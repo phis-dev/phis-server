@@ -21,7 +21,7 @@
     "dev": "next dev",
     "build": "next build",
     "typecheck": "tsc --noEmit",
-    "build:cli": "tsc -p tsconfig.cli.json",
+    "build:cli": "node scripts/build-cli.mjs",
     "db:boundary": "node scripts/validate-db-sql-boundary.mjs",
     "licenses:check": "pnpm phis licenses check",
     "start": "next start",
@@ -29,7 +29,7 @@
     "test": "vitest run",
     "test:pg": "PHI_PG_TEST=1 vitest run --config vitest.pg.config.ts",
     "phis": "node --disable-warning=ExperimentalWarning --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types ./src/cli/phis.mts",
-    "phis:dist": "node ./dist/cli/phis.mjs"
+    "phis:dist": "node ./dist/phis.mjs"
   },
   "dependencies": {
     "@phis/addon-contract": "workspace:*",
@@ -53,10 +53,14 @@
     "@typescript-eslint/eslint-plugin": "^8.62.1",
     "@typescript-eslint/parser": "^8.62.1",
     "babel-plugin-react-compiler": "1.0.0",
+    "esbuild": "0.28.2",
     "eslint": "^9.39.4",
     "eslint-config-next": "16.2.10",
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.62.1",
     "vitest": "3.2.4"
+  },
+  "bin": {
+    "phis": "./dist/phis.mjs"
   }
 }
