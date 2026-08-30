@@ -36,6 +36,7 @@ yarn-error.log*
 !.env.dev.example
 !.env.prod.example
 config/phis-runtime.json
+config/phis-instance.json
 !config/phis-runtime.example.json
 
 # vercel

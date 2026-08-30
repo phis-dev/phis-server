@@ -16,6 +16,10 @@ import {
   validatePhiConfig,
   writePhiRuntimeConfigSync,
 } from "../lib/config-files-cli.ts";
+import {
+  checkPhiInstanceVersion,
+  writePhiInstanceStamp,
+} from "../lib/instance-version-cli.ts";
 import { hashPassword } from "../lib/password-core.ts";
 import {
   buildRuntimeSummary,
@@ -1222,6 +1226,36 @@ async function setSuperUserEnabled(flags: FlagMap, enabled: boolean, json: boole
   console.log(`${enabled ? "Enabled" : "Disabled"} platform operator ${email}.`);
 }
 
+const SKIP_VERSION_CHECK_ENV = "PHIS_SKIP_VERSION_CHECK";
+
+/**
+ * A phis older than the root it points at would write formats the instance has already
+ * moved past, so it refuses. The other direction is an ordinary upgrade: it says so once
+ * and takes the root over.
+ */
+function enforceInstanceVersion(root: string) {
+  if (process.env[SKIP_VERSION_CHECK_ENV]?.trim()) return;
+
+  const check = checkPhiInstanceVersion(root, packageJson.version);
+
+  if (check.status === "behind") {
+    throw new Error(
+      `This phis is ${packageJson.version}, but ${root} was last operated by ${check.rootVersion}. ` +
+        `Use the phis that belongs to this root, or set ${SKIP_VERSION_CHECK_ENV}=1 to override.`,
+    );
+  }
+
+  if (check.status === "ahead") {
+    console.error(
+      `Note: ${root} was last operated by phis ${check.rootVersion}, this is ${packageJson.version}.`,
+    );
+  }
+
+  if (check.status !== "match") {
+    writePhiInstanceStamp(root, packageJson.version);
+  }
+}
+
 async function main() {
   const args = process.argv.slice(2);
 
@@ -1244,6 +1278,7 @@ async function main() {
   const root = getOptionalFlag(flags, "root");
 
   configRoot = root ? resolvePhiConfigPaths(root).root : getDefaultPhiRoot();
+  enforceInstanceVersion(configRoot);
 
   const [group, command, ...remaining] = parsed.positionals;
 
