@@ -1,0 +1,27 @@
+Source: phis
+Section: web
+Priority: optional
+Maintainer: Phisys Ltd. <debian@phisys.com>
+Build-Depends:
+ debhelper-compat (= 13),
+ nodejs (>= 20.19.2),
+ npm
+Standards-Version: 4.7.0
+Rules-Requires-Root: no
+
+Package: phis
+Architecture: any
+Depends:
+ ${misc:Depends},
+ ${shlibs:Depends},
+ adduser,
+ nodejs (>= 20.19.2)
+Recommends:
+ phis-host
+Suggests:
+ apache2,
+ nginx,
+ postgresql
+Description: PHIS control-plane runtime and CLI
+ Standalone Next.js runtime, operator CLI, stage layout, and host templates
+ for the central PHIS server.

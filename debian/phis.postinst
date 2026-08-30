@@ -1,0 +1,98 @@
+#!/bin/sh
+set -e
+
+APP_ROOT="/usr/lib/phis/phi-server"
+STAGE_ROOT="/srv/phis/stages/prod"
+CONFIG_DIR="${STAGE_ROOT}/config"
+STAGE_ENV_PATH="${STAGE_ROOT}/.env"
+STATIC_CONFIG_LINK="${CONFIG_DIR}/phis-config.json"
+RUNTIME_CONFIG_PATH="${CONFIG_DIR}/phis-runtime.json"
+NGINX_SITE="/etc/nginx/sites-available/phis.conf"
+APACHE_SITE="/etc/apache2/sites-available/phis.conf"
+TEMPLATE_ROOT="/usr/share/phis/templates"
+
+ensure_group() {
+  if ! getent group phis >/dev/null 2>&1; then
+    addgroup --system phis
+  fi
+}
+
+ensure_user() {
+  if ! getent passwd phis >/dev/null 2>&1; then
+    adduser \
+      --system \
+      --ingroup phis \
+      --home /nonexistent \
+      --no-create-home \
+      --disabled-login \
+      --disabled-password \
+      --gecos "PHIS runtime user" \
+      phis
+  fi
+}
+
+ensure_stage_dir() {
+  install -d -o phis -g phis -m 0755 "$1"
+}
+
+# Server Actions encrypt their bound arguments with a key that "next build" bakes
+# into the artifact. Every installation of the same .deb would otherwise share it,
+# so each stage gets its own and keeps it across upgrades.
+ensure_server_actions_key() {
+  env_path="$1"
+
+  if grep -q '^NEXT_SERVER_ACTIONS_ENCRYPTION_KEY=' "${env_path}" 2>/dev/null; then
+    return 0
+  fi
+
+  key="$(head -c 32 /dev/urandom | base64 | tr -d '\n')"
+  printf 'NEXT_SERVER_ACTIONS_ENCRYPTION_KEY=%s\n' "${key}" >> "${env_path}"
+}
+
+case "$1" in
+  configure|abort-upgrade|abort-remove|abort-deconfigure)
+    ensure_group
+    ensure_user
+
+    ensure_stage_dir /srv/phis
+    ensure_stage_dir /srv/phis/stages
+    ensure_stage_dir "${STAGE_ROOT}"
+    ensure_stage_dir "${CONFIG_DIR}"
+
+    if [ ! -e "${STATIC_CONFIG_LINK}" ]; then
+      ln -s "${APP_ROOT}/config/phis-config.json" "${STATIC_CONFIG_LINK}"
+    fi
+
+    if [ ! -e "${RUNTIME_CONFIG_PATH}" ]; then
+      printf '{\n}\n' > "${RUNTIME_CONFIG_PATH}"
+    fi
+
+    if [ ! -e "${STAGE_ENV_PATH}" ]; then
+      printf 'PORT=5301\nHOSTNAME=127.0.0.1\n' > "${STAGE_ENV_PATH}"
+    fi
+
+    ensure_server_actions_key "${STAGE_ENV_PATH}"
+
+    chown phis:phis "${STAGE_ROOT}" "${CONFIG_DIR}" "${RUNTIME_CONFIG_PATH}" "${STAGE_ENV_PATH}"
+    chmod 0600 "${STAGE_ENV_PATH}"
+    if [ -L "${STATIC_CONFIG_LINK}" ]; then
+      chown -h phis:phis "${STATIC_CONFIG_LINK}" || true
+    elif [ -e "${STATIC_CONFIG_LINK}" ]; then
+      chown phis:phis "${STATIC_CONFIG_LINK}"
+    fi
+
+    if [ -d /etc/nginx/sites-available ] && [ ! -e "${NGINX_SITE}" ]; then
+      install -m 0644 "${TEMPLATE_ROOT}/nginx/phis.conf" "${NGINX_SITE}"
+    fi
+
+    if [ -d /etc/apache2/sites-available ] && [ ! -e "${APACHE_SITE}" ]; then
+      install -m 0644 "${TEMPLATE_ROOT}/apache2/phis.conf" "${APACHE_SITE}"
+    fi
+
+    if command -v systemctl >/dev/null 2>&1; then
+      systemctl daemon-reload >/dev/null || true
+    fi
+    ;;
+esac
+
+exit 0

@@ -1,0 +1,40 @@
+{
+  "formatVersion": 1,
+  "addons": [
+    {
+      "addonId": "@phis/storage-s3",
+      "packageName": "@phis/storage-s3-server",
+      "packageVersion": "0.1.0",
+      "manifestDigest": "eb5622b4d24369ea83cd1395f7438b7255eee197f28f426aed1a4f1f47eb493e",
+      "artifactDigest": "7b9862abebbe4198cab80f1231e92c0a328f1e77c5619e754ab033c804b10965",
+      "manifest": {
+        "manifestVersion": 1,
+        "addonId": "@phis/storage-s3",
+        "packageName": "@phis/storage-s3-server",
+        "packageVersion": "0.1.0",
+        "serverAbi": "^1",
+        "capabilities": [],
+        "serviceProviders": [
+          {
+            "serviceKind": "@phis/phi-server/service/media-storage",
+            "providerKey": "@phis/storage-s3/s3",
+            "interfaceDigest": "66cb9728bdcfc4d2b97ef33db5b3de9934659ec5dd94b5ef1e35cf9030586ae2",
+            "factoryExport": "createPhiS3MediaStorageAdapter",
+            "requiredCoreCapabilities": [
+              "@phis/phi-server/storage:v1"
+            ]
+          }
+        ],
+        "requiredCoreCapabilities": [
+          "@phis/phi-server/storage:v1"
+        ],
+        "apiRoutes": [],
+        "hooks": [],
+        "jobs": [],
+        "schema": null,
+        "migrationVersion": 0
+      },
+      "enabled": true
+    }
+  ]
+}

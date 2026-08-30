@@ -1,0 +1,31 @@
+name: phis-dev
+
+services:
+  phis:
+    build:
+      context: .
+    image: phis:dev
+    container_name: phis-dev
+    restart: unless-stopped
+    env_file:
+      - .env.dev
+    environment:
+      - NODE_ENV=development
+      - PHI_SERVER_MODE=dev
+      - PORT=3101
+    working_dir: /app
+    command: sh -c "npm run dev -- --hostname 0.0.0.0 --port 3101"
+    volumes:
+      - .:/app
+      - phis-node-modules-dev:/app/node_modules
+    ports:
+      - "3101:3101"
+    networks:
+      - phis-dev
+
+networks:
+  phis-dev:
+    name: phis-dev-net
+
+volumes:
+  phis-node-modules-dev:

@@ -1,0 +1,179 @@
+import "server-only";
+
+import { getPhiServerAddonInstalledManifest } from "@/lib/addons/installed";
+import {
+  getPhiServerAddonRegistryRecord,
+  isPhiServerAddonEnabledForSite,
+} from "@/db/server-addons";
+import { hasPhiServerCoreCapability } from "@/lib/addons/core-capabilities";
+import { isPhiServerServiceInterfaceCurrent } from "@/lib/addons/core-services";
+import {
+  digestPhiServerAddonManifest,
+  validatePhiServerAddonManifest,
+} from "@/lib/addons/manifest";
+import type {
+  PhiServerAddonServiceFactory,
+  PhiServerAddonServiceProviderDescriptor,
+} from "@/lib/addons/contract";
+
+/**
+ * Finds the Add-on that implements one Core-owned service, and hands back its factory.
+ *
+ * This is the static path section 7 requires: the build manifest is the only authority for loadable
+ * code, so a provider key coming out of a database row selects an entry that a build already contains
+ * rather than becoming an import specifier. An Add-on present only in the database is not loadable,
+ * and one present only in the build is not effective until the registry agrees with it.
+ *
+ * The checks are the dispatcher's, minus the ones that need a request. A Provider is reached far from
+ * any route -- an image variant regenerating, a delete guard cleaning up -- so it cannot rely on
+ * having passed through one.
+ */
+
+export class PhiServiceProviderUnavailableError extends Error {
+  readonly reason: string;
+
+  constructor(serviceKind: string, providerKey: string, reason: string) {
+    super(`Service provider "${providerKey}" for ${serviceKind} is unavailable: ${reason}`);
+    this.name = "PhiServiceProviderUnavailableError";
+    this.reason = reason;
+  }
+}
+
+type ResolvedServiceProvider = {
+  addonId: string;
+  descriptor: PhiServerAddonServiceProviderDescriptor;
+  factory: PhiServerAddonServiceFactory;
+};
+
+/**
+ * Keyed by `serviceKind:providerKey:manifestDigest`.
+ *
+ * The digest belongs in the key now that an installation is no longer a build: an upgraded Add-on is
+ * a different manifest, and a factory resolved from the version it replaced must not answer for it.
+ * An entry from a superseded version simply stops being looked up.
+ */
+const resolvedProviders = new Map<string, ResolvedServiceProvider>();
+
+function findDeclaringEntry(serviceKind: string, providerKey: string) {
+  for (const [addonId, entry] of Object.entries(getPhiServerAddonInstalledManifest())) {
+    const descriptor = entry.manifest.serviceProviders.find(
+      (candidate) =>
+        candidate.serviceKind === serviceKind && candidate.providerKey === providerKey,
+    );
+    if (descriptor) {
+      return { addonId, entry, descriptor };
+    }
+  }
+  return null;
+}
+
+export async function resolvePhiServerServiceProvider(
+  serviceKind: string,
+  providerKey: string,
+  options?: { siteId?: number | null },
+): Promise<ResolvedServiceProvider> {
+  const found = findDeclaringEntry(serviceKind, providerKey);
+  if (!found) {
+    throw new PhiServiceProviderUnavailableError(serviceKind, providerKey, "no installed Add-on declares it");
+  }
+  const { addonId, entry, descriptor } = found;
+  const cacheKey = `${serviceKind}:${providerKey}:${entry.manifestDigest}`;
+  const cached = resolvedProviders.get(cacheKey);
+  if (!entry.enabled) {
+    throw new PhiServiceProviderUnavailableError(serviceKind, providerKey, `${addonId} is disabled`);
+  }
+  if (!isPhiServerServiceInterfaceCurrent(descriptor.serviceKind, descriptor.interfaceDigest)) {
+    throw new PhiServiceProviderUnavailableError(
+      serviceKind,
+      providerKey,
+      `${addonId} was built against a different ${serviceKind} interface`,
+    );
+  }
+
+  const manifestValidation = validatePhiServerAddonManifest(entry.manifest);
+  if (
+    !manifestValidation.manifest ||
+    digestPhiServerAddonManifest(manifestValidation.manifest) !== entry.manifestDigest
+  ) {
+    throw new PhiServiceProviderUnavailableError(serviceKind, providerKey, `${addonId} has an invalid build manifest`);
+  }
+  for (const capability of [
+    ...entry.manifest.requiredCoreCapabilities,
+    ...descriptor.requiredCoreCapabilities,
+  ]) {
+    if (!hasPhiServerCoreCapability(capability)) {
+      throw new PhiServiceProviderUnavailableError(
+        serviceKind,
+        providerKey,
+        `${addonId} requires the missing Core capability ${capability}`,
+      );
+    }
+  }
+
+  const registry = await getPhiServerAddonRegistryRecord(addonId);
+  if (!registry) {
+    throw new PhiServiceProviderUnavailableError(serviceKind, providerKey, `${addonId} is not reconciled`);
+  }
+  if (!registry.globallyEnabled) {
+    throw new PhiServiceProviderUnavailableError(serviceKind, providerKey, `${addonId} is not globally enabled`);
+  }
+  if (
+    registry.packageName !== entry.manifest.packageName ||
+    registry.packageVersion !== entry.manifest.packageVersion ||
+    registry.serverAbi !== entry.manifest.serverAbi ||
+    registry.manifestDigest !== entry.manifestDigest
+  ) {
+    throw new PhiServiceProviderUnavailableError(
+      serviceKind,
+      providerKey,
+      `${addonId} in the registry does not match this build`,
+    );
+  }
+  if (registry.migrationVersion < entry.manifest.migrationVersion) {
+    throw new PhiServiceProviderUnavailableError(
+      serviceKind,
+      providerKey,
+      `${addonId} has migration ${registry.migrationVersion} applied and needs ${entry.manifest.migrationVersion}`,
+    );
+  }
+  if (
+    options?.siteId != null &&
+    !(await isPhiServerAddonEnabledForSite(addonId, options.siteId))
+  ) {
+    throw new PhiServiceProviderUnavailableError(
+      serviceKind,
+      providerKey,
+      `${addonId} is not enabled for this Site`,
+    );
+  }
+
+  if (cached) {
+    return cached;
+  }
+
+  const runtimeModule = await entry.load();
+  const runtime = runtimeModule.phiServerAddon;
+  const runtimeValidation = validatePhiServerAddonManifest(runtime?.manifest);
+  if (
+    !runtimeValidation.manifest ||
+    digestPhiServerAddonManifest(runtimeValidation.manifest) !== entry.manifestDigest
+  ) {
+    throw new PhiServiceProviderUnavailableError(
+      serviceKind,
+      providerKey,
+      `${addonId} shipped a runtime manifest that differs from its build manifest`,
+    );
+  }
+  const factory = runtime.serviceFactories?.[descriptor.factoryExport];
+  if (typeof factory !== "function") {
+    throw new PhiServiceProviderUnavailableError(
+      serviceKind,
+      providerKey,
+      `${addonId} exports no service factory named ${descriptor.factoryExport}`,
+    );
+  }
+
+  const resolved: ResolvedServiceProvider = { addonId, descriptor, factory };
+  resolvedProviders.set(cacheKey, resolved);
+  return resolved;
+}

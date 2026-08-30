@@ -1,0 +1,38 @@
+#!/usr/bin/make -f
+ARTIFACT_DIR ?= ..
+
+%:
+	dh $@
+
+override_dh_auto_configure:
+	npm ci
+
+override_dh_auto_build:
+	npm run build
+	npm run build:cli
+
+override_dh_auto_install:
+	install -d debian/phis/usr/lib/phis
+	install -d debian/phis/usr/lib/phis/.next
+	cp -a .next/standalone/. debian/phis/usr/lib/phis/
+	cp -a .next/static debian/phis/usr/lib/phis/.next/
+	find debian/phis/usr/lib/phis/node_modules -type d \( -name '*linuxmusl*' -o -name '*musl*' \) -prune -exec rm -rf {} +
+	find debian/phis/usr/lib/phis/node_modules/argon2/prebuilds -type f -name '*.musl.node' -delete
+	cd debian/phis/usr/lib/phis/node_modules && \
+		argon2_target=$$(printf '%s\n' .pnpm/argon2@*/node_modules/argon2) && \
+		ln -s "$$argon2_target" argon2 && \
+		pg_target=$$(printf '%s\n' .pnpm/pg@*/node_modules/pg) && \
+		ln -s "$$pg_target" pg
+
+override_dh_auto_test:
+	:
+
+override_dh_auto_clean:
+	rm -rf .next dist
+	dh_auto_clean
+
+override_dh_installsystemd:
+	dh_installsystemd --no-enable --no-start
+
+override_dh_builddeb:
+	dh_builddeb --destdir=$(ARTIFACT_DIR)

@@ -1,0 +1,4 @@
+config/phis-runtime.example.json usr/share/doc/phis/examples/
+debian/phis-stage.env usr/share/phis/templates/env/stage.env
+debian/phis.nginx.conf usr/share/phis/templates/nginx/phis.conf
+debian/phis.apache2.conf usr/share/phis/templates/apache2/phis.conf

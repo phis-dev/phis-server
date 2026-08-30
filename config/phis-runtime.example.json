@@ -1,0 +1,59 @@
+{
+  "platformSuperUsers": [],
+  "sites": {
+    "overrides": {
+      "example": {
+        "sourceLocale": "en"
+      }
+    }
+  },
+  "database": {
+    "uri": "postgresql://phis_dev_user:replace-with-password@127.0.0.1:5432/phis_dev"
+  },
+  "api": {
+    "internalToken": "replace-with-internal-token",
+    "disableRateLimit": false
+  },
+  "deepl": {
+    "apiKey": "replace-with-deepl-api-key",
+    "apiUrl": "https://api-free.deepl.com/v2/translate"
+  },
+  "registration": {
+    "intentEncryptionKey": "replace-with-64-char-hex-key"
+  },
+  "auth": {
+    "transactionEncryptionKey": "replace-with-64-char-hex-key",
+    "secrets": {}
+  },
+  "forms": {
+    "timeouts": {
+      "minSubmitMs": 2000,
+      "maxSubmitMs": 7200000
+    }
+  },
+  "cors": {
+    "allowedOrigins": [],
+    "allowedOriginSuffixes": [
+      "phi-systems.tech",
+      "cdn.phis.dev",
+      "phisys.com",
+      "moonhug.ch",
+      "localhost",
+      "127.0.0.1"
+    ]
+  },
+  "email": {
+    "from": "no-reply@localhost",
+    "fromName": "Phisys",
+    "smtp": {
+      "targets": ["127.0.0.1:25"],
+      "secure": false,
+      "ignoreTls": false
+    }
+  },
+  "translation": {
+    "sourceLocale": "en",
+    "customEndpoint": "",
+    "supportedLocales": ["en"]
+  }
+}

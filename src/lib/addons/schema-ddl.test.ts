@@ -1,0 +1,89 @@
+import { describe, expect, it } from "vitest";
+
+import { buildPhiServerAddonSchemaStatements } from "./schema-ddl.ts";
+import { incidentSchemaDescriptor } from "../../../test/fixtures/addon-schema.ts";
+
+const SCHEMA = "phis_addon_acme_incidents";
+
+function statements() {
+  return buildPhiServerAddonSchemaStatements(SCHEMA, incidentSchemaDescriptor);
+}
+
+function sqlFor(summary: string) {
+  const statement = statements().find((entry) => entry.summary === summary);
+  if (!statement) {
+    throw new Error(`No statement summarised as "${summary}".`);
+  }
+  return statement.sql;
+}
+
+describe("schema DDL generation", () => {
+  it("qualifies every table with the Add-on's schema", () => {
+    for (const statement of statements()) {
+      expect(statement.sql).toContain(`"${SCHEMA}".`);
+    }
+  });
+
+  it("writes the Site column itself rather than expecting the Add-on to", () => {
+    const sql = sqlFor("create table incident");
+    expect(sql).toContain('"site_id" SMALLINT NOT NULL');
+    expect(sqlFor("bind incident to its Site")).toContain(
+      'REFERENCES phis.sites(id) ON DELETE CASCADE',
+    );
+    expect(sqlFor("index incident by Site")).toContain('("site_id")');
+  });
+
+  it("resolves a symbolic Core reference to a table an Add-on never names", () => {
+    const sql = sqlFor("point incident.reported_by at core.user");
+    expect(sql).toContain("REFERENCES phis.user_accounts");
+    expect(sql).toContain("ON DELETE SET NULL");
+    expect(sqlFor("create table incident")).toContain('"reported_by" INTEGER NULL');
+  });
+
+  it("gives a reference column the type of what it points at", () => {
+    // `incident.id` is an identity column, so the column pointing at it is a plain BIGINT.
+    expect(sqlFor("create table incident_note")).toContain('"incident_id" BIGINT NOT NULL');
+    expect(sqlFor("point incident_note.incident_id at incident")).toContain("ON DELETE CASCADE");
+  });
+
+  it("renders every structured constraint as a check", () => {
+    const sql = sqlFor("create table incident");
+    expect(sql).toContain(`"state" IN ('open', 'ack', 'closed')`);
+    expect(sql).toContain('"severity" >= 1 AND "severity" <= 5');
+    expect(sql).toContain('length(trim("title")) > 0');
+    expect(sql).toContain('"opened_at" <= "closed_at"');
+    expect(sql).toContain(
+      '(("external_ref" IS NOT NULL)::int + ("internal_ref" IS NOT NULL)::int) = 1',
+    );
+  });
+
+  it("prefixes an index name with its table, because PostgreSQL scopes them per schema", () => {
+    expect(sqlFor("index incident by state")).toContain('"incident_by_state_idx"');
+    expect(sqlFor("index incident_note by incident_id")).toContain('"incident_note_by_incident_idx"');
+  });
+
+  it("creates every table before any foreign key, so a descriptor may be in any order", () => {
+    const all = statements();
+    const lastTable = all.findLastIndex((entry) => entry.summary.startsWith("create table"));
+    const firstKey = all.findIndex((entry) => entry.summary.startsWith("point "));
+    expect(firstKey).toBeGreaterThan(lastTable);
+  });
+
+  it("escapes a literal rather than trusting it", () => {
+    const escaped = buildPhiServerAddonSchemaStatements(SCHEMA, {
+      descriptorVersion: 1,
+      version: 1,
+      tables: [
+        {
+          name: "quoted",
+          columns: [
+            { name: "id", type: "identity" },
+            { name: "label", type: "string", maxLength: 32, default: { kind: "literal", value: "it's" } },
+          ],
+          primaryKey: ["id"],
+        },
+      ],
+    });
+    expect(escaped[0].sql).toContain("DEFAULT 'it''s'");
+  });
+});

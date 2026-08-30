@@ -1,0 +1,465 @@
+"use server";
+
+import { randomBytes } from "node:crypto";
+
+import { redirect } from "next/navigation";
+
+import type { BootstrapLocale } from "@/bootstrap/i18n";
+import {
+  applyPhiBootstrapSchema,
+  createPhiBootstrapSites,
+  verifyPhiDatabaseWriteAccess,
+  type PhiBootstrapSiteInput,
+} from "@/db/bootstrap";
+import {
+  readMergedPhiConfigSync,
+  readPhiRuntimeConfigSync,
+  writePhiRuntimeConfigSync,
+} from "@/lib/config-files";
+import { resetPhiServerConfigCache } from "@/lib/config";
+import { hashPassword } from "@/lib/password-core";
+
+function isValidBootstrapPassword(password: string) {
+  return password.length >= 8 && /[^A-Za-z0-9]/.test(password);
+}
+
+function buildOperatorStepHref(locale: BootstrapLocale, saved?: boolean) {
+  const searchParams = new URLSearchParams({
+    lang: locale,
+    step: "operator",
+  });
+
+  if (saved) {
+    searchParams.set("saved", "1");
+  }
+
+  return `/setup?${searchParams.toString()}`;
+}
+
+function buildDatabaseStepHref(
+  locale: BootstrapLocale,
+  error?: string,
+) {
+  const searchParams = new URLSearchParams({
+    lang: locale,
+    step: "database",
+  });
+
+  if (error) {
+    searchParams.set("dbError", error);
+  }
+
+  return `/setup?${searchParams.toString()}`;
+}
+
+function buildTranslationsStepHref(
+  locale: BootstrapLocale,
+  error?: string,
+) {
+  const searchParams = new URLSearchParams({
+    lang: locale,
+    step: "translations",
+  });
+
+  if (error) {
+    searchParams.set("translationError", error);
+  }
+
+  return `/setup?${searchParams.toString()}`;
+}
+
+function buildSchemaStepHref(
+  locale: BootstrapLocale,
+  error?: string,
+  applied?: boolean,
+) {
+  const searchParams = new URLSearchParams({
+    lang: locale,
+    step: "schema",
+  });
+
+  if (error) {
+    searchParams.set("schemaError", error);
+  }
+
+  if (applied) {
+    searchParams.set("schemaApplied", "1");
+  }
+
+  return `/setup?${searchParams.toString()}`;
+}
+
+function buildSiteStepHref(
+  locale: BootstrapLocale,
+  error?: string,
+) {
+  const searchParams = new URLSearchParams({
+    lang: locale,
+    step: "site",
+  });
+
+  if (error) {
+    searchParams.set("siteError", error);
+  }
+
+  return `/setup?${searchParams.toString()}`;
+}
+
+function buildFinishStepHref(
+  locale: BootstrapLocale,
+  error?: string,
+) {
+  const searchParams = new URLSearchParams({
+    lang: locale,
+    step: "finish",
+  });
+
+  if (error) {
+    searchParams.set("finishError", error);
+  }
+
+  return `/setup?${searchParams.toString()}`;
+}
+
+function buildDatabaseUri({
+  host,
+  port,
+  database,
+  user,
+  password,
+  sslMode,
+}: {
+  host: string;
+  port: string;
+  database: string;
+  user: string;
+  password: string;
+  sslMode: string;
+}) {
+  const url = new URL(`postgresql://${host}`);
+  url.port = port || "5432";
+  url.pathname = `/${database}`;
+  url.username = user;
+  url.password = password;
+
+  if (sslMode === "require") {
+    url.searchParams.set("sslmode", "require");
+  }
+
+  return url.toString();
+}
+
+function normalizeHostname(value: string) {
+  return value.trim().toLowerCase();
+}
+
+function normalizeSiteKey(value: string) {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9-]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+function buildMailHost(hostname: string, publicBaseUrl: string) {
+  const normalizedHostname = normalizeHostname(hostname);
+  if (normalizedHostname) {
+    return normalizedHostname;
+  }
+
+  try {
+    return new URL(publicBaseUrl).hostname.toLowerCase();
+  } catch {
+    return "";
+  }
+}
+
+function buildAvailableLocales(defaultLocale: string) {
+  const mergedConfig = readMergedPhiConfigSync();
+  const configuredLocales =
+    (
+      mergedConfig.translation?.supportedLocales ??
+      mergedConfig.translation?.allowedLocales ??
+      []
+    ).map((value) => value.trim().toLowerCase()) ??
+    [];
+
+  return [...new Set([defaultLocale, ...configuredLocales].filter(Boolean))];
+}
+
+export async function createPlatformSuperUser(
+  locale: BootstrapLocale,
+  formData: FormData,
+) {
+  const displayName = String(formData.get("displayName") ?? "").trim();
+  const email = String(formData.get("email") ?? "").trim().toLowerCase();
+  const password = String(formData.get("password") ?? "");
+
+  if (!displayName || !email || !password || !isValidBootstrapPassword(password)) {
+    redirect(buildOperatorStepHref(locale));
+  }
+
+  const runtimeConfig = readPhiRuntimeConfigSync();
+  const existingUsers = runtimeConfig.platformSuperUsers ?? [];
+
+  if (existingUsers.length > 0) {
+    redirect(buildOperatorStepHref(locale, true));
+  }
+
+  const now = new Date().toISOString();
+  const passwordHash = await hashPassword(password);
+
+  writePhiRuntimeConfigSync({
+    ...runtimeConfig,
+    platformSuperUsers: [
+      {
+        email,
+        displayName,
+        passwordHash,
+        enabled: true,
+        createdAt: now,
+        updatedAt: now,
+      },
+    ],
+  });
+
+  redirect(buildOperatorStepHref(locale, true));
+}
+
+export async function saveDatabaseConnection(
+  locale: BootstrapLocale,
+  nextStepHref: string,
+  formData: FormData,
+) {
+  const host = String(formData.get("host") ?? "").trim();
+  const port = String(formData.get("port") ?? "").trim();
+  const database = String(formData.get("database") ?? "").trim();
+  const user = String(formData.get("user") ?? "").trim();
+  const password = String(formData.get("password") ?? "");
+  const sslMode = formData.get("sslMode") === "on" ? "require" : "disable";
+
+  if (!host || !port || !database || !user || !password) {
+    redirect(buildDatabaseStepHref(locale, "Please complete all database fields."));
+  }
+
+  const connectionString = buildDatabaseUri({
+    host,
+    port,
+    database,
+    user,
+    password,
+    sslMode,
+  });
+
+  try {
+    await verifyPhiDatabaseWriteAccess(connectionString);
+  } catch (error) {
+    const message =
+      error instanceof Error && error.message
+        ? error.message
+        : "Database connection failed.";
+    redirect(buildDatabaseStepHref(locale, message));
+  }
+
+  const runtimeConfig = readPhiRuntimeConfigSync();
+  writePhiRuntimeConfigSync({
+    ...runtimeConfig,
+    database: {
+      ...runtimeConfig.database,
+      uri: connectionString,
+    },
+  });
+
+  redirect(nextStepHref);
+}
+
+export async function saveTranslationSettings(
+  locale: BootstrapLocale,
+  nextStepHref: string,
+  formData: FormData,
+) {
+  const mode = String(formData.get("translationMode") ?? "").trim();
+  const deeplKey = String(formData.get("deeplKey") ?? "").trim();
+  const deeplEndpoint = String(formData.get("deeplEndpoint") ?? "").trim();
+  const customEndpoint = String(formData.get("customEndpoint") ?? "").trim();
+
+  if (mode !== "deepl" && mode !== "cdn" && mode !== "custom" && mode !== "none") {
+    redirect(buildTranslationsStepHref(locale, "Please choose a translation mode."));
+  }
+
+  if (mode === "deepl" && (!deeplKey || !deeplEndpoint)) {
+    redirect(
+      buildTranslationsStepHref(
+        locale,
+        "DeepL key and API endpoint are required for AI-assisted translations.",
+      ),
+    );
+  }
+
+  if (mode === "custom" && !customEndpoint) {
+    redirect(
+      buildTranslationsStepHref(
+        locale,
+        "A custom endpoint is required for the custom translation mode.",
+      ),
+    );
+  }
+
+  const runtimeConfig = readPhiRuntimeConfigSync();
+
+  writePhiRuntimeConfigSync({
+    ...runtimeConfig,
+    translation: {
+      ...runtimeConfig.translation,
+      mode,
+      customEndpoint: mode === "custom" ? customEndpoint : "",
+    },
+    deepl:
+      mode === "deepl"
+        ? {
+            ...runtimeConfig.deepl,
+            apiKey: deeplKey,
+            apiUrl: deeplEndpoint,
+          }
+        : undefined,
+  });
+
+  redirect(nextStepHref);
+}
+
+export async function applySchemaBootstrap(
+  locale: BootstrapLocale,
+  nextStepHref: string,
+) {
+  const runtimeConfig = readPhiRuntimeConfigSync();
+  const connectionString = runtimeConfig.database?.uri?.trim();
+
+  if (!connectionString) {
+    redirect(buildSchemaStepHref(locale, "No database connection configured."));
+  }
+
+  try {
+    await applyPhiBootstrapSchema(connectionString);
+  } catch (error) {
+    const message =
+      error instanceof Error && error.message
+        ? error.message
+        : "Schema creation failed.";
+    redirect(buildSchemaStepHref(locale, message));
+  }
+
+  redirect(nextStepHref);
+}
+
+export async function saveInitialSites(
+  locale: BootstrapLocale,
+  nextStepHref: string,
+  formData: FormData,
+) {
+  const createDemoSite = formData.get("createDemoSite") === "on";
+  const createCustomSite = formData.get("createCustomSite") === "on";
+
+  if (!createDemoSite && !createCustomSite) {
+    redirect(nextStepHref);
+  }
+
+  const runtimeConfig = readPhiRuntimeConfigSync();
+  const connectionString = runtimeConfig.database?.uri?.trim();
+
+  if (!connectionString) {
+    redirect(buildSiteStepHref(locale, "No database connection configured."));
+  }
+
+  const siteKey = normalizeSiteKey(String(formData.get("siteKey") ?? ""));
+  const siteName = String(formData.get("siteName") ?? "").trim();
+  const siteHostname = normalizeHostname(String(formData.get("siteHostname") ?? ""));
+  const siteBaseUrl = String(formData.get("siteBaseUrl") ?? "").trim();
+  const siteDefaultLocale = String(formData.get("siteDefaultLocale") ?? "en")
+    .trim()
+    .toLowerCase();
+  const siteSupportEmail = String(formData.get("siteSupportEmail") ?? "")
+    .trim()
+    .toLowerCase();
+
+  if (createCustomSite) {
+    if (!siteKey || !siteName || !siteHostname || !siteBaseUrl || !siteSupportEmail) {
+      redirect(buildSiteStepHref(locale, "Please complete all site fields."));
+    }
+
+    try {
+      new URL(siteBaseUrl);
+    } catch {
+      redirect(buildSiteStepHref(locale, "Please provide a valid public base URL."));
+    }
+  }
+
+  const sites: PhiBootstrapSiteInput[] = [];
+  if (createDemoSite) {
+    sites.push({
+      key: "demo",
+      name: "Demo site",
+      hostname: "demo.localhost",
+      publicBaseUrl: "http://demo.localhost",
+      defaultLocale: "en",
+      availableLocales: buildAvailableLocales("en"),
+      supportEmail: "hello@demo.localhost",
+      mailHost: "demo.localhost",
+    });
+  }
+  if (createCustomSite) {
+    const defaultLocale = siteDefaultLocale || "en";
+    const mailHost = buildMailHost(siteHostname, siteBaseUrl);
+    if (!mailHost) {
+      redirect(buildSiteStepHref(locale, "A valid hostname or public base URL is required."));
+    }
+    sites.push({
+      key: siteKey,
+      name: siteName,
+      hostname: siteHostname,
+      publicBaseUrl: siteBaseUrl,
+      defaultLocale,
+      availableLocales: buildAvailableLocales(defaultLocale),
+      supportEmail: siteSupportEmail,
+      mailHost,
+    });
+  }
+  try {
+    await createPhiBootstrapSites(connectionString, sites);
+  } catch (error) {
+    const message =
+      error instanceof Error && error.message
+        ? error.message
+        : "Site creation failed.";
+    redirect(buildSiteStepHref(locale, message));
+  }
+
+  redirect(nextStepHref);
+}
+
+export async function completeBootstrapSetup(
+  locale: BootstrapLocale,
+  formData: FormData,
+) {
+  const acceptedTerms = formData.get("acceptedTerms") === "on";
+
+  if (!acceptedTerms) {
+    redirect(buildFinishStepHref(locale, "Please accept the terms before continuing."));
+  }
+
+  const runtimeConfig = readPhiRuntimeConfigSync();
+  const internalToken = runtimeConfig.api?.internalToken?.trim() || randomBytes(32).toString("hex");
+  writePhiRuntimeConfigSync({
+    ...runtimeConfig,
+    api: {
+      ...runtimeConfig.api,
+      internalToken,
+    },
+    bootstrap: {
+      ...runtimeConfig.bootstrap,
+      enabled: false,
+    },
+  });
+  resetPhiServerConfigCache();
+
+  redirect("/operator");
+}

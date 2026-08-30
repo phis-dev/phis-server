@@ -1,0 +1,24 @@
+[Unit]
+Description=PHIS runtime (%i)
+After=network.target
+ConditionPathExists=/srv/phis/stages/%i/config/phis-runtime.json
+
+[Service]
+Type=simple
+User=phis
+Group=phis
+WorkingDirectory=/usr/lib/phis/phi-server
+Environment=NODE_ENV=production
+Environment=PHIS_ROOT=/srv/phis/stages/%i
+Environment=HOSTNAME=127.0.0.1
+EnvironmentFile=-/srv/phis/stages/%i/.env
+ExecStart=/usr/bin/node /usr/lib/phis/phi-server/server.js
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target

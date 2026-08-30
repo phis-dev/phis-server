@@ -1,0 +1,65 @@
+{
+  "runtime": {
+    "containerized": false
+  },
+  "bootstrap": {
+    "enabled": true
+  },
+  "sites": {
+    "sourcePathRoot": "/opt/phis/sources",
+    "instancePathRoot": "/var/www/phis/sites",
+    "basePort": 52000
+  },
+  "forms": {
+    "timeouts": {
+      "minSubmitMs": 2000,
+      "maxSubmitMs": 7200000
+    }
+  },
+  "cors": {
+    "allowedOrigins": [],
+    "allowedOriginSuffixes": [
+      "localhost",
+      "127.0.0.1",
+      "::1",
+      "[::1]"
+    ]
+  },
+  "email": {
+    "fromName": "phis",
+    "smtp": {
+      "targets": [
+        "127.0.0.1:25"
+      ],
+      "secure": false,
+      "ignoreTls": false
+    }
+  },
+  "media": {
+    "storageKeyPrefix": "sites",
+    "local": {
+      "rootDir": "/var/phis/media"
+    },
+    "defaults": {
+      "userQuotaBytes": null,
+      "groupQuotaBytes": null
+    }
+  },
+  "api": {
+    "phisCdnPublicToken": "phis-cdn-public-v1"
+  },
+  "translation": {
+    "sourceLocale": "en",
+    "mode": "none",
+    "cdnBaseUrl": "https://cdn.phis.dev",
+    "customEndpoint": "",
+    "supportedLocales": [
+      "de",
+      "en",
+      "fr",
+      "es"
+    ],
+    "allowPublicWrites": false,
+    "allowPublicReads": false
+  }
+}

@@ -1,0 +1,62 @@
+{
+  "name": "phis",
+  "version": "0.1.0",
+  "license": "Apache-2.0",
+  "private": true,
+  "engines": {
+    "node": ">=20.19.2"
+  },
+  "devEngines": {
+    "runtime": {
+      "name": "node",
+      "version": ">=22",
+      "onFail": "error"
+    },
+    "packageManager": {
+      "name": "npm",
+      "onFail": "error"
+    }
+  },
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "typecheck": "tsc --noEmit",
+    "build:cli": "tsc -p tsconfig.cli.json",
+    "db:boundary": "node scripts/validate-db-sql-boundary.mjs",
+    "licenses:check": "pnpm phis licenses check",
+    "start": "next start",
+    "lint": "eslint",
+    "test": "vitest run",
+    "test:pg": "PHI_PG_TEST=1 vitest run --config vitest.pg.config.ts",
+    "phis": "node --disable-warning=ExperimentalWarning --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types ./src/cli/phis.mts",
+    "phis:dist": "node ./dist/cli/phis.mjs"
+  },
+  "dependencies": {
+    "@phis/addon-contract": "workspace:*",
+    "argon2": "^0.44.0",
+    "next": "^16.2.10",
+    "nodemailer": "^9.0.3",
+    "openid-client": "^6.8.4",
+    "pg": "^8.22.0",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7",
+    "sanitize-html": "2.17.5",
+    "sharp": "^0.35.3"
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.0",
+    "@types/nodemailer": "^8.0.1",
+    "@types/pg": "^8.15.5",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "@types/sanitize-html": "2.16.1",
+    "@typescript-eslint/eslint-plugin": "^8.62.1",
+    "@typescript-eslint/parser": "^8.62.1",
+    "babel-plugin-react-compiler": "1.0.0",
+    "eslint": "^9.39.4",
+    "eslint-config-next": "16.2.10",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.62.1",
+    "vitest": "3.2.4"
+  }
+}

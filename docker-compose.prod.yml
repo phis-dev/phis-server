@@ -1,0 +1,31 @@
+name: phis-prod
+
+services:
+  phis:
+    build:
+      context: .
+    image: phis:prod
+    container_name: phis-prod
+    restart: unless-stopped
+    env_file:
+      - .env.prod
+    environment:
+      - NODE_ENV=production
+      - PHI_SERVER_MODE=prod
+      - PORT=3000
+    working_dir: /app
+    command: sh -c "npm run build && npm run start -- --hostname 0.0.0.0 --port 3000"
+    volumes:
+      - .:/app
+      - phis-node-modules-prod:/app/node_modules
+    ports:
+      - "3000:3000"
+    networks:
+      - phis-prod
+
+networks:
+  phis-prod:
+    name: phis-prod-net
+
+volumes:
+  phis-node-modules-prod:

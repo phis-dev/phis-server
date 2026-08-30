@@ -1,0 +1,2632 @@
+import "server-only";
+
+import type { PoolClient } from "pg";
+
+import {
+  collectRevisionContentIds,
+  deleteOrphanedSiteContentByIdsWithDb,
+  getResolvedSiteContentByIds,
+  upsertSiteContentAssetWithClient,
+  upsertSiteContentHtmlWithClient,
+  upsertSiteContentMarkdownWithClient,
+  upsertSiteContentTextWithClient,
+  type SiteResolvedContentRecord,
+} from "@/db/site-content";
+import { getMediaAssetBySiteAndId } from "@/db/media";
+import { materializeSiteMediaAvailabilityWithDb } from "@/db/media-spaces";
+import {
+  collectSiteCmsContentReferences,
+  collectSiteCmsReferences,
+  countSiteCmsReferencesToPageWithDb,
+  PhiCmsReferenceSourceKind,
+  replaceSiteCmsReferencesWithDb,
+} from "@/db/site-cms-references";
+import { getResolvedSiteMessageFields, type ResolvedSiteMessageField } from "@/db/translations";
+import { getPool } from "@/lib/db";
+import {
+  PhiCmsFlags,
+  PhiCmsRegionType,
+  PhiCmsRevisionFlags,
+  PhiCmsStatus,
+} from "@/lib/constants/phi-cms";
+import { normalizeSiteCmsPath } from "@/lib/helpers/cms-path";
+import { hasPhiFlag } from "@/lib/helpers/flags";
+import type {
+  CmsAreaPresetWriteInput,
+  CmsDraftContentBindingInput,
+  CmsDraftWriteState,
+  CmsPageWriteInput,
+} from "@/lib/cms/write-validation";
+import type { PhiCmsInstanceId } from "@/lib/cms/instance-id";
+import {
+  validateCmsAreaPresetWriteInput,
+  validateCmsPageWriteInput,
+} from "@/lib/cms/write-validation";
+import {
+  validateCmsAreaRevisionForPublish,
+  validateCmsPageRevisionForPublish,
+} from "@/lib/cms/publish-validation";
+import type { PhiViewerAccessPolicy } from "@/lib/authorization";
+
+type DbQueryable = Pick<PoolClient, "query">;
+
+function readWidgetContentBindingSourceValue(
+  config: Record<string, unknown> | null | undefined,
+  binding: CmsDraftContentBindingInput,
+  widgetId: PhiCmsInstanceId,
+) {
+  const rawValue = config?.[binding.sourceField];
+  if (typeof rawValue !== "string") {
+    throw new Error(
+      `Widget ${widgetId} requires config.${binding.sourceField} for ${binding.storage} content persistence.`,
+    );
+  }
+
+  if (binding.storage === "text" && !rawValue.trim()) {
+    throw new Error(
+      `Widget ${widgetId} requires a non-empty config.${binding.sourceField} for text content persistence.`,
+    );
+  }
+
+  return rawValue;
+}
+
+function readWidgetAssetContentBindingSourceValue(
+  config: Record<string, unknown> | null | undefined,
+  binding: CmsDraftContentBindingInput,
+  widgetId: PhiCmsInstanceId,
+) {
+  const rawValue = config?.[binding.sourceField];
+  if (typeof rawValue === "number" && Number.isInteger(rawValue) && rawValue > 0) {
+    return rawValue;
+  }
+
+  if (typeof rawValue === "string") {
+    const parsed = Number.parseInt(rawValue.trim(), 10);
+    if (Number.isInteger(parsed) && parsed > 0) {
+      return parsed;
+    }
+  }
+
+  throw new Error(
+    `Widget ${widgetId} requires config.${binding.sourceField} for asset content persistence.`,
+  );
+}
+
+export type SitePageRecord = {
+  id: number;
+  siteId: number;
+  areaMask: number;
+  path: string;
+  pageType: number;
+  status: number;
+  flags: number;
+  visibilityMask: number;
+  accessPolicy: PhiViewerAccessPolicy;
+  titleMsgId: number | null;
+  descriptionMsgId: number | null;
+  heroRootLayoutNodeId: PhiCmsInstanceId | null;
+  headerBottomRootLayoutNodeId: PhiCmsInstanceId | null;
+  siderRightRootLayoutNodeId: PhiCmsInstanceId | null;
+  footerTopRootLayoutNodeId: PhiCmsInstanceId | null;
+  drawerRightRootLayoutNodeId: PhiCmsInstanceId | null;
+  contentRootLayoutNodeId: PhiCmsInstanceId | null;
+  layoutConfig: Record<string, unknown>;
+};
+
+export type SiteResolvedRegionRecord = {
+  id: number;
+  pageId: number;
+  areaPresetId: number | null;
+  regionType: number;
+  rootLayoutNodeId: PhiCmsInstanceId;
+  status: number;
+  flags: number;
+  visibilityMask: number;
+  sortOrder: number;
+  config: Record<string, unknown>;
+};
+
+export type SiteOverlayRecord = {
+  id: PhiCmsInstanceId;
+  overlayType: "modal" | "drawer";
+  headerLayoutNodeId: PhiCmsInstanceId | null;
+  bodyLayoutNodeId: PhiCmsInstanceId;
+  footerLayoutNodeId: PhiCmsInstanceId | null;
+  status: number;
+  flags: number;
+  visibilityMask: number;
+  sortOrder: number;
+  label: string | null;
+  config: Record<string, unknown>;
+};
+
+export type SiteAreaPresetRecord = {
+  id: number;
+  siteId: number;
+  areaMask: number;
+  status: number;
+  flags: number;
+  visibilityMask: number;
+  config: Record<string, unknown>;
+};
+
+export type SiteLayoutNodeRecord = {
+  id: PhiCmsInstanceId;
+  siteId: number;
+  parentLayoutNodeId: PhiCmsInstanceId | null;
+  widgetType: string;
+  slotIndex: number;
+  sortOrder: number;
+  status: number;
+  flags: number;
+  visibilityMask: number;
+  label: string | null;
+  config: Record<string, unknown>;
+};
+
+export type SiteContentWidgetRecord = {
+  id: PhiCmsInstanceId;
+  siteId: number;
+  parentLayoutNodeId: PhiCmsInstanceId;
+  widgetType: string;
+  slotIndex: number;
+  sortOrder: number;
+  status: number;
+  flags: number;
+  visibilityMask: number;
+  label: string | null;
+  config: Record<string, unknown>;
+  contentId: number | null;
+  resolvedContent?: SiteResolvedContentRecord | null;
+};
+
+export type SiteResolvedWidgetTree = {
+  sourcePreset: CmsPageWriteInput["sourcePreset"];
+  page: SitePageRecord;
+  pageMeta: SiteResolvedPageMeta | null;
+  regions: SiteResolvedRegionRecord[];
+  overlays: SiteOverlayRecord[];
+  layoutNodes: SiteLayoutNodeRecord[];
+  contentWidgets: SiteContentWidgetRecord[];
+};
+
+export type SiteResolvedPageMeta = {
+  title: ResolvedSiteMessageField | null;
+  description: ResolvedSiteMessageField | null;
+};
+
+export type SiteResolvedPageLookup = {
+  areaMask: number;
+  path: string;
+  tree: SiteResolvedWidgetTree;
+};
+
+export type SiteResolvedAreaPresetTree = {
+  sourcePreset: CmsAreaPresetWriteInput["sourcePreset"];
+  preset: SiteAreaPresetRecord;
+  regions: SiteResolvedRegionRecord[];
+  overlays: SiteOverlayRecord[];
+  layoutNodes: SiteLayoutNodeRecord[];
+  contentWidgets: SiteContentWidgetRecord[];
+};
+
+export type SiteResolvedAreaPresetLookup = {
+  areaMask: number;
+  preset: SiteResolvedAreaPresetTree;
+};
+
+export type SiteAreaRevisionRecord = {
+  id: number;
+  areaScopeId: number;
+  flags: number;
+  treeJson: Record<string, unknown>;
+  message: string | null;
+  metaJson: Record<string, unknown>;
+  sourceRevisionId: number | null;
+  createdByUserId: number | null;
+  createdAt: string;
+};
+
+export type SitePageRevisionRecord = {
+  id: number;
+  pageScopeId: number;
+  flags: number;
+  treeJson: Record<string, unknown>;
+  message: string | null;
+  metaJson: Record<string, unknown>;
+  sourceRevisionId: number | null;
+  createdByUserId: number | null;
+  createdAt: string;
+};
+
+type SiteAreaScopeRecord = {
+  id: number;
+  siteId: number;
+  areaMask: number;
+  publishedRevisionId: number | null;
+  workingDraftRevisionId: number | null;
+};
+
+type SitePageScopeRecord = {
+  id: number;
+  siteId: number;
+  areaMask: number;
+  path: string | null;
+  ownerModuleId: string | null;
+  presetKey: string | null;
+  tombstonedAt: string | null;
+  publishedRevisionId: number | null;
+  workingDraftRevisionId: number | null;
+};
+
+export type SitePageScopeAddress =
+  | { kind: "path"; path: string }
+  | { kind: "preset"; ownerModuleId: string; presetKey: string };
+
+export type SitePresetIdentity = Pick<
+  CmsAreaPresetWriteInput["sourcePreset"],
+  "ownerModuleId" | "presetKey"
+>;
+
+function resolveSitePageScopeAddress(input: Pick<CmsPageWriteInput, "path" | "sourcePreset">): SitePageScopeAddress {
+  return input.sourcePreset
+    ? {
+        kind: "preset",
+        ownerModuleId: input.sourcePreset.ownerModuleId,
+        presetKey: input.sourcePreset.presetKey,
+      }
+    : { kind: "path", path: input.path };
+}
+
+function hasSamePresetIdentity(
+  left: SitePresetIdentity | null,
+  right: SitePresetIdentity | null,
+) {
+  return left == null || right == null
+    ? left === right
+    : left.ownerModuleId === right.ownerModuleId && left.presetKey === right.presetKey;
+}
+
+function resolveSnapshotPresetSource<T extends CmsPageWriteInput["sourcePreset"] | CmsAreaPresetWriteInput["sourcePreset"]>(
+  persisted: T | undefined,
+  requested: T,
+): T {
+  if (persisted === undefined) {
+    return requested;
+  }
+  if (!hasSamePresetIdentity(persisted, requested)) {
+    throw new SiteCmsDraftConflictError("CMS snapshot preset identity does not match the requested scope.");
+  }
+  return persisted;
+}
+
+export type SitePageScopeCatalogRecord = SitePageScopeRecord & {
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type SiteCmsDraftState = CmsDraftWriteState;
+
+export class SiteCmsDraftConflictError extends Error {
+  readonly code = "cms_draft_conflict";
+
+  constructor(message: string) {
+    super(message);
+    this.name = "SiteCmsDraftConflictError";
+  }
+}
+
+export class SitePagePathChangeError extends Error {
+  constructor(
+    readonly code: "invalid_path" | "page_not_found" | "module_owned" | "path_collision",
+    message: string,
+  ) {
+    super(message);
+    this.name = "SitePagePathChangeError";
+  }
+}
+
+function normalizeMutableSitePagePath(value: string) {
+  const path = normalizeSiteCmsPath(value);
+  if (
+    path.length > 512 ||
+    /[?#\\]/u.test(path) ||
+    /(?:^|\/)\.\.?(?:\/|$)/u.test(path) ||
+    /^\/(?:api|_next|operator|setup)(?:\/|$)/iu.test(path)
+  ) {
+    throw new SitePagePathChangeError("invalid_path", "The requested Page path is invalid or reserved.");
+  }
+  return path;
+}
+
+function toJsonRecord(value: unknown) {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+function readSiteCmsDraftState(revision: Pick<SiteAreaRevisionRecord | SitePageRevisionRecord, "id" | "metaJson">) {
+  const draft = revision.metaJson.draft;
+  if (!draft || typeof draft !== "object" || Array.isArray(draft)) {
+    throw new SiteCmsDraftConflictError(
+      `Working Draft revision #${revision.id} does not contain canonical Draft metadata.`,
+    );
+  }
+
+  const record = draft as Record<string, unknown>;
+  const version = record.version;
+  const nextNodeSequence = record.nextNodeSequence;
+  if (
+    !Number.isSafeInteger(version) ||
+    (version as number) < 1 ||
+    !Number.isSafeInteger(nextNodeSequence) ||
+    (nextNodeSequence as number) < 1 ||
+    (nextNodeSequence as number) > 0xffffffff
+  ) {
+    throw new SiteCmsDraftConflictError(
+      `Working Draft revision #${revision.id} contains invalid Draft metadata.`,
+    );
+  }
+
+  return {
+    revisionId: revision.id,
+    version: version as number,
+    nextNodeSequence: nextNodeSequence as number,
+  } satisfies SiteCmsDraftState;
+}
+
+function assertSiteCmsDraftWriteState(
+  persisted: SiteCmsDraftState,
+  requested: CmsDraftWriteState | undefined,
+) {
+  if (!requested) {
+    throw new SiteCmsDraftConflictError(
+      `Working Draft revision #${persisted.revisionId} requires revision and version metadata.`,
+    );
+  }
+  if (requested.revisionId !== persisted.revisionId || requested.version !== persisted.version) {
+    throw new SiteCmsDraftConflictError(
+      `Working Draft changed from revision #${requested.revisionId} version ${requested.version} to revision #${persisted.revisionId} version ${persisted.version}.`,
+    );
+  }
+  if (requested.nextNodeSequence < persisted.nextNodeSequence) {
+    throw new SiteCmsDraftConflictError(
+      `Working Draft nextNodeSequence must not move backwards from ${persisted.nextNodeSequence} to ${requested.nextNodeSequence}.`,
+    );
+  }
+}
+
+function withSiteCmsDraftMeta(
+  metaJson: Record<string, unknown>,
+  draft: Pick<SiteCmsDraftState, "version" | "nextNodeSequence">,
+) {
+  return {
+    ...metaJson,
+    draft: {
+      version: draft.version,
+      nextNodeSequence: draft.nextNodeSequence,
+    },
+  };
+}
+
+function stableJsonStringify(value: unknown): string {
+  if (Array.isArray(value)) {
+    return `[${value.map((entry) => stableJsonStringify(entry)).join(",")}]`;
+  }
+
+  if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    return `{${Object.keys(record)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${stableJsonStringify(record[key])}`)
+      .join(",")}}`;
+  }
+
+  return JSON.stringify(value);
+}
+
+function readRevisionNodeKey(node: { id?: string | number | null; widgetType?: string | null }) {
+  if ((typeof node.id === "string" && node.id) || (typeof node.id === "number" && Number.isInteger(node.id))) {
+    return `id:${node.id}`;
+  }
+
+  return `anonymous:${node.widgetType ?? "node"}:${stableJsonStringify(node)}`;
+}
+
+function diffRevisionNodes<TNode extends { id?: string | number | null; widgetType?: string | null }>(
+  previous: TNode[],
+  next: TNode[],
+) {
+  const previousByKey = new Map(previous.map((node) => [readRevisionNodeKey(node), stableJsonStringify(node)]));
+  const nextByKey = new Map(next.map((node) => [readRevisionNodeKey(node), stableJsonStringify(node)]));
+  let added = 0;
+  let changed = 0;
+  let removed = 0;
+
+  for (const [key, value] of nextByKey.entries()) {
+    if (!previousByKey.has(key)) {
+      added += 1;
+    } else if (previousByKey.get(key) !== value) {
+      changed += 1;
+    }
+  }
+
+  for (const key of previousByKey.keys()) {
+    if (!nextByKey.has(key)) {
+      removed += 1;
+    }
+  }
+
+  return { added, changed, removed, total: added + changed + removed };
+}
+
+function slugifySegment(input: string | null | undefined, fallback: string) {
+  const normalized = (input ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+
+  return normalized || fallback;
+}
+
+function buildRandomSlugSuffix() {
+  return globalThis.crypto?.randomUUID?.().slice(0, 8) ?? Math.random().toString(36).slice(2, 10);
+}
+
+function buildWidgetContentSlug(
+  scope: {
+    scopeKind: "page" | "area";
+    areaMask: number;
+    path?: string | null;
+  },
+  widget: {
+    id: PhiCmsInstanceId;
+    label: string | null;
+  },
+  contentTypeKey: string,
+) {
+  const scopeSegment =
+    scope.scopeKind === "page"
+      ? `${scope.scopeKind}-${slugifySegment(scope.path, "root")}`
+      : `${scope.scopeKind}-${scope.areaMask}`;
+  const widgetSegment = slugifySegment(widget.label, `widget-${widget.id}`);
+  return `cms-${scopeSegment}-${contentTypeKey}-${widgetSegment}-${buildRandomSlugSuffix()}`;
+}
+
+function readPageRegionConfig(layoutConfig: Record<string, unknown>, regionKey: string) {
+  const pageRegionConfigs = toJsonRecord(layoutConfig.pageRegionConfigs);
+  return toJsonRecord(pageRegionConfigs[regionKey]);
+}
+
+function buildDraftPreviewPageTree(siteId: number, input: CmsPageWriteInput): SiteResolvedWidgetTree {
+  const normalizedPath = normalizeSiteCmsPath(input.path);
+  const pageId = input.page?.id ?? -1;
+  const page: SitePageRecord = {
+    id: pageId,
+    siteId,
+    areaMask: input.areaMask,
+    path: normalizedPath,
+    pageType: input.page?.pageType ?? 0,
+    status: input.page?.status ?? 0,
+    flags: input.page?.flags ?? 0,
+    visibilityMask: input.page?.visibilityMask ?? input.areaMask,
+    accessPolicy: input.page?.accessPolicy ?? { access: "anyone" },
+    titleMsgId: input.page?.titleMsgId ?? null,
+    descriptionMsgId: input.page?.descriptionMsgId ?? null,
+    heroRootLayoutNodeId: input.page?.heroRootLayoutNodeId ?? null,
+    headerBottomRootLayoutNodeId: input.page?.headerBottomRootLayoutNodeId ?? null,
+    siderRightRootLayoutNodeId: input.page?.siderRightRootLayoutNodeId ?? null,
+    footerTopRootLayoutNodeId: input.page?.footerTopRootLayoutNodeId ?? null,
+    drawerRightRootLayoutNodeId: input.page?.drawerRightRootLayoutNodeId ?? null,
+    contentRootLayoutNodeId: input.page?.contentRootLayoutNodeId ?? null,
+    layoutConfig: toJsonRecord(input.page?.layoutConfig),
+  };
+  const regions: SiteResolvedRegionRecord[] = [];
+  const regionPairs: Array<[number, PhiCmsInstanceId | null | undefined]> = [
+    [PhiCmsRegionType.HeaderBottom, input.page?.headerBottomRootLayoutNodeId],
+    [PhiCmsRegionType.Hero, input.page?.heroRootLayoutNodeId],
+    [PhiCmsRegionType.Content, input.page?.contentRootLayoutNodeId],
+    [PhiCmsRegionType.SiderRight, input.page?.siderRightRootLayoutNodeId],
+    [PhiCmsRegionType.FooterTop, input.page?.footerTopRootLayoutNodeId],
+    [PhiCmsRegionType.Drawer, input.page?.drawerRightRootLayoutNodeId],
+  ];
+
+  regionPairs.forEach(([regionType, rootLayoutNodeId], index) => {
+    if (rootLayoutNodeId == null) {
+      return;
+    }
+
+    const regionKey =
+      regionType === PhiCmsRegionType.HeaderBottom
+        ? "header_bottom"
+        : regionType === PhiCmsRegionType.Hero
+          ? "hero"
+          : regionType === PhiCmsRegionType.Content
+            ? "content"
+            : regionType === PhiCmsRegionType.SiderRight
+              ? "sider_right"
+              : "footer_top";
+
+    regions.push({
+      id: -(index + 1),
+      pageId,
+      areaPresetId: null,
+      regionType,
+      rootLayoutNodeId,
+      status: 1,
+      flags: 0,
+      visibilityMask: input.areaMask,
+      sortOrder: index,
+      config: readPageRegionConfig(page.layoutConfig, regionKey),
+    });
+  });
+
+  return {
+    sourcePreset: input.sourcePreset,
+    page,
+    pageMeta: null,
+    regions,
+    overlays: input.overlays.map((overlay) => ({
+      id: overlay.id,
+      overlayType: overlay.overlayType,
+      headerLayoutNodeId: overlay.headerLayoutNodeId,
+      bodyLayoutNodeId: overlay.bodyLayoutNodeId,
+      footerLayoutNodeId: overlay.footerLayoutNodeId,
+      status: overlay.status ?? 0,
+      flags: overlay.flags ?? 0,
+      visibilityMask: overlay.visibilityMask ?? input.areaMask,
+      sortOrder: overlay.sortOrder ?? 0,
+      label: overlay.label ?? null,
+      config: toJsonRecord(overlay.config),
+    })),
+    layoutNodes: input.layoutNodes.map((node) => ({
+      id: node.id,
+      siteId,
+      parentLayoutNodeId: node.parentLayoutNodeId,
+      widgetType: node.widgetType,
+      slotIndex: node.slotIndex,
+      sortOrder: node.sortOrder ?? 0,
+      status: node.status ?? 0,
+      flags: node.flags ?? 0,
+      visibilityMask: node.visibilityMask ?? 0,
+      label: node.label ?? null,
+      config: toJsonRecord(node.config),
+    })),
+    contentWidgets: input.contentWidgets.map((widget) => ({
+      id: widget.id,
+      siteId,
+      parentLayoutNodeId: widget.parentLayoutNodeId,
+      widgetType: widget.widgetType,
+      slotIndex: widget.slotIndex,
+      sortOrder: widget.sortOrder ?? 0,
+      status: widget.status ?? 0,
+      flags: widget.flags ?? 0,
+      visibilityMask: widget.visibilityMask ?? 0,
+      label: widget.label ?? null,
+      config: toJsonRecord(widget.config),
+      contentId: widget.contentId ?? null,
+      resolvedContent: null,
+    })),
+  };
+}
+
+function buildDraftPreviewAreaTree(siteId: number, input: CmsAreaPresetWriteInput): SiteResolvedAreaPresetTree {
+  return {
+    sourcePreset: input.sourcePreset,
+    preset: {
+      id: input.preset?.id ?? -1,
+      siteId,
+      areaMask: input.areaMask,
+      status: input.preset?.status ?? 0,
+      flags: input.preset?.flags ?? 0,
+      visibilityMask: input.preset?.visibilityMask ?? input.areaMask,
+      config: toJsonRecord(input.preset?.config),
+    },
+    regions: input.regions.map((region, index) => ({
+      id: region.id ?? -(index + 1),
+      pageId: 0,
+      areaPresetId: input.preset?.id ?? -1,
+      regionType: region.regionType,
+      rootLayoutNodeId: region.rootLayoutNodeId,
+      status: region.status ?? 0,
+      flags: region.flags ?? 0,
+      visibilityMask: region.visibilityMask ?? input.areaMask,
+      sortOrder: region.sortOrder ?? index,
+      config: toJsonRecord(region.config),
+    })),
+    overlays: input.overlays.map((overlay) => ({
+      id: overlay.id,
+      overlayType: overlay.overlayType,
+      headerLayoutNodeId: overlay.headerLayoutNodeId,
+      bodyLayoutNodeId: overlay.bodyLayoutNodeId,
+      footerLayoutNodeId: overlay.footerLayoutNodeId,
+      status: overlay.status ?? 0,
+      flags: overlay.flags ?? 0,
+      visibilityMask: overlay.visibilityMask ?? input.areaMask,
+      sortOrder: overlay.sortOrder ?? 0,
+      label: overlay.label ?? null,
+      config: toJsonRecord(overlay.config),
+    })),
+    layoutNodes: input.layoutNodes.map((node) => ({
+      id: node.id,
+      siteId,
+      parentLayoutNodeId: node.parentLayoutNodeId,
+      widgetType: node.widgetType,
+      slotIndex: node.slotIndex,
+      sortOrder: node.sortOrder ?? 0,
+      status: node.status ?? 0,
+      flags: node.flags ?? 0,
+      visibilityMask: node.visibilityMask ?? 0,
+      label: node.label ?? null,
+      config: toJsonRecord(node.config),
+    })),
+    contentWidgets: input.contentWidgets.map((widget) => ({
+      id: widget.id,
+      siteId,
+      parentLayoutNodeId: widget.parentLayoutNodeId,
+      widgetType: widget.widgetType,
+      slotIndex: widget.slotIndex,
+      sortOrder: widget.sortOrder ?? 0,
+      status: widget.status ?? 0,
+      flags: widget.flags ?? 0,
+      visibilityMask: widget.visibilityMask ?? 0,
+      label: widget.label ?? null,
+      config: toJsonRecord(widget.config),
+      contentId: widget.contentId ?? null,
+      resolvedContent: null,
+    })),
+  };
+}
+
+async function resolveTreeContentWidgetsWithDb(
+  db: DbQueryable,
+  siteId: number,
+  widgets: SiteContentWidgetRecord[],
+  locale?: string | null,
+) {
+  const translatedContentIds = widgets
+    .filter((widget) => widget.contentId != null && !hasPhiFlag(widget.flags, PhiCmsFlags.NoTranslate))
+    .map((widget) => widget.contentId ?? 0);
+  const sourceOnlyContentIds = widgets
+    .filter((widget) => widget.contentId != null && hasPhiFlag(widget.flags, PhiCmsFlags.NoTranslate))
+    .map((widget) => widget.contentId ?? 0);
+
+  const [translatedResolvedById, sourceOnlyResolvedById] = await Promise.all([
+    getResolvedSiteContentByIds(siteId, translatedContentIds, locale ?? null),
+    getResolvedSiteContentByIds(siteId, sourceOnlyContentIds, null),
+  ]);
+
+  return widgets.map((widget) => ({
+    ...widget,
+    resolvedContent:
+      widget.contentId == null
+        ? null
+        : hasPhiFlag(widget.flags, PhiCmsFlags.NoTranslate)
+          ? sourceOnlyResolvedById.get(widget.contentId) ?? null
+          : translatedResolvedById.get(widget.contentId) ?? null,
+  }));
+}
+
+async function buildResolvedPageTreeFromRevisionWithDb(
+  db: DbQueryable,
+  siteId: number,
+  scope: SitePageScopeRecord,
+  input: CmsPageWriteInput,
+  locale?: string | null,
+): Promise<SiteResolvedWidgetTree> {
+  const tree = buildDraftPreviewPageTree(siteId, {
+    ...input,
+    page: {
+      ...(input.page ?? {}),
+      id: scope.id,
+    },
+  });
+
+  const pageMeta = await resolveSitePageMetaWithDb(tree.page, locale ?? null);
+
+  return {
+    ...tree,
+    pageMeta,
+    contentWidgets: await resolveTreeContentWidgetsWithDb(db, siteId, tree.contentWidgets, locale ?? null),
+  };
+}
+
+async function resolveSitePageMetaWithDb(
+  page: SitePageRecord,
+  locale?: string | null,
+): Promise<SiteResolvedPageMeta | null> {
+  if (!locale?.trim()) {
+    return null;
+  }
+
+  const msgIds = [page.titleMsgId, page.descriptionMsgId].filter(
+    (msgId): msgId is number => typeof msgId === "number" && Number.isInteger(msgId) && msgId > 0,
+  );
+  if (msgIds.length === 0) {
+    return null;
+  }
+
+  const resolvedFields = await getResolvedSiteMessageFields(msgIds, locale);
+  const title = page.titleMsgId ? (resolvedFields.get(page.titleMsgId) ?? null) : null;
+  const description = page.descriptionMsgId
+    ? (resolvedFields.get(page.descriptionMsgId) ?? null)
+    : null;
+
+  if (!title && !description) {
+    return null;
+  }
+
+  return {
+    title,
+    description,
+  };
+}
+
+async function buildResolvedAreaTreeFromRevisionWithDb(
+  db: DbQueryable,
+  siteId: number,
+  scope: SiteAreaScopeRecord,
+  input: CmsAreaPresetWriteInput,
+  locale?: string | null,
+): Promise<SiteResolvedAreaPresetTree> {
+  const tree = buildDraftPreviewAreaTree(siteId, {
+    ...input,
+    preset: {
+      ...(input.preset ?? {}),
+      id: scope.id,
+    },
+  });
+
+  return {
+    ...tree,
+    contentWidgets: await resolveTreeContentWidgetsWithDb(db, siteId, tree.contentWidgets, locale ?? null),
+  };
+}
+
+function parseWidgetNamespacedTypeKey(value: string) {
+  const parts = value.split("/").filter(Boolean);
+  if (parts.length < 2) {
+    throw new Error(`Invalid widget type key "${value}".`);
+  }
+
+  const typeKey = parts.at(-1)!;
+  const pluginKey = parts.slice(0, -1).join("/");
+  if (!pluginKey || !typeKey) {
+    throw new Error(`Invalid widget type key "${value}".`);
+  }
+
+  return { pluginKey, typeKey };
+}
+
+async function getSiteAreaScopeWithDb(
+  db: DbQueryable,
+  siteId: number,
+  areaMask: number,
+  options?: { forUpdate?: boolean },
+): Promise<SiteAreaScopeRecord | null> {
+  const { rows } = await db.query<{
+    id: number;
+    site_id: number;
+    area_id: number;
+    published_revision_id: number | null;
+    working_draft_revision_id: number | null;
+  }>(
+    `SELECT id, site_id, area_id, published_revision_id, working_draft_revision_id
+     FROM phis.site_area_scopes
+     WHERE site_id = $1
+       AND area_id = $2
+     LIMIT 1
+     ${options?.forUpdate ? "FOR UPDATE" : ""}`,
+    [siteId, areaMask],
+  );
+
+  const row = rows[0];
+  if (!row) {
+    return null;
+  }
+
+  return {
+    id: row.id,
+    siteId: row.site_id,
+    areaMask: row.area_id,
+    publishedRevisionId: row.published_revision_id,
+    workingDraftRevisionId: row.working_draft_revision_id,
+  };
+}
+
+async function getSitePageScopeWithDb(
+  db: DbQueryable,
+  siteId: number,
+  areaMask: number,
+  address: SitePageScopeAddress,
+  options?: { forUpdate?: boolean },
+): Promise<SitePageScopeRecord | null> {
+  const normalizedPath = address.kind === "path" ? normalizeSiteCmsPath(address.path) : null;
+  const { rows } = await db.query<{
+    id: number;
+    site_id: number;
+    area_id: number;
+    path: string | null;
+    owner_module_id: string | null;
+    preset_key: string | null;
+    tombstoned_at: Date | string | null;
+    published_revision_id: number | null;
+    working_draft_revision_id: number | null;
+  }>(
+    `SELECT id, site_id, area_id, path, owner_module_id, preset_key, tombstoned_at,
+            published_revision_id, working_draft_revision_id
+     FROM phis.site_page_scopes
+     WHERE site_id = $1
+       AND area_id = $2
+       AND ${address.kind === "path"
+         ? "path = $3 AND owner_module_id IS NULL AND preset_key IS NULL"
+         : "path IS NULL AND owner_module_id = $3 AND preset_key = $4"}
+     LIMIT 1
+     ${options?.forUpdate ? "FOR UPDATE" : ""}`,
+    address.kind === "path"
+      ? [siteId, areaMask, normalizedPath]
+      : [siteId, areaMask, address.ownerModuleId, address.presetKey],
+  );
+
+  const row = rows[0];
+  if (!row) {
+    return null;
+  }
+
+  return {
+    id: row.id,
+    siteId: row.site_id,
+    areaMask: row.area_id,
+    path: row.path,
+    ownerModuleId: row.owner_module_id,
+    presetKey: row.preset_key,
+    tombstonedAt: row.tombstoned_at == null
+      ? null
+      : row.tombstoned_at instanceof Date
+        ? row.tombstoned_at.toISOString()
+        : String(row.tombstoned_at),
+    publishedRevisionId: row.published_revision_id,
+    workingDraftRevisionId: row.working_draft_revision_id,
+  };
+}
+
+async function getSitePageScopeByIdWithDb(
+  db: DbQueryable,
+  siteId: number,
+  areaMask: number,
+  scopeId: number,
+  options?: { forUpdate?: boolean },
+): Promise<SitePageScopeRecord | null> {
+  if (!Number.isInteger(scopeId) || scopeId <= 0) return null;
+  const { rows } = await db.query<{
+    id: number;
+    site_id: number;
+    area_id: number;
+    path: string | null;
+    owner_module_id: string | null;
+    preset_key: string | null;
+    tombstoned_at: Date | string | null;
+    published_revision_id: number | null;
+    working_draft_revision_id: number | null;
+  }>(
+    `SELECT id, site_id, area_id, path, owner_module_id, preset_key, tombstoned_at,
+            published_revision_id, working_draft_revision_id
+     FROM phis.site_page_scopes
+     WHERE id = $1 AND site_id = $2 AND area_id = $3
+     ${options?.forUpdate ? "FOR UPDATE" : ""}`,
+    [scopeId, siteId, areaMask],
+  );
+  const row = rows[0];
+  return row ? {
+    id: row.id,
+    siteId: row.site_id,
+    areaMask: row.area_id,
+    path: row.path,
+    ownerModuleId: row.owner_module_id,
+    presetKey: row.preset_key,
+    tombstonedAt: row.tombstoned_at == null
+      ? null
+      : row.tombstoned_at instanceof Date
+        ? row.tombstoned_at.toISOString()
+        : String(row.tombstoned_at),
+    publishedRevisionId: row.published_revision_id,
+    workingDraftRevisionId: row.working_draft_revision_id,
+  } : null;
+}
+
+export async function listSitePageScopes(siteId: number, areaMask: number): Promise<SitePageScopeCatalogRecord[]> {
+  if (!Number.isInteger(siteId) || siteId <= 0 || !Number.isInteger(areaMask) || areaMask <= 0) {
+    return [];
+  }
+
+  const { rows } = await getPool().query<{
+    id: number;
+    site_id: number;
+    area_id: number;
+    path: string | null;
+    owner_module_id: string | null;
+    preset_key: string | null;
+    tombstoned_at: Date | string | null;
+    published_revision_id: number | null;
+    working_draft_revision_id: number | null;
+    created_at: Date | string;
+    updated_at: Date | string;
+  }>(
+    `SELECT id,
+            site_id,
+            area_id,
+            path,
+            owner_module_id,
+            preset_key,
+            tombstoned_at,
+            published_revision_id,
+            working_draft_revision_id,
+            created_at,
+            updated_at
+     FROM phis.site_page_scopes
+     WHERE site_id = $1
+       AND area_id = $2
+     ORDER BY COALESCE(path, owner_module_id || '/' || preset_key) ASC`,
+    [siteId, areaMask],
+  );
+
+  return rows.map((row) => ({
+    id: row.id,
+    siteId: row.site_id,
+    areaMask: row.area_id,
+    path: row.path,
+    ownerModuleId: row.owner_module_id,
+    presetKey: row.preset_key,
+    tombstonedAt: row.tombstoned_at == null
+      ? null
+      : row.tombstoned_at instanceof Date
+        ? row.tombstoned_at.toISOString()
+        : String(row.tombstoned_at),
+    publishedRevisionId: row.published_revision_id,
+    workingDraftRevisionId: row.working_draft_revision_id,
+    createdAt: row.created_at instanceof Date ? row.created_at.toISOString() : String(row.created_at),
+    updatedAt: row.updated_at instanceof Date ? row.updated_at.toISOString() : String(row.updated_at),
+  }));
+}
+
+async function ensureSiteAreaScopeWithDb(
+  db: DbQueryable,
+  siteId: number,
+  areaMask: number,
+): Promise<SiteAreaScopeRecord> {
+  const existing = await getSiteAreaScopeWithDb(db, siteId, areaMask, { forUpdate: true });
+  if (existing) {
+    return existing;
+  }
+
+  const { rows } = await db.query<{
+    id: number;
+    site_id: number;
+    area_id: number;
+    published_revision_id: number | null;
+    working_draft_revision_id: number | null;
+  }>(
+    `INSERT INTO phis.site_area_scopes (
+       site_id,
+       area_id,
+       published_revision_id,
+       working_draft_revision_id
+     )
+     VALUES ($1, $2, NULL, NULL)
+     ON CONFLICT (site_id, area_id)
+     DO UPDATE SET updated_at = NOW()
+     RETURNING id, site_id, area_id, published_revision_id, working_draft_revision_id`,
+    [siteId, areaMask],
+  );
+
+  return {
+    id: rows[0]!.id,
+    siteId: rows[0]!.site_id,
+    areaMask: rows[0]!.area_id,
+    publishedRevisionId: rows[0]!.published_revision_id,
+    workingDraftRevisionId: rows[0]!.working_draft_revision_id,
+  };
+}
+
+async function ensureSitePageScopeWithDb(
+  db: DbQueryable,
+  siteId: number,
+  areaMask: number,
+  address: SitePageScopeAddress,
+): Promise<SitePageScopeRecord> {
+  const normalizedPath = address.kind === "path" ? normalizeSiteCmsPath(address.path) : null;
+  const existing = await getSitePageScopeWithDb(db, siteId, areaMask, address, { forUpdate: true });
+  if (existing) {
+    return existing;
+  }
+
+  const { rows } = await db.query<{
+    id: number;
+    site_id: number;
+    area_id: number;
+    path: string | null;
+    owner_module_id: string | null;
+    preset_key: string | null;
+    tombstoned_at: Date | string | null;
+    published_revision_id: number | null;
+    working_draft_revision_id: number | null;
+  }>(
+    `INSERT INTO phis.site_page_scopes (
+       site_id,
+       area_id,
+       path,
+       owner_module_id,
+       preset_key,
+       published_revision_id,
+       working_draft_revision_id
+     )
+     VALUES ($1, $2, $3, $4, $5, NULL, NULL)
+     ON CONFLICT (${address.kind === "path"
+       ? "site_id, area_id, path) WHERE path IS NOT NULL"
+       : "site_id, area_id, owner_module_id, preset_key) WHERE owner_module_id IS NOT NULL"}
+     DO UPDATE SET updated_at = NOW()
+     RETURNING id, site_id, area_id, path, owner_module_id, preset_key, tombstoned_at,
+               published_revision_id, working_draft_revision_id`,
+    address.kind === "path"
+      ? [siteId, areaMask, normalizedPath, null, null]
+      : [siteId, areaMask, null, address.ownerModuleId, address.presetKey],
+  );
+
+  return {
+    id: rows[0]!.id,
+    siteId: rows[0]!.site_id,
+    areaMask: rows[0]!.area_id,
+    path: rows[0]!.path,
+    ownerModuleId: rows[0]!.owner_module_id,
+    presetKey: rows[0]!.preset_key,
+    tombstonedAt: rows[0]!.tombstoned_at == null
+      ? null
+      : rows[0]!.tombstoned_at instanceof Date
+        ? rows[0]!.tombstoned_at.toISOString()
+        : String(rows[0]!.tombstoned_at),
+    publishedRevisionId: rows[0]!.published_revision_id,
+    workingDraftRevisionId: rows[0]!.working_draft_revision_id,
+  };
+}
+
+async function insertSiteAreaRevisionWithDb(
+  db: DbQueryable,
+  input: {
+    areaScopeId: number;
+    flags: number;
+    treeJson: Record<string, unknown>;
+    message?: string | null;
+    metaJson?: Record<string, unknown> | null;
+    sourceRevisionId?: number | null;
+    createdByUserId?: number | null;
+  },
+): Promise<SiteAreaRevisionRecord> {
+  const { rows } = await db.query<{
+    id: number;
+    area_scope_id: number;
+    flags: number;
+    tree_json: Record<string, unknown> | null;
+    message: string | null;
+    meta_json: Record<string, unknown> | null;
+    source_revision_id: number | null;
+    created_by_user_id: number | null;
+    created_at: string;
+  }>(
+    `INSERT INTO phis.site_area_revisions (
+       area_scope_id,
+       flags,
+       tree_json,
+       message,
+       meta_json,
+       source_revision_id,
+       created_by_user_id
+     )
+     VALUES ($1, $2, $3::jsonb, $4, $5::jsonb, $6, $7)
+     RETURNING id,
+               area_scope_id,
+               flags,
+               tree_json,
+               message,
+               meta_json,
+               source_revision_id,
+               created_by_user_id,
+               created_at`,
+    [
+      input.areaScopeId,
+      input.flags,
+      JSON.stringify(input.treeJson ?? {}),
+      input.message ?? null,
+      JSON.stringify(input.metaJson ?? {}),
+      input.sourceRevisionId ?? null,
+      input.createdByUserId ?? null,
+    ],
+  );
+
+  return {
+    id: rows[0]!.id,
+    areaScopeId: rows[0]!.area_scope_id,
+    flags: rows[0]!.flags,
+    treeJson: toJsonRecord(rows[0]!.tree_json),
+    message: rows[0]!.message,
+    metaJson: toJsonRecord(rows[0]!.meta_json),
+    sourceRevisionId: rows[0]!.source_revision_id,
+    createdByUserId: rows[0]!.created_by_user_id,
+    createdAt: rows[0]!.created_at,
+  };
+}
+
+async function insertSitePageRevisionWithDb(
+  db: DbQueryable,
+  input: {
+    pageScopeId: number;
+    flags: number;
+    treeJson: Record<string, unknown>;
+    message?: string | null;
+    metaJson?: Record<string, unknown> | null;
+    sourceRevisionId?: number | null;
+    createdByUserId?: number | null;
+  },
+): Promise<SitePageRevisionRecord> {
+  const { rows } = await db.query<{
+    id: number;
+    page_scope_id: number;
+    flags: number;
+    tree_json: Record<string, unknown> | null;
+    message: string | null;
+    meta_json: Record<string, unknown> | null;
+    source_revision_id: number | null;
+    created_by_user_id: number | null;
+    created_at: string;
+  }>(
+    `INSERT INTO phis.site_page_revisions (
+            page_scope_id,
+            flags,
+            tree_json,
+            message,
+            meta_json,
+            source_revision_id,
+            created_by_user_id,
+            created_at
+     )
+     VALUES ($1, $2, $3::jsonb, $4, $5::jsonb, $6, $7, NOW())
+     RETURNING id,
+               page_scope_id,
+               flags,
+               tree_json,
+               message,
+               meta_json,
+               source_revision_id,
+               created_by_user_id,
+               created_at`,
+    [
+      input.pageScopeId,
+      input.flags,
+      JSON.stringify(input.treeJson ?? {}),
+      input.message ?? null,
+      JSON.stringify(input.metaJson ?? {}),
+      input.sourceRevisionId ?? null,
+      input.createdByUserId ?? null,
+    ],
+  );
+
+  return {
+    id: rows[0]!.id,
+    pageScopeId: rows[0]!.page_scope_id,
+    flags: rows[0]!.flags,
+    treeJson: toJsonRecord(rows[0]!.tree_json),
+    message: rows[0]!.message,
+    metaJson: toJsonRecord(rows[0]!.meta_json),
+    sourceRevisionId: rows[0]!.source_revision_id,
+    createdByUserId: rows[0]!.created_by_user_id,
+    createdAt: rows[0]!.created_at,
+  };
+}
+
+async function updateSiteAreaDraftRevisionWithDb(
+  db: DbQueryable,
+  revisionId: number,
+  areaScopeId: number,
+  input: {
+    flags: number;
+    treeJson: Record<string, unknown>;
+    message?: string | null;
+    metaJson: Record<string, unknown>;
+  },
+): Promise<SiteAreaRevisionRecord> {
+  const { rows } = await db.query<{
+    id: number;
+    area_scope_id: number;
+    flags: number;
+    tree_json: Record<string, unknown> | null;
+    message: string | null;
+    meta_json: Record<string, unknown> | null;
+    source_revision_id: number | null;
+    created_by_user_id: number | null;
+    created_at: string;
+  }>(
+    `UPDATE phis.site_area_revisions
+     SET flags = $3,
+         tree_json = $4::jsonb,
+         message = $5,
+         meta_json = $6::jsonb
+     WHERE id = $1
+       AND area_scope_id = $2
+     RETURNING id,
+               area_scope_id,
+               flags,
+               tree_json,
+               message,
+               meta_json,
+               source_revision_id,
+               created_by_user_id,
+               created_at`,
+    [
+      revisionId,
+      areaScopeId,
+      input.flags,
+      JSON.stringify(input.treeJson),
+      input.message ?? null,
+      JSON.stringify(input.metaJson),
+    ],
+  );
+  const row = rows[0];
+  if (!row) {
+    throw new SiteCmsDraftConflictError(`Working Draft revision #${revisionId} no longer exists.`);
+  }
+  return {
+    id: row.id,
+    areaScopeId: row.area_scope_id,
+    flags: row.flags,
+    treeJson: toJsonRecord(row.tree_json),
+    message: row.message,
+    metaJson: toJsonRecord(row.meta_json),
+    sourceRevisionId: row.source_revision_id,
+    createdByUserId: row.created_by_user_id,
+    createdAt: row.created_at,
+  };
+}
+
+async function updateSitePageDraftRevisionWithDb(
+  db: DbQueryable,
+  revisionId: number,
+  pageScopeId: number,
+  input: {
+    flags: number;
+    treeJson: Record<string, unknown>;
+    message?: string | null;
+    metaJson: Record<string, unknown>;
+  },
+): Promise<SitePageRevisionRecord> {
+  const { rows } = await db.query<{
+    id: number;
+    page_scope_id: number;
+    flags: number;
+    tree_json: Record<string, unknown> | null;
+    message: string | null;
+    meta_json: Record<string, unknown> | null;
+    source_revision_id: number | null;
+    created_by_user_id: number | null;
+    created_at: string;
+  }>(
+    `UPDATE phis.site_page_revisions
+     SET flags = $3,
+         tree_json = $4::jsonb,
+         message = $5,
+         meta_json = $6::jsonb
+     WHERE id = $1
+       AND page_scope_id = $2
+     RETURNING id,
+               page_scope_id,
+               flags,
+               tree_json,
+               message,
+               meta_json,
+               source_revision_id,
+               created_by_user_id,
+               created_at`,
+    [
+      revisionId,
+      pageScopeId,
+      input.flags,
+      JSON.stringify(input.treeJson),
+      input.message ?? null,
+      JSON.stringify(input.metaJson),
+    ],
+  );
+  const row = rows[0];
+  if (!row) {
+    throw new SiteCmsDraftConflictError(`Working Draft revision #${revisionId} no longer exists.`);
+  }
+  return {
+    id: row.id,
+    pageScopeId: row.page_scope_id,
+    flags: row.flags,
+    treeJson: toJsonRecord(row.tree_json),
+    message: row.message,
+    metaJson: toJsonRecord(row.meta_json),
+    sourceRevisionId: row.source_revision_id,
+    createdByUserId: row.created_by_user_id,
+    createdAt: row.created_at,
+  };
+}
+
+async function getSiteAreaRevisionByIdWithDb(
+  db: DbQueryable,
+  revisionId: number,
+): Promise<SiteAreaRevisionRecord | null> {
+  const { rows } = await db.query<{
+    id: number;
+    area_scope_id: number;
+    flags: number;
+    tree_json: Record<string, unknown> | null;
+    message: string | null;
+    meta_json: Record<string, unknown> | null;
+    source_revision_id: number | null;
+    created_by_user_id: number | null;
+    created_at: string;
+  }>(
+    `SELECT id,
+            area_scope_id,
+            flags,
+            tree_json,
+            message,
+            meta_json,
+            source_revision_id,
+            created_by_user_id,
+            created_at
+     FROM phis.site_area_revisions
+     WHERE id = $1
+     LIMIT 1`,
+    [revisionId],
+  );
+
+  const row = rows[0];
+  if (!row) {
+    return null;
+  }
+
+  return {
+    id: row.id,
+    areaScopeId: row.area_scope_id,
+    flags: row.flags,
+    treeJson: toJsonRecord(row.tree_json),
+    message: row.message,
+    metaJson: toJsonRecord(row.meta_json),
+    sourceRevisionId: row.source_revision_id,
+    createdByUserId: row.created_by_user_id,
+    createdAt: row.created_at,
+  };
+}
+
+async function getSitePageRevisionByIdWithDb(
+  db: DbQueryable,
+  revisionId: number,
+): Promise<SitePageRevisionRecord | null> {
+  const { rows } = await db.query<{
+    id: number;
+    page_scope_id: number;
+    flags: number;
+    tree_json: Record<string, unknown> | null;
+    message: string | null;
+    meta_json: Record<string, unknown> | null;
+    source_revision_id: number | null;
+    created_by_user_id: number | null;
+    created_at: string;
+  }>(
+    `SELECT id,
+            page_scope_id,
+            flags,
+            tree_json,
+            message,
+            meta_json,
+            source_revision_id,
+            created_by_user_id,
+            created_at
+     FROM phis.site_page_revisions
+     WHERE id = $1
+     LIMIT 1`,
+    [revisionId],
+  );
+
+  const row = rows[0];
+  if (!row) {
+    return null;
+  }
+
+  return {
+    id: row.id,
+    pageScopeId: row.page_scope_id,
+    flags: row.flags,
+    treeJson: toJsonRecord(row.tree_json),
+    message: row.message,
+    metaJson: toJsonRecord(row.meta_json),
+    sourceRevisionId: row.source_revision_id,
+    createdByUserId: row.created_by_user_id,
+    createdAt: row.created_at,
+  };
+}
+
+async function setSiteAreaScopePointersWithDb(
+  db: DbQueryable,
+  scopeId: number,
+  input: {
+    publishedRevisionId: number | null;
+    workingDraftRevisionId: number | null;
+  },
+) {
+  await db.query(
+    `UPDATE phis.site_area_scopes
+     SET published_revision_id = $2,
+         working_draft_revision_id = $3,
+         updated_at = NOW()
+     WHERE id = $1`,
+    [scopeId, input.publishedRevisionId, input.workingDraftRevisionId],
+  );
+}
+
+async function setSitePageScopePointersWithDb(
+  db: DbQueryable,
+  scopeId: number,
+  input: {
+    publishedRevisionId: number | null;
+    workingDraftRevisionId: number | null;
+  },
+) {
+  await db.query(
+    `UPDATE phis.site_page_scopes
+     SET published_revision_id = $2,
+         working_draft_revision_id = $3,
+         updated_at = NOW()
+     WHERE id = $1`,
+    [scopeId, input.publishedRevisionId, input.workingDraftRevisionId],
+  );
+}
+
+function readValidatedPageRevisionTree(
+  treeJson: Record<string, unknown>,
+): CmsPageWriteInput {
+  const validated = validateCmsPageWriteInput(treeJson);
+  if (!validated.ok) {
+    throw new Error(`Invalid page revision payload. ${validated.error}`);
+  }
+
+  return validated.value;
+}
+
+function isDeletedPageRevision(input: CmsPageWriteInput, flags?: number | null) {
+  return input.page?.status === PhiCmsStatus.Deleted || hasPhiFlag(flags ?? 0, PhiCmsRevisionFlags.Deleted);
+}
+
+function buildRevisionFallbackMessage(kind: string, sourceRevisionId: number | null, count?: number) {
+  const suffix = sourceRevisionId != null ? ` from revision #${sourceRevisionId}` : "";
+  return count != null && count > 0 ? `${kind}: changed ${count} nodes${suffix}` : `${kind}: saved draft${suffix}`;
+}
+
+function buildPageRevisionSummary(input: CmsPageWriteInput, source: CmsPageWriteInput | null, sourceRevisionId: number | null) {
+  const widgetDiff = diffRevisionNodes(source?.contentWidgets ?? [], input.contentWidgets);
+  const layoutDiff = diffRevisionNodes(source?.layoutNodes ?? [], input.layoutNodes);
+  const overlayDiff = diffRevisionNodes(source?.overlays ?? [], input.overlays);
+  const titleChanged = (source?.page?.titleMsgId ?? null) !== (input.page?.titleMsgId ?? null);
+  const descriptionChanged = (source?.page?.descriptionMsgId ?? null) !== (input.page?.descriptionMsgId ?? null);
+  const deleted = isDeletedPageRevision(input);
+  const messageKey = deleted
+    ? "page_deleted"
+    : titleChanged || descriptionChanged
+      ? "page_meta_changed"
+      : widgetDiff.total + layoutDiff.total + overlayDiff.total > 0
+        ? "page_nodes_changed"
+        : "page_saved";
+  const metaLabels = [titleChanged ? "title" : "", descriptionChanged ? "description" : ""].filter(Boolean);
+
+  return {
+    message: deleted
+      ? `Page: deleted${sourceRevisionId != null ? ` from revision #${sourceRevisionId}` : ""}`
+      : messageKey === "page_meta_changed"
+        ? `Page: changed ${metaLabels.join(" and ")}${sourceRevisionId != null ? ` from revision #${sourceRevisionId}` : ""}`
+        : buildRevisionFallbackMessage("Page", sourceRevisionId, widgetDiff.total + layoutDiff.total + overlayDiff.total),
+    metaJson: {
+      messageKey,
+      sourceRevisionId,
+      origin: sourceRevisionId == null ? "new" : "revision",
+      changeKinds: [
+        ...(titleChanged || descriptionChanged ? ["page_meta"] : []),
+        ...(widgetDiff.total > 0 ? ["widgets"] : []),
+        ...(layoutDiff.total > 0 ? ["layouts"] : []),
+        ...(overlayDiff.total > 0 ? ["overlays"] : []),
+        ...(deleted ? ["deleted"] : []),
+      ],
+      pageMeta: { titleChanged, descriptionChanged },
+      nodes: { widgets: widgetDiff, layouts: layoutDiff, overlays: overlayDiff },
+    },
+  };
+}
+
+function buildAreaRevisionSummary(input: CmsAreaPresetWriteInput, source: CmsAreaPresetWriteInput | null, sourceRevisionId: number | null) {
+  const widgetDiff = diffRevisionNodes(source?.contentWidgets ?? [], input.contentWidgets);
+  const layoutDiff = diffRevisionNodes(source?.layoutNodes ?? [], input.layoutNodes);
+  const overlayDiff = diffRevisionNodes(source?.overlays ?? [], input.overlays);
+  const regionDiff = diffRevisionNodes(
+    (source?.regions ?? []).map((region) => ({ ...region, id: `region:${region.regionType}` })),
+    input.regions.map((region) => ({ ...region, id: `region:${region.regionType}` })),
+  );
+  const changedCount = widgetDiff.total + layoutDiff.total + regionDiff.total + overlayDiff.total;
+
+  return {
+    message: buildRevisionFallbackMessage("Area", sourceRevisionId, changedCount),
+    metaJson: {
+      messageKey: changedCount > 0 ? "area_nodes_changed" : "area_saved",
+      sourceRevisionId,
+      origin: sourceRevisionId == null ? "new" : "revision",
+      changeKinds: [
+        ...(regionDiff.total > 0 ? ["regions"] : []),
+        ...(widgetDiff.total > 0 ? ["widgets"] : []),
+        ...(layoutDiff.total > 0 ? ["layouts"] : []),
+        ...(overlayDiff.total > 0 ? ["overlays"] : []),
+      ],
+      nodes: { regions: regionDiff, widgets: widgetDiff, layouts: layoutDiff, overlays: overlayDiff },
+    },
+  };
+}
+
+function readValidatedAreaRevisionTree(
+  treeJson: Record<string, unknown>,
+): CmsAreaPresetWriteInput {
+  const validated = validateCmsAreaPresetWriteInput(treeJson);
+  if (!validated.ok) {
+    throw new Error(`Invalid area revision payload. ${validated.error}`);
+  }
+
+  return validated.value;
+}
+
+async function getExactSiteAreaPresetTreeWithDb(
+  db: DbQueryable,
+  siteId: number,
+  areaMask: number,
+  locale?: string | null,
+  sourcePreset?: SitePresetIdentity | null,
+): Promise<SiteResolvedAreaPresetTree | null> {
+  const scope = await getSiteAreaScopeWithDb(db, siteId, areaMask);
+  if (!scope?.publishedRevisionId) {
+    return null;
+  }
+
+  const revision = await getSiteAreaRevisionByIdWithDb(db, scope.publishedRevisionId);
+  if (!revision || revision.areaScopeId !== scope.id) {
+    return null;
+  }
+
+  const revisionTree = readValidatedAreaRevisionTree(revision.treeJson);
+  if (sourcePreset && !hasSamePresetIdentity(revisionTree.sourcePreset, sourcePreset)) {
+    return null;
+  }
+
+  return buildResolvedAreaTreeFromRevisionWithDb(
+    db,
+    siteId,
+    scope,
+    revisionTree,
+    locale,
+  );
+}
+
+async function getResolvedSitePageTreeWithDb(
+  db: DbQueryable,
+  siteId: number,
+  areaMask: number,
+  address: SitePageScopeAddress,
+  locale?: string | null,
+): Promise<SiteResolvedWidgetTree | null> {
+  const scope = await getSitePageScopeWithDb(db, siteId, areaMask, address);
+  if (!scope?.publishedRevisionId) {
+    return null;
+  }
+
+  const revision = await getSitePageRevisionByIdWithDb(db, scope.publishedRevisionId);
+  if (!revision || revision.pageScopeId !== scope.id) {
+    return null;
+  }
+
+  const revisionTree = readValidatedPageRevisionTree(revision.treeJson);
+  if (isDeletedPageRevision(revisionTree, revision.flags)) {
+    return null;
+  }
+
+  return buildResolvedPageTreeFromRevisionWithDb(
+    db,
+    siteId,
+    scope,
+    revisionTree,
+    locale,
+  );
+}
+
+async function validateSiteContentOwnership(
+  db: DbQueryable,
+  siteId: number,
+  contentId: number,
+) {
+  const { rows } = await db.query<{ id: number }>(
+    `SELECT id
+     FROM phis.site_content
+     WHERE site_id = $1
+       AND id = $2
+     LIMIT 1`,
+    [siteId, contentId],
+  );
+
+  if (!rows[0]) {
+    throw new Error(`Site content ${contentId} does not belong to site ${siteId}.`);
+  }
+}
+
+async function siteContentExistsOnSite(
+  db: DbQueryable,
+  siteId: number,
+  contentId: number,
+) {
+  const { rows } = await db.query<{ id: number }>(
+    `SELECT id
+     FROM phis.site_content
+     WHERE site_id = $1
+       AND id = $2
+     LIMIT 1`,
+    [siteId, contentId],
+  );
+
+  return Boolean(rows[0]);
+}
+
+async function normalizeRevisionContentWidgetsWithDb(
+  db: PoolClient,
+  siteId: number,
+  widgets: CmsPageWriteInput["contentWidgets"] | CmsAreaPresetWriteInput["contentWidgets"],
+  scope: {
+    scopeKind: "page" | "area";
+    areaMask: number;
+    path?: string | null;
+    createdByUserId?: number | null;
+  },
+) {
+  const normalizedWidgets: typeof widgets = [];
+
+  for (const widget of widgets) {
+    const { contentBinding, ...inputWidget } = widget;
+    let stableWidget = inputWidget;
+    let contentId = stableWidget.contentId ?? null;
+
+    if (contentId != null && !(await siteContentExistsOnSite(db, siteId, contentId))) {
+      contentId = null;
+    }
+
+    if (contentBinding?.storage === "text") {
+      const rawText = readWidgetContentBindingSourceValue(stableWidget.config, contentBinding, stableWidget.id);
+      const { typeKey } = parseWidgetNamespacedTypeKey(stableWidget.widgetType);
+      const contentWrite = await upsertSiteContentTextWithClient(db, {
+        siteId,
+        contentId,
+        slug:
+          contentId == null
+            ? buildWidgetContentSlug(
+                {
+                  scopeKind: scope.scopeKind,
+                  areaMask: scope.areaMask,
+                  path: scope.path ?? null,
+                },
+                {
+                  id: stableWidget.id,
+                  label: stableWidget.label ?? null,
+                },
+                typeKey,
+              )
+            : null,
+        text: rawText,
+        status: stableWidget.status ?? 0,
+        sortOrder: stableWidget.sortOrder ?? 0,
+        meta: {},
+        createdByUserId: scope.createdByUserId ?? null,
+      });
+      contentId = contentWrite.contentId;
+    } else if (contentBinding?.storage === "html") {
+      const rawHtml = readWidgetContentBindingSourceValue(stableWidget.config, contentBinding, stableWidget.id);
+      const { typeKey } = parseWidgetNamespacedTypeKey(stableWidget.widgetType);
+      const contentWrite = await upsertSiteContentHtmlWithClient(db, {
+        siteId,
+        contentId,
+        slug:
+          contentId == null
+            ? buildWidgetContentSlug(
+                {
+                  scopeKind: scope.scopeKind,
+                  areaMask: scope.areaMask,
+                  path: scope.path ?? null,
+                },
+                {
+                  id: stableWidget.id,
+                  label: stableWidget.label ?? null,
+                },
+                typeKey,
+              )
+            : null,
+        html: rawHtml,
+        status: stableWidget.status ?? 0,
+        sortOrder: stableWidget.sortOrder ?? 0,
+        meta: {},
+        createdByUserId: scope.createdByUserId ?? null,
+      });
+      contentId = contentWrite.contentId;
+      await replaceSiteCmsReferencesWithDb(db, {
+        siteId,
+        sourceKind: PhiCmsReferenceSourceKind.Content,
+        sourceScopeId: contentWrite.contentId,
+        sourceRevisionId: contentWrite.versionId,
+        references: collectSiteCmsContentReferences("html", contentWrite.html, {
+          targetAreaId: scope.areaMask,
+        }),
+      });
+      stableWidget = {
+        ...stableWidget,
+        config: {
+          ...(stableWidget.config ?? {}),
+          [contentBinding.sourceField]: contentWrite.html,
+        },
+      };
+    } else if (contentBinding?.storage === "markdown") {
+      const rawMarkdown = readWidgetContentBindingSourceValue(stableWidget.config, contentBinding, stableWidget.id);
+      const { typeKey } = parseWidgetNamespacedTypeKey(stableWidget.widgetType);
+      const contentWrite = await upsertSiteContentMarkdownWithClient(db, {
+        siteId,
+        contentId,
+        slug:
+          contentId == null
+            ? buildWidgetContentSlug(
+                {
+                  scopeKind: scope.scopeKind,
+                  areaMask: scope.areaMask,
+                  path: scope.path ?? null,
+                },
+                {
+                  id: stableWidget.id,
+                  label: stableWidget.label ?? null,
+                },
+                typeKey,
+              )
+            : null,
+        markdown: rawMarkdown,
+        status: stableWidget.status ?? 0,
+        sortOrder: stableWidget.sortOrder ?? 0,
+        meta: {},
+        createdByUserId: scope.createdByUserId ?? null,
+      });
+      contentId = contentWrite.contentId;
+      await replaceSiteCmsReferencesWithDb(db, {
+        siteId,
+        sourceKind: PhiCmsReferenceSourceKind.Content,
+        sourceScopeId: contentWrite.contentId,
+        sourceRevisionId: contentWrite.versionId,
+        references: collectSiteCmsContentReferences("markdown", contentWrite.markdown, {
+          targetAreaId: scope.areaMask,
+        }),
+      });
+    } else if (contentBinding?.storage === "asset") {
+      const assetId = readWidgetAssetContentBindingSourceValue(stableWidget.config, contentBinding, stableWidget.id);
+      const asset = await getMediaAssetBySiteAndId(siteId, assetId);
+      if (!asset) {
+        throw new Error(`Widget ${stableWidget.id} references unknown media asset ${assetId}.`);
+      }
+      const { typeKey } = parseWidgetNamespacedTypeKey(stableWidget.widgetType);
+      const contentWrite = await upsertSiteContentAssetWithClient(db, {
+        siteId,
+        contentId,
+        assetId,
+        title: asset.title,
+        altText: asset.altText,
+        slug:
+          contentId == null
+            ? buildWidgetContentSlug(
+                {
+                  scopeKind: scope.scopeKind,
+                  areaMask: scope.areaMask,
+                  path: scope.path ?? null,
+                },
+                {
+                  id: stableWidget.id,
+                  label: stableWidget.label ?? null,
+                },
+                typeKey,
+              )
+            : "",
+        status: stableWidget.status ?? 0,
+        sortOrder: stableWidget.sortOrder ?? 0,
+        meta: {},
+        createdByUserId: scope.createdByUserId ?? null,
+      });
+      contentId = contentWrite.contentId;
+    } else if (contentId != null) {
+      await validateSiteContentOwnership(db, siteId, contentId);
+    }
+
+    normalizedWidgets.push({
+      ...stableWidget,
+      contentId,
+      ...(contentBinding ? { contentBinding } : {}),
+    });
+  }
+
+  return normalizedWidgets;
+}
+
+export async function saveSitePageDraftRevision(
+  siteId: number,
+  input: CmsPageWriteInput,
+  options?: {
+    createdByUserId?: number | null;
+    message?: string | null;
+  },
+): Promise<{
+  revisionId: number;
+  path: string;
+  areaMask: number;
+  draft: SiteCmsDraftState;
+  sourcePreset: CmsPageWriteInput["sourcePreset"];
+}> {
+  const pool = getPool();
+  const client = await pool.connect();
+  const { areaMask, draft: requestedDraft, ...revisionInput } = input;
+
+  try {
+    await client.query("BEGIN");
+    const requestedScopeId = input.sourcePreset == null && Number.isInteger(input.page?.id) && (input.page?.id ?? 0) > 0
+      ? input.page!.id
+      : null;
+    const scope = requestedScopeId == null
+      ? await ensureSitePageScopeWithDb(client, siteId, areaMask, resolveSitePageScopeAddress(input))
+      : await getSitePageScopeByIdWithDb(client, siteId, areaMask, requestedScopeId, { forUpdate: true });
+    if (!scope) {
+      throw new SiteCmsDraftConflictError("The requested Site Page Scope does not exist in this Site and Area.");
+    }
+    const sourceRevisionId = scope.workingDraftRevisionId ?? scope.publishedRevisionId ?? null;
+    const sourceRevision = sourceRevisionId == null ? null : await getSitePageRevisionByIdWithDb(client, sourceRevisionId);
+    if (sourceRevisionId != null && !sourceRevision) {
+      throw new SiteCmsDraftConflictError(`CMS page revision #${sourceRevisionId} no longer exists.`);
+    }
+    const persistedDraft = scope.workingDraftRevisionId == null || !sourceRevision
+      ? null
+      : readSiteCmsDraftState(sourceRevision);
+    if (persistedDraft) {
+      assertSiteCmsDraftWriteState(persistedDraft, requestedDraft);
+    } else if (requestedDraft) {
+      throw new SiteCmsDraftConflictError(
+        `Working Draft revision #${requestedDraft.revisionId} is no longer active.`,
+      );
+    }
+    const sourceTree = sourceRevision ? readValidatedPageRevisionTree(sourceRevision.treeJson) : null;
+    const normalizedWidgets = await normalizeRevisionContentWidgetsWithDb(client, siteId, input.contentWidgets, {
+      scopeKind: "page",
+      areaMask,
+      path: scope.path ?? input.path,
+      createdByUserId: options?.createdByUserId ?? null,
+    });
+    const nextRevisionInput = {
+      ...revisionInput,
+      path: scope.path ?? revisionInput.path,
+      sourcePreset: resolveSnapshotPresetSource(sourceTree?.sourcePreset, revisionInput.sourcePreset),
+      contentWidgets: normalizedWidgets,
+    } satisfies Omit<CmsPageWriteInput, "areaMask">;
+    const summary = buildPageRevisionSummary(
+      {
+        areaMask,
+        ...nextRevisionInput,
+      },
+      sourceTree,
+      sourceRevisionId,
+    );
+    const flags =
+      PhiCmsRevisionFlags.Draft |
+      (isDeletedPageRevision(input) ? PhiCmsRevisionFlags.Deleted : 0);
+    const nextDraftMeta = {
+      version: persistedDraft ? persistedDraft.version + 1 : 1,
+      nextNodeSequence: requestedDraft?.nextNodeSequence ?? 1,
+    };
+    const revision = persistedDraft
+      ? await updateSitePageDraftRevisionWithDb(client, persistedDraft.revisionId, scope.id, {
+          flags,
+          treeJson: nextRevisionInput as unknown as Record<string, unknown>,
+          message: options?.message ?? summary.message,
+          metaJson: withSiteCmsDraftMeta(summary.metaJson, nextDraftMeta),
+        })
+      : await insertSitePageRevisionWithDb(client, {
+          pageScopeId: scope.id,
+          flags,
+          treeJson: nextRevisionInput as unknown as Record<string, unknown>,
+          message: options?.message ?? summary.message,
+          metaJson: withSiteCmsDraftMeta(summary.metaJson, nextDraftMeta),
+          sourceRevisionId,
+          createdByUserId: options?.createdByUserId ?? null,
+        });
+    await client.query(
+      `UPDATE phis.site_page_scopes
+       SET tombstoned_at = $2,
+           updated_at = NOW()
+       WHERE id = $1`,
+      [scope.id, isDeletedPageRevision(input) ? new Date() : null],
+    );
+    await setSitePageScopePointersWithDb(client, scope.id, {
+      publishedRevisionId: scope.publishedRevisionId,
+      workingDraftRevisionId: revision.id,
+    });
+    await replaceSiteCmsReferencesWithDb(client, {
+      siteId,
+      sourceKind: PhiCmsReferenceSourceKind.Page,
+      sourceScopeId: scope.id,
+      sourceRevisionId: revision.id,
+      references: collectSiteCmsReferences(nextRevisionInput, { targetAreaId: areaMask }),
+    });
+    // A widget removed by this save may leave its content row orphaned. The candidates are the ids
+    // this save dropped; the delete itself re-checks them against every revision of the Site, so
+    // anything still restorable survives.
+    const nextContentIds = new Set(collectRevisionContentIds(nextRevisionInput));
+    await deleteOrphanedSiteContentByIdsWithDb(
+      client,
+      siteId,
+      collectRevisionContentIds(sourceTree).filter((id) => !nextContentIds.has(id)),
+    );
+    await client.query("COMMIT");
+
+    return {
+      revisionId: revision.id,
+      path: scope.path ?? normalizeSiteCmsPath(input.path),
+      areaMask,
+      draft: readSiteCmsDraftState(revision),
+      sourcePreset: nextRevisionInput.sourcePreset,
+    };
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+export async function saveSiteAreaDraftRevision(
+  siteId: number,
+  input: CmsAreaPresetWriteInput,
+  options?: {
+    createdByUserId?: number | null;
+    message?: string | null;
+  },
+): Promise<{
+  revisionId: number;
+  areaMask: number;
+  draft: SiteCmsDraftState;
+  sourcePreset: CmsAreaPresetWriteInput["sourcePreset"];
+}> {
+  const pool = getPool();
+  const client = await pool.connect();
+  const { areaMask, draft: requestedDraft, ...revisionInput } = input;
+
+  try {
+    await client.query("BEGIN");
+    const scope = await ensureSiteAreaScopeWithDb(client, siteId, areaMask);
+    const sourceRevisionId = scope.workingDraftRevisionId ?? scope.publishedRevisionId ?? null;
+    const sourceRevision = sourceRevisionId == null ? null : await getSiteAreaRevisionByIdWithDb(client, sourceRevisionId);
+    if (sourceRevisionId != null && !sourceRevision) {
+      throw new SiteCmsDraftConflictError(`CMS area revision #${sourceRevisionId} no longer exists.`);
+    }
+    const persistedDraft = scope.workingDraftRevisionId == null || !sourceRevision
+      ? null
+      : readSiteCmsDraftState(sourceRevision);
+    if (persistedDraft) {
+      assertSiteCmsDraftWriteState(persistedDraft, requestedDraft);
+    } else if (requestedDraft) {
+      throw new SiteCmsDraftConflictError(
+        `Working Draft revision #${requestedDraft.revisionId} is no longer active.`,
+      );
+    }
+    const sourceTree = sourceRevision ? readValidatedAreaRevisionTree(sourceRevision.treeJson) : null;
+    const normalizedWidgets = await normalizeRevisionContentWidgetsWithDb(client, siteId, input.contentWidgets, {
+      scopeKind: "area",
+      areaMask,
+      createdByUserId: options?.createdByUserId ?? null,
+    });
+    const nextRevisionInput = {
+      ...revisionInput,
+      sourcePreset: resolveSnapshotPresetSource(sourceTree?.sourcePreset, revisionInput.sourcePreset),
+      contentWidgets: normalizedWidgets,
+    } satisfies Omit<CmsAreaPresetWriteInput, "areaMask">;
+    const summary = buildAreaRevisionSummary(
+      {
+        areaMask,
+        ...nextRevisionInput,
+      },
+      sourceTree,
+      sourceRevisionId,
+    );
+    const nextDraftMeta = {
+      version: persistedDraft ? persistedDraft.version + 1 : 1,
+      nextNodeSequence: requestedDraft?.nextNodeSequence ?? 1,
+    };
+    const revision = persistedDraft
+      ? await updateSiteAreaDraftRevisionWithDb(client, persistedDraft.revisionId, scope.id, {
+          flags: PhiCmsRevisionFlags.Draft,
+          treeJson: nextRevisionInput as unknown as Record<string, unknown>,
+          message: options?.message ?? summary.message,
+          metaJson: withSiteCmsDraftMeta(summary.metaJson, nextDraftMeta),
+        })
+      : await insertSiteAreaRevisionWithDb(client, {
+          areaScopeId: scope.id,
+          flags: PhiCmsRevisionFlags.Draft,
+          treeJson: nextRevisionInput as unknown as Record<string, unknown>,
+          message: options?.message ?? summary.message,
+          metaJson: withSiteCmsDraftMeta(summary.metaJson, nextDraftMeta),
+          sourceRevisionId,
+          createdByUserId: options?.createdByUserId ?? null,
+        });
+    await setSiteAreaScopePointersWithDb(client, scope.id, {
+      publishedRevisionId: scope.publishedRevisionId,
+      workingDraftRevisionId: revision.id,
+    });
+    // The Area's own tree is a reference source in its own right: a Page or Asset reference sitting in
+    // Region or widget config carries no content binding, so the Content source never sees it.
+    await replaceSiteCmsReferencesWithDb(client, {
+      siteId,
+      sourceKind: PhiCmsReferenceSourceKind.Area,
+      sourceScopeId: scope.id,
+      sourceRevisionId: revision.id,
+      references: collectSiteCmsReferences(nextRevisionInput, { targetAreaId: areaMask }),
+    });
+    const nextAreaContentIds = new Set(collectRevisionContentIds(nextRevisionInput));
+    await deleteOrphanedSiteContentByIdsWithDb(
+      client,
+      siteId,
+      collectRevisionContentIds(sourceTree).filter((id) => !nextAreaContentIds.has(id)),
+    );
+    await client.query("COMMIT");
+
+    return {
+      revisionId: revision.id,
+      areaMask,
+      draft: readSiteCmsDraftState(revision),
+      sourcePreset: nextRevisionInput.sourcePreset,
+    };
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+export async function publishSitePageRevision(
+  siteId: number,
+  input: {
+    areaMask: number;
+    address: SitePageScopeAddress;
+    revisionId?: number | null;
+  },
+  options?: {
+    createdByUserId?: number | null;
+    locale?: string | null;
+  },
+): Promise<{ revisionId: number; page: SiteResolvedWidgetTree }> {
+  const pool = getPool();
+  const client = await pool.connect();
+
+  try {
+    await client.query("BEGIN");
+    const scope = await getSitePageScopeWithDb(client, siteId, input.areaMask, input.address, {
+      forUpdate: true,
+    });
+    if (!scope) {
+      throw new Error("No page draft scope found.");
+    }
+
+    const revisionId = input.revisionId ?? scope.workingDraftRevisionId;
+    if (!Number.isInteger(revisionId) || (revisionId as number) <= 0) {
+      throw new Error("No page draft revision available to publish.");
+    }
+
+    const revision = await getSitePageRevisionByIdWithDb(client, revisionId as number);
+    if (!revision || revision.pageScopeId !== scope.id) {
+      throw new Error("Page draft revision not found for the requested scope.");
+    }
+
+    const revisionTree = readValidatedPageRevisionTree(revision.treeJson);
+    const previousPublishedRevision =
+      scope.publishedRevisionId == null
+        ? null
+        : await getSitePageRevisionByIdWithDb(client, scope.publishedRevisionId);
+    if (previousPublishedRevision && previousPublishedRevision.pageScopeId !== scope.id) {
+      throw new Error("Published page revision pointer belongs to a different scope.");
+    }
+    const materializedTree = validateCmsPageRevisionForPublish(revisionTree);
+    const materializedTreeJson = { ...materializedTree } as Record<string, unknown>;
+    delete materializedTreeJson.areaMask;
+    const page = await buildResolvedPageTreeFromRevisionWithDb(
+      client,
+      siteId,
+      scope,
+      materializedTree,
+      options?.locale ?? null,
+    );
+
+    const nextFlags =
+      PhiCmsRevisionFlags.Published |
+      (isDeletedPageRevision(revisionTree, revision.flags) ? PhiCmsRevisionFlags.Deleted : 0);
+    await client.query(
+      `UPDATE phis.site_page_revisions
+       SET flags = $2,
+           tree_json = $3::jsonb
+       WHERE id = $1`,
+      [revision.id, nextFlags, materializedTreeJson],
+    );
+    await setSitePageScopePointersWithDb(client, scope.id, {
+      publishedRevisionId: revision.id,
+      workingDraftRevisionId: null,
+    });
+    await client.query("COMMIT");
+
+    return {
+      revisionId: revision.id,
+      page,
+    };
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+export async function publishSiteAreaRevision(
+  siteId: number,
+  input: {
+    areaMask: number;
+    sourcePreset: SitePresetIdentity;
+    revisionId?: number | null;
+  },
+  options?: {
+    createdByUserId?: number | null;
+    locale?: string | null;
+  },
+): Promise<{ revisionId: number; preset: SiteResolvedAreaPresetTree }> {
+  const pool = getPool();
+  const client = await pool.connect();
+
+  try {
+    await client.query("BEGIN");
+    const scope = await getSiteAreaScopeWithDb(client, siteId, input.areaMask, {
+      forUpdate: true,
+    });
+    if (!scope) {
+      throw new Error("No area draft scope found.");
+    }
+
+    const revisionId = input.revisionId ?? scope.workingDraftRevisionId;
+    if (!Number.isInteger(revisionId) || (revisionId as number) <= 0) {
+      throw new Error("No area draft revision available to publish.");
+    }
+
+    const revision = await getSiteAreaRevisionByIdWithDb(client, revisionId as number);
+    if (!revision || revision.areaScopeId !== scope.id) {
+      throw new Error("Area draft revision not found for the requested scope.");
+    }
+
+    const revisionTree = readValidatedAreaRevisionTree(revision.treeJson);
+    if (!hasSamePresetIdentity(revisionTree.sourcePreset, input.sourcePreset)) {
+      throw new Error("Area draft preset identity does not match the requested scope.");
+    }
+    const previousPublishedRevision =
+      scope.publishedRevisionId == null
+        ? null
+        : await getSiteAreaRevisionByIdWithDb(client, scope.publishedRevisionId);
+    if (previousPublishedRevision && previousPublishedRevision.areaScopeId !== scope.id) {
+      throw new Error("Published area revision pointer belongs to a different scope.");
+    }
+    const materializedTree = validateCmsAreaRevisionForPublish(revisionTree);
+    const materializedTreeJson = { ...materializedTree } as Record<string, unknown>;
+    delete materializedTreeJson.areaMask;
+    const preset = await buildResolvedAreaTreeFromRevisionWithDb(
+      client,
+      siteId,
+      scope,
+      materializedTree,
+      options?.locale ?? null,
+    );
+
+    await client.query(
+      `UPDATE phis.site_area_revisions
+       SET flags = $2,
+           tree_json = $3::jsonb
+       WHERE id = $1`,
+      [revision.id, PhiCmsRevisionFlags.Published, materializedTreeJson],
+    );
+    await setSiteAreaScopePointersWithDb(client, scope.id, {
+      publishedRevisionId: revision.id,
+      workingDraftRevisionId: null,
+    });
+    // Publishing an Area is what changes which Modules the Site actually runs, so it is also what
+    // settles which Media Space kinds the Site offers. Inside the same transaction: the pointer and the
+    // availability it implies must never be observable apart.
+    await materializeSiteMediaAvailabilityWithDb(client, siteId);
+    await client.query("COMMIT");
+
+    return {
+      revisionId: revision.id,
+      preset,
+    };
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+export async function getSitePageDraftRevisionPreview(
+  siteId: number,
+  revisionId: number,
+  input: {
+    areaMask: number;
+    address: SitePageScopeAddress;
+    locale?: string | null;
+  },
+): Promise<{ revisionId: number; tree: SiteResolvedWidgetTree } | null> {
+  const revision = await getSitePageRevisionByIdWithDb(getPool(), revisionId);
+  if (!revision || !hasPhiFlag(revision.flags, PhiCmsRevisionFlags.Draft)) {
+    return null;
+  }
+
+  const scope = await getSitePageScopeWithDb(getPool(), siteId, input.areaMask, input.address);
+  if (!scope || scope.id !== revision.pageScopeId) {
+    return null;
+  }
+
+  return {
+    revisionId,
+    tree: await buildResolvedPageTreeFromRevisionWithDb(
+      getPool(),
+      siteId,
+      scope,
+      readValidatedPageRevisionTree(revision.treeJson),
+      input.locale ?? null,
+    ),
+  };
+}
+
+export async function getSitePageRevisionReview(
+  siteId: number,
+  revisionId: number,
+  input: {
+    areaMask: number;
+    address: SitePageScopeAddress;
+    locale?: string | null;
+  },
+): Promise<{ revisionId: number; tree: SiteResolvedWidgetTree } | null> {
+  const revision = await getSitePageRevisionByIdWithDb(getPool(), revisionId);
+  if (!revision) {
+    return null;
+  }
+
+  const scope = await getSitePageScopeWithDb(getPool(), siteId, input.areaMask, input.address);
+  if (!scope || scope.id !== revision.pageScopeId) {
+    return null;
+  }
+
+  return {
+    revisionId,
+    tree: await buildResolvedPageTreeFromRevisionWithDb(
+      getPool(),
+      siteId,
+      scope,
+      readValidatedPageRevisionTree(revision.treeJson),
+      input.locale ?? null,
+    ),
+  };
+}
+
+export async function getSiteCurrentPageDraft(
+  siteId: number,
+  input: {
+    areaMask: number;
+    address: SitePageScopeAddress;
+    locale?: string | null;
+  },
+): Promise<{ revisionId: number; draft: SiteCmsDraftState; tree: SiteResolvedWidgetTree } | null> {
+  const scope = await getSitePageScopeWithDb(getPool(), siteId, input.areaMask, input.address);
+  if (!scope || scope.workingDraftRevisionId == null) {
+    return null;
+  }
+
+  const revision = await getSitePageRevisionByIdWithDb(getPool(), scope.workingDraftRevisionId);
+  if (!revision || !hasPhiFlag(revision.flags, PhiCmsRevisionFlags.Draft) || revision.pageScopeId !== scope.id) {
+    return null;
+  }
+
+  return {
+    revisionId: revision.id,
+    draft: readSiteCmsDraftState(revision),
+    tree: await buildResolvedPageTreeFromRevisionWithDb(
+      getPool(),
+      siteId,
+      scope,
+      readValidatedPageRevisionTree(revision.treeJson),
+      input.locale ?? null,
+    ),
+  };
+}
+
+export async function getSiteAreaDraftRevisionPreview(
+  siteId: number,
+  revisionId: number,
+  input: {
+    areaMask: number;
+    sourcePreset?: SitePresetIdentity | null;
+  },
+): Promise<{ revisionId: number; preset: SiteResolvedAreaPresetTree } | null> {
+  const revision = await getSiteAreaRevisionByIdWithDb(getPool(), revisionId);
+  if (!revision || !hasPhiFlag(revision.flags, PhiCmsRevisionFlags.Draft)) {
+    return null;
+  }
+
+  const scope = await getSiteAreaScopeWithDb(getPool(), siteId, input.areaMask);
+  if (!scope || scope.id !== revision.areaScopeId) {
+    return null;
+  }
+
+  const revisionTree = readValidatedAreaRevisionTree(revision.treeJson);
+  if (input.sourcePreset && !hasSamePresetIdentity(revisionTree.sourcePreset, input.sourcePreset)) {
+    return null;
+  }
+
+  return {
+    revisionId,
+    preset: await buildResolvedAreaTreeFromRevisionWithDb(
+      getPool(),
+      siteId,
+      scope,
+      revisionTree,
+      null,
+    ),
+  };
+}
+
+export async function getSiteAreaRevisionReview(
+  siteId: number,
+  revisionId: number,
+  input: {
+    areaMask: number;
+    sourcePreset?: SitePresetIdentity | null;
+  },
+): Promise<{ revisionId: number; preset: SiteResolvedAreaPresetTree } | null> {
+  const revision = await getSiteAreaRevisionByIdWithDb(getPool(), revisionId);
+  if (!revision) {
+    return null;
+  }
+
+  const scope = await getSiteAreaScopeWithDb(getPool(), siteId, input.areaMask);
+  if (!scope || scope.id !== revision.areaScopeId) {
+    return null;
+  }
+
+  const revisionTree = readValidatedAreaRevisionTree(revision.treeJson);
+  if (input.sourcePreset && !hasSamePresetIdentity(revisionTree.sourcePreset, input.sourcePreset)) {
+    return null;
+  }
+
+  return {
+    revisionId,
+    preset: await buildResolvedAreaTreeFromRevisionWithDb(
+      getPool(),
+      siteId,
+      scope,
+      revisionTree,
+      null,
+    ),
+  };
+}
+
+export async function getSiteCurrentAreaDraft(
+  siteId: number,
+  input: {
+    areaMask: number;
+    sourcePreset?: SitePresetIdentity | null;
+  },
+): Promise<{ revisionId: number; draft: SiteCmsDraftState; preset: SiteResolvedAreaPresetTree } | null> {
+  const scope = await getSiteAreaScopeWithDb(getPool(), siteId, input.areaMask);
+  if (!scope || scope.workingDraftRevisionId == null) {
+    return null;
+  }
+
+  const revision = await getSiteAreaRevisionByIdWithDb(getPool(), scope.workingDraftRevisionId);
+  if (!revision || !hasPhiFlag(revision.flags, PhiCmsRevisionFlags.Draft) || revision.areaScopeId !== scope.id) {
+    return null;
+  }
+
+  const revisionTree = readValidatedAreaRevisionTree(revision.treeJson);
+  if (input.sourcePreset && !hasSamePresetIdentity(revisionTree.sourcePreset, input.sourcePreset)) {
+    return null;
+  }
+
+  return {
+    revisionId: revision.id,
+    draft: readSiteCmsDraftState(revision),
+    preset: await buildResolvedAreaTreeFromRevisionWithDb(
+      getPool(),
+      siteId,
+      scope,
+      revisionTree,
+      null,
+    ),
+  };
+}
+
+export async function deleteSitePageDraftRevision(
+  siteId: number,
+  input: {
+    areaMask: number;
+    address: SitePageScopeAddress;
+  },
+): Promise<{ deleted: boolean }> {
+  const pool = getPool();
+  const client = await pool.connect();
+
+  try {
+    await client.query("BEGIN");
+    const scope = await getSitePageScopeWithDb(client, siteId, input.areaMask, input.address);
+    if (!scope || scope.workingDraftRevisionId == null) {
+      await client.query("COMMIT");
+      return { deleted: false };
+    }
+
+    const removedDraft = await client.query<{ tree_json: Record<string, unknown> }>(
+      `DELETE FROM phis.site_page_revisions WHERE id = $1 RETURNING tree_json`,
+      [scope.workingDraftRevisionId],
+    );
+    await deleteOrphanedSiteContentByIdsWithDb(
+      client,
+      siteId,
+      collectRevisionContentIds(removedDraft.rows[0]?.tree_json ?? null),
+    );
+    await setSitePageScopePointersWithDb(client, scope.id, {
+      publishedRevisionId: scope.publishedRevisionId,
+      workingDraftRevisionId: null,
+    });
+    await client.query("COMMIT");
+    return { deleted: true };
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+export async function deleteSiteAreaDraftRevision(
+  siteId: number,
+  input: {
+    areaMask: number;
+    sourcePreset: SitePresetIdentity;
+  },
+): Promise<{ deleted: boolean }> {
+  const pool = getPool();
+  const client = await pool.connect();
+
+  try {
+    await client.query("BEGIN");
+    const scope = await getSiteAreaScopeWithDb(client, siteId, input.areaMask);
+    if (!scope || scope.workingDraftRevisionId == null) {
+      await client.query("COMMIT");
+      return { deleted: false };
+    }
+
+    const revision = await getSiteAreaRevisionByIdWithDb(client, scope.workingDraftRevisionId);
+    if (!revision || !hasSamePresetIdentity(
+      readValidatedAreaRevisionTree(revision.treeJson).sourcePreset,
+      input.sourcePreset,
+    )) {
+      throw new Error("Area draft preset identity does not match the requested scope.");
+    }
+    const removedAreaDraft = await client.query<{ tree_json: Record<string, unknown> }>(
+      `DELETE FROM phis.site_area_revisions WHERE id = $1 RETURNING tree_json`,
+      [scope.workingDraftRevisionId],
+    );
+    await deleteOrphanedSiteContentByIdsWithDb(
+      client,
+      siteId,
+      collectRevisionContentIds(removedAreaDraft.rows[0]?.tree_json ?? null),
+    );
+    await setSiteAreaScopePointersWithDb(client, scope.id, {
+      publishedRevisionId: scope.publishedRevisionId,
+      workingDraftRevisionId: null,
+    });
+    await client.query("COMMIT");
+    return { deleted: true };
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+export async function getExactSiteAreaPresetTree(
+  siteId: number,
+  areaMask: number,
+  pageId = 0,
+  locale?: string | null,
+  sourcePreset?: SitePresetIdentity | null,
+): Promise<SiteResolvedAreaPresetTree | null> {
+  void pageId;
+  return getExactSiteAreaPresetTreeWithDb(
+    getPool(),
+    siteId,
+    areaMask,
+    locale ?? null,
+    sourcePreset,
+  );
+}
+
+export async function getResolvedSitePageTree(
+  siteId: number,
+  areaMask: number,
+  address: SitePageScopeAddress,
+  locale?: string | null,
+): Promise<SiteResolvedWidgetTree | null> {
+  return getResolvedSitePageTreeWithDb(getPool(), siteId, areaMask, address, locale ?? null);
+}
+
+export async function changeSitePagePath(
+  siteId: number,
+  areaMask: number,
+  pageScopeId: number,
+  requestedPath: string,
+) {
+  if (!Number.isInteger(siteId) || siteId <= 0 || !Number.isInteger(areaMask) || areaMask <= 0) {
+    throw new SitePagePathChangeError("page_not_found", "The requested Site or Area is invalid.");
+  }
+  const nextPath = normalizeMutableSitePagePath(requestedPath);
+  const pool = getPool();
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const scope = await getSitePageScopeByIdWithDb(client, siteId, areaMask, pageScopeId, { forUpdate: true });
+    if (!scope) {
+      throw new SitePagePathChangeError("page_not_found", "The requested Page Scope was not found.");
+    }
+    if (scope.ownerModuleId || scope.presetKey || scope.path == null) {
+      throw new SitePagePathChangeError("module_owned", "Module-owned Page paths cannot be changed by the Site.");
+    }
+    const { rows: collisions } = await client.query<{ id: number }>(
+      `SELECT id FROM phis.site_page_scopes
+       WHERE site_id = $1 AND area_id = $2 AND path = $3 AND id <> $4
+       LIMIT 1 FOR UPDATE`,
+      [siteId, areaMask, nextPath, pageScopeId],
+    );
+    if (collisions[0]) {
+      throw new SitePagePathChangeError("path_collision", "Another Page already owns this canonical path.");
+    }
+    const references = await countSiteCmsReferencesToPageWithDb(client, siteId, pageScopeId);
+    await client.query(
+      `UPDATE phis.site_page_scopes SET path = $2, updated_at = NOW() WHERE id = $1`,
+      [pageScopeId, nextPath],
+    );
+    await client.query("COMMIT");
+    return {
+      pageScopeId,
+      areaMask,
+      oldPath: scope.path,
+      path: nextPath,
+      publishedRevisionId: scope.publishedRevisionId,
+      workingDraftRevisionId: scope.workingDraftRevisionId,
+      references,
+    };
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}

@@ -1,0 +1,48 @@
+import path from "node:path";
+
+import {
+  PHIS_ROOT_ENV,
+  type PhiConfigPaths,
+  type PhiServerConfig,
+  readMergedPhiConfigSync as readMergedPhiConfigFromPathsSync,
+  readPhiRuntimeConfigSync as readPhiRuntimeConfigFromPathsSync,
+  writePhiRuntimeConfigSync as writePhiRuntimeConfigToPathsSync,
+} from "./config-core.ts";
+
+export {
+  loadConfigFileSync,
+  PHIS_DEFAULT_STAGE_ROOT,
+  PHIS_ROOT_ENV,
+  type PhiConfigPaths,
+  type PhiServerConfig,
+  type PlatformSuperUser,
+  resolvePhiSiteSourceLocale,
+  validatePhiConfig,
+} from "./config-core.ts";
+
+export function getDefaultPhiRoot() {
+  const configuredRoot = process.env[PHIS_ROOT_ENV]?.trim();
+  return path.resolve(configuredRoot || process.cwd());
+}
+
+export function resolvePhiConfigPaths(root = getDefaultPhiRoot()): PhiConfigPaths {
+  const resolvedRoot = path.resolve(root);
+
+  return {
+    root: resolvedRoot,
+    static: path.join(resolvedRoot, "config", "phis-config.json"),
+    runtime: path.join(resolvedRoot, "config", "phis-runtime.json"),
+  };
+}
+
+export function readMergedPhiConfigSync(root?: string) {
+  return readMergedPhiConfigFromPathsSync(resolvePhiConfigPaths(root ?? getDefaultPhiRoot()));
+}
+
+export function readPhiRuntimeConfigSync(root?: string) {
+  return readPhiRuntimeConfigFromPathsSync(resolvePhiConfigPaths(root ?? getDefaultPhiRoot()));
+}
+
+export function writePhiRuntimeConfigSync(config: PhiServerConfig, root?: string) {
+  writePhiRuntimeConfigToPathsSync(resolvePhiConfigPaths(root ?? getDefaultPhiRoot()), config);
+}

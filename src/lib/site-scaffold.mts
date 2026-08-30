@@ -1,0 +1,279 @@
+import { createHash } from "node:crypto";
+import { spawn } from "node:child_process";
+import { access, cp, mkdir, readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
+import path from "node:path";
+
+export const PHI_SITE_SCAFFOLD_VERSION = 2;
+
+const AREAS = ["accounting", "admin", "app", "builder", "editor"] as const;
+const ROOT_SLOTS = [
+  ["drawer", "Drawer"],
+  ["footerTop", "FooterTop"],
+  ["headerBottom", "HeaderBottom"],
+  ["hero", "Hero"],
+  ["siderRight", "SiderRight"],
+] as const;
+const AREA_NAMES = {
+  accounting: "Accounting",
+  admin: "Admin",
+  app: "App",
+  builder: "Builder",
+  editor: "Editor",
+} as const;
+
+export type PhiSiteScaffoldPackageManager = "pnpm" | "npm" | "yarn" | "bun";
+export type PhiSiteScaffoldContext = {
+  siteKey: string;
+  publicBaseUrl: string;
+  apiBaseUrl: string;
+  internalToken: string;
+  packageManager?: PhiSiteScaffoldPackageManager;
+  packageVersions?: Partial<Record<string, string>>;
+};
+export type PhiSiteScaffoldChange = { path: string; action: "created" | "repaired" | "unchanged" };
+export type PhiSiteScaffoldResult = {
+  version: number;
+  root: string;
+  changes: PhiSiteScaffoldChange[];
+};
+export type PhiSiteReleaseArtifact = { releaseId: string; path: string; buildId: string };
+
+const DEFAULT_VERSIONS: Record<string, string> = {
+  "@ant-design/icons": "6.3.2",
+  "@ant-design/nextjs-registry": "1.3.0",
+  "@phis/ui": "0.1.0",
+  antd: "6.5.1",
+  next: "16.2.11",
+  react: "19.2.8",
+  "react-dom": "19.2.8",
+  "@types/node": "26.1.0",
+  "@types/react": "19.2.17",
+  "@types/react-dom": "19.2.3",
+  typescript: "6.0.3",
+};
+const PACKAGE_MANAGER_VERSIONS: Record<PhiSiteScaffoldPackageManager, string> = {
+  pnpm: "11.9.0",
+  npm: "11.10.1",
+  yarn: "4.9.4",
+  bun: "1.2.23",
+};
+
+function hashContent(content: string) {
+  return createHash("sha256").update(content).digest("hex");
+}
+
+function runtimeModuleFiles() {
+  const areas: readonly ("public" | typeof AREAS[number])[] = ["public", ...AREAS];
+  return Object.fromEntries(areas.flatMap((area) => {
+    const name = area === "public" ? "Public" : AREA_NAMES[area];
+    const upper = area.toUpperCase();
+    return [
+      [`src/runtime-modules/${area}.ts`, `export { PHI_${upper}_CMS_SITE_BRIDGE } from "@phis/ui/next/areas/${area}";\n`],
+      [`src/runtime-modules/${area}-client.tsx`, `"use client";\n\nexport { Phi${name}RuntimeModuleClientBoundary } from "@phis/ui/next/areas/${area}-client";\n`],
+    ];
+  }));
+}
+
+function staticAreaFiles(area: typeof AREAS[number]) {
+  const name = AREA_NAMES[area];
+  const upper = area.toUpperCase();
+  const bridge = `PHI_${upper}_CMS_SITE_BRIDGE`;
+  const files: Record<string, string> = {
+    [`src/app/${area}/layout.tsx`]: `import { ${bridge} } from "@/runtime-modules/${area}";\nimport { createPhiNextStaticAreaLayout } from "@phis/ui/next/area-route";\nimport { Phi${name}RuntimeModuleClientBoundary } from "@/runtime-modules/${area}-client";\n\nexport const dynamic = "force-dynamic";\n\nexport default createPhiNextStaticAreaLayout("${area}", ${bridge}, Phi${name}RuntimeModuleClientBoundary);\n`,
+    [`src/app/${area}/[[...path]]/page.tsx`]: `import { ${bridge} } from "@/runtime-modules/${area}";\nimport { createPhiNextStaticAreaPage } from "@phis/ui/next/area-route";\n\nexport const dynamic = "force-dynamic";\n\nconst route = createPhiNextStaticAreaPage("${area}", ${bridge});\n\nexport const generateMetadata = route.generateMetadata;\nexport default route.Page;\n`,
+    [`src/app/${area}/not-found.tsx`]: `import { ${bridge} } from "@/runtime-modules/${area}";\nimport { createPhiNextStaticAreaNotFound } from "@phis/ui/next/area-route";\n\nexport const dynamic = "force-dynamic";\n\nexport default createPhiNextStaticAreaNotFound(${bridge});\n`,
+  };
+  for (const [slot, regionType] of ROOT_SLOTS) {
+    files[`src/app/${area}/@${slot}/[[...path]]/page.tsx`] = `import { PhiCmsRegionType } from "@phis/ui/cms/root-slot-page";\n\nimport { ${bridge} } from "@/runtime-modules/${area}";\nimport { createPhiNextStaticAreaSlotPage } from "@phis/ui/next/area-route";\n\nexport const dynamic = "force-dynamic";\n\nexport default createPhiNextStaticAreaSlotPage(\n  "${area}",\n  ${bridge},\n  PhiCmsRegionType.${regionType},\n);\n`;
+  }
+  return files;
+}
+
+function dynamicRootFiles() {
+  const files: Record<string, string> = {
+    "src/app/[root]/layout.tsx": `import { createPhiNextDynamicRootLayout } from "@phis/ui/next/area-route";\nimport { PhiPublicRuntimeModuleClientBoundary } from "@/runtime-modules/public-client";\nimport { PHI_PUBLIC_CMS_SITE_BRIDGE } from "@/runtime-modules/public";\n\nexport const dynamic = "force-dynamic";\n\nexport default createPhiNextDynamicRootLayout(\n  PHI_PUBLIC_CMS_SITE_BRIDGE,\n  PhiPublicRuntimeModuleClientBoundary,\n);\n`,
+    "src/app/[root]/[[...path]]/page.tsx": `import { createPhiNextDynamicRootPage } from "@phis/ui/next/area-route";\nimport { PHI_PUBLIC_CMS_SITE_BRIDGE } from "@/runtime-modules/public";\n\nexport const dynamic = "force-dynamic";\n\nconst route = createPhiNextDynamicRootPage(PHI_PUBLIC_CMS_SITE_BRIDGE);\n\nexport const generateMetadata = route.generateMetadata;\nexport default route.Page;\n`,
+    "src/app/[root]/not-found.tsx": `import { createPhiNextStaticAreaNotFound } from "@phis/ui/next/area-route";\nimport { PHI_PUBLIC_CMS_SITE_BRIDGE } from "@/runtime-modules/public";\n\nexport const dynamic = "force-dynamic";\n\nexport default createPhiNextStaticAreaNotFound(PHI_PUBLIC_CMS_SITE_BRIDGE);\n`,
+  };
+  for (const [slot, regionType] of ROOT_SLOTS) {
+    files[`src/app/[root]/@${slot}/[[...path]]/page.tsx`] = `import { PhiCmsRegionType } from "@phis/ui/cms/root-slot-page";\nimport { createPhiNextDynamicRootSlotPage } from "@phis/ui/next/area-route";\nimport { PHI_PUBLIC_CMS_SITE_BRIDGE } from "@/runtime-modules/public";\n\nexport const dynamic = "force-dynamic";\n\nexport default createPhiNextDynamicRootSlotPage(\n  PHI_PUBLIC_CMS_SITE_BRIDGE,\n  PhiCmsRegionType.${regionType},\n);\n`;
+  }
+  return files;
+}
+
+function proxyRoute(kind: "auth" | "site") {
+  const factory = kind === "auth" ? "buildPhiAuthProxyHandlers" : "buildPhiSiteProxyHandlers";
+  return `import { ${factory} } from "@phis/ui/gateway";\n\nimport {\n  buildPhiNextProxyHeaders,\n  getPhiNextUpstreamBaseUrl,\n  getPhiNextProxyTimeoutMs,\n} from "@phis/ui/next/proxy-runtime";\n\nexport const dynamic = "force-dynamic";\nexport const runtime = "nodejs";\n\nconst handlers = ${factory}({\n  upstreamBaseUrl: getPhiNextUpstreamBaseUrl(),\n  timeoutMs: getPhiNextProxyTimeoutMs(),\n  logLabel: "[phi-site][/api/${kind} proxy]",\n  missingBaseUrlMessage: "Missing phis.apiBaseUrl for /api/${kind} proxy.",\n  buildHeaders: (request) => buildPhiNextProxyHeaders(request, "phi-site-${kind}-proxy/1.0"),\n});\n\nexport const GET = handlers.GET;\nexport const POST = handlers.POST;\nexport const PUT = handlers.PUT;\nexport const PATCH = handlers.PATCH;\nexport const DELETE = handlers.DELETE;\nexport const OPTIONS = handlers.OPTIONS;\n`;
+}
+
+function packageJson(context: PhiSiteScaffoldContext) {
+  const manager = context.packageManager ?? "pnpm";
+  const versions = { ...DEFAULT_VERSIONS, ...(context.packageVersions ?? {}) };
+  return `${JSON.stringify({
+    name: context.siteKey,
+    version: "0.1.0",
+    type: "module",
+    private: true,
+    scripts: {
+      dev: "NEXT_TELEMETRY_DISABLED=1 next dev --hostname 0.0.0.0",
+      build: "NEXT_TELEMETRY_DISABLED=1 next build",
+      start: "NEXT_TELEMETRY_DISABLED=1 next start",
+      typecheck: "tsc --noEmit",
+    },
+    dependencies: Object.fromEntries(Object.entries(versions).filter(([key]) => !key.startsWith("@types/") && key !== "typescript")),
+    devDependencies: Object.fromEntries(Object.entries(versions).filter(([key]) => key.startsWith("@types/") || key === "typescript")),
+    engines: { node: ">=24" },
+    packageManager: `${manager}@${PACKAGE_MANAGER_VERSIONS[manager]}`,
+  }, null, 2)}\n`;
+}
+
+export function buildPhiSiteScaffoldFiles(context: PhiSiteScaffoldContext) {
+  const files: Record<string, string> = {
+    ...runtimeModuleFiles(),
+    ...dynamicRootFiles(),
+    ...Object.assign({}, ...AREAS.map(staticAreaFiles)),
+    "src/app/layout.tsx": `import { generatePhiNextRootMetadata, PhiNextRootLayout } from "@phis/ui/next/root-route";\n\nimport "./globals.css";\n\nexport const dynamic = "force-dynamic";\nexport const generateMetadata = generatePhiNextRootMetadata;\nexport default PhiNextRootLayout;\n`,
+    "src/app/page.tsx": `import { PhiNextSiteIndexPage } from "@phis/ui/next/root-route";\n\nexport const dynamic = "force-dynamic";\nexport default PhiNextSiteIndexPage;\n`,
+    "src/app/globals.css": "/* Site-specific global overrides may be added here. */\n",
+    "src/app/forbidden.tsx": `import { PhiCmsErrorPage } from "@phis/ui/cms/error-page";\nimport { PHI_PUBLIC_CMS_SITE_BRIDGE } from "@/runtime-modules/public";\n\nexport default function Forbidden() {\n  return <PhiCmsErrorPage code={403} cmsBridge={PHI_PUBLIC_CMS_SITE_BRIDGE} />;\n}\n`,
+    "src/app/unauthorized.tsx": `import { PhiCmsErrorPage } from "@phis/ui/cms/error-page";\nimport { PHI_PUBLIC_CMS_SITE_BRIDGE } from "@/runtime-modules/public";\n\nexport default function Unauthorized() {\n  return <PhiCmsErrorPage code={401} cmsBridge={PHI_PUBLIC_CMS_SITE_BRIDGE} />;\n}\n`,
+    "src/proxy.ts": `import type { NextRequest } from "next/server";\nimport { proxyPhiNextSiteRequest } from "@phis/ui/next/site-proxy";\n\nexport function proxy(request: NextRequest) {\n  return proxyPhiNextSiteRequest(request);\n}\n\nexport const config = { matcher: "/:path*" };\n`,
+    "src/app/api/auth/[[...path]]/route.ts": proxyRoute("auth"),
+    "src/app/api/site/[[...path]]/route.ts": proxyRoute("site"),
+    "src/app/api/site/forms/route.ts": `import { buildPhiSiteFormRouteHandlers } from "@phis/ui/gateway";\nimport { buildPhiNextProxyHeaders, getPhiNextUpstreamBaseUrl, getPhiNextProxyTimeoutMs } from "@phis/ui/next/proxy-runtime";\n\nexport const dynamic = "force-dynamic";\nexport const runtime = "nodejs";\nconst handlers = buildPhiSiteFormRouteHandlers({\n  upstreamBaseUrl: getPhiNextUpstreamBaseUrl(),\n  timeoutMs: getPhiNextProxyTimeoutMs(),\n  missingBaseUrlMessage: "Missing phis.apiBaseUrl for /api/site/forms proxy.",\n  buildHeaders: (request) => buildPhiNextProxyHeaders(request, "phi-site-forms/1.0"),\n});\nexport const GET = handlers.GET;\nexport const POST = handlers.POST;\n`,
+    "src/app/builder/api/[[...path]]/route.ts": `export { POST } from "@phis/ui/builder-api-route";\n\nexport const dynamic = "force-dynamic";\nexport const runtime = "nodejs";\n`,
+    "src/app/api/site/navigation-target/route.ts": `import { buildPhiNavigationTargetRouteHandler } from "@phis/ui/next/navigation-target-route";\n${["accounting", "admin", "app", "builder", "editor", "public"].map((area) => `import { PHI_${area.toUpperCase()}_CMS_SITE_BRIDGE } from "@/runtime-modules/${area}";`).join("\n")}\n\nexport const dynamic = "force-dynamic";\nexport const runtime = "nodejs";\nexport const GET = buildPhiNavigationTargetRouteHandler({ bridgesByArea: {\n${["public", "app", "admin", "builder", "editor", "accounting"].map((area) => `  ${area}: PHI_${area.toUpperCase()}_CMS_SITE_BRIDGE,`).join("\n")}\n} });\n`,
+    "src/app/media/[...asset]/route.ts": `import { buildPhiMediaProxyHandlers } from "@phis/ui/gateway";\nimport type { NextRequest } from "next/server";\nimport { buildPhiNextProxyHeaders, getPhiNextUpstreamBaseUrl, getPhiNextProxyTimeoutMs } from "@phis/ui/next/proxy-runtime";\n\nexport const dynamic = "force-dynamic";\nexport const runtime = "nodejs";\nconst handlers = buildPhiMediaProxyHandlers({\n  upstreamBaseUrl: getPhiNextUpstreamBaseUrl(),\n  timeoutMs: getPhiNextProxyTimeoutMs(),\n  buildHeaders: (request) => { const headers = buildPhiNextProxyHeaders(request, "phi-site-media/1.0"); headers.delete("authorization"); headers.delete("x-phi-token"); return headers; },\n});\ntype Context = { params: Promise<{ asset?: string[] }> };\nasync function adapt(context: Context) { const { asset } = await context.params; return { params: Promise.resolve({ path: asset }) }; }\nexport async function GET(request: NextRequest, context: Context) { return handlers.GET(request, await adapt(context)); }\nexport async function HEAD(request: NextRequest, context: Context) { return handlers.HEAD(request, await adapt(context)); }\n`,
+    "next.config.ts": `import type { NextConfig } from "next";\n\nconst nextConfig: NextConfig = {\n  output: "standalone",\n  reactStrictMode: true,\n  images: { localPatterns: [{ pathname: "/api/site/media/**" }] },\n  experimental: { authInterrupts: true },\n  transpilePackages: ["@phis/ui"],\n};\nexport default nextConfig;\n`,
+    "tsconfig.json": `${JSON.stringify({ compilerOptions: { target: "ES2022", lib: ["dom", "dom.iterable", "esnext"], allowJs: false, skipLibCheck: true, strict: true, noEmit: true, esModuleInterop: true, module: "esnext", moduleResolution: "bundler", resolveJsonModule: true, isolatedModules: true, jsx: "react-jsx", incremental: true, plugins: [{ name: "next" }], paths: { "@/*": ["./src/*"] } }, include: ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts", ".next/dev/types/**/*.ts"], exclude: ["node_modules"] }, null, 2)}\n`,
+    "package.json": packageJson(context),
+    "config/site-runtime.example.json": `${JSON.stringify({ site: { key: context.siteKey }, phis: { apiBaseUrl: context.apiBaseUrl, internalToken: "" }, network: { internalApiTimeoutMs: 8000 } }, null, 2)}\n`,
+    "config/site-runtime.json": `${JSON.stringify({ site: { key: context.siteKey, publicUrl: context.publicBaseUrl }, phis: { apiBaseUrl: context.apiBaseUrl, internalToken: context.internalToken }, network: { internalApiTimeoutMs: 8000 } }, null, 2)}\n`,
+  };
+  return files;
+}
+
+async function exists(target: string) {
+  try { await access(target); return true; } catch { return false; }
+}
+
+async function writeAtomic(target: string, content: string) {
+  await mkdir(path.dirname(target), { recursive: true });
+  const temporary = `${target}.phis-tmp-${process.pid}`;
+  await writeFile(temporary, content, "utf8");
+  await rename(temporary, target);
+}
+
+async function readJsonRecord(target: string) {
+  try {
+    const value = JSON.parse(await readFile(target, "utf8")) as unknown;
+    return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+  } catch { return {}; }
+}
+
+function mergePackageJson(current: Record<string, unknown>, canonicalText: string) {
+  const canonical = JSON.parse(canonicalText) as Record<string, unknown>;
+  return `${JSON.stringify({
+    ...current,
+    ...canonical,
+    scripts: { ...(current.scripts as Record<string, unknown> | undefined), ...(canonical.scripts as Record<string, unknown>) },
+    dependencies: { ...(current.dependencies as Record<string, unknown> | undefined), ...(canonical.dependencies as Record<string, unknown>) },
+    devDependencies: { ...(current.devDependencies as Record<string, unknown> | undefined), ...(canonical.devDependencies as Record<string, unknown>) },
+  }, null, 2)}\n`;
+}
+
+export async function reconcilePhiSiteScaffold(root: string, context: PhiSiteScaffoldContext, mode: "init" | "reconcile") {
+  const resolvedRoot = path.resolve(root);
+  if (mode === "init" && await exists(resolvedRoot)) {
+    const info = await stat(resolvedRoot);
+    if (!info.isDirectory()) throw new Error(`Site target ${resolvedRoot} is not a directory.`);
+    const entries = await import("node:fs/promises").then(({ readdir }) => readdir(resolvedRoot));
+    if (entries.length > 0) throw new Error(`Site target ${resolvedRoot} already exists; use phis reconcile.`);
+  }
+  await mkdir(resolvedRoot, { recursive: true });
+  const selectedManager = context.packageManager ?? "pnpm";
+  const lockfiles: Record<PhiSiteScaffoldPackageManager, string> = {
+    pnpm: "pnpm-lock.yaml",
+    npm: "package-lock.json",
+    yarn: "yarn.lock",
+    bun: "bun.lock",
+  };
+  for (const [manager, lockfile] of Object.entries(lockfiles)) {
+    if (manager !== selectedManager && await exists(path.join(resolvedRoot, lockfile))) {
+      await unlink(path.join(resolvedRoot, lockfile));
+    }
+  }
+  const files = buildPhiSiteScaffoldFiles(context);
+  const changes: PhiSiteScaffoldChange[] = [];
+  for (const [relativePath, canonical] of Object.entries(files)) {
+    const target = path.join(resolvedRoot, relativePath);
+    const alreadyExists = await exists(target);
+    if (relativePath === "config/site-runtime.json" && alreadyExists && mode === "reconcile") {
+      changes.push({ path: relativePath, action: "unchanged" });
+      continue;
+    }
+    const desired = relativePath === "package.json" && alreadyExists
+      ? mergePackageJson(await readJsonRecord(target), canonical)
+      : canonical;
+    const current = alreadyExists ? await readFile(target, "utf8") : null;
+    if (current === desired) {
+      changes.push({ path: relativePath, action: "unchanged" });
+      continue;
+    }
+    await writeAtomic(target, desired);
+    changes.push({ path: relativePath, action: alreadyExists ? "repaired" : "created" });
+  }
+  const manifest = {
+    version: PHI_SITE_SCAFFOLD_VERSION,
+    siteKey: context.siteKey,
+    files: Object.fromEntries(Object.entries(files).map(([key, value]) => [key, hashContent(value)])),
+  };
+  await writeAtomic(path.join(resolvedRoot, ".phis/scaffold-manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`);
+  return { version: PHI_SITE_SCAFFOLD_VERSION, root: resolvedRoot, changes } satisfies PhiSiteScaffoldResult;
+}
+
+export function runPhiSitePackageCommand(root: string, manager: PhiSiteScaffoldPackageManager, args: string[]) {
+  return new Promise<void>((resolve, reject) => {
+    const child = spawn(manager, args, { cwd: root, stdio: "inherit", env: { ...process.env, NEXT_TELEMETRY_DISABLED: "1" } });
+    child.on("error", reject);
+    child.on("exit", (code) => code === 0 ? resolve() : reject(new Error(`${manager} ${args.join(" ")} failed with exit code ${code ?? "unknown"}.`)));
+  });
+}
+
+export function resolvePhiSiteInstallArgs(manager: PhiSiteScaffoldPackageManager, frozen: boolean) {
+  if (manager === "pnpm") return ["install", frozen ? "--frozen-lockfile" : "--no-frozen-lockfile"];
+  if (manager === "npm") return frozen ? ["ci"] : ["install", "--package-lock-only=false"];
+  if (manager === "yarn") return ["install", ...(frozen ? ["--immutable"] : [])];
+  return ["install", ...(frozen ? ["--frozen-lockfile"] : [])];
+}
+
+export async function buildPhiSiteReleaseArtifact(root: string): Promise<PhiSiteReleaseArtifact> {
+  const resolvedRoot = path.resolve(root);
+  const standaloneRoot = path.join(resolvedRoot, ".next/standalone");
+  const serverEntry = path.join(standaloneRoot, "server.js");
+  if (!await exists(serverEntry)) throw new Error("Production build did not emit .next/standalone/server.js.");
+  const buildId = (await readFile(path.join(resolvedRoot, ".next/BUILD_ID"), "utf8")).trim();
+  if (!buildId) throw new Error("Production build did not emit a BUILD_ID.");
+  const packageText = await readFile(path.join(resolvedRoot, "package.json"), "utf8");
+  const scaffoldText = await readFile(path.join(resolvedRoot, ".phis/scaffold-manifest.json"), "utf8");
+  const releaseId = `${new Date().toISOString().replace(/[:.]/g, "-")}-${hashContent(`${buildId}\n${packageText}\n${scaffoldText}`).slice(0, 12)}`;
+  const releasesRoot = path.join(resolvedRoot, ".phis/releases");
+  const target = path.join(releasesRoot, releaseId);
+  const staging = path.join(releasesRoot, `.staging-${releaseId}`);
+  await mkdir(staging, { recursive: true });
+  await cp(standaloneRoot, staging, { recursive: true, force: false });
+  await mkdir(path.join(staging, ".next"), { recursive: true });
+  await cp(path.join(resolvedRoot, ".next/static"), path.join(staging, ".next/static"), { recursive: true, force: false });
+  for (const directory of ["public", "config"]) {
+    const source = path.join(resolvedRoot, directory);
+    if (await exists(source)) await cp(source, path.join(staging, directory), { recursive: true, force: false });
+  }
+  await writeAtomic(path.join(staging, "release.json"), `${JSON.stringify({
+    releaseId,
+    scaffoldVersion: PHI_SITE_SCAFFOLD_VERSION,
+    buildId,
+    createdAt: new Date().toISOString(),
+  }, null, 2)}\n`);
+  await rename(staging, target);
+  return { releaseId, path: target, buildId };
+}

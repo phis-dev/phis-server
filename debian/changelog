@@ -1,0 +1,5 @@
+phis (0.1.0-1) unstable; urgency=medium
+
+  * Add initial Debian packaging scaffold for the standalone runtime.
+
+ -- Phisys Ltd. <debian@phisys.com>  Thu, 09 Apr 2026 10:40:05 +0000
