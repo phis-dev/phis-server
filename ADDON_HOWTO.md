@@ -180,7 +180,9 @@ module scope empty.
   exist, and anything left over resolves upward into directories that are none of an Add-on's business.
 - **No dynamic import of a computed specifier.** An Add-on may not become a loader itself.
 - **No SQL, no migration steps, no direct database handle.** The request context deliberately carries
-  none.
+  none. Declare the queries you run in the manifest and call them by name through
+  `@phis/phi-server/data:v1`: `context.capabilities.data.select("mine", { ... })`. Core derives the
+  statements once, puts the Site filter into every one of them, and writes the scope columns itself.
 - **No authorization of your own over Core's scopes.** If a table is `ownerScoped` or `groupScoped`,
   Core wrote those columns and Core answers about them: declare `@phis/phi-server/authorization:v1` and
   ask `context.capabilities.authorization.mayActOnRow({ table, id, intent })`. Rebuilding the ladder

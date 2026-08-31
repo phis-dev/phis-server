@@ -31,6 +31,7 @@ import {
   type PhiViewerAccessPolicy,
 } from "@/lib/authorization";
 import { getPool } from "@/lib/db";
+import { buildPhiServerAddonDataCapability } from "./data-capability.ts";
 import { getEffectiveUserSiteAuthorization } from "@/db/user-site-memberships";
 import type { PhiServerAddonManifestV1 } from "./contract.ts";
 
@@ -224,6 +225,7 @@ function buildAuthorizationCapability(input: {
  */
 export function buildPhiServerAddonCapabilities(input: {
   manifest: PhiServerAddonManifestV1;
+  manifestDigest: string;
   siteId: number | null;
   actorUserId: number | null;
 }): PhiServerAddonCapabilities {
@@ -232,11 +234,29 @@ export function buildPhiServerAddonCapabilities(input: {
     // Every capability here is Site-scoped. Without a Site there is nothing to bind them to.
     return Object.freeze(capabilities);
   }
-  if (input.manifest.requiredCoreCapabilities.includes(PHI_SERVER_CORE_CAPABILITIES.authorization)) {
-    capabilities.authorization = buildAuthorizationCapability({
+  const siteId = input.siteId;
+  const required = input.manifest.requiredCoreCapabilities;
+  const authorization = buildAuthorizationCapability({
+    manifest: input.manifest,
+    siteId,
+    actorUserId: input.actorUserId,
+  });
+  if (required.includes(PHI_SERVER_CORE_CAPABILITIES.authorization)) {
+    capabilities.authorization = authorization;
+  }
+  if (required.includes(PHI_SERVER_CORE_CAPABILITIES.data)) {
+    /*
+     * The data capability enforces row authority itself, so it gets the evaluator whether or not the
+     * Add-on declared `authorization:v1`. Declaring `data:v1` is not a way to write past the ladder --
+     * it is the way to write under it.
+     */
+    capabilities.data = buildPhiServerAddonDataCapability({
       manifest: input.manifest,
-      siteId: input.siteId,
+      manifestDigest: input.manifestDigest,
+      siteId,
       actorUserId: input.actorUserId,
+      mayActOnRow: ({ table, id, intent }) =>
+        authorization.mayActOnRow({ table, id: id as number | string, intent }),
     });
   }
   return Object.freeze(capabilities);

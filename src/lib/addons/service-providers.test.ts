@@ -28,6 +28,7 @@ function manifest(overrides: Record<string, unknown> = {}) {
     hooks: [],
     jobs: [],
     schema: null,
+    queries: null,
     migrationVersion: 0,
     ...overrides,
   };

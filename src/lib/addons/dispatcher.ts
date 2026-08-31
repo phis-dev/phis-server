@@ -397,6 +397,7 @@ export async function dispatchPhiServerAddonRequest(
         // hoisted out of the request would be a capability someone could reach with another's identity.
         capabilities: buildPhiServerAddonCapabilities({
           manifest: entry.manifest,
+          manifestDigest: entry.manifestDigest,
           siteId: identity.site?.id ?? null,
           actorUserId: identity.actor?.kind === "user" ? identity.actor.id : null,
         }),

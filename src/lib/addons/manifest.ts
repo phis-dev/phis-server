@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 
 import { isPhiServerServiceInterfaceCurrent, isPhiServerServiceKind } from "./core-services.ts";
+import { validatePhiServerAddonQueryCatalog } from "./query-descriptor.ts";
 import { validatePhiServerAddonSchemaDescriptor } from "./schema-descriptor.ts";
 import { PHI_SERVER_ADDON_ID_PATTERN } from "./schema-name.ts";
 import {
@@ -10,6 +11,7 @@ import {
   type PhiServerAddonDesiredState,
   type PhiServerAddonHookDescriptor,
   type PhiServerAddonManifestV1,
+  type PhiServerAddonQueryCatalog,
   type PhiServerAddonSchemaDescriptor,
 } from "./contract.ts";
 
@@ -398,6 +400,15 @@ export function validatePhiServerAddonManifest(
     schema = validatePhiServerAddonSchemaDescriptor(value.schema, "schema", issues);
   }
 
+  let queries: PhiServerAddonQueryCatalog | null = null;
+  if (value.queries === null) {
+    queries = null;
+  } else if (value.queries === undefined) {
+    issues.push("queries must be a catalog object or null.");
+  } else {
+    queries = validatePhiServerAddonQueryCatalog(value.queries, schema, "queries", issues);
+  }
+
   const migrationVersion = value.migrationVersion;
   if (!Number.isSafeInteger(migrationVersion) || Number(migrationVersion) < 0) {
     issues.push("migrationVersion must be a non-negative integer.");
@@ -423,7 +434,9 @@ export function validatePhiServerAddonManifest(
   assertUnique(routeKeys, "route descriptors", issues);
 
   return {
-    manifest: issues.length === 0 ? (value as PhiServerAddonManifestV1) : null,
+    manifest: issues.length === 0 && queries !== undefined
+      ? (value as PhiServerAddonManifestV1)
+      : null,
     issues,
   };
 }

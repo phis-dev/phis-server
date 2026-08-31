@@ -36,7 +36,8 @@ function manifestWith(descriptor = incidentSchemaDescriptor): PhiServerAddonMani
     apiRoutes: [],
     hooks: [],
     jobs: [],
-    schema: descriptor,
+    queries: null,
+  schema: descriptor,
     migrationVersion: descriptor.version,
   };
 }

@@ -61,11 +61,46 @@ const manifest = {
   serverAbi: "1",
   capabilities: [],
   serviceProviders: [],
-  requiredCoreCapabilities: ["@phis/phi-server/authorization:v1"],
+  requiredCoreCapabilities: [
+    "@phis/phi-server/authorization:v1",
+    "@phis/phi-server/data:v1",
+  ],
   apiRoutes: [],
   hooks: [],
   jobs: [],
   schema: target.descriptor,
+  queries: {
+    parameters: {
+      mine: [],
+      add: [{ name: "title", type: "text" }, { name: "group_id", type: "integer" }],
+      rename: [{ name: "id", type: "bigInteger" }, { name: "title", type: "text" }],
+      drop: [{ name: "id", type: "bigInteger" }],
+    },
+    queries: [
+      {
+        kind: "select",
+        name: "mine",
+        table: "listing",
+        where: { kind: "compare", column: "owner_user_id", operator: "=", value: { kind: "actor" } },
+        limit: 20,
+      },
+      {
+        kind: "insert",
+        name: "add",
+        table: "listing",
+        values: [{ column: "title", value: { kind: "parameter", name: "title" } }],
+        groupParameter: "group_id",
+      },
+      {
+        kind: "update",
+        name: "rename",
+        table: "listing",
+        set: [{ column: "title", value: { kind: "parameter", name: "title" } }],
+        idParameter: "id",
+      },
+      { kind: "delete", name: "drop", table: "listing", idParameter: "id" },
+    ],
+  },
   migrationVersion: 1,
 } as unknown as PhiServerAddonManifestV1;
 
@@ -157,6 +192,7 @@ describe("owner-scoped and group-scoped Add-on tables", () => {
     async function capabilityFor(actorUserId: number | null) {
       const capabilities = buildPhiServerAddonCapabilities({
         manifest,
+        manifestDigest: "pgtest-scopes",
         siteId: site.id,
         actorUserId,
       });
@@ -183,6 +219,7 @@ describe("owner-scoped and group-scoped Add-on tables", () => {
     it("is present only when the manifest asked for it", () => {
       const without = buildPhiServerAddonCapabilities({
         manifest: { ...manifest, requiredCoreCapabilities: [] },
+        manifestDigest: "pgtest-scopes-none",
         siteId: site.id,
         actorUserId: 1,
       });
@@ -237,6 +274,68 @@ describe("owner-scoped and group-scoped Add-on tables", () => {
       const capability = await capabilityFor(editor);
       expect(await capability.groupLevel(groupId)).toBe("editor");
       expect(await capability.groupLevel(foreignGroupId)).toBeNull();
+    });
+
+    it("runs a declared query and substitutes the actor itself", async () => {
+      const author = await memberAt(PhiGroupMembershipFlags.Author);
+      const other = await memberAt(PhiGroupMembershipFlags.Author);
+      await listingOwnedBy(other);
+      const data = buildPhiServerAddonCapabilities({
+        manifest, manifestDigest: "pgtest-data", siteId: site.id, actorUserId: author,
+      }).data!;
+
+      expect(await data.select("mine")).toEqual([]);
+      const added = await data.insert("add", { title: "mine", group_id: groupId });
+      expect(added).toMatchObject({ title: "mine", owner_user_id: author, group_id: groupId });
+      const mine = await data.select("mine");
+      expect(mine).toHaveLength(1);
+      expect(mine[0]!.title).toBe("mine");
+    });
+
+    it("refuses a mutation the ladder refuses, without the Add-on having to ask", async () => {
+      const author = await memberAt(PhiGroupMembershipFlags.Author);
+      const intruder = await memberAt(PhiGroupMembershipFlags.Author);
+      const theirs = await listingOwnedBy(author);
+
+      const asIntruder = buildPhiServerAddonCapabilities({
+        manifest, manifestDigest: "pgtest-data", siteId: site.id, actorUserId: intruder,
+      }).data!;
+      expect(await asIntruder.update("rename", { id: theirs, title: "hijacked" })).toBe(0);
+      expect(await asIntruder.delete("drop", { id: theirs })).toBe(0);
+
+      const pool = await requirePhiTestDatabase();
+      const { rows } = await pool.query(
+        `SELECT title FROM ${quotePhiIdentifier(SCHEMA)}."listing" WHERE id = $1`,
+        [theirs],
+      );
+      expect(rows[0]!.title).toBe("a listing");
+
+      const asOwner = buildPhiServerAddonCapabilities({
+        manifest, manifestDigest: "pgtest-data", siteId: site.id, actorUserId: author,
+      }).data!;
+      expect(await asOwner.update("rename", { id: theirs, title: "renamed" })).toBe(1);
+    });
+
+    it("undoes the whole unit of work when the body throws", async () => {
+      const author = await memberAt(PhiGroupMembershipFlags.Author);
+      const data = buildPhiServerAddonCapabilities({
+        manifest, manifestDigest: "pgtest-data", siteId: site.id, actorUserId: author,
+      }).data!;
+      await expect(data.transaction(async (tx) => {
+        await tx.insert("add", { title: "first", group_id: groupId });
+        await tx.insert("add", { title: "second", group_id: groupId });
+        throw new Error("changed my mind");
+      })).rejects.toThrow(/changed my mind/);
+      expect(await data.select("mine")).toEqual([]);
+    });
+
+    it("refuses a query name the manifest never declared", async () => {
+      const author = await memberAt(PhiGroupMembershipFlags.Author);
+      const data = buildPhiServerAddonCapabilities({
+        manifest, manifestDigest: "pgtest-data", siteId: site.id, actorUserId: author,
+      }).data!;
+      await expect(data.select("invented")).rejects.toThrow(/No declared query named/);
+      await expect(data.select("add")).rejects.toThrow(/is a insert, not a select/);
     });
 
     it("answers no Site access to someone with no role", async () => {

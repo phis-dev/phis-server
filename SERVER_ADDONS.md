@@ -45,8 +45,12 @@ The initial server/CLI foundation now provides:
 - the declarative schema descriptor and everything Core derives from it: the generated DDL, the schema
   and its grants, the `information_schema` check afterwards, `phis addon migrate`, and `phis addon
   purge`. An Add-on describes tables, columns, references, indexes, and structured constraints, and
-  ships no SQL; Core writes the Site column and its cascade, resolves symbolic Core references, and
-  records the derived schema name under a unique index
+  ships no SQL; Core writes the Site, group and owner columns with their keys, resolves symbolic Core
+  references, and records the derived schema name under a unique index
+- the declarative query catalog and the compiled access path it implies. An Add-on declares named
+  queries, Core derives the statements once, and `data:v1` runs them by name. The Site filter is in the
+  statement rather than in the caller, Core writes the scope columns on insert, and a mutation is
+  refused by the row-level ladder before it runs
 - a Site-scoped read-only capability snapshot endpoint
 - mandatory Site Module server bindings with exact provider capability requirements
 - the initial Add-on, capability, Site activation, migration-history, and instance registry tables
@@ -54,9 +58,6 @@ The initial server/CLI foundation now provides:
 The following contract stages intentionally remain pending rather than being represented by a
 fallback:
 
-- declared queries and the compiled access path they imply. Section 15 fixes the form; nothing compiles
-  one yet, and the handler context carries no way to call one. An Add-on can own tables but cannot yet
-  read them, so nothing that owns tables is usable until this exists.
 - the second half of the DDL separation. `phis-cli` migrates as its own role, and an Add-on schema is
   owned by that role, so the serving role holds nothing but usage and data access there -- it cannot
   create a table in an Add-on schema, and the migration role cannot create anything in `phis`. What
@@ -66,10 +67,11 @@ fallback:
 - `@phis/addon-sdk`. The contract package is published and depended on; the build-time half described in
   section 3 -- descriptor builders, result-type generation, a context double -- has no package yet.
 - Site-admin activation/configuration API and provider setup flows
-- Module Storage, jobs, Threads, and Resource Link service adapters in handler context. The handler
-  context carries request data only. A Storage Provider factory does receive the restricted service
-  context section 10 describes: one nullary reader bound at construction to the secret its own Storage
-  Profile names, with no argument through which another could be named.
+- Module Storage, jobs, Threads, and Resource Link service adapters in handler context. Two Capabilities
+  are delivered -- `authorization:v1` and `data:v1`, both bound to the request -- and the rest of that
+  list is not. A Storage Provider factory receives the restricted service context section 10 describes:
+  one nullary reader bound at construction to the secret its own Storage Profile names, with no argument
+  through which another could be named.
 - startup instance heartbeat/readiness and load-balancer rollout reconciliation. `phis.server_instances`
   is declared and unwritten, so no deployment can yet tell whether every serving instance carries the
   same release.
@@ -652,6 +654,52 @@ Two neighbours it is deliberately not: `authentication:v1` is who the actor is, 
 rather than shortened to `auth` because the shortening would sit one letter from this one and mean the
 opposite half of the same word. `groups:v1` is group *facts* -- which groups exist, who is in them --
 while what follows from them is decided here.
+
+### `data:v1`
+
+Running the queries the manifest declared. Four operations and a unit of work, and every call names a
+query rather than describing one:
+
+```text
+select(name, args)  -> rows
+insert(name, args)  -> the inserted row, scope columns included
+update(name, args)  -> rows touched
+delete(name, args)  -> rows touched
+transaction(body)   -> whatever the body returns
+```
+
+There is no method taking SQL, a table, or a condition. An Add-on that could pass one of those at
+request time would be holding a database handle with extra steps, which is what section 15 rules out.
+
+Three things Core does here that an Add-on cannot influence:
+
+- **The Site filter is in the statement, not in the caller.** Every compiled statement against a
+  Site-scoped table carries it. That is what `siteScoped` promises beyond a column and a key: not that
+  an Add-on remembers to filter, but that it has no statement in which the filter is missing.
+- **The scope columns are written by Core on insert.** The descriptor has nowhere to name `site_id`,
+  `group_id` or `owner_user_id`, so there is no form of the statement in which an Add-on picks its own
+  Site, group, or owner. The Site and the owner come from the bound context; the group comes from a
+  declared parameter, because a row may belong to any group -- and the row-level check refuses one the
+  actor is not in. They stay readable: "the rows that are mine" needs `owner_user_id` by name.
+- **`update` and `delete` are checked before they run.** Both address exactly one row by its primary
+  key, and Core applies the same row authority `authorization:v1` answers with. A refused mutation
+  reports zero rows touched, which is also what a missing row reports: telling the two apart would
+  report the existence of a row the caller may not have.
+
+`mayActOnRow` and this enforcement answer the same question on purpose. The capability is for deciding
+what to offer a user -- whether to render the delete control; the write path is what actually holds. A
+check an Add-on has to remember to call is one that eventually is not called.
+
+The transaction handle offers the same four operations and nothing else: no commit, no rollback, no
+savepoint. Returning ends the unit of work, throwing undoes it, and an Add-on cannot leave one open
+because it never holds the thing that would stay open.
+
+The vocabulary is poorer than the schema descriptor's in one further way: **there are no joins.** A
+join to a Core table would make the kernel's shape an installed Add-on's dependency, and a join between
+two Add-ons' tables is already forbidden. A read is bounded by a required `limit`, capped at 500 --
+"the caller will pass a sensible one" is not a bound. `LIKE` is absent for the reason regular
+expressions are absent from the schema descriptor: escaping and collation differ between database
+systems, and taking it would buy back the dependency the descriptor exists to remove.
 
 Package version, Add-on ABI version, capability version, migration version, and release build id are
 independent version axes and are never inferred from one another.
