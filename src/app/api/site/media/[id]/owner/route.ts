@@ -42,7 +42,7 @@ export async function PUT(
 
     // Reading the Asset is the floor for being told anything about it; the transfer itself is
     // authorized below, against the row this returns.
-    const { site, session, error } = await requireMediaAssetContext(request, assetId, "read");
+    const { site, session, siteWide, error } = await requireMediaAssetContext(request, assetId, "read");
     if (error) {
       return error;
     }
@@ -77,11 +77,11 @@ export async function PUT(
     }
 
     /*
-     * Site Media authority reached this route without a group standing, so it is asked for separately
-     * rather than folded into the membership answer: administration transfers, a member transfers by
-     * level, and neither case is allowed to stand in for the other.
+     * Site Media authority reached this route without any group standing, so asking for its level would
+     * read zero and refuse an administrator. Administration transfers because it administers; everyone
+     * else transfers by their level in the group, and the two are separate answers rather than one.
      */
-    const allowed = await canTransferMediaAssetOwnership({
+    const allowed = siteWide || await canTransferMediaAssetOwnership({
       siteId: site.id,
       groupId: space.groupId,
       actorId: actorUserId,
