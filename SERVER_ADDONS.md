@@ -148,6 +148,24 @@ version is independent from provider package version.
 @phis/github/issues:v1
 ```
 
+The version sits in the id, which is why a Capability carries no separate interface digest the way a
+service kind does. A shape change raises the id to `:v2`, Core stops offering `:v1`, and an Add-on
+requiring the old one is refused at dispatch by name alone. A service kind has no version in its name
+and needs the digest to say the same thing.
+
+### How a Capability reaches an Add-on
+
+Declaring one is not receiving one. `requiredCoreCapabilities` decides whether the Add-on may run at
+all; what it then gets is a bound object on its request context, built per request, with the Site and
+the acting user closed over. There is no argument through which an Add-on could name another Site or
+ask about somebody else -- the restriction is the shape of the thing rather than a check inside it,
+which is the same reason a Storage Provider is handed its own secret instead of a reference it could
+substitute.
+
+Only declared Capabilities are present, and a Capability this release does not offer never arrives as a
+broken object: the Add-on was already refused. An Add-on reaching for one it did not declare finds
+`undefined` at the point where it made the mistake.
+
 ## 2. Module-to-server binding
 
 Every Site Module declares exactly one server binding:
@@ -586,18 +604,54 @@ Core participates in the read-only discovery model as:
 @phis/phi-server/core
 ```
 
-The initial Core capabilities are:
+The Core capabilities are the ones `@phis/addon-contract` names, and that package owns the spelling:
 
 ```text
+@phis/phi-server/authentication:v1
+@phis/phi-server/authorization:v1
 @phis/phi-server/threads:v1
 @phis/phi-server/resource-links:v1
 @phis/phi-server/support:v1
 @phis/phi-server/groups:v1
-@phis/phi-server/media:v1
+@phis/phi-server/storage:v1
 ```
 
 Core descriptors are generated from the running release and reconciled into the registry. They are not
 editable Site settings and cannot be disabled per Site.
+
+### `authorization:v1`
+
+The one Capability that is delivered rather than only declared. It answers "may this actor", in the
+three places that question is decided: does the row belong to them, what level do they hold in its
+group, and what may they do on this Site at all.
+
+```text
+mayActOnRow({ table, id, intent })  -> boolean
+groupLevel(groupId)                 -> "member" | "author" | "editor" | "manager" | null
+hasSiteAccess(access)               -> boolean
+```
+
+`mayActOnRow` is the reason it exists. `ownerScoped` and `groupScoped` mean Core wrote `owner_user_id`
+and `group_id` on that table, so Core reads them back and applies the ladder itself. The Add-on names a
+row and an intent and never reproduces the rule -- which is what keeps one rule from becoming one
+implementation per package, each with its own mistakes. The schema is derived from the calling Add-on,
+so `table` can only ever address one of its own; a name that is not in its manifest never reaches a
+query. A table with neither scope answers false to everything: absence of a scope is not absence of a
+restriction.
+
+`groupLevel` names the level instead of returning the bits. The numeric ladder stays Core's, so no
+installed Add-on can come to depend on a value, and `hasSiteAccess` takes a symbolic access name rather
+than a role flag for the same reason.
+
+**It answers and grants nothing.** There is no operation here that changes a role, a membership, or an
+owner, and there must not be one -- a single Capability declaration would otherwise be permission to
+rewrite the authorization model instead of permission to consult it. Writes stay routes with their own
+authority.
+
+Two neighbours it is deliberately not: `authentication:v1` is who the actor is, and is spelled out
+rather than shortened to `auth` because the shortening would sit one letter from this one and mean the
+opposite half of the same word. `groups:v1` is group *facts* -- which groups exist, who is in them --
+while what follows from them is decided here.
 
 Package version, Add-on ABI version, capability version, migration version, and release build id are
 independent version axes and are never inferred from one another.

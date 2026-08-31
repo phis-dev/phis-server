@@ -22,6 +22,7 @@ import {
   type PhiServerAddonHttpMethod,
   type PhiServerAddonRequestContext,
 } from "@/lib/addons/contract";
+import { buildPhiServerAddonCapabilities } from "@/lib/addons/capabilities";
 import { hasPhiServerCoreCapability } from "@/lib/addons/core-capabilities";
 import {
   digestPhiServerAddonManifest,
@@ -392,6 +393,13 @@ export async function dispatchPhiServerAddonRequest(
           ? { id: identity.site.id, key: identity.site.key }
           : null,
         actor: identity.actor,
+        // Built here, per request, so the Site and actor above are the ones closed over. A capability
+        // hoisted out of the request would be a capability someone could reach with another's identity.
+        capabilities: buildPhiServerAddonCapabilities({
+          manifest: entry.manifest,
+          siteId: identity.site?.id ?? null,
+          actorUserId: identity.actor?.kind === "user" ? identity.actor.id : null,
+        }),
         signal: request.signal,
       },
       descriptor.timeoutMs ?? DEFAULT_API_TIMEOUT_MS,

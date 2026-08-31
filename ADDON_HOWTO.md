@@ -181,6 +181,11 @@ module scope empty.
 - **No dynamic import of a computed specifier.** An Add-on may not become a loader itself.
 - **No SQL, no migration steps, no direct database handle.** The request context deliberately carries
   none.
+- **No authorization of your own over Core's scopes.** If a table is `ownerScoped` or `groupScoped`,
+  Core wrote those columns and Core answers about them: declare `@phis/phi-server/authorization:v1` and
+  ask `context.capabilities.authorization.mayActOnRow({ table, id, intent })`. Rebuilding the ladder
+  locally is the parallel contract the Module guide forbids, and it will drift from Core's the first
+  time a level changes -- which has already happened once.
 - **No global registration and no import-side-effect registration.** Both are covered by the
   no-top-level-side-effects rule and are not extension APIs.
 - **No unbounded work.** A handler is raced against its declared `timeoutMs`, and losing that race
