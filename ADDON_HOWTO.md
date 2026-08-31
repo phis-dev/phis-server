@@ -67,8 +67,8 @@ Build every identifier from the Add-on id. The grammar is enforced where it is w
   and a rollback is a change of one field.
 - **`serverAbi`** -- the Add-on ABI range this artifact was built against, e.g. `^1`.
 
-Routes, hooks, jobs, capabilities, service providers, and the schema descriptor are documented in
-[SERVER_ADDONS.md](./SERVER_ADDONS.md). Two reminders that catch people out:
+Routes, hooks, jobs, settings, capabilities, service providers, and the schema and query descriptors
+are documented in [SERVER_ADDONS.md](./SERVER_ADDONS.md). Two reminders that catch people out:
 
 - A route `path` is relative to the fixed catch-all, so `ping` and `echo/:token`, never a leading
   slash and never `/api/v1/...`.
@@ -183,6 +183,9 @@ module scope empty.
   none. Declare the queries you run in the manifest and call them by name through
   `@phis/phi-server/data:v1`: `context.capabilities.data.select("mine", { ... })`. Core derives the
   statements once, puts the Site filter into every one of them, and writes the scope columns itself.
+- **No scheduler of your own.** Declare a job and let `phis addon job` start it. A `setInterval` in an
+  Add-on fires once per serving instance for one intended run, and there is no way for you to know how
+  many instances there are.
 - **No PII beyond what your actor could already see.** The request context carries a user *id*. A
   display name comes from `@phis/phi-server/groups:v1`, and only for someone the acting user shares a
   group with; an email address is not on offer at all. If you need a person to receive a message, that

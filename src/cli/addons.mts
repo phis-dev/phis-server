@@ -618,3 +618,17 @@ export async function purgeAddon(root: string, flags: FlagMap, pool: Pool) {
   const result = await purgePhiServerAddon(pool, addonId);
   return { ok: true, action: "addon.purge", ...result };
 }
+
+/**
+ * What an installed Add-on says is configurable.
+ *
+ * Read from the desired state rather than from the running server: `phis addon config` has to work
+ * before an instance is up, and the descriptors travel with the installation anyway.
+ */
+export function readInstalledAddonSettings(root: string, addonId: string) {
+  const entry = readAddonDesiredState(root).addons.find((addon) => addon.addonId === addonId);
+  if (!entry) {
+    throw new Error(`Add-on ${addonId} is not installed.`);
+  }
+  return entry.manifest.settings ?? [];
+}

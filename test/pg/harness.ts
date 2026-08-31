@@ -398,3 +398,30 @@ export async function withPhiTestClient<T>(body: (client: PoolClient) => Promise
 export async function closePhiTestPool(): Promise<void> {
   await getPool().end();
 }
+
+/**
+ * Puts one Add-on's activation row in place for a Site.
+ *
+ * Settings live on that row, so a test that configures an Add-on needs it to exist -- exactly as an
+ * operator does, which is why the CLI refuses to configure an Add-on that was never enabled here.
+ */
+export async function activatePhiTestAddonForSite(
+  site: PhiTestSite,
+  addonId: string,
+): Promise<void> {
+  const pool = await requirePhiTestDatabase();
+  await pool.query(
+    `INSERT INTO phis.server_addons (
+       addon_id, package_name, package_version, server_abi, manifest_digest,
+       migration_version, release_build_id, flags
+     ) VALUES ($1, $2, '0.0.0', '^1', 'pgtest', 0, 'pgtest', 0)
+     ON CONFLICT (addon_id) DO NOTHING`,
+    [addonId, `${addonId}-server`],
+  );
+  await pool.query(
+    `INSERT INTO phis.site_server_addons (site_id, addon_id)
+     VALUES ($1, $2)
+     ON CONFLICT (site_id, addon_id) DO NOTHING`,
+    [site.id, addonId],
+  );
+}

@@ -67,14 +67,13 @@ fallback:
 - `@phis/addon-sdk`. The contract package is published and depended on; the build-time half described in
   section 3 -- descriptor builders, result-type generation, a context double -- has no package yet.
 - Site-admin activation/configuration API and provider setup flows
-- jobs, Threads, and Resource Link adapters in handler context. Five Capabilities are delivered, each
-  bound to the request -- `authorization:v1`, `data:v1`, `storage:v1`, `secrets:v1`, `groups:v1` -- and
-  the rest of that list is not. `jobs` is the gap that matters: a job descriptor is declared and
-  validated, and nothing runs it. A Storage Provider factory receives the restricted service context
-  section 10 describes: one nullary reader bound at construction to the secret its own Storage Profile
-  names, with no argument through which another could be named.
-- an operator-editable configuration surface per Add-on. Secrets are not it: a commission rate or a
-  moderation switch is neither secret nor something the secret store should be asked to hold.
+- Threads and Resource Link adapters in handler context. Six Capabilities are delivered, each bound to
+  the request or the job -- `authorization:v1`, `data:v1`, `storage:v1`, `secrets:v1`, `settings:v1`,
+  `groups:v1` -- and those two are not. A Storage Provider factory receives the restricted service
+  context section 10 describes: one nullary reader bound at construction to the secret its own Storage
+  Profile names, with no argument through which another could be named.
+- a Site-admin surface over what `phis addon config` writes. The values are stored, declared, and
+  readable; what is missing is a page rather than a mechanism.
 - startup instance heartbeat/readiness and load-balancer rollout reconciliation. `phis.server_instances`
   is declared and unwritten, so no deployment can yet tell whether every serving instance carries the
   same release.
@@ -746,6 +745,37 @@ asked separately.
 `user(userId)` answers null for somebody the actor shares no group with. That null is the point of the
 method: it is what stops a row's owner id from becoming a lookup into a Site's whole user table. An
 Add-on renders "listed by" and learns nothing else.
+
+### `settings:v1`
+
+`read(name)` and `all()`. What an operator configured with `phis addon config set`, stored in
+`site_server_addons.configuration_json` -- the row that already says whether the Add-on runs on that
+Site, which is where what it runs with belongs.
+
+Distinct from `secrets:v1` on purpose: a commission rate is not a credential, and asking the secret
+store to hold one would make what is configured unreadable to the operator who configured it.
+
+The declared descriptors are the shape of the answer, not the stored row. A value nobody set falls back
+to its declared default; a stored key nobody declares is ignored; a stored value of the wrong type falls
+back rather than being handed over. An Add-on therefore reads exactly what it declared it would read,
+whatever has accumulated in the column across versions. As with secrets, there is no writer.
+
+## 12a. Jobs
+
+A job is declared as `{ id, handler, suggestedInterval? }` and run by `phis addon job`, which posts to
+the serving instance. It is not scheduled by Core, and the interval is documentation for the operator
+rather than a promise: phi-server serves from several instances, so an in-process timer would fire once
+per instance for one intended run, and every Add-on would have to defend against a concurrency nobody
+asked for. The operator's own scheduler is one runner by construction.
+
+**A job has no actor.** It is the Add-on acting on its own data, not a person acting through it, so the
+row-level ladder has nobody to apply and `data:v1` writes with system authority inside one. That is
+exactly why a job is reachable only through the internal-token route and never from a request: an Add-on
+able to start its own job from a handler would have built itself a way around the ladder.
+
+The job runs in the serving process rather than in the CLI, against the release that instance actually
+serves. The CLI stays a caller instead of becoming a second runtime that would have to reproduce the
+loader, the pool, and the capability bindings.
 
 Package version, Add-on ABI version, capability version, migration version, and release build id are
 independent version axes and are never inferred from one another.

@@ -46,9 +46,15 @@ import {
   migrateAddons,
   purgeAddon,
   reconcileAddons,
+  readInstalledAddonSettings,
   removeAddon,
   setAddonEnabled,
 } from "./addons.mts";
+import {
+  parsePhiServerAddonSettingValue,
+  readPhiServerAddonSettings,
+  writePhiServerAddonSetting,
+} from "../db/server-addon-settings.mts";
 import { checkPhiDependencyLicenses } from "./licenses.mts";
 import { checkPhiMediaOwnership } from "./media-check.mts";
 import {
@@ -200,6 +206,10 @@ Usage:
   phis addon remove --addon <@scope/name>
   phis addon enable --addon <@scope/name>
   phis addon disable --addon <@scope/name>
+  phis addon config --addon <@scope/name> --site <site key>
+                    [--name <setting> [--value <value>]]
+  phis addon job    --addon <@scope/name> --job <job id> --site <site key>
+                    [--api-base-url <url>]
   phis addon reconcile --release <release/build id>
   phis addon migrate --release <release/build id> [--addon <@scope/name>]
   phis addon purge --addon <@scope/name>
@@ -1841,6 +1851,105 @@ async function main() {
         result.schemaName
           ? `Dropped schema ${result.schemaName} and every record of ${result.addonId}.`
           : `Removed every record of ${result.addonId}, which owned no tables.`,
+      );
+    }
+    return;
+  }
+
+  if (group === "addon" && command === "job") {
+    const addonId = getRequiredFlag(flags, "addon");
+    const jobId = getRequiredFlag(flags, "job");
+    const site = await getSiteByKey(getRequiredFlag(flags, "site"));
+    /*
+     * Posted to the serving instance rather than run here. The Add-on is loaded there, against the
+     * release that instance actually serves, and the CLI stays a caller instead of becoming a second
+     * runtime that would have to reproduce the loader, the pool, and the capability bindings.
+     */
+    const mergedConfig = readCliMergedConfig();
+    const apiBaseUrl = (getOptionalFlag(flags, "api-base-url")
+      ?? "http://127.0.0.1:3000").replace(/\/+$/, "");
+    const internalToken = mergedConfig.api?.internalToken?.trim() ?? "";
+    if (!internalToken) {
+      throw new Error("Missing api.internalToken; a job is started through the serving instance.");
+    }
+    const response = await fetch(`${apiBaseUrl}/api/v1/addons/jobs`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-phi-token": internalToken },
+      body: JSON.stringify({ addonId, jobId, siteKey: site.key }),
+    });
+    const outcome = await response.json().catch(() => ({ error: "The server answered unreadably." }));
+    if (json) {
+      printJson(outcome);
+    } else if (response.ok) {
+      console.log(`Ran ${addonId} job ${jobId} for ${site.key} (run ${outcome.runId}).`);
+    } else {
+      console.error(`Job ${jobId} did not run for ${site.key}: ${outcome.error ?? response.status}`);
+    }
+    if (!response.ok) {
+      process.exitCode = 1;
+    }
+    return;
+  }
+
+  if (group === "addon" && command === "config") {
+    const addonId = getRequiredFlag(flags, "addon");
+    const site = await getSiteByKey(getRequiredFlag(flags, "site"));
+    const declared = readInstalledAddonSettings(configRoot, addonId);
+    const action = getOptionalFlag(flags, "name") == null ? "list" : "set";
+    if (action === "list") {
+      const stored = await readPhiServerAddonSettings(getPool(), addonId, site.id);
+      const rows = declared.map((descriptor) => ({
+        name: descriptor.name,
+        type: descriptor.type,
+        description: descriptor.description ?? null,
+        value: stored[descriptor.name] ?? descriptor.default ?? null,
+        configured: descriptor.name in stored,
+      }));
+      if (json) {
+        printJson({ ok: true, addon: addonId, site: site.key, settings: rows });
+      } else if (rows.length === 0) {
+        console.log(`${addonId} declares nothing configurable.`);
+      } else {
+        for (const row of rows) {
+          console.log(
+            `${row.name}  ${row.type}  ${row.configured ? "" : "(default) "}${String(row.value)}` +
+            (row.description ? `  -- ${row.description}` : ""),
+          );
+        }
+      }
+      return;
+    }
+    const name = getRequiredFlag(flags, "name");
+    const descriptor = declared.find((entry) => entry.name === name);
+    if (!descriptor) {
+      throw new Error(
+        `${addonId} declares no setting named "${name}". Run without --name to see what it does.`,
+      );
+    }
+    const raw = getOptionalFlag(flags, "value");
+    // Absent `--value` clears the setting, which is how a Site goes back to the declared default.
+    const value = raw == null
+      ? null
+      : (() => {
+        const parsed = parsePhiServerAddonSettingValue(descriptor, raw);
+        if ("error" in parsed) {
+          throw new Error(`${name}: ${parsed.error}`);
+        }
+        return parsed.value;
+      })();
+    const written = await writePhiServerAddonSetting(getPool(), { addonId, siteId: site.id, name, value });
+    if (!written) {
+      throw new Error(
+        `${addonId} is not activated for ${site.key}; there is no row to configure. Enable it first.`,
+      );
+    }
+    if (json) {
+      printJson({ ok: true, addon: addonId, site: site.key, name, value });
+    } else {
+      console.log(
+        value === null
+          ? `Cleared ${name} for ${addonId} on ${site.key}; the declared default applies.`
+          : `Set ${name} for ${addonId} on ${site.key}.`,
       );
     }
     return;

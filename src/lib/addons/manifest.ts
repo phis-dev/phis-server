@@ -33,6 +33,8 @@ const DIGEST_PATTERN = /^[a-f0-9]{64}$/;
 const ROUTE_SEGMENT_PATTERN = /^(?:[a-z0-9][a-z0-9._-]*|:[a-z][a-zA-Z0-9_]*)$/;
 const HTTP_METHODS = new Set(["DELETE", "GET", "PATCH", "POST", "PUT"]);
 const AUTH_POLICIES = new Set(["internal", "site-user", "site-admin", "operator"]);
+const SETTING_NAME_PATTERN = /^[a-z][a-z0-9-]{0,63}$/;
+const SETTING_TYPES = new Set(["text", "integer", "boolean"]);
 const POSTGRES_SMALLINT_MAX = 32_767;
 const COMPATIBLE_SERVER_ABI_PATTERNS = [
   /^1(?:\.0(?:\.0)?)?$/,
@@ -399,6 +401,37 @@ export function validatePhiServerAddonManifest(
   } else {
     schema = validatePhiServerAddonSchemaDescriptor(value.schema, "schema", issues);
   }
+
+  const settings = Array.isArray(value.settings) ? value.settings : [];
+  if (!Array.isArray(value.settings)) {
+    issues.push("settings must be an array.");
+  }
+  const settingNames: string[] = [];
+  for (const [index, setting] of settings.entries()) {
+    if (!isRecord(setting)) {
+      issues.push(`settings[${index}] must be an object.`);
+      continue;
+    }
+    const name = readString(setting.name, `settings[${index}].name`, issues);
+    if (name && !SETTING_NAME_PATTERN.test(name)) {
+      issues.push(`settings[${index}].name is invalid.`);
+    }
+    settingNames.push(name);
+    if (!SETTING_TYPES.has(String(setting.type))) {
+      issues.push(`settings[${index}].type must be text, integer, or boolean.`);
+    }
+    // A default that does not match its own type would be handed to the Add-on as if an operator had
+    // set it, which is a worse failure than refusing the manifest.
+    const expected = setting.type === "integer"
+      ? "number"
+      : setting.type === "boolean"
+        ? "boolean"
+        : "string";
+    if (setting.default !== undefined && typeof setting.default !== expected) {
+      issues.push(`settings[${index}].default is not a ${String(setting.type)}.`);
+    }
+  }
+  assertUnique(settingNames, "settings", issues);
 
   let queries: PhiServerAddonQueryCatalog | null = null;
   if (value.queries === null) {

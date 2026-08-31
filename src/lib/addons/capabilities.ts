@@ -34,6 +34,7 @@ import { getPool } from "@/lib/db";
 import { buildPhiServerAddonDataCapability } from "./data-capability.ts";
 import { buildPhiServerAddonGroupsCapability } from "./groups-capability.ts";
 import { buildPhiServerAddonSecretsCapability } from "./secrets-capability.ts";
+import { buildPhiServerAddonSettingsCapability } from "./settings-capability.ts";
 import { buildPhiServerAddonStorageCapability } from "./storage-capability.ts";
 import { ensureSiteMediaConfig } from "@/db/media-spaces";
 import { getEffectiveUserSiteAuthorization } from "@/db/user-site-memberships";
@@ -233,6 +234,11 @@ export function buildPhiServerAddonCapabilities(input: {
   siteId: number | null;
   siteKey?: string | null;
   actorUserId: number | null;
+  /**
+   * A job runs as the Add-on, not as a person, so the row-level ladder has nobody to apply. Set only by
+   * the job runner, which is reachable from the CLI and never from a request.
+   */
+  systemAuthority?: boolean;
 }): PhiServerAddonCapabilities {
   const capabilities: PhiServerAddonCapabilities = {};
   if (input.siteId == null) {
@@ -260,8 +266,17 @@ export function buildPhiServerAddonCapabilities(input: {
       manifestDigest: input.manifestDigest,
       siteId,
       actorUserId: input.actorUserId,
-      mayActOnRow: ({ table, id, intent }) =>
-        authorization.mayActOnRow({ table, id: id as number | string, intent }),
+      mayActOnRow: input.systemAuthority
+        ? () => Promise.resolve(true)
+        : ({ table, id, intent }) =>
+          authorization.mayActOnRow({ table, id: id as number | string, intent }),
+    });
+  }
+  if (required.includes(PHI_SERVER_CORE_CAPABILITIES.settings)) {
+    capabilities.settings = buildPhiServerAddonSettingsCapability({
+      addonId: input.manifest.addonId,
+      siteId,
+      declared: input.manifest.settings,
     });
   }
   if (required.includes(PHI_SERVER_CORE_CAPABILITIES.groups)) {

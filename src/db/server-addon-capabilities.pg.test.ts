@@ -1,7 +1,9 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { buildPhiServerAddonGroupsCapability } from "@/lib/addons/groups-capability";
+import { buildPhiServerAddonSettingsCapability } from "@/lib/addons/settings-capability";
 import { buildPhiServerAddonStorageCapability } from "@/lib/addons/storage-capability";
+import { writePhiServerAddonSetting } from "@/db/server-addon-settings.mts";
 import { PhiGroupMembershipFlags } from "@/lib/constants/site-groups";
 import {
   addPhiTestGroupMember,
@@ -11,6 +13,7 @@ import {
   createPhiTestUser,
   dropPhiTestSites,
   requirePhiTestDatabase,
+  activatePhiTestAddonForSite,
   setPhiTestMediaConfig,
   type PhiTestSite,
 } from "../../test/pg/harness";
@@ -87,6 +90,67 @@ describe("what an Add-on may learn about a person", () => {
 
   it("says nothing about a group its actor is not in", async () => {
     expect(await capability(actor).members(otherGroupId)).toEqual([]);
+  });
+});
+
+describe("what an operator configured", () => {
+  let site: PhiTestSite;
+  const declared = [
+    { name: "greeting", type: "text" as const, default: "hello" },
+    { name: "batch-size", type: "integer" as const, default: 10 },
+    { name: "moderated", type: "boolean" as const },
+  ];
+
+  beforeAll(async () => {
+    await requirePhiTestDatabase();
+    site = await createPhiTestSite("addon-settings");
+    await activatePhiTestAddonForSite(site, ADDON_ID);
+  });
+
+  function settings() {
+    return buildPhiServerAddonSettingsCapability({ addonId: ADDON_ID, siteId: site.id, declared });
+  }
+
+  it("answers the declared default until an operator says otherwise", async () => {
+    expect(await settings().all()).toEqual({
+      greeting: "hello",
+      "batch-size": 10,
+      // Declared without a default: null is the honest answer, not an invented one.
+      moderated: null,
+    });
+  });
+
+  it("answers what the operator set, and goes back to the default when it is cleared", async () => {
+    const pool = await requirePhiTestDatabase();
+    await writePhiServerAddonSetting(pool, {
+      addonId: ADDON_ID, siteId: site.id, name: "greeting", value: "good day",
+    });
+    expect(await settings().read("greeting")).toBe("good day");
+
+    await writePhiServerAddonSetting(pool, {
+      addonId: ADDON_ID, siteId: site.id, name: "greeting", value: null,
+    });
+    expect(await settings().read("greeting")).toBe("hello");
+  });
+
+  it("ignores a stored key the Add-on no longer declares", async () => {
+    const pool = await requirePhiTestDatabase();
+    await writePhiServerAddonSetting(pool, {
+      addonId: ADDON_ID, siteId: site.id, name: "retired", value: "left over",
+    });
+    expect(await settings().read("retired")).toBeNull();
+    expect(Object.keys(await settings().all()).sort())
+      .toEqual(["batch-size", "greeting", "moderated"]);
+  });
+
+  it("falls back rather than handing over a value of the wrong type", async () => {
+    const pool = await requirePhiTestDatabase();
+    // Not reachable through the CLI, which parses first -- but a hand-edited row is, and an Add-on
+    // must not be handed a string where it declared an integer.
+    await writePhiServerAddonSetting(pool, {
+      addonId: ADDON_ID, siteId: site.id, name: "batch-size", value: "many",
+    });
+    expect(await settings().read("batch-size")).toBe(10);
   });
 });
 

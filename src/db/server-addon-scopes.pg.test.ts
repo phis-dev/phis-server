@@ -68,6 +68,7 @@ const manifest = {
   apiRoutes: [],
   hooks: [],
   jobs: [],
+  settings: [],
   schema: target.descriptor,
   queries: {
     parameters: {
@@ -327,6 +328,27 @@ describe("owner-scoped and group-scoped Add-on tables", () => {
         throw new Error("changed my mind");
       })).rejects.toThrow(/changed my mind/);
       expect(await data.select("mine")).toEqual([]);
+    });
+
+    it("writes past the ladder under system authority, which is what a job runs with", async () => {
+      const author = await memberAt(PhiGroupMembershipFlags.Author);
+      const theirs = await listingOwnedBy(author);
+
+      // A job has no actor: nobody owns anything, so the ladder has nothing to apply. Without the
+      // system flag this is the refusal the previous test asserts.
+      const asJob = buildPhiServerAddonCapabilities({
+        manifest,
+        manifestDigest: "pgtest-data",
+        siteId: site.id,
+        actorUserId: null,
+        systemAuthority: true,
+      }).data!;
+      expect(await asJob.update("rename", { id: theirs, title: "swept" })).toBe(1);
+
+      const asNobody = buildPhiServerAddonCapabilities({
+        manifest, manifestDigest: "pgtest-data", siteId: site.id, actorUserId: null,
+      }).data!;
+      expect(await asNobody.update("rename", { id: theirs, title: "not swept" })).toBe(0);
     });
 
     it("refuses a query name the manifest never declared", async () => {

@@ -1,0 +1,128 @@
+import "server-only";
+
+import { randomUUID } from "node:crypto";
+
+import type { PhiServerAddonBuildEntry, PhiServerAddonJobContext } from "./contract.ts";
+import { buildPhiServerAddonCapabilities } from "./capabilities.ts";
+import { hasPhiServerCoreCapability } from "./core-capabilities.ts";
+import { getPhiServerAddonInstalledManifest } from "./installed.ts";
+import {
+  digestPhiServerAddonManifest,
+  validatePhiServerAddonManifest,
+} from "./manifest.ts";
+import { isPhiServerAddonEnabledForSite } from "@/db/server-addons";
+
+/**
+ * Running an Add-on's declared jobs.
+ *
+ * There is no in-process scheduler and there should not be one. phi-server serves from several
+ * instances, so a timer would fire once per instance for one intended run, and the Add-on would have to
+ * defend against a concurrency nobody asked for. The operator schedules `phis addon job run` -- through
+ * systemd, cron, or whatever already runs their maintenance -- which is exactly one runner by
+ * construction. What the Add-on wants is documentation on the descriptor, not a promise Core keeps.
+ *
+ * A job has no actor. It is the Add-on acting on its own data rather than a person acting through it,
+ * so the row-level ladder does not apply inside one, and `data:v1` writes with system authority. That
+ * is also why a job is reachable only from the CLI: an Add-on able to start its own job from a request
+ * would have built itself a way around the ladder.
+ */
+
+export type PhiServerAddonJobOutcome = {
+  addonId: string;
+  jobId: string;
+  siteKey: string;
+  runId: string;
+  ok: boolean;
+  error?: string;
+};
+
+export class PhiServerAddonJobError extends Error {}
+
+function requireEntry(addonId: string): PhiServerAddonBuildEntry {
+  const entry = getPhiServerAddonInstalledManifest()[addonId];
+  if (!entry) {
+    throw new PhiServerAddonJobError(`${addonId} is not installed.`);
+  }
+  if (!entry.enabled) {
+    throw new PhiServerAddonJobError(`${addonId} is not enabled.`);
+  }
+  const validation = validatePhiServerAddonManifest(entry.manifest);
+  if (
+    !validation.manifest ||
+    digestPhiServerAddonManifest(validation.manifest) !== entry.manifestDigest
+  ) {
+    throw new PhiServerAddonJobError(`${addonId} has an invalid build manifest.`);
+  }
+  for (const capability of entry.manifest.requiredCoreCapabilities) {
+    if (!hasPhiServerCoreCapability(capability)) {
+      throw new PhiServerAddonJobError(`${addonId} requires the missing Core capability ${capability}.`);
+    }
+  }
+  return entry;
+}
+
+/**
+ * Runs one declared job for one Site.
+ *
+ * The Site is required rather than optional. An Add-on's tables are Site-scoped, its settings and
+ * secrets are per Site, and a job that quietly ran against "all of them at once" would have no Site to
+ * bind its capabilities to. Running everywhere is the caller's loop, not a hidden one here.
+ */
+export async function runPhiServerAddonJob(input: {
+  addonId: string;
+  jobId: string;
+  site: { id: number; key: string };
+  signal?: AbortSignal;
+}): Promise<PhiServerAddonJobOutcome> {
+  const { addonId, jobId, site } = input;
+  const runId = randomUUID();
+  const entry = requireEntry(addonId);
+
+  const descriptor = entry.manifest.jobs.find((job) => job.id === jobId);
+  if (!descriptor) {
+    throw new PhiServerAddonJobError(`${addonId} declares no job named ${jobId}.`);
+  }
+  if (!await isPhiServerAddonEnabledForSite(addonId, site.id)) {
+    throw new PhiServerAddonJobError(`${addonId} is not enabled for ${site.key}.`);
+  }
+
+  const runtimeModule = await entry.load();
+  const handler = runtimeModule.phiServerAddon.jobHandlers?.[descriptor.handler];
+  if (typeof handler !== "function") {
+    throw new PhiServerAddonJobError(
+      `${addonId} exports no job handler named ${descriptor.handler}.`,
+    );
+  }
+
+  const controller = new AbortController();
+  input.signal?.addEventListener("abort", () => controller.abort(), { once: true });
+  const context: PhiServerAddonJobContext = {
+    addonId,
+    jobId,
+    runId,
+    site,
+    capabilities: buildPhiServerAddonCapabilities({
+      manifest: entry.manifest,
+      manifestDigest: entry.manifestDigest,
+      siteId: site.id,
+      siteKey: site.key,
+      actorUserId: null,
+      systemAuthority: true,
+    }),
+    signal: controller.signal,
+  };
+
+  try {
+    await handler(context);
+    return { addonId, jobId, siteKey: site.key, runId, ok: true };
+  } catch (error) {
+    return {
+      addonId,
+      jobId,
+      siteKey: site.key,
+      runId,
+      ok: false,
+      error: error instanceof Error ? error.message : "The job failed.",
+    };
+  }
+}

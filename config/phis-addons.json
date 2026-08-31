@@ -5,8 +5,8 @@
       "addonId": "@phis/storage-s3",
       "packageName": "@phis/storage-s3-server",
       "packageVersion": "0.1.0",
-      "manifestDigest": "cfffefbde94bbb71578241e4796ff9d52d2a08b99038ac866d68aadc4f8edf98",
-      "artifactDigest": "2c829f49c01f1ae036d3ddbcee6141dcef0371274fca8bdfd80634f350f348b6",
+      "manifestDigest": "fcb4c59bbdf713f31b0f0bed9233e7ec570319febb48ebfb999fe8585c9d01ad",
+      "artifactDigest": "81c3958e2a2c60740c981d1737f219cdea2fc7a34a5c66283b3e706f566a657e",
       "manifest": {
         "manifestVersion": 1,
         "addonId": "@phis/storage-s3",
@@ -29,6 +29,7 @@
         "jobs": [],
         "schema": null,
         "queries": null,
+        "settings": [],
         "migrationVersion": 0
       },
       "enabled": true
