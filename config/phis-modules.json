@@ -1,0 +1,14 @@
+{
+  "formatVersion": 1,
+  "sites": {
+    "skeleton": {
+      "modules": [
+        {
+          "packageName": "@phis/module-probe",
+          "origin": "resolved",
+          "spec": "workspace:*"
+        }
+      ]
+    }
+  }
+}

@@ -41,7 +41,7 @@ describe("classifyPhiLicenseExpression", () => {
 describe("checkPhiDependencyLicenses", () => {
   it("finds nothing in the Server's production closure that has not been accepted", () => {
     const report = checkPhiDependencyLicenses();
-    expect(report.packageName).toBe("phis");
+    expect(report.packageName).toBe("@phis/server");
     expect(report.scannedProduction).toBeGreaterThan(0);
     expect(report.blocking).toEqual([]);
   });

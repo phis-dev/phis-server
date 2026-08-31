@@ -52,6 +52,14 @@ import {
   setAddonEnabled,
 } from "./addons.mts";
 import {
+  addSiteModuleDependency,
+  readSiteModuleDesiredState,
+  removeSiteModuleDependency,
+  writeSiteModuleDesiredState,
+  writeSiteModuleProjection,
+  type PhiSiteModuleEntry,
+} from "./modules.mts";
+import {
   parsePhiServerAddonSettingValue,
   readPhiServerAddonSettings,
   writePhiServerAddonSetting,
@@ -215,6 +223,10 @@ Usage:
   phis addon reconcile --release <release/build id>
   phis addon migrate --release <release/build id> [--addon <@scope/name>]
   phis addon purge --addon <@scope/name>
+  phis module list [--site <site key>]
+  phis module add --site <site key> --package <@scope/name> [--spec <version or workspace:*>]
+  phis module del --site <site key> --package <@scope/name>
+  phis module sync --site <site key>
 `);
 }
 
@@ -871,6 +883,113 @@ function readSiteScaffoldPackageManager(flags: FlagMap): PhiSiteScaffoldPackageM
   const value = getOptionalFlag(flags, "package-manager") ?? "pnpm";
   if (value === "pnpm" || value === "npm" || value === "yarn" || value === "bun") return value;
   throw new Error(`Unsupported package manager: ${value}.`);
+}
+
+/**
+ * The Site Module commands.
+ *
+ * `add` and `del` record what an operator installed and rewrite the projection in the same step, because
+ * for a Module the generated file *is* the application -- there is no separate reconcile the way an
+ * Add-on artifact needs one. `sync` exists for the case where the projection and the desired state have
+ * drifted, after a scaffold or a hand edit.
+ */
+async function runSiteModuleCommand(command: string, flags: FlagMap, json: boolean) {
+  const requireFlag = (key: string) => {
+    const value = getOptionalFlag(flags, key);
+    if (!value) {
+      throw new Error(`Missing --${key}.`);
+    }
+    return value;
+  };
+
+  if (command === "list") {
+    const siteKey = getOptionalFlag(flags, "site");
+    const state = readSiteModuleDesiredState(configRoot);
+    const rows = siteKey
+      ? [[siteKey, state.sites[siteKey]?.modules ?? []] as const]
+      : Object.entries(state.sites).map(([key, site]) => [key, site.modules] as const);
+    if (json) {
+      printJson(Object.fromEntries(rows));
+      return;
+    }
+    if (rows.length === 0) {
+      console.log("No Site Modules installed.");
+      return;
+    }
+    for (const [key, modules] of rows) {
+      console.log(`${key}: ${modules.length === 0 ? "none" : ""}`);
+      for (const entry of modules) {
+        console.log(`  ${entry.packageName}  origin=${entry.origin}${entry.spec ? `  spec=${entry.spec}` : ""}`);
+      }
+    }
+    return;
+  }
+
+  const site = await getSiteByKey(requireFlag("site"));
+  const mergedConfig = readCliMergedConfig();
+  const siteRoot = getOptionalFlag(flags, "path") ?? resolveSiteSource(site, mergedConfig.sites).path;
+  const state = readSiteModuleDesiredState(configRoot);
+  const current = state.sites[site.key]?.modules ?? [];
+
+  if (command === "sync") {
+    const result = writeSiteModuleProjection(siteRoot, current);
+    if (json) {
+      printJson({ site: site.key, root: siteRoot, ...result });
+    } else {
+      console.log(`Wrote the projection for ${site.key} (${result.moduleCount} Module(s)); rebuild the Site.`);
+    }
+    return;
+  }
+
+  if (command === "add") {
+    const packageName = requireFlag("package");
+    const spec = getOptionalFlag(flags, "spec");
+    if (current.some((entry) => entry.packageName === packageName)) {
+      throw new Error(`${packageName} is already installed for site ${site.key}.`);
+    }
+    // A spec means the package is written into the Site's dependencies; without one it has to be
+    // resolvable already. Nothing is fetched here either way.
+    const entry: PhiSiteModuleEntry = {
+      packageName,
+      origin: spec ? "resolved" : "local",
+      ...(spec ? { spec } : {}),
+    };
+    state.sites[site.key] = { modules: [...current, entry] };
+    if (spec) {
+      addSiteModuleDependency(siteRoot, packageName, spec);
+    }
+    writeSiteModuleDesiredState(configRoot, state);
+    const result = writeSiteModuleProjection(siteRoot, state.sites[site.key].modules);
+    if (json) {
+      printJson({ site: site.key, root: siteRoot, added: entry, ...result });
+    } else {
+      console.log(
+        `Installed ${packageName} for ${site.key}. Install dependencies and rebuild the Site; then activate the Module for an Area in the Builder.`,
+      );
+    }
+    return;
+  }
+
+  if (command === "del") {
+    const packageName = requireFlag("package");
+    if (!current.some((entry) => entry.packageName === packageName)) {
+      throw new Error(`${packageName} is not installed for site ${site.key}.`);
+    }
+    state.sites[site.key] = {
+      modules: current.filter((entry) => entry.packageName !== packageName),
+    };
+    const removedDependency = removeSiteModuleDependency(siteRoot, packageName);
+    writeSiteModuleDesiredState(configRoot, state);
+    const result = writeSiteModuleProjection(siteRoot, state.sites[site.key].modules);
+    if (json) {
+      printJson({ site: site.key, root: siteRoot, removed: packageName, removedDependency, ...result });
+    } else {
+      console.log(`Removed ${packageName} from ${site.key}; rebuild the Site.`);
+    }
+    return;
+  }
+
+  throw new Error(`Unknown module command: ${command}`);
 }
 
 async function runSiteScaffoldCommand(
@@ -1727,6 +1846,11 @@ async function main() {
         );
       }
     }
+    return;
+  }
+
+  if (group === "module") {
+    await runSiteModuleCommand(command, flags, json);
     return;
   }
 
