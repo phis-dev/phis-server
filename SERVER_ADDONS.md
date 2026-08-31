@@ -701,6 +701,32 @@ reads the table. The Add-on neither writes the column nor is able to forget it. 
 same way. Deleting a Site stays complete, and data that outlives its Site is not a feature of Add-on
 ownership.
 
+Two further scopes work the same way and exist for a different reason: they carry authority rather than
+a boundary.
+
+A table states that it is **owner-scoped**; Core adds `owner_user_id`, its foreign key to the user, and
+answers whether a row belongs to the acting user. The column is nullable and a deleted user leaves it
+null rather than taking the rows along, so a row without an owner belongs to nobody and no membership
+level reaches it through ownership. This is authority, not history: a table that only wants to record
+who created a row uses an ordinary `core.user` reference column, which grants nothing.
+
+A table states that it is **group-scoped**; Core adds `group_id` and binds it, and the group membership
+levels then apply to that table. Group scope requires Site scope, because a group has no meaning without
+a Site, and Core binds the pair `(group_id, site_id)` against the unique key `site_groups` carries for
+exactly this purpose. The group id alone would let a row name a group belonging to a different Site, and
+neither the Add-on nor the database would see that it had. A `core.group` reference column is bound the
+same way and is therefore also confined to a Site-scoped table, and to `ON DELETE CASCADE` -- `SET NULL`
+would clear the Site column along with it.
+
+The reason these two belong to Core and not to each Add-on is that the rule they encode -- a person may
+edit and delete what they created, and a group's members reach the group's rows by their level -- is one
+rule. Left to the packages it becomes one implementation per package, each with its own mistakes, and no
+consistent answer to who could do what.
+
+Making a Core table referenceable is also an operational act, not only a contract one: the role that
+migrates an Add-on's schema needs `REFERENCES` on that table, and the Add-on's foreign key fails at
+migration time without it.
+
 Because Core writes the statements, these rules are mostly guaranteed rather than requested. The
 verification that remains has a different addressee than it used to: after applying a descriptor,
 `phis-cli` reads `information_schema` and refuses the result when a table sits outside the Add-on's

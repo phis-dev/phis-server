@@ -49,13 +49,62 @@ describe("schema descriptor validation", () => {
     expect(descriptor).not.toBeNull();
   });
 
-  it("refuses a column the Add-on does not own", () => {
+  it.each([
+    ["site_id", "siteScoped"],
+    ["group_id", "groupScoped"],
+    ["owner_user_id", "ownerScoped"],
+  ])("refuses %s, which Core writes itself", (columnName, scope) => {
     const { issues } = validate(
       withTable((table) => {
-        (table.columns as Record<string, unknown>[]).push({ name: "site_id", type: "integer" });
+        (table.columns as Record<string, unknown>[]).push({ name: columnName, type: "integer" });
       }),
     );
-    expect(issues.join("\n")).toMatch(/Core writes for a Site-scoped table/);
+    expect(issues.join("\n")).toMatch(
+      new RegExp(`"${columnName}", which Core writes itself\\. Declare ${scope} instead\\.`),
+    );
+  });
+
+  it("accepts the owner and group scopes on a Site-scoped table", () => {
+    const { issues } = validate(
+      withTable((table) => {
+        table.ownerScoped = true;
+        table.groupScoped = true;
+      }),
+    );
+    expect(issues).toEqual([]);
+  });
+
+  it("refuses groupScoped without siteScoped", () => {
+    const { issues } = validate(
+      withTable((table) => {
+        table.siteScoped = false;
+        table.groupScoped = true;
+      }),
+    );
+    expect(issues.join("\n")).toMatch(/groupScoped requires siteScoped/);
+  });
+
+  it("refuses a group reference on a table that is not Site-scoped", () => {
+    const { issues } = validate(
+      withTable((table) => {
+        table.siteScoped = false;
+        (table.columns as Record<string, unknown>[]).push({
+          name: "audience", references: "core.group", onDelete: "cascade",
+        });
+      }),
+    );
+    expect(issues.join("\n")).toMatch(/so the table must be siteScoped/);
+  });
+
+  it("refuses setNull on a group reference, which would clear the Site column too", () => {
+    const { issues } = validate(
+      withTable((table) => {
+        (table.columns as Record<string, unknown>[]).push({
+          name: "audience", references: "core.group", onDelete: "setNull", nullable: true,
+        });
+      }),
+    );
+    expect(issues.join("\n")).toMatch(/must use onDelete "cascade"/);
   });
 
   it("refuses setNull on a column that cannot be null", () => {

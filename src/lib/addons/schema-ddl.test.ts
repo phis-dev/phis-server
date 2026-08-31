@@ -33,6 +33,55 @@ describe("schema DDL generation", () => {
     expect(sqlFor("index incident by Site")).toContain('("site_id")');
   });
 
+  it("writes the owner column nullable, so a deleted user leaves the rows behind", () => {
+    const scoped = buildPhiServerAddonSchemaStatements(SCHEMA, {
+      ...incidentSchemaDescriptor,
+      tables: incidentSchemaDescriptor.tables.map((table, index) =>
+        index === 0 ? { ...table, ownerScoped: true } : table,
+      ),
+    });
+    const create = scoped.find((entry) => entry.summary === "create table incident")!.sql;
+    expect(create).toContain('"owner_user_id" INTEGER NULL');
+    expect(scoped.find((entry) => entry.summary === "bind incident to its owner")!.sql).toContain(
+      "REFERENCES phis.user_accounts(id) ON DELETE SET NULL",
+    );
+    expect(scoped.some((entry) => entry.summary === "index incident by owner")).toBe(true);
+  });
+
+  it("binds a group together with its Site rather than by id alone", () => {
+    const scoped = buildPhiServerAddonSchemaStatements(SCHEMA, {
+      ...incidentSchemaDescriptor,
+      tables: incidentSchemaDescriptor.tables.map((table, index) =>
+        index === 0 ? { ...table, groupScoped: true } : table,
+      ),
+    });
+    expect(scoped.find((entry) => entry.summary === "create table incident")!.sql).toContain(
+      '"group_id" INTEGER NOT NULL',
+    );
+    expect(scoped.find((entry) => entry.summary === "bind incident to its group")!.sql).toContain(
+      'FOREIGN KEY ("group_id", "site_id") REFERENCES phis.site_groups(id, site_id) ON DELETE CASCADE',
+    );
+  });
+
+  it("gives a plain group reference the same composite binding", () => {
+    const [first, ...rest] = incidentSchemaDescriptor.tables;
+    const withAudience = buildPhiServerAddonSchemaStatements(SCHEMA, {
+      ...incidentSchemaDescriptor,
+      tables: [
+        {
+          ...first!,
+          columns: [
+            ...first!.columns,
+            { name: "audience", references: "core.group", onDelete: "cascade" } as const,
+          ],
+        },
+        ...rest,
+      ],
+    });
+    expect(withAudience.find((entry) => entry.summary === "point incident.audience at core.group")!.sql)
+      .toContain('FOREIGN KEY ("audience", "site_id") REFERENCES phis.site_groups(id, site_id)');
+  });
+
   it("resolves a symbolic Core reference to a table an Add-on never names", () => {
     const sql = sqlFor("point incident.reported_by at core.user");
     expect(sql).toContain("REFERENCES phis.user_accounts");

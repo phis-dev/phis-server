@@ -19,6 +19,8 @@ import {
   type PhiServerAddonTableDescriptor,
 } from "./contract.ts";
 import {
+  PHI_SERVER_ADDON_GROUP_COLUMN,
+  PHI_SERVER_ADDON_OWNER_COLUMN,
   PHI_SERVER_ADDON_SITE_COLUMN,
 } from "./schema-descriptor.ts";
 import { composePhiServerAddonObjectName } from "./schema-name.ts";
@@ -38,6 +40,11 @@ const CORE_REFERENCE_TARGETS: Record<string, { table: string; column: string; ty
   },
   [PHI_SERVER_ADDON_CORE_REFERENCES.user]: {
     table: "phis.user_accounts",
+    column: "id",
+    type: "INTEGER",
+  },
+  [PHI_SERVER_ADDON_CORE_REFERENCES.group]: {
+    table: "phis.site_groups",
     column: "id",
     type: "INTEGER",
   },
@@ -92,6 +99,23 @@ function isReferenceColumn(
 
 function qualify(schemaName: string, table: string) {
   return `${quotePhiIdentifier(schemaName)}.${quotePhiIdentifier(table)}`;
+}
+
+/**
+ * A group is always bound together with its Site, never by id alone.
+ *
+ * Core references `site_groups (id, site_id)` everywhere it points at a group, against the unique key
+ * the table carries for exactly this purpose. The id alone would let a row name a group of another
+ * Site, and no Add-on would see that it had done so.
+ */
+function groupForeignKey(schemaName: string, tableName: string, columnName: string) {
+  const target = CORE_REFERENCE_TARGETS[PHI_SERVER_ADDON_CORE_REFERENCES.group];
+  return (
+    `ALTER TABLE ${qualify(schemaName, tableName)} ADD CONSTRAINT ` +
+    `${quotePhiIdentifier(composePhiServerAddonObjectName(tableName, columnName, "fk"))} ` +
+    `FOREIGN KEY (${quotePhiIdentifier(columnName)}, ${quotePhiIdentifier(PHI_SERVER_ADDON_SITE_COLUMN)}) ` +
+    `REFERENCES ${target.table}(${target.column}, ${PHI_SERVER_ADDON_SITE_COLUMN}) ON DELETE CASCADE`
+  );
 }
 
 function referenceColumnType(
@@ -184,11 +208,20 @@ export function buildPhiServerAddonSchemaStatements(
 
   for (const table of descriptor.tables) {
     const definitions = table.columns.map((column) => columnDefinition(column, tablesByName));
-    if (table.siteScoped) {
-      definitions.unshift(
-        `${quotePhiIdentifier(PHI_SERVER_ADDON_SITE_COLUMN)} ${CORE_REFERENCE_TARGETS[PHI_SERVER_ADDON_CORE_REFERENCES.site].type} NOT NULL`,
-      );
-    }
+    // The scope columns come first and in this order, so a `\d` on any Add-on table reads the same way:
+    // where the row lives, whose group it is, and who owns it. Only the owner may be absent -- a deleted
+    // user leaves the row behind rather than taking it along.
+    definitions.unshift(...[
+      table.siteScoped
+        ? `${quotePhiIdentifier(PHI_SERVER_ADDON_SITE_COLUMN)} ${CORE_REFERENCE_TARGETS[PHI_SERVER_ADDON_CORE_REFERENCES.site].type} NOT NULL`
+        : null,
+      table.groupScoped
+        ? `${quotePhiIdentifier(PHI_SERVER_ADDON_GROUP_COLUMN)} ${CORE_REFERENCE_TARGETS[PHI_SERVER_ADDON_CORE_REFERENCES.group].type} NOT NULL`
+        : null,
+      table.ownerScoped
+        ? `${quotePhiIdentifier(PHI_SERVER_ADDON_OWNER_COLUMN)} ${CORE_REFERENCE_TARGETS[PHI_SERVER_ADDON_CORE_REFERENCES.user].type} NULL`
+        : null,
+    ].filter((definition): definition is string => definition !== null));
     definitions.push(
       `PRIMARY KEY (${table.primaryKey.map((column) => quotePhiIdentifier(column)).join(", ")})`,
     );
@@ -222,8 +255,44 @@ export function buildPhiServerAddonSchemaStatements(
           `ON ${qualify(schemaName, table.name)} (${quotePhiIdentifier(PHI_SERVER_ADDON_SITE_COLUMN)})`,
       });
     }
+    if (table.groupScoped) {
+      statements.push({
+        summary: `bind ${table.name} to its group`,
+        sql: groupForeignKey(schemaName, table.name, PHI_SERVER_ADDON_GROUP_COLUMN),
+      });
+      statements.push({
+        summary: `index ${table.name} by group`,
+        sql:
+          `CREATE INDEX ${quotePhiIdentifier(composePhiServerAddonObjectName(table.name, PHI_SERVER_ADDON_GROUP_COLUMN, "idx"))} ` +
+          `ON ${qualify(schemaName, table.name)} (${quotePhiIdentifier(PHI_SERVER_ADDON_GROUP_COLUMN)})`,
+      });
+    }
+    if (table.ownerScoped) {
+      const target = CORE_REFERENCE_TARGETS[PHI_SERVER_ADDON_CORE_REFERENCES.user];
+      statements.push({
+        summary: `bind ${table.name} to its owner`,
+        sql:
+          `ALTER TABLE ${qualify(schemaName, table.name)} ADD CONSTRAINT ` +
+          `${quotePhiIdentifier(composePhiServerAddonObjectName(table.name, PHI_SERVER_ADDON_OWNER_COLUMN, "fk"))} ` +
+          `FOREIGN KEY (${quotePhiIdentifier(PHI_SERVER_ADDON_OWNER_COLUMN)}) ` +
+          `REFERENCES ${target.table}(${target.column}) ON DELETE SET NULL`,
+      });
+      statements.push({
+        summary: `index ${table.name} by owner`,
+        sql:
+          `CREATE INDEX ${quotePhiIdentifier(composePhiServerAddonObjectName(table.name, PHI_SERVER_ADDON_OWNER_COLUMN, "idx"))} ` +
+          `ON ${qualify(schemaName, table.name)} (${quotePhiIdentifier(PHI_SERVER_ADDON_OWNER_COLUMN)})`,
+      });
+    }
     for (const column of table.columns) {
       if (!isReferenceColumn(column)) {
+        continue;
+      }
+      if (column.references === PHI_SERVER_ADDON_CORE_REFERENCES.group) {
+        statements.push({
+          summary: `point ${table.name}.${column.name} at ${column.references}`,
+          sql: groupForeignKey(schemaName, table.name, column.name),
+        });
         continue;
       }
       const target = typeof column.references === "string"

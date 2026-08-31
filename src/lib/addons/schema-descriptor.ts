@@ -46,6 +46,16 @@ const POSTGRES_SMALLINT_MAX = 32_767;
 /** Core writes this column for a Site-scoped table, so an Add-on must not declare it. */
 export const PHI_SERVER_ADDON_SITE_COLUMN = "site_id";
 
+/** The same, for the two scopes that carry authority rather than a boundary. */
+export const PHI_SERVER_ADDON_OWNER_COLUMN = "owner_user_id";
+export const PHI_SERVER_ADDON_GROUP_COLUMN = "group_id";
+
+const CORE_WRITTEN_COLUMNS: Readonly<Record<string, string>> = {
+  [PHI_SERVER_ADDON_SITE_COLUMN]: "siteScoped",
+  [PHI_SERVER_ADDON_OWNER_COLUMN]: "ownerScoped",
+  [PHI_SERVER_ADDON_GROUP_COLUMN]: "groupScoped",
+};
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
@@ -105,10 +115,10 @@ function validateColumn(
     return null;
   }
   const name = readName(value.name, `${field}.name`, issues);
-  if (name === PHI_SERVER_ADDON_SITE_COLUMN) {
+  const reservedFor = CORE_WRITTEN_COLUMNS[name];
+  if (reservedFor) {
     issues.push(
-      `${field}.name is "${PHI_SERVER_ADDON_SITE_COLUMN}", which Core writes for a Site-scoped table. ` +
-      "Declare siteScoped instead.",
+      `${field}.name is "${name}", which Core writes itself. Declare ${reservedFor} instead.`,
     );
   }
   if (value.nullable !== undefined && typeof value.nullable !== "boolean") {
@@ -284,8 +294,15 @@ function validateTable(
   if (table.length > POSTGRES_IDENTIFIER_MAX_LENGTH) {
     issues.push(`${field}.name exceeds ${POSTGRES_IDENTIFIER_MAX_LENGTH} characters.`);
   }
-  if (value.siteScoped !== undefined && typeof value.siteScoped !== "boolean") {
-    issues.push(`${field}.siteScoped must be a boolean.`);
+  for (const scope of ["siteScoped", "ownerScoped", "groupScoped"] as const) {
+    if (value[scope] !== undefined && typeof value[scope] !== "boolean") {
+      issues.push(`${field}.${scope} must be a boolean.`);
+    }
+  }
+  if (value.groupScoped === true && value.siteScoped !== true) {
+    issues.push(
+      `${field}.groupScoped requires siteScoped: a group belongs to a Site and has no meaning without one.`,
+    );
   }
 
   const rawColumns = Array.isArray(value.columns) ? value.columns : [];
@@ -297,6 +314,24 @@ function validateTable(
     .filter((column): column is PhiServerAddonColumnDescriptor => column !== null);
   const columnNames = new Set(columns.map((column) => column.name));
   assertUnique(columns.map((column) => column.name), `${field}.columns.name`, issues);
+  for (const column of columns) {
+    if (!isReferenceColumn(column) || column.references !== PHI_SERVER_ADDON_CORE_REFERENCES.group) {
+      continue;
+    }
+    if (value.siteScoped !== true) {
+      issues.push(
+        `${field}.columns "${column.name}" points at ${PHI_SERVER_ADDON_CORE_REFERENCES.group}, ` +
+        "so the table must be siteScoped. Core binds a group together with its Site.",
+      );
+    }
+    // The foreign key covers the Site column too, and `SET NULL` would clear that one as well.
+    if (column.onDelete !== "cascade") {
+      issues.push(
+        `${field}.columns "${column.name}" points at ${PHI_SERVER_ADDON_CORE_REFERENCES.group} ` +
+        "and must use onDelete \"cascade\": Core binds it together with the Site column, which cannot be nulled.",
+      );
+    }
+  }
 
   const primaryKey = Array.isArray(value.primaryKey) ? value.primaryKey : [];
   if (!Array.isArray(value.primaryKey) || primaryKey.length === 0) {

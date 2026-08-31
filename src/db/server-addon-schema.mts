@@ -5,7 +5,11 @@ import {
   buildPhiServerAddonSchemaStatements,
   quotePhiIdentifier,
 } from "../lib/addons/schema-ddl.ts";
-import { PHI_SERVER_ADDON_SITE_COLUMN } from "../lib/addons/schema-descriptor.ts";
+import {
+  PHI_SERVER_ADDON_GROUP_COLUMN,
+  PHI_SERVER_ADDON_OWNER_COLUMN,
+  PHI_SERVER_ADDON_SITE_COLUMN,
+} from "../lib/addons/schema-descriptor.ts";
 
 /**
  * Creating, checking, and removing the schema an Add-on's tables live in.
@@ -176,6 +180,44 @@ export async function verifyPhiServerAddonSchema(
         issues.push(
           `Site-scoped table "${table.name}" is not bound to phis.sites with a cascading delete.`,
         );
+      }
+    }
+  }
+
+  // The two scopes that carry authority. A missing column here does not fail loudly the way a missing
+  // Site column does -- it silently means nobody owns the row and no level reaches it -- so the check
+  // after the fact is the only thing that would notice.
+  for (const [scope, column, targetTable] of [
+    ["Owner-scoped", PHI_SERVER_ADDON_OWNER_COLUMN, "user_accounts"],
+    ["Group-scoped", PHI_SERVER_ADDON_GROUP_COLUMN, "site_groups"],
+  ] as const) {
+    const scoped = target.descriptor.tables.filter(
+      (table) => (scope === "Owner-scoped" ? table.ownerScoped : table.groupScoped),
+    );
+    if (scoped.length === 0) {
+      continue;
+    }
+    const { rows } = await client.query<{ table_name: string }>(
+      `SELECT table_name
+         FROM information_schema.columns
+        WHERE table_schema = $1 AND column_name = $2`,
+      [target.schemaName, column],
+    );
+    const present = new Set(rows.map((row) => row.table_name));
+    const bound = new Set(
+      keyRows
+        .filter(
+          (row) => row.source_schema === target.schemaName && row.target_table === targetTable,
+        )
+        .map((row) => row.source_table),
+    );
+    for (const table of scoped) {
+      if (!present.has(table.name)) {
+        issues.push(`${scope} table "${table.name}" has no ${column}.`);
+        continue;
+      }
+      if (!bound.has(table.name)) {
+        issues.push(`${scope} table "${table.name}" is not bound to phis.${targetTable}.`);
       }
     }
   }
