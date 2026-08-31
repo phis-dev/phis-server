@@ -20,10 +20,14 @@ export const dynamic = "force-dynamic";
  * field that ends someone else's access indistinguishable from a change of title, and both the
  * authority it needs and the record it leaves are different.
  *
- * Who may: the owner gives away what is theirs, an Editor reaches into someone else's ownership. The
- * recipient must already be in the group -- ownership carries rights, and handing it outside would
- * grant across the group boundary rather than inside it. `null` releases the Asset to nobody, which is
- * an Editor act and the same state a deleted account leaves behind.
+ * Who may: the owner gives away what is theirs, an Editor reaches into someone else's ownership. Giving
+ * away is never the dangerous direction -- one is dropping one's own rights -- so it needs nothing
+ * beyond owning the Asset, whether it goes to a person or to `null`. `null` means the group's rather
+ * than anyone's, which is what a receipt handed to a case becomes and what a deleted account leaves
+ * behind. Taking, passing on, and releasing someone *else's* are the Editor acts.
+ *
+ * The recipient must already be in the group -- ownership carries rights, and handing it outside would
+ * grant across the group boundary rather than inside it.
  *
  * `created_by_user_id` does not move. Whoever brought the Asset in stays recorded as having done so
  * after they can no longer touch it -- that is what makes a handed-over receipt still attributable.

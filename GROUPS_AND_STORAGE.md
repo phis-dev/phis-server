@@ -408,9 +408,25 @@ away what is theirs, an Editor reaches into someone else's ownership, whether th
 passing it on, or releasing it to nobody. The recipient must already be in the group, because ownership
 carries rights and handing it outside would grant across the group boundary rather than inside it.
 
-A null owner belongs to nobody. It is what a deleted account leaves behind and what a release produces,
-and no level reaches it through ownership -- an Editor may still update it and a Manager delete it, by
-level rather than by ownership. Site Media authority passes all of this, as it does everywhere here.
+### The group is the owner when nobody is
+
+There is no group owner column, because the Space already is one: an Asset in a Group Space is the
+group's, and `owner_user_id` only says whether some member holds it personally on top of that. A null
+owner therefore reads as "the group's, nobody's in particular" -- which is the ordinary destination for
+a receipt handed to a case, not merely the residue of a deleted account.
+
+A second column would have been worse than redundant. It could disagree with the Space, and it would
+make the owner polymorphic -- person or group -- for every check from then on.
+
+What follows from that shape:
+
+- an Author reaches nothing that is unowned; that is what "given to the group" means for the person who
+  gave it;
+- an Editor updates it and a Manager deletes it, by level rather than by ownership;
+- an Editor may set themselves as owner, and that is a *signal* -- "I am working on this" -- not a
+  permission they needed. They could already edit it. Nothing breaks if they never bother.
+
+Site Media authority passes all of this, as it does everywhere here.
 
 Folders remain Space-scoped: they organize a Space rather than belonging to anyone inside it.
 

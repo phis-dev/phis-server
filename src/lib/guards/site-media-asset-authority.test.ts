@@ -144,9 +144,17 @@ describe("handing an Asset over", () => {
     expect(await mayTransfer({ level: Editor, ownerUserId: OTHER, nextOwnerUserId: ACTOR })).toBe(true);
   });
 
-  it("needs an Editor to release it to nobody", async () => {
+  it("lets an Author release their own to the group", async () => {
+    expect(await mayTransfer({ level: Author, ownerUserId: ACTOR, nextOwnerUserId: null })).toBe(true);
+  });
+
+  it("needs an Editor to release someone else's to nobody", async () => {
     expect(await mayTransfer({ level: Author, ownerUserId: OTHER, nextOwnerUserId: null })).toBe(false);
     expect(await mayTransfer({ level: Editor, ownerUserId: OTHER, nextOwnerUserId: null })).toBe(true);
+  });
+
+  it("does not let a Member give away even their own", async () => {
+    expect(await mayTransfer({ level: Member, ownerUserId: ACTOR, nextOwnerUserId: null })).toBe(false);
   });
 
   it("refuses a recipient who is not in the group", async () => {
