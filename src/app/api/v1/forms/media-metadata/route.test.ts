@@ -30,6 +30,7 @@ function asset(): MediaAssetRecord {
     spaceId: 2,
     folderId: 9,
     createdByUserId: 3,
+    ownerUserId: 3,
     updatedByUserId: 3,
     storageProfileId: 5,
     variantVersion: 2,

@@ -50,6 +50,20 @@ const CORE_REFERENCE_TARGETS: Record<string, { table: string; column: string; ty
   },
 };
 
+/**
+ * The physical Core tables an Add-on's schema may point at.
+ *
+ * Read by the bootstrap, which grants `REFERENCES` on exactly these to the migration role. PostgreSQL
+ * treats "may point at me" as the target owner's to give, and the Core tables belong to the serving
+ * role while Add-on schemas are built by the migration role -- so the contract's symbolic list and the
+ * database's grants are the same decision, and deriving the second from the first is what stops them
+ * from drifting apart. Adding a symbolic reference brings its grant along; a hand-written list would
+ * not have, and the omission would only surface when someone installed an Add-on that used it.
+ */
+export function phiServerAddonCoreReferenceTables() {
+  return [...new Set(Object.values(CORE_REFERENCE_TARGETS).map((target) => target.table))];
+}
+
 const COLUMN_TYPE_SQL: Record<string, string> = {
   identity: "BIGINT GENERATED ALWAYS AS IDENTITY",
   smallInteger: "SMALLINT",

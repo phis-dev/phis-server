@@ -6,6 +6,7 @@ import { readFileSync } from "node:fs";
 import { Client } from "pg";
 
 import { resolvePhiAppPath } from "@/lib/app-paths";
+import { phiServerAddonCoreReferenceTables } from "@/lib/addons/schema-ddl";
 
 export type PhiBootstrapSiteInput = {
   key: string;
@@ -50,6 +51,40 @@ export async function applyPhiBootstrapSchema(connectionString: string) {
   await client.connect();
   try {
     await client.query(sql);
+  } finally {
+    await client.end();
+  }
+}
+
+/**
+ * Lets the migration role point an Add-on's tables at the Core tables the contract allows.
+ *
+ * A foreign key needs `REFERENCES` on its target, which is a privilege of its own and not implied by
+ * `SELECT`: the key constrains the target's owner, who can no longer delete those rows freely. Core's
+ * tables belong to the serving role -- the DDL above runs as it -- while Add-on schemas are built by
+ * the migration role, so without this the very first Add-on that references a Site fails at migration
+ * time with a permission error nobody would connect to a missing grant.
+ *
+ * The list comes from the contract rather than from a second copy here, so a newly referenceable Core
+ * table cannot arrive without its grant. Repeating the call is harmless and is how an installation
+ * that predates a new reference catches up.
+ */
+export async function grantPhiAddonCoreReferences(
+  connectionString: string,
+  migrationRole: string,
+) {
+  const role = migrationRole.trim();
+  // The role name arrives from configuration, so it is quoted rather than interpolated raw, and a
+  // parameter is not available in DDL.
+  if (!/^[A-Za-z_][A-Za-z0-9_$]*$/u.test(role)) {
+    throw new Error(`"${migrationRole}" is not a usable role name.`);
+  }
+  const client = new Client({ connectionString });
+  await client.connect();
+  try {
+    for (const table of phiServerAddonCoreReferenceTables()) {
+      await client.query(`GRANT REFERENCES ON ${table} TO "${role}"`);
+    }
   } finally {
     await client.end();
   }

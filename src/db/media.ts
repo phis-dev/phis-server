@@ -72,6 +72,8 @@ export type MediaAssetRecord = {
   folderId: number | null;
   createdByUserId: number | null;
   updatedByUserId: number | null;
+  /** Who may act on it now, which is not necessarily who brought it in. */
+  ownerUserId: number | null;
   storageProfileId: number;
   storageKey: string;
   originalName: string;
@@ -165,7 +167,8 @@ function mapFolder(row: FolderRow): MediaFolderRecord {
 
 type AssetRow = {
   id: number; site_id: number; space_id: number; folder_id: number | null;
-  created_by_user_id: number | null; updated_by_user_id: number | null; storage_profile_id: number;
+  created_by_user_id: number | null; updated_by_user_id: number | null; owner_user_id: number | null;
+  storage_profile_id: number;
   storage_key: string; original_name: string; content_type: string; variant_version: number | null;
   bytes: number | string | null; checksum_sha256: string | null; width: number | null; height: number | null;
   blur_data_url: string | null; meta: unknown; title: string | null; alt_text: string | null;
@@ -174,7 +177,7 @@ type AssetRow = {
 };
 
 const ASSET_COLUMNS = `id, site_id, space_id, folder_id, created_by_user_id, updated_by_user_id,
-  storage_profile_id, storage_key, original_name, content_type, variant_version, bytes, checksum_sha256,
+  owner_user_id, storage_profile_id, storage_key, original_name, content_type, variant_version, bytes, checksum_sha256,
   width, height, blur_data_url, meta, title, alt_text, lifecycle_status, delivery_policy,
   delivery_revision, presentation_flags, created_at, updated_at`;
 
@@ -184,6 +187,7 @@ function mapAsset(row: AssetRow): MediaAssetRecord {
     folderId: row.folder_id == null ? null : integer(row.folder_id),
     createdByUserId: row.created_by_user_id == null ? null : integer(row.created_by_user_id),
     updatedByUserId: row.updated_by_user_id == null ? null : integer(row.updated_by_user_id),
+    ownerUserId: row.owner_user_id == null ? null : integer(row.owner_user_id),
     storageProfileId: integer(row.storage_profile_id), storageKey: row.storage_key,
     originalName: row.original_name, contentType: row.content_type,
     variantVersion: row.variant_version == null ? null : integer(row.variant_version),
@@ -393,11 +397,14 @@ export async function createMediaAsset(input: {
   title?: string | null; altText?: string | null; lifecycleStatus?: number; deliveryPolicy?: number;
   presentationFlags?: number;
 }) {
+  // Ownership starts with the creator. It is a separate column because it is free to move afterwards,
+  // not because the two ever differ at this point.
   const { rows } = await getPool().query<AssetRow>(
     `INSERT INTO phis.media_assets (site_id, space_id, folder_id, created_by_user_id, updated_by_user_id,
+       owner_user_id,
        storage_profile_id, storage_key, original_name, content_type, variant_version, bytes, checksum_sha256,
        width, height, blur_data_url, meta, title, alt_text, lifecycle_status, delivery_policy, presentation_flags)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16::jsonb,$17,$18,$19,$20,$21)
+     VALUES ($1,$2,$3,$4,$5,$4,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16::jsonb,$17,$18,$19,$20,$21)
      RETURNING ${ASSET_COLUMNS}`,
     [input.siteId,input.spaceId,input.folderId??null,input.createdByUserId??null,input.updatedByUserId??null,
       input.storageProfileId,input.storageKey,input.originalName,input.contentType,input.variantVersion??null,
@@ -523,6 +530,29 @@ export async function deleteMediaAssetBySite(siteId: number, spaceId: number, id
     if (deleted.rows[0]) await client.query(`UPDATE phis.media_spaces SET used_bytes = GREATEST(0, used_bytes - $2), updated_at = NOW() WHERE id = $1`, [spaceId, integer(deleted.rows[0].bytes)]);
     await client.query("COMMIT"); return Boolean(deleted.rows[0]);
   } catch (error) { await client.query("ROLLBACK"); throw error; } finally { client.release(); }
+}
+
+/**
+ * Hands an Asset to someone else, or to nobody.
+ *
+ * Only the owner moves. `created_by_user_id` is history and stays where it is, which is what keeps a
+ * handed-over Asset attributable after the person who uploaded it can no longer touch it.
+ * `updated_by_user_id` records who performed the handover, because a handover is a change to the row.
+ */
+export async function setMediaAssetOwner(input: {
+  siteId: number;
+  assetId: number;
+  ownerUserId: number | null;
+  actorUserId: number;
+}) {
+  const { rows } = await getPool().query<AssetRow>(
+    `UPDATE phis.media_assets
+        SET owner_user_id = $3, updated_by_user_id = $4, updated_at = NOW()
+      WHERE site_id = $1 AND id = $2
+      RETURNING ${ASSET_COLUMNS}`,
+    [input.siteId, input.assetId, input.ownerUserId, input.actorUserId],
+  );
+  return rows[0] ? mapAsset(rows[0]) : null;
 }
 
 export async function getImageAssetVariantByAssetIdAndKey(assetId: number, variantKey: number) {

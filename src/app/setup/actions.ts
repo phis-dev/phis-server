@@ -8,6 +8,7 @@ import type { BootstrapLocale } from "@/bootstrap/i18n";
 import {
   applyPhiBootstrapSchema,
   createPhiBootstrapSites,
+  grantPhiAddonCoreReferences,
   verifyPhiDatabaseWriteAccess,
   type PhiBootstrapSiteInput,
 } from "@/db/bootstrap";
@@ -327,6 +328,23 @@ export async function saveTranslationSettings(
   redirect(nextStepHref);
 }
 
+/**
+ * The migration role's name, as the separate connection string carries it.
+ *
+ * Absent is a legitimate answer: an installation that has not configured migration authority yet gets
+ * no grants rather than a failed bootstrap, and the same call run later fills them in.
+ */
+function readMigrationRoleName(migrationUri: string | undefined) {
+  const uri = migrationUri?.trim();
+  if (!uri) return null;
+  try {
+    const username = decodeURIComponent(new URL(uri).username);
+    return username.length > 0 ? username : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function applySchemaBootstrap(
   locale: BootstrapLocale,
   nextStepHref: string,
@@ -340,6 +358,12 @@ export async function applySchemaBootstrap(
 
   try {
     await applyPhiBootstrapSchema(connectionString);
+    // Without this the first Add-on that references a Site fails at migration time, long after anyone
+    // would think to look at the roles. It runs here because this is where the tables come into being.
+    const migrationRole = readMigrationRoleName(runtimeConfig.database?.migrationUri);
+    if (migrationRole) {
+      await grantPhiAddonCoreReferences(connectionString, migrationRole);
+    }
   } catch (error) {
     const message =
       error instanceof Error && error.message

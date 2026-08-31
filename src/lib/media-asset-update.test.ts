@@ -43,6 +43,7 @@ function asset(overrides: Partial<MediaAssetRecord> = {}): MediaAssetRecord {
     spaceId: 2,
     folderId: 4,
     createdByUserId: 3,
+    ownerUserId: 3,
     updatedByUserId: 3,
     storageProfileId: 5,
     variantVersion: 2,

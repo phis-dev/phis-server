@@ -79,10 +79,10 @@ constants and must not be repeated by Modules.
 right with a smaller reach, so it sits below on the same ladder. Two consequences follow from the
 ordering rather than from a separate decision. An Editor inherits deleting their own work, so deletion
 is no longer wholly a Manager matter -- what still needs a Manager is deleting *someone else's*. And
-"their own" needs the resource to say who owns it: Core's own tables carry `created_by_user_id`, and an
-Add-on table states `ownerScoped` so Core adds and answers for the column (see
-[SERVER_ADDONS.md](./SERVER_ADDONS.md), section 15). A row whose owner is null belongs to nobody, and no
-level reaches it through ownership.
+"their own" needs the resource to say who owns it, and ownership is not authorship: `media_assets` carries
+`owner_user_id` beside `created_by_user_id`, and an Add-on table states `ownerScoped` so Core adds and
+answers for the same column (see [SERVER_ADDONS.md](./SERVER_ADDONS.md), section 15). A row whose owner is
+null belongs to nobody, and no level reaches it through ownership.
 
 The membership path is assertion- and provenance-aware from v1. Local Core membership and later LDAP,
 SCIM, Entra, or other Directory assertions may contribute independently to one effective membership.
@@ -386,11 +386,33 @@ User Space operations require the authenticated user to own that Space. Group Sp
 Member and writes require Author. Every protected read and mutation is enforced server-side from the
 trusted Site session and current authorization revision. Client visibility is presentation only.
 
-Media authority is currently decided at the Space, not at the Asset: whoever may write into a Group
-Space may write to everything in it. The ladder's owner-scoped half is therefore stated but not yet
-enforced here -- `media_assets.created_by_user_id` records the owner and no authorization decision reads
-it. Until a per-Asset gate exists, `Editor` grants nothing over `Author` in the Media layer, and
-deleting is bounded by the same Space-level write authority as creating.
+Two gates, not one. The Space answers whether an actor may put something here at all; the Asset answers
+whether they may act on *that*. Creating passes the Space gate alone. Reading, updating, and deleting one
+existing Asset are decided against its `owner_user_id`: an Author reaches what is theirs, an Editor reaches
+what anyone wrote, and removing someone else's stays a Manager act. A User Space needs no owner column for
+this -- it belongs to one person by construction and the Space is the answer.
+
+### Owner is not author
+
+`media_assets` carries both, and they mean different things. `created_by_user_id` is history: who brought
+the Asset in, unchanging, and the reason a handed-over Asset stays attributable. `owner_user_id` is
+authority: who may act on it now. Both start equal and diverge at the first handover.
+
+They have to be separate, or the ladder would be unsafe in the ordinary case. A receipt uploaded against
+an invoice would remain its uploader's to delete for as long as the row existed, however far the booking
+had progressed. With the handover, the accounting group takes ownership on acceptance, and the uploader --
+an Author -- reaches only what is still theirs.
+
+Handing over is its own operation, `PUT /api/site/media/:id/owner`, and its own authority: the owner gives
+away what is theirs, an Editor reaches into someone else's ownership, whether that means taking it,
+passing it on, or releasing it to nobody. The recipient must already be in the group, because ownership
+carries rights and handing it outside would grant across the group boundary rather than inside it.
+
+A null owner belongs to nobody. It is what a deleted account leaves behind and what a release produces,
+and no level reaches it through ownership -- an Editor may still update it and a Manager delete it, by
+level rather than by ownership. Site Media authority passes all of this, as it does everywhere here.
+
+Folders remain Space-scoped: they organize a Space rather than belonging to anyone inside it.
 
 ### Who administers a group
 

@@ -392,6 +392,11 @@ CREATE TABLE IF NOT EXISTS phis.media_assets (
   folder_id INT NULL,
   created_by_user_id INT NULL REFERENCES phis.user_accounts(id) ON DELETE SET NULL,
   updated_by_user_id INT NULL REFERENCES phis.user_accounts(id) ON DELETE SET NULL,
+  -- Authority, and deliberately not the same column as `created_by_user_id`, which is history. An Asset
+  -- handed over stays attributable to whoever brought it in while the person who may now delete it is
+  -- someone else -- a receipt uploaded against an invoice must not remain the uploader's to remove.
+  -- Both start equal and are free to diverge from the first handover onwards.
+  owner_user_id INT NULL REFERENCES phis.user_accounts(id) ON DELETE SET NULL,
   storage_profile_id INT NOT NULL,
   storage_key VARCHAR(512) NOT NULL,
   original_name VARCHAR(255) NOT NULL,
@@ -434,6 +439,9 @@ CREATE INDEX IF NOT EXISTS media_assets_space_folder_created_idx
   ON phis.media_assets (space_id, folder_id, created_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS media_assets_space_checksum_idx
   ON phis.media_assets (space_id, checksum_sha256) WHERE checksum_sha256 IS NOT NULL;
+-- "what is mine in this Space", which is the question an Author's listing asks.
+CREATE INDEX IF NOT EXISTS media_assets_space_owner_idx
+  ON phis.media_assets (space_id, owner_user_id) WHERE owner_user_id IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS phis.media_upload_sessions (
   token VARCHAR(128) PRIMARY KEY,

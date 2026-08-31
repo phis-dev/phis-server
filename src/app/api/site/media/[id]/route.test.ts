@@ -8,10 +8,11 @@ const mocks = vi.hoisted(() => ({
   update: vi.fn(),
 }));
 
-// The route is guarded by the canonical Site Media policy, so the test stands in for an authorized
-// staff session rather than for the retired token-only Site lookup.
+// The route is guarded per Asset now: Site Media authority still passes, and so does an Author acting
+// on what they own. Which of the two it was is settled inside the guard, so the test stands in for the
+// answer rather than for either path.
 vi.mock("@/lib/guards/site-media-api", () => ({
-  requireMediaManagementSiteContext: mocks.mediaContext,
+  requireMediaAssetContext: mocks.mediaContext,
 }));
 vi.mock("@/db/media", () => ({
   deleteImageAssetVariantsByAssetId: vi.fn(),
@@ -39,6 +40,7 @@ function asset(): MediaAssetRecord {
     spaceId: 2,
     folderId: null,
     createdByUserId: 3,
+    ownerUserId: 3,
     updatedByUserId: 3,
     storageProfileId: 5,
     variantVersion: 2,

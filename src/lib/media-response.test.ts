@@ -9,6 +9,7 @@ const asset: MediaAssetRecord = {
   spaceId: 3,
   folderId: 9,
   createdByUserId: 11,
+  ownerUserId: 11,
   updatedByUserId: 12,
   storageProfileId: 2,
   storageKey: "sites/skeleton/9e85641d355f4786a2e9f2e6d18e3119",
@@ -32,7 +33,7 @@ const asset: MediaAssetRecord = {
 };
 
 const MANAGEMENT_ONLY_FIELDS = [
-  "siteId", "spaceId", "folderId", "createdByUserId", "updatedByUserId",
+  "siteId", "spaceId", "folderId", "createdByUserId", "updatedByUserId", "ownerUserId",
   "storageProfileId", "storageKey", "bytes", "checksumSha256", "meta",
   "lifecycleStatus", "deliveryPolicy", "presentationFlags", "createdAt", "updatedAt",
 ] as const;

@@ -252,6 +252,9 @@ Contract:
 - `folder_id INT NULL` (composite FK to `media_folders`, `ON DELETE SET NULL`)
 - `created_by_user_id INT NULL REFERENCES phis.user_accounts(id) ON DELETE SET NULL`
 - `updated_by_user_id INT NULL REFERENCES phis.user_accounts(id) ON DELETE SET NULL`
+- `owner_user_id INT NULL REFERENCES phis.user_accounts(id) ON DELETE SET NULL` — authority, not history:
+  who may act on the Asset now, seeded from the creator and moved by a handover. `created_by_user_id`
+  never moves. See [GROUPS_AND_STORAGE.md](./GROUPS_AND_STORAGE.md), "Owner is not author".
 - `storage_profile_id INT NOT NULL` (composite FK to `media_storage_profiles`)
 - `storage_key VARCHAR(512) NOT NULL`
 - `original_name VARCHAR(255) NOT NULL`

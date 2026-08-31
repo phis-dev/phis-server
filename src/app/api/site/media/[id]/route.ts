@@ -8,7 +8,7 @@ import {
 } from "@/db/media";
 import { clearSiteConfigCache } from "@/db/site-config";
 import { getSessionFromRequest } from "@/db/user-sessions";
-import { requireMediaManagementSiteContext } from "@/lib/guards/site-media-api";
+import { requireMediaAssetContext } from "@/lib/guards/site-media-api";
 import { createPhisMediaStorageServiceForProfile } from "@/lib/media-storage";
 import { getMediaStorageProfile } from "@/db/media-spaces";
 import { collectMediaAssetDeleteReferences } from "@/lib/media-delete-guard";
@@ -114,17 +114,17 @@ export async function GET(
 ) {
   let siteKey: string | null = null;
   try {
-    const { site, error } = await requireMediaManagementSiteContext(request);
-    if (error) {
-      return error;
-    }
-    siteKey = site.key;
-
     const resolvedParams = await Promise.resolve(params);
     const assetId = parsePositiveInt(resolvedParams.id);
     if (!assetId) {
       return NextResponse.json({ error: "Missing asset id." }, { status: 400 });
     }
+
+    const { site, error } = await requireMediaAssetContext(request, assetId, "read");
+    if (error) {
+      return error;
+    }
+    siteKey = site.key;
 
     const asset = await getMediaAssetBySiteAndId(site.id, assetId);
     if (!asset) {
@@ -155,17 +155,17 @@ export async function PATCH(
 ) {
   let siteKey: string | null = null;
   try {
-    const { site, error } = await requireMediaManagementSiteContext(request);
-    if (error) {
-      return error;
-    }
-    siteKey = site.key;
-
     const resolvedParams = await Promise.resolve(params);
     const assetId = parsePositiveInt(resolvedParams.id);
     if (!assetId) {
       return NextResponse.json({ error: "Missing asset id." }, { status: 400 });
     }
+
+    const { site, error } = await requireMediaAssetContext(request, assetId, "update");
+    if (error) {
+      return error;
+    }
+    siteKey = site.key;
 
     const payload = await readJsonBody(request);
     if (!payload) {
@@ -203,19 +203,19 @@ export async function DELETE(
   let userId: number | null = null;
   const area = resolveRequestArea(request);
   try {
-    const { site, error } = await requireMediaManagementSiteContext(request);
+    const resolvedParams = await Promise.resolve(params);
+    const assetId = parsePositiveInt(resolvedParams.id);
+    if (!assetId) {
+      return NextResponse.json({ error: "Missing asset id." }, { status: 400 });
+    }
+
+    const { site, error } = await requireMediaAssetContext(request, assetId, "delete");
     if (error) {
       return error;
     }
     siteKey = site.key;
     const session = await getSessionFromRequest(request, site.id);
     userId = session?.userId ?? null;
-
-    const resolvedParams = await Promise.resolve(params);
-    const assetId = parsePositiveInt(resolvedParams.id);
-    if (!assetId) {
-      return NextResponse.json({ error: "Missing asset id." }, { status: 400 });
-    }
 
     const asset = await getMediaAssetBySiteAndId(site.id, assetId);
     if (!asset) {
