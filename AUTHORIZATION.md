@@ -48,7 +48,7 @@ type PhiViewerGroupClaim = {
 ```
 
 Group keys are provider-local and immutable after publication. Membership capabilities such as Member,
-Contributor, or Manager govern domain operations server-side; the shared visibility policy tests only
+Author, Editor, or Manager govern domain operations server-side; the shared visibility policy tests only
 effective membership in one of the declared groups.
 
 ## 2. Runtime authorization snapshot
@@ -152,7 +152,7 @@ override centrally.
 
 Site groups are not roles and follow their own split: creating or deleting a group, and granting or
 revoking the Manager level inside one, is `Developer | Admin`, while a group's Manager administers the
-Contributor and Member levels of their own group. Group membership never confers any Core role. The
+Author, Editor and Member levels of their own group. Group membership never confers any Core role. The
 full table is in [GROUPS_AND_STORAGE.md](./GROUPS_AND_STORAGE.md).
 
 Only Core Admin may assign or remove Site user role claims. A Developer may receive provider roles such

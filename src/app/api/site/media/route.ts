@@ -89,7 +89,7 @@ export async function GET(request: NextRequest) {
     /*
      * A Group Space that nothing has been written to yet is a legitimate destination, not an error: it
      * simply holds nothing, and reading it must not be what creates it. The listing answers with the
-     * empty Space and the full selector so an interface can show the group and let a Contributor start
+     * empty Space and the full selector so an interface can show the group and let an Author start
      * using it.
      */
     if (!resolution.ok && resolution.reason !== "space_not_materialized") {

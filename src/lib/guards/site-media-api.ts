@@ -65,11 +65,11 @@ export async function requireMediaManagementSiteContext(
  * but "may this actor write *here*".
  *
  * Two answers pass. Site Media authority writes anywhere, as before. Anyone else writes into a Space
- * that is theirs to write into -- their own User Space, or a group's where they hold Contributor --
+ * that is theirs to write into -- their own User Space, or a group's where they hold Author --
  * which is the same question `resolveAuthorizedMediaSpace` already answers for reads, including that a
  * Module must have declared the kind and that a group's Space is refused to someone outside it. It is
  * also what section 6 of GROUPS_AND_STORAGE.md means by a Group Space being materialized by the first
- * Contributor write: a Contributor who administers no Media at all still writes.
+ * Author write: an Author who administers no Media at all still writes.
  *
  * The Site Space is deliberately not among them. It is not delegated capacity, it holds what the Site
  * publishes, and writing there is Media administration whatever else is true of the actor.

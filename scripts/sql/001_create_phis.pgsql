@@ -189,8 +189,11 @@ CREATE TABLE IF NOT EXISTS phis.site_group_members (
     ON DELETE CASCADE,
   CONSTRAINT site_group_members_source_provider_id_check
     CHECK (source_provider_id ~ '^@[^/]+/[^/]+(?:/[^/]+)*$'),
+  -- The four cumulative levels: Member 1, Author 3, Editor 7, Manager 15. Each bit requires every bit
+  -- below it, so a level that skips a rung cannot be stored at all.
   CONSTRAINT site_group_members_flags_check
-    CHECK (membership_flags > 0 AND membership_flags <= 7 AND
+    CHECK (membership_flags > 0 AND membership_flags <= 15 AND
+      (membership_flags & 8 = 0 OR membership_flags & 7 = 7) AND
       (membership_flags & 4 = 0 OR membership_flags & 3 = 3) AND
       (membership_flags & 2 = 0 OR membership_flags & 1 = 1))
 );

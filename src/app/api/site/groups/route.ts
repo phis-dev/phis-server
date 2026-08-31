@@ -125,8 +125,8 @@ export async function GET(request: NextRequest) {
     : await listSiteGroupsForUser(siteId, userId);
 
   /*
-   * The Space is reported alongside each group because that is what the level means in practice: a
-   * Contributor may write into it, a Member sees it. A group whose Space nothing has written to yet has
+   * The Space is reported alongside each group because that is what the level means in practice: an
+   * Author may write into it, a Member sees it. A group whose Space nothing has written to yet has
    * none -- reading must not be what creates it.
    */
   const rows = await Promise.all(source.map(async (group) => {
@@ -142,7 +142,7 @@ export async function GET(request: NextRequest) {
       // level" are different answers, and a Site-wide listing is full of the first.
       membershipFlags: membershipFlags === 0 ? null : membershipFlags,
       canContribute:
-        (membershipFlags & PhiGroupMembershipFlags.Contributor) === PhiGroupMembershipFlags.Contributor,
+        (membershipFlags & PhiGroupMembershipFlags.Author) === PhiGroupMembershipFlags.Author,
       manages: siteWide ||
         (membershipFlags & PhiGroupMembershipFlags.Manager) === PhiGroupMembershipFlags.Manager,
       memberCount: "memberCount" in group ? group.memberCount : null,

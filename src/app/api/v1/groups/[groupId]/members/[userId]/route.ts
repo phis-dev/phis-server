@@ -24,7 +24,7 @@ const FORBIDDEN_MANAGER_WRITE = {
 
 /*
  * Two authorities share these routes. Developer and Admin administer any group at any level; a group's
- * own Manager administers Contributor and Member in that group only. The group id is parsed before the
+ * own Manager administers Author, Editor and Member in that group only. The group id is parsed before the
  * guard runs because the guard's decision depends on it.
  */
 export async function PUT(

@@ -31,7 +31,7 @@ import { serializeMediaSpace } from "@/lib/media-response";
  *
  * A Space that has no row yet can still be given an override: assigning capacity is a decision made
  * ahead of use, and a revocation that had to wait for the first upload would always arrive too late.
- * Materializing for that reason is an administrative act, not the Contributor write that ordinarily
+ * Materializing for that reason is an administrative act, not the Author write that ordinarily
  * brings a Group Space into existence.
  */
 function readQuotaBytes(value: unknown, issues: string[]) {

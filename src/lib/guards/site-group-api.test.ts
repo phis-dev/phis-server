@@ -18,8 +18,8 @@ const SITE_WIDE = { siteWide: true, membershipFlags: PhiGroupMembershipFlags.Man
  * one. It also means a group cannot lose its last Manager from the inside.
  */
 describe("canWriteSiteGroupMembership", () => {
-  it("lets a Manager set Contributor and Member", () => {
-    for (const next of [PhiGroupMembershipFlags.Member, PhiGroupMembershipFlags.Contributor]) {
+  it("lets a Manager set Author and Member", () => {
+    for (const next of [PhiGroupMembershipFlags.Member, PhiGroupMembershipFlags.Author]) {
       expect(canWriteSiteGroupMembership(MANAGER, { next, current: PhiGroupMembershipFlags.Member })).toBe(true);
     }
   });
@@ -27,13 +27,13 @@ describe("canWriteSiteGroupMembership", () => {
   it("stops a Manager from appointing another Manager", () => {
     expect(canWriteSiteGroupMembership(MANAGER, {
       next: PhiGroupMembershipFlags.Manager,
-      current: PhiGroupMembershipFlags.Contributor,
+      current: PhiGroupMembershipFlags.Author,
     })).toBe(false);
   });
 
   it("stops a Manager from demoting an existing Manager", () => {
     expect(canWriteSiteGroupMembership(MANAGER, {
-      next: PhiGroupMembershipFlags.Contributor,
+      next: PhiGroupMembershipFlags.Author,
       current: PhiGroupMembershipFlags.Manager,
     })).toBe(false);
   });
@@ -42,8 +42,8 @@ describe("canWriteSiteGroupMembership", () => {
     expect(canWriteSiteGroupMembership(MANAGER, { current: PhiGroupMembershipFlags.Manager })).toBe(false);
   });
 
-  it("lets a Manager remove a Contributor", () => {
-    expect(canWriteSiteGroupMembership(MANAGER, { current: PhiGroupMembershipFlags.Contributor })).toBe(true);
+  it("lets a Manager remove an Author", () => {
+    expect(canWriteSiteGroupMembership(MANAGER, { current: PhiGroupMembershipFlags.Author })).toBe(true);
   });
 
   it("lets Developer and Admin write any level", () => {
@@ -61,7 +61,7 @@ describe("what one member sees of another", () => {
     displayName: "Codex AI",
     email: "ai@phisys.com",
     companyName: "Acme",
-    membershipFlags: PhiGroupMembershipFlags.Contributor,
+    membershipFlags: PhiGroupMembershipFlags.Author,
     sourceProviderId: "@phis/phi-server/core",
     sourceConnectionKey: "local",
     validUntil: null,
@@ -82,7 +82,7 @@ describe("what one member sees of another", () => {
   it("keeps the name and the level, which is what the list is for", () => {
     const projected = projectSiteGroupMemberForMember(member, 0);
     expect(projected.displayName).toBe("Codex AI");
-    expect(projected.membershipFlags).toBe(PhiGroupMembershipFlags.Contributor);
+    expect(projected.membershipFlags).toBe(PhiGroupMembershipFlags.Author);
   });
 });
 

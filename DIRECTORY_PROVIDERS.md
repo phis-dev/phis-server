@@ -121,17 +121,17 @@ The effective membership is the union of currently effective assertions. Removin
 source removes only that source's contribution. A local assertion remains effective when LDAP is
 disabled; an LDAP assertion remains independent from a SCIM assertion.
 
-Core validates cumulative Member, Contributor, and Manager semantics after aggregation. It increments
+Core validates cumulative Member, Author, Editor, and Manager semantics after aggregation. It increments
 the affected user's `authorization_revision` only when effective authorization changes, not merely
 because a provider repeated the same assertion.
 
-A source contributes at most Contributor. The Manager level is local only, and no provider mapping --
+A source contributes at most Editor. The Manager level is local only, and no provider mapping --
 an AD `managedBy`, a naming convention, an owner relation -- may assert it. Directories have no
-equivalent of the cumulative Member/Contributor/Manager ladder in the first place: LDAP and AD groups
+equivalent of the cumulative Member/Author/Editor/Manager ladder in the first place: LDAP and AD groups
 have members and nothing else, SCIM carries `members`. Letting a source assert Manager would also make
 the level unrevocable locally, because provider-managed assertions are not locally editable, and
 [GROUPS_AND_STORAGE.md](./GROUPS_AND_STORAGE.md) reserves granting and revoking it to Developer and
-Admin. A Site whose memberships come from a Directory therefore has its Contributors and Managers named
+Admin. A Site whose memberships come from a Directory therefore has its Editors and Managers named
 locally, as a second source row beside the asserted one.
 
 Provider-managed assertions are not locally editable. The Core route returns their provenance and

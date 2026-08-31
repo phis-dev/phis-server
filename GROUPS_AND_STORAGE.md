@@ -65,14 +65,24 @@ serialized access policies use the provider-qualified stable key. A member must 
 Core membership flags have these cumulative meanings:
 
 ```text
-Member       = may discover and read group resources
-Contributor  = may create and update group resources
-Manager      = may delete group resources and administer membership
+Member   = may discover and read group resources
+Author   = may create, and may update and delete what they created
+Editor   = may update what anyone created
+Manager  = may delete what anyone created, and administers membership
 ```
 
-Assignment validation enforces `Manager => Contributor => Member`; a higher level cannot exist without
-the lower effective levels. Numeric bit assignments are centralized with the other Core constants and
-must not be repeated by Modules.
+Assignment validation enforces `Manager => Editor => Author => Member`; a higher level cannot exist
+without the lower effective levels. Numeric bit assignments are centralized with the other Core
+constants and must not be repeated by Modules.
+
+`Author` is a narrowing of `Editor`, not something beside it: "may edit only their own" is the same
+right with a smaller reach, so it sits below on the same ladder. Two consequences follow from the
+ordering rather than from a separate decision. An Editor inherits deleting their own work, so deletion
+is no longer wholly a Manager matter -- what still needs a Manager is deleting *someone else's*. And
+"their own" needs the resource to say who owns it: Core's own tables carry `created_by_user_id`, and an
+Add-on table states `ownerScoped` so Core adds and answers for the column (see
+[SERVER_ADDONS.md](./SERVER_ADDONS.md), section 15). A row whose owner is null belongs to nobody, and no
+level reaches it through ownership.
 
 The membership path is assertion- and provenance-aware from v1. Local Core membership and later LDAP,
 SCIM, Entra, or other Directory assertions may contribute independently to one effective membership.
@@ -110,7 +120,7 @@ what would be expensive:
   members of A. A field named `parent` invites the opposite reading;
 - an edge carries its own level and never forwards the child's, or a Manager of a small group would
   become a Manager of the group it is embedded in;
-- an edge, like any source assertion, contributes at most Contributor;
+- an edge, like any source assertion, contributes at most Editor;
 - the effective membership stays flat and materialized whoever resolves it, so the read path is
   unaffected either way.
 
@@ -225,7 +235,7 @@ The Space kind determines the only valid owner columns:
 The Site Space is not represented by a duplicate persisted `site` group. Its management authority is
 derived from the Core role matrix. User and Group Spaces may be created lazily on first authorized use.
 
-A Group Space is materialized by the first authorized *write*, which is a Contributor operation.
+A Group Space is materialized by the first authorized *write*, which is an Author operation.
 Discovery is a Member right and must not create the row: a group appears in the selectable Space list
 from its membership alone, and reading it before anything has been written returns an empty Space. So
 a group nobody has stored anything in leaves no trace, while everyone entitled to see it does.
@@ -373,9 +383,14 @@ Supporter and Accountant do not receive Site Media management authority. Public 
 delivery never grants mutation authority.
 
 User Space operations require the authenticated user to own that Space. Group Space reads require
-Member, writes require Contributor, and deletes require Manager. Every protected read and mutation is
-enforced server-side from the trusted Site session and current authorization revision. Client
-visibility is presentation only.
+Member and writes require Author. Every protected read and mutation is enforced server-side from the
+trusted Site session and current authorization revision. Client visibility is presentation only.
+
+Media authority is currently decided at the Space, not at the Asset: whoever may write into a Group
+Space may write to everything in it. The ladder's owner-scoped half is therefore stated but not yet
+enforced here -- `media_assets.created_by_user_id` records the owner and no authorization decision reads
+it. Until a per-Asset gate exists, `Editor` grants nothing over `Author` in the Media layer, and
+deleting is bounded by the same Space-level write authority as creating.
 
 ### Who administers a group
 
@@ -388,10 +403,10 @@ belong to Site administration either, or every membership change would queue beh
 create or delete a group                      = Developer | Admin
 grant or revoke the Manager level             = Developer | Admin
 set the Site quota ceiling per Space kind     = Developer | Admin
-set Contributor and Member levels in a group  = that group's Manager, or Developer | Admin
+set Author, Editor and Member levels        = that group's Manager, or Developer | Admin
 set that group's Space quota, up to the Site ceiling
                                               = that group's Manager, or Developer | Admin
-write in the group's Media Space              = Contributor
+write in the group's Media Space              = Author
 read and discover the group's Media Space     = Member
 ```
 

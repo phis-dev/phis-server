@@ -87,14 +87,14 @@ describe("Media Space write authority against PostgreSQL", () => {
     expect(own.ok && own.space.id).not.toBe(strangerSpaceId);
   });
 
-  it("answers a group's Space to a Contributor who administers no Media", async () => {
+  it("answers a group's Space to an Author who administers no Media", async () => {
     await enableUserSpaces(true);
     const pool = await requirePhiTestDatabase();
     await pool.query(`UPDATE phis.site_media_config SET flags = 3 WHERE site_id = $1`, [site.id]);
     const actorId = await createPhiTestUser(site);
     const groupId = await createPhiTestGroup(site, "pgtest-contributor");
     const groupSpaceId = await createPhiTestSpaceForGroup(site, groupId);
-    // Membership flag 2 is Contributor; nothing here grants Site Media authority.
+    // Membership flag 2 is Author; nothing here grants Site Media authority.
     await addPhiTestGroupMember({ site, groupId, userId: actorId, membershipFlags: 3 });
 
     const resolution = await resolveAuthorizedMediaSpace({

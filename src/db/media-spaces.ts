@@ -504,7 +504,7 @@ export async function materializeSiteMediaAvailabilityWithDb(
  * Materializes a group's Media Space on first authorized write.
  *
  * Discovery is a Member right and must not create a row -- a group nobody has stored anything in
- * leaves no trace -- so this is called from the Contributor path, never from a read. The Site's
+ * leaves no trace -- so this is called from the Author path, never from a read. The Site's
  * availability flag is checked by the caller, as it is for User Spaces.
  */
 export async function ensureGroupMediaSpace(siteId: number, groupId: number) {
@@ -658,14 +658,15 @@ export async function resolveAuthorizedMediaSpace(input: {
     if ((flags & PhiGroupMembershipFlags.Member) === 0) {
       return { ok: false, reason: "space_forbidden" };
     }
-    // Writing is a Contributor operation, and it is what materializes the Space.
+    // Writing is an Author operation -- putting something of one's own into the group -- and it is what
+    // materializes the Space.
     if (input.intent === "write") {
       // A retired group takes nothing new, site-wide authority included. Its Space stays readable so
       // what is in it can be moved out; adding to it would be filling something that has ended.
       if (group.retiredAt != null) {
         return { ok: false, reason: "space_forbidden" };
       }
-      if ((flags & PhiGroupMembershipFlags.Contributor) !== PhiGroupMembershipFlags.Contributor) {
+      if ((flags & PhiGroupMembershipFlags.Author) !== PhiGroupMembershipFlags.Author) {
         return { ok: false, reason: "space_forbidden" };
       }
       const space = await ensureGroupMediaSpace(input.siteId, groupId);
