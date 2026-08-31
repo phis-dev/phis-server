@@ -301,6 +301,22 @@ Every physical Add-on package exports a server-only manifest containing at least
 The built manifest has a deterministic digest covering route, capability, service-provider, job,
 schema, query, and migration descriptors. It never contains runtime secrets.
 
+### Adding to the manifest
+
+A field added after this manifest version is already in the wild is **optional, and defines what its
+absence means**. A required addition would lock every installation out the moment Core is upgraded: the
+stored manifest was written as it was built, its author had not forgotten the new field, and the digest
+means the file cannot be repaired by hand either. The initial fields may demand an explicit `null`,
+because no stored manifest predates them.
+
+`manifestVersion` is for something else and is deliberately rarer: it changes when an existing field's
+*meaning* changes, where an old manifest is not incomplete but wrong, and reading it under the new rules
+would install something subtly incorrect. Refusing is right there, and it is expensive on purpose.
+
+For the case nobody foresaw, `phis addon forget` removes an entry from the desired state without
+reading it. `remove` validates before it deletes, which is right when the state is sound and useless
+when it is not.
+
 The package exposes two explicit server entrypoints:
 
 ```text

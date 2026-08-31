@@ -46,6 +46,7 @@ import {
   migrateAddons,
   purgeAddon,
   reconcileAddons,
+  forgetAddon,
   readInstalledAddonSettings,
   removeAddon,
   setAddonEnabled,
@@ -206,6 +207,7 @@ Usage:
   phis addon remove --addon <@scope/name>
   phis addon enable --addon <@scope/name>
   phis addon disable --addon <@scope/name>
+  phis addon forget --addon <@scope/name>
   phis addon config --addon <@scope/name> --site <site key>
                     [--name <setting> [--value <value>]]
   phis addon job    --addon <@scope/name> --job <job id> --site <site key>
@@ -1887,6 +1889,19 @@ async function main() {
     }
     if (!response.ok) {
       process.exitCode = 1;
+    }
+    return;
+  }
+
+  if (group === "addon" && command === "forget") {
+    const result = forgetAddon(configRoot, flags);
+    if (json) {
+      printJson(result);
+    } else {
+      console.log(
+        `Forgot ${result.addonId}; ${result.remaining} Add-on(s) left in the desired state. ` +
+        "Its artifact is still on disk -- run addon check to see what is unreferenced.",
+      );
     }
     return;
   }

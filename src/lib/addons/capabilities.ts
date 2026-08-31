@@ -276,7 +276,7 @@ export function buildPhiServerAddonCapabilities(input: {
     capabilities.settings = buildPhiServerAddonSettingsCapability({
       addonId: input.manifest.addonId,
       siteId,
-      declared: input.manifest.settings,
+      declared: input.manifest.settings ?? [],
     });
   }
   if (required.includes(PHI_SERVER_CORE_CAPABILITIES.groups)) {

@@ -509,6 +509,45 @@ export async function removeAddon(root: string, flags: FlagMap) {
 }
 
 
+/**
+ * Takes an Add-on out of the desired state without reading what is stored about it.
+ *
+ * The escape hatch for a manifest that has become unreadable -- a field whose meaning changed, a state
+ * written by a release nobody has any more. `remove` validates before it deletes, which is right when
+ * the state is sound and useless when it is not: an operator would otherwise be left with a file only a
+ * text editor can repair, and the digest deliberately makes editing it pointless.
+ *
+ * It leaves the artifact where it is. Nothing here has read the manifest, so nothing here knows which
+ * version directory belonged to this Add-on, and guessing at a path to delete recursively is not a
+ * thing a recovery command should do. `phis addon check` reports what is left over.
+ */
+export function forgetAddon(root: string, flags: FlagMap) {
+  const addonId = getRequiredFlag(flags, "addon");
+  const { desiredState } = getAddonPaths(root);
+  if (!existsSync(desiredState)) {
+    throw new Error(`Missing Add-on desired state: ${desiredState}`);
+  }
+  const parsed = JSON.parse(readFileSync(desiredState, "utf8")) as {
+    formatVersion?: unknown;
+    addons?: unknown;
+  };
+  const addons = Array.isArray(parsed.addons) ? parsed.addons : [];
+  const remaining = addons.filter(
+    (addon) => !(addon && typeof addon === "object" && (addon as { addonId?: unknown }).addonId === addonId),
+  );
+  if (remaining.length === addons.length) {
+    throw new Error(`Add-on ${addonId} is not in the desired state.`);
+  }
+  writeAtomic(desiredState, `${JSON.stringify({ formatVersion: 1, addons: remaining }, null, 2)}\n`);
+  return {
+    ok: true,
+    action: "addon.forget",
+    addonId,
+    remaining: remaining.length,
+    artifactsLeftInPlace: true,
+  };
+}
+
 export async function setAddonEnabled(
   root: string,
   flags: FlagMap,

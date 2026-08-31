@@ -402,9 +402,14 @@ export function validatePhiServerAddonManifest(
     schema = validatePhiServerAddonSchemaDescriptor(value.schema, "schema", issues);
   }
 
+  /*
+   * Absent is a valid answer for a field that arrived after this manifest version was in the wild: the
+   * Add-on that stored this manifest had not forgotten it, it did not exist. Only a wrong shape is an
+   * issue, never a missing one.
+   */
   const settings = Array.isArray(value.settings) ? value.settings : [];
-  if (!Array.isArray(value.settings)) {
-    issues.push("settings must be an array.");
+  if (value.settings !== undefined && !Array.isArray(value.settings)) {
+    issues.push("settings must be an array when it is stated at all.");
   }
   const settingNames: string[] = [];
   for (const [index, setting] of settings.entries()) {
@@ -433,12 +438,10 @@ export function validatePhiServerAddonManifest(
   }
   assertUnique(settingNames, "settings", issues);
 
+  // As with `settings`: absent means none, and is what every manifest written before queries existed
+  // says. Stating it is only required to be right, not to be present.
   let queries: PhiServerAddonQueryCatalog | null = null;
-  if (value.queries === null) {
-    queries = null;
-  } else if (value.queries === undefined) {
-    issues.push("queries must be a catalog object or null.");
-  } else {
+  if (value.queries != null) {
     queries = validatePhiServerAddonQueryCatalog(value.queries, schema, "queries", issues);
   }
 
@@ -467,9 +470,7 @@ export function validatePhiServerAddonManifest(
   assertUnique(routeKeys, "route descriptors", issues);
 
   return {
-    manifest: issues.length === 0 && queries !== undefined
-      ? (value as PhiServerAddonManifestV1)
-      : null,
+    manifest: issues.length === 0 ? (value as PhiServerAddonManifestV1) : null,
     issues,
   };
 }

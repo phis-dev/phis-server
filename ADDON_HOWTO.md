@@ -11,7 +11,9 @@ Add-on was then installed, migrated, and enabled into that running process. Its 
 answered from the same PID, with no rebuild and no restart. Tampering with an installed artifact makes
 it refuse to load rather than load the changed bytes.
 
-One gap is open and named below: there is no upgrade command yet.
+`phis addon upgrade` replaces an installed artifact in place, and `phis addon forget` takes an entry out
+of the desired state without reading it -- for the manifest that has become unreadable and that
+`remove` therefore refuses to touch.
 
 ## The one shape
 
