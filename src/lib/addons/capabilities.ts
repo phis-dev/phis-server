@@ -182,6 +182,21 @@ async function mayActOnScopedRow(input: {
     : holds(PhiGroupMembershipFlags.Manager);
 }
 
+/**
+ * Whether the actor stands in one group at all.
+ *
+ * The floor of the ladder rather than a rung on it: an insert names a group, and what the contract
+ * promises is that Core refuses one the actor is not in. How deep they may then go in what is already
+ * there stays the ladder's question.
+ */
+async function actorStandsInGroup(siteId: number, groupId: unknown, actorUserId: number | null) {
+  if (actorUserId == null || !Number.isSafeInteger(groupId) || (groupId as number) <= 0) {
+    return false;
+  }
+  const flags = await readEffectiveGroupMembershipFlags(siteId, groupId as number, actorUserId);
+  return (flags & PhiGroupMembershipFlags.Member) === PhiGroupMembershipFlags.Member;
+}
+
 function buildAuthorizationCapability(input: {
   manifest: PhiServerAddonManifestV1;
   siteId: number;
@@ -270,6 +285,9 @@ export function buildPhiServerAddonCapabilities(input: {
         ? () => Promise.resolve(true)
         : ({ table, id, intent }) =>
           authorization.mayActOnRow({ table, id: id as number | string, intent }),
+      mayUseGroup: input.systemAuthority
+        ? () => Promise.resolve(true)
+        : (groupId) => actorStandsInGroup(siteId, groupId, input.actorUserId),
     });
   }
   if (required.includes(PHI_SERVER_CORE_CAPABILITIES.settings)) {

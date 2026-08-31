@@ -45,6 +45,12 @@ A group means "everyone in here reads everything in here": after the `Member` ch
 returns true unconditionally. This is a design property, not an oversight, but it decides who may be put
 in a group — never a customer, for instance.
 
+An insert that names a group is refused unless the actor stands in it
+(`src/lib/addons/data-capability.ts`). The group is the only scope column an insert names -- Core writes
+the Site and the owner itself -- so it is the only way an insert could reach outside the actor's
+standing. It is refused loudly rather than silently, because unlike a refused update there is nothing to
+withhold, and a swallowed insert would look to the Add-on exactly like one that happened.
+
 `data:v1` enforces the ladder itself on `update` and `delete`, before the statement runs
 (`src/lib/addons/data-capability.ts:141`), and it is handed the evaluator whether or not the Add-on
 declared `authorization:v1` (`capabilities.ts:258`): "Declaring `data:v1` is not a way to write past the
@@ -182,14 +188,25 @@ customer, who is nothing in the system beyond signed in.
   only answers `has(role)` no Add-on would notice the difference. It can therefore wait.
 - **The capability name**, frozen from the first public release.
 
-## Found while writing this
+## Open: moving a row to another group
 
-`PhiServerAddonInsertQueryDescriptor` in `@phis/addon-contract` states that on a group-scoped insert
-"the group comes from a declared parameter because a row can belong to any group the actor is in, and
-Core refuses one they are not". The refusal does not appear to be implemented: `run` in
-`data-capability.ts` checks the ladder for `update` and `delete` only, the compiled insert binds the
-group argument straight into the statement, and no membership check was found on that path.
+The Add-on data path has no transfer. A ticket cannot be escalated from one team to another, because the
+scope columns are absent from an update descriptor by construction -- there is nowhere to name
+`group_id`, and inserting into a foreign group is refused for the reason above.
 
-The consequence is that an actor can place a row in a group they do not belong to. It is not a read
-escalation — they still cannot read that group's rows back — but it is a documented guarantee that does
-not hold, and it should be closed before third parties write Add-ons against the contract text.
+The shape it would have to take is already written down for Media Assets in `GROUPS_AND_STORAGE.md` §6,
+"Moving an Asset between Spaces", and the reasoning transfers unchanged:
+
+- **No generic endpoint.** "What does not exist as a route cannot be called." A named operation with its
+  own guard, not a hole in a general one.
+- **Two sides check what each of them knows.** Core: may the actor reach the source, is the row in a
+  usable state, does the target accept. The Add-on: is the occasion real -- "invoice 4711 belongs to this
+  user".
+- **The client names the occasion, never the target.** A request that could name the destination would
+  have chosen its own authorization before anything was checked.
+- **Recorded durably** with source, target, actor, occasion and mode.
+
+That section also states the property the insert refusal protects: submissions are created in the
+submitter's own space and only then taken over, "because the file is theirs until the operation accepts
+it". An unchecked insert into a foreign group would have removed exactly that, which is why the gap was
+a gap and not a door somebody left open on purpose.

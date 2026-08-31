@@ -23,7 +23,8 @@ import { getPool } from "@/lib/db";
  * wherever a compiled statement asks for them, so no argument can aim a query at another tenant. And a
  * mutation is refused before it runs unless the row-level authority allows it -- the ladder is applied
  * by the write path rather than left to the Add-on to consult, because a check that has to be
- * remembered is one that eventually is not.
+ * remembered is one that eventually is not. An insert that names a group is refused the same way when
+ * the actor does not stand in it.
  *
  * `mayActOnRow` on the authorization capability answers the same question. It is for deciding what to
  * offer a user; this is what actually holds.
@@ -58,6 +59,8 @@ type Bound = {
   siteId: number;
   actorUserId: number | null;
   mayActOnRow: (input: { table: string; id: unknown; intent: "update" | "delete" }) => Promise<boolean>;
+  /** Whether the actor stands in the group an insert names. Injected for the same reason as above. */
+  mayUseGroup: (groupId: unknown) => Promise<boolean>;
 };
 
 function readArgument(
@@ -146,6 +149,25 @@ async function run(
     }
   }
 
+  if (kind === "insert" && parameters.group) {
+    /*
+     * The group is the only scope column an insert names, because a row may belong to any group the
+     * actor is in. That makes it the only way an insert could reach outside the actor's standing, so it
+     * is checked rather than trusted -- Core writes the Site and the owner itself, and this is what
+     * keeps the group as narrow as they are.
+     *
+     * Refused loudly, unlike the ladder above. There a silent zero is the point, because it does not say
+     * whether the row exists; here there is nothing to withhold, and a swallowed insert would look to
+     * the Add-on exactly like one that happened.
+     */
+    const groupId = readArgument(args, parameters.group, name);
+    if (!await bound.mayUseGroup(groupId)) {
+      throw new PhiServerAddonQueryError(
+        `Query "${name}" names a group the acting user does not stand in.`,
+      );
+    }
+  }
+
   const result = await db.query(query.sql, resolveBindings(query, bound, args, parameters));
   return { rows: result.rows as PhiServerAddonQueryRow[], rowCount: result.rowCount ?? 0 };
 }
@@ -173,6 +195,7 @@ export function buildPhiServerAddonDataCapability(input: {
   siteId: number;
   actorUserId: number | null;
   mayActOnRow: Bound["mayActOnRow"];
+  mayUseGroup: Bound["mayUseGroup"];
 }): PhiServerDataCapabilityV1 {
   const bound: Bound = {
     manifest: input.manifest,
@@ -180,6 +203,7 @@ export function buildPhiServerAddonDataCapability(input: {
     siteId: input.siteId,
     actorUserId: input.actorUserId,
     mayActOnRow: input.mayActOnRow,
+    mayUseGroup: input.mayUseGroup,
   };
   // The pool itself is queryable in the same way a client is; only the transaction needs a client.
   const pooled = buildOperations(getPool() as unknown as Queryable, bound);

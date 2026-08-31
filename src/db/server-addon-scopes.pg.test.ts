@@ -367,6 +367,59 @@ describe("owner-scoped and group-scoped Add-on tables", () => {
     });
   });
 
+  /*
+   * The group is the one scope column an insert names, and therefore the one an Add-on could aim
+   * outside the actor's standing. The contract has always said Core refuses a group they are not in;
+   * this is that sentence, against real membership rows.
+   */
+  describe("the data capability over an insert that names a group", () => {
+    function dataFor(actorUserId: number | null) {
+      return buildPhiServerAddonCapabilities({
+        manifest,
+        manifestDigest: "pgtest-scopes-data",
+        siteId: site.id,
+        actorUserId,
+      }).data!;
+    }
+
+    async function memberOfTheGroup() {
+      const id = await createPhiTestUser(site);
+      await addPhiTestGroupMember({
+        site,
+        groupId,
+        userId: id,
+        membershipFlags: PhiGroupMembershipFlags.Member,
+      });
+      return id;
+    }
+
+    it("inserts for somebody who stands in the named group", async () => {
+      const row = await dataFor(await memberOfTheGroup())
+        .insert("add", { title: "in my group", group_id: groupId });
+      expect(row).not.toBeNull();
+    });
+
+    it("refuses a group the actor does not stand in", async () => {
+      const outsider = await createPhiTestUser(site);
+      await expect(dataFor(outsider).insert("add", { title: "not mine", group_id: groupId }))
+        .rejects.toThrow(/does not stand in/);
+    });
+
+    it("refuses another Site's group before the database is asked", async () => {
+      // This used to reach PostgreSQL and fail on the composite foreign key, which is the right answer
+      // arrived at by accident. The refusal now happens where the reason is, and says what it is.
+      await expect(
+        dataFor(await memberOfTheGroup()).insert("add", { title: "elsewhere", group_id: foreignGroupId }),
+      ).rejects.toThrow(/does not stand in/);
+    });
+
+    it("refuses when nobody is acting", async () => {
+      await expect(dataFor(null).insert("add", { title: "nobody", group_id: groupId }))
+        .rejects.toThrow(/does not stand in/);
+    });
+  });
+
+
   it("keeps the row when its owner is deleted, and leaves it owned by nobody", async () => {
     const pool = await requirePhiTestDatabase();
     const { rows: inserted } = await pool.query<{ id: string }>(
