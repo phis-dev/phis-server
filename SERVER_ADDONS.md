@@ -355,6 +355,11 @@ Installation and upgrade are deployment operations, not Site configuration opera
 require a release: an Add-on is installed into a running server, and only a change to `phi-server`
 itself is a build.
 
+How an artifact reaches the machine in the first place -- configured sources, the package list an
+instance compares against, what is recorded about an Add-on's origin, and how far update handling may
+be automated -- is [DISTRIBUTION.md](./DISTRIBUTION.md). Nothing there widens this section: acquisition
+is a deployment operation like the rest.
+
 ## 7. Install root and desired state
 
 An Add-on is one self-contained ESM artifact. `phis-cli` places it in the install root and records the
