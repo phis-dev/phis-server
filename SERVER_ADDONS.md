@@ -67,11 +67,14 @@ fallback:
 - `@phis/addon-sdk`. The contract package is published and depended on; the build-time half described in
   section 3 -- descriptor builders, result-type generation, a context double -- has no package yet.
 - Site-admin activation/configuration API and provider setup flows
-- Module Storage, jobs, Threads, and Resource Link service adapters in handler context. Two Capabilities
-  are delivered -- `authorization:v1` and `data:v1`, both bound to the request -- and the rest of that
-  list is not. A Storage Provider factory receives the restricted service context section 10 describes:
-  one nullary reader bound at construction to the secret its own Storage Profile names, with no argument
-  through which another could be named.
+- jobs, Threads, and Resource Link adapters in handler context. Five Capabilities are delivered, each
+  bound to the request -- `authorization:v1`, `data:v1`, `storage:v1`, `secrets:v1`, `groups:v1` -- and
+  the rest of that list is not. `jobs` is the gap that matters: a job descriptor is declared and
+  validated, and nothing runs it. A Storage Provider factory receives the restricted service context
+  section 10 describes: one nullary reader bound at construction to the secret its own Storage Profile
+  names, with no argument through which another could be named.
+- an operator-editable configuration surface per Add-on. Secrets are not it: a commission rate or a
+  moderation switch is neither secret nor something the secret store should be asked to hold.
 - startup instance heartbeat/readiness and load-balancer rollout reconciliation. `phis.server_instances`
   is declared and unwritten, so no deployment can yet tell whether every serving instance carries the
   same release.
@@ -611,11 +614,13 @@ The Core capabilities are the ones `@phis/addon-contract` names, and that packag
 ```text
 @phis/phi-server/authentication:v1
 @phis/phi-server/authorization:v1
+@phis/phi-server/data:v1
+@phis/phi-server/groups:v1
+@phis/phi-server/secrets:v1
+@phis/phi-server/storage:v1
 @phis/phi-server/threads:v1
 @phis/phi-server/resource-links:v1
 @phis/phi-server/support:v1
-@phis/phi-server/groups:v1
-@phis/phi-server/storage:v1
 ```
 
 Core descriptors are generated from the running release and reconciled into the registry. They are not
@@ -700,6 +705,47 @@ two Add-ons' tables is already forbidden. A read is bounded by a required `limit
 "the caller will pass a sensible one" is not a bound. `LIKE` is absent for the reason regular
 expressions are absent from the schema descriptor: escaping and collation differ between database
 systems, and taking it would buy back the dependency the descriptor exists to remove.
+
+### `storage:v1`
+
+A private object store for one Add-on on one Site: `put`, `get`, `head`, `remove`, `list`.
+
+Keys are the Add-on's own and relative. Core puts them under a prefix it derives from the Add-on id and
+the Site key, and never hands the physical key back -- so there is no address an Add-on can store,
+guess, or be tricked into passing, and another Add-on's objects are unreachable by construction rather
+than by a check. The same rule the install root follows: a stored string never becomes an address.
+
+The bytes go through the Site's configured Storage Provider, so an operator who moved a Site to S3
+moved its Add-ons with it. The Site's `max_object_bytes` is the ceiling, because one limit is easier to
+reason about than two.
+
+This is not the Media library. What a person uploads, browses, and references belongs in a Media Space
+with its folders, quotas, and delivery policies. This is what an Add-on keeps for itself: a release
+artifact, a generated preview, an export waiting to be fetched.
+
+### `secrets:v1`
+
+`read(name)` and nothing else. The owner and the Site are bound, so another Add-on's secret cannot be
+named, and the resolver checks the owner a second time because a wrong binding and a wrong argument are
+different mistakes.
+
+There is no writer, and there should not be one. An operator sets a secret with `phis secret set`; a
+package that could write its own could plant one, and the store would stop being the operator's record
+of what they configured.
+
+### `groups:v1`
+
+Group facts, bounded by the acting user: `myGroups`, `members(groupId)`, `user(userId)`.
+
+One rule decides all of it -- **an Add-on sees what its actor sees.** Every answer is one the acting
+user could already have obtained through the Site's own group routes, projected exactly as those
+project it: a display name, a company only where the group's own flag discloses it, and never an
+address. That decision belongs to the group's Manager, and an Add-on inherits it rather than being
+asked separately.
+
+`user(userId)` answers null for somebody the actor shares no group with. That null is the point of the
+method: it is what stops a row's owner id from becoming a lookup into a Site's whole user table. An
+Add-on renders "listed by" and learns nothing else.
 
 Package version, Add-on ABI version, capability version, migration version, and release build id are
 independent version axes and are never inferred from one another.

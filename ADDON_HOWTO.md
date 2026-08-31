@@ -183,6 +183,10 @@ module scope empty.
   none. Declare the queries you run in the manifest and call them by name through
   `@phis/phi-server/data:v1`: `context.capabilities.data.select("mine", { ... })`. Core derives the
   statements once, puts the Site filter into every one of them, and writes the scope columns itself.
+- **No PII beyond what your actor could already see.** The request context carries a user *id*. A
+  display name comes from `@phis/phi-server/groups:v1`, and only for someone the acting user shares a
+  group with; an email address is not on offer at all. If you need a person to receive a message, that
+  is Core's to send, not yours to address.
 - **No authorization of your own over Core's scopes.** If a table is `ownerScoped` or `groupScoped`,
   Core wrote those columns and Core answers about them: declare `@phis/phi-server/authorization:v1` and
   ask `context.capabilities.authorization.mayActOnRow({ table, id, intent })`. Rebuilding the ladder

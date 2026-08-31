@@ -32,6 +32,10 @@ import {
 } from "@/lib/authorization";
 import { getPool } from "@/lib/db";
 import { buildPhiServerAddonDataCapability } from "./data-capability.ts";
+import { buildPhiServerAddonGroupsCapability } from "./groups-capability.ts";
+import { buildPhiServerAddonSecretsCapability } from "./secrets-capability.ts";
+import { buildPhiServerAddonStorageCapability } from "./storage-capability.ts";
+import { ensureSiteMediaConfig } from "@/db/media-spaces";
 import { getEffectiveUserSiteAuthorization } from "@/db/user-site-memberships";
 import type { PhiServerAddonManifestV1 } from "./contract.ts";
 
@@ -227,6 +231,7 @@ export function buildPhiServerAddonCapabilities(input: {
   manifest: PhiServerAddonManifestV1;
   manifestDigest: string;
   siteId: number | null;
+  siteKey?: string | null;
   actorUserId: number | null;
 }): PhiServerAddonCapabilities {
   const capabilities: PhiServerAddonCapabilities = {};
@@ -258,6 +263,32 @@ export function buildPhiServerAddonCapabilities(input: {
       mayActOnRow: ({ table, id, intent }) =>
         authorization.mayActOnRow({ table, id: id as number | string, intent }),
     });
+  }
+  if (required.includes(PHI_SERVER_CORE_CAPABILITIES.groups)) {
+    capabilities.groups = buildPhiServerAddonGroupsCapability({
+      siteId,
+      actorUserId: input.actorUserId,
+    });
+  }
+  // The two below address the Site by key rather than by id, because a storage prefix and a secret
+  // reference are both written with it. Without one they are not built at all: a capability that
+  // cannot name its Site is not a narrower capability, it is a broken one.
+  if (input.siteKey) {
+    const siteKey = input.siteKey;
+    if (required.includes(PHI_SERVER_CORE_CAPABILITIES.storage)) {
+      capabilities.storage = buildPhiServerAddonStorageCapability({
+        addonId: input.manifest.addonId,
+        siteId,
+        siteKey,
+        readMaxObjectBytes: async () => (await ensureSiteMediaConfig(siteId)).maxObjectBytes,
+      });
+    }
+    if (required.includes(PHI_SERVER_CORE_CAPABILITIES.secrets)) {
+      capabilities.secrets = buildPhiServerAddonSecretsCapability({
+        addonId: input.manifest.addonId,
+        siteKey,
+      });
+    }
   }
   return Object.freeze(capabilities);
 }

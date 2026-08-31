@@ -399,6 +399,7 @@ export async function dispatchPhiServerAddonRequest(
           manifest: entry.manifest,
           manifestDigest: entry.manifestDigest,
           siteId: identity.site?.id ?? null,
+          siteKey: identity.site?.key ?? null,
           actorUserId: identity.actor?.kind === "user" ? identity.actor.id : null,
         }),
         signal: request.signal,
