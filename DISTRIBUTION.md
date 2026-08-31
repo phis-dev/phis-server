@@ -88,6 +88,10 @@ as "no updates available", which is the one answer that must never be guessed.
 
 ## 3. The list
 
+The wire format is drafted in `PACKAGE_LISTING.md`, which generalises this section: an entry is
+an offering of any kind, and what makes one a phis package is a field rather than the structure.
+What follows is what our own consumption of such a list needs from it.
+
 A list describes products. One entry is one product, and a product is delivered as exactly one package:
 one version, one URL, one digest. An entry states:
 
