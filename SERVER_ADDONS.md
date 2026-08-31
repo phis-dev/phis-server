@@ -623,6 +623,26 @@ Write authority is fixed:
 
 ## 13. Core capability registry
 
+### A capability name is frozen once it is public
+
+The version lives inside the id, and it covers the shape, not the name. Renaming the name half of
+`@phis/phi-server/<name>:v1` produces an id that was never offered, which to every consumer looks like a
+capability that does not exist -- no version moved, so nothing signals a break.
+
+This is not hypothetical. `auth` was renamed to `authentication` during development, the Site Module
+requesting it was not carried along, and the Auth module resolved a capability nobody offers: it
+deactivated itself, exactly as the contract says it must, and the Site silently had no login route. That
+was found by a person reporting a 404, not by anything in the build.
+
+From the first public release of `phi-server`, a capability name may only gain a successor beside it, never
+be replaced in place. An installation that updates `@phis/ui` and `phi-server` independently through npm
+has no other protection: they agree on capability ids and on nothing else.
+
+`phis site check --key <site key>` compares what a Site's Modules require against what its server offers
+and names the Modules that lost theirs. The comparison happens in the Site, because `phi-server` does not
+depend on `@phis/ui` and cannot know what a Site requires. It reports the running Site, so it is the check
+to run after an update rather than a prediction about one.
+
 Core participates in the read-only discovery model as:
 
 ```text

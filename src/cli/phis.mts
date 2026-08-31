@@ -25,6 +25,7 @@ import {
   buildRuntimeSummary,
   hasSiteSourceOverride,
   renderSiteConfig,
+  resolveSiteInstances,
   resolveSiteSource,
   type SiteConfigTarget,
   type SiteDeploymentRecord,
@@ -180,6 +181,7 @@ Usage:
   phis site config systemd --key|-k <site key>
   phis site config docker-compose --key|-k <site key>
   phis site config runtime --key|-k <site key>
+  phis site check --key|-k <site key> [--url <base url>]
   phis operator list [--email|-e <email>]
   phis operator add --email|-e <email> --password|-p <password> [--name|-n <display name>] [--disabled|-d]
   phis operator del --email|-e <email>
@@ -893,6 +895,75 @@ function readSiteScaffoldPackageManager(flags: FlagMap): PhiSiteScaffoldPackageM
  * Add-on artifact needs one. `sync` exists for the case where the projection and the desired state have
  * drifted, after a scaffold or a hand edit.
  */
+/**
+ * What a Site needs from its server, and what it is not getting.
+ *
+ * A Module whose Core capability is missing deactivates itself, which is correct and silent: the feature
+ * is gone and the reason is in a log nobody reads until something is reported. This turns that into a
+ * command to run after an update.
+ *
+ * The Site is asked rather than computed, because `phi-server` does not depend on `@phis/ui` and cannot
+ * know what a Site requires. It reports the running Site, not a prediction about the next one.
+ */
+async function runSiteCheckCommand(flags: FlagMap, json: boolean) {
+  const site = await getSiteByKey(getRequiredFlag(flags, "key"));
+  const mergedConfig = readCliMergedConfig();
+  const token = mergedConfig.api?.internalToken?.trim() ?? "";
+  if (!token) {
+    throw new Error("Missing api.internalToken; the Site refuses an unauthenticated check.");
+  }
+  const override = getOptionalFlag(flags, "url");
+  const instance = resolveSiteInstances(site, mergedConfig.sites)[0];
+  if (!override && !instance) {
+    throw new Error(`Site ${site.key} has no instance to ask.`);
+  }
+  const baseUrl = override ?? `http://${instance.host}:${instance.port}`;
+
+  const response = await fetch(`${baseUrl.replace(/\/$/, "")}/api/site/module-diagnostics`, {
+    headers: { "x-phi-token": token, accept: "application/json" },
+    cache: "no-store",
+  }).catch((error: unknown) => {
+    throw new Error(
+      `Could not reach ${baseUrl}: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  });
+
+  const body = await response.json().catch(() => null) as {
+    ok?: boolean;
+    offeredCapabilities?: string[];
+    unavailable?: Array<{
+      area: string;
+      moduleId: string;
+      diagnosticCode: string;
+      missingCapabilities: string[];
+    }>;
+    error?: string;
+  } | null;
+
+  if (!body || (response.status !== 200 && response.status !== 409)) {
+    throw new Error(`Site ${site.key} answered ${response.status}${body?.error ? `: ${body.error}` : ""}.`);
+  }
+
+  if (json) {
+    printJson(body);
+  } else if (body.ok) {
+    console.log(
+      `${site.key}: every Module has its server capabilities (${body.offeredCapabilities?.length ?? 0} offered).`,
+    );
+  } else {
+    console.log(`${site.key}: ${body.unavailable?.length ?? 0} Module(s) deactivated.`);
+    for (const entry of body.unavailable ?? []) {
+      const missing = entry.missingCapabilities.join(", ") || "-";
+      console.log(`  ${entry.area}/${entry.moduleId}  ${entry.diagnosticCode}  missing: ${missing}`);
+    }
+    console.log(`Offered: ${(body.offeredCapabilities ?? []).join(", ") || "none"}`);
+  }
+
+  if (!body.ok) {
+    process.exitCode = 1;
+  }
+}
+
 async function runSiteModuleCommand(command: string, flags: FlagMap, json: boolean) {
   const requireFlag = (key: string) => {
     const value = getOptionalFlag(flags, key);
@@ -1440,6 +1511,11 @@ async function main() {
 
   if (group === "config" && command === "validate") {
     validateConfig(json);
+    return;
+  }
+
+  if (group === "site" && command === "check") {
+    await runSiteCheckCommand(flags, json);
     return;
   }
 
