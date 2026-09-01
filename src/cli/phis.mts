@@ -97,6 +97,11 @@ import {
   readPhiServerAddonStorageUsage,
   setPhiServerAddonStorageQuota,
 } from "../db/server-addon-storage-usage.mts";
+import {
+  readPhiServerAddonStorageSites,
+  recountPhiServerAddonStorage,
+  removePhiServerAddonStorage,
+} from "./storage-purge.mts";
 import { checkPhiDependencyLicenses } from "./licenses.mts";
 import { checkPhiMediaOwnership } from "./media-check.mts";
 import {
@@ -105,6 +110,7 @@ import {
   reconcileStorageCors,
   removeStorageProfile,
   probeStorageProfiles,
+  resolvePhiStorageObjectAdapter,
   setStorageProfile,
   useStorageProfile,
 } from "./storage.mts";
@@ -256,7 +262,7 @@ Usage:
   phis addon disable --addon <@scope/name>
   phis addon forget --addon <@scope/name>
   phis addon site   --addon <@scope/name> [--site <site key> --enable [--without-module] | --disable]
-  phis addon storage --addon <@scope/name> --site <site key> [--quota-bytes <n>] [--max-objects <n>] [--unlimited]
+  phis addon storage --addon <@scope/name> --site <site key> [--quota-bytes <n>] [--max-objects <n>] [--unlimited] [--recount]
   phis addon config --addon <@scope/name> --site <site key>
   phis addon role   --site <site key> [--addon <@scope/name>] [--user <id>]
                     [--grant <role> | --revoke <role>]
@@ -2384,15 +2390,43 @@ async function main() {
   }
 
   if (group === "addon" && command === "purge") {
+    /*
+     * Read before the purge, emptied after it.
+     *
+     * `site_server_addons` is one of the tables the purge clears, so afterwards nothing says which
+     * Sites this Add-on had a store on. And the rows go first on purpose: if the storage then refuses,
+     * what is left is objects nobody references -- untidy and findable -- whereas removing the bytes
+     * first loses them whenever the transaction rolls back.
+     */
+    const addonId = getRequiredFlag(flags, "addon");
+    const stores = await readPhiServerAddonStorageSites(getPool(), addonId);
     const result = await purgeAddon(configRoot, flags, getMigrationPool());
+
+    const readStorageSecret = (reference: string) =>
+      readPhiServerSecretWithDb(getPool(), reference, requireSecretEncryptionKey());
+    const removals = [];
+    for (const store of stores) {
+      removals.push(await removePhiServerAddonStorage(store, addonId, (site) =>
+        resolvePhiStorageObjectAdapter(
+          configRoot, site.providerId, site.config, site.secretReference, readStorageSecret,
+        )));
+    }
+
     if (json) {
-      printJson(result);
+      printJson({ ...result, storage: removals });
     } else {
       console.log(
         result.schemaName
           ? `Dropped schema ${result.schemaName} and every record of ${result.addonId}.`
           : `Removed every record of ${result.addonId}, which owned no tables.`,
       );
+      for (const removal of removals) {
+        console.log(
+          removal.error
+            ? `  ${removal.siteKey}: objects kept -- ${removal.error}`
+            : `  ${removal.siteKey}: ${removal.removed < 0 ? "store removed" : `${removal.removed} object(s) removed`}`,
+        );
+      }
     }
     return;
   }
@@ -2476,8 +2510,43 @@ async function main() {
       }
     }
 
+    let recounted: { bytes: number; objects: number } | null = null;
+    if (flags.get("recount") === true) {
+      /*
+       * The counters describe what Core booked, which is not always what the storage holds. An object
+       * removed with a bucket client, a Provider migration, a write the storage accepted after Core had
+       * given the booking back -- none of these pass through `put`. A ceiling reached by drift refuses
+       * writes against space that is free, and the error says nothing about why.
+       *
+       * A command rather than a background pass: it costs a full listing of the prefix, which is the
+       * unbounded operation the ceiling exists to prevent.
+       */
+      const stores = await readPhiServerAddonStorageSites(getPool(), addonId);
+      const store = stores.find((entry) => entry.siteId === site.id);
+      if (!store) {
+        throw new Error(`${addonId} has no store on ${site.key} to recount.`);
+      }
+      const readStorageSecret = (reference: string) =>
+        readPhiServerSecretWithDb(getPool(), reference, requireSecretEncryptionKey());
+      const adapter = await resolvePhiStorageObjectAdapter(
+        configRoot, store.providerId, store.config, store.secretReference, readStorageSecret,
+      );
+      if (!adapter) {
+        throw new Error(
+          `${site.key} stores through ${store.providerId}, which this command cannot list. ` +
+          "Recounting is available for Providers reached through an installed Add-on.",
+        );
+      }
+      recounted = await recountPhiServerAddonStorage(getPool(), {
+        addonId, site: store, listPrefix: (prefix) => adapter.listPrefix(prefix),
+      });
+    }
+
     const usage = await readPhiServerAddonStorageUsage(getPool(), { addonId, siteId: site.id });
-    const result = { ok: true, action: "addon.storage" as const, addon: addonId, site: site.key, usage };
+    const result = {
+      ok: true, action: "addon.storage" as const, addon: addonId, site: site.key, usage,
+      ...(recounted ? { recounted: true } : {}),
+    };
     if (json) {
       printJson(result);
     } else {

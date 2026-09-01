@@ -961,6 +961,21 @@ fails, in one conditional statement -- two writes arriving together would otherw
 figure, both find room, and both proceed. An overwrite costs the difference and no object, so an Add-on
 that rewrites one file each hour is not charged as though it kept every version.
 
+A purge removes the objects too, after the rows and never before them: the rows are one transaction and
+the bytes are not in it, so if the storage then refuses, what is left is objects nobody references --
+untidy, findable, removable later. Removing the bytes first would lose them whenever the transaction
+rolled back. The Sites are read before the purge, because `site_server_addons` is one of the tables it
+empties. Disabling an Add-on for a Site keeps its objects, as it keeps its tables.
+
+`phis addon storage --recount` sets the counters to what the store actually holds. They are a running
+total and can drift -- an object removed with a bucket client, a Provider migration, a write the storage
+accepted after Core had given the booking back. A ceiling reached by drift refuses writes against space
+that is free, and the error mentions the ceiling rather than the reason. It is a command rather than a
+background pass because it costs a full listing of the prefix.
+
+What Core cannot do is collect objects an Add-on no longer refers to: which of its own objects still
+matter is a question only the Add-on can answer, and a declared job is where that answer belongs.
+
 `usage()` is what an Add-on may do with the figures: read them. It exists so a refusal can be explained
 before it happens rather than arriving as an error, and a vendor who can see they are at their limit
 does not file a bug about it.

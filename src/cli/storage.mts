@@ -225,6 +225,26 @@ async function resolveProviderAdapter(
   }) as PhiMediaStorageCorsAdapter;
 }
 
+/**
+ * A Provider built for reading and removing objects, which the Local one does not need.
+ *
+ * Null there is the answer rather than a gap: `phis media check` and the purge both reach Core's own
+ * storage through the filesystem, because its adapter carries a `server-only` import a CLI cannot load.
+ */
+export async function resolvePhiStorageObjectAdapter(
+  root: string,
+  providerId: string,
+  config: Record<string, unknown>,
+  secretReference: string | null,
+  readSecret: StorageSecretReader,
+) {
+  const adapter = await resolveProviderAdapter(root, providerId, config, secretReference, readSecret);
+  return adapter as unknown as {
+    listPrefix(prefix: string): Promise<{ storageKey: string; byteSize: number }[]>;
+    deleteObject(storageKey: string): Promise<boolean>;
+  } | null;
+}
+
 /** The same construction as above, for the one call a probe makes. Local has no adapter to build. */
 async function resolveProbeAdapter(
   root: string,
