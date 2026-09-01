@@ -15,8 +15,8 @@ export async function GET(request: NextRequest) {
   if (guarded.error) return guarded.error;
   return NextResponse.json({
     provider: {
-      capability: "@phis/phi-server/groups:v1",
-      providerId: "@phis/phi-server/core",
+      capability: "@phis/server/groups:v1",
+      providerId: "@phis/server/core",
       connectionKey: null,
     },
     groups: await listSiteGroups(guarded.context!.site!.id),

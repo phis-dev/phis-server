@@ -185,7 +185,7 @@ describe("Media Folders and authorization claims against PostgreSQL", () => {
       await addPhiTestGroupMember({ site, groupId, userId });
       await pool.query(
         `INSERT INTO phis.user_site_role_claims (user_id, site_id, provider_id, role_flags)
-         VALUES ($1, $2, '@phis/phi-server/core', 8)`,
+         VALUES ($1, $2, '@phis/server/core', 8)`,
         [userId, site.id],
       );
 

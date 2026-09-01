@@ -137,7 +137,7 @@ Core is compiled into every `phi-server` release, is never installed as an Add-o
 disabled per Site. It participates in capability discovery as:
 
 ```text
-@phis/phi-server/core
+@phis/server/core
 ```
 
 ### Capability
@@ -146,9 +146,9 @@ A Capability is a namespaced, versioned server interface supplied by Core or one
 version is independent from provider package version.
 
 ```text
-@phis/phi-server/threads:v1
-@phis/phi-server/resource-links:v1
-@phis/phi-server/support:v1
+@phis/server/threads:v1
+@phis/server/resource-links:v1
+@phis/server/support:v1
 @phis/github/issues:v1
 ```
 
@@ -767,7 +767,7 @@ Write authority is fixed:
 ### A capability name is frozen once it is public
 
 The version lives inside the id, and it covers the shape, not the name. Renaming the name half of
-`@phis/phi-server/<name>:v1` produces an id that was never offered, which to every consumer looks like a
+`@phis/server/<name>:v1` produces an id that was never offered, which to every consumer looks like a
 capability that does not exist -- no version moved, so nothing signals a break.
 
 This is not hypothetical. `auth` was renamed to `authentication` during development, the Site Module
@@ -787,21 +787,21 @@ to run after an update rather than a prediction about one.
 Core participates in the read-only discovery model as:
 
 ```text
-@phis/phi-server/core
+@phis/server/core
 ```
 
 The Core capabilities are the ones `@phis/contracts/addon` names, and that subpath owns the spelling:
 
 ```text
-@phis/phi-server/authentication:v1
-@phis/phi-server/authorization:v1
-@phis/phi-server/data:v1
-@phis/phi-server/groups:v1
-@phis/phi-server/secrets:v1
-@phis/phi-server/storage:v1
-@phis/phi-server/threads:v1
-@phis/phi-server/resource-links:v1
-@phis/phi-server/support:v1
+@phis/server/authentication:v1
+@phis/server/authorization:v1
+@phis/server/data:v1
+@phis/server/groups:v1
+@phis/server/secrets:v1
+@phis/server/storage:v1
+@phis/server/threads:v1
+@phis/server/resource-links:v1
+@phis/server/support:v1
 ```
 
 Core descriptors are generated from the running release and reconciled into the registry. They are not
@@ -1312,9 +1312,9 @@ part of this contract.
 Site package:        @phis/support
 Site Module:         @phis/support/modules/support
 Server binding:      Core
-Required capability: @phis/phi-server/support:v1
-Required capability: @phis/phi-server/threads:v1
-Required capability: @phis/phi-server/resource-links:v1
+Required capability: @phis/server/support:v1
+Required capability: @phis/server/threads:v1
+Required capability: @phis/server/resource-links:v1
 Server Add-on:       none
 ```
 
@@ -1326,8 +1326,8 @@ Site Module:         @phis/github/modules/github
 Server binding:      @phis/github
 Server package:      @phis/github-server
 Provided capability: @phis/github/issues:v1
-Core requirement:    @phis/phi-server/threads:v1
-Core requirement:    @phis/phi-server/resource-links:v1
+Core requirement:    @phis/server/threads:v1
+Core requirement:    @phis/server/resource-links:v1
 ```
 
 ## 21. Non-negotiable invariants

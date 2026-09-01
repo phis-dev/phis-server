@@ -30,7 +30,7 @@ export type PhiSecretBackend = {
   resolve: (reference: string) => Promise<string | null>;
 };
 
-export const PHI_SECRET_DATABASE_BACKEND_ID = "@phis/phi-server/secrets/database";
+export const PHI_SECRET_DATABASE_BACKEND_ID = "@phis/server/secrets/database";
 
 export class PhiMissingSecretEncryptionKeyError extends Error {
   constructor() {

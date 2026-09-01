@@ -1,4 +1,4 @@
-export const PHI_CORE_GROUP_PROVIDER_ID = "@phis/phi-server/core" as const;
+export const PHI_CORE_GROUP_PROVIDER_ID = "@phis/server/core" as const;
 
 /**
  * The four levels, cumulative and in this order.

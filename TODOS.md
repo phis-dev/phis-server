@@ -83,7 +83,7 @@ Implemented in the current baseline:
   Membership rows already carry source Provider, connection, and assertion identity.
 - The pre-P0 `media_groups` table, the `groupId`/`groupPath` vocabulary, the global `local | s3` switch,
   and persisted public URLs are gone from both repositories, with no aliases retained.
-- `@phis/phi-server/groups:v1` is a permanent Core capability served by `/api/v1/groups` and its member
+- `@phis/server/groups:v1` is a permanent Core capability served by `/api/v1/groups` and its member
   routes.
 - Provider-qualified group claims and the closed `groups` access policy are part of the one shared
   authorization snapshot, parser, and evaluator, orthogonal to roles and preserving the Core Admin
@@ -478,7 +478,7 @@ Remaining work:
   Skeleton is continuously proven.
 - Extend the implemented manifest-based `phis reconcile` path so dependency refreshes preserve installed
   optional Modules, their generated external build state, Site runtime secrets, Site data, and every
-  explicitly Site-owned file. The permanent Core `@phis/phi-server/groups:v1` capability exists
+  explicitly Site-owned file. The permanent Core `@phis/server/groups:v1` capability exists
   independently of the optional `@phis/groups` UI Module; reconcile must neither install nor remove that
   Module unless an explicit Module operation requests it.
 - Complete the existing update/artifact path by resolving the compatible package and Module set through
@@ -559,7 +559,7 @@ Remaining work:
 
 - Publish `@phis/groups` as a separate `phis-cli`-installable Module package tree rather than adding its
   Admin/App pages, presets, Providers, Controllers, Forms, labels, or management code to
-  `@phis/ui`. Bind it only to the permanent Core `@phis/phi-server/groups:v1` capability; Module
+  `@phis/ui`. Bind it only to the permanent Core `@phis/server/groups:v1` capability; Module
   removal must leave Core persistence, policies, and group-aware resources intact.
 - Implement the first reference Directory Add-on against
   [DIRECTORY_PROVIDERS.md](./DIRECTORY_PROVIDERS.md). Prefer scoped push/delta synchronization, support

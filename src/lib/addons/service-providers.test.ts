@@ -47,7 +47,7 @@ const serviceProvider = (overrides: Record<string, unknown> = {}) => ({
 describe("service kinds", () => {
   it("names only kinds Core actually owns", () => {
     expect(isPhiServerServiceKind(PHI_SERVER_SERVICE_KINDS.mediaStorage)).toBe(true);
-    expect(isPhiServerServiceKind("@phis/phi-server/service/whatever")).toBe(false);
+    expect(isPhiServerServiceKind("@phis/server/service/whatever")).toBe(false);
     expect(isPhiServerServiceKind(undefined)).toBe(false);
   });
 

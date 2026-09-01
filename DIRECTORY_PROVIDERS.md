@@ -27,10 +27,10 @@ the Groups HTTP family is rooted at:
 The corresponding Core capability is:
 
 ```text
-@phis/phi-server/groups:v1
+@phis/server/groups:v1
 ```
 
-The v1 implementation uses the local provider `@phis/phi-server/core`. A future Directory Add-on
+The v1 implementation uses the local provider `@phis/server/core`. A future Directory Add-on
 registers an internal provider implementation but does not replace the Core route, publish ordinary
 Module-facing `/ldap/*` or `/entra/*` management routes, or require the UI to recognize a provider
 package.
@@ -247,7 +247,7 @@ A future Directory Add-on uses the static server Add-on registry and implements 
 kind:
 
 ```text
-@phis/phi-server/directory-provider:v1
+@phis/server/directory-provider:v1
 ```
 
 Its manifest declares one provider key, interface digest, factory, required Core capabilities, jobs,

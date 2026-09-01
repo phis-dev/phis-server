@@ -261,7 +261,7 @@ describe("canonical Auth endpoints", () => {
       authorization: {
         enabled: true,
         coreRoleFlags: 1,
-        roleClaims: [{ providerId: "@phis/phi-server/core", flags: 1 }],
+        roleClaims: [{ providerId: "@phis/server/core", flags: 1 }],
       },
       methodKey: "google",
       nextPath: "/admin",

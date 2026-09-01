@@ -37,7 +37,7 @@ describe("Core service interface digests", () => {
   });
 
   it("refuse a kind Core does not own, and a digest from another interface", () => {
-    expect(isPhiServerServiceKind("@phis/phi-server/service/nothing")).toBe(false);
+    expect(isPhiServerServiceKind("@phis/server/service/nothing")).toBe(false);
     expect(
       isPhiServerServiceInterfaceCurrent(
         PHI_SERVER_SERVICE_KINDS.mediaStorage,

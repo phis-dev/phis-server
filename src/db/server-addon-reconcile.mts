@@ -16,7 +16,7 @@ export type PhiServerAddonReconcileEntry = {
 async function reconcileCoreCapabilities(client: PoolClient, releaseBuildId: string) {
   await client.query(
     `DELETE FROM phis.server_capabilities
-      WHERE provider_id = '@phis/phi-server/core'`,
+      WHERE provider_id = '@phis/server/core'`,
   );
   for (const capability of PHI_SERVER_CORE_CAPABILITIES) {
     await client.query(
@@ -26,7 +26,7 @@ async function reconcileCoreCapabilities(client: PoolClient, releaseBuildId: str
          interface_digest,
          release_build_id
        )
-       VALUES ('@phis/phi-server/core', $1, $2, $3)`,
+       VALUES ('@phis/server/core', $1, $2, $3)`,
       [capability.id, capability.interfaceDigest, releaseBuildId],
     );
   }
@@ -53,7 +53,7 @@ export async function reconcilePhiServerAddons(
       );
       await client.query(
         `DELETE FROM phis.server_capabilities
-          WHERE provider_id <> '@phis/phi-server/core'`,
+          WHERE provider_id <> '@phis/server/core'`,
       );
     } else {
       await client.query(
@@ -66,7 +66,7 @@ export async function reconcilePhiServerAddons(
       );
       await client.query(
         `DELETE FROM phis.server_capabilities
-          WHERE provider_id <> '@phis/phi-server/core'
+          WHERE provider_id <> '@phis/server/core'
             AND NOT (provider_id = ANY($1::text[]))`,
         [desiredIds],
       );

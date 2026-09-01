@@ -62,7 +62,7 @@ describe("what one member sees of another", () => {
     email: "ai@phisys.com",
     companyName: "Acme",
     membershipFlags: PhiGroupMembershipFlags.Author,
-    sourceProviderId: "@phis/phi-server/core",
+    sourceProviderId: "@phis/server/core",
     sourceConnectionKey: "local",
     validUntil: null,
     createdAt: "2026-08-24T00:00:00.000Z",

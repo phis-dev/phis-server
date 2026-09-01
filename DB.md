@@ -179,7 +179,7 @@ must not be reintroduced as a compatibility path.
 
 Contract:
 - One profile is one concrete, operator-configured Storage target for one Site.
-- `provider_id` is a namespaced service-provider id such as `@phis/phi-server/storage-local` and is validated against the manifest-declared provider registry; an unavailable provider fails closed.
+- `provider_id` is a namespaced service-provider id such as `@phis/server/storage-local` and is validated against the manifest-declared provider registry; an unavailable provider fails closed.
 - `secret_reference` names a runtime-config secret. Credentials never live in this row, in Site administration, or in any browser payload.
 - Every Asset and every generated variant binds to a concrete profile. There is no global Storage switch and no persisted canonical public URL.
 
@@ -538,7 +538,7 @@ Contract:
 - `FOREIGN KEY (user_id, site_id) REFERENCES phis.user_site_memberships(user_id, site_id) ON DELETE CASCADE`
 
 Contract:
-- `@phis/phi-server/core` stores the effective assigned Core role matrix.
+- `@phis/server/core` stores the effective assigned Core role matrix.
 - Every enabled compatible Add-on owns an independent provider-local role bit space.
 - Persisted Add-on claims survive provider disablement but are omitted from effective runtime claims
   until the provider is available again.

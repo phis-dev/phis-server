@@ -114,7 +114,7 @@ export async function createPhiTestSite(label: string): Promise<PhiTestSite> {
 
   const { rows: profileRows } = await pool.query<{ id: number }>(
     `INSERT INTO phis.media_storage_profiles (site_id, key, provider_id)
-     VALUES ($1, 'pgtest-local', '@phis/phi-server/storage-local')
+     VALUES ($1, 'pgtest-local', '@phis/server/storage-local')
      RETURNING id`,
     [id],
   );
@@ -235,7 +235,7 @@ export async function createPhiTestGroup(site: PhiTestSite, key: string): Promis
   const pool = await requirePhiTestDatabase();
   const { rows } = await pool.query<{ id: number }>(
     `INSERT INTO phis.site_groups (site_id, provider_id, key, name)
-     VALUES ($1, '@phis/phi-server/core', $2, $2)
+     VALUES ($1, '@phis/server/core', $2, $2)
      RETURNING id`,
     [site.id, key],
   );
@@ -254,7 +254,7 @@ export async function addPhiTestGroupMember(input: {
     `INSERT INTO phis.site_group_members (
        group_id, user_id, site_id, source_provider_id, source_binding_or_assertion_key,
        membership_flags, valid_until
-     ) VALUES ($1, $2, $3, '@phis/phi-server/core', 'pgtest', $4,
+     ) VALUES ($1, $2, $3, '@phis/server/core', 'pgtest', $4,
                CASE WHEN $5::int IS NULL THEN NULL ELSE NOW() + make_interval(secs => $5::int) END)`,
     [input.groupId, input.userId, input.site.id, input.membershipFlags ?? 1, input.validUntilSeconds ?? null],
   );

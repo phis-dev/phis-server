@@ -29,7 +29,7 @@ type PhiViewerRoleClaim = {
 };
 ```
 
-`@phis/phi-server/core` is the universal Core role provider. Every authenticated Site viewer has one
+`@phis/server/core` is the universal Core role provider. Every authenticated Site viewer has one
 effective Core claim, even when its flags are zero. An enabled compatible Add-on may contribute at most
 one additional claim for its own provider id.
 
@@ -51,7 +51,7 @@ Group keys are provider-local and immutable after publication. Membership capabi
 Author, Editor, or Manager govern domain operations server-side; the shared visibility policy tests only
 effective membership in one of the declared groups.
 
-A Server Add-on never evaluates any of this itself. It declares `@phis/phi-server/authorization:v1` and
+A Server Add-on never evaluates any of this itself. It declares `@phis/server/authorization:v1` and
 receives a bound evaluator on its request context, which answers whether the acting user may act on one
 of its rows, what level they hold in a group, and whether they hold a Site access. The evaluator answers
 and grants nothing: it is the consulting surface for this document, not a second place where the model
@@ -207,7 +207,7 @@ The primary key is `(site_id, user_id, provider_id)`. The row references the Sit
 deleted with it. `role_flags` is an `INT`; each provider therefore owns its own bounded positive flag
 space.
 
-The Core role assignment is the row whose provider is `@phis/phi-server/core`. The target v1 schema
+The Core role assignment is the row whose provider is `@phis/server/core`. The target v1 schema
 does not keep `base_role_flags` or `custom_role_flags` as parallel effective-authorization columns.
 
 A zero assignment is represented by deleting the provider row, except that runtime resolution still

@@ -186,7 +186,7 @@ export async function getSessionById(sessionId: string) {
      LEFT JOIN phis.user_site_role_claims AS core_claim
        ON core_claim.user_id = session.user_id
       AND core_claim.site_id = session.site_id
-      AND core_claim.provider_id = '@phis/phi-server/core'
+      AND core_claim.provider_id = '@phis/server/core'
      JOIN phis.site_auth_config AS auth_config
        ON auth_config.site_id = session.site_id
      WHERE session.id = $1

@@ -42,7 +42,7 @@ export async function buildPhiServerCapabilitySnapshot(siteId: number) {
     }>;
   }> = [
     {
-      providerId: "@phis/phi-server/core",
+      providerId: "@phis/server/core",
       state: "available",
       diagnosticCode: null,
       capabilities: [...PHI_SERVER_CORE_CAPABILITIES],

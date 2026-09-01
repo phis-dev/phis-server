@@ -196,7 +196,7 @@ separate per source so provenance can be shown.
 - **Who paginates for a browsing UI** — through Core's copy, which then has to pass the cursor along, or
   straight against the source, which gives an Add-on a second connection outward and duplicates the
   source configuration.
-- **The capability name**, frozen from the first public release. `@phis/phi-server/package-listings:v1`
+- **The capability name**, frozen from the first public release. `@phis/server/package-listings:v1`
   is the current suggestion.
 - **Whether `attributes.phisVersion` is a range or a minimum.** A range is only worth its ambiguity if
   something filters on it; a dynamic endpoint that answers "newest compatible version for the caller"

@@ -76,7 +76,7 @@ beforeEach(() => {
   const current = asset();
   mocks.getMediaAssetBySiteAndId.mockResolvedValue(current);
   mocks.getMediaFolderBySiteAndId.mockResolvedValue({ id: 4 });
-  mocks.getMediaStorageProfile.mockResolvedValue({ providerId: "@phis/phi-server/storage-local", config: {} });
+  mocks.getMediaStorageProfile.mockResolvedValue({ providerId: "@phis/server/storage-local", config: {} });
   mocks.updateMediaAsset.mockImplementation(async (input: Record<string, unknown>) =>
     asset({
       folderId: input.folderId as number | null | undefined ?? current.folderId,

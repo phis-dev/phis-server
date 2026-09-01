@@ -120,7 +120,7 @@ routes or silently added by `init` or `reconcile`.
 
 In particular:
 
-- Core exposes the permanent provider-neutral `@phis/phi-server/groups:v1` capability independently of
+- Core exposes the permanent provider-neutral `@phis/server/groups:v1` capability independently of
   Site scaffold generation;
 - `@phis/groups` is an optional Site Module installed only by an explicit Module operation;
 - installing a Module updates package metadata and generated external build state, not canonical wrapper

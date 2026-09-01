@@ -13,7 +13,7 @@ export function resolvePhiUserArea(input: {
   }
 
   const coreRoleFlags =
-    input.roleClaims?.find(({ providerId }) => providerId === "@phis/phi-server/core")?.flags ?? 0;
+    input.roleClaims?.find(({ providerId }) => providerId === "@phis/server/core")?.flags ?? 0;
 
   if (hasPhiFlag(coreRoleFlags, PhiBaseRole.Admin)) {
     return "admin";

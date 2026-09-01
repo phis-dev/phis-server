@@ -5,8 +5,8 @@
       "addonId": "@phis/storage-s3",
       "packageName": "@phis/storage-s3-server",
       "packageVersion": "0.1.0",
-      "manifestDigest": "fcb4c59bbdf713f31b0f0bed9233e7ec570319febb48ebfb999fe8585c9d01ad",
-      "artifactDigest": "81c3958e2a2c60740c981d1737f219cdea2fc7a34a5c66283b3e706f566a657e",
+      "manifestDigest": "4a477ef05f84a1c4b032134d60f1667be426b00b0a24c29bfbb700db3ef40d63",
+      "artifactDigest": "8a27ad46e3d8d4962be79964bf0e4c7706456346599262b5cc9c63a485e277ad",
       "manifest": {
         "manifestVersion": 1,
         "addonId": "@phis/storage-s3",
@@ -16,9 +16,9 @@
         "capabilities": [],
         "serviceProviders": [
           {
-            "serviceKind": "@phis/phi-server/service/media-storage",
+            "serviceKind": "@phis/server/service/media-storage",
             "providerKey": "@phis/storage-s3/s3",
-            "interfaceDigest": "66cb9728bdcfc4d2b97ef33db5b3de9934659ec5dd94b5ef1e35cf9030586ae2",
+            "interfaceDigest": "45a871522511f7d77841ca8dd0113b423b3cfd4cb921f143cd1d3d116cab6952",
             "factoryExport": "createPhiS3MediaStorageAdapter",
             "requiredCoreCapabilities": []
           }

@@ -62,8 +62,8 @@ const manifest = {
   capabilities: [],
   serviceProviders: [],
   requiredCoreCapabilities: [
-    "@phis/phi-server/authorization:v1",
-    "@phis/phi-server/data:v1",
+    "@phis/server/authorization:v1",
+    "@phis/server/data:v1",
   ],
   apiRoutes: [],
   hooks: [],
