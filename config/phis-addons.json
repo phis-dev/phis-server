@@ -577,7 +577,7 @@
       "packageName": "@phis/storage-s3",
       "packageVersion": "0.1.0",
       "manifestDigest": "4274557f0a2992317e93b770180f20e1093276931e7407d7233c616b2f5fa32e",
-      "artifactDigest": "b1ae6d5780dec5564a01856e25add84f680e9471dcb659dea8bc3f276d64b35c",
+      "artifactDigest": "1920fc0f7fe96374a99cf09db5a611f6abfa4372f48fc0bbfd4ebdbf6f0d9134",
       "manifest": {
         "manifestVersion": 1,
         "addonId": "@phis/storage-s3",

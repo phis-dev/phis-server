@@ -4,6 +4,7 @@ import path from "node:path";
 import type { Pool } from "pg";
 
 import { PHI_LOCAL_MEDIA_STORAGE_PROVIDER_ID } from "@phis/contracts/addon";
+import type { PhisMediaStorageAdapter, PhisMediaStorageProbe } from "@phis/contracts/addon";
 
 import { loadInstalledAddonRuntime, readAddonDesiredState } from "./addons.mts";
 import { PHI_SERVER_SERVICE_KINDS } from "../lib/addons/core-services.ts";
@@ -224,6 +225,23 @@ async function resolveProviderAdapter(
   }) as PhiMediaStorageCorsAdapter;
 }
 
+/** The same construction as above, for the one call a probe makes. Local has no adapter to build. */
+async function resolveProbeAdapter(
+  root: string,
+  providerId: string,
+  config: Record<string, unknown>,
+  secretReference: string | null,
+  readSecret: StorageSecretReader,
+): Promise<Pick<PhisMediaStorageAdapter, "probeCapabilities">> {
+  const adapter = await resolveProviderAdapter(root, providerId, config, secretReference, readSecret);
+  if (!adapter || typeof (adapter as { probeCapabilities?: unknown }).probeCapabilities !== "function") {
+    throw new Error(
+      `${providerId} does not offer a capability probe. Rebuild the Add-on against the current contract.`,
+    );
+  }
+  return adapter as unknown as Pick<PhisMediaStorageAdapter, "probeCapabilities">;
+}
+
 /**
  * Writes every storage's CORS rule from the Site registry.
  *
@@ -239,6 +257,84 @@ export async function reconcileStorageCors(
 ) {
   return reconcilePhiMediaStorageCorsWith(pool, (profile) =>
     resolveProviderAdapter(root, profile.providerId, profile.config, profile.secretReference, readSecret));
+}
+
+/**
+ * Establishes what each configured endpoint can actually do, and records it.
+ *
+ * The Provider is one adapter over many storages -- AWS, MinIO, Garage -- and no field of a Profile
+ * says which is on the other end. Asking the operator would be asking them to know their storage's
+ * release notes; trying it costs one small object and answers for certain.
+ *
+ * It is also where a misconfigured Profile stops being the first uploader's problem. Today a wrong
+ * endpoint, a missing permission or a bucket that is not there is discovered by whoever uploads first,
+ * and reaches them as their error rather than as an unfinished setup.
+ *
+ * The Local Provider is skipped for the reason it is skipped for CORS: it is Core's own storage,
+ * reached only through Core's own routes, and there is no remote claim for anyone to verify.
+ */
+export async function probeStorageProfiles(
+  root: string,
+  pool: Pool,
+  flags: FlagMap,
+  readSecret: StorageSecretReader,
+) {
+  const site = await requireSite(pool, getRequiredFlag(flags, "site"));
+  const only = getOptionalFlag(flags, "key");
+  const profiles = (await readProfiles(pool, site.id))
+    .filter((profile) => !only || profile.key === only);
+  if (only && profiles.length === 0) {
+    throw new Error(`Site ${site.key} has no Storage Profile "${only}".`);
+  }
+
+  const results: {
+    key: string;
+    providerId: string;
+    probed: boolean;
+    writable?: boolean;
+    verifiesSha256?: boolean;
+    findings: string[];
+  }[] = [];
+
+  for (const profile of profiles) {
+    if (profile.providerId === PHI_LOCAL_MEDIA_STORAGE_PROVIDER_ID) {
+      results.push({
+        key: profile.key,
+        providerId: profile.providerId,
+        probed: false,
+        findings: ["Core's own storage: nothing is delivered to it by a client, so there is nothing to verify."],
+      });
+      continue;
+    }
+
+    let probe: PhisMediaStorageProbe;
+    try {
+      const adapter = await resolveProbeAdapter(
+        root, profile.providerId, profile.config, profile.secretReference, readSecret,
+      );
+      probe = await adapter.probeCapabilities();
+    } catch (error) {
+      // A Provider that cannot be built or refuses outright is an answer, and the operator wants it
+      // recorded next to the ones that answered rather than losing the whole run to it.
+      probe = {
+        writable: false,
+        verifiesSha256: false,
+        findings: [`The Provider could not be reached: ${
+          error instanceof Error ? error.message.trim() : "no reason given"
+        }`],
+      };
+    }
+
+    await pool.query(
+      `UPDATE phis.media_storage_profiles
+          SET probe = $2::jsonb, probed_at = NOW(), updated_at = NOW()
+        WHERE id = $1`,
+      [profile.id, JSON.stringify(probe)],
+    );
+    results.push({ key: profile.key, providerId: profile.providerId, probed: true, ...probe });
+  }
+
+  return { ok: true, action: "storage.probe" as const, site: site.key, profiles: results };
 }
 
 export async function listStorageProfiles(pool: Pool, flags: FlagMap) {

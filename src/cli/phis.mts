@@ -100,6 +100,7 @@ import {
   listStorageProfiles,
   reconcileStorageCors,
   removeStorageProfile,
+  probeStorageProfiles,
   setStorageProfile,
   useStorageProfile,
 } from "./storage.mts";
@@ -237,6 +238,7 @@ Usage:
   phis storage use  --site <site key> --key <profile key>
   phis storage del  --site <site key> --key <profile key>
   phis storage cors
+  phis storage probe --site <site key> [--key <profile key>]
 
   phis schema check
   phis schema apply
@@ -2142,10 +2144,11 @@ async function main() {
         action: "storage.cors" as const,
         storages: await reconcileStorageCors(configRoot, getPool(), readStorageSecret),
       }),
+      probe: () => probeStorageProfiles(configRoot, getPool(), flags, readStorageSecret),
     } as const;
     const handler = handlers[command as keyof typeof handlers];
     if (!handler) {
-      throw new Error("Unknown storage command. Use: list, add, set, use, del, cors");
+      throw new Error("Unknown storage command. Use: list, add, set, use, del, cors, probe");
     }
     const result = await handler();
     if (json) {
@@ -2176,6 +2179,19 @@ async function main() {
       }
     } else if (result.action === "storage.del") {
       console.log(`Removed Storage Profile "${result.key}" from ${result.site}.`);
+    } else if (result.action === "storage.probe") {
+      for (const profile of result.profiles) {
+        console.log(
+          `${profile.key}  ${profile.providerId}  ` +
+          (profile.probed
+            ? `${profile.writable ? "writable" : "NOT WRITABLE"}, ` +
+              `sha256 ${profile.verifiesSha256 ? "verified by the storage" : "not verified"}`
+            : "not probed"),
+        );
+        for (const finding of profile.findings) {
+          console.log(`  ${finding}`);
+        }
+      }
     } else {
       console.log(
         `${result.action === "storage.add" ? "Added" : "Updated"} Storage Profile ` +

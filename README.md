@@ -617,6 +617,7 @@ Examples:
 - `./phis storage list --site moonhug`
 - `./phis storage add --site moonhug --key s3 --provider @phis/storage-s3/s3 --config @s3.json --secret-name secret-access-key`
 - `./phis storage cors`
+- `./phis storage probe --site moonhug [--key s3]`
 - `./phis addon list`
 - `./phis addon check`
 - `./phis addon install --artifact ./dist/addon.mjs`
@@ -629,6 +630,13 @@ Site creation requires an explicit source locale. The CLI stores it as the immut
 `sites.overrides.<siteKey>.sourceLocale` value in `config/phis-runtime.json`; the versioned
 `translation.sourceLocale` value is only the installation fallback. There is deliberately no command
 for changing a Site source locale after creation.
+`storage probe` establishes what a configured endpoint can actually do, by doing it: whether the bucket
+takes a write, and whether it verifies a declared SHA-256 against the bytes it stores. One adapter
+serves AWS, MinIO and Garage alike and they do not agree on everything, so this is measured per Profile
+rather than assumed per Provider, and the answer is recorded with the moment it was true. It is worth
+running when a Profile is added or its endpoint changes -- otherwise a wrong endpoint or a missing
+permission is discovered by whoever uploads first, and reaches them as their error.
+
 The generated `nginx` site config includes `client_max_body_size 2g;` by default so media uploads can handle large video files without allowing unlimited request bodies by accident.
 
 Server Add-on desired state is operator-owned in `config/phis-addons.json`, and the artifacts it

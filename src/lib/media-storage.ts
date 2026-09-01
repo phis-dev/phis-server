@@ -28,6 +28,7 @@ export type {
   PhisMediaObjectStreamInput,
   PhisMediaStorageAdapter,
   PhisMediaStorageConfig,
+  PhisMediaStorageProbe,
   PhisMediaStorageProviderId,
   PhisMediaStorageServiceContext,
 } from "@phis/contracts/addon";
@@ -42,6 +43,7 @@ import type {
   PhisMediaObjectStreamInput,
   PhisMediaStorageAdapter,
   PhisMediaStorageConfig,
+  PhisMediaStorageProbe,
   PhisMediaStorageProviderId,
   PhisMediaStorageServiceContext,
 } from "@phis/contracts/addon";
@@ -94,6 +96,23 @@ function normalizeStorageKeyPrefix(value: string | undefined) {
 
 function buildEtag(body: Buffer) {
   return createHash("sha256").update(body).digest("hex");
+}
+
+/**
+ * What a probe writes: small, recognizable, and worth nothing if it is ever left behind.
+ *
+ * Its size is the point. A probe is run while an operator waits, against storage that may be on the
+ * other side of a slow link, and what is being established -- can this endpoint be written to, does it
+ * check what it is told -- is answered by a few bytes exactly as well as by a few megabytes.
+ */
+const PROBE_BODY = Buffer.from("phis storage probe\n", "utf-8");
+
+/** An operator reads this, so it says what happened rather than what class the exception was. */
+export function describeProbeError(error: unknown) {
+  if (error instanceof Error && error.message.trim()) {
+    return error.message.trim();
+  }
+  return "the storage gave no reason";
 }
 
 function ensureBuffer(body: Buffer | Uint8Array) {
@@ -466,6 +485,30 @@ export class PhisLocalMediaStorageAdapter implements PhisMediaStorageAdapter {
     return;
   }
 
+  /**
+   * Answers about the directory, and answers `verifiesSha256: false` without trying.
+   *
+   * Not a shortcoming. The question is whether a *remote* endpoint checks what a client claims, and
+   * here there is no client and no claim: every byte is written by Core through `putObjectStream`,
+   * which hashes as it writes. There is nothing to verify because nothing was asserted.
+   */
+  async probeCapabilities(): Promise<PhisMediaStorageProbe> {
+    const findings: string[] = [];
+    const key = `.phis-probe/${randomUUID()}`;
+    try {
+      await this.putObject({ storageKey: key, body: PROBE_BODY, contentType: "application/octet-stream" });
+      const read = await this.getObject(key);
+      if (!read || Buffer.compare(Buffer.from(read), Buffer.from(PROBE_BODY)) !== 0) {
+        findings.push("The object written by the probe did not read back unchanged.");
+      }
+    } catch (error) {
+      findings.push(`The storage root did not accept a write: ${describeProbeError(error)}`);
+    } finally {
+      await this.deleteObject(key).catch(() => {});
+    }
+    return { writable: findings.length === 0, verifiesSha256: false, findings };
+  }
+
   /** The directory is the storage. Two profiles on one root are one storage. */
   storageIdentity(): string {
     return `local:${this.config.rootDir}`;
@@ -627,6 +670,10 @@ export class PhisMediaStorageService {
 
   createUploadPlan(input: PhiMediaUploadPlanInput) {
     return this.adapter.createUploadPlan(input);
+  }
+
+  probeCapabilities() {
+    return this.adapter.probeCapabilities();
   }
 
   completeUpload(input: PhiMediaUploadCompletionInput) {

@@ -295,6 +295,14 @@ CREATE TABLE IF NOT EXISTS phis.media_storage_profiles (
   CONSTRAINT media_storage_profiles_id_site_unique UNIQUE (id, site_id)
 );
 
+-- What this endpoint turned out to be able to do, established by `phis storage probe` rather than
+-- declared by an operator. One adapter serves AWS, MinIO and Garage alike, and they do not agree on
+-- everything -- so this is an observation with a date on it, not configuration, and it lives beside
+-- `config` rather than inside it.
+ALTER TABLE phis.media_storage_profiles
+  ADD COLUMN IF NOT EXISTS probe JSONB NULL,
+  ADD COLUMN IF NOT EXISTS probed_at TIMESTAMPTZ NULL;
+
 CREATE TABLE IF NOT EXISTS phis.site_media_config (
   site_id SMALLINT PRIMARY KEY REFERENCES phis.sites(id) ON DELETE CASCADE,
   default_user_quota_bytes BIGINT NULL,
