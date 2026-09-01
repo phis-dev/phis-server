@@ -4,6 +4,11 @@ import type { PhiServerStorageCapabilityV1 } from "./contract.ts";
 import { ensureSiteMediaSpace, getMediaStorageProfile } from "@/db/media-spaces";
 import { createPhisMediaStorageServiceForProfile } from "@/lib/media-storage";
 import { derivePhiServerAddonSchemaName } from "./schema-name.ts";
+import {
+  bookPhiServerAddonStorage,
+  readPhiServerAddonStorageUsage,
+} from "@/db/server-addon-storage-usage.mts";
+import { getPool } from "@/lib/db";
 
 /**
  * A private object store for one Add-on on one Site.
@@ -85,12 +90,60 @@ export function buildPhiServerAddonStorageCapability(input: {
         );
       }
       const { service, prefix } = await resolveStorage(siteId, siteKey, addonId);
-      await service.putObject({
-        storageKey: `${prefix}/${relative}`,
-        body: Buffer.from(body),
-        contentType,
+      const storageKey = `${prefix}/${relative}`;
+
+      /*
+       * What this write costs, which is not what it weighs.
+       *
+       * Writing over an existing key replaces it: the store grows by the difference and gains no object.
+       * Counting the whole body every time would charge an Add-on that rewrites one file each hour as
+       * though it kept every version, and the total would climb until the ceiling refused a store that
+       * had never actually grown.
+       */
+      const existing = await service.headObject(storageKey).catch(() => null);
+      const deltaBytes = body.byteLength - (existing?.byteSize ?? 0);
+      const deltaObjects = existing ? 0 : 1;
+
+      /*
+       * Booked before the bytes are written, and given back if they are not.
+       *
+       * The other order would let two uploads racing each other both find room and both proceed. The
+       * cost of this order is a booking left standing when the storage fails after accepting it, which
+       * the release below returns -- capacity briefly overstated is a smaller fault than a ceiling that
+       * does not hold.
+       */
+      const booked = await bookPhiServerAddonStorage(getPool(), {
+        addonId, siteId, bytes: deltaBytes, objects: deltaObjects,
       });
+      if (booked === "not-activated") {
+        // Said plainly, because the alternative reads "0 of unlimited bytes" and sends whoever gets it
+        // to raise a ceiling that was never the problem.
+        throw new PhiServerAddonStorageError(
+          `${addonId} is not activated for this Site, so it has no store here.`,
+        );
+      }
+      if (booked === "over-quota") {
+        const usage = await readPhiServerAddonStorageUsage(getPool(), { addonId, siteId });
+        throw new PhiServerAddonStorageError(
+          `This Add-on's store on this Site is full: ` +
+          `${usage.bytes} of ${usage.quotaBytes ?? "unlimited"} bytes, ` +
+          `${usage.objects} of ${usage.quotaObjects ?? "unlimited"} objects.`,
+        );
+      }
+
+      try {
+        await service.putObject({ storageKey, body: Buffer.from(body), contentType });
+      } catch (error) {
+        await bookPhiServerAddonStorage(getPool(), {
+          addonId, siteId, bytes: -deltaBytes, objects: -deltaObjects,
+        }).catch(() => {});
+        throw error;
+      }
       return { key: relative, byteSize: body.byteLength };
+    },
+
+    async usage() {
+      return readPhiServerAddonStorageUsage(getPool(), { addonId, siteId });
     },
 
     async get(key) {
@@ -123,6 +176,11 @@ export function buildPhiServerAddonStorageCapability(input: {
         return false;
       }
       await service.deleteObject(`${prefix}/${relative}`);
+      // Given back after the object is gone, not before: capacity briefly understated costs an Add-on
+      // one refusal it could have avoided, while the other order would hand out room still occupied.
+      await bookPhiServerAddonStorage(getPool(), {
+        addonId, siteId, bytes: -existed.byteSize, objects: -1,
+      }).catch(() => {});
       return true;
     },
 

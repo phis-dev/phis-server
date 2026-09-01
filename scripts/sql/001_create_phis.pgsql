@@ -1495,6 +1495,31 @@ CREATE TABLE IF NOT EXISTS phis.site_server_addons (
 CREATE INDEX IF NOT EXISTS site_server_addons_addon_id_idx
   ON phis.site_server_addons (addon_id);
 
+-- What an Add-on's own object store holds on this Site, and what it is allowed to hold.
+--
+-- The ceiling is Core's and not the Add-on's, for the reason a ceiling always is: a package that could
+-- check its own limit could also not check it, so the number that decides lives where the Add-on cannot
+-- reach it. What an Add-on may do with the figure is read it, so it can tell somebody why a write was
+-- refused instead of failing them silently.
+--
+-- Both counts, not just bytes. Two hundred thousand small objects cost a listing, a backup and a
+-- provider bill even when the bytes are unremarkable, and no byte limit expresses that.
+--
+-- NULL is "no ceiling", the same reading as `media_spaces.quota_bytes`, and the used columns are a
+-- running total rather than something counted on demand: counting means listing the store, which is the
+-- unbounded operation the ceiling exists to prevent.
+ALTER TABLE phis.site_server_addons
+  ADD COLUMN IF NOT EXISTS storage_quota_bytes BIGINT NULL,
+  ADD COLUMN IF NOT EXISTS storage_quota_objects INT NULL,
+  ADD COLUMN IF NOT EXISTS storage_used_bytes BIGINT NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS storage_used_objects INT NOT NULL DEFAULT 0;
+
+ALTER TABLE phis.site_server_addons
+  DROP CONSTRAINT IF EXISTS site_server_addons_storage_used_check;
+ALTER TABLE phis.site_server_addons
+  ADD CONSTRAINT site_server_addons_storage_used_check
+    CHECK (storage_used_bytes >= 0 AND storage_used_objects >= 0);
+
 -- What roles of an Add-on one user holds on one Site.
 --
 -- The vocabulary belongs to the Add-on and is declared in its manifest; the assignments belong here, in

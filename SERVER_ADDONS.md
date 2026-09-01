@@ -939,7 +939,7 @@ systems, and taking it would buy back the dependency the descriptor exists to re
 
 ### `storage:v1`
 
-A private object store for one Add-on on one Site: `put`, `get`, `head`, `remove`, `list`.
+A private object store for one Add-on on one Site: `put`, `get`, `head`, `remove`, `list`, `usage`.
 
 Keys are the Add-on's own and relative. Core puts them under a prefix it derives from the Add-on id and
 the Site key, and never hands the physical key back -- so there is no address an Add-on can store,
@@ -947,8 +947,23 @@ guess, or be tricked into passing, and another Add-on's objects are unreachable 
 than by a check. The same rule the install root follows: a stored string never becomes an address.
 
 The bytes go through the Site's configured Storage Provider, so an operator who moved a Site to S3
-moved its Add-ons with it. The Site's `max_object_bytes` is the ceiling, because one limit is easier to
-reason about than two.
+moved its Add-ons with it. The Site's `max_object_bytes` bounds a single object, because one limit is
+easier to reason about than two.
+
+What the store may hold in total is bounded separately, per Add-on and per Site, in bytes and in
+objects -- two hundred thousand small files cost a listing, a backup and a provider bill even when the
+bytes are unremarkable, and no byte limit says so. The operator sets both with `phis addon storage`;
+`null` is no ceiling and is not the same as zero, which is a store that may hold nothing.
+
+The ceiling is Core's, not the Add-on's: a package that could check its own limit could equally not
+check it. A `put` is booked against the total before the bytes are written and given back if the write
+fails, in one conditional statement -- two writes arriving together would otherwise both read the same
+figure, both find room, and both proceed. An overwrite costs the difference and no object, so an Add-on
+that rewrites one file each hour is not charged as though it kept every version.
+
+`usage()` is what an Add-on may do with the figures: read them. It exists so a refusal can be explained
+before it happens rather than arriving as an error, and a vendor who can see they are at their limit
+does not file a bug about it.
 
 This is not the Media library. What a person uploads, browses, and references belongs in a Media Space
 with its folders, quotas, and delivery policies. This is what an Add-on keeps for itself: a release

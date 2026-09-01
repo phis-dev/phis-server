@@ -93,6 +93,10 @@ import {
   resolvePhiServerAddonConfigurationStatus,
   setPhiServerAddonSiteEnabled,
 } from "../db/server-addon-sites.mts";
+import {
+  readPhiServerAddonStorageUsage,
+  setPhiServerAddonStorageQuota,
+} from "../db/server-addon-storage-usage.mts";
 import { checkPhiDependencyLicenses } from "./licenses.mts";
 import { checkPhiMediaOwnership } from "./media-check.mts";
 import {
@@ -252,6 +256,7 @@ Usage:
   phis addon disable --addon <@scope/name>
   phis addon forget --addon <@scope/name>
   phis addon site   --addon <@scope/name> [--site <site key> --enable [--without-module] | --disable]
+  phis addon storage --addon <@scope/name> --site <site key> [--quota-bytes <n>] [--max-objects <n>] [--unlimited]
   phis addon config --addon <@scope/name> --site <site key>
   phis addon role   --site <site key> [--addon <@scope/name>] [--user <id>]
                     [--grant <role> | --revoke <role>]
@@ -346,6 +351,15 @@ function printMergedConfig() {
 function getOptionalFlag(flags: FlagMap, key: string) {
   const value = flags.get(key);
   return typeof value === "string" ? value.trim() : undefined;
+}
+
+/** A ceiling is a count, and a count that is not one is a typo worth stopping on. */
+function requirePositive(raw: string, flag: string) {
+  const value = Number(raw);
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new Error(`--${flag} must be a non-negative whole number.`);
+  }
+  return value;
 }
 
 function getSiteSupportEmailFlag(flags: FlagMap, required = false) {
@@ -2426,6 +2440,51 @@ async function main() {
       console.log(
         `Forgot ${result.addonId}; ${result.remaining} Add-on(s) left in the desired state. ` +
         "Its artifact is still on disk -- run addon check to see what is unreferenced.",
+      );
+    }
+    return;
+  }
+
+  if (group === "addon" && command === "storage") {
+    /*
+     * The ceiling on an Add-on's object store, which only an operator sets.
+     *
+     * Two numbers rather than one: a store can be full of bytes or full of objects, and a byte limit
+     * says nothing about two hundred thousand small files. `--unlimited` withdraws a ceiling, which is
+     * not the same as setting it to zero -- zero is a store that may hold nothing.
+     */
+    const addonId = getRequiredFlag(flags, "addon");
+    const site = await getSiteByKey(getRequiredFlag(flags, "site"));
+    const unlimited = flags.get("unlimited") === true;
+    const rawBytes = getOptionalFlag(flags, "quota-bytes");
+    const rawObjects = getOptionalFlag(flags, "max-objects");
+
+    if (unlimited || rawBytes !== undefined || rawObjects !== undefined) {
+      const quotaBytes = unlimited ? null : rawBytes !== undefined ? requirePositive(rawBytes, "quota-bytes") : undefined;
+      const quotaObjects = unlimited ? null : rawObjects !== undefined ? requirePositive(rawObjects, "max-objects") : undefined;
+      const written = await setPhiServerAddonStorageQuota(getPool(), {
+        addonId,
+        siteId: site.id,
+        ...(quotaBytes !== undefined ? { quotaBytes } : {}),
+        ...(quotaObjects !== undefined ? { quotaObjects } : {}),
+      });
+      if (!written) {
+        throw new Error(
+          `${addonId} is not activated for ${site.key}, so it has no store to bound. ` +
+          `Run phis addon site --addon ${addonId} --site ${site.key} --enable first.`,
+        );
+      }
+    }
+
+    const usage = await readPhiServerAddonStorageUsage(getPool(), { addonId, siteId: site.id });
+    const result = { ok: true, action: "addon.storage" as const, addon: addonId, site: site.key, usage };
+    if (json) {
+      printJson(result);
+    } else {
+      console.log(
+        `${addonId} on ${site.key}: ` +
+        `${usage.bytes} of ${usage.quotaBytes ?? "unlimited"} bytes, ` +
+        `${usage.objects} of ${usage.quotaObjects ?? "unlimited"} objects.`,
       );
     }
     return;

@@ -162,9 +162,23 @@ describe("where an Add-on's bytes go", () => {
   let site: PhiTestSite;
 
   beforeAll(async () => {
-    await requirePhiTestDatabase();
+    const pool = await requirePhiTestDatabase();
     site = await createPhiTestSite("addon-store");
     await setPhiTestMediaConfig(site, { maxObjectBytes: 64 });
+    // A store belongs to an Add-on that is activated here. Core books every write against that row, and
+    // without it there is nothing to charge -- which is a different refusal from a full store.
+    await pool.query(
+      `INSERT INTO phis.server_addons
+         (addon_id, package_name, package_version, server_abi, manifest_digest, release_build_id)
+       VALUES ($1, $1, '0.1.0', '1', repeat('0', 64), 'pgtest')
+       ON CONFLICT (addon_id) DO NOTHING`,
+      [ADDON_ID],
+    );
+    await pool.query(
+      `INSERT INTO phis.site_server_addons (site_id, addon_id) VALUES ($1, $2)
+       ON CONFLICT (site_id, addon_id) DO NOTHING`,
+      [site.id, ADDON_ID],
+    );
   });
 
   function storage() {
@@ -221,5 +235,49 @@ describe("where an Add-on's bytes go", () => {
       body: new Uint8Array(128),
       contentType: "application/octet-stream",
     })).rejects.toThrow(/this Site allows 64/);
+  });
+
+  it("counts what it holds, so an Add-on can say why a write was refused", async () => {
+    const store = storage();
+    const before = await store.usage();
+    await store.put({ key: "counted.bin", body: new Uint8Array(9), contentType: "text/plain" });
+    const after = await store.usage();
+    expect(after.bytes - before.bytes).toBe(9);
+    expect(after.objects - before.objects).toBe(1);
+
+    // An overwrite is the difference and no new object: an Add-on rewriting one file each hour must not
+    // be charged as though it kept every version.
+    await store.put({ key: "counted.bin", body: new Uint8Array(4), contentType: "text/plain" });
+    const rewritten = await store.usage();
+    expect(rewritten.bytes - before.bytes).toBe(4);
+    expect(rewritten.objects - before.objects).toBe(1);
+
+    await store.remove("counted.bin");
+    expect(await store.usage()).toMatchObject({ bytes: before.bytes, objects: before.objects });
+  });
+
+  it("refuses a write past the ceiling, and does not write it", async () => {
+    const pool = await requirePhiTestDatabase();
+    const store = storage();
+    const { bytes } = await store.usage();
+    await pool.query(
+      `UPDATE phis.site_server_addons SET storage_quota_bytes = $3
+        WHERE addon_id = $1 AND site_id = $2`,
+      [ADDON_ID, site.id, bytes + 4],
+    );
+
+    await expect(store.put({
+      key: "over.bin",
+      body: new Uint8Array(8),
+      contentType: "application/octet-stream",
+    })).rejects.toThrow(/store on this Site is full/);
+    // Refused before the bytes were written, never after: the object must not be there.
+    expect(await store.head("over.bin")).toBeNull();
+
+    await pool.query(
+      `UPDATE phis.site_server_addons SET storage_quota_bytes = NULL
+        WHERE addon_id = $1 AND site_id = $2`,
+      [ADDON_ID, site.id],
+    );
   });
 });

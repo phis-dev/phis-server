@@ -623,6 +623,7 @@ Examples:
 - `./phis addon install --artifact ./dist/addon.mjs`
 - `./phis addon enable --addon @phis/github`
 - `./phis addon reconcile --release 2026-07-28.1`
+- `./phis addon storage --addon @phis/marketplace --site moonhug --quota-bytes 52428800 --max-objects 500`
 - `/usr/local/bin/phis --root /srv/phis/stages/prod site config runtime --key moonhug --json`
 
 The CLI currently writes platform operators into `config/phis-runtime.json`.
