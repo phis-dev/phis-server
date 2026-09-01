@@ -1,7 +1,7 @@
 # Add-on Roles
 
-**Status: planning. The role half is not built.** The group half and the owner half exist and are
-described here as they are, because the whole point of the design is how the three fit together.
+**Status: built.** All three mechanisms exist, and the point of this document is how they fit together
+rather than any one of them on its own.
 
 ## Three questions, three mechanisms
 
@@ -23,9 +23,24 @@ Whatever Core has to evaluate must be Core's word — that is the line, and it e
 cannot be replaced by roles. The four levels are interpreted by
 `mayActOnScopedRow` in `src/lib/addons/capabilities.ts`: Author means "may change what is theirs",
 Editor "also what others wrote", Manager "also remove it". Core can only apply that because it knows
-what the words mean. Roles are, by design, opaque to Core — it stores them and answers `has()`. An
-Add-on wanting its `reviewer` to mean something for an `UPDATE` would have to teach Core that meaning,
-and then the vocabulary would have to be Core's after all.
+what the words mean. Roles are, by design, opaque to Core — it stores them, answers `has()`, and
+compares a name. An Add-on wanting its `reviewer` to mean "may change any row of this table" would have
+to teach Core that meaning, and then the vocabulary would have to be Core's after all.
+
+**What a role can do to a write is narrower and does not need that.** A declared query may state
+`requiresRole`, and Core refuses to run it for an actor who does not hold the name. Core still learns
+nothing: it does not know that `curator` moderates, only that this query is for whoever is one. The
+meaning stays where it belongs, as the pairing of a role with a query in the Add-on's own manifest.
+
+That is what makes a table nobody owns writable at all. Without an owner and without a group there is
+no row for Core to judge, so `mayActOnScopedRow` answers no to every update and delete — right for a row
+that should belong to somebody, wrong for a catalogue, a rate table or a moderation note, which belong
+to the Add-on rather than to a person. Such a query must state a role, and validation refuses it
+otherwise. On an owned or grouped table the role narrows rather than replaces: both have to be
+satisfied, and the ladder still decides which row.
+
+The check is in the descriptor and not at the top of a handler, which is the same reason the ladder is
+in the write path: a check that has to be remembered is one that eventually is not.
 
 The second reason is dimensional: the ladder hangs on the **group** (`readEffectiveGroupMembershipFlags`
 takes a group id), roles hang on the **Add-on**. The same person is Editor in one group and Member in

@@ -8,6 +8,8 @@ import {
   projectSiteGroupMemberForMember,
 } from "@/db/site-groups";
 import { PhiGroupMembershipFlags } from "@/lib/constants/site-groups";
+import { readPhiServerAddonSiteGroups } from "@/db/server-addon-groups.mts";
+import { getPool } from "@/lib/db";
 
 /**
  * Group facts, bounded by the acting user.
@@ -35,10 +37,11 @@ function project(
 }
 
 export function buildPhiServerAddonGroupsCapability(input: {
+  addonId: string;
   siteId: number;
   actorUserId: number | null;
 }): PhiServerGroupsCapabilityV1 {
-  const { siteId, actorUserId } = input;
+  const { addonId, siteId, actorUserId } = input;
 
   /** The groups the actor is in, which is the boundary every answer below is drawn against. */
   async function actorGroups() {
@@ -54,6 +57,12 @@ export function buildPhiServerAddonGroupsCapability(input: {
   }
 
   return Object.freeze({
+    async declared() {
+      // Read by provider id, so an Add-on gets its own and nobody else's -- including no Core group,
+      // whose ids are not this Add-on's business.
+      return readPhiServerAddonSiteGroups(getPool(), { addonId, siteId });
+    },
+
     async myGroups() {
       return (await actorGroups()).map((group) => ({
         id: group.id,

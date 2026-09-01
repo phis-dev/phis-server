@@ -49,6 +49,7 @@ import {
   purgeAddon,
   reconcileAddons,
   forgetAddon,
+  readInstalledAddonGroups,
   readInstalledAddonSettings,
   removeAddon,
   setAddonEnabled,
@@ -81,6 +82,14 @@ import {
   readPhiServerAddonSettings,
   writePhiServerAddonSetting,
 } from "../db/server-addon-settings.mts";
+import {
+  ensurePhiServerAddonSiteGroups,
+  retirePhiServerAddonSiteGroups,
+} from "../db/server-addon-groups.mts";
+import {
+  readPhiServerAddonSiteStates,
+  setPhiServerAddonSiteEnabled,
+} from "../db/server-addon-sites.mts";
 import { checkPhiDependencyLicenses } from "./licenses.mts";
 import { checkPhiMediaOwnership } from "./media-check.mts";
 import {
@@ -237,6 +246,7 @@ Usage:
   phis addon enable --addon <@scope/name>
   phis addon disable --addon <@scope/name>
   phis addon forget --addon <@scope/name>
+  phis addon site   --addon <@scope/name> [--site <site key> --enable | --disable]
   phis addon config --addon <@scope/name> --site <site key>
   phis addon role   --site <site key> [--addon <@scope/name>] [--user <id>]
                     [--grant <role> | --revoke <role>]
@@ -2398,6 +2408,61 @@ async function main() {
         `Forgot ${result.addonId}; ${result.remaining} Add-on(s) left in the desired state. ` +
         "Its artifact is still on disk -- run addon check to see what is unreferenced.",
       );
+    }
+    return;
+  }
+
+  if (group === "addon" && command === "site") {
+    const addonId = getRequiredFlag(flags, "addon");
+    const wantsEnable = flags.get("enable") === true;
+    const wantsDisable = flags.get("disable") === true;
+    if (wantsEnable && wantsDisable) {
+      throw new Error("Pass --enable or --disable, not both.");
+    }
+    if (!wantsEnable && !wantsDisable) {
+      const states = await readPhiServerAddonSiteStates(getPool(), addonId);
+      if (json) {
+        printJson({ ok: true, addon: addonId, sites: states });
+      } else if (states.length === 0) {
+        console.log(`${addonId} is not activated for any Site.`);
+      } else {
+        for (const state of states) {
+          console.log(
+            `site=${state.siteId}  requested=${state.requestedEnabled ? "true" : "false"}  ` +
+            `configuration=${state.configurationStatus}  effective=${state.effectiveStatus}`,
+          );
+        }
+      }
+      return;
+    }
+    const site = await getSiteByKey(getRequiredFlag(flags, "site"));
+    const state = await setPhiServerAddonSiteEnabled(getPool(), {
+      addonId,
+      siteId: site.id,
+      enabled: wantsEnable,
+    });
+    if (!state) {
+      throw new Error(`${addonId} was not activated for ${site.key}; there was nothing to disable.`);
+    }
+    const groups = wantsEnable
+      ? await ensurePhiServerAddonSiteGroups(getPool(), {
+        addonId,
+        siteId: site.id,
+        declared: readInstalledAddonGroups(configRoot, addonId),
+      })
+      : await retirePhiServerAddonSiteGroups(getPool(), { addonId, siteId: site.id });
+    if (json) {
+      printJson({ ok: true, addon: addonId, site: site.key, state, groups });
+    } else {
+      console.log(
+        `${addonId} is now ${wantsEnable ? "requested" : "withdrawn"} for ${site.key}.`,
+      );
+      for (const entry of groups) {
+        console.log(`  group ${entry.key} ${entry.action}`);
+      }
+      if (wantsEnable && state.configurationStatus !== "ready") {
+        console.log(`  configuration is ${state.configurationStatus}; run phis addon config --site ${site.key}.`);
+      }
     }
     return;
   }

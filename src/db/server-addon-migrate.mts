@@ -243,6 +243,19 @@ export async function purgePhiServerAddon(pool: Pool, addonId: string) {
     if (schemaName) {
       await dropPhiServerAddonSchema(client, schemaName);
     }
+    /*
+     * The Add-on's groups are retired, not deleted, and this is the one place in a purge that keeps
+     * something. A membership is a statement about a person made by whoever administers the Site; it is
+     * not the Add-on's data, and removing a package must not quietly undo fifty of them. A retired
+     * group grants nothing either way -- Core filters claims against the available providers -- so
+     * keeping them costs no authority and saves re-entering everybody if the Add-on comes back.
+     */
+    const { rows: retiredGroups } = await client.query<{ id: number }>(
+      `UPDATE phis.site_groups SET retired_at = NOW(), updated_at = NOW()
+        WHERE provider_id = $1 AND retired_at IS NULL
+       RETURNING id`,
+      [addonId],
+    );
     await client.query(`DELETE FROM phis.site_server_addons WHERE addon_id = $1`, [addonId]);
     await client.query(`DELETE FROM phis.server_addon_migrations WHERE addon_id = $1`, [addonId]);
     await client.query(`DELETE FROM phis.server_capabilities WHERE provider_id = $1`, [addonId]);
@@ -252,7 +265,12 @@ export async function purgePhiServerAddon(pool: Pool, addonId: string) {
     );
     await client.query(`DELETE FROM phis.server_addons WHERE addon_id = $1`, [addonId]);
     await client.query("COMMIT");
-    return { addonId, schemaName, droppedSecrets: secretCount ?? 0 };
+    return {
+      addonId,
+      schemaName,
+      droppedSecrets: secretCount ?? 0,
+      retiredGroups: retiredGroups.length,
+    };
   } catch (error) {
     await client.query("ROLLBACK");
     throw error;

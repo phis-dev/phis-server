@@ -224,6 +224,7 @@ function validateQuery(
   raw: unknown,
   schema: PhiServerAddonSchemaDescriptor,
   declared: { names: Set<string>; nullable: Set<string> },
+  declaredRoles: Set<string>,
   field: string,
   issues: string[],
 ) {
@@ -240,6 +241,26 @@ function validateQuery(
     return null;
   }
   const parameters = declared.names;
+  if (raw.requiresRole !== undefined) {
+    if (typeof raw.requiresRole !== "string" || !declaredRoles.has(raw.requiresRole)) {
+      issues.push(`${field}.requiresRole does not name a role this Add-on declares.`);
+    }
+  }
+  /*
+   * A table with no owner and no group has no row-level authority, so Core answers no to every update
+   * and delete against it. A declared role is the only thing that can stand in for that -- and it has
+   * to be declared here rather than checked in a handler, or the guarantee is somebody's memory.
+   */
+  if (
+    (raw.kind === "update" || raw.kind === "delete") &&
+    table.ownerScoped !== true && table.groupScoped !== true &&
+    raw.requiresRole === undefined
+  ) {
+    issues.push(
+      `${field} changes rows of "${table.name}", which is neither ownerScoped nor groupScoped. ` +
+      "Core has no row to judge, so such a query must state requiresRole.",
+    );
+  }
   const context: QueryContext = {
     table,
     columns: readableColumns(table),
@@ -345,6 +366,8 @@ export function validatePhiServerAddonQueryCatalog(
   schema: PhiServerAddonSchemaDescriptor | null,
   field: string,
   issues: string[],
+  /** The role names the manifest declares. A query may only require one of these. */
+  declaredRoles: Set<string> = new Set(),
 ): PhiServerAddonQueryCatalog | null {
   const before = issues.length;
   if (!isRecord(value)) {
@@ -406,6 +429,7 @@ export function validatePhiServerAddonQueryCatalog(
       query,
       schema,
       parametersByQuery.get(queryName) ?? { names: new Set(), nullable: new Set() },
+      declaredRoles,
       `${field}.queries[${index}]`,
       issues,
     );

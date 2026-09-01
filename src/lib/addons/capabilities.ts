@@ -278,6 +278,17 @@ export function buildPhiServerAddonCapabilities(input: {
   if (required.includes(PHI_SERVER_CORE_CAPABILITIES.authorization)) {
     capabilities.authorization = authorization;
   }
+  /*
+   * Built whether or not the Add-on asked for `roles:v1`, for the reason the evaluator above is: a query
+   * that states `requiresRole` is guarded by Core, and an Add-on must not be able to drop the guard by
+   * leaving a capability out of its manifest.
+   */
+  const roles = buildPhiServerAddonRolesCapability({
+    addonId: input.manifest.addonId,
+    siteId,
+    actorUserId: input.actorUserId,
+    declared: input.manifest.roles ?? [],
+  });
   if (required.includes(PHI_SERVER_CORE_CAPABILITIES.data)) {
     /*
      * The data capability enforces row authority itself, so it gets the evaluator whether or not the
@@ -296,6 +307,9 @@ export function buildPhiServerAddonCapabilities(input: {
       mayUseGroup: input.systemAuthority
         ? () => Promise.resolve(true)
         : (groupId) => actorStandsInGroup(siteId, groupId, input.actorUserId),
+      hasRole: input.systemAuthority
+        ? () => Promise.resolve(true)
+        : (role) => roles.has(role),
       unauthenticated: input.unauthenticated === true && input.systemAuthority !== true,
     });
   }
@@ -307,15 +321,11 @@ export function buildPhiServerAddonCapabilities(input: {
     });
   }
   if (required.includes(PHI_SERVER_CORE_CAPABILITIES.roles)) {
-    capabilities.roles = buildPhiServerAddonRolesCapability({
-      addonId: input.manifest.addonId,
-      siteId,
-      actorUserId: input.actorUserId,
-      declared: input.manifest.roles ?? [],
-    });
+    capabilities.roles = roles;
   }
   if (required.includes(PHI_SERVER_CORE_CAPABILITIES.groups)) {
     capabilities.groups = buildPhiServerAddonGroupsCapability({
+      addonId: input.manifest.addonId,
       siteId,
       actorUserId: input.actorUserId,
     });

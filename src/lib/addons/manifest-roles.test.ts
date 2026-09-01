@@ -80,3 +80,39 @@ describe("declaring Add-on roles", () => {
       .toMatch(/roles\[0\]\.name is invalid/);
   });
 });
+
+/**
+ * What an Add-on may declare about the groups it needs.
+ *
+ * It states which ones and Core creates them per Site, because a group exists only inside a Site and an
+ * Add-on has no Site until one asks for it. The shape is checked against what `phis.site_groups` will
+ * accept, so a manifest that cannot produce its groups is refused at install rather than on the first
+ * Site that enables it.
+ */
+describe("declaring Add-on groups", () => {
+  function groupIssues(groups: unknown) {
+    return validatePhiServerAddonManifest(manifest({ groups })).issues.join("\n");
+  }
+
+  it("accepts a group with a key and a name", () => {
+    expect(groupIssues([{ key: "market", name: "Marketplace" }])).toBe("");
+  });
+
+  it("accepts a manifest that declares none, because that is what most say", () => {
+    expect(groupIssues(undefined)).toBe("");
+  });
+
+  it("refuses a key the Site group table would refuse", () => {
+    expect(groupIssues([{ key: "Market Place", name: "x" }])).toMatch(/groups\[0\]\.key is invalid/);
+    expect(groupIssues([{ key: "-lead", name: "x" }])).toMatch(/groups\[0\]\.key is invalid/);
+  });
+
+  it("refuses a group without a name, since that is what an administrator reads", () => {
+    expect(groupIssues([{ key: "market", name: "  " }])).toMatch(/must be a non-empty string/);
+  });
+
+  it("refuses the same key twice", () => {
+    expect(groupIssues([{ key: "market", name: "A" }, { key: "market", name: "B" }]))
+      .toMatch(/groups/);
+  });
+});

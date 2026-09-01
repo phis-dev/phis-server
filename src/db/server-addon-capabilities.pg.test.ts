@@ -62,7 +62,11 @@ describe("what an Add-on may learn about a person", () => {
   });
 
   function capability(actorUserId: number | null) {
-    return buildPhiServerAddonGroupsCapability({ siteId: site.id, actorUserId });
+    return buildPhiServerAddonGroupsCapability({
+      addonId: "@pgtest/capabilities",
+      siteId: site.id,
+      actorUserId,
+    });
   }
 
   it("lists the groups its actor is in, and no others", async () => {

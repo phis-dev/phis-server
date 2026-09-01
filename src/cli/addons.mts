@@ -25,6 +25,8 @@ import {
 import { type PhiServerAddonDesiredState } from "../lib/addons/contract.ts";
 import { PHI_SERVER_CORE_CAPABILITIES } from "../lib/addons/core-capabilities.ts";
 import { phiServerAddonUnindexedSearches } from "../lib/addons/query-descriptor.ts";
+import { ensurePhiServerAddonSiteGroups } from "../db/server-addon-groups.mts";
+import { readPhiServerAddonEnabledSiteIds } from "../db/server-addon-sites.mts";
 import {
   resolvePhiServerAddonArtifactPath,
   resolvePhiServerAddonInstallRoot,
@@ -682,11 +684,42 @@ export async function reconcileAddons(
   const loaded = loadDesiredAddons(root);
   await reconcilePhiServerAddons(pool, releaseBuildId, loaded);
 
+  /*
+   * Groups are caught up here as well as at the Site that asks for the Add-on, because a release can
+   * bring a group its predecessor did not declare -- and the Sites that already run it would otherwise
+   * never get one. Nothing is retired here: a group the manifest stopped declaring may still hold the
+   * memberships an operator entered, and taking those away belongs to removing the Add-on, not to
+   * upgrading it.
+   */
+  const groups: Array<{ addonId: string; siteId: number; key: string; action: string }> = [];
+  for (const { desired, manifest } of loaded) {
+    const declared = manifest.groups ?? [];
+    if (declared.length === 0) {
+      continue;
+    }
+    for (const siteId of await readPhiServerAddonEnabledSiteIds(pool, desired.addonId)) {
+      const applied = await ensurePhiServerAddonSiteGroups(pool, {
+        addonId: desired.addonId,
+        siteId,
+        declared,
+      });
+      groups.push(
+        ...applied.map((entry) => ({
+          addonId: desired.addonId,
+          siteId,
+          key: entry.key,
+          action: entry.action,
+        })),
+      );
+    }
+  }
+
   return {
     ok: true,
     action: "addon.reconcile",
     releaseBuildId,
     addons: loaded.map(({ desired }) => desired),
+    groups,
     coreCapabilities: PHI_SERVER_CORE_CAPABILITIES,
   };
 }
@@ -759,6 +792,14 @@ export async function purgeAddon(root: string, flags: FlagMap, pool: Pool) {
  * Read from the desired state rather than from the running server: `phis addon config` has to work
  * before an instance is up, and the descriptors travel with the installation anyway.
  */
+export function readInstalledAddonGroups(root: string, addonId: string) {
+  const entry = readAddonDesiredState(root).addons.find((addon) => addon.addonId === addonId);
+  if (!entry) {
+    throw new Error(`Add-on ${addonId} is not installed.`);
+  }
+  return entry.manifest.groups ?? [];
+}
+
 export function readInstalledAddonSettings(root: string, addonId: string) {
   const entry = readAddonDesiredState(root).addons.find((addon) => addon.addonId === addonId);
   if (!entry) {

@@ -1217,6 +1217,12 @@ The declaration form carries what a real query needs and refuses what does not s
   matches everything. Core's own code still writes `ILIKE` by hand in two places, which is what an
   Add-on may not do -- not because the operator is worse there, but because the escaping is one detail
   per author instead of one for everyone.
+- a query may state `requiresRole`, and Core refuses to run it for an actor who does not hold that
+  name. Core learns no meaning from this -- it compares a name with what is stored, as `roles.has()`
+  does -- and what the role stands for remains the Add-on's own pairing of role and query. It is what
+  makes a table nobody owns writable: without an owner and without a group Core has no row to judge, so
+  such an update or delete must state a role, and validation refuses it otherwise. Where a row does have
+  an owner or a group, the role narrows rather than replaces.
 - a write declares what it returns.
 - a named sequence of queries runs as one transaction. Without one, every write stands alone and no
   invariant spanning two tables can hold.
@@ -1226,6 +1232,44 @@ The declaration form carries what a real query needs and refuses what does not s
 
 Result types are generated from the declared queries at the Add-on's own build time, by the SDK of
 section 3, because an Add-on is built separately and cannot read `phi-server`'s generated artifacts.
+
+### Groups an Add-on needs
+
+An Add-on may declare the groups it needs, by key and name, and Core creates them on every Site that
+asks for the Add-on. It cannot create one at runtime and cannot put anybody in one — the groups
+capability reads and grants nothing. Who is in a group stays with whoever administers the Site, which is
+the point: a package must not be able to hand out standing.
+
+The group lives in `phis.site_groups` beside Core's own, told apart by `provider_id`. That is what makes
+it work everywhere without a second mechanism — the ladder, the membership projection and the Site's
+group administration all read one table, and an Add-on's group is a group like any other. Core already
+filters group claims against the available providers, so a group belonging to a removed Add-on stops
+granting anything without anybody having to clean up.
+
+Groups are created when a Site asks for the Add-on, and caught up on `reconcile` for Sites that already
+run it — a new release may declare a group its predecessor did not. Removal retires rather than deletes:
+a membership is a statement about a person made by whoever administers the Site, not the Add-on's data,
+and uninstalling a package must not quietly undo fifty of them. A retired group grants nothing either
+way, and a re-enabled Add-on finds its members still there.
+
+### Asking for an Add-on on a Site
+
+Three switches stand between an artifact on disk and a handler that answers, and they are three
+decisions by, in general, three different people:
+
+| Switch | Where | Command |
+| --- | --- | --- |
+| the instance has it | desired state | `addon install` |
+| the instance allows it | `server_addons.flags` | `addon enable` |
+| the Site wants it | `site_server_addons` | `addon site --site … --enable` |
+
+The third had no way to be made until it had a command: the row was declared in the first migration,
+read in two places, and written by nothing, so every installation so far carries an operator's
+hand-written `INSERT`. `addon config --site` still fails without it, and now says what to run.
+
+What a Site asks for and what it gets stay separate columns. `effective_status` depends on the artifact
+loading, the capabilities resolving and the configuration being complete, and writing it beside the
+request would make it a guess.
 
 ### Applying and removing a schema
 

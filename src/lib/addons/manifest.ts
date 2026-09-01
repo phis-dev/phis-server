@@ -21,6 +21,9 @@ import {
  * into one would multiply the collisions the unique index has to catch for nothing in return.
  */
 const ADDON_ID_PATTERN = PHI_SERVER_ADDON_ID_PATTERN;
+/** What `phis.site_groups.key` accepts, so a manifest is refused here rather than at the first Site. */
+const GROUP_KEY_PATTERN = /^[a-z0-9][a-z0-9._-]{0,159}$/;
+
 const CAPABILITY_ID_PATTERN =
   /^@[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._-]*(?:\/[a-z0-9][a-z0-9._-]*)*:v[1-9]\d*$/;
 const DESCRIPTOR_ID_PATTERN = /^[a-z][a-z0-9._-]*$/;
@@ -506,11 +509,46 @@ export function validatePhiServerAddonManifest(
     issues.push("roles form a cycle: at least one role must be grantable by a Site access.");
   }
 
+  const groups = Array.isArray(value.groups) ? value.groups : [];
+  if (value.groups !== undefined && !Array.isArray(value.groups)) {
+    issues.push("groups must be an array when it is stated at all.");
+  }
+  const groupKeys: string[] = [];
+  for (const [index, group] of groups.entries()) {
+    if (!isRecord(group)) {
+      issues.push(`groups[${index}] must be an object.`);
+      continue;
+    }
+    // The same shape `phis.site_groups` enforces. Checked here as well as there, because a manifest
+    // that cannot produce its groups should be refused at install and not on the first Site that
+    // enables it.
+    const key = typeof group.key === "string" ? group.key : "";
+    if (!GROUP_KEY_PATTERN.test(key)) {
+      issues.push(`groups[${index}].key is invalid.`);
+    }
+    groupKeys.push(key);
+    if (typeof group.name !== "string" || group.name.trim() === "") {
+      issues.push(`groups[${index}].name must be a non-empty string.`);
+    } else if (group.name.length > 255) {
+      issues.push(`groups[${index}].name is longer than a Site group name may be.`);
+    }
+    if (group.description !== undefined && typeof group.description !== "string") {
+      issues.push(`groups[${index}].description must be a string when it is stated at all.`);
+    }
+  }
+  assertUnique(groupKeys, "groups", issues);
+
   // As with `settings`: absent means none, and is what every manifest written before queries existed
   // says. Stating it is only required to be right, not to be present.
   let queries: PhiServerAddonQueryCatalog | null = null;
   if (value.queries != null) {
-    queries = validatePhiServerAddonQueryCatalog(value.queries, schema, "queries", issues);
+    queries = validatePhiServerAddonQueryCatalog(
+      value.queries,
+      schema,
+      "queries",
+      issues,
+      new Set(roleNames.filter((name) => name !== "")),
+    );
   }
 
   const migrationVersion = value.migrationVersion;

@@ -489,3 +489,74 @@ describe("what paging refuses at validation", () => {
     expect(issuesFor({ offsetParameter: "skip" }, [{ name: "skip", type: "integer" }])).toBe("");
   });
 });
+
+describe("a query guarded by a role", () => {
+  const ownedSchema: PhiServerAddonSchemaDescriptor = {
+    descriptorVersion: 1,
+    version: 1,
+    tables: [
+      {
+        name: "category",
+        siteScoped: true,
+        columns: [
+          { name: "id", type: "identity" },
+          { name: "label", type: "string", maxLength: 64 },
+        ],
+        primaryKey: ["id"],
+      },
+    ],
+  };
+
+  function issuesFor(query: Record<string, unknown>, roles: string[]) {
+    const issues: string[] = [];
+    validatePhiServerAddonQueryCatalog(
+      {
+        parameters: { q: [{ name: "id", type: "bigInteger" }, { name: "label", type: "text" }] },
+        queries: [{ name: "q", table: "category", ...query }],
+      },
+      ownedSchema,
+      "queries",
+      issues,
+      new Set(roles),
+    );
+    return issues.join("\n");
+  }
+
+  const rename = {
+    kind: "update",
+    set: [{ column: "label", value: { kind: "parameter", name: "label" } }],
+    idParameter: "id",
+  };
+
+  it("refuses to change a table nobody owns without naming a role", () => {
+    expect(issuesFor(rename, ["curator"])).toMatch(/must state requiresRole/);
+  });
+
+  it("accepts the same query once it names one", () => {
+    expect(issuesFor({ ...rename, requiresRole: "curator" }, ["curator"])).toBe("");
+  });
+
+  it("refuses a role the Add-on does not declare", () => {
+    expect(issuesFor({ ...rename, requiresRole: "invented" }, ["curator"]))
+      .toMatch(/does not name a role this Add-on declares/);
+  });
+
+  it("leaves an owned table alone: the ladder is authority enough to be allowed to try", () => {
+    const owned = {
+      ...ownedSchema,
+      tables: ownedSchema.tables.map((table) => ({ ...table, ownerScoped: true })),
+    };
+    const issues: string[] = [];
+    validatePhiServerAddonQueryCatalog(
+      {
+        parameters: { q: [{ name: "id", type: "bigInteger" }, { name: "label", type: "text" }] },
+        queries: [{ name: "q", table: "category", ...rename }],
+      },
+      owned,
+      "queries",
+      issues,
+      new Set(),
+    );
+    expect(issues).toEqual([]);
+  });
+});

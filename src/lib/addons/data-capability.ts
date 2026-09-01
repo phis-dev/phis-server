@@ -66,6 +66,8 @@ type Bound = {
   mayActOnRow: (input: { table: string; id: unknown; intent: "update" | "delete" }) => Promise<boolean>;
   /** Whether the actor stands in the group an insert names. Injected for the same reason as above. */
   mayUseGroup: (groupId: unknown) => Promise<boolean>;
+  /** Whether the actor holds one of this Add-on's declared roles. Injected, like the two above. */
+  hasRole: (role: string) => Promise<boolean>;
   /** True when nobody authenticated at all, which is the case for a hook and for nothing else. */
   unauthenticated: boolean;
 };
@@ -128,6 +130,7 @@ function descriptorParametersFor(manifest: PhiServerAddonManifestV1, name: strin
       ? descriptor.idParameter
       : undefined,
     group: descriptor.kind === "insert" ? descriptor.groupParameter : undefined,
+    requiresRole: descriptor.requiresRole,
   };
 }
 
@@ -182,6 +185,22 @@ async function run(
     throw new PhiServerAddonQueryError(
       `Query "${name}" changes rows, and this request has no actor behind it.`,
     );
+  }
+
+  if (parameters.requiresRole) {
+    /*
+     * Before everything else, including the read of the row: whether this caller may run this query at
+     * all is a question that does not depend on which row they aimed it at, and answering it first is
+     * what stops a refusal from telling them a row exists.
+     *
+     * Refused loudly, unlike the ladder. A missing role is not "no row for you" -- there is nothing to
+     * withhold, and an Add-on that offered the action to the wrong person wants to hear so.
+     */
+    if (!await bound.hasRole(parameters.requiresRole)) {
+      throw new PhiServerAddonQueryError(
+        `Query "${name}" requires the role "${parameters.requiresRole}", which this actor does not hold.`,
+      );
+    }
   }
 
   if (kind === "update" || kind === "delete") {
@@ -296,6 +315,7 @@ export function buildPhiServerAddonDataCapability(input: {
   actorUserId: number | null;
   mayActOnRow: Bound["mayActOnRow"];
   mayUseGroup: Bound["mayUseGroup"];
+  hasRole: Bound["hasRole"];
   unauthenticated: boolean;
 }): PhiServerDataCapabilityV1 {
   const bound: Bound = {
@@ -305,6 +325,7 @@ export function buildPhiServerAddonDataCapability(input: {
     actorUserId: input.actorUserId,
     mayActOnRow: input.mayActOnRow,
     mayUseGroup: input.mayUseGroup,
+    hasRole: input.hasRole,
     unauthenticated: input.unauthenticated,
   };
   // The pool itself is queryable in the same way a client is; only the transaction needs a client.
