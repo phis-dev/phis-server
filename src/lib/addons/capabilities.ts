@@ -254,6 +254,13 @@ export function buildPhiServerAddonCapabilities(input: {
    * the job runner, which is reachable from the CLI and never from a request.
    */
   systemAuthority?: boolean;
+  /**
+   * True when nobody authenticated, which today means a hook and nothing else.
+   *
+   * Kept apart from `actorUserId == null`, which an operator, an internal caller and a job all satisfy
+   * while being anything but anonymous.
+   */
+  unauthenticated?: boolean;
 }): PhiServerAddonCapabilities {
   const capabilities: PhiServerAddonCapabilities = {};
   if (input.siteId == null) {
@@ -288,6 +295,7 @@ export function buildPhiServerAddonCapabilities(input: {
       mayUseGroup: input.systemAuthority
         ? () => Promise.resolve(true)
         : (groupId) => actorStandsInGroup(siteId, groupId, input.actorUserId),
+      unauthenticated: input.unauthenticated === true && input.systemAuthority !== true,
     });
   }
   if (required.includes(PHI_SERVER_CORE_CAPABILITIES.settings)) {

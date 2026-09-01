@@ -441,6 +441,31 @@ Hook authentication is provider-specific but descriptor-controlled. Core still e
 limit, request identity, rate-limit class, logging envelope, and timeout policy. Authenticated APIs
 and external hooks never share an implicit authentication policy.
 
+#### A hook may be told its Site, and may still not write
+
+A hook is unauthenticated by construction -- that is what makes it callable by a payment provider, or by
+somebody else's Core reading a catalogue. Until a hook could name a Site it also had no capabilities at
+all, because every one of them is Site-scoped: it could verify a signature and touch no data.
+
+`siteScoped` on a hook descriptor changes only that. The Site comes from `x-phi-site-key`, the header
+every Site-scoped route already uses, and a hook that asks for one and does not get it answers 404 --
+which incidentally keeps the address out of indexes and off casual scanners. The header is not a secret
+and this is not access control; it is hygiene, and it costs nothing.
+
+What does not change is who is calling: nobody. The actor stays null, and null on a hook means something
+it does not mean anywhere else. An internal caller arrives as `{kind:"internal"}`, an operator as
+`{kind:"operator"}`, and a job carries system authority -- all three have no Site user id and none of
+them is anonymous. Only a hook has no actor at all.
+
+**A request with no actor may read and may not write.** All three mutations are refused before the
+ladder is consulted, because there is no row-level question to be ambiguous about: this caller may change
+nothing whatever the row is. Insert is the one that needed saying -- update and delete would have been
+refused by the ladder anyway, while an insert has no row to judge and would otherwise have gone through,
+writing owner-less rows on an address anybody may call.
+
+This is why a public listing endpoint is a hook and not an API route: the reading it needs is available,
+and the writing it must not do is impossible rather than merely undone.
+
 ## 9. Dispatch contract
 
 Before an Add-on handler receives a request, Core verifies:

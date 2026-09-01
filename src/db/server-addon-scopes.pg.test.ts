@@ -420,6 +420,55 @@ describe("owner-scoped and group-scoped Add-on tables", () => {
   });
 
 
+  /*
+   * A hook reaches the same tables with nobody behind it. Reading is the point -- a public listing is
+   * why the Site is stated at all -- and writing is what must not follow from it.
+   */
+  describe("the data capability with no actor behind the request", () => {
+    function dataFor(input: { unauthenticated?: boolean; systemAuthority?: boolean }) {
+      return buildPhiServerAddonCapabilities({
+        manifest,
+        manifestDigest: "pgtest-scopes-anon",
+        siteId: site.id,
+        actorUserId: null,
+        ...input,
+      }).data!;
+    }
+
+    it("reads", async () => {
+      await expect(dataFor({ unauthenticated: true }).select("mine")).resolves.toEqual([]);
+    });
+
+    it("refuses an insert, which the ladder would not have caught", async () => {
+      await expect(dataFor({ unauthenticated: true }).insert("add", { title: "x", group_id: groupId }))
+        .rejects.toThrow(/no actor behind it/);
+    });
+
+    it("refuses an update and a delete, which the ladder catches anyway", async () => {
+      await expect(dataFor({ unauthenticated: true }).update("rename", { id: 1, title: "x" }))
+        .rejects.toThrow(/no actor behind it/);
+      await expect(dataFor({ unauthenticated: true }).delete("drop", { id: 1 }))
+        .rejects.toThrow(/no actor behind it/);
+    });
+
+    it("leaves a job alone, which has no actor either but does have authority", async () => {
+      const row = await dataFor({ unauthenticated: true, systemAuthority: true })
+        .insert("add", { title: "written by a job", group_id: groupId });
+      expect(row).not.toBeNull();
+    });
+
+    it("does not catch an operator, whose user id is null without them being anonymous", async () => {
+      /*
+       * The operator is refused too, but by the group rule and not by this one -- they stand in no
+       * group, and a group-scoped insert asks for one. Which rule answers is the whole point: the
+       * anonymous rule must not be what silences an identified caller.
+       */
+      await expect(dataFor({}).insert("add", { title: "by an operator", group_id: groupId }))
+        .rejects.toThrow(/does not stand in/);
+    });
+  });
+
+
   it("keeps the row when its owner is deleted, and leaves it owned by nobody", async () => {
     const pool = await requirePhiTestDatabase();
     const { rows: inserted } = await pool.query<{ id: string }>(

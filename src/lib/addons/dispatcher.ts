@@ -232,6 +232,33 @@ async function resolveApiIdentity(
   };
 }
 
+/**
+ * Who is calling a hook: nobody, and on which Site.
+ *
+ * A hook is unauthenticated by construction -- that is what makes it reachable by a payment provider or
+ * by somebody else's Core, and nothing here changes it. The Site is read from `x-phi-site-key`, the same
+ * header every Site-scoped route already uses, and a hook that asks for one and does not get it is a 404
+ * rather than an error: an address that answers nothing without the header stays out of indexes and off
+ * casual scanners, which is worth having even though the header is no secret.
+ *
+ * The actor stays null, and null here means something the other contexts do not: an internal caller is
+ * `{kind:"internal"}` and an operator is `{kind:"operator"}`, so a bare null is the one shape that says
+ * nobody authenticated at all. The capabilities are built from that.
+ */
+async function resolveHookIdentity(
+  request: NextRequest,
+  descriptor: PhiServerAddonHookDescriptor,
+) {
+  if (!descriptor.siteScoped) {
+    return { error: null, site: null, actor: null };
+  }
+  const site = await requireSiteFromRequest(request);
+  if (!site) {
+    return { error: notFound(), site: null, actor: null };
+  }
+  return { error: null, site, actor: null };
+}
+
 async function invokeHandler(
   handler: PhiServerAddonHandler,
   context: PhiServerAddonRequestContext,
@@ -317,7 +344,10 @@ export async function dispatchPhiServerAddonRequest(
           request,
           match.descriptor as PhiServerAddonApiRouteDescriptor,
         )
-      : { error: null, site: null, actor: null };
+      : await resolveHookIdentity(
+          request,
+          match.descriptor as PhiServerAddonHookDescriptor,
+        );
   if (identity.error) {
     return identity.error;
   }
@@ -401,6 +431,7 @@ export async function dispatchPhiServerAddonRequest(
           siteId: identity.site?.id ?? null,
           siteKey: identity.site?.key ?? null,
           actorUserId: identity.actor?.kind === "user" ? identity.actor.id : null,
+          unauthenticated: identity.actor === null,
         }),
         signal: request.signal,
       },

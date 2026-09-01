@@ -187,6 +187,11 @@ function validateHook(
   }
   validatePositiveInteger(value.bodyLimitBytes, `${field}.bodyLimitBytes`, issues, true);
   validatePositiveInteger(value.timeoutMs, `${field}.timeoutMs`, issues, true);
+  // Stated at all means stated correctly; absent means false, which is what every hook written before
+  // the field existed meant.
+  if (value.siteScoped !== undefined && typeof value.siteScoped !== "boolean") {
+    issues.push(`${field}.siteScoped must be a boolean when it is stated at all.`);
+  }
 
   return true;
 }

@@ -48,6 +48,25 @@ describe("a manifest from before the newest fields", () => {
       .toMatch(/owns no tables to run them against/);
   });
 
+  it("takes a hook that predates siteScoped, and refuses one that states it wrongly", () => {
+    const hook = {
+      id: "listing",
+      method: "GET",
+      path: "packages",
+      handler: "listing",
+      bodyLimitBytes: 1024,
+      rateLimitClass: "listing",
+      timeoutMs: 5000,
+    };
+    expect(validatePhiServerAddonManifest(manifest({ hooks: [hook] })).issues).toEqual([]);
+    expect(validatePhiServerAddonManifest(manifest({ hooks: [{ ...hook, siteScoped: true }] })).issues)
+      .toEqual([]);
+    expect(
+      validatePhiServerAddonManifest(manifest({ hooks: [{ ...hook, siteScoped: "yes" }] }))
+        .issues.join("\n"),
+    ).toMatch(/siteScoped must be a boolean when it is stated at all/);
+  });
+
   it("refuses a manifest missing a field that has always been required", () => {
     const { schema: _schema, ...withoutSchema } = manifest();
     expect(validatePhiServerAddonManifest(withoutSchema).issues.join("\n"))

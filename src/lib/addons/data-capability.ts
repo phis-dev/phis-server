@@ -61,6 +61,8 @@ type Bound = {
   mayActOnRow: (input: { table: string; id: unknown; intent: "update" | "delete" }) => Promise<boolean>;
   /** Whether the actor stands in the group an insert names. Injected for the same reason as above. */
   mayUseGroup: (groupId: unknown) => Promise<boolean>;
+  /** True when nobody authenticated at all, which is the case for a hook and for nothing else. */
+  unauthenticated: boolean;
 };
 
 function readArgument(
@@ -141,6 +143,23 @@ async function run(
   const query = requireQuery(bound, name, kind);
   const parameters = descriptorParametersFor(bound.manifest, name);
 
+  if (bound.unauthenticated && kind !== "select") {
+    /*
+     * No actor at all, no writing -- and said before the ladder rather than after, so all three
+     * mutations answer the same way. The ladder would refuse an update and a delete on its own, but
+     * silently, with a zero that means "no row for you"; here there is no row-level question to be
+     * ambiguous about, because this caller may change nothing whatever the row is. An insert has no row
+     * to judge at all, and is the one that would otherwise go through.
+     *
+     * Narrower than "no user": an operator and an internal caller both have a null user id, and a job
+     * has none either, while none of the three is anonymous. Only a caller who never identified
+     * themselves lands here -- today that is a hook, and nothing else.
+     */
+    throw new PhiServerAddonQueryError(
+      `Query "${name}" changes rows, and this request has no actor behind it.`,
+    );
+  }
+
   if (kind === "update" || kind === "delete") {
     // Before the statement, never after: a refused write must not have happened.
     const id = readArgument(args, parameters.id!, name);
@@ -196,6 +215,7 @@ export function buildPhiServerAddonDataCapability(input: {
   actorUserId: number | null;
   mayActOnRow: Bound["mayActOnRow"];
   mayUseGroup: Bound["mayUseGroup"];
+  unauthenticated: boolean;
 }): PhiServerDataCapabilityV1 {
   const bound: Bound = {
     manifest: input.manifest,
@@ -204,6 +224,7 @@ export function buildPhiServerAddonDataCapability(input: {
     actorUserId: input.actorUserId,
     mayActOnRow: input.mayActOnRow,
     mayUseGroup: input.mayUseGroup,
+    unauthenticated: input.unauthenticated,
   };
   // The pool itself is queryable in the same way a client is; only the transaction needs a client.
   const pooled = buildOperations(getPool() as unknown as Queryable, bound);
