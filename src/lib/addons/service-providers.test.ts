@@ -18,7 +18,7 @@ function manifest(overrides: Record<string, unknown> = {}) {
   return {
     manifestVersion: PHI_SERVER_ADDON_MANIFEST_VERSION,
     addonId: "@phis/storage-s3",
-    packageName: "@phis/storage-s3-server",
+    packageName: "@phis/storage-s3",
     packageVersion: "0.1.0",
     serverAbi: `^${PHI_SERVER_ADDON_ABI_VERSION}`,
     capabilities: [],

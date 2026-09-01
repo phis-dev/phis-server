@@ -72,8 +72,8 @@ The terminology is strict:
 
 - Site/client extensions are **Modules**.
 - Server extensions are **Add-ons**.
-- Every physical Add-on package uses the `-server` postfix; `@scope/name` pairs with
-  `@scope/name-server`, while the logical Add-on id remains `@scope/name`.
+- One package carries one product: a Module half, an Add-on half, or both, under one name and one
+  version. The Add-on half lives under `@scope/name/addon/…`.
 - Every Module binds to exactly one Add-on or to Core.
 - Only `phis-cli` may install, migrate, build, or globally activate Add-on code.
 - A Site may enable or disable only an already installed Add-on for itself.

@@ -61,10 +61,10 @@ files, and register nothing at module scope.
 
 Build every identifier from the Add-on id. The grammar is enforced where it is written.
 
-- **Add-on id** -- an npm package name without the `-server` postfix, containing neither `_` nor `.`:
-  `@acme/status`. This is the logical identity, and it is what the install path and the database
-  schema name are derived from.
-- **Package name** -- the same name with the mandatory `-server` postfix: `@acme/status-server`.
+- **Add-on id** -- an npm package name containing neither `_` nor `.`: `@acme/status`. This is the
+  logical identity, and it is what the install path and the database schema name are derived from.
+- **Package name** -- normally the same string. It is a separate field because a replacement package
+  may be named differently, and the logical id must not follow a repackaging.
 - **Package version** -- semver. It appears in the install path, so two versions can sit side by side
   and a rollback is a change of one field.
 - **`serverAbi`** -- the Add-on ABI range this artifact was built against, e.g. `^1`.
@@ -322,7 +322,7 @@ and enable last.
 - every builtin written with the `node:` prefix, and nothing else left as a bare import
 - exactly one export, `phiServerAddon`, and nothing happens at module scope
 - every descriptor's `handler` exists in the matching handler map
-- the Add-on id carries no `_` and no `.`, and the package name ends in `-server`
+- the Add-on id carries no `_` and no `.`
 - `serverAbi` matches the release you are installing into
 - constraints are in the first schema version; columns and indexes may come later
 - handlers honour `context.signal` and stop when it aborts

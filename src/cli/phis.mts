@@ -232,7 +232,7 @@ Usage:
   phis addon list
   phis addon check
   phis addon install --artifact <path to addon.mjs>
-  phis addon upgrade --addon <@scope/name> --artifact <path to addon.mjs>
+  phis addon upgrade --addon <@scope/name> --artifact <path to addon.mjs> [--repackage]
   phis addon remove --addon <@scope/name>
   phis addon enable --addon <@scope/name>
   phis addon disable --addon <@scope/name>

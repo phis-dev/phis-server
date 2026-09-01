@@ -14,7 +14,7 @@ function manifest(extra: Record<string, unknown> = {}) {
   return {
     manifestVersion: 1,
     addonId: "@acme/market",
-    packageName: "@acme/market-server",
+    packageName: "@acme/market",
     packageVersion: "1.0.0",
     serverAbi: "^1",
     capabilities: [],

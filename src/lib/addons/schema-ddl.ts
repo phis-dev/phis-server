@@ -146,9 +146,24 @@ function referenceColumnType(
     : REFERENCED_KEY_TYPE_SQL[keyColumn.type];
 }
 
+/**
+ * In a Site-scoped table, unique means unique *within the Site*.
+ *
+ * An Add-on cannot say so itself: it may not declare `site_id`, so it can neither name it in an index
+ * nor write the pair. Left as plain SQL uniqueness, `unique` would silently reach across every tenant on
+ * the instance -- the second Site to install the Add-on would collide with the first over a value
+ * neither of them can see, and the failure would arrive as a constraint violation on somebody else's
+ * row. So Core prepends the Site column instead of the Add-on asking for it, exactly as it does for the
+ * Site filter in every query.
+ *
+ * Instance-wide uniqueness is not expressible, and deliberately so. An Add-on holding rows for several
+ * Sites has no business enforcing a rule across them, and one that genuinely needs a globally unique
+ * value has an unscoped table for it.
+ */
 function columnDefinition(
   column: PhiServerAddonColumnDescriptor,
   tablesByName: Map<string, PhiServerAddonTableDescriptor>,
+  siteScoped: boolean,
 ) {
   const parts = [quotePhiIdentifier(column.name)];
   if (isReferenceColumn(column)) {
@@ -159,7 +174,7 @@ function columnDefinition(
     parts.push(COLUMN_TYPE_SQL[column.type]);
   }
   parts.push(column.nullable ? "NULL" : "NOT NULL");
-  if (column.unique) {
+  if (column.unique && !siteScoped) {
     parts.push("UNIQUE");
   }
   if (!isReferenceColumn(column) && column.default) {
@@ -221,7 +236,9 @@ export function buildPhiServerAddonSchemaStatements(
   const statements: PhiServerAddonSchemaStatement[] = [];
 
   for (const table of descriptor.tables) {
-    const definitions = table.columns.map((column) => columnDefinition(column, tablesByName));
+    const definitions = table.columns.map((column) =>
+      columnDefinition(column, tablesByName, table.siteScoped === true),
+    );
     // The scope columns come first and in this order, so a `\d` on any Add-on table reads the same way:
     // where the row lives, whose group it is, and who owns it. Only the owner may be absent -- a deleted
     // user leaves the row behind rather than taking it along.
@@ -239,6 +256,14 @@ export function buildPhiServerAddonSchemaStatements(
     definitions.push(
       `PRIMARY KEY (${table.primaryKey.map((column) => quotePhiIdentifier(column)).join(", ")})`,
     );
+    if (table.siteScoped) {
+      for (const column of table.columns.filter((entry) => entry.unique)) {
+        definitions.push(
+          `CONSTRAINT ${quotePhiIdentifier(composePhiServerAddonObjectName(table.name, column.name, "uq"))} ` +
+          `UNIQUE (${quotePhiIdentifier(PHI_SERVER_ADDON_SITE_COLUMN)}, ${quotePhiIdentifier(column.name)})`,
+        );
+      }
+    }
     for (const constraint of table.constraints ?? []) {
       definitions.push(
         `CONSTRAINT ${quotePhiIdentifier(composePhiServerAddonObjectName(table.name, constraint.name, "check"))} ` +
@@ -331,13 +356,21 @@ export function buildPhiServerAddonSchemaStatements(
 
   for (const table of descriptor.tables) {
     for (const index of table.indexes ?? []) {
+      // A unique index is a uniqueness rule and follows the same reading as `unique` on a column: in a
+      // Site-scoped table it holds within the Site. A non-unique index is only an access path and is
+      // left as the Add-on wrote it -- the Site filter Core puts into every query is what makes it
+      // useful, and prepending the column there would be a guess about which order helps.
+      const columns =
+        index.unique && table.siteScoped
+          ? [PHI_SERVER_ADDON_SITE_COLUMN, ...index.columns]
+          : index.columns;
       statements.push({
-        summary: `index ${table.name} by ${index.columns.join(", ")}`,
+        summary: `index ${table.name} by ${columns.join(", ")}`,
         sql:
           `CREATE ${index.unique ? "UNIQUE " : ""}INDEX ` +
           `${quotePhiIdentifier(composePhiServerAddonObjectName(table.name, index.name, "idx"))} ` +
           `ON ${qualify(schemaName, table.name)} ` +
-          `(${index.columns.map((column) => quotePhiIdentifier(column)).join(", ")})`,
+          `(${columns.map((column) => quotePhiIdentifier(column)).join(", ")})`,
       });
     }
   }

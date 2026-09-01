@@ -706,7 +706,7 @@ sanitization, and any configured malware policy succeed.
 ## 8. Storage Providers and Profiles
 
 Local filesystem Storage is the mandatory Core Provider. S3-compatible Storage is implemented by an
-operator-installed physical `*-server` Add-on and contributes no browser code.
+operator-installed Add-on and contributes no browser code.
 
 A Provider is executable code registered under one package-qualified provider key. A Storage Profile
 is Site-scoped configuration selecting that Provider:

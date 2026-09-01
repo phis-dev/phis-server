@@ -101,8 +101,8 @@
   contract in `DIRECTORY_PROVIDERS.md`.
 - Site/client extensions are Modules; server extensions are Add-ons. Every Module binds to exactly one
   Add-on or to Core.
-- Every physical Add-on package uses the `-server` postfix. A direct counterpart to the Site Module
-  `@scope/name` is `@scope/name-server`; its logical Add-on id remains `@scope/name`.
+- One package carries one product, named for the product and not for the half. The Add-on half is
+  reached through `@scope/name/addon/manifest` and `@scope/name/addon/runtime`.
 - Only `phis-cli` may install, migrate, build, remove, or globally activate Add-on code. HTTP requests,
   database rows, and Module activation must never become dynamic server package imports.
 

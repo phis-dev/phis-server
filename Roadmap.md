@@ -1002,7 +1002,7 @@ Next implementation stages:
 - report instance heartbeat/readiness and make CLI activation wait for the complete serving release
 - expose scoped Core services, secrets, jobs, and storage through the handler context
 - implement the Core Threads and Resource Links repositories behind their versioned capabilities
-- validate the complete path with separate `@phis/github` and `@phis/github-server` packages
+- validate the complete path with a `@phis/github` package carrying both halves
 
 ## Summary
 

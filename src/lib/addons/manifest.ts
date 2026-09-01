@@ -17,8 +17,7 @@ import {
 } from "./contract.ts";
 
 /**
- * An Add-on id is an npm package name without the `-server` postfix, in which neither `_` nor `.`
- * occurs. Both would have to map to `_` in the derived schema name, and three characters collapsing
+ * An Add-on id is an npm package name in which neither `_` nor `.` occurs. Both would have to map to `_` in the derived schema name, and three characters collapsing
  * into one would multiply the collisions the unique index has to catch for nothing in return.
  */
 const ADDON_ID_PATTERN = PHI_SERVER_ADDON_ID_PATTERN;

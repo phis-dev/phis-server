@@ -497,7 +497,7 @@ Remaining work:
 
 ## P1: Add an S3 Storage Add-on
 
-- Add an operator-installed S3-compatible physical `*-server` package using the one internal
+- Add an operator-installed S3-compatible Add-on package using the one internal
   service-provider ABI. Keep provider SDKs server-only, declare no browser Runtime Module dependency,
   and support endpoint, region, bucket, prefix, path-style, encryption, and secret references through a
   schema-validated Storage Profile.
@@ -524,7 +524,7 @@ Remaining work:
   the process list. What remains for the Provider is the resolution path from a Storage Profile: the
   service context section 10 promises does not exist, so a Provider factory has no way to ask for the
   reference its profile row names.
-- The Add-on landed on 2026-08-28. `@phis/storage-s3-server` implements all ten adapter methods against
+- The Add-on landed on 2026-08-28. `@phis/storage-s3` implements all ten adapter methods against
   the `@phis/contracts` types, is installed, enabled and reconciled in the development deployment,
   and moves bytes from a Storage Profile row into a bucket -- verified end to end against Garage 2.3.0,
   including the settle path finalize uses. It owns no tables, so `migrationVersion` is 0 and the missing
@@ -570,7 +570,7 @@ Remaining work:
   provider-owned field authority, optional writeback capabilities, source-aware membership assertions,
   bounded staleness, staged reconciliation, and precise `authorization_revision` updates. Preserve local
   and other healthy source assertions when one Provider becomes unavailable.
-- Add reference LDAP/Active Directory, SCIM, or Entra packages only as separate physical `*-server`
+- Add reference LDAP/Active Directory, SCIM, or Entra packages only as separate Add-on
   implementations. Their SDKs, protocol configuration, and secrets remain server-only and do not enter
   `@phis/groups`, `@phis/ui`, Site packages, or browser bundles.
 - Add resumable profile migration jobs that copy and verify Assets and variants, atomically retain Asset

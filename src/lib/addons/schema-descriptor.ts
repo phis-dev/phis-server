@@ -87,7 +87,7 @@ function assertUnique(values: string[], field: string, issues: string[]) {
 function assertComposedNameFits(
   table: string,
   name: string,
-  suffix: "idx" | "check" | "fk",
+  suffix: "idx" | "check" | "fk" | "uq",
   field: string,
   issues: string[],
 ) {
@@ -330,6 +330,14 @@ function validateTable(
         `${field}.columns "${column.name}" points at ${PHI_SERVER_ADDON_CORE_REFERENCES.group} ` +
         "and must use onDelete \"cascade\": Core binds it together with the Site column, which cannot be nulled.",
       );
+    }
+  }
+
+  // A unique column in a Site-scoped table becomes a named `(site_id, column)` constraint, so its name
+  // has to fit the same identifier budget an index or a check does.
+  if (value.siteScoped === true) {
+    for (const column of columns.filter((entry) => entry.unique)) {
+      assertComposedNameFits(table, column.name, "uq", `${field}.columns "${column.name}"`, issues);
     }
   }
 

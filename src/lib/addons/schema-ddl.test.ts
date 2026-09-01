@@ -135,4 +135,55 @@ describe("schema DDL generation", () => {
     });
     expect(escaped[0].sql).toContain("DEFAULT 'it''s'");
   });
+
+  it("scopes a unique index to the Site, because unique means unique in here", () => {
+    expect(sqlFor("index incident by site_id, external_ref")).toContain(
+      'UNIQUE INDEX "incident_by_external_idx"',
+    );
+    expect(sqlFor("index incident by site_id, external_ref")).toContain('("site_id", "external_ref")');
+  });
+
+  it("leaves a plain index alone, since it is an access path and not a rule", () => {
+    expect(sqlFor("index incident by state")).toContain('("state")');
+    expect(sqlFor("index incident by state")).not.toContain("site_id");
+  });
+
+  it("turns a unique column on a Site-scoped table into a Site-scoped constraint", () => {
+    const sql = buildPhiServerAddonSchemaStatements(SCHEMA, {
+      descriptorVersion: 1,
+      version: 1,
+      tables: [
+        {
+          name: "offering",
+          siteScoped: true,
+          columns: [
+            { name: "id", type: "identity" },
+            { name: "slug", type: "string", maxLength: 64, unique: true },
+          ],
+          primaryKey: ["id"],
+        },
+      ],
+    })[0].sql;
+    expect(sql).toContain('CONSTRAINT "offering_slug_uq" UNIQUE ("site_id", "slug")');
+    expect(sql).not.toContain('"slug" VARCHAR(64) NOT NULL UNIQUE');
+  });
+
+  it("keeps plain uniqueness where there is no Site to scope it to", () => {
+    const sql = buildPhiServerAddonSchemaStatements(SCHEMA, {
+      descriptorVersion: 1,
+      version: 1,
+      tables: [
+        {
+          name: "licence_key",
+          columns: [
+            { name: "id", type: "identity" },
+            { name: "value", type: "string", maxLength: 64, unique: true },
+          ],
+          primaryKey: ["id"],
+        },
+      ],
+    })[0].sql;
+    expect(sql).toContain('"value" VARCHAR(64) NOT NULL UNIQUE');
+    expect(sql).not.toContain("_uq");
+  });
 });

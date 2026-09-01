@@ -255,8 +255,8 @@ and any scoped ingress/setup routes. The server-only provider contract may suppo
 search, paged/delta reads, reconciliation, health, and optional writeback. It calls approved Core Users
 and Groups reconciliation services and never writes Core authorization tables directly.
 
-Examples of later physical packages are `@phis/ldap-server`, `@phis/scim-server`, and
-`@phis/entra-server`. Their SDKs and protocol clients remain server-only and never enter
+Examples of later physical packages are `@phis/ldap`, `@phis/scim`, and
+`@phis/entra`. Their SDKs and protocol clients remain server-only and never enter
 `@phis/ui`, `@phis/groups`, a Site package, or a browser bundle.
 
 ## 10. Package and priority boundary

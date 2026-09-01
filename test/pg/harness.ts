@@ -416,7 +416,7 @@ export async function activatePhiTestAddonForSite(
        migration_version, release_build_id, flags
      ) VALUES ($1, $2, '0.0.0', '^1', 'pgtest', 0, 'pgtest', 0)
      ON CONFLICT (addon_id) DO NOTHING`,
-    [addonId, `${addonId}-server`],
+    [addonId, addonId],
   );
   await pool.query(
     `INSERT INTO phis.site_server_addons (site_id, addon_id)

@@ -97,7 +97,7 @@ A Module id is `<npm-package>/modules/<module>`, and everything the Module owns 
 `<npm-package>/modules/<module>/<namespace>/<leaf>`. The `modules` marker is required, including for a
 package with a single Module: without it, nothing can tell a Module name from a namespace. The grammar
 and its enforcement are normative in
-[THIRD_PARTY_MODULES.md](../phi-shared-ui/THIRD_PARTY_MODULES.md).
+[THIRD_PARTY_MODULES.md](../phis-ui/THIRD_PARTY_MODULES.md).
 
 Examples:
 
@@ -112,24 +112,24 @@ An Add-on is a namespaced, operator-installed extension compiled into `phi-serve
 server routes, webhook handlers, jobs, migrations, external-service adapters, server-side providers,
 and versioned capabilities supported by the Add-on ABI.
 
-Every physical Add-on package uses the mandatory `-server` postfix. For a direct Site Module counterpart,
-the scope and base name match exactly:
+One package carries one product, and its name is the Add-on id. There is no `-server` postfix, and
+the two halves are told apart by their entrypoints rather than by two package names:
 
 ```text
-Module package: @phis/github
-Add-on package: @phis/github-server
+package:  @phis/github
+addonId:  @phis/github
+modules:  @phis/github/modules/github
 ```
 
-Logical identity and physical package identity are separate:
+The postfix was the older rule, from when a Module and an Add-on were separate packages. Section 4 of
+`DISTRIBUTION.md` forbids that arrangement -- the halves may not carry separate versions, digests or
+URLs, because anything that can drift eventually does -- and once they are one package the postfix says
+nothing the entrypoints do not say better. It also charged a rename to any package that had one half
+and grew the other.
 
-```text
-addonId:     @phis/github
-packageName: @phis/github-server
-```
-
-The logical Add-on id is stable API and persistence identity and omits the physical `-server` postfix.
-The physical package name is deployment metadata, but every replacement package must still satisfy the
-`@scope/name-server` Add-on naming contract.
+Logical identity and physical package identity remain separate fields, and normally hold the same
+string. A replacement package may be named differently; the logical Add-on id is API and persistence
+identity and does not follow a repackaging.
 
 ### Core
 
@@ -216,12 +216,11 @@ Site packages and server packages are separate publication and build units:
 ```text
 @phis/support
 @phis/github
-
-@phis/github-server
 ```
 
-An Add-on package name that does not end in `-server` is invalid. A file or `./server` export inside the
-Module package is not an Add-on and must never be compiled into `phi-server`.
+A file or a `./server` export inside a Module package is not an Add-on and must never be compiled into
+`phi-server`. `./server` belongs to the Module and runs in the Site process; the Add-on half is reached
+through `./addon/manifest` and `./addon/runtime` and runs in this one.
 
 The separation is mandatory:
 
@@ -322,23 +321,33 @@ For the case nobody foresaw, `phis addon forget` removes an entry from the desir
 reading it. `remove` validates before it deletes, which is right when the state is sound and useless
 when it is not.
 
-The package exposes two explicit server entrypoints:
+The package exposes two explicit server entrypoints, both under `addon/`:
 
 ```text
-@scope/package/manifest
-@scope/package/runtime
+@scope/package/addon/manifest
+@scope/package/addon/runtime
 ```
 
-`/manifest` exports `phiServerAddonManifest` and must be safe for CLI inspection without starting
-jobs, opening connections, or reading secrets. `/runtime` exports `phiServerAddon`; it contains the
+`addon/manifest` exports `phiServerAddonManifest` and must be safe for CLI inspection without starting
+jobs, opening connections, or reading secrets. `addon/runtime` exports `phiServerAddon`; it contains the
 same manifest plus the declared handler maps and service factories. There is no package-root fallback.
+
+The `addon/` prefix is what keeps the halves apart inside one package. A Module already spends `./server`
+on its React Server Components -- code that runs in the *Site* process -- and an Add-on runs in this one.
+Two different processes called "server" in one package name is the kind of collision that surfaces at
+build time, in somebody else's build. The prefix also makes the one way these exports are ever resolved
+visible: Core loads the artifact by file path against its digest (`installed.ts`) and never by package
+name, so the only resolver that will ever meet `addon/runtime` is a Site build whose author reached for
+the wrong half.
+
+The prefix holds whether or not a Module half is present. A package with one half is not a different
+kind of package, and a rule that only applies sometimes is one that has to be remembered.
 
 ## 6. Installation and deployment authority
 
 Only `phis-cli` may:
 
 - install, upgrade, or remove an Add-on artifact
-- reject any Add-on package name without the mandatory `-server` postfix
 - validate Add-on ABI and descriptor collisions
 - execute reviewed Add-on migrations
 - write and remove entries in the Add-on desired state
@@ -1046,12 +1055,12 @@ descriptor has nowhere to put one.
 
 Core derives the schema name from the logical Add-on id, never from the physical package name:
 `phis_addon_`, then the id without its `@`, with `/` and `-` both replaced by `_`. `@acme/github`
-becomes `phis_addon_acme_github`. Deriving from the package name would write `-server` into every schema
-and would demand a rename, with rows already in it, on the replacement package section 1 allows. An
-Add-on id is a valid npm package name without the `-server` postfix, in which neither `_` nor `.`
-occurs. Lowercase follows from the first half rather than from a rule of ours: npm has refused uppercase
-in new package names since 2014, and an Add-on package is always new because it needs the postfix and a
-manifest. The two characters we do exclude, we exclude for one reason -- both would have to be mapped to
+becomes `phis_addon_acme_github`. The two names normally hold the same string, so this looks like a distinction
+without a difference until the day it is not: a replacement package under section 1 may be named
+differently, and deriving the schema from the physical name would demand a rename with rows already in
+it. An Add-on id is a valid npm package name in which neither `_` nor `.` occurs. Lowercase follows
+from the first half rather than from a rule of ours: npm has refused uppercase in new package names
+since 2014, and an Add-on package is always new, because it needs a manifest. The two characters we do exclude, we exclude for one reason -- both would have to be mapped to
 `_`, and three characters collapsing into one would multiply the collisions the unique index has to
 catch for nothing in return. Excluding `_` also buys something: every underscore in a schema name then
 marks a boundary that was there before.
@@ -1136,6 +1145,16 @@ back the dependency the descriptor exists to remove.
 Constraints belong in the first version of a descriptor and are the one part that does not wait. A
 column can be added later and an index can be added later; a constraint added later meets the rows that
 are already there.
+
+**In a Site-scoped table, unique means unique within the Site.** Core prepends the Site column to every
+uniqueness rule the table declares -- to `unique` on a column and to a unique index alike. The Add-on
+cannot say this itself: it may not declare `site_id`, so it has nowhere to name the pair. Left as plain
+uniqueness the rule would reach across every tenant on the instance, and the second Site to install the
+Add-on would collide with the first over a value neither of them can see. Instance-wide uniqueness is
+therefore not expressible on a Site-scoped table, which is the answer and not a gap: an Add-on holding
+rows for several Sites has no business enforcing a rule across them, and one that genuinely needs a
+globally unique value keeps an unscoped table for it. A non-unique index is only an access path and is
+left exactly as it was written.
 
 What a descriptor cannot say is the point of it. There are no triggers, functions, views, expression or
 partial indexes, and no free-form check expression, because each of those is SQL and would put back
@@ -1346,10 +1365,10 @@ Server Add-on:       none
 ### GitHub
 
 ```text
-Site package:        @phis/github
+Package:             @phis/github
 Site Module:         @phis/github/modules/github
 Server binding:      @phis/github
-Server package:      @phis/github-server
+Add-on entrypoints:  @phis/github/addon/manifest, @phis/github/addon/runtime
 Provided capability: @phis/github/issues:v1
 Core requirement:    @phis/server/threads:v1
 Core requirement:    @phis/server/resource-links:v1
@@ -1358,8 +1377,8 @@ Core requirement:    @phis/server/resource-links:v1
 ## 21. Non-negotiable invariants
 
 - Site/client extensions are Modules; server extensions are Add-ons.
-- Every physical Add-on package has the `-server` postfix; a direct counterpart to `@scope/name` is
-  `@scope/name-server`, while its logical Add-on id remains `@scope/name`.
+- One package carries one product. Both halves ship under one name and one version, and the Add-on half
+  lives under the `addon/` entrypoint prefix.
 - Every Module binds to exactly one Add-on or to Core.
 - Module activation never installs or auto-enables an Add-on.
 - Only `phis-cli` controls installed server code, migrations, the install root, and global activation.

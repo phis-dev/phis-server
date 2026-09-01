@@ -454,6 +454,12 @@ export async function installAddon(root: string, flags: FlagMap) {
  * what a security patch looks like -- and works because the digest, not the path, is what the load
  * address carries.
  *
+ * A changed package name is refused unless `--repackage` says so. The physical name may legitimately
+ * change -- section 1 of `SERVER_ADDONS.md` allows a replacement package, which is why `addonId` and
+ * `packageName` are separate fields at all -- but it is not what an upgrade normally is. Far more often
+ * it means the wrong artifact was pointed at, and that is worth one flag to say out loud, because the
+ * logical id an operator types is the same either way.
+ *
  * Nothing here touches the registry. Between this command and the next `reconcile`, the desired state
  * names a version the registry does not, and the dispatcher refuses rather than guesses; a schema bump
  * keeps it refusing until `migrate` has run. Both are the intended failure, and both are why the
@@ -473,9 +479,10 @@ export async function upgradeAddon(root: string, flags: FlagMap) {
       `The artifact declares ${manifest.addonId}, not ${addonId}. An upgrade does not change identity.`,
     );
   }
-  if (manifest.packageName !== existing.packageName) {
+  if (manifest.packageName !== existing.packageName && flags.get("repackage") !== true) {
     throw new Error(
-      `The artifact names package ${manifest.packageName}, not ${existing.packageName}.`,
+      `The artifact names package ${manifest.packageName}, not ${existing.packageName}. ` +
+      "If the Add-on was genuinely republished under a new name, pass --repackage.",
     );
   }
   if (manifest.migrationVersion < existing.manifest.migrationVersion) {
@@ -514,6 +521,7 @@ export async function upgradeAddon(root: string, flags: FlagMap) {
       addon.addonId === addonId
         ? {
             ...addon,
+            packageName: manifest.packageName,
             packageVersion: manifest.packageVersion,
             manifestDigest,
             artifactDigest,

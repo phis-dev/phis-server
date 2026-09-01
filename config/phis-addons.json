@@ -3,14 +3,14 @@
   "addons": [
     {
       "addonId": "@phis/storage-s3",
-      "packageName": "@phis/storage-s3-server",
+      "packageName": "@phis/storage-s3",
       "packageVersion": "0.1.0",
-      "manifestDigest": "4a477ef05f84a1c4b032134d60f1667be426b00b0a24c29bfbb700db3ef40d63",
-      "artifactDigest": "8a27ad46e3d8d4962be79964bf0e4c7706456346599262b5cc9c63a485e277ad",
+      "manifestDigest": "4274557f0a2992317e93b770180f20e1093276931e7407d7233c616b2f5fa32e",
+      "artifactDigest": "b1ae6d5780dec5564a01856e25add84f680e9471dcb659dea8bc3f276d64b35c",
       "manifest": {
         "manifestVersion": 1,
         "addonId": "@phis/storage-s3",
-        "packageName": "@phis/storage-s3-server",
+        "packageName": "@phis/storage-s3",
         "packageVersion": "0.1.0",
         "serverAbi": "^1",
         "capabilities": [],
