@@ -861,6 +861,21 @@ so `table` can only ever address one of its own; a name that is not in its manif
 query. A table with neither scope answers false to everything: absence of a scope is not absence of a
 restriction.
 
+Both scopes require `siteScoped`, and `siteScoped` itself is stated rather than defaulted. Core weighs a
+person on a Site everywhere it weighs one at all -- an authorization is read as a pair, and a disabled
+membership answers no -- so ownership without a Site would be the one place that pair comes apart, the
+same account reaching a row from a Site it was never admitted to on a comparison that looked at nothing
+but a user id. And a table saying nothing at all about the Site would be the instance-wide one, which
+makes silence the permissive answer in the one descriptor where it is permissive nowhere else. A table
+that genuinely belongs to the Add-on rather than to a Site -- a category list, a currency table -- says
+so with `false`.
+
+A reference into a Site-scoped table is bound together with its Site, the way a group reference is:
+Core writes `(column, site_id)` against the target's `(key, site_id)`, lays down the unique key that
+pair needs, and requires both tables to be Site-scoped. The Site filter guards what a query *reads*; it
+does not guard what a value *points at*, and an insert naming another Site's row by id is an ordinary
+write that no declaration would show.
+
 `groupLevel` names the level instead of returning the bits. The numeric ladder stays Core's, so no
 installed Add-on can come to depend on a value, and `hasSiteAccess` takes a symbolic access name rather
 than a role flag for the same reason.
@@ -1223,6 +1238,15 @@ The declaration form carries what a real query needs and refuses what does not s
   makes a table nobody owns writable: without an owner and without a group Core has no row to judge, so
   such an update or delete must state a role, and validation refuses it otherwise. Where a row does have
   an owner or a group, the role narrows rather than replaces.
+- `alsoAllowedByRole` is the other direction, and the one moderation needs. `requiresRole` asks for the
+  role *on top of* the ladder, which on an owned table means role and owner both -- something nobody
+  moderating a stranger's row can ever be. This one widens: the row is judged first, and a caller the
+  ladder turned down is let through on the role instead, while the owner keeps reaching their own row
+  without holding any. It is asked after the row rather than before it, because a role standing in for
+  an authority the row did not grant can only be weighed once the row has answered. The refusal stays
+  the ladder's silent zero, so a moderation query does not become a way of asking whether a row exists.
+  Only on an update or a delete, only on a table that has authority to stand in for, and never together
+  with `requiresRole` -- a query wanting both is two queries under one name.
 - a write declares what it returns.
 - a named sequence of queries runs as one transaction. Without one, every write stands alone and no
   invariant spanning two tables can hold.

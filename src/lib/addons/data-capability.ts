@@ -132,6 +132,7 @@ function descriptorParametersFor(manifest: PhiServerAddonManifestV1, name: strin
       : undefined,
     group: descriptor.kind === "insert" ? descriptor.groupParameter : undefined,
     requiresRole: descriptor.requiresRole,
+    alsoAllowedByRole: descriptor.alsoAllowedByRole,
   };
 }
 
@@ -216,7 +217,18 @@ async function run(
      */
     const id = readArgument(args, parameters.id!, name);
     if (!await bound.mayActOnRow({ table: query.table, id, intent: kind })) {
-      return { rows: [] as PhiServerAddonQueryRow[], rowCount: 0, cursor: null };
+      /*
+       * The declared bypass, and the only thing that is asked after the row rather than before it.
+       *
+       * Order is the whole of it. The role stands in for an authority the row did not grant, so it can
+       * only be weighed once the row has answered -- ask it first and the owner's own path stops being
+       * reachable without it. And the refusal stays the ladder's: a caller with neither the row nor the
+       * role gets the same silent zero as before, because the alternative would turn a moderation query
+       * into a way of asking whether a row exists.
+       */
+      if (!parameters.alsoAllowedByRole || !await bound.hasRole(parameters.alsoAllowedByRole)) {
+        return { rows: [] as PhiServerAddonQueryRow[], rowCount: 0, cursor: null };
+      }
     }
   }
 

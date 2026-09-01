@@ -48,6 +48,9 @@ export const incidentSchemaDescriptor: PhiServerAddonSchemaDescriptor = {
     },
     {
       name: "incident_note",
+      // Site-scoped because it points at one that is: Core binds the reference to the Site, and a table
+      // without one has no Site to bind it to.
+      siteScoped: true,
       columns: [
         { name: "id", type: "identity" },
         { name: "incident_id", references: { table: "incident" }, onDelete: "cascade" },

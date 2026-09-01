@@ -92,7 +92,37 @@ describe("schema DDL generation", () => {
   it("gives a reference column the type of what it points at", () => {
     // `incident.id` is an identity column, so the column pointing at it is a plain BIGINT.
     expect(sqlFor("create table incident_note")).toContain('"incident_id" BIGINT NOT NULL');
-    expect(sqlFor("point incident_note.incident_id at incident")).toContain("ON DELETE CASCADE");
+    expect(sqlFor("point incident_note.incident_id at incident within its Site"))
+      .toContain("ON DELETE CASCADE");
+  });
+
+  it("carries the Site into a reference between two Site-scoped tables", () => {
+    /*
+     * The id alone would let a note of one Site name an incident of another, and nothing about the
+     * declaration would show it: the column reads the same and the constraint still holds. This is the
+     * group reference's rule applied to an Add-on's own tables, where it matters more -- both rows are
+     * the Add-on's, and a query would read across the boundary Core puts into every statement.
+     */
+    const sql = sqlFor("point incident_note.incident_id at incident within its Site");
+    expect(sql).toContain('FOREIGN KEY ("incident_id", "site_id")');
+    expect(sql).toContain('REFERENCES "phis_addon_acme_incidents"."incident"("id", "site_id")');
+  });
+
+  it("lays down the key such a reference needs, and only where one points", () => {
+    // PostgreSQL accepts `(column, site_id)` only against a unique key covering exactly those; the
+    // primary key alone is not it.
+    const key = sqlFor("key incident by Site for references");
+    expect(key).toContain('UNIQUE ("id", "site_id")');
+    expect(statements().some((entry) => entry.summary === "key incident_note by Site for references"))
+      .toBe(false);
+  });
+
+  it("keys a referenced table before anything points at it", () => {
+    const all = statements();
+    const key = all.findIndex((entry) => entry.summary.startsWith("key "));
+    const firstReference = all.findIndex((entry) => entry.summary.startsWith("point "));
+    expect(key).toBeGreaterThanOrEqual(0);
+    expect(key).toBeLessThan(firstReference);
   });
 
   it("renders every structured constraint as a check", () => {
@@ -125,6 +155,7 @@ describe("schema DDL generation", () => {
       tables: [
         {
           name: "quoted",
+          siteScoped: false,
           columns: [
             { name: "id", type: "identity" },
             { name: "label", type: "string", maxLength: 32, default: { kind: "literal", value: "it's" } },
@@ -175,6 +206,7 @@ describe("schema DDL generation", () => {
       tables: [
         {
           name: "licence_key",
+          siteScoped: false,
           columns: [
             { name: "id", type: "identity" },
             { name: "value", type: "string", maxLength: 64, unique: true },

@@ -132,6 +132,33 @@ function groupForeignKey(schemaName: string, tableName: string, columnName: stri
   );
 }
 
+/**
+ * One of the Add-on's own Site-scoped tables, referenced the same way a group is.
+ *
+ * The reasoning is the group's, applied a second time: an id alone would let a row of one Site name a
+ * row of another, and no Add-on would see that it had done so. Here it is worse than a stray reference,
+ * because the two rows are the Add-on's own and a query would happily read across the boundary Core
+ * puts into every statement.
+ *
+ * `ON DELETE CASCADE` and no choice, as with the group: the constraint covers the Site column, and
+ * `SET NULL` would clear that one too.
+ */
+function siteBoundForeignKey(
+  schemaName: string,
+  tableName: string,
+  columnName: string,
+  targetTable: string,
+  targetKey: string,
+) {
+  return (
+    `ALTER TABLE ${qualify(schemaName, tableName)} ADD CONSTRAINT ` +
+    `${quotePhiIdentifier(composePhiServerAddonObjectName(tableName, columnName, "fk"))} ` +
+    `FOREIGN KEY (${quotePhiIdentifier(columnName)}, ${quotePhiIdentifier(PHI_SERVER_ADDON_SITE_COLUMN)}) ` +
+    `REFERENCES ${qualify(schemaName, targetTable)}` +
+    `(${quotePhiIdentifier(targetKey)}, ${quotePhiIdentifier(PHI_SERVER_ADDON_SITE_COLUMN)}) ON DELETE CASCADE`
+  );
+}
+
 function referenceColumnType(
   column: PhiServerAddonReferenceColumnDescriptor,
   tablesByName: Map<string, PhiServerAddonTableDescriptor>,
@@ -234,6 +261,16 @@ export function buildPhiServerAddonSchemaStatements(
 ): PhiServerAddonSchemaStatement[] {
   const tablesByName = new Map(descriptor.tables.map((table) => [table.name, table]));
   const statements: PhiServerAddonSchemaStatement[] = [];
+  const siteBoundTargets = new Set(
+    descriptor.tables.flatMap((table) =>
+      table.columns
+        .filter(isReferenceColumn)
+        .map((column) => column.references)
+        .filter((reference) => typeof reference !== "string")
+        .map((reference) => reference.table)
+        .filter((name) => tablesByName.get(name)?.siteScoped === true),
+    ),
+  );
 
   for (const table of descriptor.tables) {
     const definitions = table.columns.map((column) =>
@@ -273,6 +310,25 @@ export function buildPhiServerAddonSchemaStatements(
     statements.push({
       summary: `create table ${table.name}`,
       sql: `CREATE TABLE ${qualify(schemaName, table.name)} (\n  ${definitions.join(",\n  ")}\n)`,
+    });
+  }
+
+  /*
+   * The key a Site-bound reference points at, laid down before any of them are added.
+   *
+   * PostgreSQL will only accept `(column, site_id)` against a unique key covering exactly those, and the
+   * primary key alone is not it. This runs as its own pass because a table may be referenced by one
+   * declared before it -- the descriptor is a shape, not a sequence.
+   *
+   * Only where something actually points: an unreferenced table would carry an index nothing reads.
+   */
+  for (const table of descriptor.tables.filter((entry) => siteBoundTargets.has(entry.name))) {
+    statements.push({
+      summary: `key ${table.name} by Site for references`,
+      sql:
+        `ALTER TABLE ${qualify(schemaName, table.name)} ADD CONSTRAINT ` +
+        `${quotePhiIdentifier(composePhiServerAddonObjectName(table.name, PHI_SERVER_ADDON_SITE_COLUMN, "uq"))} ` +
+        `UNIQUE (${quotePhiIdentifier(table.primaryKey[0]!)}, ${quotePhiIdentifier(PHI_SERVER_ADDON_SITE_COLUMN)})`,
     });
   }
 
@@ -331,6 +387,19 @@ export function buildPhiServerAddonSchemaStatements(
         statements.push({
           summary: `point ${table.name}.${column.name} at ${column.references}`,
           sql: groupForeignKey(schemaName, table.name, column.name),
+        });
+        continue;
+      }
+      if (typeof column.references !== "string" && tablesByName.get(column.references.table)!.siteScoped) {
+        statements.push({
+          summary: `point ${table.name}.${column.name} at ${column.references.table} within its Site`,
+          sql: siteBoundForeignKey(
+            schemaName,
+            table.name,
+            column.name,
+            column.references.table,
+            tablesByName.get(column.references.table)!.primaryKey[0]!,
+          ),
         });
         continue;
       }

@@ -294,14 +294,28 @@ function validateTable(
   if (table.length > POSTGRES_IDENTIFIER_MAX_LENGTH) {
     issues.push(`${field}.name exceeds ${POSTGRES_IDENTIFIER_MAX_LENGTH} characters.`);
   }
-  for (const scope of ["siteScoped", "ownerScoped", "groupScoped"] as const) {
+  for (const scope of ["ownerScoped", "groupScoped"] as const) {
     if (value[scope] !== undefined && typeof value[scope] !== "boolean") {
       issues.push(`${field}.${scope} must be a boolean.`);
     }
   }
+  // Stated, not defaulted. The two below read the answer, and an absent one would quietly mean "no
+  // boundary" -- the only place in this descriptor where saying nothing is the permissive choice.
+  if (typeof value.siteScoped !== "boolean") {
+    issues.push(
+      `${field}.siteScoped must be stated as a boolean. ` +
+      "A table that belongs to the Add-on rather than to a Site says so with false.",
+    );
+  }
   if (value.groupScoped === true && value.siteScoped !== true) {
     issues.push(
       `${field}.groupScoped requires siteScoped: a group belongs to a Site and has no meaning without one.`,
+    );
+  }
+  if (value.ownerScoped === true && value.siteScoped !== true) {
+    issues.push(
+      `${field}.ownerScoped requires siteScoped: Core weighs a person on a Site everywhere else, ` +
+      "and ownership without one would let the same account reach a row from a Site it was never admitted to.",
     );
   }
 
@@ -476,6 +490,33 @@ export function validatePhiServerAddonSchemaDescriptor(
         issues.push(
           `${field} table "${table.name}" column "${column.name}" references "${target.name}", ` +
           "whose primary key is composite. A reference column carries one column.",
+        );
+      }
+      if (!target.siteScoped) {
+        continue;
+      }
+      // The key Core lays down on the target so PostgreSQL will accept the pair.
+      assertComposedNameFits(
+        target.name,
+        PHI_SERVER_ADDON_SITE_COLUMN,
+        "uq",
+        `${field} table "${target.name}", referenced by "${table.name}"`,
+        issues,
+      );
+      // Bound together with the Site, exactly as a group reference is, and refused where it cannot be.
+      // A row of one Site naming a row of another is not something the declaration would show: the
+      // column reads the same and the constraint still holds.
+      if (!table.siteScoped) {
+        issues.push(
+          `${field} table "${table.name}" column "${column.name}" references Site-scoped "${target.name}", ` +
+          `so "${table.name}" must be siteScoped too. Core binds the reference to the Site, and a table ` +
+          "without one has no Site to bind it to.",
+        );
+      }
+      if (column.onDelete !== "cascade") {
+        issues.push(
+          `${field} table "${table.name}" column "${column.name}" references Site-scoped "${target.name}" ` +
+          "and must use onDelete \"cascade\": Core binds it together with the Site column, which cannot be nulled.",
         );
       }
     }

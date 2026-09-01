@@ -246,6 +246,28 @@ function validateQuery(
       issues.push(`${field}.requiresRole does not name a role this Add-on declares.`);
     }
   }
+  if (raw.alsoAllowedByRole !== undefined) {
+    if (typeof raw.alsoAllowedByRole !== "string" || !declaredRoles.has(raw.alsoAllowedByRole)) {
+      issues.push(`${field}.alsoAllowedByRole does not name a role this Add-on declares.`);
+    }
+    if (raw.requiresRole !== undefined) {
+      issues.push(
+        `${field} states both requiresRole and alsoAllowedByRole. One narrows and the other widens; ` +
+        "a query that wants both is two queries under one name.",
+      );
+    }
+    if (raw.kind !== "update" && raw.kind !== "delete") {
+      issues.push(
+        `${field}.alsoAllowedByRole is only meaningful on an update or a delete, ` +
+        "which are the only queries that judge a row. Use requiresRole.",
+      );
+    } else if (table.ownerScoped !== true && table.groupScoped !== true) {
+      issues.push(
+        `${field}.alsoAllowedByRole stands in for row authority, and "${table.name}" has none to ` +
+        "stand in for. Such a table's writes state requiresRole, which is then the whole authority.",
+      );
+    }
+  }
   /*
    * A table with no owner and no group has no row-level authority, so Core answers no to every update
    * and delete against it. A declared role is the only thing that can stand in for that -- and it has

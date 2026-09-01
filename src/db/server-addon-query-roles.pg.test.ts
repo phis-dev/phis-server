@@ -55,6 +55,17 @@ const target = {
         ],
         primaryKey: ["id"],
       },
+      {
+        // Owned and not grouped: the row is the writer's, and no membership level reaches over it.
+        name: "review",
+        siteScoped: true,
+        ownerScoped: true,
+        columns: [
+          { name: "id", type: "identity" as const },
+          { name: "body", type: "string" as const, maxLength: 200 },
+        ],
+        primaryKey: ["id"],
+      },
     ],
   },
 };
@@ -79,6 +90,9 @@ const manifest = {
       all: [],
       add: [{ name: "label", type: "text" }],
       rename: [{ name: "id", type: "bigInteger" }, { name: "label", type: "text" }],
+      write_review: [{ name: "body", type: "text" }],
+      all_reviews: [],
+      drop_review: [{ name: "id", type: "bigInteger" }],
     },
     queries: [
       { kind: "select", name: "all", table: "category", limit: 25 },
@@ -95,6 +109,22 @@ const manifest = {
         table: "category",
         requiresRole: "curator",
         set: [{ column: "label", value: { kind: "parameter", name: "label" } }],
+        idParameter: "id",
+      },
+      {
+        kind: "insert",
+        name: "write_review",
+        table: "review",
+        values: [{ column: "body", value: { kind: "parameter", name: "body" } }],
+      },
+      { kind: "select", name: "all_reviews", table: "review", limit: 25 },
+      {
+        // The other direction to `requiresRole`: the row is judged first, and a caller the ladder turned
+        // down is let through on the role. The writer keeps reaching their own without holding any.
+        kind: "delete",
+        name: "drop_review",
+        table: "review",
+        alsoAllowedByRole: "curator",
         idParameter: "id",
       },
     ],
@@ -208,6 +238,24 @@ describe("a query that requires a role", () => {
     expect(await data(curator).update("rename", { id, label: "after" })).toBe(1);
     const rows = (await data(curator).select("all")).rows;
     expect(rows.some((row) => row.label === "after")).toBe(true);
+  });
+
+  it("lets the writer reach their own row without holding any role", async () => {
+    const written = await data(nobody).insert("write_review", { body: "mine" });
+    expect(await data(nobody).delete("drop_review", { id: String(written!.id) })).toBe(1);
+  });
+
+  it("lets a role stand in where the ladder said no", async () => {
+    const written = await data(nobody).insert("write_review", { body: "moderated" });
+    const id = String(written!.id);
+
+    // Owned and not grouped, so there is no membership level to climb: a stranger is simply refused, and
+    // refused the ladder's way -- a silent zero, because saying more would answer whether the row exists.
+    expect(await data(vendor).delete("drop_review", { id })).toBe(0);
+    expect((await data(nobody).select("all_reviews")).rows.some((row) => row.body === "moderated"))
+      .toBe(true);
+
+    expect(await data(curator).delete("drop_review", { id })).toBe(1);
   });
 
   it("stops the moment the role is taken away", async () => {
