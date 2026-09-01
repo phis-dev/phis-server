@@ -136,3 +136,30 @@ export async function setPhiServerAddonSiteEnabled(
   );
   return rows[0] ? mapRow(rows[0]) : null;
 }
+
+/**
+ * Records what the last reconcile found, per Site that asked for the Add-on.
+ *
+ * A diagnosis and not a decision. The capability snapshot works out availability from the sources that
+ * determine it -- desired state, registry, digests, migration level, request, configuration -- and no
+ * longer reads this column; doing so made the answer depend on when it was last written, and nothing
+ * ever wrote it, so every Add-on looked unavailable everywhere. What it is good for is an operator
+ * asking "why is this not running here" without reproducing that reasoning.
+ */
+export async function recordPhiServerAddonSiteEffectiveStatus(
+  db: Queryable,
+  input: { addonId: string; status: string; diagnosticCode?: string | null },
+) {
+  const { rowCount } = await db.query(
+    `UPDATE phis.site_server_addons
+        SET effective_status = $2, diagnostic_code = $3, updated_at = NOW()
+      WHERE addon_id = $1 AND (flags & $4) <> 0`,
+    [
+      input.addonId,
+      input.status,
+      input.diagnosticCode ?? null,
+      PHI_SITE_SERVER_ADDON_FLAG_REQUESTED_ENABLED,
+    ],
+  );
+  return rowCount ?? 0;
+}

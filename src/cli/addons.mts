@@ -26,7 +26,10 @@ import { type PhiServerAddonDesiredState } from "../lib/addons/contract.ts";
 import { PHI_SERVER_CORE_CAPABILITIES } from "../lib/addons/core-capabilities.ts";
 import { phiServerAddonUnindexedSearches } from "../lib/addons/query-descriptor.ts";
 import { ensurePhiServerAddonSiteGroups } from "../db/server-addon-groups.mts";
-import { readPhiServerAddonEnabledSiteIds } from "../db/server-addon-sites.mts";
+import {
+  readPhiServerAddonEnabledSiteIds,
+  recordPhiServerAddonSiteEffectiveStatus,
+} from "../db/server-addon-sites.mts";
 import {
   resolvePhiServerAddonArtifactPath,
   resolvePhiServerAddonInstallRoot,
@@ -691,6 +694,20 @@ export async function reconcileAddons(
    * memberships an operator entered, and taking those away belongs to removing the Add-on, not to
    * upgrading it.
    */
+  /*
+   * After reconcile the registry matches the desired state by construction, so every Site that asked
+   * for the Add-on is now getting it. Recorded rather than derived on read: this is what an operator
+   * sees when they ask why something is or is not running, and it must not require re-running the
+   * capability snapshot to answer.
+   */
+  for (const { desired } of loaded) {
+    await recordPhiServerAddonSiteEffectiveStatus(pool, {
+      addonId: desired.addonId,
+      status: desired.enabled ? "available" : "disabled",
+      diagnosticCode: desired.enabled ? null : "globally_disabled",
+    });
+  }
+
   const groups: Array<{ addonId: string; siteId: number; key: string; action: string }> = [];
   for (const { desired, manifest } of loaded) {
     const declared = manifest.groups ?? [];
@@ -792,6 +809,23 @@ export async function purgeAddon(root: string, flags: FlagMap, pool: Pool) {
  * Read from the desired state rather than from the running server: `phis addon config` has to work
  * before an instance is up, and the descriptors travel with the installation anyway.
  */
+export function readInstalledAddonModules(root: string, addonId: string) {
+  const entry = readAddonDesiredState(root).addons.find((addon) => addon.addonId === addonId);
+  if (!entry) {
+    throw new Error(`Add-on ${addonId} is not installed.`);
+  }
+  return entry.manifest.modules ?? [];
+}
+
+/** One package carries one product, so the Module half is this same name. */
+export function readInstalledAddonPackageName(root: string, addonId: string) {
+  const entry = readAddonDesiredState(root).addons.find((addon) => addon.addonId === addonId);
+  if (!entry) {
+    throw new Error(`Add-on ${addonId} is not installed.`);
+  }
+  return entry.manifest.packageName;
+}
+
 export function readInstalledAddonGroups(root: string, addonId: string) {
   const entry = readAddonDesiredState(root).addons.find((addon) => addon.addonId === addonId);
   if (!entry) {

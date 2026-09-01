@@ -509,6 +509,23 @@ export function validatePhiServerAddonManifest(
     issues.push("roles form a cycle: at least one role must be grantable by a Site access.");
   }
 
+  const modules = Array.isArray(value.modules) ? value.modules : [];
+  if (value.modules !== undefined && !Array.isArray(value.modules)) {
+    issues.push("modules must be an array when it is stated at all.");
+  }
+  for (const [index, moduleId] of modules.entries()) {
+    if (typeof moduleId !== "string") {
+      issues.push(`modules[${index}] must be a string.`);
+      continue;
+    }
+    // One package carries one product, so a Module id that does not start with this package's name is
+    // naming somebody else's half -- which this manifest has no standing to declare.
+    if (packageName && !moduleId.startsWith(`${packageName}/`)) {
+      issues.push(`modules[${index}] must begin with "${packageName}/".`);
+    }
+  }
+  assertUnique(modules.filter((id): id is string => typeof id === "string"), "modules", issues);
+
   const groups = Array.isArray(value.groups) ? value.groups : [];
   if (value.groups !== undefined && !Array.isArray(value.groups)) {
     issues.push("groups must be an array when it is stated at all.");

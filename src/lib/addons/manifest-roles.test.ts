@@ -116,3 +116,32 @@ describe("declaring Add-on groups", () => {
       .toMatch(/groups/);
   });
 });
+
+/**
+ * What an Add-on says about its other half.
+ *
+ * The one thing Core cannot see from an artifact: whether a Module half exists at all. It is what lets
+ * enabling an Add-on for a Site check that the Site has both halves, and an Add-on that is only an
+ * Add-on says nothing here.
+ */
+describe("declaring the Module half", () => {
+  function moduleIssues(modules: unknown) {
+    return validatePhiServerAddonManifest(manifest({ modules })).issues.join("\n");
+  }
+
+  it("accepts ids under this package's own name", () => {
+    expect(moduleIssues(["@acme/market/modules/catalogue"])).toBe("");
+  });
+
+  it("accepts an Add-on that has no Module half, which is most of them", () => {
+    expect(moduleIssues(undefined)).toBe("");
+  });
+
+  it("refuses an id belonging to another package", () => {
+    expect(moduleIssues(["@other/thing/modules/x"])).toMatch(/must begin with "@acme\/market\/"/);
+  });
+
+  it("refuses the same Module twice", () => {
+    expect(moduleIssues(["@acme/market/modules/a", "@acme/market/modules/a"])).toMatch(/modules/);
+  });
+});

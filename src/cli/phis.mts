@@ -50,6 +50,8 @@ import {
   reconcileAddons,
   forgetAddon,
   readInstalledAddonGroups,
+  readInstalledAddonModules,
+  readInstalledAddonPackageName,
   readInstalledAddonSettings,
   removeAddon,
   setAddonEnabled,
@@ -247,7 +249,7 @@ Usage:
   phis addon enable --addon <@scope/name>
   phis addon disable --addon <@scope/name>
   phis addon forget --addon <@scope/name>
-  phis addon site   --addon <@scope/name> [--site <site key> --enable | --disable]
+  phis addon site   --addon <@scope/name> [--site <site key> --enable [--without-module] | --disable]
   phis addon config --addon <@scope/name> --site <site key>
   phis addon role   --site <site key> [--addon <@scope/name>] [--user <id>]
                     [--grant <role> | --revoke <role>]
@@ -2437,6 +2439,29 @@ async function main() {
       return;
     }
     const site = await getSiteByKey(getRequiredFlag(flags, "site"));
+    const declaredModules = readInstalledAddonModules(configRoot, addonId);
+    const modulePackage = readInstalledAddonPackageName(configRoot, addonId);
+    const siteModules = readSiteModuleDesiredState(configRoot).sites[site.key]?.modules ?? [];
+    const moduleInstalled = siteModules.some((entry) => entry.packageName === modulePackage);
+    if (wantsEnable && declaredModules.length > 0 && !moduleInstalled) {
+      /*
+       * The Module half is installed and built before the Add-on is switched on, not after.
+       *
+       * That order costs nothing and removes a state: a Module whose Add-on is not enabled for the Site
+       * deactivates itself -- the capability snapshot is per Site, and an unavailable provider drops
+       * the Module out of routes, controllers and widgets while its selection stays recorded. So the
+       * build can happen first, harmlessly, and enabling is then the cheap step that takes effect at
+       * once, with no second build behind it. Enabling first would instead leave a Site with routes and
+       * no surface until somebody remembers to build.
+       */
+      if (flags.get("without-module") !== true) {
+        throw new Error(
+          `${addonId} has a Module half (${modulePackage}) that ${site.key} does not have. ` +
+          `Run phis module add --site ${site.key} --package ${modulePackage}, rebuild the Site, ` +
+          "then enable. Pass --without-module to enable the server half on its own.",
+        );
+      }
+    }
     const state = await setPhiServerAddonSiteEnabled(getPool(), {
       addonId,
       siteId: site.id,
@@ -2466,6 +2491,15 @@ async function main() {
       );
       for (const entry of groups) {
         console.log(`  group ${entry.key} ${entry.action}`);
+      }
+      if (wantsEnable && declaredModules.length > 0 && !moduleInstalled) {
+        console.log(`  warning: the Module half ${modulePackage} is not installed here.`);
+      }
+      if (!wantsEnable && moduleInstalled) {
+        console.log(
+          `  ${modulePackage} deactivates itself now; remove it with phis module del and rebuild ` +
+          "when it should go for good.",
+        );
       }
       if (wantsEnable && state.configurationStatus !== "ready") {
         console.log(`  configuration is ${state.configurationStatus}; run phis addon config --site ${site.key}.`);

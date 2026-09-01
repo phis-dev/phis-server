@@ -84,11 +84,20 @@ export async function buildPhiServerCapabilitySnapshot(siteId: number) {
           state = "misconfigured";
           diagnosticCode =
             siteState.diagnosticCode ?? "site_configuration_invalid";
-        } else if (siteState.effectiveStatus !== "available") {
-          state = siteState.effectiveStatus as PhiServerCapabilityState;
-          diagnosticCode =
-            siteState.diagnosticCode ?? "site_effective_state_unavailable";
         }
+        /*
+         * `effective_status` is deliberately not consulted here.
+         *
+         * Everything it could say has just been decided above, from the sources that decide it: the
+         * desired state, the registry, the digests, the migration level, the Site's request and its
+         * configuration. Reading a stored verdict back on top of that made the answer depend on when it
+         * was last written -- and since nothing ever wrote it, the column sat at its default and every
+         * Add-on looked unavailable on every Site, which is why no dependent Module could activate
+         * anywhere.
+         *
+         * The column stays, written by `reconcile`, as a diagnosis an operator can read without
+         * reproducing this function. It is a record of the last check, not an input to the next one.
+         */
       }
     }
 

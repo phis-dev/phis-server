@@ -1271,11 +1271,42 @@ What a Site asks for and what it gets stay separate columns. `effective_status` 
 loading, the capabilities resolving and the configuration being complete, and writing it beside the
 request would make it a guess.
 
+`effective_status` is written by `reconcile` and read by no decision. Everything it could say is worked
+out by the capability snapshot from the sources that determine it — desired state, registry, digests,
+migration level, request, configuration — and reading a stored verdict back on top made the answer
+depend on when it was last written. Since nothing ever wrote it, the column sat at its default and every
+Add-on looked unavailable on every Site, which is why no dependent Module could activate anywhere. It
+stays as a diagnosis an operator can read without reproducing that reasoning.
+
 `configuration_status` is derived rather than declared: a setting either has a value an operator wrote
 or a default the manifest states, and an Add-on that declares nothing configurable is ready the moment a
 Site asks for it. It is re-derived after every change, because clearing a setting can take a Site back
 out of readiness and a status that only ever moves one way is one that lies. Until now nothing wrote the
 column at all, so the check that reads it could never have passed.
+
+### The Module half comes first
+
+A manifest may name the Modules its package's other half contributes, and that is the one thing Core
+cannot read off an artifact: whether a Module half exists at all. One package carries one product, so
+the package name is the manifest's own and there is nothing to resolve.
+
+**Enabling an Add-on for a Site requires that half to be there already.** The order is the opposite of
+section 6 of `DISTRIBUTION.md`, and there is no contradiction: that section is about installing into an
+instance, this is about switching on for a Site.
+
+The order costs nothing and removes a state. A Module whose Add-on is not enabled for the Site
+deactivates itself — the capability snapshot is per Site, and an unavailable provider drops the Module
+out of routes, controllers, widgets, layouts and providers while its selection stays recorded. So the
+Module can be installed and built first, harmlessly, and enabling is then the cheap step that takes
+effect at once with no second build behind it. Enabling first would leave a Site with routes and no
+surface until somebody remembers to build, and disabling first would leave a surface calling routes that
+are gone.
+
+`--without-module` enables the server half on its own, for the case that is genuinely meant.
+
+Disabling needs no such rule: the Module deactivates itself the moment the Site's request is withdrawn,
+so there is no window to protect. Removing it for good is `phis module del` and a build, in that order
+and at leisure.
 
 **A Service Provider is refused for a Site that never asked.** The check has been in `services.ts` since
 the beginning and could never fire: it is skipped when no Site is passed, and every Media caller passed
