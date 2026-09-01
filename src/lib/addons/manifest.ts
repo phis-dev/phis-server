@@ -21,6 +21,10 @@ import {
  * into one would multiply the collisions the unique index has to catch for nothing in return.
  */
 const ADDON_ID_PATTERN = PHI_SERVER_ADDON_ID_PATTERN;
+/** `<npm-package>/modules/<module>`, the Module id grammar `@phis/ui` enforces on the other side. */
+const MODULE_ID_PATTERN = (packageName: string) =>
+  new RegExp(`^${packageName.replaceAll(/[.*+?^${}()|[\]\\]/g, "\\$&")}/modules/[a-z0-9][a-z0-9-]*$`);
+
 /** What `phis.site_groups.key` accepts, so a manifest is refused here rather than at the first Site. */
 const GROUP_KEY_PATTERN = /^[a-z0-9][a-z0-9._-]{0,159}$/;
 
@@ -518,10 +522,17 @@ export function validatePhiServerAddonManifest(
       issues.push(`modules[${index}] must be a string.`);
       continue;
     }
-    // One package carries one product, so a Module id that does not start with this package's name is
-    // naming somebody else's half -- which this manifest has no standing to declare.
-    if (packageName && !moduleId.startsWith(`${packageName}/`)) {
-      issues.push(`modules[${index}] must begin with "${packageName}/".`);
+    /*
+     * The grammar `@phis/ui` states and enforces: `<npm-package>/modules/<module>`.
+     *
+     * Both halves of it matter. The package prefix, because one package carries one product and a
+     * manifest has no standing to declare somebody else's half. And the `modules/` segment, because
+     * that is what a Module id *is* -- `@acme/thing/widgets/x` is a leaf inside a module, not a module,
+     * and accepting one here would put a name into the desired state that the Site build cannot
+     * resolve.
+     */
+    if (packageName && !MODULE_ID_PATTERN(packageName).test(moduleId)) {
+      issues.push(`modules[${index}] must be "${packageName}/modules/<module>".`);
     }
   }
   assertUnique(modules.filter((id): id is string => typeof id === "string"), "modules", issues);

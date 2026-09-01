@@ -138,7 +138,13 @@ describe("declaring the Module half", () => {
   });
 
   it("refuses an id belonging to another package", () => {
-    expect(moduleIssues(["@other/thing/modules/x"])).toMatch(/must begin with "@acme\/market\/"/);
+    expect(moduleIssues(["@other/thing/modules/x"])).toMatch(/must be "@acme\/market\/modules/);
+  });
+
+  it("refuses a leaf inside a module, which is not a module", () => {
+    expect(moduleIssues(["@acme/market/modules/catalogue/widgets/list"]))
+      .toMatch(/must be "@acme\/market\/modules/);
+    expect(moduleIssues(["@acme/market/catalogue"])).toMatch(/must be "@acme\/market\/modules/);
   });
 
   it("refuses the same Module twice", () => {
