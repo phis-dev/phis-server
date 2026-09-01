@@ -31,6 +31,7 @@ describe.skipIf(!configured)("a Storage Profile that names the S3 Add-on", () =>
   let site: PhiTestSite;
   let profile: {
     providerId: typeof S3_PROVIDER_KEY;
+    siteId: number;
     config: Record<string, unknown>;
     secretReference: string;
   };
@@ -51,6 +52,7 @@ describe.skipIf(!configured)("a Storage Profile that names the S3 Add-on", () =>
     });
     profile = {
       providerId: S3_PROVIDER_KEY,
+      siteId: site.id,
       config: {
         endpoint,
         region: "garage",

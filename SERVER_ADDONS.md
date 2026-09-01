@@ -1271,6 +1271,18 @@ What a Site asks for and what it gets stay separate columns. `effective_status` 
 loading, the capabilities resolving and the configuration being complete, and writing it beside the
 request would make it a guess.
 
+`configuration_status` is derived rather than declared: a setting either has a value an operator wrote
+or a default the manifest states, and an Add-on that declares nothing configurable is ready the moment a
+Site asks for it. It is re-derived after every change, because clearing a setting can take a Site back
+out of readiness and a status that only ever moves one way is one that lies. Until now nothing wrote the
+column at all, so the check that reads it could never have passed.
+
+**A Service Provider is refused for a Site that never asked.** The check has been in `services.ts` since
+the beginning and could never fire: it is skipped when no Site is passed, and every Media caller passed
+none -- which was the only thing keeping uploads working, because the row it reads was written by
+nothing. The Site now travels in the Storage Profile, which has carried a `site_id NOT NULL` all along,
+so no caller has to remember to pass it and none can drop it by omission.
+
 ### Applying and removing a schema
 
 `phis-cli` compares the declared descriptor against the recorded one and derives the statements that

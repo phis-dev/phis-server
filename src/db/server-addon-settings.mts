@@ -1,6 +1,7 @@
 import type { Pool, PoolClient } from "pg";
 
 import type { PhiServerAddonSettingDescriptor } from "../lib/addons/contract.ts";
+import { resolvePhiServerAddonConfigurationStatus } from "./server-addon-sites.mts";
 
 /**
  * What an operator configured for one Add-on on one Site.
@@ -43,6 +44,8 @@ export async function writePhiServerAddonSetting(
     siteId: number;
     name: string;
     value: string | number | boolean | null;
+    /** Everything the Add-on declares, so the row's readiness can be re-derived after the write. */
+    declared?: ReadonlyArray<PhiServerAddonSettingDescriptor>;
   },
 ) {
   const { rowCount } = await db.query(
@@ -58,7 +61,24 @@ export async function writePhiServerAddonSetting(
       ? [input.addonId, input.siteId, input.name]
       : [input.addonId, input.siteId, input.name, JSON.stringify(input.value)],
   );
-  return (rowCount ?? 0) > 0;
+  if ((rowCount ?? 0) === 0) {
+    return false;
+  }
+  if (input.declared) {
+    // Re-derived from what is stored now rather than adjusted by hand: clearing a setting can take a
+    // Site back out of readiness, and a status that only ever moves one way is one that lies.
+    const stored = await readPhiServerAddonSettings(db, input.addonId, input.siteId);
+    await db.query(
+      `UPDATE phis.site_server_addons SET configuration_status = $3, updated_at = NOW()
+        WHERE addon_id = $1 AND site_id = $2`,
+      [
+        input.addonId,
+        input.siteId,
+        resolvePhiServerAddonConfigurationStatus(input.declared, stored),
+      ],
+    );
+  }
+  return true;
 }
 
 /**

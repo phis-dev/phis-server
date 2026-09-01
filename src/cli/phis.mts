@@ -88,6 +88,7 @@ import {
 } from "../db/server-addon-groups.mts";
 import {
   readPhiServerAddonSiteStates,
+  resolvePhiServerAddonConfigurationStatus,
   setPhiServerAddonSiteEnabled,
 } from "../db/server-addon-sites.mts";
 import { checkPhiDependencyLicenses } from "./licenses.mts";
@@ -2440,6 +2441,12 @@ async function main() {
       addonId,
       siteId: site.id,
       enabled: wantsEnable,
+      configurationStatus: wantsEnable
+        ? resolvePhiServerAddonConfigurationStatus(
+          readInstalledAddonSettings(configRoot, addonId),
+          await readPhiServerAddonSettings(getPool(), addonId, site.id),
+        )
+        : undefined,
     });
     if (!state) {
       throw new Error(`${addonId} was not activated for ${site.key}; there was nothing to disable.`);
@@ -2513,7 +2520,13 @@ async function main() {
         }
         return parsed.value;
       })();
-    const written = await writePhiServerAddonSetting(getPool(), { addonId, siteId: site.id, name, value });
+    const written = await writePhiServerAddonSetting(getPool(), {
+      addonId,
+      siteId: site.id,
+      name,
+      value,
+      declared,
+    });
     if (!written) {
       throw new Error(
         `${addonId} is not activated for ${site.key}; there is no row to configure. Enable it first.`,

@@ -660,11 +660,22 @@ export async function createPhisMediaStorageServiceForProfile(
     providerId: PhisMediaStorageProviderId;
     config: Record<string, unknown> | Partial<PhisMediaStorageConfig> | null;
     secretReference?: string | null;
+    /**
+     * The Site the profile belongs to, and the reason an Add-on Provider can be checked at all.
+     *
+     * Required rather than optional, although the resolver would accept a missing one. The check that
+     * an Add-on is enabled for this Site sits behind exactly this value, so an optional field would let
+     * any caller drop it by omission -- and the profile row has `site_id NOT NULL`, so there is never a
+     * legitimate case where it is unknown.
+     */
+    siteId: number;
   },
   siteKey?: string | null,
   options?: { siteId?: number | null },
 ) {
-  const factory = await resolvePhisMediaStorageProviderFactory(profile.providerId, options);
+  const factory = await resolvePhisMediaStorageProviderFactory(profile.providerId, {
+    siteId: options?.siteId ?? profile.siteId,
+  });
   return new PhisMediaStorageService(factory, {
     profile: {
       providerId: profile.providerId,

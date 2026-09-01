@@ -22,6 +22,7 @@ export async function reconcilePhiMediaStorageCors(): Promise<PhiMediaStorageCor
         providerId: profile.providerId as PhisMediaStorageProviderId,
         config: profile.config,
         secretReference: profile.secretReference,
+        siteId: profile.siteId,
       },
       profile.siteKey,
     );

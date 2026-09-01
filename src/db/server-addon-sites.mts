@@ -77,17 +77,48 @@ export async function readPhiServerAddonEnabledSiteIds(db: Queryable, addonId: s
  * configuration being complete -- and answering both in one statement would make the second one a
  * guess. Disabling sets it, because there the two cannot disagree.
  */
+/**
+ * Whether everything the Add-on can be configured with has an answer.
+ *
+ * Derived rather than stored as an opinion, and derived from the only thing there is: a setting either
+ * has a value an operator wrote or a default the manifest states. An Add-on that declares nothing
+ * configurable is ready the moment a Site asks for it, which is the common case and was previously
+ * unreachable -- the column defaults to "missing" and nothing ever wrote it, so the check that reads it
+ * could never have passed.
+ *
+ * A setting with neither value nor default is what makes this "missing". The manifest says the Add-on
+ * must then handle null, so this is not a promise that it would fail -- it is the one place an operator
+ * finds out that they were expected to say something.
+ */
+export function resolvePhiServerAddonConfigurationStatus(
+  declared: ReadonlyArray<{ name: string; default?: unknown }>,
+  stored: Record<string, unknown>,
+) {
+  const unanswered = declared.filter(
+    (setting) => !(setting.name in stored) && setting.default === undefined,
+  );
+  return unanswered.length === 0 ? "ready" : "missing";
+}
+
 export async function setPhiServerAddonSiteEnabled(
   db: Queryable,
-  input: { addonId: string; siteId: number; enabled: boolean },
+  input: {
+    addonId: string;
+    siteId: number;
+    enabled: boolean;
+    /** What the Add-on's declared settings currently amount to. Not written when disabling. */
+    configurationStatus?: string;
+  },
 ) {
   const flag = PHI_SITE_SERVER_ADDON_FLAG_REQUESTED_ENABLED;
   const { rows } = await db.query<Row>(
     input.enabled
-      ? `INSERT INTO phis.site_server_addons (site_id, addon_id, flags, enabled_at, updated_at)
-         VALUES ($1, $2, $3::int, NOW(), NOW())
+      ? `INSERT INTO phis.site_server_addons
+           (site_id, addon_id, flags, configuration_status, enabled_at, updated_at)
+         VALUES ($1, $2, $3::int, $4, NOW(), NOW())
          ON CONFLICT (site_id, addon_id) DO UPDATE
            SET flags = phis.site_server_addons.flags | ($3::int),
+               configuration_status = $4,
                enabled_at = NOW(),
                disabled_at = NULL,
                updated_at = NOW()
@@ -99,7 +130,9 @@ export async function setPhiServerAddonSiteEnabled(
                 updated_at = NOW()
           WHERE site_id = $1 AND addon_id = $2
          RETURNING ${COLUMNS}`,
-    [input.siteId, input.addonId, flag],
+    input.enabled
+      ? [input.siteId, input.addonId, flag, input.configurationStatus ?? "missing"]
+      : [input.siteId, input.addonId, flag],
   );
   return rows[0] ? mapRow(rows[0]) : null;
 }

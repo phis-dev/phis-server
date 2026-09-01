@@ -78,6 +78,52 @@ describe("what a Storage Provider factory is handed", () => {
       .rejects.toThrow(/no installed Add-on declares it/u);
   });
 
+  /*
+   * The check that an Add-on runs only where a Site asked for it.
+   *
+   * It has been in `services.ts` all along and could never fire: it is skipped when no Site is passed,
+   * and every Media caller passed none -- which was the only thing keeping uploads alive, because the
+   * row it reads was written by nothing. Now that the row can be written, the check has to be shown to
+   * work in both directions, or "enabled for this Site" is decoration.
+   */
+  it("refuses an installed Provider for a Site that never asked for it", async () => {
+    const { getPhiServerAddonInstalledManifest } = await import("@/lib/addons/installed");
+    const installedHere = (() => {
+      try {
+        return getPhiServerAddonInstalledManifest();
+      } catch {
+        return {};
+      }
+    })();
+    if (!installedHere["@phis/storage-s3"]?.enabled) {
+      return;
+    }
+    const { resolvePhiServerServiceProvider } = await import("@/lib/addons/services");
+    const { PHI_SERVER_SERVICE_KINDS } = await import("@/lib/addons/core-services");
+    const pool = await requirePhiTestDatabase();
+    const stranger = await createPhiTestSite("provider-unasked");
+
+    await expect(resolvePhiServerServiceProvider(
+      PHI_SERVER_SERVICE_KINDS.mediaStorage,
+      "@phis/storage-s3/s3",
+      { siteId: stranger.id },
+    )).rejects.toThrow(/not enabled for this Site/u);
+
+    const { setPhiServerAddonSiteEnabled } = await import("./server-addon-sites.mts");
+    await setPhiServerAddonSiteEnabled(pool, {
+      addonId: "@phis/storage-s3",
+      siteId: stranger.id,
+      enabled: true,
+      configurationStatus: "ready",
+    });
+    const resolved = await resolvePhiServerServiceProvider(
+      PHI_SERVER_SERVICE_KINDS.mediaStorage,
+      "@phis/storage-s3/s3",
+      { siteId: stranger.id },
+    );
+    expect(resolved.addonId).toBe("@phis/storage-s3");
+  });
+
   it("links the Local Provider directly, without consulting a build", async () => {
     const { resolvePhisMediaStorageProviderFactory, PHI_LOCAL_MEDIA_STORAGE_PROVIDER_ID } =
       await import("@/lib/media-storage");
