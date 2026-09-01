@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 
+import { readPhiViewerAddonRoleClaims } from "@/lib/addons/viewer-roles";
 import { getUserAccountById } from "@/db/user-accounts";
 import { getUserProfileByUserId } from "@/db/user-profiles";
 import { getEffectiveUserSiteAuthorization } from "@/db/user-site-memberships";
@@ -66,6 +67,7 @@ export async function GET(request: NextRequest) {
       flags: user.flags,
       roleClaims: siteRole.roleClaims,
       groupClaims: siteRole.groupClaims,
+      addonRoleClaims: await readPhiViewerAddonRoleClaims(site.id, user.id),
       authorizationRevision: siteRole.authorizationRevision,
       siteFlags: siteRole.siteFlags,
       newsletterOptIn: (siteRole.siteFlags & USER_SITE_FLAG_NEWSLETTER_OPT_IN) === USER_SITE_FLAG_NEWSLETTER_OPT_IN,

@@ -30,12 +30,31 @@ export type PhiViewerAccessPolicy =
       access: "groups";
       providerId: PhiGroupProviderId;
       allowedGroupKeys: readonly string[];
+    }
+  | {
+      access: "addon-roles";
+      providerId: PhiRoleProviderId;
+      allowedRoles: readonly string[];
     };
+
+/**
+ * The roles a Server Add-on declared, held by this viewer, by name.
+ *
+ * Names rather than flags, unlike a role claim: an Add-on's roles are frozen from the first assignment
+ * and declared in its own manifest, so a bit position would have to be handed out and kept forever --
+ * reordering the manifest would silently change what a policy means. Core never interprets these.
+ */
+export type PhiViewerAddonRoleClaim = {
+  providerId: PhiRoleProviderId;
+  roles: readonly string[];
+};
 
 export type PhiAuthorizationViewer = {
   authenticated: boolean;
   roleClaims: readonly PhiViewerRoleClaim[];
   groupClaims: readonly PhiViewerGroupClaim[];
+  /** Absent means none are known here, which evaluates an `addon-roles` policy to false. */
+  addonRoleClaims?: readonly PhiViewerAddonRoleClaim[];
 };
 
 export const PHI_ACCESS_SITE_ADMIN = {
@@ -124,6 +143,16 @@ export function hasProviderGroup(
   return viewer.groupClaims.some((claim) => claim.providerId === providerId && claim.key === groupKey);
 }
 
+export function hasProviderAddonRole(
+  viewer: Pick<PhiAuthorizationViewer, "addonRoleClaims">,
+  providerId: PhiRoleProviderId,
+  role: string,
+) {
+  return viewer.addonRoleClaims?.some(
+    (claim) => claim.providerId === providerId && claim.roles.includes(role),
+  ) === true;
+}
+
 export function canPhiViewerAccess(
   viewer: PhiAuthorizationViewer,
   policy: PhiViewerAccessPolicy,
@@ -146,6 +175,11 @@ export function canPhiViewerAccess(
   if (policy.access === "groups") {
     return policy.allowedGroupKeys.length > 0 && policy.allowedGroupKeys.some((key) =>
       hasProviderGroup(viewer, policy.providerId, key),
+    );
+  }
+  if (policy.access === "addon-roles") {
+    return policy.allowedRoles.length > 0 && policy.allowedRoles.some((role) =>
+      hasProviderAddonRole(viewer, policy.providerId, role),
     );
   }
   return policy.allowedRoleFlags > 0 &&

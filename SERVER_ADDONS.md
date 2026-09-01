@@ -668,6 +668,27 @@ handed over. An Add-on never sees a role it does not know.
 An assignment naming a role a newer version no longer declares is **kept and reported**, never deleted.
 Deleting would be silent loss of access during an upgrade; reporting leaves the operator to decide.
 
+### Gating a surface on a role
+
+A role reaches the browser too, so a Module can leave out a link somebody would be refused anyway.
+`PhiViewerAccessPolicy` takes a fourth shape:
+
+```ts
+{ access: "addon-roles", providerId: "@acme/market", allowedRoles: ["vendor"] }
+```
+
+The held names travel with the viewer as `addonRoleClaims`, filtered to what the current manifest
+declares and to Add-ons enabled for this Site. A viewer that never carried them denies rather than
+assumes.
+
+The evaluator exists twice -- `@phis/ui/types/access` and `src/lib/authorization.ts` -- because
+phi-server deliberately does not depend on the shared UI. Both were extended together and both are
+checked against the same cases; a viewer admitted by one and denied by the other is the worst shape this
+pair can take, since each side looks right on its own.
+
+**It is presentation, not protection.** Leaving a link out spares somebody a refusal; it does not make
+the page safe. The request behind the link is decided again by the handler, against `roles:v1`.
+
 ### Granting
 
 `POST /api/site/addon-roles` with `{ addonId, role, userId }`, and `DELETE` for the reverse. Core resolves
