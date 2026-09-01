@@ -423,7 +423,7 @@ What held up without a single correction:
 Three findings came out of building it:
 
 - **The contract is compile-time only.** The compiled Add-on contains no external import at all. But
-  `@phis/addon-contract` is `private: true` and unpublished, so a real third-party Add-on cannot
+  `@phis/contracts` is `private: true` and unpublished, so a real third-party Add-on cannot
   declare a dependency on it. It has to be published before anybody outside this workspace can build
   against the ABI.
 - **`phis addon install` only accepts a registry-resolvable specifier.** It runs `pnpm add <name>`,
@@ -472,7 +472,7 @@ registry -- not the `enabled` flag baked into the build manifest -- is what deci
 ### Still open
 
 - the sidecar shape: nothing has been prototyped out of process yet.
-- publishing `@phis/addon-contract`, so a third party can build against the ABI at all.
+- publishing `@phis/contracts`, so a third party can build against the ABI at all.
 - writing and reading `phis.server_instances`, and gating activation on every instance confirming it
   holds the artifact. This is the one gap that has to close before an Add-on may be installed into a
   multi-instance deployment.
@@ -598,7 +598,7 @@ turns the capability list from a compatibility gate into an extension surface.
 
 ### Where it goes, and where it does not
 
-Not into `@phis/addon-contract` as runtime code. An artifact is one self-contained file with no bare
+Not into `@phis/contracts` as runtime code. An artifact is one self-contained file with no bare
 imports, so anything the contract exported would be **compiled into every artifact** -- copied rather
 than shared, frozen at the version it was built against, and a correction Core makes tomorrow would stay
 wrong in twenty artifacts. It could not reach data anyway: the request context carries no database
@@ -687,7 +687,7 @@ The operator decides which key to trust; marketplace membership is a pre-trusted
 alternative writes a security claim into the marketplace that it cannot carry, and makes a
 self-distributed Add-on look weaker than it is when the verification is the same.
 
-This makes publishing `@phis/addon-contract` a precondition rather than an open item: while it is
+This makes publishing `@phis/contracts` a precondition rather than an open item: while it is
 `private: true`, nobody outside this workspace can build against the ABI at all.
 
 And the CLI must never depend on the marketplace. If the marketplace is itself an Add-on on the shared

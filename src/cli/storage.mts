@@ -3,7 +3,7 @@ import path from "node:path";
 
 import type { Pool } from "pg";
 
-import { PHI_LOCAL_MEDIA_STORAGE_PROVIDER_ID } from "@phis/addon-contract";
+import { PHI_LOCAL_MEDIA_STORAGE_PROVIDER_ID } from "@phis/contracts/addon";
 
 import { loadInstalledAddonRuntime, readAddonDesiredState } from "./addons.mts";
 import { PHI_SERVER_SERVICE_KINDS } from "../lib/addons/core-services.ts";

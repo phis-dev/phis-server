@@ -32,7 +32,7 @@
     "phis:dist": "node ./dist/phis.mjs"
   },
   "dependencies": {
-    "@phis/addon-contract": "workspace:*",
+    "@phis/contracts": "workspace:*",
     "argon2": "^0.44.0",
     "next": "^16.2.10",
     "nodemailer": "^9.0.3",

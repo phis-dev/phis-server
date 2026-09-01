@@ -525,7 +525,7 @@ Remaining work:
   service context section 10 promises does not exist, so a Provider factory has no way to ask for the
   reference its profile row names.
 - The Add-on landed on 2026-08-28. `@phis/storage-s3-server` implements all ten adapter methods against
-  the `@phis/addon-contract` types, is installed, enabled and reconciled in the development deployment,
+  the `@phis/contracts` types, is installed, enabled and reconciled in the development deployment,
   and moves bytes from a Storage Profile row into a bucket -- verified end to end against Garage 2.3.0,
   including the settle path finalize uses. It owns no tables, so `migrationVersion` is 0 and the missing
   migration runner does not block it. What remains before it is usable by an operator rather than by a

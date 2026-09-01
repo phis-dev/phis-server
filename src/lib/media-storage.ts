@@ -12,7 +12,7 @@ import { readMergedPhiConfigSync } from "./config-files";
 import { resolvePhiSecret } from "./secrets/resolver";
 
 /**
- * The Provider-facing half of this module lives in `@phis/addon-contract`.
+ * The Provider-facing half of this module lives in `@phis/contracts`.
  *
  * A Storage Provider is an Add-on, and an Add-on cannot type against a file inside this application.
  * Re-exported here so nothing inside phi-server had to change its imports, and so there is exactly one
@@ -30,8 +30,8 @@ export type {
   PhisMediaStorageConfig,
   PhisMediaStorageProviderId,
   PhisMediaStorageServiceContext,
-} from "@phis/addon-contract";
-export { PHI_LOCAL_MEDIA_STORAGE_PROVIDER_ID } from "@phis/addon-contract";
+} from "@phis/contracts/addon";
+export { PHI_LOCAL_MEDIA_STORAGE_PROVIDER_ID } from "@phis/contracts/addon";
 
 import type {
   PhiMediaUploadCompletionInput,
@@ -44,8 +44,8 @@ import type {
   PhisMediaStorageConfig,
   PhisMediaStorageProviderId,
   PhisMediaStorageServiceContext,
-} from "@phis/addon-contract";
-import { PHI_LOCAL_MEDIA_STORAGE_PROVIDER_ID } from "@phis/addon-contract";
+} from "@phis/contracts/addon";
+import { PHI_LOCAL_MEDIA_STORAGE_PROVIDER_ID } from "@phis/contracts/addon";
 
 export type PhisMediaStorageServiceOptions = {
   profile?: {

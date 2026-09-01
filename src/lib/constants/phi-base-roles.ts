@@ -1,12 +1,11 @@
-export const PhiBaseRole = {
-  Admin: 1 << 0,
-  Builder: 1 << 1,
-  Publisher: 1 << 2,
-  Author: 1 << 3,
-  Developer: 1 << 4,
-  Supporter: 1 << 5,
-  Accountant: 1 << 6,
-} as const;
+/*
+ * The flags themselves live in `@phis/contracts/access`: the site UI checks a viewer against the same
+ * bits, and two hand-kept copies of a bitmask is a way to give somebody the wrong role silently. What
+ * stays here is the mapping to the keys admin payloads use, which is phi-server's alone.
+ */
+export { PhiBaseRole } from "@phis/contracts/access";
+
+import { PhiBaseRole } from "@phis/contracts/access";
 
 /**
  * Stable role keys as accepted by admin section payloads (mirrors the shared UI's

@@ -7,7 +7,7 @@ import {
 /**
  * The Core-owned service kinds, as this release checks them.
  *
- * The names and digests are not stated here. They belong to `@phis/addon-contract`, because an Add-on
+ * The names and digests are not stated here. They belong to `@phis/contracts`, because an Add-on
  * has to spell them the same way and receives nothing else to read them out of. What stays here is the
  * checking: whether a name is one Core owns, and whether the interface an Add-on was built against is
  * the one this release offers.

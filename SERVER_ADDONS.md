@@ -235,7 +235,12 @@ The separation is mandatory:
 
 Two neutral packages sit between the sides, and what separates them is when they run:
 
-- `@phis/addon-contract` states what an Add-on declares or implements. `phi-server` depends on it, which
+- `@phis/contracts/addon` states what an Add-on declares or implements.
+- `@phis/contracts/access` states the authorization vocabulary phi-server and `@phis/ui` both
+  evaluate -- claim shapes, policy shapes, and the evaluator itself. It lives there because both
+  decide the same question in different processes and cannot defer to each other: phi-server in its
+  guards, the site while rendering and in the browser. One compiled source is the only arrangement in
+  which they cannot disagree, and they did disagree before it existed. `phi-server` depends on it, which
   is why nothing may enter it that does more than hand back data. Validation stays in Core: a check
   shipped to an Add-on runs in the Add-on's address space, at the version the Add-on chose, and only if
   the Add-on calls it, so it can never be the authoritative one.
@@ -785,7 +790,7 @@ Core participates in the read-only discovery model as:
 @phis/phi-server/core
 ```
 
-The Core capabilities are the ones `@phis/addon-contract` names, and that package owns the spelling:
+The Core capabilities are the ones `@phis/contracts/addon` names, and that subpath owns the spelling:
 
 ```text
 @phis/phi-server/authentication:v1

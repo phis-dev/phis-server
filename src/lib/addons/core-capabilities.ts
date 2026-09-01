@@ -6,7 +6,7 @@ import type { PhiServerAddonCapabilityDescriptor } from "./contract.ts";
 /**
  * The Core capabilities this release offers, as descriptors.
  *
- * The ids come from `@phis/addon-contract`: an Add-on declares which of them it needs, so both sides
+ * The ids come from `@phis/contracts`: an Add-on declares which of them it needs, so both sides
  * have to spell them identically and only one of the two may own the spelling. The digest is derived
  * from the id alone -- it identifies the capability in a snapshot, it does not describe an interface
  * shape -- so deriving it here costs nothing and keeps a node builtin out of the contract.

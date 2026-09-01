@@ -96,7 +96,7 @@ later meets the rows that are already there.
 
 Two steps, both in your own package. Nothing in this section involves phi-server.
 
-**Type-check against the ABI.** `@phis/addon-contract` carries the types an Add-on declares or
+**Type-check against the ABI.** `@phis/contracts/addon` carries the types an Add-on declares or
 implements. It contains no runtime code, so it disappears entirely from the compiled artifact -- it
 belongs in `devDependencies`, never in `dependencies`.
 
