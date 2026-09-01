@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
-import { readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import path from "node:path";
 import process from "node:process";
 import { Pool } from "pg";
 import packageJson from "../../package.json" with { type: "json" };
@@ -52,6 +53,10 @@ import {
   removeAddon,
   setAddonEnabled,
 } from "./addons.mts";
+import {
+  inspectSiteModulePackage,
+  type PhiSiteModulePackageReport,
+} from "./module-package.mts";
 import {
   addSiteModuleDependency,
   readSiteModuleDesiredState,
@@ -229,6 +234,7 @@ Usage:
   phis module add --site <site key> --package <@scope/name> [--spec <version or workspace:*>]
   phis module del --site <site key> --package <@scope/name>
   phis module sync --site <site key>
+  phis module check --site <site key> [--package <@scope/name>]
 `);
 }
 
@@ -964,6 +970,36 @@ async function runSiteCheckCommand(flags: FlagMap, json: boolean) {
   }
 }
 
+/**
+ * What the inspection found, said once per package.
+ *
+ * A package that is not installed yet is reported as such rather than as sound: `phis module add` runs
+ * before the package manager does, and silence there would read as a pass.
+ */
+function reportSiteModulePackages(
+  siteKey: string,
+  reports: readonly PhiSiteModulePackageReport[],
+) {
+  if (reports.length === 0) {
+    console.log(`${siteKey}: no Site Modules installed.`);
+    return;
+  }
+  for (const report of reports) {
+    if (report.root === null) {
+      console.log(`  ${report.packageName}  not installed yet -- run this again after installing.`);
+      continue;
+    }
+    if (report.issues.length === 0) {
+      console.log(`  ${report.packageName}  ok`);
+      continue;
+    }
+    console.log(`  ${report.packageName}  ${report.issues.length} issue(s)`);
+    for (const issue of report.issues) {
+      console.log(`    ${issue.code}  ${issue.message}`);
+    }
+  }
+}
+
 async function runSiteModuleCommand(command: string, flags: FlagMap, json: boolean) {
   const requireFlag = (key: string) => {
     const value = getOptionalFlag(flags, key);
@@ -1002,6 +1038,29 @@ async function runSiteModuleCommand(command: string, flags: FlagMap, json: boole
   const state = readSiteModuleDesiredState(configRoot);
   const current = state.sites[site.key]?.modules ?? [];
 
+  if (command === "check") {
+    // A Site root that is not there reads as "no package installed" otherwise, which sends an operator
+    // looking for the wrong fault.
+    if (!existsSync(path.join(siteRoot, "package.json"))) {
+      throw new Error(`No Site at ${siteRoot}. Pass --path if the Site lives elsewhere.`);
+    }
+    const only = getOptionalFlag(flags, "package");
+    const targets = only ? current.filter((entry) => entry.packageName === only) : current;
+    if (only && targets.length === 0) {
+      throw new Error(`${only} is not installed for site ${site.key}.`);
+    }
+    const reports = targets.map((entry) => inspectSiteModulePackage(siteRoot, entry.packageName));
+    if (json) {
+      printJson({ site: site.key, root: siteRoot, reports });
+    } else {
+      reportSiteModulePackages(site.key, reports);
+    }
+    if (reports.some((report) => report.issues.length > 0)) {
+      process.exitCode = 1;
+    }
+    return;
+  }
+
   if (command === "sync") {
     const result = writeSiteModuleProjection(siteRoot, current);
     if (json) {
@@ -1031,12 +1090,17 @@ async function runSiteModuleCommand(command: string, flags: FlagMap, json: boole
     }
     writeSiteModuleDesiredState(configRoot, state);
     const result = writeSiteModuleProjection(siteRoot, state.sites[site.key].modules);
+    const report = inspectSiteModulePackage(siteRoot, packageName);
     if (json) {
-      printJson({ site: site.key, root: siteRoot, added: entry, ...result });
+      printJson({ site: site.key, root: siteRoot, added: entry, report, ...result });
     } else {
       console.log(
         `Installed ${packageName} for ${site.key}. Install dependencies and rebuild the Site; then activate the Module for an Area in the Builder.`,
       );
+      reportSiteModulePackages(site.key, [report]);
+    }
+    if (report.issues.length > 0) {
+      process.exitCode = 1;
     }
     return;
   }
