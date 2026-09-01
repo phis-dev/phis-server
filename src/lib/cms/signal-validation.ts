@@ -1,39 +1,20 @@
+/*
+ * The vocabularies come from `@phis/contracts/signals`, not from a copy kept here. They were a copy
+ * once: `@phis/ui` had grown `date`, `time` and `length`, this file had not, and a length control's
+ * change signal was refused on save with "valueType is invalid" -- a widget the same release shipped.
+ */
+import {
+  isPhiSignalAction,
+  isPhiSignalScope,
+  isPhiSignalValueSchemaShape,
+  isPhiSignalValueType,
+} from "@phis/contracts/signals";
+
 import type { PhiCmsInstanceId } from "@/lib/cms/instance-id";
 import { isPhiCmsInstanceId } from "@/lib/cms/instance-id";
 
 type JsonRecord = Record<string, unknown>;
 
-const PHI_SIGNAL_SCOPES = new Set(["widget", "layout", "region", "page", "area", "site"]);
-const PHI_SIGNAL_ACTIONS = new Set([
-  "activate",
-  "change",
-  "toggle",
-  "start",
-  "stop",
-  "clear",
-  "open",
-  "close",
-  "reload",
-  "flush",
-  "filter",
-  "drop",
-]);
-const PHI_SIGNAL_VALUE_TYPES = new Set([
-  "none",
-  "boolean",
-  "string",
-  "number",
-  "enum",
-  "color",
-  "path",
-  "size",
-  "image",
-  "icon",
-  "string[]",
-  "number[]",
-  "enum[]",
-  "json",
-]);
 const PHI_CORE_CONTROLLER_ADDRESS = "controller:@phis/ui/modules/core/controller/default:default";
 
 function isRecord(value: unknown): value is JsonRecord {
@@ -112,7 +93,6 @@ function isControllerPluginKey(value: string) {
   );
 }
 
-const VALUE_SCHEMA_NAMESPACE = "signals";
 
 /**
  * A value schema is named by the module that defines it: `<package>/modules/<module>/signals/<leaf>`,
@@ -120,26 +100,6 @@ const VALUE_SCHEMA_NAMESPACE = "signals";
  * isPhiSignalValueSchema in @phis/ui; phi-server cannot import it, because it does not depend on the UI
  * package. Widening one copy alone is what turns a stored wiring into a rejected write.
  */
-function isValueSchema(value: unknown) {
-  if (typeof value !== "string") {
-    return false;
-  }
-  const marker = value.lastIndexOf(`/${VALUE_SCHEMA_NAMESPACE}/`);
-  if (marker < 0) {
-    return false;
-  }
-  const leaf = value.slice(marker + VALUE_SCHEMA_NAMESPACE.length + 2);
-  if (!isAddressSegment(leaf)) {
-    return false;
-  }
-  const owner = value.slice(0, marker);
-  const modulesMarker = owner.indexOf("/modules/");
-  if (modulesMarker < 0) {
-    return isNpmPackageName(owner);
-  }
-  const moduleKey = owner.slice(modulesMarker + "/modules/".length);
-  return isNpmPackageName(owner.slice(0, modulesMarker)) && isAddressSegment(moduleKey);
-}
 
 export function collectCmsSignalRouteErrors(
   value: unknown,
@@ -180,16 +140,16 @@ export function collectCmsSignalRouteErrors(
       } else {
         routeKeys.add(routeKey);
       }
-      if (!PHI_SIGNAL_SCOPES.has(String(route.scope))) {
+      if (!isPhiSignalScope(route.scope)) {
         errors.push(`${routeLabel}.scope is invalid.`);
       }
-      if (!PHI_SIGNAL_ACTIONS.has(String(route.action))) {
+      if (!isPhiSignalAction(route.action)) {
         errors.push(`${routeLabel}.action is invalid.`);
       }
-      if (!PHI_SIGNAL_VALUE_TYPES.has(String(route.valueType))) {
+      if (!isPhiSignalValueType(route.valueType)) {
         errors.push(`${routeLabel}.valueType is invalid.`);
       }
-      if (route.valueType === "json" && !isValueSchema(route.valueSchema)) {
+      if (route.valueType === "json" && !isPhiSignalValueSchemaShape(route.valueSchema)) {
         errors.push(`${routeLabel}.valueSchema is required for JSON values.`);
       }
 
