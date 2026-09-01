@@ -38,6 +38,13 @@ export type PhiServerAddonCompiledQuery = {
   sql: string;
   /** What to bind, in order. Resolved per call against the arguments and the bound context. */
   bindings: PhiServerAddonQueryBinding[];
+  /**
+   * Whether the table carries row authority at all: an owner, a group, or both.
+   *
+   * False means Core has no row to judge, and `mayActOnRow` answers no to everything -- correct for a
+   * row that should belong to somebody, and the reason such a table's writes must state a role instead.
+   */
+  scoped: boolean;
   /** Present on a select, and only there. */
   paging?: {
     /** The same statement with the keyset clause, for every page after the first. */
@@ -309,6 +316,7 @@ function compileSelect(
     name: descriptor.name,
     kind: "select",
     table: table.name,
+    scoped: table.ownerScoped === true || table.groupScoped === true,
     sql:
       `SELECT ${columns} FROM ${qualify(schemaName, table.name)}` +
       (clauses.length > 0 ? ` WHERE ${clauses.join(" AND ")}` : "") +
@@ -355,6 +363,7 @@ function compileInsert(
     name: descriptor.name,
     kind: "insert",
     table: table.name,
+    scoped: table.ownerScoped === true || table.groupScoped === true,
     sql:
       `INSERT INTO ${qualify(schemaName, table.name)} ` +
       `(${columns.map((column) => quotePhiIdentifier(column)).join(", ")}) ` +
@@ -395,6 +404,7 @@ function compileByIdMutation(
     name: descriptor.name,
     kind: descriptor.kind,
     table: table.name,
+    scoped: table.ownerScoped === true || table.groupScoped === true,
     sql: descriptor.kind === "update"
       ? `UPDATE ${qualify(schemaName, table.name)} SET ${assignments} WHERE ${where}`
       : `DELETE FROM ${qualify(schemaName, table.name)} WHERE ${where}`,

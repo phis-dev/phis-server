@@ -5,8 +5,8 @@
       "addonId": "@phis/marketplace",
       "packageName": "@phis/marketplace",
       "packageVersion": "0.1.0",
-      "manifestDigest": "c2b8d07d8ee1c7b1d3e717f46c37c2574bac8b53e0a502f78bbcb2d09b631f49",
-      "artifactDigest": "cdc10960840240913558c5c3efb23ce95ff2343ceb808016834f13ce169e4142",
+      "manifestDigest": "7bcc2e45432f385e806a1a4064a3a71963d93499fb6d2b65cd8b167fc8c73d12",
+      "artifactDigest": "2142445d5640baf6831c463898ac8f95625ad2d0252757b4618d5bf98c689fdf",
       "manifest": {
         "manifestVersion": 1,
         "addonId": "@phis/marketplace",
@@ -78,6 +78,22 @@
         ],
         "jobs": [],
         "settings": [],
+        "roles": [
+          {
+            "name": "curator",
+            "description": "Runs the catalogue: appoints vendors.",
+            "grantableBy": {
+              "siteAccess": "site-admin"
+            }
+          },
+          {
+            "name": "vendor",
+            "description": "May put an offering into the catalogue.",
+            "grantableBy": {
+              "role": "curator"
+            }
+          }
+        ],
         "groups": [
           {
             "key": "market",
@@ -421,6 +437,7 @@
               "kind": "insert",
               "name": "add",
               "table": "offering",
+              "requiresRole": "vendor",
               "values": [
                 {
                   "column": "slug",

@@ -204,8 +204,16 @@ async function run(
     }
   }
 
-  if (kind === "update" || kind === "delete") {
-    // Before the statement, never after: a refused write must not have happened.
+  if ((kind === "update" || kind === "delete") && query.scoped) {
+    /*
+     * Before the statement, never after: a refused write must not have happened.
+     *
+     * Only asked where there is something to ask about. A table with no owner and no group carries no
+     * row authority, so the ladder answers no to every row in it -- and putting that question to it
+     * anyway would make the role guard above decorative, allowing the attempt and then refusing it with
+     * a silent zero. Such a table's writes must state a role, which validation enforces, and that role
+     * is then the whole of the authority rather than half of it.
+     */
     const id = readArgument(args, parameters.id!, name);
     if (!await bound.mayActOnRow({ table: query.table, id, intent: kind })) {
       return { rows: [] as PhiServerAddonQueryRow[], rowCount: 0, cursor: null };
