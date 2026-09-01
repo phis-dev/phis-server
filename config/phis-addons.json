@@ -2,6 +2,560 @@
   "formatVersion": 1,
   "addons": [
     {
+      "addonId": "@phis/marketplace",
+      "packageName": "@phis/marketplace",
+      "packageVersion": "0.1.0",
+      "manifestDigest": "c2b8d07d8ee1c7b1d3e717f46c37c2574bac8b53e0a502f78bbcb2d09b631f49",
+      "artifactDigest": "cdc10960840240913558c5c3efb23ce95ff2343ceb808016834f13ce169e4142",
+      "manifest": {
+        "manifestVersion": 1,
+        "addonId": "@phis/marketplace",
+        "packageName": "@phis/marketplace",
+        "packageVersion": "0.1.0",
+        "serverAbi": "^1",
+        "capabilities": [],
+        "serviceProviders": [],
+        "requiredCoreCapabilities": [
+          "@phis/server/data:v1",
+          "@phis/server/groups:v1"
+        ],
+        "apiRoutes": [
+          {
+            "id": "offerings.mine",
+            "method": "GET",
+            "path": "offerings",
+            "handler": "listMine",
+            "auth": "site-user",
+            "siteScoped": true
+          },
+          {
+            "id": "offerings.add",
+            "method": "POST",
+            "path": "offerings",
+            "handler": "addOffering",
+            "auth": "site-user",
+            "siteScoped": true,
+            "bodyLimitBytes": 65536
+          },
+          {
+            "id": "offerings.edit",
+            "method": "PATCH",
+            "path": "offerings/:id",
+            "handler": "editOffering",
+            "auth": "site-user",
+            "siteScoped": true,
+            "bodyLimitBytes": 65536
+          },
+          {
+            "id": "offerings.status",
+            "method": "POST",
+            "path": "offerings/:id/status",
+            "handler": "setOfferingStatus",
+            "auth": "site-user",
+            "siteScoped": true,
+            "bodyLimitBytes": 4096
+          },
+          {
+            "id": "offerings.drop",
+            "method": "DELETE",
+            "path": "offerings/:id",
+            "handler": "dropOffering",
+            "auth": "site-user",
+            "siteScoped": true
+          }
+        ],
+        "hooks": [
+          {
+            "id": "listing",
+            "method": "GET",
+            "path": "list",
+            "handler": "listing",
+            "siteScoped": true,
+            "bodyLimitBytes": 1024,
+            "rateLimitClass": "public-read",
+            "timeoutMs": 5000
+          }
+        ],
+        "jobs": [],
+        "settings": [],
+        "groups": [
+          {
+            "key": "market",
+            "name": "Marketplace vendors",
+            "description": "Authors may offer and maintain their own entries; Managers may withdraw and remove anyone's."
+          }
+        ],
+        "schema": {
+          "descriptorVersion": 1,
+          "version": 1,
+          "tables": [
+            {
+              "name": "offering",
+              "siteScoped": true,
+              "ownerScoped": true,
+              "groupScoped": true,
+              "columns": [
+                {
+                  "name": "id",
+                  "type": "identity"
+                },
+                {
+                  "name": "slug",
+                  "type": "string",
+                  "maxLength": 96,
+                  "unique": true
+                },
+                {
+                  "name": "kind",
+                  "type": "string",
+                  "maxLength": 64
+                },
+                {
+                  "name": "name",
+                  "type": "string",
+                  "maxLength": 200
+                },
+                {
+                  "name": "description",
+                  "type": "text"
+                },
+                {
+                  "name": "version",
+                  "type": "string",
+                  "maxLength": 32,
+                  "nullable": true
+                },
+                {
+                  "name": "category",
+                  "type": "string",
+                  "maxLength": 64,
+                  "nullable": true
+                },
+                {
+                  "name": "licence",
+                  "type": "string",
+                  "maxLength": 64,
+                  "nullable": true
+                },
+                {
+                  "name": "url",
+                  "type": "string",
+                  "maxLength": 512,
+                  "nullable": true
+                },
+                {
+                  "name": "status",
+                  "type": "string",
+                  "maxLength": 16,
+                  "default": {
+                    "kind": "literal",
+                    "value": "draft"
+                  }
+                },
+                {
+                  "name": "provider",
+                  "type": "json",
+                  "nullable": true
+                },
+                {
+                  "name": "media",
+                  "type": "json",
+                  "nullable": true
+                },
+                {
+                  "name": "prices",
+                  "type": "json",
+                  "nullable": true
+                },
+                {
+                  "name": "asset",
+                  "type": "json",
+                  "nullable": true
+                },
+                {
+                  "name": "attributes",
+                  "type": "json",
+                  "nullable": true
+                },
+                {
+                  "name": "updated_at",
+                  "type": "instant",
+                  "default": {
+                    "kind": "now"
+                  }
+                }
+              ],
+              "primaryKey": [
+                "id"
+              ],
+              "indexes": [
+                {
+                  "name": "by_status",
+                  "columns": [
+                    "status",
+                    "kind"
+                  ]
+                },
+                {
+                  "name": "by_name",
+                  "kind": "text",
+                  "columns": [
+                    "name"
+                  ]
+                }
+              ],
+              "constraints": [
+                {
+                  "kind": "enumeration",
+                  "name": "status",
+                  "column": "status",
+                  "values": [
+                    "draft",
+                    "published",
+                    "withdrawn"
+                  ]
+                },
+                {
+                  "kind": "notEmpty",
+                  "name": "slug",
+                  "column": "slug"
+                },
+                {
+                  "kind": "notEmpty",
+                  "name": "name",
+                  "column": "name"
+                },
+                {
+                  "kind": "notEmpty",
+                  "name": "kind",
+                  "column": "kind"
+                }
+              ]
+            }
+          ]
+        },
+        "queries": {
+          "parameters": {
+            "listing": [
+              {
+                "name": "kind",
+                "type": "text",
+                "nullable": true
+              },
+              {
+                "name": "category",
+                "type": "text",
+                "nullable": true
+              },
+              {
+                "name": "q",
+                "type": "text",
+                "nullable": true
+              }
+            ],
+            "mine": [],
+            "add": [
+              {
+                "name": "slug",
+                "type": "text"
+              },
+              {
+                "name": "kind",
+                "type": "text"
+              },
+              {
+                "name": "name",
+                "type": "text"
+              },
+              {
+                "name": "description",
+                "type": "text"
+              },
+              {
+                "name": "category",
+                "type": "text",
+                "nullable": true
+              },
+              {
+                "name": "group_id",
+                "type": "integer"
+              }
+            ],
+            "edit": [
+              {
+                "name": "id",
+                "type": "bigInteger"
+              },
+              {
+                "name": "name",
+                "type": "text"
+              },
+              {
+                "name": "description",
+                "type": "text"
+              },
+              {
+                "name": "version",
+                "type": "text",
+                "nullable": true
+              },
+              {
+                "name": "category",
+                "type": "text",
+                "nullable": true
+              },
+              {
+                "name": "licence",
+                "type": "text",
+                "nullable": true
+              },
+              {
+                "name": "url",
+                "type": "text",
+                "nullable": true
+              }
+            ],
+            "set_status": [
+              {
+                "name": "id",
+                "type": "bigInteger"
+              },
+              {
+                "name": "status",
+                "type": "text"
+              }
+            ],
+            "drop": [
+              {
+                "name": "id",
+                "type": "bigInteger"
+              }
+            ]
+          },
+          "queries": [
+            {
+              "kind": "select",
+              "name": "listing",
+              "table": "offering",
+              "where": {
+                "kind": "all",
+                "conditions": [
+                  {
+                    "kind": "compare",
+                    "column": "status",
+                    "operator": "=",
+                    "value": {
+                      "kind": "literal",
+                      "value": "published"
+                    }
+                  },
+                  {
+                    "kind": "whenPresent",
+                    "parameter": "kind",
+                    "condition": {
+                      "kind": "compare",
+                      "column": "kind",
+                      "operator": "=",
+                      "value": {
+                        "kind": "parameter",
+                        "name": "kind"
+                      }
+                    }
+                  },
+                  {
+                    "kind": "whenPresent",
+                    "parameter": "category",
+                    "condition": {
+                      "kind": "compare",
+                      "column": "category",
+                      "operator": "=",
+                      "value": {
+                        "kind": "parameter",
+                        "name": "category"
+                      }
+                    }
+                  },
+                  {
+                    "kind": "whenPresent",
+                    "parameter": "q",
+                    "condition": {
+                      "kind": "contains",
+                      "column": "name",
+                      "value": {
+                        "kind": "parameter",
+                        "name": "q"
+                      }
+                    }
+                  }
+                ]
+              },
+              "orderBy": [
+                {
+                  "column": "updated_at",
+                  "direction": "desc"
+                }
+              ],
+              "limit": 50
+            },
+            {
+              "kind": "select",
+              "name": "mine",
+              "table": "offering",
+              "where": {
+                "kind": "compare",
+                "column": "owner_user_id",
+                "operator": "=",
+                "value": {
+                  "kind": "actor"
+                }
+              },
+              "orderBy": [
+                {
+                  "column": "updated_at",
+                  "direction": "desc"
+                }
+              ],
+              "limit": 50
+            },
+            {
+              "kind": "insert",
+              "name": "add",
+              "table": "offering",
+              "values": [
+                {
+                  "column": "slug",
+                  "value": {
+                    "kind": "parameter",
+                    "name": "slug"
+                  }
+                },
+                {
+                  "column": "kind",
+                  "value": {
+                    "kind": "parameter",
+                    "name": "kind"
+                  }
+                },
+                {
+                  "column": "name",
+                  "value": {
+                    "kind": "parameter",
+                    "name": "name"
+                  }
+                },
+                {
+                  "column": "description",
+                  "value": {
+                    "kind": "parameter",
+                    "name": "description"
+                  }
+                },
+                {
+                  "column": "category",
+                  "value": {
+                    "kind": "parameter",
+                    "name": "category"
+                  }
+                },
+                {
+                  "column": "updated_at",
+                  "value": {
+                    "kind": "now"
+                  }
+                }
+              ],
+              "groupParameter": "group_id"
+            },
+            {
+              "kind": "update",
+              "name": "edit",
+              "table": "offering",
+              "set": [
+                {
+                  "column": "name",
+                  "value": {
+                    "kind": "parameter",
+                    "name": "name"
+                  }
+                },
+                {
+                  "column": "description",
+                  "value": {
+                    "kind": "parameter",
+                    "name": "description"
+                  }
+                },
+                {
+                  "column": "version",
+                  "value": {
+                    "kind": "parameter",
+                    "name": "version"
+                  }
+                },
+                {
+                  "column": "category",
+                  "value": {
+                    "kind": "parameter",
+                    "name": "category"
+                  }
+                },
+                {
+                  "column": "licence",
+                  "value": {
+                    "kind": "parameter",
+                    "name": "licence"
+                  }
+                },
+                {
+                  "column": "url",
+                  "value": {
+                    "kind": "parameter",
+                    "name": "url"
+                  }
+                },
+                {
+                  "column": "updated_at",
+                  "value": {
+                    "kind": "now"
+                  }
+                }
+              ],
+              "idParameter": "id"
+            },
+            {
+              "kind": "update",
+              "name": "set_status",
+              "table": "offering",
+              "set": [
+                {
+                  "column": "status",
+                  "value": {
+                    "kind": "parameter",
+                    "name": "status"
+                  }
+                },
+                {
+                  "column": "updated_at",
+                  "value": {
+                    "kind": "now"
+                  }
+                }
+              ],
+              "idParameter": "id"
+            },
+            {
+              "kind": "delete",
+              "name": "drop",
+              "table": "offering",
+              "idParameter": "id"
+            }
+          ]
+        },
+        "migrationVersion": 1
+      },
+      "enabled": true
+    },
+    {
       "addonId": "@phis/storage-s3",
       "packageName": "@phis/storage-s3",
       "packageVersion": "0.1.0",

@@ -81,7 +81,8 @@ const manifest = {
             value: { kind: "parameter", name: "kind" },
           },
         },
-        // Every row carries the same instant on purpose: the tie is the point.
+        // Every row carries the same instant on purpose, and it comes from NOW() rather than a literal:
+        // the tie is one point, and the microseconds a JavaScript Date cannot hold are the other.
         orderBy: [{ column: "updated_at", direction: "desc" }],
         limit: 25,
       },
@@ -133,7 +134,7 @@ describe("paging a declared select", () => {
     for (const index of [1, 2, 3, 4, 5, 6, 7]) {
       await pool.query(
         `INSERT INTO ${quotePhiIdentifier(SCHEMA)}."offering" (site_id, title, kind, updated_at)
-         VALUES ($1, $2, $3, '2026-08-30T10:00:00Z')`,
+         VALUES ($1, $2, $3, NOW())`,
         [site.id, `row-${index}`, index % 2 === 0 ? "module" : "addon"],
       );
     }
@@ -180,6 +181,29 @@ describe("paging a declared select", () => {
   it("holds when the ordering column is the same instant in every row", async () => {
     const { titles } = await readAll("listing", { kind: null }, 3);
     expect(new Set(titles).size).toBe(7);
+  });
+
+  it("carries an instant at full precision, not at what a Date can hold", async () => {
+    /*
+     * `NOW()` gives microseconds and a JavaScript Date holds milliseconds. A cursor taken from the
+     * mapped row is rounded, and then matches neither `=` nor `<` against the value it came from: the
+     * next page comes back empty and every row after it is never seen. Nothing raises, nothing logs.
+     *
+     * So the assertion is not "paging works" but "the second page is not empty" -- that was the shape
+     * of the fault, and a listing of two rows read one at a time is the smallest case that shows it.
+     */
+    const first = await data().select("listing", { kind: null }, { limit: 1 });
+    expect(first.rows).toHaveLength(1);
+    expect(first.cursor).not.toBeNull();
+
+    const second = await data().select("listing", { kind: null }, { limit: 1, cursor: first.cursor });
+    expect(second.rows).toHaveLength(1);
+    expect(second.rows[0]!.title).not.toBe(first.rows[0]!.title);
+  });
+
+  it("hands back no column of its own making", async () => {
+    const page = await data().select("by_title", {}, { limit: 1 });
+    expect(Object.keys(page.rows[0]!).some((key) => key.startsWith("__phi"))).toBe(false);
   });
 
   it("hands back a cursor while there is more, and none on the last page", async () => {

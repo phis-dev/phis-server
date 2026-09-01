@@ -22,34 +22,32 @@ const ORDERING: PhiServerAddonQueryOrdering[] = [
 
 describe("a paging cursor", () => {
   it("carries the ordering values back in the order they are compared", () => {
-    const cursor = encodePhiServerAddonCursor("listing", ORDERING, {
-      updated_at: new Date("2026-08-30T10:00:00.000Z"),
-      id: "42",
-      title: "not part of the order",
-    });
+    // As the database rendered them: microseconds and all, which a JavaScript Date would have lost.
+    const cursor = encodePhiServerAddonCursor("listing", ORDERING, [
+      "2026-08-30 10:00:00.384639+00",
+      "42",
+    ]);
     expect(decodePhiServerAddonCursor("listing", ORDERING, cursor)).toEqual([
-      "2026-08-30T10:00:00.000Z",
+      "2026-08-30 10:00:00.384639+00",
       "42",
     ]);
   });
 
   it("keeps a large key as text, because a bigint does not survive a JavaScript number", () => {
     const big = "9007199254740993";
-    const cursor = encodePhiServerAddonCursor("listing", [{ column: "id", direction: "asc" }], {
-      id: big,
-    });
+    const cursor = encodePhiServerAddonCursor("listing", [{ column: "id", direction: "asc" }], [big]);
     expect(decodePhiServerAddonCursor("listing", [{ column: "id", direction: "asc" }], cursor))
       .toEqual([big]);
   });
 
   it("refuses a cursor made for another query", () => {
-    const cursor = encodePhiServerAddonCursor("listing", ORDERING, { updated_at: "x", id: "1" });
+    const cursor = encodePhiServerAddonCursor("listing", ORDERING, ["x", "1"]);
     expect(() => decodePhiServerAddonCursor("other", ORDERING, cursor))
       .toThrow(PhiServerAddonCursorError);
   });
 
   it("refuses a cursor made for another ordering of the same query", () => {
-    const cursor = encodePhiServerAddonCursor("listing", ORDERING, { updated_at: "x", id: "1" });
+    const cursor = encodePhiServerAddonCursor("listing", ORDERING, ["x", "1"]);
     const reversed: PhiServerAddonQueryOrdering[] = [
       { column: "updated_at", direction: "asc" },
       { column: "id", direction: "asc" },
@@ -64,7 +62,7 @@ describe("a paging cursor", () => {
   });
 
   it("refuses to make one from a row whose ordering value is null", () => {
-    expect(() => encodePhiServerAddonCursor("listing", ORDERING, { updated_at: null, id: "1" }))
+    expect(() => encodePhiServerAddonCursor("listing", ORDERING, [null, "1"]))
       .toThrow(/must be NOT NULL/);
   });
 });

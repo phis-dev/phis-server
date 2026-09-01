@@ -100,7 +100,8 @@ describe("compiling a declared query", () => {
   it("puts the Site filter into a select the Add-on never wrote", () => {
     const query = compiled().get("mine")!;
     expect(query.sql).toBe(
-      'SELECT "id", "title" FROM "phis_addon_acme_shop"."listing" ' +
+      'SELECT "id", "title", "id"::text AS "__phi_cursor_0" ' +
+      'FROM "phis_addon_acme_shop"."listing" ' +
       'WHERE "site_id" = $1 AND ("state" = $2 AND "retired_at" IS NULL) ' +
       'ORDER BY "id" DESC LIMIT $3',
     );

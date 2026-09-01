@@ -12,6 +12,7 @@ import type {
 } from "./contract.ts";
 import {
   compilePhiServerAddonQueries,
+  cursorColumnName,
   type PhiServerAddonCompiledQuery,
 } from "./query-sql.ts";
 import {
@@ -279,15 +280,29 @@ async function run(
 
   // The extra row is read and then dropped: it was never part of the answer, only of the question
   // whether there is one after it.
-  const rows = (result.rows as PhiServerAddonQueryRow[]).slice(0, size);
+  const raw = (result.rows as PhiServerAddonQueryRow[]).slice(0, size);
   const more = result.rows.length > size;
-  return {
-    rows,
-    rowCount: rows.length,
-    cursor: more && rows.length > 0
-      ? encodePhiServerAddonCursor(name, paging.ordering, rows[rows.length - 1]!)
-      : null,
-  };
+  const last = raw[raw.length - 1];
+  const cursor = more && last
+    ? encodePhiServerAddonCursor(
+      name,
+      paging.ordering,
+      paging.ordering.map((_, index) => last[cursorColumnName(index)]),
+    )
+    : null;
+  /*
+   * The cursor columns are Core's and leave with Core. An Add-on that saw them would start reading
+   * them, and then the way a cursor is carried would be part of the contract instead of an
+   * implementation detail -- the same reason the cursor itself is opaque.
+   */
+  const rows = raw.map((row) => {
+    const projected: Record<string, unknown> = { ...row };
+    for (let index = 0; index < paging.ordering.length; index += 1) {
+      delete projected[cursorColumnName(index)];
+    }
+    return projected as PhiServerAddonQueryRow;
+  });
+  return { rows, rowCount: rows.length, cursor };
 }
 
 function buildOperations(db: Queryable, bound: Bound): PhiServerDataTransactionV1 {

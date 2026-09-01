@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 
-import type { PhiServerAddonQueryOrdering, PhiServerAddonQueryRow } from "./contract.ts";
+import type { PhiServerAddonQueryOrdering } from "./contract.ts";
 
 /**
  * The cursor a paged select hands back, and reads again on the next call.
@@ -29,34 +29,29 @@ export function phiServerAddonOrderingSignature(
 }
 
 /**
- * What a cursor value looks like once it is out of a row.
+ * The values are taken as the database rendered them, not as the driver mapped them.
  *
- * Everything becomes text, and the database reads it back into the column's own type on the next
- * statement. An identity key is a bigint, which JavaScript cannot hold exactly beyond 2^53 -- the
- * driver already hands those over as strings, and keeping them that way is what stops a cursor going
- * wrong at a row number nobody will reach in testing.
+ * A `timestamptz` holds microseconds; a JavaScript Date holds milliseconds. A cursor built from the
+ * mapped row is therefore rounded, and then matches neither `=` nor `<` against the value it came from
+ * -- the next page comes back empty and every row after it is silently never seen. The select asks for
+ * each ordering column as text for exactly this reason, and the same goes for a bigint key, which
+ * JavaScript cannot hold beyond 2^53.
  */
-function encodeValue(value: unknown, column: string): string {
-  if (value === null || value === undefined) {
-    throw new PhiServerAddonCursorError(
-      `Ordering column "${column}" is null in a row being paged. Ordering columns must be NOT NULL.`,
-    );
-  }
-  if (value instanceof Date) {
-    return value.toISOString();
-  }
-  return String(value);
-}
-
 export function encodePhiServerAddonCursor(
   queryName: string,
   ordering: PhiServerAddonQueryOrdering[],
-  row: PhiServerAddonQueryRow,
+  values: readonly unknown[],
 ) {
-  const payload = {
-    s: phiServerAddonOrderingSignature(queryName, ordering),
-    k: ordering.map((entry) => encodeValue(row[entry.column], entry.column)),
-  };
+  const keys = values.map((value, index) => {
+    if (value === null || value === undefined) {
+      throw new PhiServerAddonCursorError(
+        `Ordering column "${ordering[index]?.column}" is null in a row being paged. ` +
+        "Ordering columns must be NOT NULL.",
+      );
+    }
+    return String(value);
+  });
+  const payload = { s: phiServerAddonOrderingSignature(queryName, ordering), k: keys };
   return Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
 }
 

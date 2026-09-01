@@ -264,6 +264,11 @@ function selectableColumns(
  * because the first page is then exactly the statement it would have been without paging at all, and an
  * operator reading `phis-cli` sees which one runs.
  */
+/** Where a select puts an ordering value for the cursor to read. Stripped before the row is handed on. */
+export function cursorColumnName(index: number) {
+  return `__phi_cursor_${index}`;
+}
+
 function compileSelect(
   schemaName: string,
   table: PhiServerAddonTableDescriptor,
@@ -273,9 +278,23 @@ function compileSelect(
 ): PhiServerAddonCompiledQuery {
   const compiler = createCompiler(parameterTypes);
   const ordering = phiServerAddonQueryOrdering(table, descriptor);
-  const columns = selectableColumns(table, descriptor)
-    .map((column) => quotePhiIdentifier(column))
-    .join(", ");
+  /*
+   * The ordering values come back as text, in columns of their own, and the cursor is built from those
+   * rather than from the row.
+   *
+   * A `timestamptz` holds microseconds and a JavaScript Date holds milliseconds, so a cursor taken from
+   * the mapped row is rounded -- and then matches neither `=` nor `<` against the value it came from.
+   * The next page comes back empty and the rows after it are simply never seen: no error, no warning,
+   * and only visible if somebody counts. `::text` is exact for every type an ordering column may have,
+   * and the database parses it back into its own type on the next statement.
+   */
+  const cursorColumns = ordering.map((entry, index) =>
+    `${quotePhiIdentifier(entry.column)}::text AS ${quotePhiIdentifier(cursorColumnName(index))}`
+  );
+  const columns = [
+    ...selectableColumns(table, descriptor).map((column) => quotePhiIdentifier(column)),
+    ...cursorColumns,
+  ].join(", ");
   const clauses = [
     siteScopeSql(compiler, table),
     descriptor.where ? conditionSql(compiler, descriptor.where) : null,
