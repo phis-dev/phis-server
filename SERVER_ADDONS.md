@@ -595,6 +595,31 @@ AND required Site configuration valid
 Disabling it for a Site stops Site-scoped routes, jobs, hooks, and capability projection for that Site.
 It does not delete data, secrets, provider installation records, or migration history.
 
+## 9a. Getting out of a state this release cannot validate
+
+A stored manifest can stop validating without the operator having touched anything: a Core release that
+renames a capability or a service kind invalidates every entry that named the old one. The manifest was
+right when it was written, and the digest means it cannot be edited by hand without breaking a second
+check.
+
+Reading the desired state in order to **run** an Add-on stays strict -- an invalid manifest is exactly
+what must not be executed. Reading it in order to **describe or change** it does not:
+
+```
+phis addon list       shows invalid entries first, by name, with what fails
+phis addon check      diagnoses before loading anything, and names the way out
+phis addon upgrade    replaces the entry, even from the same artifact when the entry is broken
+phis addon disable    and then remove, on an entry that does not validate
+```
+
+The exception in `upgrade` is the point of it: re-installing an unchanged artifact is normally refused
+as a no-op, but when the stored entry is what is broken, re-writing it is the repair. What gets written
+is validated either way, which is the check that actually protects anything.
+
+Without this, the only way out of an invalidated state was a text editor on `phis-addons.json` --
+including recomputing the manifest digest by hand, on a customer's machine, in a file they have never
+seen.
+
 ## 10a. Keeping the Core schema current
 
 `scripts/sql/001_create_phis.pgsql` is idempotent and always was, but nothing applied it after the first

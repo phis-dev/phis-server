@@ -112,6 +112,67 @@ export function readAddonDesiredState(root: string) {
   return result.state;
 }
 
+/**
+ * The stored state as data, for commands that change or merely describe it.
+ *
+ * `readAddonDesiredState` refuses a state it cannot validate, which is right for anything that is about
+ * to *run* an Add-on and wrong for everything else. A Core release that renames a capability or a service
+ * kind can invalidate a stored manifest through no fault of the operator -- and then the strict read
+ * locked them out of `remove` and `upgrade` as well, so the only way back was a text editor. The way out
+ * of a broken state must not require the state to be intact.
+ *
+ * Entries are returned as they were parsed, unvalidated, and typed as entries deliberately: here they
+ * are rows to be listed, replaced or deleted, never manifests to be executed. What gets *written* is
+ * still validated, which is the check that matters.
+ */
+export function readAddonDesiredStateForChange(root: string): {
+  state: PhiServerAddonDesiredState;
+  invalid: { addonId: string; issues: string[] }[];
+} {
+  const { desiredState } = getAddonPaths(root);
+  if (!existsSync(desiredState)) {
+    throw new Error(`Missing Add-on desired state: ${desiredState}`);
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(readFileSync(desiredState, "utf8")) as unknown;
+  } catch (error) {
+    // A file that is not JSON is not a state with a broken entry -- there is nothing to recover.
+    throw new Error(
+      `Could not parse ${desiredState}: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  }
+
+  const strict = validatePhiServerAddonDesiredState(parsed);
+  if (strict.state) {
+    return { state: strict.state, invalid: [] };
+  }
+
+  const raw = parsed as { addons?: unknown };
+  const entries = Array.isArray(raw.addons) ? raw.addons : [];
+  const invalid: { addonId: string; issues: string[] }[] = [];
+  for (const entry of entries) {
+    const one = validatePhiServerAddonDesiredState({ formatVersion: 1, addons: [entry] });
+    if (!one.state) {
+      const addonId = (entry as { addonId?: unknown }).addonId;
+      invalid.push({
+        addonId: typeof addonId === "string" ? addonId : "(unnamed)",
+        issues: one.issues,
+      });
+    }
+  }
+  if (invalid.length === 0) {
+    // The entries are each fine, so the fault is in the envelope, and that is not an entry to remove.
+    throw new Error(`Invalid Add-on desired state:\n- ${strict.issues.join("\n- ")}`);
+  }
+  return {
+    state: { formatVersion: 1, addons: entries as PhiServerAddonDesiredState["addons"] },
+    invalid,
+  };
+}
+
 function writeAddonDesiredState(root: string, state: PhiServerAddonDesiredState) {
   const sorted: PhiServerAddonDesiredState = {
     formatVersion: 1,
@@ -264,6 +325,18 @@ function loadDesiredAddons(root: string) {
 }
 
 export async function checkAddons(root: string) {
+  // Diagnose before loading. An entry a Core release invalidated cannot be loaded at all, and saying so
+  // by name -- with the way out -- beats failing on the first artifact import with a wall of issues.
+  const { invalid } = readAddonDesiredStateForChange(root);
+  if (invalid.length > 0) {
+    return {
+      ok: false,
+      action: "addon.check",
+      addons: [],
+      invalid,
+      hint: "Rebuild the Add-on against this release and run phis addon upgrade, or phis addon remove.",
+    };
+  }
   const loaded = loadDesiredAddons(root);
   return {
     ok: true,
@@ -281,10 +354,14 @@ export async function checkAddons(root: string) {
 }
 
 export function listAddons(root: string) {
+  // Tolerant on purpose: an operator whose state has one broken entry still needs to see what is there,
+  // and the broken one most of all.
+  const { state, invalid } = readAddonDesiredStateForChange(root);
   return {
-    ok: true,
+    ok: invalid.length === 0,
     action: "addon.list",
-    addons: readAddonDesiredState(root).addons,
+    addons: state.addons,
+    invalid,
   };
 }
 
@@ -384,7 +461,7 @@ export async function installAddon(root: string, flags: FlagMap) {
  */
 export async function upgradeAddon(root: string, flags: FlagMap) {
   const addonId = getRequiredFlag(flags, "addon");
-  const state = readAddonDesiredState(root);
+  const { state, invalid } = readAddonDesiredStateForChange(root);
   const existing = state.addons.find((addon) => addon.addonId === addonId);
   if (!existing) {
     throw new Error(`Add-on ${addonId} is not installed; use \`addon install\` for a new one.`);
@@ -407,9 +484,11 @@ export async function upgradeAddon(root: string, flags: FlagMap) {
       `${existing.manifest.migrationVersion}. A schema cannot be walked back by an upgrade.`,
     );
   }
+  const entryIsBroken = invalid.some((entry) => entry.addonId === addonId);
   if (
     manifest.packageVersion === existing.packageVersion &&
-    artifactDigest === existing.artifactDigest
+    artifactDigest === existing.artifactDigest &&
+    !entryIsBroken
   ) {
     throw new Error(`${addonId} ${existing.packageVersion} is already installed from this artifact.`);
   }
@@ -473,7 +552,7 @@ function pruneEmptyInstallDirectories(installRoot: string, versionDirectory: str
 
 export async function removeAddon(root: string, flags: FlagMap) {
   const addonId = getRequiredFlag(flags, "addon");
-  const state = readAddonDesiredState(root);
+  const { state } = readAddonDesiredStateForChange(root);
   const existing = state.addons.find((addon) => addon.addonId === addonId);
   if (!existing) {
     throw new Error(`Add-on ${addonId} is not installed.`);
@@ -554,7 +633,7 @@ export async function setAddonEnabled(
   enabled: boolean,
 ) {
   const addonId = getRequiredFlag(flags, "addon");
-  const state = readAddonDesiredState(root);
+  const { state } = readAddonDesiredStateForChange(root);
   const index = state.addons.findIndex((addon) => addon.addonId === addonId);
   if (index < 0) {
     throw new Error(`Add-on ${addonId} is not installed.`);

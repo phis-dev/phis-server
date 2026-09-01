@@ -2185,7 +2185,19 @@ async function main() {
     const result = listAddons(configRoot);
     if (json) {
       printJson(result);
-    } else if (result.addons.length === 0) {
+      if (!result.ok) process.exitCode = 1;
+      return;
+    }
+    for (const entry of result.invalid) {
+      console.log(`${entry.addonId}  DOES NOT VALIDATE against this release`);
+      for (const issue of entry.issues) {
+        console.log(`    ${issue}`);
+      }
+    }
+    if (result.invalid.length > 0) {
+      process.exitCode = 1;
+    }
+    if (result.addons.length === 0) {
       console.log("No server Add-ons installed.");
     } else {
       for (const addon of result.addons) {
@@ -2201,8 +2213,22 @@ async function main() {
     const result = await checkAddons(configRoot);
     if (json) {
       printJson(result);
-    } else {
+    } else if (result.ok) {
       console.log(`Validated ${result.addons.length} server Add-on(s).`);
+    } else {
+      console.log(`${result.invalid?.length ?? 0} Add-on(s) no longer validate against this release:`);
+      for (const entry of result.invalid ?? []) {
+        console.log(`  ${entry.addonId}`);
+        for (const issue of entry.issues) {
+          console.log(`    ${issue}`);
+        }
+      }
+      if (result.hint) {
+        console.log(result.hint);
+      }
+    }
+    if (!result.ok) {
+      process.exitCode = 1;
     }
     return;
   }
