@@ -32,6 +32,9 @@ const PARAMETER_TYPES = new Set([
   "uuid",
 ]);
 const MAX_CONDITION_DEPTH = 8;
+const AGGREGATE_FUNCTIONS = new Set(["count", "sum", "avg", "min", "max"]);
+/** What `sum` and `avg` have something to add up over. `identity` is a key, and averaging one is a bug. */
+const NUMERIC_COLUMN_TYPES = new Set(["smallInteger", "integer", "bigInteger"]);
 
 const CORE_WRITTEN_COLUMNS = new Set([
   PHI_SERVER_ADDON_SITE_COLUMN,
@@ -43,11 +46,18 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
+type ParameterDeclarations = {
+  names: Set<string>;
+  nullable: Set<string>;
+  lists: Set<string>;
+};
+
 type QueryContext = {
   table: PhiServerAddonTableDescriptor;
   columns: Set<string>;
   parameters: Set<string>;
   nullableParameters: Set<string>;
+  listParameters: Set<string>;
   field: string;
   issues: string[];
 };
@@ -153,6 +163,25 @@ function checkCondition(
     }
     case "in": {
       checkColumn(context, condition.column, `${where}.column`);
+      if (condition.parameter !== undefined) {
+        if (condition.values !== undefined) {
+          context.issues.push(
+            `${context.field}.${where} states both values and parameter. ` +
+            "A set fixed in the descriptor and a set the caller brings are two different conditions.",
+          );
+        }
+        const name = condition.parameter;
+        if (typeof name !== "string" || !context.parameters.has(name)) {
+          context.issues.push(`${context.field}.${where}.parameter names an undeclared parameter.`);
+        } else if (!context.listParameters.has(name)) {
+          // Otherwise the statement compiles to `= ANY($n)` over a single value, which PostgreSQL
+          // refuses at the first call rather than here.
+          context.issues.push(
+            `${context.field}.${where}.parameter "${name}" must be declared with list: true.`,
+          );
+        }
+        return;
+      }
       const values = Array.isArray(condition.values) ? condition.values : [];
       if (!Array.isArray(condition.values)) {
         context.issues.push(`${context.field}.${where}.values must be an array.`);
@@ -223,7 +252,7 @@ function checkAssignments(context: QueryContext, raw: unknown, where: string) {
 function validateQuery(
   raw: unknown,
   schema: PhiServerAddonSchemaDescriptor,
-  declared: { names: Set<string>; nullable: Set<string> },
+  declared: ParameterDeclarations,
   declaredRoles: Set<string>,
   field: string,
   issues: string[],
@@ -288,6 +317,7 @@ function validateQuery(
     columns: readableColumns(table),
     parameters,
     nullableParameters: declared.nullable,
+    listParameters: declared.lists,
     field,
     issues,
   };
@@ -337,6 +367,99 @@ function validateQuery(
       ) {
         issues.push(
           `${field}.limit must be an integer between 1 and ${PHI_SERVER_ADDON_QUERY_MAX_LIMIT}.`,
+        );
+      }
+      break;
+    }
+    case "aggregate": {
+      if (raw.where !== undefined) {
+        checkCondition(context, raw.where, "where", 1);
+      }
+      const aggregates = Array.isArray(raw.aggregates) ? raw.aggregates : [];
+      if (!Array.isArray(raw.aggregates) || aggregates.length === 0) {
+        issues.push(`${field}.aggregates must be a non-empty array.`);
+      }
+      const grouping = Array.isArray(raw.groupBy) ? raw.groupBy : [];
+      if (raw.groupBy !== undefined && !Array.isArray(raw.groupBy)) {
+        issues.push(`${field}.groupBy must be an array.`);
+      }
+      const taken = new Set<string>(grouping.filter((column): column is string =>
+        typeof column === "string"
+      ));
+      aggregates.forEach((entry, index) => {
+        const at = `aggregates[${index}]`;
+        if (!isRecord(entry)) {
+          issues.push(`${field}.${at} must be an object.`);
+          return;
+        }
+        if (typeof entry.function !== "string" || !AGGREGATE_FUNCTIONS.has(entry.function)) {
+          issues.push(`${field}.${at}.function is not an aggregate this vocabulary offers.`);
+        }
+        if (typeof entry.as !== "string" || !NAME_PATTERN.test(entry.as)) {
+          issues.push(`${field}.${at}.as is invalid.`);
+        } else if (taken.has(entry.as)) {
+          // The answer is one flat row; a name used twice would silently keep one of the two.
+          issues.push(`${field}.${at}.as "${entry.as}" collides with another column of the answer.`);
+        } else {
+          taken.add(entry.as);
+        }
+        if (entry.column === undefined) {
+          if (entry.function !== "count") {
+            issues.push(`${field}.${at}.function "${String(entry.function)}" needs a column.`);
+          }
+          return;
+        }
+        if (!checkColumn(context, entry.column, `${at}.column`)) {
+          return;
+        }
+        if (entry.function !== "sum" && entry.function !== "avg") {
+          return;
+        }
+        /*
+         * Refused here rather than by PostgreSQL at the first call. An average over a text column is a
+         * manifest that is wrong when it is written, and an Add-on installed with one would carry a
+         * query that raises for every caller -- which is exactly the class of fault declaring queries
+         * is meant to move forward in time.
+         */
+        const declaredColumn = table.columns.find((column) => column.name === entry.column);
+        const type = declaredColumn && !("references" in declaredColumn)
+          ? declaredColumn.type
+          : undefined;
+        if (!type || !NUMERIC_COLUMN_TYPES.has(type)) {
+          issues.push(
+            `${field}.${at}.column "${String(entry.column)}" is not a numeric column, ` +
+            `and ${entry.function} has nothing to add up.`,
+          );
+        }
+      });
+      grouping.forEach((column, index) => {
+        if (!checkColumn(context, column, `groupBy[${index}]`)) {
+          return;
+        }
+        // The grouping columns are the ordering, and an ordering column must be NOT NULL for the same
+        // reason a select's must: the keyset comparison that continues a page matches nothing against a
+        // null, so the paging would end early and quietly.
+        const declaredColumn = table.columns.find((entry) => entry.name === column);
+        if (declaredColumn?.nullable === true) {
+          issues.push(
+            `${field}.groupBy[${index}] names nullable column "${column}". The grouping columns are ` +
+            "what this query is paged by, and a paging column must be NOT NULL.",
+          );
+        }
+      });
+      if (grouping.length > 0) {
+        if (
+          typeof raw.limit !== "number" || !Number.isInteger(raw.limit) ||
+          raw.limit <= 0 || raw.limit > PHI_SERVER_ADDON_QUERY_MAX_LIMIT
+        ) {
+          issues.push(
+            `${field}.limit must be an integer between 1 and ${PHI_SERVER_ADDON_QUERY_MAX_LIMIT}: ` +
+            "a grouped aggregate has as many rows as there are groups, so it is paged like a select.",
+          );
+        }
+      } else if (raw.limit !== undefined) {
+        issues.push(
+          `${field}.limit says nothing without groupBy: an aggregate over the whole table is one row.`,
         );
       }
       break;
@@ -406,10 +529,11 @@ export function validatePhiServerAddonQueryCatalog(
     issues.push(`${field}.parameters must be an object keyed by query name.`);
     return null;
   }
-  const parametersByQuery = new Map<string, { names: Set<string>; nullable: Set<string> }>();
+  const parametersByQuery = new Map<string, ParameterDeclarations>();
   for (const [queryName, declared] of Object.entries(rawParameters)) {
     const names = new Set<string>();
     const nullable = new Set<string>();
+    const lists = new Set<string>();
     const list = Array.isArray(declared) ? declared : [];
     if (!Array.isArray(declared)) {
       issues.push(`${field}.parameters.${queryName} must be an array.`);
@@ -434,8 +558,14 @@ export function validatePhiServerAddonQueryCatalog(
       if (parameter.nullable === true) {
         nullable.add(parameter.name);
       }
+      if (parameter.list !== undefined && typeof parameter.list !== "boolean") {
+        issues.push(`${at}.list must be a boolean.`);
+      }
+      if (parameter.list === true) {
+        lists.add(parameter.name);
+      }
     });
-    parametersByQuery.set(queryName, { names, nullable });
+    parametersByQuery.set(queryName, { names, nullable, lists });
   }
 
   const rawQueries = Array.isArray(value.queries) ? value.queries : [];
@@ -450,7 +580,7 @@ export function validatePhiServerAddonQueryCatalog(
     validateQuery(
       query,
       schema,
-      parametersByQuery.get(queryName) ?? { names: new Set(), nullable: new Set() },
+      parametersByQuery.get(queryName) ?? { names: new Set(), nullable: new Set(), lists: new Set() },
       declaredRoles,
       `${field}.queries[${index}]`,
       issues,
@@ -496,7 +626,8 @@ export function phiServerAddonUnindexedSearches(
   };
 
   for (const query of catalog.queries) {
-    if (query.kind !== "select" || !query.where) {
+    // An aggregate searches text the same way and scans the same table for it.
+    if ((query.kind !== "select" && query.kind !== "aggregate") || !query.where) {
       continue;
     }
     const columns = new Set<string>();

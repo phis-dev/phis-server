@@ -1,5 +1,7 @@
 import {
   PHI_SERVER_ADDON_QUERY_MAX_LIMIT,
+  type PhiServerAddonAggregateQueryDescriptor,
+  type PhiServerAddonQueryAggregate,
   type PhiServerAddonInsertQueryDescriptor,
   type PhiServerAddonQueryCatalog,
   type PhiServerAddonQueryCondition,
@@ -151,13 +153,30 @@ function conditionSql(
       return `${quotePhiIdentifier(condition.column)} IS ${condition.negated ? "NOT " : ""}NULL`;
     case "contains":
       return containsSql(compiler, condition.column, condition.value);
-    case "in":
+    case "in": {
+      if (condition.parameter !== undefined) {
+        /*
+         * `= ANY(array)` rather than `IN (a, b, c)`, and that is the point of the form rather than a
+         * spelling of it. An expanded list makes the statement text a function of how many values
+         * arrived: a different query plan per length, a cache entry per length, and a statement that is
+         * assembled at request time -- which is what declaring queries exists to prevent. One binding
+         * holds the whole list, so the query has one shape.
+         *
+         * The cast is not decoration. An array parameter arrives with no type of its own, and without it
+         * PostgreSQL cannot tell which `ANY` this is.
+         */
+        const placed = compiler.place({ from: "parameter", name: condition.parameter });
+        const declared = compiler.parameterTypes.get(condition.parameter);
+        const cast = declared ? `::${PARAMETER_TYPE_SQL[declared]}[]` : "";
+        return `${quotePhiIdentifier(condition.column)} = ANY(${placed}${cast})`;
+      }
       // An empty list is `IN ()`, which is a syntax error, and `FALSE` is what it means anyway.
-      return condition.values.length === 0
+      return condition.values!.length === 0
         ? "FALSE"
         : `${quotePhiIdentifier(condition.column)} IN (${
-          condition.values.map((value) => valueSql(compiler, value)).join(", ")
+          condition.values!.map((value) => valueSql(compiler, value)).join(", ")
         })`;
+    }
     case "all":
     case "any": {
       if (condition.conditions.length === 0) {
@@ -325,6 +344,74 @@ function compileSelect(
   };
 }
 
+/**
+ * What an aggregate is ordered and paged by: its grouping columns, and nothing else.
+ *
+ * They are a total order for free. `GROUP BY` yields each combination exactly once, so the grouping
+ * columns identify a row of the answer the way a primary key identifies a row of the table -- there is
+ * no tie for Core to break and no key to append.
+ *
+ * An ungrouped aggregate has one row and no order at all.
+ */
+function aggregateOrdering(
+  descriptor: PhiServerAddonAggregateQueryDescriptor,
+): PhiServerAddonQueryOrdering[] {
+  return (descriptor.groupBy ?? []).map((column) => ({ column, direction: "asc" as const }));
+}
+
+function aggregateSql(entry: PhiServerAddonQueryAggregate) {
+  const argument = entry.column ? quotePhiIdentifier(entry.column) : "*";
+  return `${entry.function.toUpperCase()}(${argument}) AS ${quotePhiIdentifier(entry.as)}`;
+}
+
+function compileAggregate(
+  schemaName: string,
+  table: PhiServerAddonTableDescriptor,
+  descriptor: PhiServerAddonAggregateQueryDescriptor,
+  continuation: boolean,
+  parameterTypes: Map<string, PhiServerAddonQueryParameterType>,
+): PhiServerAddonCompiledQuery {
+  const compiler = createCompiler(parameterTypes);
+  const ordering = aggregateOrdering(descriptor);
+  const grouping = (descriptor.groupBy ?? []).map((column) => quotePhiIdentifier(column));
+  const columns = [
+    ...grouping,
+    ...descriptor.aggregates.map(aggregateSql),
+    // As text, for the reason a select's ordering values are: a cursor built from the mapped value is
+    // rounded, and then matches nothing on the next page.
+    ...ordering.map((entry, index) =>
+      `${quotePhiIdentifier(entry.column)}::text AS ${quotePhiIdentifier(cursorColumnName(index))}`
+    ),
+  ].join(", ");
+  /*
+   * The keyset goes in `WHERE`, before the grouping, not in `HAVING` after it.
+   *
+   * Sound only because the grouping columns are base columns: dropping the rows that sort before the
+   * cursor drops exactly the groups that sort before it, and no surviving group loses a row. It is also
+   * the cheaper half -- `HAVING` would compute every group and then throw most of them away.
+   */
+  const clauses = [
+    siteScopeSql(compiler, table),
+    descriptor.where ? conditionSql(compiler, descriptor.where) : null,
+    continuation && ordering.length > 0 ? keysetSql(compiler, ordering) : null,
+  ].filter((clause): clause is string => clause !== null);
+  const tail = ordering.length > 0
+    ? ` GROUP BY ${grouping.join(", ")} ORDER BY ${grouping.map((column) => `${column} ASC`).join(", ")}` +
+      ` LIMIT ${compiler.place({ from: "limit" })}`
+    : "";
+  return {
+    name: descriptor.name,
+    kind: "aggregate",
+    table: table.name,
+    scoped: table.ownerScoped === true || table.groupScoped === true,
+    sql:
+      `SELECT ${columns} FROM ${qualify(schemaName, table.name)}` +
+      (clauses.length > 0 ? ` WHERE ${clauses.join(" AND ")}` : "") +
+      tail,
+    bindings: compiler.bindings,
+  };
+}
+
 function compileInsert(
   schemaName: string,
   table: PhiServerAddonTableDescriptor,
@@ -445,6 +532,29 @@ export function compilePhiServerAddonQueries(
           bindings: next.bindings,
           ordering: phiServerAddonQueryOrdering(table, descriptor),
           limit: Math.min(descriptor.limit, PHI_SERVER_ADDON_QUERY_MAX_LIMIT),
+        },
+      });
+    } else if (descriptor.kind === "aggregate") {
+      const parameterTypes = new Map(
+        (catalog.parameters[descriptor.name] ?? []).map((parameter) =>
+          [parameter.name, parameter.type] as const
+        ),
+      );
+      const first = compileAggregate(schemaName, table, descriptor, false, parameterTypes);
+      const ordering = aggregateOrdering(descriptor);
+      if (ordering.length === 0) {
+        // One row, no order, nothing to continue from.
+        compiled.set(descriptor.name, first);
+        continue;
+      }
+      const next = compileAggregate(schemaName, table, descriptor, true, parameterTypes);
+      compiled.set(descriptor.name, {
+        ...first,
+        paging: {
+          sql: next.sql,
+          bindings: next.bindings,
+          ordering,
+          limit: Math.min(descriptor.limit ?? PHI_SERVER_ADDON_QUERY_MAX_LIMIT, PHI_SERVER_ADDON_QUERY_MAX_LIMIT),
         },
       });
     } else if (descriptor.kind === "insert") {

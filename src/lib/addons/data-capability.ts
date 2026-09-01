@@ -2,6 +2,7 @@ import "server-only";
 
 import type { PoolClient } from "pg";
 
+import { PHI_SERVER_ADDON_QUERY_MAX_LIST } from "./contract.ts";
 import type {
   PhiServerAddonManifestV1,
   PhiServerAddonQueryArguments,
@@ -133,7 +134,42 @@ function descriptorParametersFor(manifest: PhiServerAddonManifestV1, name: strin
     group: descriptor.kind === "insert" ? descriptor.groupParameter : undefined,
     requiresRole: descriptor.requiresRole,
     alsoAllowedByRole: descriptor.alsoAllowedByRole,
+    lists: (manifest.queries?.parameters[name] ?? [])
+      .filter((parameter) => parameter.list === true)
+      .map((parameter) => parameter.name),
   };
+}
+
+/**
+ * The one argument a caller controls the size of.
+ *
+ * Everything else in this vocabulary is bounded by the descriptor: a page has a ceiling, a condition has
+ * a fixed shape, a value is one value. A list is the exception, so it gets the bound here rather than
+ * being trusted -- an unbounded list is the unbounded read paging removed, arriving through a parameter.
+ *
+ * Refused rather than shortened. A truncated list answers about some of the rows and reports it as an
+ * answer about all of them, which is the failure the cursor exists to prevent in the other direction.
+ */
+function requireList(
+  args: PhiServerAddonQueryArguments,
+  name: string,
+  queryName: string,
+) {
+  const value = args[name];
+  if (value === undefined || value === null) {
+    return;
+  }
+  if (!Array.isArray(value)) {
+    throw new PhiServerAddonQueryError(
+      `Query "${queryName}" declares "${name}" as a list, and this call passed a single value.`,
+    );
+  }
+  if (value.length > PHI_SERVER_ADDON_QUERY_MAX_LIST) {
+    throw new PhiServerAddonQueryError(
+      `Query "${queryName}" was given ${value.length} values for "${name}", ` +
+      `and a list carries at most ${PHI_SERVER_ADDON_QUERY_MAX_LIST}.`,
+    );
+  }
 }
 
 function requireQuery(bound: Bound, name: string, kind: PhiServerAddonCompiledQuery["kind"]) {
@@ -172,7 +208,11 @@ async function run(
   const query = requireQuery(bound, name, kind);
   const parameters = descriptorParametersFor(bound.manifest, name);
 
-  if (bound.unauthenticated && kind !== "select") {
+  for (const list of parameters.lists ?? []) {
+    requireList(args, list, name);
+  }
+
+  if (bound.unauthenticated && kind !== "select" && kind !== "aggregate") {
     /*
      * No actor at all, no writing -- and said before the ladder rather than after, so all three
      * mutations answer the same way. The ladder would refuse an update and a delete on its own, but
@@ -329,6 +369,10 @@ function buildOperations(db: Queryable, bound: Bound): PhiServerDataTransactionV
   return Object.freeze({
     async select(name, args = {}, page = {}) {
       const result = await run(db, bound, name, "select", args, page);
+      return { rows: result.rows, cursor: result.cursor };
+    },
+    async aggregate(name, args = {}, page = {}) {
+      const result = await run(db, bound, name, "aggregate", args, page);
       return { rows: result.rows, cursor: result.cursor };
     },
     async insert(name, args = {}) {

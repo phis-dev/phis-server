@@ -892,15 +892,16 @@ while what follows from them is decided here.
 
 ### `data:v1`
 
-Running the queries the manifest declared. Four operations and a unit of work, and every call names a
+Running the queries the manifest declared. Five operations and a unit of work, and every call names a
 query rather than describing one:
 
 ```text
-select(name, args)  -> rows
-insert(name, args)  -> the inserted row, scope columns included
-update(name, args)  -> rows touched
-delete(name, args)  -> rows touched
-transaction(body)   -> whatever the body returns
+select(name, args)     -> a page of rows
+aggregate(name, args)  -> a page of counts and summaries
+insert(name, args)     -> the inserted row, scope columns included
+update(name, args)     -> rows touched
+delete(name, args)     -> rows touched
+transaction(body)      -> whatever the body returns
 ```
 
 There is no method taking SQL, a table, or a condition. An Add-on that could pass one of those at
@@ -1247,6 +1248,24 @@ The declaration form carries what a real query needs and refuses what does not s
   the ladder's silent zero, so a moderation query does not become a way of asking whether a row exists.
   Only on an update or a delete, only on a table that has authority to stand in for, and never together
   with `requiresRole` -- a query wanting both is two queries under one name.
+- `in` comes in two forms. One takes values fixed in the descriptor -- a state, a kind, a handful of
+  names the Add-on knows. The other names a `list` parameter and takes what the caller brings, which is
+  what makes a second question about a page possible: read a listing, then ask something about exactly
+  those keys. Core writes `= ANY($n::TYPE[])` rather than expanding the values into the text, so the
+  statement has one shape however many arrive -- an expanded list would be a statement assembled at
+  request time, with a plan and a cache entry per length. A list is capped at
+  `PHI_SERVER_ADDON_QUERY_MAX_LIST` and refused above it rather than truncated: a shortened list answers
+  about some of the rows and reports it as an answer about all of them.
+- `aggregate` counts and summarises instead of returning rows: `count`, `sum`, `avg`, `min`, `max`.
+  Without it an Add-on reads every row to count them -- the unbounded read paging exists to prevent --
+  or keeps a running total in a column Core cannot hold true. It reaches no row a select could not have
+  read: what a query may see is what the query says, and an aggregate over rows the caller may not read
+  one by one is one the Add-on wrote that way. `sum` and `avg` want an integer column, and validation
+  says so rather than letting the first call raise it. Without `groupBy` the answer is one row and there
+  is no cursor. With it there is one row per group, paged like a select -- and the grouping columns *are*
+  the ordering, total by construction because `GROUP BY` yields each combination once, which is also why
+  they must be `NOT NULL`. There is no ordering by an aggregated value: ranking by an average would page
+  on a key that is neither unique nor known before the group is computed.
 - a write declares what it returns.
 - a named sequence of queries runs as one transaction. Without one, every write stands alone and no
   invariant spanning two tables can hold.
