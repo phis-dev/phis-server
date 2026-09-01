@@ -95,12 +95,12 @@ function isControllerPluginKey(value: string) {
 
 
 /**
- * A value schema is named by the module that defines it: `<package>/modules/<module>/signals/<leaf>`,
- * or `<package>/signals/<leaf>` for a package that publishes one without a module layer. This mirrors
- * isPhiSignalValueSchema in @phis/ui; phi-server cannot import it, because it does not depend on the UI
- * package. Widening one copy alone is what turns a stored wiring into a rejected write.
+ * Every error a stored signal wiring can carry, collected rather than thrown one at a time.
+ *
+ * The vocabularies come from `@phis/contracts/signals` and the value schema is checked for its shape
+ * only -- `isPhiSignalValueSchemaShape`. Which schemas exist is the UI's to know: refusing one because
+ * phi-server had never heard of the package would refuse every third party's.
  */
-
 export function collectCmsSignalRouteErrors(
   value: unknown,
   activeIds: ReadonlySet<PhiCmsInstanceId>,
