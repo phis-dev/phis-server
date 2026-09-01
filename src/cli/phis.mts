@@ -58,7 +58,12 @@ import {
   readPhiSiteUserAddonRoles,
   revokePhiServerAddonUserRole,
 } from "../db/server-addon-roles.mts";
-import { readPhiServerAddonDeclaredRoles } from "../lib/addons/role-granting.ts";
+import { getPhiAppRoot } from "../lib/app-paths.ts";
+import {
+  applyPhiCoreSchema,
+  checkPhiCoreSchema,
+  readPhiMigrationRoleName,
+} from "./schema.mts";
 import {
   inspectSiteModulePackage,
   type PhiSiteModulePackageReport,
@@ -220,6 +225,9 @@ Usage:
   phis storage use  --site <site key> --key <profile key>
   phis storage del  --site <site key> --key <profile key>
   phis storage cors
+
+  phis schema check
+  phis schema apply
 
   phis addon list
   phis addon check
@@ -1136,6 +1144,78 @@ async function runSiteModuleCommand(command: string, flags: FlagMap, json: boole
 }
 
 /**
+ * Bringing the Core schema up to the release this checkout is.
+ *
+ * Runs as the serving role, which is what bootstrap does and what makes the tables the serving role's.
+ * Repeating it is free: the script has always been `CREATE TABLE IF NOT EXISTS` throughout.
+ */
+async function runCoreSchemaCommand(command: string, json: boolean) {
+  const database = readCliMergedConfig().database;
+  const uri = database?.uri?.trim();
+  if (!uri) {
+    throw new Error(
+      `Missing database.uri in ${getConfigPaths().runtime}. The Core schema belongs to the serving ` +
+      `role, so it is applied with the serving connection and not the migration one.`,
+    );
+  }
+  const appRoot = getPhiAppRoot();
+
+  if (command === "check") {
+    const result = await checkPhiCoreSchema({ appRoot, uri });
+    if (json) {
+      printJson(result);
+    } else if (result.missing.length === 0) {
+      console.log(`Core schema is current (${result.declared} tables).`);
+    } else {
+      console.log(`${result.missing.length} of ${result.declared} table(s) missing:`);
+      for (const table of result.missing) {
+        console.log(`  ${table}`);
+      }
+      console.log("Run phis schema apply.");
+    }
+    if (result.missing.length > 0) {
+      process.exitCode = 1;
+    }
+    return;
+  }
+
+  if (command === "apply") {
+    const result = await applyPhiCoreSchema({
+      appRoot,
+      uri,
+      migrationRole: readPhiMigrationRoleName(database?.migrationUri),
+    });
+    if (json) {
+      printJson(result);
+      return;
+    }
+    console.log(
+      result.created.length === 0
+        ? `Core schema was already current (${result.declared} tables).`
+        : `Created ${result.created.length} table(s): ${result.created.join(", ")}.`,
+    );
+    if (result.grantedTo) {
+      console.log(`Re-granted REFERENCES on the Core reference tables to ${result.grantedTo}.`);
+    }
+    return;
+  }
+
+  throw new Error(`Unknown schema command: ${command}. Use check or apply.`);
+}
+
+/**
+ * What roles one installed Add-on declares, read from the desired state on disk.
+ *
+ * Not from `@/lib/addons/role-granting`, which is `server-only`: the CLI is a plain Node process and
+ * would fail to resolve it. The desired state carries the validated manifest anyway -- that is what
+ * "code and description travel together as one per-instance unit" buys.
+ */
+function readDeclaredAddonRoles(addonId: string) {
+  const entry = listAddons(configRoot).addons.find((addon) => addon.addonId === addonId);
+  return entry ? entry.manifest.roles ?? [] : null;
+}
+
+/**
  * Reading and setting the Add-on roles one person holds on one Site.
  *
  * The operator's way in. Every declared policy still has a Site Admin floor, and an operator on the
@@ -1162,7 +1242,7 @@ async function runAddonRoleCommand(flags: FlagMap, json: boolean) {
     if (!Number.isSafeInteger(userId) || userId <= 0) {
       throw new Error("--user must be a user id.");
     }
-    const declared = readPhiServerAddonDeclaredRoles(addonId);
+    const declared = readDeclaredAddonRoles(addonId);
     if (declared === null) {
       throw new Error(`${addonId} is not installed on this server.`);
     }
@@ -1218,7 +1298,7 @@ async function runAddonRoleCommand(flags: FlagMap, json: boolean) {
   const addons = addonId
     ? [addonId]
     : [...new Set(listAddons(configRoot).addons.map((entry) => entry.addonId))];
-  const rows = addons.map((id) => ({ addonId: id, roles: readPhiServerAddonDeclaredRoles(id) ?? [] }));
+  const rows = addons.map((id) => ({ addonId: id, roles: readDeclaredAddonRoles(id) ?? [] }));
   if (json) {
     printJson({ site: site.key, addons: rows });
     return;
@@ -2164,6 +2244,11 @@ async function main() {
     } else {
       console.log(`Removed ${result.addonId} (${result.packageName}).`);
     }
+    return;
+  }
+
+  if (group === "schema") {
+    await runCoreSchemaCommand(command, json);
     return;
   }
 

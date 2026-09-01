@@ -1,0 +1,125 @@
+import { readFileSync } from "node:fs";
+import path from "node:path";
+
+import { Client } from "pg";
+
+import { phiServerAddonCoreReferenceTables } from "../lib/addons/schema-ddl.ts";
+
+/**
+ * Bringing an existing installation's Core schema up to the release it is running.
+ *
+ * `001_create_phis.pgsql` is idempotent and has always been, but until now nothing applied it after the
+ * first bootstrap. A release that adds a Core table therefore reached a running installation as a missing
+ * relation, and the way out was somebody with a database client -- which is how tables end up owned by
+ * whoever happened to have one, instead of by the serving role.
+ *
+ * It runs as the serving role for the same reason bootstrap does: Core's tables are the serving role's,
+ * and a table created by anyone else is one it cannot later alter.
+ */
+
+const SCHEMA_FILE = ["scripts", "sql", "001_create_phis.pgsql"];
+
+function readSchemaSql(appRoot: string) {
+  return readFileSync(path.join(appRoot, ...SCHEMA_FILE), "utf8");
+}
+
+/** The tables the script would create, read off its own `CREATE TABLE` lines. */
+function declaredTables(sql: string) {
+  return [...sql.matchAll(/CREATE TABLE IF NOT EXISTS phis\.([a-z0-9_]+)/gi)].map((match) =>
+    match[1]!
+  );
+}
+
+async function presentTables(client: Client) {
+  const { rows } = await client.query<{ tablename: string }>(
+    `SELECT tablename FROM pg_tables WHERE schemaname = 'phis'`,
+  );
+  return new Set(rows.map((row) => row.tablename));
+}
+
+export type PhiSchemaApplyResult = {
+  declared: number;
+  missing: string[];
+  created: string[];
+  grantedTo: string | null;
+};
+
+/**
+ * Reports what the script would add, without touching anything.
+ *
+ * Worth having on its own: on a running installation the interesting question before a deployment is
+ * whether this release needs the schema moved at all.
+ */
+export async function checkPhiCoreSchema(input: {
+  appRoot: string;
+  uri: string;
+}): Promise<PhiSchemaApplyResult> {
+  const sql = readSchemaSql(input.appRoot);
+  const client = new Client({ connectionString: input.uri });
+  await client.connect();
+  try {
+    const present = await presentTables(client);
+    const declared = declaredTables(sql);
+    return {
+      declared: declared.length,
+      missing: declared.filter((table) => !present.has(table)),
+      created: [],
+      grantedTo: null,
+    };
+  } finally {
+    await client.end();
+  }
+}
+
+export async function applyPhiCoreSchema(input: {
+  appRoot: string;
+  uri: string;
+  migrationRole: string | null;
+}): Promise<PhiSchemaApplyResult> {
+  const sql = readSchemaSql(input.appRoot);
+  const client = new Client({ connectionString: input.uri });
+  await client.connect();
+  try {
+    const before = await presentTables(client);
+    await client.query(sql);
+    const after = await presentTables(client);
+    const created = [...after].filter((table) => !before.has(table)).sort();
+
+    let grantedTo: string | null = null;
+    if (input.migrationRole) {
+      const role = input.migrationRole.trim();
+      // From configuration, so quoted rather than interpolated raw, and DDL takes no parameters.
+      if (!/^[A-Za-z_][A-Za-z0-9_$]*$/u.test(role)) {
+        throw new Error(`"${input.migrationRole}" is not a usable role name.`);
+      }
+      // Re-granted every time: a Core table added by this release may be one an Add-on may reference,
+      // and the grant is per table rather than per schema.
+      for (const table of phiServerAddonCoreReferenceTables()) {
+        await client.query(`GRANT REFERENCES ON ${table} TO "${role}"`);
+      }
+      grantedTo = role;
+    }
+
+    return {
+      declared: declaredTables(sql).length,
+      missing: [],
+      created,
+      grantedTo,
+    };
+  } finally {
+    await client.end();
+  }
+}
+
+/** The role name a migration URI carries, without exposing the rest of it. */
+export function readPhiMigrationRoleName(migrationUri: string | undefined) {
+  if (!migrationUri?.trim()) {
+    return null;
+  }
+  try {
+    const username = new URL(migrationUri.trim()).username;
+    return username ? decodeURIComponent(username) : null;
+  } catch {
+    return null;
+  }
+}

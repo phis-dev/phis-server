@@ -590,6 +590,27 @@ AND required Site configuration valid
 Disabling it for a Site stops Site-scoped routes, jobs, hooks, and capability projection for that Site.
 It does not delete data, secrets, provider installation records, or migration history.
 
+## 10a. Keeping the Core schema current
+
+`scripts/sql/001_create_phis.pgsql` is idempotent and always was, but nothing applied it after the first
+bootstrap. A release that adds a Core table therefore reached a running installation as a missing
+relation, and the way out was somebody with a database client -- which is how tables end up owned by
+whoever happened to have one rather than by the serving role, and how an Add-on's foreign key onto a
+Core table then fails for want of `REFERENCES`.
+
+```
+phis schema check      what this release declares that the database does not have
+phis schema apply      applies it, and re-grants the Core reference tables
+```
+
+Both run as the **serving role**, from `database.uri` and deliberately not from `migrationUri`: Core's
+tables belong to the serving role, exactly as bootstrap leaves them, and a table created by anyone else
+is one the application cannot later alter. `migrationUri` stays what section 15 says it is -- DDL
+authority for Add-on schemas, which are not Core's tables.
+
+`apply` re-grants `REFERENCES` on the Core reference tables to the migration role every time, because a
+table this release adds may be one an Add-on is allowed to point at, and that grant is per table.
+
 ## 11a. Roles an Add-on defines
 
 An Add-on that governs who may do what is always asking one of three questions, and answering all three
