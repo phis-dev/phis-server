@@ -7,6 +7,7 @@ import { PHI_SERVER_ADDON_ID_PATTERN } from "./schema-name.ts";
 import {
   PHI_SERVER_ADDON_ABI_VERSION,
   PHI_SERVER_ADDON_MANIFEST_VERSION,
+  PHI_SERVER_SITE_ACCESS,
   type PhiServerAddonApiRouteDescriptor,
   type PhiServerAddonDesiredState,
   type PhiServerAddonHookDescriptor,
@@ -34,6 +35,19 @@ const ROUTE_SEGMENT_PATTERN = /^(?:[a-z0-9][a-z0-9._-]*|:[a-z][a-zA-Z0-9_]*)$/;
 const HTTP_METHODS = new Set(["DELETE", "GET", "PATCH", "POST", "PUT"]);
 const AUTH_POLICIES = new Set(["internal", "site-user", "site-admin", "operator"]);
 const SETTING_NAME_PATTERN = /^[a-z][a-z0-9-]{0,63}$/;
+const SITE_ACCESS_VALUES = new Set<string>(Object.values(PHI_SERVER_SITE_ACCESS));
+
+/**
+ * Whether at least one role can be reached without already holding another.
+ *
+ * A graph where every role is granted by a role is a set nobody enters. The Site Admin floor means it is
+ * not a lock-out at runtime, but it is never what an author meant to write, and it is free to notice.
+ */
+function hasReachableRoleRoot(roles: { name: string; grantableBy: unknown }[]) {
+  return roles.some((role) =>
+    isRecord(role.grantableBy) && typeof role.grantableBy.siteAccess === "string"
+  );
+}
 const SETTING_TYPES = new Set(["text", "integer", "boolean"]);
 const POSTGRES_SMALLINT_MAX = 32_767;
 const COMPATIBLE_SERVER_ABI_PATTERNS = [
@@ -442,6 +456,56 @@ export function validatePhiServerAddonManifest(
     }
   }
   assertUnique(settingNames, "settings", issues);
+
+  const roles = Array.isArray(value.roles) ? value.roles : [];
+  if (value.roles !== undefined && !Array.isArray(value.roles)) {
+    issues.push("roles must be an array when it is stated at all.");
+  }
+  const roleNames: string[] = [];
+  for (const [index, role] of roles.entries()) {
+    if (!isRecord(role)) {
+      issues.push(`roles[${index}] must be an object.`);
+      continue;
+    }
+    const name = readString(role.name, `roles[${index}].name`, issues);
+    if (name && !SETTING_NAME_PATTERN.test(name)) {
+      issues.push(`roles[${index}].name is invalid.`);
+    }
+    roleNames.push(name);
+    if (role.description !== undefined && typeof role.description !== "string") {
+      issues.push(`roles[${index}].description must be a string when it is stated at all.`);
+    }
+    const grantableBy = role.grantableBy;
+    if (!isRecord(grantableBy)) {
+      issues.push(`roles[${index}].grantableBy must be an object.`);
+      continue;
+    }
+    // One source or the other, never both: two answers to "who may grant this" would need a rule about
+    // which one wins, and that rule would live nowhere the author can see it.
+    const bySiteAccess = grantableBy.siteAccess !== undefined;
+    const byRole = grantableBy.role !== undefined;
+    if (bySiteAccess === byRole) {
+      issues.push(`roles[${index}].grantableBy states either siteAccess or role, and not both.`);
+    } else if (bySiteAccess && !SITE_ACCESS_VALUES.has(String(grantableBy.siteAccess))) {
+      issues.push(`roles[${index}].grantableBy.siteAccess is not a Site access.`);
+    } else if (byRole && typeof grantableBy.role !== "string") {
+      issues.push(`roles[${index}].grantableBy.role must be a string.`);
+    }
+  }
+  assertUnique(roleNames, "roles", issues);
+  for (const [index, role] of roles.entries()) {
+    // A role granted by another role has to name one this same Add-on declares. Pointing at a stranger
+    // would be a policy nobody here can evaluate.
+    const grantedBy = isRecord(role) && isRecord(role.grantableBy) ? role.grantableBy.role : undefined;
+    if (typeof grantedBy === "string" && !roleNames.includes(grantedBy)) {
+      issues.push(`roles[${index}].grantableBy.role does not name a role this Add-on declares.`);
+    }
+  }
+  if (roleNames.length > 0 && !hasReachableRoleRoot(roles as { name: string; grantableBy: unknown }[])) {
+    // Every role granted by another role, in a cycle, is a set nobody can ever enter. A Site Admin can
+    // still grant anything, so this is not fatal at runtime -- but it is never what the author meant.
+    issues.push("roles form a cycle: at least one role must be grantable by a Site access.");
+  }
 
   // As with `settings`: absent means none, and is what every manifest written before queries existed
   // says. Stating it is only required to be right, not to be present.

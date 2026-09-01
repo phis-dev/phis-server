@@ -54,6 +54,12 @@ import {
   setAddonEnabled,
 } from "./addons.mts";
 import {
+  grantPhiServerAddonUserRole,
+  readPhiSiteUserAddonRoles,
+  revokePhiServerAddonUserRole,
+} from "../db/server-addon-roles.mts";
+import { readPhiServerAddonDeclaredRoles } from "../lib/addons/role-granting.ts";
+import {
   inspectSiteModulePackage,
   type PhiSiteModulePackageReport,
 } from "./module-package.mts";
@@ -224,6 +230,8 @@ Usage:
   phis addon disable --addon <@scope/name>
   phis addon forget --addon <@scope/name>
   phis addon config --addon <@scope/name> --site <site key>
+  phis addon role   --site <site key> [--addon <@scope/name>] [--user <id>]
+                    [--grant <role> | --revoke <role>]
                     [--name <setting> [--value <value>]]
   phis addon job    --addon <@scope/name> --job <job id> --site <site key>
                     [--api-base-url <url>]
@@ -1125,6 +1133,105 @@ async function runSiteModuleCommand(command: string, flags: FlagMap, json: boole
   }
 
   throw new Error(`Unknown module command: ${command}`);
+}
+
+/**
+ * Reading and setting the Add-on roles one person holds on one Site.
+ *
+ * The operator's way in. Every declared policy still has a Site Admin floor, and an operator on the
+ * command line is above that -- somebody has to be able to appoint the first person who can appoint
+ * others, and it cannot be one of them.
+ */
+async function runAddonRoleCommand(flags: FlagMap, json: boolean) {
+  const siteKey = getOptionalFlag(flags, "site");
+  if (!siteKey) {
+    throw new Error("Missing --site.");
+  }
+  const site = await getSiteByKey(siteKey);
+  const pool = getPool();
+  const grant = getOptionalFlag(flags, "grant");
+  const revoke = getOptionalFlag(flags, "revoke");
+  const userFlag = getOptionalFlag(flags, "user");
+  const addonId = getOptionalFlag(flags, "addon");
+
+  if (grant || revoke) {
+    const role = (grant ?? revoke)!;
+    if (!addonId) throw new Error("Missing --addon.");
+    if (!userFlag) throw new Error("Missing --user.");
+    const userId = Number.parseInt(userFlag, 10);
+    if (!Number.isSafeInteger(userId) || userId <= 0) {
+      throw new Error("--user must be a user id.");
+    }
+    const declared = readPhiServerAddonDeclaredRoles(addonId);
+    if (declared === null) {
+      throw new Error(`${addonId} is not installed on this server.`);
+    }
+    if (!declared.some((entry) => entry.name === role)) {
+      throw new Error(
+        `${addonId} declares no role "${role}". Declared: ${
+          declared.map((entry) => entry.name).join(", ") || "none"
+        }.`,
+      );
+    }
+    const changed = grant
+      ? await grantPhiServerAddonUserRole(pool, {
+        addonId,
+        siteId: site.id,
+        userId,
+        role,
+        grantedByUserId: null,
+      })
+      : await revokePhiServerAddonUserRole(pool, { addonId, siteId: site.id, userId, role });
+    if (json) {
+      printJson({ site: site.key, addonId, role, userId, changed });
+    } else {
+      const verb = grant ? "Granted" : "Revoked";
+      console.log(
+        changed
+          ? `${verb} ${role} on ${addonId} for user ${userId} at ${site.key}.`
+          : `No change: user ${userId} already ${grant ? "held" : "did not hold"} ${role}.`,
+      );
+    }
+    return;
+  }
+
+  if (userFlag) {
+    const userId = Number.parseInt(userFlag, 10);
+    if (!Number.isSafeInteger(userId) || userId <= 0) {
+      throw new Error("--user must be a user id.");
+    }
+    const held = await readPhiSiteUserAddonRoles(pool, { siteId: site.id, userId });
+    if (json) {
+      printJson({ site: site.key, userId, held });
+    } else if (held.length === 0) {
+      console.log(`User ${userId} holds no Add-on roles at ${site.key}.`);
+    } else {
+      for (const entry of held) {
+        console.log(`  ${entry.addonId}  ${entry.role}`);
+      }
+    }
+    return;
+  }
+
+  // No user named: what could be granted here at all, which is what an operator needs before they can
+  // name one.
+  const addons = addonId
+    ? [addonId]
+    : [...new Set(listAddons(configRoot).addons.map((entry) => entry.addonId))];
+  const rows = addons.map((id) => ({ addonId: id, roles: readPhiServerAddonDeclaredRoles(id) ?? [] }));
+  if (json) {
+    printJson({ site: site.key, addons: rows });
+    return;
+  }
+  for (const row of rows) {
+    console.log(`${row.addonId}: ${row.roles.length === 0 ? "declares no roles" : ""}`);
+    for (const role of row.roles) {
+      const by = "siteAccess" in role.grantableBy
+        ? `siteAccess=${role.grantableBy.siteAccess}`
+        : `role=${role.grantableBy.role}`;
+      console.log(`  ${role.name}  grantableBy ${by}${role.description ? `  -- ${role.description}` : ""}`);
+    }
+  }
 }
 
 async function runSiteScaffoldCommand(
@@ -2057,6 +2164,11 @@ async function main() {
     } else {
       console.log(`Removed ${result.addonId} (${result.packageName}).`);
     }
+    return;
+  }
+
+  if (group === "addon" && command === "role") {
+    await runAddonRoleCommand(flags, json);
     return;
   }
 

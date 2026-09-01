@@ -1479,6 +1479,32 @@ CREATE TABLE IF NOT EXISTS phis.site_server_addons (
 CREATE INDEX IF NOT EXISTS site_server_addons_addon_id_idx
   ON phis.site_server_addons (addon_id);
 
+-- What roles of an Add-on one user holds on one Site.
+--
+-- The vocabulary belongs to the Add-on and is declared in its manifest; the assignments belong here, in
+-- one Core table rather than one per Add-on. That is what makes "what does this person hold on this
+-- Site" answerable across every installed Add-on at once -- with a private table per package, offboarding
+-- would mean visiting each of them.
+--
+-- `role` is text and not a foreign key on purpose. Which roles exist is stated by the manifest, and that
+-- is the only truth; a table of roles beside it would be a second one, drifting at the next update. The
+-- price is that an assignment can outlive the role it names, which Core reports rather than deletes: a
+-- silent removal during an upgrade is lost access nobody asked for.
+CREATE TABLE IF NOT EXISTS phis.site_addon_user_roles (
+  site_id SMALLINT NOT NULL REFERENCES phis.sites(id) ON DELETE CASCADE,
+  addon_id VARCHAR(255) NOT NULL REFERENCES phis.server_addons(addon_id) ON DELETE RESTRICT,
+  user_id INT NOT NULL REFERENCES phis.user_accounts(id) ON DELETE CASCADE,
+  role VARCHAR(120) NOT NULL,
+  granted_by_user_id INT NULL REFERENCES phis.user_accounts(id) ON DELETE SET NULL,
+  granted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT site_addon_user_roles_pkey PRIMARY KEY (site_id, addon_id, user_id, role),
+  CONSTRAINT site_addon_user_roles_role_check CHECK (role <> '')
+);
+
+-- "What does this person hold here", across Add-ons. The primary key already serves the runtime read.
+CREATE INDEX IF NOT EXISTS site_addon_user_roles_site_user_idx
+  ON phis.site_addon_user_roles (site_id, user_id);
+
 CREATE TABLE IF NOT EXISTS phis.server_addon_migrations (
   addon_id VARCHAR(255) NOT NULL REFERENCES phis.server_addons(addon_id) ON DELETE RESTRICT,
   migration_version SMALLINT NOT NULL,

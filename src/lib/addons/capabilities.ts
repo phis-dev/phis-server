@@ -32,6 +32,7 @@ import {
 } from "@/lib/authorization";
 import { getPool } from "@/lib/db";
 import { buildPhiServerAddonDataCapability } from "./data-capability.ts";
+import { buildPhiServerAddonRolesCapability } from "./roles-capability.ts";
 import { buildPhiServerAddonGroupsCapability } from "./groups-capability.ts";
 import { buildPhiServerAddonSecretsCapability } from "./secrets-capability.ts";
 import { buildPhiServerAddonSettingsCapability } from "./settings-capability.ts";
@@ -303,6 +304,14 @@ export function buildPhiServerAddonCapabilities(input: {
       addonId: input.manifest.addonId,
       siteId,
       declared: input.manifest.settings ?? [],
+    });
+  }
+  if (required.includes(PHI_SERVER_CORE_CAPABILITIES.roles)) {
+    capabilities.roles = buildPhiServerAddonRolesCapability({
+      addonId: input.manifest.addonId,
+      siteId,
+      actorUserId: input.actorUserId,
+      declared: input.manifest.roles ?? [],
     });
   }
   if (required.includes(PHI_SERVER_CORE_CAPABILITIES.groups)) {

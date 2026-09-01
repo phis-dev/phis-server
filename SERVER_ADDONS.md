@@ -590,6 +590,75 @@ AND required Site configuration valid
 Disabling it for a Site stops Site-scoped routes, jobs, hooks, and capability projection for that Site.
 It does not delete data, secrets, provider installation records, or migration history.
 
+## 11a. Roles an Add-on defines
+
+An Add-on that governs who may do what is always asking one of three questions, and answering all three
+with one tool is the mistake:
+
+| Question | Answered by |
+|---|---|
+| May this person do this **at all**? There is no row yet. | **Role** |
+| May this person touch **their own** row? | **`owner_user_id`** |
+| May several people share a row, each to a different depth? | **Group** and its ladder |
+
+The test: does the question concern a particular row? If not, it is a role. If yes and only the creator
+should reach it, ownership settles it. If yes and several people share it at different depths, it is a
+group.
+
+**A group is Core's vocabulary about shared rows; a role is the Add-on's vocabulary about actions.**
+Whatever Core evaluates has to be Core's word -- the ladder's four levels mean something to
+`mayActOnScopedRow`, which is why they cannot be replaced by names Core does not understand. Roles are
+opaque to Core by design: it stores them, answers `has()`, and never asks what `reviewer` means. The
+ladder also hangs on the group while a role hangs on the Add-on, so the same person is Editor in one
+group and Member in another -- a dimension a role does not have.
+
+### Declared in the manifest, held by Core
+
+```ts
+roles: [
+  { name: "market-admin", grantableBy: { siteAccess: "site-admin" } },
+  { name: "vendor",       grantableBy: { role: "market-admin" } },
+  { name: "reviewer",     grantableBy: { role: "market-admin" } },
+]
+```
+
+The same bargain as `settings`: the Add-on states its vocabulary, Core holds the assignments in
+`phis.site_addon_user_roles`, and the Add-on reads through `roles:v1` and never writes. There is no
+writer for the reason `settings:v1` and `secrets:v1` have none -- an Add-on able to grant its own roles
+could grant itself whatever those roles guard.
+
+`grantableBy` is how an Add-on decides for itself who may hand out its roles, **declaratively**. It lives
+in a manifest the digest covers, so the author sets the policy and the running code cannot rewrite it.
+Two safeguards come with it: a Site Admin may always grant any role of any Add-on, without which a badly
+declared graph locks everyone out with no way back; and a manifest whose roles only grant each other is
+refused, because nobody could ever enter that set.
+
+One Core table, not one per Add-on. That is what makes "what does this person hold on this Site" a single
+question across every installed Add-on -- with a private table per package, offboarding means visiting
+each of them in turn. `role` is stored as text because which roles exist is stated by the manifest and
+that is the only truth; a role table beside it would be a second one, drifting at the next update.
+
+### Reading, and what a new version drops
+
+`roles:v1` answers `has(role)` and `all()`, bound to the acting user, and filters against the roles the
+**current** manifest declares -- the same way a stored setting nobody declared is ignored rather than
+handed over. An Add-on never sees a role it does not know.
+
+An assignment naming a role a newer version no longer declares is **kept and reported**, never deleted.
+Deleting would be silent loss of access during an upgrade; reporting leaves the operator to decide.
+
+### Granting
+
+`POST /api/site/addon-roles` with `{ addonId, role, userId }`, and `DELETE` for the reverse. Core resolves
+the descriptor from the stored manifest and evaluates `grantableBy` against the acting user. An Add-on's
+own surface renders the screen and calls this; it never decides the answer, so somebody who reaches the
+screen without the standing is refused here rather than there. Taking a role back needs the standing to
+have given it.
+
+On the command line, `phis addon role --site <key>` lists what each installed Add-on declares, `--user`
+shows what one person holds across Add-ons, and `--grant` / `--revoke` set it. The operator is above the
+Site Admin floor, because somebody has to appoint the first person who can appoint others.
+
 ## 12. Persistent registry
 
 The database stores operational state but never acts as a code loader.
