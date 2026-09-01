@@ -24,6 +24,7 @@ import {
 
 import { type PhiServerAddonDesiredState } from "../lib/addons/contract.ts";
 import { PHI_SERVER_CORE_CAPABILITIES } from "../lib/addons/core-capabilities.ts";
+import { phiServerAddonUnindexedSearches } from "../lib/addons/query-descriptor.ts";
 import {
   resolvePhiServerAddonArtifactPath,
   resolvePhiServerAddonInstallRoot,
@@ -338,9 +339,16 @@ export async function checkAddons(root: string) {
     };
   }
   const loaded = loadDesiredAddons(root);
+  const unindexedSearches = loaded.flatMap(({ desired, manifest }) =>
+    manifest.schema && manifest.queries
+      ? phiServerAddonUnindexedSearches(manifest.schema, manifest.queries)
+        .map((search) => ({ addonId: desired.addonId, ...search }))
+      : []
+  );
   return {
     ok: true,
     action: "addon.check",
+    unindexedSearches,
     addons: loaded.map(({ desired, manifest }) => ({
       ...desired,
       serverAbi: manifest.serverAbi,

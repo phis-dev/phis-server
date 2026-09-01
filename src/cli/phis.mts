@@ -1166,6 +1166,9 @@ async function runCoreSchemaCommand(command: string, json: boolean) {
       printJson(result);
     } else if (result.missing.length === 0) {
       console.log(`Core schema is current (${result.declared} tables).`);
+      for (const extension of result.missingExtensions) {
+        console.log(`  extension ${extension} is not installed.`);
+      }
     } else {
       console.log(`${result.missing.length} of ${result.declared} table(s) missing:`);
       for (const table of result.missing) {
@@ -2215,6 +2218,12 @@ async function main() {
       printJson(result);
     } else if (result.ok) {
       console.log(`Validated ${result.addons.length} server Add-on(s).`);
+      for (const search of result.unindexedSearches ?? []) {
+        console.log(
+          `  ${search.addonId}: query "${search.query}" searches ${search.table}.${search.column} ` +
+          "with no text index on it, and will read the whole table.",
+        );
+      }
     } else {
       console.log(`${result.invalid?.length ?? 0} Add-on(s) no longer validate against this release:`);
       for (const entry of result.invalid ?? []) {

@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
 
 import { compilePhiServerAddonQueries } from "./query-sql.ts";
-import { validatePhiServerAddonQueryCatalog } from "./query-descriptor.ts";
+import { buildPhiServerAddonSchemaStatements } from "./schema-ddl.ts";
+import { validatePhiServerAddonSchemaDescriptor } from "./schema-descriptor.ts";
+import {
+  phiServerAddonUnindexedSearches,
+  validatePhiServerAddonQueryCatalog,
+} from "./query-descriptor.ts";
 import type {
   PhiServerAddonQueryCatalog,
   PhiServerAddonSchemaDescriptor,
@@ -316,6 +321,128 @@ describe("validating a declared query", () => {
     const issues: string[] = [];
     validatePhiServerAddonQueryCatalog(catalog, null, "queries", issues);
     expect(issues.join("\n")).toMatch(/owns no tables to run them against/);
+  });
+});
+
+describe("searching text", () => {
+  const searchSchema: PhiServerAddonSchemaDescriptor = {
+    descriptorVersion: 1,
+    version: 1,
+    tables: [
+      {
+        name: "offering",
+        siteScoped: true,
+        columns: [
+          { name: "id", type: "identity" },
+          { name: "title", type: "string", maxLength: 200 },
+          { name: "rank", type: "integer" },
+        ],
+        primaryKey: ["id"],
+        indexes: [{ name: "by_title", kind: "text", columns: ["title"] }],
+      },
+    ],
+  };
+
+  const searchCatalog = {
+    parameters: { find: [{ name: "q", type: "text" }] },
+    queries: [
+      {
+        kind: "select",
+        name: "find",
+        table: "offering",
+        where: { kind: "contains", column: "title", value: { kind: "parameter", name: "q" } },
+        limit: 25,
+      },
+    ],
+  } as unknown as PhiServerAddonQueryCatalog;
+
+  it("escapes the value, so a per cent sign is a character and not a wildcard", () => {
+    const sql = compilePhiServerAddonQueries(SCHEMA, searchSchema, searchCatalog).get("find")!.sql;
+    expect(sql).toContain(
+      `"title" ILIKE ('%' || replace(replace(replace($2, '\\', '\\\\'), '%', '\\%'), '_', '\\_') || '%')`,
+    );
+  });
+
+  it("refuses to search a column that does not hold text", () => {
+    const issues: string[] = [];
+    validatePhiServerAddonQueryCatalog(
+      {
+        parameters: { find: [{ name: "q", type: "text" }] },
+        queries: [{
+          kind: "select",
+          name: "find",
+          table: "offering",
+          where: { kind: "contains", column: "rank", value: { kind: "parameter", name: "q" } },
+          limit: 25,
+        }],
+      },
+      searchSchema,
+      "queries",
+      issues,
+    );
+    expect(issues.join("\n")).toMatch(/is not a text column/);
+  });
+
+  it("names a search that nothing indexes, and stays quiet about one that is", () => {
+    expect(phiServerAddonUnindexedSearches(searchSchema, searchCatalog)).toEqual([]);
+    const withoutIndex = {
+      ...searchSchema,
+      tables: searchSchema.tables.map((table) => ({ ...table, indexes: [] })),
+    };
+    expect(phiServerAddonUnindexedSearches(withoutIndex, searchCatalog)).toEqual([
+      { query: "find", table: "offering", column: "title" },
+    ]);
+  });
+
+  it("sees a search wrapped in whenPresent, which is how a listing writes one", () => {
+    const optional = {
+      parameters: { find: [{ name: "q", type: "text", nullable: true }] },
+      queries: [{
+        kind: "select",
+        name: "find",
+        table: "offering",
+        where: {
+          kind: "whenPresent",
+          parameter: "q",
+          condition: { kind: "contains", column: "title", value: { kind: "parameter", name: "q" } },
+        },
+        limit: 25,
+      }],
+    } as unknown as PhiServerAddonQueryCatalog;
+    const withoutIndex = {
+      ...searchSchema,
+      tables: searchSchema.tables.map((table) => ({ ...table, indexes: [] })),
+    };
+    expect(phiServerAddonUnindexedSearches(withoutIndex, optional)).toHaveLength(1);
+  });
+
+  it("builds a trigram index for a text index, and an ordinary one otherwise", () => {
+    const statements = buildPhiServerAddonSchemaStatements(SCHEMA, searchSchema);
+    const text = statements.find((entry) => entry.summary.includes("text search"))!;
+    expect(text.sql).toContain('USING gin ("title" gin_trgm_ops)');
+  });
+
+  it("refuses a text index that is unique, spans columns, or names a number", () => {
+    const issues: string[] = [];
+    validatePhiServerAddonSchemaDescriptor(
+      {
+        ...searchSchema,
+        tables: [{
+          ...searchSchema.tables[0]!,
+          indexes: [
+            { name: "a", kind: "text", columns: ["title"], unique: true },
+            { name: "b", kind: "text", columns: ["title", "rank"] },
+            { name: "c", kind: "text", columns: ["rank"] },
+          ],
+        }],
+      },
+      "schema",
+      issues,
+    );
+    const text = issues.join("\n");
+    expect(text).toMatch(/cannot be unique/);
+    expect(text).toMatch(/exactly one column/);
+    expect(text).toMatch(/does not hold text/);
   });
 });
 

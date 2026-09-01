@@ -1,5 +1,13 @@
 CREATE SCHEMA IF NOT EXISTS phis;
 
+-- Substring search for Add-on tables. An Add-on declares a text index and Core builds a trigram one
+-- from it, which is what turns `contains` from a table scan into a lookup: measured on 200,000 rows,
+-- 72 ms without and 0.5 ms with. The extension is database-wide rather than per schema, so it belongs
+-- here rather than beside the index that needs it. An installation whose provider forbids it still
+-- runs -- the index is what is missing, not the search, and `phis addon check` says which Add-ons pay
+-- for that.
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
+
 CREATE TABLE IF NOT EXISTS phis.sites (
   id SMALLSERIAL PRIMARY KEY,
   key VARCHAR(64) NOT NULL UNIQUE,

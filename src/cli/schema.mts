@@ -37,11 +37,36 @@ async function presentTables(client: Client) {
   return new Set(rows.map((row) => row.tablename));
 }
 
+/** The extensions the script creates, read from the script rather than kept in a second list here. */
+async function missingExtensions(client: Client, sql: string) {
+  const declared = [...sql.matchAll(/CREATE EXTENSION IF NOT EXISTS ([a-z_]+)/gi)]
+    .map((match) => match[1]!);
+  if (declared.length === 0) {
+    return [];
+  }
+  const { rows } = await client.query<{ extname: string }>(
+    "SELECT extname FROM pg_extension WHERE extname = ANY($1)",
+    [declared],
+  );
+  const present = new Set(rows.map((row) => row.extname));
+  return declared.filter((name) => !present.has(name));
+}
+
 export type PhiSchemaApplyResult = {
   declared: number;
   missing: string[];
   created: string[];
   grantedTo: string | null;
+  /**
+   * Extensions the script asks for that the database does not have.
+   *
+   * Reported beside the tables because it fails differently: a missing table stops everything at once,
+   * while a missing `pg_trgm` costs nothing until an Add-on with a text index is installed, and then it
+   * is a failed migration rather than a slow query. Worth saying before that, and worth saying
+   * separately -- an installation whose provider forbids the extension has a decision to make, not a
+   * repair to run.
+   */
+  missingExtensions: string[];
 };
 
 /**
@@ -65,6 +90,7 @@ export async function checkPhiCoreSchema(input: {
       missing: declared.filter((table) => !present.has(table)),
       created: [],
       grantedTo: null,
+      missingExtensions: await missingExtensions(client, sql),
     };
   } finally {
     await client.end();
@@ -105,6 +131,8 @@ export async function applyPhiCoreSchema(input: {
       missing: [],
       created,
       grantedTo,
+      // After running the script, so this reports what the database refused rather than what it lacked.
+      missingExtensions: await missingExtensions(client, sql),
     };
   } finally {
     await client.end();

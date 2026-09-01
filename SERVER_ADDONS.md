@@ -1136,6 +1136,14 @@ constraints. Column types are abstract, and Core maps them: identity, integer in
 unbounded text, bounded string, boolean, instant, JSON document, UUID, binary. A column states
 nullability and may state a default from a closed vocabulary -- a literal, or the current instant.
 
+An index states what it is for rather than how it is built: `ordered` for equality, ranges and the
+orderings a paged select runs under, `text` for substring search over one text column. Core maps `text`
+to a trigram index, which is what makes `contains` a lookup rather than a scan -- measured on 200,000
+rows, 72 ms without it and 0.5 ms with. A text index cannot be unique and cannot span columns, because
+it indexes fragments rather than values. The extension it needs is created by the Core schema script, so
+it is there before any Add-on asks for it; where a provider forbids it, the search still works and reads
+the whole table to do it, and `phis addon check` names the queries that pay for that.
+
 Constraints are declared in structured form: a range on a number, an enumeration of permitted values,
 non-emptiness on text, a comparison between two columns of the same row, and null cardinality across a
 group of columns, for the polymorphic row where exactly one of several columns is set. Regular
@@ -1203,6 +1211,12 @@ The declaration form carries what a real query needs and refuses what does not s
   comparison against null ends the paging early and silently. The cursor carries a signature of the
   ordering it was made for; a query with a different one refuses it rather than paging on a foreign
   order.
+- text is searched with `contains`, which takes a column and a value and is the only search the
+  vocabulary offers. It is an operator rather than a pattern: Core writes the statement and escapes the
+  value, so a `%` in a search term is a character to look for rather than a wildcard that quietly
+  matches everything. Core's own code still writes `ILIKE` by hand in two places, which is what an
+  Add-on may not do -- not because the operator is worse there, but because the escaping is one detail
+  per author instead of one for everyone.
 - a write declares what it returns.
 - a named sequence of queries runs as one transaction. Without one, every write stands alone and no
   invariant spanning two tables can hold.

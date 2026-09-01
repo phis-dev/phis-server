@@ -360,6 +360,26 @@ export function buildPhiServerAddonSchemaStatements(
       // Site-scoped table it holds within the Site. A non-unique index is only an access path and is
       // left as the Add-on wrote it -- the Site filter Core puts into every query is what makes it
       // useful, and prepending the column there would be a guess about which order helps.
+      const name = quotePhiIdentifier(
+        composePhiServerAddonObjectName(table.name, index.name, "idx"),
+      );
+      if (index.kind === "text") {
+        /*
+         * A trigram index, which is what makes `contains` a lookup instead of a scan.
+         *
+         * The Site column is not prepended here as it is on a unique index. This one is not a rule about
+         * values, it is an access path, and the Site filter Core puts into every statement narrows the
+         * candidate set the index produced. Putting `site_id` in front would need `btree_gin` and buy
+         * nothing an installation with one busy Site would notice.
+         */
+        statements.push({
+          summary: `index ${table.name} for text search on ${index.columns[0]}`,
+          sql:
+            `CREATE INDEX ${name} ON ${qualify(schemaName, table.name)} ` +
+            `USING gin (${quotePhiIdentifier(index.columns[0]!)} gin_trgm_ops)`,
+        });
+        continue;
+      }
       const columns =
         index.unique && table.siteScoped
           ? [PHI_SERVER_ADDON_SITE_COLUMN, ...index.columns]
@@ -367,8 +387,7 @@ export function buildPhiServerAddonSchemaStatements(
       statements.push({
         summary: `index ${table.name} by ${columns.join(", ")}`,
         sql:
-          `CREATE ${index.unique ? "UNIQUE " : ""}INDEX ` +
-          `${quotePhiIdentifier(composePhiServerAddonObjectName(table.name, index.name, "idx"))} ` +
+          `CREATE ${index.unique ? "UNIQUE " : ""}INDEX ${name} ` +
           `ON ${qualify(schemaName, table.name)} ` +
           `(${columns.map((column) => quotePhiIdentifier(column)).join(", ")})`,
       });

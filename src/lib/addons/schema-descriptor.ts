@@ -381,6 +381,9 @@ function validateTable(
     if (descriptor.unique !== undefined && typeof descriptor.unique !== "boolean") {
       issues.push(`${indexField}.unique must be a boolean.`);
     }
+    if (descriptor.kind !== undefined && descriptor.kind !== "ordered" && descriptor.kind !== "text") {
+      issues.push(`${indexField}.kind must be "ordered" or "text".`);
+    }
     const indexColumns = Array.isArray(descriptor.columns) ? descriptor.columns : [];
     if (indexColumns.length === 0) {
       issues.push(`${indexField}.columns must name at least one column.`);
@@ -388,6 +391,21 @@ function validateTable(
     for (const [columnIndex, column] of indexColumns.entries()) {
       if (typeof column !== "string" || !columnNames.has(column)) {
         issues.push(`${indexField}.columns[${columnIndex}] does not name a column of ${table}.`);
+      }
+    }
+    if (descriptor.kind === "text") {
+      // A text index holds fragments of one column's value, so it can neither span columns nor stand
+      // for uniqueness -- and there is nothing to search in a column that does not hold text.
+      if (indexColumns.length !== 1) {
+        issues.push(`${indexField} is a text index and must name exactly one column.`);
+      }
+      if (descriptor.unique === true) {
+        issues.push(`${indexField} is a text index and cannot be unique: it indexes fragments.`);
+      }
+      const declared = columns.find((column) => column.name === indexColumns[0]);
+      const type = declared && !isReferenceColumn(declared) ? declared.type : undefined;
+      if (type !== "text" && type !== "string") {
+        issues.push(`${indexField} is a text index, but "${indexColumns[0]}" does not hold text.`);
       }
     }
   }

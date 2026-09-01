@@ -114,6 +114,25 @@ function valueSql(compiler: Compiler, value: PhiServerAddonQueryValue) {
   }
 }
 
+/**
+ * `contains`, spelled out.
+ *
+ * `ILIKE` rather than `lower(a) LIKE lower(b)` or `strpos`, because a trigram index answers `ILIKE` and
+ * answers neither of the others -- and turning the one search this vocabulary offers into a guaranteed
+ * table scan would be a poor trade for a shorter statement.
+ *
+ * The value is escaped here rather than trusted, and this is the whole reason `contains` is an operator
+ * and not a pattern the Add-on writes. Someone searching a catalogue for "100%" means the three
+ * characters; unescaped, the `%` would be a wildcard and the search would quietly return everything
+ * starting with 100. The backslash goes first, or it would double the escapes added after it.
+ */
+function containsSql(compiler: Compiler, column: string, value: PhiServerAddonQueryValue) {
+  const placed = valueSql(compiler, value);
+  const escaped =
+    `replace(replace(replace(${placed}, '\\', '\\\\'), '%', '\\%'), '_', '\\_')`;
+  return `${quotePhiIdentifier(column)} ILIKE ('%' || ${escaped} || '%')`;
+}
+
 function conditionSql(
   compiler: Compiler,
   condition: PhiServerAddonQueryCondition,
@@ -123,6 +142,8 @@ function conditionSql(
       return `${quotePhiIdentifier(condition.column)} ${condition.operator} ${valueSql(compiler, condition.value)}`;
     case "isNull":
       return `${quotePhiIdentifier(condition.column)} IS ${condition.negated ? "NOT " : ""}NULL`;
+    case "contains":
+      return containsSql(compiler, condition.column, condition.value);
     case "in":
       // An empty list is `IN ()`, which is a syntax error, and `FALSE` is what it means anyway.
       return condition.values.length === 0

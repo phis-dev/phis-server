@@ -128,6 +128,29 @@ function checkCondition(
     case "isNull":
       checkColumn(context, condition.column, `${where}.column`);
       return;
+    case "contains": {
+      if (checkColumn(context, condition.column, `${where}.column`)) {
+        // Core's scope columns are readable but hold ids, and none of them is text -- a `find` returns
+        // no descriptor for them either, so this one check answers both cases.
+        const declared = context.table.columns.find((column) => column.name === condition.column);
+        const type = declared && !("references" in declared) ? declared.type : undefined;
+        if (type !== "text" && type !== "string") {
+          context.issues.push(
+            `${context.field}.${where}.column "${condition.column}" is not a text column. ` +
+            "contains searches text and nothing else.",
+          );
+        }
+      }
+      if (isRecord(condition.value) && (condition.value.kind === "actor" || condition.value.kind === "now")) {
+        context.issues.push(
+          `${context.field}.${where}.value must be a parameter or a literal: an actor id and the ` +
+          "current instant are not things to search a text column for.",
+        );
+      } else {
+        checkValue(context, condition.value, `${where}.value`);
+      }
+      return;
+    }
     case "in": {
       checkColumn(context, condition.column, `${where}.column`);
       const values = Array.isArray(condition.values) ? condition.values : [];
@@ -393,4 +416,59 @@ export function validatePhiServerAddonQueryCatalog(
   }
 
   return issues.length === before ? (value as unknown as PhiServerAddonQueryCatalog) : null;
+}
+
+/**
+ * Searches that will read the whole table, because nothing indexes what they look in.
+ *
+ * Not an error: `contains` without a text index is correct, only slow, and refusing it would leave an
+ * Add-on with a small table paying for a rule written for a large one. But it is exactly the judgement
+ * the declarative catalogue exists to make possible -- what an Add-on will do to the database is
+ * readable before it does it -- so it is reported where an operator is already looking, at install and
+ * at `phis addon check`, rather than discovered later in a slow request.
+ */
+export function phiServerAddonUnindexedSearches(
+  schema: PhiServerAddonSchemaDescriptor,
+  catalog: PhiServerAddonQueryCatalog,
+): { query: string; table: string; column: string }[] {
+  const found: { query: string; table: string; column: string }[] = [];
+  const searched = (condition: unknown, into: Set<string>) => {
+    if (!isRecord(condition)) {
+      return;
+    }
+    if (condition.kind === "contains" && typeof condition.column === "string") {
+      into.add(condition.column);
+    }
+    if (condition.kind === "whenPresent") {
+      searched(condition.condition, into);
+    }
+    if (Array.isArray(condition.conditions)) {
+      for (const entry of condition.conditions) {
+        searched(entry, into);
+      }
+    }
+  };
+
+  for (const query of catalog.queries) {
+    if (query.kind !== "select" || !query.where) {
+      continue;
+    }
+    const columns = new Set<string>();
+    searched(query.where, columns);
+    if (columns.size === 0) {
+      continue;
+    }
+    const table = schema.tables.find((entry) => entry.name === query.table);
+    const indexed = new Set(
+      (table?.indexes ?? [])
+        .filter((index) => index.kind === "text")
+        .map((index) => index.columns[0]),
+    );
+    for (const column of columns) {
+      if (!indexed.has(column)) {
+        found.push({ query: query.name, table: query.table, column });
+      }
+    }
+  }
+  return found;
 }
