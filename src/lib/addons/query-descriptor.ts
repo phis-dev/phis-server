@@ -47,6 +47,7 @@ type QueryContext = {
   table: PhiServerAddonTableDescriptor;
   columns: Set<string>;
   parameters: Set<string>;
+  nullableParameters: Set<string>;
   field: string;
   issues: string[];
 };
@@ -147,6 +148,19 @@ function checkCondition(
       );
       return;
     }
+    case "whenPresent": {
+      const name = condition.parameter;
+      if (typeof name !== "string" || !context.parameters.has(name)) {
+        context.issues.push(`${context.field}.${where}.parameter names an undeclared parameter.`);
+      } else if (!context.nullableParameters.has(name)) {
+        context.issues.push(
+          `${context.field}.${where}.parameter "${name}" must be nullable: absence is what switches ` +
+          "this condition off, and a parameter that cannot be null is never absent.",
+        );
+      }
+      checkCondition(context, condition.condition, `${where}.condition`, depth + 1);
+      return;
+    }
     default:
       context.issues.push(`${context.field}.${where}.kind is not a condition this vocabulary offers.`);
   }
@@ -186,7 +200,7 @@ function checkAssignments(context: QueryContext, raw: unknown, where: string) {
 function validateQuery(
   raw: unknown,
   schema: PhiServerAddonSchemaDescriptor,
-  parameters: Set<string>,
+  declared: { names: Set<string>; nullable: Set<string> },
   field: string,
   issues: string[],
 ) {
@@ -202,10 +216,12 @@ function validateQuery(
     issues.push(`${field}.table does not name a table this Add-on declares.`);
     return null;
   }
+  const parameters = declared.names;
   const context: QueryContext = {
     table,
     columns: readableColumns(table),
     parameters,
+    nullableParameters: declared.nullable,
     field,
     issues,
   };
@@ -226,7 +242,22 @@ function validateQuery(
             issues.push(`${field}.orderBy[${index}] must be an object.`);
             return;
           }
-          checkColumn(context, entry.column, `orderBy[${index}].column`);
+          if (checkColumn(context, entry.column, `orderBy[${index}].column`)) {
+            /*
+             * A nullable ordering column has no defined place for its nulls -- the descriptor cannot say
+             * whether they come first or last -- and the keyset comparison that continues a page cannot
+             * be written against one: a comparison with null is null, so the page would end early and
+             * quietly rather than carry on. Refused here, where the author can still choose a default.
+             */
+            const declaredColumn = table.columns.find((column) => column.name === entry.column);
+            if (declaredColumn?.nullable === true) {
+              issues.push(
+                `${field}.orderBy[${index}].column "${entry.column}" is nullable. An ordering column ` +
+                "must be NOT NULL: paging continues by comparing against the last row's values, and " +
+                "where nulls sort is not something the descriptor can say.",
+              );
+            }
+          }
           if (entry.direction !== "asc" && entry.direction !== "desc") {
             issues.push(`${field}.orderBy[${index}].direction must be "asc" or "desc".`);
           }
@@ -241,9 +272,6 @@ function validateQuery(
         issues.push(
           `${field}.limit must be an integer between 1 and ${PHI_SERVER_ADDON_QUERY_MAX_LIMIT}.`,
         );
-      }
-      if (raw.offsetParameter !== undefined && !parameters.has(String(raw.offsetParameter))) {
-        issues.push(`${field}.offsetParameter names an undeclared parameter.`);
       }
       break;
     }
@@ -310,9 +338,10 @@ export function validatePhiServerAddonQueryCatalog(
     issues.push(`${field}.parameters must be an object keyed by query name.`);
     return null;
   }
-  const parametersByQuery = new Map<string, Set<string>>();
+  const parametersByQuery = new Map<string, { names: Set<string>; nullable: Set<string> }>();
   for (const [queryName, declared] of Object.entries(rawParameters)) {
     const names = new Set<string>();
+    const nullable = new Set<string>();
     const list = Array.isArray(declared) ? declared : [];
     if (!Array.isArray(declared)) {
       issues.push(`${field}.parameters.${queryName} must be an array.`);
@@ -334,8 +363,11 @@ export function validatePhiServerAddonQueryCatalog(
         issues.push(`${at}.type is not a parameter type this vocabulary offers.`);
       }
       names.add(parameter.name);
+      if (parameter.nullable === true) {
+        nullable.add(parameter.name);
+      }
     });
-    parametersByQuery.set(queryName, names);
+    parametersByQuery.set(queryName, { names, nullable });
   }
 
   const rawQueries = Array.isArray(value.queries) ? value.queries : [];
@@ -350,7 +382,7 @@ export function validatePhiServerAddonQueryCatalog(
     validateQuery(
       query,
       schema,
-      parametersByQuery.get(queryName) ?? new Set(),
+      parametersByQuery.get(queryName) ?? { names: new Set(), nullable: new Set() },
       `${field}.queries[${index}]`,
       issues,
     );

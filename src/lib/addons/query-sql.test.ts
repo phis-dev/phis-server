@@ -97,9 +97,13 @@ describe("compiling a declared query", () => {
     expect(query.sql).toBe(
       'SELECT "id", "title" FROM "phis_addon_acme_shop"."listing" ' +
       'WHERE "site_id" = $1 AND ("state" = $2 AND "retired_at" IS NULL) ' +
-      'ORDER BY "id" DESC LIMIT 50',
+      'ORDER BY "id" DESC LIMIT $3',
     );
-    expect(query.bindings).toEqual([{ from: "site" }, { from: "parameter", name: "state" }]);
+    expect(query.bindings).toEqual([
+      { from: "site" },
+      { from: "parameter", name: "state" },
+      { from: "limit" },
+    ]);
   });
 
   it("writes the scope columns itself on insert, and the Add-on's values after them", () => {
@@ -139,7 +143,96 @@ describe("compiling a declared query", () => {
       parameters: { all: [] },
       queries: [{ kind: "select", name: "all", table: "listing", limit: 10_000 }],
     });
-    expect(overreaching.get("all")!.sql).toContain("LIMIT 500");
+    expect(overreaching.get("all")!.paging!.limit).toBe(500);
+  });
+});
+
+const pagingSchema: PhiServerAddonSchemaDescriptor = {
+  descriptorVersion: 1,
+  version: 1,
+  tables: [
+    {
+      name: "offering",
+      siteScoped: true,
+      columns: [
+        { name: "id", type: "identity" },
+        { name: "kind", type: "string", maxLength: 64 },
+        { name: "updated_at", type: "instant" },
+        { name: "withdrawn_at", type: "instant", nullable: true },
+      ],
+      primaryKey: ["id"],
+    },
+  ],
+};
+
+function paged(descriptor: Record<string, unknown>, parameters: unknown[] = []) {
+  return compilePhiServerAddonQueries(SCHEMA, pagingSchema, {
+    parameters: { listing: parameters },
+    queries: [{ kind: "select", name: "listing", table: "offering", limit: 25, ...descriptor }],
+  } as unknown as PhiServerAddonQueryCatalog).get("listing")!;
+}
+
+describe("paging a declared select", () => {
+  it("finishes the Add-on's ordering with the primary key, so the order is total", () => {
+    const query = paged({ orderBy: [{ column: "updated_at", direction: "desc" }] });
+    expect(query.sql).toContain('ORDER BY "updated_at" DESC, "id" ASC');
+    expect(query.paging!.ordering).toEqual([
+      { column: "updated_at", direction: "desc" },
+      { column: "id", direction: "asc" },
+    ]);
+  });
+
+  it("orders by the primary key alone when the Add-on named no order at all", () => {
+    expect(paged({}).sql).toContain('ORDER BY "id" ASC');
+  });
+
+  it("does not name the primary key twice when the Add-on already ordered by it", () => {
+    const query = paged({ orderBy: [{ column: "id", direction: "desc" }] });
+    expect(query.sql).toContain('ORDER BY "id" DESC LIMIT');
+    expect(query.paging!.ordering).toHaveLength(1);
+  });
+
+  it("continues a page by comparing against the last row, one column at a time", () => {
+    const query = paged({ orderBy: [{ column: "updated_at", direction: "desc" }] });
+    expect(query.paging!.sql).toContain(
+      '("updated_at" < $2) OR ("updated_at" = $3 AND "id" > $4)',
+    );
+    expect(query.paging!.bindings).toEqual([
+      { from: "site" },
+      { from: "cursor", index: 0 },
+      { from: "cursor", index: 0 },
+      { from: "cursor", index: 1 },
+      { from: "limit" },
+    ]);
+  });
+
+  it("leaves the first page as the statement it would have been without paging", () => {
+    const query = paged({ orderBy: [{ column: "updated_at", direction: "desc" }] });
+    expect(query.sql).toContain('WHERE "site_id" = $1 ORDER BY');
+    expect(query.bindings.some((binding) => binding.from === "cursor")).toBe(false);
+  });
+
+  it("switches a whenPresent filter off with a null rather than declaring a second query", () => {
+    const query = paged(
+      {
+        where: {
+          kind: "whenPresent",
+          parameter: "kind",
+          condition: {
+            kind: "compare",
+            column: "kind",
+            operator: "=",
+            value: { kind: "parameter", name: "kind" },
+          },
+        },
+      },
+      [{ name: "kind", type: "text", nullable: true }],
+    );
+    expect(query.sql).toContain('($2::TEXT IS NULL OR "kind" = $3)');
+    expect(query.bindings.slice(1, 3)).toEqual([
+      { from: "parameter", name: "kind" },
+      { from: "parameter", name: "kind" },
+    ]);
   });
 });
 
@@ -223,5 +316,49 @@ describe("validating a declared query", () => {
     const issues: string[] = [];
     validatePhiServerAddonQueryCatalog(catalog, null, "queries", issues);
     expect(issues.join("\n")).toMatch(/owns no tables to run them against/);
+  });
+});
+
+describe("what paging refuses at validation", () => {
+  function issuesFor(descriptor: Record<string, unknown>, parameters: unknown[] = []) {
+    const issues: string[] = [];
+    validatePhiServerAddonQueryCatalog(
+      {
+        parameters: { listing: parameters },
+        queries: [{ kind: "select", name: "listing", table: "offering", limit: 25, ...descriptor }],
+      },
+      pagingSchema,
+      "queries",
+      issues,
+    );
+    return issues.join("\n");
+  }
+
+  it("refuses an ordering column that may be null", () => {
+    expect(issuesFor({ orderBy: [{ column: "withdrawn_at", direction: "desc" }] }))
+      .toMatch(/is nullable/);
+  });
+
+  it("accepts an ordering column that may not", () => {
+    expect(issuesFor({ orderBy: [{ column: "updated_at", direction: "desc" }] })).toBe("");
+  });
+
+  it("refuses whenPresent on a parameter that cannot be absent", () => {
+    const where = {
+      kind: "whenPresent",
+      parameter: "kind",
+      condition: {
+        kind: "compare",
+        column: "kind",
+        operator: "=",
+        value: { kind: "parameter", name: "kind" },
+      },
+    };
+    expect(issuesFor({ where }, [{ name: "kind", type: "text" }])).toMatch(/must be nullable/);
+    expect(issuesFor({ where }, [{ name: "kind", type: "text", nullable: true }])).toBe("");
+  });
+
+  it("no longer offers an offset to page with", () => {
+    expect(issuesFor({ offsetParameter: "skip" }, [{ name: "skip", type: "integer" }])).toBe("");
   });
 });

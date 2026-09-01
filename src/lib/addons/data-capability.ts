@@ -5,6 +5,7 @@ import type { PoolClient } from "pg";
 import type {
   PhiServerAddonManifestV1,
   PhiServerAddonQueryArguments,
+  PhiServerAddonQueryPageRequest,
   PhiServerAddonQueryRow,
   PhiServerDataCapabilityV1,
   PhiServerDataTransactionV1,
@@ -13,6 +14,10 @@ import {
   compilePhiServerAddonQueries,
   type PhiServerAddonCompiledQuery,
 } from "./query-sql.ts";
+import {
+  decodePhiServerAddonCursor,
+  encodePhiServerAddonCursor,
+} from "./query-cursor.ts";
 import { derivePhiServerAddonSchemaName } from "./schema-name.ts";
 import { getPool } from "@/lib/db";
 
@@ -84,11 +89,13 @@ function readArgument(
  */
 function resolveBindings(
   query: PhiServerAddonCompiledQuery,
+  bindings: PhiServerAddonCompiledQuery["bindings"],
   bound: Bound,
   args: PhiServerAddonQueryArguments,
-  descriptorParameters: { id?: string; group?: string; offset?: string },
+  descriptorParameters: { id?: string; group?: string },
+  page: { size: number; keys: string[] },
 ) {
-  return query.bindings.map((binding) => {
+  return bindings.map((binding) => {
     switch (binding.from) {
       case "parameter":
         return readArgument(args, binding.name, query.name);
@@ -102,8 +109,11 @@ function resolveBindings(
         return readArgument(args, descriptorParameters.id!, query.name);
       case "group":
         return readArgument(args, descriptorParameters.group!, query.name);
-      case "offset":
-        return readArgument(args, descriptorParameters.offset!, query.name);
+      case "cursor":
+        return page.keys[binding.index]!;
+      case "limit":
+        // One more than the page, which is how "is there another one" is answered without a count.
+        return page.size + 1;
     }
   });
 }
@@ -118,7 +128,6 @@ function descriptorParametersFor(manifest: PhiServerAddonManifestV1, name: strin
       ? descriptor.idParameter
       : undefined,
     group: descriptor.kind === "insert" ? descriptor.groupParameter : undefined,
-    offset: descriptor.kind === "select" ? descriptor.offsetParameter : undefined,
   };
 }
 
@@ -133,12 +142,27 @@ function requireQuery(bound: Bound, name: string, kind: PhiServerAddonCompiledQu
   return query;
 }
 
+/**
+ * How large a page actually is: the smallest of what was asked, what the Add-on allows, and the ceiling.
+ *
+ * A request that asks for nothing gets the Add-on's own limit, which is what an unpaged call used to
+ * return and keeps the ordinary case unchanged. A request for zero or nonsense gets one row rather than
+ * an error -- the page size is a wish, and a wish that cannot be granted is narrowed, not refused.
+ */
+function pageSize(requested: number | undefined, allowed: number) {
+  if (requested === undefined || !Number.isFinite(requested)) {
+    return allowed;
+  }
+  return Math.max(1, Math.min(Math.floor(requested), allowed));
+}
+
 async function run(
   db: Queryable,
   bound: Bound,
   name: string,
   kind: PhiServerAddonCompiledQuery["kind"],
   args: PhiServerAddonQueryArguments,
+  request: PhiServerAddonQueryPageRequest = {},
 ) {
   const query = requireQuery(bound, name, kind);
   const parameters = descriptorParametersFor(bound.manifest, name);
@@ -164,7 +188,7 @@ async function run(
     // Before the statement, never after: a refused write must not have happened.
     const id = readArgument(args, parameters.id!, name);
     if (!await bound.mayActOnRow({ table: query.table, id, intent: kind })) {
-      return { rows: [] as PhiServerAddonQueryRow[], rowCount: 0 };
+      return { rows: [] as PhiServerAddonQueryRow[], rowCount: 0, cursor: null };
     }
   }
 
@@ -187,14 +211,71 @@ async function run(
     }
   }
 
-  const result = await db.query(query.sql, resolveBindings(query, bound, args, parameters));
-  return { rows: result.rows as PhiServerAddonQueryRow[], rowCount: result.rowCount ?? 0 };
+  if (!query.paging) {
+    const result = await db.query(
+      query.sql,
+      resolveBindings(query, query.bindings, bound, args, parameters, { size: 0, keys: [] }),
+    );
+    return {
+      rows: result.rows as PhiServerAddonQueryRow[],
+      rowCount: result.rowCount ?? 0,
+      cursor: null,
+    };
+  }
+
+  /*
+   * Every select is paged, and the page is the whole of what a caller can reach in one call. The first
+   * page runs the plain statement; every page after it runs the one with the keyset clause, whose
+   * comparison values come out of the cursor rather than out of the arguments -- an Add-on cannot aim a
+   * page at a row it did not just read.
+   */
+  const { paging } = query;
+  const keys = request.cursor
+    ? decodePhiServerAddonCursor(name, paging.ordering, request.cursor)
+    : [];
+  const size = pageSize(request.limit, paging.limit);
+  /*
+   * Called with text and values, never with a `name`, and that is load-bearing rather than a style.
+   *
+   * A declared optional filter compiles to `($n::TYPE IS NULL OR col = $n)`, and an unnamed statement is
+   * planned at bind time with the real values: PostgreSQL folds the null test away and `col = 'x'` goes
+   * into the index condition, exactly as a hand-written filter would. Give this call a `name` and it
+   * becomes a prepared statement that may be planned generically -- measured on 200k rows, the index
+   * condition disappears and 2475 rows are read and discarded to return 25.
+   *
+   * So: no `name` here, and no prepared-statement layer above it. The server-side `plan_cache_mode` does
+   * not reach this -- that one governs the cache for prepared statements, and there is none.
+   */
+  const result = await db.query(
+    keys.length > 0 ? paging.sql : query.sql,
+    resolveBindings(
+      query,
+      keys.length > 0 ? paging.bindings : query.bindings,
+      bound,
+      args,
+      parameters,
+      { size, keys },
+    ),
+  );
+
+  // The extra row is read and then dropped: it was never part of the answer, only of the question
+  // whether there is one after it.
+  const rows = (result.rows as PhiServerAddonQueryRow[]).slice(0, size);
+  const more = result.rows.length > size;
+  return {
+    rows,
+    rowCount: rows.length,
+    cursor: more && rows.length > 0
+      ? encodePhiServerAddonCursor(name, paging.ordering, rows[rows.length - 1]!)
+      : null,
+  };
 }
 
 function buildOperations(db: Queryable, bound: Bound): PhiServerDataTransactionV1 {
   return Object.freeze({
-    async select(name, args = {}) {
-      return (await run(db, bound, name, "select", args)).rows;
+    async select(name, args = {}, page = {}) {
+      const result = await run(db, bound, name, "select", args, page);
+      return { rows: result.rows, cursor: result.cursor };
     },
     async insert(name, args = {}) {
       return (await run(db, bound, name, "insert", args)).rows[0] ?? null;

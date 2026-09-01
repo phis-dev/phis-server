@@ -1180,11 +1180,29 @@ installed rather than while it is serving.
 
 The declaration form carries what a real query needs and refuses what does not survive the boundary:
 
-- a filter may be declared optional, and Core compiles one statement per combination rather than one
-  statement with a null-tolerant predicate, because the null-tolerant form costs the index. The number
-  of optional filters per query is capped for that reason.
+- a filter may be declared optional, as `whenPresent` over a nullable parameter, and the parameter being
+  absent is what switches it off. It compiles to one statement, `($n::TYPE IS NULL OR col = $n)`, and
+  not to one statement per combination.
+
+  The combination form was the earlier plan, on the grounds that the null-tolerant predicate costs the
+  index. Measured on 200,000 rows it does not, because Core calls the database with statement text and
+  values and never with a `name`: an unnamed statement is planned at bind time with the real values, the
+  null test is folded away, and the comparison goes into the index condition just as a hand-written
+  filter would. Under a *prepared* statement it is a different story -- the index condition disappears
+  and 2,475 rows are read to return 25 -- which is why `data-capability.ts` says at the call site that
+  the unnamed form is load-bearing. The server's `plan_cache_mode` does not reach it; that governs the
+  cache for prepared statements, and there is none.
 - ordering is declared, and paging is by key rather than by offset. Core issues the cursor and reads it
   back; an Add-on passes it on without being able to see what it is made of.
+
+  There is no unpaged read to reach for: `select` answers with a page and a cursor, always. Core
+  completes the declared ordering with the table's primary key so the order is total -- without that,
+  two rows sharing a sort value may come back either way round and the page boundary falls between them
+  differently on each call, which puts one row on two pages and another on none. Every ordering column
+  must be `NOT NULL`, because where nulls sort is not something the descriptor can state and a keyset
+  comparison against null ends the paging early and silently. The cursor carries a signature of the
+  ordering it was made for; a query with a different one refuses it rather than paging on a foreign
+  order.
 - a write declares what it returns.
 - a named sequence of queries runs as one transaction. Without one, every write stands alone and no
   invariant spanning two tables can hold.

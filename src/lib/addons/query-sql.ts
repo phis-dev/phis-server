@@ -4,6 +4,8 @@ import {
   type PhiServerAddonQueryCatalog,
   type PhiServerAddonQueryCondition,
   type PhiServerAddonQueryDescriptor,
+  type PhiServerAddonQueryOrdering,
+  type PhiServerAddonQueryParameterType,
   type PhiServerAddonQueryValue,
   type PhiServerAddonSchemaDescriptor,
   type PhiServerAddonSelectQueryDescriptor,
@@ -32,9 +34,20 @@ export type PhiServerAddonCompiledQuery = {
   name: string;
   kind: PhiServerAddonQueryDescriptor["kind"];
   table: string;
+  /** The first page, or the whole statement for anything that is not a select. */
   sql: string;
   /** What to bind, in order. Resolved per call against the arguments and the bound context. */
   bindings: PhiServerAddonQueryBinding[];
+  /** Present on a select, and only there. */
+  paging?: {
+    /** The same statement with the keyset clause, for every page after the first. */
+    sql: string;
+    bindings: PhiServerAddonQueryBinding[];
+    /** What the cursor is made of, and what the statement is ordered by. */
+    ordering: PhiServerAddonQueryOrdering[];
+    /** The Add-on's own ceiling, already capped at the hard maximum. */
+    limit: number;
+  };
 };
 
 export type PhiServerAddonQueryBinding =
@@ -44,20 +57,43 @@ export type PhiServerAddonQueryBinding =
   | { from: "site" }
   | { from: "id" }
   | { from: "group" }
-  | { from: "offset" };
+  /** One value out of the cursor, in the order the query's ordering names them. */
+  | { from: "cursor"; index: number }
+  /** The page size Core settled on, plus the one row that answers "is there more". */
+  | { from: "limit" };
 
 /** `now()` is emitted as SQL rather than bound, so the instant is the database's and not the process's. */
 const NOW_SQL = "NOW()";
 
+/**
+ * How a declared parameter type is spelled where PostgreSQL has to be told.
+ *
+ * Only one place needs this: a parameter tested for presence and nothing else. `$1 IS NULL` gives the
+ * server no context to infer a type from, and it refuses the statement rather than guessing -- so the
+ * declared type, which is known here, is written down.
+ */
+const PARAMETER_TYPE_SQL: Readonly<Record<PhiServerAddonQueryParameterType, string>> = {
+  integer: "INTEGER",
+  bigInteger: "BIGINT",
+  text: "TEXT",
+  boolean: "BOOLEAN",
+  instant: "TIMESTAMPTZ",
+  uuid: "UUID",
+};
+
 type Compiler = {
   bindings: PhiServerAddonQueryBinding[];
+  parameterTypes: Map<string, PhiServerAddonQueryParameterType>;
   place(binding: PhiServerAddonQueryBinding): string;
 };
 
-function createCompiler(): Compiler {
+function createCompiler(
+  parameterTypes: Map<string, PhiServerAddonQueryParameterType> = new Map(),
+): Compiler {
   const bindings: PhiServerAddonQueryBinding[] = [];
   return {
     bindings,
+    parameterTypes,
     place(binding) {
       bindings.push(binding);
       return `$${bindings.length}`;
@@ -102,7 +138,64 @@ function conditionSql(
       const joiner = condition.kind === "all" ? " AND " : " OR ";
       return `(${condition.conditions.map((entry) => conditionSql(compiler, entry)).join(joiner)})`;
     }
+    case "whenPresent": {
+      // The parameter is placed twice, which the compiler allows: each `place` binds it again under its
+      // own number, and one call resolves both from the same argument.
+      const given = compiler.place({ from: "parameter", name: condition.parameter });
+      const declared = compiler.parameterTypes.get(condition.parameter);
+      const cast = declared ? `::${PARAMETER_TYPE_SQL[declared]}` : "";
+      return `(${given}${cast} IS NULL OR ${conditionSql(compiler, condition.condition)})`;
+    }
   }
+}
+
+/**
+ * The order a select actually runs under: what it asked for, then its primary key.
+ *
+ * A cursor needs a total order, and an Add-on's own ordering rarely is one. Two rows sharing an
+ * `updated_at` may come back either way round, and the page boundary then falls between them
+ * differently each time -- one row on two pages, another on none. The primary key is declared, so Core
+ * can always finish the job, and no author has to know that they had to.
+ */
+export function phiServerAddonQueryOrdering(
+  table: PhiServerAddonTableDescriptor,
+  descriptor: PhiServerAddonSelectQueryDescriptor,
+): PhiServerAddonQueryOrdering[] {
+  const declared = descriptor.orderBy ?? [];
+  const named = new Set(declared.map((entry) => entry.column));
+  return [
+    ...declared,
+    ...table.primaryKey
+      .filter((column) => !named.has(column))
+      .map((column) => ({ column, direction: "asc" as const })),
+  ];
+}
+
+/**
+ * Where the next page starts, as a comparison against the last row of this one.
+ *
+ * Written out rather than as a row comparison: `ROW(a, b) > ROW(x, y)` only holds when every column
+ * sorts the same way, and a listing that orders by date descending and key ascending is the ordinary
+ * case rather than the exotic one. So each step says "equal so far, and past it here", which is the
+ * same thing and survives mixed directions.
+ *
+ * Every ordering column is `NOT NULL` by validation, which is what makes this sound: a comparison
+ * against null is null, and the page would end early and silently instead of continuing.
+ */
+function keysetSql(compiler: Compiler, ordering: PhiServerAddonQueryOrdering[]) {
+  const branches: string[] = [];
+  for (let index = 0; index < ordering.length; index += 1) {
+    const steps = ordering.slice(0, index).map((entry, position) =>
+      `${quotePhiIdentifier(entry.column)} = ${compiler.place({ from: "cursor", index: position })}`
+    );
+    const last = ordering[index]!;
+    steps.push(
+      `${quotePhiIdentifier(last.column)} ${last.direction === "desc" ? "<" : ">"} ` +
+      `${compiler.place({ from: "cursor", index })}`,
+    );
+    branches.push(`(${steps.join(" AND ")})`);
+  }
+  return `(${branches.join(" OR ")})`;
 }
 
 function qualify(schemaName: string, table: string) {
@@ -142,30 +235,36 @@ function selectableColumns(
   ];
 }
 
+/**
+ * A select is compiled twice: once for the first page, once for every page after it.
+ *
+ * They differ by one clause, and that clause needs the previous page's key values as bind parameters --
+ * which the first call does not have. Two statements rather than one with a null-tolerant comparison,
+ * because the first page is then exactly the statement it would have been without paging at all, and an
+ * operator reading `phis-cli` sees which one runs.
+ */
 function compileSelect(
   schemaName: string,
   table: PhiServerAddonTableDescriptor,
   descriptor: PhiServerAddonSelectQueryDescriptor,
+  continuation: boolean,
+  parameterTypes: Map<string, PhiServerAddonQueryParameterType>,
 ): PhiServerAddonCompiledQuery {
-  const compiler = createCompiler();
+  const compiler = createCompiler(parameterTypes);
+  const ordering = phiServerAddonQueryOrdering(table, descriptor);
   const columns = selectableColumns(table, descriptor)
     .map((column) => quotePhiIdentifier(column))
     .join(", ");
   const clauses = [
     siteScopeSql(compiler, table),
     descriptor.where ? conditionSql(compiler, descriptor.where) : null,
+    continuation ? keysetSql(compiler, ordering) : null,
   ].filter((clause): clause is string => clause !== null);
-  const order = descriptor.orderBy?.length
-    ? ` ORDER BY ${
-      descriptor.orderBy
-        .map((entry) => `${quotePhiIdentifier(entry.column)} ${entry.direction === "desc" ? "DESC" : "ASC"}`)
-        .join(", ")
-    }`
-    : "";
-  const limit = Math.min(descriptor.limit, PHI_SERVER_ADDON_QUERY_MAX_LIMIT);
-  const offset = descriptor.offsetParameter
-    ? ` OFFSET ${compiler.place({ from: "offset" })}`
-    : "";
+  const order = ` ORDER BY ${
+    ordering
+      .map((entry) => `${quotePhiIdentifier(entry.column)} ${entry.direction === "desc" ? "DESC" : "ASC"}`)
+      .join(", ")
+  }`;
   return {
     name: descriptor.name,
     kind: "select",
@@ -173,7 +272,7 @@ function compileSelect(
     sql:
       `SELECT ${columns} FROM ${qualify(schemaName, table.name)}` +
       (clauses.length > 0 ? ` WHERE ${clauses.join(" AND ")}` : "") +
-      `${order} LIMIT ${limit}${offset}`,
+      `${order} LIMIT ${compiler.place({ from: "limit" })}`,
     bindings: compiler.bindings,
   };
 }
@@ -282,7 +381,22 @@ export function compilePhiServerAddonQueries(
       continue;
     }
     if (descriptor.kind === "select") {
-      compiled.set(descriptor.name, compileSelect(schemaName, table, descriptor));
+      const parameterTypes = new Map(
+        (catalog.parameters[descriptor.name] ?? []).map((parameter) =>
+          [parameter.name, parameter.type] as const
+        ),
+      );
+      const first = compileSelect(schemaName, table, descriptor, false, parameterTypes);
+      const next = compileSelect(schemaName, table, descriptor, true, parameterTypes);
+      compiled.set(descriptor.name, {
+        ...first,
+        paging: {
+          sql: next.sql,
+          bindings: next.bindings,
+          ordering: phiServerAddonQueryOrdering(table, descriptor),
+          limit: Math.min(descriptor.limit, PHI_SERVER_ADDON_QUERY_MAX_LIMIT),
+        },
+      });
     } else if (descriptor.kind === "insert") {
       compiled.set(descriptor.name, compileInsert(schemaName, table, descriptor));
     } else if (table.primaryKey.length === 1) {

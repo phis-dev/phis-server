@@ -285,10 +285,10 @@ describe("owner-scoped and group-scoped Add-on tables", () => {
         manifest, manifestDigest: "pgtest-data", siteId: site.id, actorUserId: author,
       }).data!;
 
-      expect(await data.select("mine")).toEqual([]);
+      expect((await data.select("mine")).rows).toEqual([]);
       const added = await data.insert("add", { title: "mine", group_id: groupId });
       expect(added).toMatchObject({ title: "mine", owner_user_id: author, group_id: groupId });
-      const mine = await data.select("mine");
+      const mine = (await data.select("mine")).rows;
       expect(mine).toHaveLength(1);
       expect(mine[0]!.title).toBe("mine");
     });
@@ -327,7 +327,7 @@ describe("owner-scoped and group-scoped Add-on tables", () => {
         await tx.insert("add", { title: "second", group_id: groupId });
         throw new Error("changed my mind");
       })).rejects.toThrow(/changed my mind/);
-      expect(await data.select("mine")).toEqual([]);
+      expect((await data.select("mine")).rows).toEqual([]);
     });
 
     it("writes past the ladder under system authority, which is what a job runs with", async () => {
@@ -436,7 +436,7 @@ describe("owner-scoped and group-scoped Add-on tables", () => {
     }
 
     it("reads", async () => {
-      await expect(dataFor({ unauthenticated: true }).select("mine")).resolves.toEqual([]);
+      expect((await dataFor({ unauthenticated: true }).select("mine")).rows).toEqual([]);
     });
 
     it("refuses an insert, which the ladder would not have caught", async () => {
