@@ -244,6 +244,27 @@ export async function ensureAddonMediaSpace(siteId: number, addonId: string) {
 }
 
 /**
+ * Every Add-on Space on a Site, with the Add-on each one belongs to.
+ *
+ * These Spaces are not browsable and have no owner who could administer them, so nothing else surfaces
+ * them: an administrator asked to size one would have no way to learn it exists or which Add-on it is.
+ * Reported rather than made browsable, because what is in them is the Add-on's business and what they
+ * cost is the Site's.
+ */
+export async function listAddonMediaSpaces(siteId: number) {
+  const { rows } = await getPool().query<SpaceRow & { addon_id: string }>(
+    `SELECT s.id, s.site_id, s.kind, s.user_id, s.group_id, s.default_storage_profile_id,
+            s.quota_bytes, s.used_bytes, ${liveReservedBytes("s")} AS reserved_bytes, s.flags,
+            s.addon_id
+       FROM phis.media_spaces s
+      WHERE s.site_id = $1 AND s.kind = $2
+      ORDER BY s.addon_id`,
+    [siteId, PhiMediaSpaceKind.Addon],
+  );
+  return rows.map((row) => ({ addonId: row.addon_id, space: mapSpace(row) }));
+}
+
+/**
  * Whether this endpoint was found to check a digest a client asserts.
  *
  * Read from what the probe recorded rather than inferred from the Provider, because one adapter speaks
@@ -384,6 +405,7 @@ export async function reserveMediaSpaceQuota(input: { spaceId: number; bytes: nu
                 CASE s.kind
                   WHEN ${PhiMediaSpaceKind.User} THEN c.default_user_quota_bytes
                   WHEN ${PhiMediaSpaceKind.Group} THEN c.default_group_quota_bytes
+                  WHEN ${PhiMediaSpaceKind.Addon} THEN c.default_addon_quota_bytes
                 END
               ) AS quota
        FROM phis.media_spaces s
@@ -417,6 +439,8 @@ export type SiteMediaConfigRecord = {
   /** The ceiling a Space-level override may not exceed; `null` is no ceiling. */
   maxUserQuotaBytes: number | null;
   maxGroupQuotaBytes: number | null;
+  defaultAddonQuotaBytes: number | null;
+  maxAddonQuotaBytes: number | null;
   maxObjectBytes: number;
   /**
    * What each delegated Space accepts, derived from the active Modules rather than administered.
@@ -431,7 +455,8 @@ export type SiteMediaConfigRecord = {
 function mapSiteMediaConfig(row: {
   site_id: number; flags: number; default_user_quota_bytes: number | string | null;
   default_group_quota_bytes: number | string | null; max_user_quota_bytes?: number | string | null;
-  max_group_quota_bytes?: number | string | null; max_object_bytes: number | string;
+  max_group_quota_bytes?: number | string | null; default_addon_quota_bytes?: number | string | null;
+  max_addon_quota_bytes?: number | string | null; max_object_bytes: number | string;
   user_space_content_kinds?: readonly string[] | null;
   group_space_content_kinds?: readonly string[] | null;
 }): SiteMediaConfigRecord {
@@ -442,6 +467,8 @@ function mapSiteMediaConfig(row: {
     defaultGroupQuotaBytes: asNumber(row.default_group_quota_bytes),
     maxUserQuotaBytes: asNumber(row.max_user_quota_bytes ?? null),
     maxGroupQuotaBytes: asNumber(row.max_group_quota_bytes ?? null),
+    defaultAddonQuotaBytes: asNumber(row.default_addon_quota_bytes ?? null),
+    maxAddonQuotaBytes: asNumber(row.max_addon_quota_bytes ?? null),
     maxObjectBytes: asNumber(row.max_object_bytes) ?? 0,
     userSpaceContentKinds: row.user_space_content_kinds ?? [],
     groupSpaceContentKinds: row.group_space_content_kinds ?? [],
@@ -454,17 +481,20 @@ function mapSiteMediaConfig(row: {
 export function resolveMediaQuotaCeilingBytes(kind: number, config: SiteMediaConfigRecord) {
   if (kind === PhiMediaSpaceKind.User) return config.maxUserQuotaBytes;
   if (kind === PhiMediaSpaceKind.Group) return config.maxGroupQuotaBytes;
+  if (kind === PhiMediaSpaceKind.Addon) return config.maxAddonQuotaBytes;
   return null;
 }
 
 const SITE_MEDIA_CONFIG_COLUMNS = `site_id, flags, default_user_quota_bytes, default_group_quota_bytes,
-            max_user_quota_bytes, max_group_quota_bytes, max_object_bytes,
+            max_user_quota_bytes, max_group_quota_bytes,
+            default_addon_quota_bytes, max_addon_quota_bytes, max_object_bytes,
             user_space_content_kinds, group_space_content_kinds`;
 
 type SiteMediaConfigRow = {
   site_id: number; flags: number; default_user_quota_bytes: number | string | null;
   default_group_quota_bytes: number | string | null; max_user_quota_bytes: number | string | null;
-  max_group_quota_bytes: number | string | null; max_object_bytes: number | string;
+  max_group_quota_bytes: number | string | null; default_addon_quota_bytes: number | string | null;
+  max_addon_quota_bytes: number | string | null; max_object_bytes: number | string;
   user_space_content_kinds: string[] | null;
   group_space_content_kinds: string[] | null;
 };
@@ -886,6 +916,8 @@ export type SiteMediaConfigUpdate = {
   defaultGroupQuotaBytes?: number | null;
   maxUserQuotaBytes?: number | null;
   maxGroupQuotaBytes?: number | null;
+  defaultAddonQuotaBytes?: number | null;
+  maxAddonQuotaBytes?: number | null;
   /** Always positive: the schema does not allow a Site to accept an object of any size. */
   maxObjectBytes?: number;
 };
@@ -910,7 +942,8 @@ export async function updateSiteMediaConfig(
     `UPDATE phis.site_media_config
      SET default_user_quota_bytes = $2, default_group_quota_bytes = $3,
          max_user_quota_bytes = $4, max_group_quota_bytes = $5,
-         max_object_bytes = $6, updated_at = NOW()
+         default_addon_quota_bytes = $6, max_addon_quota_bytes = $7,
+         max_object_bytes = $8, updated_at = NOW()
      WHERE site_id = $1
      RETURNING ${SITE_MEDIA_CONFIG_COLUMNS}`,
     [
@@ -919,6 +952,8 @@ export async function updateSiteMediaConfig(
       update.defaultGroupQuotaBytes !== undefined ? update.defaultGroupQuotaBytes : current.defaultGroupQuotaBytes,
       update.maxUserQuotaBytes !== undefined ? update.maxUserQuotaBytes : current.maxUserQuotaBytes,
       update.maxGroupQuotaBytes !== undefined ? update.maxGroupQuotaBytes : current.maxGroupQuotaBytes,
+      update.defaultAddonQuotaBytes !== undefined ? update.defaultAddonQuotaBytes : current.defaultAddonQuotaBytes,
+      update.maxAddonQuotaBytes !== undefined ? update.maxAddonQuotaBytes : current.maxAddonQuotaBytes,
       update.maxObjectBytes !== undefined ? update.maxObjectBytes : current.maxObjectBytes,
     ],
   );

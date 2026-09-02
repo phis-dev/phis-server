@@ -311,6 +311,11 @@ CREATE TABLE IF NOT EXISTS phis.site_media_config (
   -- one is not delegated capacity: an actor who can raise their own allowance has no allowance.
   max_user_quota_bytes BIGINT NULL,
   max_group_quota_bytes BIGINT NULL,
+  -- The fourth kind, on the same two rails as the others. An Add-on's files live in a Space of their
+  -- own precisely so that the Space's quota IS the Add-on's quota, which only works if that Space
+  -- inherits a Site default like every other delegated Space rather than being born unlimited.
+  default_addon_quota_bytes BIGINT NULL,
+  max_addon_quota_bytes BIGINT NULL,
   flags INT NOT NULL DEFAULT 0,
   max_object_bytes BIGINT NOT NULL DEFAULT 26214400,
   -- What a delegated Space accepts, derived from the active Modules on publish and never written by an
@@ -326,6 +331,8 @@ CREATE TABLE IF NOT EXISTS phis.site_media_config (
     (default_group_quota_bytes IS NULL OR default_group_quota_bytes >= 0) AND
     (max_user_quota_bytes IS NULL OR max_user_quota_bytes >= 0) AND
     (max_group_quota_bytes IS NULL OR max_group_quota_bytes >= 0) AND
+    (default_addon_quota_bytes IS NULL OR default_addon_quota_bytes >= 0) AND
+    (max_addon_quota_bytes IS NULL OR max_addon_quota_bytes >= 0) AND
     max_object_bytes > 0
   )
 );

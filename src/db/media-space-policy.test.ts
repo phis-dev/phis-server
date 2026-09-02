@@ -25,6 +25,8 @@ function config(overrides: Partial<SiteMediaConfigRecord> = {}): SiteMediaConfig
     groupSpaceContentKinds: [],
     maxUserQuotaBytes: null,
     maxGroupQuotaBytes: null,
+    defaultAddonQuotaBytes: null,
+    maxAddonQuotaBytes: null,
     maxObjectBytes: 26_214_400,
     ...overrides,
   };
@@ -213,9 +215,12 @@ describe("Media Space addresses", () => {
 
 describe("Media quota ceiling", () => {
   it("applies per Space kind and never to the Site Space", () => {
-    const limited = config({ maxUserQuotaBytes: 100, maxGroupQuotaBytes: 200 });
+    const limited = config({ maxUserQuotaBytes: 100, maxGroupQuotaBytes: 200, maxAddonQuotaBytes: 300 });
     expect(resolveMediaQuotaCeilingBytes(PhiMediaSpaceKind.User, limited)).toBe(100);
     expect(resolveMediaQuotaCeilingBytes(PhiMediaSpaceKind.Group, limited)).toBe(200);
+    // An Add-on's Space is delegated capacity like the other two: the Space's quota is the Add-on's
+    // quota, so a ceiling on it is a ceiling on the Add-on.
+    expect(resolveMediaQuotaCeilingBytes(PhiMediaSpaceKind.Addon, limited)).toBe(300);
     // The Site Space is not delegated capacity, so no ceiling is measured against it.
     expect(resolveMediaQuotaCeilingBytes(PhiMediaSpaceKind.Site, limited)).toBeNull();
   });

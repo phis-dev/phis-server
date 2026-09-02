@@ -3,11 +3,13 @@ import { NextResponse } from "next/server";
 
 import {
   ensureSiteMediaConfig,
+  listAddonMediaSpaces,
   updateSiteMediaConfig,
   type SiteMediaConfigRecord,
   type SiteMediaConfigUpdate,
 } from "@/db/media-spaces";
 import { PhiSiteMediaFlags } from "@/lib/constants/media";
+import { serializeMediaSpace } from "@/lib/media-response";
 import { requireSiteDeveloperApiContext } from "@/lib/guards/site-admin-api";
 import { logRuntimeEvent } from "@/lib/log";
 
@@ -27,6 +29,8 @@ function serializeMediaConfig(config: SiteMediaConfigRecord) {
     defaultGroupQuotaBytes: config.defaultGroupQuotaBytes,
     maxUserQuotaBytes: config.maxUserQuotaBytes,
     maxGroupQuotaBytes: config.maxGroupQuotaBytes,
+    defaultAddonQuotaBytes: config.defaultAddonQuotaBytes,
+    maxAddonQuotaBytes: config.maxAddonQuotaBytes,
     maxObjectBytes: config.maxObjectBytes,
     // Read-only, like availability beside it: what a delegated Space accepts follows the active
     // Modules, because only a Module knows what its Space is for.
@@ -59,7 +63,23 @@ export async function GET(request: NextRequest) {
   const { context, error } = await requireSiteDeveloperApiContext(request);
   if (error) return error;
   const site = context!.site!;
-  return NextResponse.json({ media: serializeMediaConfig(await ensureSiteMediaConfig(site.id)) });
+  const config = await ensureSiteMediaConfig(site.id);
+  const addonSpaces = await listAddonMediaSpaces(site.id);
+  return NextResponse.json({
+    media: serializeMediaConfig(config),
+    /*
+     * The Add-on Spaces this Site holds, so a Site default can be departed from for one of them.
+     *
+     * They appear here and nowhere else. An Add-on Space has no owner to administer it and is absent
+     * from every Space listing on purpose, so without this an administrator could set the Site default
+     * and nothing else -- the per-Space override on `PATCH /api/site/media/spaces/<id>` would be a route
+     * whose address nobody could learn.
+     */
+    addonSpaces: addonSpaces.map(({ addonId, space }) => ({
+      addonId,
+      ...serializeMediaSpace(space, config),
+    })),
+  });
 }
 
 export async function PATCH(request: NextRequest) {
@@ -87,6 +107,10 @@ export async function PATCH(request: NextRequest) {
     // The ceiling a Space-level override may not exceed; `null` clears it back to no ceiling.
     maxUserQuotaBytes: readOptionalQuota(body.maxUserQuotaBytes, "maxUserQuotaBytes", issues),
     maxGroupQuotaBytes: readOptionalQuota(body.maxGroupQuotaBytes, "maxGroupQuotaBytes", issues),
+    // The fourth kind on the same two rails. An Add-on's Space is not browsable and has no owner to
+    // administer it, so without a Site default it would be the one delegated Space born unlimited.
+    defaultAddonQuotaBytes: readOptionalQuota(body.defaultAddonQuotaBytes, "defaultAddonQuotaBytes", issues),
+    maxAddonQuotaBytes: readOptionalQuota(body.maxAddonQuotaBytes, "maxAddonQuotaBytes", issues),
     // How much of it fits, which is capacity and therefore the operator's. What a Space accepts is not
     // here: it follows the Modules, because only a Module knows what its Space is for.
     maxObjectBytes: readObjectSize(body.maxObjectBytes, issues),

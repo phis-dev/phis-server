@@ -659,6 +659,18 @@ runs on more than one Instance: a JSON file lives on one host, while every Insta
 Lowering a default or an override below current usage never deletes or hides an Asset. The Space simply
 accepts no new reservation until usage falls below the effective quota.
 
+All four kinds ride the same two rails, and the fourth needs them most. An Add-on Space has no owner: no
+user whose page shows the figure, no group Manager to notice it filling. If it did not inherit
+`default_addon_quota_bytes` it would be the one delegated Space born unlimited, and nothing would say so
+until the disk did. The ceiling `max_addon_quota_bytes` is there for the same reason as the other two --
+capacity delegated without one is not delegated capacity -- and applies wherever the override is set by
+authority short of Developer and Admin.
+
+Setting one is the ordinary Space route, `PATCH /api/site/media/spaces/<id>`, because an Add-on Space is
+a Space. What it needs beyond the others is a way to be found: it is deliberately absent from every Space
+listing, so `GET /api/site/admin/media` reports the Add-on Spaces a Site holds beside the defaults. What
+is *in* them stays the Add-on's business; what they cost is the Site's.
+
 Quota enforcement is transactional:
 
 1. resolve the trusted destination Space and operation policy;
