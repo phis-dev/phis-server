@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-import { ensureSiteMediaConfig } from "@/db/media-spaces";
+import { ensureSiteMediaConfig, listAddonMediaSpaces } from "@/db/media-spaces";
 import { PhiSiteMediaFlags } from "@/lib/constants/media";
 import { createJsonResponse } from "@/lib/api-response";
 import { guardApiV1 } from "@/lib/api-v1-guard";
@@ -25,12 +25,33 @@ export async function GET(request: Request) {
   }
 
   const config = await ensureSiteMediaConfig(site.id);
+  /*
+   * The Add-on Spaces this Site holds, reported and not offered.
+   *
+   * They appear in no Space listing and have no owner, so an administrator would otherwise have no way
+   * to learn that a store exists, what it is costing, or which Add-on to name when sizing one. What is
+   * in them stays the Add-on's business; what they cost is the Site's.
+   */
+  const addonSpaces = await listAddonMediaSpaces(site.id);
   return createJsonResponse(request, {
+    addonSpaces: addonSpaces.map(({ addonId, space }) => ({
+      addonId,
+      spaceId: space.id,
+      usedBytes: space.usedBytes,
+      reservedBytes: space.reservedBytes,
+      quotaBytes: space.quotaBytes,
+    })),
     media: {
       userSpacesEnabled: (config.flags & PhiSiteMediaFlags.UserSpacesEnabled) !== 0,
       groupSpacesEnabled: (config.flags & PhiSiteMediaFlags.GroupSpacesEnabled) !== 0,
       defaultUserQuotaBytes: config.defaultUserQuotaBytes,
       defaultGroupQuotaBytes: config.defaultGroupQuotaBytes,
+      defaultAddonQuotaBytes: config.defaultAddonQuotaBytes,
+      // The ceilings belong beside the defaults they bound. Without them the page can offer a default
+      // it cannot show a limit for, and the limit is the half that refuses.
+      maxUserQuotaBytes: config.maxUserQuotaBytes,
+      maxGroupQuotaBytes: config.maxGroupQuotaBytes,
+      maxAddonQuotaBytes: config.maxAddonQuotaBytes,
       maxObjectBytes: config.maxObjectBytes,
       userSpaceContentKinds: config.userSpaceContentKinds,
       groupSpaceContentKinds: config.groupSpaceContentKinds,
