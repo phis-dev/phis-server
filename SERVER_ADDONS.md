@@ -899,7 +899,7 @@ query rather than describing one:
 select(name, args)     -> a page of rows
 aggregate(name, args)  -> a page of counts and summaries
 insert(name, args)     -> the inserted row, scope columns included
-update(name, args)     -> rows touched
+update(name, args)     -> the row as it now stands, or null
 delete(name, args)     -> the removed row, or null
 transaction(body)      -> whatever the body returns
 ```
@@ -919,15 +919,17 @@ Three things Core does here that an Add-on cannot influence:
   actor is not in. They stay readable: "the rows that are mine" needs `owner_user_id` by name.
 - **`update` and `delete` are checked before they run.** Both address exactly one row by its primary
   key, and Core applies the same row authority `authorization:v1` answers with. A refused mutation
-  reports nothing touched, which is also what a missing row reports: telling the two apart would
-  report the existence of a row the caller may not have.
+  answers `null`, which is also what a missing row answers: telling the two apart would report the
+  existence of a row the caller may not have.
 
-  `delete` answers with the row it removed, and `null` for that same pair of refusals -- which withholds
-  exactly as much, since a row comes back only where the deletion actually happened. It is the only
-  moment those columns can be had: a row naming an object in the Add-on's store is the last record of
-  that object, and once the statement has run there is nothing left to ask. Without it the bytes stay,
-  counted against the quota, belonging to nobody. Where the file was declared as an **asset** the
-  question does not arise at all, because Core removes those rows itself through the cascade.
+  Every mutation answers with the row it wrote, and `null` for that same pair of refusals -- which
+  withholds exactly as much, since a row comes back only where the write actually happened. On an
+  `update` that is the row as it now stands rather than the values that were sent, and the two part
+  company wherever a default, a constraint, or a column the query did not name had a say. On a `delete`
+  it is the only moment those columns can be had at all: a row naming an object in the Add-on's store is
+  the last record of that object, and once the statement has run there is nothing left to ask -- the
+  bytes would stay, counted against the quota, belonging to nobody. Where the file was declared as an
+  **asset** that question does not arise, because Core removes those rows itself through the cascade.
 
 `mayActOnRow` and this enforcement answer the same question on purpose. The capability is for deciding
 what to offer a user -- whether to render the delete control; the write path is what actually holds. A

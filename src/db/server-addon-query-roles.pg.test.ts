@@ -235,7 +235,8 @@ describe("a query that requires a role", () => {
     await expect(data(vendor).update("rename", { id, label: "after" }))
       .rejects.toThrow(/requires the role "curator"/);
 
-    expect(await data(curator).update("rename", { id, label: "after" })).toBe(1);
+    expect(await data(curator).update("rename", { id, label: "after" }))
+      .toMatchObject({ label: "after" });
     const rows = (await data(curator).select("all")).rows;
     expect(rows.some((row) => row.label === "after")).toBe(true);
   });

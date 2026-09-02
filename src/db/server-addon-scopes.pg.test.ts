@@ -301,7 +301,7 @@ describe("owner-scoped and group-scoped Add-on tables", () => {
       const asIntruder = buildPhiServerAddonCapabilities({
         manifest, manifestDigest: "pgtest-data", siteId: site.id, actorUserId: intruder,
       }).data!;
-      expect(await asIntruder.update("rename", { id: theirs, title: "hijacked" })).toBe(0);
+      expect(await asIntruder.update("rename", { id: theirs, title: "hijacked" })).toBeNull();
       expect(await asIntruder.delete("drop", { id: theirs })).toBeNull();
 
       const pool = await requirePhiTestDatabase();
@@ -314,7 +314,8 @@ describe("owner-scoped and group-scoped Add-on tables", () => {
       const asOwner = buildPhiServerAddonCapabilities({
         manifest, manifestDigest: "pgtest-data", siteId: site.id, actorUserId: author,
       }).data!;
-      expect(await asOwner.update("rename", { id: theirs, title: "renamed" })).toBe(1);
+      expect(await asOwner.update("rename", { id: theirs, title: "renamed" }))
+        .toMatchObject({ title: "renamed" });
     });
 
     it("undoes the whole unit of work when the body throws", async () => {
@@ -343,12 +344,13 @@ describe("owner-scoped and group-scoped Add-on tables", () => {
         actorUserId: null,
         systemAuthority: true,
       }).data!;
-      expect(await asJob.update("rename", { id: theirs, title: "swept" })).toBe(1);
+      expect(await asJob.update("rename", { id: theirs, title: "swept" }))
+        .toMatchObject({ title: "swept" });
 
       const asNobody = buildPhiServerAddonCapabilities({
         manifest, manifestDigest: "pgtest-data", siteId: site.id, actorUserId: null,
       }).data!;
-      expect(await asNobody.update("rename", { id: theirs, title: "not swept" })).toBe(0);
+      expect(await asNobody.update("rename", { id: theirs, title: "not swept" })).toBeNull();
     });
 
     it("refuses a query name the manifest never declared", async () => {

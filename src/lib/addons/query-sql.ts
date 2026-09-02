@@ -505,7 +505,9 @@ function compileByIdMutation(
     table: table.name,
     scoped: table.ownerScoped === true || table.groupScoped === true,
     sql: descriptor.kind === "update"
-      ? `UPDATE ${qualify(schemaName, table.name)} SET ${assignments} WHERE ${where}`
+      // The row as it now stands, so a caller reads what was written rather than what it sent. The two
+      // differ wherever a default, a constraint or another column had a say.
+      ? `UPDATE ${qualify(schemaName, table.name)} SET ${assignments} WHERE ${where} RETURNING ${returningSql(table)}`
       /*
        * A delete hands back the row it removed, which is the only moment it can be had.
        *

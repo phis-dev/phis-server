@@ -127,7 +127,8 @@ describe("compiling a declared query", () => {
 
   it("addresses one row and carries the Site with it", () => {
     expect(compiled().get("rename")!.sql).toBe(
-      'UPDATE "phis_addon_acme_shop"."listing" SET "title" = $1 WHERE "id" = $2 AND "site_id" = $3',
+      'UPDATE "phis_addon_acme_shop"."listing" SET "title" = $1 WHERE "id" = $2 AND "site_id" = $3 ' +
+      'RETURNING "id", "title", "state", "retired_at", "site_id", "group_id", "owner_user_id"',
     );
     // The delete names its columns back, because after it has run there is nothing left to ask them of.
     expect(compiled().get("drop")!.sql).toBe(

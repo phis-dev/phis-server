@@ -379,7 +379,9 @@ function buildOperations(db: Queryable, bound: Bound): PhiServerDataTransactionV
       return (await run(db, bound, name, "insert", args)).rows[0] ?? null;
     },
     async update(name, args = {}) {
-      return (await run(db, bound, name, "update", args)).rowCount;
+      // The row as it stands after the write. A refusal comes back as an empty result and so answers
+      // null, which is what a row that was never there answers too.
+      return (await run(db, bound, name, "update", args)).rows[0] ?? null;
     },
     async delete(name, args = {}) {
       // The removed row, not a count. A refusal comes back as an empty result and so answers null, which
