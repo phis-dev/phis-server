@@ -79,8 +79,9 @@ describe("schema DDL generation", () => {
         ...rest,
       ],
     });
-    expect(withAudience.find((entry) => entry.summary === "point incident.audience at core.group")!.sql)
-      .toContain('FOREIGN KEY ("audience", "site_id") REFERENCES phis.site_groups(id, site_id)');
+    expect(withAudience.find(
+      (entry) => entry.summary === "point incident.audience at core.group within its Site",
+    )!.sql).toContain('FOREIGN KEY ("audience", "site_id") REFERENCES phis.site_groups(id, site_id)');
   });
 
   it("resolves a symbolic Core reference to a table an Add-on never names", () => {
@@ -287,11 +288,12 @@ describe("the asset table", () => {
     );
   });
 
-  it("holds a single-valued slot to one finished file, and says nothing about pending ones", () => {
-    const sql = assetSql("hold incident_assets to one finished file per slot");
+  it("holds a single-valued slot to one file, and leaves the accumulating one alone", () => {
+    // Plainly unique, because every row here is a finished file. It was partial while a transfer in
+    // flight lived in this table too; that record is Core's upload session now.
+    const sql = assetSql("hold incident_assets to one file per slot");
     expect(sql).toContain("CREATE UNIQUE INDEX");
-    expect(sql).toContain(`WHERE "status" = 2 AND "slot" IN ('report')`);
-    // `photos` accumulates and must not appear in the rule that permits one.
+    expect(sql).toContain(`WHERE "slot" IN ('report')`);
     expect(sql).not.toContain("photos");
   });
 
@@ -307,15 +309,21 @@ describe("the asset table", () => {
     expect(many.some((entry) => entry.summary.includes("one finished file"))).toBe(false);
   });
 
-  it("refuses two rows naming one object", () => {
-    expect(assetSql("create table incident_assets")).toContain(
-      'UNIQUE ("storage_key")',
-    );
+  it("refuses two rows on one file", () => {
+    expect(assetSql("create table incident_assets")).toContain('UNIQUE ("media_asset_id")');
   });
 
-  it("indexes the reservations that were never completed", () => {
-    expect(assetSql("index incident_assets by expiry")).toContain(
-      `("expires_at") WHERE "status" = 1`,
+  it("holds a link and none of the facts, which live once in media_assets", () => {
+    /*
+     * Two records of one thing eventually disagree. Where the object is, how big it turned out and
+     * which digest it carries are Core's answers already, for every upload it has ever handled.
+     */
+    const sql = assetSql("create table incident_assets");
+    for (const copied of ["storage_key", "byte_size", "content_type", "checksum_sha256"]) {
+      expect(sql).not.toContain(copied);
+    }
+    expect(sql).toContain(
+      'FOREIGN KEY ("media_asset_id", "site_id") REFERENCES phis.media_assets(id, site_id) ON DELETE CASCADE',
     );
   });
 });

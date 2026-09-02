@@ -237,8 +237,18 @@ describe("Group Space ownership", () => {
       .exec(schema)?.[0];
     expect(declaration).toBeDefined();
     expect(declaration).not.toContain("ON DELETE");
-    // Declared with the table rather than altered afterwards: pre-v1 the create script is the schema.
-    expect(schema).not.toContain("ALTER TABLE phis.media_spaces");
+    /*
+     * Declared with the table rather than altered afterwards: pre-v1 the create script is the schema,
+     * so a column or a rule that changes is changed where it was written and the database is rebuilt.
+     *
+     * The one exception is a reference forward. `media_spaces` is created long before `server_addons`
+     * exists, so the Add-on Space's foreign key cannot be stated with the table however much one would
+     * like it to be. That is not schema evolution and it does not open the door to any: everything
+     * else about the table still has to be declared in one place.
+     */
+    const alters = [...schema.matchAll(/ALTER TABLE phis\.media_spaces\s+(\w+)[^;]*;/gu)]
+      .map((match) => match[0]);
+    expect(alters.every((statement) => statement.includes("media_spaces_addon_fk"))).toBe(true);
   });
 });
 

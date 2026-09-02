@@ -51,7 +51,18 @@ const CORE_REFERENCE_TARGETS: Record<string, { table: string; column: string; ty
     column: "id",
     type: "INTEGER",
   },
+  [PHI_SERVER_ADDON_CORE_REFERENCES.mediaAsset]: {
+    table: "phis.media_assets",
+    column: "id",
+    type: "INTEGER",
+  },
 };
+
+/** The Core references Core binds together with the Site, because their targets live inside one. */
+const SITE_BOUND_CORE_REFERENCES = new Set<string>([
+  PHI_SERVER_ADDON_CORE_REFERENCES.group,
+  PHI_SERVER_ADDON_CORE_REFERENCES.mediaAsset,
+]);
 
 /**
  * The physical Core tables an Add-on's schema may point at.
@@ -125,8 +136,13 @@ function qualify(schemaName: string, table: string) {
  * the table carries for exactly this purpose. The id alone would let a row name a group of another
  * Site, and no Add-on would see that it had done so.
  */
-function groupForeignKey(schemaName: string, tableName: string, columnName: string) {
-  const target = CORE_REFERENCE_TARGETS[PHI_SERVER_ADDON_CORE_REFERENCES.group];
+function coreSiteBoundForeignKey(
+  schemaName: string,
+  tableName: string,
+  columnName: string,
+  reference: string,
+) {
+  const target = CORE_REFERENCE_TARGETS[reference]!;
   return (
     `ALTER TABLE ${qualify(schemaName, tableName)} ADD CONSTRAINT ` +
     `${quotePhiIdentifier(composePhiServerAddonObjectName(tableName, columnName, "fk"))} ` +
@@ -259,21 +275,21 @@ export type PhiServerAddonSchemaStatement = {
  * the grants, which are the migration runner's business and not the descriptor's.
  */
 /**
- * The columns of the table Core keeps beside a table that declares assets.
+ * The table Core keeps beside a table that declares assets.
  *
- * Every one of them is Core's. An Add-on names a slot and hands over bytes; what the object is called,
- * how big it turned out, and whether it ever arrived are answers Core writes and the Add-on reads.
+ * It holds a link and nothing else. Where the object is, how big it turned out, what type it is and
+ * which digest it carries are facts Core already keeps in `media_assets` for every upload it has ever
+ * handled -- copying them here would be a second record of one thing, and two records of one thing
+ * eventually disagree.
  *
- * `status` is why the table can be trusted. A row is written before the transfer starts, as `pending`
- * with an `expires_at`, and becomes `ready` only once the bytes are complete. So the state that would
- * otherwise be undetectable -- a row naming an object that is not there -- is instead the most visible
- * thing in the table, findable with a `WHERE` rather than by listing a bucket.
+ * So a row is: which Site, which parent row, which slot, which file. Three of those five columns are
+ * Core's scope columns; `slot` is the only fact that belongs to the Add-on.
+ *
+ * The link is bound to the Site and cascades. Bound, because an id alone would let a row of one Site
+ * name a file of another and nothing in the declaration would show it. Cascading, because a file
+ * removed in the Media view has to be able to go: the parent row survives and simply has nothing to
+ * deliver, which is what makes deleting one a usable answer to somebody uploading rubbish.
  */
-export const PHI_SERVER_ADDON_ASSET_STATUS = { pending: 1, ready: 2 } as const;
-
-/** The longest an object key can be, matching what `media_assets` allows for the same thing. */
-const ASSET_STORAGE_KEY_LENGTH = 512;
-
 function assetTableStatements(
   schemaName: string,
   table: PhiServerAddonTableDescriptor,
@@ -281,10 +297,11 @@ function assetTableStatements(
   const slots = table.assets ?? [];
   const name = composePhiServerAddonAssetTableName(table.name);
   const key = table.columns.find((column) => column.name === table.primaryKey[0]);
-  // The parent's key type, not a guess at it: an `identity` key is `BIGINT` on the referring side, and a
-  // `uuid` key is a `UUID`. Naming a width here would compile and then refuse every insert.
+  // The parent's key type, not a guess at it: an `identity` key is `BIGINT` on the side that points at
+  // it, and a `uuid` key is a `UUID`. Naming a width here would compile and then refuse every insert.
   const ownerType = key && !isReferenceColumn(key) ? REFERENCED_KEY_TYPE_SQL[key.type]! : "BIGINT";
   const site = CORE_REFERENCE_TARGETS[PHI_SERVER_ADDON_CORE_REFERENCES.site];
+  const asset = CORE_REFERENCE_TARGETS[PHI_SERVER_ADDON_CORE_REFERENCES.mediaAsset];
   const constraint = (part: string, suffix: "idx" | "check" | "fk" | "uq") =>
     quotePhiIdentifier(composePhiServerAddonObjectName(name, part, suffix));
 
@@ -297,49 +314,26 @@ function assetTableStatements(
         `"id" BIGINT GENERATED ALWAYS AS IDENTITY`,
         `"owner_id" ${ownerType} NOT NULL`,
         `"slot" VARCHAR(64) NOT NULL`,
-        `"status" SMALLINT NOT NULL`,
-        `"storage_key" VARCHAR(${ASSET_STORAGE_KEY_LENGTH}) NOT NULL`,
-        `"byte_size" BIGINT NOT NULL`,
-        `"content_type" VARCHAR(128) NOT NULL`,
-        `"checksum_sha256" CHAR(64) NULL`,
-        /*
-         * What the reservation is redeemed with, and only while it is one.
-         *
-         * It is the authority on the transfer itself: it is high-entropy, single-use, expires, and
-         * names exactly one object key at exactly one size. That is precisely what a presigned PUT
-         * grants, and holding the Core-hosted plan to a stricter rule would make the same reservation
-         * safe against S3 and unsafe against local storage.
-         *
-         * Nulled once the row is finished, so the unique key holds only over live reservations.
-         */
-        `"upload_token" VARCHAR(128) NULL`,
-        // Only a pending row has one. It is what makes an abandoned upload collectable without asking
-        // the storage anything.
-        `"expires_at" TIMESTAMPTZ NULL`,
+        `"media_asset_id" ${asset.type} NOT NULL`,
         `"created_at" TIMESTAMPTZ NOT NULL DEFAULT NOW()`,
-        `"updated_at" TIMESTAMPTZ NOT NULL DEFAULT NOW()`,
         `PRIMARY KEY ("id")`,
         // The slot vocabulary, in the database rather than only in the descriptor: a manifest can be
         // replaced, and rows written under a slot that no longer exists would be invisible to every
-        // query and still counted against the quota.
+        // query and still hold a file.
         `CONSTRAINT ${constraint("slot", "check")} CHECK ("slot" IN (${
           slots.map((slot) => quoteLiteral(slot.name)).join(", ")
         }))`,
-        `CONSTRAINT ${constraint("status", "check")} CHECK ("status" IN (${
-          Object.values(PHI_SERVER_ADDON_ASSET_STATUS).join(", ")
-        }))`,
-        `CONSTRAINT ${constraint("size", "check")} CHECK ("byte_size" >= 0)`,
-        // One row per object. Two rows naming one object would make the first deletion take the second
-        // one's bytes, and nothing about either row would show why.
-        `CONSTRAINT ${constraint("storage_key", "uq")} UNIQUE ("storage_key")`,
-        `CONSTRAINT ${constraint("upload_token", "uq")} UNIQUE ("upload_token")`,
-        // The parent, within its Site. The cascade is the point of the whole table: removing a row takes
-        // the rows describing its files, and the objects they named become collectable.
+        // One row per file. Two rows on one file would make the first removal take the second one's
+        // subject away, and nothing about either row would show why.
+        `CONSTRAINT ${constraint("media_asset_id", "uq")} UNIQUE ("media_asset_id")`,
         `CONSTRAINT ${constraint("owner_id", "fk")} FOREIGN KEY ("owner_id", ${
           quotePhiIdentifier(PHI_SERVER_ADDON_SITE_COLUMN)
         }) REFERENCES ${qualify(schemaName, table.name)}(${
           quotePhiIdentifier(table.primaryKey[0]!)
         }, ${quotePhiIdentifier(PHI_SERVER_ADDON_SITE_COLUMN)}) ON DELETE CASCADE`,
+        `CONSTRAINT ${constraint("media_asset_id", "fk")} FOREIGN KEY ("media_asset_id", ${
+          quotePhiIdentifier(PHI_SERVER_ADDON_SITE_COLUMN)
+        }) REFERENCES ${asset.table}(${asset.column}, ${PHI_SERVER_ADDON_SITE_COLUMN}) ON DELETE CASCADE`,
         `CONSTRAINT ${constraint(PHI_SERVER_ADDON_SITE_COLUMN, "fk")} FOREIGN KEY (${
           quotePhiIdentifier(PHI_SERVER_ADDON_SITE_COLUMN)
         }) REFERENCES ${site.table}(${site.column}) ON DELETE CASCADE`,
@@ -358,30 +352,20 @@ function assetTableStatements(
   const single = slots.filter((slot) => slot.cardinality === "one");
   if (single.length > 0) {
     /*
-     * One finished file per single-valued slot, and the partial index is what makes that survivable.
+     * One file per single-valued slot, plainly, because every row in this table is a finished file.
      *
-     * A plain unique key would count the pending row too, and so would refuse the upload meant to
-     * replace the current file -- leaving replacement possible only by deleting first, which is exactly
-     * the window where a failed transfer loses the file it was replacing.
+     * It was a partial index while an upload in progress lived here too: counting that row would have
+     * refused the transfer meant to replace the current file. The reservation now lives in Core's
+     * upload session instead, so nothing here is provisional and the rule can say what it means.
      */
     statements.push({
-      summary: `hold ${name} to one finished file per slot`,
+      summary: `hold ${name} to one file per slot`,
       sql:
         `CREATE UNIQUE INDEX ${constraint("one", "idx")} ON ${qualify(schemaName, name)} ` +
         `(${quotePhiIdentifier(PHI_SERVER_ADDON_SITE_COLUMN)}, "owner_id", "slot") ` +
-        `WHERE "status" = ${PHI_SERVER_ADDON_ASSET_STATUS.ready} AND "slot" IN (${
-          single.map((slot) => quoteLiteral(slot.name)).join(", ")
-        })`,
+        `WHERE "slot" IN (${single.map((slot) => quoteLiteral(slot.name)).join(", ")})`,
     });
   }
-
-  // What the sweep asks: which reservations were never completed and have run out of time.
-  statements.push({
-    summary: `index ${name} by expiry`,
-    sql:
-      `CREATE INDEX ${constraint("pending", "idx")} ON ${qualify(schemaName, name)} ` +
-      `("expires_at") WHERE "status" = ${PHI_SERVER_ADDON_ASSET_STATUS.pending}`,
-  });
 
   return statements;
 }
@@ -493,7 +477,10 @@ export function buildPhiServerAddonSchemaStatements(
     if (table.groupScoped) {
       statements.push({
         summary: `bind ${table.name} to its group`,
-        sql: groupForeignKey(schemaName, table.name, PHI_SERVER_ADDON_GROUP_COLUMN),
+        sql: coreSiteBoundForeignKey(
+          schemaName, table.name, PHI_SERVER_ADDON_GROUP_COLUMN,
+          PHI_SERVER_ADDON_CORE_REFERENCES.group,
+        ),
       });
       statements.push({
         summary: `index ${table.name} by group`,
@@ -523,10 +510,12 @@ export function buildPhiServerAddonSchemaStatements(
       if (!isReferenceColumn(column)) {
         continue;
       }
-      if (column.references === PHI_SERVER_ADDON_CORE_REFERENCES.group) {
+      if (SITE_BOUND_CORE_REFERENCES.has(column.references as string)) {
         statements.push({
-          summary: `point ${table.name}.${column.name} at ${column.references}`,
-          sql: groupForeignKey(schemaName, table.name, column.name),
+          summary: `point ${table.name}.${column.name} at ${column.references} within its Site`,
+          sql: coreSiteBoundForeignKey(
+            schemaName, table.name, column.name, column.references as string,
+          ),
         });
         continue;
       }

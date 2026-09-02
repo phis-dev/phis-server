@@ -4,12 +4,14 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { applyPhiServerAddonSchema, dropPhiServerAddonSchema } from "./server-addon-schema.mts";
 import { getPhiServerConfigSync } from "@/lib/config";
 import { buildPhiServerAddonAssetsCapability } from "@/lib/addons/assets-capability";
-import { ensureSiteMediaSpace, getMediaStorageProfile } from "@/db/media-spaces";
+import { getMediaStorageProfile } from "@/db/media-spaces";
 import { createPhisMediaStorageServiceForProfile } from "@/lib/media-storage";
-import { readPhiServerAddonStorageUsage } from "./server-addon-storage-usage.mts";
+import { ensureAddonMediaSpace } from "@/db/media-spaces";
+import { getMediaUploadSessionByToken } from "@/db/media";
 import {
   closePhiTestPool,
   createPhiTestSite,
+  createPhiTestUser,
   dropPhiTestSites,
   requirePhiTestDatabase,
   type PhiTestSite,
@@ -19,14 +21,13 @@ import type { PhiServerAddonSchemaDescriptor } from "@/lib/addons/contract";
 /**
  * Reserving a place for a file and settling it once the bytes are there.
  *
- * The order is the substance. A row exists **before** the transfer, as `pending` with an expiry, and
- * becomes a file only once Core has looked at the object -- so the state that would otherwise be
- * undetectable, a row naming an object that is not there, cannot occur. What an abandoned upload leaves
- * is a pending row past its expiry, which is a `WHERE` rather than a listing of a bucket.
+ * There is one upload lifecycle in Core and this is not a second one. The reservation is an ordinary
+ * Media upload session that states its purpose; what makes it an Add-on's file is the last step, where
+ * the finished object becomes a Media Asset in the Add-on's own Space and a link row on its table.
  *
- * The size is agreed before any bytes move, and `finalize` holds the object to it. Discovering the size
- * afterwards would make the ceiling advisory: a client could reserve a kilobyte, deliver a gigabyte, and
- * have the store charged for the kilobyte.
+ * Two things carry the design. The space is charged when the place is made, not when it is used -- a
+ * ceiling decided at the end would bound the bookkeeping and not the store. And the size is agreed
+ * before any bytes move, so `finalize` can hold the object to it rather than discover it.
  */
 
 const SCHEMA = "phis_addon_pgtest_assetlife";
@@ -60,30 +61,34 @@ let migrationPool: Pool;
 describe("putting a file on a row", () => {
   let site: PhiTestSite;
   let offeringId: string;
+  let actor: number;
 
   function assets(options?: { mayActOnRow?: boolean }) {
     return buildPhiServerAddonAssetsCapability({
       addonId: ADDON,
       siteId: site.id,
       siteKey: site.key,
+      actorUserId: actor,
       schema: descriptor,
       mayActOnRow: async () => options?.mayActOnRow ?? true,
-      proxyUploadUrl: ({ table, token }) => `/api/v1/addon-assets/pgtest/assetlife/${table}/${token}`,
+      proxyUploadUrl: ({ token }) => `/api/site/media/uploads/${token}`,
     });
   }
 
+  /** What the Space holds and what it is holding room for. */
+  async function usage() {
+    const space = await ensureAddonMediaSpace(site.id, ADDON);
+    return { bytes: space.usedBytes, reserved: space.reservedBytes };
+  }
+
   /** What the client would do, standing in for the plan the Provider issued. */
-  async function deliver(id: string, body: Buffer) {
-    const pool = await requirePhiTestDatabase();
-    const { rows } = await pool.query<{ storage_key: string }>(
-      `SELECT storage_key FROM ${SCHEMA}.offering_assets WHERE id = $1`,
-      [id],
-    );
-    const { space } = await ensureSiteMediaSpace(site.id);
+  async function deliver(token: string, body: Buffer) {
+    const session = await getMediaUploadSessionByToken(token);
+    const space = await ensureAddonMediaSpace(site.id, ADDON);
     const profile = await getMediaStorageProfile(site.id, space.defaultStorageProfileId);
     const service = await createPhisMediaStorageServiceForProfile(profile!, site.key);
     await service.putObject({
-      storageKey: rows[0]!.storage_key,
+      storageKey: session!.stagingStorageKey,
       body,
       contentType: "application/gzip",
     });
@@ -92,6 +97,7 @@ describe("putting a file on a row", () => {
   beforeAll(async () => {
     const pool = await requirePhiTestDatabase();
     site = await createPhiTestSite("addon-assetlife");
+    actor = await createPhiTestUser(site);
 
     const config = getPhiServerConfigSync().database;
     if (!config?.migrationUri || !config.uri) {
@@ -143,23 +149,32 @@ describe("putting a file on a row", () => {
     await closePhiTestPool();
   });
 
-  it("writes the row before the transfer, and does not call it a file yet", async () => {
+  it("keeps the reservation out of the Add-on's table until the bytes are there", async () => {
+    /*
+     * The Add-on's table holds facts. While the transfer is in flight the record of it lives in Core's
+     * upload session, which is what keeps `status`, an expiry and a token out of a table whose every
+     * row is supposed to mean "this file exists".
+     */
     const reservation = await assets().begin({
       table: "offering", ownerId: offeringId, slot: "package",
       contentType: "application/gzip", sizeBytes: GZIP.byteLength,
     });
     expect(reservation.plan.kind).toBe("proxy-stream");
 
-    // The row is there and the file is not: `list` answers about finished rows only.
     const pool = await requirePhiTestDatabase();
     const { rows } = await pool.query(
-      `SELECT status FROM ${SCHEMA}.offering_assets WHERE id = $1`,
-      [reservation.id],
+      `SELECT id FROM ${SCHEMA}.offering_assets WHERE owner_id = $1`,
+      [offeringId],
     );
-    expect(rows[0]).toMatchObject({ status: 1 });
+    expect(rows).toHaveLength(0);
     expect(await assets().list({ table: "offering", ownerId: offeringId })).toEqual([]);
 
-    await assets().abandon({ table: "offering", id: reservation.id });
+    // And the session does hold it, under the purpose that decides what it becomes.
+    const session = await getMediaUploadSessionByToken(reservation.token);
+    expect(session).toMatchObject({ purpose: 2, sizeBytes: GZIP.byteLength });
+    expect(session!.purposeRef).toMatchObject({ addonId: ADDON, table: "offering", slot: "package" });
+
+    await assets().abandon({ table: "offering", token: reservation.token });
   });
 
   it("charges the store when the place is made, not when it is used", async () => {
@@ -168,17 +183,20 @@ describe("putting a file on a row", () => {
      * would hold on paper while the objects accumulated underneath it.
      */
     const pool = await requirePhiTestDatabase();
-    const before = await readPhiServerAddonStorageUsage(pool, { addonId: ADDON, siteId: site.id });
+    const before = await usage();
     const reservation = await assets().begin({
       table: "offering", ownerId: offeringId, slot: "package",
       contentType: "application/gzip", sizeBytes: 100,
     });
-    const during = await readPhiServerAddonStorageUsage(pool, { addonId: ADDON, siteId: site.id });
-    expect(during.bytes).toBe(before.bytes + 100);
+    // Held, not spent: `reserved_bytes` moves and `used_bytes` does not, which is what lets the
+    // reservation be given back without ever having counted as stored.
+    const during = await usage();
+    expect(during.reserved).toBe(before.reserved + 100);
+    expect(during.bytes).toBe(before.bytes);
 
-    await assets().abandon({ table: "offering", id: reservation.id });
-    const after = await readPhiServerAddonStorageUsage(pool, { addonId: ADDON, siteId: site.id });
-    expect(after.bytes).toBe(before.bytes);
+    await assets().abandon({ table: "offering", token: reservation.token });
+    const after = await usage();
+    expect(after.reserved).toBe(before.reserved);
   });
 
   it("makes a file of it once the bytes are there", async () => {
@@ -187,8 +205,8 @@ describe("putting a file on a row", () => {
       table: "offering", ownerId: offeringId, slot: "package",
       contentType: "application/gzip", sizeBytes: GZIP.byteLength,
     });
-    await deliver(reservation.id, GZIP);
-    const asset = await assets().finalize({ table: "offering", id: reservation.id });
+    await deliver(reservation.token, GZIP);
+    const asset = await assets().finalize({ table: "offering", token: reservation.token });
     expect(asset).toMatchObject({
       slot: "package",
       byteSize: GZIP.byteLength,
@@ -198,22 +216,20 @@ describe("putting a file on a row", () => {
       .toHaveLength(1);
 
     /*
-     * And no object key comes with it. A key an Add-on holds is a key it can pass to `storage:v1`, and
-     * the two spaces have to stay apart: the sweep looks under `assets/` and treats everything there
-     * that no row names as collectable.
+     * No object key comes with it. What an Add-on gets is the Media Asset id, which is what a delivery
+     * URL is built from -- a key would be something it could pass to `storage:v1`, and the two spaces
+     * are meant to stay apart.
      */
     expect(Object.keys(asset)).not.toContain("storageKey");
-    expect(JSON.stringify(asset)).not.toContain("assets/offering");
+    expect(asset.mediaAssetId).toBeGreaterThan(0);
 
-    // And the object is inside the Add-on's own prefix, which is what a purge empties and what keeps
-    // two Add-ons on one Site apart. An `assets/` at the root of the Site's storage would be neither.
-    const stored = await pool.query<{ storage_key: string }>(
-      `SELECT storage_key FROM ${SCHEMA}.offering_assets WHERE id = $1`,
-      [reservation.id],
+    // And the file sits in the Add-on's own Space, which is the account its quota is kept on.
+    const space = await ensureAddonMediaSpace(site.id, ADDON);
+    const stored = await pool.query<{ space_id: number }>(
+      `SELECT space_id FROM phis.media_assets WHERE id = $1`,
+      [asset.mediaAssetId],
     );
-    expect(stored.rows[0]!.storage_key).toMatch(
-      new RegExp(`^addons/${SCHEMA}/${site.key}/assets/offering/package/`),
-    );
+    expect(stored.rows[0]!.space_id).toBe(space.id);
   });
 
   it("refuses to finish an upload that never arrived", async () => {
@@ -221,9 +237,9 @@ describe("putting a file on a row", () => {
       table: "offering", ownerId: offeringId, slot: "shots",
       contentType: "image/png", sizeBytes: 10,
     });
-    await expect(assets().finalize({ table: "offering", id: reservation.id }))
+    await expect(assets().finalize({ table: "offering", token: reservation.token }))
       .rejects.toThrow(/Nothing has been delivered/);
-    await assets().abandon({ table: "offering", id: reservation.id });
+    await assets().abandon({ table: "offering", token: reservation.token });
   });
 
   it("holds the object to the size that was agreed", async () => {
@@ -232,10 +248,10 @@ describe("putting a file on a row", () => {
       table: "offering", ownerId: offeringId, slot: "package",
       contentType: "application/gzip", sizeBytes: 4,
     });
-    await deliver(reservation.id, GZIP);
-    await expect(assets().finalize({ table: "offering", id: reservation.id }))
+    await deliver(reservation.token, GZIP);
+    await expect(assets().finalize({ table: "offering", token: reservation.token }))
       .rejects.toThrow(/was made for 4 bytes and 10 arrived/);
-    await assets().abandon({ table: "offering", id: reservation.id });
+    await assets().abandon({ table: "offering", token: reservation.token });
   });
 
   it("refuses bytes that are not what the slot was told they would be", async () => {
@@ -244,30 +260,30 @@ describe("putting a file on a row", () => {
       contentType: "image/png", sizeBytes: GZIP.byteLength,
     });
     // A header is a claim; the first kilobytes are evidence, and these say gzip.
-    await deliver(reservation.id, GZIP);
-    await expect(assets().finalize({ table: "offering", id: reservation.id }))
+    await deliver(reservation.token, GZIP);
+    await expect(assets().finalize({ table: "offering", token: reservation.token }))
       .rejects.toThrow(/the bytes are a "application\/gzip"/);
-    await assets().abandon({ table: "offering", id: reservation.id });
+    await assets().abandon({ table: "offering", token: reservation.token });
   });
 
   it("replaces a single-valued slot in one step, and gives the old space back", async () => {
     const pool = await requirePhiTestDatabase();
-    const before = await readPhiServerAddonStorageUsage(pool, { addonId: ADDON, siteId: site.id });
+    const before = await usage();
 
     const reservation = await assets().begin({
       table: "offering", ownerId: offeringId, slot: "package",
       contentType: "application/gzip", sizeBytes: GZIP.byteLength,
     });
-    await deliver(reservation.id, GZIP);
-    await assets().finalize({ table: "offering", id: reservation.id });
+    await deliver(reservation.token, GZIP);
+    const replacement = await assets().finalize({ table: "offering", token: reservation.token });
 
     // Exactly one, and it is the new one: there is no moment at which the row has two packages.
     const held = await assets().list({ table: "offering", ownerId: offeringId, slot: "package" });
     expect(held).toHaveLength(1);
-    expect(held[0]!.id).toBe(reservation.id);
+    expect(held[0]!.mediaAssetId).toBe(replacement.mediaAssetId);
 
     // The replaced file's bytes came back, so replacing does not accumulate.
-    const after = await readPhiServerAddonStorageUsage(pool, { addonId: ADDON, siteId: site.id });
+    const after = await usage();
     expect(after.bytes).toBe(before.bytes);
   });
 
@@ -280,9 +296,9 @@ describe("putting a file on a row", () => {
       table: "offering", ownerId: offeringId, slot: "shots",
       contentType: "image/png", sizeBytes: 3,
     });
-    expect(first.id).not.toBe(second.id);
-    await assets().abandon({ table: "offering", id: first.id });
-    await assets().abandon({ table: "offering", id: second.id });
+    expect(first.token).not.toBe(second.token);
+    await assets().abandon({ table: "offering", token: first.token });
+    await assets().abandon({ table: "offering", token: second.token });
   });
 
   it("refuses a slot the table never declared, and a table with no slots", async () => {
@@ -329,25 +345,25 @@ describe("putting a file on a row", () => {
       table: "offering", ownerId: offeringId, slot: "shots",
       contentType: "image/png", sizeBytes: 6,
     });
-    const before = await readPhiServerAddonStorageUsage(pool, { addonId: ADDON, siteId: site.id });
+    const before = await usage();
 
-    expect(await assets().abandon({ table: "offering", id: reservation.id })).toBe(true);
-    // The row is gone, so the second call finds nothing and must not book anything either.
-    expect(await assets().abandon({ table: "offering", id: reservation.id })).toBe(false);
+    expect(await assets().abandon({ table: "offering", token: reservation.token })).toBe(true);
+    // The session is gone, so the second call finds nothing and must not release anything either.
+    expect(await assets().abandon({ table: "offering", token: reservation.token })).toBe(false);
 
-    const after = await readPhiServerAddonStorageUsage(pool, { addonId: ADDON, siteId: site.id });
-    expect(after.bytes).toBe(before.bytes - 6);
+    const after = await usage();
+    expect(after.reserved).toBe(before.reserved - 6);
   });
 
   it("takes a file away with its space", async () => {
     const pool = await requirePhiTestDatabase();
-    const before = await readPhiServerAddonStorageUsage(pool, { addonId: ADDON, siteId: site.id });
+    const before = await usage();
     const held = await assets().list({ table: "offering", ownerId: offeringId, slot: "package" });
 
     expect(await assets().remove({ table: "offering", id: held[0]!.id })).toBe(true);
     expect(await assets().list({ table: "offering", ownerId: offeringId, slot: "package" }))
       .toEqual([]);
-    const after = await readPhiServerAddonStorageUsage(pool, { addonId: ADDON, siteId: site.id });
+    const after = await usage();
     expect(after.bytes).toBe(before.bytes - GZIP.byteLength);
   });
 

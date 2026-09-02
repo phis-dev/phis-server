@@ -38,7 +38,6 @@ import { buildPhiServerAddonSecretsCapability } from "./secrets-capability.ts";
 import { buildPhiServerAddonSettingsCapability } from "./settings-capability.ts";
 import { buildPhiServerAddonStorageCapability } from "./storage-capability.ts";
 import { buildPhiServerAddonAssetsCapability } from "./assets-capability.ts";
-import { phiServerAddonAssetProxyUrl } from "./asset-routes.ts";
 import { ensureSiteMediaConfig } from "@/db/media-spaces";
 import { getEffectiveUserSiteAuthorization } from "@/db/user-site-memberships";
 import type { PhiServerAddonManifestV1 } from "./contract.ts";
@@ -355,13 +354,15 @@ export function buildPhiServerAddonCapabilities(input: {
         addonId: input.manifest.addonId,
         siteId,
         siteKey,
+        actorUserId: input.actorUserId,
         schema: input.manifest.schema ?? null,
         mayActOnRow: input.systemAuthority
           ? () => Promise.resolve(true)
           : ({ table, id, intent }) =>
             authorization.mayActOnRow({ table, id: id as number | string, intent }),
-        proxyUploadUrl: ({ table, token }) =>
-          phiServerAddonAssetProxyUrl(input.manifest.addonId, table, token),
+        // Core's own upload route, because an Add-on asset is an upload like any other. There is one
+        // lifecycle and therefore one address it can be delivered to.
+        proxyUploadUrl: ({ token }) => `/api/site/media/uploads/${token}`,
       });
     }
     if (required.includes(PHI_SERVER_CORE_CAPABILITIES.secrets)) {

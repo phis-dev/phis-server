@@ -1,60 +1,48 @@
-import { randomUUID } from "node:crypto";
-
 import type { Pool, PoolClient } from "pg";
 
-import { PHI_SERVER_ADDON_ASSET_STATUS } from "@/lib/addons/schema-ddl";
 import { quotePhiIdentifier } from "@/lib/addons/schema-ddl";
-import {
-  PHI_SERVER_ADDON_ASSET_PREFIX,
-  composePhiServerAddonAssetTableName,
-  phiServerAddonStoragePrefix,
-} from "@/lib/addons/schema-name";
+import { composePhiServerAddonAssetTableName } from "@/lib/addons/schema-name";
 
 /**
- * The two halves of putting a file on a row: reserving a place for it, and settling it once it landed.
+ * The rows that say which of an Add-on's files sits in which slot on which row.
  *
- * The order is what makes the table trustworthy. A row is written **before** the transfer starts, as
- * `pending` with an expiry, and becomes `ready` only once the bytes are complete and measured. The
- * alternative -- write the row after -- leaves an object nobody knows about for the length of every
- * transfer, and leaves nothing at all behind when the transfer is abandoned halfway.
+ * They hold a link and nothing else. Where the object is, how big it turned out, what type it is and
+ * which digest it carries live once, in `media_assets`, for every upload Core has ever handled -- so
+ * there is no second copy here to fall out of step, and no object key an Add-on could be handed.
  *
- * So the failure that would otherwise be undetectable, a row naming an object that is not there, cannot
- * occur: while the object is incomplete the row says so, and every query an Add-on has reads finished
- * rows only. What an abandoned upload leaves is a pending row past its expiry, which is a `WHERE` rather
- * than a listing of a bucket.
- *
- * The object key is Core's. It is derived from a random component rather than from the row, so replacing
- * a file writes a new object instead of overwriting the current one -- overwriting destroys the file
- * that is still in use before the row that replaces it exists, and a transfer that then fails has
- * destroyed something it never managed to replace.
+ * Nothing in this file is provisional. A row exists only because an upload finished, which is what lets
+ * the single-valued rule be a plain unique index instead of a partial one: while the reservation lived
+ * in this table, counting it would have refused the very transfer meant to replace the current file.
+ * The reservation is Core's upload session now, and this table holds facts.
  */
 
 export type PhiServerAddonAssetRow = {
   id: string;
   slot: string;
   ownerId: string;
-  status: number;
-  storageKey: string;
+  mediaAssetId: number;
   byteSize: number;
   contentType: string;
   checksumSha256: string | null;
+  originalName: string;
   createdAt: string;
 };
 
-type AssetLocation = { schemaName: string; table: string };
+export type PhiServerAddonAssetLocation = { schemaName: string; table: string };
 
-function qualifyAssets(location: AssetLocation) {
+function qualifyAssets(location: PhiServerAddonAssetLocation) {
   return `${quotePhiIdentifier(location.schemaName)}.${
     quotePhiIdentifier(composePhiServerAddonAssetTableName(location.table))
   }`;
 }
 
-const SELECTED = `id, slot, owner_id, status, storage_key, byte_size, content_type,
-  checksum_sha256, created_at`;
+/** The link's own columns plus the facts, read from where they actually live. */
+const SELECTED = `l.id, l.slot, l.owner_id, l.media_asset_id, l.created_at,
+  a.bytes, a.content_type, a.checksum_sha256, a.original_name`;
 
 type RawRow = {
-  id: string; slot: string; owner_id: string; status: number; storage_key: string;
-  byte_size: string; content_type: string; checksum_sha256: string | null; created_at: Date;
+  id: string; slot: string; owner_id: string; media_asset_id: number; created_at: Date;
+  bytes: string | null; content_type: string; checksum_sha256: string | null; original_name: string;
 };
 
 function toRow(row: RawRow): PhiServerAddonAssetRow {
@@ -62,266 +50,104 @@ function toRow(row: RawRow): PhiServerAddonAssetRow {
     id: String(row.id),
     slot: row.slot,
     ownerId: String(row.owner_id),
-    status: row.status,
-    storageKey: row.storage_key,
+    mediaAssetId: row.media_asset_id,
     // `bigint` arrives as a string from `pg`, and a byte count is exactly the column that outgrows one.
-    byteSize: Number(row.byte_size),
+    byteSize: Number(row.bytes ?? 0),
     contentType: row.content_type,
     checksumSha256: row.checksum_sha256,
+    originalName: row.original_name,
     createdAt: row.created_at.toISOString(),
   };
 }
 
 /**
- * The key an object gets, which the Add-on never chooses.
+ * Puts a finished file into a slot, and reports the file it displaced.
  *
- * Inside the Add-on's own prefix, and under `assets/` within it. The first half is what a purge empties
- * and what keeps two Add-ons on one Site apart; the second is the only place the sweep is allowed to
- * look. An Add-on writing its own keys through `storage:v1` writes beside `assets/` and never into it,
- * so a sweep comparing that sub-prefix against the rows can never mistake one of those for an orphan.
- *
- * The random component is what makes replacing safe: a new file is a new object, so the one still in
- * use is not destroyed before the row that replaces it exists.
+ * A single-valued slot holds one file, so the one being replaced has to go in the same statement that
+ * puts its replacement there -- otherwise the unique index refuses the insert and the new file is
+ * stranded, complete and unreachable. The displaced row is returned rather than dropped quietly,
+ * because its Media Asset is now unreferenced and something has to be told so.
  */
-export function phiServerAddonAssetKey(input: {
-  addonId: string;
-  siteKey: string;
-  table: string;
-  slot: string;
-}) {
-  return `${phiServerAddonStoragePrefix(input.addonId, input.siteKey)}/` +
-    `${PHI_SERVER_ADDON_ASSET_PREFIX}/${input.table}/${input.slot}/${randomUUID()}`;
-}
-
-export type PhiServerAddonAssetReservation = {
-  id: string;
-  token: string;
-  storageKey: string;
-  expiresAt: string;
-};
-
-/**
- * Writes the pending row and hands back what redeems it.
- *
- * The size is stated here rather than discovered later. `finalize` holds the object to it, so a client
- * that reserved a kilobyte and delivered a gigabyte is refused by comparison rather than by trust -- and
- * the quota is booked against a number that was agreed before any bytes moved.
- */
-export async function beginPhiServerAddonAsset(
-  db: Pool | PoolClient,
+export async function linkPhiServerAddonAsset(
+  client: PoolClient,
   input: {
-    location: AssetLocation;
+    location: PhiServerAddonAssetLocation;
     siteId: number;
     ownerId: string | number;
     slot: string;
-    contentType: string;
-    sizeBytes: number;
-    storageKey: string;
-    expiresAt: Date;
-  },
-): Promise<PhiServerAddonAssetReservation> {
-  const token = `${randomUUID()}${randomUUID()}`.replaceAll("-", "");
-  const { rows } = await db.query<{ id: string }>(
-    `INSERT INTO ${qualifyAssets(input.location)}
-       (site_id, owner_id, slot, status, storage_key, byte_size, content_type, upload_token, expires_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-     RETURNING id`,
-    [
-      input.siteId,
-      String(input.ownerId),
-      input.slot,
-      PHI_SERVER_ADDON_ASSET_STATUS.pending,
-      input.storageKey,
-      input.sizeBytes,
-      input.contentType,
-      token,
-      input.expiresAt,
-    ],
-  );
-  return {
-    id: String(rows[0]!.id),
-    token,
-    storageKey: input.storageKey,
-    expiresAt: input.expiresAt.toISOString(),
-  };
-}
-
-export type PhiServerAddonAssetReservationRow = PhiServerAddonAssetRow & {
-  siteId: number;
-  expiresAt: string | null;
-};
-
-/**
- * Finds a live reservation, which is the only thing a transfer may be carried out against.
- *
- * Expiry is part of the lookup and not a check afterwards. A reservation that has run out is not a
- * reservation an extra branch happens to reject: it is simply not found, the same as one that was never
- * issued, and there is then no path on which a stale token writes anything.
- */
-export async function readPhiServerAddonAssetReservation(
-  db: Pool | PoolClient,
-  location: AssetLocation,
-  token: string,
-): Promise<PhiServerAddonAssetReservationRow | null> {
-  const { rows } = await db.query<RawRow & { site_id: number; expires_at: Date | null }>(
-    `SELECT ${SELECTED}, site_id, expires_at
-       FROM ${qualifyAssets(location)}
-      WHERE upload_token = $1 AND status = $2 AND expires_at > NOW()`,
-    [token, PHI_SERVER_ADDON_ASSET_STATUS.pending],
-  );
-  const row = rows[0];
-  return row
-    ? {
-        ...toRow(row),
-        siteId: row.site_id,
-        expiresAt: row.expires_at ? row.expires_at.toISOString() : null,
-      }
-    : null;
-}
-
-/**
- * Marks a reservation finished, and reports what the previous file was.
- *
- * A single-valued slot holds one finished row, so the one being replaced has to go in the same statement
- * that promotes its replacement -- otherwise the partial unique index refuses the promotion and the new
- * file is stranded, complete and unreachable. The old row is returned rather than deleted quietly,
- * because its object is now unreferenced and something has to be told so.
- *
- * `byteSize` is what actually landed, not what was reserved. They agree wherever the transfer went as
- * agreed; where they do not, this is the figure the quota is corrected against.
- */
-export async function finalizePhiServerAddonAsset(
-  db: PoolClient,
-  input: {
-    location: AssetLocation;
-    id: string;
-    byteSize: number;
-    checksumSha256: string | null;
-    /** True for a slot declared `one`: the finished row it replaces has to be removed here. */
+    mediaAssetId: number;
+    /** True for a slot declared `one`: whatever is in it has to make way. */
     single: boolean;
   },
-): Promise<{ asset: PhiServerAddonAssetRow; superseded: PhiServerAddonAssetRow | null } | null> {
+): Promise<{ id: string; supersededMediaAssetId: number | null }> {
   const table = qualifyAssets(input.location);
-  const { rows: pending } = await db.query<RawRow & { site_id: number }>(
-    `SELECT ${SELECTED}, site_id FROM ${table} WHERE id = $1 AND status = $2 FOR UPDATE`,
-    [input.id, PHI_SERVER_ADDON_ASSET_STATUS.pending],
-  );
-  const reservation = pending[0];
-  if (!reservation) {
-    return null;
-  }
-
-  let superseded: PhiServerAddonAssetRow | null = null;
+  let superseded: number | null = null;
   if (input.single) {
-    const { rows } = await db.query<RawRow>(
+    const { rows } = await client.query<{ media_asset_id: number }>(
       `DELETE FROM ${table}
-        WHERE site_id = $1 AND owner_id = $2 AND slot = $3 AND status = $4 AND id <> $5
-        RETURNING ${SELECTED}`,
-      [
-        reservation.site_id,
-        reservation.owner_id,
-        reservation.slot,
-        PHI_SERVER_ADDON_ASSET_STATUS.ready,
-        input.id,
-      ],
+        WHERE site_id = $1 AND owner_id = $2 AND slot = $3
+        RETURNING media_asset_id`,
+      [input.siteId, String(input.ownerId), input.slot],
     );
-    superseded = rows[0] ? toRow(rows[0]) : null;
+    superseded = rows[0]?.media_asset_id ?? null;
   }
-
-  const { rows } = await db.query<RawRow>(
-    `UPDATE ${table}
-        SET status = $2, byte_size = $3, checksum_sha256 = $4,
-            upload_token = NULL, expires_at = NULL, updated_at = NOW()
-      WHERE id = $1
-      RETURNING ${SELECTED}`,
-    [input.id, PHI_SERVER_ADDON_ASSET_STATUS.ready, input.byteSize, input.checksumSha256],
+  const { rows } = await client.query<{ id: string }>(
+    `INSERT INTO ${table} (site_id, owner_id, slot, media_asset_id)
+     VALUES ($1, $2, $3, $4) RETURNING id`,
+    [input.siteId, String(input.ownerId), input.slot, input.mediaAssetId],
   );
-  return { asset: toRow(rows[0]!), superseded };
+  return { id: String(rows[0]!.id), supersededMediaAssetId: superseded };
 }
 
-/** Gives a reservation up. Returns the row so its object can be removed; the bytes are not this file's. */
-export async function abandonPhiServerAddonAsset(
-  db: Pool | PoolClient,
-  location: AssetLocation,
-  input: { id: string; siteId: number },
-): Promise<PhiServerAddonAssetRow | null> {
-  const { rows } = await db.query<RawRow>(
-    `DELETE FROM ${qualifyAssets(location)}
-      WHERE id = $1 AND site_id = $2 AND status = $3
-      RETURNING ${SELECTED}`,
-    [input.id, input.siteId, PHI_SERVER_ADDON_ASSET_STATUS.pending],
-  );
-  return rows[0] ? toRow(rows[0]) : null;
-}
-
-/** The finished files of a row. Pending ones are absent, because they are not files yet. */
+/** The files of a row. There is no unfinished state to filter out. */
 export async function readPhiServerAddonAssets(
   db: Pool | PoolClient,
-  location: AssetLocation,
+  location: PhiServerAddonAssetLocation,
   input: { siteId: number; ownerId: string | number; slot?: string },
 ): Promise<PhiServerAddonAssetRow[]> {
   const { rows } = await db.query<RawRow>(
-    `SELECT ${SELECTED} FROM ${qualifyAssets(location)}
-      WHERE site_id = $1 AND owner_id = $2 AND status = $3
-        AND ($4::text IS NULL OR slot = $4)
-      ORDER BY slot, created_at, id`,
-    [
-      input.siteId,
-      String(input.ownerId),
-      PHI_SERVER_ADDON_ASSET_STATUS.ready,
-      input.slot ?? null,
-    ],
+    `SELECT ${SELECTED}
+       FROM ${qualifyAssets(location)} l
+       JOIN phis.media_assets a ON a.id = l.media_asset_id AND a.site_id = l.site_id
+      WHERE l.site_id = $1 AND l.owner_id = $2 AND ($3::text IS NULL OR l.slot = $3)
+      ORDER BY l.slot, l.created_at, l.id`,
+    [input.siteId, String(input.ownerId), input.slot ?? null],
   );
   return rows.map(toRow);
 }
 
-/** Removes one finished file, and reports the object that is now unreferenced. */
-export async function removePhiServerAddonAsset(
+export async function readPhiServerAddonAsset(
   db: Pool | PoolClient,
-  location: AssetLocation,
-  input: { id: string; siteId: number },
+  location: PhiServerAddonAssetLocation,
+  input: { siteId: number; id: string },
 ): Promise<PhiServerAddonAssetRow | null> {
   const { rows } = await db.query<RawRow>(
-    `DELETE FROM ${qualifyAssets(location)}
-      WHERE id = $1 AND site_id = $2 AND status = $3
-      RETURNING ${SELECTED}`,
-    [input.id, input.siteId, PHI_SERVER_ADDON_ASSET_STATUS.ready],
+    `SELECT ${SELECTED}
+       FROM ${qualifyAssets(location)} l
+       JOIN phis.media_assets a ON a.id = l.media_asset_id AND a.site_id = l.site_id
+      WHERE l.site_id = $1 AND l.id = $2`,
+    [input.siteId, input.id],
   );
   return rows[0] ? toRow(rows[0]) : null;
 }
 
 /**
- * Reservations that were never redeemed and have run out of time.
+ * Takes a file out of its slot, and reports the Media Asset that is now unreferenced.
  *
- * Reported rather than acted on: their objects live in a store this module has no handle to, and the
- * order that does not lose data is rows last. The caller removes the bytes, then removes these.
+ * Only the link goes here. Removing the Asset itself is Media's business and runs afterwards, because
+ * it is the step that touches the store and the Space's figures -- and doing it in this order means a
+ * failure there leaves a file nobody points at rather than a row pointing at nothing.
  */
-export async function readExpiredPhiServerAddonAssets(
+export async function unlinkPhiServerAddonAsset(
   db: Pool | PoolClient,
-  location: AssetLocation,
-  limit = 500,
-): Promise<PhiServerAddonAssetRow[]> {
-  const { rows } = await db.query<RawRow>(
-    `SELECT ${SELECTED} FROM ${qualifyAssets(location)}
-      WHERE status = $1 AND expires_at <= NOW()
-      ORDER BY expires_at
-      LIMIT $2`,
-    [PHI_SERVER_ADDON_ASSET_STATUS.pending, limit],
+  location: PhiServerAddonAssetLocation,
+  input: { siteId: number; id: string },
+): Promise<number | null> {
+  const { rows } = await db.query<{ media_asset_id: number }>(
+    `DELETE FROM ${qualifyAssets(location)}
+      WHERE site_id = $1 AND id = $2
+      RETURNING media_asset_id`,
+    [input.siteId, input.id],
   );
-  return rows.map(toRow);
-}
-
-export async function dropPhiServerAddonAssetRows(
-  db: Pool | PoolClient,
-  location: AssetLocation,
-  ids: string[],
-) {
-  if (ids.length === 0) {
-    return 0;
-  }
-  const { rowCount } = await db.query(
-    `DELETE FROM ${qualifyAssets(location)} WHERE id = ANY($1::bigint[])`,
-    [ids],
-  );
-  return rowCount ?? 0;
+  return rows[0]?.media_asset_id ?? null;
 }

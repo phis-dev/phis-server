@@ -73,6 +73,3 @@ export function composePhiServerAddonAssetTableName(table: string) {
 export function phiServerAddonStoragePrefix(addonId: string, siteKey: string) {
   return `addons/${derivePhiServerAddonSchemaName(addonId)}/${siteKey}`;
 }
-
-/** The one sub-prefix Core writes into and the sweep is allowed to look at. */
-export const PHI_SERVER_ADDON_ASSET_PREFIX = "assets";

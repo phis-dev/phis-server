@@ -3,6 +3,7 @@ import "server-only";
 import type { PoolClient } from "pg";
 
 import { getPool } from "@/lib/db";
+import { PhiMediaUploadPurpose } from "@/lib/media-upload-sessions";
 import {
   PhiMediaDeliveryPolicy,
   PhiMediaLifecycleStatus,
@@ -134,6 +135,9 @@ export type MediaUploadSessionRecord = {
   finalizedAt: string | null;
   createdAt: string;
   updatedAt: string;
+  /** What this upload becomes when it lands, and what that ending needs to know. */
+  purpose: number;
+  purposeRef: Record<string, unknown> | null;
 };
 
 export type ListMediaAssetsFilters = {
@@ -223,11 +227,13 @@ type UploadRow = {
   token: string; site_id: number; actor_user_id: number; space_id: number; folder_id: number | null;
   storage_profile_id: number; status: number; filename: string; content_type: string; size_bytes: number | string;
   kind: string; upload_plan_kind: number; checksum_sha256: string | null; meta: unknown; presentation_flags: number;
+  purpose: number; purpose_ref: unknown;
   staging_storage_key: string; final_storage_key: string | null; expires_at: Date | string;
   uploaded_at: Date | string | null; finalized_at: Date | string | null; created_at: Date | string; updated_at: Date | string;
 };
 
 const UPLOAD_COLUMNS = `token, site_id, actor_user_id, space_id, folder_id, storage_profile_id, status,
+  purpose, purpose_ref,
   filename, content_type, size_bytes, kind, upload_plan_kind, checksum_sha256, meta, presentation_flags,
   staging_storage_key, final_storage_key, expires_at, uploaded_at, finalized_at, created_at, updated_at`;
 
@@ -242,6 +248,7 @@ function mapUpload(row: UploadRow): MediaUploadSessionRecord {
     uploadPlanKind: integer(row.upload_plan_kind), checksumSha256: row.checksum_sha256, meta: record(row.meta), presentationFlags: integer(row.presentation_flags),
     stagingStorageKey: row.staging_storage_key, finalStorageKey: row.final_storage_key,
     expiresAt: iso(row.expires_at), uploadedAt: nullableIso(row.uploaded_at), finalizedAt: nullableIso(row.finalized_at),
+    purpose: integer(row.purpose), purposeRef: record(row.purpose_ref),
     createdAt: iso(row.created_at), updatedAt: iso(row.updated_at),
   };
 }
@@ -396,10 +403,10 @@ export async function createMediaAsset(input: {
   width?: number | null; height?: number | null; blurDataUrl?: string | null; meta?: Record<string, unknown> | null;
   title?: string | null; altText?: string | null; lifecycleStatus?: number; deliveryPolicy?: number;
   presentationFlags?: number;
-}) {
+}, db?: PoolClient) {
   // Ownership starts with the creator. It is a separate column because it is free to move afterwards,
   // not because the two ever differ at this point.
-  const { rows } = await getPool().query<AssetRow>(
+  const { rows } = await (db ?? getPool()).query<AssetRow>(
     `INSERT INTO phis.media_assets (site_id, space_id, folder_id, created_by_user_id, updated_by_user_id,
        owner_user_id,
        storage_profile_id, storage_key, original_name, content_type, variant_version, bytes, checksum_sha256,
@@ -587,18 +594,21 @@ export async function createMediaUploadSession(input: {
   checksumSha256?: string | null; meta?: Record<string, unknown> | null; presentationFlags?: number;
   stagingStorageKey: string; finalStorageKey?: string | null; expiresAt: string;
   uploadedAt?: string | null; finalizedAt?: string | null;
+  /** What this upload becomes when it lands. Media unless something else asked for it. */
+  purpose?: number; purposeRef?: Record<string, unknown> | null;
 }) {
   const { rows } = await getPool().query<UploadRow>(
     `INSERT INTO phis.media_upload_sessions (token, site_id, actor_user_id, space_id, folder_id,
        storage_profile_id, status, filename, content_type, size_bytes, kind, upload_plan_kind,
        checksum_sha256, meta, presentation_flags, staging_storage_key, final_storage_key, expires_at,
-       uploaded_at, finalized_at)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::jsonb,$15,$16,$17,$18,$19,$20)
+       uploaded_at, finalized_at, purpose, purpose_ref)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::jsonb,$15,$16,$17,$18,$19,$20,$21,$22::jsonb)
      RETURNING ${UPLOAD_COLUMNS}`,
     [input.token,input.siteId,input.actorUserId,input.spaceId,input.folderId??null,input.storageProfileId,input.status,
       input.filename,input.contentType,input.sizeBytes,input.kind,input.uploadPlanKind,input.checksumSha256??null,
       JSON.stringify(input.meta??null),
-      input.presentationFlags??0,input.stagingStorageKey,input.finalStorageKey??null,input.expiresAt,input.uploadedAt??null,input.finalizedAt??null],
+      input.presentationFlags??0,input.stagingStorageKey,input.finalStorageKey??null,input.expiresAt,input.uploadedAt??null,input.finalizedAt??null,
+      input.purpose??PhiMediaUploadPurpose.Media,JSON.stringify(input.purposeRef??null)],
   ); return rows[0] ? mapUpload(rows[0]) : null;
 }
 

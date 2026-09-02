@@ -102,10 +102,7 @@ import {
   recountPhiServerAddonStorage,
   removePhiServerAddonStorage,
 } from "./storage-purge.mts";
-import {
-  phiServerAddonObjectAdapterFor,
-  sweepPhiServerAddonAssets,
-} from "./storage-sweep.mts";
+import { sweepPhiServerAddonAssets } from "./storage-sweep.mts";
 import { checkPhiDependencyLicenses } from "./licenses.mts";
 import { checkPhiMediaOwnership } from "./media-check.mts";
 import {
@@ -2528,11 +2525,8 @@ async function main() {
       }
       const readStorageSecret = (reference: string) =>
         readPhiServerSecretWithDb(getPool(), reference, requireSecretEncryptionKey());
-      const adapter = phiServerAddonObjectAdapterFor(
-        store,
-        await resolvePhiStorageObjectAdapter(
-          configRoot, store.providerId, store.config, store.secretReference, readStorageSecret,
-        ),
+      const adapter = await resolvePhiStorageObjectAdapter(
+        configRoot, store.providerId, store.config, store.secretReference, readStorageSecret,
       );
       if (!adapter) {
         throw new Error(
@@ -2546,17 +2540,21 @@ async function main() {
     let swept: Awaited<ReturnType<typeof sweepPhiServerAddonAssets>> | null = null;
     if (flags.get("sweep") === true) {
       /*
-       * Two kinds of leftover, both of which exist because a store is not in a transaction: objects a
-       * cascade could not reach, and reservations that were never redeemed. Only the declared asset
-       * space is looked at -- the free key space an Add-on manages itself has no row describing it, so
-       * a sweep that saw it would read every object there as an orphan.
+       * Two kinds of leftover, both because the cascade only runs one way: Media Assets in the Add-on's
+       * Space that no link row names, and reservations that ran out. It is a join now rather than a
+       * bucket listing -- the free key space `storage:v1` hands out is not touched, because nothing
+       * there is a Media Asset.
        */
-      const store = await requireStore(addonId, site);
       swept = await sweepPhiServerAddonAssets(getPool(), {
-        addonId, site: store.site, adapter: store.adapter,
+        addonId, siteId: site.id, siteKey: site.key,
       });
-      if (swept.error) {
-        throw new Error(`The sweep did not finish on ${site.key}: ${swept.error}`);
+      if (swept.storageKeys.length > 0) {
+        // The rows are already gone, so a store that refuses now leaves objects nobody names -- which
+        // is exactly what the next sweep looks for. Reported rather than fatal for that reason.
+        const store = await requireStore(addonId, site);
+        for (const key of swept.storageKeys) {
+          await store.adapter.deleteObject(key).catch(() => {});
+        }
       }
     }
 
@@ -2588,7 +2586,7 @@ async function main() {
     } else {
       if (swept) {
         console.log(
-          `Swept ${swept.orphaned} object(s) nobody named and ${swept.expired} expired ` +
+          `Swept ${swept.orphaned} file(s) nobody named and ${swept.expired} expired ` +
           `reservation(s), giving back ${swept.bytesReleased} bytes.`,
         );
       }

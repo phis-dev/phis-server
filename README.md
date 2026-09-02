@@ -640,13 +640,13 @@ rather than assumed per Provider, and the answer is recorded with the moment it 
 running when a Profile is added or its endpoint changes -- otherwise a wrong endpoint or a missing
 permission is discovered by whoever uploads first, and reaches them as their error.
 
-`addon storage` bounds an Add-on's object store on one Site and reports what it holds. `--recount` sets
-the counters to what the store actually holds -- they are a running total and can drift, and a ceiling
-reached by drift refuses writes against space that is free. `--sweep` collects what the store no longer
-refers to: objects the cascade could not reach when a row was removed, and reservations that ran out
-before they were redeemed. It looks only at the space Core writes, never at the free key space an Add-on
-manages itself. Both are commands rather than background passes because each costs a full listing of the
-prefix, which is the unbounded operation the ceiling exists to prevent.
+`addon storage` bounds the key space `storage:v1` hands an Add-on on one Site and reports what it holds.
+`--recount` sets the counters to what the store actually holds -- they are a running total and can drift,
+and a ceiling reached by drift refuses writes against space that is free. `--sweep` collects the Add-on's
+declared **assets** that nothing points at any more, together with upload reservations that ran out; the
+files there are Media Assets in the Add-on's own Space, so finding the orphans is a join rather than a
+listing. An Add-on's declared assets are bounded by that Space's own quota, not by the figures this
+command sets.
 
 The generated `nginx` site config includes `client_max_body_size 2g;` by default so media uploads can handle large video files without allowing unlimited request bodies by accident.
 

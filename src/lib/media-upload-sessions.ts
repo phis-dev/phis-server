@@ -3,6 +3,19 @@ import { randomBytes } from "node:crypto";
 import { resolvePhiMediaKindFromContentType } from "./constants/media";
 import type { PhiMediaUploadPlanKindKey } from "./media-storage";
 
+/**
+ * What an upload becomes once the bytes are there.
+ *
+ * One lifecycle, several endings. Core reserves, receives, measures and hashes without knowing who
+ * asked; this is read at the last step to decide what row the finished object turns into. A closed
+ * vocabulary and not a free label, so the ending is a decision somebody made rather than a string that
+ * happened to be there.
+ */
+export const PhiMediaUploadPurpose = { Media: 1, AddonAsset: 2 } as const;
+
+export type PhiMediaUploadPurposeValue =
+  (typeof PhiMediaUploadPurpose)[keyof typeof PhiMediaUploadPurpose];
+
 export const PhiMediaUploadSessionStatus = {
   Pending: 0,
   Uploading: 1,

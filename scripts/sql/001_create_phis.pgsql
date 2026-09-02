@@ -336,6 +336,9 @@ CREATE TABLE IF NOT EXISTS phis.media_spaces (
   kind SMALLINT NOT NULL,
   user_id INT NULL,
   group_id INT NULL,
+  -- The fourth kind's owner. An Add-on's files live in a Space of their own so that the Space's quota
+  -- IS the Add-on's quota: one account over one set of bytes, rather than two that drift apart.
+  addon_id VARCHAR(255) NULL,
   default_storage_profile_id INT NOT NULL,
   quota_bytes BIGINT NULL,
   used_bytes BIGINT NOT NULL DEFAULT 0,
@@ -362,9 +365,10 @@ CREATE TABLE IF NOT EXISTS phis.media_spaces (
     REFERENCES phis.site_groups (id, site_id)
     DEFERRABLE INITIALLY DEFERRED,
   CONSTRAINT media_spaces_owner_check CHECK (
-    (kind = 1 AND user_id IS NULL AND group_id IS NULL) OR
-    (kind = 2 AND user_id IS NOT NULL AND group_id IS NULL) OR
-    (kind = 3 AND user_id IS NULL AND group_id IS NOT NULL)
+    (kind = 1 AND user_id IS NULL AND group_id IS NULL AND addon_id IS NULL) OR
+    (kind = 2 AND user_id IS NOT NULL AND group_id IS NULL AND addon_id IS NULL) OR
+    (kind = 3 AND user_id IS NULL AND group_id IS NOT NULL AND addon_id IS NULL) OR
+    (kind = 4 AND user_id IS NULL AND group_id IS NULL AND addon_id IS NOT NULL)
   ),
   CONSTRAINT media_spaces_quota_check CHECK (
     (quota_bytes IS NULL OR quota_bytes >= 0) AND used_bytes >= 0 AND reserved_bytes >= 0
@@ -378,6 +382,11 @@ CREATE UNIQUE INDEX IF NOT EXISTS media_spaces_user_unique_idx
   ON phis.media_spaces (site_id, user_id) WHERE kind = 2;
 CREATE UNIQUE INDEX IF NOT EXISTS media_spaces_group_unique_idx
   ON phis.media_spaces (site_id, group_id) WHERE kind = 3;
+
+-- One Space per Add-on per Site, which is what makes "the Space's quota" and "the Add-on's quota" the
+-- same sentence.
+CREATE UNIQUE INDEX IF NOT EXISTS media_spaces_addon_unique_idx
+  ON phis.media_spaces (site_id, addon_id) WHERE kind = 4;
 
 CREATE TABLE IF NOT EXISTS phis.media_folders (
   id SERIAL PRIMARY KEY,
@@ -475,6 +484,17 @@ CREATE TABLE IF NOT EXISTS phis.media_upload_sessions (
   meta JSONB NULL,
   presentation_flags INT NOT NULL DEFAULT 0,
   upload_plan_kind SMALLINT NOT NULL DEFAULT 1,
+  /*
+   * What this upload becomes once the bytes are there.
+   *
+   * One lifecycle, several endings. Core reserves, receives, measures and hashes without knowing who
+   * asked; `purpose` is read at the last step to decide what row the finished object turns into -- a
+   * Media Asset, or an Asset on an Add-on's row. A closed vocabulary and not a free label, so the
+   * ending is a decision somebody made rather than a string that happened to be there.
+   */
+  purpose SMALLINT NOT NULL DEFAULT 1,
+  /** What that ending needs to know. For an Add-on: which Add-on, which table, which row, which slot. */
+  purpose_ref JSONB NULL,
   staging_storage_key VARCHAR(512) NOT NULL,
   final_storage_key VARCHAR(512) NULL,
   expires_at TIMESTAMPTZ NOT NULL,
@@ -495,13 +515,17 @@ CREATE TABLE IF NOT EXISTS phis.media_upload_sessions (
     REFERENCES phis.media_storage_profiles (id, site_id)
     DEFERRABLE INITIALLY DEFERRED,
   CONSTRAINT media_upload_sessions_size_check CHECK (size_bytes > 0),
-  CONSTRAINT media_upload_sessions_plan_kind_check CHECK (upload_plan_kind IN (1, 2))
+  CONSTRAINT media_upload_sessions_plan_kind_check CHECK (upload_plan_kind IN (1, 2)),
+  CONSTRAINT media_upload_sessions_purpose_check CHECK (
+    (purpose = 1 AND purpose_ref IS NULL) OR (purpose = 2 AND purpose_ref IS NOT NULL)
+  )
 );
 
 CREATE INDEX IF NOT EXISTS media_upload_sessions_space_status_idx
   ON phis.media_upload_sessions (space_id, status, expires_at);
 CREATE INDEX IF NOT EXISTS media_upload_sessions_actor_idx
   ON phis.media_upload_sessions (site_id, actor_user_id, created_at DESC);
+
 
 CREATE TABLE IF NOT EXISTS phis.image_asset_variants (
   asset_id INT NOT NULL REFERENCES phis.media_assets(id) ON DELETE CASCADE,
@@ -1494,6 +1518,17 @@ CREATE TABLE IF NOT EXISTS phis.site_server_addons (
 
 CREATE INDEX IF NOT EXISTS site_server_addons_addon_id_idx
   ON phis.site_server_addons (addon_id);
+
+-- Added here rather than with the table: `media_spaces` is created long before `server_addons` exists.
+--
+-- Cascading, unlike the group Space above. There the contents are a person's and what happens to them
+-- is a person's decision; here removing the Add-on is already the deliberate, destructive act, and a
+-- Space belonging to a package that is gone belongs to nobody.
+ALTER TABLE phis.media_spaces
+  DROP CONSTRAINT IF EXISTS media_spaces_addon_fk;
+ALTER TABLE phis.media_spaces
+  ADD CONSTRAINT media_spaces_addon_fk
+    FOREIGN KEY (addon_id) REFERENCES phis.server_addons(addon_id) ON DELETE CASCADE;
 
 -- What an Add-on's own object store holds on this Site, and what it is allowed to hold.
 --

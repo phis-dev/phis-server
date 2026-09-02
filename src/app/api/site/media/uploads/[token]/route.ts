@@ -15,6 +15,8 @@ import {
   PhiMediaUploadSessionStatus,
 } from "@/lib/media-upload-sessions";
 import { requireMediaSpaceWriteContext } from "@/lib/guards/site-media-api";
+import { requireSiteFromRequest } from "@/lib/site-context";
+import { PhiMediaUploadPurpose } from "@/lib/media-upload-sessions";
 import { nextMediaError } from "../_helpers";
 
 export const dynamic = "force-dynamic";
@@ -29,17 +31,32 @@ export async function PUT(
     return nextMediaError("missing_upload_token", "Missing upload token.", 400);
   }
 
-  const { site, error } = await requireMediaSpaceWriteContext(request, async () => {
-    // The staged session is the destination. Reading it here rather than trusting a query parameter
-    // means the authority is decided by where the bytes will actually land.
-    const staged = await getMediaUploadSessionByToken(token);
-    return staged?.spaceId ?? null;
-  });
-  if (error) {
-    return error;
+  const staged = await getMediaUploadSessionByToken(token);
+
+  /*
+   * Who may deliver this body, and it is not always the Media permission system that answers.
+   *
+   * An upload into an Add-on Space was already authorised where it was asked for: `assets:v1` put it to
+   * the Add-on's own row authority, which is what governs a file hanging off that row. Sending it
+   * through the Media Space write check as well would ask a second, unrelated question -- may this
+   * person write into a Space that is not a person's at all -- and the answer would be no for everyone.
+   *
+   * What still holds for both is the session's own actor, checked below. The reservation names who it
+   * was made for, and only they may redeem it.
+   */
+  const site = staged?.purpose === PhiMediaUploadPurpose.AddonAsset
+    ? await requireSiteFromRequest(request)
+    : await (async () => {
+        const context = await requireMediaSpaceWriteContext(request, async () => staged?.spaceId ?? null);
+        return context.error ? null : context.site;
+      })();
+  if (!site) {
+    // The same answer whichever branch declined, because the two together are what a caller would
+    // otherwise use this route to tell apart.
+    return nextMediaError("upload_session_not_found", "Upload session not found.", 404);
   }
 
-  const session = await getMediaUploadSessionByToken(token);
+  const session = staged;
   if (!session || session.siteId !== site.id) {
     return nextMediaError("upload_session_not_found", "Upload session not found.", 404);
   }

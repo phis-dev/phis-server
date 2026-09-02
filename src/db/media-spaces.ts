@@ -15,7 +15,14 @@ import {
 
 type MediaSpaceDbQueryable = Pick<PoolClient, "query">;
 
-export const PhiMediaSpaceKind = { Site: 1, User: 2, Group: 3 } as const;
+/**
+ * Who a Space belongs to.
+ *
+ * `Addon` is the fourth and is not browsable: an Add-on's release artifacts have no business sitting
+ * between somebody's photographs. It exists so that the Space's quota **is** the Add-on's quota --
+ * one account over one set of bytes, rather than two that drift apart.
+ */
+export const PhiMediaSpaceKind = { Site: 1, User: 2, Group: 3, Addon: 4 } as const;
 export const PhiMediaLifecycleStatus = { Pending: 1, Ready: 2, Archived: 3, Quarantined: 4, Failed: 5 } as const;
 export const PhiMediaDeliveryPolicy = { Public: 1, Authenticated: 2, User: 3, Group: 4, Internal: 5 } as const;
 
@@ -61,11 +68,13 @@ function mapProfile(row: {
   };
 }
 
-function mapSpace(row: {
+type SpaceRow = {
   id: number; site_id: number; kind: number; user_id: number | null; group_id: number | null;
   default_storage_profile_id: number; quota_bytes: number | string | null; used_bytes: number | string;
   reserved_bytes: number | string; flags: number;
-}): MediaSpaceRecord {
+};
+
+function mapSpace(row: SpaceRow): MediaSpaceRecord {
   return {
     id: row.id,
     siteId: row.site_id,
@@ -194,6 +203,43 @@ export async function ensureSiteMediaSpace(siteId: number) {
   } finally {
     client.release();
   }
+}
+
+/**
+ * The Space one Add-on's files live in on one Site, made on first use.
+ *
+ * Made rather than required, for the reason the Site Space is: the first upload should not fail because
+ * nobody ran a command. The Storage Profile is the Site's own default, so an operator who moved a Site
+ * to S3 moved its Add-ons with it and did not have to be asked twice.
+ *
+ * It is not browsable. What a person uploads, browses and references belongs in a Media Space with its
+ * folders and delivery policies; this holds what a package keeps -- a release artifact, a generated
+ * preview -- and shows up in neither listing.
+ */
+export async function ensureAddonMediaSpace(siteId: number, addonId: string) {
+  const existing = await getPool().query<SpaceRow>(
+    `SELECT s.id, s.site_id, s.kind, s.user_id, s.group_id, s.default_storage_profile_id,
+            s.quota_bytes, s.used_bytes, ${liveReservedBytes("s")} AS reserved_bytes, s.flags
+       FROM phis.media_spaces s
+      WHERE s.site_id = $1 AND s.kind = $2 AND s.addon_id = $3`,
+    [siteId, PhiMediaSpaceKind.Addon, addonId],
+  );
+  if (existing.rows[0]) {
+    return mapSpace(existing.rows[0]);
+  }
+
+  // The Site Space is ensured first because it is what creates the Site's default Storage Profile.
+  const { profile } = await ensureSiteMediaSpace(siteId);
+  const { rows } = await getPool().query<SpaceRow>(
+    `INSERT INTO phis.media_spaces (site_id, kind, addon_id, default_storage_profile_id)
+     VALUES ($1, $2, $3, $4)
+     ON CONFLICT (site_id, addon_id) WHERE kind = 4
+     DO UPDATE SET updated_at = NOW()
+     RETURNING id, site_id, kind, user_id, group_id, default_storage_profile_id,
+               quota_bytes, used_bytes, reserved_bytes, flags`,
+    [siteId, PhiMediaSpaceKind.Addon, addonId, profile.id],
+  );
+  return mapSpace(rows[0]!);
 }
 
 /**

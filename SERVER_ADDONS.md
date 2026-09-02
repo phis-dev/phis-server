@@ -982,29 +982,15 @@ accepted after Core had given the booking back. A ceiling reached by drift refus
 that is free, and the error mentions the ceiling rather than the reason. It is a command rather than a
 background pass because it costs a full listing of the prefix.
 
-Objects an Add-on no longer refers to divide in two, and the line is whether Core knows about them.
-Where the file was declared as an **asset**, a row names it, the row cascades with its parent, and what
-is left over is the difference between the prefix and the keys the rows name. Everywhere else, in the
-free key space this capability hands out, which objects still matter is a question only the Add-on can
-answer, and a declared job is where that answer belongs.
+Objects an Add-on no longer refers to are its own business here. This capability hands out a key space
+the Add-on manages, and no row of Core's describes what is in it, so which objects still matter is a
+question only the Add-on can answer -- a declared job is where that answer belongs.
 
-`phis addon storage --sweep` collects the first kind, and only the first kind. **It looks under
-`assets/` and nowhere else**, because the free key space has no row describing it -- a sweep that saw
-both would read every one of those objects as an orphan and delete live data that was never a mistake.
-That boundary is the whole safety of it.
-
-It collects two things. An object no row names, which is what a cascade leaves behind: removing a parent
-row takes its asset rows with it, and the cascade is SQL, so it cannot reach into a store. And a
-reservation that ran out before it was redeemed, whose bytes were charged when the place was made. Both
-give their space back.
-
-Within each, the order is **objects first and rows second** -- the opposite of the purge, and for the
-same reason. Here the row is what proves the object may be removed, so losing it first would strand the
-object permanently. In a purge the row was the data, and losing it before the transaction committed
-would have been the loss.
-
-An upload in flight is safe from it. The row always exists before its object does, so a transfer running
-into a live reservation is named by a row and is never read as an orphan.
+Declared **assets** are the other case and they are not in this key space at all: they are Media Assets
+in the Add-on's own Space, so a row names each one and `phis addon storage --sweep` finds the ones
+nothing points at with a join rather than a bucket listing. They arise because the cascade only runs one
+way -- removing an Add-on's parent row takes its link rows, and a file is not the Add-on's to cascade.
+The sweep clears expired upload reservations in the same pass.
 
 `usage()` is what an Add-on may do with the figures: read them. It exists so a refusal can be explained
 before it happens rather than arriving as an error, and a vendor who can see they are at their limit
@@ -1020,53 +1006,51 @@ Filling the slots a table declared. The schema descriptor says where a file may 
 there.
 
 ```text
-begin(table, ownerId, slot, contentType, sizeBytes) -> a reservation and a delivery plan
-finalize(table, id, completion?)                    -> the finished file
-abandon(table, id)                                  -> gives an unredeemed reservation up
-list(table, ownerId, slot?)                         -> the finished files of a row
-remove(table, id)                                   -> takes a file and its object away
+begin(table, ownerId, slot, contentType, sizeBytes, sha256?, filename?)
+                                 -> a reservation token and a delivery plan
+finalize(table, token, completion?) -> the finished file
+abandon(table, token)               -> gives an unredeemed reservation up
+list(table, ownerId, slot?)         -> the files of a row
+remove(table, id)                   -> takes a file out of its slot, and the file with it
 ```
 
-**There is no method that takes an object key, and none that returns one.** That is the difference from
-`storage:v1`, and it is the whole point: a key an Add-on chooses is a key Core cannot recognise later,
-and an object Core cannot recognise is one it can neither collect nor account for. Here Core derives the
-key, the row records it, and the row cascades with its parent.
+**This is not a second upload lifecycle.** Core reserves, receives, measures and hashes without knowing
+who asked; the purpose stated at `begin` is read back at the last step, where the finished object becomes
+a Media Asset and a link row. The reservation is an ordinary Media upload session, delivered to the
+ordinary Media upload route.
 
-`begin` writes the row **before** any bytes move, as `pending` with an expiry, and answers with the
-Provider's own upload plan -- `presigned-put` where the endpoint can take a body directly, `proxy-stream`
-naming a Core route where it cannot. An Add-on passes the plan to its client unread.
+**No method takes an object key and none returns one.** A key an Add-on chooses is a key Core cannot
+recognise later, and an object Core cannot recognise is one it can neither deliver nor account for. What
+comes back is a Media Asset id, which a delivery URL is built from.
 
-It is refused where the slot is not declared, where the media type is not one the slot takes, where the
-size is over the slot's ceiling or the Site's, where the store is full, and **where the acting user may
-not change the row**. That last one matters: putting a file on a row changes it, so it is the row's own
+`begin` refuses where the slot is not declared, where the media type is not one it takes, where the size
+is over the slot's ceiling or the Site's, where the Space is full, and **where the acting user may not
+change the row**. That last one matters: putting a file on a row changes it, so it is the row's own
 authority that decides. Without it this would be a second, quieter way past the ladder -- a caller who
 may not edit an offering could still hang a package off it, which is editing it by another name.
 
-**The bytes are charged when the place is made, not when it is used.** Booking on finalize would let a
-store be filled by uploads that are merely started: the ceiling would hold on paper while the objects
-accumulated underneath it. The cost of this order is a reservation that expires with its bytes still
-booked, which the sweep gives back.
+**The space is charged when the place is made, not when it is used.** A ceiling decided at the end would
+bound the bookkeeping and not the store: ten clients could each write a gigabyte and have five of them
+refused afterwards, with the bytes already paid for. Reserving is one conditional statement, so it is
+also the check -- read the total, find room, then write, and two uploads arriving together both find the
+same room.
 
-`finalize` looks at the object rather than believing the report. Nothing there is not a file; a different
-size than was reserved is not a file either -- the size was agreed before any bytes moved, and accepting
-another would make the ceiling advisory. The first kilobytes are read and compared against the type the
-slot was told to expect, which is a floor and not a roof: text carries no signature, so unrecognised
-bytes are accepted rather than treated as proof of a lie. On a single-valued slot the file being replaced
-is removed in the same transaction, so the row is never holding two.
+`sha256` is the client's statement of what it is about to send. Where the Storage Profile's probe found
+the endpoint verifies one, it is **signed into the presigned request** and the endpoint refuses anything
+else -- so a wrong digest never becomes an object, and Core records the client's figure as true because a
+wrong one would not have got that far. Where it was not, the plan routes the body through Core, which
+hashes it in flight. Either way the digest is established rather than asserted, and where neither holds
+nothing is recorded: an `etag` is an HTTP header, and a column named `checksum_sha256` holding an MD5 is
+worse than one holding nothing.
 
-A digest is recorded **only where the Profile's probe found that the endpoint verifies one**. `etag` is
-an HTTP header and not a content hash: the built-in Provider fills it with a real streaming SHA-256, S3
-fills it with an MD5, and a multipart object gets a composite that hashes nothing. Recording whichever
-turned up would put a column named `checksum_sha256` in front of somebody who would reasonably compare
-against it, so an unprobed Profile answers no. Absent is a truthful "not established"; a wrong digest is
-worse than none.
+Above a single PUT that stops being true -- a multipart object's `ChecksumSHA256` is a composite of the
+part digests and not the hash of anything. It does not arise under the two-gigabyte slot ceiling, which
+is why the ceiling is worth keeping there.
 
-The Core route that receives a proxied body is `/api/v1/addon-assets/{scope}/{name}/{table}/{token}`.
-**The token is the authority there.** It is high-entropy, single-use, expires, and names exactly one
-object key at exactly one size -- which is precisely what a presigned PUT grants. Requiring a session
-cookie as well would make the same reservation safe against S3 and unsafe against the built-in Provider,
-which is not a distinction anything downstream could act on. A reservation that has run out is not found
-rather than rejected, so there is no path on which a stale token writes anything.
+`finalize` looks at the object rather than believing the report: nothing there is not a file, and a
+different size than was reserved is not one either. On a single-valued slot the file being replaced goes
+in the same transaction. Repeating it is safe -- a client whose answer was lost cannot tell a finished
+upload from a failed one, so a second call answers with the same file rather than an error.
 
 ### `secrets:v1`
 
@@ -1303,38 +1287,39 @@ Core service.
 
 A table may declare **assets**: named slots where a file belongs. The names are the Add-on's -- `logo`,
 `package`, `screenshots` -- and each slot states its cardinality (`one` replaces, `many` accumulates), a
-`maxBytes`, and the exact media types it takes. An Add-on that needs no files declares none and gets
-nothing. Assets require `siteScoped`: an object lives in one Site's store, because the store is the
-Site's Storage Profile, and a row shared across Sites has no store its file could belong to.
+`maxBytes`, the exact media types it takes, and who may fetch it. That last one is per slot because the
+answers really do differ within one package: the logo on a listing has to be readable by anyone who can
+see the listing, and the release artifact behind it must not be. Assets require `siteScoped`.
 
-Core keeps them in a table of its own beside the declaring one, named `<table>_assets`. A child table
-rather than a column per slot, because the number of slots is the Add-on's to choose and because a
-gallery is a slot holding more than one file, which no column can hold. Every column of it is Core's:
-what the object is called, how big it turned out, whether it arrived. There is no query kind that names
-the table and no capability that exposes it -- an Add-on that could write those columns could name an
-object outside its own prefix, or mark a transfer complete that never happened.
+**The file itself is a Media Asset.** Core already records where an object is, how big it turned out,
+what type it is and which digest it carries -- once, for every upload it has ever handled. An Add-on's
+asset table holds a link to one of those and nothing else:
 
-**The link is what makes collection possible at all.** While nothing tied a row to an object, which of
-an Add-on's objects still mattered was a question only the Add-on could answer. With the asset table it
-is a `SELECT`: list the prefix, subtract every key a row names, and what remains is collectable. The
-sweep looks only under `assets/` and never touches the free key space of `storage:v1`, which an Add-on
-manages itself -- a sweep that saw both would silently delete live data that was never a mistake.
+```text
+site_id · id · owner_id · slot · media_asset_id
+```
 
-The reference into the parent carries the Site, exactly as any reference between two Site-scoped tables
-does, and cascades. **Removing a row removes the rows describing its files**, and the objects they named
-become collectable. Core lays the parent's `(id, site_id)` key down for this even where nothing the
-Add-on declared points at it.
+Three of those five are Core's scope columns and `slot` is the only fact that belongs to the Add-on.
+Copying the object's properties in would be a second record of one thing, and two records of one thing
+eventually disagree. It also means **delivery comes for nothing**: the file is a Media Asset, so the
+delivery Core already has serves it.
 
-Uniqueness on a `one` slot is a partial index over finished rows only. A plain unique key would count
-the row of an upload in progress and so refuse the transfer meant to replace the current file, leaving
-replacement possible only by deleting first -- which is exactly the window in which a failed transfer
-destroys a file it never managed to replace. Replacing writes a new object key rather than overwriting
-the old one, for the same reason, and the old object is left for the sweep.
+The files live in a Media Space of the Add-on's own -- a fourth Space kind, one per Add-on per Site, not
+browsable. That is what makes the Space's quota **the Add-on's quota**: one account over one set of
+bytes, rather than two that drift apart.
 
-A row is written `pending` with an expiry before the transfer starts and becomes `ready` only once the
-bytes are complete. So the state that would otherwise be undetectable -- a row naming an object that is
-not there -- is instead the most visible thing in the table, findable with a `WHERE` rather than by
-listing a bucket.
+The link is bound to the Site and cascades **both ways**, which is worth reading twice:
+
+- Removing the Add-on's parent row takes its link rows with it. The Media Assets survive, because a file
+  is not the Add-on's to delete, and `--sweep` collects the ones nothing points at any more.
+- Removing the file in the Media view takes the link. **The parent row survives and simply has nothing
+  to deliver for that slot.** That is deliberate: it makes deleting a file a usable answer to somebody
+  uploading rubbish, without destroying the record it was attached to.
+
+Because every row in that table is a finished file, the rule for a single-valued slot is a plain unique
+index. It was a partial one while a transfer in flight lived there too -- counting that row would have
+refused the very upload meant to replace the current file. The record of a transfer is Core's upload
+session now, and this table holds facts.
 
 ### Declared queries
 
