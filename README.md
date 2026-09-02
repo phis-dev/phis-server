@@ -614,6 +614,7 @@ Examples:
 - `./phis operator add --email root@example.com --password 'replace-me' --name 'Primary Operator'`
 - `./phis operator passwd --email root@example.com --password 'replace-me-again'`
 - `./phis media check [--fix]`
+- `./phis maintain [--list] [--task upload-sessions] [--dry-run]`
 - `./phis storage list --site moonhug`
 - `./phis storage add --site moonhug --key s3 --provider @phis/storage-s3/s3 --config @s3.json --secret-name secret-access-key`
 - `./phis storage cors`
@@ -633,6 +634,14 @@ Site creation requires an explicit source locale. The CLI stores it as the immut
 `sites.overrides.<siteKey>.sourceLocale` value in `config/phis-runtime.json`; the versioned
 `translation.sourceLocale` value is only the installation fallback. There is deliberately no command
 for changing a Site source locale after creation.
+`maintain` is where cleanup that nobody is waiting for lives, and the only place it lives. Cleanup a
+request needs the result of belongs to that request -- an expired upload reservation is released when
+the same Media Space is next reserved against, and a reader discounts one the writer has not reached
+yet. What `maintain` does is repair a figure for a Space nobody has uploaded into since, and collect
+files an Add-on no longer links to. `--list` names the tasks, `--dry-run` reports without changing
+anything, and running it twice is running it once. Adding a task is adding an entry to
+`src/cli/maintain.mts`; nothing else changes.
+
 `storage probe` establishes what a configured endpoint can actually do, by doing it: whether the bucket
 takes a write, and whether it verifies a declared SHA-256 against the bytes it stores. One adapter
 serves AWS, MinIO and Garage alike and they do not agree on everything, so this is measured per Profile

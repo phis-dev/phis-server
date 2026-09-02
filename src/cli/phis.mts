@@ -103,6 +103,7 @@ import {
   removePhiServerAddonStorage,
 } from "./storage-purge.mts";
 import { sweepPhiServerAddonAssets } from "./storage-sweep.mts";
+import { PHI_MAINTENANCE_TASKS, runPhiMaintenance } from "./maintain.mts";
 import { checkPhiDependencyLicenses } from "./licenses.mts";
 import { checkPhiMediaOwnership } from "./media-check.mts";
 import {
@@ -238,6 +239,7 @@ Usage:
   phis init <site key> [--path <site source path>] [--package-manager pnpm|npm|yarn|bun]
   phis reconcile <site key> [--path <site source path>] [--package-manager pnpm|npm|yarn|bun] [--install]
   phis update <site key> [--path <site source path>] [--package-manager pnpm|npm|yarn|bun]
+  phis maintain [--task <id>] [--list] [--dry-run]
   phis media check [--fix]
   phis licenses check [--package <directory>]
 
@@ -2071,6 +2073,50 @@ async function main() {
       printJson({ ok: true, action: "secret.del", reference, removed });
     } else {
       console.log(removed ? `Removed ${reference}.` : `${reference} was not stored.`);
+    }
+    return;
+  }
+
+  if (group === "maintain") {
+    /*
+     * Cleanup that nobody is waiting for, run because an operator said so.
+     *
+     * The other kind -- state a request needs the result of -- belongs to that request and stays there;
+     * `AGENTS.md` says so and this command is not a way around it. What lands here repairs a figure or
+     * removes something nothing points at, is bounded, and gives the same answer run twice.
+     */
+    const dryRun = Boolean(flags.get("dry-run"));
+    const only = typeof flags.get("task") === "string" ? String(flags.get("task")) : null;
+    if (flags.get("list") === true) {
+      const tasks = PHI_MAINTENANCE_TASKS.map((task) => ({ id: task.id, summary: task.summary }));
+      if (json) {
+        printJson({ ok: true, action: "maintain.list", tasks });
+      } else {
+        for (const task of tasks) {
+          console.log(`${task.id.padEnd(20)} ${task.summary}`);
+        }
+      }
+      return;
+    }
+
+    const reports = await runPhiMaintenance(getPool(), { only, dryRun });
+    const failed = reports.filter((report) => report.error);
+    if (json) {
+      printJson({ ok: failed.length === 0, action: "maintain", dryRun, tasks: reports });
+    } else {
+      for (const report of reports) {
+        console.log(
+          report.error
+            ? `${report.id}: could not run -- ${report.error}`
+            : `${report.id}: ${report.detail}`,
+        );
+      }
+      if (dryRun) {
+        console.log("Nothing was changed.");
+      }
+    }
+    if (failed.length > 0) {
+      process.exitCode = 1;
     }
     return;
   }

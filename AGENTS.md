@@ -75,6 +75,10 @@
   after an upgrade are operator-invoked, bounded, reporting operations, and `phis` is their home. What is
   forbidden is using such an operation -- or a scheduler -- as a substitute for state that could have
   been correct at the moment it was written or read.
+- Those operations live in one registry, `src/cli/maintain.mts`, reached by `phis maintain`. A task there
+  states its id and a summary, answers `--dry-run` without changing anything, and is safe to run twice
+  and from two Instances at once. Adding one is adding an entry; a cleanup that does not fit those rules
+  does not belong in the registry, and almost always belongs to the request that needs its result.
 
 ## API Routing Contract
 
