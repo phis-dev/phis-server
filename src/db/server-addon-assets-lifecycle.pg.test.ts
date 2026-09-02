@@ -318,6 +318,27 @@ describe("putting a file on a row", () => {
     })).rejects.toThrow(/is not this caller's to change/);
   });
 
+  it("gives a file's space back exactly once, however often it is asked", async () => {
+    /*
+     * Double release is worse than none. `GREATEST(0, ...)` keeps a counter off the floor, but a store
+     * that has given back more than it holds hands an Add-on room it does not have -- and the ceiling
+     * then guards nothing.
+     */
+    const pool = await requirePhiTestDatabase();
+    const reservation = await assets().begin({
+      table: "offering", ownerId: offeringId, slot: "shots",
+      contentType: "image/png", sizeBytes: 6,
+    });
+    const before = await readPhiServerAddonStorageUsage(pool, { addonId: ADDON, siteId: site.id });
+
+    expect(await assets().abandon({ table: "offering", id: reservation.id })).toBe(true);
+    // The row is gone, so the second call finds nothing and must not book anything either.
+    expect(await assets().abandon({ table: "offering", id: reservation.id })).toBe(false);
+
+    const after = await readPhiServerAddonStorageUsage(pool, { addonId: ADDON, siteId: site.id });
+    expect(after.bytes).toBe(before.bytes - 6);
+  });
+
   it("takes a file away with its space", async () => {
     const pool = await requirePhiTestDatabase();
     const before = await readPhiServerAddonStorageUsage(pool, { addonId: ADDON, siteId: site.id });

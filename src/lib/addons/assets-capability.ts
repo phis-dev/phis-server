@@ -117,9 +117,30 @@ export function buildPhiServerAddonAssetsCapability(input: {
     }).catch(() => {});
   }
 
+  /**
+   * Removes the object, and says whether the space may now be given back.
+   *
+   * The distinction matters more than it looks. An object that is gone -- removed here, or never there
+   * to begin with -- is one whose booking is nobody's, so it is released. An object the storage *refused*
+   * to remove is still occupying room, and its row has just gone: it is now an orphan, and the sweep
+   * will find it and release it then. Releasing here as well would release it twice, and a store that
+   * has given back more than it holds hands an Add-on room it does not have.
+   */
   async function removeObject(row: PhiServerAddonAssetRow) {
-    const resolved = await resolveStorage().catch(() => null);
-    await resolved?.service.deleteObject(row.storageKey).catch(() => {});
+    try {
+      const { service } = await resolveStorage();
+      await service.deleteObject(row.storageKey);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /** The pair, in the only order that neither strands space nor gives it back twice. */
+  async function discard(row: PhiServerAddonAssetRow) {
+    if (await removeObject(row)) {
+      await release(row);
+    }
   }
 
   return Object.freeze({
@@ -296,8 +317,7 @@ export function buildPhiServerAddonAssetsCapability(input: {
       // The replaced file's object, removed after its row is gone: the other order hands the space back
       // while something still points at it.
       if (result.superseded) {
-        await removeObject(result.superseded);
-        await release(result.superseded);
+        await discard(result.superseded);
       }
       return view(result.asset);
     },
@@ -308,8 +328,7 @@ export function buildPhiServerAddonAssetsCapability(input: {
       if (!row) {
         return false;
       }
-      await removeObject(row);
-      await release(row);
+      await discard(row);
       return true;
     },
 
@@ -328,8 +347,7 @@ export function buildPhiServerAddonAssetsCapability(input: {
       if (!row) {
         return false;
       }
-      await removeObject(row);
-      await release(row);
+      await discard(row);
       return true;
     },
   } satisfies PhiServerAssetsCapabilityV1);

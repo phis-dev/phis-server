@@ -13,6 +13,7 @@ import {
   abandonPhiServerAddonAsset,
   readPhiServerAddonAssetReservation,
 } from "@/db/server-addon-assets.mts";
+import { bookPhiServerAddonStorage } from "@/db/server-addon-storage-usage.mts";
 import { getPool } from "@/lib/db";
 import { logRuntimeEvent } from "@/lib/log";
 
@@ -120,8 +121,27 @@ export async function PUT(request: NextRequest, context: RouteContext) {
        * The object first and the row second, which is the order that cannot lose data -- a row removed
        * before its object leaves bytes nothing names.
        */
-      await service.deleteObject(reservation.storageKey).catch(() => {});
-      await abandonPhiServerAddonAsset(pool, location, { id: reservation.id, siteId: site.id });
+      const removed = await service.deleteObject(reservation.storageKey).catch(() => false);
+      const dropped = await abandonPhiServerAddonAsset(
+        pool, location, { id: reservation.id, siteId: site.id },
+      );
+      /*
+       * And the space goes back, which is the whole reason this branch cannot simply drop the row.
+       *
+       * The bytes were charged when the place was made. Removing the row and the object without also
+       * releasing them leaves the booking with nothing left that describes it -- the sweep compares
+       * objects against rows and there is now neither, so only a `--recount` would ever find it. A
+       * client that mismatches its size on purpose could then spend an Add-on's whole store, repeatedly,
+       * on nothing, with a token it was legitimately given.
+       *
+       * Released only where the object actually went. One the storage refused to remove is an orphan
+       * the sweep will find and release then, and releasing here as well would release it twice.
+       */
+      if (dropped && removed) {
+        await bookPhiServerAddonStorage(pool, {
+          addonId, siteId: site.id, bytes: -reservation.byteSize, objects: -1,
+        }).catch(() => {});
+      }
       return refuse(400, `The reservation was made for ${reservation.byteSize} bytes.`);
     }
     // Still pending. What makes it a file is finalize, which is the Add-on's call and not the client's:
