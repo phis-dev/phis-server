@@ -307,54 +307,73 @@ export async function probeStorageProfiles(
     throw new Error(`Site ${site.key} has no Storage Profile "${only}".`);
   }
 
-  const results: {
-    key: string;
-    providerId: string;
-    probed: boolean;
-    writable?: boolean;
-    verifiesSha256?: boolean;
-    findings: string[];
-  }[] = [];
+  const results: StorageProfileProbeResult[] = [];
 
   for (const profile of profiles) {
-    if (profile.providerId === PHI_LOCAL_MEDIA_STORAGE_PROVIDER_ID) {
-      results.push({
-        key: profile.key,
-        providerId: profile.providerId,
-        probed: false,
-        findings: ["Core's own storage: nothing is delivered to it by a client, so there is nothing to verify."],
-      });
-      continue;
-    }
-
-    let probe: PhisMediaStorageProbe;
-    try {
-      const adapter = await resolveProbeAdapter(
-        root, profile.providerId, profile.config, profile.secretReference, readSecret,
-      );
-      probe = await adapter.probeCapabilities();
-    } catch (error) {
-      // A Provider that cannot be built or refuses outright is an answer, and the operator wants it
-      // recorded next to the ones that answered rather than losing the whole run to it.
-      probe = {
-        writable: false,
-        verifiesSha256: false,
-        findings: [`The Provider could not be reached: ${
-          error instanceof Error ? error.message.trim() : "no reason given"
-        }`],
-      };
-    }
-
-    await pool.query(
-      `UPDATE phis.media_storage_profiles
-          SET probe = $2::jsonb, probed_at = NOW(), updated_at = NOW()
-        WHERE id = $1`,
-      [profile.id, JSON.stringify(probe)],
-    );
-    results.push({ key: profile.key, providerId: profile.providerId, probed: true, ...probe });
+    results.push(await probeOneStorageProfile(root, pool, profile, readSecret));
   }
 
   return { ok: true, action: "storage.probe" as const, site: site.key, profiles: results };
+}
+
+export type StorageProfileProbeResult = {
+  key: string;
+  providerId: string;
+  probed: boolean;
+  writable?: boolean;
+  verifiesSha256?: boolean;
+  findings: string[];
+};
+
+/**
+ * Probes one Profile and records what it found.
+ *
+ * Separate from the command so the Profile commands can use it too: a capability is a property of an
+ * endpoint under a configuration, so the moment that configuration is written is the moment to measure
+ * it. Leaving that to a command an operator has to remember is what leaves a Profile in service with
+ * nothing recorded -- and a Profile with nothing recorded cannot be given the upload plan that depends
+ * on the endpoint checking a digest.
+ */
+export async function probeOneStorageProfile(
+  root: string,
+  pool: Pool,
+  profile: { id: number; key: string; providerId: string; config: Record<string, unknown>; secretReference: string | null },
+  readSecret: StorageSecretReader,
+): Promise<StorageProfileProbeResult> {
+  if (profile.providerId === PHI_LOCAL_MEDIA_STORAGE_PROVIDER_ID) {
+    return {
+      key: profile.key,
+      providerId: profile.providerId,
+      probed: false,
+      findings: ["Core's own storage: nothing is delivered to it by a client, so there is nothing to verify."],
+    };
+  }
+
+  let probe: PhisMediaStorageProbe;
+  try {
+    const adapter = await resolveProbeAdapter(
+      root, profile.providerId, profile.config, profile.secretReference, readSecret,
+    );
+    probe = await adapter.probeCapabilities();
+  } catch (error) {
+    // A Provider that cannot be built or refuses outright is an answer, and the operator wants it
+    // recorded next to the ones that answered rather than losing the whole run to it.
+    probe = {
+      writable: false,
+      verifiesSha256: false,
+      findings: [`The Provider could not be reached: ${
+        error instanceof Error ? error.message.trim() : "no reason given"
+      }`],
+    };
+  }
+
+  await pool.query(
+    `UPDATE phis.media_storage_profiles
+        SET probe = $2::jsonb, probed_at = NOW(), updated_at = NOW()
+      WHERE id = $1`,
+    [profile.id, JSON.stringify(probe)],
+  );
+  return { key: profile.key, providerId: profile.providerId, probed: true, ...probe };
 }
 
 export async function listStorageProfiles(pool: Pool, flags: FlagMap) {
@@ -412,11 +431,16 @@ export async function addStorageProfile(
     [site.id, key, providerId, JSON.stringify(config), secretReference],
   );
 
+  const profile = { id: rows[0]!.id, key, providerId, config, secretReference };
   return {
     ok: true,
     action: "storage.add" as const,
     site: site.key,
-    profile: { id: rows[0]!.id, key, providerId, config, secretReference },
+    profile,
+    // Measured now, while the operator is here to read the finding. A Profile that goes into service
+    // with nothing recorded cannot be given the upload plan that depends on the endpoint checking a
+    // digest, and the operator would find that out as somebody else's failed upload.
+    probe: await probeOneStorageProfile(root, pool, profile, readSecret),
     cors: await reconcileStorageCors(root, pool, readSecret),
   };
 }
@@ -455,12 +479,17 @@ export async function setStorageProfile(
     [site.id, key, JSON.stringify(config), secretReference],
   );
 
+  const profile = { id: existing.id, key, providerId: existing.providerId, config, secretReference };
   return {
     ok: true,
     action: "storage.set" as const,
     site: site.key,
     replaced: replace,
-    profile: { id: existing.id, key, providerId: existing.providerId, config, secretReference },
+    profile,
+    // The recorded answer described the endpoint the old configuration reached. Once that moved, it
+    // describes somewhere else -- so it is replaced rather than left standing, even when the new
+    // endpoint turns out to answer worse.
+    probe: await probeOneStorageProfile(root, pool, profile, readSecret),
     cors: await reconcileStorageCors(root, pool, readSecret),
   };
 }

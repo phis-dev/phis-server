@@ -720,6 +720,20 @@ with it. The union is meant to grow -- a Provider that needs several requests fo
 rather than a second upload lifecycle -- and an executor refuses a kind it does not know instead of
 falling back to a transport that would send the body to the wrong place.
 
+Which of the two a Profile may be given is decided by measurement, not by its Provider. `presigned-put`
+is only safe where the endpoint checks a declared SHA-256 against the bytes it stores: the digest is then
+established by the refusal of anything else, and Core can take the client's figure as true without having
+seen a byte. One adapter serves AWS, MinIO and Garage alike and they do not agree, and no field of the
+configuration says which is behind it, so the answer comes from a probe recorded against the Profile.
+
+Absent means no, and that makes when the probe runs part of the design rather than an operator's habit.
+It runs where a Profile is written -- `storage add` and `storage set`, which replaces the old answer
+because it described the endpoint the old configuration reached -- and once, lazily, on the request that
+first needs it, for a Profile that reached service through neither: restored from a dump, written by a
+migration, configured before the probe existed. A failure is recorded like any other answer and not
+retried per request, because an endpoint that is down would otherwise be dialled again by every upload
+into it; `phis storage probe` is what tries it again.
+
 Finalizing is always Core's: only the Server turns a delivered body into an Asset. It settles the staged
 object with the Provider first, carrying through whatever the plan asked the Client to report back,
 opaque to Core. Everything after delivery is therefore judged once, for every plan alike: what actually

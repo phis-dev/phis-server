@@ -8,6 +8,7 @@ import { PhiGroupMembershipFlags } from "@/lib/constants/site-groups";
 import { getSiteGroupById, readEffectiveGroupMembershipFlags } from "@/db/site-groups";
 import type { RequestedMediaSpace } from "@/lib/guards/site-media-api";
 import { getPool } from "@/lib/db";
+import type { PhisMediaStorageProbe } from "@phis/contracts/addon";
 import {
   PHI_LOCAL_MEDIA_STORAGE_PROVIDER_ID,
   type PhisMediaStorageProviderId,
@@ -258,6 +259,43 @@ export async function mediaStorageProfileVerifiesSha256(siteId: number, profileI
     [siteId, profileId],
   );
   return rows[0]?.probe?.verifiesSha256 === true;
+}
+
+/**
+ * What was recorded about this endpoint, and whether anything was.
+ *
+ * The two are separate answers. A Profile that answered "no" and a Profile nobody ever asked both read
+ * as no capability, and only one of them is worth asking again -- which is what `probedAt` is for.
+ */
+export async function readMediaStorageProfileProbe(siteId: number, profileId: number) {
+  const { rows } = await getPool().query<{ probe: PhisMediaStorageProbe | null; probed_at: Date | null }>(
+    `SELECT probe, probed_at FROM phis.media_storage_profiles WHERE site_id = $1 AND id = $2`,
+    [siteId, profileId],
+  );
+  const row = rows[0];
+  if (!row) return null;
+  return { probe: row.probe, probedAt: row.probed_at ? row.probed_at.toISOString() : null };
+}
+
+/**
+ * Records what an endpoint was found to do, replacing whatever stood there.
+ *
+ * Always a replacement and never a merge: a probe describes one endpoint under one configuration, so
+ * keeping any part of an older answer after the configuration moved would report a capability that was
+ * measured somewhere else.
+ */
+export async function writeMediaStorageProfileProbe(
+  siteId: number,
+  profileId: number,
+  probe: PhisMediaStorageProbe,
+) {
+  const result = await getPool().query(
+    `UPDATE phis.media_storage_profiles
+        SET probe = $3::jsonb, probed_at = NOW(), updated_at = NOW()
+      WHERE site_id = $1 AND id = $2`,
+    [siteId, profileId, JSON.stringify(probe)],
+  );
+  return (result.rowCount ?? 0) > 0;
 }
 
 export async function getMediaStorageProfile(siteId: number, profileId: number) {

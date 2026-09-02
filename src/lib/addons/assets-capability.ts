@@ -14,7 +14,6 @@ import {
   ensureAddonMediaSpace,
   ensureSiteMediaConfig,
   getMediaStorageProfile,
-  mediaStorageProfileVerifiesSha256,
   releaseMediaSpaceReservation,
   reserveMediaSpaceQuota,
 } from "@/db/media-spaces";
@@ -34,6 +33,7 @@ import {
   resolvePhiMediaUploadSessionKind,
 } from "@/lib/media-upload-sessions";
 import { createPhisMediaStorageServiceForProfile } from "@/lib/media-storage";
+import { phiMediaStorageProfileVerifiesSha256 } from "@/lib/media-storage-profile-probe";
 import { sniffPhiMediaContentType } from "@/lib/media-content-sniffer";
 import { derivePhiServerAddonSchemaName } from "./schema-name.ts";
 import {
@@ -221,7 +221,7 @@ export function buildPhiServerAddonAssetsCapability(input: {
          * without ever having seen a byte. Where it does not, the body comes through Core, which hashes
          * it in flight. Either way the digest is established rather than asserted.
          */
-        const verifies = await mediaStorageProfileVerifiesSha256(siteId, profile.id);
+        const verifies = await phiMediaStorageProfileVerifiesSha256(profile, siteKey);
         const plan = await service.createUploadPlan({
           token,
           storageKey,

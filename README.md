@@ -645,9 +645,21 @@ anything, and running it twice is running it once. Adding a task is adding an en
 `storage probe` establishes what a configured endpoint can actually do, by doing it: whether the bucket
 takes a write, and whether it verifies a declared SHA-256 against the bytes it stores. One adapter
 serves AWS, MinIO and Garage alike and they do not agree on everything, so this is measured per Profile
-rather than assumed per Provider, and the answer is recorded with the moment it was true. It is worth
-running when a Profile is added or its endpoint changes -- otherwise a wrong endpoint or a missing
-permission is discovered by whoever uploads first, and reaches them as their error.
+rather than assumed per Provider, and the answer is recorded with the moment it was true.
+
+Adding a Profile and changing one probe it themselves, and report the finding beside the change: a wrong
+endpoint or a missing permission is then an answer the operator reads while still at the terminal,
+instead of somebody else's failed upload later. `storage set` replaces the recorded answer rather than
+keeping it, because the old one describes the endpoint the old configuration reached. Running the
+command by hand stays what re-measures a Profile whose endpoint changed underneath it -- credentials
+rotated, a bucket policy edited -- since nothing about that reaches the Server.
+
+A Profile that reaches an upload with nothing recorded is probed once, there and then, by the request
+that needs the answer. That covers what no command can: a Profile restored from a dump, written by a
+migration, or configured before the probe existed. The result is recorded however it came out, and a
+failure is not retried per request -- an endpoint that is down would otherwise be dialled again on every
+upload into it, so what such a Profile carries is a finding saying so, and `storage probe` is how it is
+tried again.
 
 `addon storage` bounds the key space `storage:v1` hands an Add-on on one Site and reports what it holds.
 `--recount` sets the counters to what the store actually holds -- they are a running total and can drift,
