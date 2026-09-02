@@ -14,6 +14,10 @@ import {
   isPhiMediaUploadBodyProxied,
   PhiMediaUploadSessionStatus,
 } from "@/lib/media-upload-sessions";
+import {
+  PhiMediaUploadAbort,
+  watchPhiMediaUploadBody,
+} from "@/lib/media-upload-stream";
 import { requireMediaSpaceWriteContext } from "@/lib/guards/site-media-api";
 import { requireSiteFromRequest } from "@/lib/site-context";
 import { PhiMediaUploadPurpose } from "@/lib/media-upload-sessions";
@@ -99,6 +103,16 @@ export async function PUT(
   if (!profile) return nextMediaError("storage_profile_unavailable", "Storage Profile is unavailable.", 503);
   const storageService = await createPhisMediaStorageServiceForProfile(profile, site.key);
 
+  /*
+   * From here the body is watched, because `expires_at` is the wrong instrument for this.
+   *
+   * The reservation's expiry bounds a whole upload and is checked before one starts. It says nothing
+   * about a Client that walks away or falls silent halfway through: that session is valid, and without
+   * this Core would hold the request, the connection and the reservation open on the strength of a
+   * socket nobody is writing to.
+   */
+  const watch = watchPhiMediaUploadBody(request.body, { clientSignal: request.signal });
+
   try {
     await updateMediaUploadSessionByToken(token, {
       status: PhiMediaUploadSessionStatus.Uploading,
@@ -106,13 +120,14 @@ export async function PUT(
 
     const stored = await storageService.putObjectStream({
       storageKey: session.stagingStorageKey,
-      body: request.body,
+      body: watch.body,
       contentType: session.contentType,
       metadata: {
         token: session.token,
         siteKey: site.key,
         filename: session.filename,
       },
+      signal: watch.signal,
     });
 
     if (stored.byteSize !== session.sizeBytes) {
@@ -139,20 +154,55 @@ export async function PUT(
       checksumSha256,
     });
   } catch (uploadError) {
+    // The same teardown whichever way the body ended: the reservation goes back and the torn object
+    // goes away. Only what is reported about it differs.
     await abortMediaUploadSessionByToken(token);
     await storageService.deleteObject(session.stagingStorageKey).catch(() => {});
+
+    const abortedBy = watch.abortedBy();
+    const meta = {
+      originalName: session.filename,
+      contentType: session.contentType,
+      sizeBytes: session.sizeBytes,
+      storageKey: session.stagingStorageKey,
+      receivedBytes: watch.receivedBytes(),
+    };
+
+    /*
+     * An abandoned upload is not a Server fault, and filing it as one is not a harmless overstatement.
+     * A closed tab is the most common thing that happens to an upload; at `error` it would be the
+     * loudest line in the log and would bury the faults somebody has to act on. What it is worth
+     * instead is its rate, and that needs an event of its own to be countable at all.
+     *
+     * The silence is kept apart from the departure for the same reason in the other direction: it is
+     * the only one of the two that can also mean the timeout is set too tight for an honest slow
+     * network, and that is a question nobody can ask of a log that calls both "failed".
+     */
+    if (abortedBy) {
+      const stalled = abortedBy === PhiMediaUploadAbort.Stalled;
+      logRuntimeEvent(stalled ? "warn" : "info", stalled ? "media.upload.stalled" : "media.upload.abandoned", {
+        message: stalled
+          ? "Upload stalled: no bytes arrived before the transfer timed out."
+          : "Upload abandoned: the client went away before the body was complete.",
+        siteKey: site.key,
+        method: request.method,
+        path: request.nextUrl.pathname,
+        meta,
+      });
+      return nextMediaError(
+        stalled ? "upload_stalled" : "upload_abandoned",
+        stalled ? "Upload stalled." : "Upload abandoned.",
+        408,
+      );
+    }
+
     logRuntimeEvent("error", "media.upload.failed", {
       message: uploadError instanceof Error ? uploadError.message : "Upload failed.",
       siteKey: site.key,
       method: request.method,
       path: request.nextUrl.pathname,
       error: normalizeLogThrowable(uploadError),
-      meta: {
-        originalName: session.filename,
-        contentType: session.contentType,
-        sizeBytes: session.sizeBytes,
-        storageKey: session.stagingStorageKey,
-      },
+      meta,
     });
     return NextResponse.json(
       {
@@ -161,5 +211,8 @@ export async function PUT(
       },
       { status: 500 },
     );
+  } finally {
+    // A completed upload leaves a timer armed for as long as the timeout, otherwise.
+    watch.release();
   }
 }

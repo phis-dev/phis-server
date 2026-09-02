@@ -216,6 +216,7 @@ export class PhisLocalMediaStorageAdapter implements PhisMediaStorageAdapter {
     readable: Readable,
     contentType: string,
     metadata?: Record<string, string>,
+    signal?: AbortSignal,
   ): Promise<PhisMediaObjectHead> {
     const normalizedStorageKey = normalizeStorageKey(storageKey);
     const filePath = this.resolveFilePath(normalizedStorageKey);
@@ -240,7 +241,9 @@ export class PhisLocalMediaStorageAdapter implements PhisMediaStorageAdapter {
     });
 
     try {
-      await pipeline(readable, hashingTransform, fileStream);
+      // The abort reaches the file handle, not just the read: a half-written object left open is what
+      // the sweep would later find and what the catch below is here to prevent.
+      await pipeline(readable, hashingTransform, fileStream, signal ? { signal } : {});
     } catch (error) {
       await rm(filePath, { force: true }).catch(() => {});
       await rm(metaPath, { force: true }).catch(() => {});
@@ -291,6 +294,7 @@ export class PhisLocalMediaStorageAdapter implements PhisMediaStorageAdapter {
       Readable.fromWeb(input.body as Parameters<typeof Readable.fromWeb>[0]),
       input.contentType,
       input.metadata,
+      input.signal,
     );
   }
 

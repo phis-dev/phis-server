@@ -675,6 +675,38 @@ Quota enforcement is transactional:
    chased from there: what no request can reach belongs to a bucket lifecycle rule for S3 and to a
    deliberate operator command for Local, to the maintenance contract in `AGENTS.md`.
 
+### When a body stops arriving
+
+The session's expiry bounds a whole upload and is checked before one starts. It is not what catches a
+body that stops mid-transfer: that session is valid and that request is open, so without a second
+measure Core would hold the request, the connection and the reservation for as long as the network is
+willing to pretend the socket is alive.
+
+Two endings hide behind that, and step 4 keeps them apart because they are answered differently:
+
+- **The Client is gone.** The transport says so. There is nobody left to answer, so the reservation is
+  released, the torn object removed, and the event recorded at `info` -- a closed tab is the most common
+  thing that happens to an upload, and filing it as a Server fault would make it the loudest line in the
+  log and bury the faults somebody has to act on. Its rate is what is worth reading, which is why it is
+  an event of its own rather than a variant of `media.upload.failed`.
+- **The Client is silent.** The connection is open and no byte has arrived for
+  `PHI_MEDIA_UPLOAD_STALL_TIMEOUT_MS`. Nothing announces this; the absence of bytes is the only evidence,
+  so it is measured -- between two bytes, not across the upload, and armed before the first byte as well,
+  since a request that sends nothing at all is the same silence. Recorded at `warn`, because it is also
+  the shape a timeout set too tight for an honest slow network takes, and that is a question nobody can
+  ask of a log that calls both endings "failed".
+
+Both raise the abort on the read itself and not only on the Adapter's `signal`, which is optional: an
+Adapter is entitled to ignore it, and ending the read is what makes the write end regardless of who wrote
+the Provider. An Adapter that honours it stops paying for the write as well, which for a remote Provider
+is a request in flight.
+
+Nothing about the abort is kept in the session row. The reason is read by whoever is still listening --
+the Client that is still there gets it in the response, and the operator gets it in the log. A Client
+that has gone reads nothing, and a Client that comes back starts a new upload rather than asking why the
+old one ended, so a stored reason would be kept for a reader who never arrives. Deleting the row stays
+what makes the release happen exactly once.
+
 ### The upload plan
 
 How a body reaches storage is the Provider's to state and the Client's to carry out. `init` answers with
