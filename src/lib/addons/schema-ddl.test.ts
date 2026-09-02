@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { buildPhiServerAddonSchemaStatements } from "./schema-ddl.ts";
+import type { PhiServerAddonSchemaDescriptor } from "./contract.ts";
 import { incidentSchemaDescriptor } from "../../../test/fixtures/addon-schema.ts";
 
 const SCHEMA = "phis_addon_acme_incidents";
@@ -217,5 +218,104 @@ describe("schema DDL generation", () => {
     })[0].sql;
     expect(sql).toContain('"value" VARCHAR(64) NOT NULL UNIQUE');
     expect(sql).not.toContain("_uq");
+  });
+});
+
+/**
+ * The table Core adds beside one that declares files.
+ *
+ * It exists so that the answer to "which objects still matter" is a `SELECT` rather than a guess. Every
+ * property tested here serves that: the cascade, so removing a row removes what described its files; the
+ * partial uniqueness, so a replacement can be uploaded before the file it replaces is given up; and the
+ * expiry index, so an abandoned transfer is findable without listing a bucket.
+ */
+describe("the asset table", () => {
+  const withAssets: PhiServerAddonSchemaDescriptor = {
+    ...incidentSchemaDescriptor,
+    tables: incidentSchemaDescriptor.tables.map((table, index) =>
+      index === 0
+        ? {
+            ...table,
+            assets: [
+              { name: "report", cardinality: "one" as const, maxBytes: 1_000, contentTypes: ["application/pdf"] },
+              { name: "photos", cardinality: "many" as const, maxBytes: 2_000, contentTypes: ["image/png"] },
+            ],
+          }
+        : table,
+    ),
+  };
+
+  function assetSql(summary: string) {
+    const built = buildPhiServerAddonSchemaStatements(SCHEMA, withAssets);
+    const statement = built.find((entry) => entry.summary === summary);
+    if (!statement) {
+      throw new Error(`No statement summarised as "${summary}". Got: ${built.map((e) => e.summary).join(", ")}`);
+    }
+    return statement.sql;
+  }
+
+  it("is added only for a table that asked for it", () => {
+    expect(statements().some((entry) => entry.summary.includes("incident_assets"))).toBe(false);
+    expect(assetSql("create table incident_assets")).toContain('"incident_assets"');
+  });
+
+  it("takes the parent's key type rather than assuming one", () => {
+    // `identity` on the parent is `BIGINT` on the side that points at it.
+    expect(assetSql("create table incident_assets")).toContain('"owner_id" BIGINT NOT NULL');
+  });
+
+  it("cascades from the parent, and carries the Site into the reference", () => {
+    const sql = assetSql("create table incident_assets");
+    expect(sql).toContain(
+      'FOREIGN KEY ("owner_id", "site_id") REFERENCES "phis_addon_acme_incidents"."incident"("id", "site_id") ON DELETE CASCADE',
+    );
+  });
+
+  it("keys the parent by Site even though nothing the Add-on declared points at it", () => {
+    // Without this the composite foreign key above has no unique key to reference and PostgreSQL
+    // refuses it -- and the statement that would fail comes after tables have already been created.
+    const built = buildPhiServerAddonSchemaStatements(SCHEMA, withAssets);
+    const keyed = built.findIndex((entry) => entry.summary === "key incident by Site for references");
+    const created = built.findIndex((entry) => entry.summary === "create table incident_assets");
+    expect(keyed).toBeGreaterThanOrEqual(0);
+    expect(keyed).toBeLessThan(created);
+  });
+
+  it("writes the slot vocabulary into the database, not only into the manifest", () => {
+    expect(assetSql("create table incident_assets")).toContain(
+      `CHECK ("slot" IN ('report', 'photos'))`,
+    );
+  });
+
+  it("holds a single-valued slot to one finished file, and says nothing about pending ones", () => {
+    const sql = assetSql("hold incident_assets to one finished file per slot");
+    expect(sql).toContain("CREATE UNIQUE INDEX");
+    expect(sql).toContain(`WHERE "status" = 2 AND "slot" IN ('report')`);
+    // `photos` accumulates and must not appear in the rule that permits one.
+    expect(sql).not.toContain("photos");
+  });
+
+  it("leaves the uniqueness rule out entirely when every slot accumulates", () => {
+    const many = buildPhiServerAddonSchemaStatements(SCHEMA, {
+      ...withAssets,
+      tables: withAssets.tables.map((table, index) =>
+        index === 0
+          ? { ...table, assets: table.assets!.filter((slot) => slot.cardinality === "many") }
+          : table,
+      ),
+    });
+    expect(many.some((entry) => entry.summary.includes("one finished file"))).toBe(false);
+  });
+
+  it("refuses two rows naming one object", () => {
+    expect(assetSql("create table incident_assets")).toContain(
+      'UNIQUE ("storage_key")',
+    );
+  });
+
+  it("indexes the reservations that were never completed", () => {
+    expect(assetSql("index incident_assets by expiry")).toContain(
+      `("expires_at") WHERE "status" = 1`,
+    );
   });
 });

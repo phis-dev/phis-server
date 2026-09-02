@@ -242,7 +242,9 @@ describe("a query that requires a role", () => {
 
   it("lets the writer reach their own row without holding any role", async () => {
     const written = await data(nobody).insert("write_review", { body: "mine" });
-    expect(await data(nobody).delete("drop_review", { id: String(written!.id) })).toBe(1);
+    // The row comes back, which is the only moment its columns can still be read.
+    expect(await data(nobody).delete("drop_review", { id: String(written!.id) }))
+      .toMatchObject({ body: "mine" });
   });
 
   it("lets a role stand in where the ladder said no", async () => {
@@ -250,12 +252,12 @@ describe("a query that requires a role", () => {
     const id = String(written!.id);
 
     // Owned and not grouped, so there is no membership level to climb: a stranger is simply refused, and
-    // refused the ladder's way -- a silent zero, because saying more would answer whether the row exists.
-    expect(await data(vendor).delete("drop_review", { id })).toBe(0);
+    // refused the ladder's way -- an empty answer, because saying more would tell them the row exists.
+    expect(await data(vendor).delete("drop_review", { id })).toBeNull();
     expect((await data(nobody).select("all_reviews")).rows.some((row) => row.body === "moderated"))
       .toBe(true);
 
-    expect(await data(curator).delete("drop_review", { id })).toBe(1);
+    expect(await data(curator).delete("drop_review", { id })).toMatchObject({ body: "moderated" });
   });
 
   it("stops the moment the role is taken away", async () => {

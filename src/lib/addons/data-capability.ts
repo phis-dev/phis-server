@@ -382,7 +382,9 @@ function buildOperations(db: Queryable, bound: Bound): PhiServerDataTransactionV
       return (await run(db, bound, name, "update", args)).rowCount;
     },
     async delete(name, args = {}) {
-      return (await run(db, bound, name, "delete", args)).rowCount;
+      // The removed row, not a count. A refusal comes back as an empty result and so answers null, which
+      // is what a row that was never there answers too.
+      return (await run(db, bound, name, "delete", args)).rows[0] ?? null;
     },
   } satisfies PhiServerDataTransactionV1);
 }

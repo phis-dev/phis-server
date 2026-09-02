@@ -246,3 +246,75 @@ describe("schema descriptor validation", () => {
     expect(issues.join("\n")).toMatch(/states neither min nor max/);
   });
 });
+
+/**
+ * What a slot declaration has to say before Core will build anything from it.
+ *
+ * These are the mistakes a well-meaning manifest can still make. Core enforces a size and a type on the
+ * Add-on's behalf, so a slot that states neither is not a permissive slot, it is an unenforceable one --
+ * and the reading that lets it through is the one nobody can take back afterwards.
+ */
+describe("asset slots", () => {
+  function withAssets(assets: unknown) {
+    return withTable((table) => {
+      table.assets = assets;
+    });
+  }
+
+  const slot = {
+    name: "report",
+    cardinality: "one",
+    maxBytes: 1_000,
+    contentTypes: ["application/pdf"],
+  };
+
+  it("accepts a table that declares them", () => {
+    expect(validate(withAssets([slot])).issues).toEqual([]);
+  });
+
+  it("refuses assets on a table that belongs to no Site", () => {
+    const copy = withAssets([slot]) as unknown as { tables: Record<string, unknown>[] };
+    copy.tables[0].siteScoped = false;
+    expect(validate(copy).issues.join("\n")).toMatch(/requires siteScoped/);
+  });
+
+  it("refuses a slot with no content types rather than reading it as any type", () => {
+    expect(validate(withAssets([{ ...slot, contentTypes: [] }])).issues.join("\n"))
+      .toMatch(/at least one media type/);
+  });
+
+  it("refuses something that is not a media type", () => {
+    expect(validate(withAssets([{ ...slot, contentTypes: ["pdf"] }])).issues.join("\n"))
+      .toMatch(/must be a media type/);
+  });
+
+  it("refuses a ceiling larger than what stands in front of Core", () => {
+    expect(validate(withAssets([{ ...slot, maxBytes: 3_000_000_000 }])).issues.join("\n"))
+      .toMatch(/maxBytes must be a whole number/);
+  });
+
+  it("refuses a cardinality that is neither of the two", () => {
+    expect(validate(withAssets([{ ...slot, cardinality: "some" }])).issues.join("\n"))
+      .toMatch(/must be "one" or "many"/);
+  });
+
+  it("refuses two slots under one name", () => {
+    expect(validate(withAssets([slot, { ...slot, cardinality: "many" }])).issues.join("\n"))
+      .toMatch(/duplicate "report"/);
+  });
+
+  it("refuses a declared table sitting where the derived one goes", () => {
+    const copy = withAssets([slot]) as unknown as { tables: Record<string, unknown>[] };
+    copy.tables[1].name = "incident_assets";
+    expect(validate(copy).issues.join("\n")).toMatch(/which is the name Core gives the asset table/);
+  });
+
+  it("refuses a name whose composed constraint on the derived table would not fit", () => {
+    // Checked here rather than met as a PostgreSQL error partway through a migration that has already
+    // created tables. The assertion names the derived table, because the parent's own constraints
+    // overflow at a shorter name and would otherwise be what this test is really proving.
+    const copy = withAssets([slot]) as unknown as { tables: Record<string, unknown>[] };
+    copy.tables[0].name = "a".repeat(52);
+    expect(validate(copy).issues.join("\n")).toMatch(/\.assets on "a+_assets"/);
+  });
+});

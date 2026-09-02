@@ -129,8 +129,10 @@ describe("compiling a declared query", () => {
     expect(compiled().get("rename")!.sql).toBe(
       'UPDATE "phis_addon_acme_shop"."listing" SET "title" = $1 WHERE "id" = $2 AND "site_id" = $3',
     );
+    // The delete names its columns back, because after it has run there is nothing left to ask them of.
     expect(compiled().get("drop")!.sql).toBe(
-      'DELETE FROM "phis_addon_acme_shop"."listing" WHERE "id" = $1 AND "site_id" = $2',
+      'DELETE FROM "phis_addon_acme_shop"."listing" WHERE "id" = $1 AND "site_id" = $2 ' +
+      'RETURNING "id", "title", "state", "retired_at", "site_id", "group_id", "owner_user_id"',
     );
   });
 

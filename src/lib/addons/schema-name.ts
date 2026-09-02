@@ -48,3 +48,16 @@ export function composePhiServerAddonObjectName(
 ) {
   return `${table}_${name}_${suffix}`;
 }
+
+/** The suffix Core appends for the table holding a table's files. */
+export const PHI_SERVER_ADDON_ASSET_TABLE_SUFFIX = "assets";
+
+/**
+ * The table Core keeps beside a table that declares assets.
+ *
+ * Derived rather than declared, so an Add-on cannot name it, cannot query it directly, and cannot
+ * collide with it -- validation refuses a declared table that would land on this name.
+ */
+export function composePhiServerAddonAssetTableName(table: string) {
+  return `${table}_${PHI_SERVER_ADDON_ASSET_TABLE_SUFFIX}`;
+}

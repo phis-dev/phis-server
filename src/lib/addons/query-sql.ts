@@ -412,6 +412,24 @@ function compileAggregate(
   };
 }
 
+/**
+ * Every column of the row, Core's own included.
+ *
+ * Shared by insert and delete, which hand back the row they wrote and the row they removed. A statement
+ * that names its columns rather than `*` keeps the shape of the answer a decision of this file: a column
+ * added to a table later does not silently start appearing in what an Add-on receives.
+ */
+function returningSql(table: PhiServerAddonTableDescriptor) {
+  return [
+    ...table.columns.map((column) => column.name),
+    ...(table.siteScoped ? [PHI_SERVER_ADDON_SITE_COLUMN] : []),
+    ...(table.groupScoped ? [PHI_SERVER_ADDON_GROUP_COLUMN] : []),
+    ...(table.ownerScoped ? [PHI_SERVER_ADDON_OWNER_COLUMN] : []),
+  ]
+    .map((column) => quotePhiIdentifier(column))
+    .join(", ");
+}
+
 function compileInsert(
   schemaName: string,
   table: PhiServerAddonTableDescriptor,
@@ -440,12 +458,6 @@ function compileInsert(
     values.push(valueSql(compiler, assignment.value));
   }
 
-  const returning = [
-    ...table.columns.map((column) => column.name),
-    ...(table.siteScoped ? [PHI_SERVER_ADDON_SITE_COLUMN] : []),
-    ...(table.groupScoped ? [PHI_SERVER_ADDON_GROUP_COLUMN] : []),
-    ...(table.ownerScoped ? [PHI_SERVER_ADDON_OWNER_COLUMN] : []),
-  ];
   return {
     name: descriptor.name,
     kind: "insert",
@@ -455,7 +467,7 @@ function compileInsert(
       `INSERT INTO ${qualify(schemaName, table.name)} ` +
       `(${columns.map((column) => quotePhiIdentifier(column)).join(", ")}) ` +
       `VALUES (${values.join(", ")}) ` +
-      `RETURNING ${returning.map((column) => quotePhiIdentifier(column)).join(", ")}`,
+      `RETURNING ${returningSql(table)}`,
     bindings: compiler.bindings,
   };
 }
@@ -494,7 +506,17 @@ function compileByIdMutation(
     scoped: table.ownerScoped === true || table.groupScoped === true,
     sql: descriptor.kind === "update"
       ? `UPDATE ${qualify(schemaName, table.name)} SET ${assignments} WHERE ${where}`
-      : `DELETE FROM ${qualify(schemaName, table.name)} WHERE ${where}`,
+      /*
+       * A delete hands back the row it removed, which is the only moment it can be had.
+       *
+       * Without it the columns of a deleted row are gone the instant the statement runs, and an Add-on
+       * holding an object key in one of them has no way to learn what it should now clean up -- the
+       * bytes stay, counted against a quota, and nothing left in the database says whose they were.
+       *
+       * It tells nobody anything they did not already have. A refusal still answers null, exactly as a
+       * missing row does, because the row only comes back when the deletion actually happened.
+       */
+      : `DELETE FROM ${qualify(schemaName, table.name)} WHERE ${where} RETURNING ${returningSql(table)}`,
     bindings: compiler.bindings,
   };
 }

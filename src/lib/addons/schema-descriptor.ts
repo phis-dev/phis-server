@@ -12,6 +12,7 @@
 import {
   PHI_SERVER_ADDON_CORE_REFERENCES,
   PHI_SERVER_ADDON_SCHEMA_DESCRIPTOR_VERSION,
+  type PhiServerAddonAssetSlotDescriptor,
   type PhiServerAddonColumnDescriptor,
   type PhiServerAddonReferenceColumnDescriptor,
   type PhiServerAddonSchemaDescriptor,
@@ -20,6 +21,7 @@ import {
 } from "./contract.ts";
 import {
   POSTGRES_IDENTIFIER_MAX_LENGTH,
+  composePhiServerAddonAssetTableName,
   composePhiServerAddonObjectName,
 } from "./schema-name.ts";
 
@@ -280,6 +282,62 @@ function validateConstraint(
   return name;
 }
 
+const ASSET_CARDINALITIES = new Set(["one", "many"]);
+const MAX_ASSET_SLOT_NAME_LENGTH = 64;
+/** Two gigabytes, which is what nginx is configured to pass through in front of Core. */
+const MAX_ASSET_BYTES = 2_147_483_648;
+/** `type/subtype`, with the parameters a header may carry left out: a stored type is not negotiated. */
+const MEDIA_TYPE_PATTERN = /^[a-z0-9][a-z0-9!#$&^_.+-]*\/[a-z0-9][a-z0-9!#$&^_.+-]*$/;
+
+/**
+ * A slot, which is a name plus the two limits Core enforces on the Add-on's behalf.
+ *
+ * The limits are validated here rather than at upload because a manifest that permits a four-gigabyte
+ * logo is wrong when it is written, not when someone finally sends one.
+ */
+function validateAssetSlot(
+  value: unknown,
+  field: string,
+  issues: string[],
+): PhiServerAddonAssetSlotDescriptor | null {
+  const before = issues.length;
+  if (!isRecord(value)) {
+    issues.push(`${field} must be an object.`);
+    return null;
+  }
+  const name = readName(value.name, `${field}.name`, issues);
+  if (name.length > MAX_ASSET_SLOT_NAME_LENGTH) {
+    issues.push(`${field}.name exceeds ${MAX_ASSET_SLOT_NAME_LENGTH} characters.`);
+  }
+  if (typeof value.cardinality !== "string" || !ASSET_CARDINALITIES.has(value.cardinality)) {
+    issues.push(`${field}.cardinality must be "one" or "many".`);
+  }
+  if (
+    typeof value.maxBytes !== "number"
+    || !Number.isInteger(value.maxBytes)
+    || value.maxBytes <= 0
+    || value.maxBytes > MAX_ASSET_BYTES
+  ) {
+    issues.push(`${field}.maxBytes must be a whole number of bytes between 1 and ${MAX_ASSET_BYTES}.`);
+  }
+  if (!Array.isArray(value.contentTypes) || value.contentTypes.length === 0) {
+    /*
+     * Refused rather than read as "anything". A slot with no stated types is far more likely to be an
+     * author who has not decided yet than one who means every type there is, and the permissive reading
+     * is the one that cannot be taken back once packages depend on it.
+     */
+    issues.push(`${field}.contentTypes must name at least one media type.`);
+  } else {
+    for (const [index, type] of value.contentTypes.entries()) {
+      if (typeof type !== "string" || !MEDIA_TYPE_PATTERN.test(type)) {
+        issues.push(`${field}.contentTypes[${index}] must be a media type such as "image/png".`);
+      }
+    }
+    assertUnique(value.contentTypes as string[], `${field}.contentTypes`, issues);
+  }
+  return issues.length === before ? (value as PhiServerAddonAssetSlotDescriptor) : null;
+}
+
 function validateTable(
   value: unknown,
   field: string,
@@ -434,6 +492,44 @@ function validateTable(
   );
   assertUnique(constraintNames, `${field}.constraints.name`, issues);
 
+  if (value.assets !== undefined && !Array.isArray(value.assets)) {
+    issues.push(`${field}.assets must be an array.`);
+  }
+  const assets = Array.isArray(value.assets) ? value.assets : [];
+  if (assets.length > 0) {
+    /*
+     * A file lives in one Site's store, because the store is the Site's Storage Profile. A row shared
+     * across every Site has no store its file could belong to, and picking one would give every other
+     * Site a file it cannot reach and did not pay for.
+     */
+    if (value.siteScoped !== true) {
+      issues.push(
+        `${field}.assets requires siteScoped: an object lives in one Site's store, and a table that ` +
+        "belongs to no Site has none.",
+      );
+    }
+    if (table && value.primaryKey !== undefined && Array.isArray(value.primaryKey)
+      && value.primaryKey.length !== 1) {
+      issues.push(
+        `${field}.assets requires a single-column primary key: the asset table points at one column.`,
+      );
+    }
+    // Every name Core will compose on the derived table, checked here rather than met as a PostgreSQL
+    // error partway through a migration that has already created tables.
+    const assetTable = composePhiServerAddonAssetTableName(table);
+    for (const [part, suffix] of [
+      ["slot", "check"], ["status", "check"], ["size", "check"], ["storage_key", "uq"],
+      ["owner_id", "fk"], [PHI_SERVER_ADDON_SITE_COLUMN, "fk"],
+      ["owner", "idx"], ["one", "idx"], ["pending", "idx"],
+    ] as const) {
+      assertComposedNameFits(assetTable, part, suffix, `${field}.assets on "${assetTable}"`, issues);
+    }
+  }
+  const slotNames = assets.map((slot, index) =>
+    validateAssetSlot(slot, `${field}.assets[${index}]`, issues)?.name ?? "",
+  );
+  assertUnique(slotNames, `${field}.assets.name`, issues);
+
   return issues.length === before ? (value as PhiServerAddonTableDescriptor) : null;
 }
 
@@ -473,6 +569,25 @@ export function validatePhiServerAddonSchemaDescriptor(
   assertUnique(tables.map((table) => table.name), `${field}.tables.name`, issues);
 
   const tablesByName = new Map(tables.map((table) => [table.name, table]));
+
+  /*
+   * A declared table must not land where Core is about to put a derived one.
+   *
+   * The collision is silent otherwise: the Add-on's own `offering_assets` would be created first and
+   * the asset table's `CREATE` would then fail partway through a migration that has already made other
+   * tables -- or succeed against a shape that happens to fit, and start mixing Core's rows into the
+   * Add-on's.
+   */
+  for (const table of tables.filter((entry) => (entry.assets ?? []).length > 0)) {
+    const derived = composePhiServerAddonAssetTableName(table.name);
+    if (tablesByName.has(derived)) {
+      issues.push(
+        `${field}.tables declares "${derived}", which is the name Core gives the asset table of ` +
+        `"${table.name}". One of the two has to be called something else.`,
+      );
+    }
+  }
+
   for (const table of tables) {
     for (const column of table.columns) {
       if (!isReferenceColumn(column) || typeof column.references === "string") {

@@ -23,7 +23,10 @@ import {
   PHI_SERVER_ADDON_OWNER_COLUMN,
   PHI_SERVER_ADDON_SITE_COLUMN,
 } from "./schema-descriptor.ts";
-import { composePhiServerAddonObjectName } from "./schema-name.ts";
+import {
+  composePhiServerAddonAssetTableName,
+  composePhiServerAddonObjectName,
+} from "./schema-name.ts";
 
 /**
  * What a symbolic Core reference actually points at.
@@ -255,14 +258,130 @@ export type PhiServerAddonSchemaStatement = {
  * order and two tables may point at each other. The schema itself is not created here: that belongs with
  * the grants, which are the migration runner's business and not the descriptor's.
  */
+/**
+ * The columns of the table Core keeps beside a table that declares assets.
+ *
+ * Every one of them is Core's. An Add-on names a slot and hands over bytes; what the object is called,
+ * how big it turned out, and whether it ever arrived are answers Core writes and the Add-on reads.
+ *
+ * `status` is why the table can be trusted. A row is written before the transfer starts, as `pending`
+ * with an `expires_at`, and becomes `ready` only once the bytes are complete. So the state that would
+ * otherwise be undetectable -- a row naming an object that is not there -- is instead the most visible
+ * thing in the table, findable with a `WHERE` rather than by listing a bucket.
+ */
+export const PHI_SERVER_ADDON_ASSET_STATUS = { pending: 1, ready: 2 } as const;
+
+/** The longest an object key can be, matching what `media_assets` allows for the same thing. */
+const ASSET_STORAGE_KEY_LENGTH = 512;
+
+function assetTableStatements(
+  schemaName: string,
+  table: PhiServerAddonTableDescriptor,
+): PhiServerAddonSchemaStatement[] {
+  const slots = table.assets ?? [];
+  const name = composePhiServerAddonAssetTableName(table.name);
+  const key = table.columns.find((column) => column.name === table.primaryKey[0]);
+  // The parent's key type, not a guess at it: an `identity` key is `BIGINT` on the referring side, and a
+  // `uuid` key is a `UUID`. Naming a width here would compile and then refuse every insert.
+  const ownerType = key && !isReferenceColumn(key) ? REFERENCED_KEY_TYPE_SQL[key.type]! : "BIGINT";
+  const site = CORE_REFERENCE_TARGETS[PHI_SERVER_ADDON_CORE_REFERENCES.site];
+  const constraint = (part: string, suffix: "idx" | "check" | "fk" | "uq") =>
+    quotePhiIdentifier(composePhiServerAddonObjectName(name, part, suffix));
+
+  const statements: PhiServerAddonSchemaStatement[] = [{
+    summary: `create table ${name}`,
+    sql:
+      `CREATE TABLE ${qualify(schemaName, name)} (\n  ` +
+      [
+        `${quotePhiIdentifier(PHI_SERVER_ADDON_SITE_COLUMN)} ${site.type} NOT NULL`,
+        `"id" BIGINT GENERATED ALWAYS AS IDENTITY`,
+        `"owner_id" ${ownerType} NOT NULL`,
+        `"slot" VARCHAR(64) NOT NULL`,
+        `"status" SMALLINT NOT NULL`,
+        `"storage_key" VARCHAR(${ASSET_STORAGE_KEY_LENGTH}) NOT NULL`,
+        `"byte_size" BIGINT NOT NULL`,
+        `"content_type" VARCHAR(128) NOT NULL`,
+        `"checksum_sha256" CHAR(64) NULL`,
+        // Only a pending row has one. It is what makes an abandoned upload collectable without asking
+        // the storage anything.
+        `"expires_at" TIMESTAMPTZ NULL`,
+        `"created_at" TIMESTAMPTZ NOT NULL DEFAULT NOW()`,
+        `"updated_at" TIMESTAMPTZ NOT NULL DEFAULT NOW()`,
+        `PRIMARY KEY ("id")`,
+        // The slot vocabulary, in the database rather than only in the descriptor: a manifest can be
+        // replaced, and rows written under a slot that no longer exists would be invisible to every
+        // query and still counted against the quota.
+        `CONSTRAINT ${constraint("slot", "check")} CHECK ("slot" IN (${
+          slots.map((slot) => quoteLiteral(slot.name)).join(", ")
+        }))`,
+        `CONSTRAINT ${constraint("status", "check")} CHECK ("status" IN (${
+          Object.values(PHI_SERVER_ADDON_ASSET_STATUS).join(", ")
+        }))`,
+        `CONSTRAINT ${constraint("size", "check")} CHECK ("byte_size" >= 0)`,
+        // One row per object. Two rows naming one object would make the first deletion take the second
+        // one's bytes, and nothing about either row would show why.
+        `CONSTRAINT ${constraint("storage_key", "uq")} UNIQUE ("storage_key")`,
+        // The parent, within its Site. The cascade is the point of the whole table: removing a row takes
+        // the rows describing its files, and the objects they named become collectable.
+        `CONSTRAINT ${constraint("owner_id", "fk")} FOREIGN KEY ("owner_id", ${
+          quotePhiIdentifier(PHI_SERVER_ADDON_SITE_COLUMN)
+        }) REFERENCES ${qualify(schemaName, table.name)}(${
+          quotePhiIdentifier(table.primaryKey[0]!)
+        }, ${quotePhiIdentifier(PHI_SERVER_ADDON_SITE_COLUMN)}) ON DELETE CASCADE`,
+        `CONSTRAINT ${constraint(PHI_SERVER_ADDON_SITE_COLUMN, "fk")} FOREIGN KEY (${
+          quotePhiIdentifier(PHI_SERVER_ADDON_SITE_COLUMN)
+        }) REFERENCES ${site.table}(${site.column}) ON DELETE CASCADE`,
+      ].join(",\n  ") +
+      `\n)`,
+  }];
+
+  // "The files of this row", which is every read this table serves.
+  statements.push({
+    summary: `index ${name} by owner`,
+    sql:
+      `CREATE INDEX ${constraint("owner", "idx")} ON ${qualify(schemaName, name)} ` +
+      `(${quotePhiIdentifier(PHI_SERVER_ADDON_SITE_COLUMN)}, "owner_id", "slot")`,
+  });
+
+  const single = slots.filter((slot) => slot.cardinality === "one");
+  if (single.length > 0) {
+    /*
+     * One finished file per single-valued slot, and the partial index is what makes that survivable.
+     *
+     * A plain unique key would count the pending row too, and so would refuse the upload meant to
+     * replace the current file -- leaving replacement possible only by deleting first, which is exactly
+     * the window where a failed transfer loses the file it was replacing.
+     */
+    statements.push({
+      summary: `hold ${name} to one finished file per slot`,
+      sql:
+        `CREATE UNIQUE INDEX ${constraint("one", "idx")} ON ${qualify(schemaName, name)} ` +
+        `(${quotePhiIdentifier(PHI_SERVER_ADDON_SITE_COLUMN)}, "owner_id", "slot") ` +
+        `WHERE "status" = ${PHI_SERVER_ADDON_ASSET_STATUS.ready} AND "slot" IN (${
+          single.map((slot) => quoteLiteral(slot.name)).join(", ")
+        })`,
+    });
+  }
+
+  // What the sweep asks: which reservations were never completed and have run out of time.
+  statements.push({
+    summary: `index ${name} by expiry`,
+    sql:
+      `CREATE INDEX ${constraint("pending", "idx")} ON ${qualify(schemaName, name)} ` +
+      `("expires_at") WHERE "status" = ${PHI_SERVER_ADDON_ASSET_STATUS.pending}`,
+  });
+
+  return statements;
+}
+
 export function buildPhiServerAddonSchemaStatements(
   schemaName: string,
   descriptor: PhiServerAddonSchemaDescriptor,
 ): PhiServerAddonSchemaStatement[] {
   const tablesByName = new Map(descriptor.tables.map((table) => [table.name, table]));
   const statements: PhiServerAddonSchemaStatement[] = [];
-  const siteBoundTargets = new Set(
-    descriptor.tables.flatMap((table) =>
+  const siteBoundTargets = new Set([
+    ...descriptor.tables.flatMap((table) =>
       table.columns
         .filter(isReferenceColumn)
         .map((column) => column.references)
@@ -270,7 +389,10 @@ export function buildPhiServerAddonSchemaStatements(
         .map((reference) => reference.table)
         .filter((name) => tablesByName.get(name)?.siteScoped === true),
     ),
-  );
+    // A table with assets is pointed at by the asset table Core adds beside it, and so needs the same
+    // key -- even where nothing the Add-on declared points at it.
+    ...descriptor.tables.filter((table) => (table.assets ?? []).length > 0).map((table) => table.name),
+  ]);
 
   for (const table of descriptor.tables) {
     const definitions = table.columns.map((column) =>
@@ -330,6 +452,12 @@ export function buildPhiServerAddonSchemaStatements(
         `${quotePhiIdentifier(composePhiServerAddonObjectName(table.name, PHI_SERVER_ADDON_SITE_COLUMN, "uq"))} ` +
         `UNIQUE (${quotePhiIdentifier(table.primaryKey[0]!)}, ${quotePhiIdentifier(PHI_SERVER_ADDON_SITE_COLUMN)})`,
     });
+  }
+
+  // After that key and not before it: the asset table names it in a foreign key written inline, so it
+  // has to already be there.
+  for (const table of descriptor.tables.filter((entry) => (entry.assets ?? []).length > 0)) {
+    statements.push(...assetTableStatements(schemaName, table));
   }
 
   for (const table of descriptor.tables) {

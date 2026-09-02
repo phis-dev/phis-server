@@ -302,7 +302,7 @@ describe("owner-scoped and group-scoped Add-on tables", () => {
         manifest, manifestDigest: "pgtest-data", siteId: site.id, actorUserId: intruder,
       }).data!;
       expect(await asIntruder.update("rename", { id: theirs, title: "hijacked" })).toBe(0);
-      expect(await asIntruder.delete("drop", { id: theirs })).toBe(0);
+      expect(await asIntruder.delete("drop", { id: theirs })).toBeNull();
 
       const pool = await requirePhiTestDatabase();
       const { rows } = await pool.query(

@@ -900,7 +900,7 @@ select(name, args)     -> a page of rows
 aggregate(name, args)  -> a page of counts and summaries
 insert(name, args)     -> the inserted row, scope columns included
 update(name, args)     -> rows touched
-delete(name, args)     -> rows touched
+delete(name, args)     -> the removed row, or null
 transaction(body)      -> whatever the body returns
 ```
 
@@ -919,8 +919,15 @@ Three things Core does here that an Add-on cannot influence:
   actor is not in. They stay readable: "the rows that are mine" needs `owner_user_id` by name.
 - **`update` and `delete` are checked before they run.** Both address exactly one row by its primary
   key, and Core applies the same row authority `authorization:v1` answers with. A refused mutation
-  reports zero rows touched, which is also what a missing row reports: telling the two apart would
+  reports nothing touched, which is also what a missing row reports: telling the two apart would
   report the existence of a row the caller may not have.
+
+  `delete` answers with the row it removed, and `null` for that same pair of refusals -- which withholds
+  exactly as much, since a row comes back only where the deletion actually happened. It is the only
+  moment those columns can be had: a row naming an object in the Add-on's store is the last record of
+  that object, and once the statement has run there is nothing left to ask. Without it the bytes stay,
+  counted against the quota, belonging to nobody. Where the file was declared as an **asset** the
+  question does not arise at all, because Core removes those rows itself through the cascade.
 
 `mayActOnRow` and this enforcement answer the same question on purpose. The capability is for deciding
 what to offer a user -- whether to render the delete control; the write path is what actually holds. A
@@ -973,8 +980,13 @@ accepted after Core had given the booking back. A ceiling reached by drift refus
 that is free, and the error mentions the ceiling rather than the reason. It is a command rather than a
 background pass because it costs a full listing of the prefix.
 
-What Core cannot do is collect objects an Add-on no longer refers to: which of its own objects still
-matter is a question only the Add-on can answer, and a declared job is where that answer belongs.
+Objects an Add-on no longer refers to divide in two, and the line is whether Core knows about them.
+Where the file was declared as an **asset**, a row names it, the row cascades with its parent, and what
+is left over is the difference between the prefix and the keys the rows name -- collectable by Core.
+Everywhere else, in the free key space this capability hands out, which objects still matter is a
+question only the Add-on can answer, and a declared job is where that answer belongs. The sweep never
+crosses that line: it looks under `assets/` and nowhere else, because one that saw both would delete
+live data that was never a mistake.
 
 `usage()` is what an Add-on may do with the figures: read them. It exists so a refusal can be explained
 before it happens rather than arriving as an error, and a vendor who can see they are at their limit
@@ -1214,6 +1226,43 @@ What a descriptor cannot say is the point of it. There are no triggers, function
 partial indexes, and no free-form check expression, because each of those is SQL and would put back
 exactly what the descriptor takes away. An Add-on that needs one of them is either cut wrong or needs a
 Core service.
+
+### Files a row carries
+
+A table may declare **assets**: named slots where a file belongs. The names are the Add-on's -- `logo`,
+`package`, `screenshots` -- and each slot states its cardinality (`one` replaces, `many` accumulates), a
+`maxBytes`, and the exact media types it takes. An Add-on that needs no files declares none and gets
+nothing. Assets require `siteScoped`: an object lives in one Site's store, because the store is the
+Site's Storage Profile, and a row shared across Sites has no store its file could belong to.
+
+Core keeps them in a table of its own beside the declaring one, named `<table>_assets`. A child table
+rather than a column per slot, because the number of slots is the Add-on's to choose and because a
+gallery is a slot holding more than one file, which no column can hold. Every column of it is Core's:
+what the object is called, how big it turned out, whether it arrived. There is no query kind that names
+the table and no capability that exposes it -- an Add-on that could write those columns could name an
+object outside its own prefix, or mark a transfer complete that never happened.
+
+**The link is what makes collection possible at all.** While nothing tied a row to an object, which of
+an Add-on's objects still mattered was a question only the Add-on could answer. With the asset table it
+is a `SELECT`: list the prefix, subtract every key a row names, and what remains is collectable. The
+sweep looks only under `assets/` and never touches the free key space of `storage:v1`, which an Add-on
+manages itself -- a sweep that saw both would silently delete live data that was never a mistake.
+
+The reference into the parent carries the Site, exactly as any reference between two Site-scoped tables
+does, and cascades. **Removing a row removes the rows describing its files**, and the objects they named
+become collectable. Core lays the parent's `(id, site_id)` key down for this even where nothing the
+Add-on declared points at it.
+
+Uniqueness on a `one` slot is a partial index over finished rows only. A plain unique key would count
+the row of an upload in progress and so refuse the transfer meant to replace the current file, leaving
+replacement possible only by deleting first -- which is exactly the window in which a failed transfer
+destroys a file it never managed to replace. Replacing writes a new object key rather than overwriting
+the old one, for the same reason, and the old object is left for the sweep.
+
+A row is written `pending` with an expiry before the transfer starts and becomes `ready` only once the
+bytes are complete. So the state that would otherwise be undetectable -- a row naming an object that is
+not there -- is instead the most visible thing in the table, findable with a `WHERE` rather than by
+listing a bucket.
 
 ### Declared queries
 
