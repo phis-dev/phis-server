@@ -190,3 +190,69 @@ export function readPhiMigrationRoleName(migrationUri: string | undefined) {
     return null;
   }
 }
+
+export type PhiSchemaDropPlan = {
+  addonSchemas: { addonId: string; schemaName: string }[];
+  coreSchema: string;
+  dropped: boolean;
+};
+
+/**
+ * Removing everything this installation's schema holds, Add-on tables included.
+ *
+ * `DROP SCHEMA phis CASCADE` on its own is not a reset: an Add-on's tables live in a schema of their
+ * own, which hangs off nothing and therefore survives. What is left behind then has no catalogue row
+ * describing it -- a schema nobody claims, which the next install neither finds nor can replace.
+ *
+ * Two connections, because ownership is split and `DROP SCHEMA` is an owner's privilege: the migration
+ * role owns what it created for Add-ons, the serving role owns `phis`. Add-on schemas go first, since
+ * their foreign keys point into Core and not the other way around.
+ */
+export async function dropPhiCoreSchema(input: {
+  uri: string;
+  migrationUri: string;
+  confirmed: boolean;
+}): Promise<PhiSchemaDropPlan> {
+  const serving = new Client({ connectionString: input.uri });
+  await serving.connect();
+
+  let addonSchemas: { addonId: string; schemaName: string }[] = [];
+  try {
+    const present = await serving.query<{ exists: boolean }>(
+      `SELECT EXISTS (SELECT 1 FROM pg_namespace WHERE nspname = 'phis') AS exists`,
+    );
+    if (present.rows[0]?.exists) {
+      const { rows } = await serving.query<{ addon_id: string; schema_name: string }>(
+        `SELECT addon_id, schema_name
+         FROM phis.server_addons
+         WHERE schema_name IS NOT NULL
+         ORDER BY addon_id`,
+      );
+      addonSchemas = rows.map((row) => ({ addonId: row.addon_id, schemaName: row.schema_name }));
+    }
+
+    if (!input.confirmed) {
+      return { addonSchemas, coreSchema: "phis", dropped: false };
+    }
+
+    const migration = new Client({ connectionString: input.migrationUri });
+    await migration.connect();
+    try {
+      for (const entry of addonSchemas) {
+        // Derived by Core and stored under a unique index, never given by an Add-on -- but this is DDL
+        // with no parameters, so it is checked here rather than trusted.
+        if (!/^[a-z_][a-z0-9_]*$/u.test(entry.schemaName)) {
+          throw new Error(`"${entry.schemaName}" is not a usable schema name.`);
+        }
+        await migration.query(`DROP SCHEMA IF EXISTS "${entry.schemaName}" CASCADE`);
+      }
+    } finally {
+      await migration.end();
+    }
+
+    await serving.query("DROP SCHEMA IF EXISTS phis CASCADE");
+    return { addonSchemas, coreSchema: "phis", dropped: true };
+  } finally {
+    await serving.end();
+  }
+}

@@ -2,11 +2,18 @@ import "server-only";
 
 import type { PoolClient } from "pg";
 
+import { PhiUserEmailFlag, type PhiUserEmailSourceValue } from "@phis/contracts/access";
+
 import { getPool } from "@/lib/db";
 
 export type EnsureUserAccountInput = {
   email: string;
   siteId: number;
+  /**
+   * Where this address came from. Required rather than defaulted: the answer cannot be reconstructed
+   * afterwards, and every caller knows it at the moment it writes.
+   */
+  emailSource: PhiUserEmailSourceValue;
   medusaCustomerId?: string | null;
   passwordHash?: string | null;
   preferredLocale?: string | null;
@@ -67,7 +74,7 @@ function userAccountProjection(siteParam: number) {
             SELECT value.email_normalized
             FROM phis.user_emails AS value
             WHERE value.user_id = account.id
-            ORDER BY value.is_primary DESC, value.verified_at ASC, value.id ASC
+            ORDER BY (value.flags & 1) DESC, value.verified_at ASC, value.id ASC
             LIMIT 1
           ) AS email ON TRUE
           LEFT JOIN phis.user_password_credentials AS password ON password.user_id = account.id
@@ -160,10 +167,10 @@ export async function ensureUserAccount(input: EnsureUserAccountInput) {
       userId = created.rows[0].id;
       await client.query(
         `INSERT INTO phis.user_emails (
-           user_id, email_normalized, verified_at, is_primary, source
+           user_id, email_normalized, verified_at, flags, source
          )
-         VALUES ($1, $2, NOW(), TRUE, 'registration')`,
-        [userId, normalizedEmail],
+         VALUES ($1, $2, NOW(), $3, $4)`,
+        [userId, normalizedEmail, PhiUserEmailFlag.Primary, input.emailSource],
       );
     } else {
       await client.query(
@@ -277,6 +284,8 @@ export async function updateUserAccountProfileFields(
   userId: number,
   input: {
     email?: string | null;
+    /** Where the new address came from. Required whenever `email` is given, for the reason above. */
+    emailSource?: PhiUserEmailSourceValue;
     preferredLocale?: string | null;
     setFlags?: number;
     clearFlags?: number;
@@ -287,17 +296,42 @@ export async function updateUserAccountProfileFields(
   try {
     await client.query("BEGIN");
     if (input.email) {
+      if (!input.emailSource) {
+        throw new Error("EMAIL_SOURCE_REQUIRED");
+      }
       const normalizedEmail = normalizeEmail(input.email);
+      // A new address is a new row, and the old one stays with the origin it was written under. The
+      // table was built for this -- the unique index covers only the primary row -- and overwriting in
+      // place was throwing away the one fact nobody can reconstruct afterwards: where an address came
+      // from. Demote first, so the partial unique index never sees two primaries at once.
       await client.query(
         `UPDATE phis.user_emails
-         SET email_normalized = $2,
-             verified_at = NOW(),
-             source = 'profile-change',
+         SET flags = flags & ~$2::int,
              updated_at = NOW()
          WHERE user_id = $1
-           AND is_primary`,
-        [userId, normalizedEmail],
+           AND (flags & $2::int) <> 0`,
+        [userId, PhiUserEmailFlag.Primary],
       );
+      // Returning to an address this account held before is a promotion of the row that already
+      // carries it, keeping its original source. An address belonging to somebody else updates
+      // nothing and returns nothing, which is how a stolen login stays impossible even if two
+      // requests pass the caller's own check at the same moment.
+      const claimed = await client.query<{ id: number }>(
+        `INSERT INTO phis.user_emails (
+           user_id, email_normalized, verified_at, flags, source
+         )
+         VALUES ($1, $2, NOW(), $3, $4)
+         ON CONFLICT (email_normalized) DO UPDATE
+         SET verified_at = NOW(),
+             flags = phis.user_emails.flags | EXCLUDED.flags,
+             updated_at = NOW()
+         WHERE phis.user_emails.user_id = EXCLUDED.user_id
+         RETURNING id`,
+        [userId, normalizedEmail, PhiUserEmailFlag.Primary, input.emailSource],
+      );
+      if (!claimed.rowCount) {
+        throw new Error("EMAIL_TAKEN");
+      }
     }
     const { rows } = await client.query<{
       id: number;
@@ -321,7 +355,7 @@ export async function updateUserAccountProfileFields(
       `SELECT email_normalized
        FROM phis.user_emails
        WHERE user_id = $1
-       ORDER BY is_primary DESC, verified_at ASC, id ASC
+       ORDER BY (flags & 1) DESC, verified_at ASC, id ASC
        LIMIT 1`,
       [userId],
     );

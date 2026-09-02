@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+import { randomBytes } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
@@ -41,6 +42,12 @@ import {
   updatePhiCliSite,
 } from "../db/cli-sites.mts";
 import {
+  grantPhiCliSiteAdmin,
+  listPhiCliSiteAdmins,
+  revokePhiCliSiteAdmin,
+  setPhiCliUserPassword,
+} from "../db/cli-site-admins.mts";
+import {
   checkAddons,
   installAddon,
   upgradeAddon,
@@ -64,6 +71,7 @@ import {
 import { getPhiAppRoot } from "../lib/app-paths.ts";
 import {
   applyPhiCoreSchema,
+  dropPhiCoreSchema,
   checkPhiCoreSchema,
   readPhiMigrationRoleName,
 } from "./schema.mts";
@@ -213,6 +221,10 @@ Usage:
   phis site enable --key|-k <site key>
   phis site disable --key|-k <site key>
   phis site set --key|-k <site key> [--name|-n <site name>] [--hostname|-h <hostname>] [--public-base-url|-u <url>] [--support-email|-e <email>]
+  phis site admin --site <site key> --email <email> [--password <pw>] [--first-name <n>] [--last-name <n>]
+  phis site admin --site <site key> --list
+  phis site admin --site <site key> --email <email> --revoke
+  phis site user --site <site key> --email <email> --password <pw> [--overwrite]
   phis site locale add --key|-k <site key> --locale|-l <locale>
   phis site config set source --key|-k <site key> [--source-host <host> --source-port <port> --source-path <path>]
   phis site config add --key|-k <site key> --instance-host <host> [--instance-port <port>] --instance-path <path>
@@ -255,6 +267,7 @@ Usage:
 
   phis schema check
   phis schema apply
+  phis schema drop [--yes]
 
   phis addon list
   phis addon check
@@ -1187,7 +1200,11 @@ async function runSiteModuleCommand(command: string, flags: FlagMap, json: boole
  * Runs as the serving role, which is what bootstrap does and what makes the tables the serving role's.
  * Repeating it is free: the script has always been `CREATE TABLE IF NOT EXISTS` throughout.
  */
-async function runCoreSchemaCommand(command: string, json: boolean) {
+async function runCoreSchemaCommand(
+  command: string,
+  json: boolean,
+  schemaDropConfirmed = false,
+) {
   const database = readCliMergedConfig().database;
   const uri = database?.uri?.trim();
   if (!uri) {
@@ -1241,7 +1258,40 @@ async function runCoreSchemaCommand(command: string, json: boolean) {
     return;
   }
 
-  throw new Error(`Unknown schema command: ${command}. Use check or apply.`);
+  if (command === "drop") {
+    const migrationUri = database?.migrationUri?.trim();
+    if (!migrationUri) {
+      throw new Error(
+        `Missing database.migrationUri in ${getConfigPaths().runtime}. Add-on schemas belong to the ` +
+        "migration role, so dropping them needs that connection and not the serving one.",
+      );
+    }
+    const result = await dropPhiCoreSchema({
+      uri,
+      migrationUri,
+      confirmed: schemaDropConfirmed,
+    });
+    if (json) {
+      printJson({ ok: true, action: "schema.drop", ...result });
+      return;
+    }
+    if (!result.dropped) {
+      console.log("Would drop, in this order:");
+      for (const entry of result.addonSchemas) {
+        console.log(`  ${entry.schemaName}  (${entry.addonId})`);
+      }
+      console.log(`  ${result.coreSchema}`);
+      console.log("Nothing was dropped. Pass --yes to carry it out.");
+      return;
+    }
+    for (const entry of result.addonSchemas) {
+      console.log(`Dropped ${entry.schemaName} (${entry.addonId}).`);
+    }
+    console.log(`Dropped ${result.coreSchema}. Run phis schema apply to rebuild.`);
+    return;
+  }
+
+  throw new Error(`Unknown schema command: ${command}. Use check, apply or drop.`);
 }
 
 /**
@@ -1637,6 +1687,148 @@ async function addSuperUser(flags: FlagMap, json: boolean) {
   console.log(`Added platform operator ${email}.`);
 }
 
+
+/**
+ * Grants the Admin role on one Site, creating the account if the address is new.
+ *
+ * An operator outranks a Site administrator, so this neither asks whether one already exists nor stops
+ * at the first. What it does refuse is touching an existing account's password, because that credential
+ * is not the Site's -- see `siteUserPassword`.
+ */
+async function grantSiteAdmin(flags: FlagMap, json: boolean) {
+  const site = await getSiteByKey(getRequiredFlag(flags, "site"));
+
+  if (flags.get("list") === true) {
+    const admins = await listPhiCliSiteAdmins(getPool(), site.id);
+    if (json) {
+      printJson({ ok: true, action: "site.admin.list", site: site.key, admins });
+      return;
+    }
+    if (!admins.length) {
+      console.log(`${site.key} has no administrator.`);
+      return;
+    }
+    for (const admin of admins) {
+      const name = [admin.firstName, admin.lastName].filter(Boolean).join(" ");
+      console.log(
+        `${admin.email}  #${admin.userId}  roles=${admin.roleFlags}` +
+        `${name ? `  ${name}` : ""}${admin.hasPassword ? "" : "  (no password)"}`,
+      );
+    }
+    return;
+  }
+
+  const email = normalizeEmail(getRequiredFlag(flags, "email"));
+  if (!email.includes("@")) {
+    throw new Error("A valid --email is required.");
+  }
+
+  if (flags.get("revoke") === true) {
+    const result = await revokePhiCliSiteAdmin(getPool(), { siteId: site.id, email });
+    if (!result) {
+      throw new Error(`No account exists for ${email}.`);
+    }
+    if (json) {
+      printJson({ ok: true, action: "site.admin.revoke", site: site.key, email, ...result });
+      return;
+    }
+    console.log(
+      result.wasAdmin
+        ? `Revoked the Admin role for ${email} on ${site.key}.`
+        : `${email} did not hold the Admin role on ${site.key}.`,
+    );
+    return;
+  }
+
+  const password = getOptionalFlag(flags, "password");
+  const passwordHash = await hashPassword(
+    typeof password === "string" && password ? password : randomBytes(24).toString("base64url"),
+  );
+  const firstName = getOptionalFlag(flags, "first-name");
+  const lastName = getOptionalFlag(flags, "last-name");
+
+  const grant = await grantPhiCliSiteAdmin(getPool(), {
+    siteId: site.id,
+    email,
+    passwordHash,
+    preferredLocale: site.defaultLocale,
+    firstName: typeof firstName === "string" ? firstName : null,
+    lastName: typeof lastName === "string" ? lastName : null,
+  });
+
+  if (json) {
+    printJson({ ok: true, action: "site.admin", site: site.key, ...grant });
+    return;
+  }
+
+  if (grant.accountCreated) {
+    console.log(`Created ${email} (#${grant.userId}) and made it an administrator of ${site.key}.`);
+    if (typeof password !== "string" || !password) {
+      console.log("  warning: no --password given; a random one was set and nobody knows it.");
+      console.log(`  set one with: phis site user --site ${site.key} --email ${email} --password <pw> --overwrite`);
+    }
+    return;
+  }
+
+  console.log(
+    grant.alreadyAdmin
+      ? `${email} was already an administrator of ${site.key}.`
+      : `${email} (#${grant.userId}) is now an administrator of ${site.key}.`,
+  );
+  console.log("  password unchanged; use phis site user --password <pw> --overwrite to replace it.");
+}
+
+/**
+ * Sets one account's password.
+ *
+ * `--site` picks the person, not the reach: the credential is stored per account, so it opens every Site
+ * that account belongs to. The command prints which ones rather than leaving the operator to assume.
+ */
+async function siteUserPassword(flags: FlagMap, json: boolean) {
+  const site = await getSiteByKey(getRequiredFlag(flags, "site"));
+  const email = normalizeEmail(getRequiredFlag(flags, "email"));
+  const password = getRequiredFlag(flags, "password");
+  const overwrite = flags.get("overwrite") === true;
+
+  const result = await setPhiCliUserPassword(getPool(), {
+    siteId: site.id,
+    email,
+    passwordHash: await hashPassword(password),
+    overwrite,
+  });
+
+  if (!result.ok) {
+    if (result.reason === "no-account") {
+      throw new Error(`No account exists for ${email}.`);
+    }
+    if (result.reason === "not-a-member") {
+      throw new Error(`${email} is not a member of ${site.key}.`);
+    }
+    throw new Error(
+      `${email} already has a password. Pass --overwrite to replace it -- ` +
+      "the credential belongs to the account and opens every Site it is a member of.",
+    );
+  }
+
+  if (json) {
+    printJson({
+      ok: true,
+      action: "site.user.password",
+      site: site.key,
+      email,
+      userId: result.userId,
+      replaced: result.replaced,
+      siteIds: result.siteIds,
+    });
+    return;
+  }
+
+  console.log(`${result.replaced ? "Replaced" : "Set"} the password for ${email} (#${result.userId}).`);
+  if (result.siteIds.length > 1) {
+    console.log(`  this credential opens ${result.siteIds.length} Sites, not just ${site.key}.`);
+  }
+}
+
 async function deleteSuperUser(flags: FlagMap, json: boolean) {
   const email = getRequiredFlag(flags, "email").toLowerCase();
   const existingUsers = getRuntimeSuperUsers();
@@ -1838,6 +2030,16 @@ async function main() {
 
   if (group === "site" && command === "set") {
     await updateSiteFields(flags, json);
+    return;
+  }
+
+  if (group === "site" && command === "admin") {
+    await grantSiteAdmin(flags, json);
+    return;
+  }
+
+  if (group === "site" && command === "user") {
+    await siteUserPassword(flags, json);
     return;
   }
 
@@ -2381,7 +2583,7 @@ async function main() {
   }
 
   if (group === "schema") {
-    await runCoreSchemaCommand(command, json);
+    await runCoreSchemaCommand(command, json, flags.get("yes") === true);
     return;
   }
 

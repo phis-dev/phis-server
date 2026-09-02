@@ -21,6 +21,8 @@ import { decryptRegistrationPassword } from "@/lib/registration-secret";
 import { requireSiteFromRequest } from "@/lib/site-context";
 import { USER_SITE_FLAG_NEWSLETTER_OPT_IN } from "@/lib/user-site-flags";
 
+import { PhiUserEmailSource } from "@phis/contracts/access";
+
 type ConfirmPayload = {
   token?: unknown;
 };
@@ -160,6 +162,7 @@ export async function POST(request: Request) {
 
     await updateUserAccountProfileFields(existingAccount.id, {
       email: normalizedEmail,
+      emailSource: PhiUserEmailSource.Self,
     });
     await consumeRegistrationIntent(intent.id, existingAccount.id);
     logRuntimeEvent("info", "auth.profile.email.confirmed", {
@@ -242,6 +245,7 @@ export async function POST(request: Request) {
   const user = await ensureUserAccount({
     email: normalizedEmail,
     siteId: site.id,
+    emailSource: PhiUserEmailSource.Registration,
     medusaCustomerId,
     passwordHash,
     preferredLocale: intent.locale,

@@ -181,7 +181,7 @@ export async function listAdminUsersForSite(siteId: number, options: ListAdminUs
         SELECT candidate.email_normalized
         FROM phis.user_emails candidate
         WHERE candidate.user_id = ua.id
-        ORDER BY candidate.is_primary DESC, candidate.verified_at DESC, candidate.id ASC
+        ORDER BY (candidate.flags & 1) DESC, candidate.verified_at DESC, candidate.id ASC
         LIMIT 1
       ) email ON TRUE
       LEFT JOIN phis.user_password_credentials credential
@@ -323,7 +323,7 @@ export async function searchSiteGroupMemberCandidates(input: {
        SELECT candidate.email_normalized
        FROM phis.user_emails candidate
        WHERE candidate.user_id = ua.id
-       ORDER BY candidate.is_primary DESC, candidate.verified_at DESC, candidate.id ASC
+       ORDER BY (candidate.flags & 1) DESC, candidate.verified_at DESC, candidate.id ASC
        LIMIT 1
      ) email ON TRUE
      WHERE usm.site_id = $1

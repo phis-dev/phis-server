@@ -1,5 +1,7 @@
 import "server-only";
 
+import { phiUserEmailSourceForProvider } from "@phis/contracts/access";
+
 import { getUserAccountByEmail, getUserAccountById, ensureUserAccount } from "@/db/user-accounts";
 import {
   getSiteAuthPolicy,
@@ -108,6 +110,7 @@ export async function resolveExternalLogin(input: {
     const createdUser = await ensureUserAccount({
       email: input.identity.email!,
       siteId: input.siteId,
+      emailSource: phiUserEmailSourceForProvider(input.identity.providerKey),
       preferredLocale: null,
       flags: 0,
       reuseExisting: false,

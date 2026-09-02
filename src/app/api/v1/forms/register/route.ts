@@ -17,6 +17,8 @@ import { verifyFormGuard } from "@/lib/form-guard";
 import { verifyPasswordHash } from "@/lib/password";
 import { USER_SITE_FLAG_NEWSLETTER_OPT_IN } from "@/lib/user-site-flags";
 
+import { PhiUserEmailSource } from "@phis/contracts/access";
+
 type RegistrationPayload = {
   firstName?: unknown;
   lastName?: unknown;
@@ -171,6 +173,7 @@ export async function POST(request: Request) {
     const user = await ensureUserAccount({
       email: existingUser.emailNormalized,
       siteId: site.id,
+      emailSource: PhiUserEmailSource.Registration,
       medusaCustomerId: existingUser.medusaCustomerId,
       passwordHash: null,
       preferredLocale: locale,

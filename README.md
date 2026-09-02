@@ -607,6 +607,10 @@ Examples:
 - `./phis --root /srv/phis/stages/prod config paths`
 - `./phis site list`
 - `./phis site add --key moonhug --name "Moonhug" --hostname moonhug.example --public-base-url https://moonhug.example --source-locale en --default-locale de --available-locales de,fr --support-email support@moonhug.example`
+- `./phis site admin --site moonhug --email admin@moonhug.example --password 'replace-me' --first-name Ada --last-name Lovelace`
+- `./phis site admin --site moonhug --list`
+- `./phis site admin --site moonhug --email admin@moonhug.example --revoke`
+- `./phis site user --site moonhug --email admin@moonhug.example --password 'replace-me' --overwrite`
 - `./phis site config nginx --key moonhug`
 - `./phis site config nginx --key moonhug --source`
 - `./phis site config systemd --key moonhug`

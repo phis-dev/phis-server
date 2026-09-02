@@ -219,8 +219,8 @@ export async function createPhiTestUser(site: PhiTestSite): Promise<number> {
   );
   const userId = rows[0]!.id;
   await pool.query(
-    `INSERT INTO phis.user_emails (user_id, email_normalized, verified_at, is_primary, source)
-     VALUES ($1, $2, NOW(), TRUE, 'pgtest')`,
+    `INSERT INTO phis.user_emails (user_id, email_normalized, verified_at, flags, source)
+     VALUES ($1, $2, NOW(), 1, 1)`,
     [userId, `${PHI_TEST_SITE_KEY_PREFIX}${process.pid}-${sequence}@example.invalid`],
   );
   await pool.query(

@@ -150,7 +150,7 @@ export async function listSiteGroupMembers(siteId: number, groupId: number) {
        SELECT candidate.email_normalized
        FROM phis.user_emails candidate
        WHERE candidate.user_id = m.user_id
-       ORDER BY candidate.is_primary DESC, candidate.verified_at DESC, candidate.id ASC
+       ORDER BY (candidate.flags & 1) DESC, candidate.verified_at DESC, candidate.id ASC
        LIMIT 1
      ) email ON TRUE
      WHERE m.site_id = $1 AND m.group_id = $2

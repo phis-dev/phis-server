@@ -33,6 +33,8 @@ import { resolveUserAccountFlagTags } from "@/lib/user-flags";
 import { USER_SITE_FLAG_DISABLED, USER_SITE_FLAG_NEWSLETTER_OPT_IN } from "@/lib/user-site-flags";
 import { normalizeString, readRequestBody } from "@/lib/helpers/request";
 
+import { PhiUserEmailSource } from "@phis/contracts/access";
+
 export const dynamic = "force-dynamic";
 
 type QueryValue = string | null;
@@ -310,6 +312,7 @@ export async function POST(request: NextRequest) {
   const account = await ensureUserAccount({
     email,
     siteId: site.id,
+    emailSource: PhiUserEmailSource.Admin,
     medusaCustomerId: null,
     passwordHash,
     preferredLocale: site.defaultLocale,
@@ -446,6 +449,7 @@ export async function PUT(request: NextRequest) {
 
   await updateUserAccountProfileFields(target.id, {
     email: requestedEmail !== target.emailNormalized ? requestedEmail : null,
+    emailSource: PhiUserEmailSource.Admin,
     preferredLocale: target.preferredLocale ?? site.defaultLocale,
   });
 

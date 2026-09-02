@@ -43,15 +43,19 @@ CREATE TABLE IF NOT EXISTS phis.user_emails (
   user_id INT NOT NULL REFERENCES phis.user_accounts(id) ON DELETE CASCADE,
   email_normalized VARCHAR(320) NOT NULL UNIQUE,
   verified_at TIMESTAMPTZ NOT NULL,
-  is_primary BOOLEAN NOT NULL DEFAULT FALSE,
-  source VARCHAR(64) NOT NULL,
+  flags INT NOT NULL DEFAULT 0,
+  source SMALLINT NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT user_emails_source_check CHECK (source IN (1, 2, 3, 4, 5, 9, 20, 21, 22, 23))
 );
 
+-- One primary address per account, and the mark is bit 0 of `flags` (PhiUserEmailFlag.Primary).
+-- The index is what enforces the rule rather than merely finding the row, so the bit position it names
+-- is fixed for good: moved, the constraint would go on guarding something else without saying so.
 CREATE UNIQUE INDEX IF NOT EXISTS user_emails_primary_user_idx
   ON phis.user_emails (user_id)
-  WHERE is_primary;
+  WHERE (flags & 1) <> 0;
 
 CREATE INDEX IF NOT EXISTS user_emails_user_id_idx
   ON phis.user_emails (user_id);
@@ -65,7 +69,7 @@ LEFT JOIN LATERAL (
   SELECT candidate.email_normalized
   FROM phis.user_emails AS candidate
   WHERE candidate.user_id = account.id
-  ORDER BY candidate.is_primary DESC, candidate.verified_at DESC, candidate.id ASC
+  ORDER BY (candidate.flags & 1) DESC, candidate.verified_at DESC, candidate.id ASC
   LIMIT 1
 ) AS email ON TRUE;
 
