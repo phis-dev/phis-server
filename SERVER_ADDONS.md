@@ -998,6 +998,60 @@ This is not the Media library. What a person uploads, browses, and references be
 with its folders, quotas, and delivery policies. This is what an Add-on keeps for itself: a release
 artifact, a generated preview, an export waiting to be fetched.
 
+### `assets:v1`
+
+Filling the slots a table declared. The schema descriptor says where a file may go; this is how one gets
+there.
+
+```text
+begin(table, ownerId, slot, contentType, sizeBytes) -> a reservation and a delivery plan
+finalize(table, id, completion?)                    -> the finished file
+abandon(table, id)                                  -> gives an unredeemed reservation up
+list(table, ownerId, slot?)                         -> the finished files of a row
+remove(table, id)                                   -> takes a file and its object away
+```
+
+**There is no method that takes an object key, and none that returns one.** That is the difference from
+`storage:v1`, and it is the whole point: a key an Add-on chooses is a key Core cannot recognise later,
+and an object Core cannot recognise is one it can neither collect nor account for. Here Core derives the
+key, the row records it, and the row cascades with its parent.
+
+`begin` writes the row **before** any bytes move, as `pending` with an expiry, and answers with the
+Provider's own upload plan -- `presigned-put` where the endpoint can take a body directly, `proxy-stream`
+naming a Core route where it cannot. An Add-on passes the plan to its client unread.
+
+It is refused where the slot is not declared, where the media type is not one the slot takes, where the
+size is over the slot's ceiling or the Site's, where the store is full, and **where the acting user may
+not change the row**. That last one matters: putting a file on a row changes it, so it is the row's own
+authority that decides. Without it this would be a second, quieter way past the ladder -- a caller who
+may not edit an offering could still hang a package off it, which is editing it by another name.
+
+**The bytes are charged when the place is made, not when it is used.** Booking on finalize would let a
+store be filled by uploads that are merely started: the ceiling would hold on paper while the objects
+accumulated underneath it. The cost of this order is a reservation that expires with its bytes still
+booked, which the sweep gives back.
+
+`finalize` looks at the object rather than believing the report. Nothing there is not a file; a different
+size than was reserved is not a file either -- the size was agreed before any bytes moved, and accepting
+another would make the ceiling advisory. The first kilobytes are read and compared against the type the
+slot was told to expect, which is a floor and not a roof: text carries no signature, so unrecognised
+bytes are accepted rather than treated as proof of a lie. On a single-valued slot the file being replaced
+is removed in the same transaction, so the row is never holding two.
+
+A digest is recorded **only where the Profile's probe found that the endpoint verifies one**. `etag` is
+an HTTP header and not a content hash: the built-in Provider fills it with a real streaming SHA-256, S3
+fills it with an MD5, and a multipart object gets a composite that hashes nothing. Recording whichever
+turned up would put a column named `checksum_sha256` in front of somebody who would reasonably compare
+against it, so an unprobed Profile answers no. Absent is a truthful "not established"; a wrong digest is
+worse than none.
+
+The Core route that receives a proxied body is `/api/v1/addon-assets/{scope}/{name}/{table}/{token}`.
+**The token is the authority there.** It is high-entropy, single-use, expires, and names exactly one
+object key at exactly one size -- which is precisely what a presigned PUT grants. Requiring a session
+cookie as well would make the same reservation safe against S3 and unsafe against the built-in Provider,
+which is not a distinction anything downstream could act on. A reservation that has run out is not found
+rather than rejected, so there is no path on which a stale token writes anything.
+
 ### `secrets:v1`
 
 `read(name)` and nothing else. The owner and the Site are bound, so another Add-on's secret cannot be

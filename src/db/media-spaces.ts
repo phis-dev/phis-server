@@ -196,6 +196,24 @@ export async function ensureSiteMediaSpace(siteId: number) {
   }
 }
 
+/**
+ * Whether this endpoint was found to check a digest a client asserts.
+ *
+ * Read from what the probe recorded rather than inferred from the Provider, because one adapter speaks
+ * to several backends: `@phis/storage-s3` reaches AWS, MinIO and Garage, and they do not agree. No field
+ * of the configuration says which one is behind it.
+ *
+ * Absent means no. A Profile nobody has probed has not been found to verify anything, and treating
+ * silence as a yes is how an unverified digest ends up recorded as a checked one.
+ */
+export async function mediaStorageProfileVerifiesSha256(siteId: number, profileId: number) {
+  const { rows } = await getPool().query<{ probe: { verifiesSha256?: unknown } | null }>(
+    `SELECT probe FROM phis.media_storage_profiles WHERE site_id = $1 AND id = $2`,
+    [siteId, profileId],
+  );
+  return rows[0]?.probe?.verifiesSha256 === true;
+}
+
 export async function getMediaStorageProfile(siteId: number, profileId: number) {
   const { rows } = await getPool().query<{
     id: number; site_id: number; key: string; provider_id: string; config: Record<string, unknown>;

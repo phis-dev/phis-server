@@ -302,6 +302,17 @@ function assetTableStatements(
         `"byte_size" BIGINT NOT NULL`,
         `"content_type" VARCHAR(128) NOT NULL`,
         `"checksum_sha256" CHAR(64) NULL`,
+        /*
+         * What the reservation is redeemed with, and only while it is one.
+         *
+         * It is the authority on the transfer itself: it is high-entropy, single-use, expires, and
+         * names exactly one object key at exactly one size. That is precisely what a presigned PUT
+         * grants, and holding the Core-hosted plan to a stricter rule would make the same reservation
+         * safe against S3 and unsafe against local storage.
+         *
+         * Nulled once the row is finished, so the unique key holds only over live reservations.
+         */
+        `"upload_token" VARCHAR(128) NULL`,
         // Only a pending row has one. It is what makes an abandoned upload collectable without asking
         // the storage anything.
         `"expires_at" TIMESTAMPTZ NULL`,
@@ -321,6 +332,7 @@ function assetTableStatements(
         // One row per object. Two rows naming one object would make the first deletion take the second
         // one's bytes, and nothing about either row would show why.
         `CONSTRAINT ${constraint("storage_key", "uq")} UNIQUE ("storage_key")`,
+        `CONSTRAINT ${constraint("upload_token", "uq")} UNIQUE ("upload_token")`,
         // The parent, within its Site. The cascade is the point of the whole table: removing a row takes
         // the rows describing its files, and the objects they named become collectable.
         `CONSTRAINT ${constraint("owner_id", "fk")} FOREIGN KEY ("owner_id", ${

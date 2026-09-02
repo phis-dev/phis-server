@@ -37,6 +37,8 @@ import { buildPhiServerAddonGroupsCapability } from "./groups-capability.ts";
 import { buildPhiServerAddonSecretsCapability } from "./secrets-capability.ts";
 import { buildPhiServerAddonSettingsCapability } from "./settings-capability.ts";
 import { buildPhiServerAddonStorageCapability } from "./storage-capability.ts";
+import { buildPhiServerAddonAssetsCapability } from "./assets-capability.ts";
+import { phiServerAddonAssetProxyUrl } from "./asset-routes.ts";
 import { ensureSiteMediaConfig } from "@/db/media-spaces";
 import { getEffectiveUserSiteAuthorization } from "@/db/user-site-memberships";
 import type { PhiServerAddonManifestV1 } from "./contract.ts";
@@ -341,6 +343,25 @@ export function buildPhiServerAddonCapabilities(input: {
         siteId,
         siteKey,
         readMaxObjectBytes: async () => (await ensureSiteMediaConfig(siteId)).maxObjectBytes,
+      });
+    }
+    if (required.includes(PHI_SERVER_CORE_CAPABILITIES.assets)) {
+      /*
+       * The row authority is the same one the data capability writes under, for the same reason it is
+       * given to that one whether or not `authorization:v1` was declared: putting a file on a row changes
+       * it, and a second way to change a row must not be a quieter way past the ladder.
+       */
+      capabilities.assets = buildPhiServerAddonAssetsCapability({
+        addonId: input.manifest.addonId,
+        siteId,
+        siteKey,
+        schema: input.manifest.schema ?? null,
+        mayActOnRow: input.systemAuthority
+          ? () => Promise.resolve(true)
+          : ({ table, id, intent }) =>
+            authorization.mayActOnRow({ table, id: id as number | string, intent }),
+        proxyUploadUrl: ({ table, token }) =>
+          phiServerAddonAssetProxyUrl(input.manifest.addonId, table, token),
       });
     }
     if (required.includes(PHI_SERVER_CORE_CAPABILITIES.secrets)) {

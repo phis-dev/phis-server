@@ -519,6 +519,7 @@ function validateTable(
     const assetTable = composePhiServerAddonAssetTableName(table);
     for (const [part, suffix] of [
       ["slot", "check"], ["status", "check"], ["size", "check"], ["storage_key", "uq"],
+      ["upload_token", "uq"],
       ["owner_id", "fk"], [PHI_SERVER_ADDON_SITE_COLUMN, "fk"],
       ["owner", "idx"], ["one", "idx"], ["pending", "idx"],
     ] as const) {
