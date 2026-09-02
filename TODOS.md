@@ -532,6 +532,13 @@ Remaining work:
   test: multipart is not implemented, so an object above the 5 GiB CopyObject limit is refused loudly
   rather than copied in parts; and `phis addon install` cannot install a workspace package without
   `--package-version workspace:*`, which is a development detour rather than a supported path.
+- Open, found on 2026-09-02 while writing down the digest boundary: where an S3 Profile's probe found no
+  verification and the client stated no digest, finalize falls back to the Provider's `etag`, and for S3
+  that is an MD5 -- 32 characters recorded in a `CHAR(64)` column named for SHA-256. Nothing detects it,
+  because duplicate detection compares MD5s against MD5s within one Space and keeps working until that
+  Space's Profile changes. `GROUPS_AND_STORAGE.md` states the boundary; what it does not yet have is a
+  decision: record the algorithm beside the digest, refuse the fallback for a Provider whose `etag` is
+  not a content hash, or have Core hash the object it just settled.
 - The browser path was verified on 2026-08-28 and closed the last unknown: with the Site Space pointed
   at the S3 profile, a real browser carries a presigned PUT to the Provider's origin, finalize measures
   the bytes, and delivery reads them back out of the Provider unchanged. It needed a bucket CORS rule,
