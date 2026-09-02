@@ -4,7 +4,11 @@ import type { Pool, PoolClient } from "pg";
 
 import { PHI_SERVER_ADDON_ASSET_STATUS } from "@/lib/addons/schema-ddl";
 import { quotePhiIdentifier } from "@/lib/addons/schema-ddl";
-import { composePhiServerAddonAssetTableName } from "@/lib/addons/schema-name";
+import {
+  PHI_SERVER_ADDON_ASSET_PREFIX,
+  composePhiServerAddonAssetTableName,
+  phiServerAddonStoragePrefix,
+} from "@/lib/addons/schema-name";
 
 /**
  * The two halves of putting a file on a row: reserving a place for it, and settling it once it landed.
@@ -71,12 +75,22 @@ function toRow(row: RawRow): PhiServerAddonAssetRow {
 /**
  * The key an object gets, which the Add-on never chooses.
  *
- * Under `assets/` and nowhere else, because that is the only prefix the sweep is allowed to look at.
- * An Add-on writing its own keys through `storage:v1` writes beside this, never into it, so a sweep
- * comparing the prefix against the rows can never mistake one of those for an orphan.
+ * Inside the Add-on's own prefix, and under `assets/` within it. The first half is what a purge empties
+ * and what keeps two Add-ons on one Site apart; the second is the only place the sweep is allowed to
+ * look. An Add-on writing its own keys through `storage:v1` writes beside `assets/` and never into it,
+ * so a sweep comparing that sub-prefix against the rows can never mistake one of those for an orphan.
+ *
+ * The random component is what makes replacing safe: a new file is a new object, so the one still in
+ * use is not destroyed before the row that replaces it exists.
  */
-export function phiServerAddonAssetKey(table: string, slot: string) {
-  return `assets/${table}/${slot}/${randomUUID()}`;
+export function phiServerAddonAssetKey(input: {
+  addonId: string;
+  siteKey: string;
+  table: string;
+  slot: string;
+}) {
+  return `${phiServerAddonStoragePrefix(input.addonId, input.siteKey)}/` +
+    `${PHI_SERVER_ADDON_ASSET_PREFIX}/${input.table}/${input.slot}/${randomUUID()}`;
 }
 
 export type PhiServerAddonAssetReservation = {

@@ -984,11 +984,27 @@ background pass because it costs a full listing of the prefix.
 
 Objects an Add-on no longer refers to divide in two, and the line is whether Core knows about them.
 Where the file was declared as an **asset**, a row names it, the row cascades with its parent, and what
-is left over is the difference between the prefix and the keys the rows name -- collectable by Core.
-Everywhere else, in the free key space this capability hands out, which objects still matter is a
-question only the Add-on can answer, and a declared job is where that answer belongs. The sweep never
-crosses that line: it looks under `assets/` and nowhere else, because one that saw both would delete
-live data that was never a mistake.
+is left over is the difference between the prefix and the keys the rows name. Everywhere else, in the
+free key space this capability hands out, which objects still matter is a question only the Add-on can
+answer, and a declared job is where that answer belongs.
+
+`phis addon storage --sweep` collects the first kind, and only the first kind. **It looks under
+`assets/` and nowhere else**, because the free key space has no row describing it -- a sweep that saw
+both would read every one of those objects as an orphan and delete live data that was never a mistake.
+That boundary is the whole safety of it.
+
+It collects two things. An object no row names, which is what a cascade leaves behind: removing a parent
+row takes its asset rows with it, and the cascade is SQL, so it cannot reach into a store. And a
+reservation that ran out before it was redeemed, whose bytes were charged when the place was made. Both
+give their space back.
+
+Within each, the order is **objects first and rows second** -- the opposite of the purge, and for the
+same reason. Here the row is what proves the object may be removed, so losing it first would strand the
+object permanently. In a purge the row was the data, and losing it before the transaction committed
+would have been the loss.
+
+An upload in flight is safe from it. The row always exists before its object does, so a transfer running
+into a live reservation is named by a row and is never read as an orphan.
 
 `usage()` is what an Add-on may do with the figures: read them. It exists so a refusal can be explained
 before it happens rather than arriving as an error, and a vendor who can see they are at their limit

@@ -6,7 +6,9 @@ import type { Pool } from "pg";
 
 import { PHI_LOCAL_MEDIA_STORAGE_PROVIDER_ID } from "@phis/contracts/addon";
 
-import { derivePhiServerAddonSchemaName } from "../lib/addons/schema-name.ts";
+import { phiServerAddonStoragePrefix } from "../lib/addons/schema-name.ts";
+
+export { phiServerAddonStoragePrefix };
 
 /**
  * Removing the objects an Add-on left behind, which the database cannot do for it.
@@ -61,11 +63,6 @@ export async function readPhiServerAddonStorageSites(
     config: row.config ?? {},
     secretReference: row.secret_reference,
   }));
-}
-
-/** `addons/<derived addon name>/<site key>` -- the same derivation the capability writes under. */
-export function phiServerAddonStoragePrefix(addonId: string, siteKey: string) {
-  return `addons/${derivePhiServerAddonSchemaName(addonId)}/${siteKey}`;
 }
 
 export type PhiServerAddonStorageRemoval = {

@@ -625,6 +625,7 @@ Examples:
 - `./phis addon reconcile --release 2026-07-28.1`
 - `./phis addon storage --addon @phis/marketplace --site moonhug --quota-bytes 52428800 --max-objects 500`
 - `./phis addon storage --addon @phis/marketplace --site moonhug --recount`
+- `./phis addon storage --addon @phis/marketplace --site moonhug --sweep`
 - `/usr/local/bin/phis --root /srv/phis/stages/prod site config runtime --key moonhug --json`
 
 The CLI currently writes platform operators into `config/phis-runtime.json`.
@@ -638,6 +639,14 @@ serves AWS, MinIO and Garage alike and they do not agree on everything, so this 
 rather than assumed per Provider, and the answer is recorded with the moment it was true. It is worth
 running when a Profile is added or its endpoint changes -- otherwise a wrong endpoint or a missing
 permission is discovered by whoever uploads first, and reaches them as their error.
+
+`addon storage` bounds an Add-on's object store on one Site and reports what it holds. `--recount` sets
+the counters to what the store actually holds -- they are a running total and can drift, and a ceiling
+reached by drift refuses writes against space that is free. `--sweep` collects what the store no longer
+refers to: objects the cascade could not reach when a row was removed, and reservations that ran out
+before they were redeemed. It looks only at the space Core writes, never at the free key space an Add-on
+manages itself. Both are commands rather than background passes because each costs a full listing of the
+prefix, which is the unbounded operation the ceiling exists to prevent.
 
 The generated `nginx` site config includes `client_max_body_size 2g;` by default so media uploads can handle large video files without allowing unlimited request bodies by accident.
 

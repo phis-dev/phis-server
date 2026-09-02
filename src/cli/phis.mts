@@ -102,6 +102,10 @@ import {
   recountPhiServerAddonStorage,
   removePhiServerAddonStorage,
 } from "./storage-purge.mts";
+import {
+  phiServerAddonObjectAdapterFor,
+  sweepPhiServerAddonAssets,
+} from "./storage-sweep.mts";
 import { checkPhiDependencyLicenses } from "./licenses.mts";
 import { checkPhiMediaOwnership } from "./media-check.mts";
 import {
@@ -262,7 +266,7 @@ Usage:
   phis addon disable --addon <@scope/name>
   phis addon forget --addon <@scope/name>
   phis addon site   --addon <@scope/name> [--site <site key> --enable [--without-module] | --disable]
-  phis addon storage --addon <@scope/name> --site <site key> [--quota-bytes <n>] [--max-objects <n>] [--unlimited] [--recount]
+  phis addon storage --addon <@scope/name> --site <site key> [--quota-bytes <n>] [--max-objects <n>] [--unlimited] [--recount] [--sweep]
   phis addon config --addon <@scope/name> --site <site key>
   phis addon role   --site <site key> [--addon <@scope/name>] [--user <id>]
                     [--grant <role> | --revoke <role>]
@@ -2510,6 +2514,52 @@ async function main() {
       }
     }
 
+    /**
+     * The Site's store, built for reading and removing objects.
+     *
+     * The built-in Provider is reached through the filesystem rather than its adapter, which carries a
+     * `server-only` import a CLI process cannot load -- the same route `phis media check` takes.
+     */
+    const requireStore = async (id: string, target: { id: number; key: string }) => {
+      const stores = await readPhiServerAddonStorageSites(getPool(), id);
+      const store = stores.find((entry) => entry.siteId === target.id);
+      if (!store) {
+        throw new Error(`${id} has no store on ${target.key}.`);
+      }
+      const readStorageSecret = (reference: string) =>
+        readPhiServerSecretWithDb(getPool(), reference, requireSecretEncryptionKey());
+      const adapter = phiServerAddonObjectAdapterFor(
+        store,
+        await resolvePhiStorageObjectAdapter(
+          configRoot, store.providerId, store.config, store.secretReference, readStorageSecret,
+        ),
+      );
+      if (!adapter) {
+        throw new Error(
+          `${target.key} stores through ${store.providerId}, which this command cannot list. ` +
+          "This is available for the built-in store and for Providers reached through an installed Add-on.",
+        );
+      }
+      return { site: store, adapter };
+    };
+
+    let swept: Awaited<ReturnType<typeof sweepPhiServerAddonAssets>> | null = null;
+    if (flags.get("sweep") === true) {
+      /*
+       * Two kinds of leftover, both of which exist because a store is not in a transaction: objects a
+       * cascade could not reach, and reservations that were never redeemed. Only the declared asset
+       * space is looked at -- the free key space an Add-on manages itself has no row describing it, so
+       * a sweep that saw it would read every object there as an orphan.
+       */
+      const store = await requireStore(addonId, site);
+      swept = await sweepPhiServerAddonAssets(getPool(), {
+        addonId, site: store.site, adapter: store.adapter,
+      });
+      if (swept.error) {
+        throw new Error(`The sweep did not finish on ${site.key}: ${swept.error}`);
+      }
+    }
+
     let recounted: { bytes: number; objects: number } | null = null;
     if (flags.get("recount") === true) {
       /*
@@ -2521,24 +2571,9 @@ async function main() {
        * A command rather than a background pass: it costs a full listing of the prefix, which is the
        * unbounded operation the ceiling exists to prevent.
        */
-      const stores = await readPhiServerAddonStorageSites(getPool(), addonId);
-      const store = stores.find((entry) => entry.siteId === site.id);
-      if (!store) {
-        throw new Error(`${addonId} has no store on ${site.key} to recount.`);
-      }
-      const readStorageSecret = (reference: string) =>
-        readPhiServerSecretWithDb(getPool(), reference, requireSecretEncryptionKey());
-      const adapter = await resolvePhiStorageObjectAdapter(
-        configRoot, store.providerId, store.config, store.secretReference, readStorageSecret,
-      );
-      if (!adapter) {
-        throw new Error(
-          `${site.key} stores through ${store.providerId}, which this command cannot list. ` +
-          "Recounting is available for Providers reached through an installed Add-on.",
-        );
-      }
+      const store = await requireStore(addonId, site);
       recounted = await recountPhiServerAddonStorage(getPool(), {
-        addonId, site: store, listPrefix: (prefix) => adapter.listPrefix(prefix),
+        addonId, site: store.site, listPrefix: (prefix) => store.adapter.listPrefix(prefix),
       });
     }
 
@@ -2546,10 +2581,17 @@ async function main() {
     const result = {
       ok: true, action: "addon.storage" as const, addon: addonId, site: site.key, usage,
       ...(recounted ? { recounted: true } : {}),
+      ...(swept ? { swept: { expired: swept.expired, orphaned: swept.orphaned, bytesReleased: swept.bytesReleased } } : {}),
     };
     if (json) {
       printJson(result);
     } else {
+      if (swept) {
+        console.log(
+          `Swept ${swept.orphaned} object(s) nobody named and ${swept.expired} expired ` +
+          `reservation(s), giving back ${swept.bytesReleased} bytes.`,
+        );
+      }
       console.log(
         `${addonId} on ${site.key}: ` +
         `${usage.bytes} of ${usage.quotaBytes ?? "unlimited"} bytes, ` +

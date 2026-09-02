@@ -182,6 +182,7 @@ describe("putting a file on a row", () => {
   });
 
   it("makes a file of it once the bytes are there", async () => {
+    const pool = await requirePhiTestDatabase();
     const reservation = await assets().begin({
       table: "offering", ownerId: offeringId, slot: "package",
       contentType: "application/gzip", sizeBytes: GZIP.byteLength,
@@ -203,6 +204,16 @@ describe("putting a file on a row", () => {
      */
     expect(Object.keys(asset)).not.toContain("storageKey");
     expect(JSON.stringify(asset)).not.toContain("assets/offering");
+
+    // And the object is inside the Add-on's own prefix, which is what a purge empties and what keeps
+    // two Add-ons on one Site apart. An `assets/` at the root of the Site's storage would be neither.
+    const stored = await pool.query<{ storage_key: string }>(
+      `SELECT storage_key FROM ${SCHEMA}.offering_assets WHERE id = $1`,
+      [reservation.id],
+    );
+    expect(stored.rows[0]!.storage_key).toMatch(
+      new RegExp(`^addons/${SCHEMA}/${site.key}/assets/offering/package/`),
+    );
   });
 
   it("refuses to finish an upload that never arrived", async () => {

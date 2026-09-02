@@ -3,7 +3,7 @@ import "server-only";
 import type { PhiServerStorageCapabilityV1 } from "./contract.ts";
 import { ensureSiteMediaSpace, getMediaStorageProfile } from "@/db/media-spaces";
 import { createPhisMediaStorageServiceForProfile } from "@/lib/media-storage";
-import { derivePhiServerAddonSchemaName } from "./schema-name.ts";
+import { phiServerAddonStoragePrefix } from "./schema-name.ts";
 import {
   bookPhiServerAddonStorage,
   readPhiServerAddonStorageUsage,
@@ -21,11 +21,6 @@ import { getPool } from "@/lib/db";
  * The bytes go through the Site's configured Storage Provider, so an operator who moved a Site to S3
  * moved its Add-ons with it and did not have to be asked twice.
  */
-
-/** `addons/<derived addon name>/<site key>/` -- the schema-name derivation, reused for a path. */
-function derivePrefix(addonId: string, siteKey: string) {
-  return `addons/${derivePhiServerAddonSchemaName(addonId)}/${siteKey}`;
-}
 
 /**
  * A key an Add-on may use, or nothing.
@@ -68,7 +63,7 @@ async function resolveStorage(siteId: number, siteKey: string, addonId: string) 
     throw new PhiServerAddonStorageError("This Site has no default Storage Profile.");
   }
   const service = await createPhisMediaStorageServiceForProfile(profile, siteKey);
-  return { service, prefix: derivePrefix(addonId, siteKey) };
+  return { service, prefix: phiServerAddonStoragePrefix(addonId, siteKey) };
 }
 
 export function buildPhiServerAddonStorageCapability(input: {

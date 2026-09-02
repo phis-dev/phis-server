@@ -171,7 +171,7 @@ export function buildPhiServerAddonAssetsCapability(input: {
         );
       }
 
-      const storageKey = phiServerAddonAssetKey(table, slot);
+      const storageKey = phiServerAddonAssetKey({ addonId, siteKey, table, slot });
       const expiresAt = new Date(Date.now() + RESERVATION_TTL_MS);
       let reservation;
       try {

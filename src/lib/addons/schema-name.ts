@@ -61,3 +61,18 @@ export const PHI_SERVER_ADDON_ASSET_TABLE_SUFFIX = "assets";
 export function composePhiServerAddonAssetTableName(table: string) {
   return `${table}_${PHI_SERVER_ADDON_ASSET_TABLE_SUFFIX}`;
 }
+
+/**
+ * Where one Add-on's objects live on one Site: `addons/<derived name>/<site key>`.
+ *
+ * Derived, never given. An Add-on hands in a relative key and gets a relative key back, so there is no
+ * address it could store, guess, or be tricked into passing -- which is what makes the isolation
+ * structural rather than a check somebody has to keep writing. It is also the prefix a purge empties
+ * and a sweep reads, so everything an Add-on owns has to be under it.
+ */
+export function phiServerAddonStoragePrefix(addonId: string, siteKey: string) {
+  return `addons/${derivePhiServerAddonSchemaName(addonId)}/${siteKey}`;
+}
+
+/** The one sub-prefix Core writes into and the sweep is allowed to look at. */
+export const PHI_SERVER_ADDON_ASSET_PREFIX = "assets";
