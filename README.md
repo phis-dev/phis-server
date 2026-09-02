@@ -643,7 +643,10 @@ anything, and running it twice is running it once. Adding a task is adding an en
 `src/cli/maintain.mts`; nothing else changes.
 
 `storage probe` establishes what a configured endpoint can actually do, by doing it: whether the bucket
-takes a write, and whether it verifies a declared SHA-256 against the bytes it stores. One adapter
+takes a write, which declared digests it checks against the bytes it stores, and whether it will compute
+one of them over a whole object assembled from parts. From that answer one algorithm is chosen and
+recorded on the Profile, because duplicate detection compares digests and two are only comparable under
+the same one. One adapter
 serves AWS, MinIO and Garage alike and they do not agree on everything, so this is measured per Profile
 rather than assumed per Provider, and the answer is recorded with the moment it was true.
 

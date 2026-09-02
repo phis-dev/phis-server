@@ -136,14 +136,22 @@ export async function PUT(
       return nextMediaError("upload_size_mismatch", "Upload size mismatch.", 400);
     }
 
-    // What the object is, rather than how it arrived, decides whether it is a duplicate -- and only
-    // the plan that streams through Core arrives here at all. That judgement therefore belongs to
-    // finalize, which every plan passes through.
-    const checksumSha256 = stored.etag || null;
+    /*
+     * What the Provider can attest, which is not the same as what it returned.
+     *
+     * Taken from `checksum` rather than `etag`: the ETag is an HTTP cache validator that each Provider
+     * fills as it likes, and reading it as a content hash is how an MD5 gets recorded as a SHA-256. A
+     * Provider with nothing to attest says so, and null is recorded rather than a number that invites a
+     * comparison.
+     *
+     * Whether it makes this object a duplicate is finalize's judgement, which every plan passes through.
+     */
+    const checksum = stored.checksum ?? null;
 
     await updateMediaUploadSessionByToken(token, {
       status: PhiMediaUploadSessionStatus.Uploaded,
-      checksumSha256,
+      checksumAlgorithm: checksum?.algorithm ?? null,
+      checksumValue: checksum?.value ?? null,
       uploadedAt: new Date().toISOString(),
     });
 
@@ -151,7 +159,7 @@ export async function PUT(
       token,
       status: "uploaded",
       byteSize: stored.byteSize,
-      checksumSha256,
+      checksum,
     });
   } catch (uploadError) {
     // The same teardown whichever way the body ended: the reservation goes back and the torn object

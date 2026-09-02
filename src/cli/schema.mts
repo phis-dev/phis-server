@@ -118,11 +118,50 @@ export async function applyPhiCoreSchema(input: {
       if (!/^[A-Za-z_][A-Za-z0-9_$]*$/u.test(role)) {
         throw new Error(`"${input.migrationRole}" is not a usable role name.`);
       }
+      /*
+       * Reaching the schema at all, which every grant below silently assumed.
+       *
+       * `REFERENCES` on a table is useless to a role that may not enter the schema holding it, and for
+       * a long time nobody noticed: the privilege came from however the database was first set up and
+       * survived every `CREATE TABLE IF NOT EXISTS`. It does not survive the schema being rebuilt, and
+       * a rebuild is exactly what this command is for.
+       */
+      await client.query(`GRANT USAGE ON SCHEMA phis TO "${role}"`);
+
       // Re-granted every time: a Core table added by this release may be one an Add-on may reference,
       // and the grant is per table rather than per schema.
       for (const table of phiServerAddonCoreReferenceTables()) {
         await client.query(`GRANT REFERENCES ON ${table} TO "${role}"`);
       }
+
+      /*
+       * The catalogue the migration runner keeps, which is its own bookkeeping rather than an Add-on's.
+       *
+       * Installing an Add-on records what was installed and what it may do; those rows are written by
+       * the migration connection, so read-only access to them would stop a migration at its first
+       * statement. Named one by one rather than granted across the schema: the migrator's business is
+       * Add-ons, and Site content is not it.
+       */
+      for (const table of [
+        "phis.server_addons",
+        "phis.server_addon_migrations",
+        "phis.server_capabilities",
+        "phis.site_server_addons",
+        "phis.server_secrets",
+      ]) {
+        await client.query(`GRANT SELECT, INSERT, UPDATE, DELETE ON ${table} TO "${role}"`);
+      }
+      /*
+       * Groups an Add-on brought with it, which uninstalling has to retire.
+       *
+       * Update rather than delete, and only ever the rows whose `provider_id` names the Add-on -- a
+       * group an administrator made is not the migrator's to touch. The privilege is wider than that
+       * rule, which is why the rule lives in the statement and is stated there.
+       */
+      await client.query(`GRANT SELECT, UPDATE ON phis.site_groups TO "${role}"`);
+      // Identity columns need their sequence, and a grant on the table does not carry it.
+      await client.query(`GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA phis TO "${role}"`);
+
       grantedTo = role;
     }
 

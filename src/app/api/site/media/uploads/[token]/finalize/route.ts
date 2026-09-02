@@ -269,9 +269,20 @@ export async function POST(
     );
   }
 
-  // What the object is decides whether it is a duplicate, so every plan is judged here rather than at
-  // the transport that happened to carry it.
-  const stagedChecksum = session.checksumSha256 ?? staged.etag ?? null;
+  /*
+   * What the object is decides whether it is a duplicate, so every plan is judged here rather than at
+   * the transport that happened to carry it.
+   *
+   * The session's own digest comes first: on a proxied body Core hashed it in flight, and on a
+   * presigned one the endpoint refused anything that did not match what the client stated. Failing
+   * both, whatever the Provider can attest about the stored object -- and where it can attest nothing,
+   * nothing is recorded. `getMediaAssetBySiteAndChecksum` then decides whether the digest is one that
+   * can answer "is this the same file" at all; a CRC or an MD5 is kept as evidence of an intact
+   * transfer without being compared.
+   */
+  const stagedChecksum = session.checksumAlgorithm && session.checksumValue
+    ? { algorithm: session.checksumAlgorithm, value: session.checksumValue }
+    : staged.checksum ?? null;
   if (stagedChecksum) {
     const existingAsset = await getMediaAssetBySiteAndChecksum(site.id, session.spaceId, stagedChecksum);
     if (existingAsset) {
@@ -286,7 +297,7 @@ export async function POST(
           originalName: session.filename,
           contentType: session.contentType,
           sizeBytes: session.sizeBytes,
-          checksumSha256: stagedChecksum,
+          checksum: `${stagedChecksum.algorithm}:${stagedChecksum.value}`,
         },
       });
       return NextResponse.json(
@@ -368,7 +379,10 @@ export async function POST(
       throw new Error("Failed to settle the staged object onto its final key.");
     }
 
-    const checksumSha256 = stagedChecksum ?? finalObject.etag ?? null;
+    // The settle may have copied the object onto its final key, so the Provider is asked again rather
+    // than assumed to answer the same -- but what the staged object established outranks it, because
+    // that is the digest something actually verified.
+    const checksum = stagedChecksum ?? finalObject.checksum ?? null;
 
     // The Space decides what the Asset is visible to until a Module widens it for a purpose.
     const asset = await createMediaAsset({
@@ -383,7 +397,8 @@ export async function POST(
       originalName: session.filename,
       contentType,
       bytes: finalObject.byteSize,
-      checksumSha256,
+      checksumAlgorithm: checksum?.algorithm ?? null,
+      checksumValue: checksum?.value ?? null,
       width: imageMeta.width,
       height: imageMeta.height,
       blurDataUrl: imageMeta.blurDataUrl,

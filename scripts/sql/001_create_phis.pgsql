@@ -299,9 +299,14 @@ CREATE TABLE IF NOT EXISTS phis.media_storage_profiles (
 -- declared by an operator. One adapter serves AWS, MinIO and Garage alike, and they do not agree on
 -- everything -- so this is an observation with a date on it, not configuration, and it lives beside
 -- `config` rather than inside it.
+-- The digest this Profile records, chosen once from what the probe found the endpoint verifies.
+-- Settled per Profile rather than per upload because duplicate detection compares digests, and two
+-- objects are only comparable under the same algorithm: an adapter picking freshly on every plan would
+-- split one Space's objects into cohorts that can never be told to be the same, and silently.
 ALTER TABLE phis.media_storage_profiles
   ADD COLUMN IF NOT EXISTS probe JSONB NULL,
-  ADD COLUMN IF NOT EXISTS probed_at TIMESTAMPTZ NULL;
+  ADD COLUMN IF NOT EXISTS probed_at TIMESTAMPTZ NULL,
+  ADD COLUMN IF NOT EXISTS checksum_algorithm VARCHAR(16) NULL;
 
 CREATE TABLE IF NOT EXISTS phis.site_media_config (
   site_id SMALLINT PRIMARY KEY REFERENCES phis.sites(id) ON DELETE CASCADE,
@@ -435,7 +440,20 @@ CREATE TABLE IF NOT EXISTS phis.media_assets (
   content_type VARCHAR(128) NOT NULL,
   variant_version SMALLINT NULL,
   bytes BIGINT NULL,
-  checksum_sha256 CHAR(64) NULL,
+  /*
+   * The digest, and what produced it.
+   *
+   * Two columns rather than one named for an algorithm, because what lands here is not always the one
+   * the name promises: an `ETag` is whatever the Provider chose to put in it, and Providers disagree --
+   * MD5 for one, a digest of part digests for the same Provider above the single-request limit. A value
+   * whose algorithm is unstated is a number the reader has to guess the meaning of, and guessing wrong
+   * is how an MD5 gets compared against a SHA-256.
+   */
+  checksum_algorithm VARCHAR(16) NULL,
+  checksum_value VARCHAR(128) NULL,
+  CONSTRAINT media_assets_checksum_check CHECK (
+    (checksum_algorithm IS NULL) = (checksum_value IS NULL)
+  ),
   width SMALLINT NULL,
   height SMALLINT NULL,
   blur_data_url TEXT NULL,
@@ -469,8 +487,21 @@ CREATE TABLE IF NOT EXISTS phis.media_assets (
 
 CREATE INDEX IF NOT EXISTS media_assets_space_folder_created_idx
   ON phis.media_assets (space_id, folder_id, created_at DESC, id DESC);
+/*
+ * What duplicate detection compares, and the algorithms it is willing to believe.
+ *
+ * Restricted to the digests strong enough to answer "is this the same file". CRC is linear and MD5
+ * collisions are a download, so either would let someone who may already write to a Space stop one
+ * particular file from entering it -- a refused upload rather than a substituted one, but free to
+ * avoid. Objects carrying a weaker digest are still fully verified; they are simply not compared.
+ *
+ * The algorithm is part of the key because two digests are only comparable under the same one. Without
+ * it a Space whose Storage Profile changed would hold two sets of numbers answering different
+ * questions, and the index would silently stop finding anything.
+ */
 CREATE INDEX IF NOT EXISTS media_assets_space_checksum_idx
-  ON phis.media_assets (space_id, checksum_sha256) WHERE checksum_sha256 IS NOT NULL;
+  ON phis.media_assets (space_id, checksum_algorithm, checksum_value)
+  WHERE checksum_value IS NOT NULL AND checksum_algorithm IN ('sha256', 'sha512');
 -- "what is mine in this Space", which is the question an Author's listing asks.
 CREATE INDEX IF NOT EXISTS media_assets_space_owner_idx
   ON phis.media_assets (space_id, owner_user_id) WHERE owner_user_id IS NOT NULL;
@@ -487,7 +518,20 @@ CREATE TABLE IF NOT EXISTS phis.media_upload_sessions (
   content_type VARCHAR(128) NOT NULL,
   size_bytes BIGINT NOT NULL,
   kind VARCHAR(16) NOT NULL,
-  checksum_sha256 CHAR(64) NULL,
+  /*
+   * The digest, and what produced it.
+   *
+   * Two columns rather than one named for an algorithm, because what lands here is not always the one
+   * the name promises: an `ETag` is whatever the Provider chose to put in it, and Providers disagree --
+   * MD5 for one, a digest of part digests for the same Provider above the single-request limit. A value
+   * whose algorithm is unstated is a number the reader has to guess the meaning of, and guessing wrong
+   * is how an MD5 gets compared against a SHA-256.
+   */
+  checksum_algorithm VARCHAR(16) NULL,
+  checksum_value VARCHAR(128) NULL,
+  CONSTRAINT media_upload_sessions_checksum_check CHECK (
+    (checksum_algorithm IS NULL) = (checksum_value IS NULL)
+  ),
   meta JSONB NULL,
   presentation_flags INT NOT NULL DEFAULT 0,
   upload_plan_kind SMALLINT NOT NULL DEFAULT 1,
@@ -541,7 +585,20 @@ CREATE TABLE IF NOT EXISTS phis.image_asset_variants (
   storage_key VARCHAR(512) NOT NULL,
   content_type VARCHAR(128) NOT NULL,
   bytes BIGINT NULL,
-  checksum_sha256 CHAR(64) NULL,
+  /*
+   * The digest, and what produced it.
+   *
+   * Two columns rather than one named for an algorithm, because what lands here is not always the one
+   * the name promises: an `ETag` is whatever the Provider chose to put in it, and Providers disagree --
+   * MD5 for one, a digest of part digests for the same Provider above the single-request limit. A value
+   * whose algorithm is unstated is a number the reader has to guess the meaning of, and guessing wrong
+   * is how an MD5 gets compared against a SHA-256.
+   */
+  checksum_algorithm VARCHAR(16) NULL,
+  checksum_value VARCHAR(128) NULL,
+  CONSTRAINT image_asset_variants_checksum_check CHECK (
+    (checksum_algorithm IS NULL) = (checksum_value IS NULL)
+  ),
   width SMALLINT NOT NULL,
   height SMALLINT NOT NULL,
   blur_data_url TEXT NULL,

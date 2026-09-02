@@ -2252,7 +2252,9 @@ async function main() {
           `${profile.key}  ${profile.providerId}  ` +
           (profile.probed
             ? `${profile.writable ? "writable" : "NOT WRITABLE"}, ` +
-              `sha256 ${profile.verifiesSha256 ? "verified by the storage" : "not verified"}`
+              `verifies ${profile.verifiedAlgorithms?.length ? profile.verifiedAlgorithms.join("/") : "nothing"}, ` +
+              `recording ${profile.chosenAlgorithm ?? "no digest of its own"}` +
+              (profile.verifiesWholeMultipartObject ? ", whole-object digest survives multipart" : "")
             : "not probed"),
         );
         for (const finding of profile.findings) {

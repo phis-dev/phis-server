@@ -222,7 +222,9 @@ export async function ensureImageAssetVariant(
     storageKey: storedObject.storageKey,
     contentType: storedObject.contentType,
     bytes: storedObject.byteSize,
-    checksumSha256: storedObject.etag || null,
+    // What the Provider can attest, not what its ETag happens to hold.
+    checksumAlgorithm: storedObject.checksum?.algorithm ?? null,
+    checksumValue: storedObject.checksum?.value ?? null,
     width: rendered.info.width ?? spec.width,
     height: rendered.info.height ?? spec.height,
     blurDataUrl: null,

@@ -33,7 +33,7 @@ import {
   resolvePhiMediaUploadSessionKind,
 } from "@/lib/media-upload-sessions";
 import { createPhisMediaStorageServiceForProfile } from "@/lib/media-storage";
-import { phiMediaStorageProfileVerifiesSha256 } from "@/lib/media-storage-profile-probe";
+import { phiMediaStorageProfileChecksumAlgorithm } from "@/lib/media-storage-profile-probe";
 import { sniffPhiMediaContentType } from "@/lib/media-content-sniffer";
 import { derivePhiServerAddonSchemaName } from "./schema-name.ts";
 import {
@@ -82,7 +82,9 @@ function view(row: PhiServerAddonAssetRow): PhiServerAddonAssetView {
     mediaAssetId: row.mediaAssetId,
     byteSize: row.byteSize,
     contentType: row.contentType,
-    checksumSha256: row.checksumSha256,
+    checksum: row.checksumAlgorithm && row.checksumValue
+      ? { algorithm: row.checksumAlgorithm, value: row.checksumValue }
+      : null,
     createdAt: row.createdAt,
   };
 }
@@ -216,12 +218,17 @@ export function buildPhiServerAddonAssetsCapability(input: {
         /*
          * The plan is the Provider's answer, and the digest is what decides which one it may give.
          *
-         * Where the endpoint verifies a stated SHA-256, the bytes may go straight to it: a wrong digest
-         * is refused there and never becomes an object, so Core can take the client's figure as true
-         * without ever having seen a byte. Where it does not, the body comes through Core, which hashes
-         * it in flight. Either way the digest is established rather than asserted.
+         * Where the endpoint verifies a digest the client states, the bytes may go straight to it: a
+         * wrong one is refused there and never becomes an object, so Core can take the client's figure
+         * as true without ever having seen a byte. Where it does not, the body comes through Core,
+         * which hashes it in flight. Either way the digest is established rather than asserted.
+         *
+         * Which algorithm was settled for this Profile when it was probed. The Add-on states a SHA-256,
+         * so a Profile that verifies something else cannot use the client's figure at all -- the body
+         * takes the proxied path and Core hashes it, which is the same answer under the same name.
          */
-        const verifies = await phiMediaStorageProfileVerifiesSha256(profile, siteKey);
+        const algorithm = await phiMediaStorageProfileChecksumAlgorithm(profile, siteKey);
+        const verifies = algorithm === "sha256";
         const plan = await service.createUploadPlan({
           token,
           storageKey,
@@ -229,7 +236,7 @@ export function buildPhiServerAddonAssetsCapability(input: {
           sizeBytes,
           expiresAt,
           proxyUploadUrl: input.proxyUploadUrl({ token }),
-          ...(verifies && sha256 ? { checksumSha256: sha256 } : {}),
+          ...(verifies && sha256 ? { checksum: { algorithm: "sha256" as const, value: sha256 } } : {}),
         });
 
         await createMediaUploadSession({
@@ -244,7 +251,10 @@ export function buildPhiServerAddonAssetsCapability(input: {
           sizeBytes,
           kind: resolvePhiMediaUploadSessionKind(contentType),
           uploadPlanKind: resolvePhiMediaUploadPlanKind(plan.kind),
-          checksumSha256: sha256 ?? null,
+          // Recorded only where something will verify it; otherwise it is the client's claim, and
+          // finalize would have no way to tell it apart from an established digest.
+          checksumAlgorithm: verifies && sha256 ? "sha256" : null,
+          checksumValue: verifies && sha256 ? sha256 : null,
           stagingStorageKey: storageKey,
           expiresAt,
           purpose: PhiMediaUploadPurpose.AddonAsset,
@@ -358,10 +368,11 @@ export function buildPhiServerAddonAssetsCapability(input: {
            *
            * Where the endpoint verifies, the client's figure is true because a wrong one would have been
            * refused. Where Core streamed the body, Core hashed it. Where neither holds, nothing is
-           * recorded: `etag` is an HTTP header and not a content hash, and a column called
-           * `checksum_sha256` holding an MD5 is worse than one holding nothing.
+           * recorded: an `etag` is an HTTP header and not a content hash, and a digest whose algorithm
+           * is a guess is worse than none, because it invites a comparison.
            */
-          checksumSha256: session.checksumSha256 ?? null,
+          checksumAlgorithm: session.checksumAlgorithm ?? null,
+          checksumValue: session.checksumValue ?? null,
           deliveryPolicy: DELIVERY_POLICIES[declared.delivery ?? "public"],
         }, client);
         if (!asset) {

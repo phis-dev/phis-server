@@ -8,7 +8,7 @@ import { PhisLocalMediaStorageAdapter } from "./media-storage.ts";
 /**
  * What the built-in storage answers when asked what it can do.
  *
- * Its interesting answer is the negative one. `verifiesSha256: false` looks like a shortcoming and is
+ * Its interesting answer is the negative one. An empty `verifiedAlgorithms` looks like a shortcoming and is
  * not: the question is whether a *remote* endpoint checks what a client asserted, and here there is
  * neither a remote endpoint nor an assertion -- every byte is written by Core, which hashes as it
  * writes. A probe that answered `true` would be claiming to have verified something nobody claimed.
@@ -31,7 +31,13 @@ describe("probing the built-in storage", () => {
   it("reports a writable root, and does not claim a verification nobody asked for", async () => {
     const adapter = new PhisLocalMediaStorageAdapter({ rootDir: root, storageKeyPrefix: "sites" });
     const probe = await adapter.probeCapabilities();
-    expect(probe).toEqual({ writable: true, verifiesSha256: false, findings: [] });
+    expect(probe).toEqual({
+      writable: true,
+      // Nothing is delivered here by a client, so there is no claim to check and none is claimed.
+      verifiedAlgorithms: [],
+      verifiesWholeMultipartObject: false,
+      findings: [],
+    });
   });
 
   it("leaves nothing behind", async () => {

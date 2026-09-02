@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import {
   ensurePhiMediaStorageProfileProbe,
-  phiMediaStorageProfileVerifiesSha256,
+  phiMediaStorageProfileChecksumAlgorithm,
 } from "@/lib/media-storage-profile-probe";
 import {
   closePhiTestPool,
@@ -59,7 +59,7 @@ describe("probing a Storage Profile on first use", () => {
 
     const probe = await ensurePhiMediaStorageProfileProbe(profile, site.key);
 
-    expect(probe?.verifiesSha256).toBe(false);
+    expect(probe?.verifiedAlgorithms).toEqual([]);
     // Nothing is delivered to it by a client, so there is nothing to measure and nothing is written.
     expect((await readRow(profile.id)).probed_at).toBeNull();
   });
@@ -70,7 +70,7 @@ describe("probing a Storage Profile on first use", () => {
     const probe = await ensurePhiMediaStorageProfileProbe(profile, site.key);
 
     expect(probe?.writable).toBe(false);
-    expect(probe?.verifiesSha256).toBe(false);
+    expect(probe?.verifiedAlgorithms).toEqual([]);
     expect(probe?.findings.join(" ")).toMatch(/could not be reached/i);
 
     const row = await readRow(profile.id);
@@ -97,12 +97,14 @@ describe("probing a Storage Profile on first use", () => {
     const profile = await createProfile("recorded", "@phis/nobody/storage-nowhere");
     await pool.query(
       `UPDATE phis.media_storage_profiles
-          SET probe = $2::jsonb, probed_at = NOW() WHERE id = $1`,
-      [profile.id, JSON.stringify({ writable: true, verifiesSha256: true, findings: [] })],
+          SET probe = $2::jsonb, probed_at = NOW(), checksum_algorithm = 'sha256' WHERE id = $1`,
+      [profile.id, JSON.stringify({
+        writable: true, verifiedAlgorithms: ["sha256"], verifiesWholeMultipartObject: false, findings: [],
+      })],
     );
 
     // The Provider does not exist, so an answer could only have come from the record.
-    expect(await phiMediaStorageProfileVerifiesSha256(profile, site.key)).toBe(true);
+    expect(await phiMediaStorageProfileChecksumAlgorithm(profile, site.key)).toBe("sha256");
   });
 
   it("says no for a Profile that is not there at all", async () => {
@@ -115,6 +117,6 @@ describe("probing a Storage Profile on first use", () => {
     };
 
     expect(await ensurePhiMediaStorageProfileProbe(missing, site.key)).toBeNull();
-    expect(await phiMediaStorageProfileVerifiesSha256(missing, site.key)).toBe(false);
+    expect(await phiMediaStorageProfileChecksumAlgorithm(missing, site.key)).toBeNull();
   });
 });

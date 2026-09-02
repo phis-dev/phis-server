@@ -1,5 +1,6 @@
 import "server-only";
 
+import { choosePhisMediaChecksumAlgorithm } from "@phis/contracts/addon";
 import type { PhisMediaStorageProbe } from "@phis/contracts/addon";
 
 import {
@@ -21,9 +22,11 @@ import { logRuntimeEvent, normalizeLogThrowable } from "@/lib/log";
  */
 const LOCAL_PROBE: PhisMediaStorageProbe = {
   writable: true,
-  verifiesSha256: false,
+  verifiedAlgorithms: [],
+  verifiesWholeMultipartObject: false,
   findings: ["Core's own storage: nothing is delivered to it by a client, so there is nothing to verify."],
 };
+
 
 export type PhiMediaStorageProfileForProbe = {
   id: number;
@@ -81,7 +84,8 @@ export async function ensurePhiMediaStorageProfileProbe(
     // keeps the upload on the path that does not depend on the endpoint checking anything.
     probe = {
       writable: false,
-      verifiesSha256: false,
+      verifiedAlgorithms: [],
+      verifiesWholeMultipartObject: false,
       findings: [`The Provider could not be reached: ${
         error instanceof Error ? error.message.trim() : "no reason given"
       }`],
@@ -94,7 +98,9 @@ export async function ensurePhiMediaStorageProfileProbe(
     });
   }
 
-  await writeMediaStorageProfileProbe(profile.siteId, profile.id, probe);
+  await writeMediaStorageProfileProbe(
+    profile.siteId, profile.id, probe, choosePhisMediaChecksumAlgorithm(probe),
+  );
   logRuntimeEvent("info", "media.storage.probe.recorded", {
     message: "A Storage Profile was probed on first use.",
     siteKey: siteKey ?? null,
@@ -102,20 +108,40 @@ export async function ensurePhiMediaStorageProfileProbe(
       storageProfileId: profile.id,
       providerId: profile.providerId,
       writable: probe.writable,
-      verifiesSha256: probe.verifiesSha256,
+      verifiedAlgorithms: probe.verifiedAlgorithms.join(",") || "none",
+      chosenAlgorithm: choosePhisMediaChecksumAlgorithm(probe) ?? "none",
       findings: probe.findings.length,
     },
   });
   return probe;
 }
 
-/** Whether this endpoint checks a digest a client asserts, probing once if nobody ever asked. */
-export async function phiMediaStorageProfileVerifiesSha256(
+/**
+ * The digest this Profile records for a body delivered straight to the endpoint, probing once if
+ * nobody ever asked.
+ *
+ * Null means no digest may be asserted, and the body goes through Core to be hashed there instead.
+ * Absent evidence reads as null: treating silence as a yes is how an unverified digest ends up
+ * recorded as a checked one.
+ */
+export async function phiMediaStorageProfileChecksumAlgorithm(
   profile: PhiMediaStorageProfileForProbe,
   siteKey?: string | null,
-) {
-  const probe = await ensurePhiMediaStorageProfileProbe(profile, siteKey);
-  // Absent means no. Treating silence as a yes is how an unverified digest ends up recorded as a
-  // checked one.
-  return probe?.verifiesSha256 === true;
+): Promise<string | null> {
+  if (profile.providerId === PHI_LOCAL_MEDIA_STORAGE_PROVIDER_ID) return null;
+
+  /*
+   * The recorded choice, read rather than derived afresh.
+   *
+   * Deriving it every time would work today, because the rule is deterministic -- and would quietly
+   * stop working the day the rule changes, moving every already-probed Profile onto a new algorithm
+   * and splitting its Space's objects into two cohorts that can never be told to match. The column
+   * exists so that a choice, once made, stays made until somebody probes again.
+   */
+  const recorded = await readMediaStorageProfileProbe(profile.siteId, profile.id);
+  if (!recorded) return null;
+  if (recorded.probedAt) return recorded.checksumAlgorithm;
+
+  await ensurePhiMediaStorageProfileProbe(profile, siteKey);
+  return (await readMediaStorageProfileProbe(profile.siteId, profile.id))?.checksumAlgorithm ?? null;
 }

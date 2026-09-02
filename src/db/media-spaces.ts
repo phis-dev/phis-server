@@ -274,12 +274,12 @@ export async function listAddonMediaSpaces(siteId: number) {
  * Absent means no. A Profile nobody has probed has not been found to verify anything, and treating
  * silence as a yes is how an unverified digest ends up recorded as a checked one.
  */
-export async function mediaStorageProfileVerifiesSha256(siteId: number, profileId: number) {
-  const { rows } = await getPool().query<{ probe: { verifiesSha256?: unknown } | null }>(
-    `SELECT probe FROM phis.media_storage_profiles WHERE site_id = $1 AND id = $2`,
+export async function mediaStorageProfileChecksumAlgorithm(siteId: number, profileId: number) {
+  const { rows } = await getPool().query<{ checksum_algorithm: string | null }>(
+    `SELECT checksum_algorithm FROM phis.media_storage_profiles WHERE site_id = $1 AND id = $2`,
     [siteId, profileId],
   );
-  return rows[0]?.probe?.verifiesSha256 === true;
+  return rows[0]?.checksum_algorithm ?? null;
 }
 
 /**
@@ -289,13 +289,20 @@ export async function mediaStorageProfileVerifiesSha256(siteId: number, profileI
  * as no capability, and only one of them is worth asking again -- which is what `probedAt` is for.
  */
 export async function readMediaStorageProfileProbe(siteId: number, profileId: number) {
-  const { rows } = await getPool().query<{ probe: PhisMediaStorageProbe | null; probed_at: Date | null }>(
-    `SELECT probe, probed_at FROM phis.media_storage_profiles WHERE site_id = $1 AND id = $2`,
+  const { rows } = await getPool().query<{
+    probe: PhisMediaStorageProbe | null; probed_at: Date | null; checksum_algorithm: string | null;
+  }>(
+    `SELECT probe, probed_at, checksum_algorithm FROM phis.media_storage_profiles
+      WHERE site_id = $1 AND id = $2`,
     [siteId, profileId],
   );
   const row = rows[0];
   if (!row) return null;
-  return { probe: row.probe, probedAt: row.probed_at ? row.probed_at.toISOString() : null };
+  return {
+    probe: row.probe,
+    probedAt: row.probed_at ? row.probed_at.toISOString() : null,
+    checksumAlgorithm: row.checksum_algorithm,
+  };
 }
 
 /**
@@ -309,12 +316,13 @@ export async function writeMediaStorageProfileProbe(
   siteId: number,
   profileId: number,
   probe: PhisMediaStorageProbe,
+  checksumAlgorithm: string | null,
 ) {
   const result = await getPool().query(
     `UPDATE phis.media_storage_profiles
-        SET probe = $3::jsonb, probed_at = NOW(), updated_at = NOW()
+        SET probe = $3::jsonb, probed_at = NOW(), checksum_algorithm = $4, updated_at = NOW()
       WHERE site_id = $1 AND id = $2`,
-    [siteId, profileId, JSON.stringify(probe)],
+    [siteId, profileId, JSON.stringify(probe), checksumAlgorithm],
   );
   return (result.rowCount ?? 0) > 0;
 }

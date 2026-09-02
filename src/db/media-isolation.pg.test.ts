@@ -64,15 +64,15 @@ describe("Media Site and Space isolation against PostgreSQL", () => {
     const inSiteSpace = await createPhiTestAsset(siteA, "pgtest/dup-site");
     const inGroupSpace = await createPhiTestAsset(siteA, "pgtest/dup-group");
     await pool.query(
-      `UPDATE phis.media_assets SET checksum_sha256 = $2 WHERE id = ANY($1)`,
+      `UPDATE phis.media_assets SET checksum_algorithm = 'sha256', checksum_value = $2 WHERE id = ANY($1)`,
       [[inSiteSpace, inGroupSpace], checksum],
     );
     await pool.query(`UPDATE phis.media_assets SET space_id = $2 WHERE id = $1`, [inGroupSpace, spaceId]);
 
     // The same bytes in two Spaces are two Assets: custody differs, so one is not a duplicate of the other.
-    expect((await getMediaAssetBySiteAndChecksum(siteA.id, siteA.siteSpaceId, checksum))?.id).toBe(inSiteSpace);
-    expect((await getMediaAssetBySiteAndChecksum(siteA.id, spaceId, checksum))?.id).toBe(inGroupSpace);
-    expect(await getMediaAssetBySiteAndChecksum(siteB.id, siteA.siteSpaceId, checksum)).toBeNull();
+    expect((await getMediaAssetBySiteAndChecksum(siteA.id, siteA.siteSpaceId, { algorithm: 'sha256', value: checksum }))?.id).toBe(inSiteSpace);
+    expect((await getMediaAssetBySiteAndChecksum(siteA.id, spaceId, { algorithm: 'sha256', value: checksum }))?.id).toBe(inGroupSpace);
+    expect(await getMediaAssetBySiteAndChecksum(siteB.id, siteA.siteSpaceId, { algorithm: 'sha256', value: checksum })).toBeNull();
   });
 
   it("refuses to bind an Asset to a Storage Profile of another Site", async () => {

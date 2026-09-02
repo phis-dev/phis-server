@@ -748,42 +748,59 @@ into it; `phis storage probe` is what tries it again.
 
 ### What the digest is worth, and where it stops being one
 
-`checksum_sha256` is one column, filled from three places, and only two of them put a SHA-256 of the
-object's contents in it. Anything reading that column -- today, the duplicate index on
-`(space_id, checksum_sha256)` -- is reading whichever of the three the upload happened to take.
+`checksum_value` never travels without `checksum_algorithm`, and that is the whole design. One column
+holding "a checksum" is how an MD5 ends up in a field named for SHA-256: an `ETag` is an HTTP cache
+validator that each Provider fills as it likes -- a real SHA-256 for Core's own storage, an MD5 for a
+single-request S3 PUT, and a digest of part digests above that, which hashes no bytes anyone uploaded.
 
-- **The endpoint verified it.** The client stated a digest, `createUploadPlan` signed it into the
-  request, and the Provider refused anything that did not match. Trustworthy without Core having seen a
-  byte, because what makes it true is the refusal, not the claim. This is what the probe gates: no
-  recorded verification, no signed digest.
-- **Core hashed it in flight.** The body came through the proxy plan and the Local adapter's write
-  computes a streaming SHA-256 over exactly the bytes it stored. Trustworthy because Core did it.
-- **The Provider's `etag`, when neither of the above happened.** This is the one that is not a
-  guarantee. `etag` is an HTTP cache validator, and what a Provider puts in it is its own business:
-  Local fills it with the real SHA-256 it just computed, so the fallback is sound there and only there.
-  S3 fills it with MD5 for a single PUT -- a different algorithm and half the length, in a column named
-  for and sized to SHA-256 -- and for a multipart object with an MD5 of the concatenated part MD5s plus
-  a part count, which is not a hash of the content at all.
+A digest reaches the column three ways, and the algorithm is recorded with it every time:
 
-So the digest stops being one at two boundaries, and they are different.
+- **The endpoint verified it.** The client stated a digest, the plan signed it into the request, and the
+  Provider refused anything that did not match. Trustworthy without Core having seen a byte, because
+  what makes it true is the refusal.
+- **Core hashed it in flight.** The body came through the proxy plan and Core computed a SHA-256 over
+  exactly the bytes it stored.
+- **The Provider attested it.** `PhisMediaObjectHead.checksum` -- deliberately not `etag`. A Provider
+  that cannot say answers `null`, and null is recorded. A missing digest is a fact; a wrong one invites
+  a comparison.
 
-**The first is per-Provider and applies at any size.** An S3 Profile whose probe found no verification,
-uploading a body the client stated no digest for, records an MD5 where a SHA-256 is meant. Nothing
-detects this: duplicate detection still works, because it compares MD5s against MD5s within the same
-Space, and it keeps working right up until a Space's Profile changes and the two halves of the column
-are answers to different questions.
+**Not every digest may answer every question.** Two grades exist, and only one of them identifies:
 
-**The second is per-object-size and applies even to a verified digest.** A signed `ChecksumSHA256`
-covers one PUT. Above that, an object arrives as parts, and the checksum S3 reports for the assembled
-object is a composite of the part checksums -- the client's digest of the whole file is never something
-the endpoint was in a position to check. A verified digest therefore means what it says only for a body
-delivered in a single request.
+- **Identity-grade**: SHA-256 and SHA-512. Duplicate detection compares these.
+- **Integrity-grade**: CRC32/CRC32C/CRC64NVME, MD5, XXHASH. These prove a transfer intact and are
+  recorded as such, and are never compared.
 
-Where that boundary sits today is a matter of two unrelated limits, neither of which was chosen for this:
-the generated `nginx` config caps a proxied body at `client_max_body_size 2g`, and S3 accepts a single
-PUT up to 5 GB. The presigned path does not pass through `nginx` at all, so it is the S3 limit that
-bounds it. The S3 Provider issues no multipart plan (see `TODOS.md`), which is what keeps the second
-boundary out of reach rather than any check that enforces it.
+The distinction is not fussiness. CRC is linear, so a second file colliding with a stored one is algebra
+rather than computation, and MD5 collisions are a download. What rides on it is duplicate detection, and
+a collision there is a *refused* upload rather than a substituted file -- so the cost of trusting a weak
+digest is that someone who may already write to a Space can keep one particular file out of it. Small,
+but free to avoid, so the index is restricted to the two that cannot be gamed.
+
+Which algorithm a Profile records is settled **once, when it is probed**, and read from the Profile
+afterwards rather than derived again. Deriving it every time works only until the rule changes, and then
+it moves every already-probed Profile onto a new algorithm at once -- splitting each Space's objects
+into cohorts that can never be told to match. The consequence to accept is that duplicate detection is
+cohort-wise: two identical files recorded under different algorithms are not recognisably the same. That
+was already true before any of this; it was simply invisible.
+
+### Objects too large for one request
+
+A checksum signed into a PUT covers that PUT. Above the single-request limit an object arrives in parts,
+and the digest of the assembled object is normally a composite of the part digests -- correct, and about
+nothing anyone uploaded.
+
+The probe therefore asks a sharper question than "does this endpoint support whole-object checksums":
+`verifiesWholeMultipartObject` is true only where the endpoint will compute one of the *identity-grade*
+algorithms over the whole assembled object. With a CRC most endpoints will, and a CRC cannot answer
+whether two objects are the same.
+
+Where the answer is no, such an object is still **accepted and fully verified**, part by part; it simply
+carries no digest that duplicate detection can use. Pulling the body back through Core to hash it was
+considered and rejected: duplicate detection is a saving, not a guarantee, and buying it for the largest
+objects with a full extra read of every byte inverts the cost it exists to avoid.
+
+The S3 Provider issues no multipart plan today (see `TODOS.md`), so the boundary is not reached: `nginx`
+caps a proxied body at `client_max_body_size 2g` and S3 accepts a single PUT up to 5 GB.
 
 Finalizing is always Core's: only the Server turns a delivered body into an Asset. It settles the staged
 object with the Provider first, carrying through whatever the plan asked the Client to report back,

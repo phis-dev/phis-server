@@ -3,7 +3,7 @@ import path from "node:path";
 
 import type { Pool } from "pg";
 
-import { PHI_LOCAL_MEDIA_STORAGE_PROVIDER_ID } from "@phis/contracts/addon";
+import { choosePhisMediaChecksumAlgorithm, PHI_LOCAL_MEDIA_STORAGE_PROVIDER_ID } from "@phis/contracts/addon";
 import type { PhisMediaStorageAdapter, PhisMediaStorageProbe } from "@phis/contracts/addon";
 
 import { loadInstalledAddonRuntime, readAddonDesiredState } from "./addons.mts";
@@ -321,7 +321,9 @@ export type StorageProfileProbeResult = {
   providerId: string;
   probed: boolean;
   writable?: boolean;
-  verifiesSha256?: boolean;
+  verifiedAlgorithms?: string[];
+  verifiesWholeMultipartObject?: boolean;
+  chosenAlgorithm?: string | null;
   findings: string[];
 };
 
@@ -360,20 +362,24 @@ export async function probeOneStorageProfile(
     // recorded next to the ones that answered rather than losing the whole run to it.
     probe = {
       writable: false,
-      verifiesSha256: false,
+      verifiedAlgorithms: [],
+      verifiesWholeMultipartObject: false,
       findings: [`The Provider could not be reached: ${
         error instanceof Error ? error.message.trim() : "no reason given"
       }`],
     };
   }
 
+  // The digest this Profile will record, settled here rather than per upload: duplicate detection
+  // compares digests, and two are only comparable under the same algorithm.
+  const chosenAlgorithm = choosePhisMediaChecksumAlgorithm(probe);
   await pool.query(
     `UPDATE phis.media_storage_profiles
-        SET probe = $2::jsonb, probed_at = NOW(), updated_at = NOW()
+        SET probe = $2::jsonb, probed_at = NOW(), checksum_algorithm = $3, updated_at = NOW()
       WHERE id = $1`,
-    [profile.id, JSON.stringify(probe)],
+    [profile.id, JSON.stringify(probe), chosenAlgorithm],
   );
-  return { key: profile.key, providerId: profile.providerId, probed: true, ...probe };
+  return { key: profile.key, providerId: profile.providerId, probed: true, ...probe, chosenAlgorithm };
 }
 
 export async function listStorageProfiles(pool: Pool, flags: FlagMap) {

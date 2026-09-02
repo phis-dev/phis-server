@@ -3,6 +3,7 @@ import "server-only";
 import type { PoolClient } from "pg";
 
 import { getPool } from "@/lib/db";
+import { isPhisMediaIdentityChecksum } from "@phis/contracts/addon";
 import { PhiMediaUploadPurpose } from "@/lib/media-upload-sessions";
 import {
   PhiMediaDeliveryPolicy,
@@ -81,7 +82,8 @@ export type MediaAssetRecord = {
   contentType: string;
   variantVersion: number | null;
   bytes: number | null;
-  checksumSha256: string | null;
+  checksumAlgorithm: string | null;
+  checksumValue: string | null;
   width: number | null;
   height: number | null;
   blurDataUrl: string | null;
@@ -103,7 +105,8 @@ export type ImageAssetVariantRecord = {
   storageKey: string;
   contentType: string;
   bytes: number | null;
-  checksumSha256: string | null;
+  checksumAlgorithm: string | null;
+  checksumValue: string | null;
   width: number;
   height: number;
   blurDataUrl: string | null;
@@ -125,7 +128,8 @@ export type MediaUploadSessionRecord = {
   sizeBytes: number;
   kind: string;
   uploadPlanKind: number;
-  checksumSha256: string | null;
+  checksumAlgorithm: string | null;
+  checksumValue: string | null;
   meta: Record<string, unknown> | null;
   presentationFlags: number;
   stagingStorageKey: string;
@@ -174,14 +178,14 @@ type AssetRow = {
   created_by_user_id: number | null; updated_by_user_id: number | null; owner_user_id: number | null;
   storage_profile_id: number;
   storage_key: string; original_name: string; content_type: string; variant_version: number | null;
-  bytes: number | string | null; checksum_sha256: string | null; width: number | null; height: number | null;
+  bytes: number | string | null; checksum_algorithm: string | null; checksum_value: string | null; width: number | null; height: number | null;
   blur_data_url: string | null; meta: unknown; title: string | null; alt_text: string | null;
   lifecycle_status: number; delivery_policy: number; delivery_revision: number; presentation_flags: number;
   created_at: Date | string; updated_at: Date | string;
 };
 
 const ASSET_COLUMNS = `id, site_id, space_id, folder_id, created_by_user_id, updated_by_user_id,
-  owner_user_id, storage_profile_id, storage_key, original_name, content_type, variant_version, bytes, checksum_sha256,
+  owner_user_id, storage_profile_id, storage_key, original_name, content_type, variant_version, bytes, checksum_algorithm, checksum_value,
   width, height, blur_data_url, meta, title, alt_text, lifecycle_status, delivery_policy,
   delivery_revision, presentation_flags, created_at, updated_at`;
 
@@ -195,7 +199,7 @@ function mapAsset(row: AssetRow): MediaAssetRecord {
     storageProfileId: integer(row.storage_profile_id), storageKey: row.storage_key,
     originalName: row.original_name, contentType: row.content_type,
     variantVersion: row.variant_version == null ? null : integer(row.variant_version),
-    bytes: row.bytes == null ? null : integer(row.bytes), checksumSha256: row.checksum_sha256,
+    bytes: row.bytes == null ? null : integer(row.bytes), checksumAlgorithm: row.checksum_algorithm, checksumValue: row.checksum_value,
     width: row.width == null ? null : integer(row.width), height: row.height == null ? null : integer(row.height),
     blurDataUrl: row.blur_data_url, meta: record(row.meta), title: row.title, altText: row.alt_text,
     lifecycleStatus: integer(row.lifecycle_status), deliveryPolicy: integer(row.delivery_policy),
@@ -206,19 +210,19 @@ function mapAsset(row: AssetRow): MediaAssetRecord {
 
 type VariantRow = {
   asset_id: number; variant_key: number; storage_profile_id: number; storage_key: string;
-  content_type: string; bytes: number | string | null; checksum_sha256: string | null;
+  content_type: string; bytes: number | string | null; checksum_algorithm: string | null; checksum_value: string | null;
   width: number; height: number; blur_data_url: string | null; flags: number;
   created_at: Date | string; updated_at: Date | string;
 };
 
 const VARIANT_COLUMNS = `asset_id, variant_key, storage_profile_id, storage_key, content_type, bytes,
-  checksum_sha256, width, height, blur_data_url, flags, created_at, updated_at`;
+  checksum_algorithm, checksum_value, width, height, blur_data_url, flags, created_at, updated_at`;
 
 function mapVariant(row: VariantRow): ImageAssetVariantRecord {
   return {
     assetId: integer(row.asset_id), variantKey: integer(row.variant_key), storageProfileId: integer(row.storage_profile_id),
     storageKey: row.storage_key, contentType: row.content_type, bytes: row.bytes == null ? null : integer(row.bytes),
-    checksumSha256: row.checksum_sha256, width: integer(row.width), height: integer(row.height),
+    checksumAlgorithm: row.checksum_algorithm, checksumValue: row.checksum_value, width: integer(row.width), height: integer(row.height),
     blurDataUrl: row.blur_data_url, flags: integer(row.flags), createdAt: iso(row.created_at), updatedAt: iso(row.updated_at),
   };
 }
@@ -226,7 +230,7 @@ function mapVariant(row: VariantRow): ImageAssetVariantRecord {
 type UploadRow = {
   token: string; site_id: number; actor_user_id: number; space_id: number; folder_id: number | null;
   storage_profile_id: number; status: number; filename: string; content_type: string; size_bytes: number | string;
-  kind: string; upload_plan_kind: number; checksum_sha256: string | null; meta: unknown; presentation_flags: number;
+  kind: string; upload_plan_kind: number; checksum_algorithm: string | null; checksum_value: string | null; meta: unknown; presentation_flags: number;
   purpose: number; purpose_ref: unknown;
   staging_storage_key: string; final_storage_key: string | null; expires_at: Date | string;
   uploaded_at: Date | string | null; finalized_at: Date | string | null; created_at: Date | string; updated_at: Date | string;
@@ -234,7 +238,7 @@ type UploadRow = {
 
 const UPLOAD_COLUMNS = `token, site_id, actor_user_id, space_id, folder_id, storage_profile_id, status,
   purpose, purpose_ref,
-  filename, content_type, size_bytes, kind, upload_plan_kind, checksum_sha256, meta, presentation_flags,
+  filename, content_type, size_bytes, kind, upload_plan_kind, checksum_algorithm, checksum_value, meta, presentation_flags,
   staging_storage_key, final_storage_key, expires_at, uploaded_at, finalized_at, created_at, updated_at`;
 
 function nullableIso(value: Date | string | null) { return value == null ? null : iso(value); }
@@ -245,7 +249,7 @@ function mapUpload(row: UploadRow): MediaUploadSessionRecord {
     spaceId: integer(row.space_id), folderId: row.folder_id == null ? null : integer(row.folder_id),
     storageProfileId: integer(row.storage_profile_id), status: integer(row.status), filename: row.filename,
     contentType: row.content_type, sizeBytes: integer(row.size_bytes), kind: row.kind,
-    uploadPlanKind: integer(row.upload_plan_kind), checksumSha256: row.checksum_sha256, meta: record(row.meta), presentationFlags: integer(row.presentation_flags),
+    uploadPlanKind: integer(row.upload_plan_kind), checksumAlgorithm: row.checksum_algorithm, checksumValue: row.checksum_value, meta: record(row.meta), presentationFlags: integer(row.presentation_flags),
     stagingStorageKey: row.staging_storage_key, finalStorageKey: row.final_storage_key,
     expiresAt: iso(row.expires_at), uploadedAt: nullableIso(row.uploaded_at), finalizedAt: nullableIso(row.finalized_at),
     purpose: integer(row.purpose), purposeRef: record(row.purpose_ref),
@@ -399,7 +403,8 @@ function appendAssetFilters(parts: string[], values: Array<number | string | num
 export async function createMediaAsset(input: {
   siteId: number; spaceId: number; spaceKind?: number | null; folderId?: number | null; createdByUserId?: number | null;
   updatedByUserId?: number | null; storageProfileId: number; storageKey: string; originalName: string;
-  contentType: string; variantVersion?: number | null; bytes?: number | null; checksumSha256?: string | null;
+  contentType: string; variantVersion?: number | null; bytes?: number | null;
+  checksumAlgorithm?: string | null; checksumValue?: string | null;
   width?: number | null; height?: number | null; blurDataUrl?: string | null; meta?: Record<string, unknown> | null;
   title?: string | null; altText?: string | null; lifecycleStatus?: number; deliveryPolicy?: number;
   presentationFlags?: number;
@@ -409,13 +414,14 @@ export async function createMediaAsset(input: {
   const { rows } = await (db ?? getPool()).query<AssetRow>(
     `INSERT INTO phis.media_assets (site_id, space_id, folder_id, created_by_user_id, updated_by_user_id,
        owner_user_id,
-       storage_profile_id, storage_key, original_name, content_type, variant_version, bytes, checksum_sha256,
+       storage_profile_id, storage_key, original_name, content_type, variant_version, bytes, checksum_algorithm, checksum_value,
        width, height, blur_data_url, meta, title, alt_text, lifecycle_status, delivery_policy, presentation_flags)
-     VALUES ($1,$2,$3,$4,$5,$4,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16::jsonb,$17,$18,$19,$20,$21)
+     VALUES ($1,$2,$3,$4,$5,$4,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17::jsonb,$18,$19,$20,$21,$22)
      RETURNING ${ASSET_COLUMNS}`,
     [input.siteId,input.spaceId,input.folderId??null,input.createdByUserId??null,input.updatedByUserId??null,
       input.storageProfileId,input.storageKey,input.originalName,input.contentType,input.variantVersion??null,
-      input.bytes??null,input.checksumSha256??null,input.width??null,input.height??null,input.blurDataUrl??null,
+      input.bytes??null,input.checksumAlgorithm??null,input.checksumValue??null,
+      input.width??null,input.height??null,input.blurDataUrl??null,
       JSON.stringify(input.meta??null),input.title??null,input.altText??null,input.lifecycleStatus??PhiMediaLifecycleStatus.Ready,
       input.deliveryPolicy??defaultMediaDeliveryPolicy(input.spaceKind),input.presentationFlags??0],
   ); return rows[0] ? mapAsset(rows[0]) : null;
@@ -500,10 +506,28 @@ export async function listPublicSiteSpaceMediaAssetsByIds(siteId: number, ids: r
   return rows.map(mapAsset);
 }
 
-export async function getMediaAssetBySiteAndChecksum(siteId: number, spaceId: number, checksumSha256: string) {
+/**
+ * The Asset in this Space carrying the same digest, where the digest is one that can answer that.
+ *
+ * Both halves of the key matter. The algorithm, because two digests are only comparable under the same
+ * one -- a Space whose Storage Profile changed holds numbers answering different questions, and
+ * comparing across them finds nothing while looking like it looked. And the identity restriction,
+ * because a CRC or an MD5 collision is arranged rather than stumbled upon: it would let someone who may
+ * already write here keep one particular file out, by putting a collision in first.
+ *
+ * An object with a weaker digest is still fully verified. It is simply not compared, and answering
+ * "no duplicate" for it is the truthful answer to a question that cannot be asked.
+ */
+export async function getMediaAssetBySiteAndChecksum(
+  siteId: number,
+  spaceId: number,
+  checksum: { algorithm: string; value: string },
+) {
+  if (!isPhisMediaIdentityChecksum(checksum.algorithm)) return null;
   const { rows } = await getPool().query<AssetRow>(
-    `SELECT ${ASSET_COLUMNS} FROM phis.media_assets WHERE site_id = $1 AND space_id = $2 AND checksum_sha256 = $3 LIMIT 1`,
-    [siteId, spaceId, checksumSha256.trim()],
+    `SELECT ${ASSET_COLUMNS} FROM phis.media_assets
+      WHERE site_id = $1 AND space_id = $2 AND checksum_algorithm = $3 AND checksum_value = $4 LIMIT 1`,
+    [siteId, spaceId, checksum.algorithm, checksum.value.trim()],
   ); return rows[0] ? mapAsset(rows[0]) : null;
 }
 
@@ -571,19 +595,21 @@ export async function deleteImageAssetVariantsByAssetId(assetId: number) {
 }
 export async function upsertImageAssetVariant(input: {
   assetId: number; variantKey: number; storageProfileId: number; storageKey: string; contentType: string;
-  bytes?: number | null; checksumSha256?: string | null; width: number; height: number; blurDataUrl?: string | null; flags?: number;
+  bytes?: number | null; checksumAlgorithm?: string | null; checksumValue?: string | null;
+  width: number; height: number; blurDataUrl?: string | null; flags?: number;
 }) {
   const { rows } = await getPool().query<VariantRow>(
     `INSERT INTO phis.image_asset_variants (asset_id, variant_key, storage_profile_id, storage_key, content_type,
-       bytes, checksum_sha256, width, height, blur_data_url, flags)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+       bytes, checksum_algorithm, checksum_value, width, height, blur_data_url, flags)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
      ON CONFLICT (asset_id, variant_key) DO UPDATE SET storage_profile_id=EXCLUDED.storage_profile_id,
        storage_key=EXCLUDED.storage_key, content_type=EXCLUDED.content_type, bytes=EXCLUDED.bytes,
-       checksum_sha256=EXCLUDED.checksum_sha256, width=EXCLUDED.width, height=EXCLUDED.height,
+       checksum_algorithm=EXCLUDED.checksum_algorithm, checksum_value=EXCLUDED.checksum_value, width=EXCLUDED.width, height=EXCLUDED.height,
        blur_data_url=EXCLUDED.blur_data_url, flags=EXCLUDED.flags, updated_at=NOW()
      RETURNING ${VARIANT_COLUMNS}`,
     [input.assetId,input.variantKey,input.storageProfileId,input.storageKey,input.contentType,input.bytes??null,
-      input.checksumSha256??null,input.width,input.height,input.blurDataUrl??null,input.flags??0],
+      input.checksumAlgorithm??null,input.checksumValue??null,
+      input.width,input.height,input.blurDataUrl??null,input.flags??0],
   ); return rows[0] ? mapVariant(rows[0]) : null;
 }
 
@@ -591,7 +617,8 @@ export async function createMediaUploadSession(input: {
   token: string; siteId: number; actorUserId: number; spaceId: number; folderId?: number | null;
   storageProfileId: number; status: number; filename: string; contentType: string; sizeBytes: number; kind: string;
   uploadPlanKind: number;
-  checksumSha256?: string | null; meta?: Record<string, unknown> | null; presentationFlags?: number;
+  checksumAlgorithm?: string | null; checksumValue?: string | null;
+  meta?: Record<string, unknown> | null; presentationFlags?: number;
   stagingStorageKey: string; finalStorageKey?: string | null; expiresAt: string;
   uploadedAt?: string | null; finalizedAt?: string | null;
   /** What this upload becomes when it lands. Media unless something else asked for it. */
@@ -600,12 +627,13 @@ export async function createMediaUploadSession(input: {
   const { rows } = await getPool().query<UploadRow>(
     `INSERT INTO phis.media_upload_sessions (token, site_id, actor_user_id, space_id, folder_id,
        storage_profile_id, status, filename, content_type, size_bytes, kind, upload_plan_kind,
-       checksum_sha256, meta, presentation_flags, staging_storage_key, final_storage_key, expires_at,
+       checksum_algorithm, checksum_value, meta, presentation_flags, staging_storage_key, final_storage_key, expires_at,
        uploaded_at, finalized_at, purpose, purpose_ref)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::jsonb,$15,$16,$17,$18,$19,$20,$21,$22::jsonb)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15::jsonb,$16,$17,$18,$19,$20,$21,$22,$23::jsonb)
      RETURNING ${UPLOAD_COLUMNS}`,
     [input.token,input.siteId,input.actorUserId,input.spaceId,input.folderId??null,input.storageProfileId,input.status,
-      input.filename,input.contentType,input.sizeBytes,input.kind,input.uploadPlanKind,input.checksumSha256??null,
+      input.filename,input.contentType,input.sizeBytes,input.kind,input.uploadPlanKind,
+      input.checksumAlgorithm??null,input.checksumValue??null,
       JSON.stringify(input.meta??null),
       input.presentationFlags??0,input.stagingStorageKey,input.finalStorageKey??null,input.expiresAt,input.uploadedAt??null,input.finalizedAt??null,
       input.purpose??PhiMediaUploadPurpose.Media,JSON.stringify(input.purposeRef??null)],
@@ -618,12 +646,14 @@ export async function getMediaUploadSessionByToken(token: string) {
 }
 
 export async function updateMediaUploadSessionByToken(token: string, input: {
-  status?: number; checksumSha256?: string | null; folderId?: number | null; meta?: Record<string, unknown> | null;
+  status?: number; checksumAlgorithm?: string | null; checksumValue?: string | null;
+  folderId?: number | null; meta?: Record<string, unknown> | null;
   presentationFlags?: number; finalStorageKey?: string | null; expiresAt?: string; uploadedAt?: string | null; finalizedAt?: string | null;
 }) {
   const sets = ["updated_at = NOW()"];
   const values: Array<number | string | null> = [token.trim()];
-  for (const [column, value] of [["status",input.status],["checksum_sha256",input.checksumSha256],["folder_id",input.folderId],
+  for (const [column, value] of [["status",input.status],
+    ["checksum_algorithm",input.checksumAlgorithm],["checksum_value",input.checksumValue],["folder_id",input.folderId],
     ["meta",input.meta == null ? input.meta : JSON.stringify(input.meta)],["presentation_flags",input.presentationFlags],
     ["final_storage_key",input.finalStorageKey],["expires_at",input.expiresAt],["uploaded_at",input.uploadedAt],["finalized_at",input.finalizedAt]] as const) {
     if (value !== undefined) { values.push(value as number|string|null); sets.push(`${column} = $${values.length}${column === "meta" ? "::jsonb" : ""}`); }

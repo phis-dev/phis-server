@@ -319,7 +319,7 @@ describe("the asset table", () => {
      * which digest it carries are Core's answers already, for every upload it has ever handled.
      */
     const sql = assetSql("create table incident_assets");
-    for (const copied of ["storage_key", "byte_size", "content_type", "checksum_sha256"]) {
+    for (const copied of ["storage_key", "byte_size", "content_type", "checksum_value"]) {
       expect(sql).not.toContain(copied);
     }
     expect(sql).toContain(

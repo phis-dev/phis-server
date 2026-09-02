@@ -272,6 +272,9 @@ export class PhisLocalMediaStorageAdapter implements PhisMediaStorageAdapter {
       byteSize,
       contentType,
       etag,
+      // Core's own storage is the one Provider that can say what its digest is, because it computed it
+      // over exactly the bytes it wrote rather than reporting whatever an ETag happens to hold.
+      checksum: { algorithm: "sha256", value: etag },
       metadata: normalizedMetadata,
       lastModifiedAt: new Date().toISOString(),
     };
@@ -510,7 +513,14 @@ export class PhisLocalMediaStorageAdapter implements PhisMediaStorageAdapter {
     } finally {
       await this.deleteObject(key).catch(() => {});
     }
-    return { writable: findings.length === 0, verifiesSha256: false, findings };
+    // Nothing is asserted here, so nothing is verified: the digest on a Local upload is the SHA-256
+    // Core computes while writing, which is a property of the proxy path rather than of this endpoint.
+    return {
+      writable: findings.length === 0,
+      verifiedAlgorithms: [],
+      verifiesWholeMultipartObject: false,
+      findings,
+    };
   }
 
   /** The directory is the storage. Two profiles on one root are one storage. */

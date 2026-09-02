@@ -23,7 +23,8 @@ export type PhiServerAddonAssetRow = {
   mediaAssetId: number;
   byteSize: number;
   contentType: string;
-  checksumSha256: string | null;
+  checksumAlgorithm: string | null;
+  checksumValue: string | null;
   originalName: string;
   createdAt: string;
 };
@@ -38,11 +39,12 @@ function qualifyAssets(location: PhiServerAddonAssetLocation) {
 
 /** The link's own columns plus the facts, read from where they actually live. */
 const SELECTED = `l.id, l.slot, l.owner_id, l.media_asset_id, l.created_at,
-  a.bytes, a.content_type, a.checksum_sha256, a.original_name`;
+  a.bytes, a.content_type, a.checksum_algorithm, a.checksum_value, a.original_name`;
 
 type RawRow = {
   id: string; slot: string; owner_id: string; media_asset_id: number; created_at: Date;
-  bytes: string | null; content_type: string; checksum_sha256: string | null; original_name: string;
+  bytes: string | null; content_type: string;
+  checksum_algorithm: string | null; checksum_value: string | null; original_name: string;
 };
 
 function toRow(row: RawRow): PhiServerAddonAssetRow {
@@ -54,7 +56,8 @@ function toRow(row: RawRow): PhiServerAddonAssetRow {
     // `bigint` arrives as a string from `pg`, and a byte count is exactly the column that outgrows one.
     byteSize: Number(row.bytes ?? 0),
     contentType: row.content_type,
-    checksumSha256: row.checksum_sha256,
+    checksumAlgorithm: row.checksum_algorithm,
+    checksumValue: row.checksum_value,
     originalName: row.original_name,
     createdAt: row.created_at.toISOString(),
   };
