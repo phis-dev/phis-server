@@ -131,6 +131,10 @@
 - CSS Modules use `*.module.css`; global styles stay in `src/app/globals.css`.
 - Import alias `@/*` maps to `src/*` (see `tsconfig.json`).
 - Use the golden ratio (1.6...) for Phi spacing and layout proportions (spacing, sizing, drawers, header heights, etc.).
+- Exported type/symbol prefixes: `Phis*` for types that stay server-internal (never cross into the
+  contract); `Phi*` for anything the contract exposes, once `@phis/ui` also reads it -- matching the
+  `Phi*` convention already documented for shared components in `phis-ui`. The legacy `PhiServer*`
+  prefix is being retired into these two; a symbol keeps `PhiServer*` only until it is reclassified.
 
 ## Testing Guidelines
 - No test framework or test script is configured yet.
