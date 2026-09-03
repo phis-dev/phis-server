@@ -19,10 +19,10 @@ import {
  * enabled and reconciled for it to run, which is the point -- a Provider that resolves without those
  * would mean the checks are not where they claim to be.
  */
-const endpoint = process.env.PHI_S3_TEST_ENDPOINT;
-const bucket = process.env.PHI_S3_TEST_BUCKET;
-const accessKeyId = process.env.PHI_S3_TEST_ACCESS_KEY_ID;
-const secretAccessKey = process.env.PHI_S3_TEST_SECRET_ACCESS_KEY;
+const endpoint = process.env.PHIS_S3_TEST_ENDPOINT;
+const bucket = process.env.PHIS_S3_TEST_BUCKET;
+const accessKeyId = process.env.PHIS_S3_TEST_ACCESS_KEY_ID;
+const secretAccessKey = process.env.PHIS_S3_TEST_SECRET_ACCESS_KEY;
 const configured = Boolean(endpoint && bucket && accessKeyId && secretAccessKey);
 
 const S3_PROVIDER_KEY = "@phis/storage-s3/s3";

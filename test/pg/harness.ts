@@ -35,13 +35,13 @@ const REQUIRED_CONSTRAINTS = [
 let verified = false;
 
 function readEnabled() {
-  return process.env.PHI_PG_TEST === "1";
+  return process.env.PHIS_PG_TEST === "1";
 }
 
 export async function requirePhiTestDatabase(): Promise<Pool> {
   if (!readEnabled()) {
     throw new Error(
-      "Refusing to touch a database: set PHI_PG_TEST=1 (npm run test:pg) to run the integration tests.",
+      "Refusing to touch a database: set PHIS_PG_TEST=1 (npm run test:pg) to run the integration tests.",
     );
   }
   const pool = getPool();

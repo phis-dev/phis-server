@@ -27,7 +27,7 @@
     "start": "next start",
     "lint": "eslint",
     "test": "vitest run",
-    "test:pg": "PHI_PG_TEST=1 vitest run --config vitest.pg.config.ts",
+    "test:pg": "PHIS_PG_TEST=1 vitest run --config vitest.pg.config.ts",
     "phis": "node --disable-warning=ExperimentalWarning --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types ./src/cli/phis.mts",
     "phis:dist": "node ./dist/phis.mjs"
   },

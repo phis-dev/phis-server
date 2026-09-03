@@ -69,7 +69,7 @@ function parseCsv(value: string | null, fallback: string[]) {
 }
 
 function resolveJournalUnits() {
-  const override = (process.env.PHI_ADMIN_LOG_JOURNAL_UNITS ?? "").trim();
+  const override = (process.env.PHIS_ADMIN_LOG_JOURNAL_UNITS ?? "").trim();
   if (override) {
     return override
       .split(",")
