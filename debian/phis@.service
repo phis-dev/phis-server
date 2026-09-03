@@ -11,10 +11,6 @@ WorkingDirectory=/usr/lib/phis/phi-server
 Environment=NODE_ENV=production
 Environment=PHIS_ROOT=/srv/phis/stages/%i
 Environment=HOSTNAME=127.0.0.1
-# What this installation is, written into the package at build time. It comes first so a stage may
-# still override it -- several hosts serving one release have to agree on the name, and only the
-# operator knows that.
-EnvironmentFile=-/usr/share/phis/release.env
 EnvironmentFile=-/srv/phis/stages/%i/.env
 ExecStart=/usr/bin/node /usr/lib/phis/phi-server/server.js
 Restart=on-failure

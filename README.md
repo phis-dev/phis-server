@@ -506,20 +506,6 @@ Set only process/runtime values such as `PORT` through `.env`.
 | `PORT` | The port the runtime listens on. |
 | `HOSTNAME` | The interface it binds. Next reads this one, **not** `HOST`; `next dev` reads neither and takes `-H` instead. |
 | `TRUST_PROXY` | How many reverse proxies in front of this process are ours. |
-| `PHIS_RELEASE_ID` | Which build this process serves. Written into the package at build time; see below. |
-
-`PHIS_RELEASE_ID` is what a capability response reports as its local release identity, so that when
-one instance answers `503` for an Add-on its neighbours serve, the answer says which build that was.
-A global Add-on row does not prove that every serving instance has the same code -- the registry is
-shared, the Add-on bundles are on each instance's disk -- and this is the only field that tells them
-apart. `phis addon reconcile` and `phis addon migrate` record it against what they write, and take
-`--release` when the variable is not in the operator's own environment.
-
-The package sets it: `debian/rules` writes the commit it was built from to
-`/usr/share/phis/release.env`, which `phis@.service` reads before the stage's own `.env`. Building
-from an exported tree with no git history falls back to the changelog version, so the field is never
-empty. A stage may override it where several hosts serve one release and have to agree on its name;
-that is the only reason to set it by hand, and it is then the operator's job to keep it true.
 
 `HOSTNAME=127.0.0.1` is what the generated systemd profile sets (`phis site config systemd`), and it
 is not cosmetic: the nginx profile beside it is what the outside is meant to reach. Bound to
