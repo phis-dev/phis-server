@@ -1,3 +1,5 @@
+import { readPhiClientIp } from "@/lib/helpers/request";
+
 type RateLimitEntry = {
   count: number;
   resetAt: number;
@@ -21,17 +23,9 @@ function cleanupOldEntries(now: number) {
 }
 
 export function getClientIp(request: Request) {
-  const forwarded = request.headers.get("x-forwarded-for");
-  if (forwarded) {
-    return forwarded.split(",")[0]?.trim() || "unknown";
-  }
-
-  const realIp = request.headers.get("x-real-ip");
-  if (realIp) {
-    return realIp.trim();
-  }
-
-  return "unknown";
+  // "unknown" is a bucket, not an address: without one, every unattributable caller would otherwise
+  // get a key of its own, which is the same as having no limit for exactly those callers.
+  return readPhiClientIp(request) ?? "unknown";
 }
 
 export function checkRateLimit(

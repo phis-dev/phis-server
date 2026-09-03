@@ -1,6 +1,7 @@
 import "server-only";
 
 import { logRuntimeEvent } from "@/lib/log";
+import { readPhiClientIp } from "@/lib/helpers/request";
 
 export function logFormAbuse(
   request: Request,
@@ -8,8 +9,6 @@ export function logFormAbuse(
   reason: string,
   details?: Record<string, string | number | boolean | null>,
 ) {
-  const forwardedFor = request.headers.get("x-forwarded-for");
-  const realIp = request.headers.get("x-real-ip");
   const userAgent = request.headers.get("user-agent");
   const referer = request.headers.get("referer");
   const host = request.headers.get("x-forwarded-host") ?? request.headers.get("host");
@@ -19,7 +18,7 @@ export function logFormAbuse(
     meta: {
       form,
       reason,
-      ip: forwardedFor?.split(",")[0]?.trim() || realIp || null,
+      ip: readPhiClientIp(request),
       userAgent: userAgent || null,
       referer: referer || null,
       host: host || null,

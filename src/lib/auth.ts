@@ -4,6 +4,8 @@ import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypt
 
 import type { NextRequest, NextResponse } from "next/server";
 
+import { readPhiClientIp } from "@/lib/helpers/request";
+
 export const SESSION_COOKIE_NAME = "phi_session";
 export const CSRF_COOKIE_NAME = "phi_csrf";
 export const AREA_COOKIE_NAME = "phi_area";
@@ -159,8 +161,7 @@ export function clearAreaCookie(response: NextResponse) {
 }
 
 export function readRequestIp(request: NextRequest) {
-  const forwardedFor = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim();
-  return forwardedFor || request.headers.get("x-real-ip")?.trim() || null;
+  return readPhiClientIp(request);
 }
 
 export function readRequestUserAgent(request: NextRequest) {

@@ -207,6 +207,19 @@ function buildProxyHeaderLines(extraHeaders: string[] = []) {
     .join("\n");
 }
 
+/**
+ * The unit for a Site runtime, bound to the loopback interface.
+ *
+ * The nginx profile beside this one is what the outside is meant to reach, and it proxies to
+ * `127.0.0.1`. Without `HOSTNAME` -- the variable the standalone server reads, not `HOST` -- Next binds
+ * `0.0.0.0` and the runtime answers the network directly as
+ * well -- on that path a caller sets `X-Real-IP` and `X-Forwarded-For` itself, so the address every
+ * rate limit and audit record is keyed on becomes whatever it says. Binding to loopback is what makes
+ * the proxy's headers worth reading.
+ *
+ * The container profile is deliberately not the same: there, `0.0.0.0` is the interface the sibling
+ * container reaches, and the boundary is `expose` rather than the bind address.
+ */
 export function buildSystemdUnit(site: SiteDeploymentRecord, settings?: SiteDeploymentSettings) {
   const instance = resolvePrimaryInstance(site, settings);
   const port = requireInstancePort(instance, "systemd");
@@ -218,6 +231,7 @@ After=network.target
 User=phis
 WorkingDirectory=${instance.path}
 Environment=NODE_ENV=production
+Environment=HOSTNAME=127.0.0.1
 Environment=PORT=${port}
 ExecStart=/usr/bin/node server.js
 Restart=always
