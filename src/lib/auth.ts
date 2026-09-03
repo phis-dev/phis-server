@@ -6,10 +6,10 @@ import type { NextRequest, NextResponse } from "next/server";
 
 import { readPhiClientIp } from "@/lib/helpers/request";
 
-export const SESSION_COOKIE_NAME = "phi_session";
-export const CSRF_COOKIE_NAME = "phi_csrf";
-export const AREA_COOKIE_NAME = "phi_area";
-export const AUTH_LINK_COOKIE_NAME = "phi_auth_link";
+export const SESSION_COOKIE_NAME = "phis_session";
+export const CSRF_COOKIE_NAME = "phis_csrf";
+export const AREA_COOKIE_NAME = "phis_area";
+export const AUTH_LINK_COOKIE_NAME = "phis_auth_link";
 
 const SESSION_TTL_SECONDS = 60 * 60 * 24 * 14;
 

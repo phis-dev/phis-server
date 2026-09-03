@@ -30,7 +30,7 @@ export async function GET(request: NextRequest) {
   const user = session ? await getUserAccountById(session.userId) : null;
   const searchParams = new URL(request.url).searchParams;
   const explicitLocale = searchParams.get("locale") ?? request.headers.get("x-locale");
-  const cookieLocale = request.cookies.get("phi_locale")?.value ?? null;
+  const cookieLocale = request.cookies.get("phis_locale")?.value ?? null;
   const browserLocale = request.headers.get("accept-language");
   const resolvedLocale = resolveSiteLocale({
     requestedLocale: explicitLocale,

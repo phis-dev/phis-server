@@ -216,7 +216,7 @@ export async function POST(request: NextRequest) {
     } else {
       clearAreaCookie(response);
     }
-    response.cookies.set("phi_locale", preferredLocale, {
+    response.cookies.set("phis_locale", preferredLocale, {
       path: "/",
       sameSite: "lax",
       expires: session.expiresAt,

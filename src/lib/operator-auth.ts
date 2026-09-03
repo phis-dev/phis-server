@@ -7,7 +7,7 @@ import type { NextRequest, NextResponse } from "next/server";
 
 import { getPhiServerConfigSync } from "@/lib/config";
 
-export const OPERATOR_SESSION_COOKIE_NAME = "phi_operator_session";
+export const OPERATOR_SESSION_COOKIE_NAME = "phis_operator_session";
 
 const OPERATOR_SESSION_TTL_SECONDS = 60 * 30;
 

@@ -78,7 +78,7 @@ export async function PATCH(request: NextRequest) {
   const response = NextResponse.json({
     preferredLocale,
   });
-  response.cookies.set("phi_locale", preferredLocale, {
+  response.cookies.set("phis_locale", preferredLocale, {
     path: "/",
     sameSite: "lax",
     ...(session.expiresAt ? { expires: new Date(session.expiresAt) } : {}),

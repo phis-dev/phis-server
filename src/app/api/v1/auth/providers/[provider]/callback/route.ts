@@ -124,7 +124,7 @@ export async function GET(request: NextRequest, context: Context) {
     } else {
       clearAreaCookie(response);
     }
-    response.cookies.set("phi_locale", locale, {
+    response.cookies.set("phis_locale", locale, {
       path: "/",
       sameSite: "lax",
       expires: session.expiresAt,

@@ -48,7 +48,7 @@ vi.mock("@/lib/log", () => ({
   normalizeLogThrowable: (error: unknown) => error,
 }));
 vi.mock("@/lib/auth", () => ({
-  AUTH_LINK_COOKIE_NAME: "phi_auth_link",
+  AUTH_LINK_COOKIE_NAME: "phis_auth_link",
   verifyCsrfRequest: mocks.csrf,
   createCsrfToken: () => "csrf-test",
   readRequestIp: () => "127.0.0.1",
@@ -276,7 +276,7 @@ describe("canonical Auth endpoints", () => {
       {
         method: "POST",
         headers: {
-          cookie: "phi_auth_link=opaque-link-token",
+          cookie: "phis_auth_link=opaque-link-token",
           "content-type": "application/json",
           "x-csrf-token": "csrf-test",
         },
@@ -311,7 +311,7 @@ describe("canonical Auth endpoints", () => {
       {
         method: "POST",
         headers: {
-          cookie: "phi_auth_link=opaque-link-token",
+          cookie: "phis_auth_link=opaque-link-token",
           "content-type": "application/json",
           "x-csrf-token": "csrf-test",
         },
