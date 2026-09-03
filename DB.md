@@ -346,7 +346,7 @@ Contract:
 - `folder_id`, `presentation_flags`, and `meta` may optionally be supplied at init time as a starting context for the eventual asset row.
 - Upload-session `meta` is transient transport metadata and is copied to `media_assets.meta` during finalize. It is intended for durable source descriptors such as imported icon metadata, not for secrets or large payloads.
 - Title and alt text are added later on the actual asset via the inspector PATCH flow.
-- `kind` reuses the existing `PhiMediaKind` contract from `phi-server` and `phi-shared-ui`.
+- `kind` reuses the existing `PhiMediaKind` contract from `phi-server` and `phis-ui`.
 - `staging_storage_key` points to the staging object inside the bound profile; `final_storage_key` is the target key after finalize.
 - `checksum_sha256` is available for integrity and duplicate/comparison logic.
 - Finalize verifies the stored object before the Asset reaches `ready` and commits the quota reservation.
@@ -411,7 +411,7 @@ Contract:
 - Locale validation, automatic translation targets, Ant Design locale mapping, text direction, and fallback chains must be derived centrally in `phi-server`, not reimplemented in widgets or site apps.
 - Runtime locale resolution is exposed through `GET /api/v1/site/locale`. It returns the effective locale, provider targets, UI targets, direction, and fallback chain for the current request.
 - Site configuration can be cached by site key. Resolved runtime locale must not be cached as site config because it can depend on user session, locale cookie, explicit request locale, and `Accept-Language`.
-- `phi-shared-ui` only consumes the resolved contract. Its locale-specific UI responsibility is loading the bundled UI locale modules that correspond to the resolved locale, for example Ant Design and Dayjs.
+- `phis-ui` only consumes the resolved contract. Its locale-specific UI responsibility is loading the bundled UI locale modules that correspond to the resolved locale, for example Ant Design and Dayjs.
 - When DeepL adds target languages, the platform capability superset should be updated first; only then may sites opt into those locales.
 - `GET /api/v1/tr` translates a single message.
 - `POST /api/v1/tr` accepts either:

@@ -314,7 +314,7 @@ Remaining work:
     activating it in the `app` Area is what turns User Spaces on -- the same path `@phis/ui/groups`
     already takes for Group Spaces. It does not move the Profile preset and does not own the page.
   - **A small task belongs in an Overlay, not a Page.** Choosing an avatar is a modal, and
-    [OVERLAYS.md](../phi-shared-ui/OVERLAYS.md) already carries everything for it: Core `modal` and
+    [OVERLAYS.md](../phis-ui/OVERLAYS.md) already carries everything for it: Core `modal` and
     `drawer` containers, Module contributions through `areaOverlays`, and `open`/`close`/`toggle`
     against `cms:<instanceId>`. What is missing is a link target that opens one. The resolved and
     persisted navigation target unions are both two-valued today -- Module route or custom path,

@@ -301,7 +301,7 @@ export async function dispatchPhiServerAddonRequest(
   const addonId = `@${params.scope}/${params.name}`;
   const path = normalizeRoutePath(params.path);
   const logger = createLogger({
-    service: "phi-server",
+    service: "phis",
     requestId,
     pluginKey: addonId,
     method: request.method,

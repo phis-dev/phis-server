@@ -1,6 +1,6 @@
 import "server-only";
 
-export type PhiLogService = "phi-server" | "phi-ui" | "phi-site" | "phi-cli";
+export type PhiLogService = "phis" | "ui" | "site" | "cli";
 
 export type PhiLogLevel = "debug" | "info" | "warn" | "error";
 
@@ -105,7 +105,7 @@ function emit(level: PhiLogLevel, payload: Record<string, unknown>) {
     line = JSON.stringify({
       ts: new Date().toISOString(),
       level,
-      service: payload.service ?? "phi-server",
+      service: payload.service ?? "phis",
       event: payload.event ?? "log.emit_failed",
       message: "Failed to serialize log payload.",
     });
@@ -208,7 +208,7 @@ export function logRuntimeEvent(
   input: PhiLogEvent & Partial<PhiLoggerContext> = {},
 ) {
   const logger = createLogger({
-    service: "phi-server",
+    service: "phis",
     siteKey: input.siteKey ?? null,
     area: input.area ?? null,
     requestId: input.requestId ?? null,

@@ -233,7 +233,7 @@ the wrappers would only churn eleven call sites.
   dot-notation, and there is no stray `console.*` outside the emitter itself. Of 118 calls, 15 omit
   `siteKey`; most are legitimately platform-scoped (`operator.login.*`), while the two
   `translation.*` rejections in `/api/v1/tr` fire before Site resolution and could carry the key once
-  resolved. `phi-shared-ui` is the split half: `net/log.ts` is a deliberate same-shape copy of the
+  resolved. `phis-ui` is the split half: `net/log.ts` is a deliberate same-shape copy of the
   server logger (the packages must not depend on each other), but only the Next proxy uses it — twelve
   other emitting sites bypass it, from `[tag]`-prefixed `console.warn` objects up to a hand-rolled
   `JSON.stringify` line in `gateway/tr.ts`. About half of those are browser Client code, where the

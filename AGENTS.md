@@ -145,7 +145,7 @@
 ## Configuration Tips
 - Update ESLint rules in `eslint.config.mjs` and Next.js behavior in `next.config.ts` as needed.
 - Keep dependency changes scoped and explain why they are required.
-- Runtime constants, enums, and flag definitions belong in `src/lib/constants/*`, pure helper functions in `src/lib/helpers/*`, and type-only declarations in dedicated type files. Do not depend on `phi-shared-ui` from `phis`; counterpart constants/helpers must be defined locally when needed.
+- Runtime constants, enums, and flag definitions belong in `src/lib/constants/*`, pure helper functions in `src/lib/helpers/*`, and type-only declarations in dedicated type files. Do not depend on `phis-ui` from `phis`; counterpart constants/helpers must be defined locally when needed.
 
 ## Frontend styling coordination
 

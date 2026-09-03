@@ -175,7 +175,7 @@ function normalizeLogRecord(raw: Record<string, unknown>, siteKey: string): PhiA
     id: normalizeString(raw.__CURSOR) || `${ts}:${normalizeString(parsed.event)}:${normalizeString(parsed.requestId)}:${normalizeString(parsed.userId)}`,
     ts,
     level: level as PhiAdminLogLevel,
-    service: normalizeString(parsed.service) || "phi-site",
+    service: normalizeString(parsed.service) || "site",
     event: normalizeString(parsed.event) || "unknown",
     message: normalizeString(parsed.message) || normalizeString(parsed.event) || "unknown",
     siteKey: parsedSiteKey || null,
@@ -256,7 +256,7 @@ export function parsePhiAdminLogQuery(searchParams: URLSearchParams): PhiAdminLo
   return {
     page: asPositiveInt(searchParams.get("page"), 1, 1000),
     pageSize: asPositiveInt(searchParams.get("pageSize"), 25, 100),
-    services: parseCsv(searchParams.get("service"), ["phi-server", "phi-site", "phi-ui", "phi-cli"]),
+    services: parseCsv(searchParams.get("service"), ["phis", "site", "ui", "cli"]),
     levels,
     event: normalizeString(searchParams.get("event")),
     requestId: normalizeString(searchParams.get("requestId")),

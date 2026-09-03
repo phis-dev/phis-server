@@ -68,7 +68,7 @@ The platform is split into four application types:
 - Move site-scoped operational logging to native journald fields where possible so `siteKey` is filterable before JSON parsing in `/admin/logs`.
 - Keep `phi-server` structured log events as the source of truth for payload details, but avoid relying on `siteKey` only inside the serialized JSON body for operational filtering.
 - Make upload/finalize failures, media route failures, and similar site-bound errors emit a parsable site identifier at the transport layer so the admin log reader can select the relevant site first and apply secondary filters afterwards.
-- Treat local `phi-shared-ui` proxy logs as host-local transport only for now; if `phi-server` and the site app are not co-located, add a reusable ingest transport later instead of relying on shared filesystem or journal access across hosts.
+- Treat local `phis-ui` proxy logs as host-local transport only for now; if `phi-server` and the site app are not co-located, add a reusable ingest transport later instead of relying on shared filesystem or journal access across hosts.
 
 ## Media Upload Transport
 

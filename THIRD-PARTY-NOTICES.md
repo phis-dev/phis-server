@@ -44,7 +44,7 @@ Data © the caniuse contributors, <https://github.com/browserslist/caniuse-lite>
 
 ## Build-time only
 
-`cfonts` (GPL-3.0-or-later, via `@ant-design/cli` in phi-shared-ui) and `axe-core` (MPL-2.0, via
+`cfonts` (GPL-3.0-or-later, via `@ant-design/cli` in phis-ui) and `axe-core` (MPL-2.0, via
 `eslint-config-next`) are development dependencies. They are neither linked nor distributed, so
 their terms do not reach any artifact produced here.
 

@@ -198,7 +198,7 @@ function logCliError(event: string, message: string, meta?: Record<string, unkno
     JSON.stringify({
       ts: new Date().toISOString(),
       level: "error",
-      service: "phi-cli",
+      service: "cli",
       event,
       message,
       meta,

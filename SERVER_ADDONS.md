@@ -228,7 +228,7 @@ The separation is mandatory:
 - Add-on packages contain server-only code.
 - `phi-server` never imports a Site or React package.
 - A Site application never imports an Add-on package.
-- An Add-on never imports `phi-shared-ui`.
+- An Add-on never imports `phis-ui`.
 - Both sides may depend on a neutral, React-free contract package for shared wire schemas.
 - Server-only and Site/Client entrypoints remain physically separate module graphs.
 

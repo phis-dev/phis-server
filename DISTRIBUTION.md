@@ -8,7 +8,7 @@ exists, and what is recorded about where an installed thing came from.
 It sits beside two documents and does not restate them. What may install code, and what an installed
 Add-on physically is, belong to [SERVER_ADDONS.md](./SERVER_ADDONS.md) sections 6 and 7. How a Module
 reaches a Site build without patching the Skeleton belongs to `THIRD_PARTY_MODULES.md` section 9 in
-`phi-shared-ui`. This document covers only the step before both: acquisition.
+`phis-ui`. This document covers only the step before both: acquisition.
 
 The terminology is strict:
 

@@ -333,7 +333,7 @@ Registration, verified-email account discovery/linking, credentials, bootstrap, 
   settings; Editor Translations exposes it with its translation workspace data.
 - Global Core, package, and preset translation requests are not Site-scoped. Phi-owned preset source text is `en` and never inherits a Site locale.
 - The Site source locale remains available as a Site locale but is excluded from translation-target selectors. A Site with no target locale returns an empty translation workspace instead of treating its source as a target.
-- `phi-shared-ui` must not carry the platform capability table. It consumes the resolved locale contract and maps the effective locale to its own bundled UI locale modules, such as Ant Design and Dayjs.
+- `phis-ui` must not carry the platform capability table. It consumes the resolved locale contract and maps the effective locale to its own bundled UI locale modules, such as Ant Design and Dayjs.
 - Site configuration remains separately cacheable. Request locale resolution is `no-store` because it can depend on user session, cookies, and request headers.
 - Sites may restrict their offered locales, but they must not expand beyond the platform superset.
 - When DeepL adds new target languages, update the platform capability superset first; sites may opt into the new locales only after that update.
@@ -457,7 +457,7 @@ Runtime baseline:
 
 Package manager contract:
 
-- Until `phi-server`, `phi-shared-ui`, and the frontend packages are split into standalone repositories, the workspace root `pnpm-lock.yaml` is the authoritative lockfile.
+- Until `phi-server`, `phis-ui`, and the frontend packages are split into standalone repositories, the workspace root `pnpm-lock.yaml` is the authoritative lockfile.
 - Do not use or maintain `package-lock.json` in this repository during the workspace phase.
 - After the repository split, each standalone package must choose exactly one package manager lockfile and generate it fresh from that package's own `package.json`.
 - TODO: Revisit ESLint 10 after `eslint-plugin-react`, `eslint-plugin-import`, and `eslint-plugin-jsx-a11y` publish ESLint 10-compatible releases. The current latest versions are transitively required by `eslint-config-next` and crash or declare peers only up to ESLint 9.
