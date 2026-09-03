@@ -36,7 +36,7 @@ The platform is split into four application types:
   - intentionally lightweight admin UI
 - site apps
   - one concrete Next.js application per public site
-  - examples: `phisys.com`, `phi-systems.tech`, `moonhug.ch`
+  - one per public domain the installation serves
 - `phis-medusa`
   - Medusa-based commerce application
   - separate repo and separate runtime
@@ -104,11 +104,7 @@ It does not own:
 
 Each public site is its own Next.js repo and its own deployable unit.
 
-Examples:
-
-- `phisys.com`
-- `phi-systems.tech`
-- future sites
+One per public domain, present and future.
 
 Each site app may depend on:
 
@@ -178,9 +174,7 @@ This overhead belongs in the site app containers, not automatically in `phis`.
 
 ### Public Sites
 
-- `phisys.com` -> site app
-- `phi-systems.tech` -> site app
-- future site domains -> corresponding site app
+- each public site domain -> its corresponding site app
 
 ### Control Plane
 
@@ -750,7 +744,7 @@ Correct unit of deployment:
 
 In other words:
 
-- `phisys.com` is a Next.js app and can be deployed as its own Docker container
+- a site app is a Next.js app and can be deployed as its own Docker container
 - `phis` is its own app and can be deployed as its own Docker container
 - `phis-medusa` is its own app and can be deployed as its own Docker container
 

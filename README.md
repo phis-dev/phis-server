@@ -7,16 +7,14 @@ The project primarily exposes API endpoints and runs independently from the fron
 
 - This API instance is the clean initial version: no Payload/CMS fallback interface, no UI layer, and no legacy compatibility layers.
 - v1 favors explicit contract changes over compatibility shims. ABI breaks are acceptable when they keep the contract coherent.
-- Focus on `api-dev.phi-systems.tech` (dev) and `api.phi-systems.tech` (prod) as the only public API hosts.
+- One public API host per stage, and no second entry point beside it.
 - No workarounds without prior approval.
 - Always identify the real root cause first; if unclear, consult official documentation or migration notes before changing a contract.
 - Documentation must be written in English.
 
 ## Frontend Separation
 
-- Frontend repositories such as `phisys.com` and `phi-systems.tech` consume the API via:
-  - Dev: `https://api-dev.phi-systems.tech`
-  - Prod: `https://api.phi-systems.tech`
+- A Site's frontend repository consumes the API at that installation's API host, one per stage.
 - Public content can be loaded in the frontend through SSR or Server Components.
 - Commerce browser calls are standardized through site-local `/api/shop/*` (rewritten to `/store/*`).
 - Authentication browser calls use the Site runtime's same-origin `/api/auth/*` facade over the canonical
@@ -275,7 +273,7 @@ Pure builders can create and update builder drafts but cannot publish without an
   - a direct node may be either a layout node or a content widget
   - specialized layouts may additionally restrict which slot types are allowed
 - Runtime communication for standard CMS pages should stay layered:
-  - site frontend such as `phisys.com`
+  - the Site's own frontend
   - `@phis/ui`
   - `phis`
 
@@ -298,8 +296,8 @@ Registration, verified-email account discovery/linking, credentials, bootstrap, 
   configured session-revocation policy.
 - Medusa account creation or synchronization is a separate Site-scoped commerce workflow represented by
   `user_site_external_accounts`; it does not become Phi identity or session authority.
-- Email delivery is server-only and protected. Outbound mail uses `mx01.phisys.com` primary with
-  `mx02.phisys.com` fallback.
+- Email delivery is server-only and protected. The outbound relays, primary and fallback, are
+  deployment configuration.
 
 ## Locale Capability Contract
 
@@ -763,8 +761,8 @@ This project uses Next.js in API/backend mode; shared UI scaffolding in this REA
 
 ## Cross-Origin Notes
 
-- `phi-systems.tech` to `api.phi-systems.tech` is already cross-origin.
-- `phisys.com` or `moonhug.ch` to `api.phi-systems.tech` is additionally cross-site.
+- A Site to the API host of its own installation is already cross-origin.
+- A Site on an unrelated registrable domain is additionally cross-site.
 - CORS is still required for browser requests, but the underlying session state and CSRF validation are owned by `phis`, not by Medusa.
 
 ## Learn More

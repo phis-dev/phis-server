@@ -2,7 +2,6 @@
 
 ## Project Structure & Module Organization
 - `src/app/` holds the Next.js App Router entry points (`layout.tsx`, `page.tsx`) and global styles (`globals.css`).
-- CSS Modules live alongside components, e.g. `src/app/page.module.css`.
 - Static assets are in `public/` and are served at the site root.
 - Repository config is centralized in `next.config.ts`, `tsconfig.json`, and `eslint.config.mjs`.
 
@@ -18,7 +17,7 @@
   - A task-local instruction to implement, verify, and commit authorizes only the logically scoped commit for that task.
   - Commit only after the agreed checks pass and no required manual or browser verification remains unresolved.
   - If a required functional check cannot be performed, report the pending check instead of committing the change as complete.
-- Until the packages are split into standalone repositories, the workspace root `pnpm-lock.yaml` is the authoritative lockfile. Do not add or maintain `package-lock.json` in this repository.
+- The repositories share one pnpm workspace, and its root `pnpm-lock.yaml` is the authoritative lockfile. Do not add or maintain `package-lock.json` in this repository.
 - `pnpm dev` starts the local dev server; in the shared dev stack it is expected to run on port `3101`.
 - `pnpm build` creates the production build via Next.js.
 - `pnpm start` serves the built app (run after `pnpm build`).
@@ -112,7 +111,7 @@
 
 ## Internal Endpoint Hardening
 
-- Server-side calls from `dev.phisys.com` and `phi-systems.tech` to `phis` internal endpoints require an internal auth token (`Authorization` header).
+- Server-side calls from a Site runtime to `phis` internal endpoints require an internal auth token (`Authorization` header).
 - Initial implementation uses static shared secrets:
   - public APIs use the configured public API token
   - internal APIs use the configured internal API token
@@ -127,10 +126,9 @@
 
 ## Coding Style & Naming Conventions
 - Use TypeScript/TSX for React code; keep the existing 2-space indentation.
-- App Router files should follow Next.js naming (`page.tsx`, `layout.tsx`, `route.ts` when added).
-- CSS Modules use `*.module.css`; global styles stay in `src/app/globals.css`.
+- App Router files follow Next.js naming (`page.tsx`, `layout.tsx`, `route.ts`).
+- Global styles stay in `src/app/globals.css`.
 - Import alias `@/*` maps to `src/*` (see `tsconfig.json`).
-- Use the golden ratio (1.6...) for Phi spacing and layout proportions (spacing, sizing, drawers, header heights, etc.).
 - Exported type/symbol prefixes, by who reads the name rather than by where it is declared:
   - `Phis*` / `PHIS_*` -- phis and the Add-ons it serves. Everything in `@phis/contracts`'s Add-on
     surface (`addon`, `assets`, `capabilities`, `core`, `queries`, `schema`, `media-storage`) plus

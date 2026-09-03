@@ -34,10 +34,10 @@
   "cors": {
     "allowedOrigins": [],
     "allowedOriginSuffixes": [
-      "phi-systems.tech",
+      "example.com",
       "cdn.phis.dev",
-      "phisys.com",
-      "moonhug.ch",
+      "example.net",
+      "another-site.example",
       "localhost",
       "127.0.0.1"
     ]

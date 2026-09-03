@@ -59,7 +59,7 @@ describe("what one member sees of another", () => {
   const member = {
     userId: 7,
     displayName: "Codex AI",
-    email: "ai@phisys.com",
+    email: "ai@example.com",
     companyName: "Acme",
     membershipFlags: PhiGroupMembershipFlags.Author,
     sourceProviderId: "@phis/server/core",
