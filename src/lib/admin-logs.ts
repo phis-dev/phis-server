@@ -276,6 +276,15 @@ async function readPhiSiteAdminLogRecords(siteKey: string, sinceValue: string, u
     "--no-pager",
     "-o",
     "json",
+    /*
+     * Without this, the entries that matter most are the ones that do not arrive.
+     *
+     * `-o json` withholds a field it considers too long, handing over `MESSAGE: null` rather than the
+     * text -- and the record that trips it is precisely the one carrying a stack trace, which is to
+     * say every unhandled failure. Those parse as unreadable here and are dropped, so a search for
+     * errors answers "nothing happened" about the only events it could not show.
+     */
+    "--all",
     "--output-fields=__CURSOR,__REALTIME_TIMESTAMP,MESSAGE",
     "--since",
     since,
@@ -336,6 +345,8 @@ async function readPhiSiteAdminLogRecordByCursor(siteKey: string, cursor: string
     "--no-pager",
     "-o",
     "json",
+    // As above: a detail view exists to show the long record, so it must ask for the whole field.
+    "--all",
     "--output-fields=__CURSOR,__REALTIME_TIMESTAMP,MESSAGE",
     "--cursor",
     cursor,
