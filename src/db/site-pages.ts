@@ -32,12 +32,14 @@ import {
 import { normalizeSiteCmsPath } from "@/lib/helpers/cms-path";
 import { hasPhiFlag } from "@/lib/helpers/flags";
 import type {
+  CmsAreaModulesWriteInput,
   CmsAreaPresetWriteInput,
   CmsDraftContentBindingInput,
   CmsDraftWriteState,
   CmsPageWriteInput,
 } from "@/lib/cms/write-validation";
 import type { PhiCmsInstanceId } from "@/lib/cms/instance-id";
+import { mergePhiAreaTreeForPublish } from "@/lib/cms/area-publish-merge";
 import {
   validateCmsAreaPresetWriteInput,
   validateCmsPageWriteInput,
@@ -246,6 +248,8 @@ type SiteAreaScopeRecord = {
   areaMask: number;
   publishedRevisionId: number | null;
   workingDraftRevisionId: number | null;
+  /** The Area's Module selection is drafted apart from its structure, so it points at its own row. */
+  workingModuleDraftRevisionId: number | null;
 };
 
 type SitePageScopeRecord = {
@@ -812,8 +816,10 @@ async function getSiteAreaScopeWithDb(
     area_id: number;
     published_revision_id: number | null;
     working_draft_revision_id: number | null;
+    working_module_draft_revision_id: number | null;
   }>(
-    `SELECT id, site_id, area_id, published_revision_id, working_draft_revision_id
+    `SELECT id, site_id, area_id, published_revision_id, working_draft_revision_id,
+            working_module_draft_revision_id
      FROM phis.site_area_scopes
      WHERE site_id = $1
        AND area_id = $2
@@ -833,6 +839,7 @@ async function getSiteAreaScopeWithDb(
     areaMask: row.area_id,
     publishedRevisionId: row.published_revision_id,
     workingDraftRevisionId: row.working_draft_revision_id,
+    workingModuleDraftRevisionId: row.working_module_draft_revision_id,
   };
 }
 
@@ -1007,17 +1014,20 @@ async function ensureSiteAreaScopeWithDb(
     area_id: number;
     published_revision_id: number | null;
     working_draft_revision_id: number | null;
+    working_module_draft_revision_id: number | null;
   }>(
     `INSERT INTO phis.site_area_scopes (
        site_id,
        area_id,
        published_revision_id,
-       working_draft_revision_id
+       working_draft_revision_id,
+       working_module_draft_revision_id
      )
-     VALUES ($1, $2, NULL, NULL)
+     VALUES ($1, $2, NULL, NULL, NULL)
      ON CONFLICT (site_id, area_id)
      DO UPDATE SET updated_at = NOW()
-     RETURNING id, site_id, area_id, published_revision_id, working_draft_revision_id`,
+     RETURNING id, site_id, area_id, published_revision_id, working_draft_revision_id,
+               working_module_draft_revision_id`,
     [siteId, areaMask],
   );
 
@@ -1027,6 +1037,7 @@ async function ensureSiteAreaScopeWithDb(
     areaMask: rows[0]!.area_id,
     publishedRevisionId: rows[0]!.published_revision_id,
     workingDraftRevisionId: rows[0]!.working_draft_revision_id,
+    workingModuleDraftRevisionId: rows[0]!.working_module_draft_revision_id,
   };
 }
 
@@ -1448,21 +1459,33 @@ async function getSitePageRevisionByIdWithDb(
   };
 }
 
+/**
+ * Moves an Area scope's pointers.
+ *
+ * `workingModuleDraftRevisionId` is left alone when it is not named, rather than cleared. The two
+ * drafts are independent, and a structure save that silently dropped the Module draft pointer would
+ * discard an edit its caller never looked at.
+ */
 async function setSiteAreaScopePointersWithDb(
   db: DbQueryable,
   scopeId: number,
   input: {
     publishedRevisionId: number | null;
     workingDraftRevisionId: number | null;
+    workingModuleDraftRevisionId?: number | null;
   },
 ) {
+  const setsModuleDraft = input.workingModuleDraftRevisionId !== undefined;
   await db.query(
     `UPDATE phis.site_area_scopes
      SET published_revision_id = $2,
          working_draft_revision_id = $3,
+         ${setsModuleDraft ? "working_module_draft_revision_id = $4," : ""}
          updated_at = NOW()
      WHERE id = $1`,
-    [scopeId, input.publishedRevisionId, input.workingDraftRevisionId],
+    setsModuleDraft
+      ? [scopeId, input.publishedRevisionId, input.workingDraftRevisionId, input.workingModuleDraftRevisionId]
+      : [scopeId, input.publishedRevisionId, input.workingDraftRevisionId],
   );
 }
 
@@ -2180,6 +2203,186 @@ export async function publishSitePageRevision(
   }
 }
 
+/** The Module ids a stored Area preset config carries, in the shape a diff can compare. */
+function readAreaConfigModuleIds(config: Record<string, unknown> | undefined) {
+  const value = config?.runtimeModules;
+  return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string") : [];
+}
+
+/**
+ * What changed about an Area's Module selection, written where a reviewer will look.
+ *
+ * The point of keeping this in the Area's own revision list is that a publisher sees the change without
+ * opening anything, so the summary names the Modules rather than counting nodes: an Area revision whose
+ * message says two Modules were added is a different kind of change than one that moved a widget.
+ */
+function buildAreaModulesRevisionSummary(
+  nextConfig: Record<string, unknown>,
+  sourceConfig: Record<string, unknown> | undefined,
+  sourceRevisionId: number | null,
+) {
+  const before = readAreaConfigModuleIds(sourceConfig);
+  const after = readAreaConfigModuleIds(nextConfig);
+  const added = after.filter((moduleId) => !before.includes(moduleId));
+  const removed = before.filter((moduleId) => !after.includes(moduleId));
+  const changedCount = added.length + removed.length;
+
+  return {
+    message: changedCount > 0
+      ? `Area Modules changed (+${added.length}/-${removed.length})`
+      : "Area Modules saved",
+    metaJson: {
+      messageKey: changedCount > 0 ? "area_modules_changed" : "area_modules_saved",
+      sourceRevisionId,
+      origin: sourceRevisionId == null ? "new" : "revision",
+      changeKinds: changedCount > 0 ? ["modules"] : [],
+      modules: { added, removed },
+    },
+  };
+}
+
+/**
+ * Replaces an Area revision's preset config, and nothing else.
+ *
+ * `areaMask` and `draft` are dropped because neither belongs in a stored tree: the mask is derived from
+ * `area` when the payload is read back, and the draft state lives in `meta_json`.
+ */
+function withAreaPresetConfig(tree: CmsAreaPresetWriteInput, config: Record<string, unknown>) {
+  const revisionInput: Omit<CmsAreaPresetWriteInput, "areaMask" | "draft"> & {
+    areaMask?: number;
+    draft?: CmsDraftWriteState;
+  } = {
+    ...tree,
+    preset: { ...(tree.preset ?? {}), config },
+  };
+  delete revisionInput.areaMask;
+  delete revisionInput.draft;
+  return revisionInput;
+}
+
+/**
+ * Saves the Area's Module selection as its own Working Draft.
+ *
+ * It patches rather than writes: the source revision's tree is carried over untouched and only
+ * `preset.config` is replaced. So a Module save cannot move a widget, and the two drafts an Area can
+ * have open -- structure and Modules -- never contain each other's unpublished work.
+ *
+ * The source is the Module draft if one is open, and otherwise the published revision. A Site that has
+ * never persisted this Area has neither, and runs on the code-owned Shell preset that lives in
+ * `@phis/ui`; this process cannot render that, so the caller sends it as `baseline` and it is used only
+ * in that case.
+ */
+export async function saveSiteAreaModulesDraftRevision(
+  siteId: number,
+  input: CmsAreaModulesWriteInput,
+  options?: {
+    createdByUserId?: number | null;
+    message?: string | null;
+  },
+): Promise<{
+  revisionId: number;
+  areaMask: number;
+  draft: SiteCmsDraftState;
+  sourcePreset: CmsAreaModulesWriteInput["sourcePreset"];
+}> {
+  const pool = getPool();
+  const client = await pool.connect();
+  const { areaMask, draft: requestedDraft } = input;
+
+  try {
+    await client.query("BEGIN");
+    const scope = await ensureSiteAreaScopeWithDb(client, siteId, areaMask);
+    const sourceRevisionId = scope.workingModuleDraftRevisionId ?? scope.publishedRevisionId ?? null;
+    const sourceRevision = sourceRevisionId == null
+      ? null
+      : await getSiteAreaRevisionByIdWithDb(client, sourceRevisionId);
+    if (sourceRevisionId != null && !sourceRevision) {
+      throw new SiteCmsDraftConflictError(`CMS area revision #${sourceRevisionId} no longer exists.`);
+    }
+    const persistedDraft = scope.workingModuleDraftRevisionId == null || !sourceRevision
+      ? null
+      : readSiteCmsDraftState(sourceRevision);
+    if (persistedDraft) {
+      assertSiteCmsDraftWriteState(persistedDraft, requestedDraft);
+    } else if (requestedDraft) {
+      throw new SiteCmsDraftConflictError(
+        `Working Draft revision #${requestedDraft.revisionId} is no longer active.`,
+      );
+    }
+
+    const sourceTree = sourceRevision
+      ? readValidatedAreaRevisionTree(sourceRevision.treeJson)
+      : input.baseline ?? null;
+    if (!sourceTree) {
+      throw new SiteCmsDraftConflictError(
+        "This Area has no stored revision yet, so a Module selection needs its Shell baseline.",
+      );
+    }
+    if (!hasSamePresetIdentity(sourceTree.sourcePreset, input.sourcePreset)) {
+      throw new Error("Area preset identity does not match the requested scope.");
+    }
+
+    const nextRevisionInput = withAreaPresetConfig(sourceTree, input.config);
+    const summary = buildAreaModulesRevisionSummary(
+      input.config,
+      sourceTree.preset?.config,
+      sourceRevisionId,
+    );
+    const nextDraftMeta = {
+      version: persistedDraft ? persistedDraft.version + 1 : 1,
+      // Carried, not counted: a Module save adds no nodes, so the sequence is whatever the structure
+      // side has reached.
+      nextNodeSequence: requestedDraft?.nextNodeSequence ?? persistedDraft?.nextNodeSequence ?? 1,
+    };
+    const revision = persistedDraft
+      ? await updateSiteAreaDraftRevisionWithDb(client, persistedDraft.revisionId, scope.id, {
+          flags: PhiCmsRevisionFlags.Draft,
+          treeJson: nextRevisionInput as unknown as Record<string, unknown>,
+          message: options?.message ?? summary.message,
+          metaJson: withSiteCmsDraftMeta(summary.metaJson, nextDraftMeta),
+        })
+      : await insertSiteAreaRevisionWithDb(client, {
+          areaScopeId: scope.id,
+          flags: PhiCmsRevisionFlags.Draft,
+          treeJson: nextRevisionInput as unknown as Record<string, unknown>,
+          message: options?.message ?? summary.message,
+          metaJson: withSiteCmsDraftMeta(summary.metaJson, nextDraftMeta),
+          sourceRevisionId,
+          createdByUserId: options?.createdByUserId ?? null,
+        });
+    await setSiteAreaScopePointersWithDb(client, scope.id, {
+      publishedRevisionId: scope.publishedRevisionId,
+      workingDraftRevisionId: scope.workingDraftRevisionId,
+      workingModuleDraftRevisionId: revision.id,
+    });
+    // The carried tree carries its references with it: this revision holds the same Page and Asset
+    // references as the one it was cloned from, and a revision that registered none would let a delete
+    // guard read it as referencing nothing.
+    await replaceSiteCmsReferencesWithDb(client, {
+      siteId,
+      sourceKind: PhiCmsReferenceSourceKind.Area,
+      sourceScopeId: scope.id,
+      sourceRevisionId: revision.id,
+      references: collectSiteCmsReferences(nextRevisionInput, { targetAreaId: areaMask }),
+    });
+    // No orphan sweep: a Module save creates no Content, it carries the source revision's widgets
+    // unchanged. What it would collect are rows the published revision still uses.
+    await client.query("COMMIT");
+
+    return {
+      revisionId: revision.id,
+      areaMask,
+      draft: readSiteCmsDraftState(revision),
+      sourcePreset: nextRevisionInput.sourcePreset,
+    };
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 export async function publishSiteAreaRevision(
   siteId: number,
   input: {
@@ -2225,7 +2428,14 @@ export async function publishSiteAreaRevision(
     if (previousPublishedRevision && previousPublishedRevision.areaScopeId !== scope.id) {
       throw new Error("Published area revision pointer belongs to a different scope.");
     }
-    const materializedTree = validateCmsAreaRevisionForPublish(revisionTree);
+    const mergedTree = mergePhiAreaTreeForPublish(
+      previousPublishedRevision
+        ? readValidatedAreaRevisionTree(previousPublishedRevision.treeJson)
+        : null,
+      revisionTree,
+      "structure",
+    );
+    const materializedTree = validateCmsAreaRevisionForPublish(mergedTree);
     const materializedTreeJson = { ...materializedTree } as Record<string, unknown>;
     delete materializedTreeJson.areaMask;
     const preset = await buildResolvedAreaTreeFromRevisionWithDb(
@@ -2247,9 +2457,118 @@ export async function publishSiteAreaRevision(
       publishedRevisionId: revision.id,
       workingDraftRevisionId: null,
     });
-    // Publishing an Area is what changes which Modules the Site actually runs, so it is also what
-    // settles which Media Space kinds the Site offers. Inside the same transaction: the pointer and the
-    // availability it implies must never be observable apart.
+    // Ordinarily this publish no longer decides which Modules the Site runs -- it took that config from
+    // the published revision. The exception is the first publish of an Area, where there is nothing to
+    // take it from and the draft's own config is what becomes real. So the availability is settled here
+    // too, inside the same transaction: the pointer and what it implies must never be observable apart.
+    await materializeSiteMediaAvailabilityWithDb(client, siteId);
+    await client.query("COMMIT");
+
+    return {
+      revisionId: revision.id,
+      preset,
+    };
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+/**
+ * Publishes the Area's Module selection without publishing its structure.
+ *
+ * The mirror image of the rule in `publishSiteAreaRevision`: the tree comes from the published revision
+ * and only `preset.config` comes from this draft. Two drafts left open therefore cannot overtake each
+ * other -- whichever is published second is merged onto what the first left behind, in either order.
+ */
+export async function publishSiteAreaModulesRevision(
+  siteId: number,
+  input: {
+    areaMask: number;
+    sourcePreset: SitePresetIdentity;
+    revisionId?: number | null;
+  },
+  options?: {
+    createdByUserId?: number | null;
+    locale?: string | null;
+  },
+): Promise<{ revisionId: number; preset: SiteResolvedAreaPresetTree }> {
+  const pool = getPool();
+  const client = await pool.connect();
+
+  try {
+    await client.query("BEGIN");
+    const scope = await getSiteAreaScopeWithDb(client, siteId, input.areaMask, { forUpdate: true });
+    if (!scope) {
+      throw new Error("No area draft scope found.");
+    }
+
+    const revisionId = input.revisionId ?? scope.workingModuleDraftRevisionId;
+    if (!Number.isInteger(revisionId) || (revisionId as number) <= 0) {
+      throw new Error("No Area Module draft revision available to publish.");
+    }
+
+    const revision = await getSiteAreaRevisionByIdWithDb(client, revisionId as number);
+    if (!revision || revision.areaScopeId !== scope.id) {
+      throw new Error("Area Module draft revision not found for the requested scope.");
+    }
+
+    const revisionTree = readValidatedAreaRevisionTree(revision.treeJson);
+    if (!hasSamePresetIdentity(revisionTree.sourcePreset, input.sourcePreset)) {
+      throw new Error("Area draft preset identity does not match the requested scope.");
+    }
+    const previousPublishedRevision =
+      scope.publishedRevisionId == null
+        ? null
+        : await getSiteAreaRevisionByIdWithDb(client, scope.publishedRevisionId);
+    if (previousPublishedRevision && previousPublishedRevision.areaScopeId !== scope.id) {
+      throw new Error("Published area revision pointer belongs to a different scope.");
+    }
+
+    const mergedTree = mergePhiAreaTreeForPublish(
+      previousPublishedRevision
+        ? readValidatedAreaRevisionTree(previousPublishedRevision.treeJson)
+        : null,
+      revisionTree,
+      "modules",
+    );
+    const materializedTree = validateCmsAreaRevisionForPublish(mergedTree);
+    const materializedTreeJson = { ...materializedTree } as Record<string, unknown>;
+    delete materializedTreeJson.areaMask;
+    const preset = await buildResolvedAreaTreeFromRevisionWithDb(
+      client,
+      siteId,
+      scope,
+      materializedTree,
+      options?.locale ?? null,
+    );
+
+    await client.query(
+      `UPDATE phis.site_area_revisions
+       SET flags = $2,
+           tree_json = $3::jsonb
+       WHERE id = $1`,
+      [revision.id, PhiCmsRevisionFlags.Published, materializedTreeJson],
+    );
+    // The merge replaced this revision's tree with the published one, so what it references changed
+    // with it. The structure draft keeps its pointer: publishing Modules must not discard it.
+    await replaceSiteCmsReferencesWithDb(client, {
+      siteId,
+      sourceKind: PhiCmsReferenceSourceKind.Area,
+      sourceScopeId: scope.id,
+      sourceRevisionId: revision.id,
+      references: collectSiteCmsReferences(materializedTree, { targetAreaId: input.areaMask }),
+    });
+    await setSiteAreaScopePointersWithDb(client, scope.id, {
+      publishedRevisionId: revision.id,
+      workingDraftRevisionId: scope.workingDraftRevisionId,
+      workingModuleDraftRevisionId: null,
+    });
+    // Which Modules a Site runs is what settles which Media Space kinds it offers, and this is now the
+    // publish that changes it. Inside the same transaction: the pointer and the availability it implies
+    // must never be observable apart.
     await materializeSiteMediaAvailabilityWithDb(client, siteId);
     await client.query("COMMIT");
 
@@ -2461,6 +2780,86 @@ export async function getSiteCurrentAreaDraft(
       null,
     ),
   };
+}
+
+/** The Area's open Module draft, if it has one. Its structure draft is a separate question. */
+export async function getSiteCurrentAreaModulesDraft(
+  siteId: number,
+  input: {
+    areaMask: number;
+    sourcePreset?: SitePresetIdentity | null;
+  },
+): Promise<{ revisionId: number; draft: SiteCmsDraftState; preset: SiteResolvedAreaPresetTree } | null> {
+  const scope = await getSiteAreaScopeWithDb(getPool(), siteId, input.areaMask);
+  if (!scope || scope.workingModuleDraftRevisionId == null) {
+    return null;
+  }
+
+  const revision = await getSiteAreaRevisionByIdWithDb(getPool(), scope.workingModuleDraftRevisionId);
+  if (!revision || !hasPhiFlag(revision.flags, PhiCmsRevisionFlags.Draft) || revision.areaScopeId !== scope.id) {
+    return null;
+  }
+
+  const revisionTree = readValidatedAreaRevisionTree(revision.treeJson);
+  if (input.sourcePreset && !hasSamePresetIdentity(revisionTree.sourcePreset, input.sourcePreset)) {
+    return null;
+  }
+
+  return {
+    revisionId: revision.id,
+    draft: readSiteCmsDraftState(revision),
+    preset: await buildResolvedAreaTreeFromRevisionWithDb(getPool(), siteId, scope, revisionTree, null),
+  };
+}
+
+/**
+ * Discards the Area's Module draft.
+ *
+ * No orphan sweep, unlike the structure draft: this revision only ever carried a copy of another
+ * revision's widgets, so collecting its Content ids would collect rows the published revision uses.
+ */
+export async function deleteSiteAreaModulesDraftRevision(
+  siteId: number,
+  input: {
+    areaMask: number;
+    sourcePreset: SitePresetIdentity;
+  },
+): Promise<{ deleted: boolean }> {
+  const pool = getPool();
+  const client = await pool.connect();
+
+  try {
+    await client.query("BEGIN");
+    const scope = await getSiteAreaScopeWithDb(client, siteId, input.areaMask);
+    if (!scope || scope.workingModuleDraftRevisionId == null) {
+      await client.query("COMMIT");
+      return { deleted: false };
+    }
+
+    const revision = await getSiteAreaRevisionByIdWithDb(client, scope.workingModuleDraftRevisionId);
+    if (!revision || !hasSamePresetIdentity(
+      readValidatedAreaRevisionTree(revision.treeJson).sourcePreset,
+      input.sourcePreset,
+    )) {
+      throw new Error("Area draft preset identity does not match the requested scope.");
+    }
+    await client.query(
+      `DELETE FROM phis.site_area_revisions WHERE id = $1`,
+      [scope.workingModuleDraftRevisionId],
+    );
+    await setSiteAreaScopePointersWithDb(client, scope.id, {
+      publishedRevisionId: scope.publishedRevisionId,
+      workingDraftRevisionId: scope.workingDraftRevisionId,
+      workingModuleDraftRevisionId: null,
+    });
+    await client.query("COMMIT");
+    return { deleted: true };
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 export async function deleteSitePageDraftRevision(

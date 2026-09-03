@@ -5,13 +5,17 @@ import { NextRequest, NextResponse } from "next/server";
 import { ensureSiteMessageId, upsertSiteTranslationForSite } from "@/db/translations";
 import {
   deleteSiteAreaDraftRevision,
+  deleteSiteAreaModulesDraftRevision,
   deleteSitePageDraftRevision,
   getSiteCurrentAreaDraft,
+  getSiteCurrentAreaModulesDraft,
   getSiteCurrentPageDraft,
   getResolvedSitePageTree,
+  publishSiteAreaModulesRevision,
   publishSiteAreaRevision,
   publishSitePageRevision,
   saveSiteAreaDraftRevision,
+  saveSiteAreaModulesDraftRevision,
   saveSitePageDraftRevision,
   SiteCmsDraftConflictError,
   type SitePageScopeAddress,
@@ -19,8 +23,10 @@ import {
 import { resolvePhiServerCmsAreaMask } from "@/lib/constants/cms-areas";
 import { PhiCmsAuditEvent } from "@/lib/constants/phi-cms";
 import {
+  type CmsAreaModulesWriteInput,
   type CmsAreaPresetWriteInput,
   type CmsPageWriteInput,
+  validateCmsAreaModulesWriteInput,
   validateCmsAreaPresetWriteInput,
   validateCmsPageWriteInput,
 } from "@/lib/cms/write-validation";
@@ -496,6 +502,312 @@ export async function handleSiteCmsAreaWrite(request: NextRequest) {
         details: detail ? [detail] : [],
       },
       { status: error instanceof SiteCmsDraftConflictError ? 409 : 500 },
+    );
+  }
+}
+
+/**
+ * Saves an Area's Module selection.
+ *
+ * A separate route from the Area write, and deliberately not a mode of it: what arrives here can only
+ * be a preset config, so this cannot be used to move structure past the checks a structure write runs.
+ * It lands in the same revision family, where a reviewer sees it beside everything else about the Area.
+ */
+export async function handleSiteCmsAreaModulesWrite(request: NextRequest) {
+  const { context, error } = await requireSiteBuilderApiContext(request);
+  if (error) {
+    return error;
+  }
+
+  const payload = await readSiteCmsRequestJson(request);
+  if (payload == null) {
+    return NextResponse.json({ error: "Invalid JSON body." }, { status: 400 });
+  }
+
+  const validated = validateCmsAreaModulesWriteInput(payload);
+  if (!validated.ok) {
+    return NextResponse.json(
+      {
+        error: validated.error,
+        details: validated.details ?? [],
+      },
+      { status: 400 },
+    );
+  }
+
+  try {
+    const draft = await saveSiteAreaModulesDraftRevision(
+      context!.site!.id,
+      validated.value satisfies CmsAreaModulesWriteInput,
+      { createdByUserId: context!.session?.userId ?? null },
+    );
+
+    logSiteCmsAuditEvent(PhiCmsAuditEvent.AreaModulesDraftSaved, {
+      request,
+      siteKey: context!.site!.key,
+      area: validated.value.area,
+      userId: context!.session?.userId ?? null,
+      targetType: "cms-area-modules-draft",
+      targetId: validated.value.area,
+      meta: {
+        areaMask: validated.value.areaMask,
+        revisionId: draft.revisionId,
+        version: draft.draft.version,
+      },
+    });
+
+    return NextResponse.json({
+      area: validated.value.area,
+      revisionId: draft.revisionId,
+      version: draft.draft.version,
+      nextNodeSequence: draft.draft.nextNodeSequence,
+      sourcePreset: draft.sourcePreset,
+    });
+  } catch (error) {
+    const detail = readSiteCmsErrorDetail(error);
+    const message = readSiteCmsErrorMessage(error, "CMS area Module save failed.");
+    logRuntimeEvent("error", "cms.area_modules_write.failed", {
+      message: "CMS area Module write failed.",
+      siteKey: context!.site!.key,
+      userId: context!.session?.userId ?? null,
+      method: request.method,
+      path: request.nextUrl.pathname,
+      targetType: "cms-area-modules-draft",
+      error: normalizeLogThrowable(error),
+      meta: {
+        areaMask: validated.value.areaMask,
+      },
+    });
+    return NextResponse.json(
+      {
+        error: message,
+        details: detail ? [detail] : [],
+      },
+      { status: error instanceof SiteCmsDraftConflictError ? 409 : 500 },
+    );
+  }
+}
+
+/** Discards the Area's Module draft, leaving its structure draft where it is. */
+export async function handleSiteCmsAreaModulesDelete(request: NextRequest) {
+  const { context, error } = await requireSiteBuilderApiContext(request);
+  if (error) {
+    return error;
+  }
+
+  const payload = (await readSiteCmsRequestJson(request)) as {
+    area?: unknown;
+    ownerModuleId?: unknown;
+    presetKey?: unknown;
+  } | null;
+  const area = readSiteCmsRequestSearchParam(request, "area") ?? (typeof payload?.area === "string" ? payload.area : null);
+  const sourcePreset = resolveCmsPresetIdentity({
+    ownerModuleId: readSiteCmsRequestSearchParam(request, "ownerModuleId") ??
+      (typeof payload?.ownerModuleId === "string" ? payload.ownerModuleId : null),
+    presetKey: readSiteCmsRequestSearchParam(request, "presetKey") ??
+      (typeof payload?.presetKey === "string" ? payload.presetKey : null),
+  });
+  if (!area || !sourcePreset) {
+    return NextResponse.json({ error: "area, ownerModuleId, and presetKey must be provided." }, { status: 400 });
+  }
+
+  const areaMask = resolveAreaMask(area);
+
+  try {
+    const result = await deleteSiteAreaModulesDraftRevision(context!.site!.id, {
+      areaMask,
+      sourcePreset,
+    });
+
+    if (result.deleted) {
+      logSiteCmsAuditEvent(PhiCmsAuditEvent.AreaModulesDraftDeleted, {
+        request,
+        siteKey: context!.site!.key,
+        area,
+        userId: context!.session?.userId ?? null,
+        targetType: "cms-area-modules-draft",
+        targetId: area,
+        meta: { areaMask },
+      });
+    }
+
+    return NextResponse.json({
+      areaMask,
+      deleted: result.deleted,
+    });
+  } catch (error) {
+    logRuntimeEvent("error", "cms.area_modules_delete.failed", {
+      message: "CMS area Module draft delete failed.",
+      siteKey: context!.site!.key,
+      userId: context!.session?.userId ?? null,
+      method: request.method,
+      path: request.nextUrl.pathname,
+      targetType: "cms-area-modules-draft",
+      error: normalizeLogThrowable(error),
+      meta: {
+        areaMask,
+      },
+    });
+    return NextResponse.json(
+      {
+        error: readSiteCmsErrorMessage(error, "CMS area Module draft delete failed."),
+      },
+      { status: 500 },
+    );
+  }
+}
+
+/** Reads the Area's open Module draft. Absence is a 404: it is a question with an answer either way. */
+export async function handleSiteCmsAreaModulesDraftRead(request: NextRequest) {
+  const { context, error } = await requireSiteReviewApiContext(request);
+  if (error) {
+    return error;
+  }
+
+  const area = readSiteCmsRequestSearchParam(request, "area");
+  const sourcePreset = resolveCmsPresetIdentity({
+    ownerModuleId: readSiteCmsRequestSearchParam(request, "ownerModuleId"),
+    presetKey: readSiteCmsRequestSearchParam(request, "presetKey"),
+  });
+  if (!area || !sourcePreset) {
+    return NextResponse.json({ error: "area, ownerModuleId, and presetKey must be provided." }, { status: 400 });
+  }
+
+  const areaMask = resolveAreaMask(area);
+
+  try {
+    const draft = await getSiteCurrentAreaModulesDraft(context!.site!.id, {
+      areaMask,
+      sourcePreset,
+    });
+
+    if (!draft) {
+      return NextResponse.json({ error: "CMS area Module draft not found." }, { status: 404 });
+    }
+
+    return NextResponse.json({
+      areaMask,
+      revisionId: draft.revisionId,
+      version: draft.draft.version,
+      nextNodeSequence: draft.draft.nextNodeSequence,
+      sourcePreset: draft.preset.sourcePreset,
+      preset: draft.preset,
+    });
+  } catch (error) {
+    const detail = readSiteCmsErrorDetail(error);
+    const message = readSiteCmsErrorMessage(error, "CMS area Module draft read failed.");
+    logRuntimeEvent("error", "cms.area_modules_draft_read.failed", {
+      message: "CMS area Module draft read failed.",
+      siteKey: context!.site!.key,
+      userId: context!.session?.userId ?? null,
+      method: request.method,
+      path: request.nextUrl.pathname,
+      targetType: "cms-area-modules-draft-read",
+      error: normalizeLogThrowable(error),
+      meta: {
+        areaMask,
+      },
+    });
+    return NextResponse.json(
+      {
+        error: message,
+        details: detail ? [detail] : [],
+      },
+      { status: 500 },
+    );
+  }
+}
+
+/** Publishes the Area's Module selection. Its structure draft, if one is open, stays open. */
+export async function handleSiteCmsAreaModulesPublish(request: NextRequest) {
+  const { context, error } = await requireSitePublisherApiContext(request);
+  if (error) {
+    return error;
+  }
+
+  const payload = (await readSiteCmsRequestJson(request)) as {
+    area?: unknown;
+    ownerModuleId?: unknown;
+    presetKey?: unknown;
+    revisionId?: unknown;
+  } | null;
+  const area = readSiteCmsRequestSearchParam(request, "area") ?? (typeof payload?.area === "string" ? payload.area : null);
+  const revisionIdValue =
+    readSiteCmsRequestSearchParam(request, "revisionId") ??
+    (typeof payload?.revisionId === "number" || typeof payload?.revisionId === "string"
+      ? String(payload.revisionId)
+      : null);
+  const sourcePreset = resolveCmsPresetIdentity({
+    ownerModuleId: readSiteCmsRequestSearchParam(request, "ownerModuleId") ??
+      (typeof payload?.ownerModuleId === "string" ? payload.ownerModuleId : null),
+    presetKey: readSiteCmsRequestSearchParam(request, "presetKey") ??
+      (typeof payload?.presetKey === "string" ? payload.presetKey : null),
+  });
+  if (!area || !sourcePreset) {
+    return NextResponse.json({ error: "area, ownerModuleId, and presetKey must be provided." }, { status: 400 });
+  }
+
+  const revisionId =
+    revisionIdValue && Number.isInteger(Number(revisionIdValue)) ? Number(revisionIdValue) : null;
+  const areaMask = resolveAreaMask(area);
+  const locale = resolveRequestLocale(request);
+
+  try {
+    const result = await publishSiteAreaModulesRevision(
+      context!.site!.id,
+      {
+        areaMask,
+        sourcePreset,
+        revisionId,
+      },
+      {
+        createdByUserId: context!.session?.userId ?? null,
+        locale,
+      },
+    );
+
+    logSiteCmsAuditEvent(PhiCmsAuditEvent.AreaModulesPublished, {
+      request,
+      siteKey: context!.site!.key,
+      area,
+      userId: context!.session?.userId ?? null,
+      targetType: "cms-area-modules",
+      targetId: area,
+      meta: {
+        areaMask,
+        locale,
+        revisionId: result.revisionId,
+      },
+    });
+
+    return NextResponse.json({
+      areaMask,
+      revisionId: result.revisionId,
+      preset: result.preset,
+    });
+  } catch (error) {
+    const detail = readSiteCmsErrorDetail(error);
+    const message = readSiteCmsErrorMessage(error, "CMS area Module publish failed.");
+    logRuntimeEvent("error", "cms.area_modules_publish.failed", {
+      message: "CMS area Module publish failed.",
+      siteKey: context!.site!.key,
+      userId: context!.session?.userId ?? null,
+      method: request.method,
+      path: request.nextUrl.pathname,
+      targetType: "cms-area-modules-publish",
+      error: normalizeLogThrowable(error),
+      meta: {
+        areaMask,
+        locale,
+        revisionId,
+      },
+    });
+    return NextResponse.json(
+      {
+        error: message,
+        details: detail ? [detail] : [],
+      },
+      { status: 500 },
     );
   }
 }

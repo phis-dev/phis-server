@@ -1288,6 +1288,12 @@ CREATE TABLE IF NOT EXISTS phis.site_area_scopes (
   area_id SMALLINT NOT NULL DEFAULT 1,
   published_revision_id INT NULL,
   working_draft_revision_id INT NULL,
+  -- The Area's structure and its Module selection are edited apart and published apart, so each keeps
+  -- its own Working Draft. Both drafts are ordinary rows in site_area_revisions and both carry a whole
+  -- Area: a publish writes only the fields its draft owns into the published revision, and reads the
+  -- rest from there. That is what lets two open drafts pass each other without one undoing the other.
+  -- There is one published pointer, because a published Area is one state and not two.
+  working_module_draft_revision_id INT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   CONSTRAINT site_area_scopes_site_area_unique UNIQUE (site_id, area_id)
@@ -1483,6 +1489,9 @@ CREATE INDEX IF NOT EXISTS site_theme_revisions_scope_idx
 
 ALTER TABLE phis.site_area_revisions
   ADD COLUMN IF NOT EXISTS meta_json JSONB NOT NULL DEFAULT '{}'::jsonb;
+
+ALTER TABLE phis.site_area_scopes
+  ADD COLUMN IF NOT EXISTS working_module_draft_revision_id INT NULL;
 
 ALTER TABLE phis.site_page_revisions
   ADD COLUMN IF NOT EXISTS meta_json JSONB NOT NULL DEFAULT '{}'::jsonb;

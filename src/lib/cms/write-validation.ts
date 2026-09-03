@@ -102,6 +102,28 @@ export type CmsAreaPresetWriteInput = {
   contentWidgets: CmsDraftContentWidgetInput[];
 };
 
+/**
+ * What a Module selection write carries, which is deliberately not an Area.
+ *
+ * The selection lives in the Area preset's config and is published from the same revision family, but
+ * it is edited on its own page and saved on its own. So the payload names the config and nothing else:
+ * a caller that could also send `regions` would be able to move the structure through a route nobody
+ * reviews as a structure write.
+ *
+ * `baseline` is the exception, and only for a Site that has never persisted this Area. There is then no
+ * revision to patch, and the Area runs on the code-owned Shell preset -- which lives in `@phis/ui` and
+ * is not something this process can render. The client sends the preset it is already showing, it is
+ * validated exactly like an ordinary Area write, and it is used only when no revision exists.
+ */
+export type CmsAreaModulesWriteInput = {
+  area: string;
+  areaMask: number;
+  sourcePreset: CmsPresetSourceInput;
+  draft?: CmsDraftWriteState;
+  config: JsonRecord;
+  baseline?: CmsAreaPresetWriteInput;
+};
+
 export type CmsPageWriteInput = {
   area: string;
   areaMask: number;
@@ -1034,6 +1056,62 @@ export function validateCmsAreaPresetWriteInput(payload: unknown): CmsValidation
       overlays,
       layoutNodes,
       contentWidgets,
+    },
+  };
+}
+
+export function validateCmsAreaModulesWriteInput(
+  payload: unknown,
+): CmsValidationResult<CmsAreaModulesWriteInput> {
+  if (!isRecord(payload)) {
+    return buildFailure("Invalid request body.", ["Body must be an object."]);
+  }
+
+  const errors: string[] = [];
+  const area = normalizeCmsArea(payload.area, errors);
+  const areaMask = area ? resolveCmsAreaMaskFromArea(area, errors) : undefined;
+  const sourcePreset = readCmsPresetSource(payload.sourcePreset, "sourcePreset", errors);
+  const draft = readDraftWriteState(payload.draft, errors);
+  const config = readOptionalRecord(payload.config, "config", errors);
+
+  if (config === undefined) {
+    errors.push("config must be provided as an object.");
+  } else if (
+    !Array.isArray(config.runtimeModules) ||
+    config.runtimeModules.some((moduleId) => typeof moduleId !== "string" || moduleId.trim() === "")
+  ) {
+    // Which ids are allowed for this Area is the catalog's answer and is settled before the write.
+    // What is checked here is only the shape, so a malformed body fails as a bad request rather than
+    // reaching the database as a config nothing can read back.
+    errors.push("config.runtimeModules must be an array of module ids.");
+  }
+
+  let baseline: CmsAreaPresetWriteInput | undefined;
+  if (payload.baseline !== undefined) {
+    const validatedBaseline = validateCmsAreaPresetWriteInput(payload.baseline);
+    if (!validatedBaseline.ok) {
+      errors.push(`baseline is not a valid Area payload. ${validatedBaseline.error}`);
+      errors.push(...(validatedBaseline.details ?? []));
+    } else if (validatedBaseline.value.areaMask !== areaMask) {
+      errors.push("baseline must describe the same Area.");
+    } else {
+      baseline = validatedBaseline.value;
+    }
+  }
+
+  if (area === undefined || areaMask === undefined || sourcePreset == null || config === undefined || errors.length > 0) {
+    return buildFailure("Invalid CMS Area Module payload.", errors);
+  }
+
+  return {
+    ok: true,
+    value: {
+      area,
+      areaMask,
+      sourcePreset,
+      draft,
+      config,
+      baseline,
     },
   };
 }
