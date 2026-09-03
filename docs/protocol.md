@@ -36,10 +36,7 @@ All external endpoints live under `/api/v1/`.
 - Tagging baseline is `phis-api-v1` (common tag for all public API cache entries).
 - Explicit UI/admin revalidation should call `revalidateTag("phis-api-v1")` after content/admin mutations.
 - Invalidating the baseline tag is enough to clear all cache entries that also carry endpoint-specific tags (`phis-api-v1:<segment>`), because each cached response is tagged with both.
-- In `phi-systems`, the admin-facing implementation is a Server Action:
-  - `src/app/actions/revalidatePhiServerCache.ts`
-  - exported function `revalidatePhiServerApiCache()`
-  - this keeps cache controls within server-side rendering and avoids exposing admin cache controls as public API endpoints.
+- Invalidation belongs to the consumer's own server side, which is why this API exposes no endpoint for it: admin cache control must not become a public route.
 - Optional endpoint-level tags can be added later (`phis-api-v1:<endpoint>`, `phis-api-v1:locale`), but are not required for the baseline.
 - Non-public/internal endpoints and user-specific responses should not be cached.
 
