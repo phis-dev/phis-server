@@ -286,8 +286,8 @@ Usage:
                     [--name <setting> [--value <value>]]
   phis addon job    --addon <@scope/name> --job <job id> --site <site key>
                     [--api-base-url <url>]
-  phis addon reconcile --release <release/build id>
-  phis addon migrate --release <release/build id> [--addon <@scope/name>]
+  phis addon reconcile
+  phis addon migrate [--addon <@scope/name>]
   phis addon purge --addon <@scope/name>
   phis module list [--site <site key>]
   phis module add --site <site key> --package <@scope/name> [--spec <version or workspace:*>]

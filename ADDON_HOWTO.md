@@ -212,10 +212,10 @@ configuration action.
 
 ```text
 phis addon install --artifact ./dist/addon.mjs
-phis addon reconcile --release <release id>
-phis addon migrate  --release <release id> --addon @acme/status
+phis addon reconcile
+phis addon migrate  --addon @acme/status
 phis addon enable   --addon @acme/status
-phis addon reconcile --release <release id>
+phis addon reconcile
 ```
 
 What each step is for:
@@ -235,8 +235,8 @@ Installation never enables an Add-on, and an Add-on cannot enable itself.
 
 ```text
 phis addon upgrade --addon @acme/status --artifact ./dist/addon.mjs
-phis addon migrate  --release <release id> --addon @acme/status   # only if the schema version rose
-phis addon reconcile --release <release id>
+phis addon migrate  --addon @acme/status   # only if the schema version rose
+phis addon reconcile
 ```
 
 The new artifact goes into its own version directory beside the old one, and the desired state is
@@ -265,7 +265,7 @@ The reverse path enforces its own order, and the order is not a formality:
 
 ```text
 phis addon disable --addon @acme/status
-phis addon reconcile --release <release id>
+phis addon reconcile
 phis addon remove  --addon @acme/status
 phis addon purge   --addon @acme/status
 ```

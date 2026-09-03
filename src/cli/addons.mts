@@ -12,6 +12,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 import type { Pool } from "pg";
+import packageJson from "../../package.json" with { type: "json" };
 
 import {
   migratePhisAddon,
@@ -677,13 +678,7 @@ export async function reconcileAddons(
   flags: FlagMap,
   pool: Pool,
 ) {
-  const releaseBuildId =
-    getOptionalFlag(flags, "release") ??
-    process.env.PHIS_RELEASE_ID?.trim() ??
-    "";
-  if (!releaseBuildId) {
-    throw new Error("Missing --release or PHIS_RELEASE_ID.");
-  }
+  const releaseBuildId = readReleaseBuildId();
   const loaded = loadDesiredAddons(root);
   await reconcilePhisAddons(pool, releaseBuildId, loaded);
 
@@ -741,13 +736,16 @@ export async function reconcileAddons(
   };
 }
 
-function readReleaseBuildId(flags: FlagMap) {
-  const releaseBuildId =
-    getOptionalFlag(flags, "release") ?? process.env.PHIS_RELEASE_ID?.trim() ?? "";
-  if (!releaseBuildId) {
-    throw new Error("Missing --release or PHIS_RELEASE_ID.");
-  }
-  return releaseBuildId;
+/**
+ * The release this CLI writes against, which is the package it was built from.
+ *
+ * It is not an operator's to choose. What the registry records has to be the code that wrote it, and
+ * the CLI ships inside the same package as the runtime it reconciles -- so the version is already the
+ * answer, and asking for one could only introduce a wrong one. `next build` bakes the same value into
+ * the runtime for its capability responses, so the two cannot disagree.
+ */
+function readReleaseBuildId() {
+  return packageJson.version;
 }
 
 /**
@@ -762,7 +760,7 @@ export async function migrateAddons(
   pool: Pool,
   servingRole: string,
 ) {
-  const releaseBuildId = readReleaseBuildId(flags);
+  const releaseBuildId = readReleaseBuildId();
   const addonId = getOptionalFlag(flags, "addon");
   const loaded = loadDesiredAddons(root);
   const selected = addonId
