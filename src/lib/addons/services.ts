@@ -152,7 +152,7 @@ export async function resolvePhisServiceProvider(
   }
 
   const runtimeModule = await entry.load();
-  const runtime = runtimeModule.phiServerAddon;
+  const runtime = runtimeModule.phisAddon;
   const runtimeValidation = validatePhisAddonManifest(runtime?.manifest);
   if (
     !runtimeValidation.manifest ||

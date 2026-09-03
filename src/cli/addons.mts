@@ -45,7 +45,7 @@ import {
 type FlagMap = Map<string, string | boolean>;
 
 type AddonArtifactModule = {
-  phiServerAddon?: {
+  phisAddon?: {
     manifest?: unknown;
     serviceFactories?: Record<string, (config: unknown, context: unknown) => unknown>;
   };
@@ -214,13 +214,13 @@ async function loadArtifactManifest(artifactPath: string, artifactDigest: string
     );
   }
 
-  if (!imported.phiServerAddon) {
+  if (!imported.phisAddon) {
     throw new Error(
-      `${artifactPath} does not export phiServerAddon. An artifact has exactly one export.`,
+      `${artifactPath} does not export phisAddon. An artifact has exactly one export.`,
     );
   }
 
-  return assertPhisAddonManifest(imported.phiServerAddon.manifest);
+  return assertPhisAddonManifest(imported.phisAddon.manifest);
 }
 
 /**
@@ -265,10 +265,10 @@ export async function loadInstalledAddonRuntime(root: string, addonId: string) {
   const imported = (await import(
     `${pathToFileURL(artifactPath).href}?v=${artifactDigest}`
   )) as AddonArtifactModule;
-  if (!imported.phiServerAddon) {
-    throw new Error(`${artifactPath} does not export phiServerAddon.`);
+  if (!imported.phisAddon) {
+    throw new Error(`${artifactPath} does not export phisAddon.`);
   }
-  return { entry, runtime: imported.phiServerAddon };
+  return { entry, runtime: imported.phisAddon };
 }
 
 function loadDesiredAddons(root: string) {

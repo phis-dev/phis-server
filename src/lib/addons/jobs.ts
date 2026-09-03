@@ -87,7 +87,7 @@ export async function runPhisAddonJob(input: {
   }
 
   const runtimeModule = await entry.load();
-  const handler = runtimeModule.phiServerAddon.jobHandlers?.[descriptor.handler];
+  const handler = runtimeModule.phisAddon.jobHandlers?.[descriptor.handler];
   if (typeof handler !== "function") {
     throw new PhisAddonJobError(
       `${addonId} exports no job handler named ${descriptor.handler}.`,

@@ -6,7 +6,7 @@
       "packageName": "@phis/marketplace",
       "packageVersion": "0.1.0",
       "manifestDigest": "7bcc2e45432f385e806a1a4064a3a71963d93499fb6d2b65cd8b167fc8c73d12",
-      "artifactDigest": "e161141152cd2d2bb11976b126c05c9af1a1ef1d025b7f23e1f5e7326647b417",
+      "artifactDigest": "a25ca38f735eac52c4160f2ba66d0078086e0896779afbe52c42b2d2882cbb56",
       "manifest": {
         "manifestVersion": 1,
         "addonId": "@phis/marketplace",
@@ -577,7 +577,7 @@
       "packageName": "@phis/storage-s3",
       "packageVersion": "0.1.0",
       "manifestDigest": "4274557f0a2992317e93b770180f20e1093276931e7407d7233c616b2f5fa32e",
-      "artifactDigest": "2e5235fa72236c3f9b84ff00e8438c9e49fd0d04de820cf7250ccb476c347a1f",
+      "artifactDigest": "8cbc11c0fc50e42cda805a552e3dbec229cb4ca96772d92752ad22afbee63932",
       "manifest": {
         "manifestVersion": 1,
         "addonId": "@phis/storage-s3",

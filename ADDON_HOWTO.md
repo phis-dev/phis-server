@@ -40,7 +40,7 @@ a request or a database value. The install root defaults to `addons/` under the 
 One export:
 
 ```js
-export const phiServerAddon = {
+export const phisAddon = {
   manifest,        // PhisAddonManifestV1
   apiHandlers,     // optional
   hookHandlers,    // optional
@@ -48,7 +48,7 @@ export const phiServerAddon = {
 };
 ```
 
-The manifest is reached as `phiServerAddon.manifest`. There is no second entrypoint, no separate
+The manifest is reached as `phisAddon.manifest`. There is no second entrypoint, no separate
 manifest file, and no `package.json` in the install root -- the artifact is the unit.
 
 **The module must have no top-level side effects.** `phis-cli` imports the artifact to read and
@@ -320,7 +320,7 @@ and enable last.
 - no native or asset-carrying dependency anywhere in the tree; load the artifact once before handing it
   over
 - every builtin written with the `node:` prefix, and nothing else left as a bare import
-- exactly one export, `phiServerAddon`, and nothing happens at module scope
+- exactly one export, `phisAddon`, and nothing happens at module scope
 - every descriptor's `handler` exists in the matching handler map
 - the Add-on id carries no `_` and no `.`
 - `serverAbi` matches the release you are installing into

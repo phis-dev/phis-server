@@ -328,8 +328,8 @@ The package exposes two explicit server entrypoints, both under `addon/`:
 @scope/package/addon/runtime
 ```
 
-`addon/manifest` exports `phiServerAddonManifest` and must be safe for CLI inspection without starting
-jobs, opening connections, or reading secrets. `addon/runtime` exports `phiServerAddon`; it contains the
+`addon/manifest` exports `phisAddonManifest` and must be safe for CLI inspection without starting
+jobs, opening connections, or reading secrets. `addon/runtime` exports `phisAddon`; it contains the
 same manifest plus the declared handler maps and service factories. There is no package-root fallback.
 
 The `addon/` prefix is what keeps the halves apart inside one package. A Module already spends `./server`
