@@ -9,8 +9,8 @@ import {
 import { getPhisAddonInstalledManifest } from "@/lib/addons/installed";
 import { PHIS_CORE_CAPABILITIES } from "@/lib/addons/core-capabilities";
 
-export type { PhiServerCapabilityState } from "@phis/contracts/server-capabilities";
-import type { PhiServerCapabilityState } from "@phis/contracts/server-capabilities";
+export type { PhiCapabilityState } from "@phis/contracts/server-capabilities";
+import type { PhiCapabilityState } from "@phis/contracts/server-capabilities";
 
 function getBuildDigest() {
   const buildState = Object.entries(getPhisAddonInstalledManifest())
@@ -29,7 +29,7 @@ function getBuildDigest() {
 export async function buildPhisCapabilitySnapshot(siteId: number) {
   const providers: Array<{
     providerId: string;
-    state: PhiServerCapabilityState;
+    state: PhiCapabilityState;
     diagnosticCode: string | null;
     capabilities: Array<{
       id: string;
@@ -47,7 +47,7 @@ export async function buildPhisCapabilitySnapshot(siteId: number) {
   for (const [addonId, entry] of Object.entries(
     getPhisAddonInstalledManifest(),
   ).sort(([left], [right]) => left.localeCompare(right))) {
-    let state: PhiServerCapabilityState = "available";
+    let state: PhiCapabilityState = "available";
     let diagnosticCode: string | null = null;
 
     if (!entry.enabled) {

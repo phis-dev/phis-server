@@ -136,14 +136,15 @@
     surface (`addon`, `assets`, `capabilities`, `core`, `queries`, `schema`, `media-storage`) plus
     every type this application keeps to itself.
   - `Phi*` / `PHI_*` -- a name the Site UI reads too, and neutral about which side it came from:
-    `@phis/contracts`'s `access`, `http`, `locale`, `logging`, `media`, `signals` and `site-groups`.
-    It is the same `Phi*` convention documented for shared components in `phis-ui`.
-  - `PhiServer*` -- what the name says about the server, whoever reads it. It is what `phis-ui` marks
-    the server side of a pair with (the props a Server Component takes, the theme tokens the server
-    delivers), and it survives a move into the contract: `PhiServerCapabilityState` stays that even
-    though it lives in `@phis/contracts` and the UI reads it, because it is phis's verdict on a
-    provider and its sibling types in `phis-ui` spell it the same way. Being read by the UI is what
-    picks `Phi*` over `Phis*`; it does not override a name that is about the server.
+    `@phis/contracts`'s `access`, `http`, `locale`, `logging`, `media`, `signals`, `site-groups` and
+    `server-capabilities`. It is the same `Phi*` convention documented for shared components in
+    `phis-ui`.
+  - `PhiServer*` belongs to `phis-ui` alone, where it marks the server side of a pair -- the props a
+    Server Component takes, the theme tokens the server delivers -- against a bare `Phi*` name for the
+    client's. Nothing in this repository or in the contract carries it.
+  - What decides between the first two is who reads the name, never who produced the value. The
+    capability verdict is phis's own, and it is still `PhiCapabilityState`: the UI reads it, and what
+    it describes is a provider -- Core or an Add-on -- rather than the server.
   - "Server" inside a name (`PhiRuntimeModuleServerBinding`) describes the thing, not the namespace,
     and stays.
 
