@@ -2,7 +2,7 @@ import "server-only";
 
 import { getSupportedDeepLTargetLanguages } from "@/lib/deepl-languages";
 import { getPhiServerConfigSync } from "@/lib/config";
-import { DEFAULT_LOCALE, SUPPORTED_LOCALES } from "@/lib/locale";
+import { PHI_CANONICAL_SOURCE_LOCALE, SUPPORTED_LOCALES } from "@/lib/locale";
 import { PHIS_TOKEN_HEADER } from "@/lib/constants/http-headers";
 
 export type TranslationLocaleOption = {
@@ -77,16 +77,16 @@ function buildLocaleOptions(
     });
   }
 
-  deduped.set(DEFAULT_LOCALE, {
-    code: DEFAULT_LOCALE,
-    label: buildLocaleLabel(DEFAULT_LOCALE, "English"),
+  deduped.set(PHI_CANONICAL_SOURCE_LOCALE, {
+    code: PHI_CANONICAL_SOURCE_LOCALE,
+    label: buildLocaleLabel(PHI_CANONICAL_SOURCE_LOCALE, "English"),
   });
 
   return Array.from(deduped.values()).sort((left, right) => {
-    if (left.code === DEFAULT_LOCALE) {
+    if (left.code === PHI_CANONICAL_SOURCE_LOCALE) {
       return -1;
     }
-    if (right.code === DEFAULT_LOCALE) {
+    if (right.code === PHI_CANONICAL_SOURCE_LOCALE) {
       return 1;
     }
     return left.label.localeCompare(right.label);
@@ -98,10 +98,10 @@ export function getConfiguredTranslationSupportedLocalesSync() {
   const configured =
     config.translation?.supportedLocales ??
     config.translation?.allowedLocales ??
-    [DEFAULT_LOCALE];
+    [PHI_CANONICAL_SOURCE_LOCALE];
 
   return Array.from(
-    new Set([DEFAULT_LOCALE, ...configured.map((value) => normalizeLocaleCode(value)).filter(Boolean)]),
+    new Set([PHI_CANONICAL_SOURCE_LOCALE, ...configured.map((value) => normalizeLocaleCode(value)).filter(Boolean)]),
   );
 }
 
@@ -117,7 +117,7 @@ function coerceConfiguredLocales(
 
   return Array.from(
     new Set(
-      [DEFAULT_LOCALE, ...configuredLocales]
+      [PHI_CANONICAL_SOURCE_LOCALE, ...configuredLocales]
         .map((value) => normalizeLocaleCode(value))
         .filter((value) => value && allowedCodes.has(value)),
     ),
@@ -183,7 +183,7 @@ async function fetchCdnLocaleOptions() {
 }
 
 async function fetchDeepLLocaleOptions() {
-  const result = await getSupportedDeepLTargetLanguages({ sourceLocale: DEFAULT_LOCALE });
+  const result = await getSupportedDeepLTargetLanguages({ sourceLocale: PHI_CANONICAL_SOURCE_LOCALE });
   return buildLocaleOptions(
     result.languages.map((language) => ({
       code: language.language,

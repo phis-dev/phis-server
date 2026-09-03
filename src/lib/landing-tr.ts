@@ -3,7 +3,7 @@ import "server-only";
 import { cookies, headers } from "next/headers";
 
 import {
-  DEFAULT_LOCALE,
+  PHI_CANONICAL_SOURCE_LOCALE,
   SUPPORTED_LOCALES,
   normalizeLocale,
 } from "@/lib/locale";
@@ -43,7 +43,7 @@ async function resolveLocale() {
 
 function shouldSkipGlobalTranslation(locale: string) {
   const translationMode = getPhiServerConfigSync().translation?.mode ?? "none";
-  return translationMode === "none" || locale === DEFAULT_LOCALE;
+  return translationMode === "none" || locale === PHI_CANONICAL_SOURCE_LOCALE;
 }
 
 async function withTranslationTimeout<T>(promise: Promise<T>, ms: number) {

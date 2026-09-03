@@ -1,7 +1,7 @@
 import "server-only";
 
 import { getPhiServerConfigSync } from "@/lib/config";
-import { DEFAULT_LOCALE } from "@/lib/locale";
+import { PHI_CANONICAL_SOURCE_LOCALE } from "@/lib/locale";
 
 const DEFAULT_DEEPL_TRANSLATE_URL = "https://api-free.deepl.com/v2/translate";
 const DEEPL_LANGUAGE_CACHE_TTL_MS = 60 * 60 * 1000;
@@ -89,7 +89,7 @@ async function requestDeepLLanguages(type: DeepLLanguageType) {
 export async function getSupportedDeepLTargetLanguages(options?: {
   sourceLocale?: string | null;
 }): Promise<DeepLSupportedTargetLanguagesResult> {
-  const sourceLocale = normalizeLocaleKey(options?.sourceLocale) || DEFAULT_LOCALE;
+  const sourceLocale = normalizeLocaleKey(options?.sourceLocale) || PHI_CANONICAL_SOURCE_LOCALE;
   const languages = await requestDeepLLanguages("target");
 
   return {

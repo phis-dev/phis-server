@@ -1,7 +1,7 @@
 import "server-only";
 
 import { sendEmail } from "@/lib/email";
-import { DEFAULT_LOCALE, normalizeLocale } from "@/lib/locale";
+import { PHI_CANONICAL_SOURCE_LOCALE, normalizeLocale } from "@/lib/locale";
 import { translateWithCache } from "@/lib/translations";
 
 export type SupportedEmailTemplate =
@@ -96,7 +96,7 @@ async function translateTemplateText(
   context: TemplateContext,
   escapeValue: (value: string) => string,
 ) {
-  if (locale === DEFAULT_LOCALE) {
+  if (locale === PHI_CANONICAL_SOURCE_LOCALE) {
     return applyTemplateParams(part.text, part.params, context, escapeValue);
   }
 
@@ -150,7 +150,7 @@ export async function resolveEmailTemplate(
   );
   const ctaLabel = defaults.ctaLabel;
   const translatedCtaLabel = ctaLabel
-    ? normalizedLocale === DEFAULT_LOCALE
+    ? normalizedLocale === PHI_CANONICAL_SOURCE_LOCALE
       ? ctaLabel
       : await translateWithCache({
           locale: normalizedLocale,

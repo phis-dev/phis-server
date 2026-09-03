@@ -4,7 +4,7 @@ import { getSiteRuntimeConfig } from "@/db/sites";
 import { createJsonResponse } from "@/lib/api-response";
 import { getApiV1TokenMode, guardApiV1 } from "@/lib/api-v1-guard";
 import { getPhiServerConfig } from "@/lib/config";
-import { DEFAULT_LOCALE } from "@/lib/locale";
+import { PHI_CANONICAL_SOURCE_LOCALE } from "@/lib/locale";
 import { requireSiteFromRequest } from "@/lib/site-context";
 import { getConfiguredTranslationSupportedLocalesSync } from "@/lib/translation-locale-options";
 import { PHIS_TOKEN_HEADER } from "@/lib/constants/http-headers";
@@ -51,7 +51,7 @@ export async function GET(request: Request) {
     const response = createJsonResponse(
       request,
       {
-        defaultLocale: DEFAULT_LOCALE,
+        defaultLocale: PHI_CANONICAL_SOURCE_LOCALE,
         locales: supportedLocales,
         labels,
         options,

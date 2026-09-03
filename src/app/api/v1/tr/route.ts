@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { getApiV1TokenMode, guardApiV1 } from "@/lib/api-v1-guard";
 import { getPhiServerConfig } from "@/lib/config";
 import { logRuntimeEvent, normalizeLogThrowable } from "@/lib/log";
-import { DEFAULT_LOCALE } from "@/lib/locale";
+import { PHI_CANONICAL_SOURCE_LOCALE } from "@/lib/locale";
 import { resolveSiteFromHeaders } from "@/lib/site-context";
 import { getConfiguredTranslationSupportedLocalesSync } from "@/lib/translation-locale-options";
 import { parseTranslationContext } from "@/lib/translation-context";
@@ -161,7 +161,7 @@ async function handleTranslation(request: Request, payload: TranslationPayload) 
       tokenMode === "internal" && explicitSiteKey
         ? await resolveSiteFromHeaders(request.headers)
         : null;
-    const effectiveSourceLocale = sourceLocale?.trim() || site?.sourceLocale || DEFAULT_LOCALE;
+    const effectiveSourceLocale = sourceLocale?.trim() || site?.sourceLocale || PHI_CANONICAL_SOURCE_LOCALE;
     const translation = site
       ? normalizeLocale(effectiveSourceLocale) === normalizeLocale(site.sourceLocale)
         ? await translateSiteWithCache({
@@ -257,7 +257,7 @@ async function handleBatchTranslation(request: Request, payload: TranslationPayl
       tokenMode === "internal" && explicitSiteKey
         ? await resolveSiteFromHeaders(request.headers)
         : null;
-    const effectiveSourceLocale = sourceLocale?.trim() || site?.sourceLocale || DEFAULT_LOCALE;
+    const effectiveSourceLocale = sourceLocale?.trim() || site?.sourceLocale || PHI_CANONICAL_SOURCE_LOCALE;
     const translations = site
       ? normalizeLocale(effectiveSourceLocale) === normalizeLocale(site.sourceLocale)
         ? await translateSiteBatchWithCache({

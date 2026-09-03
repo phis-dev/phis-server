@@ -5,7 +5,7 @@ import { randomBytes } from "node:crypto";
 import { getPool } from "@/lib/db";
 import { getPhiServerConfigSync } from "@/lib/config";
 import { resolvePhiSiteSourceLocale } from "@/lib/config-files";
-import { DEFAULT_LOCALE, resolvePhiLocaleCapability } from "@/lib/locale";
+import { PHI_CANONICAL_SOURCE_LOCALE, resolvePhiLocaleCapability } from "@/lib/locale";
 import { SITE_FLAG_ACTIVE } from "@/lib/site-flags";
 import { clearSiteConfigCache } from "@/db/site-config";
 import { getMediaAssetById } from "@/db/media";
@@ -140,7 +140,7 @@ function buildLocaleOptions(codes: string[]) {
   const normalizedCodes = codes
     .map((code) => resolvePhiLocaleCapability(code)?.locale)
     .filter((code): code is string => Boolean(code));
-  const uniqueCodes = Array.from(new Set(normalizedCodes.length > 0 ? normalizedCodes : [DEFAULT_LOCALE]));
+  const uniqueCodes = Array.from(new Set(normalizedCodes.length > 0 ? normalizedCodes : [PHI_CANONICAL_SOURCE_LOCALE]));
 
   return uniqueCodes.map((code) => ({
     code,

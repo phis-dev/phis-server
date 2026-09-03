@@ -16,7 +16,7 @@ import {
 } from "@/db/translations";
 import { getPhiServerConfigSync } from "@/lib/config";
 import {
-  DEFAULT_LOCALE,
+  PHI_CANONICAL_SOURCE_LOCALE,
   resolveDeepLSourceLang,
   resolveDeepLTargetLang,
   resolvePhiLocaleCapability,
@@ -517,7 +517,7 @@ async function translateCanonicalGlobalBatch(input: Required<Pick<BatchTranslati
       locale: input.locale,
       msgs: pending.map((entry) => entry.msg),
       ctx: input.ctx,
-      sourceLocale: DEFAULT_LOCALE,
+      sourceLocale: PHI_CANONICAL_SOURCE_LOCALE,
       format: input.format,
     });
     await Promise.all(pending.map(async (entry, index) => {
@@ -577,7 +577,7 @@ async function translateExternalGlobalBatch(input: Required<Pick<BatchTranslatio
 
   if (pending.length > 0) {
     const canonical = await requestConfiguredTranslationsOrFallback({
-      locale: DEFAULT_LOCALE,
+      locale: PHI_CANONICAL_SOURCE_LOCALE,
       msgs: pending.map((entry) => entry.source),
       ctx: input.ctx,
       sourceLocale: input.sourceLocale,
@@ -603,7 +603,7 @@ async function translateExternalGlobalBatch(input: Required<Pick<BatchTranslatio
     }
   }
 
-  if (sameLocale(input.locale, DEFAULT_LOCALE)) {
+  if (sameLocale(input.locale, PHI_CANONICAL_SOURCE_LOCALE)) {
     return input.msgs.map((source) => units.get(source)?.canonicalMsg ?? source);
   }
 
@@ -631,7 +631,7 @@ async function translateExternalGlobalBatch(input: Required<Pick<BatchTranslatio
       locale: input.locale,
       msgs: targetPending.map((entry) => entry.canonicalMsg),
       ctx: input.ctx,
-      sourceLocale: DEFAULT_LOCALE,
+      sourceLocale: PHI_CANONICAL_SOURCE_LOCALE,
       format: input.format,
     });
     await Promise.all(targetPending.map(async (entry, index) => {
@@ -659,7 +659,7 @@ export async function translateBatchWithCache({
   format,
 }: BatchTranslationInput) {
   const normalizedLocale = locale.trim();
-  const normalizedSourceLocale = sourceLocale?.trim() || DEFAULT_LOCALE;
+  const normalizedSourceLocale = sourceLocale?.trim() || PHI_CANONICAL_SOURCE_LOCALE;
   const normalizedMsgs = normalizeBatchMessages(msgs);
   const rawCtx = ctx?.trim() ?? "";
   const translationFormat = normalizeTranslationFormat(format);
@@ -669,7 +669,7 @@ export async function translateBatchWithCache({
   if (normalizedMsgs.length === 0 || sameLocale(normalizedLocale, normalizedSourceLocale)) {
     return normalizedMsgs;
   }
-  if (!sameLocale(normalizedSourceLocale, DEFAULT_LOCALE)) {
+  if (!sameLocale(normalizedSourceLocale, PHI_CANONICAL_SOURCE_LOCALE)) {
     return translateExternalGlobalBatch({
       locale: normalizedLocale,
       sourceLocale: normalizedSourceLocale,

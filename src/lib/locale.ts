@@ -1,9 +1,18 @@
 import config from "../../config/phis-config.json";
 
-export const DEFAULT_LOCALE = "en";
+export { PHI_CANONICAL_SOURCE_LOCALE } from "@phis/contracts/locale";
+import { PHI_CANONICAL_SOURCE_LOCALE } from "@phis/contracts/locale";
+
 const configuredLocales = config.translation?.supportedLocales ?? [];
+
+/**
+ * Every locale this installation can serve, with the source language always among them.
+ *
+ * The canonical source is included because a store's own language is one it can always answer in --
+ * not because it is anyone's default.
+ */
 export const SUPPORTED_LOCALES = Array.from(
-  new Set([DEFAULT_LOCALE, ...configuredLocales]),
+  new Set([PHI_CANONICAL_SOURCE_LOCALE, ...configuredLocales]),
 ) as ReadonlyArray<string>;
 
 export type SupportedLocale = (typeof SUPPORTED_LOCALES)[number];
@@ -86,7 +95,7 @@ const PHI_LOCALE_CAPABILITY_INPUTS = [
 ] satisfies readonly CapabilityInput[];
 
 function buildLabelFallbacks(input: CapabilityInput) {
-  return Array.from(new Set([input.locale, input.language, DEFAULT_LOCALE].filter(Boolean)));
+  return Array.from(new Set([input.locale, input.language, PHI_CANONICAL_SOURCE_LOCALE].filter(Boolean)));
 }
 
 function toCapability(input: CapabilityInput): PhiLocaleCapability {
@@ -122,7 +131,7 @@ function normalizeLocaleKey(input?: string | null) {
 }
 
 export function normalizeLocale(input?: string | null) {
-  return resolvePhiLocaleCapability(input)?.locale ?? getPhiLocaleCapability(DEFAULT_LOCALE).locale;
+  return resolvePhiLocaleCapability(input)?.locale ?? getPhiLocaleCapability(PHI_CANONICAL_SOURCE_LOCALE).locale;
 }
 
 export function resolveDeepLTargetLang(input?: string | null) {
@@ -162,14 +171,14 @@ export function resolvePhiLocaleCapability(locale: string | null | undefined): P
 }
 
 export function getPhiLocaleCapability(locale: string | null | undefined): PhiLocaleCapability {
-  return resolvePhiLocaleCapability(locale) ?? resolvePhiLocaleCapability(DEFAULT_LOCALE) as PhiLocaleCapability;
+  return resolvePhiLocaleCapability(locale) ?? resolvePhiLocaleCapability(PHI_CANONICAL_SOURCE_LOCALE) as PhiLocaleCapability;
 }
 
 function normalizeAvailableLocaleCapabilities(availableLocales: readonly string[]) {
   const capabilities = availableLocales
     .map((locale) => resolvePhiLocaleCapability(locale))
     .filter((capability): capability is PhiLocaleCapability => Boolean(capability));
-  return capabilities.length > 0 ? capabilities : [getPhiLocaleCapability(DEFAULT_LOCALE)];
+  return capabilities.length > 0 ? capabilities : [getPhiLocaleCapability(PHI_CANONICAL_SOURCE_LOCALE)];
 }
 
 function matchAvailableLocale(candidate: string | null | undefined, availableLocales: readonly PhiLocaleCapability[]) {
