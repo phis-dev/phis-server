@@ -2,15 +2,15 @@ import "server-only";
 
 import { randomUUID } from "node:crypto";
 
-import type { PhiServerAddonBuildEntry, PhiServerAddonJobContext } from "./contract.ts";
-import { buildPhiServerAddonCapabilities } from "./capabilities.ts";
-import { hasPhiServerCoreCapability } from "./core-capabilities.ts";
-import { getPhiServerAddonInstalledManifest } from "./installed.ts";
+import type { PhisAddonBuildEntry, PhisAddonJobContext } from "./contract.ts";
+import { buildPhisAddonCapabilities } from "./capabilities.ts";
+import { hasPhisCoreCapability } from "./core-capabilities.ts";
+import { getPhisAddonInstalledManifest } from "./installed.ts";
 import {
-  digestPhiServerAddonManifest,
-  validatePhiServerAddonManifest,
+  digestPhisAddonManifest,
+  validatePhisAddonManifest,
 } from "./manifest.ts";
-import { isPhiServerAddonEnabledForSite } from "@/db/server-addons";
+import { isPhisAddonEnabledForSite } from "@/db/server-addons";
 
 /**
  * Running an Add-on's declared jobs.
@@ -27,7 +27,7 @@ import { isPhiServerAddonEnabledForSite } from "@/db/server-addons";
  * would have built itself a way around the ladder.
  */
 
-export type PhiServerAddonJobOutcome = {
+export type PhisAddonJobOutcome = {
   addonId: string;
   jobId: string;
   siteKey: string;
@@ -36,26 +36,26 @@ export type PhiServerAddonJobOutcome = {
   error?: string;
 };
 
-export class PhiServerAddonJobError extends Error {}
+export class PhisAddonJobError extends Error {}
 
-function requireEntry(addonId: string): PhiServerAddonBuildEntry {
-  const entry = getPhiServerAddonInstalledManifest()[addonId];
+function requireEntry(addonId: string): PhisAddonBuildEntry {
+  const entry = getPhisAddonInstalledManifest()[addonId];
   if (!entry) {
-    throw new PhiServerAddonJobError(`${addonId} is not installed.`);
+    throw new PhisAddonJobError(`${addonId} is not installed.`);
   }
   if (!entry.enabled) {
-    throw new PhiServerAddonJobError(`${addonId} is not enabled.`);
+    throw new PhisAddonJobError(`${addonId} is not enabled.`);
   }
-  const validation = validatePhiServerAddonManifest(entry.manifest);
+  const validation = validatePhisAddonManifest(entry.manifest);
   if (
     !validation.manifest ||
-    digestPhiServerAddonManifest(validation.manifest) !== entry.manifestDigest
+    digestPhisAddonManifest(validation.manifest) !== entry.manifestDigest
   ) {
-    throw new PhiServerAddonJobError(`${addonId} has an invalid build manifest.`);
+    throw new PhisAddonJobError(`${addonId} has an invalid build manifest.`);
   }
   for (const capability of entry.manifest.requiredCoreCapabilities) {
-    if (!hasPhiServerCoreCapability(capability)) {
-      throw new PhiServerAddonJobError(`${addonId} requires the missing Core capability ${capability}.`);
+    if (!hasPhisCoreCapability(capability)) {
+      throw new PhisAddonJobError(`${addonId} requires the missing Core capability ${capability}.`);
     }
   }
   return entry;
@@ -68,40 +68,40 @@ function requireEntry(addonId: string): PhiServerAddonBuildEntry {
  * secrets are per Site, and a job that quietly ran against "all of them at once" would have no Site to
  * bind its capabilities to. Running everywhere is the caller's loop, not a hidden one here.
  */
-export async function runPhiServerAddonJob(input: {
+export async function runPhisAddonJob(input: {
   addonId: string;
   jobId: string;
   site: { id: number; key: string };
   signal?: AbortSignal;
-}): Promise<PhiServerAddonJobOutcome> {
+}): Promise<PhisAddonJobOutcome> {
   const { addonId, jobId, site } = input;
   const runId = randomUUID();
   const entry = requireEntry(addonId);
 
   const descriptor = entry.manifest.jobs.find((job) => job.id === jobId);
   if (!descriptor) {
-    throw new PhiServerAddonJobError(`${addonId} declares no job named ${jobId}.`);
+    throw new PhisAddonJobError(`${addonId} declares no job named ${jobId}.`);
   }
-  if (!await isPhiServerAddonEnabledForSite(addonId, site.id)) {
-    throw new PhiServerAddonJobError(`${addonId} is not enabled for ${site.key}.`);
+  if (!await isPhisAddonEnabledForSite(addonId, site.id)) {
+    throw new PhisAddonJobError(`${addonId} is not enabled for ${site.key}.`);
   }
 
   const runtimeModule = await entry.load();
   const handler = runtimeModule.phiServerAddon.jobHandlers?.[descriptor.handler];
   if (typeof handler !== "function") {
-    throw new PhiServerAddonJobError(
+    throw new PhisAddonJobError(
       `${addonId} exports no job handler named ${descriptor.handler}.`,
     );
   }
 
   const controller = new AbortController();
   input.signal?.addEventListener("abort", () => controller.abort(), { once: true });
-  const context: PhiServerAddonJobContext = {
+  const context: PhisAddonJobContext = {
     addonId,
     jobId,
     runId,
     site,
-    capabilities: buildPhiServerAddonCapabilities({
+    capabilities: buildPhisAddonCapabilities({
       manifest: entry.manifest,
       manifestDigest: entry.manifestDigest,
       siteId: site.id,

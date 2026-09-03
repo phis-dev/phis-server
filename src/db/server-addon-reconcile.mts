@@ -1,15 +1,15 @@
 import type { Pool, PoolClient } from "pg";
 
 import type {
-  PhiServerAddonDesiredStateEntry,
-  PhiServerAddonManifestV1,
+  PhisAddonDesiredStateEntry,
+  PhisAddonManifestV1,
 } from "../lib/addons/contract.ts";
-import { PHI_SERVER_CORE_CAPABILITIES } from "../lib/addons/core-capabilities.ts";
-import { PHI_SERVER_ADDON_FLAG_GLOBALLY_ENABLED } from "../lib/constants/server-addons.ts";
+import { PHIS_CORE_CAPABILITIES } from "../lib/addons/core-capabilities.ts";
+import { PHIS_ADDON_FLAG_GLOBALLY_ENABLED } from "../lib/constants/server-addons.ts";
 
-export type PhiServerAddonReconcileEntry = {
-  desired: PhiServerAddonDesiredStateEntry;
-  manifest: PhiServerAddonManifestV1;
+export type PhisAddonReconcileEntry = {
+  desired: PhisAddonDesiredStateEntry;
+  manifest: PhisAddonManifestV1;
   digest: string;
 };
 
@@ -18,7 +18,7 @@ async function reconcileCoreCapabilities(client: PoolClient, releaseBuildId: str
     `DELETE FROM phis.server_capabilities
       WHERE provider_id = '@phis/server/core'`,
   );
-  for (const capability of PHI_SERVER_CORE_CAPABILITIES) {
+  for (const capability of PHIS_CORE_CAPABILITIES) {
     await client.query(
       `INSERT INTO phis.server_capabilities (
          provider_id,
@@ -32,10 +32,10 @@ async function reconcileCoreCapabilities(client: PoolClient, releaseBuildId: str
   }
 }
 
-export async function reconcilePhiServerAddons(
+export async function reconcilePhisAddons(
   pool: Pool,
   releaseBuildId: string,
-  loaded: PhiServerAddonReconcileEntry[],
+  loaded: PhisAddonReconcileEntry[],
 ) {
   const client = await pool.connect();
   try {
@@ -49,7 +49,7 @@ export async function reconcilePhiServerAddons(
             SET flags = flags & ~($1::int),
                 disabled_at = COALESCE(disabled_at, NOW()),
                 updated_at = NOW()`,
-        [PHI_SERVER_ADDON_FLAG_GLOBALLY_ENABLED],
+        [PHIS_ADDON_FLAG_GLOBALLY_ENABLED],
       );
       await client.query(
         `DELETE FROM phis.server_capabilities
@@ -62,7 +62,7 @@ export async function reconcilePhiServerAddons(
                 disabled_at = COALESCE(disabled_at, NOW()),
                 updated_at = NOW()
           WHERE NOT (addon_id = ANY($2::text[]))`,
-        [PHI_SERVER_ADDON_FLAG_GLOBALLY_ENABLED, desiredIds],
+        [PHIS_ADDON_FLAG_GLOBALLY_ENABLED, desiredIds],
       );
       await client.query(
         `DELETE FROM phis.server_capabilities
@@ -118,8 +118,8 @@ export async function reconcilePhiServerAddons(
           manifest.serverAbi,
           digest,
           releaseBuildId,
-          desired.enabled ? PHI_SERVER_ADDON_FLAG_GLOBALLY_ENABLED : 0,
-          PHI_SERVER_ADDON_FLAG_GLOBALLY_ENABLED,
+          desired.enabled ? PHIS_ADDON_FLAG_GLOBALLY_ENABLED : 0,
+          PHIS_ADDON_FLAG_GLOBALLY_ENABLED,
         ],
       );
       await client.query(

@@ -1,10 +1,10 @@
 import { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { applyPhiServerAddonSchema, dropPhiServerAddonSchema } from "./server-addon-schema.mts";
-import { getPhiServerConfigSync } from "@/lib/config";
+import { applyPhisAddonSchema, dropPhisAddonSchema } from "./server-addon-schema.mts";
+import { getPhisConfigSync } from "@/lib/config";
 import { quotePhiIdentifier } from "@/lib/addons/schema-ddl";
-import { buildPhiServerAddonCapabilities } from "@/lib/addons/capabilities";
+import { buildPhisAddonCapabilities } from "@/lib/addons/capabilities";
 import {
   closePhiTestPool,
   createPhiTestSite,
@@ -12,7 +12,7 @@ import {
   requirePhiTestDatabase,
   type PhiTestSite,
 } from "../../test/pg/harness";
-import type { PhiServerAddonManifestV1 } from "@/lib/addons/contract";
+import type { PhisAddonManifestV1 } from "@/lib/addons/contract";
 
 /**
  * Whether paging actually holds, which only PostgreSQL can say.
@@ -96,7 +96,7 @@ const manifest = {
     ],
   },
   migrationVersion: 1,
-} as unknown as PhiServerAddonManifestV1;
+} as unknown as PhisAddonManifestV1;
 
 let migrationPool: Pool;
 
@@ -104,7 +104,7 @@ describe("paging a declared select", () => {
   let site: PhiTestSite;
 
   function data() {
-    return buildPhiServerAddonCapabilities({
+    return buildPhisAddonCapabilities({
       manifest,
       manifestDigest: "pgtest-paging",
       siteId: site.id,
@@ -116,7 +116,7 @@ describe("paging a declared select", () => {
     await requirePhiTestDatabase();
     site = await createPhiTestSite("addon-paging");
 
-    const config = getPhiServerConfigSync().database;
+    const config = getPhisConfigSync().database;
     if (!config?.migrationUri || !config.uri) {
       throw new Error("These tests need database.migrationUri and database.uri.");
     }
@@ -124,8 +124,8 @@ describe("paging a declared select", () => {
     migrationPool = new Pool({ connectionString: config.migrationUri });
     const client = await migrationPool.connect();
     try {
-      await dropPhiServerAddonSchema(client, SCHEMA);
-      await applyPhiServerAddonSchema(client, target, servingRole);
+      await dropPhisAddonSchema(client, SCHEMA);
+      await applyPhisAddonSchema(client, target, servingRole);
     } finally {
       client.release();
     }
@@ -144,7 +144,7 @@ describe("paging a declared select", () => {
     if (migrationPool) {
       const client = await migrationPool.connect();
       try {
-        await dropPhiServerAddonSchema(client, SCHEMA);
+        await dropPhisAddonSchema(client, SCHEMA);
       } finally {
         client.release();
       }

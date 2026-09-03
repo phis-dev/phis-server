@@ -1,11 +1,11 @@
 import { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { applyPhiServerAddonSchema, dropPhiServerAddonSchema } from "./server-addon-schema.mts";
-import { getPhiServerConfigSync } from "@/lib/config";
-import { buildPhiServerAddonCapabilities } from "@/lib/addons/capabilities";
+import { applyPhisAddonSchema, dropPhisAddonSchema } from "./server-addon-schema.mts";
+import { getPhisConfigSync } from "@/lib/config";
+import { buildPhisAddonCapabilities } from "@/lib/addons/capabilities";
 import { ensureAddonMediaSpace } from "@/db/media-spaces";
-import { validatePhiServerAddonQueryCatalog } from "@/lib/addons/query-descriptor";
+import { validatePhisAddonQueryCatalog } from "@/lib/addons/query-descriptor";
 import {
   closePhiTestPool,
   createPhiTestSite,
@@ -13,7 +13,7 @@ import {
   requirePhiTestDatabase,
   type PhiTestSite,
 } from "../../test/pg/harness";
-import type { PhiServerAddonManifestV1 } from "@/lib/addons/contract";
+import type { PhisAddonManifestV1 } from "@/lib/addons/contract";
 
 /**
  * The table Core keeps beside one that declares files, against a real database.
@@ -95,7 +95,7 @@ const manifest = {
     ],
   },
   migrationVersion: 1,
-} as unknown as PhiServerAddonManifestV1;
+} as unknown as PhisAddonManifestV1;
 
 let migrationPool: Pool;
 
@@ -104,7 +104,7 @@ describe("the asset table Core adds beside a table that declares files", () => {
   let siteB: PhiTestSite;
 
   function data(site: PhiTestSite) {
-    return buildPhiServerAddonCapabilities({
+    return buildPhisAddonCapabilities({
       manifest,
       manifestDigest: "pgtest-assets",
       siteId: site.id,
@@ -153,7 +153,7 @@ describe("the asset table Core adds beside a table that declares files", () => {
     siteA = await createPhiTestSite("addon-assets-a");
     siteB = await createPhiTestSite("addon-assets-b");
 
-    const config = getPhiServerConfigSync().database;
+    const config = getPhisConfigSync().database;
     if (!config?.migrationUri || !config.uri) {
       throw new Error("These tests need database.migrationUri and database.uri.");
     }
@@ -170,8 +170,8 @@ describe("the asset table Core adds beside a table that declares files", () => {
     migrationPool = new Pool({ connectionString: config.migrationUri });
     const client = await migrationPool.connect();
     try {
-      await dropPhiServerAddonSchema(client, SCHEMA);
-      await applyPhiServerAddonSchema(client, target, servingRole);
+      await dropPhisAddonSchema(client, SCHEMA);
+      await applyPhisAddonSchema(client, target, servingRole);
     } finally {
       client.release();
     }
@@ -181,7 +181,7 @@ describe("the asset table Core adds beside a table that declares files", () => {
     if (migrationPool) {
       const client = await migrationPool.connect();
       try {
-        await dropPhiServerAddonSchema(client, SCHEMA);
+        await dropPhisAddonSchema(client, SCHEMA);
       } finally {
         client.release();
       }
@@ -300,7 +300,7 @@ describe("the asset table Core adds beside a table that declares files", () => {
      * this is the validator saying so rather than a rule written a second time.
      */
     const issues: string[] = [];
-    validatePhiServerAddonQueryCatalog(
+    validatePhisAddonQueryCatalog(
       {
         parameters: { peek: [] },
         queries: [{ kind: "select", name: "peek", table: "offering_assets", limit: 5 }],

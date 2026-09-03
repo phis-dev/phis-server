@@ -1,6 +1,6 @@
 import type { Pool, PoolClient } from "pg";
 
-import type { PhiServerAddonGroupDescriptor } from "../lib/addons/contract.ts";
+import type { PhisAddonGroupDescriptor } from "../lib/addons/contract.ts";
 
 /**
  * The groups an Add-on declared, on one Site.
@@ -18,17 +18,17 @@ import type { PhiServerAddonGroupDescriptor } from "../lib/addons/contract.ts";
 
 type Queryable = Pick<Pool | PoolClient, "query">;
 
-export type PhiServerAddonGroupAction = {
+export type PhisAddonGroupAction = {
   key: string;
   groupId: number;
   action: "created" | "present" | "restored" | "retired";
 };
 
-export async function ensurePhiServerAddonSiteGroups(
+export async function ensurePhisAddonSiteGroups(
   db: Queryable,
-  input: { addonId: string; siteId: number; declared: PhiServerAddonGroupDescriptor[] },
-): Promise<PhiServerAddonGroupAction[]> {
-  const actions: PhiServerAddonGroupAction[] = [];
+  input: { addonId: string; siteId: number; declared: PhisAddonGroupDescriptor[] },
+): Promise<PhisAddonGroupAction[]> {
+  const actions: PhisAddonGroupAction[] = [];
   for (const group of input.declared) {
     /*
      * Harmless to run twice, which it has to be: enabling a Site runs it, and so does reconciling a
@@ -63,10 +63,10 @@ export async function ensurePhiServerAddonSiteGroups(
   return actions;
 }
 
-export async function retirePhiServerAddonSiteGroups(
+export async function retirePhisAddonSiteGroups(
   db: Queryable,
   input: { addonId: string; siteId?: number },
-): Promise<PhiServerAddonGroupAction[]> {
+): Promise<PhisAddonGroupAction[]> {
   const { rows } = await db.query<{ id: number; key: string }>(
     input.siteId === undefined
       ? `UPDATE phis.site_groups SET retired_at = NOW(), updated_at = NOW()
@@ -81,7 +81,7 @@ export async function retirePhiServerAddonSiteGroups(
 }
 
 /** What one Add-on's groups are on one Site, for the capability that hands ids to a handler. */
-export async function readPhiServerAddonSiteGroups(
+export async function readPhisAddonSiteGroups(
   db: Queryable,
   input: { addonId: string; siteId: number },
 ) {

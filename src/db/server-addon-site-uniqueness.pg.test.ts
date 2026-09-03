@@ -2,10 +2,10 @@ import { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import {
-  applyPhiServerAddonSchema,
-  dropPhiServerAddonSchema,
+  applyPhisAddonSchema,
+  dropPhisAddonSchema,
 } from "./server-addon-schema.mts";
-import { getPhiServerConfigSync } from "@/lib/config";
+import { getPhisConfigSync } from "@/lib/config";
 import { quotePhiIdentifier } from "@/lib/addons/schema-ddl";
 import {
   closePhiTestPool,
@@ -58,7 +58,7 @@ describe("uniqueness in a Site-scoped Add-on table", () => {
     site = await createPhiTestSite("addon-unique");
     otherSite = await createPhiTestSite("addon-unique-other");
 
-    const config = getPhiServerConfigSync().database;
+    const config = getPhisConfigSync().database;
     if (!config?.migrationUri || !config.uri) {
       throw new Error("These tests need database.migrationUri and database.uri.");
     }
@@ -66,8 +66,8 @@ describe("uniqueness in a Site-scoped Add-on table", () => {
     migrationPool = new Pool({ connectionString: config.migrationUri });
     const client = await migrationPool.connect();
     try {
-      await dropPhiServerAddonSchema(client, SCHEMA);
-      await applyPhiServerAddonSchema(client, target, servingRole);
+      await dropPhisAddonSchema(client, SCHEMA);
+      await applyPhisAddonSchema(client, target, servingRole);
     } finally {
       client.release();
     }
@@ -77,7 +77,7 @@ describe("uniqueness in a Site-scoped Add-on table", () => {
     if (migrationPool) {
       const client = await migrationPool.connect();
       try {
-        await dropPhiServerAddonSchema(client, SCHEMA);
+        await dropPhisAddonSchema(client, SCHEMA);
       } finally {
         client.release();
       }

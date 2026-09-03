@@ -2,11 +2,11 @@ import { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import {
-  applyPhiServerAddonSchema,
-  dropPhiServerAddonSchema,
-  verifyPhiServerAddonSchema,
+  applyPhisAddonSchema,
+  dropPhisAddonSchema,
+  verifyPhisAddonSchema,
 } from "./server-addon-schema.mts";
-import { getPhiServerConfigSync } from "@/lib/config";
+import { getPhisConfigSync } from "@/lib/config";
 import { quotePhiIdentifier } from "@/lib/addons/schema-ddl";
 import {
   addPhiTestGroupMember,
@@ -18,9 +18,9 @@ import {
   requirePhiTestDatabase,
   type PhiTestSite,
 } from "../../test/pg/harness";
-import { buildPhiServerAddonCapabilities } from "@/lib/addons/capabilities";
+import { buildPhisAddonCapabilities } from "@/lib/addons/capabilities";
 import { PhiGroupMembershipFlags } from "@/lib/constants/site-groups";
-import type { PhiServerAddonManifestV1 } from "@/lib/addons/contract";
+import type { PhisAddonManifestV1 } from "@/lib/addons/contract";
 
 /**
  * The two scopes that carry authority rather than a boundary.
@@ -103,7 +103,7 @@ const manifest = {
     ],
   },
   migrationVersion: 1,
-} as unknown as PhiServerAddonManifestV1;
+} as unknown as PhisAddonManifestV1;
 
 let migrationPool: Pool;
 
@@ -121,7 +121,7 @@ describe("owner-scoped and group-scoped Add-on tables", () => {
     foreignGroupId = await createPhiTestGroup(otherSite, "vendors");
     userId = await createPhiTestUser(site);
 
-    const config = getPhiServerConfigSync().database;
+    const config = getPhisConfigSync().database;
     if (!config?.migrationUri || !config.uri) {
       throw new Error("These tests need database.migrationUri and database.uri.");
     }
@@ -129,8 +129,8 @@ describe("owner-scoped and group-scoped Add-on tables", () => {
     migrationPool = new Pool({ connectionString: config.migrationUri });
     const client = await migrationPool.connect();
     try {
-      await dropPhiServerAddonSchema(client, SCHEMA);
-      await applyPhiServerAddonSchema(client, target, servingRole);
+      await dropPhisAddonSchema(client, SCHEMA);
+      await applyPhisAddonSchema(client, target, servingRole);
     } finally {
       client.release();
     }
@@ -140,7 +140,7 @@ describe("owner-scoped and group-scoped Add-on tables", () => {
     if (migrationPool) {
       const client = await migrationPool.connect();
       try {
-        await dropPhiServerAddonSchema(client, SCHEMA);
+        await dropPhisAddonSchema(client, SCHEMA);
       } finally {
         client.release();
       }
@@ -163,11 +163,11 @@ describe("owner-scoped and group-scoped Add-on tables", () => {
   it("passes its own verification, and notices when a binding is gone", async () => {
     const client = await migrationPool.connect();
     try {
-      expect(await verifyPhiServerAddonSchema(client, target)).toEqual([]);
+      expect(await verifyPhisAddonSchema(client, target)).toEqual([]);
       await client.query(
         `ALTER TABLE ${quotePhiIdentifier(SCHEMA)}."listing" DROP CONSTRAINT "listing_owner_user_id_fk"`,
       );
-      expect((await verifyPhiServerAddonSchema(client, target)).join("\n")).toMatch(
+      expect((await verifyPhisAddonSchema(client, target)).join("\n")).toMatch(
         /Owner-scoped table "listing" is not bound/,
       );
       await client.query(
@@ -191,7 +191,7 @@ describe("owner-scoped and group-scoped Add-on tables", () => {
    */
   describe("the authorization capability over an Add-on's own rows", () => {
     async function capabilityFor(actorUserId: number | null) {
-      const capabilities = buildPhiServerAddonCapabilities({
+      const capabilities = buildPhisAddonCapabilities({
         manifest,
         manifestDigest: "pgtest-scopes",
         siteId: site.id,
@@ -218,7 +218,7 @@ describe("owner-scoped and group-scoped Add-on tables", () => {
     }
 
     it("is present only when the manifest asked for it", () => {
-      const without = buildPhiServerAddonCapabilities({
+      const without = buildPhisAddonCapabilities({
         manifest: { ...manifest, requiredCoreCapabilities: [] },
         manifestDigest: "pgtest-scopes-none",
         siteId: site.id,
@@ -281,7 +281,7 @@ describe("owner-scoped and group-scoped Add-on tables", () => {
       const author = await memberAt(PhiGroupMembershipFlags.Author);
       const other = await memberAt(PhiGroupMembershipFlags.Author);
       await listingOwnedBy(other);
-      const data = buildPhiServerAddonCapabilities({
+      const data = buildPhisAddonCapabilities({
         manifest, manifestDigest: "pgtest-data", siteId: site.id, actorUserId: author,
       }).data!;
 
@@ -298,7 +298,7 @@ describe("owner-scoped and group-scoped Add-on tables", () => {
       const intruder = await memberAt(PhiGroupMembershipFlags.Author);
       const theirs = await listingOwnedBy(author);
 
-      const asIntruder = buildPhiServerAddonCapabilities({
+      const asIntruder = buildPhisAddonCapabilities({
         manifest, manifestDigest: "pgtest-data", siteId: site.id, actorUserId: intruder,
       }).data!;
       expect(await asIntruder.update("rename", { id: theirs, title: "hijacked" })).toBeNull();
@@ -311,7 +311,7 @@ describe("owner-scoped and group-scoped Add-on tables", () => {
       );
       expect(rows[0]!.title).toBe("a listing");
 
-      const asOwner = buildPhiServerAddonCapabilities({
+      const asOwner = buildPhisAddonCapabilities({
         manifest, manifestDigest: "pgtest-data", siteId: site.id, actorUserId: author,
       }).data!;
       expect(await asOwner.update("rename", { id: theirs, title: "renamed" }))
@@ -320,7 +320,7 @@ describe("owner-scoped and group-scoped Add-on tables", () => {
 
     it("undoes the whole unit of work when the body throws", async () => {
       const author = await memberAt(PhiGroupMembershipFlags.Author);
-      const data = buildPhiServerAddonCapabilities({
+      const data = buildPhisAddonCapabilities({
         manifest, manifestDigest: "pgtest-data", siteId: site.id, actorUserId: author,
       }).data!;
       await expect(data.transaction(async (tx) => {
@@ -337,7 +337,7 @@ describe("owner-scoped and group-scoped Add-on tables", () => {
 
       // A job has no actor: nobody owns anything, so the ladder has nothing to apply. Without the
       // system flag this is the refusal the previous test asserts.
-      const asJob = buildPhiServerAddonCapabilities({
+      const asJob = buildPhisAddonCapabilities({
         manifest,
         manifestDigest: "pgtest-data",
         siteId: site.id,
@@ -347,7 +347,7 @@ describe("owner-scoped and group-scoped Add-on tables", () => {
       expect(await asJob.update("rename", { id: theirs, title: "swept" }))
         .toMatchObject({ title: "swept" });
 
-      const asNobody = buildPhiServerAddonCapabilities({
+      const asNobody = buildPhisAddonCapabilities({
         manifest, manifestDigest: "pgtest-data", siteId: site.id, actorUserId: null,
       }).data!;
       expect(await asNobody.update("rename", { id: theirs, title: "not swept" })).toBeNull();
@@ -355,7 +355,7 @@ describe("owner-scoped and group-scoped Add-on tables", () => {
 
     it("refuses a query name the manifest never declared", async () => {
       const author = await memberAt(PhiGroupMembershipFlags.Author);
-      const data = buildPhiServerAddonCapabilities({
+      const data = buildPhisAddonCapabilities({
         manifest, manifestDigest: "pgtest-data", siteId: site.id, actorUserId: author,
       }).data!;
       await expect(data.select("invented")).rejects.toThrow(/No declared query named/);
@@ -376,7 +376,7 @@ describe("owner-scoped and group-scoped Add-on tables", () => {
    */
   describe("the data capability over an insert that names a group", () => {
     function dataFor(actorUserId: number | null) {
-      return buildPhiServerAddonCapabilities({
+      return buildPhisAddonCapabilities({
         manifest,
         manifestDigest: "pgtest-scopes-data",
         siteId: site.id,
@@ -428,7 +428,7 @@ describe("owner-scoped and group-scoped Add-on tables", () => {
    */
   describe("the data capability with no actor behind the request", () => {
     function dataFor(input: { unauthenticated?: boolean; systemAuthority?: boolean }) {
-      return buildPhiServerAddonCapabilities({
+      return buildPhisAddonCapabilities({
         manifest,
         manifestDigest: "pgtest-scopes-anon",
         siteId: site.id,

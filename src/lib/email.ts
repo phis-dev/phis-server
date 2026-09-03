@@ -2,7 +2,7 @@ import "server-only";
 
 import nodemailer from "nodemailer";
 
-import { getPhiServerConfigSync } from "@/lib/config";
+import { getPhisConfigSync } from "@/lib/config";
 import { normalizeLocale } from "@/lib/locale";
 
 const DEFAULT_SMTP_HOST = "127.0.0.1";
@@ -69,7 +69,7 @@ function parseSmtpTargets(targets: string, fallbackPort: number): SmtpTarget[] {
 }
 
 function createMailTransport(target: SmtpTarget) {
-  const smtpConfig = getPhiServerConfigSync().email?.smtp;
+  const smtpConfig = getPhisConfigSync().email?.smtp;
   const secure = smtpConfig?.secure === true;
   const ignoreTLS = smtpConfig?.ignoreTls === true;
   const rejectUnauthorized =
@@ -143,7 +143,7 @@ export function buildPasswordResetUrlForRequest(
 }
 
 function buildFromHeader() {
-  const emailConfig = getPhiServerConfigSync().email;
+  const emailConfig = getPhisConfigSync().email;
   const configuredFrom = emailConfig?.from?.trim();
   const senderName = emailConfig?.fromName?.trim() || "Phisys";
   const senderAddress = configuredFrom ?? "no-reply@localhost";
@@ -170,7 +170,7 @@ async function sendEmailOnce(message: EmailMessage, target: SmtpTarget) {
 }
 
 export async function sendEmail(message: EmailMessage): Promise<string | null> {
-  const smtpTargets = getPhiServerConfigSync().email?.smtp?.targets ?? [DEFAULT_SMTP_HOSTS];
+  const smtpTargets = getPhisConfigSync().email?.smtp?.targets ?? [DEFAULT_SMTP_HOSTS];
   const targets = parseSmtpTargets(smtpTargets.join(","), DEFAULT_SMTP_PORT);
 
   if (targets.length === 0) {

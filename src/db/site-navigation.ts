@@ -4,7 +4,7 @@ import type { PoolClient } from "pg";
 
 import { getPool } from "@/lib/db";
 import { PhiCmsRevisionFlags } from "@/lib/constants/phi-cms";
-import { isPhiServerCmsAreaKey, resolvePhiServerCmsAreaMask } from "@/lib/constants/cms-areas";
+import { isPhisCmsAreaKey, resolvePhisCmsAreaMask } from "@/lib/constants/cms-areas";
 import {
   collectSiteCmsReferences,
   PhiCmsReferenceSourceKind,
@@ -58,8 +58,8 @@ export async function projectSiteNavigationOverlayTargets(
   overlay: SiteNavigationOverlay,
 ): Promise<SiteNavigationOverlay> {
   const areaKey = overlay.navKey.slice(0, overlay.navKey.indexOf(":"));
-  if (!isPhiServerCmsAreaKey(areaKey)) return overlay;
-  const scopes = await listSitePageScopes(siteId, resolvePhiServerCmsAreaMask(areaKey));
+  if (!isPhisCmsAreaKey(areaKey)) return overlay;
+  const scopes = await listSitePageScopes(siteId, resolvePhisCmsAreaMask(areaKey));
   const scopesById = new Map(scopes.map((scope) => [scope.id, scope] as const));
   return {
     ...overlay,
@@ -117,7 +117,7 @@ function requireSiteNavigationScopeKey(value: string) {
     separatorIndex >= normalized.length - 1 ||
     normalized.indexOf(":", separatorIndex + 1) !== -1 ||
     normalized.length > 64 ||
-    !isPhiServerCmsAreaKey(normalized.slice(0, separatorIndex)) ||
+    !isPhisCmsAreaKey(normalized.slice(0, separatorIndex)) ||
     !/^[a-z0-9](?:[a-z0-9/_-]*[a-z0-9])?$/.test(localKey)
   ) {
     throw new Error("Navigation key must be formatted as area:key.");
@@ -476,7 +476,7 @@ export async function listSiteNavigationScopes(siteId: number, area?: string | n
     return [];
   }
   const normalizedArea = area?.trim().toLowerCase() ?? "";
-  if (normalizedArea && !isPhiServerCmsAreaKey(normalizedArea)) {
+  if (normalizedArea && !isPhisCmsAreaKey(normalizedArea)) {
     throw new Error("Invalid navigation Area.");
   }
   const { rows } = await getPool().query<{
@@ -721,7 +721,7 @@ export async function saveSiteNavigationDraftRevision(
       sourceScopeId: scope.id,
       sourceRevisionId: revision.id,
       references: collectSiteCmsReferences(overlay, {
-        targetAreaId: resolvePhiServerCmsAreaMask(areaKey),
+        targetAreaId: resolvePhisCmsAreaMask(areaKey),
       }),
     });
     await client.query("COMMIT");

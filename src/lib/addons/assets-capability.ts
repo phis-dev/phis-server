@@ -3,10 +3,10 @@ import "server-only";
 import { randomUUID } from "node:crypto";
 
 import type {
-  PhiServerAddonAssetSlotDescriptor,
-  PhiServerAddonAssetView,
-  PhiServerAddonSchemaDescriptor,
-  PhiServerAssetsCapabilityV1,
+  PhisAddonAssetSlotDescriptor,
+  PhisAddonAssetView,
+  PhisAddonSchemaDescriptor,
+  PhisAssetsCapabilityV1,
 } from "./contract.ts";
 import {
   PhiMediaDeliveryPolicy,
@@ -35,13 +35,13 @@ import {
 import { createPhisMediaStorageServiceForProfile } from "@/lib/media-storage";
 import { phiMediaStorageProfileChecksumAlgorithm } from "@/lib/media-storage-profile-probe";
 import { sniffPhiMediaContentType } from "@/lib/media-content-sniffer";
-import { derivePhiServerAddonSchemaName } from "./schema-name.ts";
+import { derivePhisAddonSchemaName } from "./schema-name.ts";
 import {
-  linkPhiServerAddonAsset,
-  readPhiServerAddonAsset,
-  readPhiServerAddonAssets,
-  unlinkPhiServerAddonAsset,
-  type PhiServerAddonAssetRow,
+  linkPhisAddonAsset,
+  readPhisAddonAsset,
+  readPhisAddonAssets,
+  unlinkPhisAddonAsset,
+  type PhisAddonAssetRow,
 } from "@/db/server-addon-assets.mts";
 import { getPool } from "@/lib/db";
 
@@ -70,9 +70,9 @@ const DELIVERY_POLICIES = {
   internal: PhiMediaDeliveryPolicy.Internal,
 } as const;
 
-export class PhiServerAddonAssetError extends Error {}
+export class PhisAddonAssetError extends Error {}
 
-function view(row: PhiServerAddonAssetRow): PhiServerAddonAssetView {
+function view(row: PhisAddonAssetRow): PhisAddonAssetView {
   // No object key. A key an Add-on holds is a key it could pass to `storage:v1`, and the two spaces are
   // meant to stay apart -- what it gets instead is the Media Asset id, which the delivery route takes.
   return {
@@ -89,33 +89,33 @@ function view(row: PhiServerAddonAssetRow): PhiServerAddonAssetView {
   };
 }
 
-export function buildPhiServerAddonAssetsCapability(input: {
+export function buildPhisAddonAssetsCapability(input: {
   addonId: string;
   siteId: number;
   siteKey: string;
   actorUserId: number | null;
-  schema: PhiServerAddonSchemaDescriptor | null;
+  schema: PhisAddonSchemaDescriptor | null;
   /** The same row authority the data capability writes under: attaching a file changes the row. */
   mayActOnRow: (input: { table: string; id: unknown; intent: "update" }) => Promise<boolean>;
   /** Where Core receives a body for a Provider that cannot take one directly. */
   proxyUploadUrl: (input: { token: string }) => string;
-}): PhiServerAssetsCapabilityV1 {
+}): PhisAssetsCapabilityV1 {
   const { addonId, siteId, siteKey, schema } = input;
-  const schemaName = derivePhiServerAddonSchemaName(addonId);
+  const schemaName = derivePhisAddonSchemaName(addonId);
 
   function requireTable(table: string) {
     const declared = schema?.tables.find((entry) => entry.name === table);
     if (!declared || (declared.assets ?? []).length === 0) {
-      throw new PhiServerAddonAssetError(`"${table}" declares no asset slots.`);
+      throw new PhisAddonAssetError(`"${table}" declares no asset slots.`);
     }
     return { schemaName, table };
   }
 
-  function requireSlot(table: string, slot: string): PhiServerAddonAssetSlotDescriptor {
+  function requireSlot(table: string, slot: string): PhisAddonAssetSlotDescriptor {
     const declared = schema?.tables.find((entry) => entry.name === table);
     const found = (declared?.assets ?? []).find((entry) => entry.name === slot);
     if (!found) {
-      throw new PhiServerAddonAssetError(`"${table}" declares no asset slot named "${slot}".`);
+      throw new PhisAddonAssetError(`"${table}" declares no asset slot named "${slot}".`);
     }
     return found;
   }
@@ -124,7 +124,7 @@ export function buildPhiServerAddonAssetsCapability(input: {
     const space = await ensureAddonMediaSpace(siteId, addonId);
     const profile = await getMediaStorageProfile(siteId, space.defaultStorageProfileId);
     if (!profile) {
-      throw new PhiServerAddonAssetError("This Site has no default Storage Profile.");
+      throw new PhisAddonAssetError("This Site has no default Storage Profile.");
     }
     return {
       space,
@@ -147,7 +147,7 @@ export function buildPhiServerAddonAssetsCapability(input: {
     ) {
       // One answer for "no such reservation" and "not yours", because the two together are what a
       // caller would otherwise use this to tell apart.
-      throw new PhiServerAddonAssetError(`Reservation ${token} is not open.`);
+      throw new PhisAddonAssetError(`Reservation ${token} is not open.`);
     }
     return { session, ref: ref as { ownerId: string; slot: string } };
   }
@@ -158,38 +158,38 @@ export function buildPhiServerAddonAssetsCapability(input: {
       const declared = requireSlot(table, slot);
 
       if (!Number.isInteger(sizeBytes) || sizeBytes <= 0) {
-        throw new PhiServerAddonAssetError("A reservation must state a whole number of bytes above zero.");
+        throw new PhisAddonAssetError("A reservation must state a whole number of bytes above zero.");
       }
       if (sizeBytes > declared.maxBytes) {
-        throw new PhiServerAddonAssetError(
+        throw new PhisAddonAssetError(
           `Slot "${slot}" takes at most ${declared.maxBytes} bytes; this is ${sizeBytes}.`,
         );
       }
       const maxObjectBytes = (await ensureSiteMediaConfig(siteId)).maxObjectBytes;
       if (sizeBytes > maxObjectBytes) {
-        throw new PhiServerAddonAssetError(
+        throw new PhisAddonAssetError(
           `Object is ${sizeBytes} bytes; this Site allows ${maxObjectBytes}.`,
         );
       }
       if (!declared.contentTypes.includes(contentType)) {
-        throw new PhiServerAddonAssetError(
+        throw new PhisAddonAssetError(
           `Slot "${slot}" takes ${declared.contentTypes.join(", ")}; this is "${contentType}".`,
         );
       }
       if (sha256 !== undefined && !/^[0-9a-f]{64}$/.test(sha256)) {
-        throw new PhiServerAddonAssetError("A stated digest must be 64 lowercase hex characters.");
+        throw new PhisAddonAssetError("A stated digest must be 64 lowercase hex characters.");
       }
       if (input.actorUserId == null) {
         // Every upload is somebody's. A file with no actor behind it has nobody to answer for it, and
         // the Space's own records are built around there being one.
-        throw new PhiServerAddonAssetError("An upload needs an authenticated actor.");
+        throw new PhisAddonAssetError("An upload needs an authenticated actor.");
       }
       /*
        * The row's authority, not the slot's. Putting a file on a row changes it, so whoever may change
        * it may put one there -- which keeps this from becoming a second, quieter way past the ladder.
        */
       if (!await input.mayActOnRow({ table, id: ownerId, intent: "update" })) {
-        throw new PhiServerAddonAssetError(
+        throw new PhisAddonAssetError(
           `Row ${String(ownerId)} of "${table}" is not this caller's to change.`,
         );
       }
@@ -204,7 +204,7 @@ export function buildPhiServerAddonAssetsCapability(input: {
        * and then refuse the bookkeeping for five of them, with the bytes already paid for.
        */
       if (!await reserveMediaSpaceQuota({ spaceId: space.id, bytes: sizeBytes })) {
-        throw new PhiServerAddonAssetError(
+        throw new PhisAddonAssetError(
           "This Add-on's store on this Site has no room for a file of that size.",
         );
       }
@@ -282,7 +282,7 @@ export function buildPhiServerAddonAssetsCapability(input: {
          * only safe thing it can do is repeat itself. Answering with an error there would report a
          * finished file as a broken one.
          */
-        const existing = await readPhiServerAddonAssets(getPool(), location, {
+        const existing = await readPhisAddonAssets(getPool(), location, {
           siteId, ownerId: ref.ownerId, slot: ref.slot,
         });
         // Matched on the object, because that is the one thing the session and the finished row share.
@@ -303,7 +303,7 @@ export function buildPhiServerAddonAssetsCapability(input: {
         .completeUpload({ storageKey: session.stagingStorageKey, completion })
         .catch(() => null);
       if (!stored) {
-        throw new PhiServerAddonAssetError(
+        throw new PhisAddonAssetError(
           `Nothing has been delivered for reservation ${token}, so there is no file to finish.`,
         );
       }
@@ -315,7 +315,7 @@ export function buildPhiServerAddonAssetsCapability(input: {
          */
         await service.deleteObject(session.stagingStorageKey).catch(() => {});
         await abortMediaUploadSessionByToken(token);
-        throw new PhiServerAddonAssetError(
+        throw new PhisAddonAssetError(
           `Reservation ${token} was made for ${session.sizeBytes} bytes and ${stored.byteSize} arrived.`,
         );
       }
@@ -332,7 +332,7 @@ export function buildPhiServerAddonAssetsCapability(input: {
       if (sniffed?.evidence === "signature" && sniffed.contentType !== session.contentType) {
         await service.deleteObject(session.stagingStorageKey).catch(() => {});
         await abortMediaUploadSessionByToken(token);
-        throw new PhiServerAddonAssetError(
+        throw new PhisAddonAssetError(
           `Reservation ${token} was made for "${session.contentType}" and the bytes are a ` +
           `"${sniffed.contentType}".`,
         );
@@ -351,7 +351,7 @@ export function buildPhiServerAddonAssetsCapability(input: {
           [space.id, session.sizeBytes],
         );
         if (!committed[0]) {
-          throw new PhiServerAddonAssetError("The Space reservation is no longer available.");
+          throw new PhisAddonAssetError("The Space reservation is no longer available.");
         }
         const asset = await createMediaAsset({
           siteId,
@@ -376,9 +376,9 @@ export function buildPhiServerAddonAssetsCapability(input: {
           deliveryPolicy: DELIVERY_POLICIES[declared.delivery ?? "public"],
         }, client);
         if (!asset) {
-          throw new PhiServerAddonAssetError("The Media Asset could not be created.");
+          throw new PhisAddonAssetError("The Media Asset could not be created.");
         }
-        linked = await linkPhiServerAddonAsset(client, {
+        linked = await linkPhisAddonAsset(client, {
           location, siteId, ownerId: ref.ownerId, slot: ref.slot,
           mediaAssetId: asset.id,
           single: declared.cardinality === "one",
@@ -403,9 +403,9 @@ export function buildPhiServerAddonAssetsCapability(input: {
       if (linked.supersededMediaAssetId != null) {
         await deleteMediaAssetBySite(siteId, space.id, linked.supersededMediaAssetId).catch(() => {});
       }
-      const row = await readPhiServerAddonAsset(getPool(), location, { siteId, id: linked.id });
+      const row = await readPhisAddonAsset(getPool(), location, { siteId, id: linked.id });
       if (!row) {
-        throw new PhiServerAddonAssetError(`Asset ${linked.id} vanished between writing and reading it.`);
+        throw new PhisAddonAssetError(`Asset ${linked.id} vanished between writing and reading it.`);
       }
       return view(row);
     },
@@ -442,7 +442,7 @@ export function buildPhiServerAddonAssetsCapability(input: {
       if (slot !== undefined) {
         requireSlot(table, slot);
       }
-      const rows = await readPhiServerAddonAssets(getPool(), location, { siteId, ownerId, slot });
+      const rows = await readPhisAddonAssets(getPool(), location, { siteId, ownerId, slot });
       return rows.map(view);
     },
 
@@ -450,7 +450,7 @@ export function buildPhiServerAddonAssetsCapability(input: {
       const location = requireTable(table);
       // The link first, the file second: a failure there leaves a file nobody points at, which is
       // findable, rather than a row pointing at nothing, which is not.
-      const mediaAssetId = await unlinkPhiServerAddonAsset(getPool(), location, { siteId, id });
+      const mediaAssetId = await unlinkPhisAddonAsset(getPool(), location, { siteId, id });
       if (mediaAssetId == null) {
         return false;
       }
@@ -458,5 +458,5 @@ export function buildPhiServerAddonAssetsCapability(input: {
       await deleteMediaAssetBySite(siteId, space.id, mediaAssetId).catch(() => {});
       return true;
     },
-  } satisfies PhiServerAssetsCapabilityV1);
+  } satisfies PhisAssetsCapabilityV1);
 }

@@ -1,8 +1,8 @@
 import "server-only";
 
 import type { PhiViewerAddonRoleClaim } from "@/lib/authorization";
-import { getPhiServerAddonInstalledManifest } from "./installed.ts";
-import { isPhiServerAddonEnabledForSite } from "@/db/server-addons";
+import { getPhisAddonInstalledManifest } from "./installed.ts";
+import { isPhisAddonEnabledForSite } from "@/db/server-addons";
 import { readPhiSiteUserAddonRoles } from "@/db/server-addon-roles.mts";
 import { getPool } from "@/lib/db";
 
@@ -27,7 +27,7 @@ export async function readPhiViewerAddonRoleClaims(
     return [];
   }
 
-  const installed = getPhiServerAddonInstalledManifest();
+  const installed = getPhisAddonInstalledManifest();
   const byAddon = new Map<string, string[]>();
   for (const grant of grants) {
     const entry = installed[grant.addonId];
@@ -43,7 +43,7 @@ export async function readPhiViewerAddonRoleClaims(
 
   const claims: PhiViewerAddonRoleClaim[] = [];
   for (const [addonId, roles] of byAddon) {
-    if (!await isPhiServerAddonEnabledForSite(addonId, siteId)) {
+    if (!await isPhisAddonEnabledForSite(addonId, siteId)) {
       continue;
     }
     claims.push({ providerId: addonId as PhiViewerAddonRoleClaim["providerId"], roles });

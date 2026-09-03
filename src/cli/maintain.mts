@@ -1,6 +1,6 @@
 import type { Pool } from "pg";
 
-import { sweepPhiServerAddonAssets } from "./storage-sweep.mts";
+import { sweepPhisAddonAssets } from "./storage-sweep.mts";
 
 /**
  * The one place cleanup lives, and the reason there is only one.
@@ -136,7 +136,7 @@ const orphanedAddonAssets: PhiMaintenanceTask = {
     let cleared = 0;
     const keys: string[] = [];
     for (const space of spaces) {
-      const result = await sweepPhiServerAddonAssets(pool, {
+      const result = await sweepPhisAddonAssets(pool, {
         addonId: space.addon_id, siteId: space.site_id, siteKey: space.site_key,
       });
       cleared += result.orphaned;

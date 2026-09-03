@@ -2,7 +2,7 @@ import "server-only";
 
 import { NextResponse } from "next/server";
 
-import { getPhiServerConfigSync } from "@/lib/config";
+import { getPhisConfigSync } from "@/lib/config";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 import { PHIS_TOKEN_HEADER } from "@/lib/constants/http-headers";
 
@@ -17,11 +17,11 @@ type GuardOptions = {
 export type ApiV1TokenMode = "internal" | "public" | null;
 
 function getPublicToken() {
-  return getPhiServerConfigSync().api?.publicToken?.trim() ?? "";
+  return getPhisConfigSync().api?.publicToken?.trim() ?? "";
 }
 
 function getInternalToken() {
-  return getPhiServerConfigSync().api?.internalToken?.trim() ?? "";
+  return getPhisConfigSync().api?.internalToken?.trim() ?? "";
 }
 
 function readProvidedToken(request: Request) {
@@ -72,7 +72,7 @@ export function guardApiV1(request: Request, options: GuardOptions = {}) {
   }
 
   const path = new URL(request.url).pathname;
-  const config = getPhiServerConfigSync();
+  const config = getPhisConfigSync();
   const shouldRateLimit =
     tokenMode !== "internal" &&
     config.api?.disableRateLimit !== true &&

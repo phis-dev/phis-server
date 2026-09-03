@@ -1,11 +1,11 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import {
-  deletePhiServerSecretWithDb,
-  hasPhiServerSecretWithDb,
-  listPhiServerSecretsWithDb,
-  readPhiServerSecretWithDb,
-  writePhiServerSecretWithDb,
+  deletePhisSecretWithDb,
+  hasPhisSecretWithDb,
+  listPhisSecretsWithDb,
+  readPhisSecretWithDb,
+  writePhisSecretWithDb,
 } from "./server-secrets-store.mts";
 import { buildPhiSecretReference } from "@/lib/secrets/reference";
 import {
@@ -42,10 +42,10 @@ describe("server secret store", () => {
       name: "smtp-password",
     });
 
-    await writePhiServerSecretWithDb(pool, { reference, value: "hunter2", key, siteId: site.id });
+    await writePhisSecretWithDb(pool, { reference, value: "hunter2", key, siteId: site.id });
 
-    expect(await readPhiServerSecretWithDb(pool, reference, key)).toBe("hunter2");
-    expect(await hasPhiServerSecretWithDb(pool, reference)).toBe(true);
+    expect(await readPhisSecretWithDb(pool, reference, key)).toBe("hunter2");
+    expect(await hasPhisSecretWithDb(pool, reference)).toBe(true);
   });
 
   it("never stores the value in a readable column", async () => {
@@ -55,7 +55,7 @@ describe("server secret store", () => {
       siteKey: site.key,
       name: "readable-check",
     });
-    await writePhiServerSecretWithDb(pool, {
+    await writePhisSecretWithDb(pool, {
       reference,
       value: "plaintext-canary",
       key,
@@ -76,12 +76,12 @@ describe("server secret store", () => {
       siteKey: site.key,
       name: "rotating",
     });
-    await writePhiServerSecretWithDb(pool, { reference, value: "first", key, siteId: site.id });
-    const before = await listPhiServerSecretsWithDb(pool, { siteId: site.id });
-    await writePhiServerSecretWithDb(pool, { reference, value: "second", key, siteId: site.id });
+    await writePhisSecretWithDb(pool, { reference, value: "first", key, siteId: site.id });
+    const before = await listPhisSecretsWithDb(pool, { siteId: site.id });
+    await writePhisSecretWithDb(pool, { reference, value: "second", key, siteId: site.id });
 
-    expect(await readPhiServerSecretWithDb(pool, reference, key)).toBe("second");
-    expect((await listPhiServerSecretsWithDb(pool, { siteId: site.id })).length).toBe(before.length);
+    expect(await readPhisSecretWithDb(pool, reference, key)).toBe("second");
+    expect((await listPhisSecretsWithDb(pool, { siteId: site.id })).length).toBe(before.length);
   });
 
   it("refuses to read a secret with the wrong key rather than answering null", async () => {
@@ -91,15 +91,15 @@ describe("server secret store", () => {
       siteKey: site.key,
       name: "wrong-key",
     });
-    await writePhiServerSecretWithDb(pool, { reference, value: "x", key, siteId: site.id });
+    await writePhisSecretWithDb(pool, { reference, value: "x", key, siteId: site.id });
 
-    await expect(readPhiServerSecretWithDb(pool, reference, otherKey)).rejects.toThrow();
+    await expect(readPhisSecretWithDb(pool, reference, otherKey)).rejects.toThrow();
   });
 
   it("answers null for a secret nobody configured", async () => {
     const pool = await requirePhiTestDatabase();
-    expect(await readPhiServerSecretWithDb(pool, "core:pgtest-never-written", key)).toBeNull();
-    expect(await hasPhiServerSecretWithDb(pool, "core:pgtest-never-written")).toBe(false);
+    expect(await readPhisSecretWithDb(pool, "core:pgtest-never-written", key)).toBeNull();
+    expect(await hasPhisSecretWithDb(pool, "core:pgtest-never-written")).toBe(false);
   });
 
   it("derives the owner columns from the reference", async () => {
@@ -109,9 +109,9 @@ describe("server secret store", () => {
       siteKey: site.key,
       name: "owner-columns",
     });
-    await writePhiServerSecretWithDb(pool, { reference, value: "x", key, siteId: site.id });
+    await writePhisSecretWithDb(pool, { reference, value: "x", key, siteId: site.id });
 
-    const stored = (await listPhiServerSecretsWithDb(pool, { siteId: site.id }))
+    const stored = (await listPhisSecretsWithDb(pool, { siteId: site.id }))
       .find((entry) => entry.reference === reference)!;
     expect(stored.addonId).toBeNull();
     expect(stored.siteId).toBe(site.id);
@@ -125,9 +125,9 @@ describe("server secret store", () => {
       siteKey: site.key,
       name: "mismatch",
     });
-    await expect(writePhiServerSecretWithDb(pool, { reference: siteScoped, value: "x", key }))
+    await expect(writePhisSecretWithDb(pool, { reference: siteScoped, value: "x", key }))
       .rejects.toThrow(/names a Site/u);
-    await expect(writePhiServerSecretWithDb(pool, {
+    await expect(writePhisSecretWithDb(pool, {
       reference: "core:pgtest-deployment-wide",
       value: "x",
       key,
@@ -137,7 +137,7 @@ describe("server secret store", () => {
 
   it("refuses an empty value", async () => {
     const pool = await requirePhiTestDatabase();
-    await expect(writePhiServerSecretWithDb(pool, {
+    await expect(writePhisSecretWithDb(pool, {
       reference: "core:pgtest-empty",
       value: "",
       key,
@@ -152,12 +152,12 @@ describe("server secret store", () => {
       siteKey: doomed.key,
       name: "goes-away",
     });
-    await writePhiServerSecretWithDb(pool, { reference, value: "x", key, siteId: doomed.id });
-    expect(await hasPhiServerSecretWithDb(pool, reference)).toBe(true);
+    await writePhisSecretWithDb(pool, { reference, value: "x", key, siteId: doomed.id });
+    expect(await hasPhisSecretWithDb(pool, reference)).toBe(true);
 
     await pool.query(`DELETE FROM phis.sites WHERE id = $1`, [doomed.id]);
 
-    expect(await hasPhiServerSecretWithDb(pool, reference)).toBe(false);
+    expect(await hasPhisSecretWithDb(pool, reference)).toBe(false);
   });
 
   it("deletes on request and reports whether anything went", async () => {
@@ -167,9 +167,9 @@ describe("server secret store", () => {
       siteKey: site.key,
       name: "removable",
     });
-    await writePhiServerSecretWithDb(pool, { reference, value: "x", key, siteId: site.id });
+    await writePhisSecretWithDb(pool, { reference, value: "x", key, siteId: site.id });
 
-    expect(await deletePhiServerSecretWithDb(pool, reference)).toBe(true);
-    expect(await deletePhiServerSecretWithDb(pool, reference)).toBe(false);
+    expect(await deletePhisSecretWithDb(pool, reference)).toBe(true);
+    expect(await deletePhisSecretWithDb(pool, reference)).toBe(false);
   });
 });

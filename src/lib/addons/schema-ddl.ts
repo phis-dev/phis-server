@@ -11,21 +11,21 @@
  */
 
 import {
-  PHI_SERVER_ADDON_CORE_REFERENCES,
-  type PhiServerAddonColumnDescriptor,
-  type PhiServerAddonReferenceColumnDescriptor,
-  type PhiServerAddonSchemaDescriptor,
-  type PhiServerAddonTableConstraintDescriptor,
-  type PhiServerAddonTableDescriptor,
+  PHIS_ADDON_CORE_REFERENCES,
+  type PhisAddonColumnDescriptor,
+  type PhisAddonReferenceColumnDescriptor,
+  type PhisAddonSchemaDescriptor,
+  type PhisAddonTableConstraintDescriptor,
+  type PhisAddonTableDescriptor,
 } from "./contract.ts";
 import {
-  PHI_SERVER_ADDON_GROUP_COLUMN,
-  PHI_SERVER_ADDON_OWNER_COLUMN,
-  PHI_SERVER_ADDON_SITE_COLUMN,
+  PHIS_ADDON_GROUP_COLUMN,
+  PHIS_ADDON_OWNER_COLUMN,
+  PHIS_ADDON_SITE_COLUMN,
 } from "./schema-descriptor.ts";
 import {
-  composePhiServerAddonAssetTableName,
-  composePhiServerAddonObjectName,
+  composePhisAddonAssetTableName,
+  composePhisAddonObjectName,
 } from "./schema-name.ts";
 
 /**
@@ -36,22 +36,22 @@ import {
  * guessed from "the user".
  */
 const CORE_REFERENCE_TARGETS: Record<string, { table: string; column: string; type: string }> = {
-  [PHI_SERVER_ADDON_CORE_REFERENCES.site]: {
+  [PHIS_ADDON_CORE_REFERENCES.site]: {
     table: "phis.sites",
     column: "id",
     type: "SMALLINT",
   },
-  [PHI_SERVER_ADDON_CORE_REFERENCES.user]: {
+  [PHIS_ADDON_CORE_REFERENCES.user]: {
     table: "phis.user_accounts",
     column: "id",
     type: "INTEGER",
   },
-  [PHI_SERVER_ADDON_CORE_REFERENCES.group]: {
+  [PHIS_ADDON_CORE_REFERENCES.group]: {
     table: "phis.site_groups",
     column: "id",
     type: "INTEGER",
   },
-  [PHI_SERVER_ADDON_CORE_REFERENCES.mediaAsset]: {
+  [PHIS_ADDON_CORE_REFERENCES.mediaAsset]: {
     table: "phis.media_assets",
     column: "id",
     type: "INTEGER",
@@ -60,8 +60,8 @@ const CORE_REFERENCE_TARGETS: Record<string, { table: string; column: string; ty
 
 /** The Core references Core binds together with the Site, because their targets live inside one. */
 const SITE_BOUND_CORE_REFERENCES = new Set<string>([
-  PHI_SERVER_ADDON_CORE_REFERENCES.group,
-  PHI_SERVER_ADDON_CORE_REFERENCES.mediaAsset,
+  PHIS_ADDON_CORE_REFERENCES.group,
+  PHIS_ADDON_CORE_REFERENCES.mediaAsset,
 ]);
 
 /**
@@ -120,8 +120,8 @@ function quoteLiteral(value: string | number | boolean) {
 }
 
 function isReferenceColumn(
-  column: PhiServerAddonColumnDescriptor,
-): column is PhiServerAddonReferenceColumnDescriptor {
+  column: PhisAddonColumnDescriptor,
+): column is PhisAddonReferenceColumnDescriptor {
   return "references" in column;
 }
 
@@ -145,9 +145,9 @@ function coreSiteBoundForeignKey(
   const target = CORE_REFERENCE_TARGETS[reference]!;
   return (
     `ALTER TABLE ${qualify(schemaName, tableName)} ADD CONSTRAINT ` +
-    `${quotePhiIdentifier(composePhiServerAddonObjectName(tableName, columnName, "fk"))} ` +
-    `FOREIGN KEY (${quotePhiIdentifier(columnName)}, ${quotePhiIdentifier(PHI_SERVER_ADDON_SITE_COLUMN)}) ` +
-    `REFERENCES ${target.table}(${target.column}, ${PHI_SERVER_ADDON_SITE_COLUMN}) ON DELETE CASCADE`
+    `${quotePhiIdentifier(composePhisAddonObjectName(tableName, columnName, "fk"))} ` +
+    `FOREIGN KEY (${quotePhiIdentifier(columnName)}, ${quotePhiIdentifier(PHIS_ADDON_SITE_COLUMN)}) ` +
+    `REFERENCES ${target.table}(${target.column}, ${PHIS_ADDON_SITE_COLUMN}) ON DELETE CASCADE`
   );
 }
 
@@ -171,16 +171,16 @@ function siteBoundForeignKey(
 ) {
   return (
     `ALTER TABLE ${qualify(schemaName, tableName)} ADD CONSTRAINT ` +
-    `${quotePhiIdentifier(composePhiServerAddonObjectName(tableName, columnName, "fk"))} ` +
-    `FOREIGN KEY (${quotePhiIdentifier(columnName)}, ${quotePhiIdentifier(PHI_SERVER_ADDON_SITE_COLUMN)}) ` +
+    `${quotePhiIdentifier(composePhisAddonObjectName(tableName, columnName, "fk"))} ` +
+    `FOREIGN KEY (${quotePhiIdentifier(columnName)}, ${quotePhiIdentifier(PHIS_ADDON_SITE_COLUMN)}) ` +
     `REFERENCES ${qualify(schemaName, targetTable)}` +
-    `(${quotePhiIdentifier(targetKey)}, ${quotePhiIdentifier(PHI_SERVER_ADDON_SITE_COLUMN)}) ON DELETE CASCADE`
+    `(${quotePhiIdentifier(targetKey)}, ${quotePhiIdentifier(PHIS_ADDON_SITE_COLUMN)}) ON DELETE CASCADE`
   );
 }
 
 function referenceColumnType(
-  column: PhiServerAddonReferenceColumnDescriptor,
-  tablesByName: Map<string, PhiServerAddonTableDescriptor>,
+  column: PhisAddonReferenceColumnDescriptor,
+  tablesByName: Map<string, PhisAddonTableDescriptor>,
 ): string {
   if (typeof column.references === "string") {
     return CORE_REFERENCE_TARGETS[column.references].type;
@@ -207,8 +207,8 @@ function referenceColumnType(
  * value has an unscoped table for it.
  */
 function columnDefinition(
-  column: PhiServerAddonColumnDescriptor,
-  tablesByName: Map<string, PhiServerAddonTableDescriptor>,
+  column: PhisAddonColumnDescriptor,
+  tablesByName: Map<string, PhisAddonTableDescriptor>,
   siteScoped: boolean,
 ) {
   const parts = [quotePhiIdentifier(column.name)];
@@ -229,7 +229,7 @@ function columnDefinition(
   return parts.join(" ");
 }
 
-function constraintExpression(constraint: PhiServerAddonTableConstraintDescriptor) {
+function constraintExpression(constraint: PhisAddonTableConstraintDescriptor) {
   switch (constraint.kind) {
     case "range": {
       const bounds: string[] = [];
@@ -261,7 +261,7 @@ function constraintExpression(constraint: PhiServerAddonTableConstraintDescripto
   }
 }
 
-export type PhiServerAddonSchemaStatement = {
+export type PhisAddonSchemaStatement = {
   /** What this statement is for, so `phis-cli` can show an operator a plan rather than a wall of SQL. */
   summary: string;
   sql: string;
@@ -292,25 +292,25 @@ export type PhiServerAddonSchemaStatement = {
  */
 function assetTableStatements(
   schemaName: string,
-  table: PhiServerAddonTableDescriptor,
-): PhiServerAddonSchemaStatement[] {
+  table: PhisAddonTableDescriptor,
+): PhisAddonSchemaStatement[] {
   const slots = table.assets ?? [];
-  const name = composePhiServerAddonAssetTableName(table.name);
+  const name = composePhisAddonAssetTableName(table.name);
   const key = table.columns.find((column) => column.name === table.primaryKey[0]);
   // The parent's key type, not a guess at it: an `identity` key is `BIGINT` on the side that points at
   // it, and a `uuid` key is a `UUID`. Naming a width here would compile and then refuse every insert.
   const ownerType = key && !isReferenceColumn(key) ? REFERENCED_KEY_TYPE_SQL[key.type]! : "BIGINT";
-  const site = CORE_REFERENCE_TARGETS[PHI_SERVER_ADDON_CORE_REFERENCES.site];
-  const asset = CORE_REFERENCE_TARGETS[PHI_SERVER_ADDON_CORE_REFERENCES.mediaAsset];
+  const site = CORE_REFERENCE_TARGETS[PHIS_ADDON_CORE_REFERENCES.site];
+  const asset = CORE_REFERENCE_TARGETS[PHIS_ADDON_CORE_REFERENCES.mediaAsset];
   const constraint = (part: string, suffix: "idx" | "check" | "fk" | "uq") =>
-    quotePhiIdentifier(composePhiServerAddonObjectName(name, part, suffix));
+    quotePhiIdentifier(composePhisAddonObjectName(name, part, suffix));
 
-  const statements: PhiServerAddonSchemaStatement[] = [{
+  const statements: PhisAddonSchemaStatement[] = [{
     summary: `create table ${name}`,
     sql:
       `CREATE TABLE ${qualify(schemaName, name)} (\n  ` +
       [
-        `${quotePhiIdentifier(PHI_SERVER_ADDON_SITE_COLUMN)} ${site.type} NOT NULL`,
+        `${quotePhiIdentifier(PHIS_ADDON_SITE_COLUMN)} ${site.type} NOT NULL`,
         `"id" BIGINT GENERATED ALWAYS AS IDENTITY`,
         `"owner_id" ${ownerType} NOT NULL`,
         `"slot" VARCHAR(64) NOT NULL`,
@@ -327,15 +327,15 @@ function assetTableStatements(
         // subject away, and nothing about either row would show why.
         `CONSTRAINT ${constraint("media_asset_id", "uq")} UNIQUE ("media_asset_id")`,
         `CONSTRAINT ${constraint("owner_id", "fk")} FOREIGN KEY ("owner_id", ${
-          quotePhiIdentifier(PHI_SERVER_ADDON_SITE_COLUMN)
+          quotePhiIdentifier(PHIS_ADDON_SITE_COLUMN)
         }) REFERENCES ${qualify(schemaName, table.name)}(${
           quotePhiIdentifier(table.primaryKey[0]!)
-        }, ${quotePhiIdentifier(PHI_SERVER_ADDON_SITE_COLUMN)}) ON DELETE CASCADE`,
+        }, ${quotePhiIdentifier(PHIS_ADDON_SITE_COLUMN)}) ON DELETE CASCADE`,
         `CONSTRAINT ${constraint("media_asset_id", "fk")} FOREIGN KEY ("media_asset_id", ${
-          quotePhiIdentifier(PHI_SERVER_ADDON_SITE_COLUMN)
-        }) REFERENCES ${asset.table}(${asset.column}, ${PHI_SERVER_ADDON_SITE_COLUMN}) ON DELETE CASCADE`,
-        `CONSTRAINT ${constraint(PHI_SERVER_ADDON_SITE_COLUMN, "fk")} FOREIGN KEY (${
-          quotePhiIdentifier(PHI_SERVER_ADDON_SITE_COLUMN)
+          quotePhiIdentifier(PHIS_ADDON_SITE_COLUMN)
+        }) REFERENCES ${asset.table}(${asset.column}, ${PHIS_ADDON_SITE_COLUMN}) ON DELETE CASCADE`,
+        `CONSTRAINT ${constraint(PHIS_ADDON_SITE_COLUMN, "fk")} FOREIGN KEY (${
+          quotePhiIdentifier(PHIS_ADDON_SITE_COLUMN)
         }) REFERENCES ${site.table}(${site.column}) ON DELETE CASCADE`,
       ].join(",\n  ") +
       `\n)`,
@@ -346,7 +346,7 @@ function assetTableStatements(
     summary: `index ${name} by owner`,
     sql:
       `CREATE INDEX ${constraint("owner", "idx")} ON ${qualify(schemaName, name)} ` +
-      `(${quotePhiIdentifier(PHI_SERVER_ADDON_SITE_COLUMN)}, "owner_id", "slot")`,
+      `(${quotePhiIdentifier(PHIS_ADDON_SITE_COLUMN)}, "owner_id", "slot")`,
   });
 
   const single = slots.filter((slot) => slot.cardinality === "one");
@@ -362,7 +362,7 @@ function assetTableStatements(
       summary: `hold ${name} to one file per slot`,
       sql:
         `CREATE UNIQUE INDEX ${constraint("one", "idx")} ON ${qualify(schemaName, name)} ` +
-        `(${quotePhiIdentifier(PHI_SERVER_ADDON_SITE_COLUMN)}, "owner_id", "slot") ` +
+        `(${quotePhiIdentifier(PHIS_ADDON_SITE_COLUMN)}, "owner_id", "slot") ` +
         `WHERE "slot" IN (${single.map((slot) => quoteLiteral(slot.name)).join(", ")})`,
     });
   }
@@ -370,12 +370,12 @@ function assetTableStatements(
   return statements;
 }
 
-export function buildPhiServerAddonSchemaStatements(
+export function buildPhisAddonSchemaStatements(
   schemaName: string,
-  descriptor: PhiServerAddonSchemaDescriptor,
-): PhiServerAddonSchemaStatement[] {
+  descriptor: PhisAddonSchemaDescriptor,
+): PhisAddonSchemaStatement[] {
   const tablesByName = new Map(descriptor.tables.map((table) => [table.name, table]));
-  const statements: PhiServerAddonSchemaStatement[] = [];
+  const statements: PhisAddonSchemaStatement[] = [];
   const siteBoundTargets = new Set([
     ...descriptor.tables.flatMap((table) =>
       table.columns
@@ -399,13 +399,13 @@ export function buildPhiServerAddonSchemaStatements(
     // user leaves the row behind rather than taking it along.
     definitions.unshift(...[
       table.siteScoped
-        ? `${quotePhiIdentifier(PHI_SERVER_ADDON_SITE_COLUMN)} ${CORE_REFERENCE_TARGETS[PHI_SERVER_ADDON_CORE_REFERENCES.site].type} NOT NULL`
+        ? `${quotePhiIdentifier(PHIS_ADDON_SITE_COLUMN)} ${CORE_REFERENCE_TARGETS[PHIS_ADDON_CORE_REFERENCES.site].type} NOT NULL`
         : null,
       table.groupScoped
-        ? `${quotePhiIdentifier(PHI_SERVER_ADDON_GROUP_COLUMN)} ${CORE_REFERENCE_TARGETS[PHI_SERVER_ADDON_CORE_REFERENCES.group].type} NOT NULL`
+        ? `${quotePhiIdentifier(PHIS_ADDON_GROUP_COLUMN)} ${CORE_REFERENCE_TARGETS[PHIS_ADDON_CORE_REFERENCES.group].type} NOT NULL`
         : null,
       table.ownerScoped
-        ? `${quotePhiIdentifier(PHI_SERVER_ADDON_OWNER_COLUMN)} ${CORE_REFERENCE_TARGETS[PHI_SERVER_ADDON_CORE_REFERENCES.user].type} NULL`
+        ? `${quotePhiIdentifier(PHIS_ADDON_OWNER_COLUMN)} ${CORE_REFERENCE_TARGETS[PHIS_ADDON_CORE_REFERENCES.user].type} NULL`
         : null,
     ].filter((definition): definition is string => definition !== null));
     definitions.push(
@@ -414,14 +414,14 @@ export function buildPhiServerAddonSchemaStatements(
     if (table.siteScoped) {
       for (const column of table.columns.filter((entry) => entry.unique)) {
         definitions.push(
-          `CONSTRAINT ${quotePhiIdentifier(composePhiServerAddonObjectName(table.name, column.name, "uq"))} ` +
-          `UNIQUE (${quotePhiIdentifier(PHI_SERVER_ADDON_SITE_COLUMN)}, ${quotePhiIdentifier(column.name)})`,
+          `CONSTRAINT ${quotePhiIdentifier(composePhisAddonObjectName(table.name, column.name, "uq"))} ` +
+          `UNIQUE (${quotePhiIdentifier(PHIS_ADDON_SITE_COLUMN)}, ${quotePhiIdentifier(column.name)})`,
         );
       }
     }
     for (const constraint of table.constraints ?? []) {
       definitions.push(
-        `CONSTRAINT ${quotePhiIdentifier(composePhiServerAddonObjectName(table.name, constraint.name, "check"))} ` +
+        `CONSTRAINT ${quotePhiIdentifier(composePhisAddonObjectName(table.name, constraint.name, "check"))} ` +
         `CHECK (${constraintExpression(constraint)})`,
       );
     }
@@ -445,8 +445,8 @@ export function buildPhiServerAddonSchemaStatements(
       summary: `key ${table.name} by Site for references`,
       sql:
         `ALTER TABLE ${qualify(schemaName, table.name)} ADD CONSTRAINT ` +
-        `${quotePhiIdentifier(composePhiServerAddonObjectName(table.name, PHI_SERVER_ADDON_SITE_COLUMN, "uq"))} ` +
-        `UNIQUE (${quotePhiIdentifier(table.primaryKey[0]!)}, ${quotePhiIdentifier(PHI_SERVER_ADDON_SITE_COLUMN)})`,
+        `${quotePhiIdentifier(composePhisAddonObjectName(table.name, PHIS_ADDON_SITE_COLUMN, "uq"))} ` +
+        `UNIQUE (${quotePhiIdentifier(table.primaryKey[0]!)}, ${quotePhiIdentifier(PHIS_ADDON_SITE_COLUMN)})`,
     });
   }
 
@@ -458,52 +458,52 @@ export function buildPhiServerAddonSchemaStatements(
 
   for (const table of descriptor.tables) {
     if (table.siteScoped) {
-      const target = CORE_REFERENCE_TARGETS[PHI_SERVER_ADDON_CORE_REFERENCES.site];
+      const target = CORE_REFERENCE_TARGETS[PHIS_ADDON_CORE_REFERENCES.site];
       statements.push({
         summary: `bind ${table.name} to its Site`,
         sql:
           `ALTER TABLE ${qualify(schemaName, table.name)} ADD CONSTRAINT ` +
-          `${quotePhiIdentifier(composePhiServerAddonObjectName(table.name, PHI_SERVER_ADDON_SITE_COLUMN, "fk"))} ` +
-          `FOREIGN KEY (${quotePhiIdentifier(PHI_SERVER_ADDON_SITE_COLUMN)}) ` +
+          `${quotePhiIdentifier(composePhisAddonObjectName(table.name, PHIS_ADDON_SITE_COLUMN, "fk"))} ` +
+          `FOREIGN KEY (${quotePhiIdentifier(PHIS_ADDON_SITE_COLUMN)}) ` +
           `REFERENCES ${target.table}(${target.column}) ON DELETE CASCADE`,
       });
       statements.push({
         summary: `index ${table.name} by Site`,
         sql:
-          `CREATE INDEX ${quotePhiIdentifier(composePhiServerAddonObjectName(table.name, PHI_SERVER_ADDON_SITE_COLUMN, "idx"))} ` +
-          `ON ${qualify(schemaName, table.name)} (${quotePhiIdentifier(PHI_SERVER_ADDON_SITE_COLUMN)})`,
+          `CREATE INDEX ${quotePhiIdentifier(composePhisAddonObjectName(table.name, PHIS_ADDON_SITE_COLUMN, "idx"))} ` +
+          `ON ${qualify(schemaName, table.name)} (${quotePhiIdentifier(PHIS_ADDON_SITE_COLUMN)})`,
       });
     }
     if (table.groupScoped) {
       statements.push({
         summary: `bind ${table.name} to its group`,
         sql: coreSiteBoundForeignKey(
-          schemaName, table.name, PHI_SERVER_ADDON_GROUP_COLUMN,
-          PHI_SERVER_ADDON_CORE_REFERENCES.group,
+          schemaName, table.name, PHIS_ADDON_GROUP_COLUMN,
+          PHIS_ADDON_CORE_REFERENCES.group,
         ),
       });
       statements.push({
         summary: `index ${table.name} by group`,
         sql:
-          `CREATE INDEX ${quotePhiIdentifier(composePhiServerAddonObjectName(table.name, PHI_SERVER_ADDON_GROUP_COLUMN, "idx"))} ` +
-          `ON ${qualify(schemaName, table.name)} (${quotePhiIdentifier(PHI_SERVER_ADDON_GROUP_COLUMN)})`,
+          `CREATE INDEX ${quotePhiIdentifier(composePhisAddonObjectName(table.name, PHIS_ADDON_GROUP_COLUMN, "idx"))} ` +
+          `ON ${qualify(schemaName, table.name)} (${quotePhiIdentifier(PHIS_ADDON_GROUP_COLUMN)})`,
       });
     }
     if (table.ownerScoped) {
-      const target = CORE_REFERENCE_TARGETS[PHI_SERVER_ADDON_CORE_REFERENCES.user];
+      const target = CORE_REFERENCE_TARGETS[PHIS_ADDON_CORE_REFERENCES.user];
       statements.push({
         summary: `bind ${table.name} to its owner`,
         sql:
           `ALTER TABLE ${qualify(schemaName, table.name)} ADD CONSTRAINT ` +
-          `${quotePhiIdentifier(composePhiServerAddonObjectName(table.name, PHI_SERVER_ADDON_OWNER_COLUMN, "fk"))} ` +
-          `FOREIGN KEY (${quotePhiIdentifier(PHI_SERVER_ADDON_OWNER_COLUMN)}) ` +
+          `${quotePhiIdentifier(composePhisAddonObjectName(table.name, PHIS_ADDON_OWNER_COLUMN, "fk"))} ` +
+          `FOREIGN KEY (${quotePhiIdentifier(PHIS_ADDON_OWNER_COLUMN)}) ` +
           `REFERENCES ${target.table}(${target.column}) ON DELETE SET NULL`,
       });
       statements.push({
         summary: `index ${table.name} by owner`,
         sql:
-          `CREATE INDEX ${quotePhiIdentifier(composePhiServerAddonObjectName(table.name, PHI_SERVER_ADDON_OWNER_COLUMN, "idx"))} ` +
-          `ON ${qualify(schemaName, table.name)} (${quotePhiIdentifier(PHI_SERVER_ADDON_OWNER_COLUMN)})`,
+          `CREATE INDEX ${quotePhiIdentifier(composePhisAddonObjectName(table.name, PHIS_ADDON_OWNER_COLUMN, "idx"))} ` +
+          `ON ${qualify(schemaName, table.name)} (${quotePhiIdentifier(PHIS_ADDON_OWNER_COLUMN)})`,
       });
     }
     for (const column of table.columns) {
@@ -544,7 +544,7 @@ export function buildPhiServerAddonSchemaStatements(
         }`,
         sql:
           `ALTER TABLE ${qualify(schemaName, table.name)} ADD CONSTRAINT ` +
-          `${quotePhiIdentifier(composePhiServerAddonObjectName(table.name, column.name, "fk"))} ` +
+          `${quotePhiIdentifier(composePhisAddonObjectName(table.name, column.name, "fk"))} ` +
           `FOREIGN KEY (${quotePhiIdentifier(column.name)}) ` +
           `REFERENCES ${target.table}(${quotePhiIdentifier(target.column)}) ` +
           `ON DELETE ${column.onDelete === "cascade" ? "CASCADE" : "SET NULL"}`,
@@ -559,7 +559,7 @@ export function buildPhiServerAddonSchemaStatements(
       // left as the Add-on wrote it -- the Site filter Core puts into every query is what makes it
       // useful, and prepending the column there would be a guess about which order helps.
       const name = quotePhiIdentifier(
-        composePhiServerAddonObjectName(table.name, index.name, "idx"),
+        composePhisAddonObjectName(table.name, index.name, "idx"),
       );
       if (index.kind === "text") {
         /*
@@ -580,7 +580,7 @@ export function buildPhiServerAddonSchemaStatements(
       }
       const columns =
         index.unique && table.siteScoped
-          ? [PHI_SERVER_ADDON_SITE_COLUMN, ...index.columns]
+          ? [PHIS_ADDON_SITE_COLUMN, ...index.columns]
           : index.columns;
       statements.push({
         summary: `index ${table.name} by ${columns.join(", ")}`,

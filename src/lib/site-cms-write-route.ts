@@ -20,7 +20,7 @@ import {
   SiteCmsDraftConflictError,
   type SitePageScopeAddress,
 } from "@/db/site-pages";
-import { resolvePhiServerCmsAreaMask } from "@/lib/constants/cms-areas";
+import { resolvePhisCmsAreaMask } from "@/lib/constants/cms-areas";
 import { PhiCmsAuditEvent } from "@/lib/constants/phi-cms";
 import {
   type CmsAreaModulesWriteInput,
@@ -62,7 +62,7 @@ function resolveRequestLocale(request: Request) {
 }
 
 function resolveAreaMask(area: unknown) {
-  return resolvePhiServerCmsAreaMask(typeof area === "string" ? area.trim().toLowerCase() : "");
+  return resolvePhisCmsAreaMask(typeof area === "string" ? area.trim().toLowerCase() : "");
 }
 
 function normalizeCmsPath(value: unknown) {

@@ -3,7 +3,7 @@ import "server-only";
 import { randomBytes } from "node:crypto";
 
 import { getPool } from "@/lib/db";
-import { getPhiServerConfigSync } from "@/lib/config";
+import { getPhisConfigSync } from "@/lib/config";
 import { resolvePhiSiteSourceLocale } from "@/lib/config-files";
 import { PHI_CANONICAL_SOURCE_LOCALE, resolvePhiLocaleCapability } from "@/lib/locale";
 import { SITE_FLAG_ACTIVE } from "@/lib/site-flags";
@@ -77,7 +77,7 @@ function mapSiteRow(
     id: row.id,
     key: row.key,
     name: row.name,
-    sourceLocale: resolvePhiSiteSourceLocale(getPhiServerConfigSync(), row.key),
+    sourceLocale: resolvePhiSiteSourceLocale(getPhisConfigSync(), row.key),
     defaultLocale: row.default_locale,
     flags: row.flags,
   };

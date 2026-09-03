@@ -1390,7 +1390,7 @@ The declaration form carries what a real query needs and refuses what does not s
   those keys. Core writes `= ANY($n::TYPE[])` rather than expanding the values into the text, so the
   statement has one shape however many arrive -- an expanded list would be a statement assembled at
   request time, with a plan and a cache entry per length. A list is capped at
-  `PHI_SERVER_ADDON_QUERY_MAX_LIST` and refused above it rather than truncated: a shortened list answers
+  `PHIS_ADDON_QUERY_MAX_LIST` and refused above it rather than truncated: a shortened list answers
   about some of the rows and reports it as an answer about all of them.
 - `aggregate` counts and summarises instead of returning rows: `count`, `sum`, `avg`, `min`, `max`.
   Without it an Add-on reads every row to count them -- the unbounded read paging exists to prevent --

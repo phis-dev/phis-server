@@ -17,7 +17,7 @@ import {
   readPhiRuntimeConfigSync,
   writePhiRuntimeConfigSync,
 } from "@/lib/config-files";
-import { resetPhiServerConfigCache } from "@/lib/config";
+import { resetPhisConfigCache } from "@/lib/config";
 import { hashPassword } from "@/lib/password-core";
 
 function isValidBootstrapPassword(password: string) {
@@ -483,7 +483,7 @@ export async function completeBootstrapSetup(
       enabled: false,
     },
   });
-  resetPhiServerConfigCache();
+  resetPhisConfigCache();
 
   redirect("/operator");
 }

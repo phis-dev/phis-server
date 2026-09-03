@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  decodePhiServerAddonCursor,
-  encodePhiServerAddonCursor,
-  PhiServerAddonCursorError,
+  decodePhisAddonCursor,
+  encodePhisAddonCursor,
+  PhisAddonCursorError,
 } from "./query-cursor.ts";
-import type { PhiServerAddonQueryOrdering } from "./contract.ts";
+import type { PhisAddonQueryOrdering } from "./contract.ts";
 
 /**
  * What a cursor has to survive, and what it has to refuse.
@@ -15,7 +15,7 @@ import type { PhiServerAddonQueryOrdering } from "./contract.ts";
  * some rows and repeating others. Nothing downstream would notice, which is why it is caught here.
  */
 
-const ORDERING: PhiServerAddonQueryOrdering[] = [
+const ORDERING: PhisAddonQueryOrdering[] = [
   { column: "updated_at", direction: "desc" },
   { column: "id", direction: "asc" },
 ];
@@ -23,11 +23,11 @@ const ORDERING: PhiServerAddonQueryOrdering[] = [
 describe("a paging cursor", () => {
   it("carries the ordering values back in the order they are compared", () => {
     // As the database rendered them: microseconds and all, which a JavaScript Date would have lost.
-    const cursor = encodePhiServerAddonCursor("listing", ORDERING, [
+    const cursor = encodePhisAddonCursor("listing", ORDERING, [
       "2026-08-30 10:00:00.384639+00",
       "42",
     ]);
-    expect(decodePhiServerAddonCursor("listing", ORDERING, cursor)).toEqual([
+    expect(decodePhisAddonCursor("listing", ORDERING, cursor)).toEqual([
       "2026-08-30 10:00:00.384639+00",
       "42",
     ]);
@@ -35,34 +35,34 @@ describe("a paging cursor", () => {
 
   it("keeps a large key as text, because a bigint does not survive a JavaScript number", () => {
     const big = "9007199254740993";
-    const cursor = encodePhiServerAddonCursor("listing", [{ column: "id", direction: "asc" }], [big]);
-    expect(decodePhiServerAddonCursor("listing", [{ column: "id", direction: "asc" }], cursor))
+    const cursor = encodePhisAddonCursor("listing", [{ column: "id", direction: "asc" }], [big]);
+    expect(decodePhisAddonCursor("listing", [{ column: "id", direction: "asc" }], cursor))
       .toEqual([big]);
   });
 
   it("refuses a cursor made for another query", () => {
-    const cursor = encodePhiServerAddonCursor("listing", ORDERING, ["x", "1"]);
-    expect(() => decodePhiServerAddonCursor("other", ORDERING, cursor))
-      .toThrow(PhiServerAddonCursorError);
+    const cursor = encodePhisAddonCursor("listing", ORDERING, ["x", "1"]);
+    expect(() => decodePhisAddonCursor("other", ORDERING, cursor))
+      .toThrow(PhisAddonCursorError);
   });
 
   it("refuses a cursor made for another ordering of the same query", () => {
-    const cursor = encodePhiServerAddonCursor("listing", ORDERING, ["x", "1"]);
-    const reversed: PhiServerAddonQueryOrdering[] = [
+    const cursor = encodePhisAddonCursor("listing", ORDERING, ["x", "1"]);
+    const reversed: PhisAddonQueryOrdering[] = [
       { column: "updated_at", direction: "asc" },
       { column: "id", direction: "asc" },
     ];
-    expect(() => decodePhiServerAddonCursor("listing", reversed, cursor))
+    expect(() => decodePhisAddonCursor("listing", reversed, cursor))
       .toThrow(/different ordering/);
   });
 
   it("refuses something that is not a cursor at all", () => {
-    expect(() => decodePhiServerAddonCursor("listing", ORDERING, "not-a-cursor"))
-      .toThrow(PhiServerAddonCursorError);
+    expect(() => decodePhisAddonCursor("listing", ORDERING, "not-a-cursor"))
+      .toThrow(PhisAddonCursorError);
   });
 
   it("refuses to make one from a row whose ordering value is null", () => {
-    expect(() => encodePhiServerAddonCursor("listing", ORDERING, [null, "1"]))
+    expect(() => encodePhisAddonCursor("listing", ORDERING, [null, "1"]))
       .toThrow(/must be NOT NULL/);
   });
 });

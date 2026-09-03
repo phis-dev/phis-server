@@ -1,20 +1,20 @@
 import "server-only";
 
 import {
-  PHI_SERVER_CORE_CAPABILITIES,
-  PHI_SERVER_SITE_ACCESS,
-  type PhiServerAddonCapabilities,
-  type PhiServerAuthorizationCapabilityV1,
-  type PhiServerGroupLevel,
-  type PhiServerRowIntent,
-  type PhiServerSiteAccess,
+  PHIS_CORE_CAPABILITIES,
+  PHIS_SITE_ACCESS,
+  type PhisAddonCapabilities,
+  type PhisAuthorizationCapabilityV1,
+  type PhisGroupLevel,
+  type PhisRowIntent,
+  type PhisSiteAccess,
 } from "./contract.ts";
 import {
-  PHI_SERVER_ADDON_GROUP_COLUMN,
-  PHI_SERVER_ADDON_OWNER_COLUMN,
-  PHI_SERVER_ADDON_SITE_COLUMN,
+  PHIS_ADDON_GROUP_COLUMN,
+  PHIS_ADDON_OWNER_COLUMN,
+  PHIS_ADDON_SITE_COLUMN,
 } from "./schema-descriptor.ts";
-import { derivePhiServerAddonSchemaName } from "./schema-name.ts";
+import { derivePhisAddonSchemaName } from "./schema-name.ts";
 import { quotePhiIdentifier } from "./schema-ddl.ts";
 import { readEffectiveGroupMembershipFlags } from "@/db/site-groups";
 import { PhiGroupMembershipFlags } from "@/lib/constants/site-groups";
@@ -31,16 +31,16 @@ import {
   type PhiViewerAccessPolicy,
 } from "@/lib/authorization";
 import { getPool } from "@/lib/db";
-import { buildPhiServerAddonDataCapability } from "./data-capability.ts";
-import { buildPhiServerAddonRolesCapability } from "./roles-capability.ts";
-import { buildPhiServerAddonGroupsCapability } from "./groups-capability.ts";
-import { buildPhiServerAddonSecretsCapability } from "./secrets-capability.ts";
-import { buildPhiServerAddonSettingsCapability } from "./settings-capability.ts";
-import { buildPhiServerAddonStorageCapability } from "./storage-capability.ts";
-import { buildPhiServerAddonAssetsCapability } from "./assets-capability.ts";
+import { buildPhisAddonDataCapability } from "./data-capability.ts";
+import { buildPhisAddonRolesCapability } from "./roles-capability.ts";
+import { buildPhisAddonGroupsCapability } from "./groups-capability.ts";
+import { buildPhisAddonSecretsCapability } from "./secrets-capability.ts";
+import { buildPhisAddonSettingsCapability } from "./settings-capability.ts";
+import { buildPhisAddonStorageCapability } from "./storage-capability.ts";
+import { buildPhisAddonAssetsCapability } from "./assets-capability.ts";
 import { ensureSiteMediaConfig } from "@/db/media-spaces";
 import { getEffectiveUserSiteAuthorization } from "@/db/user-site-memberships";
-import type { PhiServerAddonManifestV1 } from "./contract.ts";
+import type { PhisAddonManifestV1 } from "./contract.ts";
 
 /**
  * Building the capabilities one request gets.
@@ -55,26 +55,26 @@ import type { PhiServerAddonManifestV1 } from "./contract.ts";
  * asked for.
  */
 
-const SITE_ACCESS_POLICIES: Readonly<Record<PhiServerSiteAccess, PhiViewerAccessPolicy>> = {
-  [PHI_SERVER_SITE_ACCESS.siteAdmin]: PHI_ACCESS_SITE_ADMIN,
-  [PHI_SERVER_SITE_ACCESS.developerTools]: PHI_ACCESS_DEVELOPER_TOOLS,
-  [PHI_SERVER_SITE_ACCESS.structureAuthoring]: PHI_ACCESS_STRUCTURE_AUTHORING,
-  [PHI_SERVER_SITE_ACCESS.contentEditing]: PHI_ACCESS_CONTENT_EDITING,
-  [PHI_SERVER_SITE_ACCESS.publishing]: PHI_ACCESS_PUBLISHING,
-  [PHI_SERVER_SITE_ACCESS.siteMedia]: PHI_ACCESS_SITE_MEDIA,
-  [PHI_SERVER_SITE_ACCESS.support]: PHI_ACCESS_SUPPORT,
-  [PHI_SERVER_SITE_ACCESS.accounting]: PHI_ACCESS_ACCOUNTING,
+const SITE_ACCESS_POLICIES: Readonly<Record<PhisSiteAccess, PhiViewerAccessPolicy>> = {
+  [PHIS_SITE_ACCESS.siteAdmin]: PHI_ACCESS_SITE_ADMIN,
+  [PHIS_SITE_ACCESS.developerTools]: PHI_ACCESS_DEVELOPER_TOOLS,
+  [PHIS_SITE_ACCESS.structureAuthoring]: PHI_ACCESS_STRUCTURE_AUTHORING,
+  [PHIS_SITE_ACCESS.contentEditing]: PHI_ACCESS_CONTENT_EDITING,
+  [PHIS_SITE_ACCESS.publishing]: PHI_ACCESS_PUBLISHING,
+  [PHIS_SITE_ACCESS.siteMedia]: PHI_ACCESS_SITE_MEDIA,
+  [PHIS_SITE_ACCESS.support]: PHI_ACCESS_SUPPORT,
+  [PHIS_SITE_ACCESS.accounting]: PHI_ACCESS_ACCOUNTING,
 };
 
 /** Highest first, so the first match is the level. */
-const GROUP_LEVELS: ReadonlyArray<readonly [PhiServerGroupLevel, number]> = [
+const GROUP_LEVELS: ReadonlyArray<readonly [PhisGroupLevel, number]> = [
   ["manager", PhiGroupMembershipFlags.Manager],
   ["editor", PhiGroupMembershipFlags.Editor],
   ["author", PhiGroupMembershipFlags.Author],
   ["member", PhiGroupMembershipFlags.Member],
 ];
 
-function resolveGroupLevel(flags: number): PhiServerGroupLevel | null {
+function resolveGroupLevel(flags: number): PhisGroupLevel | null {
   return GROUP_LEVELS.find(([, value]) => (flags & value) === value)?.[0] ?? null;
 }
 
@@ -94,7 +94,7 @@ type RowScope = {
  * looks like one of its tables.
  */
 async function readRowScope(
-  manifest: PhiServerAddonManifestV1,
+  manifest: PhisAddonManifestV1,
   siteId: number,
   table: string,
   id: number | string,
@@ -114,13 +114,13 @@ async function readRowScope(
     return null;
   }
 
-  const schemaName = derivePhiServerAddonSchemaName(manifest.addonId);
+  const schemaName = derivePhisAddonSchemaName(manifest.addonId);
   const columns = [
-    ownerScoped ? quotePhiIdentifier(PHI_SERVER_ADDON_OWNER_COLUMN) : `NULL AS ${quotePhiIdentifier(PHI_SERVER_ADDON_OWNER_COLUMN)}`,
-    groupScoped ? quotePhiIdentifier(PHI_SERVER_ADDON_GROUP_COLUMN) : `NULL AS ${quotePhiIdentifier(PHI_SERVER_ADDON_GROUP_COLUMN)}`,
+    ownerScoped ? quotePhiIdentifier(PHIS_ADDON_OWNER_COLUMN) : `NULL AS ${quotePhiIdentifier(PHIS_ADDON_OWNER_COLUMN)}`,
+    groupScoped ? quotePhiIdentifier(PHIS_ADDON_GROUP_COLUMN) : `NULL AS ${quotePhiIdentifier(PHIS_ADDON_GROUP_COLUMN)}`,
   ].join(", ");
   const siteFilter = descriptor.siteScoped
-    ? ` AND ${quotePhiIdentifier(PHI_SERVER_ADDON_SITE_COLUMN)} = $2`
+    ? ` AND ${quotePhiIdentifier(PHIS_ADDON_SITE_COLUMN)} = $2`
     : "";
   const { rows } = await getPool().query<{ owner_user_id: number | null; group_id: number | null }>(
     `SELECT ${columns}
@@ -146,7 +146,7 @@ async function mayActOnScopedRow(input: {
   siteId: number;
   actorUserId: number;
   scope: RowScope;
-  intent: PhiServerRowIntent;
+  intent: PhisRowIntent;
 }) {
   const { scope } = input;
   if (!scope.ownerScoped && !scope.groupScoped) {
@@ -200,10 +200,10 @@ async function actorStandsInGroup(siteId: number, groupId: unknown, actorUserId:
 }
 
 function buildAuthorizationCapability(input: {
-  manifest: PhiServerAddonManifestV1;
+  manifest: PhisAddonManifestV1;
   siteId: number;
   actorUserId: number | null;
-}): PhiServerAuthorizationCapabilityV1 {
+}): PhisAuthorizationCapabilityV1 {
   const { manifest, siteId, actorUserId } = input;
   return Object.freeze({
     async mayActOnRow({ table, id, intent }) {
@@ -235,7 +235,7 @@ function buildAuthorizationCapability(input: {
         groupClaims: role.groupClaims,
       }, policy);
     },
-  } satisfies PhiServerAuthorizationCapabilityV1);
+  } satisfies PhisAuthorizationCapabilityV1);
 }
 
 /**
@@ -245,8 +245,8 @@ function buildAuthorizationCapability(input: {
  * question about a user answers negatively rather than being absent -- an Add-on then handles one
  * shape instead of two, and "no" is the safe answer in the case where nobody is acting.
  */
-export function buildPhiServerAddonCapabilities(input: {
-  manifest: PhiServerAddonManifestV1;
+export function buildPhisAddonCapabilities(input: {
+  manifest: PhisAddonManifestV1;
   manifestDigest: string;
   siteId: number | null;
   siteKey?: string | null;
@@ -263,8 +263,8 @@ export function buildPhiServerAddonCapabilities(input: {
    * while being anything but anonymous.
    */
   unauthenticated?: boolean;
-}): PhiServerAddonCapabilities {
-  const capabilities: PhiServerAddonCapabilities = {};
+}): PhisAddonCapabilities {
+  const capabilities: PhisAddonCapabilities = {};
   if (input.siteId == null) {
     // Every capability here is Site-scoped. Without a Site there is nothing to bind them to.
     return Object.freeze(capabilities);
@@ -276,7 +276,7 @@ export function buildPhiServerAddonCapabilities(input: {
     siteId,
     actorUserId: input.actorUserId,
   });
-  if (required.includes(PHI_SERVER_CORE_CAPABILITIES.authorization)) {
+  if (required.includes(PHIS_CORE_CAPABILITIES.authorization)) {
     capabilities.authorization = authorization;
   }
   /*
@@ -284,19 +284,19 @@ export function buildPhiServerAddonCapabilities(input: {
    * that states `requiresRole` is guarded by Core, and an Add-on must not be able to drop the guard by
    * leaving a capability out of its manifest.
    */
-  const roles = buildPhiServerAddonRolesCapability({
+  const roles = buildPhisAddonRolesCapability({
     addonId: input.manifest.addonId,
     siteId,
     actorUserId: input.actorUserId,
     declared: input.manifest.roles ?? [],
   });
-  if (required.includes(PHI_SERVER_CORE_CAPABILITIES.data)) {
+  if (required.includes(PHIS_CORE_CAPABILITIES.data)) {
     /*
      * The data capability enforces row authority itself, so it gets the evaluator whether or not the
      * Add-on declared `authorization:v1`. Declaring `data:v1` is not a way to write past the ladder --
      * it is the way to write under it.
      */
-    capabilities.data = buildPhiServerAddonDataCapability({
+    capabilities.data = buildPhisAddonDataCapability({
       manifest: input.manifest,
       manifestDigest: input.manifestDigest,
       siteId,
@@ -314,18 +314,18 @@ export function buildPhiServerAddonCapabilities(input: {
       unauthenticated: input.unauthenticated === true && input.systemAuthority !== true,
     });
   }
-  if (required.includes(PHI_SERVER_CORE_CAPABILITIES.settings)) {
-    capabilities.settings = buildPhiServerAddonSettingsCapability({
+  if (required.includes(PHIS_CORE_CAPABILITIES.settings)) {
+    capabilities.settings = buildPhisAddonSettingsCapability({
       addonId: input.manifest.addonId,
       siteId,
       declared: input.manifest.settings ?? [],
     });
   }
-  if (required.includes(PHI_SERVER_CORE_CAPABILITIES.roles)) {
+  if (required.includes(PHIS_CORE_CAPABILITIES.roles)) {
     capabilities.roles = roles;
   }
-  if (required.includes(PHI_SERVER_CORE_CAPABILITIES.groups)) {
-    capabilities.groups = buildPhiServerAddonGroupsCapability({
+  if (required.includes(PHIS_CORE_CAPABILITIES.groups)) {
+    capabilities.groups = buildPhisAddonGroupsCapability({
       addonId: input.manifest.addonId,
       siteId,
       actorUserId: input.actorUserId,
@@ -336,21 +336,21 @@ export function buildPhiServerAddonCapabilities(input: {
   // cannot name its Site is not a narrower capability, it is a broken one.
   if (input.siteKey) {
     const siteKey = input.siteKey;
-    if (required.includes(PHI_SERVER_CORE_CAPABILITIES.storage)) {
-      capabilities.storage = buildPhiServerAddonStorageCapability({
+    if (required.includes(PHIS_CORE_CAPABILITIES.storage)) {
+      capabilities.storage = buildPhisAddonStorageCapability({
         addonId: input.manifest.addonId,
         siteId,
         siteKey,
         readMaxObjectBytes: async () => (await ensureSiteMediaConfig(siteId)).maxObjectBytes,
       });
     }
-    if (required.includes(PHI_SERVER_CORE_CAPABILITIES.assets)) {
+    if (required.includes(PHIS_CORE_CAPABILITIES.assets)) {
       /*
        * The row authority is the same one the data capability writes under, for the same reason it is
        * given to that one whether or not `authorization:v1` was declared: putting a file on a row changes
        * it, and a second way to change a row must not be a quieter way past the ladder.
        */
-      capabilities.assets = buildPhiServerAddonAssetsCapability({
+      capabilities.assets = buildPhisAddonAssetsCapability({
         addonId: input.manifest.addonId,
         siteId,
         siteKey,
@@ -365,8 +365,8 @@ export function buildPhiServerAddonCapabilities(input: {
         proxyUploadUrl: ({ token }) => `/api/site/media/uploads/${token}`,
       });
     }
-    if (required.includes(PHI_SERVER_CORE_CAPABILITIES.secrets)) {
-      capabilities.secrets = buildPhiServerAddonSecretsCapability({
+    if (required.includes(PHIS_CORE_CAPABILITIES.secrets)) {
+      capabilities.secrets = buildPhisAddonSecretsCapability({
         addonId: input.manifest.addonId,
         siteKey,
       });

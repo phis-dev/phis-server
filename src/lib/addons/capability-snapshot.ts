@@ -3,17 +3,17 @@ import "server-only";
 import { createHash } from "node:crypto";
 
 import {
-  getPhiServerAddonRegistryRecord,
-  getPhiServerAddonSiteState,
+  getPhisAddonRegistryRecord,
+  getPhisAddonSiteState,
 } from "@/db/server-addons";
-import { getPhiServerAddonInstalledManifest } from "@/lib/addons/installed";
-import { PHI_SERVER_CORE_CAPABILITIES } from "@/lib/addons/core-capabilities";
+import { getPhisAddonInstalledManifest } from "@/lib/addons/installed";
+import { PHIS_CORE_CAPABILITIES } from "@/lib/addons/core-capabilities";
 
-export type { PhiServerCapabilityState } from "@phis/contracts/server-capabilities";
-import type { PhiServerCapabilityState } from "@phis/contracts/server-capabilities";
+export type { PhiCapabilityState } from "@phis/contracts/server-capabilities";
+import type { PhiCapabilityState } from "@phis/contracts/server-capabilities";
 
 function getBuildDigest() {
-  const buildState = Object.entries(getPhiServerAddonInstalledManifest())
+  const buildState = Object.entries(getPhisAddonInstalledManifest())
     .sort(([left], [right]) => left.localeCompare(right))
     .map(([addonId, entry]) => ({
       addonId,
@@ -26,10 +26,10 @@ function getBuildDigest() {
     .digest("hex");
 }
 
-export async function buildPhiServerCapabilitySnapshot(siteId: number) {
+export async function buildPhisCapabilitySnapshot(siteId: number) {
   const providers: Array<{
     providerId: string;
-    state: PhiServerCapabilityState;
+    state: PhiCapabilityState;
     diagnosticCode: string | null;
     capabilities: Array<{
       id: string;
@@ -40,21 +40,21 @@ export async function buildPhiServerCapabilitySnapshot(siteId: number) {
       providerId: "@phis/server/core",
       state: "available",
       diagnosticCode: null,
-      capabilities: [...PHI_SERVER_CORE_CAPABILITIES],
+      capabilities: [...PHIS_CORE_CAPABILITIES],
     },
   ];
 
   for (const [addonId, entry] of Object.entries(
-    getPhiServerAddonInstalledManifest(),
+    getPhisAddonInstalledManifest(),
   ).sort(([left], [right]) => left.localeCompare(right))) {
-    let state: PhiServerCapabilityState = "available";
+    let state: PhiCapabilityState = "available";
     let diagnosticCode: string | null = null;
 
     if (!entry.enabled) {
       state = "disabled";
       diagnosticCode = "build_disabled";
     } else {
-      const registry = await getPhiServerAddonRegistryRecord(addonId);
+      const registry = await getPhisAddonRegistryRecord(addonId);
       if (!registry) {
         state = "unavailable";
         diagnosticCode = "registry_missing";
@@ -71,7 +71,7 @@ export async function buildPhiServerCapabilitySnapshot(siteId: number) {
         state = "incompatible";
         diagnosticCode = "deployment_mismatch";
       } else {
-        const siteState = await getPhiServerAddonSiteState(addonId, siteId);
+        const siteState = await getPhisAddonSiteState(addonId, siteId);
         if (!siteState?.requestedEnabled) {
           state = "disabled";
           diagnosticCode = "site_disabled";

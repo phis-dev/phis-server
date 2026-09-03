@@ -1,7 +1,7 @@
 import "server-only";
 
 import { getSiteConfigBySiteId } from "@/db/site-config";
-import { getPhiServerConfigSync } from "@/lib/config";
+import { getPhisConfigSync } from "@/lib/config";
 
 export async function getFormGuardSecret(siteId: number) {
   const siteConfig = await getSiteConfigBySiteId(siteId);
@@ -13,7 +13,7 @@ export async function getFormGuardSecret(siteId: number) {
 
 export function getFormTimingWindow(form: string) {
   void form;
-  const config = getPhiServerConfigSync();
+  const config = getPhisConfigSync();
   const timing = config.forms?.timeouts;
   const minAgeMs = Number(timing?.minSubmitMs ?? 2000);
   const maxAgeMs = Number(timing?.maxSubmitMs ?? 7_200_000);

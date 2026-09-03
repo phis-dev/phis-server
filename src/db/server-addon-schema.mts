@@ -1,14 +1,14 @@
 import type { PoolClient } from "pg";
 
-import type { PhiServerAddonSchemaDescriptor } from "../lib/addons/contract.ts";
+import type { PhisAddonSchemaDescriptor } from "../lib/addons/contract.ts";
 import {
-  buildPhiServerAddonSchemaStatements,
+  buildPhisAddonSchemaStatements,
   quotePhiIdentifier,
 } from "../lib/addons/schema-ddl.ts";
 import {
-  PHI_SERVER_ADDON_GROUP_COLUMN,
-  PHI_SERVER_ADDON_OWNER_COLUMN,
-  PHI_SERVER_ADDON_SITE_COLUMN,
+  PHIS_ADDON_GROUP_COLUMN,
+  PHIS_ADDON_OWNER_COLUMN,
+  PHIS_ADDON_SITE_COLUMN,
 } from "../lib/addons/schema-descriptor.ts";
 
 /**
@@ -29,9 +29,9 @@ const PERMITTED_DELETE_RULES = new Map([
   ["n", "set null"],
 ]);
 
-export type PhiServerAddonSchemaTarget = {
+export type PhisAddonSchemaTarget = {
   schemaName: string;
-  descriptor: PhiServerAddonSchemaDescriptor;
+  descriptor: PhisAddonSchemaDescriptor;
 };
 
 /**
@@ -65,13 +65,13 @@ async function grantExistingObjects(client: PoolClient, schemaName: string, serv
   await client.query(`GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA ${schema} TO ${role}`);
 }
 
-export async function applyPhiServerAddonSchema(
+export async function applyPhisAddonSchema(
   client: PoolClient,
-  target: PhiServerAddonSchemaTarget,
+  target: PhisAddonSchemaTarget,
   servingRole: string,
 ) {
   await prepareSchema(client, target.schemaName, servingRole);
-  const statements = buildPhiServerAddonSchemaStatements(target.schemaName, target.descriptor);
+  const statements = buildPhisAddonSchemaStatements(target.schemaName, target.descriptor);
   for (const statement of statements) {
     await client.query(statement.sql);
   }
@@ -85,9 +85,9 @@ export async function applyPhiServerAddonSchema(
  * Returns the complaints rather than throwing, so a caller can roll back with all of them in hand
  * instead of one at a time.
  */
-export async function verifyPhiServerAddonSchema(
+export async function verifyPhisAddonSchema(
   client: PoolClient,
-  target: PhiServerAddonSchemaTarget,
+  target: PhisAddonSchemaTarget,
 ) {
   const issues: string[] = [];
   const declared = new Set(target.descriptor.tables.map((table) => table.name));
@@ -155,7 +155,7 @@ export async function verifyPhiServerAddonSchema(
       `SELECT table_name, is_nullable
          FROM information_schema.columns
         WHERE table_schema = $1 AND column_name = $2`,
-      [target.schemaName, PHI_SERVER_ADDON_SITE_COLUMN],
+      [target.schemaName, PHIS_ADDON_SITE_COLUMN],
     );
     const boundTables = new Map(siteRows.map((row) => [row.table_name, row.is_nullable]));
     const siteKeys = new Set(
@@ -170,7 +170,7 @@ export async function verifyPhiServerAddonSchema(
     );
     for (const table of siteScoped) {
       if (!boundTables.has(table.name)) {
-        issues.push(`Site-scoped table "${table.name}" has no ${PHI_SERVER_ADDON_SITE_COLUMN}.`);
+        issues.push(`Site-scoped table "${table.name}" has no ${PHIS_ADDON_SITE_COLUMN}.`);
         continue;
       }
       if (boundTables.get(table.name) !== "NO") {
@@ -188,8 +188,8 @@ export async function verifyPhiServerAddonSchema(
   // Site column does -- it silently means nobody owns the row and no level reaches it -- so the check
   // after the fact is the only thing that would notice.
   for (const [scope, column, targetTable] of [
-    ["Owner-scoped", PHI_SERVER_ADDON_OWNER_COLUMN, "user_accounts"],
-    ["Group-scoped", PHI_SERVER_ADDON_GROUP_COLUMN, "site_groups"],
+    ["Owner-scoped", PHIS_ADDON_OWNER_COLUMN, "user_accounts"],
+    ["Group-scoped", PHIS_ADDON_GROUP_COLUMN, "site_groups"],
   ] as const) {
     const scoped = target.descriptor.tables.filter(
       (table) => (scope === "Owner-scoped" ? table.ownerScoped : table.groupScoped),
@@ -231,6 +231,6 @@ export async function verifyPhiServerAddonSchema(
  * This is the destructive half of section 15's two-step removal, and the only operation that touches
  * rows. Disabling an Add-on and uninstalling its package reach neither.
  */
-export async function dropPhiServerAddonSchema(client: PoolClient, schemaName: string) {
+export async function dropPhisAddonSchema(client: PoolClient, schemaName: string) {
   await client.query(`DROP SCHEMA IF EXISTS ${quotePhiIdentifier(schemaName)} CASCADE`);
 }

@@ -5,7 +5,7 @@ import {
   PHIS_ROOT_ENV,
   PHIS_DEFAULT_STAGE_ROOT,
   type PhiConfigPaths,
-  type PhiServerConfig,
+  type PhisConfig,
   readMergedPhiConfigSync as readMergedPhiConfigFromPathsSync,
   readPhiRuntimeConfigSync as readPhiRuntimeConfigFromPathsSync,
   readPhiStaticConfigSync as readPhiStaticConfigFromPathsSync,
@@ -18,7 +18,7 @@ export {
   PHIS_DEFAULT_STAGE_ROOT,
   PHIS_ROOT_ENV,
   type PhiConfigPaths,
-  type PhiServerConfig,
+  type PhisConfig,
   type PlatformSuperUser,
   resolvePhiSiteSourceLocale,
   validatePhiConfig,
@@ -67,6 +67,6 @@ export function readMergedPhiConfigSync(root?: string) {
   return readMergedPhiConfigFromPathsSync(resolvePhiConfigPaths(root));
 }
 
-export function writePhiRuntimeConfigSync(config: PhiServerConfig, root?: string) {
+export function writePhiRuntimeConfigSync(config: PhisConfig, root?: string) {
   writePhiRuntimeConfigToPathsSync(resolvePhiConfigPaths(root), config);
 }

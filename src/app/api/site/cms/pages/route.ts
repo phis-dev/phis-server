@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { listSitePageScopes } from "@/db/site-pages";
-import { isPhiServerCmsAreaKey, resolvePhiServerCmsAreaMask } from "@/lib/constants/cms-areas";
+import { isPhisCmsAreaKey, resolvePhisCmsAreaMask } from "@/lib/constants/cms-areas";
 import { requireSiteBuilderApiContext } from "@/lib/guards/site-admin-api";
 import { createPhiPageReference } from "@/lib/internal-references";
 
@@ -18,11 +18,11 @@ export async function GET(request: NextRequest) {
 
   const url = new URL(request.url);
   const area = normalizeArea(url.searchParams.get("area"));
-  if (!isPhiServerCmsAreaKey(area)) {
+  if (!isPhisCmsAreaKey(area)) {
     return NextResponse.json({ error: "Invalid CMS area." }, { status: 400 });
   }
 
-  const areaMask = resolvePhiServerCmsAreaMask(area);
+  const areaMask = resolvePhisCmsAreaMask(area);
   const pages = await listSitePageScopes(context!.site!.id, areaMask);
 
   return NextResponse.json({

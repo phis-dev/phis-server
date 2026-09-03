@@ -31,7 +31,7 @@ export type PhiSitesConfig = {
   overrides?: Record<string, PhiSiteOverrideConfig>;
 };
 
-export type PhiServerConfig = {
+export type PhisConfig = {
   sites?: PhiSitesConfig;
   runtime?: {
     containerized?: boolean;
@@ -133,7 +133,7 @@ export type PhiServerConfig = {
 };
 
 export type ConfigFileLoadResult = {
-  config: PhiServerConfig;
+  config: PhisConfig;
   error?: string;
 };
 
@@ -143,7 +143,7 @@ export type PhiConfigPaths = {
   runtime: string;
 };
 
-export const DEFAULT_CONFIG: PhiServerConfig = {
+export const DEFAULT_CONFIG: PhisConfig = {
   sites: {
     sourcePathRoot: "/opt/phis/sources",
     instancePathRoot: "/var/www/phis/sites",
@@ -190,7 +190,7 @@ export const DEFAULT_CONFIG: PhiServerConfig = {
   },
 };
 
-export function resolvePhiSiteSourceLocale(config: PhiServerConfig, siteKeyInput: string) {
+export function resolvePhiSiteSourceLocale(config: PhisConfig, siteKeyInput: string) {
   const siteKey = siteKeyInput.trim().toLowerCase();
   const siteLocale = siteKey ? config.sites?.overrides?.[siteKey]?.sourceLocale?.trim().toLowerCase() : "";
   const fallbackLocale = config.translation?.sourceLocale?.trim().toLowerCase() ?? "";
@@ -201,7 +201,7 @@ export function loadConfigFileSync(configPath: string): ConfigFileLoadResult {
   try {
     const raw = readFileSync(configPath, "utf-8");
     return {
-      config: JSON.parse(raw) as PhiServerConfig,
+      config: JSON.parse(raw) as PhisConfig,
     };
   } catch (error) {
     const message =
@@ -213,11 +213,11 @@ export function loadConfigFileSync(configPath: string): ConfigFileLoadResult {
   }
 }
 
-export function readConfigFileSync(configPath: string): PhiServerConfig {
+export function readConfigFileSync(configPath: string): PhisConfig {
   return loadConfigFileSync(configPath).config;
 }
 
-export function mergeConfig(base: PhiServerConfig, override: PhiServerConfig): PhiServerConfig {
+export function mergeConfig(base: PhisConfig, override: PhisConfig): PhisConfig {
   const mergedSiteOverrides =
     base.sites?.overrides || override.sites?.overrides
       ? Object.fromEntries(
@@ -346,7 +346,7 @@ export function readMergedPhiConfigSync(configPaths: PhiConfigPaths) {
   );
 }
 
-export function writePhiRuntimeConfigSync(configPaths: PhiConfigPaths, config: PhiServerConfig) {
+export function writePhiRuntimeConfigSync(configPaths: PhiConfigPaths, config: PhisConfig) {
   const nextContent = `${JSON.stringify(config, null, 2)}\n`;
   const tempPath = `${configPaths.runtime}.tmp`;
   writeFileSync(tempPath, nextContent, "utf-8");
@@ -379,7 +379,7 @@ function validateSiteLocationConfig(
   }
 }
 
-export function validatePhiConfig(config: PhiServerConfig) {
+export function validatePhiConfig(config: PhisConfig) {
   const issues: string[] = [];
 
   if (

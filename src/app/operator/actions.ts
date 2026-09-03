@@ -11,7 +11,7 @@ import {
   readPhiRuntimeConfigSync,
   writePhiRuntimeConfigSync,
 } from "@/lib/config-files";
-import { resetPhiServerConfigCache } from "@/lib/config";
+import { resetPhisConfigCache } from "@/lib/config";
 import { getOperatorSession } from "@/lib/operator-auth";
 import { PHIS_TOKEN_HEADER } from "@/lib/constants/http-headers";
 import {
@@ -496,7 +496,7 @@ export async function updateOperatorSupportedLocales(formData: FormData) {
       apiUrl: deeplEndpoint || runtimeConfig.deepl?.apiUrl || "",
     },
   });
-  resetPhiServerConfigCache();
+  resetPhisConfigCache();
   revalidatePath("/operator");
 
   redirect(buildTranslationsHref({ mode, success: true }));

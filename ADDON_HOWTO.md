@@ -41,7 +41,7 @@ One export:
 
 ```js
 export const phiServerAddon = {
-  manifest,        // PhiServerAddonManifestV1
+  manifest,        // PhisAddonManifestV1
   apiHandlers,     // optional
   hookHandlers,    // optional
   serviceFactories // optional

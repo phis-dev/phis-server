@@ -589,10 +589,10 @@ export async function resolvePhisMediaStorageProviderFactory(
       resolvePhisMediaStorageConfig(config as Partial<PhisMediaStorageConfig> | null),
     );
   }
-  const { resolvePhiServerServiceProvider } = await import("./addons/services");
-  const { PHI_SERVER_SERVICE_KINDS } = await import("./addons/core-services");
-  const resolved = await resolvePhiServerServiceProvider(
-    PHI_SERVER_SERVICE_KINDS.mediaStorage,
+  const { resolvePhisServiceProvider } = await import("./addons/services");
+  const { PHIS_SERVICE_KINDS } = await import("./addons/core-services");
+  const resolved = await resolvePhisServiceProvider(
+    PHIS_SERVICE_KINDS.mediaStorage,
     providerId,
     options,
   );

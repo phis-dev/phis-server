@@ -10,7 +10,7 @@ import { getSessionFromRequest } from "@/db/user-sessions";
 import { getMediaStorageProfile } from "@/db/media-spaces";
 import { createPhisMediaStorageServiceForProfile } from "@/lib/media-storage";
 import { logRuntimeEvent, normalizeLogThrowable } from "@/lib/log";
-import { PHI_SERVER_CMS_AREA_KEYS } from "@/lib/constants/cms-areas";
+import { PHIS_CMS_AREA_KEYS } from "@/lib/constants/cms-areas";
 import {
   isPhiMediaUploadBodyProxied,
   PhiMediaUploadSessionStatus,
@@ -29,7 +29,7 @@ export const dynamic = "force-dynamic";
 
 function normalizeAreaKey(value: string | null | undefined) {
   const normalized = value?.trim().toLowerCase() ?? "";
-  return PHI_SERVER_CMS_AREA_KEYS.includes(normalized as (typeof PHI_SERVER_CMS_AREA_KEYS)[number])
+  return PHIS_CMS_AREA_KEYS.includes(normalized as (typeof PHIS_CMS_AREA_KEYS)[number])
     ? normalized
     : null;
 }

@@ -1,7 +1,7 @@
 import "server-only";
 
 import { NextResponse } from "next/server";
-import { getPhiServerConfigSync } from "@/lib/config";
+import { getPhisConfigSync } from "@/lib/config";
 import { PHIS_TOKEN_HEADER } from "@/lib/constants/http-headers";
 
 type CorsOptions = {
@@ -12,7 +12,7 @@ type CorsOptions = {
 
 function getAllowedOriginSuffixes() {
   return (
-    getPhiServerConfigSync().cors?.allowedOriginSuffixes
+    getPhisConfigSync().cors?.allowedOriginSuffixes
       ?.map((item) => item.trim().toLowerCase())
       .filter(Boolean) ?? []
   );
@@ -20,7 +20,7 @@ function getAllowedOriginSuffixes() {
 
 function getAllowedOrigins() {
   return (
-    getPhiServerConfigSync().cors?.allowedOrigins
+    getPhisConfigSync().cors?.allowedOrigins
       ?.map((item) => item.trim())
       .filter(Boolean) ?? []
   );

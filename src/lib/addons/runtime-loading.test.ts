@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 
-import { PHI_SERVER_SERVICE_KINDS } from "./core-services";
-import { getPhiServerAddonInstalledManifest } from "./installed";
-import { resolvePhiServerServiceProvider } from "./services";
+import { PHIS_SERVICE_KINDS } from "./core-services";
+import { getPhisAddonInstalledManifest } from "./installed";
+import { resolvePhisServiceProvider } from "./services";
 
 /**
  * The runtime loader, exercised against whatever is actually installed here.
@@ -15,7 +15,7 @@ import { resolvePhiServerServiceProvider } from "./services";
 const S3_ADDON_ID = "@phis/storage-s3";
 const installed = (() => {
   try {
-    return getPhiServerAddonInstalledManifest();
+    return getPhisAddonInstalledManifest();
   } catch {
     return {};
   }
@@ -28,8 +28,8 @@ describe.skipIf(!s3Installed)("the installed S3 Add-on", () => {
   });
 
   it("resolves its Media Storage factory through the runtime loader", async () => {
-    const resolved = await resolvePhiServerServiceProvider(
-      PHI_SERVER_SERVICE_KINDS.mediaStorage,
+    const resolved = await resolvePhisServiceProvider(
+      PHIS_SERVICE_KINDS.mediaStorage,
       "@phis/storage-s3/s3",
     );
     expect(resolved.addonId).toBe(S3_ADDON_ID);

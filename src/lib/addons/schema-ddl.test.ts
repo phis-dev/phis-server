@@ -1,13 +1,13 @@
 import { describe, expect, it } from "vitest";
 
-import { buildPhiServerAddonSchemaStatements } from "./schema-ddl.ts";
-import type { PhiServerAddonSchemaDescriptor } from "./contract.ts";
+import { buildPhisAddonSchemaStatements } from "./schema-ddl.ts";
+import type { PhisAddonSchemaDescriptor } from "./contract.ts";
 import { incidentSchemaDescriptor } from "../../../test/fixtures/addon-schema.ts";
 
 const SCHEMA = "phis_addon_acme_incidents";
 
 function statements() {
-  return buildPhiServerAddonSchemaStatements(SCHEMA, incidentSchemaDescriptor);
+  return buildPhisAddonSchemaStatements(SCHEMA, incidentSchemaDescriptor);
 }
 
 function sqlFor(summary: string) {
@@ -35,7 +35,7 @@ describe("schema DDL generation", () => {
   });
 
   it("writes the owner column nullable, so a deleted user leaves the rows behind", () => {
-    const scoped = buildPhiServerAddonSchemaStatements(SCHEMA, {
+    const scoped = buildPhisAddonSchemaStatements(SCHEMA, {
       ...incidentSchemaDescriptor,
       tables: incidentSchemaDescriptor.tables.map((table, index) =>
         index === 0 ? { ...table, ownerScoped: true } : table,
@@ -50,7 +50,7 @@ describe("schema DDL generation", () => {
   });
 
   it("binds a group together with its Site rather than by id alone", () => {
-    const scoped = buildPhiServerAddonSchemaStatements(SCHEMA, {
+    const scoped = buildPhisAddonSchemaStatements(SCHEMA, {
       ...incidentSchemaDescriptor,
       tables: incidentSchemaDescriptor.tables.map((table, index) =>
         index === 0 ? { ...table, groupScoped: true } : table,
@@ -66,7 +66,7 @@ describe("schema DDL generation", () => {
 
   it("gives a plain group reference the same composite binding", () => {
     const [first, ...rest] = incidentSchemaDescriptor.tables;
-    const withAudience = buildPhiServerAddonSchemaStatements(SCHEMA, {
+    const withAudience = buildPhisAddonSchemaStatements(SCHEMA, {
       ...incidentSchemaDescriptor,
       tables: [
         {
@@ -151,7 +151,7 @@ describe("schema DDL generation", () => {
   });
 
   it("escapes a literal rather than trusting it", () => {
-    const escaped = buildPhiServerAddonSchemaStatements(SCHEMA, {
+    const escaped = buildPhisAddonSchemaStatements(SCHEMA, {
       descriptorVersion: 1,
       version: 1,
       tables: [
@@ -182,7 +182,7 @@ describe("schema DDL generation", () => {
   });
 
   it("turns a unique column on a Site-scoped table into a Site-scoped constraint", () => {
-    const sql = buildPhiServerAddonSchemaStatements(SCHEMA, {
+    const sql = buildPhisAddonSchemaStatements(SCHEMA, {
       descriptorVersion: 1,
       version: 1,
       tables: [
@@ -202,7 +202,7 @@ describe("schema DDL generation", () => {
   });
 
   it("keeps plain uniqueness where there is no Site to scope it to", () => {
-    const sql = buildPhiServerAddonSchemaStatements(SCHEMA, {
+    const sql = buildPhisAddonSchemaStatements(SCHEMA, {
       descriptorVersion: 1,
       version: 1,
       tables: [
@@ -231,7 +231,7 @@ describe("schema DDL generation", () => {
  * expiry index, so an abandoned transfer is findable without listing a bucket.
  */
 describe("the asset table", () => {
-  const withAssets: PhiServerAddonSchemaDescriptor = {
+  const withAssets: PhisAddonSchemaDescriptor = {
     ...incidentSchemaDescriptor,
     tables: incidentSchemaDescriptor.tables.map((table, index) =>
       index === 0
@@ -247,7 +247,7 @@ describe("the asset table", () => {
   };
 
   function assetSql(summary: string) {
-    const built = buildPhiServerAddonSchemaStatements(SCHEMA, withAssets);
+    const built = buildPhisAddonSchemaStatements(SCHEMA, withAssets);
     const statement = built.find((entry) => entry.summary === summary);
     if (!statement) {
       throw new Error(`No statement summarised as "${summary}". Got: ${built.map((e) => e.summary).join(", ")}`);
@@ -275,7 +275,7 @@ describe("the asset table", () => {
   it("keys the parent by Site even though nothing the Add-on declared points at it", () => {
     // Without this the composite foreign key above has no unique key to reference and PostgreSQL
     // refuses it -- and the statement that would fail comes after tables have already been created.
-    const built = buildPhiServerAddonSchemaStatements(SCHEMA, withAssets);
+    const built = buildPhisAddonSchemaStatements(SCHEMA, withAssets);
     const keyed = built.findIndex((entry) => entry.summary === "key incident by Site for references");
     const created = built.findIndex((entry) => entry.summary === "create table incident_assets");
     expect(keyed).toBeGreaterThanOrEqual(0);
@@ -298,7 +298,7 @@ describe("the asset table", () => {
   });
 
   it("leaves the uniqueness rule out entirely when every slot accumulates", () => {
-    const many = buildPhiServerAddonSchemaStatements(SCHEMA, {
+    const many = buildPhisAddonSchemaStatements(SCHEMA, {
       ...withAssets,
       tables: withAssets.tables.map((table, index) =>
         index === 0

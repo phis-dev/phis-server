@@ -14,7 +14,7 @@ import type { Pool } from "pg";
  * uses for the Site's own quota, for the same reason.
  */
 
-export type PhiServerAddonStorageUsage = {
+export type PhisAddonStorageUsage = {
   bytes: number;
   objects: number;
   quotaBytes: number | null;
@@ -30,10 +30,10 @@ function asNullableNumber(value: number | string | null): number | null {
   return value == null ? null : Number(value);
 }
 
-export async function readPhiServerAddonStorageUsage(
+export async function readPhisAddonStorageUsage(
   pool: Pool,
   input: { addonId: string; siteId: number },
-): Promise<PhiServerAddonStorageUsage> {
+): Promise<PhisAddonStorageUsage> {
   const { rows } = await pool.query<{
     storage_used_bytes: string; storage_used_objects: number;
     storage_quota_bytes: string | null; storage_quota_objects: number | null;
@@ -52,7 +52,7 @@ export async function readPhiServerAddonStorageUsage(
   };
 }
 
-export type PhiServerAddonStorageBooking = {
+export type PhisAddonStorageBooking = {
   addonId: string;
   siteId: number;
   /** How the total changes. Negative when an object shrinks or goes away. */
@@ -69,7 +69,7 @@ export type PhiServerAddonStorageBooking = {
  * for bytes that were never written -- the figures in such a message read "0 of unlimited", which is
  * nobody's idea of full.
  */
-export type PhiServerAddonStorageBookingOutcome = "booked" | "over-quota" | "not-activated";
+export type PhisAddonStorageBookingOutcome = "booked" | "over-quota" | "not-activated";
 
 /**
  * Books a change against the ceiling, and answers whether it fits.
@@ -83,10 +83,10 @@ export type PhiServerAddonStorageBookingOutcome = "booked" | "over-quota" | "not
  * failing path only. Folding it into the first would mean returning the row when the quota refuses,
  * and then the successful path pays for the distinction instead.
  */
-export async function bookPhiServerAddonStorage(
+export async function bookPhisAddonStorage(
   pool: Pool,
-  input: PhiServerAddonStorageBooking,
-): Promise<PhiServerAddonStorageBookingOutcome> {
+  input: PhisAddonStorageBooking,
+): Promise<PhisAddonStorageBookingOutcome> {
   const { rows } = await pool.query<{ addon_id: string }>(
     `UPDATE phis.site_server_addons
         SET storage_used_bytes = GREATEST(0, storage_used_bytes + $3),
@@ -115,7 +115,7 @@ export async function bookPhiServerAddonStorage(
  * that may hold nothing, none is a store nobody bounded. Answers false when the Add-on is not enabled
  * for this Site at all -- there is no row to bound, and quietly creating one would enable it.
  */
-export async function setPhiServerAddonStorageQuota(
+export async function setPhisAddonStorageQuota(
   pool: Pool,
   input: {
     addonId: string;

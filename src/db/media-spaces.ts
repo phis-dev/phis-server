@@ -2,7 +2,7 @@ import "server-only";
 
 import type { PoolClient } from "pg";
 
-import { getPhiServerConfigSync } from "@/lib/config";
+import { getPhisConfigSync } from "@/lib/config";
 import { PhiSiteMediaFlags, resolvePhiMediaKindFromContentType } from "@/lib/constants/media";
 import { PhiGroupMembershipFlags } from "@/lib/constants/site-groups";
 import { getSiteGroupById, readEffectiveGroupMembershipFlags } from "@/db/site-groups";
@@ -123,7 +123,7 @@ function mapSpace(row: SpaceRow): MediaSpaceRecord {
  * directory. Afterwards the row is authoritative and configuration is never consulted again.
  */
 async function ensureLocalStorageProfileWithDb(db: MediaSpaceDbQueryable, siteId: number) {
-  const media = getPhiServerConfigSync().media ?? {};
+  const media = getPhisConfigSync().media ?? {};
   const seed: Record<string, unknown> = {};
   if (media.storageKeyPrefix?.trim()) seed.storageKeyPrefix = media.storageKeyPrefix.trim();
   if (media.local?.rootDir?.trim()) seed.rootDir = media.local.rootDir.trim();
@@ -545,7 +545,7 @@ function selectSiteMediaConfigWithDb(db: MediaSpaceDbQueryable, siteId: number) 
  * starts with no Space kind available and the first Area publish materializes the truth.
  */
 function insertSiteMediaConfigWithDb(db: MediaSpaceDbQueryable, siteId: number) {
-  const defaults = getPhiServerConfigSync().media?.defaults ?? {};
+  const defaults = getPhisConfigSync().media?.defaults ?? {};
   return db.query(
     `INSERT INTO phis.site_media_config (site_id, flags, default_user_quota_bytes, default_group_quota_bytes)
      VALUES ($1, 0, $2, $3)

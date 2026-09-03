@@ -2,25 +2,25 @@ import "server-only";
 
 import type { PoolClient } from "pg";
 
-import { PHI_SERVER_ADDON_QUERY_MAX_LIST } from "./contract.ts";
+import { PHIS_ADDON_QUERY_MAX_LIST } from "./contract.ts";
 import type {
-  PhiServerAddonManifestV1,
-  PhiServerAddonQueryArguments,
-  PhiServerAddonQueryPageRequest,
-  PhiServerAddonQueryRow,
-  PhiServerDataCapabilityV1,
-  PhiServerDataTransactionV1,
+  PhisAddonManifestV1,
+  PhisAddonQueryArguments,
+  PhisAddonQueryPageRequest,
+  PhisAddonQueryRow,
+  PhisDataCapabilityV1,
+  PhisDataTransactionV1,
 } from "./contract.ts";
 import {
-  compilePhiServerAddonQueries,
+  compilePhisAddonQueries,
   cursorColumnName,
-  type PhiServerAddonCompiledQuery,
+  type PhisAddonCompiledQuery,
 } from "./query-sql.ts";
 import {
-  decodePhiServerAddonCursor,
-  encodePhiServerAddonCursor,
+  decodePhisAddonCursor,
+  encodePhisAddonCursor,
 } from "./query-cursor.ts";
-import { derivePhiServerAddonSchemaName } from "./schema-name.ts";
+import { derivePhisAddonSchemaName } from "./schema-name.ts";
 import { getPool } from "@/lib/db";
 
 /**
@@ -38,31 +38,31 @@ import { getPool } from "@/lib/db";
  */
 
 /** The compiled catalog per Add-on build, keyed by manifest digest so a changed build recompiles. */
-const compiledCatalogs = new Map<string, Map<string, PhiServerAddonCompiledQuery>>();
+const compiledCatalogs = new Map<string, Map<string, PhisAddonCompiledQuery>>();
 
-function resolveCatalog(manifest: PhiServerAddonManifestV1, manifestDigest: string) {
+function resolveCatalog(manifest: PhisAddonManifestV1, manifestDigest: string) {
   const cached = compiledCatalogs.get(manifestDigest);
   if (cached) {
     return cached;
   }
   const compiled = manifest.schema && manifest.queries
-    ? compilePhiServerAddonQueries(
-      derivePhiServerAddonSchemaName(manifest.addonId),
+    ? compilePhisAddonQueries(
+      derivePhisAddonSchemaName(manifest.addonId),
       manifest.schema,
       manifest.queries,
     )
-    : new Map<string, PhiServerAddonCompiledQuery>();
+    : new Map<string, PhisAddonCompiledQuery>();
   compiledCatalogs.set(manifestDigest, compiled);
   return compiled;
 }
 
-export class PhiServerAddonQueryError extends Error {}
+export class PhisAddonQueryError extends Error {}
 
 type Queryable = Pick<PoolClient, "query">;
 
 type Bound = {
-  manifest: PhiServerAddonManifestV1;
-  catalog: Map<string, PhiServerAddonCompiledQuery>;
+  manifest: PhisAddonManifestV1;
+  catalog: Map<string, PhisAddonCompiledQuery>;
   siteId: number;
   actorUserId: number | null;
   mayActOnRow: (input: { table: string; id: unknown; intent: "update" | "delete" }) => Promise<boolean>;
@@ -75,12 +75,12 @@ type Bound = {
 };
 
 function readArgument(
-  args: PhiServerAddonQueryArguments,
+  args: PhisAddonQueryArguments,
   name: string,
   queryName: string,
 ) {
   if (!(name in args)) {
-    throw new PhiServerAddonQueryError(`Query "${queryName}" needs an argument named "${name}".`);
+    throw new PhisAddonQueryError(`Query "${queryName}" needs an argument named "${name}".`);
   }
   return args[name] ?? null;
 }
@@ -92,10 +92,10 @@ function readArgument(
  * sources rather than a list of names: the Add-on has no way to supply a value for either.
  */
 function resolveBindings(
-  query: PhiServerAddonCompiledQuery,
-  bindings: PhiServerAddonCompiledQuery["bindings"],
+  query: PhisAddonCompiledQuery,
+  bindings: PhisAddonCompiledQuery["bindings"],
   bound: Bound,
-  args: PhiServerAddonQueryArguments,
+  args: PhisAddonQueryArguments,
   descriptorParameters: { id?: string; group?: string },
   page: { size: number; keys: string[] },
 ) {
@@ -122,7 +122,7 @@ function resolveBindings(
   });
 }
 
-function descriptorParametersFor(manifest: PhiServerAddonManifestV1, name: string) {
+function descriptorParametersFor(manifest: PhisAddonManifestV1, name: string) {
   const descriptor = manifest.queries?.queries.find((entry) => entry.name === name);
   if (!descriptor) {
     return {};
@@ -151,7 +151,7 @@ function descriptorParametersFor(manifest: PhiServerAddonManifestV1, name: strin
  * answer about all of them, which is the failure the cursor exists to prevent in the other direction.
  */
 function requireList(
-  args: PhiServerAddonQueryArguments,
+  args: PhisAddonQueryArguments,
   name: string,
   queryName: string,
 ) {
@@ -160,25 +160,25 @@ function requireList(
     return;
   }
   if (!Array.isArray(value)) {
-    throw new PhiServerAddonQueryError(
+    throw new PhisAddonQueryError(
       `Query "${queryName}" declares "${name}" as a list, and this call passed a single value.`,
     );
   }
-  if (value.length > PHI_SERVER_ADDON_QUERY_MAX_LIST) {
-    throw new PhiServerAddonQueryError(
+  if (value.length > PHIS_ADDON_QUERY_MAX_LIST) {
+    throw new PhisAddonQueryError(
       `Query "${queryName}" was given ${value.length} values for "${name}", ` +
-      `and a list carries at most ${PHI_SERVER_ADDON_QUERY_MAX_LIST}.`,
+      `and a list carries at most ${PHIS_ADDON_QUERY_MAX_LIST}.`,
     );
   }
 }
 
-function requireQuery(bound: Bound, name: string, kind: PhiServerAddonCompiledQuery["kind"]) {
+function requireQuery(bound: Bound, name: string, kind: PhisAddonCompiledQuery["kind"]) {
   const query = bound.catalog.get(name);
   if (!query) {
-    throw new PhiServerAddonQueryError(`No declared query named "${name}".`);
+    throw new PhisAddonQueryError(`No declared query named "${name}".`);
   }
   if (query.kind !== kind) {
-    throw new PhiServerAddonQueryError(`Query "${name}" is a ${query.kind}, not a ${kind}.`);
+    throw new PhisAddonQueryError(`Query "${name}" is a ${query.kind}, not a ${kind}.`);
   }
   return query;
 }
@@ -201,9 +201,9 @@ async function run(
   db: Queryable,
   bound: Bound,
   name: string,
-  kind: PhiServerAddonCompiledQuery["kind"],
-  args: PhiServerAddonQueryArguments,
-  request: PhiServerAddonQueryPageRequest = {},
+  kind: PhisAddonCompiledQuery["kind"],
+  args: PhisAddonQueryArguments,
+  request: PhisAddonQueryPageRequest = {},
 ) {
   const query = requireQuery(bound, name, kind);
   const parameters = descriptorParametersFor(bound.manifest, name);
@@ -224,7 +224,7 @@ async function run(
      * has none either, while none of the three is anonymous. Only a caller who never identified
      * themselves lands here -- today that is a hook, and nothing else.
      */
-    throw new PhiServerAddonQueryError(
+    throw new PhisAddonQueryError(
       `Query "${name}" changes rows, and this request has no actor behind it.`,
     );
   }
@@ -239,7 +239,7 @@ async function run(
      * withhold, and an Add-on that offered the action to the wrong person wants to hear so.
      */
     if (!await bound.hasRole(parameters.requiresRole)) {
-      throw new PhiServerAddonQueryError(
+      throw new PhisAddonQueryError(
         `Query "${name}" requires the role "${parameters.requiresRole}", which this actor does not hold.`,
       );
     }
@@ -267,7 +267,7 @@ async function run(
        * into a way of asking whether a row exists.
        */
       if (!parameters.alsoAllowedByRole || !await bound.hasRole(parameters.alsoAllowedByRole)) {
-        return { rows: [] as PhiServerAddonQueryRow[], rowCount: 0, cursor: null };
+        return { rows: [] as PhisAddonQueryRow[], rowCount: 0, cursor: null };
       }
     }
   }
@@ -285,7 +285,7 @@ async function run(
      */
     const groupId = readArgument(args, parameters.group, name);
     if (!await bound.mayUseGroup(groupId)) {
-      throw new PhiServerAddonQueryError(
+      throw new PhisAddonQueryError(
         `Query "${name}" names a group the acting user does not stand in.`,
       );
     }
@@ -297,7 +297,7 @@ async function run(
       resolveBindings(query, query.bindings, bound, args, parameters, { size: 0, keys: [] }),
     );
     return {
-      rows: result.rows as PhiServerAddonQueryRow[],
+      rows: result.rows as PhisAddonQueryRow[],
       rowCount: result.rowCount ?? 0,
       cursor: null,
     };
@@ -311,7 +311,7 @@ async function run(
    */
   const { paging } = query;
   const keys = request.cursor
-    ? decodePhiServerAddonCursor(name, paging.ordering, request.cursor)
+    ? decodePhisAddonCursor(name, paging.ordering, request.cursor)
     : [];
   const size = pageSize(request.limit, paging.limit);
   /*
@@ -340,11 +340,11 @@ async function run(
 
   // The extra row is read and then dropped: it was never part of the answer, only of the question
   // whether there is one after it.
-  const raw = (result.rows as PhiServerAddonQueryRow[]).slice(0, size);
+  const raw = (result.rows as PhisAddonQueryRow[]).slice(0, size);
   const more = result.rows.length > size;
   const last = raw[raw.length - 1];
   const cursor = more && last
-    ? encodePhiServerAddonCursor(
+    ? encodePhisAddonCursor(
       name,
       paging.ordering,
       paging.ordering.map((_, index) => last[cursorColumnName(index)]),
@@ -360,12 +360,12 @@ async function run(
     for (let index = 0; index < paging.ordering.length; index += 1) {
       delete projected[cursorColumnName(index)];
     }
-    return projected as PhiServerAddonQueryRow;
+    return projected as PhisAddonQueryRow;
   });
   return { rows, rowCount: rows.length, cursor };
 }
 
-function buildOperations(db: Queryable, bound: Bound): PhiServerDataTransactionV1 {
+function buildOperations(db: Queryable, bound: Bound): PhisDataTransactionV1 {
   return Object.freeze({
     async select(name, args = {}, page = {}) {
       const result = await run(db, bound, name, "select", args, page);
@@ -388,11 +388,11 @@ function buildOperations(db: Queryable, bound: Bound): PhiServerDataTransactionV
       // is what a row that was never there answers too.
       return (await run(db, bound, name, "delete", args)).rows[0] ?? null;
     },
-  } satisfies PhiServerDataTransactionV1);
+  } satisfies PhisDataTransactionV1);
 }
 
-export function buildPhiServerAddonDataCapability(input: {
-  manifest: PhiServerAddonManifestV1;
+export function buildPhisAddonDataCapability(input: {
+  manifest: PhisAddonManifestV1;
   manifestDigest: string;
   siteId: number;
   actorUserId: number | null;
@@ -400,7 +400,7 @@ export function buildPhiServerAddonDataCapability(input: {
   mayUseGroup: Bound["mayUseGroup"];
   hasRole: Bound["hasRole"];
   unauthenticated: boolean;
-}): PhiServerDataCapabilityV1 {
+}): PhisDataCapabilityV1 {
   const bound: Bound = {
     manifest: input.manifest,
     catalog: resolveCatalog(input.manifest, input.manifestDigest),
@@ -431,5 +431,5 @@ export function buildPhiServerAddonDataCapability(input: {
         client.release();
       }
     },
-  } satisfies PhiServerDataCapabilityV1);
+  } satisfies PhisDataCapabilityV1);
 }

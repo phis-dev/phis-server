@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { validatePhiServerAddonSchemaDescriptor } from "./schema-descriptor.ts";
-import { derivePhiServerAddonSchemaName } from "./schema-name.ts";
+import { validatePhisAddonSchemaDescriptor } from "./schema-descriptor.ts";
+import { derivePhisAddonSchemaName } from "./schema-name.ts";
 import { incidentSchemaDescriptor } from "../../../test/fixtures/addon-schema.ts";
 
 function validate(value: unknown) {
   const issues: string[] = [];
-  const descriptor = validatePhiServerAddonSchemaDescriptor(value, "schema", issues);
+  const descriptor = validatePhisAddonSchemaDescriptor(value, "schema", issues);
   return { descriptor, issues };
 }
 
@@ -20,25 +20,25 @@ function withTable(mutate: (table: Record<string, unknown>) => void) {
 
 describe("schema name derivation", () => {
   it("prefixes and flattens the logical id", () => {
-    expect(derivePhiServerAddonSchemaName("@acme/github")).toBe("phis_addon_acme_github");
-    expect(derivePhiServerAddonSchemaName("@phis/storage-s3")).toBe("phis_addon_phis_storage_s3");
+    expect(derivePhisAddonSchemaName("@acme/github")).toBe("phis_addon_acme_github");
+    expect(derivePhisAddonSchemaName("@phis/storage-s3")).toBe("phis_addon_phis_storage_s3");
   });
 
   it("is lossy in exactly the way the unique index has to catch", () => {
-    expect(derivePhiServerAddonSchemaName("@acme-a/b")).toBe(
-      derivePhiServerAddonSchemaName("@acme/a-b"),
+    expect(derivePhisAddonSchemaName("@acme-a/b")).toBe(
+      derivePhisAddonSchemaName("@acme/a-b"),
     );
   });
 
   it("refuses an id that is not an npm name without the postfix", () => {
-    expect(() => derivePhiServerAddonSchemaName("acme/github")).toThrow(/valid Add-on id/);
-    expect(() => derivePhiServerAddonSchemaName("@acme/git_hub")).toThrow(/valid Add-on id/);
-    expect(() => derivePhiServerAddonSchemaName("@acme/git.hub")).toThrow(/valid Add-on id/);
+    expect(() => derivePhisAddonSchemaName("acme/github")).toThrow(/valid Add-on id/);
+    expect(() => derivePhisAddonSchemaName("@acme/git_hub")).toThrow(/valid Add-on id/);
+    expect(() => derivePhisAddonSchemaName("@acme/git.hub")).toThrow(/valid Add-on id/);
   });
 
   it("refuses a name it would otherwise have to truncate", () => {
     const long = `@${"a".repeat(30)}/${"b".repeat(30)}`;
-    expect(() => derivePhiServerAddonSchemaName(long)).toThrow(/exceeds 63/);
+    expect(() => derivePhisAddonSchemaName(long)).toThrow(/exceeds 63/);
   });
 });
 

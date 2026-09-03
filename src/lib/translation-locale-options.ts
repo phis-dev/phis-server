@@ -1,7 +1,7 @@
 import "server-only";
 
 import { getSupportedDeepLTargetLanguages } from "@/lib/deepl-languages";
-import { getPhiServerConfigSync } from "@/lib/config";
+import { getPhisConfigSync } from "@/lib/config";
 import { PHI_CANONICAL_SOURCE_LOCALE, SUPPORTED_LOCALES } from "@/lib/locale";
 import { PHIS_TOKEN_HEADER } from "@/lib/constants/http-headers";
 
@@ -94,7 +94,7 @@ function buildLocaleOptions(
 }
 
 export function getConfiguredTranslationSupportedLocalesSync() {
-  const config = getPhiServerConfigSync();
+  const config = getPhisConfigSync();
   const configured =
     config.translation?.supportedLocales ??
     config.translation?.allowedLocales ??
@@ -106,7 +106,7 @@ export function getConfiguredTranslationSupportedLocalesSync() {
 }
 
 export function getConfiguredCdnBaseUrlSync() {
-  return getPhiServerConfigSync().translation?.cdnBaseUrl?.trim() || "https://cdn.phis.dev";
+  return getPhisConfigSync().translation?.cdnBaseUrl?.trim() || "https://cdn.phis.dev";
 }
 
 function coerceConfiguredLocales(
@@ -140,7 +140,7 @@ function getStaticLocaleCatalogOptions() {
 }
 
 async function fetchCdnLocaleOptions() {
-  const config = getPhiServerConfigSync();
+  const config = getPhisConfigSync();
   const token = config.api?.phisCdnPublicToken?.trim();
   const cdnBaseUrl = getConfiguredCdnBaseUrlSync().replace(/\/+$/, "");
   const { signal, clear } = createTimeoutSignal(1500);
@@ -219,7 +219,7 @@ async function getLocaleSourceOptions(mode: TranslationMode) {
 export async function resolveTranslationLocaleSourceState(
   modeOverride?: string | null,
 ): Promise<TranslationLocaleSourceState> {
-  const config = getPhiServerConfigSync();
+  const config = getPhisConfigSync();
   const mode = modeOverride
     ? normalizeTranslationMode(modeOverride)
     : normalizeTranslationMode(config.translation?.mode ?? "none");
@@ -249,6 +249,6 @@ export async function resolveTranslationLocaleSourceState(
 
 export async function warmTranslationLocaleSourceOptions() {
   await getLocaleSourceOptions(
-    normalizeTranslationMode(getPhiServerConfigSync().translation?.mode ?? "none"),
+    normalizeTranslationMode(getPhisConfigSync().translation?.mode ?? "none"),
   );
 }

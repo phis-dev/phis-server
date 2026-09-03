@@ -1,10 +1,10 @@
-import type { PhiServerAddonSchemaDescriptor } from "@/lib/addons/contract";
+import type { PhisAddonSchemaDescriptor } from "@/lib/addons/contract";
 
 /**
  * A descriptor with enough shape to be worth testing: a Site-scoped table, a reference into Core, a
  * reference between two of the Add-on's own tables, and one constraint of every structured kind.
  */
-export const incidentSchemaDescriptor: PhiServerAddonSchemaDescriptor = {
+export const incidentSchemaDescriptor: PhisAddonSchemaDescriptor = {
   descriptorVersion: 1,
   version: 1,
   tables: [

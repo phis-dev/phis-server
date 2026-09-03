@@ -1,22 +1,22 @@
 import {
-  PHI_SERVER_ADDON_QUERY_MAX_LIMIT,
-  type PhiServerAddonAggregateQueryDescriptor,
-  type PhiServerAddonQueryAggregate,
-  type PhiServerAddonInsertQueryDescriptor,
-  type PhiServerAddonQueryCatalog,
-  type PhiServerAddonQueryCondition,
-  type PhiServerAddonQueryDescriptor,
-  type PhiServerAddonQueryOrdering,
-  type PhiServerAddonQueryParameterType,
-  type PhiServerAddonQueryValue,
-  type PhiServerAddonSchemaDescriptor,
-  type PhiServerAddonSelectQueryDescriptor,
-  type PhiServerAddonTableDescriptor,
+  PHIS_ADDON_QUERY_MAX_LIMIT,
+  type PhisAddonAggregateQueryDescriptor,
+  type PhisAddonQueryAggregate,
+  type PhisAddonInsertQueryDescriptor,
+  type PhisAddonQueryCatalog,
+  type PhisAddonQueryCondition,
+  type PhisAddonQueryDescriptor,
+  type PhisAddonQueryOrdering,
+  type PhisAddonQueryParameterType,
+  type PhisAddonQueryValue,
+  type PhisAddonSchemaDescriptor,
+  type PhisAddonSelectQueryDescriptor,
+  type PhisAddonTableDescriptor,
 } from "./contract.ts";
 import {
-  PHI_SERVER_ADDON_GROUP_COLUMN,
-  PHI_SERVER_ADDON_OWNER_COLUMN,
-  PHI_SERVER_ADDON_SITE_COLUMN,
+  PHIS_ADDON_GROUP_COLUMN,
+  PHIS_ADDON_OWNER_COLUMN,
+  PHIS_ADDON_SITE_COLUMN,
 } from "./schema-descriptor.ts";
 import { quotePhiIdentifier } from "./schema-ddl.ts";
 
@@ -32,14 +32,14 @@ import { quotePhiIdentifier } from "./schema-ddl.ts";
  * and identifiers come from the schema descriptor rather than from anything a caller passes.
  */
 
-export type PhiServerAddonCompiledQuery = {
+export type PhisAddonCompiledQuery = {
   name: string;
-  kind: PhiServerAddonQueryDescriptor["kind"];
+  kind: PhisAddonQueryDescriptor["kind"];
   table: string;
   /** The first page, or the whole statement for anything that is not a select. */
   sql: string;
   /** What to bind, in order. Resolved per call against the arguments and the bound context. */
-  bindings: PhiServerAddonQueryBinding[];
+  bindings: PhisAddonQueryBinding[];
   /**
    * Whether the table carries row authority at all: an owner, a group, or both.
    *
@@ -51,15 +51,15 @@ export type PhiServerAddonCompiledQuery = {
   paging?: {
     /** The same statement with the keyset clause, for every page after the first. */
     sql: string;
-    bindings: PhiServerAddonQueryBinding[];
+    bindings: PhisAddonQueryBinding[];
     /** What the cursor is made of, and what the statement is ordered by. */
-    ordering: PhiServerAddonQueryOrdering[];
+    ordering: PhisAddonQueryOrdering[];
     /** The Add-on's own ceiling, already capped at the hard maximum. */
     limit: number;
   };
 };
 
-export type PhiServerAddonQueryBinding =
+export type PhisAddonQueryBinding =
   | { from: "parameter"; name: string }
   | { from: "literal"; value: string | number | boolean }
   | { from: "actor" }
@@ -81,7 +81,7 @@ const NOW_SQL = "NOW()";
  * server no context to infer a type from, and it refuses the statement rather than guessing -- so the
  * declared type, which is known here, is written down.
  */
-const PARAMETER_TYPE_SQL: Readonly<Record<PhiServerAddonQueryParameterType, string>> = {
+const PARAMETER_TYPE_SQL: Readonly<Record<PhisAddonQueryParameterType, string>> = {
   integer: "INTEGER",
   bigInteger: "BIGINT",
   text: "TEXT",
@@ -91,15 +91,15 @@ const PARAMETER_TYPE_SQL: Readonly<Record<PhiServerAddonQueryParameterType, stri
 };
 
 type Compiler = {
-  bindings: PhiServerAddonQueryBinding[];
-  parameterTypes: Map<string, PhiServerAddonQueryParameterType>;
-  place(binding: PhiServerAddonQueryBinding): string;
+  bindings: PhisAddonQueryBinding[];
+  parameterTypes: Map<string, PhisAddonQueryParameterType>;
+  place(binding: PhisAddonQueryBinding): string;
 };
 
 function createCompiler(
-  parameterTypes: Map<string, PhiServerAddonQueryParameterType> = new Map(),
+  parameterTypes: Map<string, PhisAddonQueryParameterType> = new Map(),
 ): Compiler {
-  const bindings: PhiServerAddonQueryBinding[] = [];
+  const bindings: PhisAddonQueryBinding[] = [];
   return {
     bindings,
     parameterTypes,
@@ -110,7 +110,7 @@ function createCompiler(
   };
 }
 
-function valueSql(compiler: Compiler, value: PhiServerAddonQueryValue) {
+function valueSql(compiler: Compiler, value: PhisAddonQueryValue) {
   switch (value.kind) {
     case "parameter":
       return compiler.place({ from: "parameter", name: value.name });
@@ -135,7 +135,7 @@ function valueSql(compiler: Compiler, value: PhiServerAddonQueryValue) {
  * characters; unescaped, the `%` would be a wildcard and the search would quietly return everything
  * starting with 100. The backslash goes first, or it would double the escapes added after it.
  */
-function containsSql(compiler: Compiler, column: string, value: PhiServerAddonQueryValue) {
+function containsSql(compiler: Compiler, column: string, value: PhisAddonQueryValue) {
   const placed = valueSql(compiler, value);
   const escaped =
     `replace(replace(replace(${placed}, '\\', '\\\\'), '%', '\\%'), '_', '\\_')`;
@@ -144,7 +144,7 @@ function containsSql(compiler: Compiler, column: string, value: PhiServerAddonQu
 
 function conditionSql(
   compiler: Compiler,
-  condition: PhiServerAddonQueryCondition,
+  condition: PhisAddonQueryCondition,
 ): string {
   switch (condition.kind) {
     case "compare":
@@ -205,9 +205,9 @@ function conditionSql(
  * can always finish the job, and no author has to know that they had to.
  */
 export function phiServerAddonQueryOrdering(
-  table: PhiServerAddonTableDescriptor,
-  descriptor: PhiServerAddonSelectQueryDescriptor,
-): PhiServerAddonQueryOrdering[] {
+  table: PhisAddonTableDescriptor,
+  descriptor: PhisAddonSelectQueryDescriptor,
+): PhisAddonQueryOrdering[] {
   const declared = descriptor.orderBy ?? [];
   const named = new Set(declared.map((entry) => entry.column));
   return [
@@ -229,7 +229,7 @@ export function phiServerAddonQueryOrdering(
  * Every ordering column is `NOT NULL` by validation, which is what makes this sound: a comparison
  * against null is null, and the page would end early and silently instead of continuing.
  */
-function keysetSql(compiler: Compiler, ordering: PhiServerAddonQueryOrdering[]) {
+function keysetSql(compiler: Compiler, ordering: PhisAddonQueryOrdering[]) {
   const branches: string[] = [];
   for (let index = 0; index < ordering.length; index += 1) {
     const steps = ordering.slice(0, index).map((entry, position) =>
@@ -255,9 +255,9 @@ function qualify(schemaName: string, table: string) {
  * This is what `siteScoped` promises beyond a column and a foreign key: not that an Add-on remembers
  * to filter, but that it has no statement in which the filter is missing.
  */
-function siteScopeSql(compiler: Compiler, table: PhiServerAddonTableDescriptor) {
+function siteScopeSql(compiler: Compiler, table: PhisAddonTableDescriptor) {
   return table.siteScoped
-    ? `${quotePhiIdentifier(PHI_SERVER_ADDON_SITE_COLUMN)} = ${compiler.place({ from: "site" })}`
+    ? `${quotePhiIdentifier(PHIS_ADDON_SITE_COLUMN)} = ${compiler.place({ from: "site" })}`
     : null;
 }
 
@@ -268,16 +268,16 @@ function siteScopeSql(compiler: Compiler, table: PhiServerAddonTableDescriptor) 
  * cannot tell apart from anyone else's -- which is exactly what it needs them for.
  */
 function selectableColumns(
-  table: PhiServerAddonTableDescriptor,
-  descriptor: PhiServerAddonSelectQueryDescriptor,
+  table: PhisAddonTableDescriptor,
+  descriptor: PhisAddonSelectQueryDescriptor,
 ) {
   if (descriptor.columns && descriptor.columns.length > 0) {
     return descriptor.columns;
   }
   return [
-    ...(table.siteScoped ? [PHI_SERVER_ADDON_SITE_COLUMN] : []),
-    ...(table.groupScoped ? [PHI_SERVER_ADDON_GROUP_COLUMN] : []),
-    ...(table.ownerScoped ? [PHI_SERVER_ADDON_OWNER_COLUMN] : []),
+    ...(table.siteScoped ? [PHIS_ADDON_SITE_COLUMN] : []),
+    ...(table.groupScoped ? [PHIS_ADDON_GROUP_COLUMN] : []),
+    ...(table.ownerScoped ? [PHIS_ADDON_OWNER_COLUMN] : []),
     ...table.columns.map((column) => column.name),
   ];
 }
@@ -297,11 +297,11 @@ export function cursorColumnName(index: number) {
 
 function compileSelect(
   schemaName: string,
-  table: PhiServerAddonTableDescriptor,
-  descriptor: PhiServerAddonSelectQueryDescriptor,
+  table: PhisAddonTableDescriptor,
+  descriptor: PhisAddonSelectQueryDescriptor,
   continuation: boolean,
-  parameterTypes: Map<string, PhiServerAddonQueryParameterType>,
-): PhiServerAddonCompiledQuery {
+  parameterTypes: Map<string, PhisAddonQueryParameterType>,
+): PhisAddonCompiledQuery {
   const compiler = createCompiler(parameterTypes);
   const ordering = phiServerAddonQueryOrdering(table, descriptor);
   /*
@@ -354,23 +354,23 @@ function compileSelect(
  * An ungrouped aggregate has one row and no order at all.
  */
 function aggregateOrdering(
-  descriptor: PhiServerAddonAggregateQueryDescriptor,
-): PhiServerAddonQueryOrdering[] {
+  descriptor: PhisAddonAggregateQueryDescriptor,
+): PhisAddonQueryOrdering[] {
   return (descriptor.groupBy ?? []).map((column) => ({ column, direction: "asc" as const }));
 }
 
-function aggregateSql(entry: PhiServerAddonQueryAggregate) {
+function aggregateSql(entry: PhisAddonQueryAggregate) {
   const argument = entry.column ? quotePhiIdentifier(entry.column) : "*";
   return `${entry.function.toUpperCase()}(${argument}) AS ${quotePhiIdentifier(entry.as)}`;
 }
 
 function compileAggregate(
   schemaName: string,
-  table: PhiServerAddonTableDescriptor,
-  descriptor: PhiServerAddonAggregateQueryDescriptor,
+  table: PhisAddonTableDescriptor,
+  descriptor: PhisAddonAggregateQueryDescriptor,
   continuation: boolean,
-  parameterTypes: Map<string, PhiServerAddonQueryParameterType>,
-): PhiServerAddonCompiledQuery {
+  parameterTypes: Map<string, PhisAddonQueryParameterType>,
+): PhisAddonCompiledQuery {
   const compiler = createCompiler(parameterTypes);
   const ordering = aggregateOrdering(descriptor);
   const grouping = (descriptor.groupBy ?? []).map((column) => quotePhiIdentifier(column));
@@ -419,12 +419,12 @@ function compileAggregate(
  * that names its columns rather than `*` keeps the shape of the answer a decision of this file: a column
  * added to a table later does not silently start appearing in what an Add-on receives.
  */
-function returningSql(table: PhiServerAddonTableDescriptor) {
+function returningSql(table: PhisAddonTableDescriptor) {
   return [
     ...table.columns.map((column) => column.name),
-    ...(table.siteScoped ? [PHI_SERVER_ADDON_SITE_COLUMN] : []),
-    ...(table.groupScoped ? [PHI_SERVER_ADDON_GROUP_COLUMN] : []),
-    ...(table.ownerScoped ? [PHI_SERVER_ADDON_OWNER_COLUMN] : []),
+    ...(table.siteScoped ? [PHIS_ADDON_SITE_COLUMN] : []),
+    ...(table.groupScoped ? [PHIS_ADDON_GROUP_COLUMN] : []),
+    ...(table.ownerScoped ? [PHIS_ADDON_OWNER_COLUMN] : []),
   ]
     .map((column) => quotePhiIdentifier(column))
     .join(", ");
@@ -432,9 +432,9 @@ function returningSql(table: PhiServerAddonTableDescriptor) {
 
 function compileInsert(
   schemaName: string,
-  table: PhiServerAddonTableDescriptor,
-  descriptor: PhiServerAddonInsertQueryDescriptor,
-): PhiServerAddonCompiledQuery {
+  table: PhisAddonTableDescriptor,
+  descriptor: PhisAddonInsertQueryDescriptor,
+): PhisAddonCompiledQuery {
   const compiler = createCompiler();
   const columns: string[] = [];
   const values: string[] = [];
@@ -442,15 +442,15 @@ function compileInsert(
   // Core's columns first, and written by Core. The descriptor has nowhere to name them, so there is no
   // form of this statement in which an Add-on chooses its own Site, group, or owner.
   if (table.siteScoped) {
-    columns.push(PHI_SERVER_ADDON_SITE_COLUMN);
+    columns.push(PHIS_ADDON_SITE_COLUMN);
     values.push(compiler.place({ from: "site" }));
   }
   if (table.groupScoped) {
-    columns.push(PHI_SERVER_ADDON_GROUP_COLUMN);
+    columns.push(PHIS_ADDON_GROUP_COLUMN);
     values.push(compiler.place({ from: "group" }));
   }
   if (table.ownerScoped) {
-    columns.push(PHI_SERVER_ADDON_OWNER_COLUMN);
+    columns.push(PHIS_ADDON_OWNER_COLUMN);
     values.push(compiler.place({ from: "actor" }));
   }
   for (const assignment of descriptor.values) {
@@ -481,9 +481,9 @@ function compileInsert(
  */
 function compileByIdMutation(
   schemaName: string,
-  table: PhiServerAddonTableDescriptor,
-  descriptor: PhiServerAddonQueryDescriptor & { kind: "update" | "delete" },
-): PhiServerAddonCompiledQuery {
+  table: PhisAddonTableDescriptor,
+  descriptor: PhisAddonQueryDescriptor & { kind: "update" | "delete" },
+): PhisAddonCompiledQuery {
   const compiler = createCompiler();
   const assignments = descriptor.kind === "update"
     ? descriptor.set
@@ -496,7 +496,7 @@ function compileByIdMutation(
   const where = [
     `${key} = ${compiler.place({ from: "id" })}`,
     ...(table.siteScoped
-      ? [`${quotePhiIdentifier(PHI_SERVER_ADDON_SITE_COLUMN)} = ${compiler.place({ from: "site" })}`]
+      ? [`${quotePhiIdentifier(PHIS_ADDON_SITE_COLUMN)} = ${compiler.place({ from: "site" })}`]
       : []),
   ].join(" AND ");
   return {
@@ -529,13 +529,13 @@ function compileByIdMutation(
  * A descriptor naming a table the schema does not declare is skipped rather than compiled; validation
  * has already refused such a catalog, and this stays a pure derivation with nothing to report.
  */
-export function compilePhiServerAddonQueries(
+export function compilePhisAddonQueries(
   schemaName: string,
-  schema: PhiServerAddonSchemaDescriptor,
-  catalog: PhiServerAddonQueryCatalog,
-): Map<string, PhiServerAddonCompiledQuery> {
+  schema: PhisAddonSchemaDescriptor,
+  catalog: PhisAddonQueryCatalog,
+): Map<string, PhisAddonCompiledQuery> {
   const tables = new Map(schema.tables.map((table) => [table.name, table]));
-  const compiled = new Map<string, PhiServerAddonCompiledQuery>();
+  const compiled = new Map<string, PhisAddonCompiledQuery>();
   for (const descriptor of catalog.queries) {
     const table = tables.get(descriptor.table);
     if (!table) {
@@ -555,7 +555,7 @@ export function compilePhiServerAddonQueries(
           sql: next.sql,
           bindings: next.bindings,
           ordering: phiServerAddonQueryOrdering(table, descriptor),
-          limit: Math.min(descriptor.limit, PHI_SERVER_ADDON_QUERY_MAX_LIMIT),
+          limit: Math.min(descriptor.limit, PHIS_ADDON_QUERY_MAX_LIMIT),
         },
       });
     } else if (descriptor.kind === "aggregate") {
@@ -578,7 +578,7 @@ export function compilePhiServerAddonQueries(
           sql: next.sql,
           bindings: next.bindings,
           ordering,
-          limit: Math.min(descriptor.limit ?? PHI_SERVER_ADDON_QUERY_MAX_LIMIT, PHI_SERVER_ADDON_QUERY_MAX_LIMIT),
+          limit: Math.min(descriptor.limit ?? PHIS_ADDON_QUERY_MAX_LIMIT, PHIS_ADDON_QUERY_MAX_LIMIT),
         },
       });
     } else if (descriptor.kind === "insert") {

@@ -1,9 +1,9 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { buildPhiServerAddonGroupsCapability } from "@/lib/addons/groups-capability";
-import { buildPhiServerAddonSettingsCapability } from "@/lib/addons/settings-capability";
-import { buildPhiServerAddonStorageCapability } from "@/lib/addons/storage-capability";
-import { writePhiServerAddonSetting } from "@/db/server-addon-settings.mts";
+import { buildPhisAddonGroupsCapability } from "@/lib/addons/groups-capability";
+import { buildPhisAddonSettingsCapability } from "@/lib/addons/settings-capability";
+import { buildPhisAddonStorageCapability } from "@/lib/addons/storage-capability";
+import { writePhisAddonSetting } from "@/db/server-addon-settings.mts";
 import { PhiGroupMembershipFlags } from "@/lib/constants/site-groups";
 import {
   addPhiTestGroupMember,
@@ -62,7 +62,7 @@ describe("what an Add-on may learn about a person", () => {
   });
 
   function capability(actorUserId: number | null) {
-    return buildPhiServerAddonGroupsCapability({
+    return buildPhisAddonGroupsCapability({
       addonId: "@pgtest/capabilities",
       siteId: site.id,
       actorUserId,
@@ -112,7 +112,7 @@ describe("what an operator configured", () => {
   });
 
   function settings() {
-    return buildPhiServerAddonSettingsCapability({ addonId: ADDON_ID, siteId: site.id, declared });
+    return buildPhisAddonSettingsCapability({ addonId: ADDON_ID, siteId: site.id, declared });
   }
 
   it("answers the declared default until an operator says otherwise", async () => {
@@ -126,12 +126,12 @@ describe("what an operator configured", () => {
 
   it("answers what the operator set, and goes back to the default when it is cleared", async () => {
     const pool = await requirePhiTestDatabase();
-    await writePhiServerAddonSetting(pool, {
+    await writePhisAddonSetting(pool, {
       addonId: ADDON_ID, siteId: site.id, name: "greeting", value: "good day",
     });
     expect(await settings().read("greeting")).toBe("good day");
 
-    await writePhiServerAddonSetting(pool, {
+    await writePhisAddonSetting(pool, {
       addonId: ADDON_ID, siteId: site.id, name: "greeting", value: null,
     });
     expect(await settings().read("greeting")).toBe("hello");
@@ -139,7 +139,7 @@ describe("what an operator configured", () => {
 
   it("ignores a stored key the Add-on no longer declares", async () => {
     const pool = await requirePhiTestDatabase();
-    await writePhiServerAddonSetting(pool, {
+    await writePhisAddonSetting(pool, {
       addonId: ADDON_ID, siteId: site.id, name: "retired", value: "left over",
     });
     expect(await settings().read("retired")).toBeNull();
@@ -151,7 +151,7 @@ describe("what an operator configured", () => {
     const pool = await requirePhiTestDatabase();
     // Not reachable through the CLI, which parses first -- but a hand-edited row is, and an Add-on
     // must not be handed a string where it declared an integer.
-    await writePhiServerAddonSetting(pool, {
+    await writePhisAddonSetting(pool, {
       addonId: ADDON_ID, siteId: site.id, name: "batch-size", value: "many",
     });
     expect(await settings().read("batch-size")).toBe(10);
@@ -182,7 +182,7 @@ describe("where an Add-on's bytes go", () => {
   });
 
   function storage() {
-    return buildPhiServerAddonStorageCapability({
+    return buildPhisAddonStorageCapability({
       addonId: ADDON_ID,
       siteId: site.id,
       siteKey: site.key,

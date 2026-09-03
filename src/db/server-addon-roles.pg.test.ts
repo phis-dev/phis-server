@@ -1,13 +1,13 @@
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
 
 import {
-  grantPhiServerAddonUserRole,
-  readPhiServerAddonOrphanedRoles,
+  grantPhisAddonUserRole,
+  readPhisAddonOrphanedRoles,
   readPhiSiteUserAddonRoles,
-  revokePhiServerAddonUserRole,
+  revokePhisAddonUserRole,
 } from "./server-addon-roles.mts";
-import { buildPhiServerAddonRolesCapability } from "@/lib/addons/roles-capability";
-import { mayGrantPhiServerAddonRole } from "@/lib/addons/role-granting";
+import { buildPhisAddonRolesCapability } from "@/lib/addons/roles-capability";
+import { mayGrantPhisAddonRole } from "@/lib/addons/role-granting";
 import {
   closePhiTestPool,
   createPhiTestSite,
@@ -62,7 +62,7 @@ describe("Add-on roles", () => {
   });
 
   function capabilityFor(actorUserId: number | null) {
-    return buildPhiServerAddonRolesCapability({
+    return buildPhisAddonRolesCapability({
       addonId: ADDON,
       siteId: site.id,
       actorUserId,
@@ -73,8 +73,8 @@ describe("Add-on roles", () => {
   it("grants once, and says so when a second grant adds nothing", async () => {
     const pool = await requirePhiTestDatabase();
     const input = { addonId: ADDON, siteId: site.id, userId: vendor, role: "vendor", grantedByUserId: admin };
-    expect(await grantPhiServerAddonUserRole(pool, input)).toBe(true);
-    expect(await grantPhiServerAddonUserRole(pool, input)).toBe(false);
+    expect(await grantPhisAddonUserRole(pool, input)).toBe(true);
+    expect(await grantPhisAddonUserRole(pool, input)).toBe(false);
     expect(await capabilityFor(vendor).has("vendor")).toBe(true);
   });
 
@@ -86,14 +86,14 @@ describe("Add-on roles", () => {
 
   it("does not hand over a role the manifest no longer declares", async () => {
     const pool = await requirePhiTestDatabase();
-    await grantPhiServerAddonUserRole(pool, {
+    await grantPhisAddonUserRole(pool, {
       addonId: ADDON, siteId: site.id, userId: vendor, role: "retired-role", grantedByUserId: null,
     });
     expect(await capabilityFor(vendor).all()).toEqual(["vendor"]);
     expect(await capabilityFor(vendor).has("retired-role")).toBe(false);
 
     // Not handed over, but not gone either: the operator is told, and decides.
-    const orphans = await readPhiServerAddonOrphanedRoles(pool, {
+    const orphans = await readPhisAddonOrphanedRoles(pool, {
       addonId: ADDON,
       declared: DECLARED.map((role) => role.name),
     });
@@ -108,7 +108,7 @@ describe("Add-on roles", () => {
   });
 
   it("refuses a grant from somebody who holds neither the access nor the granting role", async () => {
-    const verdict = await mayGrantPhiServerAddonRole({
+    const verdict = await mayGrantPhisAddonRole({
       addonId: ADDON, siteId: site.id, actorUserId: vendor, role: "vendor", declared: DECLARED,
     });
     expect(verdict).toEqual({ allowed: false, reason: "not_permitted" });
@@ -116,20 +116,20 @@ describe("Add-on roles", () => {
 
   it("allows a grant from somebody holding the role the policy names", async () => {
     const pool = await requirePhiTestDatabase();
-    await grantPhiServerAddonUserRole(pool, {
+    await grantPhisAddonUserRole(pool, {
       addonId: ADDON, siteId: site.id, userId: admin, role: "market-admin", grantedByUserId: null,
     });
-    const verdict = await mayGrantPhiServerAddonRole({
+    const verdict = await mayGrantPhisAddonRole({
       addonId: ADDON, siteId: site.id, actorUserId: admin, role: "vendor", declared: DECLARED,
     });
     expect(verdict.allowed).toBe(true);
   });
 
   it("refuses a role nobody declared, and an Add-on nobody installed", async () => {
-    expect(await mayGrantPhiServerAddonRole({
+    expect(await mayGrantPhisAddonRole({
       addonId: ADDON, siteId: site.id, actorUserId: admin, role: "nonesuch", declared: DECLARED,
     })).toEqual({ allowed: false, reason: "role_undeclared" });
-    expect(await mayGrantPhiServerAddonRole({
+    expect(await mayGrantPhisAddonRole({
       addonId: "@pgtest/absent", siteId: site.id, actorUserId: admin, role: "vendor", declared: null,
     })).toEqual({ allowed: false, reason: "addon_unknown" });
   });
@@ -137,7 +137,7 @@ describe("Add-on roles", () => {
   it("takes the grants with the user", async () => {
     const pool = await requirePhiTestDatabase();
     const doomed = await createPhiTestUser(site);
-    await grantPhiServerAddonUserRole(pool, {
+    await grantPhisAddonUserRole(pool, {
       addonId: ADDON, siteId: site.id, userId: doomed, role: "vendor", grantedByUserId: null,
     });
     await pool.query(`DELETE FROM phis.user_accounts WHERE id = $1`, [doomed]);
@@ -151,8 +151,8 @@ describe("Add-on roles", () => {
   it("revokes, and says so when there was nothing to revoke", async () => {
     const pool = await requirePhiTestDatabase();
     const input = { addonId: ADDON, siteId: site.id, userId: vendor, role: "vendor" };
-    expect(await revokePhiServerAddonUserRole(pool, input)).toBe(true);
-    expect(await revokePhiServerAddonUserRole(pool, input)).toBe(false);
+    expect(await revokePhisAddonUserRole(pool, input)).toBe(true);
+    expect(await revokePhisAddonUserRole(pool, input)).toBe(false);
     expect(await capabilityFor(vendor).has("vendor")).toBe(false);
   });
 });

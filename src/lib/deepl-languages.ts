@@ -1,6 +1,6 @@
 import "server-only";
 
-import { getPhiServerConfigSync } from "@/lib/config";
+import { getPhisConfigSync } from "@/lib/config";
 import { PHI_CANONICAL_SOURCE_LOCALE } from "@/lib/locale";
 
 const DEFAULT_DEEPL_TRANSLATE_URL = "https://api-free.deepl.com/v2/translate";
@@ -32,7 +32,7 @@ function normalizeLocaleKey(locale?: string | null) {
 
 function getDeepLLanguagesUrl(type: DeepLLanguageType) {
   const configuredUrl =
-    getPhiServerConfigSync().deepl?.apiUrl?.trim() || DEFAULT_DEEPL_TRANSLATE_URL;
+    getPhisConfigSync().deepl?.apiUrl?.trim() || DEFAULT_DEEPL_TRANSLATE_URL;
   const url = new URL(configuredUrl);
   url.pathname = "/v2/languages";
   url.search = "";
@@ -46,7 +46,7 @@ async function requestDeepLLanguages(type: DeepLLanguageType) {
     return cached.languages;
   }
 
-  const apiKey = getPhiServerConfigSync().deepl?.apiKey?.trim();
+  const apiKey = getPhisConfigSync().deepl?.apiKey?.trim();
   if (!apiKey) {
     throw new Error("Missing deepl.apiKey in config/phis-runtime.json.");
   }

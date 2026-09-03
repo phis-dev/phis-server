@@ -7,7 +7,7 @@ import { choosePhisMediaChecksumAlgorithm, PHI_LOCAL_MEDIA_STORAGE_PROVIDER_ID }
 import type { PhisMediaStorageAdapter, PhisMediaStorageProbe } from "@phis/contracts/addon";
 
 import { loadInstalledAddonRuntime, readAddonDesiredState } from "./addons.mts";
-import { PHI_SERVER_SERVICE_KINDS } from "../lib/addons/core-services.ts";
+import { PHIS_SERVICE_KINDS } from "../lib/addons/core-services.ts";
 import {
   reconcilePhiMediaStorageCorsWith,
   type PhiMediaStorageCorsAdapter,
@@ -157,7 +157,7 @@ function findProviderEntry(root: string, providerId: string) {
   const state = readAddonDesiredState(root);
   for (const addon of state.addons) {
     const descriptor = addon.manifest.serviceProviders.find((provider) =>
-      provider.serviceKind === PHI_SERVER_SERVICE_KINDS.mediaStorage &&
+      provider.serviceKind === PHIS_SERVICE_KINDS.mediaStorage &&
       provider.providerKey === providerId);
     if (descriptor) {
       return { addonId: addon.addonId, descriptor };

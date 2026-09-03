@@ -3,50 +3,50 @@ import "server-only";
 import { getPool } from "@/lib/db";
 import type { PhiSecretEncryptionKey } from "@/lib/secrets/crypto";
 import {
-  deletePhiServerSecretWithDb,
-  hasPhiServerSecretWithDb,
-  hasPhiServerSecretsWithDb,
-  listPhiServerSecretsWithDb,
-  readPhiServerSecretWithDb,
-  writePhiServerSecretWithDb,
-  type PhiServerSecretRecord,
+  deletePhisSecretWithDb,
+  hasPhisSecretWithDb,
+  hasPhisSecretsWithDb,
+  listPhisSecretsWithDb,
+  readPhisSecretWithDb,
+  writePhisSecretWithDb,
+  type PhisSecretRecord,
 } from "./server-secrets-store.mts";
 
-export type { PhiServerSecretRecord };
+export type { PhisSecretRecord };
 export {
-  deletePhiServerSecretWithDb,
-  hasPhiServerSecretWithDb,
-  hasPhiServerSecretsWithDb,
-  listPhiServerSecretsWithDb,
-  readPhiServerSecretWithDb,
-  writePhiServerSecretWithDb,
+  deletePhisSecretWithDb,
+  hasPhisSecretWithDb,
+  hasPhisSecretsWithDb,
+  listPhisSecretsWithDb,
+  readPhisSecretWithDb,
+  writePhisSecretWithDb,
 };
 
-export function writePhiServerSecret(input: {
+export function writePhisSecret(input: {
   reference: string;
   value: string;
   key: PhiSecretEncryptionKey;
   siteId?: number | null;
 }) {
-  return writePhiServerSecretWithDb(getPool(), input);
+  return writePhisSecretWithDb(getPool(), input);
 }
 
-export function readPhiServerSecret(reference: string, key: PhiSecretEncryptionKey) {
-  return readPhiServerSecretWithDb(getPool(), reference, key);
+export function readPhisSecret(reference: string, key: PhiSecretEncryptionKey) {
+  return readPhisSecretWithDb(getPool(), reference, key);
 }
 
-export function hasPhiServerSecret(reference: string) {
-  return hasPhiServerSecretWithDb(getPool(), reference);
+export function hasPhisSecret(reference: string) {
+  return hasPhisSecretWithDb(getPool(), reference);
 }
 
-export function hasPhiServerSecrets(references: string[]) {
-  return hasPhiServerSecretsWithDb(getPool(), references);
+export function hasPhisSecrets(references: string[]) {
+  return hasPhisSecretsWithDb(getPool(), references);
 }
 
-export function deletePhiServerSecret(reference: string) {
-  return deletePhiServerSecretWithDb(getPool(), reference);
+export function deletePhisSecret(reference: string) {
+  return deletePhisSecretWithDb(getPool(), reference);
 }
 
-export function listPhiServerSecrets(filter?: { siteId?: number | null; addonId?: string | null }) {
-  return listPhiServerSecretsWithDb(getPool(), filter);
+export function listPhisSecrets(filter?: { siteId?: number | null; addonId?: string | null }) {
+  return listPhisSecretsWithDb(getPool(), filter);
 }

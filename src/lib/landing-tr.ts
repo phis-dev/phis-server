@@ -7,7 +7,7 @@ import {
   SUPPORTED_LOCALES,
   normalizeLocale,
 } from "@/lib/locale";
-import { getPhiServerConfigSync } from "@/lib/config";
+import { getPhisConfigSync } from "@/lib/config";
 import { logRuntimeEvent } from "@/lib/log";
 import { resolveSiteFromHeaders } from "@/lib/site-context";
 import { translateBatchWithCache, translateSiteWithCache, translateWithCache } from "@/lib/translations";
@@ -42,7 +42,7 @@ async function resolveLocale() {
 }
 
 function shouldSkipGlobalTranslation(locale: string) {
-  const translationMode = getPhiServerConfigSync().translation?.mode ?? "none";
+  const translationMode = getPhisConfigSync().translation?.mode ?? "none";
   return translationMode === "none" || locale === PHI_CANONICAL_SOURCE_LOCALE;
 }
 

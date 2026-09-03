@@ -1,7 +1,7 @@
 import {
-  PHI_SERVER_SERVICE_INTERFACE_DIGESTS,
-  PHI_SERVER_SERVICE_KINDS,
-  type PhiServerServiceKind,
+  PHIS_SERVICE_INTERFACE_DIGESTS,
+  PHIS_SERVICE_KINDS,
+  type PhisServiceKind,
 } from "./contract.ts";
 
 /**
@@ -17,21 +17,21 @@ import {
  * Add-on built against the old one is refused with its own value quoted back.
  */
 
-export { PHI_SERVER_SERVICE_KINDS };
-export type { PhiServerServiceKind };
+export { PHIS_SERVICE_KINDS };
+export type { PhisServiceKind };
 
-export function phiServerServiceInterfaceDigest(kind: PhiServerServiceKind) {
-  return PHI_SERVER_SERVICE_INTERFACE_DIGESTS[kind];
+export function phiServerServiceInterfaceDigest(kind: PhisServiceKind) {
+  return PHIS_SERVICE_INTERFACE_DIGESTS[kind];
 }
 
-const SERVICE_KIND_SET = new Set<string>(Object.values(PHI_SERVER_SERVICE_KINDS));
+const SERVICE_KIND_SET = new Set<string>(Object.values(PHIS_SERVICE_KINDS));
 
-export function isPhiServerServiceKind(value: unknown): value is PhiServerServiceKind {
+export function isPhisServiceKind(value: unknown): value is PhisServiceKind {
   return typeof value === "string" && SERVICE_KIND_SET.has(value);
 }
 
 /** Whether an Add-on was built against the interface this release actually offers. */
-export function isPhiServerServiceInterfaceCurrent(kind: string, interfaceDigest: string) {
-  return isPhiServerServiceKind(kind) &&
+export function isPhisServiceInterfaceCurrent(kind: string, interfaceDigest: string) {
+  return isPhisServiceKind(kind) &&
     phiServerServiceInterfaceDigest(kind) === interfaceDigest;
 }

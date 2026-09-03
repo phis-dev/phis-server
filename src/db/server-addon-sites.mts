@@ -18,7 +18,7 @@ import { PHI_SITE_SERVER_ADDON_FLAG_REQUESTED_ENABLED } from "../lib/constants/s
 
 type Queryable = Pick<Pool | PoolClient, "query">;
 
-export type PhiServerAddonSiteState = {
+export type PhisAddonSiteState = {
   siteId: number;
   addonId: string;
   requestedEnabled: boolean;
@@ -36,7 +36,7 @@ type Row = {
   diagnostic_code: string | null;
 };
 
-function mapRow(row: Row): PhiServerAddonSiteState {
+function mapRow(row: Row): PhisAddonSiteState {
   return {
     siteId: row.site_id,
     addonId: row.addon_id,
@@ -50,7 +50,7 @@ function mapRow(row: Row): PhiServerAddonSiteState {
 const COLUMNS =
   "site_id, addon_id, flags, configuration_status, effective_status, diagnostic_code";
 
-export async function readPhiServerAddonSiteStates(db: Queryable, addonId: string) {
+export async function readPhisAddonSiteStates(db: Queryable, addonId: string) {
   const { rows } = await db.query<Row>(
     `SELECT ${COLUMNS} FROM phis.site_server_addons WHERE addon_id = $1 ORDER BY site_id`,
     [addonId],
@@ -59,7 +59,7 @@ export async function readPhiServerAddonSiteStates(db: Queryable, addonId: strin
 }
 
 /** The Sites that asked for this Add-on, which is where its per-Site state has to be kept up. */
-export async function readPhiServerAddonEnabledSiteIds(db: Queryable, addonId: string) {
+export async function readPhisAddonEnabledSiteIds(db: Queryable, addonId: string) {
   const { rows } = await db.query<{ site_id: number }>(
     `SELECT site_id FROM phis.site_server_addons
       WHERE addon_id = $1 AND (flags & $2) <> 0
@@ -90,7 +90,7 @@ export async function readPhiServerAddonEnabledSiteIds(db: Queryable, addonId: s
  * must then handle null, so this is not a promise that it would fail -- it is the one place an operator
  * finds out that they were expected to say something.
  */
-export function resolvePhiServerAddonConfigurationStatus(
+export function resolvePhisAddonConfigurationStatus(
   declared: ReadonlyArray<{ name: string; default?: unknown }>,
   stored: Record<string, unknown>,
 ) {
@@ -100,7 +100,7 @@ export function resolvePhiServerAddonConfigurationStatus(
   return unanswered.length === 0 ? "ready" : "missing";
 }
 
-export async function setPhiServerAddonSiteEnabled(
+export async function setPhisAddonSiteEnabled(
   db: Queryable,
   input: {
     addonId: string;
@@ -146,7 +146,7 @@ export async function setPhiServerAddonSiteEnabled(
  * ever wrote it, so every Add-on looked unavailable everywhere. What it is good for is an operator
  * asking "why is this not running here" without reproducing that reasoning.
  */
-export async function recordPhiServerAddonSiteEffectiveStatus(
+export async function recordPhisAddonSiteEffectiveStatus(
   db: Queryable,
   input: { addonId: string; status: string; diagnosticCode?: string | null },
 ) {

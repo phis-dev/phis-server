@@ -1,26 +1,26 @@
 import { createHash } from "node:crypto";
 
-import { isPhiServerServiceInterfaceCurrent, isPhiServerServiceKind } from "./core-services.ts";
-import { validatePhiServerAddonQueryCatalog } from "./query-descriptor.ts";
-import { validatePhiServerAddonSchemaDescriptor } from "./schema-descriptor.ts";
-import { PHI_SERVER_ADDON_ID_PATTERN } from "./schema-name.ts";
+import { isPhisServiceInterfaceCurrent, isPhisServiceKind } from "./core-services.ts";
+import { validatePhisAddonQueryCatalog } from "./query-descriptor.ts";
+import { validatePhisAddonSchemaDescriptor } from "./schema-descriptor.ts";
+import { PHIS_ADDON_ID_PATTERN } from "./schema-name.ts";
 import {
-  PHI_SERVER_ADDON_ABI_VERSION,
-  PHI_SERVER_ADDON_MANIFEST_VERSION,
-  PHI_SERVER_SITE_ACCESS,
-  type PhiServerAddonApiRouteDescriptor,
-  type PhiServerAddonDesiredState,
-  type PhiServerAddonHookDescriptor,
-  type PhiServerAddonManifestV1,
-  type PhiServerAddonQueryCatalog,
-  type PhiServerAddonSchemaDescriptor,
+  PHIS_ADDON_ABI_VERSION,
+  PHIS_ADDON_MANIFEST_VERSION,
+  PHIS_SITE_ACCESS,
+  type PhisAddonApiRouteDescriptor,
+  type PhisAddonDesiredState,
+  type PhisAddonHookDescriptor,
+  type PhisAddonManifestV1,
+  type PhisAddonQueryCatalog,
+  type PhisAddonSchemaDescriptor,
 } from "./contract.ts";
 
 /**
  * An Add-on id is an npm package name in which neither `_` nor `.` occurs. Both would have to map to `_` in the derived schema name, and three characters collapsing
  * into one would multiply the collisions the unique index has to catch for nothing in return.
  */
-const ADDON_ID_PATTERN = PHI_SERVER_ADDON_ID_PATTERN;
+const ADDON_ID_PATTERN = PHIS_ADDON_ID_PATTERN;
 /** `<npm-package>/modules/<module>`, the Module id grammar `@phis/ui` enforces on the other side. */
 const MODULE_ID_PATTERN = (packageName: string) =>
   new RegExp(`^${packageName.replaceAll(/[.*+?^${}()|[\]\\]/g, "\\$&")}/modules/[a-z0-9][a-z0-9-]*$`);
@@ -41,7 +41,7 @@ const ROUTE_SEGMENT_PATTERN = /^(?:[a-z0-9][a-z0-9._-]*|:[a-z][a-zA-Z0-9_]*)$/;
 const HTTP_METHODS = new Set(["DELETE", "GET", "PATCH", "POST", "PUT"]);
 const AUTH_POLICIES = new Set(["internal", "site-user", "site-admin", "operator"]);
 const SETTING_NAME_PATTERN = /^[a-z][a-z0-9-]{0,63}$/;
-const SITE_ACCESS_VALUES = new Set<string>(Object.values(PHI_SERVER_SITE_ACCESS));
+const SITE_ACCESS_VALUES = new Set<string>(Object.values(PHIS_SITE_ACCESS));
 
 /**
  * Whether at least one role can be reached without already holding another.
@@ -121,7 +121,7 @@ function validateApiRoute(
   value: unknown,
   index: number,
   issues: string[],
-): value is PhiServerAddonApiRouteDescriptor {
+): value is PhisAddonApiRouteDescriptor {
   const field = `apiRoutes[${index}]`;
   if (!isRecord(value)) {
     issues.push(`${field} must be an object.`);
@@ -174,7 +174,7 @@ function validateHook(
   value: unknown,
   index: number,
   issues: string[],
-): value is PhiServerAddonHookDescriptor {
+): value is PhisAddonHookDescriptor {
   const field = `hooks[${index}]`;
   if (!isRecord(value)) {
     issues.push(`${field} must be an object.`);
@@ -231,9 +231,9 @@ export function stablePhiJson(value: unknown): string {
   return JSON.stringify(value);
 }
 
-export function validatePhiServerAddonManifest(
+export function validatePhisAddonManifest(
   value: unknown,
-): { manifest: PhiServerAddonManifestV1 | null; issues: string[] } {
+): { manifest: PhisAddonManifestV1 | null; issues: string[] } {
   const issues: string[] = [];
   if (!isRecord(value)) {
     return {
@@ -242,9 +242,9 @@ export function validatePhiServerAddonManifest(
     };
   }
 
-  if (value.manifestVersion !== PHI_SERVER_ADDON_MANIFEST_VERSION) {
+  if (value.manifestVersion !== PHIS_ADDON_MANIFEST_VERSION) {
     issues.push(
-      `manifestVersion must be ${PHI_SERVER_ADDON_MANIFEST_VERSION}.`,
+      `manifestVersion must be ${PHIS_ADDON_MANIFEST_VERSION}.`,
     );
   }
 
@@ -262,9 +262,9 @@ export function validatePhiServerAddonManifest(
   if (packageVersion && !PACKAGE_VERSION_PATTERN.test(packageVersion)) {
     issues.push("packageVersion must be an exact semantic version.");
   }
-  if (!isPhiServerAddonAbiCompatible(serverAbi)) {
+  if (!isPhisAddonAbiCompatible(serverAbi)) {
     issues.push(
-      `serverAbi must be a range compatible only with ABI ${PHI_SERVER_ADDON_ABI_VERSION}.`,
+      `serverAbi must be a range compatible only with ABI ${PHIS_ADDON_ABI_VERSION}.`,
     );
   }
 
@@ -316,9 +316,9 @@ export function validatePhiServerAddonManifest(
       `serviceProviders[${index}].factoryExport`,
       issues,
     );
-    if (serviceKind && !isPhiServerServiceKind(serviceKind)) {
+    if (serviceKind && !isPhisServiceKind(serviceKind)) {
       issues.push(`serviceProviders[${index}].serviceKind "${serviceKind}" is not a Core service kind.`);
-    } else if (serviceKind && digest && !isPhiServerServiceInterfaceCurrent(serviceKind, digest)) {
+    } else if (serviceKind && digest && !isPhisServiceInterfaceCurrent(serviceKind, digest)) {
       // The digest exists so an Add-on built against an older interface is refused here rather than
       // called with arguments it does not expect.
       issues.push(
@@ -418,13 +418,13 @@ export function validatePhiServerAddonManifest(
   }
   assertUnique(jobIds, "jobs", issues);
 
-  let schema: PhiServerAddonSchemaDescriptor | null = null;
+  let schema: PhisAddonSchemaDescriptor | null = null;
   if (value.schema === null) {
     schema = null;
   } else if (value.schema === undefined) {
     issues.push("schema must be a descriptor object or null.");
   } else {
-    schema = validatePhiServerAddonSchemaDescriptor(value.schema, "schema", issues);
+    schema = validatePhisAddonSchemaDescriptor(value.schema, "schema", issues);
   }
 
   /*
@@ -568,9 +568,9 @@ export function validatePhiServerAddonManifest(
 
   // As with `settings`: absent means none, and is what every manifest written before queries existed
   // says. Stating it is only required to be right, not to be present.
-  let queries: PhiServerAddonQueryCatalog | null = null;
+  let queries: PhisAddonQueryCatalog | null = null;
   if (value.queries != null) {
-    queries = validatePhiServerAddonQueryCatalog(
+    queries = validatePhisAddonQueryCatalog(
       value.queries,
       schema,
       "queries",
@@ -604,30 +604,30 @@ export function validatePhiServerAddonManifest(
   assertUnique(routeKeys, "route descriptors", issues);
 
   return {
-    manifest: issues.length === 0 ? (value as PhiServerAddonManifestV1) : null,
+    manifest: issues.length === 0 ? (value as PhisAddonManifestV1) : null,
     issues,
   };
 }
 
-export function isPhiServerAddonAbiCompatible(serverAbi: string) {
+export function isPhisAddonAbiCompatible(serverAbi: string) {
   return COMPATIBLE_SERVER_ABI_PATTERNS.some((pattern) => pattern.test(serverAbi.trim()));
 }
 
-export function assertPhiServerAddonManifest(value: unknown) {
-  const result = validatePhiServerAddonManifest(value);
+export function assertPhisAddonManifest(value: unknown) {
+  const result = validatePhisAddonManifest(value);
   if (!result.manifest) {
     throw new Error(`Invalid Phi server Add-on manifest:\n- ${result.issues.join("\n- ")}`);
   }
   return result.manifest;
 }
 
-export function digestPhiServerAddonManifest(manifest: PhiServerAddonManifestV1) {
+export function digestPhisAddonManifest(manifest: PhisAddonManifestV1) {
   return createHash("sha256").update(stablePhiJson(manifest)).digest("hex");
 }
 
-export function validatePhiServerAddonDesiredState(
+export function validatePhisAddonDesiredState(
   value: unknown,
-): { state: PhiServerAddonDesiredState | null; issues: string[] } {
+): { state: PhisAddonDesiredState | null; issues: string[] } {
   const issues: string[] = [];
   if (!isRecord(value)) {
     return { state: null, issues: ["Desired state must be an object."] };
@@ -691,13 +691,13 @@ export function validatePhiServerAddonDesiredState(
     // what it declares. Validating them and binding them to the digest is what makes that safe: a
     // hand-edited entry cannot widen an Add-on's routes, capabilities, or schema without also
     // matching a digest it cannot compute for code it does not have.
-    const embedded = validatePhiServerAddonManifest(addon.manifest);
+    const embedded = validatePhisAddonManifest(addon.manifest);
     if (!embedded.manifest) {
       for (const issue of embedded.issues) {
         issues.push(`addons[${index}].manifest: ${issue}`);
       }
     } else {
-      if (manifestDigest && digestPhiServerAddonManifest(embedded.manifest) !== manifestDigest) {
+      if (manifestDigest && digestPhisAddonManifest(embedded.manifest) !== manifestDigest) {
         issues.push(`addons[${index}].manifest does not match manifestDigest.`);
       }
       if (addonId && embedded.manifest.addonId !== addonId) {
@@ -718,7 +718,7 @@ export function validatePhiServerAddonDesiredState(
   assertUnique(packageNames, "addons.packageName", issues);
 
   return {
-    state: issues.length === 0 ? (value as PhiServerAddonDesiredState) : null,
+    state: issues.length === 0 ? (value as PhisAddonDesiredState) : null,
     issues,
   };
 }

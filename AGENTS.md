@@ -131,10 +131,18 @@
 - CSS Modules use `*.module.css`; global styles stay in `src/app/globals.css`.
 - Import alias `@/*` maps to `src/*` (see `tsconfig.json`).
 - Use the golden ratio (1.6...) for Phi spacing and layout proportions (spacing, sizing, drawers, header heights, etc.).
-- Exported type/symbol prefixes: `Phis*` for types that stay server-internal (never cross into the
-  contract); `Phi*` for anything the contract exposes, once `@phis/ui` also reads it -- matching the
-  `Phi*` convention already documented for shared components in `phis-ui`. The legacy `PhiServer*`
-  prefix is being retired into these two; a symbol keeps `PhiServer*` only until it is reclassified.
+- Exported type/symbol prefixes, by who reads the name rather than by where it is declared:
+  - `Phis*` / `PHIS_*` -- phis and the Add-ons it serves. Everything in `@phis/contracts`'s Add-on
+    surface (`addon`, `assets`, `capabilities`, `core`, `queries`, `schema`, `media-storage`) plus
+    every type this application keeps to itself.
+  - `Phi*` / `PHI_*` -- a name the Site UI reads too. `@phis/contracts`'s `access`, `http`, `locale`,
+    `logging`, `media`, `signals`, `site-groups` and `PhiCapabilityState` are that half, and it is the
+    same `Phi*` convention documented for shared components in `phis-ui`.
+  - `PhiServer*` belongs to `phis-ui` alone, where it marks the server side of a pair -- the props a
+    Server Component takes, the theme tokens the server delivers -- and the bare `Phi*` name is the
+    client's. Nothing here carries it; a `PhiServer*` name in this repository is a leftover.
+  - "Server" inside a name (`PhiRuntimeModuleServerBinding`) describes the thing, not the namespace,
+    and stays.
 
 ## Testing Guidelines
 - No test framework or test script is configured yet.

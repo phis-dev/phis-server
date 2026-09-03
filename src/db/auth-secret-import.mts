@@ -1,6 +1,6 @@
 import type { Pool } from "pg";
 
-import { writePhiServerSecretWithDb } from "./server-secrets-store.mts";
+import { writePhisSecretWithDb } from "./server-secrets-store.mts";
 import type { PhiSecretEncryptionKey } from "../lib/secrets/crypto.ts";
 
 /**
@@ -104,7 +104,7 @@ export async function importPhiAuthSecrets(
       entries.push({ legacyReference, reference, ...parsed, status: "site-missing" });
       continue;
     }
-    await writePhiServerSecretWithDb(pool, { reference, value, key, siteId });
+    await writePhisSecretWithDb(pool, { reference, value, key, siteId });
     const replacements = replacementsBySite.get(siteId) ?? new Map<string, string>();
     replacements.set(legacyReference, reference);
     replacementsBySite.set(siteId, replacements);

@@ -13,14 +13,14 @@ import type { Pool, PoolClient } from "pg";
 
 type Queryable = Pick<Pool | PoolClient, "query">;
 
-export type PhiServerAddonRoleGrant = {
+export type PhisAddonRoleGrant = {
   addonId: string;
   role: string;
   grantedAt: Date;
   grantedByUserId: number | null;
 };
 
-export async function readPhiServerAddonUserRoles(
+export async function readPhisAddonUserRoles(
   db: Queryable,
   input: { addonId: string; siteId: number; userId: number },
 ): Promise<string[]> {
@@ -37,7 +37,7 @@ export async function readPhiServerAddonUserRoles(
 export async function readPhiSiteUserAddonRoles(
   db: Queryable,
   input: { siteId: number; userId: number },
-): Promise<PhiServerAddonRoleGrant[]> {
+): Promise<PhisAddonRoleGrant[]> {
   const { rows } = await db.query<{
     addon_id: string;
     role: string;
@@ -59,7 +59,7 @@ export async function readPhiSiteUserAddonRoles(
 }
 
 /** Who holds one role of one Add-on here. */
-export async function readPhiServerAddonRoleHolders(
+export async function readPhisAddonRoleHolders(
   db: Queryable,
   input: { addonId: string; siteId: number; role: string },
 ): Promise<number[]> {
@@ -79,7 +79,7 @@ export async function readPhiServerAddonRoleHolders(
  * Re-granting keeps the first grant rather than restamping it: who first let this person in is the more
  * useful of the two answers, and the second grant added nothing.
  */
-export async function grantPhiServerAddonUserRole(
+export async function grantPhisAddonUserRole(
   db: Queryable,
   input: {
     addonId: string;
@@ -99,7 +99,7 @@ export async function grantPhiServerAddonUserRole(
   return (rowCount ?? 0) > 0;
 }
 
-export async function revokePhiServerAddonUserRole(
+export async function revokePhisAddonUserRole(
   db: Queryable,
   input: { addonId: string; siteId: number; userId: number; role: string },
 ) {
@@ -118,7 +118,7 @@ export async function revokePhiServerAddonUserRole(
  * people holding it should lose their access without anyone noticing; an operator decides that, and
  * needs to be told first.
  */
-export async function readPhiServerAddonOrphanedRoles(
+export async function readPhisAddonOrphanedRoles(
   db: Queryable,
   input: { addonId: string; declared: readonly string[] },
 ): Promise<{ siteId: number; role: string; holders: number }[]> {

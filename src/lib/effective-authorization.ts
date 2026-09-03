@@ -1,6 +1,6 @@
 import "server-only";
 
-import { buildPhiServerCapabilitySnapshot } from "@/lib/addons/capability-snapshot";
+import { buildPhisCapabilitySnapshot } from "@/lib/addons/capability-snapshot";
 import {
   PHI_CORE_ROLE_PROVIDER_ID,
   type PhiViewerRoleClaim,
@@ -10,7 +10,7 @@ export async function resolveEffectivePhiViewerRoleClaims(
   siteId: number,
   persistedClaims: readonly PhiViewerRoleClaim[],
 ) {
-  const snapshot = await buildPhiServerCapabilitySnapshot(siteId);
+  const snapshot = await buildPhisCapabilitySnapshot(siteId);
   const availableProviders = new Set(
     snapshot.providers
       .filter((provider) => provider.state === "available")

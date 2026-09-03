@@ -2,12 +2,12 @@ import { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import {
-  digestPhiServerAddonSchemaDescriptor,
-  migratePhiServerAddon,
-  purgePhiServerAddon,
+  digestPhisAddonSchemaDescriptor,
+  migratePhisAddon,
+  purgePhisAddon,
 } from "./server-addon-migrate.mts";
-import type { PhiServerAddonManifestV1 } from "@/lib/addons/contract";
-import { getPhiServerConfigSync } from "@/lib/config";
+import type { PhisAddonManifestV1 } from "@/lib/addons/contract";
+import { getPhisConfigSync } from "@/lib/config";
 import { incidentSchemaDescriptor } from "../../test/fixtures/addon-schema.ts";
 import { closePhiTestPool, requirePhiTestDatabase } from "../../test/pg/harness";
 
@@ -23,7 +23,7 @@ const ADDON_ID = "@pgtest/tracker";
 const SCHEMA = "phis_addon_pgtest_tracker";
 const RELEASE = "pgtest-release";
 
-function manifestWith(descriptor = incidentSchemaDescriptor): PhiServerAddonManifestV1 {
+function manifestWith(descriptor = incidentSchemaDescriptor): PhisAddonManifestV1 {
   return {
     manifestVersion: 1,
     addonId: ADDON_ID,
@@ -67,7 +67,7 @@ async function cleanUp() {
 describe("Add-on migration runner", () => {
   beforeAll(async () => {
     await requirePhiTestDatabase();
-    const config = getPhiServerConfigSync().database;
+    const config = getPhisConfigSync().database;
     if (!config?.migrationUri || !config.uri) {
       throw new Error("These tests need database.migrationUri and database.uri.");
     }
@@ -83,7 +83,7 @@ describe("Add-on migration runner", () => {
   });
 
   it("registers the Add-on it is about to migrate", async () => {
-    const outcome = await migratePhiServerAddon(
+    const outcome = await migratePhisAddon(
       migrationPool,
       { manifest: manifestWith(), releaseBuildId: RELEASE, servingRole },
       "a".repeat(64),
@@ -104,11 +104,11 @@ describe("Add-on migration runner", () => {
     );
     expect(rows).toHaveLength(1);
     expect(rows[0].migration_id).toBe("schema-v1");
-    expect(rows[0].checksum).toBe(digestPhiServerAddonSchemaDescriptor(incidentSchemaDescriptor));
+    expect(rows[0].checksum).toBe(digestPhisAddonSchemaDescriptor(incidentSchemaDescriptor));
   });
 
   it("does nothing the second time", async () => {
-    const outcome = await migratePhiServerAddon(
+    const outcome = await migratePhisAddon(
       migrationPool,
       { manifest: manifestWith(), releaseBuildId: RELEASE, servingRole },
       "a".repeat(64),
@@ -129,7 +129,7 @@ describe("Add-on migration runner", () => {
         constraints: table.constraints,
       })),
     };
-    const outcome = await migratePhiServerAddon(
+    const outcome = await migratePhisAddon(
       migrationPool,
       { manifest: manifestWith(reordered), releaseBuildId: RELEASE, servingRole },
       "a".repeat(64),
@@ -141,7 +141,7 @@ describe("Add-on migration runner", () => {
     const changed = structuredClone(incidentSchemaDescriptor);
     changed.tables[0].columns.push({ name: "resolution", type: "text", nullable: true });
     await expect(
-      migratePhiServerAddon(
+      migratePhisAddon(
         migrationPool,
         { manifest: manifestWith(changed), releaseBuildId: RELEASE, servingRole },
         "a".repeat(64),
@@ -154,7 +154,7 @@ describe("Add-on migration runner", () => {
     next.version = 2;
     next.tables[0].columns.push({ name: "resolution", type: "text", nullable: true });
     await expect(
-      migratePhiServerAddon(
+      migratePhisAddon(
         migrationPool,
         { manifest: manifestWith(next), releaseBuildId: RELEASE, servingRole },
         "a".repeat(64),
@@ -170,7 +170,7 @@ describe("Add-on migration runner", () => {
       [`addon:${ADDON_ID}:token`, ADDON_ID, "0".repeat(24), "0".repeat(32)],
     );
 
-    const result = await purgePhiServerAddon(migrationPool, ADDON_ID);
+    const result = await purgePhisAddon(migrationPool, ADDON_ID);
     expect(result.schemaName).toBe(SCHEMA);
     expect(result.droppedSecrets).toBe(1);
 

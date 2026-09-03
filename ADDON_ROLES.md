@@ -79,7 +79,7 @@ Roles are declared in the manifest, exactly as settings are: the Add-on states i
 holds the values, and the Add-on reads through a capability and never writes.
 
 ```ts
-roles?: PhiServerAddonRoleDescriptor[]   // { name, description?, grantableBy }
+roles?: PhisAddonRoleDescriptor[]   // { name, description?, grantableBy }
 ```
 
 ```ts

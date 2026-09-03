@@ -2,11 +2,11 @@ import "server-only";
 
 import { getPool } from "@/lib/db";
 import {
-  PHI_SERVER_ADDON_FLAG_GLOBALLY_ENABLED,
+  PHIS_ADDON_FLAG_GLOBALLY_ENABLED,
   PHI_SITE_SERVER_ADDON_FLAG_REQUESTED_ENABLED,
 } from "@/lib/constants/server-addons";
 
-export type PhiServerAddonRegistryRecord = {
+export type PhisAddonRegistryRecord = {
   addonId: string;
   packageName: string;
   packageVersion: string;
@@ -17,7 +17,7 @@ export type PhiServerAddonRegistryRecord = {
   globallyEnabled: boolean;
 };
 
-export async function getPhiServerAddonRegistryRecord(addonId: string) {
+export async function getPhisAddonRegistryRecord(addonId: string) {
   const { rows } = await getPool().query<{
     addon_id: string;
     package_name: string;
@@ -56,11 +56,11 @@ export async function getPhiServerAddonRegistryRecord(addonId: string) {
     manifestDigest: row.manifest_digest,
     releaseBuildId: row.release_build_id,
     globallyEnabled:
-      (row.flags & PHI_SERVER_ADDON_FLAG_GLOBALLY_ENABLED) !== 0,
-  } satisfies PhiServerAddonRegistryRecord;
+      (row.flags & PHIS_ADDON_FLAG_GLOBALLY_ENABLED) !== 0,
+  } satisfies PhisAddonRegistryRecord;
 }
 
-export async function isPhiServerAddonEnabledForSite(addonId: string, siteId: number) {
+export async function isPhisAddonEnabledForSite(addonId: string, siteId: number) {
   const { rows } = await getPool().query<{
     flags: number;
     configuration_status: string;
@@ -81,7 +81,7 @@ export async function isPhiServerAddonEnabledForSite(addonId: string, siteId: nu
   );
 }
 
-export async function getPhiServerAddonSiteState(addonId: string, siteId: number) {
+export async function getPhisAddonSiteState(addonId: string, siteId: number) {
   const { rows } = await getPool().query<{
     flags: number;
     configuration_status: string;

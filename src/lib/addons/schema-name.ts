@@ -14,18 +14,18 @@
  */
 
 /** An Add-on id is an npm package name in which neither `_` nor `.` occurs. */
-export const PHI_SERVER_ADDON_ID_PATTERN = /^@[a-z0-9][a-z0-9-]*\/[a-z0-9][a-z0-9-]*$/;
-export const PHI_SERVER_ADDON_SCHEMA_PREFIX = "phis_addon_";
+export const PHIS_ADDON_ID_PATTERN = /^@[a-z0-9][a-z0-9-]*\/[a-z0-9][a-z0-9-]*$/;
+export const PHIS_ADDON_SCHEMA_PREFIX = "phis_addon_";
 export const POSTGRES_IDENTIFIER_MAX_LENGTH = 63;
 
-export function derivePhiServerAddonSchemaName(addonId: string) {
+export function derivePhisAddonSchemaName(addonId: string) {
   const id = addonId.trim();
-  if (!PHI_SERVER_ADDON_ID_PATTERN.test(id)) {
+  if (!PHIS_ADDON_ID_PATTERN.test(id)) {
     throw new Error(
       `"${addonId}" is not a valid Add-on id: an npm package name containing neither _ nor .`,
     );
   }
-  const name = `${PHI_SERVER_ADDON_SCHEMA_PREFIX}${id.slice(1).replaceAll(/[/-]/g, "_")}`;
+  const name = `${PHIS_ADDON_SCHEMA_PREFIX}${id.slice(1).replaceAll(/[/-]/g, "_")}`;
   if (name.length > POSTGRES_IDENTIFIER_MAX_LENGTH) {
     throw new Error(
       `Schema name "${name}" for ${addonId} exceeds ${POSTGRES_IDENTIFIER_MAX_LENGTH} characters. ` +
@@ -41,7 +41,7 @@ export function derivePhiServerAddonSchemaName(addonId: string) {
  * An Add-on names these per table, so two tables may both call an index `by_state`; PostgreSQL scopes
  * them per schema, so Core is what makes them distinct.
  */
-export function composePhiServerAddonObjectName(
+export function composePhisAddonObjectName(
   table: string,
   name: string,
   suffix: "idx" | "check" | "fk" | "uq",
@@ -50,7 +50,7 @@ export function composePhiServerAddonObjectName(
 }
 
 /** The suffix Core appends for the table holding a table's files. */
-export const PHI_SERVER_ADDON_ASSET_TABLE_SUFFIX = "assets";
+export const PHIS_ADDON_ASSET_TABLE_SUFFIX = "assets";
 
 /**
  * The table Core keeps beside a table that declares assets.
@@ -58,8 +58,8 @@ export const PHI_SERVER_ADDON_ASSET_TABLE_SUFFIX = "assets";
  * Derived rather than declared, so an Add-on cannot name it, cannot query it directly, and cannot
  * collide with it -- validation refuses a declared table that would land on this name.
  */
-export function composePhiServerAddonAssetTableName(table: string) {
-  return `${table}_${PHI_SERVER_ADDON_ASSET_TABLE_SUFFIX}`;
+export function composePhisAddonAssetTableName(table: string) {
+  return `${table}_${PHIS_ADDON_ASSET_TABLE_SUFFIX}`;
 }
 
 /**
@@ -71,5 +71,5 @@ export function composePhiServerAddonAssetTableName(table: string) {
  * and a sweep reads, so everything an Add-on owns has to be under it.
  */
 export function phiServerAddonStoragePrefix(addonId: string, siteKey: string) {
-  return `addons/${derivePhiServerAddonSchemaName(addonId)}/${siteKey}`;
+  return `addons/${derivePhisAddonSchemaName(addonId)}/${siteKey}`;
 }

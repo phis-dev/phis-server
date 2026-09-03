@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 import { getSiteRuntimeConfig } from "@/db/sites";
 import { createJsonResponse } from "@/lib/api-response";
 import { getApiV1TokenMode, guardApiV1 } from "@/lib/api-v1-guard";
-import { getPhiServerConfig } from "@/lib/config";
+import { getPhisConfig } from "@/lib/config";
 import { PHI_CANONICAL_SOURCE_LOCALE } from "@/lib/locale";
 import { requireSiteFromRequest } from "@/lib/site-context";
 import { getConfiguredTranslationSupportedLocalesSync } from "@/lib/translation-locale-options";
@@ -27,7 +27,7 @@ export async function GET(request: Request) {
 
   const tokenMode = getApiV1TokenMode(request);
   if (tokenMode === "public") {
-    const config = await getPhiServerConfig();
+    const config = await getPhisConfig();
     if (config.translation?.allowPublicReads !== true) {
       return NextResponse.json({ error: "Forbidden." }, { status: 403, headers: CORS_HEADERS });
     }

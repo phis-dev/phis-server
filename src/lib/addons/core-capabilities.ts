@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 
-import { PHI_SERVER_CORE_CAPABILITIES as CORE_CAPABILITY_IDS } from "./contract.ts";
-import type { PhiServerAddonCapabilityDescriptor } from "./contract.ts";
+import { PHIS_CORE_CAPABILITIES as CORE_CAPABILITY_IDS } from "./contract.ts";
+import type { PhisAddonCapabilityDescriptor } from "./contract.ts";
 
 /**
  * The Core capabilities this release offers, as descriptors.
@@ -12,7 +12,7 @@ import type { PhiServerAddonCapabilityDescriptor } from "./contract.ts";
  * shape -- so deriving it here costs nothing and keeps a node builtin out of the contract.
  */
 
-function coreCapability(id: string): PhiServerAddonCapabilityDescriptor {
+function coreCapability(id: string): PhisAddonCapabilityDescriptor {
   return {
     id,
     interfaceDigest: createHash("sha256")
@@ -21,12 +21,12 @@ function coreCapability(id: string): PhiServerAddonCapabilityDescriptor {
   };
 }
 
-export const PHI_SERVER_CORE_CAPABILITIES = Object.freeze(
+export const PHIS_CORE_CAPABILITIES = Object.freeze(
   Object.values(CORE_CAPABILITY_IDS).map(coreCapability),
 );
 
 const CORE_CAPABILITY_ID_SET = new Set<string>(Object.values(CORE_CAPABILITY_IDS));
 
-export function hasPhiServerCoreCapability(capabilityId: string) {
+export function hasPhisCoreCapability(capabilityId: string) {
   return CORE_CAPABILITY_ID_SET.has(capabilityId);
 }

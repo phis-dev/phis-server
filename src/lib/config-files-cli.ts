@@ -3,7 +3,7 @@ import path from "node:path";
 import {
   PHIS_ROOT_ENV,
   type PhiConfigPaths,
-  type PhiServerConfig,
+  type PhisConfig,
   readMergedPhiConfigSync as readMergedPhiConfigFromPathsSync,
   readPhiRuntimeConfigSync as readPhiRuntimeConfigFromPathsSync,
   writePhiRuntimeConfigSync as writePhiRuntimeConfigToPathsSync,
@@ -14,7 +14,7 @@ export {
   PHIS_DEFAULT_STAGE_ROOT,
   PHIS_ROOT_ENV,
   type PhiConfigPaths,
-  type PhiServerConfig,
+  type PhisConfig,
   type PlatformSuperUser,
   resolvePhiSiteSourceLocale,
   validatePhiConfig,
@@ -43,6 +43,6 @@ export function readPhiRuntimeConfigSync(root?: string) {
   return readPhiRuntimeConfigFromPathsSync(resolvePhiConfigPaths(root ?? getDefaultPhiRoot()));
 }
 
-export function writePhiRuntimeConfigSync(config: PhiServerConfig, root?: string) {
+export function writePhiRuntimeConfigSync(config: PhisConfig, root?: string) {
   writePhiRuntimeConfigToPathsSync(resolvePhiConfigPaths(root ?? getDefaultPhiRoot()), config);
 }

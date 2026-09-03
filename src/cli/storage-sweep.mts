@@ -1,6 +1,6 @@
 import type { Pool } from "pg";
 
-import { derivePhiServerAddonSchemaName } from "../lib/addons/schema-name.ts";
+import { derivePhisAddonSchemaName } from "../lib/addons/schema-name.ts";
 
 /**
  * Collecting the files of an Add-on that nothing points at any more.
@@ -27,8 +27,8 @@ import { derivePhiServerAddonSchemaName } from "../lib/addons/schema-name.ts";
  * legitimately be called `foo_assets` where `foo` declares nothing. What marks a derived one is that it
  * holds `media_asset_id` and `slot` together, which no descriptor can produce -- the columns are Core's.
  */
-export async function readPhiServerAddonAssetTables(pool: Pool, addonId: string) {
-  const schemaName = derivePhiServerAddonSchemaName(addonId);
+export async function readPhisAddonAssetTables(pool: Pool, addonId: string) {
+  const schemaName = derivePhisAddonSchemaName(addonId);
   const { rows } = await pool.query<{ table_name: string }>(
     `SELECT table_name
        FROM information_schema.columns
@@ -41,7 +41,7 @@ export async function readPhiServerAddonAssetTables(pool: Pool, addonId: string)
   return { schemaName, tables: rows.map((row) => row.table_name) };
 }
 
-export type PhiServerAddonSweepResult = {
+export type PhisAddonSweepResult = {
   siteKey: string;
   /** Media Assets in the Add-on's Space that no link row names. */
   orphaned: number;
@@ -66,16 +66,16 @@ export type PhiServerAddonSweepResult = {
  * past its expiry is dead whoever was holding it, so any instance may remove it. What that leaves is the
  * staged object, which becomes an orphan in the first sense and is collected by the same pass.
  */
-export async function sweepPhiServerAddonAssets(
+export async function sweepPhisAddonAssets(
   pool: Pool,
   input: {
     addonId: string;
     siteId: number;
     siteKey: string;
   },
-): Promise<PhiServerAddonSweepResult> {
+): Promise<PhisAddonSweepResult> {
   const { addonId, siteId, siteKey } = input;
-  const result: PhiServerAddonSweepResult = {
+  const result: PhisAddonSweepResult = {
     siteKey, orphaned: 0, expired: 0, bytesReleased: 0, storageKeys: [],
   };
 
@@ -114,7 +114,7 @@ export async function sweepPhiServerAddonAssets(
   result.expired = expired.length;
   result.storageKeys.push(...expired.map((row) => row.staging_storage_key));
 
-  const { schemaName, tables } = await readPhiServerAddonAssetTables(pool, addonId);
+  const { schemaName, tables } = await readPhisAddonAssetTables(pool, addonId);
   const linked = tables.length > 0
     ? tables
       .map((table) => `SELECT media_asset_id FROM "${schemaName}"."${table.replaceAll('"', '""')}"`)

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { validatePhiServerAddonManifest } from "./manifest.ts";
+import { validatePhisAddonManifest } from "./manifest.ts";
 
 /**
  * What a manifest written before a field existed must still be.
@@ -35,16 +35,16 @@ function manifest(extra: Record<string, unknown> = {}) {
 
 describe("a manifest from before the newest fields", () => {
   it("is accepted without settings or queries", () => {
-    const result = validatePhiServerAddonManifest(manifest());
+    const result = validatePhisAddonManifest(manifest());
     expect(result.issues).toEqual([]);
     expect(result.manifest).not.toBeNull();
   });
 
   it("still refuses either one when it is stated wrongly", () => {
-    expect(validatePhiServerAddonManifest(manifest({ settings: "some" })).issues.join("\n"))
+    expect(validatePhisAddonManifest(manifest({ settings: "some" })).issues.join("\n"))
       .toMatch(/settings must be an array when it is stated at all/);
     // Stated at all means checked in full: this Add-on owns no tables, so it can declare no queries.
-    expect(validatePhiServerAddonManifest(manifest({ queries: { queries: [] } })).issues.join("\n"))
+    expect(validatePhisAddonManifest(manifest({ queries: { queries: [] } })).issues.join("\n"))
       .toMatch(/owns no tables to run them against/);
   });
 
@@ -58,18 +58,18 @@ describe("a manifest from before the newest fields", () => {
       rateLimitClass: "listing",
       timeoutMs: 5000,
     };
-    expect(validatePhiServerAddonManifest(manifest({ hooks: [hook] })).issues).toEqual([]);
-    expect(validatePhiServerAddonManifest(manifest({ hooks: [{ ...hook, siteScoped: true }] })).issues)
+    expect(validatePhisAddonManifest(manifest({ hooks: [hook] })).issues).toEqual([]);
+    expect(validatePhisAddonManifest(manifest({ hooks: [{ ...hook, siteScoped: true }] })).issues)
       .toEqual([]);
     expect(
-      validatePhiServerAddonManifest(manifest({ hooks: [{ ...hook, siteScoped: "yes" }] }))
+      validatePhisAddonManifest(manifest({ hooks: [{ ...hook, siteScoped: "yes" }] }))
         .issues.join("\n"),
     ).toMatch(/siteScoped must be a boolean when it is stated at all/);
   });
 
   it("refuses a manifest missing a field that has always been required", () => {
     const { schema: _schema, ...withoutSchema } = manifest();
-    expect(validatePhiServerAddonManifest(withoutSchema).issues.join("\n"))
+    expect(validatePhisAddonManifest(withoutSchema).issues.join("\n"))
       .toMatch(/schema must be a descriptor object or null/);
   });
 });

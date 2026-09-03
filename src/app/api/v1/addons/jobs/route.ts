@@ -3,7 +3,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { guardApiV1 } from "@/lib/api-v1-guard";
 import { getPhiCliSiteByKey } from "@/db/cli-sites.mts";
 import { getPool } from "@/lib/db";
-import { PhiServerAddonJobError, runPhiServerAddonJob } from "@/lib/addons/jobs";
+import { PhisAddonJobError, runPhisAddonJob } from "@/lib/addons/jobs";
 import { logRuntimeEvent } from "@/lib/log";
 
 export const dynamic = "force-dynamic";
@@ -45,7 +45,7 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    const outcome = await runPhiServerAddonJob({
+    const outcome = await runPhisAddonJob({
       addonId: body.addonId,
       jobId: body.jobId,
       site: { id: site.id, key: site.key },
@@ -69,7 +69,7 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     // A refused job -- not installed, not enabled, not declared -- is the caller's mistake and is
     // reported as one, distinct from a job that ran and threw.
-    if (error instanceof PhiServerAddonJobError) {
+    if (error instanceof PhisAddonJobError) {
       return NextResponse.json({ error: error.message }, { status: 409 });
     }
     throw error;

@@ -14,31 +14,31 @@ import { pathToFileURL } from "node:url";
 import type { Pool } from "pg";
 
 import {
-  migratePhiServerAddon,
-  purgePhiServerAddon,
+  migratePhisAddon,
+  purgePhisAddon,
 } from "../db/server-addon-migrate.mts";
 import {
-  reconcilePhiServerAddons,
-  type PhiServerAddonReconcileEntry,
+  reconcilePhisAddons,
+  type PhisAddonReconcileEntry,
 } from "../db/server-addon-reconcile.mts";
 
-import { type PhiServerAddonDesiredState } from "../lib/addons/contract.ts";
-import { PHI_SERVER_CORE_CAPABILITIES } from "../lib/addons/core-capabilities.ts";
+import { type PhisAddonDesiredState } from "../lib/addons/contract.ts";
+import { PHIS_CORE_CAPABILITIES } from "../lib/addons/core-capabilities.ts";
 import { phiServerAddonUnindexedSearches } from "../lib/addons/query-descriptor.ts";
-import { ensurePhiServerAddonSiteGroups } from "../db/server-addon-groups.mts";
+import { ensurePhisAddonSiteGroups } from "../db/server-addon-groups.mts";
 import {
-  readPhiServerAddonEnabledSiteIds,
-  recordPhiServerAddonSiteEffectiveStatus,
+  readPhisAddonEnabledSiteIds,
+  recordPhisAddonSiteEffectiveStatus,
 } from "../db/server-addon-sites.mts";
 import {
-  resolvePhiServerAddonArtifactPath,
-  resolvePhiServerAddonInstallRoot,
-  resolvePhiServerAddonVersionDirectory,
+  resolvePhisAddonArtifactPath,
+  resolvePhisAddonInstallRoot,
+  resolvePhisAddonVersionDirectory,
 } from "../lib/addons/install-root.ts";
 import {
-  assertPhiServerAddonManifest,
-  digestPhiServerAddonManifest,
-  validatePhiServerAddonDesiredState,
+  assertPhisAddonManifest,
+  digestPhisAddonManifest,
+  validatePhisAddonDesiredState,
 } from "../lib/addons/manifest.ts";
 
 type FlagMap = Map<string, string | boolean>;
@@ -50,7 +50,7 @@ type AddonArtifactModule = {
   };
 };
 
-type LoadedAddon = PhiServerAddonReconcileEntry;
+type LoadedAddon = PhisAddonReconcileEntry;
 
 function getOptionalFlag(flags: FlagMap, key: string) {
   const value = flags.get(key);
@@ -68,7 +68,7 @@ function getRequiredFlag(flags: FlagMap, key: string) {
 function getAddonPaths(root: string) {
   return {
     desiredState: path.join(root, "config", "phis-addons.json"),
-    installRoot: resolvePhiServerAddonInstallRoot(root),
+    installRoot: resolvePhisAddonInstallRoot(root),
   };
 }
 
@@ -111,7 +111,7 @@ export function readAddonDesiredState(root: string) {
     );
   }
 
-  const result = validatePhiServerAddonDesiredState(parsed);
+  const result = validatePhisAddonDesiredState(parsed);
   if (!result.state) {
     throw new Error(`Invalid Add-on desired state:\n- ${result.issues.join("\n- ")}`);
   }
@@ -132,7 +132,7 @@ export function readAddonDesiredState(root: string) {
  * still validated, which is the check that matters.
  */
 export function readAddonDesiredStateForChange(root: string): {
-  state: PhiServerAddonDesiredState;
+  state: PhisAddonDesiredState;
   invalid: { addonId: string; issues: string[] }[];
 } {
   const { desiredState } = getAddonPaths(root);
@@ -151,7 +151,7 @@ export function readAddonDesiredStateForChange(root: string): {
     );
   }
 
-  const strict = validatePhiServerAddonDesiredState(parsed);
+  const strict = validatePhisAddonDesiredState(parsed);
   if (strict.state) {
     return { state: strict.state, invalid: [] };
   }
@@ -160,7 +160,7 @@ export function readAddonDesiredStateForChange(root: string): {
   const entries = Array.isArray(raw.addons) ? raw.addons : [];
   const invalid: { addonId: string; issues: string[] }[] = [];
   for (const entry of entries) {
-    const one = validatePhiServerAddonDesiredState({ formatVersion: 1, addons: [entry] });
+    const one = validatePhisAddonDesiredState({ formatVersion: 1, addons: [entry] });
     if (!one.state) {
       const addonId = (entry as { addonId?: unknown }).addonId;
       invalid.push({
@@ -174,13 +174,13 @@ export function readAddonDesiredStateForChange(root: string): {
     throw new Error(`Invalid Add-on desired state:\n- ${strict.issues.join("\n- ")}`);
   }
   return {
-    state: { formatVersion: 1, addons: entries as PhiServerAddonDesiredState["addons"] },
+    state: { formatVersion: 1, addons: entries as PhisAddonDesiredState["addons"] },
     invalid,
   };
 }
 
-function writeAddonDesiredState(root: string, state: PhiServerAddonDesiredState) {
-  const sorted: PhiServerAddonDesiredState = {
+function writeAddonDesiredState(root: string, state: PhisAddonDesiredState) {
+  const sorted: PhisAddonDesiredState = {
     formatVersion: 1,
     addons: [...state.addons].sort((left, right) =>
       left.addonId.localeCompare(right.addonId),
@@ -219,7 +219,7 @@ async function loadArtifactManifest(artifactPath: string, artifactDigest: string
     );
   }
 
-  return assertPhiServerAddonManifest(imported.phiServerAddon.manifest);
+  return assertPhisAddonManifest(imported.phiServerAddon.manifest);
 }
 
 /**
@@ -246,7 +246,7 @@ export async function loadInstalledAddonRuntime(root: string, addonId: string) {
   }
 
   const { installRoot } = getAddonPaths(root);
-  const artifactPath = resolvePhiServerAddonArtifactPath(
+  const artifactPath = resolvePhisAddonArtifactPath(
     installRoot,
     entry.addonId,
     entry.packageVersion,
@@ -277,13 +277,13 @@ function loadDesiredAddons(root: string) {
 
   for (const desired of state.addons) {
     const manifest = desired.manifest;
-    const digest = digestPhiServerAddonManifest(manifest);
+    const digest = digestPhisAddonManifest(manifest);
     const mismatches: string[] = [];
     if (digest !== desired.manifestDigest) {
       mismatches.push(`manifestDigest ${digest} != ${desired.manifestDigest}`);
     }
 
-    const artifactPath = resolvePhiServerAddonArtifactPath(
+    const artifactPath = resolvePhisAddonArtifactPath(
       installRoot,
       desired.addonId,
       desired.packageVersion,
@@ -392,7 +392,7 @@ async function readArtifact(flags: FlagMap) {
     bytes,
     artifactDigest,
     manifest,
-    manifestDigest: digestPhiServerAddonManifest(manifest),
+    manifestDigest: digestPhisAddonManifest(manifest),
   };
 }
 
@@ -408,12 +408,12 @@ export async function installAddon(root: string, flags: FlagMap) {
   }
 
   const { installRoot } = getAddonPaths(root);
-  const versionDirectory = resolvePhiServerAddonVersionDirectory(
+  const versionDirectory = resolvePhisAddonVersionDirectory(
     installRoot,
     manifest.addonId,
     manifest.packageVersion,
   );
-  const target = resolvePhiServerAddonArtifactPath(
+  const target = resolvePhisAddonArtifactPath(
     installRoot,
     manifest.addonId,
     manifest.packageVersion,
@@ -514,16 +514,16 @@ export async function upgradeAddon(root: string, flags: FlagMap) {
   }
 
   const { installRoot } = getAddonPaths(root);
-  const versionDirectory = resolvePhiServerAddonVersionDirectory(
+  const versionDirectory = resolvePhisAddonVersionDirectory(
     installRoot,
     addonId,
     manifest.packageVersion,
   );
-  const target = resolvePhiServerAddonArtifactPath(installRoot, addonId, manifest.packageVersion);
+  const target = resolvePhisAddonArtifactPath(installRoot, addonId, manifest.packageVersion);
   const previous = {
     packageVersion: existing.packageVersion,
     artifactDigest: existing.artifactDigest,
-    directory: resolvePhiServerAddonVersionDirectory(installRoot, addonId, existing.packageVersion),
+    directory: resolvePhisAddonVersionDirectory(installRoot, addonId, existing.packageVersion),
   };
 
   mkdirSync(versionDirectory, { recursive: true });
@@ -583,7 +583,7 @@ export async function removeAddon(root: string, flags: FlagMap) {
   }
 
   const { installRoot } = getAddonPaths(root);
-  const versionDirectory = resolvePhiServerAddonVersionDirectory(
+  const versionDirectory = resolvePhisAddonVersionDirectory(
     installRoot,
     existing.addonId,
     existing.packageVersion,
@@ -685,7 +685,7 @@ export async function reconcileAddons(
     throw new Error("Missing --release or PHIS_RELEASE_ID.");
   }
   const loaded = loadDesiredAddons(root);
-  await reconcilePhiServerAddons(pool, releaseBuildId, loaded);
+  await reconcilePhisAddons(pool, releaseBuildId, loaded);
 
   /*
    * Groups are caught up here as well as at the Site that asks for the Add-on, because a release can
@@ -701,7 +701,7 @@ export async function reconcileAddons(
    * capability snapshot to answer.
    */
   for (const { desired } of loaded) {
-    await recordPhiServerAddonSiteEffectiveStatus(pool, {
+    await recordPhisAddonSiteEffectiveStatus(pool, {
       addonId: desired.addonId,
       status: desired.enabled ? "available" : "disabled",
       diagnosticCode: desired.enabled ? null : "globally_disabled",
@@ -714,8 +714,8 @@ export async function reconcileAddons(
     if (declared.length === 0) {
       continue;
     }
-    for (const siteId of await readPhiServerAddonEnabledSiteIds(pool, desired.addonId)) {
-      const applied = await ensurePhiServerAddonSiteGroups(pool, {
+    for (const siteId of await readPhisAddonEnabledSiteIds(pool, desired.addonId)) {
+      const applied = await ensurePhisAddonSiteGroups(pool, {
         addonId: desired.addonId,
         siteId,
         declared,
@@ -737,7 +737,7 @@ export async function reconcileAddons(
     releaseBuildId,
     addons: loaded.map(({ desired }) => desired),
     groups,
-    coreCapabilities: PHI_SERVER_CORE_CAPABILITIES,
+    coreCapabilities: PHIS_CORE_CAPABILITIES,
   };
 }
 
@@ -775,7 +775,7 @@ export async function migrateAddons(
   const outcomes = [];
   for (const { manifest, digest } of selected) {
     outcomes.push(
-      await migratePhiServerAddon(pool, { manifest, releaseBuildId, servingRole }, digest),
+      await migratePhisAddon(pool, { manifest, releaseBuildId, servingRole }, digest),
     );
   }
 
@@ -799,7 +799,7 @@ export async function purgeAddon(root: string, flags: FlagMap, pool: Pool) {
     );
   }
 
-  const result = await purgePhiServerAddon(pool, addonId);
+  const result = await purgePhisAddon(pool, addonId);
   return { ok: true, action: "addon.purge", ...result };
 }
 

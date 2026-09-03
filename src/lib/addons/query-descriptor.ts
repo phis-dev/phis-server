@@ -1,14 +1,14 @@
 import {
-  PHI_SERVER_ADDON_QUERY_MAX_LIMIT,
-  type PhiServerAddonQueryCatalog,
-  type PhiServerAddonQueryDescriptor,
-  type PhiServerAddonSchemaDescriptor,
-  type PhiServerAddonTableDescriptor,
+  PHIS_ADDON_QUERY_MAX_LIMIT,
+  type PhisAddonQueryCatalog,
+  type PhisAddonQueryDescriptor,
+  type PhisAddonSchemaDescriptor,
+  type PhisAddonTableDescriptor,
 } from "./contract.ts";
 import {
-  PHI_SERVER_ADDON_GROUP_COLUMN,
-  PHI_SERVER_ADDON_OWNER_COLUMN,
-  PHI_SERVER_ADDON_SITE_COLUMN,
+  PHIS_ADDON_GROUP_COLUMN,
+  PHIS_ADDON_OWNER_COLUMN,
+  PHIS_ADDON_SITE_COLUMN,
 } from "./schema-descriptor.ts";
 
 /**
@@ -37,9 +37,9 @@ const AGGREGATE_FUNCTIONS = new Set(["count", "sum", "avg", "min", "max"]);
 const NUMERIC_COLUMN_TYPES = new Set(["smallInteger", "integer", "bigInteger"]);
 
 const CORE_WRITTEN_COLUMNS = new Set([
-  PHI_SERVER_ADDON_SITE_COLUMN,
-  PHI_SERVER_ADDON_GROUP_COLUMN,
-  PHI_SERVER_ADDON_OWNER_COLUMN,
+  PHIS_ADDON_SITE_COLUMN,
+  PHIS_ADDON_GROUP_COLUMN,
+  PHIS_ADDON_OWNER_COLUMN,
 ]);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -53,7 +53,7 @@ type ParameterDeclarations = {
 };
 
 type QueryContext = {
-  table: PhiServerAddonTableDescriptor;
+  table: PhisAddonTableDescriptor;
   columns: Set<string>;
   parameters: Set<string>;
   nullableParameters: Set<string>;
@@ -70,12 +70,12 @@ type QueryContext = {
  * where assignments are checked. Reading what Core wrote gives an Add-on nothing it did not already
  * have -- it owns the rows.
  */
-function readableColumns(table: PhiServerAddonTableDescriptor) {
+function readableColumns(table: PhisAddonTableDescriptor) {
   return new Set([
     ...table.columns.map((column) => column.name),
-    ...(table.siteScoped ? [PHI_SERVER_ADDON_SITE_COLUMN] : []),
-    ...(table.groupScoped ? [PHI_SERVER_ADDON_GROUP_COLUMN] : []),
-    ...(table.ownerScoped ? [PHI_SERVER_ADDON_OWNER_COLUMN] : []),
+    ...(table.siteScoped ? [PHIS_ADDON_SITE_COLUMN] : []),
+    ...(table.groupScoped ? [PHIS_ADDON_GROUP_COLUMN] : []),
+    ...(table.ownerScoped ? [PHIS_ADDON_OWNER_COLUMN] : []),
   ]);
 }
 
@@ -251,7 +251,7 @@ function checkAssignments(context: QueryContext, raw: unknown, where: string) {
 
 function validateQuery(
   raw: unknown,
-  schema: PhiServerAddonSchemaDescriptor,
+  schema: PhisAddonSchemaDescriptor,
   declared: ParameterDeclarations,
   declaredRoles: Set<string>,
   field: string,
@@ -363,10 +363,10 @@ function validateQuery(
       }
       if (
         typeof raw.limit !== "number" || !Number.isInteger(raw.limit) ||
-        raw.limit <= 0 || raw.limit > PHI_SERVER_ADDON_QUERY_MAX_LIMIT
+        raw.limit <= 0 || raw.limit > PHIS_ADDON_QUERY_MAX_LIMIT
       ) {
         issues.push(
-          `${field}.limit must be an integer between 1 and ${PHI_SERVER_ADDON_QUERY_MAX_LIMIT}.`,
+          `${field}.limit must be an integer between 1 and ${PHIS_ADDON_QUERY_MAX_LIMIT}.`,
         );
       }
       break;
@@ -450,10 +450,10 @@ function validateQuery(
       if (grouping.length > 0) {
         if (
           typeof raw.limit !== "number" || !Number.isInteger(raw.limit) ||
-          raw.limit <= 0 || raw.limit > PHI_SERVER_ADDON_QUERY_MAX_LIMIT
+          raw.limit <= 0 || raw.limit > PHIS_ADDON_QUERY_MAX_LIMIT
         ) {
           issues.push(
-            `${field}.limit must be an integer between 1 and ${PHI_SERVER_ADDON_QUERY_MAX_LIMIT}: ` +
+            `${field}.limit must be an integer between 1 and ${PHIS_ADDON_QUERY_MAX_LIMIT}: ` +
             "a grouped aggregate has as many rows as there are groups, so it is paged like a select.",
           );
         }
@@ -497,7 +497,7 @@ function validateQuery(
       issues.push(`${field}.kind is not a query this vocabulary offers.`);
       return null;
   }
-  return raw as unknown as PhiServerAddonQueryDescriptor;
+  return raw as unknown as PhisAddonQueryDescriptor;
 }
 
 /**
@@ -506,14 +506,14 @@ function validateQuery(
  * A catalog without a schema is refused outright rather than treated as empty: queries against tables
  * that do not exist are a mistake worth naming, not an absence.
  */
-export function validatePhiServerAddonQueryCatalog(
+export function validatePhisAddonQueryCatalog(
   value: unknown,
-  schema: PhiServerAddonSchemaDescriptor | null,
+  schema: PhisAddonSchemaDescriptor | null,
   field: string,
   issues: string[],
   /** The role names the manifest declares. A query may only require one of these. */
   declaredRoles: Set<string> = new Set(),
-): PhiServerAddonQueryCatalog | null {
+): PhisAddonQueryCatalog | null {
   const before = issues.length;
   if (!isRecord(value)) {
     issues.push(`${field} must be an object.`);
@@ -591,7 +591,7 @@ export function validatePhiServerAddonQueryCatalog(
     issues.push(`${field}.queries declares "${duplicates[0]}" more than once.`);
   }
 
-  return issues.length === before ? (value as unknown as PhiServerAddonQueryCatalog) : null;
+  return issues.length === before ? (value as unknown as PhisAddonQueryCatalog) : null;
 }
 
 /**
@@ -604,8 +604,8 @@ export function validatePhiServerAddonQueryCatalog(
  * at `phis addon check`, rather than discovered later in a slow request.
  */
 export function phiServerAddonUnindexedSearches(
-  schema: PhiServerAddonSchemaDescriptor,
-  catalog: PhiServerAddonQueryCatalog,
+  schema: PhisAddonSchemaDescriptor,
+  catalog: PhisAddonQueryCatalog,
 ): { query: string; table: string; column: string }[] {
   const found: { query: string; table: string; column: string }[] = [];
   const searched = (condition: unknown, into: Set<string>) => {

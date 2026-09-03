@@ -1,11 +1,11 @@
 import { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { applyPhiServerAddonSchema, dropPhiServerAddonSchema } from "./server-addon-schema.mts";
-import { grantPhiServerAddonUserRole, revokePhiServerAddonUserRole } from "./server-addon-roles.mts";
-import { getPhiServerConfigSync } from "@/lib/config";
+import { applyPhisAddonSchema, dropPhisAddonSchema } from "./server-addon-schema.mts";
+import { grantPhisAddonUserRole, revokePhisAddonUserRole } from "./server-addon-roles.mts";
+import { getPhisConfigSync } from "@/lib/config";
 import { quotePhiIdentifier } from "@/lib/addons/schema-ddl";
-import { buildPhiServerAddonCapabilities } from "@/lib/addons/capabilities";
+import { buildPhisAddonCapabilities } from "@/lib/addons/capabilities";
 import {
   closePhiTestPool,
   createPhiTestSite,
@@ -14,7 +14,7 @@ import {
   requirePhiTestDatabase,
   type PhiTestSite,
 } from "../../test/pg/harness";
-import type { PhiServerAddonManifestV1 } from "@/lib/addons/contract";
+import type { PhisAddonManifestV1 } from "@/lib/addons/contract";
 
 /**
  * A query guarded by a role, running against a real database.
@@ -130,7 +130,7 @@ const manifest = {
     ],
   },
   migrationVersion: 1,
-} as unknown as PhiServerAddonManifestV1;
+} as unknown as PhisAddonManifestV1;
 
 let migrationPool: Pool;
 
@@ -141,7 +141,7 @@ describe("a query that requires a role", () => {
   let nobody: number;
 
   function data(actorUserId: number | null) {
-    return buildPhiServerAddonCapabilities({
+    return buildPhisAddonCapabilities({
       manifest,
       manifestDigest: "pgtest-queryroles",
       siteId: site.id,
@@ -163,14 +163,14 @@ describe("a query that requires a role", () => {
        ON CONFLICT (addon_id) DO NOTHING`,
       [ADDON],
     );
-    await grantPhiServerAddonUserRole(pool, {
+    await grantPhisAddonUserRole(pool, {
       addonId: ADDON,
       siteId: site.id,
       userId: vendor,
       role: "vendor",
       grantedByUserId: null,
     });
-    await grantPhiServerAddonUserRole(pool, {
+    await grantPhisAddonUserRole(pool, {
       addonId: ADDON,
       siteId: site.id,
       userId: curator,
@@ -178,7 +178,7 @@ describe("a query that requires a role", () => {
       grantedByUserId: null,
     });
 
-    const config = getPhiServerConfigSync().database;
+    const config = getPhisConfigSync().database;
     if (!config?.migrationUri || !config.uri) {
       throw new Error("These tests need database.migrationUri and database.uri.");
     }
@@ -186,8 +186,8 @@ describe("a query that requires a role", () => {
     migrationPool = new Pool({ connectionString: config.migrationUri });
     const client = await migrationPool.connect();
     try {
-      await dropPhiServerAddonSchema(client, SCHEMA);
-      await applyPhiServerAddonSchema(client, target, servingRole);
+      await dropPhisAddonSchema(client, SCHEMA);
+      await applyPhisAddonSchema(client, target, servingRole);
     } finally {
       client.release();
     }
@@ -198,7 +198,7 @@ describe("a query that requires a role", () => {
     if (migrationPool) {
       const client = await migrationPool.connect();
       try {
-        await dropPhiServerAddonSchema(client, SCHEMA);
+        await dropPhisAddonSchema(client, SCHEMA);
       } finally {
         client.release();
       }
@@ -262,7 +262,7 @@ describe("a query that requires a role", () => {
   });
 
   it("stops the moment the role is taken away", async () => {
-    await revokePhiServerAddonUserRole(await requirePhiTestDatabase(), {
+    await revokePhisAddonUserRole(await requirePhiTestDatabase(), {
       addonId: ADDON,
       siteId: site.id,
       userId: vendor,
@@ -273,7 +273,7 @@ describe("a query that requires a role", () => {
   });
 
   it("refuses a caller with no actor at all before it looks at roles", async () => {
-    const anonymous = buildPhiServerAddonCapabilities({
+    const anonymous = buildPhisAddonCapabilities({
       manifest,
       manifestDigest: "pgtest-queryroles",
       siteId: site.id,

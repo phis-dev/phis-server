@@ -7,15 +7,15 @@ import { pathToFileURL } from "node:url";
 
 import { getDefaultServerPhiRoot } from "@/lib/config-files";
 import {
-  resolvePhiServerAddonArtifactPath,
-  resolvePhiServerAddonInstallRoot,
+  resolvePhisAddonArtifactPath,
+  resolvePhisAddonInstallRoot,
 } from "@/lib/addons/install-root";
-import { validatePhiServerAddonDesiredState } from "@/lib/addons/manifest";
+import { validatePhisAddonDesiredState } from "@/lib/addons/manifest";
 import type {
-  PhiServerAddonBuildEntry,
-  PhiServerAddonBuildManifest,
-  PhiServerAddonDesiredStateEntry,
-  PhiServerAddonRuntimeModuleV1,
+  PhisAddonBuildEntry,
+  PhisAddonBuildManifest,
+  PhisAddonDesiredStateEntry,
+  PhisAddonRuntimeModuleV1,
 } from "@/lib/addons/contract";
 
 /**
@@ -34,7 +34,7 @@ import type {
 
 type CachedDesiredState = {
   signature: string;
-  entries: PhiServerAddonBuildManifest;
+  entries: PhisAddonBuildManifest;
 };
 
 let cache: CachedDesiredState | null = null;
@@ -53,13 +53,13 @@ function readDesiredStateSignature(filePath: string) {
   }
 }
 
-export class PhiServerAddonArtifactError extends Error {
+export class PhisAddonArtifactError extends Error {
   readonly addonId: string;
   readonly reason: "missing" | "digest-mismatch";
 
   constructor(addonId: string, reason: "missing" | "digest-mismatch", detail: string) {
     super(`Add-on ${addonId} artifact ${reason}: ${detail}`);
-    this.name = "PhiServerAddonArtifactError";
+    this.name = "PhisAddonArtifactError";
     this.addonId = addonId;
     this.reason = reason;
   }
@@ -72,9 +72,9 @@ export class PhiServerAddonArtifactError extends Error {
  * unload an ES module, but a different specifier is a different module, so the next dispatch after a
  * new digest reaches the new code while requests already in flight finish on the old one.
  */
-async function loadArtifact(entry: PhiServerAddonDesiredStateEntry) {
-  const installRoot = resolvePhiServerAddonInstallRoot(getDefaultServerPhiRoot());
-  const artifactPath = resolvePhiServerAddonArtifactPath(
+async function loadArtifact(entry: PhisAddonDesiredStateEntry) {
+  const installRoot = resolvePhisAddonInstallRoot(getDefaultServerPhiRoot());
+  const artifactPath = resolvePhisAddonArtifactPath(
     installRoot,
     entry.addonId,
     entry.packageVersion,
@@ -84,7 +84,7 @@ async function loadArtifact(entry: PhiServerAddonDesiredStateEntry) {
   try {
     bytes = readFileSync(artifactPath);
   } catch (error) {
-    throw new PhiServerAddonArtifactError(
+    throw new PhisAddonArtifactError(
       entry.addonId,
       "missing",
       `${artifactPath} (${error instanceof Error ? error.message : String(error)})`,
@@ -93,7 +93,7 @@ async function loadArtifact(entry: PhiServerAddonDesiredStateEntry) {
 
   const digest = createHash("sha256").update(bytes).digest("hex");
   if (digest !== entry.artifactDigest) {
-    throw new PhiServerAddonArtifactError(
+    throw new PhisAddonArtifactError(
       entry.addonId,
       "digest-mismatch",
       `expected ${entry.artifactDigest}, found ${digest}`,
@@ -101,10 +101,10 @@ async function loadArtifact(entry: PhiServerAddonDesiredStateEntry) {
   }
 
   const specifier = `${pathToFileURL(artifactPath).href}?v=${entry.artifactDigest}`;
-  return (await import(/* turbopackIgnore: true */ specifier)) as PhiServerAddonRuntimeModuleV1;
+  return (await import(/* turbopackIgnore: true */ specifier)) as PhisAddonRuntimeModuleV1;
 }
 
-function toBuildEntry(entry: PhiServerAddonDesiredStateEntry): PhiServerAddonBuildEntry {
+function toBuildEntry(entry: PhisAddonDesiredStateEntry): PhisAddonBuildEntry {
   return {
     enabled: entry.enabled,
     manifestDigest: entry.manifestDigest,
@@ -113,17 +113,17 @@ function toBuildEntry(entry: PhiServerAddonDesiredStateEntry): PhiServerAddonBui
   };
 }
 
-export function getPhiServerAddonInstalledManifest(): PhiServerAddonBuildManifest {
+export function getPhisAddonInstalledManifest(): PhisAddonBuildManifest {
   const filePath = getDesiredStatePath();
   const signature = readDesiredStateSignature(filePath);
   if (cache && cache.signature === signature) {
     return cache.entries;
   }
 
-  let entries: PhiServerAddonBuildManifest = Object.freeze({});
+  let entries: PhisAddonBuildManifest = Object.freeze({});
   if (signature !== "absent") {
     const parsed = JSON.parse(readFileSync(filePath, "utf8")) as unknown;
-    const validation = validatePhiServerAddonDesiredState(parsed);
+    const validation = validatePhisAddonDesiredState(parsed);
     if (!validation.state) {
       // An unreadable desired state is an empty one: no Add-on becomes reachable by accident.
       throw new Error(

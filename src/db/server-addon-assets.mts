@@ -1,7 +1,7 @@
 import type { Pool, PoolClient } from "pg";
 
 import { quotePhiIdentifier } from "@/lib/addons/schema-ddl";
-import { composePhiServerAddonAssetTableName } from "@/lib/addons/schema-name";
+import { composePhisAddonAssetTableName } from "@/lib/addons/schema-name";
 
 /**
  * The rows that say which of an Add-on's files sits in which slot on which row.
@@ -16,7 +16,7 @@ import { composePhiServerAddonAssetTableName } from "@/lib/addons/schema-name";
  * The reservation is Core's upload session now, and this table holds facts.
  */
 
-export type PhiServerAddonAssetRow = {
+export type PhisAddonAssetRow = {
   id: string;
   slot: string;
   ownerId: string;
@@ -29,11 +29,11 @@ export type PhiServerAddonAssetRow = {
   createdAt: string;
 };
 
-export type PhiServerAddonAssetLocation = { schemaName: string; table: string };
+export type PhisAddonAssetLocation = { schemaName: string; table: string };
 
-function qualifyAssets(location: PhiServerAddonAssetLocation) {
+function qualifyAssets(location: PhisAddonAssetLocation) {
   return `${quotePhiIdentifier(location.schemaName)}.${
-    quotePhiIdentifier(composePhiServerAddonAssetTableName(location.table))
+    quotePhiIdentifier(composePhisAddonAssetTableName(location.table))
   }`;
 }
 
@@ -47,7 +47,7 @@ type RawRow = {
   checksum_algorithm: string | null; checksum_value: string | null; original_name: string;
 };
 
-function toRow(row: RawRow): PhiServerAddonAssetRow {
+function toRow(row: RawRow): PhisAddonAssetRow {
   return {
     id: String(row.id),
     slot: row.slot,
@@ -71,10 +71,10 @@ function toRow(row: RawRow): PhiServerAddonAssetRow {
  * stranded, complete and unreachable. The displaced row is returned rather than dropped quietly,
  * because its Media Asset is now unreferenced and something has to be told so.
  */
-export async function linkPhiServerAddonAsset(
+export async function linkPhisAddonAsset(
   client: PoolClient,
   input: {
-    location: PhiServerAddonAssetLocation;
+    location: PhisAddonAssetLocation;
     siteId: number;
     ownerId: string | number;
     slot: string;
@@ -103,11 +103,11 @@ export async function linkPhiServerAddonAsset(
 }
 
 /** The files of a row. There is no unfinished state to filter out. */
-export async function readPhiServerAddonAssets(
+export async function readPhisAddonAssets(
   db: Pool | PoolClient,
-  location: PhiServerAddonAssetLocation,
+  location: PhisAddonAssetLocation,
   input: { siteId: number; ownerId: string | number; slot?: string },
-): Promise<PhiServerAddonAssetRow[]> {
+): Promise<PhisAddonAssetRow[]> {
   const { rows } = await db.query<RawRow>(
     `SELECT ${SELECTED}
        FROM ${qualifyAssets(location)} l
@@ -119,11 +119,11 @@ export async function readPhiServerAddonAssets(
   return rows.map(toRow);
 }
 
-export async function readPhiServerAddonAsset(
+export async function readPhisAddonAsset(
   db: Pool | PoolClient,
-  location: PhiServerAddonAssetLocation,
+  location: PhisAddonAssetLocation,
   input: { siteId: number; id: string },
-): Promise<PhiServerAddonAssetRow | null> {
+): Promise<PhisAddonAssetRow | null> {
   const { rows } = await db.query<RawRow>(
     `SELECT ${SELECTED}
        FROM ${qualifyAssets(location)} l
@@ -141,9 +141,9 @@ export async function readPhiServerAddonAsset(
  * it is the step that touches the store and the Space's figures -- and doing it in this order means a
  * failure there leaves a file nobody points at rather than a row pointing at nothing.
  */
-export async function unlinkPhiServerAddonAsset(
+export async function unlinkPhisAddonAsset(
   db: Pool | PoolClient,
-  location: PhiServerAddonAssetLocation,
+  location: PhisAddonAssetLocation,
   input: { siteId: number; id: string },
 ): Promise<number | null> {
   const { rows } = await db.query<{ media_asset_id: number }>(

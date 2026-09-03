@@ -5,12 +5,12 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import {
   phiServerAddonStoragePrefix,
-  readPhiServerAddonStorageSites,
-  recountPhiServerAddonStorage,
-  removePhiServerAddonStorage,
-  type PhiServerAddonStorageSite,
+  readPhisAddonStorageSites,
+  recountPhisAddonStorage,
+  removePhisAddonStorage,
+  type PhisAddonStorageSite,
 } from "../cli/storage-purge.mts";
-import { readPhiServerAddonStorageUsage } from "./server-addon-storage-usage.mts";
+import { readPhisAddonStorageUsage } from "./server-addon-storage-usage.mts";
 import {
   closePhiTestPool,
   createPhiTestSite,
@@ -66,7 +66,7 @@ describe("clearing an Add-on's store", () => {
     await closePhiTestPool();
   });
 
-  function localSite(): PhiServerAddonStorageSite {
+  function localSite(): PhisAddonStorageSite {
     return {
       siteId: site.id,
       siteKey: site.key,
@@ -78,7 +78,7 @@ describe("clearing an Add-on's store", () => {
 
   it("finds the Sites a store has to be cleared on, while the rows still say so", async () => {
     // Read before the purge, because `site_server_addons` is one of the tables it empties.
-    const stores = await readPhiServerAddonStorageSites(await requirePhiTestDatabase(), ADDON);
+    const stores = await readPhisAddonStorageSites(await requirePhiTestDatabase(), ADDON);
     expect(stores.map((store) => store.siteKey)).toContain(site.key);
   });
 
@@ -93,14 +93,14 @@ describe("clearing an Add-on's store", () => {
     await writeFile(path.join(directory, "artifacts", "one.bin"), "x");
     await writeFile(path.join(directory, "artifacts", "two.bin"), "yy");
 
-    const removal = await removePhiServerAddonStorage(localSite(), ADDON, async () => null);
+    const removal = await removePhisAddonStorage(localSite(), ADDON, async () => null);
     expect(removal.error).toBeNull();
     // The Site's own directory goes; the empty parent above it may stay, and holds nothing either way.
     expect(await readdir(directory).catch(() => null)).toBeNull();
   });
 
   it("is not an error to clear a store that was never written to", async () => {
-    const removal = await removePhiServerAddonStorage(localSite(), ADDON, async () => null);
+    const removal = await removePhisAddonStorage(localSite(), ADDON, async () => null);
     expect(removal).toMatchObject({ error: null, removed: 0 });
   });
 
@@ -109,7 +109,7 @@ describe("clearing an Add-on's store", () => {
      * By this point the rows are already gone, so throwing would help nobody: what an operator needs is
      * the list of Sites whose objects are still there.
      */
-    const removal = await removePhiServerAddonStorage(
+    const removal = await removePhisAddonStorage(
       { ...localSite(), providerId: "@acme/storage/elsewhere" },
       ADDON,
       async () => { throw new Error("the endpoint refused the credential"); },
@@ -121,10 +121,10 @@ describe("clearing an Add-on's store", () => {
   it("brings a drifted figure back to what the store actually holds", async () => {
     const pool = await requirePhiTestDatabase();
     // The row was seeded claiming a megabyte across 42 objects; the store holds two small ones.
-    const before = await readPhiServerAddonStorageUsage(pool, { addonId: ADDON, siteId: site.id });
+    const before = await readPhisAddonStorageUsage(pool, { addonId: ADDON, siteId: site.id });
     expect(before.bytes).toBe(999999);
 
-    const result = await recountPhiServerAddonStorage(pool, {
+    const result = await recountPhisAddonStorage(pool, {
       addonId: ADDON,
       site: localSite(),
       listPrefix: async () => [
@@ -134,12 +134,12 @@ describe("clearing an Add-on's store", () => {
     });
     expect(result).toMatchObject({ bytes: 25, objects: 2, applied: true });
 
-    const after = await readPhiServerAddonStorageUsage(pool, { addonId: ADDON, siteId: site.id });
+    const after = await readPhisAddonStorageUsage(pool, { addonId: ADDON, siteId: site.id });
     expect(after).toMatchObject({ bytes: 25, objects: 2 });
   });
 
   it("says so when there is no row to correct", async () => {
-    const result = await recountPhiServerAddonStorage(await requirePhiTestDatabase(), {
+    const result = await recountPhisAddonStorage(await requirePhiTestDatabase(), {
       addonId: ADDON,
       site: { ...localSite(), siteId: 32000 },
       listPrefix: async () => [],

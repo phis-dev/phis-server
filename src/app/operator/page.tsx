@@ -9,7 +9,7 @@ import {
 import { OperatorInfrastructurePanel } from "@/components/operator/operator-infrastructure-panel";
 import { OperatorSitesPanel } from "@/components/operator/operator-sites-panel";
 import { OperatorTranslationsPanel } from "@/components/operator/operator-translations-panel";
-import { getPhiServerConfigSync, isBootstrapEnabled } from "@/lib/config";
+import { getPhisConfigSync, isBootstrapEnabled } from "@/lib/config";
 import { listSites } from "@/db/sites";
 import { trGlobalLabelSet } from "@/lib/landing-tr";
 import { getOperatorSession } from "@/lib/operator-auth";
@@ -119,7 +119,7 @@ export default async function OperatorPage({
   }
 
   if (section === "sites") {
-    const config = getPhiServerConfigSync();
+    const config = getPhisConfigSync();
     const [sitesLabels, sites] = await Promise.all([
       trGlobalLabelSet(OPERATOR_SITES_LABELS, WEB_UI_LABEL_CONTEXT),
       listSites(),
@@ -148,7 +148,7 @@ export default async function OperatorPage({
   }
 
   if (section === "translations") {
-    const config = getPhiServerConfigSync();
+    const config = getPhisConfigSync();
     const [translationsLabels, sourceState, sites] = await Promise.all([
       trGlobalLabelSet(OPERATOR_TRANSLATIONS_LABELS, WEB_UI_LABEL_CONTEXT),
       resolveTranslationLocaleSourceState(translationMode ? normalizeTranslationMode(translationMode) : null),

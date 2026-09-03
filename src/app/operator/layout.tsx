@@ -4,7 +4,7 @@ import { cookies, headers } from "next/headers";
 
 import { OPERATOR_LAYOUT_LABELS } from "@/components/operator/label-sets";
 import { OperatorShellFrame } from "@/components/operator/operator-shell-frame";
-import { getPhiServerConfigSync } from "@/lib/config";
+import { getPhisConfigSync } from "@/lib/config";
 import { normalizeLocale } from "@/lib/locale";
 import { getOperatorSession } from "@/lib/operator-auth";
 import { resolveOperationalMode } from "@/lib/operator-runtime";
@@ -34,7 +34,7 @@ export default async function OperatorLayout({ children }: { children: ReactNode
   const session = await getOperatorSession();
   const cookieStore = await cookies();
   const requestHeaders = await headers();
-  const translationMode = getPhiServerConfigSync().translation?.mode ?? "none";
+  const translationMode = getPhisConfigSync().translation?.mode ?? "none";
   const allowedLocales =
     translationMode === "none" ? ["en"] : getConfiguredTranslationSupportedLocalesSync();
   const currentLocale = normalizeLocale(

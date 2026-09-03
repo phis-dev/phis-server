@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { validatePhiServerAddonManifest } from "./manifest.ts";
+import { validatePhisAddonManifest } from "./manifest.ts";
 
 /**
  * What an Add-on may declare about its own roles.
@@ -33,16 +33,16 @@ const admin = { name: "market-admin", grantableBy: { siteAccess: "site-admin" } 
 const vendor = { name: "vendor", grantableBy: { role: "market-admin" } };
 
 function issuesFor(roles: unknown) {
-  return validatePhiServerAddonManifest(manifest({ roles })).issues.join("\n");
+  return validatePhisAddonManifest(manifest({ roles })).issues.join("\n");
 }
 
 describe("declaring Add-on roles", () => {
   it("accepts a manifest that declares none, as every older one does", () => {
-    expect(validatePhiServerAddonManifest(manifest()).issues).toEqual([]);
+    expect(validatePhisAddonManifest(manifest()).issues).toEqual([]);
   });
 
   it("accepts a role granted by a Site access, and one granted by another role", () => {
-    expect(validatePhiServerAddonManifest(manifest({ roles: [admin, vendor] })).issues).toEqual([]);
+    expect(validatePhisAddonManifest(manifest({ roles: [admin, vendor] })).issues).toEqual([]);
   });
 
   it("refuses a policy naming a Site access Core does not have", () => {
@@ -91,7 +91,7 @@ describe("declaring Add-on roles", () => {
  */
 describe("declaring Add-on groups", () => {
   function groupIssues(groups: unknown) {
-    return validatePhiServerAddonManifest(manifest({ groups })).issues.join("\n");
+    return validatePhisAddonManifest(manifest({ groups })).issues.join("\n");
   }
 
   it("accepts a group with a key and a name", () => {
@@ -126,7 +126,7 @@ describe("declaring Add-on groups", () => {
  */
 describe("declaring the Module half", () => {
   function moduleIssues(modules: unknown) {
-    return validatePhiServerAddonManifest(manifest({ modules })).issues.join("\n");
+    return validatePhisAddonManifest(manifest({ modules })).issues.join("\n");
   }
 
   it("accepts ids under this package's own name", () => {

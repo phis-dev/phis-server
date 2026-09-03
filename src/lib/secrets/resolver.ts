@@ -1,7 +1,7 @@
 import "server-only";
 
-import { getPhiServerConfigSync } from "@/lib/config";
-import { readPhiServerSecret } from "@/db/server-secrets";
+import { getPhisConfigSync } from "@/lib/config";
+import { readPhisSecret } from "@/db/server-secrets";
 import {
   PHI_SECRET_INITIAL_KEY_VERSION,
   type PhiSecretEncryptionKey,
@@ -43,7 +43,7 @@ export class PhiMissingSecretEncryptionKeyError extends Error {
 }
 
 export function readPhiSecretEncryptionKey(): PhiSecretEncryptionKey {
-  const config = getPhiServerConfigSync().secrets;
+  const config = getPhisConfigSync().secrets;
   const keyHex = config?.encryptionKey?.trim() ?? "";
   if (!keyHex) {
     throw new PhiMissingSecretEncryptionKeyError();
@@ -71,7 +71,7 @@ export function isPhiSecretStoreReadable() {
 
 const databaseBackend: PhiSecretBackend = {
   id: PHI_SECRET_DATABASE_BACKEND_ID,
-  resolve: (reference) => readPhiServerSecret(reference, readPhiSecretEncryptionKey()),
+  resolve: (reference) => readPhisSecret(reference, readPhiSecretEncryptionKey()),
 };
 
 const backends = new Map<string, PhiSecretBackend>([[databaseBackend.id, databaseBackend]]);

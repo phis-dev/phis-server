@@ -3,15 +3,15 @@ import { createHash } from "node:crypto";
 import type { Pool } from "pg";
 
 import type {
-  PhiServerAddonManifestV1,
-  PhiServerAddonSchemaDescriptor,
+  PhisAddonManifestV1,
+  PhisAddonSchemaDescriptor,
 } from "../lib/addons/contract.ts";
 import { stablePhiJson } from "../lib/addons/manifest.ts";
-import { derivePhiServerAddonSchemaName } from "../lib/addons/schema-name.ts";
+import { derivePhisAddonSchemaName } from "../lib/addons/schema-name.ts";
 import {
-  applyPhiServerAddonSchema,
-  dropPhiServerAddonSchema,
-  verifyPhiServerAddonSchema,
+  applyPhisAddonSchema,
+  dropPhisAddonSchema,
+  verifyPhisAddonSchema,
 } from "./server-addon-schema.mts";
 
 /**
@@ -27,14 +27,14 @@ import {
  * reformatting is not drift and a changed shape is.
  */
 
-export type PhiServerAddonMigrationInput = {
-  manifest: PhiServerAddonManifestV1;
+export type PhisAddonMigrationInput = {
+  manifest: PhisAddonManifestV1;
   releaseBuildId: string;
   /** The role a running instance serves with, which needs to read what this creates but never write DDL. */
   servingRole: string;
 };
 
-export type PhiServerAddonMigrationOutcome = {
+export type PhisAddonMigrationOutcome = {
   addonId: string;
   schemaName: string | null;
   appliedVersion: number;
@@ -42,7 +42,7 @@ export type PhiServerAddonMigrationOutcome = {
   statements: string[];
 };
 
-export function digestPhiServerAddonSchemaDescriptor(descriptor: PhiServerAddonSchemaDescriptor) {
+export function digestPhisAddonSchemaDescriptor(descriptor: PhisAddonSchemaDescriptor) {
   return createHash("sha256").update(stablePhiJson(descriptor)).digest("hex");
 }
 
@@ -59,7 +59,7 @@ function purgeAdvice(addonId: string) {
  */
 async function ensureCatalogRow(
   client: import("pg").PoolClient,
-  manifest: PhiServerAddonManifestV1,
+  manifest: PhisAddonManifestV1,
   releaseBuildId: string,
   manifestDigest: string,
 ) {
@@ -87,11 +87,11 @@ async function ensureCatalogRow(
   );
 }
 
-export async function migratePhiServerAddon(
+export async function migratePhisAddon(
   pool: Pool,
-  input: PhiServerAddonMigrationInput,
+  input: PhisAddonMigrationInput,
   manifestDigest: string,
-): Promise<PhiServerAddonMigrationOutcome> {
+): Promise<PhisAddonMigrationOutcome> {
   const { manifest, releaseBuildId, servingRole } = input;
   const client = await pool.connect();
   try {
@@ -127,8 +127,8 @@ export async function migratePhiServerAddon(
 
     // A recorded name wins over a computed one, so a later change to the derivation leaves an installed
     // Add-on on the schema it already has instead of orphaning its tables.
-    const schemaName = recordedSchemaName ?? derivePhiServerAddonSchemaName(manifest.addonId);
-    const checksum = digestPhiServerAddonSchemaDescriptor(manifest.schema);
+    const schemaName = recordedSchemaName ?? derivePhisAddonSchemaName(manifest.addonId);
+    const checksum = digestPhisAddonSchemaDescriptor(manifest.schema);
 
     const { rows: appliedRows } = await client.query<{
       migration_version: number;
@@ -175,8 +175,8 @@ export async function migratePhiServerAddon(
     );
 
     const target = { schemaName, descriptor: manifest.schema };
-    const statements = await applyPhiServerAddonSchema(client, target, servingRole);
-    const issues = await verifyPhiServerAddonSchema(client, target);
+    const statements = await applyPhisAddonSchema(client, target, servingRole);
+    const issues = await verifyPhisAddonSchema(client, target);
     if (issues.length > 0) {
       throw new Error(
         `The schema generated for ${manifest.addonId} does not satisfy the Add-on contract:\n- ` +
@@ -228,7 +228,7 @@ export async function migratePhiServerAddon(
  * Add-on's stored secrets with it, because credentials for something no longer installed have no reason
  * to stay readable.
  */
-export async function purgePhiServerAddon(pool: Pool, addonId: string) {
+export async function purgePhisAddon(pool: Pool, addonId: string) {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
@@ -241,7 +241,7 @@ export async function purgePhiServerAddon(pool: Pool, addonId: string) {
     }
     const schemaName = rows[0].schema_name;
     if (schemaName) {
-      await dropPhiServerAddonSchema(client, schemaName);
+      await dropPhisAddonSchema(client, schemaName);
     }
     /*
      * The Add-on's groups are retired, not deleted, and this is the one place in a purge that keeps

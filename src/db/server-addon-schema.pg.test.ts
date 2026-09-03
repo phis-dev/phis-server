@@ -2,11 +2,11 @@ import { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import {
-  applyPhiServerAddonSchema,
-  dropPhiServerAddonSchema,
-  verifyPhiServerAddonSchema,
+  applyPhisAddonSchema,
+  dropPhisAddonSchema,
+  verifyPhisAddonSchema,
 } from "./server-addon-schema.mts";
-import { getPhiServerConfigSync } from "@/lib/config";
+import { getPhisConfigSync } from "@/lib/config";
 import { quotePhiIdentifier } from "@/lib/addons/schema-ddl";
 import { incidentSchemaDescriptor } from "../../test/fixtures/addon-schema.ts";
 import {
@@ -45,16 +45,16 @@ describe("generated Add-on schema", () => {
   beforeAll(async () => {
     await requirePhiTestDatabase();
     site = await createPhiTestSite("addon-schema");
-    const config = getPhiServerConfigSync().database;
+    const config = getPhisConfigSync().database;
     if (!config?.migrationUri || !config.uri) {
       throw new Error("These tests need database.migrationUri and database.uri.");
     }
     servingRole = decodeURIComponent(new URL(config.uri).username);
     migrationPool = new Pool({ connectionString: config.migrationUri });
     await withMigrationClient(async (client) => {
-      await dropPhiServerAddonSchema(client, SCHEMA);
+      await dropPhisAddonSchema(client, SCHEMA);
       await client.query(`DROP SCHEMA IF EXISTS ${quotePhiIdentifier(FOREIGN_SCHEMA)} CASCADE`);
-      await applyPhiServerAddonSchema(client, target, servingRole);
+      await applyPhisAddonSchema(client, target, servingRole);
     });
   });
 
@@ -62,7 +62,7 @@ describe("generated Add-on schema", () => {
     if (migrationPool) {
       await withMigrationClient(async (client) => {
         await client.query(`DROP SCHEMA IF EXISTS ${quotePhiIdentifier(FOREIGN_SCHEMA)} CASCADE`);
-        await dropPhiServerAddonSchema(client, SCHEMA);
+        await dropPhisAddonSchema(client, SCHEMA);
       });
       await migrationPool.end();
     }
@@ -71,7 +71,7 @@ describe("generated Add-on schema", () => {
   });
 
   it("passes its own verification", async () => {
-    const issues = await withMigrationClient((client) => verifyPhiServerAddonSchema(client, target));
+    const issues = await withMigrationClient((client) => verifyPhisAddonSchema(client, target));
     expect(issues).toEqual([]);
   });
 
@@ -143,7 +143,7 @@ describe("generated Add-on schema", () => {
              REFERENCES ${quotePhiIdentifier(SCHEMA)}."incident"(id) ON DELETE CASCADE
          )`,
       );
-      const found = await verifyPhiServerAddonSchema(client, target);
+      const found = await verifyPhisAddonSchema(client, target);
       await client.query(`DROP SCHEMA ${quotePhiIdentifier(FOREIGN_SCHEMA)} CASCADE`);
       return found;
     });
@@ -153,7 +153,7 @@ describe("generated Add-on schema", () => {
   it("reports a table nobody declared", async () => {
     const issues = await withMigrationClient(async (client) => {
       await client.query(`CREATE TABLE ${quotePhiIdentifier(SCHEMA)}."stray" (id INT PRIMARY KEY)`);
-      const found = await verifyPhiServerAddonSchema(client, target);
+      const found = await verifyPhisAddonSchema(client, target);
       await client.query(`DROP TABLE ${quotePhiIdentifier(SCHEMA)}."stray"`);
       return found;
     });
@@ -162,13 +162,13 @@ describe("generated Add-on schema", () => {
 
   it("removes everything when the schema is dropped", async () => {
     await withMigrationClient(async (client) => {
-      await dropPhiServerAddonSchema(client, SCHEMA);
+      await dropPhisAddonSchema(client, SCHEMA);
       const { rows } = await client.query(
         `SELECT count(*)::int AS total FROM information_schema.tables WHERE table_schema = $1`,
         [SCHEMA],
       );
       expect(rows[0].total).toBe(0);
-      await applyPhiServerAddonSchema(client, target, servingRole);
+      await applyPhisAddonSchema(client, target, servingRole);
     });
   });
 });

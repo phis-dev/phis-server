@@ -2,7 +2,7 @@ import "server-only";
 
 import type { PoolClient } from "pg";
 
-import { buildPhiServerCapabilitySnapshot } from "@/lib/addons/capability-snapshot";
+import { buildPhisCapabilitySnapshot } from "@/lib/addons/capability-snapshot";
 import type { PhiGroupProviderId, PhiViewerGroupClaim } from "@/lib/authorization";
 import { getPool } from "@/lib/db";
 import {
@@ -204,7 +204,7 @@ async function readEffectiveGroupFlagsWithDb(db: DbQueryable, siteId: number, us
        AND (m.valid_until IS NULL OR m.valid_until > NOW())`,
     [siteId, userId],
   );
-  const snapshot = await buildPhiServerCapabilitySnapshot(siteId);
+  const snapshot = await buildPhisCapabilitySnapshot(siteId);
   const availableProviders = new Set(
     snapshot.providers.filter((provider) => provider.state === "available").map((provider) => provider.providerId),
   );

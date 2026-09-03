@@ -1,12 +1,12 @@
 import "server-only";
 
-import type { PhiServerStorageCapabilityV1 } from "./contract.ts";
+import type { PhisStorageCapabilityV1 } from "./contract.ts";
 import { ensureSiteMediaSpace, getMediaStorageProfile } from "@/db/media-spaces";
 import { createPhisMediaStorageServiceForProfile } from "@/lib/media-storage";
 import { phiServerAddonStoragePrefix } from "./schema-name.ts";
 import {
-  bookPhiServerAddonStorage,
-  readPhiServerAddonStorageUsage,
+  bookPhisAddonStorage,
+  readPhisAddonStorageUsage,
 } from "@/db/server-addon-storage-usage.mts";
 import { getPool } from "@/lib/db";
 
@@ -44,12 +44,12 @@ function normalizeRelativeKey(key: string) {
   return segments.join("/");
 }
 
-export class PhiServerAddonStorageError extends Error {}
+export class PhisAddonStorageError extends Error {}
 
 function requireKey(key: string) {
   const normalized = normalizeRelativeKey(key);
   if (!normalized) {
-    throw new PhiServerAddonStorageError(`"${key}" is not a usable object key.`);
+    throw new PhisAddonStorageError(`"${key}" is not a usable object key.`);
   }
   return normalized;
 }
@@ -60,18 +60,18 @@ async function resolveStorage(siteId: number, siteKey: string, addonId: string) 
   const { space } = await ensureSiteMediaSpace(siteId);
   const profile = await getMediaStorageProfile(siteId, space.defaultStorageProfileId);
   if (!profile) {
-    throw new PhiServerAddonStorageError("This Site has no default Storage Profile.");
+    throw new PhisAddonStorageError("This Site has no default Storage Profile.");
   }
   const service = await createPhisMediaStorageServiceForProfile(profile, siteKey);
   return { service, prefix: phiServerAddonStoragePrefix(addonId, siteKey) };
 }
 
-export function buildPhiServerAddonStorageCapability(input: {
+export function buildPhisAddonStorageCapability(input: {
   addonId: string;
   siteId: number;
   siteKey: string;
   readMaxObjectBytes: () => Promise<number>;
-}): PhiServerStorageCapabilityV1 {
+}): PhisStorageCapabilityV1 {
   const { addonId, siteId, siteKey, readMaxObjectBytes } = input;
   return Object.freeze({
     async put({ key, body, contentType }) {
@@ -80,7 +80,7 @@ export function buildPhiServerAddonStorageCapability(input: {
       // it here too, and one limit is easier to reason about than two.
       const maxObjectBytes = await readMaxObjectBytes();
       if (body.byteLength > maxObjectBytes) {
-        throw new PhiServerAddonStorageError(
+        throw new PhisAddonStorageError(
           `Object is ${body.byteLength} bytes; this Site allows ${maxObjectBytes}.`,
         );
       }
@@ -107,19 +107,19 @@ export function buildPhiServerAddonStorageCapability(input: {
        * the release below returns -- capacity briefly overstated is a smaller fault than a ceiling that
        * does not hold.
        */
-      const booked = await bookPhiServerAddonStorage(getPool(), {
+      const booked = await bookPhisAddonStorage(getPool(), {
         addonId, siteId, bytes: deltaBytes, objects: deltaObjects,
       });
       if (booked === "not-activated") {
         // Said plainly, because the alternative reads "0 of unlimited bytes" and sends whoever gets it
         // to raise a ceiling that was never the problem.
-        throw new PhiServerAddonStorageError(
+        throw new PhisAddonStorageError(
           `${addonId} is not activated for this Site, so it has no store here.`,
         );
       }
       if (booked === "over-quota") {
-        const usage = await readPhiServerAddonStorageUsage(getPool(), { addonId, siteId });
-        throw new PhiServerAddonStorageError(
+        const usage = await readPhisAddonStorageUsage(getPool(), { addonId, siteId });
+        throw new PhisAddonStorageError(
           `This Add-on's store on this Site is full: ` +
           `${usage.bytes} of ${usage.quotaBytes ?? "unlimited"} bytes, ` +
           `${usage.objects} of ${usage.quotaObjects ?? "unlimited"} objects.`,
@@ -129,7 +129,7 @@ export function buildPhiServerAddonStorageCapability(input: {
       try {
         await service.putObject({ storageKey, body: Buffer.from(body), contentType });
       } catch (error) {
-        await bookPhiServerAddonStorage(getPool(), {
+        await bookPhisAddonStorage(getPool(), {
           addonId, siteId, bytes: -deltaBytes, objects: -deltaObjects,
         }).catch(() => {});
         throw error;
@@ -138,7 +138,7 @@ export function buildPhiServerAddonStorageCapability(input: {
     },
 
     async usage() {
-      return readPhiServerAddonStorageUsage(getPool(), { addonId, siteId });
+      return readPhisAddonStorageUsage(getPool(), { addonId, siteId });
     },
 
     async get(key) {
@@ -173,7 +173,7 @@ export function buildPhiServerAddonStorageCapability(input: {
       await service.deleteObject(`${prefix}/${relative}`);
       // Given back after the object is gone, not before: capacity briefly understated costs an Add-on
       // one refusal it could have avoided, while the other order would hand out room still occupied.
-      await bookPhiServerAddonStorage(getPool(), {
+      await bookPhisAddonStorage(getPool(), {
         addonId, siteId, bytes: -existed.byteSize, objects: -1,
       }).catch(() => {});
       return true;
@@ -188,5 +188,5 @@ export function buildPhiServerAddonStorageCapability(input: {
         .map((head) => head.storageKey.slice(root.length + 1))
         .filter((key) => key.length > 0);
     },
-  } satisfies PhiServerStorageCapabilityV1);
+  } satisfies PhisStorageCapabilityV1);
 }

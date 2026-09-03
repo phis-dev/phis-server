@@ -1,9 +1,9 @@
 import "server-only";
 import { Pool } from "pg";
-import { getPhiServerConfigSync } from "@/lib/config";
+import { getPhisConfigSync } from "@/lib/config";
 
 function buildPostgresPool(): Pool {
-  const connectionString = getPhiServerConfigSync().database?.uri?.trim() ?? null;
+  const connectionString = getPhisConfigSync().database?.uri?.trim() ?? null;
 
   if (connectionString) {
     return new Pool({ connectionString });

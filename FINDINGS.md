@@ -94,7 +94,7 @@ Sections 3.1 and 3.2 are implemented: the dead files and exports below were dele
 and local helpers cleaned, and the operator pages, public render, media variants, and the translation
 endpoint verified live afterwards. Four corrections against the original lists:
 
-- `renderSiteConfig`, `assertPhiServerAddonManifest`, and `validatePhiServerAddonDesiredState` are used
+- `renderSiteConfig`, `assertPhisAddonManifest`, and `validatePhisAddonDesiredState` are used
   by the CLI (`src/cli/*.mts`), which the scan had not covered — they stay.
 - `resolveOperationalMode`, `readOperatorInfrastructureSnapshot`, and `trGlobalLabelSet` are used by the
   operator pages and stay; the compiler caught the attempted removal.
@@ -129,7 +129,7 @@ endpoint verified live afterwards. Four corrections against the original lists:
   `canAccessPage`, `authenticateMedusaCustomer`, `getSupportedDeepLSourceLanguages`,
   `buildFallbackVariantSvg`, `isImageVariantKey`, `parseVariantRequestPath`, `phiServerLogger`,
   `renderSiteConfig`, `readOperatorInfrastructureSnapshot`, `resolveOperationalMode`,
-  `assertPhiServerAddonManifest`, `validatePhiServerAddonDesiredState`, `nextJsonError`
+  `assertPhisAddonManifest`, `validatePhisAddonDesiredState`, `nextJsonError`
 - Guards: `requireSiteAdminApiContext`, `requireSiteEditorApiContext`,
   `requireSiteAccountingApiContext` (declared role surface, no route uses them yet)
 
@@ -141,7 +141,7 @@ with the 1.1 fix and is no longer on this list.
 
 The `SUPPORT_TICKET_*`/`SUPPORT_GITHUB_*` families (`src/db/support.ts`), `SITE_CONTENT_TYPE_PAGE/
 LEGAL/SNIPPET`, `PhiCmsPageType`, `PhiCmsRegionStatus`, `PhiCmsRevisionScopeType`,
-`PhiMediaFolderFlags`, and `PHI_SERVER_INSTANCE_FLAG_READY` are unreferenced values of documented closed
+`PhiMediaFolderFlags`, and `PHIS_INSTANCE_FLAG_READY` are unreferenced values of documented closed
 vocabularies. They document the contract and are accepted as data-driven values; not recommended for
 removal, listed to keep the unused-export scan honest.
 

@@ -2,14 +2,14 @@ import { NextResponse, type NextRequest } from "next/server";
 
 import { requireSiteAuthenticatedApiContext } from "@/lib/guards/site-admin-api";
 import {
-  mayGrantPhiServerAddonRole,
-  readPhiServerAddonDeclaredRoles,
-  readPhiServerAddonGrantableRoles,
+  mayGrantPhisAddonRole,
+  readPhisAddonDeclaredRoles,
+  readPhisAddonGrantableRoles,
 } from "@/lib/addons/role-granting";
 import {
-  grantPhiServerAddonUserRole,
+  grantPhisAddonUserRole,
   readPhiSiteUserAddonRoles,
-  revokePhiServerAddonUserRole,
+  revokePhisAddonUserRole,
 } from "@/db/server-addon-roles.mts";
 import { getPool } from "@/lib/db";
 import { logRuntimeEvent } from "@/lib/log";
@@ -55,7 +55,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "Authentication required." }, { status: 401 });
   }
 
-  const grantable = await readPhiServerAddonGrantableRoles({
+  const grantable = await readPhisAddonGrantableRoles({
     siteId: context.site.id,
     actorUserId: context.session.userId,
   });
@@ -86,12 +86,12 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "addonId, role and userId are required." }, { status: 400 });
   }
 
-  const verdict = await mayGrantPhiServerAddonRole({
+  const verdict = await mayGrantPhisAddonRole({
     addonId: input.addonId,
     siteId: context.site.id,
     actorUserId: context.session.userId,
     role: input.role,
-    declared: readPhiServerAddonDeclaredRoles(input.addonId),
+    declared: readPhisAddonDeclaredRoles(input.addonId),
   });
   if (!verdict.allowed) {
     // An unknown Add-on and an undeclared role are the caller's mistake and say so; a refusal on
@@ -101,7 +101,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: verdict.reason }, { status });
   }
 
-  const granted = await grantPhiServerAddonUserRole(getPool(), {
+  const granted = await grantPhisAddonUserRole(getPool(), {
     addonId: input.addonId,
     siteId: context.site.id,
     userId: input.userId,
@@ -129,19 +129,19 @@ export async function DELETE(request: NextRequest) {
 
   // Taking a role back needs the standing to have given it. Anything else would let somebody undo a
   // decision they could not have made.
-  const verdict = await mayGrantPhiServerAddonRole({
+  const verdict = await mayGrantPhisAddonRole({
     addonId: input.addonId,
     siteId: context.site.id,
     actorUserId: context.session.userId,
     role: input.role,
-    declared: readPhiServerAddonDeclaredRoles(input.addonId),
+    declared: readPhisAddonDeclaredRoles(input.addonId),
   });
   if (!verdict.allowed) {
     const status = verdict.reason === "not_permitted" ? 403 : 404;
     return NextResponse.json({ error: verdict.reason }, { status });
   }
 
-  const revoked = await revokePhiServerAddonUserRole(getPool(), {
+  const revoked = await revokePhisAddonUserRole(getPool(), {
     addonId: input.addonId,
     siteId: context.site.id,
     userId: input.userId,

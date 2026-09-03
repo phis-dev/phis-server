@@ -1,7 +1,7 @@
 import "server-only";
 
-import type { PhiServerAddonRoleDescriptor, PhiServerRolesCapabilityV1 } from "./contract.ts";
-import { readPhiServerAddonUserRoles } from "@/db/server-addon-roles.mts";
+import type { PhisAddonRoleDescriptor, PhisRolesCapabilityV1 } from "./contract.ts";
+import { readPhisAddonUserRoles } from "@/db/server-addon-roles.mts";
 import { getPool } from "@/lib/db";
 
 /**
@@ -19,12 +19,12 @@ import { getPool } from "@/lib/db";
  * Nobody acting answers no rather than being absent -- one shape for the Add-on to handle, and "no" is
  * the safe answer when there is no one to ask about.
  */
-export function buildPhiServerAddonRolesCapability(input: {
+export function buildPhisAddonRolesCapability(input: {
   addonId: string;
   siteId: number;
   actorUserId: number | null;
-  declared: readonly PhiServerAddonRoleDescriptor[];
-}): PhiServerRolesCapabilityV1 {
+  declared: readonly PhisAddonRoleDescriptor[];
+}): PhisRolesCapabilityV1 {
   const { addonId, siteId, actorUserId, declared } = input;
   const declaredNames = declared.map((role) => role.name);
 
@@ -33,7 +33,7 @@ export function buildPhiServerAddonRolesCapability(input: {
       return [] as string[];
     }
     const stored = new Set(
-      await readPhiServerAddonUserRoles(getPool(), { addonId, siteId, userId: actorUserId }),
+      await readPhisAddonUserRoles(getPool(), { addonId, siteId, userId: actorUserId }),
     );
     // Declaration order, not storage order: what the Add-on listed is what it reads back.
     return declaredNames.filter((name) => stored.has(name));
@@ -52,5 +52,5 @@ export function buildPhiServerAddonRolesCapability(input: {
     async all() {
       return Object.freeze(await held());
     },
-  } satisfies PhiServerRolesCapabilityV1);
+  } satisfies PhisRolesCapabilityV1);
 }

@@ -1,10 +1,10 @@
 import "server-only";
 
 import {
-  deletePhiServerSecret,
-  hasPhiServerSecret,
-  hasPhiServerSecrets,
-  writePhiServerSecret,
+  deletePhisSecret,
+  hasPhisSecret,
+  hasPhisSecrets,
+  writePhisSecret,
 } from "@/db/server-secrets";
 import {
   buildPhiAuthSecretReference,
@@ -37,7 +37,7 @@ export async function writeSiteAuthSecret(reference: string, value: string, site
   if (!normalized) {
     throw new Error("Authentication provider secret cannot be empty.");
   }
-  await writePhiServerSecret({
+  await writePhisSecret({
     reference,
     value: normalized,
     key: readPhiSecretEncryptionKey(),
@@ -46,7 +46,7 @@ export async function writeSiteAuthSecret(reference: string, value: string, site
 }
 
 export function deleteSiteAuthSecret(reference: string) {
-  return deletePhiServerSecret(reference);
+  return deletePhisSecret(reference);
 }
 
 /**
@@ -55,11 +55,11 @@ export function deleteSiteAuthSecret(reference: string) {
  * The public Auth manifest asks only this, so it never decrypts anything.
  */
 export function hasSiteAuthSecret(reference: string | null) {
-  return reference ? hasPhiServerSecret(reference) : Promise.resolve(false);
+  return reference ? hasPhisSecret(reference) : Promise.resolve(false);
 }
 
 export function hasSiteAuthSecrets(references: (string | null)[]) {
-  return hasPhiServerSecrets(references.filter((reference): reference is string => Boolean(reference)));
+  return hasPhisSecrets(references.filter((reference): reference is string => Boolean(reference)));
 }
 
 export async function readSiteAuthSecret(reference: string | null) {

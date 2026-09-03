@@ -4,7 +4,7 @@ import { NextResponse } from "next/server";
 import { listPublicSiteSpaceMediaAssetsByIds } from "@/db/media";
 import { listSitePageScopes } from "@/db/site-pages";
 import { guardApiV1 } from "@/lib/api-v1-guard";
-import { isPhiServerCmsAreaKey, resolvePhiServerCmsAreaMask } from "@/lib/constants/cms-areas";
+import { isPhisCmsAreaKey, resolvePhisCmsAreaMask } from "@/lib/constants/cms-areas";
 import { readPhiPageReference } from "@/lib/internal-references";
 import { serializeMediaAssetForPublicReference } from "@/lib/media-response";
 import { requireSiteFromRequest } from "@/lib/site-context";
@@ -41,7 +41,7 @@ export async function POST(request: NextRequest) {
   }
   // Page references resolve inside one Area; Assets are Site scoped and carry no Area. An Asset-only
   // request therefore does not have to name an Area, and must not be forced to invent one.
-  if (requestedReferences.length > 0 && !isPhiServerCmsAreaKey(area)) {
+  if (requestedReferences.length > 0 && !isPhisCmsAreaKey(area)) {
     return NextResponse.json({ error: "Invalid reference resolution request." }, { status: 400 });
   }
 
@@ -55,7 +55,7 @@ export async function POST(request: NextRequest) {
 
   const scopes = references.length === 0
     ? []
-    : await listSitePageScopes(site.id, resolvePhiServerCmsAreaMask(area));
+    : await listSitePageScopes(site.id, resolvePhisCmsAreaMask(area));
   const byId = new Map(scopes.map((scope) => [scope.id, scope] as const));
   const resolved = references.map((entry) => {
     const reference = entry!;

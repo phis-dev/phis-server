@@ -5,7 +5,7 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import { cookies } from "next/headers";
 import type { NextRequest, NextResponse } from "next/server";
 
-import { getPhiServerConfigSync } from "@/lib/config";
+import { getPhisConfigSync } from "@/lib/config";
 
 export const OPERATOR_SESSION_COOKIE_NAME = "phis_operator_session";
 
@@ -22,7 +22,7 @@ function isProduction() {
 }
 
 function getOperatorSessionSecret() {
-  const config = getPhiServerConfigSync();
+  const config = getPhisConfigSync();
   const secret =
     config.api?.internalToken?.trim() ||
     config.registration?.intentEncryptionKey?.trim() ||

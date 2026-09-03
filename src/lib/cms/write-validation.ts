@@ -1,6 +1,6 @@
 import "server-only";
 
-import { isPhiServerCmsAreaKey, resolvePhiServerCmsAreaMask } from "@/lib/constants/cms-areas";
+import { isPhisCmsAreaKey, resolvePhisCmsAreaMask } from "@/lib/constants/cms-areas";
 import { normalizeSiteCmsPath } from "@/lib/helpers/cms-path";
 import {
   readPhiCmsInstanceId,
@@ -470,12 +470,12 @@ function resolveCmsAreaMaskFromArea(value: unknown, errors: string[]) {
     return undefined;
   }
 
-  if (!isPhiServerCmsAreaKey(area)) {
+  if (!isPhisCmsAreaKey(area)) {
     errors.push("area must be a valid CMS area.");
     return undefined;
   }
 
-  return resolvePhiServerCmsAreaMask(area);
+  return resolvePhisCmsAreaMask(area);
 }
 
 function parseContentBinding(value: unknown, label: string, errors: string[]) {

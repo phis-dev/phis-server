@@ -1,7 +1,7 @@
 import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 
-import { buildPhiServerCapabilitySnapshot } from "@/lib/addons/capability-snapshot";
+import { buildPhisCapabilitySnapshot } from "@/lib/addons/capability-snapshot";
 import { createJsonResponse } from "@/lib/api-response";
 import { guardApiV1 } from "@/lib/api-v1-guard";
 import { requireSiteFromRequest } from "@/lib/site-context";
@@ -21,7 +21,7 @@ export async function GET(request: NextRequest) {
     request,
     {
       siteKey: site.key,
-      ...(await buildPhiServerCapabilitySnapshot(site.id)),
+      ...(await buildPhisCapabilitySnapshot(site.id)),
     },
     {
       cacheControl: "private, no-store",

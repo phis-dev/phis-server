@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 
-import type { PhiServerAddonQueryOrdering } from "./contract.ts";
+import type { PhisAddonQueryOrdering } from "./contract.ts";
 
 /**
  * The cursor a paged select hands back, and reads again on the next call.
@@ -18,11 +18,11 @@ import type { PhiServerAddonQueryOrdering } from "./contract.ts";
 /** Short on purpose: this is a mismatch check, not a defence against forgery. */
 const SIGNATURE_LENGTH = 12;
 
-export class PhiServerAddonCursorError extends Error {}
+export class PhisAddonCursorError extends Error {}
 
 export function phiServerAddonOrderingSignature(
   queryName: string,
-  ordering: PhiServerAddonQueryOrdering[],
+  ordering: PhisAddonQueryOrdering[],
 ) {
   const spec = ordering.map((entry) => `${entry.column}:${entry.direction}`).join(",");
   return createHash("sha256").update(`${queryName}|${spec}`).digest("hex").slice(0, SIGNATURE_LENGTH);
@@ -37,14 +37,14 @@ export function phiServerAddonOrderingSignature(
  * each ordering column as text for exactly this reason, and the same goes for a bigint key, which
  * JavaScript cannot hold beyond 2^53.
  */
-export function encodePhiServerAddonCursor(
+export function encodePhisAddonCursor(
   queryName: string,
-  ordering: PhiServerAddonQueryOrdering[],
+  ordering: PhisAddonQueryOrdering[],
   values: readonly unknown[],
 ) {
   const keys = values.map((value, index) => {
     if (value === null || value === undefined) {
-      throw new PhiServerAddonCursorError(
+      throw new PhisAddonCursorError(
         `Ordering column "${ordering[index]?.column}" is null in a row being paged. ` +
         "Ordering columns must be NOT NULL.",
       );
@@ -55,32 +55,32 @@ export function encodePhiServerAddonCursor(
   return Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
 }
 
-export function decodePhiServerAddonCursor(
+export function decodePhisAddonCursor(
   queryName: string,
-  ordering: PhiServerAddonQueryOrdering[],
+  ordering: PhisAddonQueryOrdering[],
   cursor: string,
 ): string[] {
   let payload: unknown;
   try {
     payload = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8"));
   } catch {
-    throw new PhiServerAddonCursorError("The cursor is not readable.");
+    throw new PhisAddonCursorError("The cursor is not readable.");
   }
   if (
     typeof payload !== "object" || payload === null ||
     !Array.isArray((payload as { k?: unknown }).k) ||
     typeof (payload as { s?: unknown }).s !== "string"
   ) {
-    throw new PhiServerAddonCursorError("The cursor is not readable.");
+    throw new PhisAddonCursorError("The cursor is not readable.");
   }
   const { s, k } = payload as { s: string; k: unknown[] };
   if (s !== phiServerAddonOrderingSignature(queryName, ordering)) {
-    throw new PhiServerAddonCursorError(
+    throw new PhisAddonCursorError(
       `The cursor was made for a different ordering than query "${queryName}" runs under.`,
     );
   }
   if (k.length !== ordering.length || k.some((value) => typeof value !== "string")) {
-    throw new PhiServerAddonCursorError("The cursor does not carry this query's ordering values.");
+    throw new PhisAddonCursorError("The cursor does not carry this query's ordering values.");
   }
   return k as string[];
 }

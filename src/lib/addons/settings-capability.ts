@@ -1,10 +1,10 @@
 import "server-only";
 
 import type {
-  PhiServerAddonSettingDescriptor,
-  PhiServerSettingsCapabilityV1,
+  PhisAddonSettingDescriptor,
+  PhisSettingsCapabilityV1,
 } from "./contract.ts";
-import { readPhiServerAddonSettings } from "@/db/server-addon-settings.mts";
+import { readPhisAddonSettings } from "@/db/server-addon-settings.mts";
 import { getPool } from "@/lib/db";
 
 /**
@@ -20,7 +20,7 @@ import { getPool } from "@/lib/db";
  */
 
 function coerce(
-  descriptor: PhiServerAddonSettingDescriptor,
+  descriptor: PhisAddonSettingDescriptor,
   stored: unknown,
 ): string | number | boolean | null {
   if (stored === undefined || stored === null) {
@@ -38,11 +38,11 @@ function coerce(
   }
 }
 
-export function buildPhiServerAddonSettingsCapability(input: {
+export function buildPhisAddonSettingsCapability(input: {
   addonId: string;
   siteId: number;
-  declared: readonly PhiServerAddonSettingDescriptor[];
-}): PhiServerSettingsCapabilityV1 {
+  declared: readonly PhisAddonSettingDescriptor[];
+}): PhisSettingsCapabilityV1 {
   const { addonId, siteId, declared } = input;
   const byName = new Map(declared.map((descriptor) => [descriptor.name, descriptor]));
 
@@ -54,15 +54,15 @@ export function buildPhiServerAddonSettingsCapability(input: {
         // asking for something it never declared has a bug in its manifest, not in this call.
         return null;
       }
-      const stored = await readPhiServerAddonSettings(getPool(), addonId, siteId);
+      const stored = await readPhisAddonSettings(getPool(), addonId, siteId);
       return coerce(descriptor, stored[name]);
     },
 
     async all() {
-      const stored = await readPhiServerAddonSettings(getPool(), addonId, siteId);
+      const stored = await readPhisAddonSettings(getPool(), addonId, siteId);
       return Object.freeze(Object.fromEntries(
         declared.map((descriptor) => [descriptor.name, coerce(descriptor, stored[descriptor.name])]),
       ));
     },
-  } satisfies PhiServerSettingsCapabilityV1);
+  } satisfies PhisSettingsCapabilityV1);
 }

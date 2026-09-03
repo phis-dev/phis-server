@@ -28,7 +28,7 @@ export { phiServerAddonStoragePrefix };
  * one thing needed here: a directory, removed.
  */
 
-export type PhiServerAddonStorageSite = {
+export type PhisAddonStorageSite = {
   siteId: number;
   siteKey: string;
   providerId: string;
@@ -37,10 +37,10 @@ export type PhiServerAddonStorageSite = {
 };
 
 /** What a purge is about to have to clean up, read while the rows still say so. */
-export async function readPhiServerAddonStorageSites(
+export async function readPhisAddonStorageSites(
   pool: Pool,
   addonId: string,
-): Promise<PhiServerAddonStorageSite[]> {
+): Promise<PhisAddonStorageSite[]> {
   const { rows } = await pool.query<{
     site_id: number; site_key: string; provider_id: string;
     config: Record<string, unknown>; secret_reference: string | null;
@@ -65,7 +65,7 @@ export async function readPhiServerAddonStorageSites(
   }));
 }
 
-export type PhiServerAddonStorageRemoval = {
+export type PhisAddonStorageRemoval = {
   siteKey: string;
   providerId: string;
   removed: number;
@@ -79,14 +79,14 @@ export type PhiServerAddonStorageRemoval = {
  * remaining Sites untouched and give an operator no list of what still needs attention -- and the rows
  * are already gone by this point, so stopping helps nobody.
  */
-export async function removePhiServerAddonStorage(
-  site: PhiServerAddonStorageSite,
+export async function removePhisAddonStorage(
+  site: PhisAddonStorageSite,
   addonId: string,
-  resolveAdapter: (site: PhiServerAddonStorageSite) => Promise<{
+  resolveAdapter: (site: PhisAddonStorageSite) => Promise<{
     listPrefix(prefix: string): Promise<{ storageKey: string }[]>;
     deleteObject(storageKey: string): Promise<boolean>;
   } | null>,
-): Promise<PhiServerAddonStorageRemoval> {
+): Promise<PhisAddonStorageRemoval> {
   const prefix = phiServerAddonStoragePrefix(addonId, site.siteKey);
   try {
     if (site.providerId === PHI_LOCAL_MEDIA_STORAGE_PROVIDER_ID) {
@@ -144,11 +144,11 @@ export async function removePhiServerAddonStorage(
  * unbounded operation the ceiling exists to prevent. Run after a migration, or when a figure is
  * disbelieved.
  */
-export async function recountPhiServerAddonStorage(
+export async function recountPhisAddonStorage(
   pool: Pool,
   input: {
     addonId: string;
-    site: PhiServerAddonStorageSite;
+    site: PhisAddonStorageSite;
     listPrefix: (prefix: string) => Promise<{ storageKey: string; byteSize: number }[]>;
   },
 ) {

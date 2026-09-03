@@ -1,7 +1,7 @@
 import type { Pool, PoolClient } from "pg";
 
-import type { PhiServerAddonSettingDescriptor } from "../lib/addons/contract.ts";
-import { resolvePhiServerAddonConfigurationStatus } from "./server-addon-sites.mts";
+import type { PhisAddonSettingDescriptor } from "../lib/addons/contract.ts";
+import { resolvePhisAddonConfigurationStatus } from "./server-addon-sites.mts";
 
 /**
  * What an operator configured for one Add-on on one Site.
@@ -16,7 +16,7 @@ import { resolvePhiServerAddonConfigurationStatus } from "./server-addon-sites.m
 
 type Queryable = Pick<Pool | PoolClient, "query">;
 
-export async function readPhiServerAddonSettings(
+export async function readPhisAddonSettings(
   db: Queryable,
   addonId: string,
   siteId: number,
@@ -37,7 +37,7 @@ export async function readPhiServerAddonSettings(
  * Removing rather than storing null is what makes "unset" mean the declared default: a stored null and
  * an absent key would otherwise be two ways to say nothing, and only one of them would fall back.
  */
-export async function writePhiServerAddonSetting(
+export async function writePhisAddonSetting(
   db: Queryable,
   input: {
     addonId: string;
@@ -45,7 +45,7 @@ export async function writePhiServerAddonSetting(
     name: string;
     value: string | number | boolean | null;
     /** Everything the Add-on declares, so the row's readiness can be re-derived after the write. */
-    declared?: ReadonlyArray<PhiServerAddonSettingDescriptor>;
+    declared?: ReadonlyArray<PhisAddonSettingDescriptor>;
   },
 ) {
   const { rowCount } = await db.query(
@@ -67,14 +67,14 @@ export async function writePhiServerAddonSetting(
   if (input.declared) {
     // Re-derived from what is stored now rather than adjusted by hand: clearing a setting can take a
     // Site back out of readiness, and a status that only ever moves one way is one that lies.
-    const stored = await readPhiServerAddonSettings(db, input.addonId, input.siteId);
+    const stored = await readPhisAddonSettings(db, input.addonId, input.siteId);
     await db.query(
       `UPDATE phis.site_server_addons SET configuration_status = $3, updated_at = NOW()
         WHERE addon_id = $1 AND site_id = $2`,
       [
         input.addonId,
         input.siteId,
-        resolvePhiServerAddonConfigurationStatus(input.declared, stored),
+        resolvePhisAddonConfigurationStatus(input.declared, stored),
       ],
     );
   }
@@ -87,8 +87,8 @@ export async function writePhiServerAddonSetting(
  * Checked before anything is stored, so a mistyped commission rate is refused at the moment it is
  * entered rather than silently read back as a fallback three weeks later.
  */
-export function parsePhiServerAddonSettingValue(
-  descriptor: PhiServerAddonSettingDescriptor,
+export function parsePhisAddonSettingValue(
+  descriptor: PhisAddonSettingDescriptor,
   raw: string,
 ): { value: string | number | boolean } | { error: string } {
   switch (descriptor.type) {

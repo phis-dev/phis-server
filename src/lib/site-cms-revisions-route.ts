@@ -14,7 +14,7 @@ import {
   type SiteRevisionKind,
   type SiteRevisionScopeInput,
 } from "@/db/site-revisions";
-import { resolvePhiServerCmsAreaMask } from "@/lib/constants/cms-areas";
+import { resolvePhisCmsAreaMask } from "@/lib/constants/cms-areas";
 import { PhiCmsAuditEvent } from "@/lib/constants/phi-cms";
 import {
   requireSiteBuilderApiContext,
@@ -69,7 +69,7 @@ function resolveRevisionScopeInput(
     throw new Error("area must be provided.");
   }
 
-  const areaMask = resolvePhiServerCmsAreaMask(areaValue);
+  const areaMask = resolvePhisCmsAreaMask(areaValue);
   const ownerModuleId = typeof source.ownerModuleId === "string" ? source.ownerModuleId.trim() : "";
   const presetKey = typeof source.presetKey === "string" ? source.presetKey.trim() : "";
   if (kind === "area") {

@@ -10,19 +10,19 @@
  */
 
 import {
-  PHI_SERVER_ADDON_CORE_REFERENCES,
-  PHI_SERVER_ADDON_SCHEMA_DESCRIPTOR_VERSION,
-  type PhiServerAddonAssetSlotDescriptor,
-  type PhiServerAddonColumnDescriptor,
-  type PhiServerAddonReferenceColumnDescriptor,
-  type PhiServerAddonSchemaDescriptor,
-  type PhiServerAddonTableDescriptor,
-  type PhiServerAddonValueColumnDescriptor,
+  PHIS_ADDON_CORE_REFERENCES,
+  PHIS_ADDON_SCHEMA_DESCRIPTOR_VERSION,
+  type PhisAddonAssetSlotDescriptor,
+  type PhisAddonColumnDescriptor,
+  type PhisAddonReferenceColumnDescriptor,
+  type PhisAddonSchemaDescriptor,
+  type PhisAddonTableDescriptor,
+  type PhisAddonValueColumnDescriptor,
 } from "./contract.ts";
 import {
   POSTGRES_IDENTIFIER_MAX_LENGTH,
-  composePhiServerAddonAssetTableName,
-  composePhiServerAddonObjectName,
+  composePhisAddonAssetTableName,
+  composePhisAddonObjectName,
 } from "./schema-name.ts";
 
 const OBJECT_NAME_PATTERN = /^[a-z][a-z0-9_]*$/;
@@ -41,21 +41,21 @@ const COLUMN_TYPES = new Set([
 ]);
 const DELETE_RULES = new Set(["cascade", "setNull"]);
 const COMPARISON_OPERATORS = new Set(["<", "<=", ">", ">="]);
-const CORE_REFERENCES = new Set<string>(Object.values(PHI_SERVER_ADDON_CORE_REFERENCES));
+const CORE_REFERENCES = new Set<string>(Object.values(PHIS_ADDON_CORE_REFERENCES));
 const MAX_STRING_LENGTH = 10_485_760;
 const POSTGRES_SMALLINT_MAX = 32_767;
 
 /** Core writes this column for a Site-scoped table, so an Add-on must not declare it. */
-export const PHI_SERVER_ADDON_SITE_COLUMN = "site_id";
+export const PHIS_ADDON_SITE_COLUMN = "site_id";
 
 /** The same, for the two scopes that carry authority rather than a boundary. */
-export const PHI_SERVER_ADDON_OWNER_COLUMN = "owner_user_id";
-export const PHI_SERVER_ADDON_GROUP_COLUMN = "group_id";
+export const PHIS_ADDON_OWNER_COLUMN = "owner_user_id";
+export const PHIS_ADDON_GROUP_COLUMN = "group_id";
 
 const CORE_WRITTEN_COLUMNS: Readonly<Record<string, string>> = {
-  [PHI_SERVER_ADDON_SITE_COLUMN]: "siteScoped",
-  [PHI_SERVER_ADDON_OWNER_COLUMN]: "ownerScoped",
-  [PHI_SERVER_ADDON_GROUP_COLUMN]: "groupScoped",
+  [PHIS_ADDON_SITE_COLUMN]: "siteScoped",
+  [PHIS_ADDON_OWNER_COLUMN]: "ownerScoped",
+  [PHIS_ADDON_GROUP_COLUMN]: "groupScoped",
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -63,8 +63,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function isReferenceColumn(
-  column: PhiServerAddonColumnDescriptor,
-): column is PhiServerAddonReferenceColumnDescriptor {
+  column: PhisAddonColumnDescriptor,
+): column is PhisAddonReferenceColumnDescriptor {
   return "references" in column;
 }
 
@@ -96,7 +96,7 @@ function assertComposedNameFits(
   if (!table || !name) {
     return "";
   }
-  const composed = composePhiServerAddonObjectName(table, name, suffix);
+  const composed = composePhisAddonObjectName(table, name, suffix);
   if (composed.length > POSTGRES_IDENTIFIER_MAX_LENGTH) {
     issues.push(
       `${field} becomes "${composed}", which exceeds ${POSTGRES_IDENTIFIER_MAX_LENGTH} characters.`,
@@ -110,7 +110,7 @@ function validateColumn(
   value: unknown,
   field: string,
   issues: string[],
-): PhiServerAddonColumnDescriptor | null {
+): PhisAddonColumnDescriptor | null {
   const before = issues.length;
   if (!isRecord(value)) {
     issues.push(`${field} must be an object.`);
@@ -152,7 +152,7 @@ function validateColumn(
     if ("type" in value) {
       issues.push(`${field} is a reference column and must not state a type.`);
     }
-    return issues.length === before ? (value as PhiServerAddonReferenceColumnDescriptor) : null;
+    return issues.length === before ? (value as PhisAddonReferenceColumnDescriptor) : null;
   }
 
   const type = value.type;
@@ -189,7 +189,7 @@ function validateColumn(
       issues.push(`${field}.default.kind must be "literal" or "now".`);
     }
   }
-  return issues.length === before ? (value as PhiServerAddonValueColumnDescriptor) : null;
+  return issues.length === before ? (value as PhisAddonValueColumnDescriptor) : null;
 }
 
 function validateConstraint(
@@ -299,7 +299,7 @@ function validateAssetSlot(
   value: unknown,
   field: string,
   issues: string[],
-): PhiServerAddonAssetSlotDescriptor | null {
+): PhisAddonAssetSlotDescriptor | null {
   const before = issues.length;
   if (!isRecord(value)) {
     issues.push(`${field} must be an object.`);
@@ -335,14 +335,14 @@ function validateAssetSlot(
     }
     assertUnique(value.contentTypes as string[], `${field}.contentTypes`, issues);
   }
-  return issues.length === before ? (value as PhiServerAddonAssetSlotDescriptor) : null;
+  return issues.length === before ? (value as PhisAddonAssetSlotDescriptor) : null;
 }
 
 function validateTable(
   value: unknown,
   field: string,
   issues: string[],
-): PhiServerAddonTableDescriptor | null {
+): PhisAddonTableDescriptor | null {
   const before = issues.length;
   if (!isRecord(value)) {
     issues.push(`${field} must be an object.`);
@@ -383,23 +383,23 @@ function validateTable(
   }
   const columns = rawColumns
     .map((column, index) => validateColumn(column, `${field}.columns[${index}]`, issues))
-    .filter((column): column is PhiServerAddonColumnDescriptor => column !== null);
+    .filter((column): column is PhisAddonColumnDescriptor => column !== null);
   const columnNames = new Set(columns.map((column) => column.name));
   assertUnique(columns.map((column) => column.name), `${field}.columns.name`, issues);
   for (const column of columns) {
-    if (!isReferenceColumn(column) || column.references !== PHI_SERVER_ADDON_CORE_REFERENCES.group) {
+    if (!isReferenceColumn(column) || column.references !== PHIS_ADDON_CORE_REFERENCES.group) {
       continue;
     }
     if (value.siteScoped !== true) {
       issues.push(
-        `${field}.columns "${column.name}" points at ${PHI_SERVER_ADDON_CORE_REFERENCES.group}, ` +
+        `${field}.columns "${column.name}" points at ${PHIS_ADDON_CORE_REFERENCES.group}, ` +
         "so the table must be siteScoped. Core binds a group together with its Site.",
       );
     }
     // The foreign key covers the Site column too, and `SET NULL` would clear that one as well.
     if (column.onDelete !== "cascade") {
       issues.push(
-        `${field}.columns "${column.name}" points at ${PHI_SERVER_ADDON_CORE_REFERENCES.group} ` +
+        `${field}.columns "${column.name}" points at ${PHIS_ADDON_CORE_REFERENCES.group} ` +
         "and must use onDelete \"cascade\": Core binds it together with the Site column, which cannot be nulled.",
       );
     }
@@ -516,11 +516,11 @@ function validateTable(
     }
     // Every name Core will compose on the derived table, checked here rather than met as a PostgreSQL
     // error partway through a migration that has already created tables.
-    const assetTable = composePhiServerAddonAssetTableName(table);
+    const assetTable = composePhisAddonAssetTableName(table);
     for (const [part, suffix] of [
       ["slot", "check"], ["status", "check"], ["size", "check"], ["storage_key", "uq"],
       ["upload_token", "uq"],
-      ["owner_id", "fk"], [PHI_SERVER_ADDON_SITE_COLUMN, "fk"],
+      ["owner_id", "fk"], [PHIS_ADDON_SITE_COLUMN, "fk"],
       ["owner", "idx"], ["one", "idx"], ["pending", "idx"],
     ] as const) {
       assertComposedNameFits(assetTable, part, suffix, `${field}.assets on "${assetTable}"`, issues);
@@ -531,7 +531,7 @@ function validateTable(
   );
   assertUnique(slotNames, `${field}.assets.name`, issues);
 
-  return issues.length === before ? (value as PhiServerAddonTableDescriptor) : null;
+  return issues.length === before ? (value as PhisAddonTableDescriptor) : null;
 }
 
 /**
@@ -540,18 +540,18 @@ function validateTable(
  * Own-table references are resolved last, because a table may reference one declared after it and the
  * descriptor is a shape rather than a sequence.
  */
-export function validatePhiServerAddonSchemaDescriptor(
+export function validatePhisAddonSchemaDescriptor(
   value: unknown,
   field: string,
   issues: string[],
-): PhiServerAddonSchemaDescriptor | null {
+): PhisAddonSchemaDescriptor | null {
   const before = issues.length;
   if (!isRecord(value)) {
     issues.push(`${field} must be an object.`);
     return null;
   }
-  if (value.descriptorVersion !== PHI_SERVER_ADDON_SCHEMA_DESCRIPTOR_VERSION) {
-    issues.push(`${field}.descriptorVersion must be ${PHI_SERVER_ADDON_SCHEMA_DESCRIPTOR_VERSION}.`);
+  if (value.descriptorVersion !== PHIS_ADDON_SCHEMA_DESCRIPTOR_VERSION) {
+    issues.push(`${field}.descriptorVersion must be ${PHIS_ADDON_SCHEMA_DESCRIPTOR_VERSION}.`);
   }
   const version = value.version;
   if (!Number.isSafeInteger(version) || Number(version) < 1) {
@@ -566,7 +566,7 @@ export function validatePhiServerAddonSchemaDescriptor(
   }
   const tables = rawTables
     .map((table, index) => validateTable(table, `${field}.tables[${index}]`, issues))
-    .filter((table): table is PhiServerAddonTableDescriptor => table !== null);
+    .filter((table): table is PhisAddonTableDescriptor => table !== null);
   assertUnique(tables.map((table) => table.name), `${field}.tables.name`, issues);
 
   const tablesByName = new Map(tables.map((table) => [table.name, table]));
@@ -580,7 +580,7 @@ export function validatePhiServerAddonSchemaDescriptor(
    * Add-on's.
    */
   for (const table of tables.filter((entry) => (entry.assets ?? []).length > 0)) {
-    const derived = composePhiServerAddonAssetTableName(table.name);
+    const derived = composePhisAddonAssetTableName(table.name);
     if (tablesByName.has(derived)) {
       issues.push(
         `${field}.tables declares "${derived}", which is the name Core gives the asset table of ` +
@@ -614,7 +614,7 @@ export function validatePhiServerAddonSchemaDescriptor(
       // The key Core lays down on the target so PostgreSQL will accept the pair.
       assertComposedNameFits(
         target.name,
-        PHI_SERVER_ADDON_SITE_COLUMN,
+        PHIS_ADDON_SITE_COLUMN,
         "uq",
         `${field} table "${target.name}", referenced by "${table.name}"`,
         issues,
@@ -638,5 +638,5 @@ export function validatePhiServerAddonSchemaDescriptor(
     }
   }
 
-  return issues.length === before ? (value as PhiServerAddonSchemaDescriptor) : null;
+  return issues.length === before ? (value as PhisAddonSchemaDescriptor) : null;
 }

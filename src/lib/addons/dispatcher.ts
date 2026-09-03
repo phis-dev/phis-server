@@ -10,23 +10,23 @@ import {
   touchSession,
 } from "@/db/user-sessions";
 import {
-  getPhiServerAddonRegistryRecord,
-  isPhiServerAddonEnabledForSite,
+  getPhisAddonRegistryRecord,
+  isPhisAddonEnabledForSite,
 } from "@/db/server-addons";
-import { getPhiServerAddonInstalledManifest } from "@/lib/addons/installed";
+import { getPhisAddonInstalledManifest } from "@/lib/addons/installed";
 import {
-  type PhiServerAddonApiRouteDescriptor,
-  type PhiServerAddonBuildEntry,
-  type PhiServerAddonHandler,
-  type PhiServerAddonHookDescriptor,
-  type PhiServerAddonHttpMethod,
-  type PhiServerAddonRequestContext,
+  type PhisAddonApiRouteDescriptor,
+  type PhisAddonBuildEntry,
+  type PhisAddonHandler,
+  type PhisAddonHookDescriptor,
+  type PhisAddonHttpMethod,
+  type PhisAddonRequestContext,
 } from "@/lib/addons/contract";
-import { buildPhiServerAddonCapabilities } from "@/lib/addons/capabilities";
-import { hasPhiServerCoreCapability } from "@/lib/addons/core-capabilities";
+import { buildPhisAddonCapabilities } from "@/lib/addons/capabilities";
+import { hasPhisCoreCapability } from "@/lib/addons/core-capabilities";
 import {
-  digestPhiServerAddonManifest,
-  validatePhiServerAddonManifest,
+  digestPhisAddonManifest,
+  validatePhisAddonManifest,
 } from "@/lib/addons/manifest";
 import { guardApiV1 } from "@/lib/api-v1-guard";
 import { requireSiteAdminOnlyApiContext } from "@/lib/guards/site-admin-api";
@@ -126,10 +126,10 @@ async function readRequestBody(request: Request, limit: number) {
 }
 
 async function verifyRegistryState(
-  entry: PhiServerAddonBuildEntry,
+  entry: PhisAddonBuildEntry,
   siteId: number | null,
 ) {
-  const registry = await getPhiServerAddonRegistryRecord(entry.manifest.addonId);
+  const registry = await getPhisAddonRegistryRecord(entry.manifest.addonId);
   if (!registry) {
     return "unavailable" as const;
   }
@@ -147,7 +147,7 @@ async function verifyRegistryState(
   }
   if (
     siteId !== null &&
-    !(await isPhiServerAddonEnabledForSite(entry.manifest.addonId, siteId))
+    !(await isPhisAddonEnabledForSite(entry.manifest.addonId, siteId))
   ) {
     return "hidden" as const;
   }
@@ -156,7 +156,7 @@ async function verifyRegistryState(
 
 async function resolveApiIdentity(
   request: NextRequest,
-  descriptor: PhiServerAddonApiRouteDescriptor,
+  descriptor: PhisAddonApiRouteDescriptor,
 ) {
   if (descriptor.auth === "operator") {
     const operator = getOperatorSessionFromRequest(request);
@@ -247,7 +247,7 @@ async function resolveApiIdentity(
  */
 async function resolveHookIdentity(
   request: NextRequest,
-  descriptor: PhiServerAddonHookDescriptor,
+  descriptor: PhisAddonHookDescriptor,
 ) {
   if (!descriptor.siteScoped) {
     return { error: null, site: null, actor: null };
@@ -260,8 +260,8 @@ async function resolveHookIdentity(
 }
 
 async function invokeHandler(
-  handler: PhiServerAddonHandler,
-  context: PhiServerAddonRequestContext,
+  handler: PhisAddonHandler,
+  context: PhisAddonRequestContext,
   timeoutMs: number,
 ) {
   const timeoutController = new AbortController();
@@ -292,7 +292,7 @@ async function invokeHandler(
   }
 }
 
-export async function dispatchPhiServerAddonRequest(
+export async function dispatchPhisAddonRequest(
   request: NextRequest,
   kind: AddonRouteKind,
   params: AddonRouteParams,
@@ -307,23 +307,23 @@ export async function dispatchPhiServerAddonRequest(
     method: request.method,
     path,
   });
-  const entry = getPhiServerAddonInstalledManifest()[addonId];
+  const entry = getPhisAddonInstalledManifest()[addonId];
 
   if (!entry || !entry.enabled) {
     return notFound();
   }
 
-  const manifestValidation = validatePhiServerAddonManifest(entry.manifest);
+  const manifestValidation = validatePhisAddonManifest(entry.manifest);
   if (
     !manifestValidation.manifest ||
-    digestPhiServerAddonManifest(manifestValidation.manifest) !== entry.manifestDigest
+    digestPhisAddonManifest(manifestValidation.manifest) !== entry.manifestDigest
   ) {
     logger.error("addon.build_manifest.invalid");
     return unavailable(requestId);
   }
   if (
     entry.manifest.requiredCoreCapabilities.some(
-      (capability) => !hasPhiServerCoreCapability(capability),
+      (capability) => !hasPhisCoreCapability(capability),
     )
   ) {
     logger.error("addon.core_capability.incompatible");
@@ -342,11 +342,11 @@ export async function dispatchPhiServerAddonRequest(
     kind === "api"
       ? await resolveApiIdentity(
           request,
-          match.descriptor as PhiServerAddonApiRouteDescriptor,
+          match.descriptor as PhisAddonApiRouteDescriptor,
         )
       : await resolveHookIdentity(
           request,
-          match.descriptor as PhiServerAddonHookDescriptor,
+          match.descriptor as PhisAddonHookDescriptor,
         );
   if (identity.error) {
     return identity.error;
@@ -379,8 +379,8 @@ export async function dispatchPhiServerAddonRequest(
     }
 
     const descriptor = match.descriptor as
-      | PhiServerAddonApiRouteDescriptor
-      | PhiServerAddonHookDescriptor;
+      | PhisAddonApiRouteDescriptor
+      | PhisAddonHookDescriptor;
     const bodyLimit =
       descriptor.bodyLimitBytes ?? DEFAULT_API_BODY_LIMIT_BYTES;
     const bodyResult = await readRequestBody(request, bodyLimit);
@@ -390,10 +390,10 @@ export async function dispatchPhiServerAddonRequest(
 
     const runtimeModule = await entry.load();
     const runtime = runtimeModule.phiServerAddon;
-    const runtimeValidation = validatePhiServerAddonManifest(runtime?.manifest);
+    const runtimeValidation = validatePhisAddonManifest(runtime?.manifest);
     if (
       !runtimeValidation.manifest ||
-      digestPhiServerAddonManifest(runtimeValidation.manifest) !== entry.manifestDigest
+      digestPhisAddonManifest(runtimeValidation.manifest) !== entry.manifestDigest
     ) {
       logger.error("addon.runtime_manifest.mismatch");
       return unavailable(requestId);
@@ -413,7 +413,7 @@ export async function dispatchPhiServerAddonRequest(
       {
         addonId,
         requestId,
-        method: request.method as PhiServerAddonHttpMethod,
+        method: request.method as PhisAddonHttpMethod,
         url: request.url,
         headers: new Headers(request.headers),
         body: bodyResult.body,
@@ -425,7 +425,7 @@ export async function dispatchPhiServerAddonRequest(
         actor: identity.actor,
         // Built here, per request, so the Site and actor above are the ones closed over. A capability
         // hoisted out of the request would be a capability someone could reach with another's identity.
-        capabilities: buildPhiServerAddonCapabilities({
+        capabilities: buildPhisAddonCapabilities({
           manifest: entry.manifest,
           manifestDigest: entry.manifestDigest,
           siteId: identity.site?.id ?? null,

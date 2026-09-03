@@ -1,9 +1,9 @@
 import "server-only";
 
-import type { PhiServerAddonRoleDescriptor } from "./contract.ts";
-import { PHI_SERVER_SITE_ACCESS } from "./contract.ts";
-import { getPhiServerAddonInstalledManifest } from "./installed.ts";
-import { readPhiServerAddonUserRoles } from "@/db/server-addon-roles.mts";
+import type { PhisAddonRoleDescriptor } from "./contract.ts";
+import { PHIS_SITE_ACCESS } from "./contract.ts";
+import { getPhisAddonInstalledManifest } from "./installed.ts";
+import { readPhisAddonUserRoles } from "@/db/server-addon-roles.mts";
 import { getPool } from "@/lib/db";
 import { getEffectiveUserSiteAuthorization } from "@/db/user-site-memberships";
 import {
@@ -31,23 +31,23 @@ import {
  */
 
 const SITE_ACCESS_POLICIES: Readonly<Record<string, PhiViewerAccessPolicy>> = {
-  [PHI_SERVER_SITE_ACCESS.siteAdmin]: PHI_ACCESS_SITE_ADMIN,
-  [PHI_SERVER_SITE_ACCESS.developerTools]: PHI_ACCESS_DEVELOPER_TOOLS,
-  [PHI_SERVER_SITE_ACCESS.structureAuthoring]: PHI_ACCESS_STRUCTURE_AUTHORING,
-  [PHI_SERVER_SITE_ACCESS.contentEditing]: PHI_ACCESS_CONTENT_EDITING,
-  [PHI_SERVER_SITE_ACCESS.publishing]: PHI_ACCESS_PUBLISHING,
-  [PHI_SERVER_SITE_ACCESS.siteMedia]: PHI_ACCESS_SITE_MEDIA,
-  [PHI_SERVER_SITE_ACCESS.support]: PHI_ACCESS_SUPPORT,
-  [PHI_SERVER_SITE_ACCESS.accounting]: PHI_ACCESS_ACCOUNTING,
+  [PHIS_SITE_ACCESS.siteAdmin]: PHI_ACCESS_SITE_ADMIN,
+  [PHIS_SITE_ACCESS.developerTools]: PHI_ACCESS_DEVELOPER_TOOLS,
+  [PHIS_SITE_ACCESS.structureAuthoring]: PHI_ACCESS_STRUCTURE_AUTHORING,
+  [PHIS_SITE_ACCESS.contentEditing]: PHI_ACCESS_CONTENT_EDITING,
+  [PHIS_SITE_ACCESS.publishing]: PHI_ACCESS_PUBLISHING,
+  [PHIS_SITE_ACCESS.siteMedia]: PHI_ACCESS_SITE_MEDIA,
+  [PHIS_SITE_ACCESS.support]: PHI_ACCESS_SUPPORT,
+  [PHIS_SITE_ACCESS.accounting]: PHI_ACCESS_ACCOUNTING,
 };
 
-export type PhiServerAddonRoleGrantVerdict =
-  | { allowed: true; descriptor: PhiServerAddonRoleDescriptor }
+export type PhisAddonRoleGrantVerdict =
+  | { allowed: true; descriptor: PhisAddonRoleDescriptor }
   | { allowed: false; reason: "addon_unknown" | "role_undeclared" | "not_permitted" };
 
 /** The roles one installed, Site-enabled Add-on declares, or null when it is not installed here. */
-export function readPhiServerAddonDeclaredRoles(addonId: string) {
-  const entry = getPhiServerAddonInstalledManifest()[addonId];
+export function readPhisAddonDeclaredRoles(addonId: string) {
+  const entry = getPhisAddonInstalledManifest()[addonId];
   return entry ? entry.manifest.roles ?? [] : null;
 }
 
@@ -74,13 +74,13 @@ async function holdsSiteAccess(siteId: number, userId: number, access: string) {
  * one that cannot be exercised without arranging the world first. The caller knows which Add-on it is
  * talking about and has already had to decide the Add-on exists.
  */
-export async function mayGrantPhiServerAddonRole(input: {
+export async function mayGrantPhisAddonRole(input: {
   addonId: string;
   siteId: number;
   actorUserId: number;
   role: string;
-  declared: readonly PhiServerAddonRoleDescriptor[] | null;
-}): Promise<PhiServerAddonRoleGrantVerdict> {
+  declared: readonly PhisAddonRoleDescriptor[] | null;
+}): Promise<PhisAddonRoleGrantVerdict> {
   const declared = input.declared;
   if (declared === null) {
     return { allowed: false, reason: "addon_unknown" };
@@ -91,7 +91,7 @@ export async function mayGrantPhiServerAddonRole(input: {
   }
 
   // The floor first, because it answers for every role and costs one lookup.
-  if (await holdsSiteAccess(input.siteId, input.actorUserId, PHI_SERVER_SITE_ACCESS.siteAdmin)) {
+  if (await holdsSiteAccess(input.siteId, input.actorUserId, PHIS_SITE_ACCESS.siteAdmin)) {
     return { allowed: true, descriptor };
   }
 
@@ -102,7 +102,7 @@ export async function mayGrantPhiServerAddonRole(input: {
       : { allowed: false, reason: "not_permitted" };
   }
 
-  const held = await readPhiServerAddonUserRoles(getPool(), {
+  const held = await readPhisAddonUserRoles(getPool(), {
     addonId: input.addonId,
     siteId: input.siteId,
     userId: input.actorUserId,
@@ -118,15 +118,15 @@ export async function mayGrantPhiServerAddonRole(input: {
  * What user administration renders. One screen serves an operator and a `market-admin` alike, because it
  * shows what the viewer could grant and not what exists -- and the same evaluation decides the write.
  */
-export async function readPhiServerAddonGrantableRoles(input: {
+export async function readPhisAddonGrantableRoles(input: {
   siteId: number;
   actorUserId: number;
 }) {
-  const installed = getPhiServerAddonInstalledManifest();
-  const grantable: { addonId: string; role: PhiServerAddonRoleDescriptor }[] = [];
+  const installed = getPhisAddonInstalledManifest();
+  const grantable: { addonId: string; role: PhisAddonRoleDescriptor }[] = [];
   for (const entry of Object.values(installed)) {
     for (const role of entry.manifest.roles ?? []) {
-      const verdict = await mayGrantPhiServerAddonRole({
+      const verdict = await mayGrantPhisAddonRole({
         addonId: entry.manifest.addonId,
         siteId: input.siteId,
         actorUserId: input.actorUserId,

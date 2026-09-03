@@ -14,7 +14,7 @@ import {
   upsertSiteTranslations,
   upsertTranslation,
 } from "@/db/translations";
-import { getPhiServerConfigSync } from "@/lib/config";
+import { getPhisConfigSync } from "@/lib/config";
 import {
   PHI_CANONICAL_SOURCE_LOCALE,
   resolveDeepLSourceLang,
@@ -121,7 +121,7 @@ function buildTranslationCacheContext(input: {
 }
 
 function getConfiguredTranslationMode() {
-  return getPhiServerConfigSync().translation?.mode ?? "none";
+  return getPhisConfigSync().translation?.mode ?? "none";
 }
 
 function isConfiguredSourceLocaleSupported(locale: string) {
@@ -272,7 +272,7 @@ async function requestConfiguredTranslationsOrFallback(input: {
   }
 
   const translationMode = getConfiguredTranslationMode();
-  const hasDeepLKey = Boolean(getPhiServerConfigSync().deepl?.apiKey?.trim());
+  const hasDeepLKey = Boolean(getPhisConfigSync().deepl?.apiKey?.trim());
 
   if (translationMode !== "custom" && (translationMode !== "deepl" || !hasDeepLKey)) {
     return { translations: normalizedTexts, succeeded: false };
@@ -328,7 +328,7 @@ async function requestCustomTranslations(input: {
   sourceLocale?: string;
   format?: TranslationFormat;
 }) {
-  const endpoint = getPhiServerConfigSync().translation?.customEndpoint?.trim();
+  const endpoint = getPhisConfigSync().translation?.customEndpoint?.trim();
   if (!endpoint) {
     throw new Error("Missing translation.customEndpoint in runtime config.");
   }
@@ -382,7 +382,7 @@ async function requestDeepL(
   format: TranslationFormat = "text",
   cacheKeyPrefix = "deepl",
 ) {
-  const apiKey = getPhiServerConfigSync().deepl?.apiKey?.trim();
+  const apiKey = getPhisConfigSync().deepl?.apiKey?.trim();
   if (!apiKey) {
     throw new Error("Missing deepl.apiKey in config/phis-runtime.json.");
   }
@@ -392,7 +392,7 @@ async function requestDeepL(
     return [];
   }
 
-  const url = getPhiServerConfigSync().deepl?.apiUrl?.trim() ?? DEFAULT_DEEPL_URL;
+  const url = getPhisConfigSync().deepl?.apiUrl?.trim() ?? DEFAULT_DEEPL_URL;
   const createParams = (batch: readonly string[]) => {
     const params = new URLSearchParams({
       target_lang: resolveDeepLTargetLang(locale),
@@ -903,7 +903,7 @@ export async function detectTranslationSourceLocale(input: {
   if (!sample || getConfiguredTranslationMode() !== "deepl") {
     return null;
   }
-  const apiKey = getPhiServerConfigSync().deepl?.apiKey?.trim();
+  const apiKey = getPhisConfigSync().deepl?.apiKey?.trim();
   if (!apiKey) {
     return null;
   }
@@ -912,7 +912,7 @@ export async function detectTranslationSourceLocale(input: {
     target_lang: resolveDeepLTargetLang(input.targetLocale),
     text: sample,
   });
-  const url = getPhiServerConfigSync().deepl?.apiUrl?.trim() ?? DEFAULT_DEEPL_URL;
+  const url = getPhisConfigSync().deepl?.apiUrl?.trim() ?? DEFAULT_DEEPL_URL;
   const cacheKey = buildExternalTranslationCacheKey({
     provider: "deepl",
     locale: input.targetLocale,

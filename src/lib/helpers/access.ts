@@ -1,4 +1,4 @@
-import { PHI_SERVER_SPECIAL_AREA_KEYS, resolvePhiServerCmsAreaMask } from "@/lib/constants/cms-areas";
+import { PHIS_SPECIAL_AREA_KEYS, resolvePhisCmsAreaMask } from "@/lib/constants/cms-areas";
 import {
   type PhiAuthorizationViewer,
   type PhiViewerAccessPolicy,
@@ -22,7 +22,7 @@ function normalizeRequestPath(path: string | null | undefined) {
 export function resolveAreaFromPath(path: string | null | undefined) {
   const normalized = normalizeRequestPath(path);
   const first = normalized.split("/").filter(Boolean)[0] ?? "public";
-  return resolvePhiServerCmsAreaMask(first);
+  return resolvePhisCmsAreaMask(first);
 }
 
 export function resolveCmsPath(path: string | null | undefined): ResolvedCmsPath {
@@ -35,7 +35,7 @@ export function resolveCmsPath(path: string | null | undefined): ResolvedCmsPath
   }
 
   const first = segments[0]?.toLowerCase();
-  const knownArea = Boolean(first) && PHI_SERVER_SPECIAL_AREA_KEYS.includes(first as typeof PHI_SERVER_SPECIAL_AREA_KEYS[number]);
+  const knownArea = Boolean(first) && PHIS_SPECIAL_AREA_KEYS.includes(first as typeof PHIS_SPECIAL_AREA_KEYS[number]);
 
   if (!knownArea) {
     return { areaMask, path: normalized };

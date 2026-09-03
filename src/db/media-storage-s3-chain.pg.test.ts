@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { createPhisMediaStorageServiceForProfile } from "@/lib/media-storage";
-import { writePhiServerSecretWithDb } from "./server-secrets-store.mts";
+import { writePhisSecretWithDb } from "./server-secrets-store.mts";
 import { buildPhiSecretReference } from "@/lib/secrets/reference";
 import { readPhiSecretEncryptionKey } from "@/lib/secrets/resolver";
 import {
@@ -44,7 +44,7 @@ describe.skipIf(!configured)("a Storage Profile that names the S3 Add-on", () =>
       siteKey: site.key,
       name: "secret-access-key",
     });
-    await writePhiServerSecretWithDb(pool, {
+    await writePhisSecretWithDb(pool, {
       reference,
       value: secretAccessKey!,
       key: readPhiSecretEncryptionKey(),

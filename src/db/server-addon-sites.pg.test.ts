@@ -1,16 +1,16 @@
 import { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { getPhiServerConfigSync } from "@/lib/config";
+import { getPhisConfigSync } from "@/lib/config";
 import {
-  ensurePhiServerAddonSiteGroups,
-  readPhiServerAddonSiteGroups,
-  retirePhiServerAddonSiteGroups,
+  ensurePhisAddonSiteGroups,
+  readPhisAddonSiteGroups,
+  retirePhisAddonSiteGroups,
 } from "./server-addon-groups.mts";
 import {
-  readPhiServerAddonEnabledSiteIds,
-  readPhiServerAddonSiteStates,
-  setPhiServerAddonSiteEnabled,
+  readPhisAddonEnabledSiteIds,
+  readPhisAddonSiteStates,
+  setPhisAddonSiteEnabled,
 } from "./server-addon-sites.mts";
 import {
   closePhiTestPool,
@@ -44,7 +44,7 @@ describe("activating an Add-on for a Site", () => {
     pool = await requirePhiTestDatabase();
     site = await createPhiTestSite("addon-sites");
     other = await createPhiTestSite("addon-sites-other");
-    const config = getPhiServerConfigSync().database;
+    const config = getPhisConfigSync().database;
     if (!config?.uri) {
       throw new Error("These tests need database.uri.");
     }
@@ -68,17 +68,17 @@ describe("activating an Add-on for a Site", () => {
   });
 
   it("creates the row a Site's request lives in, which nothing used to do", async () => {
-    const state = await setPhiServerAddonSiteEnabled(pool, {
+    const state = await setPhisAddonSiteEnabled(pool, {
       addonId: ADDON,
       siteId: site.id,
       enabled: true,
     });
     expect(state).toMatchObject({ requestedEnabled: true, configurationStatus: "missing" });
-    expect(await readPhiServerAddonEnabledSiteIds(pool, ADDON)).toEqual([site.id]);
+    expect(await readPhisAddonEnabledSiteIds(pool, ADDON)).toEqual([site.id]);
   });
 
   it("says nothing about what the Site actually gets, only what it asked for", async () => {
-    const [state] = await readPhiServerAddonSiteStates(pool, ADDON);
+    const [state] = await readPhisAddonSiteStates(pool, ADDON);
     // Requested and effective are different questions; the second one depends on the artifact loading
     // and the configuration being complete, neither of which this row can know.
     expect(state!.requestedEnabled).toBe(true);
@@ -86,14 +86,14 @@ describe("activating an Add-on for a Site", () => {
   });
 
   it("creates the declared groups, and says which were new", async () => {
-    const first = await ensurePhiServerAddonSiteGroups(pool, {
+    const first = await ensurePhisAddonSiteGroups(pool, {
       addonId: ADDON,
       siteId: site.id,
       declared: DECLARED,
     });
     expect(first).toEqual([{ key: "market", groupId: expect.any(Number), action: "created" }]);
 
-    const again = await ensurePhiServerAddonSiteGroups(pool, {
+    const again = await ensurePhisAddonSiteGroups(pool, {
       addonId: ADDON,
       siteId: site.id,
       declared: DECLARED,
@@ -103,26 +103,26 @@ describe("activating an Add-on for a Site", () => {
   });
 
   it("keeps one Site's group apart from another's", async () => {
-    await ensurePhiServerAddonSiteGroups(pool, {
+    await ensurePhisAddonSiteGroups(pool, {
       addonId: ADDON,
       siteId: other.id,
       declared: DECLARED,
     });
-    const here = await readPhiServerAddonSiteGroups(pool, { addonId: ADDON, siteId: site.id });
-    const there = await readPhiServerAddonSiteGroups(pool, { addonId: ADDON, siteId: other.id });
+    const here = await readPhisAddonSiteGroups(pool, { addonId: ADDON, siteId: site.id });
+    const there = await readPhisAddonSiteGroups(pool, { addonId: ADDON, siteId: other.id });
     expect(here).toHaveLength(1);
     expect(there).toHaveLength(1);
     expect(here[0]!.id).not.toBe(there[0]!.id);
   });
 
   it("retires a group rather than deleting it, and finds it again on the way back", async () => {
-    const before = await readPhiServerAddonSiteGroups(pool, { addonId: ADDON, siteId: site.id });
-    const retired = await retirePhiServerAddonSiteGroups(pool, {
+    const before = await readPhisAddonSiteGroups(pool, { addonId: ADDON, siteId: site.id });
+    const retired = await retirePhisAddonSiteGroups(pool, {
       addonId: ADDON,
       siteId: site.id,
     });
     expect(retired).toHaveLength(1);
-    expect(await readPhiServerAddonSiteGroups(pool, { addonId: ADDON, siteId: site.id })).toEqual([]);
+    expect(await readPhisAddonSiteGroups(pool, { addonId: ADDON, siteId: site.id })).toEqual([]);
 
     // The row is still there -- which is the whole point, because the memberships hang off it.
     const { rows } = await pool.query(
@@ -131,7 +131,7 @@ describe("activating an Add-on for a Site", () => {
     );
     expect(rows).toHaveLength(1);
 
-    const restored = await ensurePhiServerAddonSiteGroups(pool, {
+    const restored = await ensurePhisAddonSiteGroups(pool, {
       addonId: ADDON,
       siteId: site.id,
       declared: DECLARED,
@@ -140,18 +140,18 @@ describe("activating an Add-on for a Site", () => {
   });
 
   it("withdraws the request without touching the row's history", async () => {
-    const state = await setPhiServerAddonSiteEnabled(pool, {
+    const state = await setPhisAddonSiteEnabled(pool, {
       addonId: ADDON,
       siteId: site.id,
       enabled: false,
     });
     expect(state).toMatchObject({ requestedEnabled: false, effectiveStatus: "disabled" });
     // The other Site was given groups but never asked for the Add-on, so nothing is left asking.
-    expect(await readPhiServerAddonEnabledSiteIds(pool, ADDON)).toEqual([]);
+    expect(await readPhisAddonEnabledSiteIds(pool, ADDON)).toEqual([]);
   });
 
   it("refuses to withdraw what was never asked for, instead of pretending it worked", async () => {
-    const missing = await setPhiServerAddonSiteEnabled(pool, {
+    const missing = await setPhisAddonSiteEnabled(pool, {
       addonId: ADDON,
       siteId: 32_000,
       enabled: false,

@@ -64,9 +64,9 @@ import {
   setAddonEnabled,
 } from "./addons.mts";
 import {
-  grantPhiServerAddonUserRole,
+  grantPhisAddonUserRole,
   readPhiSiteUserAddonRoles,
-  revokePhiServerAddonUserRole,
+  revokePhisAddonUserRole,
 } from "../db/server-addon-roles.mts";
 import { getPhiAppRoot } from "../lib/app-paths.ts";
 import {
@@ -88,29 +88,29 @@ import {
   type PhiSiteModuleEntry,
 } from "./modules.mts";
 import {
-  parsePhiServerAddonSettingValue,
-  readPhiServerAddonSettings,
-  writePhiServerAddonSetting,
+  parsePhisAddonSettingValue,
+  readPhisAddonSettings,
+  writePhisAddonSetting,
 } from "../db/server-addon-settings.mts";
 import {
-  ensurePhiServerAddonSiteGroups,
-  retirePhiServerAddonSiteGroups,
+  ensurePhisAddonSiteGroups,
+  retirePhisAddonSiteGroups,
 } from "../db/server-addon-groups.mts";
 import {
-  readPhiServerAddonSiteStates,
-  resolvePhiServerAddonConfigurationStatus,
-  setPhiServerAddonSiteEnabled,
+  readPhisAddonSiteStates,
+  resolvePhisAddonConfigurationStatus,
+  setPhisAddonSiteEnabled,
 } from "../db/server-addon-sites.mts";
 import {
-  readPhiServerAddonStorageUsage,
-  setPhiServerAddonStorageQuota,
+  readPhisAddonStorageUsage,
+  setPhisAddonStorageQuota,
 } from "../db/server-addon-storage-usage.mts";
 import {
-  readPhiServerAddonStorageSites,
-  recountPhiServerAddonStorage,
-  removePhiServerAddonStorage,
+  readPhisAddonStorageSites,
+  recountPhisAddonStorage,
+  removePhisAddonStorage,
 } from "./storage-purge.mts";
-import { sweepPhiServerAddonAssets } from "./storage-sweep.mts";
+import { sweepPhisAddonAssets } from "./storage-sweep.mts";
 import { PHI_MAINTENANCE_TASKS, runPhiMaintenance } from "./maintain.mts";
 import { checkPhiDependencyLicenses } from "./licenses.mts";
 import { checkPhiMediaOwnership } from "./media-check.mts";
@@ -128,10 +128,10 @@ import { restoreFirstPartyAuthPreset } from "../db/auth-preset.mts";
 import { importPhiAuthSecrets } from "../db/auth-secret-import.mts";
 import { buildPhiAuthSecretReference } from "../lib/secrets/reference.ts";
 import {
-  deletePhiServerSecretWithDb,
-  listPhiServerSecretsWithDb,
-  readPhiServerSecretWithDb,
-  writePhiServerSecretWithDb,
+  deletePhisSecretWithDb,
+  listPhisSecretsWithDb,
+  readPhisSecretWithDb,
+  writePhisSecretWithDb,
 } from "../db/server-secrets-store.mts";
 import {
   createPhiSecretEncryptionKey,
@@ -1346,14 +1346,14 @@ async function runAddonRoleCommand(flags: FlagMap, json: boolean) {
       );
     }
     const changed = grant
-      ? await grantPhiServerAddonUserRole(pool, {
+      ? await grantPhisAddonUserRole(pool, {
         addonId,
         siteId: site.id,
         userId,
         role,
         grantedByUserId: null,
       })
-      : await revokePhiServerAddonUserRole(pool, { addonId, siteId: site.id, userId, role });
+      : await revokePhisAddonUserRole(pool, { addonId, siteId: site.id, userId, role });
     if (json) {
       printJson({ site: site.key, addonId, role, userId, changed });
     } else {
@@ -2212,7 +2212,7 @@ async function main() {
 
   if (group === "secret" && command === "set") {
     const { reference, siteId } = await resolveSecretIdentity(flags);
-    const record = await writePhiServerSecretWithDb(getPool(), {
+    const record = await writePhisSecretWithDb(getPool(), {
       reference,
       value: await readSecretValue(flags),
       key: requireSecretEncryptionKey(),
@@ -2230,7 +2230,7 @@ async function main() {
     const addonId = getOptionalFlag(flags, "addon");
     const siteKey = getOptionalFlag(flags, "site");
     const site = siteKey ? await getSiteByKey(siteKey) : null;
-    const records = await listPhiServerSecretsWithDb(getPool(), {
+    const records = await listPhisSecretsWithDb(getPool(), {
       ...(site ? { siteId: site.id } : {}),
       ...(addonId ? { addonId } : {}),
     });
@@ -2250,7 +2250,7 @@ async function main() {
     const { reference } = await resolveSecretIdentity(flags);
     let status: "configured" | "missing" | "unreadable" = "missing";
     try {
-      status = (await readPhiServerSecretWithDb(getPool(), reference, requireSecretEncryptionKey()))
+      status = (await readPhisSecretWithDb(getPool(), reference, requireSecretEncryptionKey()))
         ? "configured"
         : "missing";
     } catch {
@@ -2271,7 +2271,7 @@ async function main() {
 
   if (group === "secret" && command === "del") {
     const { reference } = await resolveSecretIdentity(flags);
-    const removed = await deletePhiServerSecretWithDb(getPool(), reference);
+    const removed = await deletePhisSecretWithDb(getPool(), reference);
     if (json) {
       printJson({ ok: true, action: "secret.del", reference, removed });
     } else {
@@ -2402,7 +2402,7 @@ async function main() {
     // that has to write a bucket rule needs its credential, and there is no reason to reach for the
     // Server to get it.
     const readStorageSecret = (reference: string) =>
-      readPhiServerSecretWithDb(getPool(), reference, requireSecretEncryptionKey());
+      readPhisSecretWithDb(getPool(), reference, requireSecretEncryptionKey());
     const handlers = {
       list: () => listStorageProfiles(getPool(), flags),
       add: () => addStorageProfile(configRoot, getPool(), flags, readStorageSecret),
@@ -2651,14 +2651,14 @@ async function main() {
      * first loses them whenever the transaction rolls back.
      */
     const addonId = getRequiredFlag(flags, "addon");
-    const stores = await readPhiServerAddonStorageSites(getPool(), addonId);
+    const stores = await readPhisAddonStorageSites(getPool(), addonId);
     const result = await purgeAddon(configRoot, flags, getMigrationPool());
 
     const readStorageSecret = (reference: string) =>
-      readPhiServerSecretWithDb(getPool(), reference, requireSecretEncryptionKey());
+      readPhisSecretWithDb(getPool(), reference, requireSecretEncryptionKey());
     const removals = [];
     for (const store of stores) {
-      removals.push(await removePhiServerAddonStorage(store, addonId, (site) =>
+      removals.push(await removePhisAddonStorage(store, addonId, (site) =>
         resolvePhiStorageObjectAdapter(
           configRoot, site.providerId, site.config, site.secretReference, readStorageSecret,
         )));
@@ -2748,7 +2748,7 @@ async function main() {
     if (unlimited || rawBytes !== undefined || rawObjects !== undefined) {
       const quotaBytes = unlimited ? null : rawBytes !== undefined ? requirePositive(rawBytes, "quota-bytes") : undefined;
       const quotaObjects = unlimited ? null : rawObjects !== undefined ? requirePositive(rawObjects, "max-objects") : undefined;
-      const written = await setPhiServerAddonStorageQuota(getPool(), {
+      const written = await setPhisAddonStorageQuota(getPool(), {
         addonId,
         siteId: site.id,
         ...(quotaBytes !== undefined ? { quotaBytes } : {}),
@@ -2769,13 +2769,13 @@ async function main() {
      * `server-only` import a CLI process cannot load -- the same route `phis media check` takes.
      */
     const requireStore = async (id: string, target: { id: number; key: string }) => {
-      const stores = await readPhiServerAddonStorageSites(getPool(), id);
+      const stores = await readPhisAddonStorageSites(getPool(), id);
       const store = stores.find((entry) => entry.siteId === target.id);
       if (!store) {
         throw new Error(`${id} has no store on ${target.key}.`);
       }
       const readStorageSecret = (reference: string) =>
-        readPhiServerSecretWithDb(getPool(), reference, requireSecretEncryptionKey());
+        readPhisSecretWithDb(getPool(), reference, requireSecretEncryptionKey());
       const adapter = await resolvePhiStorageObjectAdapter(
         configRoot, store.providerId, store.config, store.secretReference, readStorageSecret,
       );
@@ -2788,7 +2788,7 @@ async function main() {
       return { site: store, adapter };
     };
 
-    let swept: Awaited<ReturnType<typeof sweepPhiServerAddonAssets>> | null = null;
+    let swept: Awaited<ReturnType<typeof sweepPhisAddonAssets>> | null = null;
     if (flags.get("sweep") === true) {
       /*
        * Two kinds of leftover, both because the cascade only runs one way: Media Assets in the Add-on's
@@ -2796,7 +2796,7 @@ async function main() {
        * bucket listing -- the free key space `storage:v1` hands out is not touched, because nothing
        * there is a Media Asset.
        */
-      swept = await sweepPhiServerAddonAssets(getPool(), {
+      swept = await sweepPhisAddonAssets(getPool(), {
         addonId, siteId: site.id, siteKey: site.key,
       });
       if (swept.storageKeys.length > 0) {
@@ -2821,12 +2821,12 @@ async function main() {
        * unbounded operation the ceiling exists to prevent.
        */
       const store = await requireStore(addonId, site);
-      recounted = await recountPhiServerAddonStorage(getPool(), {
+      recounted = await recountPhisAddonStorage(getPool(), {
         addonId, site: store.site, listPrefix: (prefix) => store.adapter.listPrefix(prefix),
       });
     }
 
-    const usage = await readPhiServerAddonStorageUsage(getPool(), { addonId, siteId: site.id });
+    const usage = await readPhisAddonStorageUsage(getPool(), { addonId, siteId: site.id });
     const result = {
       ok: true, action: "addon.storage" as const, addon: addonId, site: site.key, usage,
       ...(recounted ? { recounted: true } : {}),
@@ -2858,7 +2858,7 @@ async function main() {
       throw new Error("Pass --enable or --disable, not both.");
     }
     if (!wantsEnable && !wantsDisable) {
-      const states = await readPhiServerAddonSiteStates(getPool(), addonId);
+      const states = await readPhisAddonSiteStates(getPool(), addonId);
       if (json) {
         printJson({ ok: true, addon: addonId, sites: states });
       } else if (states.length === 0) {
@@ -2897,14 +2897,14 @@ async function main() {
         );
       }
     }
-    const state = await setPhiServerAddonSiteEnabled(getPool(), {
+    const state = await setPhisAddonSiteEnabled(getPool(), {
       addonId,
       siteId: site.id,
       enabled: wantsEnable,
       configurationStatus: wantsEnable
-        ? resolvePhiServerAddonConfigurationStatus(
+        ? resolvePhisAddonConfigurationStatus(
           readInstalledAddonSettings(configRoot, addonId),
-          await readPhiServerAddonSettings(getPool(), addonId, site.id),
+          await readPhisAddonSettings(getPool(), addonId, site.id),
         )
         : undefined,
     });
@@ -2912,12 +2912,12 @@ async function main() {
       throw new Error(`${addonId} was not activated for ${site.key}; there was nothing to disable.`);
     }
     const groups = wantsEnable
-      ? await ensurePhiServerAddonSiteGroups(getPool(), {
+      ? await ensurePhisAddonSiteGroups(getPool(), {
         addonId,
         siteId: site.id,
         declared: readInstalledAddonGroups(configRoot, addonId),
       })
-      : await retirePhiServerAddonSiteGroups(getPool(), { addonId, siteId: site.id });
+      : await retirePhisAddonSiteGroups(getPool(), { addonId, siteId: site.id });
     if (json) {
       printJson({ ok: true, addon: addonId, site: site.key, state, groups });
     } else {
@@ -2949,7 +2949,7 @@ async function main() {
     const declared = readInstalledAddonSettings(configRoot, addonId);
     const action = getOptionalFlag(flags, "name") == null ? "list" : "set";
     if (action === "list") {
-      const stored = await readPhiServerAddonSettings(getPool(), addonId, site.id);
+      const stored = await readPhisAddonSettings(getPool(), addonId, site.id);
       const rows = declared.map((descriptor) => ({
         name: descriptor.name,
         type: descriptor.type,
@@ -2983,13 +2983,13 @@ async function main() {
     const value = raw == null
       ? null
       : (() => {
-        const parsed = parsePhiServerAddonSettingValue(descriptor, raw);
+        const parsed = parsePhisAddonSettingValue(descriptor, raw);
         if ("error" in parsed) {
           throw new Error(`${name}: ${parsed.error}`);
         }
         return parsed.value;
       })();
-    const written = await writePhiServerAddonSetting(getPool(), {
+    const written = await writePhisAddonSetting(getPool(), {
       addonId,
       siteId: site.id,
       name,

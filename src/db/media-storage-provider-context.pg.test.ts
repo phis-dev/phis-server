@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { buildPhisMediaStorageServiceContext } from "@/lib/media-storage";
-import { writePhiServerSecretWithDb } from "./server-secrets-store.mts";
+import { writePhisSecretWithDb } from "./server-secrets-store.mts";
 import { buildPhiSecretReference } from "@/lib/secrets/reference";
 import { readPhiSecretEncryptionKey } from "@/lib/secrets/resolver";
 import {
@@ -26,7 +26,7 @@ describe("what a Storage Provider factory is handed", () => {
       siteKey: site.key,
       name: "provider-probe",
     });
-    await writePhiServerSecretWithDb(pool, {
+    await writePhisSecretWithDb(pool, {
       reference,
       value: "the-provider-credential",
       key: readPhiSecretEncryptionKey(),
@@ -87,10 +87,10 @@ describe("what a Storage Provider factory is handed", () => {
    * work in both directions, or "enabled for this Site" is decoration.
    */
   it("refuses an installed Provider for a Site that never asked for it", async () => {
-    const { getPhiServerAddonInstalledManifest } = await import("@/lib/addons/installed");
+    const { getPhisAddonInstalledManifest } = await import("@/lib/addons/installed");
     const installedHere = (() => {
       try {
-        return getPhiServerAddonInstalledManifest();
+        return getPhisAddonInstalledManifest();
       } catch {
         return {};
       }
@@ -98,26 +98,26 @@ describe("what a Storage Provider factory is handed", () => {
     if (!installedHere["@phis/storage-s3"]?.enabled) {
       return;
     }
-    const { resolvePhiServerServiceProvider } = await import("@/lib/addons/services");
-    const { PHI_SERVER_SERVICE_KINDS } = await import("@/lib/addons/core-services");
+    const { resolvePhisServiceProvider } = await import("@/lib/addons/services");
+    const { PHIS_SERVICE_KINDS } = await import("@/lib/addons/core-services");
     const pool = await requirePhiTestDatabase();
     const stranger = await createPhiTestSite("provider-unasked");
 
-    await expect(resolvePhiServerServiceProvider(
-      PHI_SERVER_SERVICE_KINDS.mediaStorage,
+    await expect(resolvePhisServiceProvider(
+      PHIS_SERVICE_KINDS.mediaStorage,
       "@phis/storage-s3/s3",
       { siteId: stranger.id },
     )).rejects.toThrow(/not enabled for this Site/u);
 
-    const { setPhiServerAddonSiteEnabled } = await import("./server-addon-sites.mts");
-    await setPhiServerAddonSiteEnabled(pool, {
+    const { setPhisAddonSiteEnabled } = await import("./server-addon-sites.mts");
+    await setPhisAddonSiteEnabled(pool, {
       addonId: "@phis/storage-s3",
       siteId: stranger.id,
       enabled: true,
       configurationStatus: "ready",
     });
-    const resolved = await resolvePhiServerServiceProvider(
-      PHI_SERVER_SERVICE_KINDS.mediaStorage,
+    const resolved = await resolvePhisServiceProvider(
+      PHIS_SERVICE_KINDS.mediaStorage,
       "@phis/storage-s3/s3",
       { siteId: stranger.id },
     );

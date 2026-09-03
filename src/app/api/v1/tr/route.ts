@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getApiV1TokenMode, guardApiV1 } from "@/lib/api-v1-guard";
-import { getPhiServerConfig } from "@/lib/config";
+import { getPhisConfig } from "@/lib/config";
 import { logRuntimeEvent, normalizeLogThrowable } from "@/lib/log";
 import { PHI_CANONICAL_SOURCE_LOCALE } from "@/lib/locale";
 import { resolveSiteFromHeaders } from "@/lib/site-context";
@@ -137,7 +137,7 @@ async function handleTranslation(request: Request, payload: TranslationPayload) 
 
   const { locale, msg, ctx, hash, sourceLocale, format } = validated;
   const normalizedLocale = normalizeLocale(locale);
-  const config = await getPhiServerConfig();
+  const config = await getPhisConfig();
   const allowedLocales = new Set(getConfiguredTranslationSupportedLocalesSync());
   const allowPublicWrites = config.translation?.allowPublicWrites === true;
   const allowPublicReads = config.translation?.allowPublicReads === true;
@@ -230,7 +230,7 @@ async function handleBatchTranslation(request: Request, payload: TranslationPayl
 
   const { locale, msgs, ctx, sourceLocale, format } = validated;
   const normalizedLocale = normalizeLocale(locale);
-  const config = await getPhiServerConfig();
+  const config = await getPhisConfig();
   const allowedLocales = new Set(getConfiguredTranslationSupportedLocalesSync());
   const allowPublicWrites = config.translation?.allowPublicWrites === true;
   const allowPublicReads = config.translation?.allowPublicReads === true;

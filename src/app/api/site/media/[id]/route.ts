@@ -14,7 +14,7 @@ import { getMediaStorageProfile } from "@/db/media-spaces";
 import { collectMediaAssetDeleteReferences } from "@/lib/media-delete-guard";
 import { logRuntimeEvent } from "@/lib/log";
 import { serializeMediaAssetForDetail } from "@/lib/media-response";
-import { PHI_SERVER_CMS_AREA_KEYS, resolvePhiServerCmsAreaKey } from "@/lib/constants/cms-areas";
+import { PHIS_CMS_AREA_KEYS, resolvePhisCmsAreaKey } from "@/lib/constants/cms-areas";
 import { MediaAssetUpdateError, updateSiteMediaAsset } from "@/lib/media-asset-update";
 import { parsePositiveInt } from "@/lib/helpers/request";
 import { PHIS_AREA_HEADER } from "@/lib/constants/http-headers";
@@ -23,7 +23,7 @@ export const dynamic = "force-dynamic";
 
 function normalizeAreaKey(value: string | null | undefined) {
   const normalized = value?.trim().toLowerCase() ?? "";
-  return PHI_SERVER_CMS_AREA_KEYS.includes(normalized as (typeof PHI_SERVER_CMS_AREA_KEYS)[number])
+  return PHIS_CMS_AREA_KEYS.includes(normalized as (typeof PHIS_CMS_AREA_KEYS)[number])
     ? normalized
     : null;
 }
@@ -64,7 +64,7 @@ async function deleteStoredMediaAsset(asset: Awaited<ReturnType<typeof getMediaA
 function describeMediaAssetReference(reference: Awaited<ReturnType<typeof collectMediaAssetDeleteReferences>>[number]) {
   const parts: string[] = [];
   if (reference.areaMask != null) {
-    parts.push(`area=${resolvePhiServerCmsAreaKey(reference.areaMask)}`);
+    parts.push(`area=${resolvePhisCmsAreaKey(reference.areaMask)}`);
   }
 
   if (reference.pagePath) {

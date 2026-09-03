@@ -1,6 +1,6 @@
 import "server-only";
 
-import type { PhiServerSecretsCapabilityV1 } from "./contract.ts";
+import type { PhisSecretsCapabilityV1 } from "./contract.ts";
 import { buildPhiSecretReference } from "@/lib/secrets/reference";
 import { resolvePhiSecret } from "@/lib/secrets/resolver";
 
@@ -15,10 +15,10 @@ import { resolvePhiSecret } from "@/lib/secrets/resolver";
  * package able to write its own would be a package able to plant one, and the store would stop being
  * the operator's record of what they configured.
  */
-export function buildPhiServerAddonSecretsCapability(input: {
+export function buildPhisAddonSecretsCapability(input: {
   addonId: string;
   siteKey: string;
-}): PhiServerSecretsCapabilityV1 {
+}): PhisSecretsCapabilityV1 {
   const owner = { kind: "addon", addonId: input.addonId } as const;
   return Object.freeze({
     async read(name) {
@@ -33,5 +33,5 @@ export function buildPhiServerAddonSecretsCapability(input: {
       // distinction, kept rather than flattened, because the two need different operator action.
       return resolvePhiSecret(owner, reference);
     },
-  } satisfies PhiServerSecretsCapabilityV1);
+  } satisfies PhisSecretsCapabilityV1);
 }

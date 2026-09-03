@@ -1,6 +1,6 @@
 import "server-only";
 
-import type { PhiServerGroupsCapabilityV1, PhiServerUserProjection } from "./contract.ts";
+import type { PhisGroupsCapabilityV1, PhisUserProjection } from "./contract.ts";
 import {
   listSiteGroupMembers,
   listSiteGroupsForUser,
@@ -8,7 +8,7 @@ import {
   projectSiteGroupMemberForMember,
 } from "@/db/site-groups";
 import { PhiGroupMembershipFlags } from "@/lib/constants/site-groups";
-import { readPhiServerAddonSiteGroups } from "@/db/server-addon-groups.mts";
+import { readPhisAddonSiteGroups } from "@/db/server-addon-groups.mts";
 import { getPool } from "@/lib/db";
 
 /**
@@ -27,7 +27,7 @@ import { getPool } from "@/lib/db";
 function project(
   member: Awaited<ReturnType<typeof listSiteGroupMembers>>[number],
   groupFlags: number,
-): PhiServerUserProjection {
+): PhisUserProjection {
   const projected = projectSiteGroupMemberForMember(member, groupFlags);
   return {
     userId: projected.userId,
@@ -36,11 +36,11 @@ function project(
   };
 }
 
-export function buildPhiServerAddonGroupsCapability(input: {
+export function buildPhisAddonGroupsCapability(input: {
   addonId: string;
   siteId: number;
   actorUserId: number | null;
-}): PhiServerGroupsCapabilityV1 {
+}): PhisGroupsCapabilityV1 {
   const { addonId, siteId, actorUserId } = input;
 
   /** The groups the actor is in, which is the boundary every answer below is drawn against. */
@@ -60,7 +60,7 @@ export function buildPhiServerAddonGroupsCapability(input: {
     async declared() {
       // Read by provider id, so an Add-on gets its own and nobody else's -- including no Core group,
       // whose ids are not this Add-on's business.
-      return readPhiServerAddonSiteGroups(getPool(), { addonId, siteId });
+      return readPhisAddonSiteGroups(getPool(), { addonId, siteId });
     },
 
     async myGroups() {
@@ -100,5 +100,5 @@ export function buildPhiServerAddonGroupsCapability(input: {
       }
       return null;
     },
-  } satisfies PhiServerGroupsCapabilityV1);
+  } satisfies PhisGroupsCapabilityV1);
 }

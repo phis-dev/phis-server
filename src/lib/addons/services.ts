@@ -1,19 +1,19 @@
 import "server-only";
 
-import { getPhiServerAddonInstalledManifest } from "@/lib/addons/installed";
+import { getPhisAddonInstalledManifest } from "@/lib/addons/installed";
 import {
-  getPhiServerAddonRegistryRecord,
-  isPhiServerAddonEnabledForSite,
+  getPhisAddonRegistryRecord,
+  isPhisAddonEnabledForSite,
 } from "@/db/server-addons";
-import { hasPhiServerCoreCapability } from "@/lib/addons/core-capabilities";
-import { isPhiServerServiceInterfaceCurrent } from "@/lib/addons/core-services";
+import { hasPhisCoreCapability } from "@/lib/addons/core-capabilities";
+import { isPhisServiceInterfaceCurrent } from "@/lib/addons/core-services";
 import {
-  digestPhiServerAddonManifest,
-  validatePhiServerAddonManifest,
+  digestPhisAddonManifest,
+  validatePhisAddonManifest,
 } from "@/lib/addons/manifest";
 import type {
-  PhiServerAddonServiceFactory,
-  PhiServerAddonServiceProviderDescriptor,
+  PhisAddonServiceFactory,
+  PhisAddonServiceProviderDescriptor,
 } from "@/lib/addons/contract";
 
 /**
@@ -41,8 +41,8 @@ export class PhiServiceProviderUnavailableError extends Error {
 
 type ResolvedServiceProvider = {
   addonId: string;
-  descriptor: PhiServerAddonServiceProviderDescriptor;
-  factory: PhiServerAddonServiceFactory;
+  descriptor: PhisAddonServiceProviderDescriptor;
+  factory: PhisAddonServiceFactory;
 };
 
 /**
@@ -55,7 +55,7 @@ type ResolvedServiceProvider = {
 const resolvedProviders = new Map<string, ResolvedServiceProvider>();
 
 function findDeclaringEntry(serviceKind: string, providerKey: string) {
-  for (const [addonId, entry] of Object.entries(getPhiServerAddonInstalledManifest())) {
+  for (const [addonId, entry] of Object.entries(getPhisAddonInstalledManifest())) {
     const descriptor = entry.manifest.serviceProviders.find(
       (candidate) =>
         candidate.serviceKind === serviceKind && candidate.providerKey === providerKey,
@@ -67,7 +67,7 @@ function findDeclaringEntry(serviceKind: string, providerKey: string) {
   return null;
 }
 
-export async function resolvePhiServerServiceProvider(
+export async function resolvePhisServiceProvider(
   serviceKind: string,
   providerKey: string,
   options?: { siteId?: number | null },
@@ -82,7 +82,7 @@ export async function resolvePhiServerServiceProvider(
   if (!entry.enabled) {
     throw new PhiServiceProviderUnavailableError(serviceKind, providerKey, `${addonId} is disabled`);
   }
-  if (!isPhiServerServiceInterfaceCurrent(descriptor.serviceKind, descriptor.interfaceDigest)) {
+  if (!isPhisServiceInterfaceCurrent(descriptor.serviceKind, descriptor.interfaceDigest)) {
     throw new PhiServiceProviderUnavailableError(
       serviceKind,
       providerKey,
@@ -90,10 +90,10 @@ export async function resolvePhiServerServiceProvider(
     );
   }
 
-  const manifestValidation = validatePhiServerAddonManifest(entry.manifest);
+  const manifestValidation = validatePhisAddonManifest(entry.manifest);
   if (
     !manifestValidation.manifest ||
-    digestPhiServerAddonManifest(manifestValidation.manifest) !== entry.manifestDigest
+    digestPhisAddonManifest(manifestValidation.manifest) !== entry.manifestDigest
   ) {
     throw new PhiServiceProviderUnavailableError(serviceKind, providerKey, `${addonId} has an invalid build manifest`);
   }
@@ -101,7 +101,7 @@ export async function resolvePhiServerServiceProvider(
     ...entry.manifest.requiredCoreCapabilities,
     ...descriptor.requiredCoreCapabilities,
   ]) {
-    if (!hasPhiServerCoreCapability(capability)) {
+    if (!hasPhisCoreCapability(capability)) {
       throw new PhiServiceProviderUnavailableError(
         serviceKind,
         providerKey,
@@ -110,7 +110,7 @@ export async function resolvePhiServerServiceProvider(
     }
   }
 
-  const registry = await getPhiServerAddonRegistryRecord(addonId);
+  const registry = await getPhisAddonRegistryRecord(addonId);
   if (!registry) {
     throw new PhiServiceProviderUnavailableError(serviceKind, providerKey, `${addonId} is not reconciled`);
   }
@@ -138,7 +138,7 @@ export async function resolvePhiServerServiceProvider(
   }
   if (
     options?.siteId != null &&
-    !(await isPhiServerAddonEnabledForSite(addonId, options.siteId))
+    !(await isPhisAddonEnabledForSite(addonId, options.siteId))
   ) {
     throw new PhiServiceProviderUnavailableError(
       serviceKind,
@@ -153,10 +153,10 @@ export async function resolvePhiServerServiceProvider(
 
   const runtimeModule = await entry.load();
   const runtime = runtimeModule.phiServerAddon;
-  const runtimeValidation = validatePhiServerAddonManifest(runtime?.manifest);
+  const runtimeValidation = validatePhisAddonManifest(runtime?.manifest);
   if (
     !runtimeValidation.manifest ||
-    digestPhiServerAddonManifest(runtimeValidation.manifest) !== entry.manifestDigest
+    digestPhisAddonManifest(runtimeValidation.manifest) !== entry.manifestDigest
   ) {
     throw new PhiServiceProviderUnavailableError(
       serviceKind,

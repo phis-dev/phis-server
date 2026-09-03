@@ -1,9 +1,9 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import {
-  bookPhiServerAddonStorage,
-  readPhiServerAddonStorageUsage,
-  setPhiServerAddonStorageQuota,
+  bookPhisAddonStorage,
+  readPhisAddonStorageUsage,
+  setPhisAddonStorageQuota,
 } from "./server-addon-storage-usage.mts";
 import {
   closePhiTestPool,
@@ -63,7 +63,7 @@ describe("an Add-on's storage ceiling", () => {
         WHERE addon_id = $1 AND site_id = $2`,
       [ADDON, site.id],
     );
-    await setPhiServerAddonStorageQuota(pool, {
+    await setPhisAddonStorageQuota(pool, {
       addonId: ADDON, siteId: site.id, quotaBytes, quotaObjects,
     });
   }
@@ -72,15 +72,15 @@ describe("an Add-on's storage ceiling", () => {
     const pool = await requirePhiTestDatabase();
     await reset(1000, null);
 
-    expect(await bookPhiServerAddonStorage(pool, {
+    expect(await bookPhisAddonStorage(pool, {
       addonId: ADDON, siteId: site.id, bytes: 900, objects: 1,
     })).toBe("booked");
-    expect(await bookPhiServerAddonStorage(pool, {
+    expect(await bookPhisAddonStorage(pool, {
       addonId: ADDON, siteId: site.id, bytes: 200, objects: 1,
     })).toBe("over-quota");
 
     // The refusal changed nothing: a rejected booking must not have happened.
-    const usage = await readPhiServerAddonStorageUsage(pool, { addonId: ADDON, siteId: site.id });
+    const usage = await readPhisAddonStorageUsage(pool, { addonId: ADDON, siteId: site.id });
     expect(usage.bytes).toBe(900);
     expect(usage.objects).toBe(1);
   });
@@ -91,13 +91,13 @@ describe("an Add-on's storage ceiling", () => {
 
     // Ten at once, each of which fits on its own and only four of which fit together.
     const booked = await Promise.all(
-      Array.from({ length: 10 }, () => bookPhiServerAddonStorage(pool, {
+      Array.from({ length: 10 }, () => bookPhisAddonStorage(pool, {
         addonId: ADDON, siteId: site.id, bytes: 250, objects: 1,
       })),
     );
     expect(booked.filter((outcome) => outcome === "booked")).toHaveLength(4);
 
-    const usage = await readPhiServerAddonStorageUsage(pool, { addonId: ADDON, siteId: site.id });
+    const usage = await readPhisAddonStorageUsage(pool, { addonId: ADDON, siteId: site.id });
     expect(usage.bytes).toBe(1000);
   });
 
@@ -105,23 +105,23 @@ describe("an Add-on's storage ceiling", () => {
     const pool = await requirePhiTestDatabase();
     await reset(null, 2);
 
-    expect(await bookPhiServerAddonStorage(pool, { addonId: ADDON, siteId: site.id, bytes: 1, objects: 1 })).toBe("booked");
-    expect(await bookPhiServerAddonStorage(pool, { addonId: ADDON, siteId: site.id, bytes: 1, objects: 1 })).toBe("booked");
-    expect(await bookPhiServerAddonStorage(pool, { addonId: ADDON, siteId: site.id, bytes: 1, objects: 1 })).toBe("over-quota");
+    expect(await bookPhisAddonStorage(pool, { addonId: ADDON, siteId: site.id, bytes: 1, objects: 1 })).toBe("booked");
+    expect(await bookPhisAddonStorage(pool, { addonId: ADDON, siteId: site.id, bytes: 1, objects: 1 })).toBe("booked");
+    expect(await bookPhisAddonStorage(pool, { addonId: ADDON, siteId: site.id, bytes: 1, objects: 1 })).toBe("over-quota");
   });
 
   it("charges an overwrite the difference and no object", async () => {
     const pool = await requirePhiTestDatabase();
     await reset(1000, 1);
 
-    await bookPhiServerAddonStorage(pool, { addonId: ADDON, siteId: site.id, bytes: 400, objects: 1 });
+    await bookPhisAddonStorage(pool, { addonId: ADDON, siteId: site.id, bytes: 400, objects: 1 });
     // The same key written again at 600: 200 more bytes, still one object -- which the object ceiling
     // of 1 would otherwise refuse.
-    expect(await bookPhiServerAddonStorage(pool, {
+    expect(await bookPhisAddonStorage(pool, {
       addonId: ADDON, siteId: site.id, bytes: 200, objects: 0,
     })).toBe("booked");
 
-    const usage = await readPhiServerAddonStorageUsage(pool, { addonId: ADDON, siteId: site.id });
+    const usage = await readPhisAddonStorageUsage(pool, { addonId: ADDON, siteId: site.id });
     expect(usage).toMatchObject({ bytes: 600, objects: 1 });
   });
 
@@ -129,40 +129,40 @@ describe("an Add-on's storage ceiling", () => {
     const pool = await requirePhiTestDatabase();
     await reset(1000, 5);
 
-    await bookPhiServerAddonStorage(pool, { addonId: ADDON, siteId: site.id, bytes: 1000, objects: 5 });
-    expect(await bookPhiServerAddonStorage(pool, { addonId: ADDON, siteId: site.id, bytes: 1, objects: 1 })).toBe("over-quota");
+    await bookPhisAddonStorage(pool, { addonId: ADDON, siteId: site.id, bytes: 1000, objects: 5 });
+    expect(await bookPhisAddonStorage(pool, { addonId: ADDON, siteId: site.id, bytes: 1, objects: 1 })).toBe("over-quota");
 
     // A release is a booking with negative numbers, and the ceiling has no say over giving back.
-    expect(await bookPhiServerAddonStorage(pool, {
+    expect(await bookPhisAddonStorage(pool, {
       addonId: ADDON, siteId: site.id, bytes: -400, objects: -2,
     })).toBe("booked");
-    expect(await bookPhiServerAddonStorage(pool, { addonId: ADDON, siteId: site.id, bytes: 1, objects: 1 })).toBe("booked");
+    expect(await bookPhisAddonStorage(pool, { addonId: ADDON, siteId: site.id, bytes: 1, objects: 1 })).toBe("booked");
   });
 
   it("does not let a count drift below zero and hand out free space", async () => {
     const pool = await requirePhiTestDatabase();
     await reset(1000, 5);
 
-    await bookPhiServerAddonStorage(pool, { addonId: ADDON, siteId: site.id, bytes: -5000, objects: -50 });
-    const usage = await readPhiServerAddonStorageUsage(pool, { addonId: ADDON, siteId: site.id });
+    await bookPhisAddonStorage(pool, { addonId: ADDON, siteId: site.id, bytes: -5000, objects: -50 });
+    const usage = await readPhisAddonStorageUsage(pool, { addonId: ADDON, siteId: site.id });
     expect(usage).toMatchObject({ bytes: 0, objects: 0 });
   });
 
   it("treats no ceiling and a ceiling of zero as different answers", async () => {
     const pool = await requirePhiTestDatabase();
     await reset(0, null);
-    expect(await bookPhiServerAddonStorage(pool, { addonId: ADDON, siteId: site.id, bytes: 1, objects: 1 })).toBe("over-quota");
+    expect(await bookPhisAddonStorage(pool, { addonId: ADDON, siteId: site.id, bytes: 1, objects: 1 })).toBe("over-quota");
 
-    await setPhiServerAddonStorageQuota(pool, { addonId: ADDON, siteId: site.id, quotaBytes: null });
-    expect(await bookPhiServerAddonStorage(pool, { addonId: ADDON, siteId: site.id, bytes: 1, objects: 1 })).toBe("booked");
+    await setPhisAddonStorageQuota(pool, { addonId: ADDON, siteId: site.id, quotaBytes: null });
+    expect(await bookPhisAddonStorage(pool, { addonId: ADDON, siteId: site.id, bytes: 1, objects: 1 })).toBe("booked");
   });
 
   it("leaves the other ceiling alone when only one is being set", async () => {
     const pool = await requirePhiTestDatabase();
     await reset(1000, 7);
 
-    await setPhiServerAddonStorageQuota(pool, { addonId: ADDON, siteId: site.id, quotaBytes: 2000 });
-    const usage = await readPhiServerAddonStorageUsage(pool, { addonId: ADDON, siteId: site.id });
+    await setPhisAddonStorageQuota(pool, { addonId: ADDON, siteId: site.id, quotaBytes: 2000 });
+    const usage = await readPhisAddonStorageUsage(pool, { addonId: ADDON, siteId: site.id });
     expect(usage.quotaBytes).toBe(2000);
     expect(usage.quotaObjects).toBe(7);
   });
@@ -174,14 +174,14 @@ describe("an Add-on's storage ceiling", () => {
      * looking for bytes nobody wrote.
      */
     const pool = await requirePhiTestDatabase();
-    expect(await bookPhiServerAddonStorage(pool, {
+    expect(await bookPhisAddonStorage(pool, {
       addonId: ADDON, siteId: 32000, bytes: 1, objects: 1,
     })).toBe("not-activated");
   });
 
   it("refuses to bound an Add-on that is not activated for the Site", async () => {
     const pool = await requirePhiTestDatabase();
-    expect(await setPhiServerAddonStorageQuota(pool, {
+    expect(await setPhisAddonStorageQuota(pool, {
       addonId: ADDON, siteId: 32000, quotaBytes: 10,
     })).toBe(false);
   });

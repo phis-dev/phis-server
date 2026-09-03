@@ -1,6 +1,6 @@
 import type { NextRequest } from "next/server";
 
-import { dispatchPhiServerAddonRequest } from "@/lib/addons/dispatcher";
+import { dispatchPhisAddonRequest } from "@/lib/addons/dispatcher";
 
 type RouteContext = {
   params: Promise<{
@@ -11,7 +11,7 @@ type RouteContext = {
 };
 
 async function dispatch(request: NextRequest, context: RouteContext) {
-  return dispatchPhiServerAddonRequest(request, "api", await context.params);
+  return dispatchPhisAddonRequest(request, "api", await context.params);
 }
 
 export const DELETE = dispatch;

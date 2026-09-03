@@ -1,12 +1,12 @@
 import "server-only";
 
 import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
-import { getPhiServerConfigSync } from "@/lib/config";
+import { getPhisConfigSync } from "@/lib/config";
 
 const ALGORITHM = "aes-256-gcm";
 
 function readKey() {
-  const raw = getPhiServerConfigSync().registration?.intentEncryptionKey?.trim() ?? "";
+  const raw = getPhisConfigSync().registration?.intentEncryptionKey?.trim() ?? "";
 
   if (!raw) {
     throw new Error(

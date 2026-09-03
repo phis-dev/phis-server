@@ -1,15 +1,15 @@
 import { describe, expect, it } from "vitest";
 
-import { compilePhiServerAddonQueries } from "./query-sql.ts";
-import { buildPhiServerAddonSchemaStatements } from "./schema-ddl.ts";
-import { validatePhiServerAddonSchemaDescriptor } from "./schema-descriptor.ts";
+import { compilePhisAddonQueries } from "./query-sql.ts";
+import { buildPhisAddonSchemaStatements } from "./schema-ddl.ts";
+import { validatePhisAddonSchemaDescriptor } from "./schema-descriptor.ts";
 import {
   phiServerAddonUnindexedSearches,
-  validatePhiServerAddonQueryCatalog,
+  validatePhisAddonQueryCatalog,
 } from "./query-descriptor.ts";
 import type {
-  PhiServerAddonQueryCatalog,
-  PhiServerAddonSchemaDescriptor,
+  PhisAddonQueryCatalog,
+  PhisAddonSchemaDescriptor,
 } from "./contract.ts";
 
 /**
@@ -22,7 +22,7 @@ import type {
 
 const SCHEMA = "phis_addon_acme_shop";
 
-const schema: PhiServerAddonSchemaDescriptor = {
+const schema: PhisAddonSchemaDescriptor = {
   descriptorVersion: 1,
   version: 1,
   tables: [
@@ -42,7 +42,7 @@ const schema: PhiServerAddonSchemaDescriptor = {
   ],
 };
 
-const catalog: PhiServerAddonQueryCatalog = {
+const catalog: PhisAddonQueryCatalog = {
   parameters: {
     mine: [{ name: "state", type: "text" }],
     add: [{ name: "title", type: "text" }, { name: "group_id", type: "integer" }],
@@ -87,12 +87,12 @@ const catalog: PhiServerAddonQueryCatalog = {
 };
 
 function compiled() {
-  return compilePhiServerAddonQueries(SCHEMA, schema, catalog);
+  return compilePhisAddonQueries(SCHEMA, schema, catalog);
 }
 
 function validate(value: unknown) {
   const issues: string[] = [];
-  const result = validatePhiServerAddonQueryCatalog(value, schema, "queries", issues);
+  const result = validatePhisAddonQueryCatalog(value, schema, "queries", issues);
   return { result, issues };
 }
 
@@ -138,7 +138,7 @@ describe("compiling a declared query", () => {
   });
 
   it("returns the scope columns alongside the declared ones when none are named", () => {
-    const everything = compilePhiServerAddonQueries(SCHEMA, schema, {
+    const everything = compilePhisAddonQueries(SCHEMA, schema, {
       parameters: { all: [] },
       queries: [{ kind: "select", name: "all", table: "listing", limit: 5 }],
     });
@@ -148,7 +148,7 @@ describe("compiling a declared query", () => {
   });
 
   it("caps a limit above the ceiling instead of trusting it", () => {
-    const overreaching = compilePhiServerAddonQueries(SCHEMA, schema, {
+    const overreaching = compilePhisAddonQueries(SCHEMA, schema, {
       parameters: { all: [] },
       queries: [{ kind: "select", name: "all", table: "listing", limit: 10_000 }],
     });
@@ -156,7 +156,7 @@ describe("compiling a declared query", () => {
   });
 });
 
-const pagingSchema: PhiServerAddonSchemaDescriptor = {
+const pagingSchema: PhisAddonSchemaDescriptor = {
   descriptorVersion: 1,
   version: 1,
   tables: [
@@ -175,10 +175,10 @@ const pagingSchema: PhiServerAddonSchemaDescriptor = {
 };
 
 function paged(descriptor: Record<string, unknown>, parameters: unknown[] = []) {
-  return compilePhiServerAddonQueries(SCHEMA, pagingSchema, {
+  return compilePhisAddonQueries(SCHEMA, pagingSchema, {
     parameters: { listing: parameters },
     queries: [{ kind: "select", name: "listing", table: "offering", limit: 25, ...descriptor }],
-  } as unknown as PhiServerAddonQueryCatalog).get("listing")!;
+  } as unknown as PhisAddonQueryCatalog).get("listing")!;
 }
 
 describe("paging a declared select", () => {
@@ -323,13 +323,13 @@ describe("validating a declared query", () => {
 
   it("refuses a catalog when the Add-on owns no tables at all", () => {
     const issues: string[] = [];
-    validatePhiServerAddonQueryCatalog(catalog, null, "queries", issues);
+    validatePhisAddonQueryCatalog(catalog, null, "queries", issues);
     expect(issues.join("\n")).toMatch(/owns no tables to run them against/);
   });
 });
 
 describe("searching text", () => {
-  const searchSchema: PhiServerAddonSchemaDescriptor = {
+  const searchSchema: PhisAddonSchemaDescriptor = {
     descriptorVersion: 1,
     version: 1,
     tables: [
@@ -358,10 +358,10 @@ describe("searching text", () => {
         limit: 25,
       },
     ],
-  } as unknown as PhiServerAddonQueryCatalog;
+  } as unknown as PhisAddonQueryCatalog;
 
   it("escapes the value, so a per cent sign is a character and not a wildcard", () => {
-    const sql = compilePhiServerAddonQueries(SCHEMA, searchSchema, searchCatalog).get("find")!.sql;
+    const sql = compilePhisAddonQueries(SCHEMA, searchSchema, searchCatalog).get("find")!.sql;
     expect(sql).toContain(
       `"title" ILIKE ('%' || replace(replace(replace($2, '\\', '\\\\'), '%', '\\%'), '_', '\\_') || '%')`,
     );
@@ -369,7 +369,7 @@ describe("searching text", () => {
 
   it("refuses to search a column that does not hold text", () => {
     const issues: string[] = [];
-    validatePhiServerAddonQueryCatalog(
+    validatePhisAddonQueryCatalog(
       {
         parameters: { find: [{ name: "q", type: "text" }] },
         queries: [{
@@ -412,7 +412,7 @@ describe("searching text", () => {
         },
         limit: 25,
       }],
-    } as unknown as PhiServerAddonQueryCatalog;
+    } as unknown as PhisAddonQueryCatalog;
     const withoutIndex = {
       ...searchSchema,
       tables: searchSchema.tables.map((table) => ({ ...table, indexes: [] })),
@@ -421,14 +421,14 @@ describe("searching text", () => {
   });
 
   it("builds a trigram index for a text index, and an ordinary one otherwise", () => {
-    const statements = buildPhiServerAddonSchemaStatements(SCHEMA, searchSchema);
+    const statements = buildPhisAddonSchemaStatements(SCHEMA, searchSchema);
     const text = statements.find((entry) => entry.summary.includes("text search"))!;
     expect(text.sql).toContain('USING gin ("title" gin_trgm_ops)');
   });
 
   it("refuses a text index that is unique, spans columns, or names a number", () => {
     const issues: string[] = [];
-    validatePhiServerAddonSchemaDescriptor(
+    validatePhisAddonSchemaDescriptor(
       {
         ...searchSchema,
         tables: [{
@@ -453,7 +453,7 @@ describe("searching text", () => {
 describe("what paging refuses at validation", () => {
   function issuesFor(descriptor: Record<string, unknown>, parameters: unknown[] = []) {
     const issues: string[] = [];
-    validatePhiServerAddonQueryCatalog(
+    validatePhisAddonQueryCatalog(
       {
         parameters: { listing: parameters },
         queries: [{ kind: "select", name: "listing", table: "offering", limit: 25, ...descriptor }],
@@ -495,7 +495,7 @@ describe("what paging refuses at validation", () => {
 });
 
 describe("a query guarded by a role", () => {
-  const ownedSchema: PhiServerAddonSchemaDescriptor = {
+  const ownedSchema: PhisAddonSchemaDescriptor = {
     descriptorVersion: 1,
     version: 1,
     tables: [
@@ -513,7 +513,7 @@ describe("a query guarded by a role", () => {
 
   function issuesFor(query: Record<string, unknown>, roles: string[]) {
     const issues: string[] = [];
-    validatePhiServerAddonQueryCatalog(
+    validatePhisAddonQueryCatalog(
       {
         parameters: { q: [{ name: "id", type: "bigInteger" }, { name: "label", type: "text" }] },
         queries: [{ name: "q", table: "category", ...query }],
@@ -551,7 +551,7 @@ describe("a query guarded by a role", () => {
       tables: ownedSchema.tables.map((table) => ({ ...table, ownerScoped: true })),
     };
     const issues: string[] = [];
-    validatePhiServerAddonQueryCatalog(
+    validatePhisAddonQueryCatalog(
       {
         parameters: { q: [{ name: "id", type: "bigInteger" }, { name: "label", type: "text" }] },
         queries: [{ name: "q", table: "category", ...rename }],

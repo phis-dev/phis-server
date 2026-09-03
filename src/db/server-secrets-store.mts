@@ -10,7 +10,7 @@ import { isPhiSecretReference, parsePhiSecretReference } from "../lib/secrets/re
 
 type DbQueryable = Pick<PoolClient, "query">;
 
-export type PhiServerSecretRecord = {
+export type PhisSecretRecord = {
   reference: string;
   siteId: number | null;
   addonId: string | null;
@@ -35,7 +35,7 @@ function toIso(value: Date | string) {
   return value instanceof Date ? value.toISOString() : String(value);
 }
 
-function toRecord(row: SecretRow): PhiServerSecretRecord {
+function toRecord(row: SecretRow): PhisSecretRecord {
   return {
     reference: row.reference,
     siteId: row.site_id,
@@ -64,7 +64,7 @@ function toCipher(row: SecretRow): PhiSecretCipherRecord {
  * disagree with the name it is stored under -- and deleting a Site or an Add-on takes its secrets with
  * it through the foreign keys rather than through a sweep somebody has to remember to run.
  */
-export async function writePhiServerSecretWithDb(
+export async function writePhisSecretWithDb(
   db: DbQueryable,
   input: {
     reference: string;
@@ -72,7 +72,7 @@ export async function writePhiServerSecretWithDb(
     key: PhiSecretEncryptionKey;
     siteId?: number | null;
   },
-): Promise<PhiServerSecretRecord> {
+): Promise<PhisSecretRecord> {
   const identity = parsePhiSecretReference(input.reference);
   if (!identity) {
     throw new Error(`"${input.reference}" is not a valid secret reference.`);
@@ -121,7 +121,7 @@ export async function writePhiServerSecretWithDb(
  * one call for different operator action, and collapsing them would let a rotated-away key look like a
  * configuration that was never done.
  */
-export async function readPhiServerSecretWithDb(
+export async function readPhisSecretWithDb(
   db: DbQueryable,
   reference: string,
   key: PhiSecretEncryptionKey,
@@ -140,7 +140,7 @@ export async function readPhiServerSecretWithDb(
 }
 
 /** Whether a secret exists, without decrypting it -- what a status surface is allowed to know. */
-export async function hasPhiServerSecretWithDb(db: DbQueryable, reference: string) {
+export async function hasPhisSecretWithDb(db: DbQueryable, reference: string) {
   if (!isPhiSecretReference(reference)) return false;
   const { rows } = await db.query<{ exists: boolean }>(
     `SELECT TRUE AS exists FROM phis.server_secrets WHERE reference = $1 LIMIT 1`,
@@ -156,7 +156,7 @@ export async function hasPhiServerSecretWithDb(db: DbQueryable, reference: strin
  * question per provider on a hot public endpoint would decrypt for an answer that never needed a
  * plaintext.
  */
-export async function hasPhiServerSecretsWithDb(db: DbQueryable, references: string[]) {
+export async function hasPhisSecretsWithDb(db: DbQueryable, references: string[]) {
   const candidates = references.filter((reference) => isPhiSecretReference(reference));
   if (candidates.length === 0) {
     return new Set<string>();
@@ -168,7 +168,7 @@ export async function hasPhiServerSecretsWithDb(db: DbQueryable, references: str
   return new Set(rows.map((row) => row.reference));
 }
 
-export async function deletePhiServerSecretWithDb(db: DbQueryable, reference: string) {
+export async function deletePhisSecretWithDb(db: DbQueryable, reference: string) {
   const { rowCount } = await db.query(
     `DELETE FROM phis.server_secrets WHERE reference = $1`,
     [reference],
@@ -182,10 +182,10 @@ export async function deletePhiServerSecretWithDb(db: DbQueryable, reference: st
  * This is the inventory an operator needs to see what is configured, and it is deliberately incapable
  * of leaking: no ciphertext leaves, so no caller can be tempted to decrypt outside the resolver.
  */
-export async function listPhiServerSecretsWithDb(db: DbQueryable, filter?: {
+export async function listPhisSecretsWithDb(db: DbQueryable, filter?: {
   siteId?: number | null;
   addonId?: string | null;
-}): Promise<PhiServerSecretRecord[]> {
+}): Promise<PhisSecretRecord[]> {
   const conditions: string[] = [];
   const params: unknown[] = [];
   if (filter?.siteId !== undefined) {

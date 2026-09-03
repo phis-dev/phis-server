@@ -1,9 +1,9 @@
 import { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { applyPhiServerAddonSchema, dropPhiServerAddonSchema } from "./server-addon-schema.mts";
-import { getPhiServerConfigSync } from "@/lib/config";
-import { buildPhiServerAddonAssetsCapability } from "@/lib/addons/assets-capability";
+import { applyPhisAddonSchema, dropPhisAddonSchema } from "./server-addon-schema.mts";
+import { getPhisConfigSync } from "@/lib/config";
+import { buildPhisAddonAssetsCapability } from "@/lib/addons/assets-capability";
 import { getMediaStorageProfile } from "@/db/media-spaces";
 import { createPhisMediaStorageServiceForProfile } from "@/lib/media-storage";
 import { ensureAddonMediaSpace } from "@/db/media-spaces";
@@ -16,7 +16,7 @@ import {
   requirePhiTestDatabase,
   type PhiTestSite,
 } from "../../test/pg/harness";
-import type { PhiServerAddonSchemaDescriptor } from "@/lib/addons/contract";
+import type { PhisAddonSchemaDescriptor } from "@/lib/addons/contract";
 
 /**
  * Reserving a place for a file and settling it once the bytes are there.
@@ -33,7 +33,7 @@ import type { PhiServerAddonSchemaDescriptor } from "@/lib/addons/contract";
 const SCHEMA = "phis_addon_pgtest_assetlife";
 const ADDON = "@pgtest/assetlife";
 
-const descriptor: PhiServerAddonSchemaDescriptor = {
+const descriptor: PhisAddonSchemaDescriptor = {
   descriptorVersion: 1,
   version: 1,
   tables: [
@@ -64,7 +64,7 @@ describe("putting a file on a row", () => {
   let actor: number;
 
   function assets(options?: { mayActOnRow?: boolean }) {
-    return buildPhiServerAddonAssetsCapability({
+    return buildPhisAddonAssetsCapability({
       addonId: ADDON,
       siteId: site.id,
       siteKey: site.key,
@@ -99,7 +99,7 @@ describe("putting a file on a row", () => {
     site = await createPhiTestSite("addon-assetlife");
     actor = await createPhiTestUser(site);
 
-    const config = getPhiServerConfigSync().database;
+    const config = getPhisConfigSync().database;
     if (!config?.migrationUri || !config.uri) {
       throw new Error("These tests need database.migrationUri and database.uri.");
     }
@@ -107,8 +107,8 @@ describe("putting a file on a row", () => {
     migrationPool = new Pool({ connectionString: config.migrationUri });
     const client = await migrationPool.connect();
     try {
-      await dropPhiServerAddonSchema(client, SCHEMA);
-      await applyPhiServerAddonSchema(client, { schemaName: SCHEMA, descriptor }, servingRole);
+      await dropPhisAddonSchema(client, SCHEMA);
+      await applyPhisAddonSchema(client, { schemaName: SCHEMA, descriptor }, servingRole);
     } finally {
       client.release();
     }
@@ -137,7 +137,7 @@ describe("putting a file on a row", () => {
     if (migrationPool) {
       const client = await migrationPool.connect();
       try {
-        await dropPhiServerAddonSchema(client, SCHEMA);
+        await dropPhisAddonSchema(client, SCHEMA);
       } finally {
         client.release();
       }
