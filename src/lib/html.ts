@@ -50,8 +50,8 @@ const PHI_SAFE_HTML_TRAILING_EMPTY_BLOCKS =
 
 /**
  * Validates the grammar of one reference-carrying attribute inside the trusted internal content
- * channel. A canonical `phi:page/<reference>` or `phi:asset/<id>` value survives unchanged; anything
- * that only resolves to a `phi:` scheme through encoding tricks loses the attribute. External values
+ * channel. A canonical `phis:page/<reference>` or `phis:asset/<id>` value survives unchanged; anything
+ * that only resolves to a `phis:` scheme through encoding tricks loses the attribute. External values
  * are left to the ordinary scheme allowlist.
  */
 function sanitizePhiReferenceAttribute(
@@ -81,7 +81,7 @@ function sanitizePhiReferenceAttribute(
  * Authoritative sanitizer for persisted CMS HTML.
  *
  * `allowInternalReferences` selects the declared internal content channel defined by `REFERENCES.md`.
- * Only that channel may carry `phi:page/` and `phi:asset/` URIs, and only it renders `img`, because
+ * Only that channel may carry `phis:page/` and `phis:asset/` URIs, and only it renders `img`, because
  * an Asset reference is expressed as an image source. Every other caller keeps the narrow
  * external-only surface.
  */
@@ -111,7 +111,7 @@ export function sanitizePhiPersistedHtml(
         height: PHI_SAFE_HTML_IMAGE_LENGTH_STYLES,
       },
     },
-    allowedSchemes: [...PHI_SAFE_HTML_SCHEMES, ...(allowInternalReferences ? ["phi"] : [])],
+    allowedSchemes: [...PHI_SAFE_HTML_SCHEMES, ...(allowInternalReferences ? ["phis"] : [])],
     ...(allowInternalReferences
       ? {
           transformTags: {

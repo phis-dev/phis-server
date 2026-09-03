@@ -82,7 +82,7 @@ function projectFocalRect(meta: Record<string, unknown> | null): PhiMediaFocalRe
 }
 
 /**
- * The public rendering projection for a resolved `phi:asset/<id>` reference.
+ * The public rendering projection for a resolved `phis:asset/<id>` reference.
  *
  * This is deliberately not the management record minus storage internals. It carries only what a
  * public page already reveals once the Asset is rendered, so a caller holding just the internal token

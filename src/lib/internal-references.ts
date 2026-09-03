@@ -1,5 +1,5 @@
-export const PHI_INTERNAL_PAGE_SCHEME = "phi:page/" as const;
-export const PHI_INTERNAL_ASSET_SCHEME = "phi:asset/" as const;
+export const PHIS_INTERNAL_PAGE_SCHEME = "phis:page/" as const;
+export const PHIS_INTERNAL_ASSET_SCHEME = "phis:asset/" as const;
 
 export type PhiPageTarget =
   | { kind: "site"; pageScopeId: number }
@@ -55,14 +55,14 @@ export function readPhiPageReference(value: unknown): { reference: PhiPageRefere
 
 export function readPhiInternalReference(value: unknown): PhiInternalReference | null {
   if (typeof value !== "string") return null;
-  if (value.startsWith(PHI_INTERNAL_ASSET_SCHEME)) {
-    const rawId = value.slice(PHI_INTERNAL_ASSET_SCHEME.length);
+  if (value.startsWith(PHIS_INTERNAL_ASSET_SCHEME)) {
+    const rawId = value.slice(PHIS_INTERNAL_ASSET_SCHEME.length);
     return /^[1-9]\d*$/u.test(rawId) && Number.isSafeInteger(Number(rawId))
       ? { kind: "asset", assetId: Number(rawId) }
       : null;
   }
-  if (!value.startsWith(PHI_INTERNAL_PAGE_SCHEME)) return null;
-  const [rawReference, ...fragmentParts] = value.slice(PHI_INTERNAL_PAGE_SCHEME.length).split("#");
+  if (!value.startsWith(PHIS_INTERNAL_PAGE_SCHEME)) return null;
+  const [rawReference, ...fragmentParts] = value.slice(PHIS_INTERNAL_PAGE_SCHEME.length).split("#");
   const parsed = readPhiPageReference(rawReference);
   if (!parsed) return null;
   try {
@@ -80,7 +80,7 @@ const PHI_SCHEME_ENTITY_COLON = /&colon;|&#0*58;|&#x0*3a;/giu;
 const PHI_SCHEME_CONTROL_CHARACTERS = /[\u0000-\u0020]+/gu;
 
 /**
- * Collapses the encodings an attacker can use to hide a `phi:` scheme from a naive prefix check:
+ * Collapses the encodings an attacker can use to hide a `phis:` scheme from a naive prefix check:
  * HTML colon entities, repeated percent-encoding, and interleaved control characters.
  * The result is a detection value only; it is never persisted or rendered.
  */
@@ -106,7 +106,7 @@ export type PhiReferenceAttribute =
 /**
  * Classifies one trusted-content `href`/`src` value.
  *
- * Only the canonical literal form is accepted as internal. A value that merely resolves to a `phi:`
+ * Only the canonical literal form is accepted as internal. A value that merely resolves to a `phis:`
  * scheme after decoding is `invalid` and must be dropped, never repaired: authoring emits the
  * canonical form, so an obfuscated variant can only come from a bypass attempt.
  */
@@ -115,15 +115,15 @@ export function classifyPhiReferenceAttribute(value: unknown): PhiReferenceAttri
   const raw = value.trim();
   const reference = readPhiInternalReference(raw);
   if (reference) return { kind: "internal", uri: raw, reference };
-  return normalizePotentialPhiScheme(raw).toLowerCase().startsWith("phi:")
+  return normalizePotentialPhiScheme(raw).toLowerCase().startsWith("phis:")
     ? { kind: "invalid" }
     : { kind: "external" };
 }
 
-const PHI_INTERNAL_REFERENCE_IN_TEXT = /phi:(?:asset\/[1-9]\d*|page\/v1\.[A-Za-z0-9_-]+(?:#[^\s"'<>()[\]]+)?)/gu;
+const PHIS_INTERNAL_REFERENCE_IN_TEXT = /phis:(?:asset\/[1-9]\d*|page\/v1\.[A-Za-z0-9_-]+(?:#[^\s"'<>()[\]]+)?)/gu;
 
 export function collectPhiInternalReferencesFromText(value: string) {
-  return [...value.matchAll(PHI_INTERNAL_REFERENCE_IN_TEXT)].flatMap((match) => {
+  return [...value.matchAll(PHIS_INTERNAL_REFERENCE_IN_TEXT)].flatMap((match) => {
     const reference = readPhiInternalReference(match[0]);
     return reference ? [{ reference, offset: match.index }] : [];
   });
@@ -132,10 +132,10 @@ export function collectPhiInternalReferencesFromText(value: string) {
 export function createPhiPageUri(reference: PhiPageReference, fragment?: string | null) {
   if (!readPhiPageReference(reference)) throw new Error("Invalid Phi Page reference.");
   const normalizedFragment = fragment?.replace(/^#/u, "").trim();
-  return `${PHI_INTERNAL_PAGE_SCHEME}${reference}${normalizedFragment ? `#${encodeURIComponent(normalizedFragment)}` : ""}`;
+  return `${PHIS_INTERNAL_PAGE_SCHEME}${reference}${normalizedFragment ? `#${encodeURIComponent(normalizedFragment)}` : ""}`;
 }
 
 export function createPhiAssetUri(assetId: number) {
   if (!isPositiveInteger(assetId)) throw new Error("Phi Asset ids must be positive integers.");
-  return `${PHI_INTERNAL_ASSET_SCHEME}${assetId}`;
+  return `${PHIS_INTERNAL_ASSET_SCHEME}${assetId}`;
 }

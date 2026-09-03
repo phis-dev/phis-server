@@ -14,7 +14,7 @@ const MAX_REFERENCES_PER_REQUEST = 256;
 /**
  * Bulk resolver for the internal reference forms defined by `REFERENCES.md`.
  *
- * Both `phi:page/<reference>` and `phi:asset/<id>` resolve here, in one round trip per render, because
+ * Both `phis:page/<reference>` and `phis:asset/<id>` resolve here, in one round trip per render, because
  * they are one contract. The endpoint is internal-token only and therefore has no mode that returns a
  * management record: Assets are projected through the public rendering projection, and an id outside
  * the Site Space, not Ready, or not publicly deliverable is simply absent from the result.

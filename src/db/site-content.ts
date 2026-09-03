@@ -169,7 +169,7 @@ function normalizeHtmlContent(value: string | null | undefined) {
   }
 
   // `site_content(type=html)` is the declared internal content channel from `REFERENCES.md`, so it
-  // keeps canonical `phi:page/` and `phi:asset/` URIs instead of stripping them as unknown schemes.
+  // keeps canonical `phis:page/` and `phis:asset/` URIs instead of stripping them as unknown schemes.
   return sanitizePhiPersistedHtml(value, { allowInternalReferences: true });
 }
 

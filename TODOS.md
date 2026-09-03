@@ -20,7 +20,7 @@ Implemented in the current baseline:
   and renders the resolved path read-only, with the literal URL editor reserved for explicit external targets.
 - `phis.site_cms_references` is the maintained index, replaced transactionally per source scope by the
   Page, Navigation, and trusted-content writes, and read by path-change reporting and the delete guards.
-- The authoritative HTML write sanitizer accepts `phi:page/` and `phi:asset/` in the declared internal
+- The authoritative HTML write sanitizer accepts `phis:page/` and `phis:asset/` in the declared internal
   content channel, drops obfuscated and grammatically invalid variants, and permits `img` there. Bulk
   resolution, fragment preservation, Asset access enforcement, and the guarantee that no unresolved Phi
   URI reaches Client output live in the shared server render path.
@@ -423,7 +423,7 @@ Remaining work:
   section 2 of [GROUPS_AND_STORAGE.md](./GROUPS_AND_STORAGE.md). A retired group's Space is not retired
   with it: it stays where it is and comes back when the group does, readable throughout so its contents
   can be moved out, and closed to writes. The `media-folder` Form endpoint stays pinned to the Site
-  Space deliberately, because it is the Builder path. CMS, Builder, Editor, and `phi:asset` resolution
+  Space deliberately, because it is the Builder path. CMS, Builder, Editor, and `phis:asset` resolution
   stay pinned to the Site Space.
 - The Provider-neutral upload-plan ABI landed on 2026-08-25. `init` answers with a typed plan the
   Storage Provider issued -- `proxy-stream` today, `presigned-put` defined beside it -- and a generic

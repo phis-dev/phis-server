@@ -932,7 +932,7 @@ submission writes `Group`. Nobody picks a level from a list, because "who may se
 decision and publishing decisions belong to whoever owns the purpose. The default for an Asset created
 in a User Space is `User`, and a Module deliberately widens it.
 
-There are two delivery paths and they answer different questions. A `phi:asset/...` reference inside CMS
+There are two delivery paths and they answer different questions. A `phis:asset/...` reference inside CMS
 content resolves through the Core resolver, which admits Site Space Assets only -- that keeps a Page
 from embedding someone else's file. A Module rendering its own collection resolves through its own data
 source and is bound by the delivery policy alone. Neither needs to be relaxed for the other.
@@ -982,7 +982,7 @@ while it previews the App. The signal partition settles it -- a live Area partit
 in that Area, a `canvas` partition is always authoring -- and both have to agree before a selector
 appears. Builder and Editor stay
 on the Site Space because that is where publishable content comes from: an Asset from a group cannot be
-rendered by a `phi:asset` reference, so offering it there would only produce images that vanish on the
+rendered by a `phis:asset` reference, so offering it there would only produce images that vanish on the
 published page. It also keeps ordinary authoring independent of the optional `@phis/groups` package.
 Anyone who needs their groups switches to `/app`, where the same memberships apply.
 

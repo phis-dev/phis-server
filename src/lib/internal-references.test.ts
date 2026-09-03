@@ -45,13 +45,13 @@ describe("reference attribute classification", () => {
 
   it("rejects malformed and obfuscated Phi schemes instead of repairing them", () => {
     for (const value of [
-      "phi:page/v1.not-base64url!",
-      "phi:asset/0",
-      "phi:asset/abc",
-      "phi:unknown/1",
-      "phi&colon;asset/23",
-      "phi&#58;asset/23",
-      "%70hi%3Aasset%2F23",
+      "phis:page/v1.not-base64url!",
+      "phis:asset/0",
+      "phis:asset/abc",
+      "phis:unknown/1",
+      "phis&colon;asset/23",
+      "phis&#58;asset/23",
+      "%70his%3Aasset%2F23",
     ]) {
       expect(classifyPhiReferenceAttribute(value).kind, value).toBe("invalid");
     }
@@ -70,24 +70,24 @@ describe("persisted HTML sanitizer", () => {
 
   it("strips Phi URIs and images outside the internal content channel", () => {
     const sanitized = sanitizePhiPersistedHtml(internalHtml);
-    expect(sanitized).not.toContain("phi:");
+    expect(sanitized).not.toContain("phis:");
     expect(sanitized).not.toContain("<img");
   });
 
   it("drops a percent-encoded Phi scheme instead of decoding it into a reference", () => {
     const sanitized = sanitizePhiPersistedHtml(
-      `<p><img src="%70hi%3Aasset%2F23" alt="Asset"></p>`,
+      `<p><img src="%70his%3Aasset%2F23" alt="Asset"></p>`,
       { allowInternalReferences: true },
     );
-    expect(sanitized).not.toContain("phi:");
+    expect(sanitized).not.toContain("phis:");
     expect(sanitized).not.toContain("src=");
   });
 
   it("accepts an entity-encoded colon because the parser yields the canonical value", () => {
     // `&colon;` is decoded during HTML parsing, so the attribute reaching validation is already the
-    // canonical `phi:asset/23`. Accepting it is not a bypass: the resulting reference is well formed.
+    // canonical `phis:asset/23`. Accepting it is not a bypass: the resulting reference is well formed.
     const sanitized = sanitizePhiPersistedHtml(
-      `<p><a href="phi&colon;asset/23">Link</a></p>`,
+      `<p><a href="phis&colon;asset/23">Link</a></p>`,
       { allowInternalReferences: true },
     );
     expect(sanitized).toContain(assetUri);
@@ -95,10 +95,10 @@ describe("persisted HTML sanitizer", () => {
 
   it("drops a Phi URI whose reference grammar is invalid", () => {
     const sanitized = sanitizePhiPersistedHtml(
-      `<p><a href="phi:page/v1.@@@">Broken</a></p>`,
+      `<p><a href="phis:page/v1.@@@">Broken</a></p>`,
       { allowInternalReferences: true },
     );
-    expect(sanitized).not.toContain("phi:");
+    expect(sanitized).not.toContain("phis:");
     expect(sanitized).not.toContain("href=");
   });
 

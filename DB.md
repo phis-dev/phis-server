@@ -202,7 +202,7 @@ Contract:
 Contract:
 - `kind` is the closed owner contract: `1 = site`, `2 = user`, `3 = group`. A CHECK constraint enforces that exactly the matching owner column is set.
 - A Site has at most one Site Space, one Space per member, and one Space per group; partial unique indexes enforce that.
-- The Site Space owns Site presentation, CMS content, theme, and published download Assets. CMS, Builder, Editor, and `phi:asset` resolution are pinned to it.
+- The Site Space owns Site presentation, CMS content, theme, and published download Assets. CMS, Builder, Editor, and `phis:asset` resolution are pinned to it.
 - `quota_bytes` is an explicit Space-level override. `NULL` inherits the Site default from `site_media_config` per [GROUPS_AND_STORAGE.md](./GROUPS_AND_STORAGE.md) section 7; what an absent Site default itself means is not defined by the contract yet. `used_bytes` is committed usage and `reserved_bytes` is in-flight upload reservation; both are non-negative.
 - Composite foreign keys on `(user_id, site_id)` and `(group_id, site_id)` make a cross-Site owner unrepresentable rather than merely rejected in code.
 
@@ -768,8 +768,8 @@ Contract:
   `site_content(type=html)` version. Client-side authoring checks are advisory and cannot replace this
   write-time enforcement.
 - `site_content(type=html)` and `site_content(type=markdown)` are the declared internal content channel
-  from [REFERENCES.md](./REFERENCES.md). The write sanitizer accepts `phi:page/<reference>` and
-  `phi:asset/<asset-id>` there, and `img` exists in that channel because an Asset reference is expressed
+  from [REFERENCES.md](./REFERENCES.md). The write sanitizer accepts `phis:page/<reference>` and
+  `phis:asset/<asset-id>` there, and `img` exists in that channel because an Asset reference is expressed
   as an image source. Every other sanitizer caller keeps the external-only scheme set.
 - Only the canonical literal reference form survives. A value that reaches a `phi:` scheme through
   percent-encoding or other obfuscation loses its `href`/`src` attribute rather than being repaired,
@@ -846,7 +846,7 @@ Contract:
 
 ### Internal Page and Asset references
 
-Stable Page references and `phi:page/...` / `phi:asset/...` document references follow
+Stable Page references and `phis:page/...` / `phis:asset/...` document references follow
 [REFERENCES.md](./REFERENCES.md). Structured internal targets persist Page Scope or Module preset identity,
 never a copied path. Asset targets reuse `media_assets.id` and remain Site/access constrained.
 

@@ -89,8 +89,8 @@ operator repair; live fallback lookup is forbidden.
 Only internally persisted trusted Markdown/HTML may contain the reserved forms:
 
 ```text
-phi:page/<opaque-page-reference>
-phi:asset/<positive-asset-id>
+phis:page/<opaque-page-reference>
+phis:asset/<positive-asset-id>
 ```
 
 The CMS write path accepts those schemes only in the declared internal content channel, validates their

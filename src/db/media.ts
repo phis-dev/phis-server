@@ -479,7 +479,7 @@ export async function getMediaAssetBySiteAndId(siteId: number, id: number, space
 }
 
 /**
- * Resolves `phi:asset/<id>` references for public rendering.
+ * Resolves `phis:asset/<id>` references for public rendering.
  *
  * The Site Space, Ready lifecycle, and public delivery policy are part of the query rather than a
  * caller-side filter, so an unknown or protected id is simply absent from the result and cannot be

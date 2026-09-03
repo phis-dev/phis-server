@@ -17,7 +17,7 @@ function pool() {
  * The only Asset read the internal reference resolver performs, and therefore the only one that answers
  * an unauthenticated render. Everything it must not hand out is expressed as a WHERE clause here: an
  * Asset in a User or Group Space, one that is not Ready, or one that is not publicly deliverable is
- * absent rather than reported, so a `phi:asset` reference cannot be used to probe for it.
+ * absent rather than reported, so a `phis:asset` reference cannot be used to probe for it.
  */
 describe("The public Asset projection behind reference resolution", () => {
   it("asks only for Ready, publicly deliverable Assets of this Site's Site Space", async () => {

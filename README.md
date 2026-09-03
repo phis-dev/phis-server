@@ -48,7 +48,7 @@ The normative mutable Site Page path and structured Page/Asset reference contrac
 CMS rich HTML is sanitized authoritatively by the backend when an HTML content binding is posted. The
 sanitized value is the only value written to Widget config and `site_content(type=html)`; Public and App
 clients do not repeat that persistence check. That sanitizer is also the enforcement point for the
-internal content channel: it preserves canonical `phi:page/` and `phi:asset/` URIs, drops obfuscated or
+internal content channel: it preserves canonical `phis:page/` and `phis:asset/` URIs, drops obfuscated or
 malformed ones, and the same write transaction indexes the surviving references into
 `site_cms_references`.
 
