@@ -104,6 +104,48 @@ export const PHI_SITE_MODULE_PROJECTION_FILES = [
   "src/generated/site-modules-client.ts",
 ] as const;
 
+/**
+ * Which Area a root error route rebuilds its shell from.
+ *
+ * The boundaries are loaded per Area instead of imported outright. This registry is reachable from the
+ * root error routes, which are the fallback boundary for the whole app, so a plain import would put
+ * every Area's Client manifest into that graph; loading them this way fetches only the Area that is
+ * actually rendered.
+ */
+function errorAreaRegistryFile() {
+  const areas: readonly ("public" | typeof AREAS[number])[] = ["public", ...AREAS];
+  const bridgeImports = areas
+    .map((area) => `import { PHI_${area.toUpperCase()}_CMS_SITE_BRIDGE } from "@/runtime-modules/${area}";`)
+    .join("\n");
+  const entries = areas
+    .map((area) => {
+      const name = area === "public" ? "Public" : AREA_NAMES[area];
+      return `  ${area}: {\n`
+        + `    cmsBridge: PHI_${area.toUpperCase()}_CMS_SITE_BRIDGE,\n`
+        + `    Boundary: dynamic(() =>\n`
+        + `      import("@/runtime-modules/${area}-client").then((m) => m.Phi${name}RuntimeModuleClientBoundary),\n`
+        + `    ),\n`
+        + `  },`;
+    })
+    .join("\n");
+
+  return {
+    "src/runtime-modules/error-areas.tsx":
+      `import dynamic from "next/dynamic";\n\n`
+      + `import type { PhiNextErrorAreaRegistry } from "@phis/ui/next/area-route";\n\n`
+      + `${bridgeImports}\n\n`
+      + `/**\n`
+      + ` * Which Area a root error route rebuilds its shell from.\n`
+      + ` *\n`
+      + ` * The boundaries are loaded per Area instead of imported outright. This registry is reachable from the\n`
+      + ` * root error routes, which are the fallback boundary for the whole app, so a plain import would put\n`
+      + ` * every Area's Client manifest into that graph; loading them this way fetches only the Area that is\n`
+      + ` * actually rendered.\n`
+      + ` */\n`
+      + `export const PHI_CMS_ERROR_AREAS: PhiNextErrorAreaRegistry = {\n${entries}\n};\n`,
+  };
+}
+
 function siteModuleProjectionFiles() {
   return {
     "src/generated/site-modules.ts":
@@ -176,13 +218,15 @@ export function buildPhiSiteScaffoldFiles(context: PhiSiteScaffoldContext) {
   const files: Record<string, string> = {
     ...runtimeModuleFiles(),
     ...siteModuleProjectionFiles(),
+    ...errorAreaRegistryFile(),
     ...dynamicRootFiles(),
     ...Object.assign({}, ...AREAS.map(staticAreaFiles)),
     "src/app/layout.tsx": `import { generatePhiNextRootMetadata, PhiNextRootLayout } from "@phis/ui/next/root-route";\n\nimport "./globals.css";\n\nexport const dynamic = "force-dynamic";\nexport const generateMetadata = generatePhiNextRootMetadata;\nexport default PhiNextRootLayout;\n`,
     "src/app/page.tsx": `import { PhiNextSiteIndexPage } from "@phis/ui/next/root-route";\n\nexport const dynamic = "force-dynamic";\nexport default PhiNextSiteIndexPage;\n`,
     "src/app/globals.css": "/* Site-specific global overrides may be added here. */\n",
-    "src/app/forbidden.tsx": `import { PhiCmsErrorPage } from "@phis/ui/cms/error-page";\nimport { PHI_PUBLIC_CMS_SITE_BRIDGE } from "@/runtime-modules/public";\n\nexport default function Forbidden() {\n  return <PhiCmsErrorPage code={403} cmsBridge={PHI_PUBLIC_CMS_SITE_BRIDGE} />;\n}\n`,
-    "src/app/unauthorized.tsx": `import { PhiCmsErrorPage } from "@phis/ui/cms/error-page";\nimport { PHI_PUBLIC_CMS_SITE_BRIDGE } from "@/runtime-modules/public";\n\nexport default function Unauthorized() {\n  return <PhiCmsErrorPage code={401} cmsBridge={PHI_PUBLIC_CMS_SITE_BRIDGE} />;\n}\n`,
+    "src/app/not-found.tsx": `import { createPhiNextRootErrorPage } from "@phis/ui/next/area-route";\nimport { PHI_CMS_ERROR_AREAS } from "@/runtime-modules/error-areas";\n\nexport default createPhiNextRootErrorPage(404, PHI_CMS_ERROR_AREAS);\n`,
+    "src/app/forbidden.tsx": `import { createPhiNextRootErrorPage } from "@phis/ui/next/area-route";\nimport { PHI_CMS_ERROR_AREAS } from "@/runtime-modules/error-areas";\n\nexport default createPhiNextRootErrorPage(403, PHI_CMS_ERROR_AREAS);\n`,
+    "src/app/unauthorized.tsx": `import { createPhiNextRootErrorPage } from "@phis/ui/next/area-route";\nimport { PHI_CMS_ERROR_AREAS } from "@/runtime-modules/error-areas";\n\nexport default createPhiNextRootErrorPage(401, PHI_CMS_ERROR_AREAS);\n`,
     "src/proxy.ts": `import type { NextRequest } from "next/server";\nimport { proxyPhiNextSiteRequest } from "@phis/ui/next/site-proxy";\n\nexport function proxy(request: NextRequest) {\n  return proxyPhiNextSiteRequest(request);\n}\n\nexport const config = { matcher: "/:path*" };\n`,
     "src/app/api/auth/[[...path]]/route.ts": proxyRoute("auth"),
     "src/app/api/site/[[...path]]/route.ts": proxyRoute("site"),
