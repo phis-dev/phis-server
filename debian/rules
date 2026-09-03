@@ -1,6 +1,11 @@
 #!/usr/bin/make -f
 ARTIFACT_DIR ?= ..
 
+# What this build is, for the runtime to report as its release. The commit is what identifies a build
+# across the stages that run it; the changelog version stands in where the package is built from an
+# exported source tree with no git history, so the field is never empty and never invented.
+PHIS_RELEASE_ID ?= $(shell git rev-parse --short=12 HEAD 2>/dev/null || dpkg-parsechangelog -SVersion)
+
 %:
 	dh $@
 
@@ -23,6 +28,9 @@ override_dh_auto_install:
 		ln -s "$$argon2_target" argon2 && \
 		pg_target=$$(printf '%s\n' .pnpm/pg@*/node_modules/pg) && \
 		ln -s "$$pg_target" pg
+	install -d debian/phis/usr/share/phis
+	printf '# Written by debian/rules at package build time. Do not edit.\nPHIS_RELEASE_ID=%s\n' \
+		'$(PHIS_RELEASE_ID)' > debian/phis/usr/share/phis/release.env
 
 override_dh_auto_test:
 	:
