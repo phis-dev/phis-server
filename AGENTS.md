@@ -135,12 +135,15 @@
   - `Phis*` / `PHIS_*` -- phis and the Add-ons it serves. Everything in `@phis/contracts`'s Add-on
     surface (`addon`, `assets`, `capabilities`, `core`, `queries`, `schema`, `media-storage`) plus
     every type this application keeps to itself.
-  - `Phi*` / `PHI_*` -- a name the Site UI reads too. `@phis/contracts`'s `access`, `http`, `locale`,
-    `logging`, `media`, `signals`, `site-groups` and `PhiCapabilityState` are that half, and it is the
-    same `Phi*` convention documented for shared components in `phis-ui`.
-  - `PhiServer*` belongs to `phis-ui` alone, where it marks the server side of a pair -- the props a
-    Server Component takes, the theme tokens the server delivers -- and the bare `Phi*` name is the
-    client's. Nothing here carries it; a `PhiServer*` name in this repository is a leftover.
+  - `Phi*` / `PHI_*` -- a name the Site UI reads too, and neutral about which side it came from:
+    `@phis/contracts`'s `access`, `http`, `locale`, `logging`, `media`, `signals` and `site-groups`.
+    It is the same `Phi*` convention documented for shared components in `phis-ui`.
+  - `PhiServer*` -- what the name says about the server, whoever reads it. It is what `phis-ui` marks
+    the server side of a pair with (the props a Server Component takes, the theme tokens the server
+    delivers), and it survives a move into the contract: `PhiServerCapabilityState` stays that even
+    though it lives in `@phis/contracts` and the UI reads it, because it is phis's verdict on a
+    provider and its sibling types in `phis-ui` spell it the same way. Being read by the UI is what
+    picks `Phi*` over `Phis*`; it does not override a name that is about the server.
   - "Server" inside a name (`PhiRuntimeModuleServerBinding`) describes the thing, not the namespace,
     and stays.
 
