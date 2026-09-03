@@ -141,7 +141,9 @@
     `phis-ui`.
   - `PhiServer*` belongs to `phis-ui` alone, where it marks the server side of a pair -- the props a
     Server Component takes, the theme tokens the server delivers -- against a bare `Phi*` name for the
-    client's. Nothing in this repository or in the contract carries it.
+    client's. Nothing in this repository or in the contract carries it. That half is written down in
+    `phis-ui/AGENTS.md`, which points back here for the two above; changing one without the other
+    leaves a rule that is only half true.
   - What decides between the first two is who reads the name, never who produced the value. The
     capability verdict is phis's own, and it is still `PhiCapabilityState`: the UI reads it, and what
     it describes is a provider -- Core or an Add-on -- rather than the server.
