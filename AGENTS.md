@@ -144,11 +144,12 @@
   - "Server" inside a name (`PhiRuntimeModuleServerBinding`) describes the thing, not the namespace.
 
 ## Testing Guidelines
-- No test framework or test script is configured yet.
-- If you add tests, include a run command in `package.json` and document the locations and naming pattern (for example `src/__tests__/`).
+- `pnpm test` runs the Vitest suite. `pnpm test:pg` runs the database-backed tests, which need
+  `PHIS_PG_TEST=1` and a reachable PostgreSQL; they are excluded from the default run.
+- Tests live beside the code they cover, named `*.test.ts`. A test that needs the database is named
+  `*.pg.test.ts`, which is what `vitest.pg.config.ts` selects on.
 
 ## Commit & Pull Request Guidelines
-- Git history currently contains only “Initial commit from Create Next App,” so no established convention exists yet.
 - Prefer short, imperative commit messages (e.g., “Add dashboard layout”).
 - Pull requests should include a clear description, local run steps, and screenshots for UI changes.
 - For larger changes, align with the operator first, for example on topology, deployment, DNS, or API/database changes, then implement.
