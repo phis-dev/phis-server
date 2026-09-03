@@ -10,7 +10,7 @@ import {
 } from "@/lib/guards/site-admin-api";
 import {
   getMediaSpaceById,
-  PhiMediaSpaceKind,
+  PhisMediaSpaceKind,
   resolveAuthorizedMediaSpace,
 } from "@/db/media-spaces";
 import { getMediaAssetBySiteAndId } from "@/db/media";
@@ -108,7 +108,7 @@ export async function requireMediaSpaceWriteContext(
   }
 
   const target = await getMediaSpaceById(context.site.id, targetSpaceId);
-  if (!target || target.kind === PhiMediaSpaceKind.Site) {
+  if (!target || target.kind === PhisMediaSpaceKind.Site) {
     return media;
   }
 
@@ -121,7 +121,7 @@ export async function requireMediaSpaceWriteContext(
   const authorized = await resolveAuthorizedMediaSpace({
     siteId: context.site.id,
     userId: context.session.userId,
-    requestedSpaceId: target.kind === PhiMediaSpaceKind.User
+    requestedSpaceId: target.kind === PhisMediaSpaceKind.User
       ? "user"
       : { kind: "group", groupId: target.groupId ?? 0 },
     intent: "write",
@@ -203,12 +203,12 @@ export async function requireMediaAssetContext(
   }
   const space = await getMediaSpaceById(context.site.id, asset.spaceId);
   // The Site Space is not delegated capacity; acting on what it holds is Media administration.
-  if (!space || space.kind === PhiMediaSpaceKind.Site) {
+  if (!space || space.kind === PhisMediaSpaceKind.Site) {
     return media;
   }
 
   const actorId = context.session.userId;
-  const granted = space.kind === PhiMediaSpaceKind.User
+  const granted = space.kind === PhisMediaSpaceKind.User
     // A User Space is one person's by definition, so the Space is the ownership answer.
     ? space.userId === actorId
     : await isGroupAssetActionAllowed({

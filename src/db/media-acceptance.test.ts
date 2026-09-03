@@ -3,7 +3,8 @@ import { describe, expect, it } from "vitest";
 import {
   isPhiMediaContentAllowedInSpace,
   isPhiMediaObjectSizeAllowed,
-  PhiMediaSpaceKind,
+  PhisMediaSpaceKind,
+  type PhisMediaSpaceKindValue,
   resolveMediaSpaceContentKinds,
 } from "@/db/media-spaces";
 
@@ -19,32 +20,32 @@ describe("Media acceptance rules", () => {
     userSpaceContentKinds: ["image"],
     groupSpaceContentKinds: ["document", "pdf"],
   };
-  const space = (kind: number) => ({ kind });
+  const space = (kind: PhisMediaSpaceKindValue) => ({ kind });
 
   describe("what a Space accepts", () => {
     it("accepts what a Module declared its Space for", () => {
-      expect(isPhiMediaContentAllowedInSpace("image/png", space(PhiMediaSpaceKind.User), config)).toBe(true);
-      expect(isPhiMediaContentAllowedInSpace("image/svg+xml", space(PhiMediaSpaceKind.User), config)).toBe(true);
+      expect(isPhiMediaContentAllowedInSpace("image/png", space(PhisMediaSpaceKind.User), config)).toBe(true);
+      expect(isPhiMediaContentAllowedInSpace("image/svg+xml", space(PhisMediaSpaceKind.User), config)).toBe(true);
     });
 
     it("refuses what no Module declared it for", () => {
-      expect(isPhiMediaContentAllowedInSpace("application/pdf", space(PhiMediaSpaceKind.User), config)).toBe(false);
-      expect(isPhiMediaContentAllowedInSpace("video/mp4", space(PhiMediaSpaceKind.User), config)).toBe(false);
+      expect(isPhiMediaContentAllowedInSpace("application/pdf", space(PhisMediaSpaceKind.User), config)).toBe(false);
+      expect(isPhiMediaContentAllowedInSpace("video/mp4", space(PhisMediaSpaceKind.User), config)).toBe(false);
     });
 
     it("keeps the two delegated kinds apart", () => {
       // The whole point of deriving per Space kind: a general library declaring everything for the
       // Site Space must not widen what a personal Space holds.
-      expect(isPhiMediaContentAllowedInSpace("application/pdf", space(PhiMediaSpaceKind.Group), config)).toBe(true);
-      expect(isPhiMediaContentAllowedInSpace("image/png", space(PhiMediaSpaceKind.Group), config)).toBe(false);
+      expect(isPhiMediaContentAllowedInSpace("application/pdf", space(PhisMediaSpaceKind.Group), config)).toBe(true);
+      expect(isPhiMediaContentAllowedInSpace("image/png", space(PhisMediaSpaceKind.Group), config)).toBe(false);
     });
 
     // The opposite reading from an administered list, and for a reason: this one is only ever empty
     // when no Module has spoken, and a Space nothing asked for holds nothing.
     it("accepts nothing when no Module declared anything", () => {
       const silent = { userSpaceContentKinds: [], groupSpaceContentKinds: [] };
-      expect(isPhiMediaContentAllowedInSpace("image/png", space(PhiMediaSpaceKind.User), silent)).toBe(false);
-      expect(isPhiMediaContentAllowedInSpace("text/plain", space(PhiMediaSpaceKind.Group), silent)).toBe(false);
+      expect(isPhiMediaContentAllowedInSpace("image/png", space(PhisMediaSpaceKind.User), silent)).toBe(false);
+      expect(isPhiMediaContentAllowedInSpace("text/plain", space(PhisMediaSpaceKind.Group), silent)).toBe(false);
     });
 
     // Not delegated capacity: `PHI_ACCESS_SITE_MEDIA` decides there, and what a Site publishes
@@ -52,22 +53,22 @@ describe("Media acceptance rules", () => {
     it("never restricts the Site Space", () => {
       const silent = { userSpaceContentKinds: [], groupSpaceContentKinds: [] };
       for (const contentType of ["image/png", "application/x-msdownload", "text/html", ""]) {
-        expect(isPhiMediaContentAllowedInSpace(contentType, space(PhiMediaSpaceKind.Site), silent)).toBe(true);
+        expect(isPhiMediaContentAllowedInSpace(contentType, space(PhisMediaSpaceKind.Site), silent)).toBe(true);
       }
-      expect(resolveMediaSpaceContentKinds(space(PhiMediaSpaceKind.Site), config)).toBeNull();
+      expect(resolveMediaSpaceContentKinds(space(PhisMediaSpaceKind.Site), config)).toBeNull();
     });
 
     it("decides on the kind rather than the exact type", () => {
       // A declaration names kinds, so a Module gets every type in the family without listing them.
       for (const contentType of ["image/png", "image/webp", "image/avif", "IMAGE/JPEG; charset=binary"]) {
-        expect(isPhiMediaContentAllowedInSpace(contentType, space(PhiMediaSpaceKind.User), config)).toBe(true);
+        expect(isPhiMediaContentAllowedInSpace(contentType, space(PhisMediaSpaceKind.User), config)).toBe(true);
       }
     });
 
     it("refuses an unclassifiable type against any declaration", () => {
       // `other` is what an unmapped type resolves to, and nothing declares it.
-      expect(isPhiMediaContentAllowedInSpace("", space(PhiMediaSpaceKind.User), config)).toBe(false);
-      expect(isPhiMediaContentAllowedInSpace("application/vnd.acme.invented", space(PhiMediaSpaceKind.Group), config))
+      expect(isPhiMediaContentAllowedInSpace("", space(PhisMediaSpaceKind.User), config)).toBe(false);
+      expect(isPhiMediaContentAllowedInSpace("application/vnd.acme.invented", space(PhisMediaSpaceKind.Group), config))
         .toBe(false);
     });
 
@@ -75,8 +76,8 @@ describe("Media acceptance rules", () => {
       // A newer Module's declaration travels as the string it is: refusing it here would make an older
       // control plane reject a Module that knows perfectly well what it means.
       const future = { userSpaceContentKinds: ["hologram"], groupSpaceContentKinds: [] };
-      expect(resolveMediaSpaceContentKinds(space(PhiMediaSpaceKind.User), future)).toEqual(["hologram"]);
-      expect(isPhiMediaContentAllowedInSpace("image/png", space(PhiMediaSpaceKind.User), future)).toBe(false);
+      expect(resolveMediaSpaceContentKinds(space(PhisMediaSpaceKind.User), future)).toEqual(["hologram"]);
+      expect(isPhiMediaContentAllowedInSpace("image/png", space(PhisMediaSpaceKind.User), future)).toBe(false);
     });
   });
 

@@ -14,7 +14,7 @@ import {
   setPhiTestMediaConfig,
   type PhiTestSite,
 } from "../../test/pg/harness";
-import { PhiMediaSpaceKind, resolveAuthorizedMediaSpace } from "./media-spaces";
+import { PhisMediaSpaceKind, resolveAuthorizedMediaSpace } from "./media-spaces";
 
 /**
  * What a Media write is authorized against.
@@ -69,7 +69,7 @@ describe("Media Space write authority against PostgreSQL", () => {
     });
 
     expect(first.ok && again.ok).toBe(true);
-    expect(first.ok && first.space.kind).toBe(PhiMediaSpaceKind.User);
+    expect(first.ok && first.space.kind).toBe(PhisMediaSpaceKind.User);
     // The same Space both times: a second write must not mint a second one.
     expect(first.ok && again.ok && first.space.id).toBe(again.ok ? again.space.id : -1);
   });

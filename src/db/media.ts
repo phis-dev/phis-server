@@ -8,7 +8,7 @@ import { PhiMediaUploadPurpose } from "@/lib/media-upload-sessions";
 import {
   PhiMediaDeliveryPolicy,
   PhiMediaLifecycleStatus,
-  PhiMediaSpaceKind,
+  PhisMediaSpaceKind,
   type MediaSpaceRecord,
   type MediaStorageProfileRecord,
 } from "@/db/media-spaces";
@@ -447,8 +447,8 @@ export async function createMediaAsset(input: {
  * purpose, and a group's file is the group's. The Site Space is Site content and stays public.
  */
 export function defaultMediaDeliveryPolicy(spaceKind: number | null | undefined) {
-  if (spaceKind === PhiMediaSpaceKind.User) return PhiMediaDeliveryPolicy.User;
-  if (spaceKind === PhiMediaSpaceKind.Group) return PhiMediaDeliveryPolicy.Group;
+  if (spaceKind === PhisMediaSpaceKind.User) return PhiMediaDeliveryPolicy.User;
+  if (spaceKind === PhisMediaSpaceKind.Group) return PhiMediaDeliveryPolicy.Group;
   return PhiMediaDeliveryPolicy.Public;
 }
 
@@ -510,7 +510,7 @@ export async function listPublicSiteSpaceMediaAssetsByIds(siteId: number, ids: r
     [
       siteId,
       uniqueIds,
-      PhiMediaSpaceKind.Site,
+      PhisMediaSpaceKind.Site,
       PhiMediaLifecycleStatus.Ready,
       PhiMediaDeliveryPolicy.Public,
     ],

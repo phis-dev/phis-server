@@ -3,7 +3,7 @@ import "server-only";
 import type { NextRequest } from "next/server";
 
 import type { MediaAssetRecord } from "@/db/media";
-import { getMediaSpaceById, isEffectiveMediaGroupMember, PhiMediaDeliveryPolicy, PhiMediaLifecycleStatus, PhiMediaSpaceKind } from "@/db/media-spaces";
+import { getMediaSpaceById, isEffectiveMediaGroupMember, PhiMediaDeliveryPolicy, PhiMediaLifecycleStatus, PhisMediaSpaceKind } from "@/db/media-spaces";
 import { getSessionFromRequest } from "@/db/user-sessions";
 import { getApiV1TokenMode } from "@/lib/api-v1-guard";
 
@@ -18,10 +18,10 @@ export async function canDeliverMediaAsset(request: NextRequest, asset: MediaAss
   const space = await getMediaSpaceById(asset.siteId, asset.spaceId);
   if (!space) return false;
   if (asset.deliveryPolicy === PhiMediaDeliveryPolicy.User) {
-    return space.kind === PhiMediaSpaceKind.User && space.userId === session.userId;
+    return space.kind === PhisMediaSpaceKind.User && space.userId === session.userId;
   }
   return asset.deliveryPolicy === PhiMediaDeliveryPolicy.Group &&
-    space.kind === PhiMediaSpaceKind.Group && space.groupId != null &&
+    space.kind === PhisMediaSpaceKind.Group && space.groupId != null &&
     await isEffectiveMediaGroupMember(asset.siteId, space.groupId, session.userId);
 }
 

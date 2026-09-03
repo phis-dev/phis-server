@@ -10,7 +10,7 @@ import type {
 } from "./contract.ts";
 import {
   PhiMediaDeliveryPolicy,
-  PhiMediaSpaceKind,
+  PhisMediaSpaceKind,
   ensureAddonMediaSpace,
   ensureSiteMediaConfig,
   getMediaStorageProfile,
@@ -356,7 +356,7 @@ export function buildPhiServerAddonAssetsCapability(input: {
         const asset = await createMediaAsset({
           siteId,
           spaceId: space.id,
-          spaceKind: PhiMediaSpaceKind.Addon,
+          spaceKind: PhisMediaSpaceKind.Addon,
           createdByUserId: input.actorUserId,
           storageProfileId: profile.id,
           storageKey: session.stagingStorageKey,

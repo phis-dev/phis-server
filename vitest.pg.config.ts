@@ -20,6 +20,7 @@ export default defineConfig({
     environment: "node",
     clearMocks: true,
     include: ["**/*.pg.test.ts"],
+    exclude: ["**/node_modules/**", "**/dist/**", "**/.next/**"],
     fileParallelism: false,
     pool: "threads",
     poolOptions: { threads: { singleThread: true } },

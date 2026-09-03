@@ -25,7 +25,7 @@ vi.mock("@/db/media", () => ({ getMediaAssetBySiteAndId: mocks.asset }));
 vi.mock("@/db/media-spaces", () => ({
   getMediaSpaceById: mocks.space,
   resolveAuthorizedMediaSpace: vi.fn(),
-  PhiMediaSpaceKind: { Site: 1, User: 2, Group: 3 },
+  PhisMediaSpaceKind: { Site: 1, User: 2, Group: 3 },
 }));
 vi.mock("@/db/site-groups", () => ({ readEffectiveGroupMembershipFlags: mocks.flags }));
 vi.mock("@/lib/authorization", () => ({

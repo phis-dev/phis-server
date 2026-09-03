@@ -11,7 +11,8 @@ import {
   ensureSiteMediaConfig,
   isPhiMediaContentAllowedInSpace,
   isPhiMediaObjectSizeAllowed,
-  PhiMediaSpaceKind,
+  PhisMediaSpaceKind,
+  type PhisMediaSpaceKindValue,
   updateSiteMediaConfig,
 } from "./media-spaces";
 
@@ -25,7 +26,7 @@ import {
  */
 describe("Media acceptance limits against PostgreSQL", () => {
   let site: PhiTestSite;
-  const space = (kind: number) => ({ kind });
+  const space = (kind: PhisMediaSpaceKindValue) => ({ kind });
 
   beforeAll(async () => {
     await dropPhiTestSites();
@@ -44,9 +45,9 @@ describe("Media acceptance limits against PostgreSQL", () => {
     expect(config.userSpaceContentKinds).toEqual([]);
     expect(config.groupSpaceContentKinds).toEqual([]);
     // Nothing has been published, so no Module has said what a delegated Space is for.
-    expect(isPhiMediaContentAllowedInSpace("image/png", space(PhiMediaSpaceKind.User), config)).toBe(false);
+    expect(isPhiMediaContentAllowedInSpace("image/png", space(PhisMediaSpaceKind.User), config)).toBe(false);
     // The Site Space needs no declaration; a role decides there.
-    expect(isPhiMediaContentAllowedInSpace("application/x-msdownload", space(PhiMediaSpaceKind.Site), config))
+    expect(isPhiMediaContentAllowedInSpace("application/x-msdownload", space(PhisMediaSpaceKind.Site), config))
       .toBe(true);
     expect(isPhiMediaObjectSizeAllowed(26_214_400, config)).toBe(true);
     expect(isPhiMediaObjectSizeAllowed(26_214_401, config)).toBe(false);
@@ -61,9 +62,9 @@ describe("Media acceptance limits against PostgreSQL", () => {
 
     expect(config.userSpaceContentKinds).toEqual(["image"]);
     expect(config.groupSpaceContentKinds).toEqual(["pdf", "document"]);
-    expect(isPhiMediaContentAllowedInSpace("image/png", space(PhiMediaSpaceKind.User), config)).toBe(true);
-    expect(isPhiMediaContentAllowedInSpace("application/pdf", space(PhiMediaSpaceKind.User), config)).toBe(false);
-    expect(isPhiMediaContentAllowedInSpace("application/pdf", space(PhiMediaSpaceKind.Group), config)).toBe(true);
+    expect(isPhiMediaContentAllowedInSpace("image/png", space(PhisMediaSpaceKind.User), config)).toBe(true);
+    expect(isPhiMediaContentAllowedInSpace("application/pdf", space(PhisMediaSpaceKind.User), config)).toBe(false);
+    expect(isPhiMediaContentAllowedInSpace("application/pdf", space(PhisMediaSpaceKind.Group), config)).toBe(true);
   });
 
   // The point of the whole change: an administrative write must not be able to reach these.

@@ -23,7 +23,17 @@ type MediaSpaceDbQueryable = Pick<PoolClient, "query">;
  * between somebody's photographs. It exists so that the Space's quota **is** the Add-on's quota --
  * one account over one set of bytes, rather than two that drift apart.
  */
-export const PhiMediaSpaceKind = { Site: 1, User: 2, Group: 3, Addon: 4 } as const;
+/**
+ * How this server stores the kind of a Space.
+ *
+ * The numbers are the stored contract and never change. They are deliberately not in
+ * `@phis/contracts`: a Site never sees them, it is handed the wire name instead.
+ */
+export const PhisMediaSpaceKind = { Site: 1, User: 2, Group: 3, Addon: 4 } as const;
+
+export type PhisMediaSpaceKindValue = (typeof PhisMediaSpaceKind)[keyof typeof PhisMediaSpaceKind];
+
+const MEDIA_SPACE_KIND_VALUES = new Set<number>(Object.values(PhisMediaSpaceKind));
 export const PhiMediaLifecycleStatus = { Pending: 1, Ready: 2, Archived: 3, Quarantined: 4, Failed: 5 } as const;
 export const PhiMediaDeliveryPolicy = { Public: 1, Authenticated: 2, User: 3, Group: 4, Internal: 5 } as const;
 
@@ -40,7 +50,7 @@ export type MediaStorageProfileRecord = {
 export type MediaSpaceRecord = {
   id: number;
   siteId: number;
-  kind: number;
+  kind: PhisMediaSpaceKindValue;
   userId: number | null;
   groupId: number | null;
   defaultStorageProfileId: number;
@@ -75,11 +85,25 @@ type SpaceRow = {
   reserved_bytes: number | string; flags: number;
 };
 
+/**
+ * A stored kind this release does not know is a data fault, not a Space to guess at.
+ *
+ * Quota ceiling, delivery policy and the wire name all branch on it, and the previous reader mapped an
+ * unknown value to "site" -- which is how an Add-on Space reached the administration surface calling
+ * itself a Site Space. There is no CHECK constraint behind the column, so this is where it is caught.
+ */
+function requireSpaceKind(value: number): PhisMediaSpaceKindValue {
+  if (!MEDIA_SPACE_KIND_VALUES.has(value)) {
+    throw new Error(`Unknown media space kind: ${value}`);
+  }
+  return value as PhisMediaSpaceKindValue;
+}
+
 function mapSpace(row: SpaceRow): MediaSpaceRecord {
   return {
     id: row.id,
     siteId: row.site_id,
-    kind: row.kind,
+    kind: requireSpaceKind(row.kind),
     userId: row.user_id,
     groupId: row.group_id,
     defaultStorageProfileId: row.default_storage_profile_id,
@@ -160,7 +184,7 @@ export async function ensureSiteMediaSpace(siteId: number) {
      FROM phis.media_spaces s
      JOIN phis.media_storage_profiles p ON p.id = s.default_storage_profile_id AND p.site_id = s.site_id
      WHERE s.site_id = $1 AND s.kind = $2`,
-    [siteId, PhiMediaSpaceKind.Site],
+    [siteId, PhisMediaSpaceKind.Site],
   );
   const hit = existing.rows[0];
   if (hit && hit.config && Object.keys(hit.config).length > 0) {
@@ -194,7 +218,7 @@ export async function ensureSiteMediaSpace(siteId: number) {
        DO UPDATE SET updated_at = NOW()
        RETURNING id, site_id, kind, user_id, group_id, default_storage_profile_id,
                  quota_bytes, used_bytes, reserved_bytes, flags`,
-      [siteId, PhiMediaSpaceKind.Site, profile.id],
+      [siteId, PhisMediaSpaceKind.Site, profile.id],
     );
     await client.query("COMMIT");
     return { space: mapSpace(rows[0]!), profile };
@@ -223,7 +247,7 @@ export async function ensureAddonMediaSpace(siteId: number, addonId: string) {
             s.quota_bytes, s.used_bytes, ${liveReservedBytes("s")} AS reserved_bytes, s.flags
        FROM phis.media_spaces s
       WHERE s.site_id = $1 AND s.kind = $2 AND s.addon_id = $3`,
-    [siteId, PhiMediaSpaceKind.Addon, addonId],
+    [siteId, PhisMediaSpaceKind.Addon, addonId],
   );
   if (existing.rows[0]) {
     return mapSpace(existing.rows[0]);
@@ -238,7 +262,7 @@ export async function ensureAddonMediaSpace(siteId: number, addonId: string) {
      DO UPDATE SET updated_at = NOW()
      RETURNING id, site_id, kind, user_id, group_id, default_storage_profile_id,
                quota_bytes, used_bytes, reserved_bytes, flags`,
-    [siteId, PhiMediaSpaceKind.Addon, addonId, profile.id],
+    [siteId, PhisMediaSpaceKind.Addon, addonId, profile.id],
   );
   return mapSpace(rows[0]!);
 }
@@ -259,7 +283,7 @@ export async function listAddonMediaSpaces(siteId: number) {
        FROM phis.media_spaces s
       WHERE s.site_id = $1 AND s.kind = $2
       ORDER BY s.addon_id`,
-    [siteId, PhiMediaSpaceKind.Addon],
+    [siteId, PhisMediaSpaceKind.Addon],
   );
   return rows.map((row) => ({ addonId: row.addon_id, space: mapSpace(row) }));
 }
@@ -411,9 +435,9 @@ export async function reserveMediaSpaceQuota(input: { spaceId: number; bytes: nu
               COALESCE(
                 s.quota_bytes,
                 CASE s.kind
-                  WHEN ${PhiMediaSpaceKind.User} THEN c.default_user_quota_bytes
-                  WHEN ${PhiMediaSpaceKind.Group} THEN c.default_group_quota_bytes
-                  WHEN ${PhiMediaSpaceKind.Addon} THEN c.default_addon_quota_bytes
+                  WHEN ${PhisMediaSpaceKind.User} THEN c.default_user_quota_bytes
+                  WHEN ${PhisMediaSpaceKind.Group} THEN c.default_group_quota_bytes
+                  WHEN ${PhisMediaSpaceKind.Addon} THEN c.default_addon_quota_bytes
                 END
               ) AS quota
        FROM phis.media_spaces s
@@ -487,9 +511,9 @@ function mapSiteMediaConfig(row: {
  * The ceiling that applies to one Space kind. The Site Space has none: it is not delegated capacity.
  */
 export function resolveMediaQuotaCeilingBytes(kind: number, config: SiteMediaConfigRecord) {
-  if (kind === PhiMediaSpaceKind.User) return config.maxUserQuotaBytes;
-  if (kind === PhiMediaSpaceKind.Group) return config.maxGroupQuotaBytes;
-  if (kind === PhiMediaSpaceKind.Addon) return config.maxAddonQuotaBytes;
+  if (kind === PhisMediaSpaceKind.User) return config.maxUserQuotaBytes;
+  if (kind === PhisMediaSpaceKind.Group) return config.maxGroupQuotaBytes;
+  if (kind === PhisMediaSpaceKind.Addon) return config.maxAddonQuotaBytes;
   return null;
 }
 
@@ -669,7 +693,7 @@ export async function ensureGroupMediaSpace(siteId: number, groupId: number) {
        DO UPDATE SET updated_at = NOW()
        RETURNING id, site_id, kind, user_id, group_id, default_storage_profile_id,
                  quota_bytes, used_bytes, reserved_bytes, flags`,
-      [siteId, PhiMediaSpaceKind.Group, groupId, profile.id],
+      [siteId, PhisMediaSpaceKind.Group, groupId, profile.id],
     );
     await client.query("COMMIT");
     // No row means the group does not exist on this Site or is retired; the caller reports that.
@@ -691,17 +715,17 @@ export async function getGroupMediaSpace(siteId: number, groupId: number) {
     `SELECT id, site_id, kind, user_id, group_id, default_storage_profile_id,
             quota_bytes, used_bytes, ${liveReservedBytes("")} AS reserved_bytes, flags
      FROM phis.media_spaces WHERE site_id = $1 AND kind = $2 AND group_id = $3`,
-    [siteId, PhiMediaSpaceKind.Group, groupId],
+    [siteId, PhisMediaSpaceKind.Group, groupId],
   );
   return rows[0] ? mapSpace(rows[0]) : null;
 }
 
 export function isPhiMediaSpaceKindEnabled(config: SiteMediaConfigRecord, kind: number) {
-  if (kind === PhiMediaSpaceKind.Site) return true;
-  if (kind === PhiMediaSpaceKind.User) {
+  if (kind === PhisMediaSpaceKind.Site) return true;
+  if (kind === PhisMediaSpaceKind.User) {
     return (config.flags & PhiSiteMediaFlags.UserSpacesEnabled) !== 0;
   }
-  if (kind === PhiMediaSpaceKind.Group) {
+  if (kind === PhisMediaSpaceKind.Group) {
     return (config.flags & PhiSiteMediaFlags.GroupSpacesEnabled) !== 0;
   }
   return false;
@@ -719,8 +743,8 @@ export function resolveEffectiveMediaQuotaBytes(
   config: SiteMediaConfigRecord,
 ): number | null {
   if (space.quotaBytes != null) return space.quotaBytes;
-  if (space.kind === PhiMediaSpaceKind.User) return config.defaultUserQuotaBytes;
-  if (space.kind === PhiMediaSpaceKind.Group) return config.defaultGroupQuotaBytes;
+  if (space.kind === PhisMediaSpaceKind.User) return config.defaultUserQuotaBytes;
+  if (space.kind === PhisMediaSpaceKind.Group) return config.defaultGroupQuotaBytes;
   return null;
 }
 
@@ -774,7 +798,7 @@ export async function resolveAuthorizedMediaSpace(input: {
   // the contract's lazy creation on first authorized use, gated on the availability flag. A numeric id
   // can only ever address a Space that already exists.
   if (input.requestedSpaceId === "user") {
-    if (!isPhiMediaSpaceKindEnabled(config, PhiMediaSpaceKind.User)) {
+    if (!isPhiMediaSpaceKindEnabled(config, PhisMediaSpaceKind.User)) {
       return { ok: false, reason: "space_kind_unavailable" };
     }
     const space = await ensureUserMediaSpace(input.siteId, input.userId);
@@ -783,7 +807,7 @@ export async function resolveAuthorizedMediaSpace(input: {
 
   if (typeof input.requestedSpaceId === "object" && input.requestedSpaceId.kind === "group") {
     const groupId = input.requestedSpaceId.groupId;
-    if (!isPhiMediaSpaceKindEnabled(config, PhiMediaSpaceKind.Group)) {
+    if (!isPhiMediaSpaceKindEnabled(config, PhisMediaSpaceKind.Group)) {
       return { ok: false, reason: "space_kind_unavailable" };
     }
     // A group that does not exist is not an empty Space; it is nothing. Checked before authority,
@@ -830,13 +854,13 @@ export async function resolveAuthorizedMediaSpace(input: {
 
   // Targeted authorization instead of materializing the full authorized list: a User Space belongs
   // to exactly one user and a Group Space to one group's effective members.
-  const authorized = input.siteWide || space.kind === PhiMediaSpaceKind.Site ||
-    (space.kind === PhiMediaSpaceKind.User && space.userId === input.userId) ||
-    (space.kind === PhiMediaSpaceKind.Group && space.groupId != null &&
+  const authorized = input.siteWide || space.kind === PhisMediaSpaceKind.Site ||
+    (space.kind === PhisMediaSpaceKind.User && space.userId === input.userId) ||
+    (space.kind === PhisMediaSpaceKind.Group && space.groupId != null &&
       await isEffectiveMediaGroupMember(input.siteId, space.groupId, input.userId));
   if (!authorized) return { ok: false, reason: "space_forbidden" };
   // The same rule as the `group:<id>` branch above, reached by Space id instead of by group.
-  if (input.intent === "write" && space.kind === PhiMediaSpaceKind.Group && space.groupId != null) {
+  if (input.intent === "write" && space.kind === PhisMediaSpaceKind.Group && space.groupId != null) {
     const group = await getSiteGroupById(input.siteId, space.groupId);
     if (group?.retiredAt != null) return { ok: false, reason: "space_forbidden" };
   }
@@ -865,7 +889,7 @@ export async function listSelectableMediaSpaces(input: {
     spaces,
     // A group the actor belongs to belongs in the selector whether or not anything has been written to
     // it: discovery is a Member right, and it must not be the thing that creates the row.
-    pendingGroups: isPhiMediaSpaceKindEnabled(config, PhiMediaSpaceKind.Group)
+    pendingGroups: isPhiMediaSpaceKindEnabled(config, PhisMediaSpaceKind.Group)
       ? await listGroupsWithoutMediaSpace(input.siteId, input.userId)
       : [],
   };
@@ -887,7 +911,7 @@ export async function listGroupsWithoutMediaSpace(siteId: number, userId: number
      LEFT JOIN phis.media_spaces s ON s.site_id = g.site_id AND s.kind = $3 AND s.group_id = g.id
      WHERE g.site_id = $1 AND s.id IS NULL AND g.retired_at IS NULL
      ORDER BY g.name, g.id`,
-    [siteId, userId, PhiMediaSpaceKind.Group],
+    [siteId, userId, PhisMediaSpaceKind.Group],
   );
   return rows;
 }
@@ -984,7 +1008,7 @@ export async function ensureUserMediaSpace(siteId: number, userId: number) {
     `SELECT id, site_id, kind, user_id, group_id, default_storage_profile_id,
             quota_bytes, used_bytes, ${liveReservedBytes("")} AS reserved_bytes, flags
      FROM phis.media_spaces WHERE site_id = $1 AND kind = $2 AND user_id = $3`,
-    [siteId, PhiMediaSpaceKind.User, userId],
+    [siteId, PhisMediaSpaceKind.User, userId],
   );
   if (existing.rows[0]) return mapSpace(existing.rows[0]);
 
@@ -1004,7 +1028,7 @@ export async function ensureUserMediaSpace(siteId: number, userId: number) {
        DO UPDATE SET updated_at = NOW()
        RETURNING id, site_id, kind, user_id, group_id, default_storage_profile_id,
                  quota_bytes, used_bytes, reserved_bytes, flags`,
-      [siteId, PhiMediaSpaceKind.User, userId, profile.id],
+      [siteId, PhisMediaSpaceKind.User, userId, profile.id],
     );
     await client.query("COMMIT");
     return mapSpace(rows[0]!);
@@ -1037,8 +1061,8 @@ export function resolveMediaSpaceContentKinds(
   space: Pick<MediaSpaceRecord, "kind">,
   config: Pick<SiteMediaConfigRecord, "userSpaceContentKinds" | "groupSpaceContentKinds">,
 ): readonly string[] | null {
-  if (space.kind === PhiMediaSpaceKind.User) return config.userSpaceContentKinds;
-  if (space.kind === PhiMediaSpaceKind.Group) return config.groupSpaceContentKinds;
+  if (space.kind === PhisMediaSpaceKind.User) return config.userSpaceContentKinds;
+  if (space.kind === PhisMediaSpaceKind.Group) return config.groupSpaceContentKinds;
   return null;
 }
 

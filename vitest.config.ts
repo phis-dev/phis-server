@@ -15,6 +15,6 @@ export default defineConfig({
     environment: "node",
     clearMocks: true,
     // The integration suite needs a live database and its own single-threaded config.
-    exclude: ["**/node_modules/**", "**/dist/**", "**/*.pg.test.ts"],
+    exclude: ["**/node_modules/**", "**/dist/**", "**/.next/**", "**/*.pg.test.ts"],
   },
 });

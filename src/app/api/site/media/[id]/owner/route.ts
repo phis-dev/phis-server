@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { getMediaAssetBySiteAndId, setMediaAssetOwner } from "@/db/media";
-import { getMediaSpaceById, PhiMediaSpaceKind } from "@/db/media-spaces";
+import { getMediaSpaceById, PhisMediaSpaceKind } from "@/db/media-spaces";
 import { getSessionFromRequest } from "@/db/user-sessions";
 import {
   canTransferMediaAssetOwnership,
@@ -68,7 +68,7 @@ export async function PUT(
       return NextResponse.json({ error: "Media asset not found." }, { status: 404 });
     }
     const space = await getMediaSpaceById(site.id, asset.spaceId);
-    if (!space || space.kind !== PhiMediaSpaceKind.Group) {
+    if (!space || space.kind !== PhisMediaSpaceKind.Group) {
       // A User Space has one owner by construction and the Site Space has none; neither is handed over.
       return NextResponse.json({ error: "media_asset_owner_fixed" }, { status: 409 });
     }

@@ -7,7 +7,7 @@ import {
   ensureUserMediaSpace,
   getMediaSpaceById,
   isPhiMediaSpaceKindEnabled,
-  PhiMediaSpaceKind,
+  PhisMediaSpaceKind,
   resolveMediaQuotaCeilingBytes,
   setMediaSpaceQuotaBytes,
   type MediaSpaceRecord,
@@ -87,7 +87,7 @@ export async function PATCH(
     if (!space) return NextResponse.json({ error: "space_not_found" }, { status: 404 });
     if (!siteWide) {
       // A Manager reaches their own group's Space by any address; nothing else is theirs to size.
-      const flags = space.kind === PhiMediaSpaceKind.Group && space.groupId != null
+      const flags = space.kind === PhisMediaSpaceKind.Group && space.groupId != null
         ? await readEffectiveGroupMembershipFlags(siteId, space.groupId, userId)
         : 0;
       if ((flags & PhiGroupMembershipFlags.Manager) !== PhiGroupMembershipFlags.Manager) {
@@ -95,7 +95,7 @@ export async function PATCH(
       }
     }
   } else if (requested.kind === "group") {
-    if (!isPhiMediaSpaceKindEnabled(config, PhiMediaSpaceKind.Group)) {
+    if (!isPhiMediaSpaceKindEnabled(config, PhisMediaSpaceKind.Group)) {
       return NextResponse.json({ error: "space_kind_unavailable" }, { status: 409 });
     }
     if (!siteWide) {
@@ -109,7 +109,7 @@ export async function PATCH(
   } else {
     // Naming another user's Space is administration and has no group Manager equivalent.
     if (!siteWide) return NextResponse.json({ error: "space_forbidden" }, { status: 403 });
-    if (!isPhiMediaSpaceKindEnabled(config, PhiMediaSpaceKind.User)) {
+    if (!isPhiMediaSpaceKindEnabled(config, PhisMediaSpaceKind.User)) {
       return NextResponse.json({ error: "space_kind_unavailable" }, { status: 409 });
     }
     space = await ensureUserMediaSpace(siteId, requested.userId);

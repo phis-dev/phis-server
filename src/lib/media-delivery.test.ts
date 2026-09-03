@@ -24,7 +24,7 @@ vi.mock("@/lib/api-v1-guard", () => ({ getApiV1TokenMode: mocks.tokenMode }));
 import {
   PhiMediaDeliveryPolicy,
   PhiMediaLifecycleStatus,
-  PhiMediaSpaceKind,
+  PhisMediaSpaceKind,
 } from "@/db/media-spaces";
 import { canDeliverMediaAsset, mediaDeliveryCacheControl, mediaDeliverySafetyHeaders } from "./media-delivery";
 
@@ -108,7 +108,7 @@ describe("Who may be delivered a Media Asset", () => {
       PhiMediaLifecycleStatus.Failed,
     ]) {
       for (const deliveryPolicy of Object.values(PhiMediaDeliveryPolicy)) {
-        visitor({ token: "internal", userId: 7, space: { kind: PhiMediaSpaceKind.Site } });
+        visitor({ token: "internal", userId: 7, space: { kind: PhisMediaSpaceKind.Site } });
         await expect(
           canDeliverMediaAsset(delivery(), protectedAsset({ lifecycleStatus, deliveryPolicy })),
           `${lifecycleStatus}/${deliveryPolicy}`,
@@ -138,27 +138,27 @@ describe("Who may be delivered a Media Asset", () => {
 
   it("delivers a User Asset to the owner of the Space it sits in", async () => {
     const own = protectedAsset({ deliveryPolicy: PhiMediaDeliveryPolicy.User });
-    visitor({ userId: 7, space: { kind: PhiMediaSpaceKind.User, userId: 7 } });
+    visitor({ userId: 7, space: { kind: PhisMediaSpaceKind.User, userId: 7 } });
     await expect(canDeliverMediaAsset(delivery(), own)).resolves.toBe(true);
-    visitor({ userId: 8, space: { kind: PhiMediaSpaceKind.User, userId: 7 } });
+    visitor({ userId: 8, space: { kind: PhisMediaSpaceKind.User, userId: 7 } });
     await expect(canDeliverMediaAsset(delivery(), own)).resolves.toBe(false);
     // The policy names the Space kind too: a User policy on a Group Space grants nothing.
-    visitor({ userId: 7, space: { kind: PhiMediaSpaceKind.Group, groupId: 2 }, member: true });
+    visitor({ userId: 7, space: { kind: PhisMediaSpaceKind.Group, groupId: 2 }, member: true });
     await expect(canDeliverMediaAsset(delivery(), own)).resolves.toBe(false);
   });
 
   it("delivers a Group Asset to an effective member of that group", async () => {
     const shared = protectedAsset({ deliveryPolicy: PhiMediaDeliveryPolicy.Group });
-    visitor({ userId: 7, space: { kind: PhiMediaSpaceKind.Group, groupId: 2 }, member: true });
+    visitor({ userId: 7, space: { kind: PhisMediaSpaceKind.Group, groupId: 2 }, member: true });
     await expect(canDeliverMediaAsset(delivery(), shared)).resolves.toBe(true);
     expect(mocks.groupMember).toHaveBeenCalledWith(31, 2, 7);
 
-    visitor({ userId: 7, space: { kind: PhiMediaSpaceKind.Group, groupId: 2 }, member: false });
+    visitor({ userId: 7, space: { kind: PhisMediaSpaceKind.Group, groupId: 2 }, member: false });
     await expect(canDeliverMediaAsset(delivery(), shared)).resolves.toBe(false);
     // Membership is asked for per request, so a retired group stops delivering without any Asset write.
-    visitor({ userId: 7, space: { kind: PhiMediaSpaceKind.Group, groupId: null }, member: true });
+    visitor({ userId: 7, space: { kind: PhisMediaSpaceKind.Group, groupId: null }, member: true });
     await expect(canDeliverMediaAsset(delivery(), shared)).resolves.toBe(false);
-    visitor({ userId: 7, space: { kind: PhiMediaSpaceKind.Site }, member: true });
+    visitor({ userId: 7, space: { kind: PhisMediaSpaceKind.Site }, member: true });
     await expect(canDeliverMediaAsset(delivery(), shared)).resolves.toBe(false);
   });
 
@@ -170,7 +170,7 @@ describe("Who may be delivered a Media Asset", () => {
   });
 
   it("refuses a delivery policy it does not know", async () => {
-    visitor({ token: "internal", userId: 7, space: { kind: PhiMediaSpaceKind.Site } });
+    visitor({ token: "internal", userId: 7, space: { kind: PhisMediaSpaceKind.Site } });
     await expect(canDeliverMediaAsset(delivery(), protectedAsset({ deliveryPolicy: 99 }))).resolves.toBe(false);
   });
 

@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   isPhiMediaSpaceKindEnabled,
-  PhiMediaSpaceKind,
+  PhisMediaSpaceKind,
   readDeclaredMediaSpaces,
   resolveEffectiveMediaQuotaBytes,
   type SiteMediaConfigRecord,
@@ -35,22 +35,22 @@ function config(overrides: Partial<SiteMediaConfigRecord> = {}): SiteMediaConfig
 describe("Media Space availability", () => {
   it("denies User and Group Spaces on a Site that was never configured", () => {
     const unconfigured = config();
-    expect(isPhiMediaSpaceKindEnabled(unconfigured, PhiMediaSpaceKind.User)).toBe(false);
-    expect(isPhiMediaSpaceKindEnabled(unconfigured, PhiMediaSpaceKind.Group)).toBe(false);
+    expect(isPhiMediaSpaceKindEnabled(unconfigured, PhisMediaSpaceKind.User)).toBe(false);
+    expect(isPhiMediaSpaceKindEnabled(unconfigured, PhisMediaSpaceKind.Group)).toBe(false);
   });
 
   it("always keeps the Site Space available", () => {
-    expect(isPhiMediaSpaceKindEnabled(config(), PhiMediaSpaceKind.Site)).toBe(true);
+    expect(isPhiMediaSpaceKindEnabled(config(), PhisMediaSpaceKind.Site)).toBe(true);
   });
 
   it("enables the two kinds independently", () => {
     const userOnly = config({ flags: PhiSiteMediaFlags.UserSpacesEnabled });
-    expect(isPhiMediaSpaceKindEnabled(userOnly, PhiMediaSpaceKind.User)).toBe(true);
-    expect(isPhiMediaSpaceKindEnabled(userOnly, PhiMediaSpaceKind.Group)).toBe(false);
+    expect(isPhiMediaSpaceKindEnabled(userOnly, PhisMediaSpaceKind.User)).toBe(true);
+    expect(isPhiMediaSpaceKindEnabled(userOnly, PhisMediaSpaceKind.Group)).toBe(false);
 
     const groupOnly = config({ flags: PhiSiteMediaFlags.GroupSpacesEnabled });
-    expect(isPhiMediaSpaceKindEnabled(groupOnly, PhiMediaSpaceKind.User)).toBe(false);
-    expect(isPhiMediaSpaceKindEnabled(groupOnly, PhiMediaSpaceKind.Group)).toBe(true);
+    expect(isPhiMediaSpaceKindEnabled(groupOnly, PhisMediaSpaceKind.User)).toBe(false);
+    expect(isPhiMediaSpaceKindEnabled(groupOnly, PhisMediaSpaceKind.Group)).toBe(true);
   });
 
   it("rejects an unknown Space kind", () => {
@@ -143,36 +143,36 @@ describe("effective quota resolution", () => {
   const site = config({ defaultUserQuotaBytes: 1_000, defaultGroupQuotaBytes: 5_000 });
 
   it("inherits the Site default per kind when the Space has no override", () => {
-    expect(resolveEffectiveMediaQuotaBytes({ kind: PhiMediaSpaceKind.User, quotaBytes: null }, site))
+    expect(resolveEffectiveMediaQuotaBytes({ kind: PhisMediaSpaceKind.User, quotaBytes: null }, site))
       .toBe(1_000);
-    expect(resolveEffectiveMediaQuotaBytes({ kind: PhiMediaSpaceKind.Group, quotaBytes: null }, site))
+    expect(resolveEffectiveMediaQuotaBytes({ kind: PhisMediaSpaceKind.Group, quotaBytes: null }, site))
       .toBe(5_000);
   });
 
   it("inherits live, so changing the Site default moves every non-overridden Space", () => {
-    const space = { kind: PhiMediaSpaceKind.User, quotaBytes: null };
+    const space = { kind: PhisMediaSpaceKind.User, quotaBytes: null };
     expect(resolveEffectiveMediaQuotaBytes(space, site)).toBe(1_000);
     expect(resolveEffectiveMediaQuotaBytes(space, { ...site, defaultUserQuotaBytes: 2_000 }))
       .toBe(2_000);
   });
 
   it("prefers an explicit override over the default", () => {
-    expect(resolveEffectiveMediaQuotaBytes({ kind: PhiMediaSpaceKind.User, quotaBytes: 42 }, site))
+    expect(resolveEffectiveMediaQuotaBytes({ kind: PhisMediaSpaceKind.User, quotaBytes: 42 }, site))
       .toBe(42);
   });
 
   it("treats an explicit zero as revocation rather than as an absent override", () => {
-    expect(resolveEffectiveMediaQuotaBytes({ kind: PhiMediaSpaceKind.User, quotaBytes: 0 }, site))
+    expect(resolveEffectiveMediaQuotaBytes({ kind: PhisMediaSpaceKind.User, quotaBytes: 0 }, site))
       .toBe(0);
   });
 
   it("leaves the Site Space unlimited and independent of the per-kind defaults", () => {
-    expect(resolveEffectiveMediaQuotaBytes({ kind: PhiMediaSpaceKind.Site, quotaBytes: null }, site))
+    expect(resolveEffectiveMediaQuotaBytes({ kind: PhisMediaSpaceKind.Site, quotaBytes: null }, site))
       .toBeNull();
   });
 
   it("resolves to no limit when neither an override nor a default exists", () => {
-    expect(resolveEffectiveMediaQuotaBytes({ kind: PhiMediaSpaceKind.User, quotaBytes: null }, config()))
+    expect(resolveEffectiveMediaQuotaBytes({ kind: PhisMediaSpaceKind.User, quotaBytes: null }, config()))
       .toBeNull();
   });
 });
@@ -216,17 +216,17 @@ describe("Media Space addresses", () => {
 describe("Media quota ceiling", () => {
   it("applies per Space kind and never to the Site Space", () => {
     const limited = config({ maxUserQuotaBytes: 100, maxGroupQuotaBytes: 200, maxAddonQuotaBytes: 300 });
-    expect(resolveMediaQuotaCeilingBytes(PhiMediaSpaceKind.User, limited)).toBe(100);
-    expect(resolveMediaQuotaCeilingBytes(PhiMediaSpaceKind.Group, limited)).toBe(200);
+    expect(resolveMediaQuotaCeilingBytes(PhisMediaSpaceKind.User, limited)).toBe(100);
+    expect(resolveMediaQuotaCeilingBytes(PhisMediaSpaceKind.Group, limited)).toBe(200);
     // An Add-on's Space is delegated capacity like the other two: the Space's quota is the Add-on's
     // quota, so a ceiling on it is a ceiling on the Add-on.
-    expect(resolveMediaQuotaCeilingBytes(PhiMediaSpaceKind.Addon, limited)).toBe(300);
+    expect(resolveMediaQuotaCeilingBytes(PhisMediaSpaceKind.Addon, limited)).toBe(300);
     // The Site Space is not delegated capacity, so no ceiling is measured against it.
-    expect(resolveMediaQuotaCeilingBytes(PhiMediaSpaceKind.Site, limited)).toBeNull();
+    expect(resolveMediaQuotaCeilingBytes(PhisMediaSpaceKind.Site, limited)).toBeNull();
   });
 
   it("means no ceiling when unset", () => {
-    expect(resolveMediaQuotaCeilingBytes(PhiMediaSpaceKind.Group, config())).toBeNull();
+    expect(resolveMediaQuotaCeilingBytes(PhisMediaSpaceKind.Group, config())).toBeNull();
   });
 });
 
@@ -265,15 +265,15 @@ describe("Group Space ownership", () => {
  */
 describe("default delivery policy", () => {
   it("keeps a User Space Asset private until something widens it", () => {
-    expect(defaultMediaDeliveryPolicy(PhiMediaSpaceKind.User)).toBe(PhiMediaDeliveryPolicy.User);
+    expect(defaultMediaDeliveryPolicy(PhisMediaSpaceKind.User)).toBe(PhiMediaDeliveryPolicy.User);
   });
 
   it("keeps a Group Space Asset inside its group", () => {
-    expect(defaultMediaDeliveryPolicy(PhiMediaSpaceKind.Group)).toBe(PhiMediaDeliveryPolicy.Group);
+    expect(defaultMediaDeliveryPolicy(PhisMediaSpaceKind.Group)).toBe(PhiMediaDeliveryPolicy.Group);
   });
 
   it("leaves Site content public, which is what the Site Space is for", () => {
-    expect(defaultMediaDeliveryPolicy(PhiMediaSpaceKind.Site)).toBe(PhiMediaDeliveryPolicy.Public);
+    expect(defaultMediaDeliveryPolicy(PhisMediaSpaceKind.Site)).toBe(PhiMediaDeliveryPolicy.Public);
     // An unknown or absent kind must not be more permissive than the Site Space it falls back to.
     expect(defaultMediaDeliveryPolicy(null)).toBe(PhiMediaDeliveryPolicy.Public);
   });

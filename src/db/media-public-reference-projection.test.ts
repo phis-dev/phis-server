@@ -5,7 +5,7 @@ const mocks = vi.hoisted(() => ({ query: vi.fn(), getPool: vi.fn() }));
 vi.mock("@/lib/db", () => ({ getPool: mocks.getPool }));
 
 import { listPublicSiteSpaceMediaAssetsByIds } from "./media";
-import { PhiMediaDeliveryPolicy, PhiMediaLifecycleStatus, PhiMediaSpaceKind } from "./media-spaces";
+import { PhiMediaDeliveryPolicy, PhiMediaLifecycleStatus, PhisMediaSpaceKind } from "./media-spaces";
 
 function pool() {
   mocks.query.mockResolvedValue({ rows: [] });
@@ -29,7 +29,7 @@ describe("The public Asset projection behind reference resolution", () => {
     expect(values).toEqual([
       31,
       [9],
-      PhiMediaSpaceKind.Site,
+      PhisMediaSpaceKind.Site,
       PhiMediaLifecycleStatus.Ready,
       PhiMediaDeliveryPolicy.Public,
     ]);

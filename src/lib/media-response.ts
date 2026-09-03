@@ -2,13 +2,15 @@ import { NextResponse } from "next/server";
 
 import type { MediaAssetRecord } from "@/db/media";
 import {
-  PhiMediaSpaceKind,
+  PhisMediaSpaceKind,
   resolveEffectiveMediaQuotaBytes,
   type MediaSpaceRecord,
+  type PhisMediaSpaceKindValue,
   type MediaSpaceResolutionError,
   type SiteMediaConfigRecord,
 } from "@/db/media-spaces";
 import { PhiImageAssetVariantKey, resolvePhiMediaKindFromContentType } from "@/lib/constants/media";
+import type { PhiMediaSpaceKind } from "@phis/contracts/media";
 
 type PublicMediaAssetProjection = Omit<MediaAssetRecord, "storageProfileId" | "storageKey"> & {
   deliveryUrl: string;
@@ -150,10 +152,19 @@ export function serializeMediaAssetForDetail(asset: MediaAssetRecord): PhiMediaA
   };
 }
 
-const MEDIA_SPACE_KIND_LABELS: Record<number, "site" | "user" | "group"> = {
-  [PhiMediaSpaceKind.Site]: "site",
-  [PhiMediaSpaceKind.User]: "user",
-  [PhiMediaSpaceKind.Group]: "group",
+
+
+/**
+ * Every stored kind, onto the name the wire uses.
+ *
+ * Typed as a total map, so a kind added to `PhisMediaSpaceKind` and forgotten here is a compile error
+ * rather than a Space that quietly reports itself as another kind.
+ */
+const MEDIA_SPACE_KIND_NAMES: Record<PhisMediaSpaceKindValue, PhiMediaSpaceKind> = {
+  [PhisMediaSpaceKind.Site]: "site",
+  [PhisMediaSpaceKind.User]: "user",
+  [PhisMediaSpaceKind.Group]: "group",
+  [PhisMediaSpaceKind.Addon]: "addon",
 };
 
 export type PhiMediaSpaceResponse = {
@@ -161,7 +172,7 @@ export type PhiMediaSpaceResponse = {
   id: number | null;
   /** How to name this Space in a request, which a Space without a row still needs. */
   address: string;
-  kind: "site" | "user" | "group";
+  kind: PhiMediaSpaceKind;
   groupId: number | null;
   name: string | null;
   quotaBytes: number | null;
@@ -181,11 +192,11 @@ export function serializeMediaSpace(
   config: SiteMediaConfigRecord,
   name?: string | null,
 ): PhiMediaSpaceResponse {
-  const groupId = space.kind === PhiMediaSpaceKind.Group ? space.groupId : null;
+  const groupId = space.kind === PhisMediaSpaceKind.Group ? space.groupId : null;
   return {
     id: space.id,
     address: groupId != null ? `group:${groupId}` : String(space.id),
-    kind: MEDIA_SPACE_KIND_LABELS[space.kind] ?? "site",
+    kind: MEDIA_SPACE_KIND_NAMES[space.kind],
     groupId,
     name: name ?? null,
     quotaBytes: resolveEffectiveMediaQuotaBytes(space, config),
