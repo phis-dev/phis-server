@@ -29,7 +29,6 @@ const nextConfig: NextConfig = {
     ],
   },
   reactCompiler: true,
-  allowedDevOrigins: ["phi-systems.ch", "phi-systems.ch:3000", "*.phi-systems.ch"],
   experimental: {
     externalDir: true,
   },

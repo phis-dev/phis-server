@@ -120,8 +120,8 @@ endpoint verified live afterwards. Four corrections against the original lists:
 - `src/db/site-cms-references.ts`: `countSiteCmsReferencesToPage`/`…ToAsset` pool wrappers
 - `src/db/supported-devices.ts` and `src/lib/adapter-plugin-flags.ts`: `phi_systems` domain layer,
   **moved** on operator instruction rather than discarded — parked as non-building reference in
-  `phi-systems.tech/server-reference/` with a note, to be folded into the future phi-systems server
-  Add-on. `phi-server` stays clean of domain Add-on code.
+  that project's own repository, to be folded into its future server Add-on. `phis` stays clean of
+  domain Add-on code.
 - `src/db/translations.ts`: `getTranslation`, `getSiteTranslation`, `upsertSiteTranslation`
 - `src/db/user-*`: `setUserAccountEnabled`, `deleteUserSiteMembership`, `setUserSiteRoleClaim`,
   `deleteUserPasswordResetTokensForSite`, plus `getSupportInboxSummary`, `getSupportTeamBySiteAndKey`
