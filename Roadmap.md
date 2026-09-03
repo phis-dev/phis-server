@@ -57,7 +57,7 @@ The platform is split into four application types:
 - Add a `phis-cli` emergency recovery operation that can enable or disable a Site user membership by
   Site and user identity; the current CLI can change Site and platform-operator state, but not Site-user state.
 - Keep site-scoped request resolution separate from public, site-agnostic helpers.
-- Done 2026-08-17: `x-phi-site-key` is the only Site identity. The host/origin/referer fallback and
+- Done 2026-08-17: `x-phis-site-key` is the only Site identity. The host/origin/referer fallback and
   `getSiteByHostname` are removed from the generic site resolver; a request without the explicit key is
   simply not Site-scoped, and `tr()` and other global lookups stay outside the site context contract.
 - Audit remaining `throw new Error(...)` paths in shared helpers and storage code so route handlers can keep using structured `phi-server` log events instead of letting internal exceptions surface as raw runtime errors.

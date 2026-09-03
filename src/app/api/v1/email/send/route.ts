@@ -7,11 +7,12 @@ import { getSiteByKey } from "@/db/sites";
 import { sendEmail } from "@/lib/email";
 import { getSiteConfigBySiteId } from "@/db/site-config";
 import { sendTemplatedEmail, stripHtml, type SupportedEmailTemplate } from "@/lib/email-templates";
+import { PHIS_SITE_KEY_HEADER, PHIS_TOKEN_HEADER } from "@/lib/constants/http-headers";
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
-  "Access-Control-Allow-Headers": "authorization, x-phi-token, x-phi-site-key, content-type",
+  "Access-Control-Allow-Headers": `authorization, ${PHIS_TOKEN_HEADER}, ${PHIS_SITE_KEY_HEADER}, content-type`,
 };
 
 type GenericEmailMessage = {

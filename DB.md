@@ -418,10 +418,10 @@ Contract:
   - a single `msg`
   - or a `msgs` array for batch translation
 - Both request shapes may also carry `format=text|html`; `text` is the default and `html` means intentional translatable HTML markup.
-- Public translation requests must not send `x-phi-site-key`.
+- Public translation requests must not send `x-phis-site-key`.
 - Internal translation requests use these rules:
-  - internal token + `x-phi-site-key` => site translation store (`tr_site_msg`, `tr_site_lang`)
-  - internal token without `x-phi-site-key` => global translation store (`tr_msg`, `tr_lang`) for `phi-core` text and global label sets
+  - internal token + `x-phis-site-key` => site translation store (`tr_site_msg`, `tr_site_lang`)
+  - internal token without `x-phis-site-key` => global translation store (`tr_msg`, `tr_lang`) for `phi-core` text and global label sets
 - Public translation requests use the global translation store only, never the site store.
 
 ### `phis.user_accounts`

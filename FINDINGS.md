@@ -43,7 +43,7 @@ still listed under 3.2.
 ### 1.4 Media routes inherit the host-based Site fallback — FIXED 2026-08-17
 
 The host/origin/referer fallback is removed from `resolveSiteFromHeaders` entirely: the explicit
-`x-phi-site-key` header is the only Site identity, per the roadmap's cleanup item. Every active caller
+`x-phis-site-key` header is the only Site identity, per the roadmap's cleanup item. Every active caller
 — the shared-ui gateways, the Skeleton proxies, and direct SSR calls — already sends the key, and
 `/api/v1/tr` handles a Site-less request gracefully. `getSiteByHostname` and its cache lost their last
 caller and were removed with the fallback. Verified live: a request carrying only `Host` or
@@ -205,7 +205,7 @@ stage-2 widget-level verification.
 ### 4.3 Two Site resolution entry points — RESOLVED 2026-08-17 (semantics unified)
 
 Since the host-fallback removal both entry points share one resolution semantic: the explicit
-`x-phi-site-key` only. What remains are two ergonomic wrappers over that one semantic —
+`x-phis-site-key` only. What remains are two ergonomic wrappers over that one semantic —
 `requireSiteFromRequest` returns `site | null` for callers that shape their own response, and
 `requireSiteFromExplicitKeyRequest` returns `{ site, error }` for the eleven auth routes that want the
 ready-made 400/404. That is one resolver with two return shapes, not two resolution paths; collapsing

@@ -139,6 +139,7 @@ import {
   type PhiSecretEncryptionKey,
 } from "../lib/secrets/crypto.ts";
 import { buildPhiSecretReference } from "../lib/secrets/reference.ts";
+import { PHIS_TOKEN_HEADER } from "../lib/constants/http-headers.ts";
 import {
   buildPhiSiteReleaseArtifact,
   reconcilePhiSiteScaffold,
@@ -993,7 +994,7 @@ async function runSiteCheckCommand(flags: FlagMap, json: boolean) {
   const baseUrl = override ?? `http://${instance.host}:${instance.port}`;
 
   const response = await fetch(`${baseUrl.replace(/\/$/, "")}/api/site/module-diagnostics`, {
-    headers: { "x-phi-token": token, accept: "application/json" },
+    headers: { [PHIS_TOKEN_HEADER]: token, accept: "application/json" },
     cache: "no-store",
   }).catch((error: unknown) => {
     throw new Error(
@@ -2700,7 +2701,7 @@ async function main() {
     }
     const response = await fetch(`${apiBaseUrl}/api/v1/addons/jobs`, {
       method: "POST",
-      headers: { "content-type": "application/json", "x-phi-token": internalToken },
+      headers: { "content-type": "application/json", [PHIS_TOKEN_HEADER]: internalToken },
       body: JSON.stringify({ addonId, jobId, siteKey: site.key }),
     });
     const outcome = await response.json().catch(() => ({ error: "The server answered unreadably." }));

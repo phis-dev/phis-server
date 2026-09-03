@@ -3,6 +3,7 @@ import "server-only";
 import { getSupportedDeepLTargetLanguages } from "@/lib/deepl-languages";
 import { getPhiServerConfigSync } from "@/lib/config";
 import { DEFAULT_LOCALE, SUPPORTED_LOCALES } from "@/lib/locale";
+import { PHIS_TOKEN_HEADER } from "@/lib/constants/http-headers";
 
 export type TranslationLocaleOption = {
   code: string;
@@ -147,7 +148,7 @@ async function fetchCdnLocaleOptions() {
   try {
     const response = await fetch(`${cdnBaseUrl}/api/v1/locales`, {
       method: "GET",
-      headers: token ? { "x-phi-token": token } : {},
+      headers: token ? { [PHIS_TOKEN_HEADER]: token } : {},
       cache: "no-store",
       signal,
     });

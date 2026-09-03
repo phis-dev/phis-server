@@ -13,6 +13,7 @@ import {
 } from "@/lib/config-files";
 import { resetPhiServerConfigCache } from "@/lib/config";
 import { getOperatorSession } from "@/lib/operator-auth";
+import { PHIS_TOKEN_HEADER } from "@/lib/constants/http-headers";
 import {
   getConfiguredCdnBaseUrlSync,
   getConfiguredTranslationSupportedLocalesSync,
@@ -75,7 +76,7 @@ async function verifyCdnMode() {
   try {
     const response = await fetch(url, {
       method: "GET",
-      headers: token ? { "x-phi-token": token } : {},
+      headers: token ? { [PHIS_TOKEN_HEADER]: token } : {},
       cache: "no-store",
       signal,
     });

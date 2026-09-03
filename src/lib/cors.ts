@@ -2,6 +2,7 @@ import "server-only";
 
 import { NextResponse } from "next/server";
 import { getPhiServerConfigSync } from "@/lib/config";
+import { PHIS_TOKEN_HEADER } from "@/lib/constants/http-headers";
 
 type CorsOptions = {
   methods: string[];
@@ -65,7 +66,7 @@ export function buildCorsHeaders(request: Request, options: CorsOptions) {
     "Access-Control-Allow-Headers": (options.headers ?? [
       "content-type",
       "x-csrf-token",
-      "x-phi-token",
+      PHIS_TOKEN_HEADER,
       "authorization",
     ]).join(", "),
     Vary: "Origin",

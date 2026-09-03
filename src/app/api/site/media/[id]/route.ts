@@ -17,6 +17,7 @@ import { serializeMediaAssetForDetail } from "@/lib/media-response";
 import { PHI_SERVER_CMS_AREA_KEYS, resolvePhiServerCmsAreaKey } from "@/lib/constants/cms-areas";
 import { MediaAssetUpdateError, updateSiteMediaAsset } from "@/lib/media-asset-update";
 import { parsePositiveInt } from "@/lib/helpers/request";
+import { PHIS_AREA_HEADER } from "@/lib/constants/http-headers";
 
 export const dynamic = "force-dynamic";
 
@@ -28,7 +29,7 @@ function normalizeAreaKey(value: string | null | undefined) {
 }
 
 function resolveRequestArea(request: NextRequest) {
-  return normalizeAreaKey(request.headers.get("x-phi-area"));
+  return normalizeAreaKey(request.headers.get(PHIS_AREA_HEADER));
 }
 
 async function readJsonBody(request: NextRequest) {

@@ -7,12 +7,13 @@ import { getPhiServerConfig } from "@/lib/config";
 import { DEFAULT_LOCALE } from "@/lib/locale";
 import { requireSiteFromRequest } from "@/lib/site-context";
 import { getConfiguredTranslationSupportedLocalesSync } from "@/lib/translation-locale-options";
+import { PHIS_TOKEN_HEADER } from "@/lib/constants/http-headers";
 
 const CACHE_CONTROL = "public, max-age=300, stale-while-revalidate=3600";
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, OPTIONS",
-  "Access-Control-Allow-Headers": "x-phi-token",
+  "Access-Control-Allow-Headers": PHIS_TOKEN_HEADER,
 };
 
 export async function GET(request: Request) {

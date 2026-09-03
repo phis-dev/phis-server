@@ -1,14 +1,14 @@
 # phis API Protocol
 
 ## Authentication
-All external API clients must send the header `x-phi-token` with the shared public token.
+All external API clients must send the header `x-phis-token` with the shared public token.
 Requests without the header or with an invalid token return `403`.
 Public requests use the configured public API token in all non-internal flows.
 Internal/operational endpoints use the configured internal API token and are marked accordingly.
 
 Frontends are expected to reach `/api/v1` through local site `/api/v1/*` route handlers where possible:
 - Browser traffic remains same-origin and does not expose token handling to client JS.
-- Route handlers inject `x-phi-token` from server runtime configuration before forwarding to this backend.
+- Route handlers inject `x-phis-token` from server runtime configuration before forwarding to this backend.
 - Browser callers should never include any token in JavaScript-accessible environment variables; only server route handlers may attach token headers.
 - Public form guards are issued centrally by `phis`.
 - Frontend pages should fetch form guards server-side via an internal call to `GET /api/v1/forms/guard`.
@@ -49,7 +49,7 @@ All external endpoints live under `/api/v1/`.
 Returns the public preset list.
 
 **Headers**
-- `x-phi-token`: required
+- `x-phis-token`: required
 - (value for public endpoints must match the configured public API token)
 
 **Query params**
@@ -78,7 +78,7 @@ Returns the public preset list.
 Returns the preset collections list.
 
 **Headers**
-- `x-phi-token`: required
+- `x-phis-token`: required
 
 **Response**
 ```json
@@ -101,7 +101,7 @@ Returns the preset collections list.
 Returns the supported locales list.
 
 **Headers**
-- `x-phi-token`: required
+- `x-phis-token`: required
 
 **Response**
 ```json
@@ -124,7 +124,7 @@ Returns the news feed (latest first).
 Items with `outdated` dates in the past are omitted.
 
 **Headers**
-- `x-phi-token`: required
+- `x-phis-token`: required
 
 **Response**
 ```json
@@ -149,7 +149,7 @@ Items with `outdated` dates in the past are omitted.
 Returns a translated string using cached DeepL results.
 
 **Headers**
-- `x-phi-token`: required
+- `x-phis-token`: required
 
 **Query**
 ```text
@@ -178,7 +178,7 @@ Used for internal server-to-server email dispatch for registration/contact workf
 
 Headers:
 
-- `x-phi-token` **or** `Authorization: Bearer <token>` required
+- `x-phis-token` **or** `Authorization: Bearer <token>` required
 - internal endpoints require the configured internal API token
 
 Body:
@@ -205,9 +205,9 @@ Used for server-side form rendering. Returns signed guard fields for a supported
 
 Headers:
 
-- `x-phi-token` **or** `Authorization: Bearer <token>` required
+- `x-phis-token` **or** `Authorization: Bearer <token>` required
 - internal endpoints require the configured internal API token
-- `x-phi-site-key` required unless site can be resolved from forwarded headers
+- `x-phis-site-key` required; there is no host, origin or referer fallback
 
 Query:
 
@@ -237,9 +237,9 @@ Internal centralized registration confirmation endpoint.
 
 Headers:
 
-- `x-phi-token` **or** `Authorization: Bearer <token>` required
+- `x-phis-token` **or** `Authorization: Bearer <token>` required
 - internal endpoints require the configured internal API token
-- `x-phi-site-key` required unless site can be resolved from forwarded headers
+- `x-phis-site-key` required; there is no host, origin or referer fallback
 
 Body:
 

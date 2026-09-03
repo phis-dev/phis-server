@@ -6,6 +6,7 @@ import { DEFAULT_LOCALE } from "@/lib/locale";
 import { resolveSiteFromHeaders } from "@/lib/site-context";
 import { getConfiguredTranslationSupportedLocalesSync } from "@/lib/translation-locale-options";
 import { parseTranslationContext } from "@/lib/translation-context";
+import { PHIS_SITE_KEY_HEADER, PHIS_TOKEN_HEADER } from "@/lib/constants/http-headers";
 import {
   translateBatchWithCache,
   translateExternalSiteBatchWithCache,
@@ -17,7 +18,7 @@ import {
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-  "Access-Control-Allow-Headers": "x-phi-token, x-phi-site-key, content-type",
+  "Access-Control-Allow-Headers": `${PHIS_TOKEN_HEADER}, ${PHIS_SITE_KEY_HEADER}, content-type`,
 };
 
 function normalizeLocale(value: string) {
@@ -124,7 +125,7 @@ async function handleTranslation(request: Request, payload: TranslationPayload) 
   }
 
   const tokenMode = getApiV1TokenMode(request);
-  const explicitSiteKey = request.headers.get("x-phi-site-key")?.trim() ?? "";
+  const explicitSiteKey = request.headers.get(PHIS_SITE_KEY_HEADER)?.trim() ?? "";
   if (tokenMode === "public" && explicitSiteKey) {
     return NextResponse.json({ error: "Forbidden." }, { status: 403, headers: CORS_HEADERS });
   }
@@ -217,7 +218,7 @@ async function handleBatchTranslation(request: Request, payload: TranslationPayl
   }
 
   const tokenMode = getApiV1TokenMode(request);
-  const explicitSiteKey = request.headers.get("x-phi-site-key")?.trim() ?? "";
+  const explicitSiteKey = request.headers.get(PHIS_SITE_KEY_HEADER)?.trim() ?? "";
   if (tokenMode === "public" && explicitSiteKey) {
     return NextResponse.json({ error: "Forbidden." }, { status: 403, headers: CORS_HEADERS });
   }

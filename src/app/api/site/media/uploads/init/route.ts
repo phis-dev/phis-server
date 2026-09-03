@@ -12,12 +12,14 @@ import {
   isPhiMediaContentAllowedInSpace,
   isPhiMediaObjectSizeAllowed,
   resolveAuthorizedMediaSpace,
+  resolveMediaSpaceContentKinds,
 } from "@/db/media-spaces";
 import { getMediaStorageProfile } from "@/db/media-spaces";
 import { nextMediaSpaceError } from "@/lib/media-response";
 import { getSessionFromRequest } from "@/db/user-sessions";
 import { createPhisMediaStorageServiceForProfile } from "@/lib/media-storage";
-import { logRuntimeEvent } from "@/lib/log";
+import { logRuntimeEvent, normalizeLogThrowable } from "@/lib/log";
+import { PHI_SERVER_CMS_AREA_KEYS } from "@/lib/constants/cms-areas";
 import {
   createPhiMediaUploadSessionToken,
   PhiMediaUploadSessionStatus,
@@ -30,6 +32,7 @@ import {
 } from "@/lib/guards/site-media-api";
 import { nextMediaError, readJsonBody } from "../_helpers";
 import { normalizeString } from "@/lib/helpers/request";
+import { PHIS_AREA_HEADER } from "@/lib/constants/http-headers";
 
 export const dynamic = "force-dynamic";
 
@@ -84,6 +87,47 @@ function normalizeUploadMeta(value: unknown) {
   }
 }
 
+/**
+ * A refusal, recorded as it is issued.
+ *
+ * Every check ahead of the session row ends an upload before anything exists to look at afterwards:
+ * no session, no asset, no reservation held. An operator asking why an upload failed would otherwise
+ * find the whole class of them missing, which reads as "nothing happened" rather than "refused".
+ *
+ * `warn` and not `error`, because a refusal is the endpoint working: the file was too large, or not
+ * what the Space is for. What is worth knowing is which rule spoke, so `reason` carries the same key
+ * the caller was given, and the two can be matched.
+ */
+function normalizeAreaKey(value: string | null | undefined) {
+  const normalized = value?.trim().toLowerCase() ?? "";
+  return PHI_SERVER_CMS_AREA_KEYS.includes(normalized as (typeof PHI_SERVER_CMS_AREA_KEYS)[number])
+    ? normalized
+    : null;
+}
+
+/** The shell the call came from, which only the Client can say. */
+function resolveRequestArea(request: NextRequest) {
+  return normalizeAreaKey(request.headers.get(PHIS_AREA_HEADER));
+}
+
+function refuseUpload(
+  request: NextRequest,
+  context: { siteKey: string; userId: number | null },
+  refusal: { reason: string; message: string; status: number; meta?: Record<string, unknown> },
+) {
+  logRuntimeEvent("warn", "media.upload.refused", {
+    area: resolveRequestArea(request),
+    message: refusal.message,
+    siteKey: context.siteKey,
+    userId: context.userId,
+    method: request.method,
+    path: request.nextUrl.pathname,
+    status: refusal.status,
+    meta: { reason: refusal.reason, ...refusal.meta },
+  });
+  return nextMediaError(refusal.reason, refusal.message, refusal.status);
+}
+
 export async function POST(request: NextRequest) {
   const { site, siteWide, error } = await requireMediaSpaceWriteContext(request, async ({ site: ownSite, session }) => {
     // The Space this upload is for, resolved through the same reader the body below uses, so the
@@ -102,8 +146,13 @@ export async function POST(request: NextRequest) {
 
   const authSession = await getSessionFromRequest(request, site.id);
   if (!authSession) {
-    return nextMediaError("authentication_required", "Authentication required.", 401);
+    return refuseUpload(request, { siteKey: site.key, userId: null }, {
+      reason: "authentication_required",
+      message: "Authentication required.",
+      status: 401,
+    });
   }
+  const actor = { siteKey: site.key, userId: authSession.userId };
 
   const payload = await readJsonBody(request);
   if (!payload) {
@@ -141,11 +190,12 @@ export async function POST(request: NextRequest) {
    */
   const mediaConfig = await ensureSiteMediaConfig(site.id);
   if (!isPhiMediaObjectSizeAllowed(size, mediaConfig)) {
-    return nextMediaError(
-      "media_asset_too_large",
-      `This file is larger than the ${mediaConfig.maxObjectBytes} byte limit for this site.`,
-      413,
-    );
+    return refuseUpload(request, actor, {
+      reason: "media_asset_too_large",
+      message: `This file is larger than the ${mediaConfig.maxObjectBytes} byte limit for this site.`,
+      status: 413,
+      meta: { filename, contentType, sizeBytes: size, maxObjectBytes: mediaConfig.maxObjectBytes },
+    });
   }
 
   const resolution = await resolveAuthorizedMediaSpace({
@@ -157,7 +207,19 @@ export async function POST(request: NextRequest) {
     requestedSpaceId: readRequestedMediaSpaceId(request),
   });
   if (!resolution.ok) {
-    return nextMediaSpaceError(resolution.reason);
+    // Its own response shape, so the reason is logged here rather than inside `refuseUpload`.
+    const response = nextMediaSpaceError(resolution.reason);
+    logRuntimeEvent("warn", "media.upload.refused", {
+      area: resolveRequestArea(request),
+      message: "Upload refused: the Media Space could not be resolved for this actor.",
+      siteKey: site.key,
+      userId: authSession.userId,
+      method: request.method,
+      path: request.nextUrl.pathname,
+      status: response.status,
+      meta: { reason: resolution.reason, requestedSpaceId: readRequestedMediaSpaceId(request) },
+    });
+    return response;
   }
   const { space } = resolution;
 
@@ -170,25 +232,48 @@ export async function POST(request: NextRequest) {
    * get to disagree with what the uploader said they were.
    */
   if (!isPhiMediaContentAllowedInSpace(contentType, space, mediaConfig)) {
-    return nextMediaError(
-      "content_type_not_allowed",
-      "That kind of file does not belong in this Media Space.",
-      415,
-    );
+    return refuseUpload(request, actor, {
+      reason: "content_type_not_allowed",
+      message: "That kind of file does not belong in this Media Space.",
+      status: 415,
+      meta: {
+        filename,
+        declaredContentType: contentType,
+        spaceId: space.id,
+        spaceKind: space.kind,
+        // What the Space does accept, so the refusal can be read without looking the Space up.
+        accepted: resolveMediaSpaceContentKinds(space, mediaConfig),
+      },
+    });
   }
 
   const profile = await getMediaStorageProfile(site.id, space.defaultStorageProfileId);
   if (!profile) {
-    return nextMediaError("storage_profile_unavailable", "Storage Profile unavailable.", 503);
+    return refuseUpload(request, actor, {
+      reason: "storage_profile_unavailable",
+      message: "Storage Profile unavailable.",
+      status: 503,
+      meta: { spaceId: space.id, storageProfileId: space.defaultStorageProfileId },
+    });
   }
   if (folderId != null && !await getMediaFolderBySiteAndId(site.id, space.id, folderId)) {
-    return nextMediaError("folder_not_found", "Folder not found in the active Media Space.", 404);
+    return refuseUpload(request, actor, {
+      reason: "folder_not_found",
+      message: "Folder not found in the active Media Space.",
+      status: 404,
+      meta: { folderId, spaceId: space.id },
+    });
   }
   // Maintenance happens at the moment the resource is requested: whoever asks this Space for capacity
   // first hands back the capacity its own expired sessions are still holding.
   await releaseExpiredMediaUploadSessions(space.id);
   if (!await reserveMediaSpaceQuota({ spaceId: space.id, bytes: size })) {
-    return nextMediaError("media_quota_exceeded", "Media Space quota exceeded.", 413);
+    return refuseUpload(request, actor, {
+      reason: "media_quota_exceeded",
+      message: "Media Space quota exceeded.",
+      status: 413,
+      meta: { spaceId: space.id, spaceKind: space.kind, requestedBytes: size },
+    });
   }
   const storageService = await createPhisMediaStorageServiceForProfile(profile, site.key)
   const token = createPhiMediaUploadSessionToken();
@@ -239,11 +324,16 @@ export async function POST(request: NextRequest) {
       // The reservation was taken before the session row; without the row nothing can release it later.
       await releaseMediaSpaceReservation({ spaceId: space.id, bytes: size });
       logRuntimeEvent("error", "media.upload_session.create_failed", {
-        message: "Failed to create upload session.",
+        area: resolveRequestArea(request),
+        message: "Failed to create upload session: the insert returned no row.",
         siteKey: site.key,
+        userId: authSession.userId,
         method: request.method,
         path: request.nextUrl.pathname,
+        status: 500,
         meta: {
+          spaceId: space.id,
+          storageProfileId: profile.id,
           filename,
           contentType,
           sizeBytes: size,
@@ -277,13 +367,27 @@ export async function POST(request: NextRequest) {
     });
   } catch (error) {
     await releaseMediaSpaceReservation({ spaceId: space.id, bytes: size }).catch(() => {});
+    /*
+     * A refusal by the database, which is not a refusal of the upload.
+     *
+     * Everything the caller was told is that this failed; what actually happened is a constraint or a
+     * connection, and only this record carries it. So the message names the step -- an operator reading
+     * a list of events should not have to recognise Postgres wording to see which one broke -- while
+     * the driver's own text, code and constraint name travel in `error`, where the detail view shows
+     * them. `normalizeLogThrowable` because a raw throwable is not reliably serializable.
+     */
     logRuntimeEvent("error", "media.upload_session.create_failed", {
-      message: error instanceof Error ? error.message : "Failed to create upload session.",
+      area: resolveRequestArea(request),
+      message: "Failed to create upload session: the database refused the row.",
       siteKey: site.key,
+      userId: authSession.userId,
       method: request.method,
       path: request.nextUrl.pathname,
-      error,
+      status: 500,
+      error: normalizeLogThrowable(error),
       meta: {
+        spaceId: space.id,
+        storageProfileId: profile.id,
         filename,
         contentType,
         sizeBytes: size,

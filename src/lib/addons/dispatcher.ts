@@ -236,7 +236,7 @@ async function resolveApiIdentity(
  * Who is calling a hook: nobody, and on which Site.
  *
  * A hook is unauthenticated by construction -- that is what makes it reachable by a payment provider or
- * by somebody else's Core, and nothing here changes it. The Site is read from `x-phi-site-key`, the same
+ * by somebody else's Core, and nothing here changes it. The Site is read from `x-phis-site-key`, the same
  * header every Site-scoped route already uses, and a hook that asks for one and does not get it is a 404
  * rather than an error: an address that answers nothing without the header stays out of indexes and off
  * casual scanners, which is worth having even though the header is no secret.

@@ -16,9 +16,9 @@
 
 ## External v1 API (Token Guarded)
 
-All `/api/v1/*` endpoints require `x-phi-token` and a non-bot user-agent header.
+All `/api/v1/*` endpoints require `x-phis-token` and a non-bot user-agent header.
 Public endpoints use the configured public API token.
-Internal endpoints use the configured internal API token via `x-phi-token` or `Authorization: Bearer <token>`.
+Internal endpoints use the configured internal API token via `x-phis-token` or `Authorization: Bearer <token>`.
 Frontend clients should prefer same-origin `/api/v1/*` proxy calls from their local Next route handlers instead of exposing token handling in browser code.
 
 ### GET /api/v1/presets?collection=slug
@@ -42,7 +42,7 @@ Body: `{ pluginType, version }`
 Returns `{ plugins, currentVersion, latest, updateAvailable }`.
 
 ### POST /api/v1/email/send
-Internal/internal-service use only. Requires the configured internal API token via `x-phi-token` or `Authorization: Bearer <token>`.
+Internal/internal-service use only. Requires the configured internal API token via `x-phis-token` or `Authorization: Bearer <token>`.
 
 Body:
 
@@ -105,7 +105,7 @@ Deletes the site media asset and its backing object.
 ## Translation API (Token Guarded)
 
 ### GET /api/v1/tr
-Headers: `x-phi-token`  
+Headers: `x-phis-token`  
 Query: `locale`, `msg`, optional `ctx`, optional `hash`, optional `format=text|html`
 Returns `{ translation }`. Only locales from `config/phis-config.json` are translated via
 DeepL; all others return the original `msg`.

@@ -24,6 +24,7 @@ import {
 } from "@/lib/media-content-sniffer";
 import { createPhisMediaStorageServiceForProfile } from "@/lib/media-storage";
 import { logRuntimeEvent, normalizeLogThrowable } from "@/lib/log";
+import { PHI_SERVER_CMS_AREA_KEYS } from "@/lib/constants/cms-areas";
 import {
   isPhiMediaUploadBodyProxied,
   PhiMediaUploadSessionStatus,
@@ -31,8 +32,22 @@ import {
 import { serializeMediaAssetForDetail } from "@/lib/media-response";
 import { requireMediaSpaceWriteContext } from "@/lib/guards/site-media-api";
 import { nextMediaError } from "../../_helpers";
+import { PHIS_AREA_HEADER } from "@/lib/constants/http-headers";
 
 export const dynamic = "force-dynamic";
+
+function normalizeAreaKey(value: string | null | undefined) {
+  const normalized = value?.trim().toLowerCase() ?? "";
+  return PHI_SERVER_CMS_AREA_KEYS.includes(normalized as (typeof PHI_SERVER_CMS_AREA_KEYS)[number])
+    ? normalized
+    : null;
+}
+
+/** The shell the call came from, which only the Client can say. */
+function resolveRequestArea(request: NextRequest) {
+  return normalizeAreaKey(request.headers.get(PHIS_AREA_HEADER));
+}
+
 
 const SVG_MIN_DISPLAY_DIMENSION = 48;
 
@@ -250,6 +265,8 @@ export async function POST(
     await storageService.deleteObject(session.stagingStorageKey).catch(() => {});
     await abortMediaUploadSessionByToken(token);
     logRuntimeEvent("warn", "media.upload.content_refused", {
+      area: resolveRequestArea(request),
+      userId: authSession.userId,
       message: "Upload refused: the object is not what this Media Space accepts.",
       siteKey: site.key,
       method: request.method,
@@ -289,6 +306,8 @@ export async function POST(
       await storageService.deleteObject(session.stagingStorageKey).catch(() => {});
       await abortMediaUploadSessionByToken(token);
       logRuntimeEvent("warn", "media.upload.duplicate", {
+        area: resolveRequestArea(request),
+        userId: authSession.userId,
         message: "Duplicate media asset upload rejected.",
         siteKey: site.key,
         method: request.method,
@@ -338,6 +357,8 @@ export async function POST(
     await storageService.deleteObject(session.stagingStorageKey).catch(() => {});
     await abortMediaUploadSessionByToken(token);
     logRuntimeEvent("warn", "media.upload.svg_rejected", {
+      area: resolveRequestArea(request),
+      userId: authSession.userId,
       message: svgValidationError,
       siteKey: site.key,
       method: request.method,
@@ -431,6 +452,8 @@ export async function POST(
     });
   } catch (finalizeError) {
     logRuntimeEvent("error", "media.upload.finalize_failed", {
+      area: resolveRequestArea(request),
+      userId: authSession.userId,
       message: finalizeError instanceof Error ? finalizeError.message : "Finalize failed.",
       siteKey: site.key,
       method: request.method,

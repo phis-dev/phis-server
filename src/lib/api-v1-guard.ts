@@ -4,8 +4,8 @@ import { NextResponse } from "next/server";
 
 import { getPhiServerConfigSync } from "@/lib/config";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
+import { PHIS_TOKEN_HEADER } from "@/lib/constants/http-headers";
 
-const TOKEN_HEADER = "x-phi-token";
 const AUTH_HEADER = "authorization";
 const NO_RATE_LIMIT_PATHS = new Set(["/api/v1/tr"]);
 
@@ -25,7 +25,7 @@ function getInternalToken() {
 }
 
 function readProvidedToken(request: Request) {
-  const tokenFromHeader = request.headers.get(TOKEN_HEADER);
+  const tokenFromHeader = request.headers.get(PHIS_TOKEN_HEADER);
   const tokenFromAuth = request.headers.get(AUTH_HEADER);
   const authMatch =
     tokenFromAuth?.toLowerCase().startsWith("bearer ") ? tokenFromAuth.slice(7).trim() : "";

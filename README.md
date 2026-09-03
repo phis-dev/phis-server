@@ -436,7 +436,7 @@ Registration, verified-email account discovery/linking, credentials, bootstrap, 
 - CORS remains enabled for direct browser calls against `api.*` with explicit allow-origins instead of a wildcard.
 - Non-personalized `GET` endpoints are cacheable via TTL or revalidation on the API or frontend layer.
 - Personalized or sensitive endpoints such as `cart`, `customer`, `session`, and uploads must use `no-store`.
-- Site-aware API endpoints require `x-phi-site-key`. The former host/origin/referer fallback is removed:
+- Site-aware API endpoints require `x-phis-site-key`. The former host/origin/referer fallback is removed:
   a request without the explicit key is not Site-scoped. Site proxies and SSR callers inject the header;
   the commerce `/api/shop/*` path is unaffected because it terminates at Medusa, not at `phis`.
 
@@ -498,6 +498,40 @@ interactivity, not build duration or `.next` size.
 ## Environment
 
 Set only process/runtime values such as `PORT` through `.env`.
+
+### Process variables
+
+| Variable | Meaning |
+| --- | --- |
+| `PORT` | The port the runtime listens on. |
+| `HOSTNAME` | The interface it binds. Next reads this one, **not** `HOST`; `next dev` reads neither and takes `-H` instead. |
+| `TRUST_PROXY` | How many reverse proxies in front of this process are ours. |
+
+`HOSTNAME=127.0.0.1` is what the generated systemd profile sets (`phis site config systemd`), and it
+is not cosmetic: the nginx profile beside it is what the outside is meant to reach. Bound to
+`0.0.0.0`, the runtime also answers the network directly, and on that path a caller writes
+`X-Forwarded-For` and `X-Real-IP` themselves -- which makes every address below untrustworthy no
+matter how carefully it is read. The container profile deliberately keeps `0.0.0.0`, where the
+boundary is `expose` rather than the bind address.
+
+`TRUST_PROXY` follows the Express convention: `true` or unset means one, `false` or `0` means none, a
+number means that many. It decides which entry of `X-Forwarded-For` is believed, and the count is the
+only thing that can decide it. Every proxy *appends* what it saw rather than replacing the header, so
+a caller who sends one keeps it, and the first entry -- the one usually read as "the client" -- is
+whatever that caller chose to write. The address is therefore counted from the right: skip our own
+hops, and what remains is what the outermost proxy we run actually observed.
+
+- Behind the shipped nginx profile: `true`.
+- Behind a CDN in front of that nginx: `2`. Left at `true`, the recorded address would be the CDN's
+  edge rather than the visitor's.
+- Behind no proxy at all: `0`. Both headers are then the caller's to invent, and nothing is read from
+  them.
+
+It matters wherever an address stands for a caller: the rate-limit key for the public v1 API and for
+every Add-on hook, the address recorded against a session at login, and the form abuse log. Reading
+the first entry instead would let a single caller appear as an unlimited number of them and so pass
+any per-address limit. One function answers it for all of them, `readPhiClientIp` in
+`src/lib/helpers/request.ts`.
 
 Application runtime configuration now lives in JSON files:
 

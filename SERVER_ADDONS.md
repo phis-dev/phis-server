@@ -461,7 +461,7 @@ A hook is unauthenticated by construction -- that is what makes it callable by a
 somebody else's Core reading a catalogue. Until a hook could name a Site it also had no capabilities at
 all, because every one of them is Site-scoped: it could verify a signature and touch no data.
 
-`siteScoped` on a hook descriptor changes only that. The Site comes from `x-phi-site-key`, the header
+`siteScoped` on a hook descriptor changes only that. The Site comes from `x-phis-site-key`, the header
 every Site-scoped route already uses, and a hook that asks for one and does not get it answers 404 --
 which incidentally keeps the address out of indexes and off casual scanners. The header is not a secret
 and this is not access control; it is hygiene, and it costs nothing.
