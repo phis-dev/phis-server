@@ -9,13 +9,8 @@ import {
 import { getPhiServerAddonInstalledManifest } from "@/lib/addons/installed";
 import { PHI_SERVER_CORE_CAPABILITIES } from "@/lib/addons/core-capabilities";
 
-export type PhiServerCapabilityState =
-  | "available"
-  | "missing"
-  | "disabled"
-  | "incompatible"
-  | "misconfigured"
-  | "unavailable";
+export type { PhiServerCapabilityState } from "@phis/contracts/server-capabilities";
+import type { PhiServerCapabilityState } from "@phis/contracts/server-capabilities";
 
 function getBuildDigest() {
   const buildState = Object.entries(getPhiServerAddonInstalledManifest())
