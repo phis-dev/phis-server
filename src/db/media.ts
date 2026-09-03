@@ -31,6 +31,18 @@ function record(value: unknown) {
     : null;
 }
 
+/**
+ * A JSON column that is absent, and says so in SQL rather than in JSON.
+ *
+ * `JSON.stringify(null)` is the string "null", and a `::jsonb` cast turns that into the JSON value
+ * null -- which is a value, so `IS NULL` is false for it. That is not what an absent optional column
+ * means anywhere else, and `media_upload_sessions_purpose_check` reads it the ordinary way: purpose 1
+ * requires `purpose_ref IS NULL`, which a stored JSON null never satisfies.
+ */
+function jsonbOrNull(value: Record<string, unknown> | null | undefined) {
+  return value == null ? null : JSON.stringify(value);
+}
+
 function normalizeFolderPathSegment(value: string) {
   return value.replace(/[\r\n]+/gu, " ").replace(/\s+/gu, " ").trim();
 }
@@ -422,7 +434,7 @@ export async function createMediaAsset(input: {
       input.storageProfileId,input.storageKey,input.originalName,input.contentType,input.variantVersion??null,
       input.bytes??null,input.checksumAlgorithm??null,input.checksumValue??null,
       input.width??null,input.height??null,input.blurDataUrl??null,
-      JSON.stringify(input.meta??null),input.title??null,input.altText??null,input.lifecycleStatus??PhiMediaLifecycleStatus.Ready,
+      jsonbOrNull(input.meta),input.title??null,input.altText??null,input.lifecycleStatus??PhiMediaLifecycleStatus.Ready,
       input.deliveryPolicy??defaultMediaDeliveryPolicy(input.spaceKind),input.presentationFlags??0],
   ); return rows[0] ? mapAsset(rows[0]) : null;
 }
@@ -634,9 +646,9 @@ export async function createMediaUploadSession(input: {
     [input.token,input.siteId,input.actorUserId,input.spaceId,input.folderId??null,input.storageProfileId,input.status,
       input.filename,input.contentType,input.sizeBytes,input.kind,input.uploadPlanKind,
       input.checksumAlgorithm??null,input.checksumValue??null,
-      JSON.stringify(input.meta??null),
+      jsonbOrNull(input.meta),
       input.presentationFlags??0,input.stagingStorageKey,input.finalStorageKey??null,input.expiresAt,input.uploadedAt??null,input.finalizedAt??null,
-      input.purpose??PhiMediaUploadPurpose.Media,JSON.stringify(input.purposeRef??null)],
+      input.purpose??PhiMediaUploadPurpose.Media,jsonbOrNull(input.purposeRef)],
   ); return rows[0] ? mapUpload(rows[0]) : null;
 }
 
