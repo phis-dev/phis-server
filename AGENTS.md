@@ -135,20 +135,13 @@
   - `Phis*` / `PHIS_*` -- phis and the Add-ons it serves. Everything in `@phis/contracts`'s Add-on
     surface (`addon`, `assets`, `capabilities`, `core`, `queries`, `schema`, `media-storage`) plus
     every type this application keeps to itself.
-  - `Phi*` / `PHI_*` -- a name the Site UI reads too, and neutral about which side it came from:
-    `@phis/contracts`'s `access`, `http`, `locale`, `logging`, `media`, `signals`, `site-groups` and
-    `server-capabilities`. It is the same `Phi*` convention documented for shared components in
-    `phis-ui`.
-  - `PhiServer*` belongs to `phis-ui` alone, where it marks the server side of a pair -- the props a
-    Server Component takes, the theme tokens the server delivers -- against a bare `Phi*` name for the
-    client's. Nothing in this repository or in the contract carries it. That half is written down in
-    `phis-ui/AGENTS.md`, which points back here for the two above; changing one without the other
-    leaves a rule that is only half true.
-  - What decides between the first two is who reads the name, never who produced the value. The
-    capability verdict is phis's own, and it is still `PhiCapabilityState`: the UI reads it, and what
-    it describes is a provider -- Core or an Add-on -- rather than the server.
-  - "Server" inside a name (`PhiRuntimeModuleServerBinding`) describes the thing, not the namespace,
-    and stays.
+  - `Phi*` / `PHI_*` -- a name the Site UI reads too: `@phis/contracts`'s `access`, `http`, `locale`,
+    `logging`, `media`, `signals`, `site-groups` and `server-capabilities`.
+  - Who reads the name decides between those two, never who produced the value: the capability verdict
+    is phis's own and is still `PhiCapabilityState`.
+  - `PhiServer*` belongs to `phis-ui` alone and appears neither here nor in the contract; see
+    `phis-ui/AGENTS.md`.
+  - "Server" inside a name (`PhiRuntimeModuleServerBinding`) describes the thing, not the namespace.
 
 ## Testing Guidelines
 - No test framework or test script is configured yet.
