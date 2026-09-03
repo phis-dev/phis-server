@@ -1,24 +1,12 @@
 export const PHI_CORE_GROUP_PROVIDER_ID = "@phis/server/core" as const;
 
-/**
- * The four levels, cumulative and in this order.
- *
- * Each level does everything the one below it does and one thing more, which is what lets a check ask
- * for a level rather than for a list of rights. Read the ladder by what changes at each rung: a Member
- * reads, an Author creates and may edit and delete what they created, an Editor reaches what others
- * created, and a Manager may remove it and administers the group's own membership.
- *
- * Owner-scoped authority is the reason `Author` sits below `Editor` rather than beside it. "May edit
- * only their own" is a narrowing of "may edit", not a different kind of right, so it belongs on the
- * ladder -- and an Editor consequently inherits it. That an Editor may delete their own work while
- * someone else's still needs a Manager follows from the same ordering.
- */
-export const PhiGroupMembershipFlags = {
-  Member: 1,
-  Author: 1 | 2,
-  Editor: 1 | 2 | 4,
-  Manager: 1 | 2 | 4 | 8,
-} as const;
+export {
+  PhiGroupMembershipFlags,
+  PHI_GROUP_MEMBERSHIP_LEVELS,
+  readPhiGroupMembershipLevel,
+  type PhiGroupMembershipFlagValue,
+} from "@phis/contracts/site-groups";
+import { PhiGroupMembershipFlags } from "@phis/contracts/site-groups";
 
 /**
  * What a group's member list shows, not what anyone may do.
