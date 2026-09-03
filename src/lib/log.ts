@@ -1,39 +1,13 @@
 import "server-only";
 
-export type PhiLogService = "phis" | "ui" | "site" | "cli";
-
-export type PhiLogLevel = "debug" | "info" | "warn" | "error";
-
-export type PhiLoggerContext = {
-  service: PhiLogService;
-  siteKey?: string | null;
-  area?: string | null;
-  requestId?: string | null;
-  userId?: number | string | null;
-  actorRole?: string | null;
-  pluginKey?: string | null;
-  method?: string | null;
-  path?: string | null;
-  targetType?: string | null;
-  targetId?: number | string | null;
-};
-
-export type PhiLogEvent = {
-  message?: string;
-  status?: number | null;
-  durationMs?: number | null;
-  error?: unknown;
-  meta?: Record<string, unknown>;
-};
-
-export interface PhiLogger {
-  readonly context: Readonly<PhiLoggerContext>;
-  child(context: Partial<PhiLoggerContext>): PhiLogger;
-  debug(event: string, data?: PhiLogEvent): void;
-  info(event: string, data?: PhiLogEvent): void;
-  warn(event: string, data?: PhiLogEvent): void;
-  error(event: string, data?: PhiLogEvent): void;
-}
+export type {
+  PhiLogEvent,
+  PhiLogLevel,
+  PhiLogService,
+  PhiLogger,
+  PhiLoggerContext,
+} from "@phis/contracts/logging";
+import type { PhiLogEvent, PhiLogLevel, PhiLogService, PhiLoggerContext, PhiLogger } from "@phis/contracts/logging";
 
 function serializeError(error: unknown) {
   if (error instanceof Error) {
