@@ -25,7 +25,7 @@ import {
 
 import { type PhisAddonDesiredState } from "../lib/addons/contract.ts";
 import { PHIS_CORE_CAPABILITIES } from "../lib/addons/core-capabilities.ts";
-import { phiServerAddonUnindexedSearches } from "../lib/addons/query-descriptor.ts";
+import { phisAddonUnindexedSearches } from "../lib/addons/query-descriptor.ts";
 import { ensurePhisAddonSiteGroups } from "../db/server-addon-groups.mts";
 import {
   readPhisAddonEnabledSiteIds,
@@ -347,7 +347,7 @@ export async function checkAddons(root: string) {
   const loaded = loadDesiredAddons(root);
   const unindexedSearches = loaded.flatMap(({ desired, manifest }) =>
     manifest.schema && manifest.queries
-      ? phiServerAddonUnindexedSearches(manifest.schema, manifest.queries)
+      ? phisAddonUnindexedSearches(manifest.schema, manifest.queries)
         .map((search) => ({ addonId: desired.addonId, ...search }))
       : []
   );

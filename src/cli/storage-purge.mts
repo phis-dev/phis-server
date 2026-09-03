@@ -6,9 +6,9 @@ import type { Pool } from "pg";
 
 import { PHI_LOCAL_MEDIA_STORAGE_PROVIDER_ID } from "@phis/contracts/addon";
 
-import { phiServerAddonStoragePrefix } from "../lib/addons/schema-name.ts";
+import { phisAddonStoragePrefix } from "../lib/addons/schema-name.ts";
 
-export { phiServerAddonStoragePrefix };
+export { phisAddonStoragePrefix };
 
 /**
  * Removing the objects an Add-on left behind, which the database cannot do for it.
@@ -87,7 +87,7 @@ export async function removePhisAddonStorage(
     deleteObject(storageKey: string): Promise<boolean>;
   } | null>,
 ): Promise<PhisAddonStorageRemoval> {
-  const prefix = phiServerAddonStoragePrefix(addonId, site.siteKey);
+  const prefix = phisAddonStoragePrefix(addonId, site.siteKey);
   try {
     if (site.providerId === PHI_LOCAL_MEDIA_STORAGE_PROVIDER_ID) {
       const rootDir = typeof site.config.rootDir === "string" ? site.config.rootDir.trim() : "";
@@ -152,7 +152,7 @@ export async function recountPhisAddonStorage(
     listPrefix: (prefix: string) => Promise<{ storageKey: string; byteSize: number }[]>;
   },
 ) {
-  const heads = await input.listPrefix(phiServerAddonStoragePrefix(input.addonId, input.site.siteKey));
+  const heads = await input.listPrefix(phisAddonStoragePrefix(input.addonId, input.site.siteKey));
   const bytes = heads.reduce((total, head) => total + head.byteSize, 0);
   const objects = heads.length;
   const { rows } = await pool.query<{ storage_used_bytes: string; storage_used_objects: number }>(

@@ -3,7 +3,7 @@ import "server-only";
 import type { PhisStorageCapabilityV1 } from "./contract.ts";
 import { ensureSiteMediaSpace, getMediaStorageProfile } from "@/db/media-spaces";
 import { createPhisMediaStorageServiceForProfile } from "@/lib/media-storage";
-import { phiServerAddonStoragePrefix } from "./schema-name.ts";
+import { phisAddonStoragePrefix } from "./schema-name.ts";
 import {
   bookPhisAddonStorage,
   readPhisAddonStorageUsage,
@@ -63,7 +63,7 @@ async function resolveStorage(siteId: number, siteKey: string, addonId: string) 
     throw new PhisAddonStorageError("This Site has no default Storage Profile.");
   }
   const service = await createPhisMediaStorageServiceForProfile(profile, siteKey);
-  return { service, prefix: phiServerAddonStoragePrefix(addonId, siteKey) };
+  return { service, prefix: phisAddonStoragePrefix(addonId, siteKey) };
 }
 
 export function buildPhisAddonStorageCapability(input: {

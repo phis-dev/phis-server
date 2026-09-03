@@ -70,6 +70,6 @@ export function composePhisAddonAssetTableName(table: string) {
  * structural rather than a check somebody has to keep writing. It is also the prefix a purge empties
  * and a sweep reads, so everything an Add-on owns has to be under it.
  */
-export function phiServerAddonStoragePrefix(addonId: string, siteKey: string) {
+export function phisAddonStoragePrefix(addonId: string, siteKey: string) {
   return `addons/${derivePhisAddonSchemaName(addonId)}/${siteKey}`;
 }

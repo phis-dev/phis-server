@@ -8,11 +8,11 @@ import {
   PHIS_SERVICE_KINDS,
   isPhisServiceInterfaceCurrent,
   isPhisServiceKind,
-  phiServerServiceInterfaceDigest,
+  phisServiceInterfaceDigest,
 } from "./core-services";
 import { validatePhisAddonManifest } from "./manifest";
 
-const storageDigest = phiServerServiceInterfaceDigest(PHIS_SERVICE_KINDS.mediaStorage);
+const storageDigest = phisServiceInterfaceDigest(PHIS_SERVICE_KINDS.mediaStorage);
 
 function manifest(overrides: Record<string, unknown> = {}) {
   return {
@@ -52,8 +52,8 @@ describe("service kinds", () => {
   });
 
   it("gives each kind its own interface digest", () => {
-    expect(phiServerServiceInterfaceDigest(PHIS_SERVICE_KINDS.mediaStorage))
-      .not.toBe(phiServerServiceInterfaceDigest(PHIS_SERVICE_KINDS.directory));
+    expect(phisServiceInterfaceDigest(PHIS_SERVICE_KINDS.mediaStorage))
+      .not.toBe(phisServiceInterfaceDigest(PHIS_SERVICE_KINDS.directory));
     expect(storageDigest).toMatch(/^[0-9a-f]{64}$/u);
   });
 
@@ -62,7 +62,7 @@ describe("service kinds", () => {
       .toBe(true);
     expect(isPhisServiceInterfaceCurrent(
       PHIS_SERVICE_KINDS.mediaStorage,
-      phiServerServiceInterfaceDigest(PHIS_SERVICE_KINDS.directory),
+      phisServiceInterfaceDigest(PHIS_SERVICE_KINDS.directory),
     )).toBe(false);
   });
 });
@@ -104,7 +104,7 @@ describe("service provider descriptors", () => {
         serviceProvider({
           serviceKind: PHIS_SERVICE_KINDS.directory,
           providerKey: "@phis/storage-s3/ldap",
-          interfaceDigest: phiServerServiceInterfaceDigest(PHIS_SERVICE_KINDS.directory),
+          interfaceDigest: phisServiceInterfaceDigest(PHIS_SERVICE_KINDS.directory),
           factoryExport: "createLdapDirectoryAdapter",
         }),
       ],

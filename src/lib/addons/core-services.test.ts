@@ -10,7 +10,7 @@ import {
 import {
   isPhisServiceInterfaceCurrent,
   isPhisServiceKind,
-  phiServerServiceInterfaceDigest,
+  phisServiceInterfaceDigest,
 } from "./core-services.ts";
 
 /**
@@ -41,13 +41,13 @@ describe("Core service interface digests", () => {
     expect(
       isPhisServiceInterfaceCurrent(
         PHIS_SERVICE_KINDS.mediaStorage,
-        phiServerServiceInterfaceDigest(PHIS_SERVICE_KINDS.directory),
+        phisServiceInterfaceDigest(PHIS_SERVICE_KINDS.directory),
       ),
     ).toBe(false);
     expect(
       isPhisServiceInterfaceCurrent(
         PHIS_SERVICE_KINDS.mediaStorage,
-        phiServerServiceInterfaceDigest(PHIS_SERVICE_KINDS.mediaStorage),
+        phisServiceInterfaceDigest(PHIS_SERVICE_KINDS.mediaStorage),
       ),
     ).toBe(true);
   });

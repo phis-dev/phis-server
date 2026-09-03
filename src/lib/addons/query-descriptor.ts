@@ -603,7 +603,7 @@ export function validatePhisAddonQueryCatalog(
  * readable before it does it -- so it is reported where an operator is already looking, at install and
  * at `phis addon check`, rather than discovered later in a slow request.
  */
-export function phiServerAddonUnindexedSearches(
+export function phisAddonUnindexedSearches(
   schema: PhisAddonSchemaDescriptor,
   catalog: PhisAddonQueryCatalog,
 ): { query: string; table: string; column: string }[] {

@@ -4,7 +4,7 @@ import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import {
-  phiServerAddonStoragePrefix,
+  phisAddonStoragePrefix,
   readPhisAddonStorageSites,
   recountPhisAddonStorage,
   removePhisAddonStorage,
@@ -83,12 +83,12 @@ describe("clearing an Add-on's store", () => {
   });
 
   it("writes under the prefix the capability writes under, and nowhere else", () => {
-    const prefix = phiServerAddonStoragePrefix(ADDON, site.key);
+    const prefix = phisAddonStoragePrefix(ADDON, site.key);
     expect(prefix).toBe(`addons/phis_addon_pgtest_storage_cleanup/${site.key}`);
   });
 
   it("removes the whole store of a Site from the built-in storage", async () => {
-    const directory = path.join(root, phiServerAddonStoragePrefix(ADDON, site.key));
+    const directory = path.join(root, phisAddonStoragePrefix(ADDON, site.key));
     await mkdir(path.join(directory, "artifacts"), { recursive: true });
     await writeFile(path.join(directory, "artifacts", "one.bin"), "x");
     await writeFile(path.join(directory, "artifacts", "two.bin"), "yy");

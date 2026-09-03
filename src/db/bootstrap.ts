@@ -6,7 +6,7 @@ import { readFileSync } from "node:fs";
 import { Client } from "pg";
 
 import { resolvePhiAppPath } from "@/lib/app-paths";
-import { phiServerAddonCoreReferenceTables } from "@/lib/addons/schema-ddl";
+import { phisAddonCoreReferenceTables } from "@/lib/addons/schema-ddl";
 
 export type PhiBootstrapSiteInput = {
   key: string;
@@ -82,7 +82,7 @@ export async function grantPhiAddonCoreReferences(
   const client = new Client({ connectionString });
   await client.connect();
   try {
-    for (const table of phiServerAddonCoreReferenceTables()) {
+    for (const table of phisAddonCoreReferenceTables()) {
       await client.query(`GRANT REFERENCES ON ${table} TO "${role}"`);
     }
   } finally {

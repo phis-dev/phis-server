@@ -74,7 +74,7 @@ const SITE_BOUND_CORE_REFERENCES = new Set<string>([
  * from drifting apart. Adding a symbolic reference brings its grant along; a hand-written list would
  * not have, and the omission would only surface when someone installed an Add-on that used it.
  */
-export function phiServerAddonCoreReferenceTables() {
+export function phisAddonCoreReferenceTables() {
   return [...new Set(Object.values(CORE_REFERENCE_TARGETS).map((target) => target.table))];
 }
 

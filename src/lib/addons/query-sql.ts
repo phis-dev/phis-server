@@ -204,7 +204,7 @@ function conditionSql(
  * differently each time -- one row on two pages, another on none. The primary key is declared, so Core
  * can always finish the job, and no author has to know that they had to.
  */
-export function phiServerAddonQueryOrdering(
+export function phisAddonQueryOrdering(
   table: PhisAddonTableDescriptor,
   descriptor: PhisAddonSelectQueryDescriptor,
 ): PhisAddonQueryOrdering[] {
@@ -303,7 +303,7 @@ function compileSelect(
   parameterTypes: Map<string, PhisAddonQueryParameterType>,
 ): PhisAddonCompiledQuery {
   const compiler = createCompiler(parameterTypes);
-  const ordering = phiServerAddonQueryOrdering(table, descriptor);
+  const ordering = phisAddonQueryOrdering(table, descriptor);
   /*
    * The ordering values come back as text, in columns of their own, and the cursor is built from those
    * rather than from the row.
@@ -554,7 +554,7 @@ export function compilePhisAddonQueries(
         paging: {
           sql: next.sql,
           bindings: next.bindings,
-          ordering: phiServerAddonQueryOrdering(table, descriptor),
+          ordering: phisAddonQueryOrdering(table, descriptor),
           limit: Math.min(descriptor.limit, PHIS_ADDON_QUERY_MAX_LIMIT),
         },
       });

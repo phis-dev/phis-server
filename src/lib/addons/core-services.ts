@@ -20,7 +20,7 @@ import {
 export { PHIS_SERVICE_KINDS };
 export type { PhisServiceKind };
 
-export function phiServerServiceInterfaceDigest(kind: PhisServiceKind) {
+export function phisServiceInterfaceDigest(kind: PhisServiceKind) {
   return PHIS_SERVICE_INTERFACE_DIGESTS[kind];
 }
 
@@ -33,5 +33,5 @@ export function isPhisServiceKind(value: unknown): value is PhisServiceKind {
 /** Whether an Add-on was built against the interface this release actually offers. */
 export function isPhisServiceInterfaceCurrent(kind: string, interfaceDigest: string) {
   return isPhisServiceKind(kind) &&
-    phiServerServiceInterfaceDigest(kind) === interfaceDigest;
+    phisServiceInterfaceDigest(kind) === interfaceDigest;
 }

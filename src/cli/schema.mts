@@ -3,7 +3,7 @@ import path from "node:path";
 
 import { Client } from "pg";
 
-import { phiServerAddonCoreReferenceTables } from "../lib/addons/schema-ddl.ts";
+import { phisAddonCoreReferenceTables } from "../lib/addons/schema-ddl.ts";
 
 /**
  * Bringing an existing installation's Core schema up to the release it is running.
@@ -130,7 +130,7 @@ export async function applyPhiCoreSchema(input: {
 
       // Re-granted every time: a Core table added by this release may be one an Add-on may reference,
       // and the grant is per table rather than per schema.
-      for (const table of phiServerAddonCoreReferenceTables()) {
+      for (const table of phisAddonCoreReferenceTables()) {
         await client.query(`GRANT REFERENCES ON ${table} TO "${role}"`);
       }
 

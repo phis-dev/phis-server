@@ -7,7 +7,7 @@ import {
   deleteOrphanedSiteContentByIdsWithDb,
 } from "@/db/site-content";
 import { getPool } from "@/lib/db";
-import { isPhiServerCmsAreaKey, resolvePhiServerCmsAreaKey } from "@/lib/constants/cms-areas";
+import { isPhisCmsAreaKey, resolvePhisCmsAreaKey } from "@/lib/constants/cms-areas";
 import { PhiCmsRevisionFlags } from "@/lib/constants/phi-cms";
 import { normalizeSiteCmsPath } from "@/lib/helpers/cms-path";
 import { getSiteThemeRevisionByIdWithDb, normalizeSiteThemeScopeKey } from "@/db/site-theme";
@@ -53,6 +53,11 @@ export type SiteRevisionScopeSummary = {
   themeKey: string | null;
   publishedRevisionId: number | null;
   workingDraftRevisionId: number | null;
+  /**
+   * The Area's second Working Draft -- its Module selection, saved apart from its structure. Null for
+   * every other scope kind, which has only ever had one draft to begin with.
+   */
+  workingModuleDraftRevisionId: number | null;
 };
 
 export type SiteRevisionHistoryRow = {
@@ -96,7 +101,7 @@ function requireSiteNavigationScopeKey(value: string) {
     separatorIndex <= 0 ||
     separatorIndex >= normalized.length - 1 ||
     normalized.indexOf(":", separatorIndex + 1) !== -1 ||
-    !isPhiServerCmsAreaKey(normalized.slice(0, separatorIndex))
+    !isPhisCmsAreaKey(normalized.slice(0, separatorIndex))
   ) {
     throw new Error("Navigation key must be formatted as area:key.");
   }
@@ -109,6 +114,7 @@ function buildScopeSummary(
   pointers: {
     publishedRevisionId: number | null;
     workingDraftRevisionId: number | null;
+    workingModuleDraftRevisionId?: number | null;
   },
 ): SiteRevisionScopeSummary {
   if (input.kind === "navigation") {
@@ -121,6 +127,7 @@ function buildScopeSummary(
       themeKey: null,
       publishedRevisionId: pointers.publishedRevisionId,
       workingDraftRevisionId: pointers.workingDraftRevisionId,
+      workingModuleDraftRevisionId: null,
     };
   }
 
@@ -133,10 +140,11 @@ function buildScopeSummary(
       themeKey: normalizeSiteThemeScopeKey(input.key),
       publishedRevisionId: pointers.publishedRevisionId,
       workingDraftRevisionId: pointers.workingDraftRevisionId,
+      workingModuleDraftRevisionId: null,
     };
   }
 
-  const area = resolvePhiServerCmsAreaKey(input.areaMask);
+  const area = resolvePhisCmsAreaKey(input.areaMask);
   return {
     kind: input.kind,
     area,
@@ -147,6 +155,8 @@ function buildScopeSummary(
     themeKey: null,
     publishedRevisionId: pointers.publishedRevisionId,
     workingDraftRevisionId: pointers.workingDraftRevisionId,
+    // Only an "area" scope ever has one: a Page has no Modules of its own to select.
+    workingModuleDraftRevisionId: input.kind === "area" ? pointers.workingModuleDraftRevisionId ?? null : null,
   };
 }
 
@@ -165,6 +175,7 @@ function mapRevisionRows(
   scope: {
     publishedRevisionId: number | null;
     workingDraftRevisionId: number | null;
+    workingModuleDraftRevisionId?: number | null;
   },
 ): SiteRevisionHistoryRow[] {
   return rows.map((row) => {
@@ -192,7 +203,10 @@ function mapRevisionRows(
         : {},
       sourceRevisionId: row.source_revision_id,
       isPublished: scope.publishedRevisionId === row.id,
-      isWorkingDraft: scope.workingDraftRevisionId === row.id,
+      // An Area keeps two Working Drafts open at once -- structure and Modules -- so a row is a
+      // Working Draft if it is either one, not only the first.
+      isWorkingDraft:
+        scope.workingDraftRevisionId === row.id || scope.workingModuleDraftRevisionId === row.id,
       isDeleted: (row.flags & PhiCmsRevisionFlags.Deleted) !== 0,
       sourcePreset,
     };
@@ -254,13 +268,15 @@ async function getAreaScopeWithDb(
   id: number;
   publishedRevisionId: number | null;
   workingDraftRevisionId: number | null;
+  workingModuleDraftRevisionId: number | null;
 } | null> {
   const { rows } = await db.query<{
     id: number;
     published_revision_id: number | null;
     working_draft_revision_id: number | null;
+    working_module_draft_revision_id: number | null;
   }>(
-    `SELECT id, published_revision_id, working_draft_revision_id
+    `SELECT id, published_revision_id, working_draft_revision_id, working_module_draft_revision_id
      FROM phis.site_area_scopes
      WHERE site_id = $1
        AND area_id = $2
@@ -274,6 +290,7 @@ async function getAreaScopeWithDb(
         id: row.id,
         publishedRevisionId: row.published_revision_id,
         workingDraftRevisionId: row.working_draft_revision_id,
+        workingModuleDraftRevisionId: row.working_module_draft_revision_id,
       }
     : null;
 }
@@ -394,6 +411,7 @@ type ResolvedRevisionScope =
       scopeId: number | null;
       publishedRevisionId: number | null;
       workingDraftRevisionId: number | null;
+      workingModuleDraftRevisionId: number | null;
     }
   | {
       kind: "page";
@@ -432,6 +450,7 @@ async function resolveRevisionScopeWithDb(
       scopeId: scope?.id ?? null,
       publishedRevisionId: scope?.publishedRevisionId ?? null,
       workingDraftRevisionId: scope?.workingDraftRevisionId ?? null,
+      workingModuleDraftRevisionId: scope?.workingModuleDraftRevisionId ?? null,
     };
   }
 
@@ -569,6 +588,7 @@ export async function listSiteRevisionHistory(
   const scopeSummary = buildScopeSummary(input, {
     publishedRevisionId: scope.publishedRevisionId,
     workingDraftRevisionId: scope.workingDraftRevisionId,
+    workingModuleDraftRevisionId: scope.kind === "area" ? scope.workingModuleDraftRevisionId : null,
   });
 
   if (!scope.scopeId) {
@@ -1002,5 +1022,5 @@ export function isSiteRevisionNotFoundError(error: unknown) {
 }
 
 export function buildSiteNavigationScopeKeyFromArea(areaMask: number, navKey: string) {
-  return `${resolvePhiServerCmsAreaKey(areaMask)}:${normalizeNavigationKeyPart(navKey)}`;
+  return `${resolvePhisCmsAreaKey(areaMask)}:${normalizeNavigationKeyPart(navKey)}`;
 }

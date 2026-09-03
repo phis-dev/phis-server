@@ -20,7 +20,7 @@ const SIGNATURE_LENGTH = 12;
 
 export class PhisAddonCursorError extends Error {}
 
-export function phiServerAddonOrderingSignature(
+export function phisAddonOrderingSignature(
   queryName: string,
   ordering: PhisAddonQueryOrdering[],
 ) {
@@ -51,7 +51,7 @@ export function encodePhisAddonCursor(
     }
     return String(value);
   });
-  const payload = { s: phiServerAddonOrderingSignature(queryName, ordering), k: keys };
+  const payload = { s: phisAddonOrderingSignature(queryName, ordering), k: keys };
   return Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
 }
 
@@ -74,7 +74,7 @@ export function decodePhisAddonCursor(
     throw new PhisAddonCursorError("The cursor is not readable.");
   }
   const { s, k } = payload as { s: string; k: unknown[] };
-  if (s !== phiServerAddonOrderingSignature(queryName, ordering)) {
+  if (s !== phisAddonOrderingSignature(queryName, ordering)) {
     throw new PhisAddonCursorError(
       `The cursor was made for a different ordering than query "${queryName}" runs under.`,
     );

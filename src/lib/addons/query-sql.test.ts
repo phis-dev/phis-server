@@ -4,7 +4,7 @@ import { compilePhisAddonQueries } from "./query-sql.ts";
 import { buildPhisAddonSchemaStatements } from "./schema-ddl.ts";
 import { validatePhisAddonSchemaDescriptor } from "./schema-descriptor.ts";
 import {
-  phiServerAddonUnindexedSearches,
+  phisAddonUnindexedSearches,
   validatePhisAddonQueryCatalog,
 } from "./query-descriptor.ts";
 import type {
@@ -388,12 +388,12 @@ describe("searching text", () => {
   });
 
   it("names a search that nothing indexes, and stays quiet about one that is", () => {
-    expect(phiServerAddonUnindexedSearches(searchSchema, searchCatalog)).toEqual([]);
+    expect(phisAddonUnindexedSearches(searchSchema, searchCatalog)).toEqual([]);
     const withoutIndex = {
       ...searchSchema,
       tables: searchSchema.tables.map((table) => ({ ...table, indexes: [] })),
     };
-    expect(phiServerAddonUnindexedSearches(withoutIndex, searchCatalog)).toEqual([
+    expect(phisAddonUnindexedSearches(withoutIndex, searchCatalog)).toEqual([
       { query: "find", table: "offering", column: "title" },
     ]);
   });
@@ -417,7 +417,7 @@ describe("searching text", () => {
       ...searchSchema,
       tables: searchSchema.tables.map((table) => ({ ...table, indexes: [] })),
     };
-    expect(phiServerAddonUnindexedSearches(withoutIndex, optional)).toHaveLength(1);
+    expect(phisAddonUnindexedSearches(withoutIndex, optional)).toHaveLength(1);
   });
 
   it("builds a trigram index for a text index, and an ordinary one otherwise", () => {
