@@ -507,6 +507,15 @@ Set only process/runtime values such as `PORT` through `.env`.
 | `HOSTNAME` | The interface it binds. Next reads this one, **not** `HOST`; `next dev` reads neither and takes `-H` instead. |
 | `TRUST_PROXY` | How many reverse proxies in front of this process are ours. |
 
+`PHIS_RELEASE_ID` is deliberately not in that table. It is what a capability response reports as its
+release identity -- section 17 of [SERVER_ADDONS.md](./SERVER_ADDONS.md): a shared Add-on row does not
+prove every serving instance runs the same code, and this is the field that tells them apart. Because
+it describes the build rather than the host, `next.config.ts` takes it from the package version and
+`next build` bakes it in, so it is right by construction instead of being one more line an operator
+has to keep true per stage. Setting it in the environment therefore has no effect on the runtime.
+`phis addon reconcile` and `phis addon migrate` run outside Next and do not see it; they take
+`--release`.
+
 `HOSTNAME=127.0.0.1` is what the generated systemd profile sets (`phis site config systemd`), and it
 is not cosmetic: the nginx profile beside it is what the outside is meant to reach. Bound to
 `0.0.0.0`, the runtime also answers the network directly, and on that path a caller writes
