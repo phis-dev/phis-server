@@ -85,10 +85,6 @@ export type PhisConfig = {
       maxSubmitMs?: number;
     };
   };
-  cors?: {
-    allowedOrigins?: string[];
-    allowedOriginSuffixes?: string[];
-  };
   email?: {
     from?: string;
     fromName?: string;
@@ -156,10 +152,6 @@ export const DEFAULT_CONFIG: PhisConfig = {
     enabled: false,
   },
   platformSuperUsers: [],
-  cors: {
-    allowedOrigins: [],
-    allowedOriginSuffixes: [],
-  },
   email: {
     fromName: "",
     smtp: {
@@ -287,13 +279,6 @@ export function mergeConfig(base: PhisConfig, override: PhisConfig): PhisConfig 
         ...base.forms?.timeouts,
         ...override.forms?.timeouts,
       },
-    },
-    cors: {
-      ...base.cors,
-      ...override.cors,
-      allowedOrigins: override.cors?.allowedOrigins ?? base.cors?.allowedOrigins,
-      allowedOriginSuffixes:
-        override.cors?.allowedOriginSuffixes ?? base.cors?.allowedOriginSuffixes,
     },
     email: {
       ...base.email,
@@ -458,13 +443,6 @@ export function validatePhiConfig(config: PhisConfig) {
   }
 
   if (
-    config.cors?.allowedOrigins &&
-    !isStringArray(config.cors.allowedOrigins)
-  ) {
-    issues.push("cors.allowedOrigins must be an array of strings.");
-  }
-
-  if (
     config.auth?.transactionEncryptionKey !== undefined &&
     !/^[a-f0-9]{64}$/i.test(config.auth.transactionEncryptionKey)
   ) {
@@ -493,13 +471,6 @@ export function validatePhiConfig(config: PhisConfig) {
       "auth.secrets is no longer read. Run `phis auth import-secrets` to move it into the encrypted " +
       "store, which is what a second instance can read.",
     );
-  }
-
-  if (
-    config.cors?.allowedOriginSuffixes &&
-    !isStringArray(config.cors.allowedOriginSuffixes)
-  ) {
-    issues.push("cors.allowedOriginSuffixes must be an array of strings.");
   }
 
   if (

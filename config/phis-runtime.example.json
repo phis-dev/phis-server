@@ -31,17 +31,6 @@
       "maxSubmitMs": 7200000
     }
   },
-  "cors": {
-    "allowedOrigins": [],
-    "allowedOriginSuffixes": [
-      "example.com",
-      "cdn.phis.dev",
-      "example.net",
-      "another-site.example",
-      "localhost",
-      "127.0.0.1"
-    ]
-  },
   "email": {
     "from": "no-reply@localhost",
     "fromName": "Phisys",

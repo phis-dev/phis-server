@@ -110,7 +110,7 @@ Query: `locale`, `msg`, optional `ctx`, optional `hash`, optional `format=text|h
 Returns `{ translation }`. Only locales from `config/phis-config.json` are translated via
 DeepL; all others return the original `msg`.
 
-Token, database, DeepL, mail, CORS, and other runtime-sensitive settings are loaded from:
+Token, database, DeepL, mail, and other runtime-sensitive settings are loaded from:
 
 - `config/phis-config.json`
 - `config/phis-runtime.json`

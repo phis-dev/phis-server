@@ -6,7 +6,7 @@ import { PHI_CANONICAL_SOURCE_LOCALE } from "@/lib/locale";
 import { resolveSiteFromHeaders } from "@/lib/site-context";
 import { getConfiguredTranslationSupportedLocalesSync } from "@/lib/translation-locale-options";
 import { parseTranslationContext } from "@/lib/translation-context";
-import { PHIS_SITE_KEY_HEADER, PHIS_TOKEN_HEADER } from "@/lib/constants/http-headers";
+import { PHIS_SITE_KEY_HEADER } from "@/lib/constants/http-headers";
 import {
   translateBatchWithCache,
   translateExternalSiteBatchWithCache,
@@ -14,12 +14,6 @@ import {
   translateSiteWithCache,
   translateWithCache,
 } from "@/lib/translations";
-
-const CORS_HEADERS = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-  "Access-Control-Allow-Headers": `${PHIS_TOKEN_HEADER}, ${PHIS_SITE_KEY_HEADER}, content-type`,
-};
 
 function normalizeLocale(value: string) {
   return value.toLowerCase().split(/[-_]/)[0] ?? "";
@@ -34,13 +28,6 @@ type TranslationPayload = {
   sourceLocale?: string | null;
   format?: "text" | "html" | null;
 };
-
-function withCorsHeaders(response: NextResponse) {
-  Object.entries(CORS_HEADERS).forEach(([key, value]) => {
-    response.headers.set(key, value);
-  });
-  return response;
-}
 
 function validatePayload(payload: TranslationPayload) {
   const locale = payload?.locale;
@@ -69,7 +56,7 @@ function validatePayload(payload: TranslationPayload) {
     });
     return NextResponse.json(
       { error: "locale, msg, and ctx must be strings. format must be text or html. hash is optional and must be a string." },
-      { status: 400, headers: CORS_HEADERS },
+      { status: 400 },
     );
   }
 
@@ -78,7 +65,7 @@ function validatePayload(payload: TranslationPayload) {
   } catch (error) {
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Invalid translation context." },
-      { status: 400, headers: CORS_HEADERS },
+      { status: 400 },
     );
   }
 
@@ -102,7 +89,7 @@ function validateBatchPayload(payload: TranslationPayload) {
   ) {
     return NextResponse.json(
       { error: "locale must be a string, msgs must be a string array, and format must be text or html." },
-      { status: 400, headers: CORS_HEADERS },
+      { status: 400 },
     );
   }
 
@@ -111,7 +98,7 @@ function validateBatchPayload(payload: TranslationPayload) {
   } catch (error) {
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Invalid translation context." },
-      { status: 400, headers: CORS_HEADERS },
+      { status: 400 },
     );
   }
 
@@ -121,13 +108,13 @@ function validateBatchPayload(payload: TranslationPayload) {
 async function handleTranslation(request: Request, payload: TranslationPayload) {
   const guardError = guardApiV1(request);
   if (guardError) {
-    return withCorsHeaders(guardError);
+    return guardError;
   }
 
   const tokenMode = getApiV1TokenMode(request);
   const explicitSiteKey = request.headers.get(PHIS_SITE_KEY_HEADER)?.trim() ?? "";
   if (tokenMode === "public" && explicitSiteKey) {
-    return NextResponse.json({ error: "Forbidden." }, { status: 403, headers: CORS_HEADERS });
+    return NextResponse.json({ error: "Forbidden." }, { status: 403 });
   }
 
   const validated = validatePayload(payload);
@@ -142,7 +129,7 @@ async function handleTranslation(request: Request, payload: TranslationPayload) 
   const allowPublicWrites = config.translation?.allowPublicWrites === true;
   const allowPublicReads = config.translation?.allowPublicReads === true;
   if (tokenMode === "public" && !allowPublicReads) {
-    return NextResponse.json({ error: "Forbidden." }, { status: 403, headers: CORS_HEADERS });
+    return NextResponse.json({ error: "Forbidden." }, { status: 403 });
   }
   if (!allowedLocales.has(normalizedLocale)) {
     logRuntimeEvent("warn", "translation.locale_not_allowed", {
@@ -153,7 +140,7 @@ async function handleTranslation(request: Request, payload: TranslationPayload) 
         tokenMode,
       },
     });
-    return NextResponse.json({ translation: msg }, { headers: CORS_HEADERS });
+    return NextResponse.json({ translation: msg });
   }
 
   try {
@@ -191,7 +178,7 @@ async function handleTranslation(request: Request, payload: TranslationPayload) 
           format,
         });
 
-    return NextResponse.json({ translation }, { headers: CORS_HEADERS });
+    return NextResponse.json({ translation });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Translation failed.";
     logRuntimeEvent("error", "translation.failed", {
@@ -207,20 +194,20 @@ async function handleTranslation(request: Request, payload: TranslationPayload) 
         tokenMode,
       },
     });
-    return NextResponse.json({ error: message }, { status: 500, headers: CORS_HEADERS });
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }
 
 async function handleBatchTranslation(request: Request, payload: TranslationPayload) {
   const guardError = guardApiV1(request);
   if (guardError) {
-    return withCorsHeaders(guardError);
+    return guardError;
   }
 
   const tokenMode = getApiV1TokenMode(request);
   const explicitSiteKey = request.headers.get(PHIS_SITE_KEY_HEADER)?.trim() ?? "";
   if (tokenMode === "public" && explicitSiteKey) {
-    return NextResponse.json({ error: "Forbidden." }, { status: 403, headers: CORS_HEADERS });
+    return NextResponse.json({ error: "Forbidden." }, { status: 403 });
   }
 
   const validated = validateBatchPayload(payload);
@@ -235,7 +222,7 @@ async function handleBatchTranslation(request: Request, payload: TranslationPayl
   const allowPublicWrites = config.translation?.allowPublicWrites === true;
   const allowPublicReads = config.translation?.allowPublicReads === true;
   if (tokenMode === "public" && !allowPublicReads) {
-    return NextResponse.json({ error: "Forbidden." }, { status: 403, headers: CORS_HEADERS });
+    return NextResponse.json({ error: "Forbidden." }, { status: 403 });
   }
   if (!allowedLocales.has(normalizedLocale)) {
     logRuntimeEvent("warn", "translation.locale_not_allowed", {
@@ -248,7 +235,6 @@ async function handleBatchTranslation(request: Request, payload: TranslationPayl
     });
     return NextResponse.json(
       { translations: msgs.map((msg) => (typeof msg === "string" ? msg : "")) },
-      { headers: CORS_HEADERS },
     );
   }
 
@@ -286,7 +272,7 @@ async function handleBatchTranslation(request: Request, payload: TranslationPayl
           format,
         });
 
-    return NextResponse.json({ translations }, { headers: CORS_HEADERS });
+    return NextResponse.json({ translations });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Translation failed.";
     logRuntimeEvent("error", "translation.batch_failed", {
@@ -302,7 +288,7 @@ async function handleBatchTranslation(request: Request, payload: TranslationPayl
         tokenMode,
       },
     });
-    return NextResponse.json({ error: message }, { status: 500, headers: CORS_HEADERS });
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }
 
@@ -328,7 +314,7 @@ export async function POST(request: Request) {
   try {
     payload = (await request.json()) as TranslationPayload;
   } catch {
-    return NextResponse.json({ error: "Invalid JSON body." }, { status: 400, headers: CORS_HEADERS });
+    return NextResponse.json({ error: "Invalid JSON body." }, { status: 400 });
   }
 
   if (Array.isArray(payload.msgs)) {
@@ -336,8 +322,4 @@ export async function POST(request: Request) {
   }
 
   return handleTranslation(request, payload);
-}
-
-export async function OPTIONS() {
-  return new NextResponse(null, { status: 204, headers: CORS_HEADERS });
 }

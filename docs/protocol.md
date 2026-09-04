@@ -251,7 +251,8 @@ Response:
 ## Notes
 - Responses include an `ETag` header and support `If-None-Match` for `304`.
 - JSON responses are cached (see `Cache-Control` per route).
-- `GET /api/v1/news` and `GET /api/v1/presets` include permissive CORS headers for browser clients.
+- No endpoint emits `Access-Control-Allow-*`. Callers are the Site route handlers, which reach this API
+  server-side and therefore never send a preflight.
 
 ## Supported devices
 

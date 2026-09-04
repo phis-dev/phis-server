@@ -7,21 +7,12 @@ import { getPhisConfig } from "@/lib/config";
 import { PHI_CANONICAL_SOURCE_LOCALE } from "@/lib/locale";
 import { requireSiteFromRequest } from "@/lib/site-context";
 import { getConfiguredTranslationSupportedLocalesSync } from "@/lib/translation-locale-options";
-import { PHIS_TOKEN_HEADER } from "@/lib/constants/http-headers";
 
 const CACHE_CONTROL = "public, max-age=300, stale-while-revalidate=3600";
-const CORS_HEADERS = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "GET, OPTIONS",
-  "Access-Control-Allow-Headers": PHIS_TOKEN_HEADER,
-};
 
 export async function GET(request: Request) {
   const guardError = guardApiV1(request);
   if (guardError) {
-    Object.entries(CORS_HEADERS).forEach(([key, value]) => {
-      guardError.headers.set(key, value);
-    });
     return guardError;
   }
 
@@ -29,7 +20,7 @@ export async function GET(request: Request) {
   if (tokenMode === "public") {
     const config = await getPhisConfig();
     if (config.translation?.allowPublicReads !== true) {
-      return NextResponse.json({ error: "Forbidden." }, { status: 403, headers: CORS_HEADERS });
+      return NextResponse.json({ error: "Forbidden." }, { status: 403 });
     }
 
     const supportedLocales = getConfiguredTranslationSupportedLocalesSync();
@@ -48,7 +39,7 @@ export async function GET(request: Request) {
       label: labels[code] ?? code.toUpperCase(),
     }));
 
-    const response = createJsonResponse(
+    return createJsonResponse(
       request,
       {
         defaultLocale: PHI_CANONICAL_SOURCE_LOCALE,
@@ -58,20 +49,16 @@ export async function GET(request: Request) {
       },
       { cacheControl: CACHE_CONTROL },
     );
-    Object.entries(CORS_HEADERS).forEach(([key, value]) => {
-      response.headers.set(key, value);
-    });
-    return response;
   }
 
   const site = await requireSiteFromRequest(request);
   if (!site) {
-    return NextResponse.json({ error: "Site not found." }, { status: 404, headers: CORS_HEADERS });
+    return NextResponse.json({ error: "Site not found." }, { status: 404 });
   }
 
   const config = await getSiteRuntimeConfig(site.id);
   if (!config) {
-    return NextResponse.json({ error: "Site not found." }, { status: 404, headers: CORS_HEADERS });
+    return NextResponse.json({ error: "Site not found." }, { status: 404 });
   }
 
   const labels = config.availableLocales.reduce<Record<string, string>>((acc, option) => {
@@ -81,7 +68,7 @@ export async function GET(request: Request) {
 
   const locales = config.availableLocales.map((option) => option.code);
 
-  const response = createJsonResponse(
+  return createJsonResponse(
     request,
     {
       defaultLocale: config.defaultLocale,
@@ -91,12 +78,4 @@ export async function GET(request: Request) {
     },
     { cacheControl: CACHE_CONTROL },
   );
-  Object.entries(CORS_HEADERS).forEach(([key, value]) => {
-    response.headers.set(key, value);
-  });
-  return response;
-}
-
-export async function OPTIONS() {
-  return new NextResponse(null, { status: 204, headers: CORS_HEADERS });
 }

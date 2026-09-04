@@ -222,11 +222,6 @@ the wrappers would only churn eleven call sites.
   guard/param prologues that could share one context builder.
 - `test/` and `src/**/*.test.ts` split: test placement is inconsistent (six files under `test/`, the
   rest co-located). Pick one convention.
-- Unwired contract: CORS. README promises "explicit allow-origins instead of a wildcard" and
-  `config/phis-runtime.json` carries a validated `cors.*` block, but the public v1 routes (`tr`, `news`,
-  `locales`, `email/send`) hardcode `Access-Control-Allow-Origin: *` per route, and `src/lib/cors.ts` —
-  the only implementation that reads the configured origins — has no caller. Either wire the configured
-  policy or align the documentation; the helper is kept for that decision.
 - Logging unification status (surveyed 2026-08-17). `phi-server` is effectively unified: the
   `PhiLogger` factory in `src/lib/log.ts` is the documented contract's implementation,
   `logRuntimeEvent` wraps it, 118 call sites across 51 files use it, every event name is

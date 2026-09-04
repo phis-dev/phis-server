@@ -7,13 +7,6 @@ import { getSiteByKey } from "@/db/sites";
 import { sendEmail } from "@/lib/email";
 import { getSiteConfigBySiteId } from "@/db/site-config";
 import { sendTemplatedEmail, stripHtml, type SupportedEmailTemplate } from "@/lib/email-templates";
-import { PHIS_SITE_KEY_HEADER, PHIS_TOKEN_HEADER } from "@/lib/constants/http-headers";
-
-const CORS_HEADERS = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
-  "Access-Control-Allow-Headers": `authorization, ${PHIS_TOKEN_HEADER}, ${PHIS_SITE_KEY_HEADER}, content-type`,
-};
 
 type GenericEmailMessage = {
   subject?: unknown;
@@ -56,7 +49,7 @@ function resolveMessageId(result: unknown) {
 }
 
 function formatError(message: string, status = 400) {
-  return NextResponse.json({ error: message }, { status, headers: CORS_HEADERS });
+  return NextResponse.json({ error: message }, { status });
 }
 
 function normalizeTemplate(value: unknown): SupportedEmailTemplate | null {
@@ -190,7 +183,6 @@ export async function POST(request: Request) {
         to: recipient,
         messageId: resolveMessageId(result),
       },
-      { headers: CORS_HEADERS },
     );
   }
 
@@ -216,7 +208,6 @@ export async function POST(request: Request) {
         to: genericBody?.to ?? normalizeEmail(payload.to),
         messageId: resolveMessageId(result),
       },
-      { headers: CORS_HEADERS },
     );
   }
 
@@ -240,13 +231,5 @@ export async function POST(request: Request) {
       to: genericBody.to,
       messageId: resolveMessageId(result),
     },
-    { headers: CORS_HEADERS },
   );
-}
-
-export async function OPTIONS() {
-  return NextResponse.json(null, {
-    status: 204,
-    headers: CORS_HEADERS,
-  });
 }

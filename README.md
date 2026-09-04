@@ -431,7 +431,7 @@ Registration, verified-email account discovery/linking, credentials, bootstrap, 
 
 - `/<site>/api/shop/*` is the commerce pass-through to Medusa (`/store/*`).
 - `/<site>/api/auth/*` is the same-origin Site facade for Core authentication under `/api/v1/auth/*`.
-- CORS remains enabled for direct browser calls against `api.*` with explicit allow-origins instead of a wildcard.
+- No `/api/v1` route sets CORS headers. A browser never calls this API directly; see Cross-Origin Notes.
 - Non-personalized `GET` endpoints are cacheable via TTL or revalidation on the API or frontend layer.
 - Personalized or sensitive endpoints such as `cart`, `customer`, `session`, and uploads must use `no-store`.
 - Site-aware API endpoints require `x-phis-site-key`. The former host/origin/referer fallback is removed:
@@ -761,9 +761,11 @@ This project uses Next.js in API/backend mode; shared UI scaffolding in this REA
 
 ## Cross-Origin Notes
 
-- A Site to the API host of its own installation is already cross-origin.
-- A Site on an unrelated registrable domain is additionally cross-site.
-- CORS is still required for browser requests, but the underlying session state and CSRF validation are owned by `phis`, not by Medusa.
+- A Site reaches `/api/v1` from its own server, never from the browser: the Site route handler holds the
+  `x-phis-token` and forwards. Browser traffic therefore stays same-origin to the Site and no route here
+  emits `Access-Control-Allow-*`.
+- Session state and CSRF validation are owned by `phis`, not by Medusa. The commerce pass-through
+  `/api/shop/*` terminates at Medusa and answers for its own origin policy.
 
 ## Learn More
 
