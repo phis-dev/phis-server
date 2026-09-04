@@ -564,3 +564,128 @@ describe("a query guarded by a role", () => {
     expect(issues).toEqual([]);
   });
 });
+
+/**
+ * Writing a document, and the two ways that could quietly go wrong.
+ *
+ * A `json` column had no way to be written at all before this parameter type: every literal is a
+ * scalar, and every other parameter type is one too. What makes it safe to add is that it can only be
+ * written -- a document that could be compared would need paths, operators and an index vocabulary,
+ * which is a second query language growing inside the one this file exists to keep small.
+ */
+describe("writing a json column", () => {
+  const documentSchema: PhisAddonSchemaDescriptor = {
+    descriptorVersion: 1,
+    version: 1,
+    tables: [
+      {
+        name: "offering",
+        siteScoped: true,
+        ownerScoped: true,
+        columns: [
+          { name: "id", type: "identity" },
+          { name: "name", type: "string", maxLength: 200 },
+          { name: "attributes", type: "json", nullable: true },
+        ],
+        primaryKey: ["id"],
+      },
+    ],
+  };
+
+  function check(value: unknown) {
+    const issues: string[] = [];
+    validatePhisAddonQueryCatalog(value, documentSchema, "queries", issues, new Set());
+    return issues.join("\n");
+  }
+
+  const describeCatalog: PhisAddonQueryCatalog = {
+    parameters: {
+      describe: [
+        { name: "id", type: "bigInteger" },
+        { name: "attributes", type: "json", nullable: true },
+      ],
+    },
+    queries: [{
+      kind: "update",
+      name: "describe",
+      table: "offering",
+      set: [{ column: "attributes", value: { kind: "parameter", name: "attributes" } }],
+      idParameter: "id",
+    }],
+  };
+
+  it("accepts a document written into the column declared for one", () => {
+    expect(check(describeCatalog)).toBe("");
+  });
+
+  it("casts the placeholder, because the value arrives as JSON text and the column is JSONB", () => {
+    const query = compilePhisAddonQueries(SCHEMA, documentSchema, describeCatalog).get("describe")!;
+    expect(query.sql).toContain('"attributes" = $1::JSONB');
+    // And says so on the binding, because that is where the value gets serialised.
+    expect(query.bindings[0]).toEqual({ from: "parameter", name: "attributes", json: true });
+  });
+
+  it("refuses to filter on a document", () => {
+    expect(check({
+      parameters: { probe: [{ name: "attributes", type: "json", nullable: true }] },
+      queries: [{
+        kind: "select", name: "probe", table: "offering", limit: 10,
+        where: {
+          kind: "compare", column: "attributes", operator: "=",
+          value: { kind: "parameter", name: "attributes" },
+        },
+      }],
+    })).toMatch(/filters on the json parameter "attributes"/);
+  });
+
+  it("refuses to search a document, whichever way it is reached", () => {
+    expect(check({
+      parameters: { probe: [{ name: "attributes", type: "json", nullable: true }] },
+      queries: [{
+        kind: "select", name: "probe", table: "offering", limit: 10,
+        where: {
+          kind: "whenPresent",
+          parameter: "attributes",
+          condition: {
+            kind: "contains", column: "name",
+            value: { kind: "parameter", name: "attributes" },
+          },
+        },
+      }],
+    })).toMatch(/filters on the json parameter "attributes"/);
+  });
+
+  it("refuses a document as a list, because a list is for matching", () => {
+    expect(check({
+      parameters: { probe: [{ name: "attributes", type: "json", list: true }] },
+      queries: [{
+        kind: "select", name: "probe", table: "offering", limit: 10,
+        where: { kind: "in", column: "name", parameter: "attributes" },
+      }],
+    })).toMatch(/json cannot also be a list/);
+  });
+
+  it("refuses a scalar written into a document column", () => {
+    // Stored as a bare JSON string, read back as a string, and every reader expecting an object breaks.
+    expect(check({
+      parameters: { probe: [{ name: "id", type: "bigInteger" }] },
+      queries: [{
+        kind: "update", name: "probe", table: "offering", idParameter: "id",
+        set: [{ column: "attributes", value: { kind: "literal", value: "{}" } }],
+      }],
+    })).toMatch(/which is json, from something other than a json parameter/);
+  });
+
+  it("refuses a document written into a column that is not one", () => {
+    // The other direction: the serialised text would be stored and read back as a string.
+    expect(check({
+      parameters: {
+        probe: [{ name: "id", type: "bigInteger" }, { name: "doc", type: "json" }],
+      },
+      queries: [{
+        kind: "update", name: "probe", table: "offering", idParameter: "id",
+        set: [{ column: "name", value: { kind: "parameter", name: "doc" } }],
+      }],
+    })).toMatch(/writes the json parameter into "name", which is string/);
+  });
+});

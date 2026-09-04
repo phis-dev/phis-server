@@ -30,6 +30,7 @@ const PARAMETER_TYPES = new Set([
   "boolean",
   "instant",
   "uuid",
+  "json",
 ]);
 const MAX_CONDITION_DEPTH = 8;
 const AGGREGATE_FUNCTIONS = new Set(["count", "sum", "avg", "min", "max"]);
@@ -50,6 +51,7 @@ type ParameterDeclarations = {
   names: Set<string>;
   nullable: Set<string>;
   lists: Set<string>;
+  jsons: Set<string>;
 };
 
 type QueryContext = {
@@ -58,6 +60,7 @@ type QueryContext = {
   parameters: Set<string>;
   nullableParameters: Set<string>;
   listParameters: Set<string>;
+  jsonParameters: Set<string>;
   field: string;
   issues: string[];
 };
@@ -89,7 +92,16 @@ function checkColumn(context: QueryContext, column: unknown, where: string) {
   return true;
 }
 
-function checkValue(context: QueryContext, value: unknown, where: string) {
+/**
+ * @param position Where this value stands. A `json` parameter is a document and not a comparable, so it
+ * is refused everywhere a condition could reach it -- see `PhisAddonQueryParameterType`.
+ */
+function checkValue(
+  context: QueryContext,
+  value: unknown,
+  where: string,
+  position: "filter" | "assignment" = "filter",
+) {
   if (!isRecord(value)) {
     context.issues.push(`${context.field}.${where} must be an object.`);
     return;
@@ -98,6 +110,12 @@ function checkValue(context: QueryContext, value: unknown, where: string) {
     case "parameter":
       if (typeof value.name !== "string" || !context.parameters.has(value.name)) {
         context.issues.push(`${context.field}.${where} names an undeclared parameter.`);
+      } else if (position === "filter" && context.jsonParameters.has(value.name)) {
+        context.issues.push(
+          `${context.field}.${where} filters on the json parameter "${value.name}". ` +
+          "A document is written, never compared: filtering one would need paths and operators this " +
+          "vocabulary does not have.",
+        );
       }
       return;
     case "literal":
@@ -218,6 +236,47 @@ function checkCondition(
   }
 }
 
+/**
+ * A document goes in a document column, and nothing else goes in one either.
+ *
+ * Both directions, because both mistakes are silent. A `json` parameter written to a `text` column
+ * stores the serialised document as a string that reads back as one; a literal written to a `json`
+ * column stores a bare JSON scalar where the Add-on meant an object, and every reader that expected a
+ * document gets a string. PostgreSQL accepts both, which is why this is checked here.
+ */
+function checkJsonAssignment(
+  context: QueryContext,
+  column: string,
+  value: unknown,
+  at: string,
+) {
+  const declared = context.table.columns.find((entry) => entry.name === column);
+  // Core's own scope columns reach here as undefined; assigning one is refused before this. A reference
+  // column carries no type of its own -- it takes the type of what it points at, and never json.
+  const columnType = declared && !("references" in declared) ? declared.type : null;
+  if (!columnType) {
+    return;
+  }
+  const wantsJson = columnType === "json";
+  const isJsonParameter = isRecord(value)
+    && value.kind === "parameter"
+    && typeof value.name === "string"
+    && context.jsonParameters.has(value.name);
+  if (wantsJson && !isJsonParameter) {
+    context.issues.push(
+      `${context.field}.${at} writes "${column}", which is json, from something other than a json ` +
+      "parameter. A literal would be stored as a bare JSON scalar rather than as the document a " +
+      "reader expects.",
+    );
+  }
+  if (!wantsJson && isJsonParameter) {
+    context.issues.push(
+      `${context.field}.${at} writes the json parameter into "${column}", which is ${columnType}. ` +
+      "The document would be stored as its serialised text and read back as a string.",
+    );
+  }
+}
+
 function checkAssignments(context: QueryContext, raw: unknown, where: string) {
   const assignments = Array.isArray(raw) ? raw : [];
   if (!Array.isArray(raw) || assignments.length === 0) {
@@ -240,8 +299,9 @@ function checkAssignments(context: QueryContext, raw: unknown, where: string) {
     }
     if (checkColumn(context, assignment.column, `${at}.column`)) {
       seen.push(assignment.column as string);
+      checkJsonAssignment(context, assignment.column as string, assignment.value, at);
     }
-    checkValue(context, assignment.value, `${at}.value`);
+    checkValue(context, assignment.value, `${at}.value`, "assignment");
   });
   const duplicates = seen.filter((column, index) => seen.indexOf(column) !== index);
   if (duplicates.length > 0) {
@@ -318,6 +378,7 @@ function validateQuery(
     parameters,
     nullableParameters: declared.nullable,
     listParameters: declared.lists,
+    jsonParameters: declared.jsons,
     field,
     issues,
   };
@@ -534,6 +595,7 @@ export function validatePhisAddonQueryCatalog(
     const names = new Set<string>();
     const nullable = new Set<string>();
     const lists = new Set<string>();
+    const jsons = new Set<string>();
     const list = Array.isArray(declared) ? declared : [];
     if (!Array.isArray(declared)) {
       issues.push(`${field}.parameters.${queryName} must be an array.`);
@@ -564,8 +626,16 @@ export function validatePhisAddonQueryCatalog(
       if (parameter.list === true) {
         lists.add(parameter.name);
       }
+      if (parameter.type === "json") {
+        jsons.add(parameter.name);
+        if (parameter.list === true) {
+          // `= ANY($n::JSONB[])` is a comparison, and a document is not compared. The list form exists
+          // for asking a second question about keys that were just read, which documents are not.
+          issues.push(`${at}.type json cannot also be a list: a document is written, never matched.`);
+        }
+      }
     });
-    parametersByQuery.set(queryName, { names, nullable, lists });
+    parametersByQuery.set(queryName, { names, nullable, lists, jsons });
   }
 
   const rawQueries = Array.isArray(value.queries) ? value.queries : [];
@@ -580,7 +650,8 @@ export function validatePhisAddonQueryCatalog(
     validateQuery(
       query,
       schema,
-      parametersByQuery.get(queryName) ?? { names: new Set(), nullable: new Set(), lists: new Set() },
+      parametersByQuery.get(queryName)
+        ?? { names: new Set(), nullable: new Set(), lists: new Set(), jsons: new Set() },
       declaredRoles,
       `${field}.queries[${index}]`,
       issues,

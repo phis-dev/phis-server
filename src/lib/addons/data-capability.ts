@@ -101,8 +101,21 @@ function resolveBindings(
 ) {
   return bindings.map((binding) => {
     switch (binding.from) {
-      case "parameter":
-        return readArgument(args, binding.name, query.name);
+      case "parameter": {
+        const value = readArgument(args, binding.name, query.name);
+        if (!binding.json || value === null) {
+          return value;
+        }
+        // Serialised here rather than left to `pg`, which turns an object into JSON and an array into a
+        // PostgreSQL array literal. `undefined` comes back for a value JSON cannot carry.
+        const document = JSON.stringify(value);
+        if (document === undefined) {
+          throw new PhisAddonQueryError(
+            `Query "${query.name}" was given a value for "${binding.name}" that is not a document.`,
+          );
+        }
+        return document;
+      }
       case "literal":
         return binding.value;
       case "actor":

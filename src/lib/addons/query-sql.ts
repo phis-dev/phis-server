@@ -60,7 +60,15 @@ export type PhisAddonCompiledQuery = {
 };
 
 export type PhisAddonQueryBinding =
-  | { from: "parameter"; name: string }
+  /**
+   * `json` says the value is a document rather than a scalar, and it has to be said here.
+   *
+   * `pg` serialises a plain object to JSON of its own accord, and serialises an **array** to a
+   * PostgreSQL array literal instead -- so `media: [...]` would arrive as `{...}` and be refused by the
+   * column, while `provider: {...}` went through. One of the two shapes a document can have working and
+   * the other not is worse than neither, so the value is serialised where its type is known.
+   */
+  | { from: "parameter"; name: string; json?: true }
   | { from: "literal"; value: string | number | boolean }
   | { from: "actor" }
   | { from: "site" }
@@ -88,6 +96,7 @@ const PARAMETER_TYPE_SQL: Readonly<Record<PhisAddonQueryParameterType, string>> 
   boolean: "BOOLEAN",
   instant: "TIMESTAMPTZ",
   uuid: "UUID",
+  json: "JSONB",
 };
 
 type Compiler = {
@@ -112,8 +121,14 @@ function createCompiler(
 
 function valueSql(compiler: Compiler, value: PhisAddonQueryValue) {
   switch (value.kind) {
-    case "parameter":
-      return compiler.place({ from: "parameter", name: value.name });
+    case "parameter": {
+      const json = compiler.parameterTypes.get(value.name) === "json";
+      const placed = compiler.place(
+        json ? { from: "parameter", name: value.name, json: true } : { from: "parameter", name: value.name },
+      );
+      // The cast is not decoration: the value arrives as JSON text, and the column is JSONB.
+      return json ? `${placed}::JSONB` : placed;
+    }
     case "literal":
       return compiler.place({ from: "literal", value: value.value });
     case "actor":
@@ -434,8 +449,9 @@ function compileInsert(
   schemaName: string,
   table: PhisAddonTableDescriptor,
   descriptor: PhisAddonInsertQueryDescriptor,
+  parameterTypes: Map<string, PhisAddonQueryParameterType>,
 ): PhisAddonCompiledQuery {
-  const compiler = createCompiler();
+  const compiler = createCompiler(parameterTypes);
   const columns: string[] = [];
   const values: string[] = [];
 
@@ -483,8 +499,9 @@ function compileByIdMutation(
   schemaName: string,
   table: PhisAddonTableDescriptor,
   descriptor: PhisAddonQueryDescriptor & { kind: "update" | "delete" },
+  parameterTypes: Map<string, PhisAddonQueryParameterType>,
 ): PhisAddonCompiledQuery {
-  const compiler = createCompiler();
+  const compiler = createCompiler(parameterTypes);
   const assignments = descriptor.kind === "update"
     ? descriptor.set
       .map((assignment) =>
@@ -541,12 +558,17 @@ export function compilePhisAddonQueries(
     if (!table) {
       continue;
     }
+    /*
+     * Every kind needs these now, not only the two that page. `in` wanted the declared type to cast an
+     * array, and a `json` parameter wants it to cast a document -- and documents are written, so the
+     * kinds that write are exactly the ones that were not being told.
+     */
+    const parameterTypes = new Map(
+      (catalog.parameters[descriptor.name] ?? []).map((parameter) =>
+        [parameter.name, parameter.type] as const
+      ),
+    );
     if (descriptor.kind === "select") {
-      const parameterTypes = new Map(
-        (catalog.parameters[descriptor.name] ?? []).map((parameter) =>
-          [parameter.name, parameter.type] as const
-        ),
-      );
       const first = compileSelect(schemaName, table, descriptor, false, parameterTypes);
       const next = compileSelect(schemaName, table, descriptor, true, parameterTypes);
       compiled.set(descriptor.name, {
@@ -559,11 +581,6 @@ export function compilePhisAddonQueries(
         },
       });
     } else if (descriptor.kind === "aggregate") {
-      const parameterTypes = new Map(
-        (catalog.parameters[descriptor.name] ?? []).map((parameter) =>
-          [parameter.name, parameter.type] as const
-        ),
-      );
       const first = compileAggregate(schemaName, table, descriptor, false, parameterTypes);
       const ordering = aggregateOrdering(descriptor);
       if (ordering.length === 0) {
@@ -582,9 +599,12 @@ export function compilePhisAddonQueries(
         },
       });
     } else if (descriptor.kind === "insert") {
-      compiled.set(descriptor.name, compileInsert(schemaName, table, descriptor));
+      compiled.set(descriptor.name, compileInsert(schemaName, table, descriptor, parameterTypes));
     } else if (table.primaryKey.length === 1) {
-      compiled.set(descriptor.name, compileByIdMutation(schemaName, table, descriptor));
+      compiled.set(
+        descriptor.name,
+        compileByIdMutation(schemaName, table, descriptor, parameterTypes),
+      );
     }
   }
   return compiled;
