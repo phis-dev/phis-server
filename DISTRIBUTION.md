@@ -222,7 +222,7 @@ interface is put in front of them.
 ## Open questions
 
 - The archive layout for a package carrying both halves.
-- Whether `phi-server` itself is distributed through the same list. It has the same problem -- version,
+- Whether `@phis/server` itself is distributed through the same list. It has the same problem -- version,
   compatibility, is there something newer -- and one format for both would be cleaner than two, but it
   widens the scope.
 - Whether sources are a column on `server_addons` or a small table of named sources that entries point

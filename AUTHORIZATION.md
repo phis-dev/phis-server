@@ -1,7 +1,7 @@
 # Phi Viewer Authorization Contract
 
 This document is the normative target v1 contract for Site-scoped viewer roles, provider-qualified
-group claims, access evaluation, persistence, and API enforcement in `phi-server`. Site rendering and
+group claims, access evaluation, persistence, and API enforcement in `@phis/server`. Site rendering and
 responsive visibility consume this contract through `@phis/ui`; they must not define a second
 authorization model. General group persistence, membership semantics, and Media Space authorization
 are governed by [GROUPS_AND_STORAGE.md](./GROUPS_AND_STORAGE.md). Local and external user/group Directory
@@ -176,14 +176,14 @@ roles: [
 ]
 ```
 
-Role keys and flags are immutable ABI identities for a published provider version. `phi-server`
+Role keys and flags are immutable ABI identities for a published provider version. `@phis/server`
 validates that:
 
 - every flag is a single positive supported bit;
 - keys and flags are unique within the provider;
 - assigned flags are a subset of the active provider catalog;
 - an Add-on resolves or mutates only its own claim namespace;
-- only `phi-server` constructs the Core claim.
+- only `@phis/server` constructs the Core claim.
 
 A Site Module may always reference Core roles. It may additionally reference roles of its own
 `serverBinding.providerId`. Referencing a different third-party provider creates an undeclared second
@@ -213,7 +213,7 @@ does not keep `base_role_flags` or `custom_role_flags` as parallel effective-aut
 A zero assignment is represented by deleting the provider row, except that runtime resolution still
 materializes the authenticated viewer's effective Core claim with zero flags.
 
-Provider claims are written only through an authorized generic `phi-server` role-assignment service.
+Provider claims are written only through an authorized generic `@phis/server` role-assignment service.
 Site Modules and Add-ons never write authorization tables directly.
 
 Provider-qualified group claims use the one normalized `site_groups` and `site_group_members` path from
@@ -261,7 +261,7 @@ must enforce the same policy server-side.
 CMS write validation accepts the same canonical policy object in Region, Layout, Surface, and Widget
 render-block config and in Command Toolbar button config. An explicitly present malformed policy makes
 the write invalid; it is never normalized to public access. Module artifact minima and provider
-ownership are resolved by the compiled `@phis/ui` Module catalog, while `phi-server` remains
+ownership are resolved by the compiled `@phis/ui` Module catalog, while `@phis/server` remains
 the authority for claims and protected API operations.
 
 Role-specific convenience guards may exist, but they must delegate to the shared policy evaluator and
@@ -269,6 +269,6 @@ must not reproduce independent `allowAdmin`, `allowDeveloper`, or similar decisi
 
 ## 10. Responsive visibility
 
-Viewport visibility is not authorization. `phi-server` may persist the shared viewport flag matrix, but
+Viewport visibility is not authorization. `@phis/server` may persist the shared viewport flag matrix, but
 it must never use viewport or user-agent detection to grant API, Area, Page, or role access. The
 normative display policy and inheritance rules live in `@phis/ui`.

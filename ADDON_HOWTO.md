@@ -1,4 +1,4 @@
-# Building, compiling, and installing a phi-server Add-on
+# Building, compiling, and installing a `@phis/server` Add-on
 
 This is the practical guide for shipping an Add-on. The normative rules stay in
 [SERVER_ADDONS.md](./SERVER_ADDONS.md); where this guide is more specific, it is specific about the
@@ -94,7 +94,7 @@ later meets the rows that are already there.
 
 ## 3. How to compile it
 
-Two steps, both in your own package. Nothing in this section involves phi-server.
+Two steps, both in your own package. Nothing in this section involves `@phis/server`.
 
 **Type-check against the ABI.** `@phis/contracts/addon` carries the types an Add-on declares or
 implements. It contains no runtime code, so it disappears entirely from the compiled artifact -- it
@@ -158,7 +158,7 @@ resolves a path from `__dirname`. They bundle and then cannot find what they exp
 package external and putting a `node_modules` beside the artifact does work -- but because of what that
 costs. Node resolves a bare specifier by walking *up*, so an artifact with any bare import left in it
 reaches whatever `node_modules` happens to sit above the install root. Measured: an artifact under the
-install root imported `pg`, `phi-server`'s own PostgreSQL driver, successfully. The rule "no import of
+install root imported `pg`, `@phis/server`'s own PostgreSQL driver, successfully. The rule "no import of
 anything outside the artifact" is true only while the artifact contains no bare imports; the moment one
 is allowed, the rule becomes a promise instead of a property.
 
@@ -177,7 +177,7 @@ module scope empty.
 
 ## 4. What it must not do
 
-- **No import of anything outside the artifact**, other than `node:` builtins. Not phi-server, not a
+- **No import of anything outside the artifact**, other than `node:` builtins. Not `@phis/server`, not a
   package name, not a path. The artifact's own relative imports are inlined by the bundler and cease to
   exist, and anything left over resolves upward into directories that are none of an Add-on's business.
 - **No dynamic import of a computed specifier.** An Add-on may not become a loader itself.

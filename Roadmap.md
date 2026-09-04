@@ -60,15 +60,15 @@ The platform is split into four application types:
 - Done 2026-08-17: `x-phis-site-key` is the only Site identity. The host/origin/referer fallback and
   `getSiteByHostname` are removed from the generic site resolver; a request without the explicit key is
   simply not Site-scoped, and `tr()` and other global lookups stay outside the site context contract.
-- Audit remaining `throw new Error(...)` paths in shared helpers and storage code so route handlers can keep using structured `phi-server` log events instead of letting internal exceptions surface as raw runtime errors.
+- Audit remaining `throw new Error(...)` paths in shared helpers and storage code so route handlers can keep using structured `@phis/server` log events instead of letting internal exceptions surface as raw runtime errors.
 - Prefer explicit result/return contracts over unhandled exceptions for route-adjacent helpers where the failure is a normal operational case rather than a programmer invariant.
 
 ## Logging Contract
 
 - Move site-scoped operational logging to native journald fields where possible so `siteKey` is filterable before JSON parsing in `/admin/logs`.
-- Keep `phi-server` structured log events as the source of truth for payload details, but avoid relying on `siteKey` only inside the serialized JSON body for operational filtering.
+- Keep `@phis/server` structured log events as the source of truth for payload details, but avoid relying on `siteKey` only inside the serialized JSON body for operational filtering.
 - Make upload/finalize failures, media route failures, and similar site-bound errors emit a parsable site identifier at the transport layer so the admin log reader can select the relevant site first and apply secondary filters afterwards.
-- Treat local `phis-ui` proxy logs as host-local transport only for now; if `phi-server` and the site app are not co-located, add a reusable ingest transport later instead of relying on shared filesystem or journal access across hosts.
+- Treat local `phis-ui` proxy logs as host-local transport only for now; if `@phis/server` and the site app are not co-located, add a reusable ingest transport later instead of relying on shared filesystem or journal access across hosts.
 
 ## Media Upload Transport
 
@@ -77,7 +77,7 @@ The platform is split into four application types:
 - Preferred target directions:
   - direct-to-storage uploads with presigned URLs
   - or a same-origin upload front door implemented outside Next, e.g. nginx or a dedicated upload service
-- The upload-session contract in `phi-server` should remain the stable coordination point regardless of the transport layer.
+- The upload-session contract in `@phis/server` should remain the stable coordination point regardless of the transport layer.
 - Restricted media delivery still needs the signed-URL flow to be implemented end to end, including generation, verification, and browser-facing delivery for `restricted + private` assets.
 
 ## Application Boundaries
@@ -314,7 +314,7 @@ Those concerns are better handled through Docker, Debian packaging, and Git-base
 
 ## Hot-pluggable Add-ons
 
-**Done.** Installing an Add-on used to require a `phi-server` rebuild, because
+**Done.** Installing an Add-on used to require a `@phis/server` rebuild, because
 `src/generated/addon-build-manifest.ts` was a generated source file whose `import()` targets were
 compiled into the build -- and a rebuild stops every tenant on the shared instance. Add-ons are now
 loaded at runtime from the install root; [ADDON_HOWTO.md](./ADDON_HOWTO.md) is the guide, and
@@ -704,7 +704,7 @@ The trade runs the other way from the server, and that is what settles it:
 
 | | blast radius of a rebuild | value of hot-plug |
 | --- | --- | --- |
-| `phi-server` | every tenant on the shared instance | high |
+| `@phis/server` | every tenant on the shared instance | high |
 | Site instance | one tenant, their own code | low |
 
 A Site rebuild is an ordinary deploy of one company's own application. Measured: 29.7 s to compile, cold
@@ -963,6 +963,33 @@ Two prerequisites are easy to miss because nothing fails without them today:
 Local object storage is the remaining blocker under either model: an Asset on one host's disk does not
 exist for the others, which is why the S3 Storage Add-on is a precondition for more than one instance
 rather than merely a storage option.
+
+### Decided: Add-on desired state moves into the database
+
+Pull needs a place to pull from. `config/phis-addons.json` is a file per host, so a host that is meant
+to read which Add-ons it should be running finds the answer only where somebody already put it -- which
+is the copying that pull exists to remove.
+
+The split that holds is not file against database but these two:
+
+- **which Add-ons in which version are wanted** -- one answer for the installation, in the database
+- **which artifact bytes are physically present** -- per host, on disk, and reported by that host
+
+`SERVER_ADDONS.md` section 7 stays true either way: an Add-on present only in the database is not
+loadable. The digest binding gets stronger rather than weaker, because the digest a host reports is then
+checked against a recorded one instead of against a neighbouring copy of the same file.
+
+This is also what lets an interface say anything. A UI can only state that an Add-on is installed, could
+be enabled, or is waiting on a Module build if those facts are readable where the UI runs. Today the
+first of them lives in a file the Next process does not own, which is why the operator surface has no
+Add-on panel at all.
+
+Consequences to work out when this is built:
+
+- `addon install` stops being the thing that records intent and becomes the thing that places bytes;
+  under pull, the host places them itself.
+- `addon enable` becomes a plain row update, which is what makes it available to the operator UI.
+- the three switches of `SERVER_ADDONS.md` section 15 keep their separation; only their storage moves.
 
 ## Immediate Cleanup Decisions
 

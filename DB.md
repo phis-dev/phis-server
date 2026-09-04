@@ -346,7 +346,7 @@ Contract:
 - `folder_id`, `presentation_flags`, and `meta` may optionally be supplied at init time as a starting context for the eventual asset row.
 - Upload-session `meta` is transient transport metadata and is copied to `media_assets.meta` during finalize. It is intended for durable source descriptors such as imported icon metadata, not for secrets or large payloads.
 - Title and alt text are added later on the actual asset via the inspector PATCH flow.
-- `kind` reuses the existing `PhiMediaKind` contract from `phi-server` and `phis-ui`.
+- `kind` reuses the existing `PhiMediaKind` contract from `@phis/server` and `phis-ui`.
 - `staging_storage_key` points to the staging object inside the bound profile; `final_storage_key` is the target key after finalize.
 - `checksum_sha256` is available for integrity and duplicate/comparison logic.
 - Finalize verifies the stored object before the Asset reaches `ready` and commits the quota reservation.
@@ -397,7 +397,7 @@ Contract:
 ### Locale Capability Contract
 
 - Locale support is two-level:
-  - `phi-server` defines the platform-wide locale capability superset.
+  - `@phis/server` defines the platform-wide locale capability superset.
   - each site defines a subset through `sites.default_locale` and `sites.available_locales`.
 - The platform-wide superset must cover at least every DeepL target language supported by the configured DeepL provider snapshot.
 - Sites must not offer locales that are unknown to the platform capability superset.
@@ -408,7 +408,7 @@ Contract:
   - Ant Design receives the resolved UI locale key, for example `de-CH -> de_DE`, `en-GB -> en_GB`, `zh-Hans -> zh_CN`.
   - Intl and `<html lang>` receive the effective site locale.
   - Phi label sets use the resolved fallback chain, for example `de-CH -> de -> en`.
-- Locale validation, automatic translation targets, Ant Design locale mapping, text direction, and fallback chains must be derived centrally in `phi-server`, not reimplemented in widgets or site apps.
+- Locale validation, automatic translation targets, Ant Design locale mapping, text direction, and fallback chains must be derived centrally in `@phis/server`, not reimplemented in widgets or site apps.
 - Runtime locale resolution is exposed through `GET /api/v1/site/locale`. It returns the effective locale, provider targets, UI targets, direction, and fallback chain for the current request.
 - Site configuration can be cached by site key. Resolved runtime locale must not be cached as site config because it can depend on user session, locale cookie, explicit request locale, and `Accept-Language`.
 - `phis-ui` only consumes the resolved contract. Its locale-specific UI responsibility is loading the bundled UI locale modules that correspond to the resolved locale, for example Ant Design and Dayjs.

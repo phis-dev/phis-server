@@ -302,7 +302,7 @@ Registration, verified-email account discovery/linking, credentials, bootstrap, 
 ## Locale Capability Contract
 
 - Locale support has two levels:
-  - `phi-server` defines the maximum platform capability superset.
+  - `@phis/server` defines the maximum platform capability superset.
   - each site enables only a subset of that superset.
 - The platform superset must cover at least every target language supported by the configured DeepL target-language snapshot.
 - Site config must be validated against that superset:
@@ -321,7 +321,7 @@ Registration, verified-email account discovery/linking, credentials, bootstrap, 
 - External integrations must use their resolved target instead of the raw site locale:
   - DeepL example: `de-CH -> DE`, `en-GB -> EN-GB`, `pt-BR -> PT-BR`, `zh-Hans -> ZH-HANS`.
   - Ant Design example: `de-CH -> de_DE`, `en-GB -> en_GB`, `zh-Hans -> zh_CN`.
-- Locale, translation-target, Ant Design locale, direction, and fallback-chain mapping must be resolved centrally by `phi-server`.
+- Locale, translation-target, Ant Design locale, direction, and fallback-chain mapping must be resolved centrally by `@phis/server`.
 - `GET /api/v1/site/locale` is the request/runtime resolver. It accepts the raw browser/request locale context and returns the validated resolved locale contract.
 - Resolution order is explicit request locale, authenticated user preference, locale cookie, browser `Accept-Language`, then site default.
 - `sourceLocale` and `defaultLocale` are separate concepts. The immutable Site `sourceLocale` owns CMS source text and Site translation messages; `defaultLocale` is only the final request-locale fallback.
@@ -382,7 +382,7 @@ Registration, verified-email account discovery/linking, credentials, bootstrap, 
 - Runtime logs must be emitted as one-line JSON objects to stdout/stderr so `systemd` and `journalctl` can filter them consistently.
 - Do not add a separate log table for operational logging.
 - CLI commands may keep human-readable text output; this contract applies to runtime server and proxy logs.
-- Fixed service names are `phi-server`, `phi-ui`, `phi-site`, and `phi-cli`.
+- Fixed service names are `@phis/server`, `phi-ui`, `phi-site`, and `phi-cli`.
 - Runtime code should log through a `PhiLogger` instance with `child(...)`, `debug(...)`, `info(...)`, `warn(...)`, and `error(...)`.
 - The common log shape is:
   - `ts`
@@ -419,7 +419,7 @@ Registration, verified-email account discovery/linking, credentials, bootstrap, 
   - `form.abuse.detected`
 - `siteKey` is mandatory for site-scoped request logs.
 - `requestId` should be added whenever a request context is available.
-- The admin log feed is owned and served by `phi-server` at `GET /api/site/admin/logs`; it is the only supported reader for site-scoped operational logs and must filter by `siteKey` before applying secondary query filters.
+- The admin log feed is owned and served by `@phis/server` at `GET /api/site/admin/logs`; it is the only supported reader for site-scoped operational logs and must filter by `siteKey` before applying secondary query filters.
 - Sensitive values such as passwords, full tokens, and raw secret material must never be logged.
 - Emails, IP addresses, and user agents should only be logged when they are relevant to the event.
 - Prefer `warn` for degraded but expected states, `error` for failures, and `info` for successful lifecycle events.
@@ -455,7 +455,7 @@ Runtime baseline:
 
 Package manager contract:
 
-- Until `phi-server`, `phis-ui`, and the frontend packages are split into standalone repositories, the workspace root `pnpm-lock.yaml` is the authoritative lockfile.
+- Until `@phis/server`, `phis-ui`, and the frontend packages are split into standalone repositories, the workspace root `pnpm-lock.yaml` is the authoritative lockfile.
 - Do not use or maintain `package-lock.json` in this repository during the workspace phase.
 - After the repository split, each standalone package must choose exactly one package manager lockfile and generate it fresh from that package's own `package.json`.
 - TODO: Revisit ESLint 10 after `eslint-plugin-react`, `eslint-plugin-import`, and `eslint-plugin-jsx-a11y` publish ESLint 10-compatible releases. The current latest versions are transitively required by `eslint-config-next` and crash or declare peers only up to ESLint 9.
@@ -511,8 +511,8 @@ prove every serving instance runs the same code, and this is the field that tell
 it describes the build rather than the host, `next.config.ts` takes it from the package version and
 `next build` bakes it in, so it is right by construction instead of being one more line an operator
 has to keep true per stage. Setting it in the environment therefore has no effect on the runtime.
-`phis addon reconcile` and `phis addon migrate` run outside Next and do not see it; they take
-`--release`.
+`phis addon reconcile` and `phis addon migrate` run outside Next and do not see it; they read the
+same package version themselves, which is why neither offers a flag to name a different one.
 
 `HOSTNAME=127.0.0.1` is what the generated systemd profile sets (`phis site config systemd`), and it
 is not cosmetic: the nginx profile beside it is what the outside is meant to reach. Bound to
@@ -668,7 +668,7 @@ Examples:
 - `./phis addon check`
 - `./phis addon install --artifact ./dist/addon.mjs`
 - `./phis addon enable --addon @phis/github`
-- `./phis addon reconcile --release 2026-07-28.1`
+- `./phis addon reconcile`
 - `./phis addon storage --addon @phis/marketplace --site moonhug --quota-bytes 52428800 --max-objects 500`
 - `./phis addon storage --addon @phis/marketplace --site moonhug --recount`
 - `./phis addon storage --addon @phis/marketplace --site moonhug --sweep`
@@ -722,9 +722,9 @@ The generated `nginx` site config includes `client_max_body_size 2g;` by default
 Server Add-on desired state is operator-owned in `config/phis-addons.json`, and the artifacts it
 names live under `addons/`. `phis addon install --artifact <path>` copies one self-contained
 `addon.mjs` into that root, validates its manifest, and records the entry with both digests;
-`phis addon check` re-verifies the installed set. No Add-on is compiled into `phi-server`, so
+`phis addon check` re-verifies the installed set. No Add-on is compiled into `@phis/server`, so
 installing one needs neither a rebuild nor a restart. New Add-ons are installed disabled. Enabling or
-disabling updates the desired state; `phis addon reconcile --release <id>` then records the deployed
+disabling updates the desired state; `phis addon reconcile` then records the deployed
 release and global state in PostgreSQL. Site Module activation never changes this file or the server
 dependency graph. See [ADDON_HOWTO.md](./ADDON_HOWTO.md) for how an Add-on is built and compiled.
 

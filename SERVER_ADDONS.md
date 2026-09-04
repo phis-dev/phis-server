@@ -2,7 +2,7 @@
 
 ## Status
 
-This document defines the normative target v1 contract for extending `phi-server` and binding Site
+This document defines the normative target v1 contract for extending `@phis/server` and binding Site
 Modules to server capabilities.
 
 Common Site authentication methods and session authority remain in Core under
@@ -108,7 +108,7 @@ Examples:
 
 ### Add-on
 
-An Add-on is a namespaced, operator-installed extension compiled into `phi-server`. It may contribute
+An Add-on is a namespaced, operator-installed extension compiled into `@phis/server`. It may contribute
 server routes, webhook handlers, jobs, migrations, external-service adapters, server-side providers,
 and versioned capabilities supported by the Add-on ABI.
 
@@ -133,7 +133,7 @@ identity and does not follow a repackaging.
 
 ### Core
 
-Core is compiled into every `phi-server` release, is never installed as an Add-on, and cannot be
+Core is compiled into every `@phis/server` release, is never installed as an Add-on, and cannot be
 disabled per Site. It participates in capability discovery as:
 
 ```text
@@ -219,14 +219,14 @@ Site packages and server packages are separate publication and build units:
 ```
 
 A file or a `./server` export inside a Module package is not an Add-on and must never be compiled into
-`phi-server`. `./server` belongs to the Module and runs in the Site process; the Add-on half is reached
+`@phis/server`. `./server` belongs to the Module and runs in the Site process; the Add-on half is reached
 through `./addon/manifest` and `./addon/runtime` and runs in this one.
 
 The separation is mandatory:
 
 - Site packages contain Site-runtime and authoring code.
 - Add-on packages contain server-only code.
-- `phi-server` never imports a Site or React package.
+- `@phis/server` never imports a Site or React package.
 - A Site application never imports an Add-on package.
 - An Add-on never imports `phis-ui`.
 - Both sides may depend on a neutral, React-free contract package for shared wire schemas.
@@ -235,11 +235,11 @@ The separation is mandatory:
 Two neutral packages sit between the sides, and what separates them is when they run:
 
 - `@phis/contracts/addon` states what an Add-on declares or implements.
-- `@phis/contracts/access` states the authorization vocabulary phi-server and `@phis/ui` both
+- `@phis/contracts/access` states the authorization vocabulary `@phis/server` and `@phis/ui` both
   evaluate -- claim shapes, policy shapes, and the evaluator itself. It lives there because both
-  decide the same question in different processes and cannot defer to each other: phi-server in its
+  decide the same question in different processes and cannot defer to each other: `@phis/server` in its
   guards, the site while rendering and in the browser. One compiled source is the only arrangement in
-  which they cannot disagree, and they did disagree before it existed. `phi-server` depends on it, which
+  which they cannot disagree, and they did disagree before it existed. `@phis/server` depends on it, which
   is why nothing may enter it that does more than hand back data. Validation stays in Core: a check
   shipped to an Add-on runs in the Add-on's address space, at the version the Add-on chose, and only if
   the Add-on calls it, so it can never be the authoritative one.
@@ -290,7 +290,7 @@ Every physical Add-on package exports a server-only manifest containing at least
 
 - logical Add-on id
 - physical package name and package version
-- compatible `phi-server` Add-on ABI range
+- compatible `@phis/server` Add-on ABI range
 - immutable route namespace
 - provided capabilities and interface versions
 - internal service-provider descriptors when the Add-on implements a Core-owned service kind
@@ -352,7 +352,7 @@ Only `phis-cli` may:
 - execute reviewed Add-on migrations
 - write and remove entries in the Add-on desired state
 - globally enable or emergency-disable an Add-on
-- build and deploy `phi-server`
+- build and deploy `@phis/server`
 - distribute an artifact to every instance and reconcile the release across them
 
 No browser route, Site Module, persisted CMS value, Add-on handler, or database row may:
@@ -366,7 +366,7 @@ No browser route, Site Module, persisted CMS value, Add-on handler, or database 
 - globally enable server code
 
 Installation and upgrade are deployment operations, not Site configuration operations. They no longer
-require a release: an Add-on is installed into a running server, and only a change to `phi-server`
+require a release: an Add-on is installed into a running server, and only a change to `@phis/server`
 itself is a build.
 
 How an artifact reaches the machine in the first place -- configured sources, the package list an
@@ -378,7 +378,7 @@ is a deployment operation like the rest.
 
 An Add-on is one self-contained ESM artifact. `phis-cli` places it in the install root and records the
 entry -- its identity, its validated descriptors, and two digests -- in the operator-owned desired
-state. No Add-on is compiled into `phi-server`, and there is no second mechanism beside this one.
+state. No Add-on is compiled into `@phis/server`, and there is no second mechanism beside this one.
 
 Self-contained is a requirement, not a recommendation. An artifact carries its dependencies and leaves
 no bare import behind except `node:` builtins, because Node resolves a bare specifier by walking up:
@@ -420,7 +420,7 @@ in flight finish on the old one, and the superseded version stays resident until
 
 ## 8. Fixed Core routes
 
-`phi-server` owns two fixed optional catch-all Route Handlers:
+`@phis/server` owns two fixed optional catch-all Route Handlers:
 
 ```text
 /api/v1/addons/[scope]/[name]/[[...path]]
@@ -721,7 +721,7 @@ declares and to Add-ons enabled for this Site. A viewer that never carried them 
 assumes.
 
 The evaluator exists twice -- `@phis/ui/types/access` and `src/lib/authorization.ts` -- because
-phi-server deliberately does not depend on the shared UI. Both were extended together and both are
+`@phis/server` deliberately does not depend on the shared UI. Both were extended together and both are
 checked against the same cases; a viewer admitted by one and denied by the other is the worst shape this
 pair can take, since each side looks right on its own.
 
@@ -777,7 +777,7 @@ Secrets are not stored in registry records. A registry row carries the reference
 configuration-state marker; the encrypted store described in section 16 is a separate table with
 its own access path, and reading it is never part of reading the registry.
 
-Persistent boolean state follows the existing `phi-server` table convention and occupies explicit
+Persistent boolean state follows the existing `@phis/server` table convention and occupies explicit
 bits in `flags INT` columns. Schema, configuration, and migration counters use `SMALLINT`; package
 versions, capability interface versions, and release ids remain independent string identities.
 
@@ -792,7 +792,7 @@ phis.server_instances.flags    bit 0 = ready
 Write authority is fixed:
 
 - `phis-cli` writes installation, version, migration, release, and global state.
-- `phi-server` startup/reconciliation writes observed build and instance state.
+- `@phis/server` startup/reconciliation writes observed build and instance state.
 - authorized Site administration writes only its Site's permitted enablement and configuration state.
 - normal Site clients have no registry mutation authority.
 
@@ -809,12 +809,12 @@ requesting it was not carried along, and the Auth module resolved a capability n
 deactivated itself, exactly as the contract says it must, and the Site silently had no login route. That
 was found by a person reporting a 404, not by anything in the build.
 
-From the first public release of `phi-server`, a capability name may only gain a successor beside it, never
-be replaced in place. An installation that updates `@phis/ui` and `phi-server` independently through npm
+From the first public release of `@phis/server`, a capability name may only gain a successor beside it, never
+be replaced in place. An installation that updates `@phis/ui` and `@phis/server` independently through npm
 has no other protection: they agree on capability ids and on nothing else.
 
 `phis site check --key <site key>` compares what a Site's Modules require against what its server offers
-and names the Modules that lost theirs. The comparison happens in the Site, because `phi-server` does not
+and names the Modules that lost theirs. The comparison happens in the Site, because `@phis/server` does not
 depend on `@phis/ui` and cannot know what a Site requires. It reports the running Site, so it is the check
 to run after an update rather than a prediction about one.
 
@@ -1094,7 +1094,7 @@ whatever has accumulated in the column across versions. As with secrets, there i
 
 A job is declared as `{ id, handler, suggestedInterval? }` and run by `phis addon job`, which posts to
 the serving instance. It is not scheduled by Core, and the interval is documentation for the operator
-rather than a promise: phi-server serves from several instances, so an in-process timer would fire once
+rather than a promise: `@phis/server` serves from several instances, so an in-process timer would fire once
 per instance for one intended run, and every Add-on would have to defend against a concurrency nobody
 asked for. The operator's own scheduler is one runner by construction.
 
@@ -1410,7 +1410,7 @@ The declaration form carries what a real query needs and refuses what does not s
   from a Core service.
 
 Result types are generated from the declared queries at the Add-on's own build time, by the SDK of
-section 3, because an Add-on is built separately and cannot read `phi-server`'s generated artifacts.
+section 3, because an Add-on is built separately and cannot read `@phis/server`'s generated artifacts.
 
 ### Groups an Add-on needs
 

@@ -1,6 +1,6 @@
 # Page Path and Internal Reference Contract
 
-This document defines the normative target-v1 `phi-server` persistence, authorization, sanitization, and
+This document defines the normative target-v1 `@phis/server` persistence, authorization, sanitization, and
 resolution contract for mutable Site Page paths and structured Page/Asset references. The corresponding
 UI and Authoring contract lives in `@phis/ui/REFERENCES.md`; both sides must use one wire format
 and must not introduce compatibility aliases.

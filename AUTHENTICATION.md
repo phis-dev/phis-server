@@ -15,7 +15,7 @@ not covered by this Site-viewer contract.
 
 ## 1. Ownership and trust boundaries
 
-`phi-server` Core is the authentication authority. It owns:
+`@phis/server` Core is the authentication authority. It owns:
 
 - global Phi users, verified email addresses, credentials, external identities, and Site memberships;
 - Site authentication policy and provider-installation validation;
@@ -333,7 +333,7 @@ server-validated relative Site paths.
 
 ## 11. HTTP boundary
 
-The canonical `phi-server` API lives under `/api/v1/auth/*`. A Site runtime exposes the browser-facing
+The canonical `@phis/server` API lives under `/api/v1/auth/*`. A Site runtime exposes the browser-facing
 same-origin facade under `/api/auth/*`, injects trusted Site/server credentials, forwards only approved
 headers and payload fields, and transports the host-bound session cookie. Browser code never receives the
 server API token or provider secret.

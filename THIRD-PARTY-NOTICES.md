@@ -1,14 +1,14 @@
 # Third-Party Notices
 
-phi-server is licensed under Apache-2.0 (see `LICENSE`). It depends on third-party software
+`@phis/server` is licensed under Apache-2.0 (see `LICENSE`). It depends on third-party software
 under its own terms. The overwhelming majority is MIT, ISC, BSD or Apache-2.0 and imposes no
 obligation beyond attribution. This file records the cases that do.
 
 ## libvips, via `sharp` — LGPL-3.0-or-later
 
-phi-server depends on `sharp` directly and calls it at runtime: `src/lib/image-variants.ts`
+`@phis/server` depends on `sharp` directly and calls it at runtime: `src/lib/image-variants.ts`
 generates image variants, and the upload finalize route processes every uploaded image. This
-is the one third-party obligation that reaches phi-server itself, not merely its tooling.
+is the one third-party obligation that reaches `@phis/server` itself, not merely its tooling.
 
 `sharp` itself is Apache-2.0. The image processing it performs is done by **libvips 8.18.3**,
 shipped as a prebuilt shared library in the platform package `@img/sharp-libvips-<platform>`
@@ -17,7 +17,7 @@ bundled with it: fribidi, glib, libexif, libheif, librsvg, pango and proxy-libin
 MPL-2.0. Everything else in that bundle is MIT, BSD-like or zlib — including libimagequant,
 which is used in a BSD-2-Clause fork rather than the GPL-licensed original.
 
-phi-server uses these libraries **unmodified**, loaded dynamically at runtime through a Node
+`@phis/server` uses these libraries **unmodified**, loaded dynamically at runtime through a Node
 native addon. This is the case LGPL section 4 provides for, and the obligations that follow are:
 
 - this notice, naming the libraries and their licence;
@@ -30,10 +30,10 @@ native addon. This is the case LGPL section 4 provides for, and the obligations 
 **Relevant when redistributing**, i.e. when a container image or a `standalone` build carries
 the `.so` file. It does not apply to merely operating the service.
 
-**Add-ons**: the above covers phi-server's own use. Separately, an Add-on that bundles `sharp`
+**Add-ons**: the above covers `@phis/server`'s own use. Separately, an Add-on that bundles `sharp`
 into its own artifact takes on these obligations for that artifact — including a closed-source
 one. It remains permitted; it is not free of duties. An Add-on served by the core instead, once
-an image capability exists, carries none of them: libvips stays inside phi-server.
+an image capability exists, carries none of them: libvips stays inside `@phis/server`.
 
 ## caniuse-lite — CC-BY-4.0
 

@@ -65,7 +65,7 @@ A bootstrap generator should materialize the following site files:
 - `config/site-runtime.example.json`
 
 The generated `/api/auth/[[...path]]` route is the thin same-origin browser facade from
-`AUTHENTICATION.md`; it forwards only the approved Auth surface to `phi-server` `/api/v1/auth/*` and does
+`AUTHENTICATION.md`; it forwards only the approved Auth surface to `@phis/server` `/api/v1/auth/*` and does
 not contain Site-owned credential or identity logic.
 
 ## Site-Owned Route Shape
@@ -181,7 +181,7 @@ This is necessary so existing sites can pick up new shared scaffold requirements
 
 ## Responsibility Split
 
-- `phi-server`
+- `@phis/server`
   - canonical backend storage, CMS, site registry, and media serving
   - owns the bootstrap and reconcile CLI contract
 - `@phis/ui`

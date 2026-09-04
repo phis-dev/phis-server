@@ -1,7 +1,7 @@
 # Site Groups, Media Spaces, and Storage Provider Contract
 
 This document defines the normative target-v1 contract for Site-scoped groups, Media ownership,
-folders, quotas, binary Storage Providers, and protected Asset delivery in `phi-server`. The Asset
+folders, quotas, binary Storage Providers, and protected Asset delivery in `@phis/server`. The Asset
 Collection, Picker, Inspector, and CMS reference projections in `@phis/ui` consume this
 contract; they must not define another ownership, authorization, or Storage model.
 
@@ -896,7 +896,7 @@ The upload service returns a Provider-neutral upload plan:
 - Local may return an authenticated same-origin proxy stream;
 - S3 may return presigned PUT or multipart instructions;
 - the Client follows the plan without branching on a Provider package id;
-- finalize always returns to `phi-server` for authorization, verification, persistence, and quota commit.
+- finalize always returns to `@phis/server` for authorization, verification, persistence, and quota commit.
 
 Finalize must not require buffering an arbitrary object in memory. Metadata extraction, SVG
 sanitization, image processing, variant creation, and scanning use bounded streams, temporary files, or
