@@ -56,6 +56,35 @@ describe("site scaffold", () => {
     expect(routes.length).toBeGreaterThan(0);
   });
 
+  it("ignores the runtime config, so a first commit cannot publish the internal token", async () => {
+    const files = buildPhiSiteScaffoldFiles(context);
+    const ignored = files[".gitignore"]!.split("\n");
+
+    expect(ignored).toContain("config/site-runtime.json");
+    expect(ignored).toContain("node_modules/");
+    expect(ignored).toContain(".next/");
+  });
+
+  it("writes the ignore file once and leaves a Site's own entries alone", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "phis-scaffold-"));
+    roots.push(root);
+    await reconcilePhiSiteScaffold(root, context, "init");
+    await writeFile(path.join(root, ".gitignore"), "node_modules/\n.env.local\n", "utf8");
+
+    const result = await reconcilePhiSiteScaffold(root, context, "reconcile");
+
+    expect(result.changes.find((entry) => entry.path === ".gitignore")?.action).toBe("unchanged");
+    expect(await readFile(path.join(root, ".gitignore"), "utf8")).toBe("node_modules/\n.env.local\n");
+  });
+
+  it("ships the Markdown the code-owned Public presets fetch", () => {
+    // Without these the welcome and terms pages render "fetch failed" on a brand new Site.
+    const files = buildPhiSiteScaffoldFiles(context);
+
+    expect(files["public/welcome.md"]).toContain("#");
+    expect(files["public/terms-and-conditions.md"]).toContain("#");
+  });
+
   it("repairs managed wrappers without overwriting runtime secrets or unknown files", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "phis-scaffold-"));
     roots.push(root);

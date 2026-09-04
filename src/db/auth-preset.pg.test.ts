@@ -16,11 +16,14 @@ const PUBLIC_AREA = 1;
 const BUILDER_AREA = 256;
 const FOREIGN_PROVIDER = "@acme/login";
 
+/** The Module selection lives under `config.modules`; `shell` belongs to the structure draft. */
 async function createAreaRevision(
   site: PhiTestSite,
   areaMask: number,
-  config: Record<string, unknown>,
+  modules: Record<string, unknown>,
+  shell: Record<string, unknown> | null = null,
 ) {
+  const config: Record<string, unknown> = { modules, ...(shell ? { shell } : {}) };
   const pool = await requirePhiTestDatabase();
   const { rows: scopeRows } = await pool.query<{ id: number }>(
     `INSERT INTO phis.site_area_scopes (site_id, area_id) VALUES ($1, $2) RETURNING id`,
@@ -59,6 +62,10 @@ async function readAreaConfig(revisionId: number) {
   return rows[0]!.config;
 }
 
+async function readAreaModules(revisionId: number) {
+  return (await readAreaConfig(revisionId)).modules as Record<string, unknown>;
+}
+
 describe("restoreFirstPartyAuthPreset", () => {
   let site: PhiTestSite;
 
@@ -74,11 +81,16 @@ describe("restoreFirstPartyAuthPreset", () => {
 
   it("replaces a foreign provider, keeps the rest of the selection, and stays idempotent", async () => {
     const pool = await requirePhiTestDatabase();
-    const { scopeId, revisionId } = await createAreaRevision(site, PUBLIC_AREA, {
-      runtimeModules: ["@phis/ui/modules/asset", FOREIGN_PROVIDER, "@phis/ui/modules/avatar"],
-      authUiProviderModuleId: FOREIGN_PROVIDER,
-      mediaSpaces: { user: { kinds: ["image"] } },
-    });
+    const { scopeId, revisionId } = await createAreaRevision(
+      site,
+      PUBLIC_AREA,
+      {
+        runtimeModules: ["@phis/ui/modules/asset", FOREIGN_PROVIDER, "@phis/ui/modules/avatar"],
+        authUiProviderModuleId: FOREIGN_PROVIDER,
+        mediaSpaces: { user: { kinds: ["image"] } },
+      },
+      { rootRoute: { mode: "landing" } },
+    );
 
     const first = await restoreFirstPartyAuthPreset(pool, site.key);
     const publicArea = first.areas.find((area) => area.area === "public")!;
@@ -89,7 +101,7 @@ describe("restoreFirstPartyAuthPreset", () => {
     expect(first.publicLoginOwner).toBe("site-revision");
     expect(first.warnings).toEqual([]);
 
-    const restored = await readAreaConfig(publicArea.publishedRevisionId!);
+    const restored = await readAreaModules(publicArea.publishedRevisionId!);
     expect(restored.runtimeModules).toEqual([
       PHI_FIRST_PARTY_AUTH_UI_MODULE_ID,
       "@phis/ui/modules/asset",
@@ -98,6 +110,10 @@ describe("restoreFirstPartyAuthPreset", () => {
     expect(restored.authUiProviderModuleId).toBe(PHI_FIRST_PARTY_AUTH_UI_MODULE_ID);
     // Untouched keys survive: the operation restores Auth, it does not rewrite the preset.
     expect(restored.mediaSpaces).toEqual({ user: { kinds: ["image"] } });
+    // And it stays inside its own namespace -- the Shell's statements are another draft's to make.
+    expect((await readAreaConfig(publicArea.publishedRevisionId!)).shell).toEqual({
+      rootRoute: { mode: "landing" },
+    });
 
     const settled = await readAreaPointer(scopeId);
     const second = await restoreFirstPartyAuthPreset(pool, site.key);

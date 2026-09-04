@@ -116,6 +116,77 @@ export const PHI_SITE_MODULE_PROJECTION_FILES = [
 ] as const;
 
 /**
+ * The ignore file a generated Site starts with.
+ *
+ * `config/site-runtime.json` is the reason it is scaffolded at all rather than left to the operator: it
+ * carries the internal token, and a Site whose first commit includes it has published a credential
+ * before anyone looked. The build outputs are the ordinary rest.
+ *
+ * It is written once and never repaired, on the same terms as the runtime config -- a Site that adds
+ * its own entries owns the file from then on.
+ */
+const PHI_SITE_GITIGNORE = [
+  "node_modules/",
+  ".next/",
+  "dist/",
+  "build/",
+  "tsconfig.tsbuildinfo",
+  "config/site-runtime.json",
+  "*.log",
+  "",
+].join("\n");
+
+/**
+ * The two Markdown bodies the code-owned Public presets fetch.
+ *
+ * `public-welcome-page` and `public-terms-page` render a Markdown Widget whose `sourceUrl` is
+ * `/welcome.md` and `/terms-and-conditions.md`, served from the Site's own `public/` directory. A Site
+ * generated without them answers its own root with "fetch failed" -- which is what the first scaffold
+ * of a new Site did until this was noticed.
+ *
+ * They are placeholders and say so. Like the ignore file they are written once and never repaired: the
+ * first thing an operator does with a new Site is replace them.
+ */
+const PHI_SITE_PUBLIC_MARKDOWN = {
+  "public/welcome.md": `# Welcome to PHIS
+
+This site is using the shared markdown fallback for \`/\` until a CMS page is defined.
+
+## Next Steps
+
+- Create a real CMS page for \`/\` in \`phis\`.
+- Add navigation and area presets for the public shell.
+- Replace this fallback once the first site content is ready.
+
+## Useful Link
+
+- [Open phis.dev](https://phis.dev)
+`,
+  "public/terms-and-conditions.md": `# Terms and Conditions
+
+This software is provided as is, without any express or implied warranty.
+
+By using this site, you agree that the operators may change, suspend, or remove features at any time without prior notice.
+
+You are responsible for the accuracy of the information you submit and for keeping your account credentials secure.
+
+You must not use this service for unlawful activity, abuse, or attempts to interfere with the operation of the platform.
+
+To the maximum extent permitted by law, the operators are not liable for any direct, indirect, incidental, or consequential damages arising from the use of this software.
+
+If you do not agree to these terms, do not use this site.
+`,
+} as const;
+
+/** Written on `init`, left alone on `reconcile`: the Site owns these once they exist. */
+const PHI_SITE_OWNED_AFTER_INIT: readonly string[] = [
+  "config/site-runtime.json",
+  ".gitignore",
+  ...Object.keys(PHI_SITE_PUBLIC_MARKDOWN),
+  ...PHI_SITE_MODULE_PROJECTION_FILES,
+];
+
+/**
  * Which Area a root error route rebuilds its shell from.
  *
  * The boundaries are loaded per Area instead of imported outright. This registry is reachable from the
@@ -267,6 +338,8 @@ export function buildPhiSiteScaffoldFiles(context: PhiSiteScaffoldContext) {
     "src/app/layout.tsx": `import { generatePhiNextRootMetadata, PhiNextRootLayout } from "@phis/ui/next/root-route";\n\nimport "./globals.css";\n\nexport const dynamic = "force-dynamic";\nexport const generateMetadata = generatePhiNextRootMetadata;\nexport default PhiNextRootLayout;\n`,
     "src/app/page.tsx": `import { PhiNextSiteIndexPage } from "@phis/ui/next/root-route";\n\nexport const dynamic = "force-dynamic";\nexport default PhiNextSiteIndexPage;\n`,
     "src/app/globals.css": "/* Site-specific global overrides may be added here. */\n",
+    ".gitignore": PHI_SITE_GITIGNORE,
+    ...PHI_SITE_PUBLIC_MARKDOWN,
     "src/app/not-found.tsx": `import { createPhiNextRootErrorPage } from "@phis/ui/next/area-route";\nimport { PHI_CMS_ERROR_AREAS } from "@/runtime-modules/error-areas";\n\nexport default createPhiNextRootErrorPage(404, PHI_CMS_ERROR_AREAS);\n`,
     "src/app/forbidden.tsx": `import { createPhiNextRootErrorPage } from "@phis/ui/next/area-route";\nimport { PHI_CMS_ERROR_AREAS } from "@/runtime-modules/error-areas";\n\nexport default createPhiNextRootErrorPage(403, PHI_CMS_ERROR_AREAS);\n`,
     "src/app/unauthorized.tsx": `import { createPhiNextRootErrorPage } from "@phis/ui/next/area-route";\nimport { PHI_CMS_ERROR_AREAS } from "@/runtime-modules/error-areas";\n\nexport default createPhiNextRootErrorPage(401, PHI_CMS_ERROR_AREAS);\n`,
@@ -342,8 +415,7 @@ export async function reconcilePhiSiteScaffold(root: string, context: PhiSiteSca
   for (const [relativePath, canonical] of Object.entries(files)) {
     const target = path.join(resolvedRoot, relativePath);
     const alreadyExists = await exists(target);
-    const preservedOnReconcile = relativePath === "config/site-runtime.json"
-      || (PHI_SITE_MODULE_PROJECTION_FILES as readonly string[]).includes(relativePath);
+    const preservedOnReconcile = PHI_SITE_OWNED_AFTER_INIT.includes(relativePath);
     if (preservedOnReconcile && alreadyExists && mode === "reconcile") {
       changes.push({ path: relativePath, action: "unchanged" });
       continue;
