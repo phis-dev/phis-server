@@ -23,6 +23,14 @@ export async function register() {
     return;
   }
 
+  /*
+   * Imported here rather than at module scope: this file is evaluated in every runtime, and the
+   * heartbeat reaches the database pool, the config and the install root -- none of which the edge
+   * runtime has. A dev instance reports itself like any other, because it is one.
+   */
+  const { startPhisInstanceHeartbeat } = await import("@/lib/instance-heartbeat");
+  startPhisInstanceHeartbeat();
+
   if (process.env.NODE_ENV !== "production") {
     return;
   }

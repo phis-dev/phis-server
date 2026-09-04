@@ -448,9 +448,10 @@ Two standalone instances against one database, the registry reporting the Add-on
 Behind a load balancer that is a coin flip per request. Two further observations make it worse before
 it gets better:
 
-- **`phis.server_instances` is empty.** The table has `release_build_id`, `addon_manifest_digest`,
-  `addon_packages_json`, `flags`, and `last_seen_at` -- the readiness model is designed, but nothing
-  writes or reads it.
+- **`phis.server_instances` was empty.** The table has `release_build_id`, `addon_manifest_digest`,
+  `addon_packages_json`, `flags`, and `last_seen_at`. It is written now: each instance reports itself
+  from `instrumentation.ts`, and `phis instance list` reads it. What is still missing is the consumer --
+  activation does not wait for the fleet to agree.
 - **`reconcile` is driven by the desired state, not by the build.** It reported two Add-ons while the
   built manifest carried one, so a release cannot currently say "this build does not carry that
   Add-on".
@@ -467,8 +468,8 @@ registry -- not the `enabled` flag baked into the build manifest -- is what deci
 
 - the sidecar shape: nothing has been prototyped out of process yet.
 - publishing `@phis/contracts`, so a third party can build against the ABI at all.
-- writing and reading `phis.server_instances`, and gating activation on every instance confirming it
-  holds the artifact. This is the one gap that has to close before an Add-on may be installed into a
+- gating activation on every instance confirming it holds the artifact. The report exists; nothing
+  waits for it. This is the one gap that has to close before an Add-on may be installed into a
   multi-instance deployment.
 - an install root guaranteed free of `node_modules` on any ancestor path.
 - **the Site's half of the Storage Profile surface.** `phis storage` covers the operator's half; the
@@ -952,8 +953,9 @@ host -- the problem the store exists to remove.
 
 Two prerequisites are easy to miss because nothing fails without them today:
 
-- **the instance heartbeat.** `phis.server_instances` is declared and unwritten. Until an instance
-  reports itself, no deployment can tell whether the fleet runs one release or three.
+- ~~**the instance heartbeat.**~~ Done: every instance writes `phis.server_instances` at startup and
+  every 30 seconds, `phis instance drain` withdraws readiness from the unit's `ExecStop`, and
+  `phis instance list` says when the fleet is running more than one release or more than one Add-on set.
 - **upstreams from healthy instances, not from configured ones.** Two instance notions currently exist
   and do not know each other: `SiteLocation` in `config/phis-runtime.json` states where a Site should
   be deployed, and `phis.server_instances` states what is actually running. `buildNginxConfig` resolves

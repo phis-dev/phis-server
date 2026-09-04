@@ -64,6 +64,12 @@ import {
   setAddonEnabled,
 } from "./addons.mts";
 import {
+  listPhisServerInstances,
+  markPhisServerInstanceStopped,
+  prunePhisServerInstances,
+} from "../db/server-instances.mts";
+import { resolvePhisInstanceId } from "../lib/instance-identity.mts";
+import {
   grantPhisAddonUserRole,
   readPhiSiteUserAddonRoles,
   revokePhisAddonUserRole,
@@ -294,6 +300,9 @@ Usage:
   phis module del --site <site key> --package <@scope/name>
   phis module sync --site <site key>
   phis module check --site <site key> [--package <@scope/name>]
+  phis instance list [--stale-after <seconds>]
+  phis instance drain [--id <instance id>]
+  phis instance prune [--forget-after <seconds>]
 `);
 }
 
@@ -369,6 +378,19 @@ function printConfigPaths(json: boolean) {
 
 function printMergedConfig() {
   printJson(readCliMergedConfig());
+}
+
+/** A flag counted in seconds, refused rather than silently defaulted when it is not one. */
+function readSecondsFlag(flags: FlagMap, key: string, fallback: number) {
+  const raw = flags.get(key);
+  if (raw === undefined) {
+    return fallback;
+  }
+  const seconds = Number(raw);
+  if (!Number.isFinite(seconds) || seconds <= 0) {
+    throw new Error(`--${key} takes a positive number of seconds, not "${String(raw)}".`);
+  }
+  return seconds;
 }
 
 function getOptionalFlag(flags: FlagMap, key: string) {
@@ -2278,6 +2300,83 @@ async function main() {
       console.log(removed ? `Removed ${reference}.` : `${reference} was not stored.`);
     }
     return;
+  }
+
+  if (group === "instance") {
+    /*
+     * What the fleet says about itself, read rather than polled.
+     *
+     * Section 17 has each instance report its own release, Add-on digest and readiness, so this is the
+     * only way to see whether a rollout finished: two rows with different release ids are a deployment
+     * mid-flight, and a row that is not ready is a host the load balancer should not be sending to.
+     * Nothing here contacts a host -- if an instance has stopped writing, that silence is the answer.
+     */
+    if (command === "list") {
+      const staleAfter = readSecondsFlag(flags, "stale-after", 90);
+      const instances = await listPhisServerInstances(getPool(), staleAfter);
+      if (json) {
+        printJson({ ok: true, action: "instance.list", staleAfterSeconds: staleAfter, instances });
+        return;
+      }
+      if (instances.length === 0) {
+        console.log("No instance has reported. Nothing has run this release yet.");
+        return;
+      }
+      for (const instance of instances) {
+        const addons = Object.entries(instance.addonPackages)
+          .map(([addonId, version]) => `${addonId}@${version}`)
+          .join(" ");
+        console.log(
+          `${instance.instanceId}  release=${instance.releaseBuildId}  ` +
+          `ready=${instance.ready ? "true" : "false"}  seen=${instance.lastSeenAt}`,
+        );
+        console.log(`    addons=${addons || "none"}  digest=${instance.addonManifestDigest}`);
+      }
+      const releases = new Set(instances.map((instance) => instance.releaseBuildId));
+      if (releases.size > 1) {
+        console.log(`${releases.size} releases are serving at once; a rollout has not finished.`);
+      }
+      const digests = new Set(instances.map((instance) => instance.addonManifestDigest));
+      if (digests.size > 1) {
+        console.log(
+          `${digests.size} Add-on sets are serving at once; an artifact has not reached every instance.`,
+        );
+      }
+      return;
+    }
+
+    if (command === "drain") {
+      /*
+       * Withdraws readiness on the way down, run by whatever stops the process.
+       *
+       * It is not a signal handler inside the runtime because Next installs its own and exits; a
+       * handler racing that usually loses and always looks as though it had not. Doing it from outside
+       * is also the right order -- traffic should stop before the process does -- and it is what the
+       * generated unit's ExecStop calls. The row stays: an operator looking afterwards should still see
+       * that this instance was here and when it left.
+       */
+      const instanceId = getOptionalFlag(flags, "id") ?? resolvePhisInstanceId(configRoot);
+      await markPhisServerInstanceStopped(getPool(), instanceId);
+      if (json) {
+        printJson({ ok: true, action: "instance.drain", instanceId });
+      } else {
+        console.log(`${instanceId} no longer reports ready.`);
+      }
+      return;
+    }
+
+    if (command === "prune") {
+      const forgetAfter = readSecondsFlag(flags, "forget-after", 60 * 60 * 24 * 30);
+      const removed = await prunePhisServerInstances(getPool(), forgetAfter);
+      if (json) {
+        printJson({ ok: true, action: "instance.prune", forgetAfterSeconds: forgetAfter, removed });
+      } else {
+        console.log(`Forgot ${removed} instance(s) silent for more than ${forgetAfter}s.`);
+      }
+      return;
+    }
+
+    throw new Error(`Unknown instance command: ${command}. Use list, drain or prune.`);
   }
 
   if (group === "maintain") {

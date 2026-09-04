@@ -140,3 +140,26 @@ export function getPhisAddonInstalledManifest(): PhisAddonBuildManifest {
   cache = { signature, entries };
   return entries;
 }
+
+/**
+ * One number for the whole locally installed set.
+ *
+ * Section 17 has every instance report its Add-on state so a fleet running two releases is visible
+ * rather than inferred. Comparing per-Add-on digests across instances would answer the same question
+ * with more moving parts, so the set is digested once and compared once. It lives here rather than
+ * beside either caller because the capability snapshot and the instance heartbeat must not be able to
+ * report different digests for the same installation.
+ */
+export function getPhisAddonBuildDigest() {
+  const buildState = Object.entries(getPhisAddonInstalledManifest())
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([addonId, entry]) => ({
+      addonId,
+      enabled: entry.enabled,
+      manifestDigest: entry.manifestDigest,
+      packageVersion: entry.manifest.packageVersion,
+    }));
+  return createHash("sha256")
+    .update(JSON.stringify(buildState))
+    .digest("hex");
+}

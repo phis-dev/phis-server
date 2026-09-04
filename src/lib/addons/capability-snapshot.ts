@@ -1,30 +1,17 @@
 import "server-only";
 
-import { createHash } from "node:crypto";
-
 import {
   getPhisAddonRegistryRecord,
   getPhisAddonSiteState,
 } from "@/db/server-addons";
-import { getPhisAddonInstalledManifest } from "@/lib/addons/installed";
+import {
+  getPhisAddonBuildDigest,
+  getPhisAddonInstalledManifest,
+} from "@/lib/addons/installed";
 import { PHIS_CORE_CAPABILITIES } from "@/lib/addons/core-capabilities";
 
 export type { PhiCapabilityState } from "@phis/contracts/server-capabilities";
 import type { PhiCapabilityState } from "@phis/contracts/server-capabilities";
-
-function getBuildDigest() {
-  const buildState = Object.entries(getPhisAddonInstalledManifest())
-    .sort(([left], [right]) => left.localeCompare(right))
-    .map(([addonId, entry]) => ({
-      addonId,
-      enabled: entry.enabled,
-      manifestDigest: entry.manifestDigest,
-      packageVersion: entry.manifest.packageVersion,
-    }));
-  return createHash("sha256")
-    .update(JSON.stringify(buildState))
-    .digest("hex");
-}
 
 export async function buildPhisCapabilitySnapshot(siteId: number) {
   const providers: Array<{
@@ -106,7 +93,7 @@ export async function buildPhisCapabilitySnapshot(siteId: number) {
 
   return {
     releaseBuildId: process.env.PHIS_RELEASE_ID?.trim() || null,
-    buildManifestDigest: getBuildDigest(),
+    buildManifestDigest: getPhisAddonBuildDigest(),
     providers,
   };
 }

@@ -74,9 +74,10 @@ fallback:
   Profile names, with no argument through which another could be named.
 - a Site-admin surface over what `phis addon config` writes. The values are stored, declared, and
   readable; what is missing is a page rather than a mechanism.
-- startup instance heartbeat/readiness and load-balancer rollout reconciliation. `phis.server_instances`
-  is declared and unwritten, so no deployment can yet tell whether every serving instance carries the
-  same release.
+- load-balancer rollout reconciliation. Every serving instance now writes `phis.server_instances` at
+  startup and on an interval, and `phis instance list` shows where the fleet disagrees about the
+  release or the Add-on set -- but nothing yet waits for that agreement, so activation still completes
+  while an instance is behind.
 - provider role catalogs, Site user claim persistence, and Add-on viewer-claim resolution defined by
   `AUTHORIZATION.md`
 - a separately published reference Add-on used for end-to-end package tests

@@ -504,6 +504,7 @@ Set only process/runtime values such as `PORT` through `.env`.
 | `PORT` | The port the runtime listens on. |
 | `HOSTNAME` | The interface it binds. Next reads this one, **not** `HOST`; `next dev` reads neither and takes `-H` instead. |
 | `TRUST_PROXY` | How many reverse proxies in front of this process are ours. |
+| `PHIS_INSTANCE_ID` | What this process calls itself in `phis.server_instances`. Derived from host name and stage root when unset; set it where the host name is regenerated on every start, such as a container. |
 
 `PHIS_RELEASE_ID` is deliberately not in that table. It is what a capability response reports as its
 release identity -- section 17 of [SERVER_ADDONS.md](./SERVER_ADDONS.md): a shared Add-on row does not
@@ -669,6 +670,7 @@ Examples:
 - `./phis addon install --artifact ./dist/addon.mjs`
 - `./phis addon enable --addon @phis/github`
 - `./phis addon reconcile`
+- `./phis instance list`
 - `./phis addon storage --addon @phis/marketplace --site moonhug --quota-bytes 52428800 --max-objects 500`
 - `./phis addon storage --addon @phis/marketplace --site moonhug --recount`
 - `./phis addon storage --addon @phis/marketplace --site moonhug --sweep`

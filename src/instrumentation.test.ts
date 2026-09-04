@@ -1,6 +1,13 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { register } from "./instrumentation";
+import { startPhisInstanceHeartbeat } from "@/lib/instance-heartbeat";
+
+// The heartbeat reaches the database, and this suite is about what `register` decides, not about what
+// the heartbeat then reports.
+vi.mock("@/lib/instance-heartbeat", () => ({
+  startPhisInstanceHeartbeat: vi.fn(),
+}));
 
 const VALID_KEY = "5lgTC2J/WHPz+1sxVDxm7lqc/OPPKcr/TeVYyX6xZB4=";
 const TOUCHED = ["NEXT_RUNTIME", "NODE_ENV", "NEXT_SERVER_ACTIONS_ENCRYPTION_KEY"] as const;
@@ -67,5 +74,23 @@ describe("register", () => {
   it("does not run outside the Node runtime, which never decrypts an action", async () => {
     setEnv({ NEXT_RUNTIME: "edge", NODE_ENV: "production" });
     await expect(register()).resolves.toBeUndefined();
+  });
+
+  it("reports the instance in development too, because it is one", async () => {
+    setEnv({ NEXT_RUNTIME: "nodejs", NODE_ENV: "development" });
+    await register();
+    expect(startPhisInstanceHeartbeat).toHaveBeenCalledTimes(1);
+  });
+
+  it("reports the instance before the key check, so a misconfigured one is still visible", async () => {
+    setEnv({ NEXT_RUNTIME: "nodejs", NODE_ENV: "production" });
+    await expect(register()).rejects.toThrow();
+    expect(startPhisInstanceHeartbeat).toHaveBeenCalledTimes(1);
+  });
+
+  it("reports nothing from the edge runtime, which holds no install root", async () => {
+    setEnv({ NEXT_RUNTIME: "edge", NODE_ENV: "production" });
+    await register();
+    expect(startPhisInstanceHeartbeat).not.toHaveBeenCalled();
   });
 });
