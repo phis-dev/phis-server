@@ -6,6 +6,17 @@ import path from "node:path";
 export const PHI_SITE_SCAFFOLD_VERSION = 2;
 
 const AREAS = ["accounting", "admin", "app", "builder", "editor"] as const;
+
+/**
+ * The two branches every Area is routed through, and how much of the Area each one draws.
+ *
+ * `(root)` answers the Area root and draws no Shell; `(pages)` answers everything below it and draws
+ * the Area's own Regions. Both are route groups, so neither appears in a URL.
+ */
+const AREA_BRANCHES = [
+  ["(root)", '"none"'],
+  ["(pages)", '"shell"'],
+] as const;
 const ROOT_SLOTS = [
   ["drawer", "Drawer"],
   ["footerTop", "FooterTop"],
@@ -161,29 +172,61 @@ function siteModuleProjectionFiles() {
   };
 }
 
+/**
+ * One Area's routes, split into the branch that answers its root and the branch that answers every
+ * page inside it.
+ *
+ * The root of an Area draws no Shell: it is either a landing page, whose point is to arrive without the
+ * Area's chrome and its cost, or a redirect, which draws nothing at all. Making that two branches
+ * rather than a condition inside one Layout is what lets Next mount and unmount the Shell on a client
+ * navigation across the boundary -- a Layout that stayed would keep drawing chrome the branch no longer
+ * has. The Area's own Layout keeps the guards, the providers and the Overlays, so crossing that
+ * boundary rebuilds the Shell without rebuilding the Area.
+ *
+ * Both branches call the same factories; only `chrome` and the catch-all differ. The optional catch-all
+ * cannot stay: it would match the Area root as well and collide with the root branch's own page.
+ */
 function staticAreaFiles(area: typeof AREAS[number]) {
   const name = AREA_NAMES[area];
   const upper = area.toUpperCase();
   const bridge = `PHI_${upper}_CMS_SITE_BRIDGE`;
+  const areaPage = `import { ${bridge} } from "@/runtime-modules/${area}";\nimport { createPhiNextStaticAreaPage } from "@phis/ui/next/area-route";\n\nexport const dynamic = "force-dynamic";\n\nconst route = createPhiNextStaticAreaPage("${area}", ${bridge});\n\nexport const generateMetadata = route.generateMetadata;\nexport default route.Page;\n`;
   const files: Record<string, string> = {
-    [`src/app/${area}/layout.tsx`]: `import { ${bridge} } from "@/runtime-modules/${area}";\nimport { createPhiNextStaticAreaLayout } from "@phis/ui/next/area-route";\nimport { Phi${name}RuntimeModuleClientBoundary } from "@/runtime-modules/${area}-client";\n\nexport const dynamic = "force-dynamic";\n\nexport default createPhiNextStaticAreaLayout("${area}", ${bridge}, Phi${name}RuntimeModuleClientBoundary);\n`,
-    [`src/app/${area}/[[...path]]/page.tsx`]: `import { ${bridge} } from "@/runtime-modules/${area}";\nimport { createPhiNextStaticAreaPage } from "@phis/ui/next/area-route";\n\nexport const dynamic = "force-dynamic";\n\nconst route = createPhiNextStaticAreaPage("${area}", ${bridge});\n\nexport const generateMetadata = route.generateMetadata;\nexport default route.Page;\n`,
+    [`src/app/${area}/layout.tsx`]: `import { ${bridge} } from "@/runtime-modules/${area}";\nimport { createPhiNextStaticAreaBoundary } from "@phis/ui/next/area-route";\nimport { Phi${name}RuntimeModuleClientBoundary } from "@/runtime-modules/${area}-client";\n\nexport const dynamic = "force-dynamic";\n\nexport default createPhiNextStaticAreaBoundary("${area}", ${bridge}, Phi${name}RuntimeModuleClientBoundary);\n`,
+    [`src/app/${area}/(root)/page.tsx`]: areaPage,
+    [`src/app/${area}/(pages)/[...path]/page.tsx`]: areaPage,
     [`src/app/${area}/not-found.tsx`]: `import { ${bridge} } from "@/runtime-modules/${area}";\nimport { createPhiNextStaticAreaNotFound } from "@phis/ui/next/area-route";\n\nexport const dynamic = "force-dynamic";\n\nexport default createPhiNextStaticAreaNotFound(${bridge});\n`,
   };
+  for (const [group, chrome] of AREA_BRANCHES) {
+    files[`src/app/${area}/${group}/layout.tsx`] = `import { ${bridge} } from "@/runtime-modules/${area}";\nimport { createPhiNextStaticAreaLayout } from "@phis/ui/next/area-route";\n\nexport const dynamic = "force-dynamic";\n\nexport default createPhiNextStaticAreaLayout("${area}", ${bridge}, ${chrome});\n`;
+  }
   for (const [slot, regionType] of ROOT_SLOTS) {
-    files[`src/app/${area}/@${slot}/[[...path]]/page.tsx`] = `import { PhiCmsRegionType } from "@phis/ui/cms/root-slot-page";\n\nimport { ${bridge} } from "@/runtime-modules/${area}";\nimport { createPhiNextStaticAreaSlotPage } from "@phis/ui/next/area-route";\n\nexport const dynamic = "force-dynamic";\n\nexport default createPhiNextStaticAreaSlotPage(\n  "${area}",\n  ${bridge},\n  PhiCmsRegionType.${regionType},\n);\n`;
+    const slotPage = `import { PhiCmsRegionType } from "@phis/ui/cms/root-slot-page";\n\nimport { ${bridge} } from "@/runtime-modules/${area}";\nimport { createPhiNextStaticAreaSlotPage } from "@phis/ui/next/area-route";\n\nexport const dynamic = "force-dynamic";\n\nexport default createPhiNextStaticAreaSlotPage(\n  "${area}",\n  ${bridge},\n  PhiCmsRegionType.${regionType},\n);\n`;
+    files[`src/app/${area}/(root)/@${slot}/page.tsx`] = slotPage;
+    files[`src/app/${area}/(pages)/@${slot}/[...path]/page.tsx`] = slotPage;
   }
   return files;
 }
 
+/**
+ * The Public Area's routes. Same two branches as every other Area, addressed by locale rather than by
+ * an Area segment -- so `/de` is its root and draws no Shell, exactly as `/builder` is the Builder's.
+ */
 function dynamicRootFiles() {
+  const rootPage = `import { createPhiNextDynamicRootPage } from "@phis/ui/next/area-route";\nimport { PHI_PUBLIC_CMS_SITE_BRIDGE } from "@/runtime-modules/public";\n\nexport const dynamic = "force-dynamic";\n\nconst route = createPhiNextDynamicRootPage(PHI_PUBLIC_CMS_SITE_BRIDGE);\n\nexport const generateMetadata = route.generateMetadata;\nexport default route.Page;\n`;
   const files: Record<string, string> = {
-    "src/app/[root]/layout.tsx": `import { createPhiNextDynamicRootLayout } from "@phis/ui/next/area-route";\nimport { PhiPublicRuntimeModuleClientBoundary } from "@/runtime-modules/public-client";\nimport { PHI_PUBLIC_CMS_SITE_BRIDGE } from "@/runtime-modules/public";\n\nexport const dynamic = "force-dynamic";\n\nexport default createPhiNextDynamicRootLayout(\n  PHI_PUBLIC_CMS_SITE_BRIDGE,\n  PhiPublicRuntimeModuleClientBoundary,\n);\n`,
-    "src/app/[root]/[[...path]]/page.tsx": `import { createPhiNextDynamicRootPage } from "@phis/ui/next/area-route";\nimport { PHI_PUBLIC_CMS_SITE_BRIDGE } from "@/runtime-modules/public";\n\nexport const dynamic = "force-dynamic";\n\nconst route = createPhiNextDynamicRootPage(PHI_PUBLIC_CMS_SITE_BRIDGE);\n\nexport const generateMetadata = route.generateMetadata;\nexport default route.Page;\n`,
+    "src/app/[root]/layout.tsx": `import { createPhiNextDynamicRootBoundary } from "@phis/ui/next/area-route";\nimport { PhiPublicRuntimeModuleClientBoundary } from "@/runtime-modules/public-client";\nimport { PHI_PUBLIC_CMS_SITE_BRIDGE } from "@/runtime-modules/public";\n\nexport const dynamic = "force-dynamic";\n\nexport default createPhiNextDynamicRootBoundary(\n  PHI_PUBLIC_CMS_SITE_BRIDGE,\n  PhiPublicRuntimeModuleClientBoundary,\n);\n`,
+    "src/app/[root]/(root)/page.tsx": rootPage,
+    "src/app/[root]/(pages)/[...path]/page.tsx": rootPage,
     "src/app/[root]/not-found.tsx": `import { createPhiNextStaticAreaNotFound } from "@phis/ui/next/area-route";\nimport { PHI_PUBLIC_CMS_SITE_BRIDGE } from "@/runtime-modules/public";\n\nexport const dynamic = "force-dynamic";\n\nexport default createPhiNextStaticAreaNotFound(PHI_PUBLIC_CMS_SITE_BRIDGE);\n`,
   };
+  for (const [group, chrome] of AREA_BRANCHES) {
+    files[`src/app/[root]/${group}/layout.tsx`] = `import { createPhiNextDynamicRootLayout } from "@phis/ui/next/area-route";\nimport { PHI_PUBLIC_CMS_SITE_BRIDGE } from "@/runtime-modules/public";\n\nexport const dynamic = "force-dynamic";\n\nexport default createPhiNextDynamicRootLayout(PHI_PUBLIC_CMS_SITE_BRIDGE, ${chrome});\n`;
+  }
   for (const [slot, regionType] of ROOT_SLOTS) {
-    files[`src/app/[root]/@${slot}/[[...path]]/page.tsx`] = `import { PhiCmsRegionType } from "@phis/ui/cms/root-slot-page";\nimport { createPhiNextDynamicRootSlotPage } from "@phis/ui/next/area-route";\nimport { PHI_PUBLIC_CMS_SITE_BRIDGE } from "@/runtime-modules/public";\n\nexport const dynamic = "force-dynamic";\n\nexport default createPhiNextDynamicRootSlotPage(\n  PHI_PUBLIC_CMS_SITE_BRIDGE,\n  PhiCmsRegionType.${regionType},\n);\n`;
+    const slotPage = `import { PhiCmsRegionType } from "@phis/ui/cms/root-slot-page";\nimport { createPhiNextDynamicRootSlotPage } from "@phis/ui/next/area-route";\nimport { PHI_PUBLIC_CMS_SITE_BRIDGE } from "@/runtime-modules/public";\n\nexport const dynamic = "force-dynamic";\n\nexport default createPhiNextDynamicRootSlotPage(\n  PHI_PUBLIC_CMS_SITE_BRIDGE,\n  PhiCmsRegionType.${regionType},\n);\n`;
+    files[`src/app/[root]/(root)/@${slot}/page.tsx`] = slotPage;
+    files[`src/app/[root]/(pages)/@${slot}/[...path]/page.tsx`] = slotPage;
   }
   return files;
 }

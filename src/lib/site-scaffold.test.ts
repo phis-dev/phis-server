@@ -24,10 +24,36 @@ afterEach(async () => {
 describe("site scaffold", () => {
   it("generates every canonical route family and exact dependencies", () => {
     const files = buildPhiSiteScaffoldFiles(context);
-    expect(files["src/app/[root]/[[...path]]/page.tsx"]).toContain("createPhiNextDynamicRootPage");
-    expect(files["src/app/admin/@drawer/[[...path]]/page.tsx"]).toContain("PhiCmsRegionType.Drawer");
+    expect(files["src/app/[root]/(root)/page.tsx"]).toContain("createPhiNextDynamicRootPage");
+    expect(files["src/app/[root]/(pages)/[...path]/page.tsx"]).toContain("createPhiNextDynamicRootPage");
+    expect(files["src/app/admin/(pages)/@drawer/[...path]/page.tsx"]).toContain("PhiCmsRegionType.Drawer");
+    expect(files["src/app/admin/(root)/@drawer/page.tsx"]).toContain("PhiCmsRegionType.Drawer");
     expect(files["src/app/api/site/forms/route.ts"]).toContain("buildPhiSiteFormRouteHandlers");
     expect(JSON.parse(files["package.json"]!).dependencies["@phis/ui"]).toBe("0.1.0");
+  });
+
+  it("draws the Shell below an Area root and nothing around the root itself", () => {
+    const files = buildPhiSiteScaffoldFiles(context);
+
+    expect(files["src/app/builder/(root)/layout.tsx"]).toContain('PHI_BUILDER_CMS_SITE_BRIDGE, "none"');
+    expect(files["src/app/builder/(pages)/layout.tsx"]).toContain('PHI_BUILDER_CMS_SITE_BRIDGE, "shell"');
+    expect(files["src/app/[root]/(root)/layout.tsx"]).toContain('PHI_PUBLIC_CMS_SITE_BRIDGE, "none"');
+    expect(files["src/app/[root]/(pages)/layout.tsx"]).toContain('PHI_PUBLIC_CMS_SITE_BRIDGE, "shell"');
+
+    // The Area's own Layout holds the guards and providers, and draws no Region of its own.
+    expect(files["src/app/builder/layout.tsx"]).toContain("createPhiNextStaticAreaBoundary");
+    expect(files["src/app/[root]/layout.tsx"]).toContain("createPhiNextDynamicRootBoundary");
+  });
+
+  it("leaves no optional catch-all that would swallow an Area root", () => {
+    // An optional catch-all matches the Area root too, so it would collide with the root branch's page
+    // -- and Next refuses both catch-all kinds at one level outright.
+    const routes = Object.keys(buildPhiSiteScaffoldFiles(context)).filter((file) =>
+      file.startsWith("src/app/") && file.endsWith("/page.tsx"),
+    );
+
+    expect(routes.some((file) => file.includes("[[...path]]"))).toBe(false);
+    expect(routes.length).toBeGreaterThan(0);
   });
 
   it("repairs managed wrappers without overwriting runtime secrets or unknown files", async () => {
