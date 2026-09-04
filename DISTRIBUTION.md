@@ -151,6 +151,9 @@ They are easily confused, and each answers a different question:
 Only the first is new here. The other two are unchanged, and a package digest never replaces them: it
 speaks about a delivery, not about what is running.
 
+A certification is not a fourth row. It is a signature over the package digest -- a claim about who
+vouched for a delivery, not another thing measured about it -- and section 9 states what it may carry.
+
 ## 6. Order
 
 The Add-on half is installed before the Module half, because it is hot-pluggable and the Module half
@@ -172,6 +175,11 @@ Where an installed thing came from must be recorded, and must be visible.
 `phis.server_addons` has no origin column today. It needs one: local, or a named source with the
 version and package digest that were verified. An Add-on has only these two, because the resolved door
 is not open to it.
+
+Where a signature was verified, the signer and the date it was last confirmed belong beside the origin.
+Under delegation that pair is the difference between an Add-on an administrator was permitted to install
+and one an operator placed by hand, and an operator taking over an unfamiliar machine is asking exactly
+that.
 
 For Modules the build manifest is the only place this can live, and it distinguishes all three:
 
