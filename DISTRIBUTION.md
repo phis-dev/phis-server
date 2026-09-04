@@ -195,16 +195,29 @@ which somebody placed by hand.
 
 Three steps that must stay separable:
 
-1. **Check.** Fetch the lists, compare against what is installed, filter by compatibility, record the
-   result. Nothing is downloaded. This belongs in `phis-cli`, invoked by the operator's scheduler -- not
-   in a job, because a job belongs to an Add-on and supplying the server is not an Add-on's business.
+1. **Check.** Fetch the lists, compare against what is installed, filter by compatibility, note what a
+   signer has since withdrawn, record the result. Nothing is downloaded. This belongs in `phis-cli`,
+   invoked by the operator's scheduler -- not in a job, because a job belongs to an Add-on and supplying
+   the server is not an Add-on's business.
 2. **Stage.** Fetch and verify the package, place it beside the running one. No reconcile, no
    migration, no import: the irreversible part, running unknown code, has not happened, and the step
    can be undone by deleting a file.
 3. **Apply.** Reconcile, migrate, build, restart.
 
-Step 3 does not run unattended. Migrations are not reversible and a bad Add-on takes the instance with
-it. If it is ever automated, it is per Add-on, opted into on the machine, and never a default.
+The line that matters runs between 2 and 3, and any interface reporting progress should draw it there.
+Up to Stage nothing unknown has executed and deleting a file undoes the step. From Apply on, foreign
+code has run and a migration does not come back. A failed Apply therefore reports what actually holds --
+the schema change stands, the build was reverted -- and never claims a rollback.
+
+Step 3 does not run unattended on a schedule. Migrations are not reversible and a bad Add-on takes the
+instance with it. It may run on request, which is what section 9 delegates, but only for a package a
+trusted signer vouched for, and never as a default.
+
+A signature is not a fourth digest. It is a claim about the package digest of section 5 -- someone
+vouched for these bytes at this version -- and it travels on the list beside the digest it speaks about.
+Being verifiable offline against a shipped public key is the point: an installation that has to ask a
+service for permission cannot install without a network, and reports every installation to whoever
+answers.
 
 ## 9. Authority
 
@@ -213,11 +226,45 @@ be read and a package fetched only by `phis-cli` on the machine.
 
 The three levels stand unchanged: installed and globally enabled, or compiled into the build, is a
 server-level fact held by the operator; enabled for one Site is a Site-level fact. A Site administrator
-may act only on the second, and only on what is already present.
+acts on the second by default, and on what is already present.
 
-For a pair this needs no rule at all. The Module half requires a build, so no request from a browser can
-produce one -- a Site administrator cannot trigger a pair installation by construction, whatever
-interface is put in front of them.
+For a pair this used to need no rule. The Module half requires a build, and while nothing could produce
+a build from a request, a Site administrator could not trigger a pair installation whatever interface
+was put in front of them. That was a structural guarantee rather than a policy, and it ends where a
+durable run recorded by `phis` and executed by `phis-host` can produce a build. What the structure gave
+for free has to be stated instead.
+
+### Delegated installation
+
+An operator may delegate installation to a Site administrator. The delegation is a server-level setting
+held by the operator, and it is bounded twice:
+
+- **by source.** The administrator installs only from a list the operator approved.
+- **by signature.** Only a package a trusted signer vouched for, at the exact version and package digest
+  it vouched for. A certification is a claim about one release of one package; hung on a vendor or a
+  package name it would let one review cover everything shipped afterwards, which is worse than no
+  certification because it looks like one.
+
+Trusted signers are a list, with the phis.dev key as the shipped default rather than the only entry, so
+a company can vouch for its own packages to its own administrators. A withdrawn certification is picked
+up by the Check step, which is why the visible fact is *certified, last confirmed on <date>* rather than
+a mark with no age.
+
+Neither bound reaches the operator on the machine. The local and resolved doors of section 1 exist for
+code nobody publishes, and requiring a signature there would mean asking an outside party to vouch for
+in-house work. The requirement is a property of the delegation, not of the product.
+
+What certification can carry is also bounded. It can establish that the manifest validates, that the ABI
+is in range, that the artifact is self-contained, that the declared capabilities match what the code
+uses, and that the publisher is identifiable -- most of which `phis addon check` already performs, and
+the rest of which is a static scan against the prohibitions in `ADDON_HOWTO.md` section 4. It cannot
+establish that the code is safe. An interface that renders it as *reviewed and safe* rather than *this
+publisher is known and these checks passed* is making a claim nobody made.
+
+The delegation hands a server-level power to somebody holding a Site-level one. The Add-on half runs in
+the process every Site on the instance shares, so where more than one tenant is served this is a
+cross-tenant grant however narrowly the interface is drawn. It is unremarkable on a single-tenant
+installation, and the two bounds above are what make it arguable anywhere else.
 
 ## Open questions
 

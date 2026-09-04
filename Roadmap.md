@@ -989,7 +989,54 @@ Consequences to work out when this is built:
 - `addon install` stops being the thing that records intent and becomes the thing that places bytes;
   under pull, the host places them itself.
 - `addon enable` becomes a plain row update, which is what makes it available to the operator UI.
-- the three switches of `SERVER_ADDONS.md` section 15 keep their separation; only their storage moves.
+- the three switches of `SERVER_ADDONS.md` section 15 keep their separation; only their storage
+  moves.
+
+### Decided: an operator may delegate Add-on installation to a Site administrator
+
+A CMS that requires shell access to gain a feature is not competitive, and on a single-instance
+installation the operator and the Site administrator are frequently the same person anyway. So an
+operator-owned setting in the database says whether an administrator may install from the UI, and
+the interface reads it where it runs.
+
+**The reach of that setting is the decision, not the setting itself.** The Add-on half runs in the
+process every Site on the instance shares, so an administrator who installs one places code in front
+of the neighbouring Site too. Hanging the flag on a Site would suggest a boundary that does not
+exist. It is therefore bounded by what may be installed rather than by who asks:
+
+- the flag says *whether* installation is delegated
+- an operator-approved source says *from where*
+- a signature over the package digest says *who vouched for these bytes*
+
+`DISTRIBUTION.md` section 9 carries the rule and what certification can and cannot claim. Two points
+decide whether it is worth building: a certification is a claim about one version and digest, never
+about a vendor; and the automated half has to be the bulk of it, or vendors route around a slow
+queue through the local door -- which section 7 of that document already names as the way the local
+door launders the transported one.
+
+The run itself crosses a privilege boundary and must be built as two halves. `phis` records the
+intent and the per-step status; `phis-host` places the Module on the source path, builds, copies to
+the serving path and restarts, and reports back. The same pull shape as release distribution, and
+for the same reason: a web process that can write the serving path and restart a unit is what that
+split exists to prevent. It also makes the run durable -- a build outlives any request, and an
+administrator closes the tab.
+
+Two things to state in the interface rather than discover:
+
+- the restart is the **Site's**, not the server's. Installing an Add-on rebuilds and restarts
+  nothing here (`SERVER_ADDONS.md` section 7); what needs a build is the Module half in the Site's
+  own Next app, and on a single instance there is no second one to absorb it.
+- progress is three steps, not eight. `DISTRIBUTION.md` section 8 draws the line between Stage and
+  Apply, and which side a failure fell on is the fact worth reporting.
+
+The order stays the one section 6 of that document argues for: Add-on half first, Module half
+second, `addon site --enable` last. That last step is already gated -- the CLI refuses to enable an
+Add-on whose Module half the Site does not have -- and the interface should show it as a
+precondition to satisfy, not as a warning attached to a button.
+
+Boundary: this assumes the host builds. Under the fleet direction a build should happen once and be
+distributed rather than repeated on every host, so delegated installation is a single-instance
+feature until that question is answered separately.
 
 ## Immediate Cleanup Decisions
 
