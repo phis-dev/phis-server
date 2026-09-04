@@ -149,6 +149,22 @@ describe("effective quota resolution", () => {
       .toBe(5_000);
   });
 
+  it("inherits the Add-on default too, because the reservation statement resolves the same one", () => {
+    /*
+     * The reader and the enforcer have to name one number. `reserveMediaSpaceQuota` coalesces the
+     * override with `default_addon_quota_bytes`; answering `null` here would have told an Add-on and
+     * an administrator that a Space is unlimited while the store refused uploads against the default.
+     */
+    expect(resolveEffectiveMediaQuotaBytes(
+      { kind: PhisMediaSpaceKind.Addon, quotaBytes: null },
+      config({ defaultAddonQuotaBytes: 9_000 }),
+    )).toBe(9_000);
+    expect(resolveEffectiveMediaQuotaBytes(
+      { kind: PhisMediaSpaceKind.Addon, quotaBytes: 7 },
+      config({ defaultAddonQuotaBytes: 9_000 }),
+    )).toBe(7);
+  });
+
   it("inherits live, so changing the Site default moves every non-overridden Space", () => {
     const space = { kind: PhisMediaSpaceKind.User, quotaBytes: null };
     expect(resolveEffectiveMediaQuotaBytes(space, site)).toBe(1_000);

@@ -17,7 +17,9 @@ import {
   getMediaStorageProfile,
   releaseMediaSpaceReservation,
   reserveMediaSpaceQuota,
+  resolveEffectiveMediaQuotaBytes,
 } from "@/db/media-spaces";
+import { resolvePhiMediaDeliveryUrl } from "@/lib/media-response";
 import {
   abortMediaUploadSessionByToken,
   createMediaAsset,
@@ -74,12 +76,18 @@ export class PhisAddonAssetError extends Error {}
 
 function view(row: PhisAddonAssetRow): PhisAddonAssetView {
   // No object key. A key an Add-on holds is a key it could pass to `storage:v1`, and the two spaces are
-  // meant to stay apart -- what it gets instead is the Media Asset id, which the delivery route takes.
+  // meant to stay apart -- what it gets instead is Core's own address for the file.
   return {
     id: row.id,
     slot: row.slot,
     ownerId: row.ownerId,
     mediaAssetId: row.mediaAssetId,
+    // Built here rather than described in the contract: the route and its cache revision are Core's,
+    // and a path composed without the revision is one that revalidates forever and looks fine doing it.
+    contentPath: resolvePhiMediaDeliveryUrl({
+      id: row.mediaAssetId,
+      deliveryRevision: row.deliveryRevision,
+    }),
     byteSize: row.byteSize,
     contentType: row.contentType,
     checksum: row.checksumAlgorithm && row.checksumValue
@@ -498,6 +506,24 @@ export function buildPhisAddonAssetsCapability(input: {
       const space = await ensureAddonMediaSpace(siteId, addonId);
       await deleteMediaAssetBySite(siteId, space.id, mediaAssetId).catch(() => {});
       return true;
+    },
+
+    async usage() {
+      const space = await ensureAddonMediaSpace(siteId, addonId);
+      const config = await ensureSiteMediaConfig(siteId);
+      return {
+        bytes: space.usedBytes,
+        /*
+         * The live figure, discounting reservations that have lapsed -- the same one the reserve
+         * statement compares against. Reporting the raw column would show an Add-on as full on the
+         * strength of transfers nobody is still making, and the next `begin` would then succeed
+         * against a ceiling this said there was no room under.
+         */
+        reservedBytes: space.reservedBytes,
+        // The effective ceiling after inheritance, because that is the one that gets applied. `null`
+        // is no limit; an explicit `0` is a revocation and stays a `0`.
+        quotaBytes: resolveEffectiveMediaQuotaBytes(space, config),
+      };
     },
   } satisfies PhisAssetsCapabilityV1);
 }

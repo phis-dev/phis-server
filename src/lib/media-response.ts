@@ -29,7 +29,14 @@ function isImageAsset(contentType: string) {
   return contentType.trim().toLowerCase().startsWith("image/");
 }
 
-function resolveDeliveryUrl(asset: MediaAssetRecord) {
+/**
+ * Where one Media Asset is served from, with the cache revision that makes it addressable.
+ *
+ * Exported because the Add-on assets capability hands the same path out and a second builder would be
+ * a second answer: one of them would forget the revision, and a delivery that merely revalidates every
+ * time looks exactly like one that works.
+ */
+export function resolvePhiMediaDeliveryUrl(asset: Pick<MediaAssetRecord, "id" | "deliveryRevision">) {
   return `/api/site/media/${asset.id}/content?r=${asset.deliveryRevision}`;
 }
 
@@ -116,7 +123,7 @@ export function serializeMediaAssetForPublicReference(
 ): PhiPublicMediaAssetReferenceResponse {
   return {
     id: asset.id,
-    deliveryUrl: resolveDeliveryUrl(asset),
+    deliveryUrl: resolvePhiMediaDeliveryUrl(asset),
     deliveryRevision: asset.deliveryRevision,
     variantVersion: asset.variantVersion,
     contentType: asset.contentType,
@@ -136,7 +143,7 @@ export function serializeMediaAssetForPublicReference(
 export function serializeMediaAssetForTile(asset: MediaAssetRecord): PhiMediaAssetTileResponse {
   return {
     ...projectPublicMediaAsset(asset),
-    deliveryUrl: resolveDeliveryUrl(asset),
+    deliveryUrl: resolvePhiMediaDeliveryUrl(asset),
     kind: resolvePhiMediaKindFromContentType(asset.contentType),
     thumbnailUrl: resolveThumbnailUrl(asset),
   };
@@ -145,7 +152,7 @@ export function serializeMediaAssetForTile(asset: MediaAssetRecord): PhiMediaAss
 export function serializeMediaAssetForDetail(asset: MediaAssetRecord): PhiMediaAssetDetailResponse {
   return {
     ...projectPublicMediaAsset(asset),
-    deliveryUrl: resolveDeliveryUrl(asset),
+    deliveryUrl: resolvePhiMediaDeliveryUrl(asset),
     kind: resolvePhiMediaKindFromContentType(asset.contentType),
     thumbnailUrl: resolveThumbnailUrl(asset),
     previewUrl: resolvePreviewUrl(asset),

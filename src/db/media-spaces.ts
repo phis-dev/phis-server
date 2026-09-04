@@ -624,7 +624,7 @@ export async function materializeSiteMediaAvailabilityWithDb(
   siteId: number,
 ): Promise<DeclaredMediaSpaces> {
   const { rows } = await db.query<{ spaces: unknown }>(
-    `SELECT revision.tree_json #> '{preset,config,mediaSpaces}' AS spaces
+    `SELECT revision.tree_json #> '{preset,config,modules,mediaSpaces}' AS spaces
      FROM phis.site_area_scopes scope
      JOIN phis.site_area_revisions revision ON revision.id = scope.published_revision_id
      WHERE scope.site_id = $1`,
@@ -745,6 +745,10 @@ export function resolveEffectiveMediaQuotaBytes(
   if (space.quotaBytes != null) return space.quotaBytes;
   if (space.kind === PhisMediaSpaceKind.User) return config.defaultUserQuotaBytes;
   if (space.kind === PhisMediaSpaceKind.Group) return config.defaultGroupQuotaBytes;
+  // An Add-on Space inherits too. Leaving it out here said "no limit" while `reserveMediaSpaceQuota`
+  // resolved the same default and refused against it -- a reader and an enforcer disagreeing about the
+  // one number both exist to report.
+  if (space.kind === PhisMediaSpaceKind.Addon) return config.defaultAddonQuotaBytes;
   return null;
 }
 

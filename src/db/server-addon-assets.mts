@@ -26,6 +26,8 @@ export type PhisAddonAssetRow = {
   checksumAlgorithm: string | null;
   checksumValue: string | null;
   originalName: string;
+  /** The cache revision the delivery URL carries. Rotates whenever the file's delivery changes. */
+  deliveryRevision: number;
   createdAt: string;
 };
 
@@ -39,12 +41,14 @@ function qualifyAssets(location: PhisAddonAssetLocation) {
 
 /** The link's own columns plus the facts, read from where they actually live. */
 const SELECTED = `l.id, l.slot, l.owner_id, l.media_asset_id, l.created_at,
-  a.bytes, a.content_type, a.checksum_algorithm, a.checksum_value, a.original_name`;
+  a.bytes, a.content_type, a.checksum_algorithm, a.checksum_value, a.original_name,
+  a.delivery_revision`;
 
 type RawRow = {
   id: string; slot: string; owner_id: string; media_asset_id: number; created_at: Date;
   bytes: string | null; content_type: string;
   checksum_algorithm: string | null; checksum_value: string | null; original_name: string;
+  delivery_revision: number;
 };
 
 function toRow(row: RawRow): PhisAddonAssetRow {
@@ -59,6 +63,7 @@ function toRow(row: RawRow): PhisAddonAssetRow {
     checksumAlgorithm: row.checksum_algorithm,
     checksumValue: row.checksum_value,
     originalName: row.original_name,
+    deliveryRevision: Number(row.delivery_revision),
     createdAt: row.created_at.toISOString(),
   };
 }

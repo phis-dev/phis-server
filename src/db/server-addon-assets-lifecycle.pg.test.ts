@@ -379,6 +379,49 @@ describe("putting a file on a row", () => {
     expect(after.bytes).toBe(before.bytes - GZIP.byteLength);
   });
 
+  it("addresses a file the way Core addresses its own, cache revision included", async () => {
+    /*
+     * Without the revision the path still delivers, and delivers with `max-age=0, must-revalidate`
+     * forever -- a failure that looks exactly like success. So it is Core that composes it, from the
+     * one builder Media itself uses, rather than the Add-on from a route it was never told.
+     */
+    const reservation = await assets().begin({
+      table: "offering", ownerId: offeringId, slot: "package",
+      contentType: "application/gzip", sizeBytes: GZIP.byteLength,
+    });
+    await deliver(reservation.token, GZIP);
+    const file = await assets().finalize({ table: "offering", token: reservation.token });
+
+    expect(file.contentPath)
+      .toBe(`/api/site/media/${file.mediaAssetId}/content?r=1`);
+    // And the same answer when it is read back, not only when it is made.
+    const [listed] = await assets().list({ table: "offering", ownerId: offeringId, slot: "package" });
+    expect(listed!.contentPath).toBe(file.contentPath);
+
+    await assets().remove({ table: "offering", id: file.id });
+  });
+
+  it("reports what it holds against the ceiling that will actually be applied", async () => {
+    /*
+     * The point of reading this is to explain a refusal before it happens, so the figures have to be
+     * the ones `begin` compares: stored bytes and live reservations both count against the same
+     * ceiling, and a reservation in flight is as unavailable as a stored byte.
+     */
+    const before = await assets().usage();
+    expect(before).toMatchObject({ bytes: expect.any(Number), reservedBytes: expect.any(Number) });
+
+    const reservation = await assets().begin({
+      table: "offering", ownerId: offeringId, slot: "shots",
+      contentType: "image/png", sizeBytes: 40,
+    });
+    const held = await assets().usage();
+    expect(held.reservedBytes).toBe(before.reservedBytes + 40);
+    expect(held.bytes).toBe(before.bytes);
+
+    await assets().abandon({ table: "offering", token: reservation.token });
+    expect((await assets().usage()).reservedBytes).toBe(before.reservedBytes);
+  });
+
   it("asks the row's authority to read it before saying what it carries", async () => {
     /*
      * Asking what a row carries is reading the row, and the slot's `delivery` cannot stand in for the
