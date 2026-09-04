@@ -7,6 +7,7 @@ import type {
   PhisAddonAssetView,
   PhisAddonSchemaDescriptor,
   PhisAssetsCapabilityV1,
+  PhisRowIntent,
 } from "./contract.ts";
 import {
   PhiMediaDeliveryPolicy,
@@ -23,7 +24,6 @@ import {
   createMediaUploadSession,
   deleteMediaAssetBySite,
   getMediaUploadSessionByToken,
-  updateMediaUploadSessionByToken,
 } from "@/db/media";
 import {
   PhiMediaUploadPurpose,
@@ -96,7 +96,7 @@ export function buildPhisAddonAssetsCapability(input: {
   actorUserId: number | null;
   schema: PhisAddonSchemaDescriptor | null;
   /** The same row authority the data capability writes under: attaching a file changes the row. */
-  mayActOnRow: (input: { table: string; id: unknown; intent: "update" }) => Promise<boolean>;
+  mayActOnRow: (input: { table: string; id: unknown; intent: PhisRowIntent }) => Promise<boolean>;
   /** Where Core receives a body for a Provider that cannot take one directly. */
   proxyUploadUrl: (input: { token: string }) => string;
 }): PhisAssetsCapabilityV1 {
@@ -120,6 +120,24 @@ export function buildPhisAddonAssetsCapability(input: {
     return found;
   }
 
+  /**
+   * The row's authority, not the slot's -- and asked in every direction, not only where a file arrives.
+   *
+   * A file is part of the row it hangs off. Putting one there changes the row, taking one away changes
+   * it too, and asking what a row carries is reading the row. Checking only the arriving file would
+   * leave the other two as a quieter way past the same ladder, which is the thing this check exists to
+   * prevent. The slot's `delivery` cannot stand in for it either: a file whose id, name and size are
+   * readable by anyone has already given up most of what `internal` was keeping.
+   */
+  async function requireRowAuthority(table: string, ownerId: unknown, intent: PhisRowIntent) {
+    if (!await input.mayActOnRow({ table, id: ownerId, intent })) {
+      throw new PhisAddonAssetError(
+        `Row ${String(ownerId)} of "${table}" is not this caller's to ` +
+        `${intent === "read" ? "read" : "change"}.`,
+      );
+    }
+  }
+
   async function resolveSpace() {
     const space = await ensureAddonMediaSpace(siteId, addonId);
     const profile = await getMediaStorageProfile(siteId, space.defaultStorageProfileId);
@@ -133,7 +151,13 @@ export function buildPhisAddonAssetsCapability(input: {
     };
   }
 
-  /** Reads the session and proves it is this Add-on's, on this Site, in this slot. */
+  /**
+   * Reads the session and proves it is this Add-on's, on this Site, in this slot, and this caller's.
+   *
+   * The actor is checked here for the reason the delivery route checks it there: a reservation names
+   * who it was made for, and only they may redeem it. Without it the row authority `begin` established
+   * would hold for one call and be spendable by whoever else came to hold the token.
+   */
   async function requireSession(token: string, table: string) {
     const session = await getMediaUploadSessionByToken(token);
     const ref = session?.purposeRef as
@@ -144,6 +168,7 @@ export function buildPhisAddonAssetsCapability(input: {
       || session.purpose !== PhiMediaUploadPurpose.AddonAsset
       || ref?.addonId !== addonId
       || ref?.table !== table
+      || session.actorUserId !== input.actorUserId
     ) {
       // One answer for "no such reservation" and "not yours", because the two together are what a
       // caller would otherwise use this to tell apart.
@@ -184,15 +209,8 @@ export function buildPhisAddonAssetsCapability(input: {
         // the Space's own records are built around there being one.
         throw new PhisAddonAssetError("An upload needs an authenticated actor.");
       }
-      /*
-       * The row's authority, not the slot's. Putting a file on a row changes it, so whoever may change
-       * it may put one there -- which keeps this from becoming a second, quieter way past the ladder.
-       */
-      if (!await input.mayActOnRow({ table, id: ownerId, intent: "update" })) {
-        throw new PhisAddonAssetError(
-          `Row ${String(ownerId)} of "${table}" is not this caller's to change.`,
-        );
-      }
+      // Putting a file on a row changes it, so whoever may change it may put one there.
+      await requireRowAuthority(table, ownerId, "update");
 
       const { space, profile, service } = await resolveSpace();
       /*
@@ -427,6 +445,7 @@ export function buildPhisAddonAssetsCapability(input: {
         || session.purpose !== PhiMediaUploadPurpose.AddonAsset
         || ref?.addonId !== addonId
         || ref?.table !== table
+        || session.actorUserId !== input.actorUserId
         || session.status === PhiMediaUploadSessionStatus.Completed
       ) {
         return false;
@@ -442,12 +461,34 @@ export function buildPhisAddonAssetsCapability(input: {
       if (slot !== undefined) {
         requireSlot(table, slot);
       }
+      await requireRowAuthority(table, ownerId, "read");
       const rows = await readPhisAddonAssets(getPool(), location, { siteId, ownerId, slot });
       return rows.map(view);
     },
 
     async remove({ table, id }) {
       const location = requireTable(table);
+      /*
+       * A file is addressed by a generated key, so anything that is not one names nothing.
+       *
+       * Answered here rather than by the database, which would raise on the type instead: an Add-on
+       * passing a path segment straight through would then get an error about bigint syntax where the
+       * contract promises "not there is not an error".
+       */
+      if (!/^\d+$/u.test(String(id))) {
+        return false;
+      }
+      /*
+       * The row is found before it is judged, because the argument names the file and the authority is
+       * the row's. Absent answers `false` the way it always has: "may I" about something that is not
+       * there has no other honest answer, and reporting it as a refusal would say that it exists.
+       */
+      const existing = await readPhisAddonAsset(getPool(), location, { siteId, id });
+      if (!existing) {
+        return false;
+      }
+      // Taking a file out of a slot changes the row, the same act `begin` is measured against.
+      await requireRowAuthority(table, existing.ownerId, "update");
       // The link first, the file second: a failure there leaves a file nobody points at, which is
       // findable, rather than a row pointing at nothing, which is not.
       const mediaAssetId = await unlinkPhisAddonAsset(getPool(), location, { siteId, id });

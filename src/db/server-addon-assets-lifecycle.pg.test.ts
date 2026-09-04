@@ -56,6 +56,9 @@ const descriptor: PhisAddonSchemaDescriptor = {
 /** A real gzip header, so the content sniffer has something truthful to agree with. */
 const GZIP = Buffer.from([0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03]);
 
+/** The same, for the slot that takes images. */
+const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+
 let migrationPool: Pool;
 
 describe("putting a file on a row", () => {
@@ -63,14 +66,23 @@ describe("putting a file on a row", () => {
   let offeringId: string;
   let actor: number;
 
-  function assets(options?: { mayActOnRow?: boolean }) {
+  function assets(options?: {
+    mayActOnRow?: boolean;
+    /** Who is acting, for the cases about a reservation being redeemed by somebody else. */
+    actorUserId?: number | null;
+    /** Collects what the row authority was asked, so a test can name the intent and not just the answer. */
+    intents?: string[];
+  }) {
     return buildPhisAddonAssetsCapability({
       addonId: ADDON,
       siteId: site.id,
       siteKey: site.key,
-      actorUserId: actor,
+      actorUserId: options && "actorUserId" in options ? (options.actorUserId ?? null) : actor,
       schema: descriptor,
-      mayActOnRow: async () => options?.mayActOnRow ?? true,
+      mayActOnRow: async ({ intent }) => {
+        options?.intents?.push(intent);
+        return options?.mayActOnRow ?? true;
+      },
       proxyUploadUrl: ({ token }) => `/api/site/media/uploads/${token}`,
     });
   }
@@ -82,7 +94,7 @@ describe("putting a file on a row", () => {
   }
 
   /** What the client would do, standing in for the plan the Provider issued. */
-  async function deliver(token: string, body: Buffer) {
+  async function deliver(token: string, body: Buffer, contentType = "application/gzip") {
     const session = await getMediaUploadSessionByToken(token);
     const space = await ensureAddonMediaSpace(site.id, ADDON);
     const profile = await getMediaStorageProfile(site.id, space.defaultStorageProfileId);
@@ -90,7 +102,7 @@ describe("putting a file on a row", () => {
     await service.putObject({
       storageKey: session!.stagingStorageKey,
       body,
-      contentType: "application/gzip",
+      contentType,
     });
   }
 
@@ -365,6 +377,67 @@ describe("putting a file on a row", () => {
       .toEqual([]);
     const after = await usage();
     expect(after.bytes).toBe(before.bytes - GZIP.byteLength);
+  });
+
+  it("asks the row's authority to read it before saying what it carries", async () => {
+    /*
+     * Asking what a row carries is reading the row, and the slot's `delivery` cannot stand in for the
+     * answer: a file whose id, name and size come back to anybody has already given up most of what
+     * `internal` was keeping.
+     */
+    const intents: string[] = [];
+    await assets({ intents }).list({ table: "offering", ownerId: offeringId });
+    expect(intents).toEqual(["read"]);
+
+    await expect(assets({ mayActOnRow: false }).list({ table: "offering", ownerId: offeringId }))
+      .rejects.toThrow(/is not this caller's to read/);
+  });
+
+  it("asks the row's authority to change it before taking a file away", async () => {
+    // Taking a file out of a slot changes the row exactly as putting one there does, so it is the same
+    // question -- and the file must still be there when the answer was no.
+    const reservation = await assets().begin({
+      table: "offering", ownerId: offeringId, slot: "shots",
+      contentType: "image/png", sizeBytes: PNG.byteLength,
+    });
+    await deliver(reservation.token, PNG, "image/png");
+    const held = await assets().finalize({ table: "offering", token: reservation.token });
+
+    const intents: string[] = [];
+    await expect(assets({ mayActOnRow: false, intents }).remove({ table: "offering", id: held.id }))
+      .rejects.toThrow(/is not this caller's to change/);
+    expect(intents).toEqual(["update"]);
+    expect(await assets().list({ table: "offering", ownerId: offeringId, slot: "shots" }))
+      .toContainEqual(expect.objectContaining({ id: held.id }));
+  });
+
+  it("says nothing about a file that is not there, rather than refusing it", async () => {
+    // "May I" about something absent has no honest answer but no, and a refusal would say it exists.
+    expect(await assets({ mayActOnRow: false })
+      .remove({ table: "offering", id: "999999999" })).toBe(false);
+    // And a key that is not one at all names nothing either, rather than raising on its type.
+    expect(await assets().remove({ table: "offering", id: "not-a-key" })).toBe(false);
+  });
+
+  it("lets only the person a reservation was made for redeem it", async () => {
+    /*
+     * The row authority `begin` established is spent once, by the actor it was established for.
+     * Without this, whoever came to hold the token could spend it -- and the check at the start would
+     * have decided nothing about who finishes.
+     */
+    const stranger = await createPhiTestUser(site);
+    const reservation = await assets().begin({
+      table: "offering", ownerId: offeringId, slot: "shots",
+      contentType: "image/png", sizeBytes: PNG.byteLength,
+    });
+    await deliver(reservation.token, PNG, "image/png");
+
+    const theirs = assets({ actorUserId: stranger });
+    await expect(theirs.finalize({ table: "offering", token: reservation.token }))
+      .rejects.toThrow(/is not open/);
+    expect(await theirs.abandon({ table: "offering", token: reservation.token })).toBe(false);
+    // Still the reservation it was, and still redeemable by the one who made it.
+    expect(await assets().abandon({ table: "offering", token: reservation.token })).toBe(true);
   });
 
 });
