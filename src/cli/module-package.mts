@@ -1,6 +1,12 @@
 import { existsSync, readFileSync, readdirSync, realpathSync } from "node:fs";
 import path from "node:path";
 
+import {
+  isPhiRuntimeModuleCategory,
+  readPhisModulePackageDeclaration,
+  type PhisModulePackageDeclaration,
+} from "@phis/contracts/catalog";
+
 /**
  * What a Module package has to look like once it is built, checked where it arrives.
  *
@@ -18,7 +24,11 @@ export type PhiSiteModulePackageIssueCode =
   | "server_entry_is_client"
   | "runtime_not_peer"
   | "vendored_dependencies"
-  | "css_without_side_effects";
+  | "css_without_side_effects"
+  | "declaration_missing"
+  | "declaration_invalid"
+  | "declaration_foreign_module"
+  | "declaration_unknown_category";
 
 export type PhiSiteModulePackageIssue = {
   code: PhiSiteModulePackageIssueCode;
@@ -43,6 +53,7 @@ const ENTRYPOINTS = [
 const SHARED_RUNTIMES = ["react", "@phis/ui"] as const;
 
 type PackageManifest = {
+  name?: string;
   exports?: Record<string, unknown>;
   dependencies?: Record<string, string>;
   sideEffects?: unknown;
@@ -165,6 +176,54 @@ export function inspectSiteModulePackage(
       issues.push({
         code: "server_entry_is_client",
         message: `${target} begins with "use client", but "${entrypoint.subpath}" is a Server entrypoint.`,
+      });
+    }
+  }
+
+  /*
+   * What the package says it carries.
+   *
+   * The fourth way to be wrong, and the only one that fails nowhere: a package with no declaration
+   * installs and renders perfectly and is simply never listed, because a catalogue that cannot run a
+   * Module has no other way to learn what it is for. Read as text like everything else here.
+   */
+  let declaration: PhisModulePackageDeclaration | null = null;
+  let declarationReadable = true;
+  try {
+    declaration = readPhisModulePackageDeclaration(manifest);
+  } catch (error) {
+    declarationReadable = false;
+    issues.push({
+      code: "declaration_invalid",
+      message:
+        `${error instanceof Error ? error.message : String(error)} ` +
+        "A marketplace refuses a package whose declaration it cannot read.",
+    });
+  }
+  if (declarationReadable && (declaration === null || declaration.modules.length === 0)) {
+    issues.push({
+      code: "declaration_missing",
+      message:
+        'The package declares no Modules under "phis" in its package.json. A catalogue cannot run a ' +
+        "Module to find out what it is for, so an undeclared package is refused rather than guessed at.",
+    });
+  }
+  for (const entry of declaration?.modules ?? []) {
+    if (!entry.moduleId.startsWith(`${packageName}/`)) {
+      issues.push({
+        code: "declaration_foreign_module",
+        message:
+          `"${entry.moduleId}" is declared but does not belong to ${packageName}. One package carries ` +
+          "one product, so every Module it declares is its own.",
+      });
+    }
+    if (!isPhiRuntimeModuleCategory(entry.category)) {
+      issues.push({
+        code: "declaration_unknown_category",
+        message:
+          `"${entry.category}" is not a category this release offers. The list may have grown since ` +
+          "this server was built -- the marketplace decides at intake, and this is a warning, not that " +
+          "verdict.",
       });
     }
   }
