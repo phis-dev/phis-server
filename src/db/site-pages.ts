@@ -39,6 +39,10 @@ import type {
   CmsPageWriteInput,
 } from "@/lib/cms/write-validation";
 import type { PhiCmsInstanceId } from "@/lib/cms/instance-id";
+import {
+  PHI_AREA_CONFIG_MODULES_NAMESPACE,
+  readPhiAreaConfigNamespace,
+} from "@/lib/cms/area-config";
 import { mergePhiAreaTreeForPublish } from "@/lib/cms/area-publish-merge";
 import {
   validateCmsAreaPresetWriteInput,
@@ -2205,7 +2209,7 @@ export async function publishSitePageRevision(
 
 /** The Module ids a stored Area preset config carries, in the shape a diff can compare. */
 function readAreaConfigModuleIds(config: Record<string, unknown> | undefined) {
-  const value = config?.runtimeModules;
+  const value = readPhiAreaConfigNamespace(config, PHI_AREA_CONFIG_MODULES_NAMESPACE)?.runtimeModules;
   return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string") : [];
 }
 

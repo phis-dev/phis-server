@@ -7,8 +7,15 @@ import {
 
 const OTHER_PROVIDER = "@acme/login";
 
-function areaTree(config: Record<string, unknown>) {
-  return { regions: ["kept"], preset: { flags: 0, config } };
+/** The Module selection lives under `config.modules`; the helper keeps the tests reading about it. */
+function areaTree(modules: Record<string, unknown>, config: Record<string, unknown> = {}) {
+  return { regions: ["kept"], preset: { flags: 0, config: { ...config, modules } } };
+}
+
+function readModulesConfig(tree: Record<string, unknown>) {
+  const preset = tree.preset as Record<string, unknown>;
+  const config = preset.config as Record<string, unknown>;
+  return config.modules as Record<string, unknown>;
 }
 
 describe("restoreFirstPartyAuthInAreaTree", () => {
@@ -39,8 +46,7 @@ describe("restoreFirstPartyAuthInAreaTree", () => {
       PHI_FIRST_PARTY_AUTH_UI_MODULE_ID,
       "@phis/ui/modules/asset",
     ]);
-    const preset = result.tree.preset as Record<string, unknown>;
-    expect((preset.config as Record<string, unknown>).authUiProviderModuleId).toBe(
+    expect(readModulesConfig(result.tree).authUiProviderModuleId).toBe(
       PHI_FIRST_PARTY_AUTH_UI_MODULE_ID,
     );
   });
@@ -73,14 +79,19 @@ describe("restoreFirstPartyAuthInAreaTree", () => {
 
   it("keeps everything it was not asked to touch", () => {
     const result = restoreFirstPartyAuthInAreaTree({
-      ...areaTree({ runtimeModules: [], mediaSpaces: { user: { kinds: ["image"] } } }),
+      ...areaTree(
+        { runtimeModules: [], mediaSpaces: { user: { kinds: ["image"] } } },
+        { shell: { rootRoute: { mode: "landing" } } },
+      ),
       overlays: ["kept"],
     });
 
     expect((result.tree as Record<string, unknown>).overlays).toEqual(["kept"]);
     expect((result.tree as Record<string, unknown>).regions).toEqual(["kept"]);
+    expect(readModulesConfig(result.tree).mediaSpaces).toEqual({ user: { kinds: ["image"] } });
+    // The Shell namespace belongs to another workspace and is not this operation's to rewrite.
     const config = (result.tree.preset as Record<string, unknown>).config as Record<string, unknown>;
-    expect(config.mediaSpaces).toEqual({ user: { kinds: ["image"] } });
+    expect(config.shell).toEqual({ rootRoute: { mode: "landing" } });
   });
 
   it("stays put when its own output is fed back in", () => {

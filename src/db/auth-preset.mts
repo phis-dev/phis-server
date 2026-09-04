@@ -1,5 +1,6 @@
 import type { Pool, PoolClient } from "pg";
 import { PhiCmsVisibilityContext } from "../lib/constants/phi-cms.ts";
+import { PHI_AREA_CONFIG_MODULES_NAMESPACE } from "../lib/cms/area-config.ts";
 
 export const PHI_FIRST_PARTY_AUTH_UI_MODULE_ID = "@phis/ui/modules/auth";
 
@@ -30,11 +31,12 @@ function toRecord(value: unknown): Record<string, unknown> {
 export function restoreFirstPartyAuthInAreaTree(tree: Record<string, unknown>) {
   const preset = toRecord(tree.preset);
   const config = toRecord(preset.config);
-  const currentModuleIds = Array.isArray(config.runtimeModules)
-    ? config.runtimeModules.filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+  const modules = toRecord(config[PHI_AREA_CONFIG_MODULES_NAMESPACE]);
+  const currentModuleIds = Array.isArray(modules.runtimeModules)
+    ? modules.runtimeModules.filter((value): value is string => typeof value === "string" && value.trim().length > 0)
     : [];
-  const previousProviderModuleId = typeof config.authUiProviderModuleId === "string"
-    ? config.authUiProviderModuleId.trim()
+  const previousProviderModuleId = typeof modules.authUiProviderModuleId === "string"
+    ? modules.authUiProviderModuleId.trim()
     : null;
   const removedProviderModuleIds = previousProviderModuleId && previousProviderModuleId !== PHI_FIRST_PARTY_AUTH_UI_MODULE_ID
     ? [previousProviderModuleId]
@@ -60,8 +62,11 @@ export function restoreFirstPartyAuthInAreaTree(tree: Record<string, unknown>) {
         ...preset,
         config: {
           ...config,
-          runtimeModules,
-          authUiProviderModuleId: PHI_FIRST_PARTY_AUTH_UI_MODULE_ID,
+          [PHI_AREA_CONFIG_MODULES_NAMESPACE]: {
+            ...modules,
+            runtimeModules,
+            authUiProviderModuleId: PHI_FIRST_PARTY_AUTH_UI_MODULE_ID,
+          },
         },
       },
     },
@@ -161,8 +166,8 @@ async function observeAuthUiProviders(client: PoolClient, siteId: number) {
         provider_module_id: string | null;
         runtime_modules: unknown;
       }>(
-        `SELECT tree_json #>> '{preset,config,authUiProviderModuleId}' AS provider_module_id,
-                tree_json #>  '{preset,config,runtimeModules}'          AS runtime_modules
+        `SELECT tree_json #>> '{preset,config,modules,authUiProviderModuleId}' AS provider_module_id,
+                tree_json #>  '{preset,config,modules,runtimeModules}'          AS runtime_modules
          FROM phis.site_area_revisions
          WHERE id = $1
          LIMIT 1`,

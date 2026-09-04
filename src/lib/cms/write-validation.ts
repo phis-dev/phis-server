@@ -1,6 +1,12 @@
 import "server-only";
 
 import { isPhisCmsAreaKey, resolvePhisCmsAreaMask } from "@/lib/constants/cms-areas";
+import {
+  PHI_AREA_CONFIG_MODULES_NAMESPACE,
+  PHI_AREA_CONFIG_SHELL_NAMESPACE,
+  isPhiAreaConfigNamespace,
+  readPhiAreaConfigNamespace,
+} from "@/lib/cms/area-config";
 import { normalizeSiteCmsPath } from "@/lib/helpers/cms-path";
 import {
   readPhiCmsInstanceId,
@@ -105,10 +111,11 @@ export type CmsAreaPresetWriteInput = {
 /**
  * What a Module selection write carries, which is deliberately not an Area.
  *
- * The selection lives in the Area preset's config and is published from the same revision family, but
- * it is edited on its own page and saved on its own. So the payload names the config and nothing else:
- * a caller that could also send `regions` would be able to move the structure through a route nobody
- * reviews as a structure write.
+ * The selection lives under `config.modules` and is published from the same revision family, but it is
+ * edited on its own page and saved on its own. So the payload names the config and nothing else: a
+ * caller that could also send `regions` would be able to move the structure through a route nobody
+ * reviews as a structure write. `config.shell` is refused here for the mirror-image reason -- it
+ * belongs to the structure draft, and a write that carries it believes it owns something it does not.
  *
  * `baseline` is the exception, and only for a Site that has never persisted this Area. There is then no
  * revision to patch, and the Area runs on the code-owned Shell preset -- which lives in `@phis/ui` and
@@ -1019,7 +1026,7 @@ export function validateCmsAreaPresetWriteInput(payload: unknown): CmsValidation
           errors,
           { min: 0, allowZero: true },
         ),
-        config: readOptionalRecord(payload.preset.config, "preset.config", errors) ?? {},
+        config: readAreaPresetConfig(payload.preset.config, "structure", errors),
       }
     : undefined;
 
@@ -1060,6 +1067,37 @@ export function validateCmsAreaPresetWriteInput(payload: unknown): CmsValidation
   };
 }
 
+/**
+ * Reads an Area preset config and holds the namespace boundary while doing it.
+ *
+ * `config.shell` belongs to the structure draft and `config.modules` to the Module selection; a write
+ * that carries the other side's namespace is rejected rather than quietly dropped, because a client
+ * sending it is a client that believes it owns something it does not. A key outside both namespaces is
+ * refused for the same reason: a value nothing can read back is a bug on its way to being stored.
+ */
+function readAreaPresetConfig(
+  value: unknown,
+  owns: "structure" | "modules",
+  errors: string[],
+  label = "preset.config",
+) {
+  const config = readOptionalRecord(value, label, errors) ?? {};
+  const owned = owns === "structure" ? PHI_AREA_CONFIG_SHELL_NAMESPACE : PHI_AREA_CONFIG_MODULES_NAMESPACE;
+
+  for (const key of Object.keys(config)) {
+    if (key === owned) {
+      continue;
+    }
+    errors.push(
+      isPhiAreaConfigNamespace(key)
+        ? `${label}.${key} belongs to the other draft and must not be written here.`
+        : `${label}.${key} is not a known Area config namespace.`,
+    );
+  }
+
+  return config;
+}
+
 export function validateCmsAreaModulesWriteInput(
   payload: unknown,
 ): CmsValidationResult<CmsAreaModulesWriteInput> {
@@ -1072,18 +1110,23 @@ export function validateCmsAreaModulesWriteInput(
   const areaMask = area ? resolveCmsAreaMaskFromArea(area, errors) : undefined;
   const sourcePreset = readCmsPresetSource(payload.sourcePreset, "sourcePreset", errors);
   const draft = readDraftWriteState(payload.draft, errors);
-  const config = readOptionalRecord(payload.config, "config", errors);
+  const config = payload.config === undefined
+    ? undefined
+    : readAreaPresetConfig(payload.config, "modules", errors, "config");
+  const modules = readPhiAreaConfigNamespace(config, PHI_AREA_CONFIG_MODULES_NAMESPACE);
 
   if (config === undefined) {
     errors.push("config must be provided as an object.");
+  } else if (modules === undefined) {
+    errors.push(`config.${PHI_AREA_CONFIG_MODULES_NAMESPACE} must be provided as an object.`);
   } else if (
-    !Array.isArray(config.runtimeModules) ||
-    config.runtimeModules.some((moduleId) => typeof moduleId !== "string" || moduleId.trim() === "")
+    !Array.isArray(modules.runtimeModules) ||
+    modules.runtimeModules.some((moduleId) => typeof moduleId !== "string" || moduleId.trim() === "")
   ) {
     // Which ids are allowed for this Area is the catalog's answer and is settled before the write.
     // What is checked here is only the shape, so a malformed body fails as a bad request rather than
     // reaching the database as a config nothing can read back.
-    errors.push("config.runtimeModules must be an array of module ids.");
+    errors.push(`config.${PHI_AREA_CONFIG_MODULES_NAMESPACE}.runtimeModules must be an array of module ids.`);
   }
 
   let baseline: CmsAreaPresetWriteInput | undefined;
