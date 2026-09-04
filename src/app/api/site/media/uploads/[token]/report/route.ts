@@ -6,8 +6,9 @@ import {
 } from "@/db/media";
 import { getSessionFromRequest } from "@/db/user-sessions";
 import { logRuntimeEvent } from "@/lib/log";
-import { PhiMediaUploadSessionStatus } from "@/lib/media-upload-sessions";
+import { PhiMediaUploadPurpose, PhiMediaUploadSessionStatus } from "@/lib/media-upload-sessions";
 import { requireMediaSpaceWriteContext } from "@/lib/guards/site-media-api";
+import { requireSiteFromRequest } from "@/lib/site-context";
 import { nextMediaError } from "../../_helpers";
 
 /**
@@ -49,15 +50,29 @@ export async function POST(
     return nextMediaError("missing_upload_token", "Missing upload token.", 400);
   }
 
-  const { site, error } = await requireMediaSpaceWriteContext(request, async () => {
-    const staged = await getMediaUploadSessionByToken(token);
-    return staged?.spaceId ?? null;
-  });
-  if (error) {
-    return error;
+  const staged = await getMediaUploadSessionByToken(token);
+
+  /*
+   * Who may report on this body, split the way the delivery route splits it.
+   *
+   * An upload into an Add-on Space was authorised where it was asked for, by the Add-on's own row
+   * authority. Its Space is not a person's, so the Media Space write check answers no to everyone --
+   * and a Client that cannot report is one whose failed presigned upload leaves nothing in the log at
+   * all, which is the single case this route exists for. The session's own actor still decides, below.
+   */
+  const site = staged?.purpose === PhiMediaUploadPurpose.AddonAsset
+    ? await requireSiteFromRequest(request)
+    : await (async () => {
+        const context = await requireMediaSpaceWriteContext(request, async () => staged?.spaceId ?? null);
+        return context.error ? null : context.site;
+      })();
+  if (!site) {
+    // The same answer whichever branch declined, for the reason the delivery route gives: the two
+    // together are what a caller would otherwise use this route to tell apart.
+    return nextMediaError("upload_session_not_found", "Upload session not found.", 404);
   }
 
-  const session = await getMediaUploadSessionByToken(token);
+  const session = staged;
   if (!session || session.siteId !== site.id) {
     return nextMediaError("upload_session_not_found", "Upload session not found.", 404);
   }
