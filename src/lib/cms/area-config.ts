@@ -13,6 +13,15 @@
  * convention the client happened to keep.
  */
 
+/**
+ * The Shell's own statements about itself, by key.
+ *
+ * `rootRoute` says what an Area's `/` resolves to: a landing page, or a forward to a Page named by an
+ * internal reference. The site UI reads the same key; the server only checks that what is stored can
+ * be read back at all.
+ */
+export const PHI_AREA_ROOT_ROUTE_KEY = "rootRoute" as const;
+
 export const PHI_AREA_CONFIG_SHELL_NAMESPACE = "shell" as const;
 export const PHI_AREA_CONFIG_MODULES_NAMESPACE = "modules" as const;
 

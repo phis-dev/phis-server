@@ -4,6 +4,7 @@ import { isPhisCmsAreaKey, resolvePhisCmsAreaMask } from "@/lib/constants/cms-ar
 import {
   PHI_AREA_CONFIG_MODULES_NAMESPACE,
   PHI_AREA_CONFIG_SHELL_NAMESPACE,
+  PHI_AREA_ROOT_ROUTE_KEY,
   isPhiAreaConfigNamespace,
   readPhiAreaConfigNamespace,
 } from "@/lib/cms/area-config";
@@ -15,6 +16,7 @@ import {
   type PhiCmsInstanceId,
 } from "@/lib/cms/instance-id";
 import { collectCmsSignalRouteErrors } from "@/lib/cms/signal-validation";
+import { readPhiPageReference } from "@/lib/internal-references";
 import type { PhiRoleProviderId, PhiViewerAccessPolicy } from "@/lib/authorization";
 
 type JsonRecord = Record<string, unknown>;
@@ -1095,7 +1097,59 @@ function readAreaPresetConfig(
     );
   }
 
+  if (owns === "structure" && config[PHI_AREA_CONFIG_SHELL_NAMESPACE] !== undefined) {
+    readAreaShellConfig(
+      config[PHI_AREA_CONFIG_SHELL_NAMESPACE],
+      errors,
+      `${label}.${PHI_AREA_CONFIG_SHELL_NAMESPACE}`,
+    );
+  }
+
   return config;
+}
+
+/**
+ * What the Shell may state about itself.
+ *
+ * The shape is checked here and the meaning is not: whether the Page a root route forwards to still
+ * exists is the reader's question, asked again on every request, because the answer changes when a
+ * Module is switched off or a Page is deleted long after this write. What must not reach the database
+ * is a value nothing can read back at all -- an unknown key, or a target that is not a Page reference.
+ */
+function readAreaShellConfig(value: unknown, errors: string[], label: string) {
+  const shell = readOptionalRecord(value, label, errors);
+  if (!shell) {
+    return;
+  }
+
+  for (const key of Object.keys(shell)) {
+    if (key !== PHI_AREA_ROOT_ROUTE_KEY) {
+      errors.push(`${label}.${key} is not a known Shell config key.`);
+    }
+  }
+
+  if (shell[PHI_AREA_ROOT_ROUTE_KEY] === undefined) {
+    return;
+  }
+  const rootRoute = readOptionalRecord(shell[PHI_AREA_ROOT_ROUTE_KEY], `${label}.${PHI_AREA_ROOT_ROUTE_KEY}`, errors);
+  if (!rootRoute) {
+    return;
+  }
+
+  const rootRouteLabel = `${label}.${PHI_AREA_ROOT_ROUTE_KEY}`;
+  if (rootRoute.mode === "landing") {
+    if (rootRoute.target !== undefined) {
+      errors.push(`${rootRouteLabel}.target must be absent when the mode is "landing".`);
+    }
+    return;
+  }
+  if (rootRoute.mode !== "redirect") {
+    errors.push(`${rootRouteLabel}.mode must be "landing" or "redirect".`);
+    return;
+  }
+  if (!readPhiPageReference(rootRoute.target)) {
+    errors.push(`${rootRouteLabel}.target must be an internal Page reference.`);
+  }
 }
 
 export function validateCmsAreaModulesWriteInput(
