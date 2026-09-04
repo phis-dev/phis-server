@@ -1,4 +1,4 @@
-import { saveDatabaseConnection } from "@/app/setup/actions";
+import { saveDatabaseConnection } from "@/app/(browser)/setup/actions";
 import type { BootstrapLocale, BootstrapMessages } from "@/bootstrap/i18n";
 import { SubmitButton } from "@/components/ui/submit-button";
 import { Switch } from "@/components/ui/switch";

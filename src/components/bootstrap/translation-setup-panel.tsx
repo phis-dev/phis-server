@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 
 import type { BootstrapMessages } from "@/bootstrap/i18n";
-import { saveTranslationSettings } from "@/app/setup/actions";
+import { saveTranslationSettings } from "@/app/(browser)/setup/actions";
 import { SubmitButton } from "@/components/ui/submit-button";
 
 type TranslationMode = "deepl" | "cdn" | "custom" | "none";

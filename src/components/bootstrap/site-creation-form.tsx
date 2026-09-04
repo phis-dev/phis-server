@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 
-import { saveInitialSites } from "@/app/setup/actions";
+import { saveInitialSites } from "@/app/(browser)/setup/actions";
 import type { BootstrapLocale, BootstrapMessages } from "@/bootstrap/i18n";
 import { SelectMenu } from "@/components/ui/select-menu";
 import { SubmitButton } from "@/components/ui/submit-button";

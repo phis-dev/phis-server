@@ -1,6 +1,6 @@
 import { Client } from "pg";
 
-import { applySchemaBootstrap } from "@/app/setup/actions";
+import { applySchemaBootstrap } from "@/app/(browser)/setup/actions";
 import type { BootstrapLocale, BootstrapMessages } from "@/bootstrap/i18n";
 import { SubmitButton } from "@/components/ui/submit-button";
 import { readPhiRuntimeConfigSync } from "@/lib/config-files";

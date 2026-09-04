@@ -1,16 +1,12 @@
-import { notFound } from "next/navigation";
-
 import { SetupLayoutShell } from "@/components/bootstrap/setup-layout-shell";
-import { isBootstrapEnabled } from "@/lib/config";
+import { requirePhisBrowserSurface } from "@/lib/browser-surfaces";
 
 export default function SetupLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
-  if (!isBootstrapEnabled()) {
-    notFound();
-  }
+  requirePhisBrowserSurface("setup");
 
   return <SetupLayoutShell>{children}</SetupLayoutShell>;
 }
