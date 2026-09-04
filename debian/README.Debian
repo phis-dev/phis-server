@@ -5,19 +5,24 @@ Install layout
 --------------
 
 - Application root: `/usr/lib/phis`
-- Standalone server root: `/usr/lib/phis/phi-server`
+- Standalone server root: `/usr/lib/phis/server`
 - CLI wrapper: `/usr/bin/phis`
 - Default stage root: `/srv/phis/stages/prod`
 - Optional stage environment file: `/srv/phis/stages/<stage>/.env`
 
 The packaged `systemd` template keeps the application working directory under
-`/usr/lib/phis/phi-server` and reads the mutable stage configuration through
+`/usr/lib/phis/server` and reads the mutable stage configuration through
 `PHIS_ROOT`.
 The default `prod` stage listens on `127.0.0.1:5301`.
 
 The installed `/usr/bin/phis` symlink points to the bundled wrapper under
-`/usr/lib/phis/phi-server/phis`, so the CLI and the standalone runtime use the
+`/usr/lib/phis/server/phis`, so the CLI and the standalone runtime use the
 same traced dependency set.
+
+`server` is a fixed name the packaging chooses. Next's standalone output nests the
+application under the directory it was built from, and the packaging renames it on
+the way in rather than repeating that name -- a checkout renamed on disk must not
+be able to move an installed path.
 
 Runtime baseline:
 

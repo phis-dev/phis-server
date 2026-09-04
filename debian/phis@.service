@@ -7,12 +7,12 @@ ConditionPathExists=/srv/phis/stages/%i/config/phis-runtime.json
 Type=simple
 User=phis
 Group=phis
-WorkingDirectory=/usr/lib/phis/phi-server
+WorkingDirectory=/usr/lib/phis/server
 Environment=NODE_ENV=production
 Environment=PHIS_ROOT=/srv/phis/stages/%i
 Environment=HOSTNAME=127.0.0.1
 EnvironmentFile=-/srv/phis/stages/%i/.env
-ExecStart=/usr/bin/node /usr/lib/phis/phi-server/server.js
+ExecStart=/usr/bin/node /usr/lib/phis/server/server.js
 # Stop reporting ready before the process goes, so the proxy drops this instance first. Tolerated
 # on failure: a shutdown must not hang on a database that is already gone.
 ExecStop=-/usr/bin/phis --root /srv/phis/stages/%i instance drain

@@ -12,10 +12,23 @@ override_dh_auto_build:
 	npm run build:cli
 
 override_dh_auto_install:
-	install -d debian/phis/usr/lib/phis
-	install -d debian/phis/usr/lib/phis/.next
-	cp -a .next/standalone/. debian/phis/usr/lib/phis/
-	cp -a .next/static debian/phis/usr/lib/phis/.next/
+	install -d debian/phis/usr/lib/phis/server
+	cp -a .next/standalone/node_modules debian/phis/usr/lib/phis/
+# The app directory inside the standalone output carries the name of the checkout it was built from,
+# which is not ours to depend on -- spelling it out is what left the unit pointing at a path the build
+# had stopped producing. It is found by its entry point and lands under a fixed name.
+	app_dir=$$(dirname "$$(find .next/standalone -maxdepth 2 -name server.js -print -quit)"); \
+		test -n "$$app_dir" || { echo "no server.js in .next/standalone" >&2; exit 1; }; \
+		cp -a "$$app_dir/." debian/phis/usr/lib/phis/server/
+	cp -a .next/static debian/phis/usr/lib/phis/server/.next/
+# Enforced here rather than trusted to the build. `next.config.ts` says the install root must never
+# travel inside the artifact, and the file tracer still copies it; the package is the last place that
+# can be sure, and the only one where being sure is verifiable.
+	rm -rf debian/phis/usr/lib/phis/server/addons \
+		debian/phis/usr/lib/phis/server/debian \
+		debian/phis/usr/lib/phis/server/docs \
+		debian/phis/usr/lib/phis/server/test \
+		debian/phis/usr/lib/phis/server/tsconfig.tsbuildinfo
 	find debian/phis/usr/lib/phis/node_modules -type d \( -name '*linuxmusl*' -o -name '*musl*' \) -prune -exec rm -rf {} +
 	find debian/phis/usr/lib/phis/node_modules/argon2/prebuilds -type f -name '*.musl.node' -delete
 	cd debian/phis/usr/lib/phis/node_modules && \

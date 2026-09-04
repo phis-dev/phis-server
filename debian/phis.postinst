@@ -1,7 +1,7 @@
 #!/bin/sh
 set -e
 
-APP_ROOT="/usr/lib/phis/phi-server"
+APP_ROOT="/usr/lib/phis/server"
 STAGE_ROOT="/srv/phis/stages/prod"
 CONFIG_DIR="${STAGE_ROOT}/config"
 STAGE_ENV_PATH="${STAGE_ROOT}/.env"
