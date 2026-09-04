@@ -1,7 +1,7 @@
 import Link from "next/link";
 
 import type { BootstrapLocale, BootstrapMessages } from "@/bootstrap/i18n";
-import { createPlatformSuperUser } from "@/app/(browser)/setup/actions";
+import { createPlatformSuperUser } from "@/app/(operator)/setup/actions";
 import { ClearOperatorAccountsButton } from "@/components/bootstrap/clear-operator-accounts-button";
 import { Button } from "@/components/ui/button";
 import { SubmitButton } from "@/components/ui/submit-button";

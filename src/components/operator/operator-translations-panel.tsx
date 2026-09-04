@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 
-import { updateOperatorSupportedLocales } from "@/app/(browser)/operator/actions";
+import { updateOperatorSupportedLocales } from "@/app/(operator)/operator/actions";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { MultiSelectMenu } from "@/components/ui/multi-select-menu";

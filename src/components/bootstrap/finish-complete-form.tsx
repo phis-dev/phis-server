@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 
-import { completeBootstrapSetup } from "@/app/(browser)/setup/actions";
+import { completeBootstrapSetup } from "@/app/(operator)/setup/actions";
 import type { BootstrapLocale, BootstrapMessages } from "@/bootstrap/i18n";
 import { Checkbox } from "@/components/ui/checkbox";
 import { SubmitButton } from "@/components/ui/submit-button";

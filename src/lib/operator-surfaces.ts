@@ -5,9 +5,13 @@ import { notFound } from "next/navigation";
 import { isBootstrapEnabled } from "@/lib/config";
 
 /**
- * The pages this service answers in a browser, and what each one depends on.
+ * The operator's pages, and what each one depends on.
  *
- * Everything else here is an API. Which pages exist used to be decided in `middleware.ts`, a file that
+ * They are the only pages this service renders; everything else it answers is an API. All three are
+ * the operator's rather than a visitor's -- setting an installation up and recovering it are the same
+ * job as running it, which is why they share a gate and a route group.
+ *
+ * Which pages exist used to be decided in `middleware.ts`, a file that
  * ran on every request, sat outside `src/` where `next dev` never loaded it, and answered `404` to the
  * operator, setup and recovery pages for as long as they had existed -- visible only in a production
  * build. The decision now sits beside the pages it governs, costs nothing per request, and is one
@@ -18,7 +22,7 @@ import { isBootstrapEnabled } from "@/lib/config";
  * all. `notFound` rather than a refusal, because a surface an installation does not offer should not
  * announce that it exists.
  */
-export const PHIS_BROWSER_SURFACES = {
+export const PHIS_OPERATOR_SURFACES = {
   /** The control plane. It has to work when no Site does, so nothing switches it off. */
   operator: () => true,
   /** Runs before any Site exists, and only while the installation says it is being set up. */
@@ -27,11 +31,11 @@ export const PHIS_BROWSER_SURFACES = {
   recovery: () => true,
 } as const;
 
-export type PhisBrowserSurface = keyof typeof PHIS_BROWSER_SURFACES;
+export type PhisOperatorSurface = keyof typeof PHIS_OPERATOR_SURFACES;
 
 /** Renders `notFound()` unless this installation offers the surface. */
-export function requirePhisBrowserSurface(surface: PhisBrowserSurface) {
-  if (!PHIS_BROWSER_SURFACES[surface]()) {
+export function requirePhisOperatorSurface(surface: PhisOperatorSurface) {
+  if (!PHIS_OPERATOR_SURFACES[surface]()) {
     notFound();
   }
 }

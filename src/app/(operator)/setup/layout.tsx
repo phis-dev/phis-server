@@ -1,12 +1,12 @@
 import { SetupLayoutShell } from "@/components/bootstrap/setup-layout-shell";
-import { requirePhisBrowserSurface } from "@/lib/browser-surfaces";
+import { requirePhisOperatorSurface } from "@/lib/operator-surfaces";
 
 export default function SetupLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
-  requirePhisBrowserSurface("setup");
+  requirePhisOperatorSurface("setup");
 
   return <SetupLayoutShell>{children}</SetupLayoutShell>;
 }

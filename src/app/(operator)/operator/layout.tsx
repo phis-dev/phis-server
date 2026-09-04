@@ -4,7 +4,7 @@ import { cookies, headers } from "next/headers";
 
 import { OPERATOR_LAYOUT_LABELS } from "@/components/operator/label-sets";
 import { OperatorShellFrame } from "@/components/operator/operator-shell-frame";
-import { requirePhisBrowserSurface } from "@/lib/browser-surfaces";
+import { requirePhisOperatorSurface } from "@/lib/operator-surfaces";
 import { getPhisConfigSync } from "@/lib/config";
 import { normalizeLocale } from "@/lib/locale";
 import { getOperatorSession } from "@/lib/operator-auth";
@@ -32,7 +32,7 @@ function buildLocaleOptions(allowedLocales: string[]) {
 }
 
 export default async function OperatorLayout({ children }: { children: ReactNode }) {
-  requirePhisBrowserSurface("operator");
+  requirePhisOperatorSurface("operator");
 
   const session = await getOperatorSession();
   const cookieStore = await cookies();

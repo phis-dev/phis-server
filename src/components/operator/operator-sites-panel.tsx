@@ -7,7 +7,7 @@ import {
   deleteOperatorSite,
   deleteOperatorSiteTranslations,
   updateOperatorSite,
-} from "@/app/(browser)/operator/actions";
+} from "@/app/(operator)/operator/actions";
 import type { SiteListRecord } from "@/db/sites";
 import type { OperationalMode } from "@/lib/operator-runtime";
 import {
