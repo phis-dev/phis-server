@@ -160,6 +160,47 @@ describe("generated Add-on schema", () => {
     expect(issues.join("\n")).toMatch(/without being declared/);
   });
 
+  it("does not call the link table of a slot a stray", async () => {
+    /*
+     * The table nobody declares and Core writes anyway.
+     *
+     * A table with asset slots gets a link table generated beside it, and the check reads back what is
+     * in the schema. Counting only the descriptor's own names made the runner complain about the table
+     * it had just created one statement earlier -- so no Add-on with slots could be migrated at all,
+     * which is how this was found.
+     */
+    const slotted = "phis_addon_pgtest_slots";
+    const withSlots = {
+      schemaName: slotted,
+      descriptor: {
+        descriptorVersion: 1 as const,
+        version: 1,
+        tables: [
+          {
+            name: "offering",
+            siteScoped: true,
+            columns: [
+              { name: "id", type: "identity" as const },
+              { name: "name", type: "string" as const, maxLength: 64 },
+            ],
+            primaryKey: ["id"],
+            assets: [
+              { name: "icon", cardinality: "one" as const, maxBytes: 4096, contentTypes: ["image/png"] },
+            ],
+          },
+        ],
+      },
+    };
+    const issues = await withMigrationClient(async (client) => {
+      await dropPhisAddonSchema(client, slotted);
+      await applyPhisAddonSchema(client, withSlots, servingRole);
+      const found = await verifyPhisAddonSchema(client, withSlots);
+      await dropPhisAddonSchema(client, slotted);
+      return found;
+    });
+    expect(issues).toEqual([]);
+  });
+
   it("removes everything when the schema is dropped", async () => {
     await withMigrationClient(async (client) => {
       await dropPhisAddonSchema(client, SCHEMA);

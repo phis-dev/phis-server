@@ -10,6 +10,7 @@ import {
   PHIS_ADDON_OWNER_COLUMN,
   PHIS_ADDON_SITE_COLUMN,
 } from "../lib/addons/schema-descriptor.ts";
+import { composePhisAddonAssetTableName } from "../lib/addons/schema-name.ts";
 
 /**
  * Creating, checking, and removing the schema an Add-on's tables live in.
@@ -90,7 +91,19 @@ export async function verifyPhisAddonSchema(
   target: PhisAddonSchemaTarget,
 ) {
   const issues: string[] = [];
-  const declared = new Set(target.descriptor.tables.map((table) => table.name));
+  /*
+   * The tables the descriptor names, and the ones Core adds beside them.
+   *
+   * A table that declares asset slots gets a link table Core generates and no descriptor mentions. It
+   * belongs here for the reason this check exists at all: what is read back is Core's own output, and a
+   * table Core wrote itself is not a stray one. Left out, no Add-on with slots could ever be migrated --
+   * the very first thing the runner does after applying is complain about the table it just made.
+   */
+  const declared = new Set(target.descriptor.tables.flatMap((table) => (
+    (table.assets ?? []).length > 0
+      ? [table.name, composePhisAddonAssetTableName(table.name)]
+      : [table.name]
+  )));
 
   const { rows: tableRows } = await client.query<{ table_name: string }>(
     `SELECT table_name
