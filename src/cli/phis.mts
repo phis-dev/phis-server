@@ -2771,6 +2771,15 @@ async function main() {
           ? `Dropped schema ${result.schemaName} and every record of ${result.addonId}.`
           : `Removed every record of ${result.addonId}, which owned no tables.`,
       );
+      if (result.discardedObjects > 0) {
+        // Noted rather than removed: these are Media objects, and this process cannot build the Media
+        // storage service. What the note buys is that they can still be named at all -- the rows that
+        // knew their keys are gone.
+        console.log(
+          `  ${result.discardedObjects} Media object(s) noted for removal; the serving instance ` +
+          "clears them as it deletes.",
+        );
+      }
       for (const removal of removals) {
         console.log(
           removal.error

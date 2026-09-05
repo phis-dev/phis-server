@@ -8,8 +8,15 @@ import {
 } from "./server-addon-migrate.mts";
 import type { PhisAddonManifestV1 } from "@/lib/addons/contract";
 import { getPhisConfigSync } from "@/lib/config";
+import { createMediaAsset } from "./media.ts";
+import { ensureAddonMediaSpace } from "./media-spaces.ts";
 import { incidentSchemaDescriptor } from "../../test/fixtures/addon-schema.ts";
-import { closePhiTestPool, requirePhiTestDatabase } from "../../test/pg/harness";
+import {
+  closePhiTestPool,
+  createPhiTestSite,
+  dropPhiTestSites,
+  requirePhiTestDatabase,
+} from "../../test/pg/harness";
 
 /**
  * The runner end to end: a manifest arrives, a schema exists, and the catalog says so afterwards.
@@ -78,6 +85,9 @@ describe("Add-on migration runner", () => {
 
   afterAll(async () => {
     await cleanUp();
+    const pool = await requirePhiTestDatabase();
+    await pool.query(`DELETE FROM phis.media_discarded_objects`);
+    await dropPhiTestSites();
     await migrationPool.end();
     await closePhiTestPool();
   });
@@ -170,9 +180,45 @@ describe("Add-on migration runner", () => {
       [`addon:${ADDON_ID}:token`, ADDON_ID, "0".repeat(24), "0".repeat(32)],
     );
 
+    /*
+     * A file in the Add-on's Space, because the catalog row cascades into the Space, the Space into its
+     * Assets, and no foreign key reaches into a store. Without the note written first, the object would
+     * outlive every row that knew its key -- under the Site's Media prefix, where the storage purge does
+     * not look, in a Space the sweep can no longer ask about.
+     */
+    const site = await createPhiTestSite("addon-purge");
+    await pool.query(
+      `INSERT INTO phis.site_server_addons (site_id, addon_id) VALUES ($1, $2)
+       ON CONFLICT (site_id, addon_id) DO NOTHING`,
+      [site.id, ADDON_ID],
+    );
+    const space = await ensureAddonMediaSpace(site.id, ADDON_ID);
+    const asset = await createMediaAsset({
+      siteId: site.id,
+      spaceId: space.id,
+      storageProfileId: space.defaultStorageProfileId,
+      storageKey: "media/pgtest/purged-object.bin",
+      originalName: "purged-object.bin",
+      contentType: "application/octet-stream",
+      bytes: 10,
+    });
+
     const result = await purgePhisAddon(migrationPool, ADDON_ID);
     expect(result.schemaName).toBe(SCHEMA);
     expect(result.droppedSecrets).toBe(1);
+    expect(result.discardedObjects).toBe(1);
+
+    // The Asset went with the Space, and what it stood for is on the removal list under its own key.
+    const { rows: assets } = await pool.query(
+      `SELECT 1 FROM phis.media_assets WHERE id = $1`,
+      [asset!.id],
+    );
+    expect(assets).toHaveLength(0);
+    const { rows: noted } = await pool.query<{ storage_key: string }>(
+      `SELECT storage_key FROM phis.media_discarded_objects WHERE site_id = $1`,
+      [site.id],
+    );
+    expect(noted.map((row) => row.storage_key)).toEqual(["media/pgtest/purged-object.bin"]);
 
     const { rows: schemas } = await pool.query(
       `SELECT 1 FROM information_schema.schemata WHERE schema_name = $1`,

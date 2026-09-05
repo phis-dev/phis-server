@@ -1725,6 +1725,19 @@ Add-on's Site assignments and applied-version rows, and deletes its catalog row 
 Add-on's stored secrets with it, because credentials for something no longer installed have no reason to
 stay readable.
 
+**The catalog row is also what the Add-on's Media Space hangs on**, and it cascades: the Space, its
+Assets, their variants. Nothing in that chain can reach a store, and afterwards nothing can name the
+objects either -- they sit under the Site's ordinary Media prefix, which `phis addon storage --purge`
+does not look at because that command removes the `storage:v1` prefix, in a Space the sweep can no
+longer ask about. So the purge writes their keys to `phis.media_discarded_objects` in the same
+transaction, before the cascade runs, and reports how many. Removing them is then a drain like any
+other.
+
+One case stays open and is not solvable here: an Add-on that was itself the Storage Provider. Its
+objects can only be reached through code that left with it, so the keys are recorded and the bytes are
+the operator's to remove with a client of their own. `phis addon storage --purge` already says as much
+in that situation.
+
 Simple Add-on documents may use mediated Module Storage instead of dedicated tables. Module Storage
 remains Site- and Add-on-scoped, schema-validated, quota-limited, audited, and inaccessible through raw
 SQL.

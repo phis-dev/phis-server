@@ -256,6 +256,51 @@ export async function purgePhisAddon(pool: Pool, addonId: string) {
        RETURNING id`,
       [addonId],
     );
+    /*
+     * The Add-on's files, written down while there is still something that knows them.
+     *
+     * The catalog row below cascades into the Add-on's Media Space, the Space into its Assets and the
+     * Assets into their variants -- and a foreign key cannot reach into a store. So the objects would
+     * outlive every row that named them, under the Site's ordinary Media prefix where the storage purge
+     * does not look, in a Space that no longer exists for the sweep to ask about. Unfindable, in a way
+     * no later command could repair.
+     *
+     * Upload sessions are read here too and removed with them: they carry a staged object, and their
+     * `space_id` is a plain column, so they would be left pointing at a Space that is gone.
+     *
+     * `DISTINCT ON` because a finished upload keeps its staging key as the Asset's storage key, so the
+     * same object is named twice -- and one statement may not touch a conflicting row twice.
+     */
+    const { rows: discarded } = await client.query<{ id: string }>(
+      `WITH spaces AS (
+         SELECT id, site_id FROM phis.media_spaces WHERE addon_id = $1
+       ), objects AS (
+         SELECT a.site_id, a.storage_profile_id, a.storage_key
+           FROM phis.media_assets a
+           JOIN spaces s ON s.id = a.space_id AND s.site_id = a.site_id
+         UNION ALL
+         SELECT a.site_id, v.storage_profile_id, v.storage_key
+           FROM phis.image_asset_variants v
+           JOIN phis.media_assets a ON a.id = v.asset_id
+           JOIN spaces s ON s.id = a.space_id AND s.site_id = a.site_id
+         UNION ALL
+         SELECT u.site_id, u.storage_profile_id, u.staging_storage_key AS storage_key
+           FROM phis.media_upload_sessions u
+           JOIN spaces s ON s.id = u.space_id AND s.site_id = u.site_id
+       )
+       INSERT INTO phis.media_discarded_objects (site_id, storage_profile_id, storage_key)
+       SELECT DISTINCT ON (storage_profile_id, storage_key) site_id, storage_profile_id, storage_key
+         FROM objects
+       ON CONFLICT (storage_profile_id, storage_key) DO UPDATE SET discarded_at = NOW()
+       RETURNING id`,
+      [addonId],
+    );
+    await client.query(
+      `DELETE FROM phis.media_upload_sessions u
+        USING phis.media_spaces s
+        WHERE s.addon_id = $1 AND s.id = u.space_id AND s.site_id = u.site_id`,
+      [addonId],
+    );
     await client.query(`DELETE FROM phis.site_server_addons WHERE addon_id = $1`, [addonId]);
     await client.query(`DELETE FROM phis.server_addon_migrations WHERE addon_id = $1`, [addonId]);
     await client.query(`DELETE FROM phis.server_capabilities WHERE provider_id = $1`, [addonId]);
@@ -270,6 +315,8 @@ export async function purgePhisAddon(pool: Pool, addonId: string) {
       schemaName,
       droppedSecrets: secretCount ?? 0,
       retiredGroups: retiredGroups.length,
+      /** Objects now on the removal list. They are removed by a drain, not by this transaction. */
+      discardedObjects: discarded.length,
     };
   } catch (error) {
     await client.query("ROLLBACK");

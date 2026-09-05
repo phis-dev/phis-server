@@ -152,6 +152,27 @@ export async function applyPhiCoreSchema(input: {
         await client.query(`GRANT SELECT, INSERT, UPDATE, DELETE ON ${table} TO "${role}"`);
       }
       /*
+       * The Media an Add-on's Space holds, which a purge destroys whether anyone looks or not.
+       *
+       * Removing the catalog row cascades into the Add-on's Space, the Space into its Assets and the
+       * Assets into their variants -- and a foreign key cannot reach into a store, so the objects would
+       * outlive the last rows that knew their keys. The keys are therefore written down in the same
+       * transaction that triggers the cascade, which means this connection has to be able to read them.
+       *
+       * Wider than the rule it serves, like the group grant below: the privilege covers every Site's
+       * Media, and what keeps the purge to one Add-on's Space is the statement, which says so.
+       */
+      for (const table of ["phis.media_spaces", "phis.media_assets", "phis.image_asset_variants"]) {
+        await client.query(`GRANT SELECT ON ${table} TO "${role}"`);
+      }
+      // The staged object of a reservation that never finished, and the row is left pointing at a Space
+      // that is about to stop existing.
+      await client.query(`GRANT SELECT, DELETE ON phis.media_upload_sessions TO "${role}"`);
+      await client.query(
+        `GRANT SELECT, INSERT, UPDATE ON phis.media_discarded_objects TO "${role}"`,
+      );
+
+      /*
        * Groups an Add-on brought with it, which uninstalling has to retire.
        *
        * Update rather than delete, and only ever the rows whose `provider_id` names the Add-on -- a
