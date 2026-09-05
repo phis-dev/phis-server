@@ -140,6 +140,34 @@ export async function readPhisAddonAsset(
 }
 
 /**
+ * Writes a one-valued slot's delivery path onto the row it belongs to, or clears it.
+ *
+ * In the same transaction as the link, because the two say the same thing: a row whose mirror pointed
+ * at a file it no longer holds would be a listing showing a picture that is gone, and a row whose mirror
+ * was empty while the file was there would send every reader back to asking per row -- which is the cost
+ * the mirror exists to remove.
+ *
+ * The column is named by the slot's declaration and created from it, so it is Core's on both ends: no
+ * declared query may assign it, and nothing else writes it.
+ */
+export async function writePhisAddonAssetMirror(
+  db: Pool | PoolClient,
+  location: PhisAddonAssetLocation,
+  input: { siteId: number; ownerId: string | number; column: string; path: string | null },
+) {
+  await db.query(
+    `UPDATE ${qualifyOwner(location)}
+        SET ${quotePhiIdentifier(input.column)} = $3
+      WHERE site_id = $1 AND id = $2`,
+    [input.siteId, String(input.ownerId), input.path],
+  );
+}
+
+function qualifyOwner(location: PhisAddonAssetLocation) {
+  return `${quotePhiIdentifier(location.schemaName)}.${quotePhiIdentifier(location.table)}`;
+}
+
+/**
  * The Media Assets a row holds, by id and nothing else.
  *
  * Read before the row goes, because the links are what name the files and they go with it -- the

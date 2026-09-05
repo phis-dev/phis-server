@@ -76,10 +76,24 @@ type QueryContext = {
 function readableColumns(table: PhisAddonTableDescriptor) {
   return new Set([
     ...table.columns.map((column) => column.name),
+    ...mirrorColumns(table),
     ...(table.siteScoped ? [PHIS_ADDON_SITE_COLUMN] : []),
     ...(table.groupScoped ? [PHIS_ADDON_GROUP_COLUMN] : []),
     ...(table.ownerScoped ? [PHIS_ADDON_OWNER_COLUMN] : []),
   ]);
+}
+
+/**
+ * The columns a slot mirrors its delivery path into: readable, and Core's to write.
+ *
+ * Readable because a listing that could not select the path would be back to asking per row, which is
+ * the cost the mirror exists to remove. Not writable for the same reason the scope columns are not: a
+ * row that could name its own file could name somebody else's.
+ */
+function mirrorColumns(table: PhisAddonTableDescriptor) {
+  return (table.assets ?? [])
+    .map((slot) => slot.mirrorColumn)
+    .filter((name): name is string => typeof name === "string" && name.length > 0);
 }
 
 function checkColumn(context: QueryContext, column: unknown, where: string) {
@@ -290,8 +304,14 @@ function checkAssignments(context: QueryContext, raw: unknown, where: string) {
       context.issues.push(`${context.field}.${at} must be an object.`);
       return;
     }
-    if (typeof assignment.column === "string" && CORE_WRITTEN_COLUMNS.has(assignment.column)) {
-      // The scope columns are Core's on the way in as much as on the way out.
+    if (
+      typeof assignment.column === "string"
+      && (
+        CORE_WRITTEN_COLUMNS.has(assignment.column)
+        || mirrorColumns(context.table).includes(assignment.column)
+      )
+    ) {
+      // The scope columns are Core's on the way in as much as on the way out, and so is a slot's mirror.
       context.issues.push(
         `${context.field}.${at}.column is "${assignment.column}", which Core writes itself.`,
       );

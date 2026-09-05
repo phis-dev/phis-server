@@ -412,6 +412,18 @@ export function buildPhisAddonSchemaStatements(
         ? `${quotePhiIdentifier(PHIS_ADDON_CREATED_BY_COLUMN)} ${CORE_REFERENCE_TARGETS[PHIS_ADDON_CORE_REFERENCES.user].type} NULL`
         : null,
     ].filter((definition): definition is string => definition !== null));
+    /*
+     * Where Core keeps a one-valued slot's delivery path, beside the Add-on's own columns.
+     *
+     * Nullable and unconstrained: it holds a path Core wrote and nothing else may write, and an empty
+     * one means the slot is empty. Long enough for the address of a Media Asset, which is the only
+     * shape it ever holds.
+     */
+    for (const slot of table.assets ?? []) {
+      if (slot.mirrorColumn) {
+        definitions.push(`${quotePhiIdentifier(slot.mirrorColumn)} VARCHAR(512) NULL`);
+      }
+    }
     definitions.push(
       `PRIMARY KEY (${table.primaryKey.map((column) => quotePhiIdentifier(column)).join(", ")})`,
     );

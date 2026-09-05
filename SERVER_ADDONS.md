@@ -1055,6 +1055,24 @@ different size than was reserved is not one either. On a single-valued slot the 
 in the same transaction. Repeating it is safe -- a client whose answer was lost cannot tell a finished
 upload from a failed one, so a second call answers with the same file rather than an error.
 
+#### The path on the row
+
+A one-valued slot may name a **mirror column**, and Core keeps that slot's delivery path in it: written
+when a file is settled, rewritten when a file replaces it, cleared when it is taken away.
+
+Without one, showing a row's picture means asking for its files -- one question per row, so a page of
+fifty costs fifty, and a public listing pays it on every request. With one the path arrives with the row,
+in the statement that was being run anyway.
+
+The column is Core's on both ends. It is created from the declaration rather than by the Add-on, it is
+readable in a declared query like any other column, and no declared query may assign it -- a row that
+could name its own file could name somebody else's. The path is kept rather than the Media Asset id
+because a delivery path carries the cache revision, and reading that back would be the join the mirror
+exists to avoid.
+
+Only on a slot that holds one file. A slot that accumulates has no single path to mirror, and a column
+holding the newest of several is a fact nobody asked for.
+
 #### When the row goes
 
 An Add-on never has to take its files away first. `data:v1`'s `delete` does it, and the order is the

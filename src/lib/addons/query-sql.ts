@@ -283,6 +283,20 @@ function siteScopeSql(compiler: Compiler, table: PhisAddonTableDescriptor) {
  * The scope columns are readable, and a row that came back without them would be a row an Add-on
  * cannot tell apart from anyone else's -- which is exactly what it needs them for.
  */
+/**
+ * The columns Core keeps a slot's delivery path in.
+ *
+ * Readable like any other column -- a listing that could not read the path would be back to asking per
+ * row, which is what the mirror exists to end -- and assignable by nobody: the compiler refuses a
+ * declared query that names one, because a row pointing at a file it was not given is a row pointing at
+ * somebody else's.
+ */
+function mirrorColumns(table: PhisAddonTableDescriptor) {
+  return (table.assets ?? [])
+    .map((slot) => slot.mirrorColumn)
+    .filter((name): name is string => typeof name === "string" && name.length > 0);
+}
+
 function selectableColumns(
   table: PhisAddonTableDescriptor,
   descriptor: PhisAddonSelectQueryDescriptor,
@@ -295,6 +309,7 @@ function selectableColumns(
     ...(table.groupScoped ? [PHIS_ADDON_GROUP_COLUMN] : []),
     ...(table.ownerScoped ? [PHIS_ADDON_OWNER_COLUMN, PHIS_ADDON_CREATED_BY_COLUMN] : []),
     ...table.columns.map((column) => column.name),
+    ...mirrorColumns(table),
   ];
 }
 
@@ -438,6 +453,7 @@ function compileAggregate(
 function returningSql(table: PhisAddonTableDescriptor) {
   return [
     ...table.columns.map((column) => column.name),
+    ...mirrorColumns(table),
     ...(table.siteScoped ? [PHIS_ADDON_SITE_COLUMN] : []),
     ...(table.groupScoped ? [PHIS_ADDON_GROUP_COLUMN] : []),
     ...(table.ownerScoped ? [PHIS_ADDON_OWNER_COLUMN, PHIS_ADDON_CREATED_BY_COLUMN] : []),

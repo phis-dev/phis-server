@@ -46,7 +46,13 @@ const descriptor: PhisAddonSchemaDescriptor = {
       ],
       primaryKey: ["id"],
       assets: [
-        { name: "package", cardinality: "one", maxBytes: 4096, contentTypes: ["application/gzip"] },
+        {
+          name: "package",
+          cardinality: "one",
+          maxBytes: 4096,
+          contentTypes: ["application/gzip"],
+          mirrorColumn: "package_path",
+        },
         { name: "shots", cardinality: "many", maxBytes: 4096, contentTypes: ["image/png"] },
       ],
     },
@@ -387,6 +393,48 @@ describe("putting a file on a row", () => {
 
     const after = await usage();
     expect(after.reserved).toBe(before.reserved - 6);
+  });
+
+  /** What the row itself says about the file, which is what a listing reads instead of asking. */
+  async function mirror(id: string) {
+    const pool = await requirePhiTestDatabase();
+    const { rows } = await pool.query<{ package_path: string | null }>(
+      `SELECT package_path FROM ${SCHEMA}.offering WHERE id = $1`,
+      [id],
+    );
+    return rows[0]?.package_path ?? null;
+  }
+
+  it("writes the delivery path onto the row, and replaces it when the file does", async () => {
+    /*
+     * The reason the mirror exists: showing a row's file otherwise means asking for its files, one
+     * question per row, so a page of fifty costs fifty. The path travels with the row instead.
+     */
+    const [held] = await assets().list({ table: "offering", ownerId: offeringId, slot: "package" });
+    expect(await mirror(offeringId)).toBe(held!.contentPath);
+
+    const reservation = await assets().begin({
+      table: "offering", ownerId: offeringId, slot: "package",
+      contentType: "application/gzip", sizeBytes: GZIP.byteLength,
+    });
+    await deliver(reservation.token, GZIP);
+    const replacement = await assets().finalize({ table: "offering", token: reservation.token });
+    // The displaced file's path is gone with it: one slot, one path, and never the older of the two.
+    expect(await mirror(offeringId)).toBe(replacement.contentPath);
+    expect(await mirror(offeringId)).not.toBe(held!.contentPath);
+
+    await assets().remove({ table: "offering", id: replacement.id });
+    // Empty rather than stale: a row that kept the path would show a picture that is not there.
+    expect(await mirror(offeringId)).toBeNull();
+
+    // Put one back, because the slot is what the tests after this one are about.
+    const again = await assets().begin({
+      table: "offering", ownerId: offeringId, slot: "package",
+      contentType: "application/gzip", sizeBytes: GZIP.byteLength,
+    });
+    await deliver(again.token, GZIP);
+    const restored = await assets().finalize({ table: "offering", token: again.token });
+    expect(await mirror(offeringId)).toBe(restored.contentPath);
   });
 
   it("takes a file away with its space, and out of the store", async () => {

@@ -41,6 +41,7 @@ import { sniffPhiMediaContentType } from "@/lib/media-content-sniffer";
 import { derivePhisAddonSchemaName } from "./schema-name.ts";
 import {
   linkPhisAddonAsset,
+  writePhisAddonAssetMirror,
   readPhisAddonAsset,
   readPhisAddonAssets,
   unlinkPhisAddonAsset,
@@ -430,6 +431,19 @@ export function buildPhisAddonAssetsCapability(input: {
           mediaAssetId: asset.id,
           single: declared.cardinality === "one",
         });
+        if (declared.mirrorColumn) {
+          // In the same transaction as the link, because they say the same thing. The path carries the
+          // cache revision, which is why it is the path and not the id that is kept.
+          await writePhisAddonAssetMirror(client, location, {
+            siteId,
+            ownerId: ref.ownerId,
+            column: declared.mirrorColumn,
+            path: resolvePhiMediaDeliveryUrl({
+              id: asset.id,
+              deliveryRevision: asset.deliveryRevision,
+            }),
+          });
+        }
         await client.query(
           `UPDATE phis.media_upload_sessions
               SET status = $2, finalized_at = NOW(), final_storage_key = staging_storage_key,
@@ -523,6 +537,13 @@ export function buildPhisAddonAssetsCapability(input: {
       const mediaAssetId = await unlinkPhisAddonAsset(getPool(), location, { siteId, id });
       if (mediaAssetId == null) {
         return false;
+      }
+      const mirror = requireSlot(table, existing.slot).mirrorColumn;
+      if (mirror) {
+        // Cleared before the file goes, so no moment shows a row pointing at something already removed.
+        await writePhisAddonAssetMirror(getPool(), location, {
+          siteId, ownerId: existing.ownerId, column: mirror, path: null,
+        });
       }
       const space = await ensureAddonMediaSpace(siteId, addonId);
       await release(space.id, mediaAssetId);

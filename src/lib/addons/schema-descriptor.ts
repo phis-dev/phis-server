@@ -311,6 +311,8 @@ function validateAssetSlot(
   value: unknown,
   field: string,
   issues: string[],
+  /** The names the table already uses, so a mirror cannot land on one of them. */
+  columnNames: ReadonlySet<string>,
 ): PhisAddonAssetSlotDescriptor | null {
   const before = issues.length;
   if (!isRecord(value)) {
@@ -346,6 +348,25 @@ function validateAssetSlot(
       }
     }
     assertUnique(value.contentTypes as string[], `${field}.contentTypes`, issues);
+  }
+  if (value.mirrorColumn !== undefined) {
+    /*
+     * The column Core keeps this slot's delivery path in, checked here rather than met as a collision
+     * later: it is created beside the Add-on's own columns and written by Core alone, so a name that is
+     * already a declared column would be a column with two writers and no way to tell which wrote last.
+     */
+    const mirror = readName(value.mirrorColumn, `${field}.mirrorColumn`, issues);
+    if (mirror && columnNames.has(mirror)) {
+      issues.push(`${field}.mirrorColumn "${mirror}" is already a declared column.`);
+    }
+    if (mirror && CORE_WRITTEN_COLUMNS[mirror]) {
+      issues.push(`${field}.mirrorColumn "${mirror}" is a column Core writes for a scope.`);
+    }
+    if (value.cardinality !== "one") {
+      // A slot that accumulates has no single path to mirror, and the newest of several is a fact
+      // nobody asked for.
+      issues.push(`${field}.mirrorColumn is only for a slot that holds one file.`);
+    }
   }
   return issues.length === before ? (value as PhisAddonAssetSlotDescriptor) : null;
 }
@@ -544,10 +565,19 @@ function validateTable(
       assertComposedNameFits(assetTable, part, suffix, `${field}.assets on "${assetTable}"`, issues);
     }
   }
+  const declaredColumnNames = new Set(columns.map((column) => column.name));
   const slotNames = assets.map((slot, index) =>
-    validateAssetSlot(slot, `${field}.assets[${index}]`, issues)?.name ?? "",
+    validateAssetSlot(slot, `${field}.assets[${index}]`, issues, declaredColumnNames)?.name ?? "",
   );
   assertUnique(slotNames, `${field}.assets.name`, issues);
+  // Two slots mirroring into one column would be two files claiming one path.
+  assertUnique(
+    assets
+      .map((slot) => (isRecord(slot) && typeof slot.mirrorColumn === "string" ? slot.mirrorColumn : ""))
+      .filter((name) => name !== ""),
+    `${field}.assets.mirrorColumn`,
+    issues,
+  );
 
   return issues.length === before ? (value as PhisAddonTableDescriptor) : null;
 }
