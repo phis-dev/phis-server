@@ -301,6 +301,15 @@ export async function purgePhisAddon(pool: Pool, addonId: string) {
         WHERE s.addon_id = $1 AND s.id = u.space_id AND s.site_id = u.site_id`,
       [addonId],
     );
+    /*
+     * Role grants go, unlike group memberships above.
+     *
+     * A membership is a statement about a person that outlives the package -- the group keeps its key
+     * and its people, and a reinstall finds them again. A grant names a role that only this Add-on's
+     * manifest defines, so once it is gone the row means nothing; the foreign key says so too, and a
+     * purge that left them refused to run at all.
+     */
+    await client.query(`DELETE FROM phis.site_addon_user_roles WHERE addon_id = $1`, [addonId]);
     await client.query(`DELETE FROM phis.site_server_addons WHERE addon_id = $1`, [addonId]);
     await client.query(`DELETE FROM phis.server_addon_migrations WHERE addon_id = $1`, [addonId]);
     await client.query(`DELETE FROM phis.server_capabilities WHERE provider_id = $1`, [addonId]);

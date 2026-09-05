@@ -148,6 +148,8 @@ export async function applyPhiCoreSchema(input: {
         "phis.server_capabilities",
         "phis.site_server_addons",
         "phis.server_secrets",
+        // Handed out by an Add-on and gone with it: a grant names a role only that manifest defines.
+        "phis.site_addon_user_roles",
       ]) {
         await client.query(`GRANT SELECT, INSERT, UPDATE, DELETE ON ${table} TO "${role}"`);
       }

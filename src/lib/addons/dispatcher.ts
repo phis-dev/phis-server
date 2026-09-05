@@ -632,7 +632,11 @@ export async function dispatchPhisAddonRequest(
         path,
         pathParams: match.pathParams,
         site: identity.site
-          ? { id: identity.site.id, key: identity.site.key }
+          ? {
+            id: identity.site.id,
+            key: identity.site.key,
+            publicBaseUrl: identity.site.publicBaseUrl,
+          }
           : null,
         actor: identity.actor,
         // Built here, per request, so the Site and actor above are the ones closed over. A capability

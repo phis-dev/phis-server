@@ -67,6 +67,7 @@ async function cleanUp() {
   await migrationPool.query(`DROP SCHEMA IF EXISTS "${SCHEMA}" CASCADE`);
   await pool.query(`DELETE FROM phis.server_secrets WHERE addon_id = $1`, [ADDON_ID]);
   await pool.query(`DELETE FROM phis.server_addon_migrations WHERE addon_id = $1`, [ADDON_ID]);
+  await pool.query(`DELETE FROM phis.site_addon_user_roles WHERE addon_id = $1`, [ADDON_ID]);
   await pool.query(`DELETE FROM phis.site_server_addons WHERE addon_id = $1`, [ADDON_ID]);
   await pool.query(`DELETE FROM phis.server_addons WHERE addon_id = $1`, [ADDON_ID]);
 }
@@ -202,6 +203,17 @@ describe("Add-on migration runner", () => {
       contentType: "application/octet-stream",
       bytes: 10,
     });
+
+    /*
+     * A role this Add-on handed out. It names a role only this manifest defines, so it cannot outlive
+     * the package -- and until it was deleted here the foreign key refused the purge outright, which is
+     * how an Add-on that had ever granted anything became unpurgeable.
+     */
+    await pool.query(
+      `INSERT INTO phis.site_addon_user_roles (site_id, addon_id, user_id, role, granted_by_user_id)
+       VALUES ($1, $2, $3, 'vendor', $3) ON CONFLICT DO NOTHING`,
+      [site.id, ADDON_ID, 45],
+    );
 
     const result = await purgePhisAddon(migrationPool, ADDON_ID);
     expect(result.schemaName).toBe(SCHEMA);

@@ -19,6 +19,14 @@ export type SiteRecord = {
   sourceLocale: string;
   defaultLocale: string;
   flags: number;
+  /**
+   * Where this Site answers from, as the outside world reaches it.
+   *
+   * Read with the rest of the row rather than looked up where it is needed: everything Core addresses
+   * is Site-relative, so whoever has to leave the Site -- a listing another Core fetches, a link in a
+   * mail, a picture in a feed -- would otherwise ask for the Site again to learn its name.
+   */
+  publicBaseUrl: string;
 };
 
 export type SiteLocaleOption = {
@@ -71,7 +79,10 @@ function normalizeEmail(input: string) {
 }
 
 function mapSiteRow(
-  row: { id: number; key: string; name: string; default_locale: string; flags: number },
+  row: {
+    id: number; key: string; name: string; default_locale: string; flags: number;
+    public_base_url: string;
+  },
 ): SiteRecord {
   return {
     id: row.id,
@@ -80,6 +91,7 @@ function mapSiteRow(
     sourceLocale: resolvePhiSiteSourceLocale(getPhisConfigSync(), row.key),
     defaultLocale: row.default_locale,
     flags: row.flags,
+    publicBaseUrl: row.public_base_url,
   };
 }
 
@@ -182,9 +194,12 @@ export async function getSiteByKey(input: string) {
 
   const pool = getPool();
   const { rows } = await pool.query<
-    { id: number; key: string; name: string; default_locale: string; flags: number }
+    {
+      id: number; key: string; name: string; default_locale: string; flags: number;
+      public_base_url: string;
+    }
   >(
-    `SELECT id, key, name, default_locale, flags
+    `SELECT id, key, name, default_locale, flags, public_base_url
      FROM phis.sites
      WHERE key = $1
        AND (flags & $2) <> 0
