@@ -5,8 +5,8 @@
       "addonId": "@phis/marketplace",
       "packageName": "@phis/marketplace",
       "packageVersion": "0.1.0",
-      "manifestDigest": "6992622884515ac9c9e802802fd43e3063564c42ceb6302dbbf32e8de93d94b1",
-      "artifactDigest": "4f8181705a920a470be9c368e78fdcc3cbd21bb0913299b5a7d623648443ffc8",
+      "manifestDigest": "834a915be8f925b7e8b37580dda6c2d85b620aec442ac09250b6b17daed968f5",
+      "artifactDigest": "3f23cf5939730dc3d7f6e6ab1adf721632749f32b1be44d257fd371599271a70",
       "manifest": {
         "manifestVersion": 1,
         "addonId": "@phis/marketplace",
@@ -17,7 +17,6 @@
         "serviceProviders": [],
         "requiredCoreCapabilities": [
           "@phis/server/data:v1",
-          "@phis/server/groups:v1",
           "@phis/server/assets:v1"
         ],
         "apiRoutes": [
@@ -138,13 +137,6 @@
             }
           }
         ],
-        "groups": [
-          {
-            "key": "market",
-            "name": "Marketplace vendors",
-            "description": "Authors may offer and maintain their own entries; Managers may withdraw and remove anyone's."
-          }
-        ],
         "schema": {
           "descriptorVersion": 1,
           "version": 1,
@@ -153,7 +145,6 @@
               "name": "offering",
               "siteScoped": true,
               "ownerScoped": true,
-              "groupScoped": true,
               "columns": [
                 {
                   "name": "id",
@@ -403,10 +394,6 @@
                 "name": "attributes",
                 "type": "json",
                 "nullable": true
-              },
-              {
-                "name": "group_id",
-                "type": "integer"
               }
             ],
             "edit": [
@@ -640,13 +627,13 @@
                     "kind": "now"
                   }
                 }
-              ],
-              "groupParameter": "group_id"
+              ]
             },
             {
               "kind": "update",
               "name": "edit",
               "table": "offering",
+              "alsoAllowedByRole": "curator",
               "set": [
                 {
                   "column": "name",
@@ -731,6 +718,7 @@
               "kind": "update",
               "name": "set_status",
               "table": "offering",
+              "alsoAllowedByRole": "curator",
               "set": [
                 {
                   "column": "status",
@@ -752,6 +740,7 @@
               "kind": "delete",
               "name": "drop",
               "table": "offering",
+              "alsoAllowedByRole": "curator",
               "idParameter": "id"
             }
           ]
