@@ -29,6 +29,12 @@ describe("site scaffold", () => {
     expect(files["src/app/admin/(pages)/@drawer/[...path]/page.tsx"]).toContain("PhiCmsRegionType.Drawer");
     expect(files["src/app/admin/(root)/@drawer/page.tsx"]).toContain("PhiCmsRegionType.Drawer");
     expect(files["src/app/api/site/forms/route.ts"]).toContain("buildPhiSiteFormRouteHandlers");
+    /*
+     * The door a Module half reaches its own Add-on half through. Without it a Site proxies `/api/site`
+     * and `/api/auth` and nothing else, so every call an Add-on's surface makes ends at the Site's 404
+     * page -- which is where the first one did.
+     */
+    expect(files["src/app/api/addons/[[...path]]/route.ts"]).toContain("buildPhiAddonProxyHandlers");
     expect(JSON.parse(files["package.json"]!).dependencies["@phis/ui"]).toBe("0.1.0");
   });
 
