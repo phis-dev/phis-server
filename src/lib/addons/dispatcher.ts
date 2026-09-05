@@ -259,13 +259,27 @@ export function isPhisAddonAssetPath(path: string) {
 
 /** The shape a slot request takes, and the only one it may take. */
 type PhisAddonAssetRoute =
+  | { kind: "describe"; table: string }
   | { kind: "list"; table: string; ownerId: string }
   | { kind: "remove"; table: string; ownerId: string; id: string }
   | { kind: "begin" | "finalize" | "abandon"; table: string; ownerId: string; slot: string };
 
 function readAssetRoute(method: string, path: string): PhisAddonAssetRoute | null {
   const [, table, ownerId, third, fourth] = path.split("/");
-  if (!table || !ownerId) {
+  if (!table) {
+    return null;
+  }
+  /*
+   * What the table's slots take, before anybody picks a file.
+   *
+   * The manifest states it -- the types, the ceiling, whether the slot holds one file or many -- and a
+   * surface that was configured with the same facts would be a second copy of them, wrong from the
+   * first time somebody widened a slot and forgot the other place.
+   */
+  if (method === "GET" && ownerId === undefined) {
+    return { kind: "describe" as const, table };
+  }
+  if (!ownerId) {
     return null;
   }
   if (method === "GET" && third === undefined) {
@@ -360,6 +374,13 @@ async function dispatchAddonAssetRequest(
 
   try {
     switch (route.kind) {
+      case "describe": {
+        const declared = entry.manifest.schema?.tables.find((table) => table.name === route.table);
+        if (!declared || (declared.assets ?? []).length === 0) {
+          return notFound();
+        }
+        return NextResponse.json({ slots: declared.assets });
+      }
       case "list":
         return NextResponse.json({
           files: await assets.list({ table: route.table, ownerId: route.ownerId }),
