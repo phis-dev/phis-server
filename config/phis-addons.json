@@ -5,8 +5,8 @@
       "addonId": "@phis/marketplace",
       "packageName": "@phis/marketplace",
       "packageVersion": "0.1.0",
-      "manifestDigest": "7bcc2e45432f385e806a1a4064a3a71963d93499fb6d2b65cd8b167fc8c73d12",
-      "artifactDigest": "a25ca38f735eac52c4160f2ba66d0078086e0896779afbe52c42b2d2882cbb56",
+      "manifestDigest": "6992622884515ac9c9e802802fd43e3063564c42ceb6302dbbf32e8de93d94b1",
+      "artifactDigest": "4f8181705a920a470be9c368e78fdcc3cbd21bb0913299b5a7d623648443ffc8",
       "manifest": {
         "manifestVersion": 1,
         "addonId": "@phis/marketplace",
@@ -17,7 +17,8 @@
         "serviceProviders": [],
         "requiredCoreCapabilities": [
           "@phis/server/data:v1",
-          "@phis/server/groups:v1"
+          "@phis/server/groups:v1",
+          "@phis/server/assets:v1"
         ],
         "apiRoutes": [
           {
@@ -60,6 +61,49 @@
             "method": "DELETE",
             "path": "offerings/:id",
             "handler": "dropOffering",
+            "auth": "site-user",
+            "siteScoped": true
+          },
+          {
+            "id": "offerings.assets.list",
+            "method": "GET",
+            "path": "offerings/:id/assets",
+            "handler": "listOfferingAssets",
+            "auth": "site-user",
+            "siteScoped": true
+          },
+          {
+            "id": "offerings.assets.begin",
+            "method": "POST",
+            "path": "offerings/:id/assets",
+            "handler": "beginOfferingAsset",
+            "auth": "site-user",
+            "siteScoped": true,
+            "bodyLimitBytes": 4096
+          },
+          {
+            "id": "offerings.assets.finalize",
+            "method": "POST",
+            "path": "offerings/:id/assets/finalize",
+            "handler": "finishOfferingAsset",
+            "auth": "site-user",
+            "siteScoped": true,
+            "bodyLimitBytes": 4096
+          },
+          {
+            "id": "offerings.assets.abandon",
+            "method": "POST",
+            "path": "offerings/:id/assets/abandon",
+            "handler": "abandonOfferingAsset",
+            "auth": "site-user",
+            "siteScoped": true,
+            "bodyLimitBytes": 4096
+          },
+          {
+            "id": "offerings.assets.drop",
+            "method": "DELETE",
+            "path": "offerings/:id/assets/:assetId",
+            "handler": "dropOfferingAsset",
             "auth": "site-user",
             "siteScoped": true
           }
@@ -204,6 +248,54 @@
               "primaryKey": [
                 "id"
               ],
+              "assets": [
+                {
+                  "name": "icon",
+                  "cardinality": "one",
+                  "maxBytes": 512000,
+                  "contentTypes": [
+                    "image/png",
+                    "image/jpeg",
+                    "image/webp",
+                    "image/svg+xml"
+                  ],
+                  "delivery": "public"
+                },
+                {
+                  "name": "logo",
+                  "cardinality": "one",
+                  "maxBytes": 512000,
+                  "contentTypes": [
+                    "image/png",
+                    "image/jpeg",
+                    "image/webp",
+                    "image/svg+xml"
+                  ],
+                  "delivery": "public"
+                },
+                {
+                  "name": "cover",
+                  "cardinality": "one",
+                  "maxBytes": 4000000,
+                  "contentTypes": [
+                    "image/png",
+                    "image/jpeg",
+                    "image/webp"
+                  ],
+                  "delivery": "public"
+                },
+                {
+                  "name": "screenshots",
+                  "cardinality": "many",
+                  "maxBytes": 4000000,
+                  "contentTypes": [
+                    "image/png",
+                    "image/jpeg",
+                    "image/webp"
+                  ],
+                  "delivery": "public"
+                }
+              ],
               "indexes": [
                 {
                   "name": "by_status",
@@ -293,6 +385,26 @@
                 "nullable": true
               },
               {
+                "name": "provider",
+                "type": "json",
+                "nullable": true
+              },
+              {
+                "name": "media",
+                "type": "json",
+                "nullable": true
+              },
+              {
+                "name": "prices",
+                "type": "json",
+                "nullable": true
+              },
+              {
+                "name": "attributes",
+                "type": "json",
+                "nullable": true
+              },
+              {
                 "name": "group_id",
                 "type": "integer"
               }
@@ -328,6 +440,26 @@
               {
                 "name": "url",
                 "type": "text",
+                "nullable": true
+              },
+              {
+                "name": "provider",
+                "type": "json",
+                "nullable": true
+              },
+              {
+                "name": "media",
+                "type": "json",
+                "nullable": true
+              },
+              {
+                "name": "prices",
+                "type": "json",
+                "nullable": true
+              },
+              {
+                "name": "attributes",
+                "type": "json",
                 "nullable": true
               }
             ],
@@ -475,6 +607,34 @@
                   }
                 },
                 {
+                  "column": "provider",
+                  "value": {
+                    "kind": "parameter",
+                    "name": "provider"
+                  }
+                },
+                {
+                  "column": "media",
+                  "value": {
+                    "kind": "parameter",
+                    "name": "media"
+                  }
+                },
+                {
+                  "column": "prices",
+                  "value": {
+                    "kind": "parameter",
+                    "name": "prices"
+                  }
+                },
+                {
+                  "column": "attributes",
+                  "value": {
+                    "kind": "parameter",
+                    "name": "attributes"
+                  }
+                },
+                {
                   "column": "updated_at",
                   "value": {
                     "kind": "now"
@@ -528,6 +688,34 @@
                   "value": {
                     "kind": "parameter",
                     "name": "url"
+                  }
+                },
+                {
+                  "column": "provider",
+                  "value": {
+                    "kind": "parameter",
+                    "name": "provider"
+                  }
+                },
+                {
+                  "column": "media",
+                  "value": {
+                    "kind": "parameter",
+                    "name": "media"
+                  }
+                },
+                {
+                  "column": "prices",
+                  "value": {
+                    "kind": "parameter",
+                    "name": "prices"
+                  }
+                },
+                {
+                  "column": "attributes",
+                  "value": {
+                    "kind": "parameter",
+                    "name": "attributes"
                   }
                 },
                 {
