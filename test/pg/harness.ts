@@ -21,6 +21,7 @@ const REQUIRED_TABLES = [
   "media_assets",
   "media_spaces",
   "media_storage_profiles",
+  "media_discarded_objects",
 ] as const;
 
 /** Referential actions these tests assert on. Named so a drifted database says which one is missing. */

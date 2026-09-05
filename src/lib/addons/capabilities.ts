@@ -38,6 +38,7 @@ import { buildPhisAddonSecretsCapability } from "./secrets-capability.ts";
 import { buildPhisAddonSettingsCapability } from "./settings-capability.ts";
 import { buildPhisAddonStorageCapability } from "./storage-capability.ts";
 import { buildPhisAddonAssetsCapability } from "./assets-capability.ts";
+import { buildPhisAddonRowAssets } from "./row-assets.ts";
 import { ensureSiteMediaConfig } from "@/db/media-spaces";
 import { getEffectiveUserSiteAuthorization } from "@/db/user-site-memberships";
 import type { PhisAddonManifestV1 } from "./contract.ts";
@@ -290,6 +291,22 @@ export function buildPhisAddonCapabilities(input: {
     actorUserId: input.actorUserId,
     declared: input.manifest.roles ?? [],
   });
+  /*
+   * What a delete does with the row's files, built from the schema rather than from the capability list.
+   *
+   * Not gated on `assets:v1`. A build that declared slots, filled them and then stopped asking for the
+   * capability still has the files, and the delete that removes their row is the last chance anything
+   * has to notice them. It needs the Site key because removing an object means addressing a store.
+   */
+  const rowAssets = input.siteKey
+    && (input.manifest.schema?.tables ?? []).some((table) => (table.assets ?? []).length > 0)
+    ? buildPhisAddonRowAssets({
+      addonId: input.manifest.addonId,
+      siteId,
+      siteKey: input.siteKey,
+      schema: input.manifest.schema ?? null,
+    })
+    : null;
   if (required.includes(PHIS_CORE_CAPABILITIES.data)) {
     /*
      * The data capability enforces row authority itself, so it gets the evaluator whether or not the
@@ -312,6 +329,7 @@ export function buildPhisAddonCapabilities(input: {
         ? () => Promise.resolve(true)
         : (role) => roles.has(role),
       unauthenticated: input.unauthenticated === true && input.systemAuthority !== true,
+      rowAssets,
     });
   }
   if (required.includes(PHIS_CORE_CAPABILITIES.settings)) {

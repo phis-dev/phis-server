@@ -21,6 +21,8 @@ import {
   encodePhisAddonCursor,
 } from "./query-cursor.ts";
 import { derivePhisAddonSchemaName } from "./schema-name.ts";
+import type { PhisAddonRowAssets } from "./row-assets.ts";
+import type { PhiDiscardedMediaObject } from "@/db/media-discard";
 import { getPool } from "@/lib/db";
 
 /**
@@ -72,7 +74,26 @@ type Bound = {
   hasRole: (role: string) => Promise<boolean>;
   /** True when nobody authenticated at all, which is the case for a hook and for nothing else. */
   unauthenticated: boolean;
+  /**
+   * What becomes of a row's files when the row goes. Absent where the Add-on has no assets capability.
+   *
+   * Here rather than in the assets capability because the act is a delete, and a delete is this
+   * capability's. The two meet at the row: one owns the statement, the other owns the files it leaves.
+   */
+  rowAssets: PhisAddonRowAssets | null;
 };
+
+/**
+ * The row a delete names, taken from the arguments the way the statement itself will take it.
+ *
+ * Read before anything happens, and only to know what to look up: whether the delete is allowed, and
+ * whether it matches a row at all, is still the statement's answer and nothing here anticipates it.
+ */
+function deleteOwnerId(bound: Bound, name: string, args: PhisAddonQueryArguments) {
+  const descriptor = (bound.manifest.queries?.queries ?? [])
+    .find((entry) => entry.name === name && entry.kind === "delete");
+  return descriptor && "idParameter" in descriptor ? args[descriptor.idParameter] ?? null : null;
+}
 
 function readArgument(
   args: PhisAddonQueryArguments,
@@ -378,7 +399,40 @@ async function run(
   return { rows, rowCount: rows.length, cursor };
 }
 
-function buildOperations(db: Queryable, bound: Bound): PhisDataTransactionV1 {
+/**
+ * Runs the body on a client, opening a transaction where there is not one already.
+ *
+ * `pending` says which case this is. Inside an Add-on's own transaction the commit is somebody else's
+ * and the objects must wait for it, so they are handed up rather than removed here.
+ */
+async function withRowDeleteTransaction<T>(
+  db: Queryable,
+  pending: PhiDiscardedMediaObject[] | null,
+  body: (client: PoolClient) => Promise<T>,
+): Promise<T> {
+  if (pending) {
+    return await body(db as PoolClient);
+  }
+  const client = await getPool().connect();
+  try {
+    await client.query("BEGIN");
+    const result = await body(client);
+    await client.query("COMMIT");
+    return result;
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+function buildOperations(
+  db: Queryable,
+  bound: Bound,
+  /** Where discarded objects go while a transaction is still open, or null outside one. */
+  pending: PhiDiscardedMediaObject[] | null,
+): PhisDataTransactionV1 {
   return Object.freeze({
     async select(name, args = {}, page = {}) {
       const result = await run(db, bound, name, "select", args, page);
@@ -399,7 +453,42 @@ function buildOperations(db: Queryable, bound: Bound): PhisDataTransactionV1 {
     async delete(name, args = {}) {
       // The removed row, not a count. A refusal comes back as an empty result and so answers null, which
       // is what a row that was never there answers too.
-      return (await run(db, bound, name, "delete", args)).rows[0] ?? null;
+      const query = bound.catalog.get(name);
+      const rowAssets = bound.rowAssets;
+      const ownerId = query && rowAssets?.slotted(query.table)
+        ? deleteOwnerId(bound, name, args)
+        : null;
+      if (!query || !rowAssets || ownerId == null) {
+        return (await run(db, bound, name, "delete", args)).rows[0] ?? null;
+      }
+
+      const { row, objects } = await withRowDeleteTransaction(db, pending, async (client) => {
+        /*
+         * Read first, delete second, give up third.
+         *
+         * The links name the files and the cascade takes them with the row, so afterwards there is
+         * nothing left to ask. Reading before the statement costs an indexed lookup on a row that may
+         * turn out to be untouchable -- and that is the cheap half of the trade: the alternative is
+         * deleting files for a statement that then refuses, which nothing can undo.
+         */
+        const assetIds = await rowAssets.collect(client, query.table, ownerId);
+        const deleted = (await run(client, bound, name, "delete", args)).rows[0] ?? null;
+        if (!deleted || assetIds.length === 0) {
+          return { row: deleted, objects: [] as PhiDiscardedMediaObject[] };
+        }
+        return { row: deleted, objects: await rowAssets.discard(client, assetIds) };
+      });
+
+      if (objects.length > 0) {
+        // Outside the transaction either way: the store cannot be rolled back, so it is touched only
+        // once the rows are certain. Inside an Add-on's transaction that certainty comes later still.
+        if (pending) {
+          pending.push(...objects);
+        } else {
+          await rowAssets.drain(objects);
+        }
+      }
+      return row;
     },
   } satisfies PhisDataTransactionV1);
 }
@@ -413,6 +502,8 @@ export function buildPhisAddonDataCapability(input: {
   mayUseGroup: Bound["mayUseGroup"];
   hasRole: Bound["hasRole"];
   unauthenticated: boolean;
+  /** Absent where the Add-on declares no asset slots, and then a delete is only ever a statement. */
+  rowAssets?: PhisAddonRowAssets | null;
 }): PhisDataCapabilityV1 {
   const bound: Bound = {
     manifest: input.manifest,
@@ -423,19 +514,26 @@ export function buildPhisAddonDataCapability(input: {
     mayUseGroup: input.mayUseGroup,
     hasRole: input.hasRole,
     unauthenticated: input.unauthenticated,
+    rowAssets: input.rowAssets ?? null,
   };
   // The pool itself is queryable in the same way a client is; only the transaction needs a client.
-  const pooled = buildOperations(getPool() as unknown as Queryable, bound);
+  const pooled = buildOperations(getPool() as unknown as Queryable, bound, null);
   return Object.freeze({
     ...pooled,
     async transaction(body) {
       const client = await getPool().connect();
+      const pending: PhiDiscardedMediaObject[] = [];
       try {
         await client.query("BEGIN");
         // The handle offers the four operations and nothing else, so an Add-on has no way to commit,
         // roll back, or leave the transaction open. Returning ends it; throwing undoes it.
-        const result = await body(buildOperations(client, bound));
+        const result = await body(buildOperations(client, bound, pending));
         await client.query("COMMIT");
+        // Only now: a rollback would have put the rows back, and the objects have to still be there
+        // when it does. Notes written inside the transaction leave with it.
+        if (pending.length > 0) {
+          await input.rowAssets?.drain(pending);
+        }
         return result;
       } catch (error) {
         await client.query("ROLLBACK").catch(() => {});

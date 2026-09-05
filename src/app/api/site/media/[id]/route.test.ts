@@ -15,8 +15,6 @@ vi.mock("@/lib/guards/site-media-api", () => ({
   requireMediaAssetContext: mocks.mediaContext,
 }));
 vi.mock("@/db/media", () => ({
-  deleteImageAssetVariantsByAssetId: vi.fn(),
-  deleteMediaAssetBySite: vi.fn(),
   getMediaAssetBySiteAndId: vi.fn(),
   pruneEmptyMediaFolderBranch: vi.fn(),
 }));

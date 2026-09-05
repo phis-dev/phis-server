@@ -140,6 +140,25 @@ export async function readPhisAddonAsset(
 }
 
 /**
+ * The Media Assets a row holds, by id and nothing else.
+ *
+ * Read before the row goes, because the links are what name the files and they go with it -- the
+ * foreign key sees to that, and afterwards there is nothing left to ask.
+ */
+export async function readPhisAddonRowAssetIds(
+  db: Pool | PoolClient,
+  location: PhisAddonAssetLocation,
+  input: { siteId: number; ownerId: string | number },
+): Promise<number[]> {
+  const { rows } = await db.query<{ media_asset_id: number }>(
+    `SELECT media_asset_id FROM ${qualifyAssets(location)}
+      WHERE site_id = $1 AND owner_id = $2`,
+    [input.siteId, String(input.ownerId)],
+  );
+  return rows.map((row) => Number(row.media_asset_id));
+}
+
+/**
  * Takes a file out of its slot, and reports the Media Asset that is now unreferenced.
  *
  * Only the link goes here. Removing the Asset itself is Media's business and runs afterwards, because

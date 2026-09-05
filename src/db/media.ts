@@ -563,18 +563,6 @@ export async function countMediaAssetsBySiteWithFilters(siteId: number, filters:
   const { rows } = await getPool().query<{ total: string }>(parts.join("\n"), values); return Number.parseInt(rows[0]?.total ?? "0", 10) || 0;
 }
 
-export async function deleteMediaAssetBySite(siteId: number, spaceId: number, id: number) {
-  const pool = getPool(); const client = await pool.connect();
-  try {
-    await client.query("BEGIN");
-    const deleted = await client.query<{ bytes: number | string | null }>(
-      `DELETE FROM phis.media_assets WHERE site_id = $1 AND space_id = $2 AND id = $3 RETURNING bytes`, [siteId, spaceId, id],
-    );
-    if (deleted.rows[0]) await client.query(`UPDATE phis.media_spaces SET used_bytes = GREATEST(0, used_bytes - $2), updated_at = NOW() WHERE id = $1`, [spaceId, integer(deleted.rows[0].bytes)]);
-    await client.query("COMMIT"); return Boolean(deleted.rows[0]);
-  } catch (error) { await client.query("ROLLBACK"); throw error; } finally { client.release(); }
-}
-
 /**
  * Hands an Asset to someone else, or to nobody.
  *

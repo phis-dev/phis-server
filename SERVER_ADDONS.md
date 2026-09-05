@@ -930,7 +930,8 @@ Three things Core does here that an Add-on cannot influence:
   it is the only moment those columns can be had at all: a row naming an object in the Add-on's store is
   the last record of that object, and once the statement has run there is nothing left to ask -- the
   bytes would stay, counted against the quota, belonging to nobody. Where the file was declared as an
-  **asset** that question does not arise, because Core removes those rows itself through the cascade.
+  **asset** that question does not arise: Core takes the row's files with the row, down to the objects
+  behind them. See *When the row goes* under `assets:v1`.
 
 `mayActOnRow` and this enforcement answer the same question on purpose. The capability is for deciding
 what to offer a user -- whether to render the delete control; the write path is what actually holds. A
@@ -1013,6 +1014,7 @@ finalize(table, token, completion?) -> the finished file
 abandon(table, token)               -> gives an unredeemed reservation up
 list(table, ownerId, slot?)         -> the files of a row
 remove(table, id)                   -> takes a file out of its slot, and the file with it
+usage()                             -> what the Space holds, reserves, and is allowed
 ```
 
 **This is not a second upload lifecycle.** Core reserves, receives, measures and hashes without knowing
@@ -1052,6 +1054,28 @@ is why the ceiling is worth keeping there.
 different size than was reserved is not one either. On a single-valued slot the file being replaced goes
 in the same transaction. Repeating it is safe -- a client whose answer was lost cannot tell a finished
 upload from a failed one, so a second call answers with the same file rather than an error.
+
+#### When the row goes
+
+An Add-on never has to take its files away first. `data:v1`'s `delete` does it, and the order is the
+whole of the design.
+
+The links are read **before** the statement, because the foreign key takes them with the row and
+afterwards there is nothing left to ask. The statement runs and may still refuse -- a delete the ladder
+turns down comes back as a silent zero -- and only a row that actually went releases anything, because
+files destroyed for an act that did not happen cannot be put back. The Assets, their variants and the
+Space's figures then go in that same transaction, so a rollback takes the release with it.
+
+The store is touched last and alone, because it cannot take part in a transaction. That is the one gap
+no ordering closes: the moment the Asset row is gone, the storage key is gone with it, and a process that
+dies before the object does leaves a file that nothing can name. So the key is **written down inside the
+transaction** -- `phis.media_discarded_objects` -- and the removal that follows clears the note. What
+stays there is a retry list, read by an index, drained a few at a time by whatever deletes next.
+
+`phis maintain` still asks the other question: which Assets in an Add-on's Space does no link name. The
+note says what Core meant to remove; the join says what is actually unreferenced, and it is the only
+thing that catches what no note was ever written for -- a restored backup, a schema dropped by hand, an
+Add-on removed with its tables. It is the audit, not the mechanism.
 
 ### `secrets:v1`
 

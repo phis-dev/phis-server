@@ -1718,3 +1718,29 @@ CREATE TABLE IF NOT EXISTS phis.server_instances (
 
 CREATE INDEX IF NOT EXISTS server_instances_release_ready_idx
   ON phis.server_instances (release_build_id, ((flags & 1) <> 0), last_seen_at DESC);
+
+/*
+ * Objects whose rows are already gone, and the only thing that still knows they exist.
+ *
+ * A store cannot take part in a transaction. However the rows are ordered, removing the object is the
+ * last step and the first that can fail on its own -- and once the Asset row is gone, the storage key
+ * is gone with it, so nothing can name the object again. The key is therefore written down inside the
+ * transaction that removes the row, and the removal that follows clears the note.
+ *
+ * What stays here is a retry list, and it is short by construction: a row appears only when a store
+ * refused or a process died between the commit and the call. Finding them is a bounded read, which is
+ * the whole reason for the table -- the alternative is asking the store what it holds that nobody
+ * claims, and that answer costs the whole Space every time it is asked.
+ */
+CREATE TABLE IF NOT EXISTS phis.media_discarded_objects (
+  id BIGSERIAL PRIMARY KEY,
+  site_id SMALLINT NOT NULL REFERENCES phis.sites(id) ON DELETE CASCADE,
+  storage_profile_id INT NOT NULL,
+  storage_key VARCHAR(512) NOT NULL,
+  discarded_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  -- The same object discarded twice is the retry, not a second file.
+  CONSTRAINT media_discarded_objects_key_unique UNIQUE (storage_profile_id, storage_key)
+);
+
+CREATE INDEX IF NOT EXISTS media_discarded_objects_site_idx
+  ON phis.media_discarded_objects (site_id, discarded_at, id);
