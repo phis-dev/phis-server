@@ -309,13 +309,18 @@ function dynamicRootFiles() {
  * `/api/v1/addons/*`, and a Site that proxied only `/api/site` and `/api/auth` left every such call at
  * its own 404 page. Short outside and versioned upstream, exactly as `auth` already is.
  */
-function proxyRoute(kind: "auth" | "site" | "addons") {
+function proxyRoute(kind: "auth" | "site" | "addons" | "hooks") {
   const factory = kind === "auth"
     ? "buildPhiAuthProxyHandlers"
     : kind === "addons"
       ? "buildPhiAddonProxyHandlers"
-      : "buildPhiSiteProxyHandlers";
-  return `import { ${factory} } from "@phis/ui/gateway";\n\nimport {\n  buildPhiNextProxyHeaders,\n  getPhiNextUpstreamBaseUrl,\n  getPhiNextProxyTimeoutMs,\n} from "@phis/ui/next/proxy-runtime";\n\nexport const dynamic = "force-dynamic";\nexport const runtime = "nodejs";\n\nconst handlers = ${factory}({\n  upstreamBaseUrl: getPhiNextUpstreamBaseUrl(),\n  timeoutMs: getPhiNextProxyTimeoutMs(),\n  logLabel: "[phi-site][/api/${kind} proxy]",\n  missingBaseUrlMessage: "Missing phis.apiBaseUrl for /api/${kind} proxy.",\n  buildHeaders: (request) => buildPhiNextProxyHeaders(request, "phi-site-${kind}-proxy/1.0"),\n});\n\nexport const GET = handlers.GET;\nexport const POST = handlers.POST;\nexport const PUT = handlers.PUT;\nexport const PATCH = handlers.PATCH;\nexport const DELETE = handlers.DELETE;\nexport const OPTIONS = handlers.OPTIONS;\n`;
+      : kind === "hooks"
+        ? "buildPhiHookProxyHandlers"
+        : "buildPhiSiteProxyHandlers";
+  // The hooks door faces outward: what arrives on it came from the open internet and must not pick up
+  // a claim to have come from inside on the way through.
+  const headerOptions = kind === "hooks" ? ", { internalToken: false }" : "";
+  return `import { ${factory} } from "@phis/ui/gateway";\n\nimport {\n  buildPhiNextProxyHeaders,\n  getPhiNextUpstreamBaseUrl,\n  getPhiNextProxyTimeoutMs,\n} from "@phis/ui/next/proxy-runtime";\n\nexport const dynamic = "force-dynamic";\nexport const runtime = "nodejs";\n\nconst handlers = ${factory}({\n  upstreamBaseUrl: getPhiNextUpstreamBaseUrl(),\n  timeoutMs: getPhiNextProxyTimeoutMs(),\n  logLabel: "[phi-site][/api/${kind} proxy]",\n  missingBaseUrlMessage: "Missing phis.apiBaseUrl for /api/${kind} proxy.",\n  buildHeaders: (request) => buildPhiNextProxyHeaders(request, "phi-site-${kind}-proxy/1.0"${headerOptions}),\n});\n\nexport const GET = handlers.GET;\nexport const POST = handlers.POST;\nexport const PUT = handlers.PUT;\nexport const PATCH = handlers.PATCH;\nexport const DELETE = handlers.DELETE;\nexport const OPTIONS = handlers.OPTIONS;\n`;
 }
 
 function packageJson(context: PhiSiteScaffoldContext) {
@@ -358,6 +363,7 @@ export function buildPhiSiteScaffoldFiles(context: PhiSiteScaffoldContext) {
     "src/app/api/auth/[[...path]]/route.ts": proxyRoute("auth"),
     "src/app/api/site/[[...path]]/route.ts": proxyRoute("site"),
     "src/app/api/addons/[[...path]]/route.ts": proxyRoute("addons"),
+    "src/app/api/hooks/[[...path]]/route.ts": proxyRoute("hooks"),
     "src/app/api/site/forms/route.ts": `import { buildPhiSiteFormRouteHandlers } from "@phis/ui/gateway";\nimport { buildPhiNextProxyHeaders, getPhiNextUpstreamBaseUrl, getPhiNextProxyTimeoutMs } from "@phis/ui/next/proxy-runtime";\n\nexport const dynamic = "force-dynamic";\nexport const runtime = "nodejs";\nconst handlers = buildPhiSiteFormRouteHandlers({\n  upstreamBaseUrl: getPhiNextUpstreamBaseUrl(),\n  timeoutMs: getPhiNextProxyTimeoutMs(),\n  missingBaseUrlMessage: "Missing phis.apiBaseUrl for /api/site/forms proxy.",\n  buildHeaders: (request) => buildPhiNextProxyHeaders(request, "phi-site-forms/1.0"),\n});\nexport const GET = handlers.GET;\nexport const POST = handlers.POST;\n`,
     "src/app/builder/api/[[...path]]/route.ts": `export { POST } from "@phis/ui/builder-api-route";\n\nexport const dynamic = "force-dynamic";\nexport const runtime = "nodejs";\n`,
     "src/app/api/site/module-diagnostics/route.ts": `import { buildPhiSiteModuleDiagnosticsRouteHandler } from "@phis/ui/next/module-diagnostics-route";\n${["accounting", "admin", "app", "builder", "editor", "public"].map((area) => `import { PHI_${area.toUpperCase()}_CMS_SITE_BRIDGE } from "@/runtime-modules/${area}";`).join("\n")}\n\nexport const dynamic = "force-dynamic";\nexport const runtime = "nodejs";\nexport const GET = buildPhiSiteModuleDiagnosticsRouteHandler({ bridgesByArea: {\n${["public", "app", "admin", "builder", "editor", "accounting"].map((area) => `  ${area}: PHI_${area.toUpperCase()}_CMS_SITE_BRIDGE,`).join("\n")}\n} });\n`,

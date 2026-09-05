@@ -35,6 +35,15 @@ describe("site scaffold", () => {
      * page -- which is where the first one did.
      */
     expect(files["src/app/api/addons/[[...path]]/route.ts"]).toContain("buildPhiAddonProxyHandlers");
+    /*
+     * And the door an outside caller uses. Core is reachable on its own host, so this is not about
+     * reachability but about which Site a request is for: a payment provider, an OAuth callback or
+     * another Core fetching a listing cannot state one, and here the Site states itself.
+     */
+    const hooks = files["src/app/api/hooks/[[...path]]/route.ts"]!;
+    expect(hooks).toContain("buildPhiHookProxyHandlers");
+    // What arrives from the open internet must not pick up a claim to have come from inside.
+    expect(hooks).toContain("{ internalToken: false }");
     expect(JSON.parse(files["package.json"]!).dependencies["@phis/ui"]).toBe("0.1.0");
   });
 
