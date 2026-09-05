@@ -23,6 +23,7 @@ import {
   type PhisAddonRequestContext,
 } from "@/lib/addons/contract";
 import { buildPhisAddonCapabilities } from "@/lib/addons/capabilities";
+import { PhisAddonAssetError } from "@/lib/addons/assets-capability";
 import { hasPhisCoreCapability } from "@/lib/addons/core-capabilities";
 import {
   digestPhisAddonManifest,
@@ -233,6 +234,190 @@ async function resolveApiIdentity(
 }
 
 /**
+ * The slot lifecycle, served by Core under every Add-on's own root.
+ *
+ * `assets:v1` is Core's: Core declares the slots from the schema descriptor, judges the row, reserves
+ * the space, holds the object to its size, sniffs it and links it. An Add-on wrapping that in five
+ * routes of its own adds a path and nothing else, and every Add-on with slots was going to write the
+ * same five. So Core answers them itself, under `<addon root>/_assets`, and a surface that fills a slot
+ * needs to know the Add-on, the table and the slot rather than somebody's route names.
+ *
+ * The segment is reserved by the route grammar rather than by a list: a declared segment must begin
+ * with a letter or a digit, so an Add-on cannot name one starting with an underscore. A route that
+ * shadowed this one would be a way of being asked to handle somebody else's upload, and the shape of
+ * the name is what keeps that from being expressible.
+ *
+ * An Add-on that needs a rule of its own -- no new pictures on a published entry -- still writes its own
+ * routes and keeps them. What this removes is the boilerplate, not the option.
+ */
+const PHIS_ADDON_ASSET_SEGMENT = "_assets";
+const PHIS_ADDON_ASSET_BODY_LIMIT_BYTES = 4_096;
+
+export function isPhisAddonAssetPath(path: string) {
+  return path === PHIS_ADDON_ASSET_SEGMENT || path.startsWith(`${PHIS_ADDON_ASSET_SEGMENT}/`);
+}
+
+/** The shape a slot request takes, and the only one it may take. */
+type PhisAddonAssetRoute =
+  | { kind: "list"; table: string; ownerId: string }
+  | { kind: "remove"; table: string; ownerId: string; id: string }
+  | { kind: "begin" | "finalize" | "abandon"; table: string; ownerId: string; slot: string };
+
+function readAssetRoute(method: string, path: string): PhisAddonAssetRoute | null {
+  const [, table, ownerId, third, fourth] = path.split("/");
+  if (!table || !ownerId) {
+    return null;
+  }
+  if (method === "GET" && third === undefined) {
+    return { kind: "list" as const, table, ownerId };
+  }
+  if (method === "DELETE" && typeof third === "string" && fourth === undefined) {
+    return { kind: "remove" as const, table, ownerId, id: third };
+  }
+  if (method !== "POST" || typeof third !== "string") {
+    return null;
+  }
+  if (fourth === undefined) {
+    return { kind: "begin" as const, table, ownerId, slot: third };
+  }
+  if (fourth === "finalize" || fourth === "abandon") {
+    return { kind: fourth, table, ownerId, slot: third };
+  }
+  return null;
+}
+
+async function dispatchAddonAssetRequest(
+  request: NextRequest,
+  context: {
+    entry: ReturnType<typeof getPhisAddonInstalledManifest>[string];
+    addonId: string;
+    path: string;
+    requestId: string;
+    logger: ReturnType<typeof createLogger>;
+  },
+) {
+  const { entry, addonId, path, requestId, logger } = context;
+  const route = readAssetRoute(request.method, path);
+  if (!route) {
+    return notFound();
+  }
+
+  // The same identity a `site-user` route of this Add-on would be given, because that is what this is:
+  // a person changing a row they may change, through the Add-on that owns it.
+  const identity = await resolveApiIdentity(request, {
+    id: "core.assets",
+    method: request.method as PhisAddonHttpMethod,
+    path,
+    handler: "core.assets",
+    auth: "site-user",
+    siteScoped: true,
+  });
+  if (identity.error) {
+    return identity.error;
+  }
+  if (!identity.site) {
+    return notFound();
+  }
+
+  const registryState = await verifyRegistryState(entry, identity.site.id);
+  if (registryState === "hidden") {
+    return notFound();
+  }
+  if (registryState !== "ready") {
+    logger.error("addon.registry.unavailable");
+    return unavailable(requestId);
+  }
+
+  const bodyResult = await readRequestBody(request, PHIS_ADDON_ASSET_BODY_LIMIT_BYTES);
+  if (bodyResult.error || !bodyResult.body) {
+    return bodyResult.error;
+  }
+  let body: Record<string, unknown> = {};
+  if (bodyResult.body.length > 0) {
+    try {
+      const parsed: unknown = JSON.parse(new TextDecoder().decode(bodyResult.body));
+      body = typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
+        ? parsed as Record<string, unknown>
+        : {};
+    } catch {
+      return NextResponse.json({ error: "The body is not JSON." }, { status: 400 });
+    }
+  }
+
+  const capabilities = buildPhisAddonCapabilities({
+    manifest: entry.manifest,
+    manifestDigest: entry.manifestDigest,
+    siteId: identity.site.id,
+    siteKey: identity.site.key,
+    actorUserId: identity.actor?.kind === "user" ? identity.actor.id : null,
+  });
+  const assets = capabilities.assets;
+  if (!assets) {
+    // The Add-on declares no slots, or does not ask for the capability. Either way there is nothing
+    // here to address, and saying so as "not found" is the same answer an undeclared route gets.
+    return notFound();
+  }
+
+  try {
+    switch (route.kind) {
+      case "list":
+        return NextResponse.json({
+          files: await assets.list({ table: route.table, ownerId: route.ownerId }),
+        });
+      case "begin": {
+        const sizeBytes = Number(body.sizeBytes);
+        if (!Number.isSafeInteger(sizeBytes) || sizeBytes <= 0) {
+          return NextResponse.json(
+            { error: "sizeBytes must be a whole number of bytes." },
+            { status: 400 },
+          );
+        }
+        const reservation = await assets.begin({
+          table: route.table,
+          ownerId: route.ownerId,
+          slot: route.slot,
+          contentType: String(body.contentType ?? ""),
+          sizeBytes,
+          ...(typeof body.sha256 === "string" ? { sha256: body.sha256 } : {}),
+          ...(typeof body.filename === "string" ? { filename: body.filename } : {}),
+        });
+        return NextResponse.json({ reservation }, { status: 201 });
+      }
+      case "finalize":
+        return NextResponse.json({
+          file: await assets.finalize({
+            table: route.table,
+            token: String(body.token ?? ""),
+            ...(body.completion === undefined ? {} : { completion: body.completion }),
+          }),
+        });
+      case "abandon":
+        return NextResponse.json({
+          abandoned: await assets.abandon({ table: route.table, token: String(body.token ?? "") }),
+        });
+      case "remove": {
+        const removed = await assets.remove({ table: route.table, id: route.id });
+        return removed
+          ? NextResponse.json({ removed: true })
+          : NextResponse.json({ error: "No such file." }, { status: 404 });
+      }
+    }
+  } catch (error) {
+    /*
+     * A refusal reaches the caller as one. Every message the assets capability throws is about what the
+     * caller asked -- an undeclared slot, a type the slot does not take, a row that is not theirs, a
+     * Space with no room -- and answering "unavailable" to all of them, as a thrown error otherwise
+     * would, tells a person their file was too large by saying the server is broken.
+     */
+    if (error instanceof PhisAddonAssetError) {
+      return NextResponse.json({ error: error.message }, { status: 400 });
+    }
+    logger.error("addon.assets.failed", { error });
+    return unavailable(requestId);
+  }
+}
+
+/**
  * Who is calling a hook: nobody, and on which Site.
  *
  * A hook is unauthenticated by construction -- that is what makes it reachable by a payment provider or
@@ -328,6 +513,12 @@ export async function dispatchPhisAddonRequest(
   ) {
     logger.error("addon.core_capability.incompatible");
     return unavailable(requestId);
+  }
+
+  if (kind === "api" && isPhisAddonAssetPath(path)) {
+    return await dispatchAddonAssetRequest(request, {
+      entry, addonId, path, requestId, logger,
+    });
   }
 
   const match =
