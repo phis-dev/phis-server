@@ -1,17 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import {
-  deleteMediaAssetBySite,
-  deleteImageAssetVariantsByAssetId,
   getMediaAssetBySiteAndId,
   pruneEmptyMediaFolderBranch,
 } from "@/db/media";
 import { clearSiteConfigCache } from "@/db/site-config";
 import { getSessionFromRequest } from "@/db/user-sessions";
 import { requireMediaAssetContext } from "@/lib/guards/site-media-api";
-import { createPhisMediaStorageServiceForProfile } from "@/lib/media-storage";
-import { getMediaStorageProfile } from "@/db/media-spaces";
 import { collectMediaAssetDeleteReferences } from "@/lib/media-delete-guard";
+import { deleteStoredPhiMediaAsset } from "@/lib/media-asset-delete";
 import { logRuntimeEvent } from "@/lib/log";
 import { serializeMediaAssetForDetail } from "@/lib/media-response";
 import { PHIS_CMS_AREA_KEYS, resolvePhisCmsAreaKey } from "@/lib/constants/cms-areas";
@@ -39,26 +36,6 @@ async function readJsonBody(request: NextRequest) {
   } catch {
     return null;
   }
-}
-
-async function deleteStoredMediaAsset(asset: Awaited<ReturnType<typeof getMediaAssetBySiteAndId>>) {
-  if (!asset) {
-    return false;
-  }
-
-  const deletedVariants = await deleteImageAssetVariantsByAssetId(asset.id);
-  await Promise.all(deletedVariants.map(async (variant) => {
-    const profile = await getMediaStorageProfile(asset.siteId, variant.storageProfileId);
-    if (!profile) return;
-    const storage = await createPhisMediaStorageServiceForProfile(profile);
-    await storage.deleteObject(variant.storageKey).catch(() => {});
-  }));
-  const profile = await getMediaStorageProfile(asset.siteId, asset.storageProfileId);
-  if (profile) {
-    const storage = await createPhisMediaStorageServiceForProfile(profile);
-    await storage.deleteObject(asset.storageKey).catch(() => {});
-  }
-  return deleteMediaAssetBySite(asset.siteId, asset.spaceId, asset.id);
 }
 
 function describeMediaAssetReference(reference: Awaited<ReturnType<typeof collectMediaAssetDeleteReferences>>[number]) {
@@ -249,7 +226,7 @@ export async function DELETE(
       );
     }
 
-    const deleted = await deleteStoredMediaAsset(asset);
+    const deleted = await deleteStoredPhiMediaAsset(asset, site.key);
     if (deleted) {
       if (asset.folderId != null) {
         await pruneEmptyMediaFolderBranch(site.id, asset.spaceId, asset.folderId);

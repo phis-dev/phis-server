@@ -24,7 +24,7 @@ import {
   abortMediaUploadSessionByToken,
   createMediaAsset,
   createMediaUploadSession,
-  deleteMediaAssetBySite,
+  getMediaAssetBySiteAndId,
   getMediaUploadSessionByToken,
 } from "@/db/media";
 import {
@@ -34,6 +34,7 @@ import {
   resolvePhiMediaUploadPlanKind,
   resolvePhiMediaUploadSessionKind,
 } from "@/lib/media-upload-sessions";
+import { deleteStoredPhiMediaAsset } from "@/lib/media-asset-delete";
 import { createPhisMediaStorageServiceForProfile } from "@/lib/media-storage";
 import { phiMediaStorageProfileChecksumAlgorithm } from "@/lib/media-storage-profile-probe";
 import { sniffPhiMediaContentType } from "@/lib/media-content-sniffer";
@@ -157,6 +158,26 @@ export function buildPhisAddonAssetsCapability(input: {
       profile,
       service: await createPhisMediaStorageServiceForProfile(profile, siteKey),
     };
+  }
+
+  /**
+   * Gives a file up entirely: the object, the variants derived from it, the row and the Space's figures.
+   *
+   * Best effort by construction. Both callers have already removed what pointed at the file, and the
+   * link is the part that had to succeed -- a file nobody points at is findable and can be swept, where
+   * a row pointing at nothing is neither.
+   *
+   * The Space is checked rather than assumed. The id comes out of this Add-on's own link table, so a
+   * file from anywhere else would be a fault in Core; but the argument reaches a delete either way, and
+   * a delete that ranges further than the caller can address is not one to leave standing on an
+   * argument about who could have written the id.
+   */
+  async function release(spaceId: number, mediaAssetId: number) {
+    const asset = await getMediaAssetBySiteAndId(siteId, mediaAssetId);
+    if (!asset || asset.spaceId !== spaceId) {
+      return;
+    }
+    await deleteStoredPhiMediaAsset(asset, siteKey).catch(() => {});
   }
 
   /**
@@ -427,7 +448,7 @@ export function buildPhisAddonAssetsCapability(input: {
       // The displaced file, removed after the row that pointed at it is gone. Media's own delete takes
       // the object and the Space's figures with it.
       if (linked.supersededMediaAssetId != null) {
-        await deleteMediaAssetBySite(siteId, space.id, linked.supersededMediaAssetId).catch(() => {});
+        await release(space.id, linked.supersededMediaAssetId);
       }
       const row = await readPhisAddonAsset(getPool(), location, { siteId, id: linked.id });
       if (!row) {
@@ -504,7 +525,7 @@ export function buildPhisAddonAssetsCapability(input: {
         return false;
       }
       const space = await ensureAddonMediaSpace(siteId, addonId);
-      await deleteMediaAssetBySite(siteId, space.id, mediaAssetId).catch(() => {});
+      await release(space.id, mediaAssetId);
       return true;
     },
 

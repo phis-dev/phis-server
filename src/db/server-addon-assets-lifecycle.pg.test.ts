@@ -93,6 +93,24 @@ describe("putting a file on a row", () => {
     return { bytes: space.usedBytes, reserved: space.reservedBytes };
   }
 
+  /** Where the store keeps a file, read out of Media because the view deliberately never says. */
+  async function storageKeyOf(mediaAssetId: number) {
+    const pool = await requirePhiTestDatabase();
+    const { rows } = await pool.query<{ storage_key: string }>(
+      `SELECT storage_key FROM phis.media_assets WHERE site_id = $1 AND id = $2`,
+      [site.id, mediaAssetId],
+    );
+    return rows[0]?.storage_key ?? null;
+  }
+
+  /** Whether the object is still there -- the question the Space's figures cannot answer. */
+  async function objectExists(storageKey: string) {
+    const space = await ensureAddonMediaSpace(site.id, ADDON);
+    const profile = await getMediaStorageProfile(site.id, space.defaultStorageProfileId);
+    const service = await createPhisMediaStorageServiceForProfile(profile!, site.key);
+    return Boolean(await service.headObject(storageKey));
+  }
+
   /** What the client would do, standing in for the plan the Provider issued. */
   async function deliver(token: string, body: Buffer, contentType = "application/gzip") {
     const session = await getMediaUploadSessionByToken(token);
@@ -281,6 +299,8 @@ describe("putting a file on a row", () => {
   it("replaces a single-valued slot in one step, and gives the old space back", async () => {
     const pool = await requirePhiTestDatabase();
     const before = await usage();
+    const [displaced] = await assets().list({ table: "offering", ownerId: offeringId, slot: "package" });
+    const displacedKey = await storageKeyOf(displaced!.mediaAssetId);
 
     const reservation = await assets().begin({
       table: "offering", ownerId: offeringId, slot: "package",
@@ -297,6 +317,8 @@ describe("putting a file on a row", () => {
     // The replaced file's bytes came back, so replacing does not accumulate.
     const after = await usage();
     expect(after.bytes).toBe(before.bytes);
+    // And they came back out of the store as well: the figures alone would say the same either way.
+    expect(await objectExists(displacedKey!)).toBe(false);
   });
 
   it("lets a slot that accumulates accumulate", async () => {
@@ -367,16 +389,24 @@ describe("putting a file on a row", () => {
     expect(after.reserved).toBe(before.reserved - 6);
   });
 
-  it("takes a file away with its space", async () => {
+  it("takes a file away with its space, and out of the store", async () => {
+    /*
+     * The store is asked separately from the figures, because dropping the Asset row alone gives the
+     * bytes back to the Space and leaves them in the bucket -- and with the row goes the storage key,
+     * so from that moment nothing can find the object again. Every visible sign says the file is gone.
+     */
     const pool = await requirePhiTestDatabase();
     const before = await usage();
     const held = await assets().list({ table: "offering", ownerId: offeringId, slot: "package" });
+    const key = await storageKeyOf(held[0]!.mediaAssetId);
+    expect(await objectExists(key!)).toBe(true);
 
     expect(await assets().remove({ table: "offering", id: held[0]!.id })).toBe(true);
     expect(await assets().list({ table: "offering", ownerId: offeringId, slot: "package" }))
       .toEqual([]);
     const after = await usage();
     expect(after.bytes).toBe(before.bytes - GZIP.byteLength);
+    expect(await objectExists(key!)).toBe(false);
   });
 
   it("addresses a file the way Core addresses its own, cache revision included", async () => {
