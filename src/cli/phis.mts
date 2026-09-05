@@ -54,6 +54,7 @@ import {
   listAddons,
   migrateAddons,
   purgeAddon,
+  transferAddonOwnership,
   reconcileAddons,
   forgetAddon,
   readInstalledAddonGroups,
@@ -295,6 +296,7 @@ Usage:
   phis addon reconcile
   phis addon migrate [--addon <@scope/name>]
   phis addon purge --addon <@scope/name>
+  phis addon owner  --addon <@scope/name> --site <site key> [--from <user id>] --to <user id>
   phis module list [--site <site key>]
   phis module add --site <site key> --package <@scope/name> [--spec <version or workspace:*>]
   phis module del --site <site key> --package <@scope/name>
@@ -2735,6 +2737,31 @@ async function main() {
             console.log(`  - ${statement}`);
           }
         }
+      }
+    }
+    return;
+  }
+
+  if (group === "addon" && command === "owner") {
+    /*
+     * Succession, not sharing. One person maintains a vendor's entries and one day it is somebody else;
+     * the rows move, and who wrote them does not.
+     */
+    const site = await getSiteByKey(getRequiredFlag(flags, "site"));
+    const result = await transferAddonOwnership(flags, getPool(), site.id);
+    if (json) {
+      printJson(result);
+    } else {
+      const from = result.fromUserId === null ? "nobody" : `user ${result.fromUserId}`;
+      console.log(
+        `Moved ${result.rows} row(s) of ${result.addonId} on ${site.key} from ${from} ` +
+        `to user ${result.toUserId}.`,
+      );
+      for (const entry of result.moved.filter((row) => row.rows > 0)) {
+        console.log(`  ${entry.table}: ${entry.rows}`);
+      }
+      for (const table of result.skipped) {
+        console.log(`  ${table}: left alone, it carries no Site and is not one Site's to hand over.`);
       }
     }
     return;

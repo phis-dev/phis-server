@@ -1418,8 +1418,20 @@ a boundary.
 A table states that it is **owner-scoped**; Core adds `owner_user_id`, its foreign key to the user, and
 answers whether a row belongs to the acting user. The column is nullable and a deleted user leaves it
 null rather than taking the rows along, so a row without an owner belongs to nobody and no membership
-level reaches it through ownership. This is authority, not history: a table that only wants to record
-who created a row uses an ordinary `core.user` reference column, which grants nothing.
+level reaches it through ownership.
+
+**Beside it Core writes `created_by_user_id`, and never writes it again.** The owner is authority and
+moves; the author is history and stays, which is what keeps a handed-over row attributable afterwards.
+Media keeps the same pair for the same reason. They hold the same value until the first handover and
+part company there.
+
+`phis addon owner --addon … --site … [--from <user>] --to <user>` is that handover: every owned row of
+one Site moves from one account to another in one transaction, because a half-finished one would leave
+the successor holding part of a vendor's entries and nothing recording where the line was drawn. Left
+out, `--from` names the rows nobody owns -- what a deleted account leaves behind, and the case a
+successor is most often appointed for. Which tables are owned is read from the catalog rather than from
+a manifest: what makes a table owned is that Core put the column on it, and the database holds that fact
+already.
 
 A table states that it is **group-scoped**; Core adds `group_id` and binds it, and the group membership
 levels then apply to that table. Group scope requires Site scope, because a group has no meaning without

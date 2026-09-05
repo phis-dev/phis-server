@@ -15,6 +15,7 @@ import {
 } from "./contract.ts";
 import {
   PHIS_ADDON_GROUP_COLUMN,
+  PHIS_ADDON_CREATED_BY_COLUMN,
   PHIS_ADDON_OWNER_COLUMN,
   PHIS_ADDON_SITE_COLUMN,
 } from "./schema-descriptor.ts";
@@ -292,7 +293,7 @@ function selectableColumns(
   return [
     ...(table.siteScoped ? [PHIS_ADDON_SITE_COLUMN] : []),
     ...(table.groupScoped ? [PHIS_ADDON_GROUP_COLUMN] : []),
-    ...(table.ownerScoped ? [PHIS_ADDON_OWNER_COLUMN] : []),
+    ...(table.ownerScoped ? [PHIS_ADDON_OWNER_COLUMN, PHIS_ADDON_CREATED_BY_COLUMN] : []),
     ...table.columns.map((column) => column.name),
   ];
 }
@@ -439,7 +440,7 @@ function returningSql(table: PhisAddonTableDescriptor) {
     ...table.columns.map((column) => column.name),
     ...(table.siteScoped ? [PHIS_ADDON_SITE_COLUMN] : []),
     ...(table.groupScoped ? [PHIS_ADDON_GROUP_COLUMN] : []),
-    ...(table.ownerScoped ? [PHIS_ADDON_OWNER_COLUMN] : []),
+    ...(table.ownerScoped ? [PHIS_ADDON_OWNER_COLUMN, PHIS_ADDON_CREATED_BY_COLUMN] : []),
   ]
     .map((column) => quotePhiIdentifier(column))
     .join(", ");
@@ -467,6 +468,9 @@ function compileInsert(
   }
   if (table.ownerScoped) {
     columns.push(PHIS_ADDON_OWNER_COLUMN);
+    values.push(compiler.place({ from: "actor" }));
+    // The same value, in a column no later statement touches. They part company at the first handover.
+    columns.push(PHIS_ADDON_CREATED_BY_COLUMN);
     values.push(compiler.place({ from: "actor" }));
   }
   for (const assignment of descriptor.values) {

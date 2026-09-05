@@ -19,6 +19,7 @@ import {
   type PhisAddonTableDescriptor,
 } from "./contract.ts";
 import {
+  PHIS_ADDON_CREATED_BY_COLUMN,
   PHIS_ADDON_GROUP_COLUMN,
   PHIS_ADDON_OWNER_COLUMN,
   PHIS_ADDON_SITE_COLUMN,
@@ -407,6 +408,9 @@ export function buildPhisAddonSchemaStatements(
       table.ownerScoped
         ? `${quotePhiIdentifier(PHIS_ADDON_OWNER_COLUMN)} ${CORE_REFERENCE_TARGETS[PHIS_ADDON_CORE_REFERENCES.user].type} NULL`
         : null,
+      table.ownerScoped
+        ? `${quotePhiIdentifier(PHIS_ADDON_CREATED_BY_COLUMN)} ${CORE_REFERENCE_TARGETS[PHIS_ADDON_CORE_REFERENCES.user].type} NULL`
+        : null,
     ].filter((definition): definition is string => definition !== null));
     definitions.push(
       `PRIMARY KEY (${table.primaryKey.map((column) => quotePhiIdentifier(column)).join(", ")})`,
@@ -499,6 +503,15 @@ export function buildPhisAddonSchemaStatements(
           `FOREIGN KEY (${quotePhiIdentifier(PHIS_ADDON_OWNER_COLUMN)}) ` +
           `REFERENCES ${target.table}(${target.column}) ON DELETE SET NULL`,
       });
+      statements.push({
+        summary: `keep ${table.name} attributable to its author`,
+        sql:
+          `ALTER TABLE ${qualify(schemaName, table.name)} ADD CONSTRAINT ` +
+          `${quotePhiIdentifier(composePhisAddonObjectName(table.name, PHIS_ADDON_CREATED_BY_COLUMN, "fk"))} ` +
+          `FOREIGN KEY (${quotePhiIdentifier(PHIS_ADDON_CREATED_BY_COLUMN)}) ` +
+          `REFERENCES ${target.table}(${target.column}) ON DELETE SET NULL`,
+      });
+      // No index: nothing filters on the author. It is read off a row that was found some other way.
       statements.push({
         summary: `index ${table.name} by owner`,
         sql:

@@ -114,11 +114,15 @@ describe("compiling a declared query", () => {
 
   it("writes the scope columns itself on insert, and the Add-on's values after them", () => {
     const query = compiled().get("add")!;
-    expect(query.sql).toContain('("site_id", "group_id", "owner_user_id", "title", "state")');
-    expect(query.sql).toContain("VALUES ($1, $2, $3, $4, $5)");
+    expect(query.sql)
+      .toContain('("site_id", "group_id", "owner_user_id", "created_by_user_id", "title", "state")');
+    expect(query.sql).toContain("VALUES ($1, $2, $3, $4, $5, $6)");
     expect(query.bindings).toEqual([
       { from: "site" },
       { from: "group" },
+      // Twice, and the same value: the owner is authority and may move, the author is history and does
+      // not. They are one person until the first handover.
+      { from: "actor" },
       { from: "actor" },
       { from: "parameter", name: "title" },
       { from: "literal", value: "draft" },
@@ -128,12 +132,12 @@ describe("compiling a declared query", () => {
   it("addresses one row and carries the Site with it", () => {
     expect(compiled().get("rename")!.sql).toBe(
       'UPDATE "phis_addon_acme_shop"."listing" SET "title" = $1 WHERE "id" = $2 AND "site_id" = $3 ' +
-      'RETURNING "id", "title", "state", "retired_at", "site_id", "group_id", "owner_user_id"',
+      'RETURNING "id", "title", "state", "retired_at", "site_id", "group_id", "owner_user_id", "created_by_user_id"',
     );
     // The delete names its columns back, because after it has run there is nothing left to ask them of.
     expect(compiled().get("drop")!.sql).toBe(
       'DELETE FROM "phis_addon_acme_shop"."listing" WHERE "id" = $1 AND "site_id" = $2 ' +
-      'RETURNING "id", "title", "state", "retired_at", "site_id", "group_id", "owner_user_id"',
+      'RETURNING "id", "title", "state", "retired_at", "site_id", "group_id", "owner_user_id", "created_by_user_id"',
     );
   });
 
@@ -143,7 +147,8 @@ describe("compiling a declared query", () => {
       queries: [{ kind: "select", name: "all", table: "listing", limit: 5 }],
     });
     expect(everything.get("all")!.sql).toContain(
-      'SELECT "site_id", "group_id", "owner_user_id", "id", "title", "state", "retired_at"',
+      'SELECT "site_id", "group_id", "owner_user_id", "created_by_user_id", ' +
+      '"id", "title", "state", "retired_at",',
     );
   });
 

@@ -28,6 +28,10 @@ import { PHIS_CORE_CAPABILITIES } from "../lib/addons/core-capabilities.ts";
 import { phisAddonUnindexedSearches } from "../lib/addons/query-descriptor.ts";
 import { ensurePhisAddonSiteGroups } from "../db/server-addon-groups.mts";
 import {
+  isPhiSiteMember,
+  transferPhisAddonOwnership,
+} from "../db/server-addon-owner.mts";
+import {
   readPhisAddonEnabledSiteIds,
   recordPhisAddonSiteEffectiveStatus,
 } from "../db/server-addon-sites.mts";
@@ -799,6 +803,44 @@ export async function purgeAddon(root: string, flags: FlagMap, pool: Pool) {
 
   const result = await purgePhisAddon(pool, addonId);
   return { ok: true, action: "addon.purge", ...result };
+}
+
+/**
+ * Handing an Add-on's rows on this Site to another account.
+ *
+ * The successor has to be a member of the Site, checked here rather than left to the foreign key: the
+ * key knows only that an account exists somewhere, and rows owned by somebody who cannot sign in to this
+ * Site are rows nobody can reach.
+ *
+ * `--from` may be left out, and then it names the rows nobody owns -- what a deleted account leaves
+ * behind, and the case a successor is most often being appointed for.
+ */
+export async function transferAddonOwnership(flags: FlagMap, pool: Pool, siteId: number) {
+  const addonId = getRequiredFlag(flags, "addon");
+  const rawFrom = getOptionalFlag(flags, "from");
+  const fromUserId = rawFrom === undefined || rawFrom === null || rawFrom === "none"
+    ? null
+    : readUserId(rawFrom, "--from");
+  const toUserId = readUserId(getRequiredFlag(flags, "to"), "--to");
+  if (fromUserId === toUserId) {
+    throw new Error("--from and --to name the same account, so there is nothing to hand over.");
+  }
+  if (!await isPhiSiteMember(pool, siteId, toUserId)) {
+    throw new Error(`User ${toUserId} is not a member of this Site and cannot be given its rows.`);
+  }
+
+  const result = await transferPhisAddonOwnership(pool, {
+    addonId, siteId, fromUserId, toUserId,
+  });
+  return { ok: true, action: "addon.owner", ...result };
+}
+
+function readUserId(value: string, flag: string) {
+  const parsed = Number.parseInt(value.trim(), 10);
+  if (!Number.isSafeInteger(parsed) || parsed <= 0) {
+    throw new Error(`${flag} must be a user id.`);
+  }
+  return parsed;
 }
 
 /**

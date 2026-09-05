@@ -52,9 +52,21 @@ export const PHIS_ADDON_SITE_COLUMN = "site_id";
 export const PHIS_ADDON_OWNER_COLUMN = "owner_user_id";
 export const PHIS_ADDON_GROUP_COLUMN = "group_id";
 
+/**
+ * Who wrote the row, beside who owns it now.
+ *
+ * Written once and never again, which is what makes a handover possible without losing the trail: the
+ * owner is authority and moves, the author is history and stays. Media keeps the same pair for the same
+ * reason -- an Asset handed to somebody else stays attributable to whoever brought it in.
+ *
+ * Present wherever the owner is, because it exists to survive the owner changing.
+ */
+export const PHIS_ADDON_CREATED_BY_COLUMN = "created_by_user_id";
+
 const CORE_WRITTEN_COLUMNS: Readonly<Record<string, string>> = {
   [PHIS_ADDON_SITE_COLUMN]: "siteScoped",
   [PHIS_ADDON_OWNER_COLUMN]: "ownerScoped",
+  [PHIS_ADDON_CREATED_BY_COLUMN]: "ownerScoped",
   [PHIS_ADDON_GROUP_COLUMN]: "groupScoped",
 };
 
@@ -411,6 +423,12 @@ function validateTable(
     for (const column of columns.filter((entry) => entry.unique)) {
       assertComposedNameFits(table, column.name, "uq", `${field}.columns "${column.name}"`, issues);
     }
+  }
+
+  if (value.ownerScoped === true) {
+    // The longest name Core composes on an owned table, checked here rather than met as a PostgreSQL
+    // error partway through a migration that has already created the table.
+    assertComposedNameFits(table, PHIS_ADDON_CREATED_BY_COLUMN, "fk", `${field}.ownerScoped`, issues);
   }
 
   const primaryKey = Array.isArray(value.primaryKey) ? value.primaryKey : [];

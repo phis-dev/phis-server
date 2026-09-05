@@ -6,6 +6,7 @@ import {
   quotePhiIdentifier,
 } from "../lib/addons/schema-ddl.ts";
 import {
+  PHIS_ADDON_CREATED_BY_COLUMN,
   PHIS_ADDON_GROUP_COLUMN,
   PHIS_ADDON_OWNER_COLUMN,
   PHIS_ADDON_SITE_COLUMN,
@@ -127,6 +128,8 @@ export async function verifyPhisAddonSchema(
     conname: string;
     source_schema: string;
     source_table: string;
+    /** The first constrained column, which is the one the scope checks below are about. */
+    source_column: string | null;
     target_schema: string;
     target_table: string;
     confdeltype: string;
@@ -134,6 +137,8 @@ export async function verifyPhisAddonSchema(
     `SELECT con.conname,
             src_ns.nspname AS source_schema,
             src.relname    AS source_table,
+            (SELECT a.attname FROM pg_attribute a
+              WHERE a.attrelid = con.conrelid AND a.attnum = con.conkey[1]) AS source_column,
             tgt_ns.nspname AS target_schema,
             tgt.relname    AS target_table,
             con.confdeltype
@@ -202,6 +207,10 @@ export async function verifyPhisAddonSchema(
   // after the fact is the only thing that would notice.
   for (const [scope, column, targetTable] of [
     ["Owner-scoped", PHIS_ADDON_OWNER_COLUMN, "user_accounts"],
+    // The author is checked with the owner because it is created with the owner, and because the two
+    // point at the same table: a check that asked only "is this table bound to user_accounts" would be
+    // satisfied by either of them and would notice neither going missing.
+    ["Owner-scoped", PHIS_ADDON_CREATED_BY_COLUMN, "user_accounts"],
     ["Group-scoped", PHIS_ADDON_GROUP_COLUMN, "site_groups"],
   ] as const) {
     const scoped = target.descriptor.tables.filter(
@@ -219,9 +228,11 @@ export async function verifyPhisAddonSchema(
     const present = new Set(rows.map((row) => row.table_name));
     const bound = new Set(
       keyRows
-        .filter(
-          (row) => row.source_schema === target.schemaName && row.target_table === targetTable,
-        )
+        .filter((row) => (
+          row.source_schema === target.schemaName
+          && row.target_table === targetTable
+          && row.source_column === column
+        ))
         .map((row) => row.source_table),
     );
     for (const table of scoped) {
@@ -230,7 +241,9 @@ export async function verifyPhisAddonSchema(
         continue;
       }
       if (!bound.has(table.name)) {
-        issues.push(`${scope} table "${table.name}" is not bound to phis.${targetTable}.`);
+        issues.push(
+          `${scope} table "${table.name}" is not bound to phis.${targetTable} by ${column}.`,
+        );
       }
     }
   }
