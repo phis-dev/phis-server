@@ -5,8 +5,8 @@
       "addonId": "@phis/marketplace",
       "packageName": "@phis/marketplace",
       "packageVersion": "0.1.0",
-      "manifestDigest": "87a643078820526fda7a470928d3c7069fdb3e2d5e52655023beb3e694a673c1",
-      "artifactDigest": "9d390274f9ddee305e31ae859beb9d628c0f10308783c5d8209f6714449a7891",
+      "manifestDigest": "e4eb2f4ccb565058bc33e34b5c9525a463f3550f26a0a5d8d4fa74b96b5914bc",
+      "artifactDigest": "b11e64583fd76545c22882d4d7d075e7f215c4bdf79c2ba6c485deb00c001d27",
       "manifest": {
         "manifestVersion": 1,
         "addonId": "@phis/marketplace",
@@ -100,49 +100,6 @@
             "method": "DELETE",
             "path": "vendors/:id/members/:userId",
             "handler": "dropVendorMember",
-            "auth": "site-user",
-            "siteScoped": true
-          },
-          {
-            "id": "offerings.assets.list",
-            "method": "GET",
-            "path": "offerings/:id/assets",
-            "handler": "listOfferingAssets",
-            "auth": "site-user",
-            "siteScoped": true
-          },
-          {
-            "id": "offerings.assets.begin",
-            "method": "POST",
-            "path": "offerings/:id/assets",
-            "handler": "beginOfferingAsset",
-            "auth": "site-user",
-            "siteScoped": true,
-            "bodyLimitBytes": 4096
-          },
-          {
-            "id": "offerings.assets.finalize",
-            "method": "POST",
-            "path": "offerings/:id/assets/finalize",
-            "handler": "finishOfferingAsset",
-            "auth": "site-user",
-            "siteScoped": true,
-            "bodyLimitBytes": 4096
-          },
-          {
-            "id": "offerings.assets.abandon",
-            "method": "POST",
-            "path": "offerings/:id/assets/abandon",
-            "handler": "abandonOfferingAsset",
-            "auth": "site-user",
-            "siteScoped": true,
-            "bodyLimitBytes": 4096
-          },
-          {
-            "id": "offerings.assets.drop",
-            "method": "DELETE",
-            "path": "offerings/:id/assets/:assetId",
-            "handler": "dropOfferingAsset",
             "auth": "site-user",
             "siteScoped": true
           }
