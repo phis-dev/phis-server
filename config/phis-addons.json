@@ -5,8 +5,8 @@
       "addonId": "@phis/marketplace",
       "packageName": "@phis/marketplace",
       "packageVersion": "0.1.0",
-      "manifestDigest": "834a915be8f925b7e8b37580dda6c2d85b620aec442ac09250b6b17daed968f5",
-      "artifactDigest": "3f23cf5939730dc3d7f6e6ab1adf721632749f32b1be44d257fd371599271a70",
+      "manifestDigest": "87a643078820526fda7a470928d3c7069fdb3e2d5e52655023beb3e694a673c1",
+      "artifactDigest": "9d390274f9ddee305e31ae859beb9d628c0f10308783c5d8209f6714449a7891",
       "manifest": {
         "manifestVersion": 1,
         "addonId": "@phis/marketplace",
@@ -17,8 +17,14 @@
         "serviceProviders": [],
         "requiredCoreCapabilities": [
           "@phis/server/data:v1",
-          "@phis/server/assets:v1"
+          "@phis/server/assets:v1",
+          "@phis/server/groups:v1"
         ],
+        "groupWriter": {
+          "allowedBy": {
+            "role": "vendor"
+          }
+        },
         "apiRoutes": [
           {
             "id": "offerings.mine",
@@ -60,6 +66,40 @@
             "method": "DELETE",
             "path": "offerings/:id",
             "handler": "dropOffering",
+            "auth": "site-user",
+            "siteScoped": true
+          },
+          {
+            "id": "vendors.mine",
+            "method": "GET",
+            "path": "vendors",
+            "handler": "listVendors",
+            "auth": "site-user",
+            "siteScoped": true
+          },
+          {
+            "id": "vendors.add",
+            "method": "POST",
+            "path": "vendors",
+            "handler": "addVendor",
+            "auth": "site-user",
+            "siteScoped": true,
+            "bodyLimitBytes": 4096
+          },
+          {
+            "id": "vendors.member.add",
+            "method": "POST",
+            "path": "vendors/:id/members",
+            "handler": "addVendorMember",
+            "auth": "site-user",
+            "siteScoped": true,
+            "bodyLimitBytes": 4096
+          },
+          {
+            "id": "vendors.member.drop",
+            "method": "DELETE",
+            "path": "vendors/:id/members/:userId",
+            "handler": "dropVendorMember",
             "auth": "site-user",
             "siteScoped": true
           },
@@ -145,6 +185,7 @@
               "name": "offering",
               "siteScoped": true,
               "ownerScoped": true,
+              "groupScoped": true,
               "columns": [
                 {
                   "name": "id",
@@ -394,6 +435,10 @@
                 "name": "attributes",
                 "type": "json",
                 "nullable": true
+              },
+              {
+                "name": "group_id",
+                "type": "integer"
               }
             ],
             "edit": [
@@ -627,7 +672,8 @@
                     "kind": "now"
                   }
                 }
-              ]
+              ],
+              "groupParameter": "group_id"
             },
             {
               "kind": "update",
