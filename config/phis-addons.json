@@ -5,8 +5,8 @@
       "addonId": "@phis/marketplace",
       "packageName": "@phis/marketplace",
       "packageVersion": "0.1.0",
-      "manifestDigest": "e4eb2f4ccb565058bc33e34b5c9525a463f3550f26a0a5d8d4fa74b96b5914bc",
-      "artifactDigest": "b11e64583fd76545c22882d4d7d075e7f215c4bdf79c2ba6c485deb00c001d27",
+      "manifestDigest": "14ddf5988b3c6e89f468df596b34b9dc1948b4885674b71016fbaf4bd842a874",
+      "artifactDigest": "28f3ba9163142791002253f11e538e5cf6b8bcbf4b444e81328a3deb23cfe0b9",
       "manifest": {
         "manifestVersion": 1,
         "addonId": "@phis/marketplace",
@@ -241,6 +241,7 @@
                 {
                   "name": "icon",
                   "cardinality": "one",
+                  "mirrorColumn": "icon_path",
                   "maxBytes": 512000,
                   "contentTypes": [
                     "image/png",
@@ -253,6 +254,7 @@
                 {
                   "name": "logo",
                   "cardinality": "one",
+                  "mirrorColumn": "logo_path",
                   "maxBytes": 512000,
                   "contentTypes": [
                     "image/png",
@@ -265,6 +267,7 @@
                 {
                   "name": "cover",
                   "cardinality": "one",
+                  "mirrorColumn": "cover_path",
                   "maxBytes": 4000000,
                   "contentTypes": [
                     "image/png",
