@@ -1001,7 +1001,18 @@ function buildFailure(error: string, details: string[]): CmsValidationResult<nev
   };
 }
 
-export function validateCmsAreaPresetWriteInput(payload: unknown): CmsValidationResult<CmsAreaPresetWriteInput> {
+/**
+ * The same shape, read for two different reasons.
+ *
+ * A *write* carries one draft's work and must not carry the other's, which is what the ownership rule
+ * is for. A *stored* revision is the product of one or the other -- and after a publish merge, of both
+ * -- so reading one back under the write rule refused every Module draft the moment anything tried to
+ * read it again: written once, unreadable afterwards, including by its own publish.
+ */
+export function validateCmsAreaPresetWriteInput(
+  payload: unknown,
+  options?: { config?: "structure" | "stored" },
+): CmsValidationResult<CmsAreaPresetWriteInput> {
   if (!isRecord(payload)) {
     return buildFailure("Invalid request body.", ["Body must be an object."]);
   }
@@ -1028,7 +1039,7 @@ export function validateCmsAreaPresetWriteInput(payload: unknown): CmsValidation
           errors,
           { min: 0, allowZero: true },
         ),
-        config: readAreaPresetConfig(payload.preset.config, "structure", errors),
+        config: readAreaPresetConfig(payload.preset.config, options?.config ?? "structure", errors),
       }
     : undefined;
 
@@ -1079,7 +1090,7 @@ export function validateCmsAreaPresetWriteInput(payload: unknown): CmsValidation
  */
 function readAreaPresetConfig(
   value: unknown,
-  owns: "structure" | "modules",
+  owns: "structure" | "modules" | "stored",
   errors: string[],
   label = "preset.config",
 ) {
@@ -1087,7 +1098,10 @@ function readAreaPresetConfig(
   const owned = owns === "structure" ? PHI_AREA_CONFIG_SHELL_NAMESPACE : PHI_AREA_CONFIG_MODULES_NAMESPACE;
 
   for (const key of Object.keys(config)) {
-    if (key === owned) {
+    // `stored` accepts either namespace: what is on disk was written by whichever draft owns it, and a
+    // published revision carries both because the publish merge put them together. What stays refused
+    // everywhere is a namespace nothing can read back at all.
+    if (key === owned || (owns === "stored" && isPhiAreaConfigNamespace(key))) {
       continue;
     }
     errors.push(
@@ -1097,7 +1111,7 @@ function readAreaPresetConfig(
     );
   }
 
-  if (owns === "structure" && config[PHI_AREA_CONFIG_SHELL_NAMESPACE] !== undefined) {
+  if (owns !== "modules" && config[PHI_AREA_CONFIG_SHELL_NAMESPACE] !== undefined) {
     readAreaShellConfig(
       config[PHI_AREA_CONFIG_SHELL_NAMESPACE],
       errors,

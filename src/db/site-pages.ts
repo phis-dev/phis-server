@@ -1600,7 +1600,9 @@ function buildAreaRevisionSummary(input: CmsAreaPresetWriteInput, source: CmsAre
 function readValidatedAreaRevisionTree(
   treeJson: Record<string, unknown>,
 ): CmsAreaPresetWriteInput {
-  const validated = validateCmsAreaPresetWriteInput(treeJson);
+  // Read as stored rather than as a write: this tree was written by one of the two drafts and may carry
+  // either namespace, and a published one carries both.
+  const validated = validateCmsAreaPresetWriteInput(treeJson, { config: "stored" });
   if (!validated.ok) {
     throw new Error(`Invalid area revision payload. ${validated.error}`);
   }

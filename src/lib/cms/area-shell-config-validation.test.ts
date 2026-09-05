@@ -40,6 +40,50 @@ function errorsOf(shell: unknown) {
   return result.ok ? [] : result.details ?? [];
 }
 
+describe("reading a stored Area revision back", () => {
+  /*
+   * A revision on disk was written by one of the two drafts, and after a publish merge it carries both
+   * namespaces. Reading one back under the write rule refused every Module draft the moment anything
+   * looked at it again -- so a Module selection could be saved once and never read, published or
+   * saved over, and the failure surfaced as "Invalid area revision payload".
+   */
+  function storedWith(config: Record<string, unknown>) {
+    return validateCmsAreaPresetWriteInput(
+      { ...buildStructurePayload(), preset: { config } },
+      { config: "stored" },
+    );
+  }
+
+  it("takes the namespace the Module draft owns", () => {
+    expect(storedWith({ modules: { runtimeModules: [] } }).ok).toBe(true);
+  });
+
+  it("takes both, which is what a published revision holds", () => {
+    expect(storedWith({
+      shell: {},
+      modules: { runtimeModules: [] },
+    }).ok).toBe(true);
+  });
+
+  it("still refuses a namespace nothing can read back", () => {
+    const result = storedWith({ nonsense: {} });
+    expect(result.ok).toBe(false);
+    expect(result.ok ? [] : result.details ?? [])
+      .toContain("preset.config.nonsense is not a known Area config namespace.");
+  });
+
+  it("leaves a write refusing the other draft's namespace", () => {
+    // The rule that keeps two open drafts from containing each other's work stays exactly as it was.
+    const result = validateCmsAreaPresetWriteInput({
+      ...buildStructurePayload(),
+      preset: { config: { modules: { runtimeModules: [] } } },
+    });
+    expect(result.ok).toBe(false);
+    expect(result.ok ? [] : result.details ?? [])
+      .toContain("preset.config.modules belongs to the other draft and must not be written here.");
+  });
+});
+
 describe("the Shell half of an Area config", () => {
   it("takes a redirect to a Page the Site authored", () => {
     const result = validateCmsAreaPresetWriteInput(
