@@ -272,11 +272,21 @@ export async function setSiteGroupFlags(siteId: number, groupId: number, flags: 
   return rows[0] ? mapGroup(rows[0]) : null;
 }
 
+/**
+ * Writes a membership into a group whose provider is the caller's.
+ *
+ * The provider is a parameter rather than a constant because an Add-on's group is a group like any
+ * other -- same table, same ladder, same projection -- and the only thing that differs is who owns it.
+ * It is compared as well as inserted, so a caller can only reach the groups it brought: passing an
+ * Add-on's id here cannot touch a Core group, and passing Core's cannot touch an Add-on's.
+ */
 export async function setLocalSiteGroupMembership(input: {
   siteId: number;
   groupId: number;
   userId: number;
   membershipFlags: number;
+  /** Defaults to Core's own groups, which is every caller but the Add-on capability. */
+  providerId?: string;
 }) {
   const flags = normalizePhiGroupMembershipFlags(input.membershipFlags);
   const pool = getPool();
@@ -299,7 +309,10 @@ export async function setLocalSiteGroupMembership(input: {
        ON CONFLICT (group_id, user_id, source_provider_id, source_connection_key, source_binding_or_assertion_key)
        DO UPDATE SET membership_flags = EXCLUDED.membership_flags, updated_at = NOW()
        RETURNING group_id`,
-      [input.siteId, input.groupId, input.userId, PHI_CORE_GROUP_PROVIDER_ID, bindingKey, flags],
+      [
+        input.siteId, input.groupId, input.userId,
+        input.providerId ?? PHI_CORE_GROUP_PROVIDER_ID, bindingKey, flags,
+      ],
     );
     if (result.rowCount !== 1) {
       throw new Error("Local group not found, retired, or the person is not a member of this Site.");
@@ -322,7 +335,12 @@ export async function setLocalSiteGroupMembership(input: {
   }
 }
 
-export async function removeLocalSiteGroupMembership(input: { siteId: number; groupId: number; userId: number }) {
+export async function removeLocalSiteGroupMembership(input: {
+  siteId: number;
+  groupId: number;
+  userId: number;
+  providerId?: string;
+}) {
   const pool = getPool();
   const client = await pool.connect();
   try {
@@ -332,7 +350,10 @@ export async function removeLocalSiteGroupMembership(input: { siteId: number; gr
       `DELETE FROM phis.site_group_members m USING phis.site_groups g
        WHERE m.group_id = g.id AND g.site_id = $1 AND g.id = $2 AND m.user_id = $3
          AND m.source_provider_id = $4`,
-      [input.siteId, input.groupId, input.userId, PHI_CORE_GROUP_PROVIDER_ID],
+      [
+        input.siteId, input.groupId, input.userId,
+        input.providerId ?? PHI_CORE_GROUP_PROVIDER_ID,
+      ],
     );
     const after = await readEffectiveGroupFlagsWithDb(client, input.siteId, input.userId);
     if (JSON.stringify(before) !== JSON.stringify(after)) {

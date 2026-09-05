@@ -347,6 +347,7 @@ export function buildPhisAddonCapabilities(input: {
       addonId: input.manifest.addonId,
       siteId,
       actorUserId: input.actorUserId,
+      groupWriter: input.manifest.groupWriter ?? null,
     });
   }
   // The two below address the Site by key rather than by id, because a storage prefix and a secret

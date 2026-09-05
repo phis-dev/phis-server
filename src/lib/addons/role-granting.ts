@@ -1,6 +1,6 @@
 import "server-only";
 
-import type { PhisAddonRoleDescriptor } from "./contract.ts";
+import type { PhisAddonRoleDescriptor, PhisAddonRoleGrantPolicy } from "./contract.ts";
 import { PHIS_SITE_ACCESS } from "./contract.ts";
 import { getPhisAddonInstalledManifest } from "./installed.ts";
 import { readPhisAddonUserRoles } from "@/db/server-addon-roles.mts";
@@ -68,6 +68,34 @@ async function holdsSiteAccess(siteId: number, userId: number, access: string) {
 }
 
 /**
+ * Whether one person meets a policy an Add-on's manifest states.
+ *
+ * Shared by the two things a manifest hands out under one -- a role, and the right to make a group --
+ * so that "who may cause this" is decided once and reads the same way in both. The Site Admin floor is
+ * part of it: without one, a badly declared condition locks a Site out with no way back but a database
+ * edit.
+ */
+export async function satisfiesPhisAddonGrantPolicy(input: {
+  addonId: string;
+  siteId: number;
+  actorUserId: number;
+  policy: PhisAddonRoleGrantPolicy;
+}) {
+  if (await holdsSiteAccess(input.siteId, input.actorUserId, PHIS_SITE_ACCESS.siteAdmin)) {
+    return true;
+  }
+  if ("siteAccess" in input.policy) {
+    return await holdsSiteAccess(input.siteId, input.actorUserId, input.policy.siteAccess);
+  }
+  const held = await readPhisAddonUserRoles(getPool(), {
+    addonId: input.addonId,
+    siteId: input.siteId,
+    userId: input.actorUserId,
+  });
+  return held.includes(input.policy.role);
+}
+
+/**
  * The declared roles are passed in rather than looked up here.
  *
  * The lookup reaches installed state on disk, and a decision function that reaches for global state is
@@ -90,24 +118,12 @@ export async function mayGrantPhisAddonRole(input: {
     return { allowed: false, reason: "role_undeclared" };
   }
 
-  // The floor first, because it answers for every role and costs one lookup.
-  if (await holdsSiteAccess(input.siteId, input.actorUserId, PHIS_SITE_ACCESS.siteAdmin)) {
-    return { allowed: true, descriptor };
-  }
-
-  const policy = descriptor.grantableBy;
-  if ("siteAccess" in policy) {
-    return (await holdsSiteAccess(input.siteId, input.actorUserId, policy.siteAccess))
-      ? { allowed: true, descriptor }
-      : { allowed: false, reason: "not_permitted" };
-  }
-
-  const held = await readPhisAddonUserRoles(getPool(), {
+  return await satisfiesPhisAddonGrantPolicy({
     addonId: input.addonId,
     siteId: input.siteId,
-    userId: input.actorUserId,
-  });
-  return held.includes(policy.role)
+    actorUserId: input.actorUserId,
+    policy: descriptor.grantableBy,
+  })
     ? { allowed: true, descriptor }
     : { allowed: false, reason: "not_permitted" };
 }

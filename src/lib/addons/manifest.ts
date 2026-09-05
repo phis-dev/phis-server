@@ -513,6 +513,31 @@ export function validatePhisAddonManifest(
     issues.push("roles form a cycle: at least one role must be grantable by a Site access.");
   }
 
+  if (value.groupWriter !== undefined) {
+    /*
+     * The right to make a group is stated the way the right to grant a role is, and checked the same
+     * way -- one source, never both, and a role it names has to be one this Add-on declares. A policy
+     * pointing at a stranger's role is one nobody here can evaluate, and would fail closed at the worst
+     * moment: when somebody is trying to enter a group nobody can enter.
+     */
+    const writer = value.groupWriter;
+    if (!isRecord(writer) || !isRecord(writer.allowedBy)) {
+      issues.push("groupWriter states an allowedBy object when it is stated at all.");
+    } else {
+      const bySiteAccess = writer.allowedBy.siteAccess !== undefined;
+      const byRole = writer.allowedBy.role !== undefined;
+      if (bySiteAccess === byRole) {
+        issues.push("groupWriter.allowedBy states either siteAccess or role, and not both.");
+      } else if (bySiteAccess && !SITE_ACCESS_VALUES.has(String(writer.allowedBy.siteAccess))) {
+        issues.push("groupWriter.allowedBy.siteAccess is not a Site access.");
+      } else if (byRole && typeof writer.allowedBy.role !== "string") {
+        issues.push("groupWriter.allowedBy.role must be a string.");
+      } else if (byRole && !roleNames.includes(String(writer.allowedBy.role))) {
+        issues.push("groupWriter.allowedBy.role does not name a role this Add-on declares.");
+      }
+    }
+  }
+
   const modules = Array.isArray(value.modules) ? value.modules : [];
   if (value.modules !== undefined && !Array.isArray(value.modules)) {
     issues.push("modules must be an array when it is stated at all.");

@@ -1077,6 +1077,40 @@ note says what Core meant to remove; the join says what is actually unreferenced
 thing that catches what no note was ever written for -- a restored backup, a schema dropped by hand, an
 Add-on removed with its tables. It is the audit, not the mechanism.
 
+#### Groups an Add-on makes as it runs
+
+The `groups` list in a manifest is for the groups a Site always has -- known when the manifest was
+written, created per Site when the Site asks for the Add-on. `groupWriter` is for the other kind: one
+per vendor, per team, per tenant, whose number and names nobody knew in advance.
+
+```text
+create(key, name)                  -> the group, made or already there
+addMember(groupId, userId, level)
+removeMember(groupId, userId)
+retire(groupId)
+```
+
+It is a **declaration** rather than a capability an Add-on simply has, for the reason `grantableBy`
+exists: the manifest is covered by a digest the running code cannot rewrite, so the author states who
+may cause a group and Core decides whether the condition is met. Without it, "an Add-on may make groups"
+would mean "an Add-on may make itself an authority container and fill it". The same policy shape a
+role's `grantableBy` uses, evaluated by the same function, with the same Site Admin floor.
+
+**Ownership bounds the rest.** A group made here carries the Add-on's id as its provider, and every
+write checks that before it writes: group ids are integers out of one table, so without that check an
+Add-on could administer Core's groups and another Add-on's by guessing a number. Membership rows carry
+the Add-on as their source too, which is what keeps them apart from the ones a Site administrator wrote.
+
+`create` is an upsert, because asking twice is how an id is learned: the key is the Add-on's to choose
+and the id is the database's to assign. `retire` is not a delete -- access policies are serialized
+against the provider-qualified key, and releasing it would let a later group of the same name inherit
+them.
+
+Nothing else changes: it is `phis.site_groups` with a different provider, so the ladder, the membership
+projection and the Site's group administration all keep reading one table. Core already filters group
+claims against the available providers, so one of these stops granting anything the moment the Add-on is
+gone -- and comes back with it, members included.
+
 ### `secrets:v1`
 
 `read(name)` and nothing else. The owner and the Site are bound, so another Add-on's secret cannot be

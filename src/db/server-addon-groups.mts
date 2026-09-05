@@ -63,6 +63,53 @@ export async function ensurePhisAddonSiteGroups(
   return actions;
 }
 
+/**
+ * One group an Add-on asks for at runtime rather than declaring in its manifest.
+ *
+ * The same upsert the declared ones go through, and for the same reasons: asking twice is the way to
+ * learn an id, and a retired group comes back rather than staying dead. What differs is only where the
+ * key came from -- a manifest states a fixed set, and this is for the ones a Site produces as it runs,
+ * one per vendor, per team, per tenant.
+ */
+export async function createPhisAddonSiteGroup(
+  db: Queryable,
+  input: { addonId: string; siteId: number; key: string; name: string },
+) {
+  const [action] = await ensurePhisAddonSiteGroups(db, {
+    addonId: input.addonId,
+    siteId: input.siteId,
+    declared: [{ key: input.key, name: input.name }],
+  });
+  return action!;
+}
+
+/** Retires one of an Add-on's own groups. Not deleting: a key that came back would inherit policies. */
+export async function retirePhisAddonSiteGroup(
+  db: Queryable,
+  input: { addonId: string; siteId: number; groupId: number },
+) {
+  const { rows } = await db.query<{ id: number }>(
+    `UPDATE phis.site_groups SET retired_at = NOW(), updated_at = NOW()
+      WHERE provider_id = $1 AND site_id = $2 AND id = $3 AND retired_at IS NULL
+     RETURNING id`,
+    [input.addonId, input.siteId, input.groupId],
+  );
+  return rows.length > 0;
+}
+
+/** Whether a group is this Add-on's to administer at all. Every writer asks before it writes. */
+export async function isPhisAddonSiteGroup(
+  db: Queryable,
+  input: { addonId: string; siteId: number; groupId: number },
+) {
+  const { rows } = await db.query(
+    `SELECT 1 FROM phis.site_groups
+      WHERE provider_id = $1 AND site_id = $2 AND id = $3 AND retired_at IS NULL`,
+    [input.addonId, input.siteId, input.groupId],
+  );
+  return rows.length > 0;
+}
+
 export async function retirePhisAddonSiteGroups(
   db: Queryable,
   input: { addonId: string; siteId?: number },

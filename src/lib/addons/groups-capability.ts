@@ -1,15 +1,30 @@
 import "server-only";
 
-import type { PhisGroupsCapabilityV1, PhisUserProjection } from "./contract.ts";
+import type {
+  PhisAddonGroupWriterDescriptor,
+  PhisGroupsCapabilityV1,
+  PhisUserProjection,
+} from "./contract.ts";
 import {
   listSiteGroupMembers,
   listSiteGroupsForUser,
   getSiteGroupById,
   projectSiteGroupMemberForMember,
+  removeLocalSiteGroupMembership,
+  setLocalSiteGroupMembership,
 } from "@/db/site-groups";
 import { PhiGroupMembershipFlags } from "@/lib/constants/site-groups";
-import { readPhisAddonSiteGroups } from "@/db/server-addon-groups.mts";
+import {
+  createPhisAddonSiteGroup,
+  isPhisAddonSiteGroup,
+  readPhisAddonSiteGroups,
+  retirePhisAddonSiteGroup,
+} from "@/db/server-addon-groups.mts";
+import { isPhiSiteMember } from "@/db/server-addon-owner.mts";
+import { satisfiesPhisAddonGrantPolicy } from "./role-granting.ts";
 import { getPool } from "@/lib/db";
+
+export class PhisAddonGroupWriteError extends Error {}
 
 /**
  * Group facts, bounded by the acting user.
@@ -40,8 +55,41 @@ export function buildPhisAddonGroupsCapability(input: {
   addonId: string;
   siteId: number;
   actorUserId: number | null;
+  /** Absent where the manifest declares no writer, and then every write below is refused. */
+  groupWriter?: PhisAddonGroupWriterDescriptor | null;
 }): PhisGroupsCapabilityV1 {
   const { addonId, siteId, actorUserId } = input;
+
+  /**
+   * Whether this caller may write groups at all.
+   *
+   * Two conditions and both are the manifest's: that it asked for a writer, and that the acting user
+   * meets the policy it stated. Refused loudly, unlike the reads above -- there is nothing to withhold
+   * here, and a swallowed write would look to an Add-on exactly like one that happened.
+   */
+  async function requireWriter() {
+    const policy = input.groupWriter?.allowedBy;
+    if (!policy) {
+      throw new PhisAddonGroupWriteError(
+        `${addonId} declares no groupWriter, so it cannot make or administer groups.`,
+      );
+    }
+    if (actorUserId == null) {
+      throw new PhisAddonGroupWriteError("A group is made for somebody, and nobody is acting here.");
+    }
+    if (!await satisfiesPhisAddonGrantPolicy({ addonId, siteId, actorUserId, policy })) {
+      throw new PhisAddonGroupWriteError(
+        "This caller does not meet the policy the manifest states for making a group.",
+      );
+    }
+  }
+
+  /** The group has to be this Add-on's, checked before every write and never inferred from the id. */
+  async function requireOwnGroup(groupId: number) {
+    if (!await isPhisAddonSiteGroup(getPool(), { addonId, siteId, groupId })) {
+      throw new PhisAddonGroupWriteError(`Group ${groupId} is not ${addonId}'s to administer.`);
+    }
+  }
 
   /** The groups the actor is in, which is the boundary every answer below is drawn against. */
   async function actorGroups() {
@@ -99,6 +147,39 @@ export function buildPhisAddonGroupsCapability(input: {
         }
       }
       return null;
+    },
+
+    async create({ key, name }) {
+      await requireWriter();
+      const action = await createPhisAddonSiteGroup(getPool(), { addonId, siteId, key, name });
+      return { id: action.groupId, key: action.key, name };
+    },
+
+    async addMember({ groupId, userId, level }) {
+      await requireWriter();
+      await requireOwnGroup(groupId);
+      if (!await isPhiSiteMember(getPool(), siteId, userId)) {
+        // Refused rather than written: a membership for somebody who cannot sign in to this Site grants
+        // nothing and would sit there looking like standing.
+        throw new PhisAddonGroupWriteError(`User ${userId} is not a member of this Site.`);
+      }
+      await setLocalSiteGroupMembership({
+        siteId, groupId, userId, membershipFlags: level, providerId: addonId,
+      });
+      return true;
+    },
+
+    async removeMember({ groupId, userId }) {
+      await requireWriter();
+      await requireOwnGroup(groupId);
+      await removeLocalSiteGroupMembership({ siteId, groupId, userId, providerId: addonId });
+      return true;
+    },
+
+    async retire({ groupId }) {
+      await requireWriter();
+      await requireOwnGroup(groupId);
+      return await retirePhisAddonSiteGroup(getPool(), { addonId, siteId, groupId });
     },
   } satisfies PhisGroupsCapabilityV1);
 }
