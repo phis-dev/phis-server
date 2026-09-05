@@ -13,7 +13,11 @@ import {
   removeLocalSiteGroupMembership,
   setLocalSiteGroupMembership,
 } from "@/db/site-groups";
-import { PhiGroupMembershipFlags } from "@/lib/constants/site-groups";
+import {
+  PhiGroupMembershipFlags,
+  phiGroupLevelFlags,
+  phiGroupLevelOf,
+} from "@/lib/constants/site-groups";
 import {
   createPhisAddonSiteGroup,
   isPhisAddonSiteGroup,
@@ -112,11 +116,12 @@ export function buildPhisAddonGroupsCapability(input: {
     },
 
     async myGroups() {
-      return (await actorGroups()).map((group) => ({
-        id: group.id,
-        key: group.key,
-        name: group.name,
-      }));
+      return (await actorGroups()).flatMap((group) => {
+        const level = phiGroupLevelOf(group.membershipFlags);
+        // A membership whose bits amount to no level is one this build does not understand, and
+        // reporting it without one would invite a caller to treat it as the lowest.
+        return level ? [{ id: group.id, key: group.key, name: group.name, level }] : [];
+      });
     },
 
     async members(groupId) {
@@ -163,8 +168,12 @@ export function buildPhisAddonGroupsCapability(input: {
         // nothing and would sit there looking like standing.
         throw new PhisAddonGroupWriteError(`User ${userId} is not a member of this Site.`);
       }
+      const membershipFlags = phiGroupLevelFlags(level);
+      if (membershipFlags === null) {
+        throw new PhisAddonGroupWriteError(`"${String(level)}" is not a membership level.`);
+      }
       await setLocalSiteGroupMembership({
-        siteId, groupId, userId, membershipFlags: level, providerId: addonId,
+        siteId, groupId, userId, membershipFlags, providerId: addonId,
       });
       return true;
     },

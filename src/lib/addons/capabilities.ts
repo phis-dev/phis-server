@@ -17,7 +17,7 @@ import {
 import { derivePhisAddonSchemaName } from "./schema-name.ts";
 import { quotePhiIdentifier } from "./schema-ddl.ts";
 import { readEffectiveGroupMembershipFlags } from "@/db/site-groups";
-import { PhiGroupMembershipFlags } from "@/lib/constants/site-groups";
+import { PhiGroupMembershipFlags, phiGroupLevelOf } from "@/lib/constants/site-groups";
 import {
   canPhiViewerAccess,
   PHI_ACCESS_ACCOUNTING,
@@ -66,18 +66,6 @@ const SITE_ACCESS_POLICIES: Readonly<Record<PhisSiteAccess, PhiViewerAccessPolic
   [PHIS_SITE_ACCESS.support]: PHI_ACCESS_SUPPORT,
   [PHIS_SITE_ACCESS.accounting]: PHI_ACCESS_ACCOUNTING,
 };
-
-/** Highest first, so the first match is the level. */
-const GROUP_LEVELS: ReadonlyArray<readonly [PhisGroupLevel, number]> = [
-  ["manager", PhiGroupMembershipFlags.Manager],
-  ["editor", PhiGroupMembershipFlags.Editor],
-  ["author", PhiGroupMembershipFlags.Author],
-  ["member", PhiGroupMembershipFlags.Member],
-];
-
-function resolveGroupLevel(flags: number): PhisGroupLevel | null {
-  return GROUP_LEVELS.find(([, value]) => (flags & value) === value)?.[0] ?? null;
-}
 
 type RowScope = {
   ownerUserId: number | null;
@@ -218,7 +206,7 @@ function buildAuthorizationCapability(input: {
       if (actorUserId == null || !Number.isSafeInteger(groupId) || groupId <= 0) {
         return null;
       }
-      return resolveGroupLevel(await readEffectiveGroupMembershipFlags(siteId, groupId, actorUserId));
+      return phiGroupLevelOf(await readEffectiveGroupMembershipFlags(siteId, groupId, actorUserId));
     },
     async hasSiteAccess(access) {
       const policy = SITE_ACCESS_POLICIES[access];

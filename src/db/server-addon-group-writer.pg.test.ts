@@ -126,7 +126,7 @@ describe("an Add-on that makes its own groups", () => {
   it("puts somebody in, at the level it was given", async () => {
     const group = await groups(curator).create({ key: "vendor-members", name: "Members" });
     expect(await groups(curator).addMember({
-      groupId: group.id, userId: member, level: PhiGroupMembershipFlags.Author,
+      groupId: group.id, userId: member, level: "author",
     })).toBe(true);
 
     const { rows } = await getPool().query<{ membership_flags: number; source_provider_id: string }>(
@@ -134,6 +134,7 @@ describe("an Add-on that makes its own groups", () => {
         WHERE group_id = $1 AND user_id = $2`,
       [group.id, member],
     );
+    // The level crossed by name and is stored as the bits Core keeps: an Add-on never sees them.
     expect(rows[0]).toMatchObject({
       membership_flags: PhiGroupMembershipFlags.Author,
       source_provider_id: ADDON,
@@ -161,7 +162,7 @@ describe("an Add-on that makes its own groups", () => {
     const foreign = rows[0]!.id;
 
     await expect(groups(curator).addMember({
-      groupId: foreign, userId: member, level: PhiGroupMembershipFlags.Member,
+      groupId: foreign, userId: member, level: "member",
     })).rejects.toThrow(/not @pgtest\/groupwriter's to administer/);
     await expect(groups(curator).retire({ groupId: foreign })).rejects.toThrow(/to administer/);
   });
@@ -175,7 +176,7 @@ describe("an Add-on that makes its own groups", () => {
     );
     expect(rows[0]!.retired_at).not.toBeNull();
     await expect(groups(curator).addMember({
-      groupId: group.id, userId: member, level: PhiGroupMembershipFlags.Member,
+      groupId: group.id, userId: member, level: "member",
     })).rejects.toThrow(/to administer/);
   });
 });

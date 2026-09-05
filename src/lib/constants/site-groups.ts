@@ -7,6 +7,28 @@ export {
   type PhiGroupMembershipFlagValue,
 } from "@phis/contracts/site-groups";
 import { PhiGroupMembershipFlags } from "@phis/contracts/site-groups";
+import type { PhisGroupLevel } from "@phis/contracts/addon";
+
+/**
+ * The ladder by name, which is how it crosses the Add-on boundary.
+ *
+ * An Add-on has no reason to know the bits, and a level that travels as a number is one an Add-on ends
+ * up doing arithmetic on. Highest first, so a lookup by flags takes the first match.
+ */
+export const PHI_GROUP_LEVEL_FLAGS: ReadonlyArray<readonly [PhisGroupLevel, number]> = [
+  ["manager", PhiGroupMembershipFlags.Manager],
+  ["editor", PhiGroupMembershipFlags.Editor],
+  ["author", PhiGroupMembershipFlags.Author],
+  ["member", PhiGroupMembershipFlags.Member],
+];
+
+export function phiGroupLevelFlags(level: PhisGroupLevel) {
+  return PHI_GROUP_LEVEL_FLAGS.find(([name]) => name === level)?.[1] ?? null;
+}
+
+export function phiGroupLevelOf(flags: number): PhisGroupLevel | null {
+  return PHI_GROUP_LEVEL_FLAGS.find(([, value]) => (flags & value) === value)?.[0] ?? null;
+}
 
 /**
  * What a group's member list shows, not what anyone may do.
