@@ -638,9 +638,13 @@ path; the preset tree stays untouched.
 That distinction is the point. Assigning a path must not pull the structure preset into the draft: a Page
 still renders straight from its preset, with no roundtrip to the database. Only a structural edit made in
 `/pages` or `/shells` copies the preset into the stored config, and that is unchanged --
-`builder/persistence.ts` already rejects a modules payload carrying `config.shell`. The Area root slot is
-the one assignment that does live in `config.shell`, because choosing what stands at `/` is a Shell
-decision and is made in `/shells`.
+`builder/persistence.ts` already rejects a modules payload carrying `config.shell`.
+
+The root slot is no exception to that. `config.shell.rootRoute` names which applicant stands at `/`; it is
+a selection, and naming it copies no preset either. What copies a preset is an edit to the tree itself --
+a Widget added, a background changed -- made in `/shells`. Which is why a second applicant costs nothing:
+the assignment that already holds is written as a value, the Builder gets a select box to change it, and
+the first one configured keeps the door until somebody picks another.
 
 **The Area root is a slot, not a path.** `/` belongs to the Area's base Module and is drawn without the
 Shell. A Module route declaring `path: "/"` is an application, granted immediately when nobody else
