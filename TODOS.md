@@ -724,27 +724,6 @@ address, and a choice would delete a page nobody wanted deleted.
 - The catalog-wide `pageKey` collision check in the descriptor compiler is then vacuous and is deleted
   with it.
 
-## P2: Let a Form say which Areas it belongs to
-
-`PhiRuntimeModuleFormDefinition` carries no Area, so `auth`, `groups` and `localization` each split their
-Forms by hand inside their Area contribution factories -- the last place where a Module states its surface
-per Area in handwritten ternaries rather than in a descriptor.
-
-A Form is not machinery like a Widget. A Card renders whatever it is pointed at and belongs everywhere; a
-Form is one transaction with one handler and one audience, and "create an installation" has no business in
-an App picker. That it carries no access policy is not a gap to fill first: the intended restriction was
-always placement.
-
-- Give a Form the Areas it belongs to, as a list. Every existing split maps onto it exactly and nothing is
-  left over: the sign-in Forms are `["public", "app"]`, the Auth settings Forms `["admin"]`, groups
-  `create`/`membership` `["admin"]` and `myMembership` `["app"]`, localization `siteLocales` `["admin"]`
-  and `editorTranslation` `["editor"]`.
-- The projection then cuts Forms like routes, the same eligibility check applies, the Builder still
-  receives all of them, and the `area` parameter disappears from `auth/server.ts`, `groups/server.ts` and
-  `localization/server.ts`.
-- Whether a Form should also carry an access policy becomes a separate question -- not where it is
-  offered, but who inside an Area may use it. It can wait.
-
 ## P2: Auth Module replacement and preset recovery
 
 `phis-cli auth restore-preset --site <site-key>` is implemented, idempotent, and verified before it
