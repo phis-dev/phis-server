@@ -587,9 +587,15 @@ Remaining work:
 
 ## P2: Give every Area route a package namespace, and settle Public path collisions
 
-Designed 2026-09-06. The item asked for a Site-owned base path and an activation-time collision decision
-instead of a compile-time failure. The answer turned out far smaller than the machinery first drafted for
-it, because only one namespace is worth contesting. Nothing here is built yet.
+Designed 2026-09-06, and largely built the same day. The item asked for a Site-owned base path and an
+activation-time collision decision instead of a compile-time failure. The answer turned out far smaller
+than the machinery first drafted for it, because only one namespace is worth contesting.
+
+**Built:** the package namespace and the mount without `basePath` (`b0983148`), the two visibility rules
+(`e0b90533`), Form Areas (`75592ce8`), and the Page identity that replaced `pageKey` (`9e2db6f5`) --
+which took the catalog-wide ownership check and the active-table Page collision with it, and dropped
+`home`. **Not built:** the enable-time dialog and the assignment it writes, several applicants for the
+root slot, and the public SEO surface.
 
 **Two namespaces, and only one question.**
 
@@ -689,40 +695,16 @@ anyway, and the Admin root narrows further with a Core role today. A Module-prov
 root or for a navigation container. `isPhiViewerAccessPolicyProviderOwned` already draws the distinction;
 applications for a slot use it with the narrower allowance and are refused where the package is composed.
 
-**Two things to build regardless of any of the above.**
-
-- A navigation item whose target route is unrouted must be **hidden**, not raise `Navigation item
-  references missing route preset`. Routes filtered out by access are already skipped; an unrouted one is
-  skipped the same way.
-- The write may refuse, the read never may. Enabling a Module is a write and may be strict. Resolving a
-  route table is a read of what was written and must always produce one -- `compilePhiCmsActiveRouteTable`
-  throws today, and a catalog-wide `pageKey` check throws even for Modules no Area activates, which is why
-  installing a colliding Module takes down Areas that never touch it.
+**Two things built regardless of any of the above.** A navigation item whose target route does not answer
+hides, and so does a container left with no visible child -- resolved against the active route table, so
+the rule holds by itself once a Module can lose a path. And the read no longer refuses: where two active
+routes want one address the first claim answers and the second is absent, rather than the whole table
+failing to compile.
 
 **Add the public SEO surface, which does not exist yet:** `robots.txt`, a sitemap over published Public
 pages, canonical URLs, and durable redirects when a Page path changes. Renaming an indexed path without a
 redirect is only acceptable while nothing is indexed.
 
-**Ship the namespacing with the page-key change below.** Both move stored identities, and before v1 with
-almost no saved drafts is the cheapest moment either will ever have.
-
-## P2: Give a page key an owner, and drop `home`
-
-A `pageKey` is a bare word today, unique per Area, and `(area, pageKey)` is the storage identity of a
-saved page. Two Modules naming a page `dashboard` therefore collide over a name rather than over an
-address, and a choice would delete a page nobody wanted deleted.
-
-- Make it two fields, Module and key. Not one concatenated string: the identity grammar's `modules`
-  marker is what separates `<package>/modules/<module>` from the equally valid `<package>/<namespace>/
-  <leaf>`, and gluing the parts together would make the two indistinguishable. Two fields keep the
-  identity whole and keep the long part out of anything a person reads.
-- The Area base pages follow the same shape. Storage identities change; before v1, with almost no saved
-  drafts, this is the cheapest moment it will ever have.
-- Drop `home` entirely. `resolvePhiBuilderCmsStoragePathForCatalog` special-cases it, the App carries a
-  `/home` page beside a root that already forwards, and the Public welcome page occupies `/`. With the
-  landing slot above, whoever wants a home designates a page and the special case goes.
-- The catalog-wide `pageKey` collision check in the descriptor compiler is then vacuous and is deleted
-  with it.
 
 ## P2: Auth Module replacement and preset recovery
 
