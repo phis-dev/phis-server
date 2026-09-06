@@ -587,33 +587,157 @@ Remaining work:
 
 ## P2: Make Module route paths Site-owned and add the public SEO surface
 
-- Turn a Module route's base path into a Site-owned value. `PhiCmsRoutePresetDescriptor` proposes a path,
-  the operator confirms or overrides it when the Module is activated, and the resolved value is persisted
-  per Site. Keep `buildPhiRuntimeModuleRouteSegment` as the deterministic fallback for an unstated or
-  already-taken proposal rather than as the recommended shape. This extends the existing rule that no
-  route is derived from an NPM package name.
-- The reason is durability, not ranking. A public URL is a permanent promise, and deriving it from
-  `ownerModuleId` binds a Site's indexed paths to a third party's package name: renaming `@acme/shop`
-  would rewrite every indexed URL. `acme+shop` is also legal but valueless to a visitor, and `+` in a path
-  is routinely mangled by tooling that reads it as an encoded space.
-- Make route collisions an activation-time decision instead of a compile-time failure. Two independently
-  installed Modules that both propose `/acme` must be resolvable by the operator without source access;
-  today `compilePhiCmsActiveRouteTable` throws `Active route collision` and the Site cannot publish at all.
-- Feed the persisted mapping into descriptor compilation as a second input. Internal linkage already
-  survives a rename because navigation targets carry `{ ownerModuleId, presetKey }` beside the resolved
-  path, so the change is confined to the compiler's inputs and the activation flow.
-- Declare a route mount on the App Area. `routeMounts` exists only on `admin` and `builder`, both with
-  `basePath: "/settings"`, so a Module has no mounted place in `app`. This is a missing declaration in
-  `PHI_APP_RUNTIME_AREA_DEFINITIONS`, not a missing mechanism.
-- Decide and enforce which callers may claim an absolute Area-local path. A first-party Module may own
-  `/groups`; a third-party Module is mounted unless the operator grants it a base path. The compiler does
-  not distinguish the two callers today.
-- Add the public SEO surface, which does not exist yet: `robots.txt`, a sitemap over published Public
-  pages, canonical URLs, and durable redirects when a Page path or a Module base path changes. Renaming an
-  indexed path without a redirect is only acceptable while nothing is indexed.
-- Keep the whole item scoped to `public`, the only Area with `PHI_VIEWER_ACCESS_ANYONE`. `app`, `admin`,
-  `builder`, `editor`, and `accounting` are authenticated and never indexed, so the segment shape there is
-  cosmetic.
+Designed 2026-09-06. This item asked for two things -- a Site-owned base path and an activation-time
+collision decision instead of a compile-time failure. Both are answered below, together with the part
+that was missing: what happens to the Module that does not get the path. Nothing here is built yet.
+
+**A Module ships two different kinds of thing, and conflating them is what made this hard.** It ships
+*addresses*, which the Site owns and may reassign, and *applications for a slot the Area owns*, which are
+accepted or not. The Area root `/` and every route mount `basePath` are slots; everything else is an
+address.
+
+**The rule for addresses is one sentence.** Every Module route has a Site-owned effective path. The
+default is the path its descriptor proposes. When two routes propose the same one, the Site names another
+for one of them; until it does, that route has no address.
+
+- No winner, no loser, no container, no derived segment. The earlier sketch grew all four to decide who
+  holds a contested path and where the other one goes; a Site-owned path answers both at once, because
+  a path that can be assigned is a path that never has to be inferred.
+- The first-class default survives, but only as a tie-break for **who is asked to move**: the built-in
+  keeps its proposal and the newcomer needs a name. It is not a mechanism of its own. Replacing a
+  built-in page is the same gesture in reverse -- give the Module `/register`, and give the built-in
+  preset another path or none.
+- `buildPhiRuntimeModuleRouteSegment` stops being the fallback for a taken path. The two objections
+  recorded here are not specific to `public`: `+` is routinely mangled by tooling that reads it as an
+  encoded space, and deriving a path from `ownerModuleId` binds the Site's URLs to a third party's
+  package name in every Area, only with smaller consequences behind a sign-in. A public URL is a
+  permanent promise and must never be invented; an authenticated one need not be invented either.
+- The segment stays where it was designed to be used: under a route mount an Area declares, which a
+  Module opts into deliberately. It is not a collision fallback.
+
+**What counts as a collision.** The same route form -- an identical exact path, or two overlapping
+dynamic patterns. Static already beats dynamic when a path is resolved, so `/marketplace/vendors` and
+`/marketplace/:slug` do not collide. `pageKey` collisions disappear entirely once a page key is a pair of
+Module and key rather than a bare word; see the identity item below.
+
+**When it is evaluated.** Over the *active set of an Area*, never over the installed catalog. Today
+`compilePhiCmsActiveRouteTable` throws, and a catalog-wide `pageKey` check throws for Modules no Area
+activates at all, so installing a colliding Module takes down Areas that never touch it.
+
+- installing: nothing at all;
+- activating for an Area: the collision is recorded, the Builder asks for a path;
+- deactivating: no automatic move, because that would change a link nobody asked to change; the Builder
+  may offer the freed path to whoever is left;
+- upgrading `@phis/ui` into a path an active Module already answers: detect, move nothing, report.
+
+**The resolution must be total.** For any set of descriptors and any stored assignment it yields a route
+table and a list of unresolved proposals, and it never throws. The exceptions become questions in the
+Builder. `compilePhiCmsActiveRouteTable` already receives catalog, Area, active Module ids and viewer;
+the stored assignments join as a further input, and its three throw sites become the resolution.
+
+**Precedence resolves before the viewer filter.** Today the table drops routes the viewer may not see and
+only then detects collisions, so a path silently falls through to the other claimant for anybody the
+first is hidden from. The shape of a Site must not depend on who is looking.
+
+**Where the decision lives.** In the Area draft, switched at publish, with the preset copied into the
+database only when the preset itself is edited. Uncontested paths store nothing. The moment a path
+becomes contested its currently valid assignment is written even when it equals the proposal -- that is
+the difference between "the default applies" and "we decided that it applies", and only the second
+survives an upgrade that moves the default. A newly appearing collision never changes what a published
+Site serves.
+
+**Navigation follows for free, and must stop throwing.** Navigation targets carry
+`{ ownerModuleId, presetKey }` beside the resolved path, so reassignment moves the path and the entries
+keep pointing at the same preset; there is no second decision to make in a navigation tree. But a route
+without an address is now an ordinary state, and an item whose target is unrouted must be **hidden**
+rather than raise `Navigation item references missing route preset`. Routes filtered out by access are
+already skipped; an unrouted one is skipped the same way.
+
+**An unresolved proposal does not block publishing.** One page has no address, the rest of the Module
+works, and the Builder shows it as a page waiting for one. Holding a whole Area for that would be harsher
+than the problem.
+
+**The landing page is a slot, not a path.** `/` belongs to the Area's base Module and is drawn without the
+Shell. What stands in it is designated by the Shell draft, and there are three settings: the Area's own
+page, a forward, or another Module's page rendered in place. The third is new and is the reason the slot
+exists: the forward itself is cheap -- a 307, no intermediate document -- but its destination is an
+ordinary page and arrives inside the Shell, which is exactly what a landing page must not do.
+`phi-area-root-redirect-tree` already names the home for this as `preset.config.shell.rootRoute`.
+
+- A Module route declaring `path: "/"` is an application, not a claim. Two applicants are two entries in
+  a list, not a conflict; a Module with two applications is refused where the package is composed.
+- Order: a written assignment, then a sole applicant, then the Area's own page. The pass-through is
+  unconditional, but "already decided" includes an edited or published page standing in the slot, so in
+  practice it applies on a fresh Site and not afterwards. When a second applicant appears the currently
+  valid assignment is written first, so the front door cannot silently revert.
+- A designated page stops answering its own route and its navigation entry points at `/`. One page, one
+  address. An application nobody accepted has no public address and is visible only in the Builder; it is
+  not lost content but an offer not taken.
+
+**A Module may not gate an Area's slot behind its own role.** Core roles may narrow -- the Area gates
+anyway, and the Admin root narrows further with a Core role today. A Module-provider role may not, for
+the root or for a mount base. `isPhiViewerAccessPolicyProviderOwned` already draws that distinction;
+applications for a slot use it with the narrower allowance and are refused where the package is composed.
+
+**Declare a route mount on the App Area.** `routeMounts` exists only on `admin` and `builder`, both at
+`/settings`, so a Module has no mounted place in `app` -- where most of them will want to put their
+settings. A mount needs an exact base route owned by the Area's base Module and a navigation container
+item to hang under, so this is a small page plus a declaration, not just a declaration. `editor` and
+`accounting` should follow when something asks for them. `public` gets none; a public settings page is
+not a thing.
+
+**Add the public SEO surface, which does not exist yet:** `robots.txt`, a sitemap over published Public
+pages, canonical URLs, and durable redirects when a Page path or a Module base path changes. Renaming an
+indexed path without a redirect is only acceptable while nothing is indexed. This is the one part of the
+item that is genuinely `public`-only -- the path rules above are the same in every Area, which is the
+point.
+
+**Still open:**
+
+- This supersedes the earlier default that a third-party Module is mounted unless the operator grants it
+  a base path. A Module's proposed path is used as proposed when it is free; only a collision requires a
+  human. Mounting stays a deliberate opt-in for Modules that want to live under a declared container.
+- The Admin root requires the Core `Developer` role while the Area itself stays open to Site
+  administrators. Worth checking on its own terms; the rule above permits it either way.
+
+## P2: Give a page key an owner, and drop `home`
+
+A `pageKey` is a bare word today, unique per Area, and `(area, pageKey)` is the storage identity of a
+saved page. Two Modules naming a page `dashboard` therefore collide over a name rather than over an
+address, and a choice would delete a page nobody wanted deleted.
+
+- Make it two fields, Module and key. Not one concatenated string: the identity grammar's `modules`
+  marker is what separates `<package>/modules/<module>` from the equally valid `<package>/<namespace>/
+  <leaf>`, and gluing the parts together would make the two indistinguishable. Two fields keep the
+  identity whole and keep the long part out of anything a person reads.
+- The Area base pages follow the same shape. Storage identities change; before v1, with almost no saved
+  drafts, this is the cheapest moment it will ever have.
+- Drop `home` entirely. `resolvePhiBuilderCmsStoragePathForCatalog` special-cases it, the App carries a
+  `/home` page beside a root that already forwards, and the Public welcome page occupies `/`. With the
+  landing slot above, whoever wants a home designates a page and the special case goes.
+- The catalog-wide `pageKey` collision check in the descriptor compiler is then vacuous and is deleted
+  with it.
+
+## P2: Let a Form say which Areas it belongs to
+
+`PhiRuntimeModuleFormDefinition` carries no Area, so `auth`, `groups` and `localization` each split their
+Forms by hand inside their Area contribution factories -- the last place where a Module states its surface
+per Area in handwritten ternaries rather than in a descriptor.
+
+A Form is not machinery like a Widget. A Card renders whatever it is pointed at and belongs everywhere; a
+Form is one transaction with one handler and one audience, and "create an installation" has no business in
+an App picker. That it carries no access policy is not a gap to fill first: the intended restriction was
+always placement.
+
+- Give a Form the Areas it belongs to, as a list. Every existing split maps onto it exactly and nothing is
+  left over: the sign-in Forms are `["public", "app"]`, the Auth settings Forms `["admin"]`, groups
+  `create`/`membership` `["admin"]` and `myMembership` `["app"]`, localization `siteLocales` `["admin"]`
+  and `editorTranslation` `["editor"]`.
+- The projection then cuts Forms like routes, the same eligibility check applies, the Builder still
+  receives all of them, and the `area` parameter disappears from `auth/server.ts`, `groups/server.ts` and
+  `localization/server.ts`.
+- Whether a Form should also carry an access policy becomes a separate question -- not where it is
+  offered, but who inside an Area may use it. It can wait.
 
 ## P2: Auth Module replacement and preset recovery
 
