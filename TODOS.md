@@ -641,12 +641,25 @@ may well ship a better landing page than we do.
 - A designated page stops answering its own route and its navigation entry points at `/`. One page, one
   address. A Module with two applications is refused where the package is composed.
 
-**A route mount stops being a path mechanism.** It existed to compose several Modules' settings pages
-under one address; with every route already under its package namespace the address is unique anyway, and
-what a mount actually achieves -- grouping under one navigation container -- lives in `parentItemKey`, not
-in the path. It becomes a navigation grouping, and `buildPhiRuntimeModuleRouteSegment` with its `+`
-segment leaves the codebase. The App Area still needs its settings container; that is now a navigation
-declaration rather than a page plus a mount.
+**A route mount stops being a path mechanism, but stays.** Every Area but Public still needs its settings
+container, and a Module still needs a published name to hang itself under -- otherwise each package would
+have to hardcode the navigation item key of a container another package owns. So
+`PhiCmsAreaRouteMountDescriptor` keeps `mountKey`, `navKey` and `parentItemKey` and loses `basePath`, and a
+route's `mount: { mountKey: "settings" }` stops meaning "prefix my path" and means only "put my entry in
+that container". The path comes from the package namespace either way, so it is unique without the mount,
+and `buildPhiRuntimeModuleRouteSegment` with its `+` segment leaves the codebase.
+
+- The container therefore has no address of its own. `/settings` is not a page in any Area; it is a
+  navigation node whose children are ordinary pages under their packages. That removes the question of
+  what an empty container's base does -- there is no base to answer.
+- A container hides when no child of it is visible, the way an item hides when its target is unrouted.
+  These are two rules, not one: an item is judged by its target, a container by its children.
+
+**A navigation label is not an identity.** A position is `navKey/itemKey` and its target is a route; the
+label is free text the Builder may rewrite at any time. Two Modules both calling their entry "Settings" is
+therefore not a collision -- two targets that happen to read alike -- and nothing may dedupe, order or
+refuse by label. Where it confuses a menu, the Builder renames one; the system cannot know which of the
+two is the wrong one.
 
 **A Module may not gate an Area's slot behind its own role.** Core roles may narrow -- the Area gates
 anyway, and the Admin root narrows further with a Core role today. A Module-provider role may not, for the
