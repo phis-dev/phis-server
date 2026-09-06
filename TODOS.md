@@ -629,6 +629,19 @@ is not enabled. No half-state exists: a Module is active with every route addres
 - The dangerous case -- somebody replaces Auth and locks themselves out -- already has its recovery in
   `phis-cli auth restore-preset`.
 
+**Where an assigned path is kept, and what it must not touch.** The answer from the dialog goes into the
+Area preset's `modules` namespace, beside `runtimeModules` -- a map from `moduleId/presetKey` to a path,
+written by the same route, with the same draft and publish behaviour, which is also what makes "check
+against the draft's active set" free. It is a value the descriptor compiler reads while composing the
+path; the preset tree stays untouched.
+
+That distinction is the point. Assigning a path must not pull the structure preset into the draft: a Page
+still renders straight from its preset, with no roundtrip to the database. Only a structural edit made in
+`/pages` or `/shells` copies the preset into the stored config, and that is unchanged --
+`builder/persistence.ts` already rejects a modules payload carrying `config.shell`. The Area root slot is
+the one assignment that does live in `config.shell`, because choosing what stands at `/` is a Shell
+decision and is made in `/shells`.
+
 **The Area root is a slot, not a path.** `/` belongs to the Area's base Module and is drawn without the
 Shell. A Module route declaring `path: "/"` is an application, granted immediately when nobody else
 applies; several applicants are a list to choose from in the Shell draft, never a conflict. By convention
