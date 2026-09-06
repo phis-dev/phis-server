@@ -613,10 +613,16 @@ surface fall away with it.
 proposes is taken, the dialog asks for another one or offers to take it over; declining means the Module
 is not enabled. No half-state exists: a Module is active with every route addressed, or it is not active.
 
-- A Module update that introduces a colliding Public path deactivates the Module -- it is what moved.
-  This belongs in the output of the update command, before the rollout, not only in a log an operator
-  finds afterwards. Re-enabling brings the dialog.
-- Deactivating does nothing else. Nothing is rebuilt, the route simply stops answering, and an assignment
+- Taking it over is the same rule seen from the other side: the previous holder's route stops resolving,
+  so that Module is deactivated until it names a path of its own. No separate mechanism, and no Module
+  half-addressed.
+- Outside Public an update may add as many routes as it likes -- they are under the package and cannot
+  collide -- so what follows is a Public matter only.
+- A Module update that introduces a colliding Public path deactivates the Module until the route resolves
+  again -- it is what moved. Deactivation is a state with an exit, not a verdict: naming a free path
+  brings the Module back. This belongs in the output of the update command, before the rollout, not only
+  in a log an operator finds afterwards.
+- Deactivating does nothing else. Nothing is rebuilt, the routes simply stop answering, and an assignment
   already made stays made.
 - Checks run against the draft's active set, so freeing a path by switching one Module off and claiming it
   with another works in a single editing session.
