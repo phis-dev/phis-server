@@ -660,7 +660,14 @@ rule prevents rather than repairs -- a revision written at `/` before it exists 
 
 **Still missing for any of this:** a Route preset cannot say that it is a landing offer. The Area
 root's forward page and a real landing look identical from outside -- a preset with `path: "/"` -- so
-the applicants cannot be listed without a word for it in the descriptor.
+the applicants cannot be listed without a word for it in the descriptor. That word is a flag on
+`PhiCmsRoutePresetDescriptor`, beside the `path: "/"` it keeps: the path is the application, as the
+type's own comment already says, and `findPhiPublicRoutePathCollisions` already steps over `/` so the
+address question never touches it. `public-welcome-page` carries the flag; the `<area>-root-page`
+forwarders do not, and that is exactly the distinction nothing can express today. Three readers
+follow it: the applicants provider filters on it, the route table admits exactly one `/` -- the chosen
+one, or the single applicant -- and the /shells Select offers the rest. It is not a second address: a
+declined offer is simply not routed, and the Module keeps every other route it has.
 
 **A Module that is not there is a state, not a fault** (2026-09-07). A stored selection may name a
 Module this build cannot serve -- a deploy ahead of its rollout, a rollback, a removed package -- so the
