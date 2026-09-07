@@ -601,6 +601,17 @@ with -- `/contracts`, which nobody wants, beside `/login`, which Auth has. **Not
 address over from the Module that holds it, several applicants for the root slot, the update command's
 report, and the public SEO surface.
 
+**A Module that is not there is a state, not a fault** (2026-09-07). A stored selection may name a
+Module this build cannot serve -- a deploy ahead of its rollout, a rollback, a removed package -- so the
+read drops it and the write refuses it, and the Modules workspace shows what was dropped before the next
+save writes the selection without it. Nothing is cleaned when a package is removed: the Site keeps the
+record until somebody saves, the Area revisions keep it after, and a removal made by accident is
+reversible. A block whose Module is gone draws its diagnostic in a workspace and nothing at all on a
+live page, and a Layout that cannot be drawn keeps its children rather than swallowing them. Switching a
+Module off now states what it stops drawing, counted from the published trees over
+`/api/site/cms/module-usage`. Still open there: the same count in the output of `phis module del`, and a
+"remove from this Site" action on the row for a Module that is not in the build.
+
 The dialog offers another address and refuses to enable without one. Taking the address over -- the
 other half the design describes, where the previous holder loses the route and is deactivated until it
 names one of its own -- is not built: everything it needs is in place (an assignment is a value, and a
