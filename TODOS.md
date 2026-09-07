@@ -615,12 +615,18 @@ states the result, carrying the Page's own title, the empty case, and a stored c
 resolves. No warning and no per-Area restriction: forwarding is what naming a working Page means, and
 nothing needs policing.
 
-The applicants for that slot are the second half of the same question. `/` is not an address a Module
-can be given -- it is a slot with exactly one owner -- but every Module that declares a Page at `/`
-is applying for it, the Area's base Module included, and one of them has to be chosen. The base
-Module's Page is the default so a Site that was never configured still has a front door; the choice
-in /shells only moves it. A Module that applied and was not chosen does not answer at `/` -- it is in
-the position of any Module whose address is taken, and needs another one or stays off.
+The applicants for that slot are the second half of the same question, and they are unlike the
+addresses in every way that matters. An address is a necessity: a Module whose route is taken cannot
+do its work, so it is renamed or it stays off, and that is why the dialog refuses to enable without
+an answer. A landing is an **offer**. A Module says "I have a landing for Public and one for Admin",
+the Site picks one of everything offered -- or a Page of its own -- and a Module whose offer is
+declined loses nothing: it keeps every address it has and goes on working. Nothing is renamed and
+nothing is refused, because nothing was needed.
+
+One applicant takes the slot without a question, which is the ordinary case and would be silly to
+ask about. But it lands in the **draft** like every other change and reaches visitors on publish --
+otherwise a Site whose operator decided it has no landing would get one the moment a Module was
+installed, live and unasked.
 
 **A Module that is not there is a state, not a fault** (2026-09-07). A stored selection may name a
 Module this build cannot serve -- a deploy ahead of its rollout, a rollback, a removed package -- so the
