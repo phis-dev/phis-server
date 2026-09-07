@@ -594,8 +594,17 @@ than the machinery first drafted for it, because only one namespace is worth con
 **Built:** the package namespace and the mount without `basePath` (`b0983148`), the two visibility rules
 (`e0b90533`), Form Areas (`75592ce8`), and the Page identity that replaced `pageKey` (`9e2db6f5`) --
 which took the catalog-wide ownership check and the active-table Page collision with it, and dropped
-`home`. **Not built:** the enable-time dialog and the assignment it writes, several applicants for the
-root slot, and the public SEO surface.
+`home`. Then the enable-time question itself: the assignment a Site writes and the route table reading
+it (`799ab02f`), the dialog the Modules workspace asks it with (`7474dbd2`, `03e9c38d`), the server's
+shape check on the way in (phis-server `73665eb`), and `@phis/dev` as the Site package it can be seen
+with -- `/contracts`, which nobody wants, beside `/login`, which Auth has. **Not built:** taking an
+address over from the Module that holds it, several applicants for the root slot, the update command's
+report, and the public SEO surface.
+
+The dialog offers another address and refuses to enable without one. Taking the address over -- the
+other half the design describes, where the previous holder loses the route and is deactivated until it
+names one of its own -- is not built: everything it needs is in place (an assignment is a value, and a
+Module losing a path already hides its navigation entry), but nothing writes the losing side yet.
 
 **Two namespaces, and only one question.**
 
