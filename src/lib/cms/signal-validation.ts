@@ -4,6 +4,9 @@
  * change signal was refused on save with "valueType is invalid" -- a widget the same release shipped.
  */
 import {
+  isPhiSignalReceiver,
+  readPhiCmsSignalAddressInstanceId,
+  readPhiSignalReceiverScopeProblem,
   isPhiSignalAction,
   isPhiSignalScope,
   isPhiSignalValueSchemaShape,
@@ -11,88 +14,12 @@ import {
 } from "@phis/contracts/signals";
 
 import type { PhiCmsInstanceId } from "@/lib/cms/instance-id";
-import { isPhiCmsInstanceId } from "@/lib/cms/instance-id";
 
 type JsonRecord = Record<string, unknown>;
-
-const PHI_CORE_CONTROLLER_ADDRESS = "controller:@phis/ui/modules/core/controller/default:default";
 
 function isRecord(value: unknown): value is JsonRecord {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
-
-function isAddressSegment(value: string) {
-  return value.length > 0 && !value.includes("/") && !value.includes(":");
-}
-
-function isNpmPackageName(value: string) {
-  if (!value || value.includes(":") || value.length > 214) {
-    return false;
-  }
-  return value.startsWith("@")
-    ? /^@[a-z0-9][a-z0-9._~-]*\/[a-z0-9][a-z0-9._~-]*$/.test(value)
-    : /^[a-z0-9][a-z0-9._~-]*$/.test(value);
-}
-
-function readCmsAddressInstanceId(address: string) {
-  if (!address.startsWith("cms:")) {
-    return null;
-  }
-  const parts = address.slice("cms:".length).split(":");
-  if (
-    (parts.length !== 1 && parts.length !== 2) ||
-    !isPhiCmsInstanceId(parts[0]) ||
-    (parts.length === 2 && !isAddressSegment(parts[1]!))
-  ) {
-    return null;
-  }
-  return parts[0];
-}
-
-function isRegionAddress(address: string) {
-  return address.startsWith("region:") && isAddressSegment(address.slice("region:".length));
-}
-
-function isControllerAddress(address: string) {
-  if (!address.startsWith("controller:")) {
-    return false;
-  }
-  const body = address.slice("controller:".length);
-  const instanceSeparatorIndex = body.lastIndexOf(":");
-  if (instanceSeparatorIndex <= 0 || instanceSeparatorIndex === body.length - 1) {
-    return false;
-  }
-  const namespacedType = body.slice(0, instanceSeparatorIndex);
-  const instanceKey = body.slice(instanceSeparatorIndex + 1);
-  const controllerSeparatorIndex = namespacedType.lastIndexOf("/");
-  if (controllerSeparatorIndex <= 0 || controllerSeparatorIndex === namespacedType.length - 1) {
-    return false;
-  }
-  return (
-    isControllerPluginKey(namespacedType.slice(0, controllerSeparatorIndex)) &&
-    isAddressSegment(namespacedType.slice(controllerSeparatorIndex + 1)) &&
-    isAddressSegment(instanceKey)
-  );
-}
-
-/**
- * A controller lives in the namespace of the module that owns it, so a plugin key is either a bare
- * package name or that package followed by `/modules/<module>/<namespace>`. This mirrors the grammar
- * in @phis/ui; phi-server cannot import it, because it does not depend on the UI package.
- */
-function isControllerPluginKey(value: string) {
-  const marker = value.indexOf("/modules/");
-  if (marker < 0) {
-    return isNpmPackageName(value);
-  }
-  const rest = value.slice(marker + "/modules/".length).split("/");
-  return (
-    isNpmPackageName(value.slice(0, marker)) &&
-    rest.length === 2 &&
-    rest.every((part) => isAddressSegment(part))
-  );
-}
-
 
 /**
  * Every error a stored signal wiring can carry, collected rather than thrown one at a time.
@@ -157,39 +84,28 @@ export function collectCmsSignalRouteErrors(
       if (receiver === null) {
         return;
       }
-      if (receiver === "broadcast") {
-        if (route.scope === "site") {
-          errors.push(`${routeLabel} must not broadcast in Site scope.`);
-        }
+      if (!isPhiSignalReceiver(receiver)) {
+        errors.push(typeof receiver === "string"
+          ? `${routeLabel}.receiver is not a canonical signal address.`
+          : `${routeLabel}.receiver must be null, broadcast, or a signal address.`);
         return;
       }
-      if (typeof receiver !== "string") {
-        errors.push(`${routeLabel}.receiver must be null, broadcast, or a signal address.`);
-        return;
+      /*
+       * Which receivers a scope admits is the contract's sentence, not one written twice.
+       *
+       * The site UI refuses to deliver the same combinations at runtime; what differs is only what
+       * each side does with the answer -- a rejected write here, a dropped signal there.
+       */
+      const scopeProblem = isPhiSignalScope(route.scope)
+        ? readPhiSignalReceiverScopeProblem(route.scope, receiver)
+        : null;
+      if (scopeProblem) {
+        errors.push(`${routeLabel} ${scopeProblem}.`);
       }
-      const cmsInstanceId = readCmsAddressInstanceId(receiver);
-      if (cmsInstanceId) {
-        if (!activeIds.has(cmsInstanceId)) {
-          errors.push(`${routeLabel} targets an unknown CMS instance.`);
-        }
-        if (route.scope === "site") {
-          errors.push(`${routeLabel} must not target a CMS instance in Site scope.`);
-        }
-        return;
+      const cmsInstanceId = receiver === "broadcast" ? null : readPhiCmsSignalAddressInstanceId(receiver);
+      if (cmsInstanceId && !activeIds.has(cmsInstanceId)) {
+        errors.push(`${routeLabel} targets an unknown CMS instance.`);
       }
-      if (isRegionAddress(receiver)) {
-        if (route.scope === "site") {
-          errors.push(`${routeLabel} must not target a Region in Site scope.`);
-        }
-        return;
-      }
-      if (isControllerAddress(receiver)) {
-        if (route.scope === "site" && receiver !== PHI_CORE_CONTROLLER_ADDRESS) {
-          errors.push(`${routeLabel} may target only the Core Runtime Controller in Site scope.`);
-        }
-        return;
-      }
-      errors.push(`${routeLabel}.receiver is not a canonical signal address.`);
     });
   }
 

@@ -3,10 +3,16 @@ import { describe, expect, it } from "vitest";
 import { collectCmsSignalRouteErrors } from "./signal-validation";
 
 /**
- * phi-server keeps its own copy of the signal grammar because it does not depend on `@phis/ui`. The
- * copies are the failure mode: widening one alone turns a stored wiring into a rejected write, which
- * is how a renamed controller namespace once produced a 500 on `/admin`. These cases are the ones the
- * `@phis/ui` side asserts too, so a future widening that reaches only one side fails here.
+ * The weaker of the two questions asked about a value schema name.
+ *
+ * phi-server checks that a JSON signal names *a* schema, never which one: it holds no Module registry
+ * and must not: refusing a schema because it had never heard of the package would refuse every third
+ * party's. `@phis/ui` holds the registry and asks the stricter question about the same string.
+ *
+ * The grammar itself is no longer a copy -- `isPhiSignalValueSchemaShape` lives in
+ * `@phis/contracts/signals` -- but the two answers still have to agree on every input, which is what
+ * these cases pin. They are the ones `@phis/ui`'s validator asserts too, so a widening that reaches
+ * only one answer fails on the other.
  */
 const ACCEPTED = [
   "@phis/ui/modules/core/signals/message",
