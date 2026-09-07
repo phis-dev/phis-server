@@ -4,6 +4,7 @@ import { isPhisCmsAreaKey, resolvePhisCmsAreaMask } from "@/lib/constants/cms-ar
 import {
   PHI_AREA_CONFIG_MODULES_NAMESPACE,
   PHI_AREA_CONFIG_SHELL_NAMESPACE,
+  PHI_AREA_PUBLIC_ROUTE_PATHS_KEY,
   PHI_AREA_ROOT_ROUTE_KEY,
   isPhiAreaConfigNamespace,
   readPhiAreaConfigNamespace,
@@ -1088,6 +1089,61 @@ export function validateCmsAreaPresetWriteInput(
  * sending it is a client that believes it owns something it does not. A key outside both namespaces is
  * refused for the same reason: a value nothing can read back is a bug on its way to being stored.
  */
+/**
+ * The addresses this Site gave Public routes whose declared path was taken.
+ *
+ * Shape only, and strictly: a route names itself by its Module and preset, and the address is a fixed
+ * path -- a dynamic segment belongs to the route the Module declared, not to an answer somebody typed
+ * into a dialog. The reader in the site UI drops an entry it cannot act on, which is right for a read
+ * that runs on every request; here is where being wrong is worth refusing.
+ */
+function readAreaPublicRoutePaths(value: unknown, errors: string[], label: string) {
+  if (value === undefined) {
+    return;
+  }
+  if (!Array.isArray(value)) {
+    errors.push(`${label} must be an array.`);
+    return;
+  }
+
+  const seen = new Set<string>();
+  value.forEach((entry, index) => {
+    const entryLabel = `${label}[${index}]`;
+    if (!isRecord(entry)) {
+      errors.push(`${entryLabel} must be an object.`);
+      return;
+    }
+    const ownerModuleId = typeof entry.ownerModuleId === "string" ? entry.ownerModuleId.trim() : "";
+    const presetKey = typeof entry.presetKey === "string" ? entry.presetKey.trim() : "";
+    if (!ownerModuleId || !presetKey) {
+      errors.push(`${entryLabel} must name ownerModuleId and presetKey.`);
+      return;
+    }
+    if (typeof entry.path !== "string" || !isAssignablePublicRoutePath(entry.path)) {
+      errors.push(`${entryLabel}.path must be a fixed path such as "/sign-in".`);
+      return;
+    }
+    const identity = `${ownerModuleId}/${presetKey}`;
+    if (seen.has(identity)) {
+      errors.push(`${label} names route "${identity}" twice.`);
+      return;
+    }
+    seen.add(identity);
+  });
+}
+
+const PUBLIC_ROUTE_PATH_SEGMENT_PATTERN = /^[\p{L}\p{N}][\p{L}\p{N}._~-]*$/u;
+
+function isAssignablePublicRoutePath(value: string) {
+  if (!value.startsWith("/") || value === "/") {
+    return false;
+  }
+  const segments = value.split("/");
+  return segments[0] === "" &&
+    segments.length > 1 &&
+    segments.slice(1).every((segment) => PUBLIC_ROUTE_PATH_SEGMENT_PATTERN.test(segment));
+}
+
 function readAreaPresetConfig(
   value: unknown,
   owns: "structure" | "modules" | "stored",
@@ -1195,6 +1251,14 @@ export function validateCmsAreaModulesWriteInput(
     // What is checked here is only the shape, so a malformed body fails as a bad request rather than
     // reaching the database as a config nothing can read back.
     errors.push(`config.${PHI_AREA_CONFIG_MODULES_NAMESPACE}.runtimeModules must be an array of module ids.`);
+  }
+
+  if (modules !== undefined) {
+    readAreaPublicRoutePaths(
+      modules[PHI_AREA_PUBLIC_ROUTE_PATHS_KEY],
+      errors,
+      `config.${PHI_AREA_CONFIG_MODULES_NAMESPACE}.${PHI_AREA_PUBLIC_ROUTE_PATHS_KEY}`,
+    );
   }
 
   let baseline: CmsAreaPresetWriteInput | undefined;

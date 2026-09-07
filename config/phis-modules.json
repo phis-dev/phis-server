@@ -12,6 +12,11 @@
           "packageName": "@phis/marketplace",
           "origin": "resolved",
           "spec": "workspace:*"
+        },
+        {
+          "packageName": "@phis/dev",
+          "origin": "resolved",
+          "spec": "workspace:*"
         }
       ]
     }

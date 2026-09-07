@@ -22,6 +22,17 @@
  */
 export const PHI_AREA_ROOT_ROUTE_KEY = "rootRoute" as const;
 
+/**
+ * What a Site decided about a Public address, by key.
+ *
+ * `publicRoutePaths` holds the answers given when a Module was enabled and the address it declared was
+ * already taken. Public is the only Area where that question arises -- everywhere else a Module's
+ * routes live under its package -- and the server checks only that an entry can be read back as one:
+ * whether the route still exists, and whether the address is free today, are the site UI's questions,
+ * asked again every time the table is compiled.
+ */
+export const PHI_AREA_PUBLIC_ROUTE_PATHS_KEY = "publicRoutePaths" as const;
+
 export const PHI_AREA_CONFIG_SHELL_NAMESPACE = "shell" as const;
 export const PHI_AREA_CONFIG_MODULES_NAMESPACE = "modules" as const;
 
