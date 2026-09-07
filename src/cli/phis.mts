@@ -280,7 +280,7 @@ Usage:
 
   phis schema check
   phis schema apply
-  phis schema drop [--yes]
+  phis schema drop [--force]
 
   phis addon list
   phis addon check
@@ -304,7 +304,7 @@ Usage:
   phis addon owner  --addon <@scope/name> --site <site key> [--from <user id>] --to <user id>
   phis module list [--site <site key>]
   phis module add --site <site key> --package <@scope/name> [--spec <version or workspace:*>]
-  phis module del --site <site key> --package <@scope/name> [--yes]
+  phis module del --site <site key> --package <@scope/name> [--force]
   phis module sync --site <site key>
   phis module check --site <site key> [--package <@scope/name>]
   phis instance list [--stale-after <seconds>]
@@ -1262,7 +1262,7 @@ async function runSiteModuleCommand(command: string, flags: FlagMap, json: boole
      * their pages and stop being drawn -- and that is exactly what nobody would notice happening.
      */
     const usage = await readSiteModulePackageUsage(site.id, packageName);
-    const forced = flags.get("yes") === true;
+    const forced = flags.get("force") === true;
     if (usage.blocks > 0 && !forced) {
       if (json) {
         printJson({
@@ -1282,7 +1282,7 @@ async function runSiteModuleCommand(command: string, flags: FlagMap, json: boole
       reportSiteModulePackageUsage(usage.areas);
       throw new Error(
         "Removing the package stops all of them being drawn. Switch the Module off in the Builder " +
-        "first, or pass --yes to carry it out.",
+        "first, or pass --force to carry it out.",
       );
     }
     state.sites[site.key] = {
@@ -1401,7 +1401,7 @@ async function runCoreSchemaCommand(
         console.log(`  ${entry.schemaName}  (${entry.addonId})`);
       }
       console.log(`  ${result.coreSchema}`);
-      console.log("Nothing was dropped. Pass --yes to carry it out.");
+      console.log("Nothing was dropped. Pass --force to carry it out.");
       return;
     }
     for (const entry of result.addonSchemas) {
@@ -2780,7 +2780,7 @@ async function main() {
   }
 
   if (group === "schema") {
-    await runCoreSchemaCommand(command, json, flags.get("yes") === true);
+    await runCoreSchemaCommand(command, json, flags.get("force") === true);
     return;
   }
 

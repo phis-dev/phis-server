@@ -610,7 +610,7 @@ reversible. A block whose Module is gone draws its diagnostic in a workspace and
 live page, and a Layout that cannot be drawn keeps its children rather than swallowing them. Switching a
 Module off now states what it stops drawing, counted from the published trees over
 `/api/site/cms/module-usage`; `phis module del` counts the same thing over its own pool and refuses to
-take a package out of the build while its blocks stand on published pages, unless `--yes` says to carry
+take a package out of the build while its blocks stand on published pages, unless `--force` says to carry
 it out anyway. Still open there: a "remove from this Site" action on the row for a Module that is not in
 the build.
 
