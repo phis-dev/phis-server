@@ -102,18 +102,21 @@ describe("the Shell half of an Area config", () => {
     expect(errorsOf({ rootRoute: { mode: "redirect", target: moduleReference } })).toEqual([]);
   });
 
-  it("takes a landing page, which names no target", () => {
+  it("takes a landing page that names no applicant, which the Site authors itself", () => {
     expect(errorsOf({ rootRoute: { mode: "landing" } })).toEqual([]);
+  });
+
+  it("takes a landing page that names the applicant whose Page stands at the root", () => {
+    expect(errorsOf({ rootRoute: { mode: "landing", target: moduleReference } })).toEqual([]);
   });
 
   it("takes a structure write that states nothing about the root route", () => {
     expect(validateCmsAreaPresetWriteInput(buildStructurePayload()).ok).toBe(true);
   });
 
-  it("refuses a landing page that also names a target", () => {
-    // Two answers to one question: whichever the reader honoured, the other would be a silent lie.
-    expect(errorsOf({ rootRoute: { mode: "landing", target: pageReference } })).toEqual([
-      'preset.config.shell.rootRoute.target must be absent when the mode is "landing".',
+  it("refuses a landing page whose applicant is not a reference", () => {
+    expect(errorsOf({ rootRoute: { mode: "landing", target: "the welcome page" } })).toEqual([
+      "preset.config.shell.rootRoute.target must be an internal Page reference.",
     ]);
   });
 

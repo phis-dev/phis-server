@@ -1208,8 +1208,10 @@ function readAreaShellConfig(value: unknown, errors: string[], label: string) {
 
   const rootRouteLabel = `${label}.${PHI_AREA_ROOT_ROUTE_KEY}`;
   if (rootRoute.mode === "landing") {
-    if (rootRoute.target !== undefined) {
-      errors.push(`${rootRouteLabel}.target must be absent when the mode is "landing".`);
+    // A landing names the applicant whose Page stands at the root, or nothing -- a landing without an
+    // applicant is a Page the Site authors itself, which is a state and not an omission.
+    if (rootRoute.target !== undefined && !readPhiPageReference(rootRoute.target)) {
+      errors.push(`${rootRouteLabel}.target must be an internal Page reference.`);
     }
     return;
   }
