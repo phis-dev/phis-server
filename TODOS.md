@@ -613,8 +613,14 @@ with no word said. Proposed: two statements instead of three options -- what sta
 navigation entry, or a named Page) and how (forward, or draw it here) -- and one line beneath that
 states the result, carrying the Page's own title, the empty case, and a stored choice that no longer
 resolves. No warning and no per-Area restriction: forwarding is what naming a working Page means, and
-nothing needs policing. There are no several applicants for the root slot either: `/` belongs to the
-Area's base Module, so a foreign Module asking for it gets the answer every taken address gets.
+nothing needs policing.
+
+The applicants for that slot are the second half of the same question. `/` is not an address a Module
+can be given -- it is a slot with exactly one owner -- but every Module that declares a Page at `/`
+is applying for it, the Area's base Module included, and one of them has to be chosen. The base
+Module's Page is the default so a Site that was never configured still has a front door; the choice
+in /shells only moves it. A Module that applied and was not chosen does not answer at `/` -- it is in
+the position of any Module whose address is taken, and needs another one or stays off.
 
 **A Module that is not there is a state, not a fault** (2026-09-07). A stored selection may name a
 Module this build cannot serve -- a deploy ahead of its rollout, a rollback, a removed package -- so the
