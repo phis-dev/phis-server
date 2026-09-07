@@ -608,25 +608,59 @@ page's chunks, CSS and fonts arrive, and Next's link prefetch does the fetching,
 mechanism of its own. Behind a sign-in nobody lingers, which is why those Areas forward instead.
 
 The Select in the /shells header mixes a *what* with a *how*, and its "Landing page" entry names no
-page at all -- it only strips the forward, which on every Area but Public leaves a blank front door
-with no word said. Proposed: two statements instead of three options -- what stands at `/` (the first
-navigation entry, or a named Page) and how (forward, or draw it here) -- and one line beneath that
-states the result, carrying the Page's own title, the empty case, and a stored choice that no longer
-resolves. No warning and no per-Area restriction: forwarding is what naming a working Page means, and
+page at all -- it only strips the forward. Proposed: two Selects side by side in the workspace header,
+where the third column stands empty on /shells today. The first says what `/` does -- the first
+navigation entry, a Page it forwards to, or a landing. The second names the landing, and is enabled
+only while the first says so and there is something to name. Beneath them one line states the result,
+carrying the Page's own title and where its tree comes from, the preset or a revision of the Site's
+own -- the same distinction as on any Module Page, and the answer to what a Module update will still
+reach. No warning and no per-Area restriction: forwarding is what naming a working Page means, and
 nothing needs policing.
 
 The applicants for that slot are the second half of the same question, and they are unlike the
 addresses in every way that matters. An address is a necessity: a Module whose route is taken cannot
 do its work, so it is renamed or it stays off, and that is why the dialog refuses to enable without
 an answer. A landing is an **offer**. A Module says "I have a landing for Public and one for Admin",
-the Site picks one of everything offered -- or a Page of its own -- and a Module whose offer is
-declined loses nothing: it keeps every address it has and goes on working. Nothing is renamed and
-nothing is refused, because nothing was needed.
+the Site picks one of everything offered, and a Module whose offer is declined loses nothing: it
+keeps every address it has and goes on working. Nothing is renamed and nothing is refused, because
+nothing was needed.
 
 One applicant takes the slot without a question, which is the ordinary case and would be silly to
 ask about. But it lands in the **draft** like every other change and reaches visitors on publish --
 otherwise a Site whose operator decided it has no landing would get one the moment a Module was
 installed, live and unasked.
+
+Both Selects store a Page reference, never a path, in `preset.config.shell.rootRoute` as today.
+Disabling the second needs no new capability -- `enabled/change:boolean` is inherited by every
+renderable block and already lands as `commandDisabled` in the control -- but it needs a sender: a
+Select emits its value as a string, and nothing turns "the value is landing" into a boolean, so the
+Builder controller dispatches it, as it does for the two Modules-workspace dialogs. The applicants are
+in the snapshot already: `buildPhiBuilderModulePresetPagesByArea` walks the declared catalog rather
+than the compiled route table, so an offer that lost is still there with its owner and preset key.
+Where there are none the provider stays and answers with an empty list; two ways to say "nothing to
+choose" would be two states that look alike and arise differently.
+
+A Site that wants its own landing needs no case of its own. An accepted offer is a Module Page like
+any other: it draws from the preset until somebody opens it in /pages, and the first draft snapshots
+what the preset produced, after which the stored revision answers instead. Accepting nothing is the
+other half of the same sentence -- the tree at `/` is then empty and gets authored there, with the six
+Regions that belong to the Page rather than to the Area.
+
+That leaves one trap, and it is closed in /pages rather than at render time. The forward is not a
+property of the mode; it is the whole content of the root preset's tree, and a stored revision
+replaces a preset's tree. Authoring the root Page while the Area forwards would therefore switch the
+forward off without anyone touching the Select. So: while `/` forwards, it is not offered in the page
+selector of /pages -- no entry, no revision, no contradiction. The filter belongs in that Select's own
+options provider and not in `resolvePhiBuilderActivePageCatalog`, which also feeds /revisions, where
+the root Page's history should stay visible, and the applicants list, which needs exactly those nodes.
+Two things follow: the Area's root route has to travel with the controller preload the way
+`publicRoutePaths` does, because today only /shells is handed it; and the Page comes back with
+whatever it had when the Area is switched to landing again, since nothing is cleaned here either. The
+rule prevents rather than repairs -- a revision written at `/` before it exists still beats the preset.
+
+**Still missing for any of this:** a Route preset cannot say that it is a landing offer. The Area
+root's forward page and a real landing look identical from outside -- a preset with `path: "/"` -- so
+the applicants cannot be listed without a word for it in the descriptor.
 
 **A Module that is not there is a state, not a fault** (2026-09-07). A stored selection may name a
 Module this build cannot serve -- a deploy ahead of its rollout, a rollback, a removed package -- so the
