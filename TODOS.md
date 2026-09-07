@@ -597,9 +597,9 @@ which took the catalog-wide ownership check and the active-table Page collision 
 `home`. Then the enable-time question itself: the assignment a Site writes and the route table reading
 it (`799ab02f`), the dialog the Modules workspace asks it with (`7474dbd2`, `03e9c38d`), the server's
 shape check on the way in (phis-server `73665eb`), and `@phis/dev` as the Site package it can be seen
-with -- `/contracts`, which nobody wants, beside `/login`, which Auth has. **Not built:** taking an
-address over from the Module that holds it, several applicants for the root slot, the update command's
-report, and the public SEO surface.
+with -- `/contracts`, which nobody wants, beside `/login`, which Auth has. **Not built:** changing an
+address a Module already holds, several applicants for the root slot, the update command's report, and
+the public SEO surface. Taking an address over from its holder was considered and dropped.
 
 **A Module that is not there is a state, not a fault** (2026-09-07). A stored selection may name a
 Module this build cannot serve -- a deploy ahead of its rollout, a rollback, a removed package -- so the
@@ -614,10 +614,13 @@ take a package out of the build while its blocks stand on published pages, unles
 it out anyway. Still open there: a "remove from this Site" action on the row for a Module that is not in
 the build.
 
-The dialog offers another address and refuses to enable without one. Taking the address over -- the
-other half the design describes, where the previous holder loses the route and is deactivated until it
-names one of its own -- is not built: everything it needs is in place (an assignment is a value, and a
-Module losing a path already hides its navigation entry), but nothing writes the losing side yet.
+The dialog offers another address and refuses to enable without one, and that is the whole answer:
+taking the address over from the Module that holds it -- the other half the design once described --
+was dropped on 2026-09-07. An address is settled by whoever asks for it second, and an operator who
+wants the other order moves the first Module instead. **Still open:** nothing offers that move. The
+dialog opens only while enabling and lists only contested routes, so the address a Module already
+holds cannot be changed at all -- what is missing is a standing list of the Site's Public addresses,
+editable while everything stays enabled.
 
 **Two namespaces, and only one question.**
 
