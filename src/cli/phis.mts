@@ -147,6 +147,11 @@ import {
 } from "../lib/secrets/crypto.ts";
 import { buildPhiSecretReference } from "../lib/secrets/reference.ts";
 import { PHIS_TOKEN_HEADER } from "../lib/constants/http-headers.ts";
+import { PHIS_CMS_AREA_KEYS, resolvePhisCmsAreaMask } from "../lib/constants/cms-areas.ts";
+import {
+  listSiteModuleBlockUsageWithDb,
+  type SiteModuleBlockUsageRecord,
+} from "../db/site-module-usage.ts";
 import {
   buildPhiSiteReleaseArtifact,
   reconcilePhiSiteScaffold,
@@ -299,7 +304,7 @@ Usage:
   phis addon owner  --addon <@scope/name> --site <site key> [--from <user id>] --to <user id>
   phis module list [--site <site key>]
   phis module add --site <site key> --package <@scope/name> [--spec <version or workspace:*>]
-  phis module del --site <site key> --package <@scope/name>
+  phis module del --site <site key> --package <@scope/name> [--yes]
   phis module sync --site <site key>
   phis module check --site <site key> [--package <@scope/name>]
   phis instance list [--stale-after <seconds>]
@@ -1092,6 +1097,54 @@ function reportSiteModulePackages(
   }
 }
 
+type PhiSiteModuleAreaUsage = {
+  area: string;
+  entries: SiteModuleBlockUsageRecord[];
+  blocks: number;
+};
+
+/**
+ * What a package still draws on this Site, Area by Area.
+ *
+ * Asked with the package name rather than a Module id: one package carries one product, so every
+ * block any of its Modules owns begins with that name, and the declaration -- which a package that
+ * has already been uninstalled no longer has -- is not needed to ask.
+ */
+async function readSiteModulePackageUsage(siteId: number, packageName: string) {
+  const areas: PhiSiteModuleAreaUsage[] = [];
+  for (const area of PHIS_CMS_AREA_KEYS) {
+    const entries = await listSiteModuleBlockUsageWithDb(
+      getPool(),
+      siteId,
+      resolvePhisCmsAreaMask(area),
+      packageName,
+    );
+    if (entries.length > 0) {
+      areas.push({
+        area,
+        entries,
+        blocks: entries.reduce((total, entry) => total + entry.blocks, 0),
+      });
+    }
+  }
+  return { areas, blocks: areas.reduce((total, entry) => total + entry.blocks, 0) };
+}
+
+function describeSiteModuleUsageEntry(entry: SiteModuleBlockUsageRecord) {
+  if (entry.kind === "area") {
+    return "Area shell";
+  }
+  return entry.path ?? `${entry.ownerModuleId ?? "?"}:${entry.presetKey ?? "?"}`;
+}
+
+function reportSiteModulePackageUsage(areas: readonly PhiSiteModuleAreaUsage[]) {
+  for (const area of areas) {
+    for (const entry of area.entries) {
+      console.log(`  ${area.area}  ${describeSiteModuleUsageEntry(entry)}  ${entry.blocks}`);
+    }
+  }
+}
+
 async function runSiteModuleCommand(command: string, flags: FlagMap, json: boolean) {
   const requireFlag = (key: string) => {
     const value = getOptionalFlag(flags, key);
@@ -1202,6 +1255,36 @@ async function runSiteModuleCommand(command: string, flags: FlagMap, json: boole
     if (!current.some((entry) => entry.packageName === packageName)) {
       throw new Error(`${packageName} is not installed for site ${site.key}.`);
     }
+    /*
+     * The same question the Builder asks before switching a Module off, asked here because this is
+     * the harsher half of it: a Module switched off can be switched back on, a package taken out of
+     * the build cannot until it is put back. The blocks are not deleted either way -- they stay in
+     * their pages and stop being drawn -- and that is exactly what nobody would notice happening.
+     */
+    const usage = await readSiteModulePackageUsage(site.id, packageName);
+    const forced = flags.get("yes") === true;
+    if (usage.blocks > 0 && !forced) {
+      if (json) {
+        printJson({
+          site: site.key,
+          package: packageName,
+          removed: null,
+          blocks: usage.blocks,
+          usage: usage.areas,
+          error: "Module blocks are in use on published pages.",
+        });
+        process.exitCode = 1;
+        return;
+      }
+      console.log(
+        `${packageName} draws ${usage.blocks} block(s) on published pages of ${site.key}:`,
+      );
+      reportSiteModulePackageUsage(usage.areas);
+      throw new Error(
+        "Removing the package stops all of them being drawn. Switch the Module off in the Builder " +
+        "first, or pass --yes to carry it out.",
+      );
+    }
     state.sites[site.key] = {
       modules: current.filter((entry) => entry.packageName !== packageName),
     };
@@ -1209,9 +1292,21 @@ async function runSiteModuleCommand(command: string, flags: FlagMap, json: boole
     writeSiteModuleDesiredState(configRoot, state);
     const result = writeSiteModuleProjection(siteRoot, state.sites[site.key].modules);
     if (json) {
-      printJson({ site: site.key, root: siteRoot, removed: packageName, removedDependency, ...result });
+      printJson({
+        site: site.key,
+        root: siteRoot,
+        removed: packageName,
+        removedDependency,
+        blocks: usage.blocks,
+        usage: usage.areas,
+        ...result,
+      });
     } else {
       console.log(`Removed ${packageName} from ${site.key}; rebuild the Site.`);
+      if (usage.blocks > 0) {
+        console.log(`  ${usage.blocks} block(s) stop being drawn:`);
+        reportSiteModulePackageUsage(usage.areas);
+      }
     }
     return;
   }

@@ -13,6 +13,7 @@ import {
   type SiteResolvedContentRecord,
 } from "@/db/site-content";
 import { getMediaAssetBySiteAndId } from "@/db/media";
+import { listSiteModuleBlockUsageWithDb } from "@/db/site-module-usage";
 import { materializeSiteMediaAvailabilityWithDb } from "@/db/media-spaces";
 import {
   collectSiteCmsContentReferences,
@@ -947,107 +948,11 @@ async function getSitePageScopeByIdWithDb(
   } : null;
 }
 
-export type SiteModuleBlockUsageRecord = {
-  kind: "page" | "area";
-  pageScopeId: number | null;
-  path: string | null;
-  /** A Module Page has no path of its own; it is named by the preset it came from. */
-  ownerModuleId: string | null;
-  presetKey: string | null;
-  blocks: number;
-};
+export type { SiteModuleBlockUsageRecord } from "@/db/site-module-usage";
 
-/*
- * Where a Module's blocks stand on stored trees.
- *
- * A Module owns its Widgets and Layouts, and a stored node carries the owner inside its type --
- * "@phis/dev/modules/site/widgets/note" -- so the question can be asked without the control plane
- * knowing anything about Modules. It looks at what a visitor gets, the published revision, because
- * that is what switching the Module off actually takes away; an unsaved draft takes it away when it
- * is published, which is a different sentence and belongs in a different place.
- */
-const MODULE_BLOCK_USAGE_PREDICATE = `(
-  EXISTS (
-    SELECT 1 FROM jsonb_array_elements(COALESCE(r.tree_json -> 'contentWidgets', '[]'::jsonb)) AS node
-    WHERE node ->> 'widgetType' LIKE $3
-  )
-  OR EXISTS (
-    SELECT 1 FROM jsonb_array_elements(COALESCE(r.tree_json -> 'layoutNodes', '[]'::jsonb)) AS node
-    WHERE node ->> 'widgetType' LIKE $3
-  )
-)`;
-
-const MODULE_BLOCK_COUNT = `(
-  (SELECT count(*) FROM jsonb_array_elements(COALESCE(r.tree_json -> 'contentWidgets', '[]'::jsonb)) AS node
-    WHERE node ->> 'widgetType' LIKE $3)
-  + (SELECT count(*) FROM jsonb_array_elements(COALESCE(r.tree_json -> 'layoutNodes', '[]'::jsonb)) AS node
-    WHERE node ->> 'widgetType' LIKE $3)
-)`;
-
-export async function listSiteModuleBlockUsage(
-  siteId: number,
-  areaMask: number,
-  moduleId: string,
-): Promise<SiteModuleBlockUsageRecord[]> {
-  const trimmedModuleId = moduleId.trim();
-  if (
-    !Number.isInteger(siteId) || siteId <= 0 ||
-    !Number.isInteger(areaMask) || areaMask <= 0 ||
-    trimmedModuleId.length === 0
-  ) {
-    return [];
-  }
-
-  const typePrefix = `${trimmedModuleId}/%`;
-  const { rows: pageRows } = await getPool().query<{
-    id: number;
-    path: string | null;
-    owner_module_id: string | null;
-    preset_key: string | null;
-    blocks: string;
-  }>(
-    `SELECT s.id, s.path, s.owner_module_id, s.preset_key, ${MODULE_BLOCK_COUNT} AS blocks
-       FROM phis.site_page_scopes s
-       JOIN phis.site_page_revisions r ON r.id = s.published_revision_id
-      WHERE s.site_id = $1
-        AND s.area_id = $2
-        AND s.tombstoned_at IS NULL
-        AND ${MODULE_BLOCK_USAGE_PREDICATE}
-      ORDER BY s.path NULLS LAST, s.id`,
-    [siteId, areaMask, typePrefix],
-  );
-
-  const { rows: areaRows } = await getPool().query<{ blocks: string }>(
-    `SELECT ${MODULE_BLOCK_COUNT} AS blocks
-       FROM phis.site_area_scopes s
-       JOIN phis.site_area_revisions r ON r.id = s.published_revision_id
-      WHERE s.site_id = $1
-        AND s.area_id = $2
-        AND ${MODULE_BLOCK_USAGE_PREDICATE}`,
-    [siteId, areaMask, typePrefix],
-  );
-
-  return [
-    ...areaRows
-      .map((row) => Number(row.blocks))
-      .filter((blocks) => blocks > 0)
-      .map((blocks) => ({
-        kind: "area" as const,
-        pageScopeId: null,
-        path: null,
-        ownerModuleId: null,
-        presetKey: null,
-        blocks,
-      })),
-    ...pageRows.map((row) => ({
-      kind: "page" as const,
-      pageScopeId: row.id,
-      path: row.path,
-      ownerModuleId: row.owner_module_id,
-      presetKey: row.preset_key,
-      blocks: Number(row.blocks),
-    })),
-  ];
+/** The Builder's half of the question; the CLI asks the same one against its own pool. */
+export function listSiteModuleBlockUsage(siteId: number, areaMask: number, moduleId: string) {
+  return listSiteModuleBlockUsageWithDb(getPool(), siteId, areaMask, moduleId);
 }
 
 export async function listSitePageScopes(siteId: number, areaMask: number): Promise<SitePageScopeCatalogRecord[]> {
