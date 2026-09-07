@@ -598,8 +598,23 @@ which took the catalog-wide ownership check and the active-table Page collision 
 it (`799ab02f`), the dialog the Modules workspace asks it with (`7474dbd2`, `03e9c38d`), the server's
 shape check on the way in (phis-server `73665eb`), and `@phis/dev` as the Site package it can be seen
 with -- `/contracts`, which nobody wants, beside `/login`, which Auth has. **Not built:** changing an
-address a Module already holds, several applicants for the root slot, the update command's report, and
-the public SEO surface. Taking an address over from its holder was considered and dropped.
+address a Module already holds, the root slot in /shells, the update command's report, and the public
+SEO surface. Taking an address over from its holder was considered and dropped.
+
+**The Area root, designed 2026-09-07, not built.** `/` is drawn without the Area's five own Regions --
+`chrome: "none"` never resolves them -- and the six Page-owned ones draw as on any page, each from its
+own slot route. That cheapness is the point: a landing page buys the seconds in which the first real
+page's chunks, CSS and fonts arrive, and Next's link prefetch does the fetching, so it needs no
+mechanism of its own. Behind a sign-in nobody lingers, which is why those Areas forward instead.
+
+The Select in the /shells header mixes a *what* with a *how*, and its "Landing page" entry names no
+page at all -- it only strips the forward, which on every Area but Public leaves a blank front door
+with no word said. Proposed: two statements instead of three options -- what stands at `/` (the first
+navigation entry, or a named Page) and how (forward, or draw it here) -- and one line beneath that
+states the result, carrying the Page's own title, the empty case, and a stored choice that no longer
+resolves. No warning and no per-Area restriction: forwarding is what naming a working Page means, and
+nothing needs policing. There are no several applicants for the root slot either: `/` belongs to the
+Area's base Module, so a foreign Module asking for it gets the answer every taken address gets.
 
 **A Module that is not there is a state, not a fault** (2026-09-07). A stored selection may name a
 Module this build cannot serve -- a deploy ahead of its rollout, a rollback, a removed package -- so the
