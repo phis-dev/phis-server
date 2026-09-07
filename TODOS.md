@@ -598,10 +598,10 @@ which took the catalog-wide ownership check and the active-table Page collision 
 it (`799ab02f`), the dialog the Modules workspace asks it with (`7474dbd2`, `03e9c38d`), the server's
 shape check on the way in (phis-server `73665eb`), and `@phis/dev` as the Site package it can be seen
 with -- `/contracts`, which nobody wants, beside `/login`, which Auth has. **Not built:** changing an
-address a Module already holds, the root slot in /shells, the update command's report, and the public
-SEO surface. Taking an address over from its holder was considered and dropped.
+address a Module already holds, the update command's report, and the public SEO surface. Taking an address over from its holder was considered and dropped.
 
-**The Area root, designed 2026-09-07, not built.** `/` is drawn without the Area's five own Regions --
+**The Area root, designed and built 2026-09-07** (phis-ui `2a29db09`, phis-server `b92bcb6`,
+phis-dev `12ba99f`). `/` is drawn without the Area's five own Regions --
 `chrome: "none"` never resolves them -- and the six Page-owned ones draw as on any page, each from its
 own slot route. That cheapness is the point: a landing page buys the seconds in which the first real
 page's chunks, CSS and fonts arrive, and Next's link prefetch does the fetching, so it needs no
@@ -658,14 +658,20 @@ Two things follow: the Area's root route has to travel with the controller prelo
 whatever it had when the Area is switched to landing again, since nothing is cleaned here either. The
 rule prevents rather than repairs -- a revision written at `/` before it exists still beats the preset.
 
-**Still missing for any of this:** a Route preset cannot say that it is a landing offer. The Area
-root's forward page and a real landing look identical from outside -- a preset with `path: "/"` -- so
-the applicants cannot be listed without a word for it in the descriptor. That word is a flag on
-`PhiCmsRoutePresetDescriptor`, beside the `path: "/"` it keeps: the path is the application, as the
+**Built as described, with one part left out:** there is no line stating the result beneath the two
+Selects. Between them they already say what `/` does and which landing stands there, and the only
+surplus was where a landing's tree comes from -- which went into the applicant's own option line, as
+the Module's name and, where the Site has taken the Page over, a word saying so. A line of prose
+would need a Widget type that renders provider-driven text, which does not exist.
+
+**What the flag settled:** a Route preset can now say that it is a landing offer. The Area root's
+forward page and a real landing look identical from outside -- a preset with `path: "/"` -- so the
+applicants could not be listed without a word for it. It is a flag on `PhiCmsRoutePresetDescriptor`,
+beside the `path: "/"` it keeps: the path is the application, as the
 type's own comment already says, and `findPhiPublicRoutePathCollisions` already steps over `/` so the
 address question never touches it. `public-welcome-page` carries the flag; the `<area>-root-page`
-forwarders do not, and that is exactly the distinction nothing can express today. Three readers
-follow it: the applicants provider filters on it, the route table admits exactly one `/` -- the chosen
+forwarders do not, and that is exactly the distinction nothing could express. Three readers follow
+it: the applicants provider filters on it, the route table admits exactly one `/` -- the chosen
 one, or the single applicant -- and the /shells Select offers the rest. It is not a second address: a
 declined offer is simply not routed, and the Module keeps every other route it has.
 
