@@ -6,6 +6,7 @@ import {
   PHI_AREA_CONFIG_SHELL_NAMESPACE,
   PHI_AREA_PUBLIC_ROUTE_PATHS_KEY,
   PHI_AREA_ROOT_ROUTE_KEY,
+  PHI_AREA_SEO_KEY,
   isPhiAreaConfigNamespace,
   readPhiAreaConfigNamespace,
 } from "@/lib/cms/area-config";
@@ -1193,10 +1194,12 @@ function readAreaShellConfig(value: unknown, errors: string[], label: string) {
   }
 
   for (const key of Object.keys(shell)) {
-    if (key !== PHI_AREA_ROOT_ROUTE_KEY) {
+    if (key !== PHI_AREA_ROOT_ROUTE_KEY && key !== PHI_AREA_SEO_KEY) {
       errors.push(`${label}.${key} is not a known Shell config key.`);
     }
   }
+
+  readAreaSeoConfig(shell[PHI_AREA_SEO_KEY], errors, `${label}.${PHI_AREA_SEO_KEY}`);
 
   if (shell[PHI_AREA_ROOT_ROUTE_KEY] === undefined) {
     return;
@@ -1221,6 +1224,32 @@ function readAreaShellConfig(value: unknown, errors: string[], label: string) {
   }
   if (!readPhiPageReference(rootRoute.target)) {
     errors.push(`${rootRouteLabel}.target must be an internal Page reference.`);
+  }
+}
+
+/**
+ * What an Area may state about being found.
+ *
+ * Two booleans, both optional, because the Shell states its config whole on every structure save: an
+ * Area that was never asked sends nothing rather than a guess. Whether the answers change anything --
+ * only Public is indexed at all -- is the reader's question, as it is for the root route.
+ */
+function readAreaSeoConfig(value: unknown, errors: string[], label: string) {
+  if (value === undefined) {
+    return;
+  }
+  const seo = readOptionalRecord(value, label, errors);
+  if (!seo) {
+    return;
+  }
+  for (const key of Object.keys(seo)) {
+    if (key !== "index" && key !== "sitemap") {
+      errors.push(`${label}.${key} is not a known SEO key.`);
+      continue;
+    }
+    if (typeof seo[key] !== "boolean") {
+      errors.push(`${label}.${key} must be a boolean.`);
+    }
   }
 }
 

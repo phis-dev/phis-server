@@ -23,6 +23,16 @@
 export const PHI_AREA_ROOT_ROUTE_KEY = "rootRoute" as const;
 
 /**
+ * What an Area says about being found, by key.
+ *
+ * `seo` holds two answers, and only Public is ever asked them: whether search engines may index the
+ * Area at all, and whether its published Pages are listed in the sitemap. Every other Area is
+ * authenticated, so its answer is fixed and needs no storage -- which is why an absent key is not a
+ * default to be guessed here but a Site that has not been asked, exactly as with the root route.
+ */
+export const PHI_AREA_SEO_KEY = "seo" as const;
+
+/**
  * What a Site decided about a Public address, by key.
  *
  * `publicRoutePaths` holds the answers given when a Module was enabled and the address it declared was

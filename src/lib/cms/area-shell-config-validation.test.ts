@@ -133,6 +133,26 @@ describe("the Shell half of an Area config", () => {
     ]);
   });
 
+  it("takes the two answers an Area gives about being found", () => {
+    expect(errorsOf({ seo: { index: true, sitemap: false } })).toEqual([]);
+  });
+
+  it("takes a structure write that states nothing about being found", () => {
+    expect(errorsOf({ rootRoute: { mode: "landing" } })).toEqual([]);
+  });
+
+  it("refuses an SEO answer that is not a boolean", () => {
+    expect(errorsOf({ seo: { index: "yes" } })).toEqual([
+      "preset.config.shell.seo.index must be a boolean.",
+    ]);
+  });
+
+  it("refuses an SEO key nothing reads back", () => {
+    expect(errorsOf({ seo: { canonical: "https://example.test" } })).toEqual([
+      "preset.config.shell.seo.canonical is not a known SEO key.",
+    ]);
+  });
+
   it("refuses a key nothing reads back", () => {
     expect(errorsOf({ rootRoute: { mode: "landing" }, backdrop: "later" })).toEqual([
       "preset.config.shell.backdrop is not a known Shell config key.",

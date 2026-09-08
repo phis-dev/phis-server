@@ -597,8 +597,9 @@ which took the catalog-wide ownership check and the active-table Page collision 
 `home`. Then the enable-time question itself: the assignment a Site writes and the route table reading
 it (`799ab02f`), the dialog the Modules workspace asks it with (`7474dbd2`, `03e9c38d`), the server's
 shape check on the way in (phis-server `73665eb`), and `@phis/dev` as the Site package it can be seen
-with -- `/contracts`, which nobody wants, beside `/login`, which Auth has. **Not built:** changing an
-address a Module already holds, the update command's report, and the public SEO surface. Taking an address over from its holder was considered and dropped.
+with -- `/contracts`, which nobody wants, beside `/login`, which Auth has. **Not built:** a standing list
+of the Site's Public addresses, the update command's report, and the public SEO surface. Taking an address
+over from its holder was considered and dropped.
 
 **The Area root, designed and built 2026-09-07** (phis-ui `2a29db09`, phis-server `b92bcb6`,
 phis-dev `12ba99f`). `/` is drawn without the Area's five own Regions --
@@ -685,16 +686,17 @@ live page, and a Layout that cannot be drawn keeps its children rather than swal
 Module off now states what it stops drawing, counted from the published trees over
 `/api/site/cms/module-usage`; `phis module del` counts the same thing over its own pool and refuses to
 take a package out of the build while its blocks stand on published pages, unless `--force` says to carry
-it out anyway. Still open there: a "remove from this Site" action on the row for a Module that is not in
-the build.
+it out anyway. The row for a Module that is not in the build needs no action of its own: save is strict,
+so the next one writes the selection without it.
 
 The dialog offers another address and refuses to enable without one, and that is the whole answer:
 taking the address over from the Module that holds it -- the other half the design once described --
 was dropped on 2026-09-07. An address is settled by whoever asks for it second, and an operator who
-wants the other order moves the first Module instead. **Still open:** nothing offers that move. The
-dialog opens only while enabling and lists only contested routes, so the address a Module already
-holds cannot be changed at all -- what is missing is a standing list of the Site's Public addresses,
-editable while everything stays enabled.
+wants the other order moves the first Module instead -- which the switches already allow, because checks
+run against the draft's active set: switching the holder off frees the address, switching the other one
+on takes it, and switching the first one back on makes it the one that asks. **Still open:** a standing
+list of the Site's Public addresses, editable while everything stays enabled, so that order need not be
+reached by switching.
 
 **Two namespaces, and only one question.**
 
@@ -803,6 +805,14 @@ failing to compile.
 **Add the public SEO surface, which does not exist yet:** `robots.txt`, a sitemap over published Public
 pages, canonical URLs, and durable redirects when a Page path changes. Renaming an indexed path without a
 redirect is only acceptable while nothing is indexed.
+
+**The two answers are asked already** (2026-09-08, phis-ui, phis-server). The Shells workspace header lost
+its two root-route Selects to an Area settings dialog -- a header is about the canvas, and everything the
+Area says about itself belongs together -- and the dialog asks two more: whether the Area may be indexed,
+and whether its published Pages are listed in the sitemap. They are stored in `config.shell.seo` beside
+`rootRoute`, travel with the structure draft, and are only answerable in Public, which is the only Area
+anything indexes; elsewhere the switches state the fact and are shown as unanswerable. **Nothing reads them
+yet** -- that is the surface above, and it is what the answers are for.
 
 
 ## P2: Auth Module replacement and preset recovery
