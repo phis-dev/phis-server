@@ -133,8 +133,11 @@
   - `Phis*` / `PHIS_*` -- phis and the Add-ons it serves. Everything in `@phis/contracts`'s Add-on
     surface (`addon`, `assets`, `capabilities`, `core`, `queries`, `schema`, `media-storage`) plus
     every type this application keeps to itself.
-  - `Phi*` / `PHI_*` -- a name the Site UI reads too: `@phis/contracts`'s `access`, `http`, `locale`,
-    `logging`, `media`, `signals`, `site-groups` and `server-capabilities`.
+  - `Phi*` / `PHI_*` -- a name the Site UI reads too: `@phis/contracts`'s `access`, `cms`, `http`,
+    `locale`, `logging`, `media`, `signals`, `site-groups` and `server-capabilities`. `catalog` sits in
+    both zones and is the clearest reading of the rule: the Module category the UI groups by is
+    `PhiRuntimeModuleCategory`, the package declaration only phis and an Add-on exchange is
+    `PhisModulePackageDeclaration`.
   - Who reads the name decides between those two, never who produced the value: the capability verdict
     is phis's own and is still `PhiCapabilityState`.
   - `PhiServer*` belongs to `phis-ui` alone and appears neither here nor in the contract; see
