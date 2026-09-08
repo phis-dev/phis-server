@@ -1,28 +1,14 @@
 /*
- * The CMS row vocabulary, held in the contract both sides read it from.
+ * What phi-server alone keeps about a CMS row.
  *
- * A status, a Region type, a visibility mask and a flag set are written by the site UI, checked and
- * stored here, and read back by both. They stood in two identical files until 2026-09-08 -- the same
- * arrangement the node identity had, and the same silent failure waiting in it: a renumbering on one
- * side would have been read as a different Area or a different status on the other, with every row
- * looking correct where it was written.
+ * The numbers a row is written with -- status, Region type, visibility mask, flags -- are read from
+ * `@phis/contracts/cms`, where the site UI reads them too, and every call site here names that
+ * contract. They are not re-exported through this file: nothing outside phi-server imports from it,
+ * so a second name for the same value would buy nothing and could drift.
  *
- * Re-exported rather than imported at every call site, so the guards, routes and DB layer that use
- * them keep naming one place.
+ * A revision's scope and the audit vocabulary stay, because nothing outside asks about either.
  */
-export {
-  DEFAULT_PHI_CMS_VISIBILITY_MASK,
-  PhiCmsFlags,
-  PhiCmsPageType,
-  PhiCmsRegionStatus,
-  PhiCmsRegionType,
-  PhiCmsRevisionFlags,
-  PhiCmsStatus,
-  PhiCmsVisibilityContext,
-  type PhiCmsRegionTypeValue,
-} from "@phis/contracts/cms";
 
-/* What phi-server alone keeps: a revision's scope, and the audit vocabulary nothing outside reads. */
 export const PhiCmsRevisionScopeType = {
   Page: 0,
   Area: 1,

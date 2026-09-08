@@ -1,5 +1,5 @@
 import type { Pool, PoolClient } from "pg";
-import { PhiCmsVisibilityContext } from "../lib/constants/phi-cms.ts";
+import { PhiCmsVisibilityContext } from "@phis/contracts/cms";
 import { PHI_AREA_CONFIG_MODULES_NAMESPACE } from "../lib/cms/area-config.ts";
 
 export const PHI_FIRST_PARTY_AUTH_UI_MODULE_ID = "@phis/ui/modules/auth";

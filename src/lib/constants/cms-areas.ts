@@ -1,4 +1,4 @@
-import { PhiCmsVisibilityContext } from "./phi-cms.ts";
+import { PhiCmsVisibilityContext } from "@phis/contracts/cms";
 
 export const PHIS_CMS_AREA_KEYS = [
   "public",

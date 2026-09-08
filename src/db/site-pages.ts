@@ -29,7 +29,7 @@ import {
   PhiCmsRegionType,
   PhiCmsRevisionFlags,
   PhiCmsStatus,
-} from "@/lib/constants/phi-cms";
+} from "@phis/contracts/cms";
 import { normalizeSiteCmsPath } from "@/lib/helpers/cms-path";
 import { hasPhiFlag } from "@/lib/helpers/flags";
 import type {

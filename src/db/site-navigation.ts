@@ -3,7 +3,7 @@ import "server-only";
 import type { PoolClient } from "pg";
 
 import { getPool } from "@/lib/db";
-import { PhiCmsRevisionFlags } from "@/lib/constants/phi-cms";
+import { PhiCmsRevisionFlags } from "@phis/contracts/cms";
 import { isPhisCmsAreaKey, resolvePhisCmsAreaMask } from "@/lib/constants/cms-areas";
 import {
   collectSiteCmsReferences,

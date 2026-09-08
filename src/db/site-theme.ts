@@ -4,7 +4,7 @@ import type { PoolClient } from "pg";
 
 import { clearSiteConfigCache } from "@/db/site-config";
 import { getPool } from "@/lib/db";
-import { PhiCmsRevisionFlags } from "@/lib/constants/phi-cms";
+import { PhiCmsRevisionFlags } from "@phis/contracts/cms";
 
 type DbQueryable = Pick<PoolClient, "query">;
 

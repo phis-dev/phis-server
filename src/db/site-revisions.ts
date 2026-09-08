@@ -8,7 +8,7 @@ import {
 } from "@/db/site-content";
 import { getPool } from "@/lib/db";
 import { isPhisCmsAreaKey, resolvePhisCmsAreaKey } from "@/lib/constants/cms-areas";
-import { PhiCmsRevisionFlags } from "@/lib/constants/phi-cms";
+import { PhiCmsRevisionFlags } from "@phis/contracts/cms";
 import { normalizeSiteCmsPath } from "@/lib/helpers/cms-path";
 import { getSiteThemeRevisionByIdWithDb, normalizeSiteThemeScopeKey } from "@/db/site-theme";
 
