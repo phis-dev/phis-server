@@ -1289,8 +1289,8 @@ CREATE TABLE IF NOT EXISTS phis.site_area_scopes (
   -- accounting 64, builder 256. Bits 2, 5 and 7 are unassigned, and those holes are what makes the
   -- column misread at a glance -- 8 looks like the fourth Area and is the third. One value both names
   -- the Area and says what a row is visible in, which is why the mask is stored rather than an
-  -- ordinal. PhiCmsVisibilityContext in src/lib/constants/phi-cms.ts decides the numbers; nothing
-  -- may write them out a second time.
+  -- ordinal. PhiCmsVisibilityContext in @phis/contracts/cms decides the numbers -- one file both
+  -- phi-server and the site UI read them from -- and nothing may write them out a second time.
   area_id SMALLINT NOT NULL DEFAULT 1,
   published_revision_id INT NULL,
   working_draft_revision_id INT NULL,

@@ -1,62 +1,28 @@
-export const PhiCmsPageType = {
-  Standard: 0,
-  Landing: 1,
-  Legal: 2,
-  System: 3,
-  Redirect: 4,
-} as const;
+/*
+ * The CMS row vocabulary, held in the contract both sides read it from.
+ *
+ * A status, a Region type, a visibility mask and a flag set are written by the site UI, checked and
+ * stored here, and read back by both. They stood in two identical files until 2026-09-08 -- the same
+ * arrangement the node identity had, and the same silent failure waiting in it: a renumbering on one
+ * side would have been read as a different Area or a different status on the other, with every row
+ * looking correct where it was written.
+ *
+ * Re-exported rather than imported at every call site, so the guards, routes and DB layer that use
+ * them keep naming one place.
+ */
+export {
+  DEFAULT_PHI_CMS_VISIBILITY_MASK,
+  PhiCmsFlags,
+  PhiCmsPageType,
+  PhiCmsRegionStatus,
+  PhiCmsRegionType,
+  PhiCmsRevisionFlags,
+  PhiCmsStatus,
+  PhiCmsVisibilityContext,
+  type PhiCmsRegionTypeValue,
+} from "@phis/contracts/cms";
 
-export const PhiCmsStatus = {
-  Draft: 0,
-  Published: 1,
-  Archived: 2,
-  Deleted: 3,
-} as const;
-
-export const PhiCmsRegionStatus = {
-  Draft: 0,
-  Active: 1,
-  Disabled: 2,
-} as const;
-
-export const PhiCmsRegionType = {
-  HeaderTop: 10,
-  HeaderMain: 11,
-  HeaderBottom: 12,
-  SiderLeft: 20,
-  SiderRight: 21,
-  Hero: 25,
-  Content: 30,
-  FooterTop: 39,
-  Footer: 40,
-  FooterBottom: 41,
-  Drawer: 50,
-} as const;
-
-export const PhiCmsVisibilityContext = {
-  PublicArea: 1 << 0,
-  AppArea: 1 << 1,
-  AdminArea: 1 << 3,
-  EditorArea: 1 << 4,
-  AccountingArea: 1 << 6,
-  BuilderArea: 1 << 8,
-} as const;
-
-export const PhiCmsFlags = {
-  SiteCustom: 1 << 0,
-  Hidden: 1 << 1,
-  MobileOnly: 1 << 2,
-  DesktopOnly: 1 << 3,
-  Collapsed: 1 << 4,
-  NoTranslate: 1 << 5,
-} as const;
-
-export const PhiCmsRevisionFlags = {
-  Draft: 1 << 0,
-  Published: 1 << 1,
-  Deleted: 1 << 2,
-} as const;
-
+/* What phi-server alone keeps: a revision's scope, and the audit vocabulary nothing outside reads. */
 export const PhiCmsRevisionScopeType = {
   Page: 0,
   Area: 1,
@@ -85,5 +51,3 @@ export const PhiCmsAuditEvent = {
 } as const;
 
 export type PhiCmsAuditEvent = (typeof PhiCmsAuditEvent)[keyof typeof PhiCmsAuditEvent];
-
-export const DEFAULT_PHI_CMS_VISIBILITY_MASK = PhiCmsVisibilityContext.PublicArea;
