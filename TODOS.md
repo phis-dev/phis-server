@@ -698,6 +698,25 @@ on takes it, and switching the first one back on makes it the one that asks. **S
 list of the Site's Public addresses, editable while everything stays enabled, so that order need not be
 reached by switching.
 
+**A Site Page can hold an address too, designed 2026-09-08 and not built.** The collision check in the
+path-change command looks only in `site_page_scopes`, and a Site path is validated against `/api`,
+`/_next`, `/operator` and `/setup` alone. Site against Module is therefore unchecked in both directions,
+in Public and outside it.
+
+The rule is the one already in force, with a second kind of holder: whoever asks second bears the cost.
+In Public a Module that finds its declared path held by a published Site Page is offered another address
+by the same dialog, which needs only a second reason to give for why an address is taken. Outside Public
+the newcomer has nothing to yield with, because its path is its package identity: a Site Page authored on
+`/acme/shop` before that package was installed makes the activation refuse, naming the occupied path, and
+it stays refused until the Site moves the Page. That is rare and acceptable as long as it is written down
+for Module builders, which it now is in `phis-ui/THIRD_PARTY_MODULES.md`. One complement keeps it to that
+single order: a Site Page may not be moved onto the path of a package active in its Area. Moving the Page
+is cheap once durable redirects exist, because a published address survives the move as a redirect.
+
+**The collision dialog does not say that an address is already public.** It knows -- the published Area
+revision routes it -- and an operator answering the question deserves to see the difference between
+renaming something nobody has visited and moving an address that stands in an index.
+
 **Two namespaces, and only one question.**
 
 - **Every Area but Public**: a Module's routes live under its own package, `/<scope>/<package>/…` --
@@ -806,6 +825,47 @@ failing to compile.
 URLs, and durable redirects when a Page path changes. Renaming an indexed path without a redirect is only
 acceptable while nothing is indexed. The sitemap needs a decision first: the Site has locale prefixes, so
 either one entry per locale with `hreflang` alternates, or the default locale alone.
+
+**Canonical** means `alternates.canonical`, which nothing emits today. The duplicate that makes it worth
+having is our own: `config.shell.rootRoute` renders a Page in place at the Area root, so `/en/` and
+`/en/terms-and-conditions` both answer 200 with the same document. That was the point -- a landing Page
+must not arrive through a forward, inside the Shell -- and the canonical is what pays for it. Not to be
+confused with `canonicalHref` in `server-helpers/cms-route.ts`, which is a computed 307 for a wrong
+locale prefix and shares only the word. `hreflang` alternates live in the same metadata field, so they
+wait on the same locale decision as the sitemap.
+
+**Durable redirects, designed 2026-09-08, not built.** Renaming a Page path drops the old address to a
+404 with no trace. Internal links do not notice -- references persist identity, never an href -- so what
+breaks is everything outside: bookmarks, foreign links, and the index entry with its history.
+
+- *One source.* A Site-authored Page whose path was published and which the Builder then moves, in every
+  Area and not only Public. Module addresses are not a source, and the reason is structural: in a Public
+  collision the newcomer yields and never the holder -- taking an address over from its holder was
+  considered and dropped on 2026-09-07 -- so a published Module address cannot be pulled away, and
+  outside Public a route lives under its package path where two packages never meet. The off/on gesture
+  that lets an operator reverse the order does move a published address, but it lands in a case already
+  decided: the address has a new holder, or it has none, and neither takes a redirect. A package update
+  that changes a declared path is the only move without a Site gesture, and belongs to the standing
+  address list rather than here.
+- *What a row holds:* the old path and the target, where the target is a structured internal reference --
+  `site_page_scopes.id`, the variant the reference codec already issues -- and never the target path.
+  That is what makes `/a -> /b -> /c` two rows that both resolve in one hop to wherever the Page is
+  today: no chains, no cycles, no hop limit.
+- *The trigger:* the dedicated path-change command, inside its transaction. It is the only writer of a
+  Site path -- restoring, undoing, publishing and discarding never touch one -- so there is no second
+  place to forget. The condition is `published_revision_id` on the locked Scope at that moment. Never
+  published means the address was never public; withdrawn means it has been a 404 since, which a
+  redirect would undo.
+- *The invariant:* the history holds only paths that no live Page occupies. A new Page claiming a
+  remembered path deletes that row rather than being shadowed by it, and a Page renamed back onto its old
+  path drops the row it made. Resolution order then does not matter, because the two sets never
+  intersect -- which is why this needs no precedence rule and no fallback.
+- *At runtime* the lookup sits on the miss path only, so ordinary traffic never pays for it. A hit
+  answers 301 to the Scope's current path. The locale prefix stays outside it, since paths are
+  locale-neutral, so `/de/old` reaches `/de/new` by itself. The target must be live -- not tombstoned,
+  and published -- because a 301 into a 404 is worse than the 404.
+- *Open:* whether the Builder shows the remembered addresses anywhere. Proposed no, for now: the
+  invariant frees a path the moment somebody needs it, so there is nothing to administer.
 
 **The Area states the head of its Pages, and the head is written** (2026-09-08, phis-ui, phis-server). The
 Shells workspace header lost its two root-route Selects to an Area settings dialog -- a header is about the
