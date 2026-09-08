@@ -1285,6 +1285,12 @@ CREATE INDEX IF NOT EXISTS site_content_published_at_idx
 CREATE TABLE IF NOT EXISTS phis.site_area_scopes (
   id SERIAL PRIMARY KEY,
   site_id SMALLINT NOT NULL REFERENCES phis.sites(id) ON DELETE CASCADE,
+  -- The Area's visibility mask, not a running number: public 1, app 2, admin 8, editor 16,
+  -- accounting 64, builder 256. Bits 2, 5 and 7 are unassigned, and those holes are what makes the
+  -- column misread at a glance -- 8 looks like the fourth Area and is the third. One value both names
+  -- the Area and says what a row is visible in, which is why the mask is stored rather than an
+  -- ordinal. PhiCmsVisibilityContext in src/lib/constants/phi-cms.ts decides the numbers; nothing
+  -- may write them out a second time.
   area_id SMALLINT NOT NULL DEFAULT 1,
   published_revision_id INT NULL,
   working_draft_revision_id INT NULL,
@@ -1305,6 +1311,7 @@ CREATE INDEX IF NOT EXISTS site_area_scopes_site_area_idx
 CREATE TABLE IF NOT EXISTS phis.site_page_scopes (
   id SERIAL PRIMARY KEY,
   site_id SMALLINT NOT NULL REFERENCES phis.sites(id) ON DELETE CASCADE,
+  -- The Area's visibility mask, as in site_area_scopes above.
   area_id SMALLINT NOT NULL DEFAULT 1,
   path VARCHAR(512) NULL,
   owner_module_id VARCHAR(255) NULL,
@@ -1426,6 +1433,7 @@ CREATE TABLE IF NOT EXISTS phis.site_cms_references (
   source_revision_id INT NULL,
   source_location VARCHAR(1024) NOT NULL,
   target_kind SMALLINT NOT NULL,
+  -- The Area's visibility mask, as in site_area_scopes.
   target_area_id SMALLINT NULL,
   target_page_scope_id INT NULL REFERENCES phis.site_page_scopes(id) ON DELETE RESTRICT,
   target_owner_module_id VARCHAR(255) NULL,
