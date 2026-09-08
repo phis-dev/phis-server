@@ -133,23 +133,52 @@ describe("the Shell half of an Area config", () => {
     ]);
   });
 
-  it("takes the two answers an Area gives about being found", () => {
-    expect(errorsOf({ seo: { index: true, sitemap: false } })).toEqual([]);
+  it("takes the four answers an Area gives about the head of its Pages", () => {
+    expect(errorsOf({
+      meta: { index: true, sitemap: false, titleTemplate: "%s | Phi", defaultTitle: "Phi" },
+    })).toEqual([]);
   });
 
-  it("takes a structure write that states nothing about being found", () => {
+  it("takes a structure write that states nothing about the head of its Pages", () => {
     expect(errorsOf({ rootRoute: { mode: "landing" } })).toEqual([]);
   });
 
-  it("refuses an SEO answer that is not a boolean", () => {
-    expect(errorsOf({ seo: { index: "yes" } })).toEqual([
-      "preset.config.shell.seo.index must be a boolean.",
+  it("refuses an indexing answer that is not a boolean", () => {
+    expect(errorsOf({ meta: { index: "yes" } })).toEqual([
+      "preset.config.shell.meta.index must be a boolean.",
     ]);
   });
 
-  it("refuses an SEO key nothing reads back", () => {
-    expect(errorsOf({ seo: { canonical: "https://example.test" } })).toEqual([
-      "preset.config.shell.seo.canonical is not a known SEO key.",
+  it("refuses a meta key nothing reads back", () => {
+    expect(errorsOf({ meta: { canonical: "https://example.test" } })).toEqual([
+      "preset.config.shell.meta.canonical is not a known area meta key.",
+    ]);
+  });
+
+  it("refuses a title that is not a string", () => {
+    expect(errorsOf({ meta: { defaultTitle: 7 } })).toEqual([
+      "preset.config.shell.meta.defaultTitle must be a string.",
+    ]);
+  });
+
+  /*
+   * A template without the placeholder is not a formatting slip: it gives every Page in the Area the
+   * same title, which nothing downstream can detect and no Operator would have meant.
+   */
+  it("refuses a title template that drops the Page's own title", () => {
+    expect(errorsOf({ meta: { titleTemplate: "Phi Systems" } })).toEqual([
+      'preset.config.shell.meta.titleTemplate must contain the "%s" placeholder for the Page\'s own title.',
+    ]);
+  });
+
+  it("takes an emptied title template as the answer that it is", () => {
+    // Cleared means "the Site's name", which the reader resolves. Only a non-empty one has to format.
+    expect(errorsOf({ meta: { titleTemplate: "" } })).toEqual([]);
+  });
+
+  it("refuses a title longer than anything a head should carry", () => {
+    expect(errorsOf({ meta: { defaultTitle: "x".repeat(201) } })).toEqual([
+      "preset.config.shell.meta.defaultTitle must be at most 200 characters.",
     ]);
   });
 

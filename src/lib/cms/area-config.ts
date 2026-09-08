@@ -23,14 +23,15 @@
 export const PHI_AREA_ROOT_ROUTE_KEY = "rootRoute" as const;
 
 /**
- * What an Area says about being found, by key.
+ * What an Area says about itself in the head of every Page it draws, by key.
  *
- * `seo` holds two answers, and only Public is ever asked them: whether search engines may index the
- * Area at all, and whether its published Pages are listed in the sitemap. Every other Area is
- * authenticated, so its answer is fixed and needs no storage -- which is why an absent key is not a
- * default to be guessed here but a Site that has not been asked, exactly as with the root route.
+ * `meta` holds four answers in two groups. Whether search engines may index the Area and whether its
+ * published Pages are listed in the sitemap are only ever asked of Public -- every other Area is
+ * authenticated, so its answer is fixed and needs no storage. The title template and the default title
+ * are asked of every Area, because a tab title is not a search result. An absent key is not a default
+ * to be guessed here but a Site that has not been asked, exactly as with the root route.
  */
-export const PHI_AREA_SEO_KEY = "seo" as const;
+export const PHI_AREA_META_KEY = "meta" as const;
 
 /**
  * What a Site decided about a Public address, by key.

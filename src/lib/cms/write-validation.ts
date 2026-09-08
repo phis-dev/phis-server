@@ -6,7 +6,7 @@ import {
   PHI_AREA_CONFIG_SHELL_NAMESPACE,
   PHI_AREA_PUBLIC_ROUTE_PATHS_KEY,
   PHI_AREA_ROOT_ROUTE_KEY,
-  PHI_AREA_SEO_KEY,
+  PHI_AREA_META_KEY,
   isPhiAreaConfigNamespace,
   readPhiAreaConfigNamespace,
 } from "@/lib/cms/area-config";
@@ -1194,12 +1194,12 @@ function readAreaShellConfig(value: unknown, errors: string[], label: string) {
   }
 
   for (const key of Object.keys(shell)) {
-    if (key !== PHI_AREA_ROOT_ROUTE_KEY && key !== PHI_AREA_SEO_KEY) {
+    if (key !== PHI_AREA_ROOT_ROUTE_KEY && key !== PHI_AREA_META_KEY) {
       errors.push(`${label}.${key} is not a known Shell config key.`);
     }
   }
 
-  readAreaSeoConfig(shell[PHI_AREA_SEO_KEY], errors, `${label}.${PHI_AREA_SEO_KEY}`);
+  readAreaMetaConfig(shell[PHI_AREA_META_KEY], errors, `${label}.${PHI_AREA_META_KEY}`);
 
   if (shell[PHI_AREA_ROOT_ROUTE_KEY] === undefined) {
     return;
@@ -1228,27 +1228,51 @@ function readAreaShellConfig(value: unknown, errors: string[], label: string) {
 }
 
 /**
- * What an Area may state about being found.
+ * What an Area may state about the head of its Pages.
  *
- * Two booleans, both optional, because the Shell states its config whole on every structure save: an
- * Area that was never asked sends nothing rather than a guess. Whether the answers change anything --
- * only Public is indexed at all -- is the reader's question, as it is for the root route.
+ * Every key optional, because the Shell states its config whole on every structure save: an Area that
+ * was never asked sends nothing rather than a guess. Whether the answers change anything -- only
+ * Public is indexed at all -- is the reader's question, as it is for the root route.
+ *
+ * The template is checked for its placeholder and not merely for being a string. A template without
+ * one is not a formatting slip but a Site where every Page has the same title, which no reader can
+ * detect and no Operator would have meant; and it is the write path, so it is refused here rather
+ * than worked around later.
  */
-function readAreaSeoConfig(value: unknown, errors: string[], label: string) {
+const AREA_META_BOOLEAN_KEYS = new Set(["index", "sitemap"]);
+const AREA_META_TEXT_KEYS = new Set(["titleTemplate", "defaultTitle"]);
+const AREA_META_TITLE_MAX_LENGTH = 200;
+
+function readAreaMetaConfig(value: unknown, errors: string[], label: string) {
   if (value === undefined) {
     return;
   }
-  const seo = readOptionalRecord(value, label, errors);
-  if (!seo) {
+  const meta = readOptionalRecord(value, label, errors);
+  if (!meta) {
     return;
   }
-  for (const key of Object.keys(seo)) {
-    if (key !== "index" && key !== "sitemap") {
-      errors.push(`${label}.${key} is not a known SEO key.`);
+  for (const key of Object.keys(meta)) {
+    if (AREA_META_BOOLEAN_KEYS.has(key)) {
+      if (typeof meta[key] !== "boolean") {
+        errors.push(`${label}.${key} must be a boolean.`);
+      }
       continue;
     }
-    if (typeof seo[key] !== "boolean") {
-      errors.push(`${label}.${key} must be a boolean.`);
+    if (!AREA_META_TEXT_KEYS.has(key)) {
+      errors.push(`${label}.${key} is not a known area meta key.`);
+      continue;
+    }
+    const text = meta[key];
+    if (typeof text !== "string") {
+      errors.push(`${label}.${key} must be a string.`);
+      continue;
+    }
+    if (text.length > AREA_META_TITLE_MAX_LENGTH) {
+      errors.push(`${label}.${key} must be at most ${AREA_META_TITLE_MAX_LENGTH} characters.`);
+      continue;
+    }
+    if (key === "titleTemplate" && text.trim() && !text.includes("%s")) {
+      errors.push(`${label}.${key} must contain the "%s" placeholder for the Page's own title.`);
     }
   }
 }

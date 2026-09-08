@@ -802,18 +802,35 @@ the rule holds by itself once a Module can lose a path. And the read no longer r
 routes want one address the first claim answers and the second is absent, rather than the whole table
 failing to compile.
 
-**Add the public SEO surface, which does not exist yet:** `robots.txt`, a sitemap over published Public
-pages, canonical URLs, and durable redirects when a Page path changes. Renaming an indexed path without a
-redirect is only acceptable while nothing is indexed.
+**Add the rest of the public SEO surface:** `robots.txt`, a sitemap over published Public pages, canonical
+URLs, and durable redirects when a Page path changes. Renaming an indexed path without a redirect is only
+acceptable while nothing is indexed. The sitemap needs a decision first: the Site has locale prefixes, so
+either one entry per locale with `hreflang` alternates, or the default locale alone.
 
-**The two answers are asked already** (2026-09-08, phis-ui, phis-server). The Shells workspace header lost
-its two root-route Selects to an Area settings dialog -- a header is about the canvas, and everything the
-Area says about itself belongs together -- and the dialog asks two more: whether the Area may be indexed,
-and whether its published Pages are listed in the sitemap. They are stored in `config.shell.seo` beside
-`rootRoute`, travel with the structure draft, and are only answerable in Public, which is the only Area
-anything indexes; elsewhere the switches state the fact and are shown as unanswerable. **Nothing reads them
-yet** -- that is the surface above, and it is what the answers are for.
+**The Area states the head of its Pages, and the head is written** (2026-09-08, phis-ui, phis-server). The
+Shells workspace header lost its two root-route Selects to an Area settings dialog -- a header is about the
+canvas, and everything the Area says about itself belongs together -- and the dialog now asks four more
+questions in two groups. *Page titles*: a title template with `%s` standing for the Page's own title, and a
+default title for Pages that name none. *Search engines*: whether the Area may be indexed, and whether its
+published Pages are listed in the sitemap.
 
+All four are stored under `config.shell.meta` beside `rootRoute` and travel with the structure draft. The
+key was `seo` and holds four answers now, which is why it was renamed: a tab title is not a search result.
+The two groups are answerable by different Areas -- the titles everywhere, because the Admin wants its own
+tab title, and the two switches only in Public, which is the only Area anything indexes. Elsewhere the
+switches state the fact and are shown as unanswerable.
+
+The titles and `robots` are read: `next/area-route.tsx` builds its metadata through
+`buildPhiAreaPageMetadata` rather than assembling it inline. The title it returns is *absolute*, because
+the Root Layout states a template for the whole Site and an Area that stated its own has to replace it
+rather than be wrapped by it; an Area that stated none still gets `%s | <site name>`, which is what the
+Root Layout always did. Every Area but Public is `noindex` whatever is stored, so a Site that never opened
+the dialog still keeps its Admin out of the index.
+
+The write path is strict, as the switches' was: an unknown key, a non-boolean switch, a non-string title,
+a title over 200 characters, and a non-empty template without `%s` are each refused. That last one is not
+a formatting slip -- a template without the placeholder gives every Page in the Area the same title, which
+nothing downstream can detect. **Still unread:** the sitemap switch, which is the surface above.
 
 ## P2: Auth Module replacement and preset recovery
 
