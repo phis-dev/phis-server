@@ -60,6 +60,27 @@ describe("site scaffold", () => {
     expect(files["src/app/[root]/layout.tsx"]).toContain("createPhiNextDynamicRootBoundary");
   });
 
+  /*
+   * The root refusal routes are the fallback boundary of the whole app, so every module they can reach
+   * joins every route's chunk group. A registry naming all six Areas here once put the Builder's
+   * workspace Clients on the Public landing page and roughly doubled its script payload.
+   */
+  it("lets only the Public Area answer a root refusal, and loads even that", () => {
+    const files = buildPhiSiteScaffoldFiles(context);
+    const area = files["src/runtime-modules/root-error-area.tsx"];
+
+    expect(area).toContain("PhiNextRootErrorArea");
+    expect(area).toContain('import("@/runtime-modules/public")');
+    expect(area).toContain('import("@/runtime-modules/public-client")');
+    for (const other of ["accounting", "admin", "app", "builder", "editor"]) {
+      expect(area).not.toContain(`@/runtime-modules/${other}`);
+    }
+
+    for (const route of ["not-found", "unauthorized", "forbidden"]) {
+      expect(files[`src/app/${route}.tsx`]).toContain("PHI_CMS_ROOT_ERROR_AREA");
+    }
+  });
+
   it("leaves no optional catch-all that would swallow an Area root", () => {
     // An optional catch-all matches the Area root too, so it would collide with the root branch's page
     // -- and Next refuses both catch-all kinds at one level outright.
