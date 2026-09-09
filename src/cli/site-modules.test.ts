@@ -11,13 +11,32 @@ import { buildSiteModuleProjection } from "./modules.mts";
  */
 describe("the generated Site Module projection", () => {
   it("composes to nothing when no Module is installed", () => {
-    const { server, client } = buildSiteModuleProjection([]);
+    const { server, client, authoringClient } = buildSiteModuleProjection([]);
     expect(server).toContain("collectPhiSiteModuleServerAreaContributions([\n]);");
     expect(client).toContain("definitions: []");
     expect(client).toContain("clients: []");
-    expect(client).toContain("authoring: []");
+    expect(authoringClient).toContain("authoring: []");
     // A Site without Modules must still get a Client file, or its Area hosts have nothing to be handed.
     expect(client.startsWith('"use client";')).toBe(true);
+    expect(authoringClient.startsWith('"use client";')).toBe(true);
+  });
+
+  /*
+   * The separation the Public bundle depends on. Every Area host imports the live file, so an Authoring
+   * import in it is an Authoring implementation in every Area's browser bundle -- which is how the
+   * Builder's table controls once shipped with the Public landing page.
+   */
+  it("keeps Authoring out of the file every Area host imports", () => {
+    const { client, authoringClient } = buildSiteModuleProjection([
+      { packageName: "@acme/status", origin: "local" },
+    ]);
+    // The import edge is what matters; the file may name its counterpart in prose.
+    expect(client).not.toMatch(/^import .*authoring-client/mu);
+    expect(client).not.toContain("phiModuleAuthoringContributions");
+    expect(authoringClient).toContain(
+      'import { phiModuleAuthoringContributions as m_acme_status_authoring } from "@acme/status/authoring-client";',
+    );
+    expect(authoringClient).toContain("collectPhiSiteModuleAuthoringContributions");
   });
 
   it("imports each boundary under the fixed export names", () => {
@@ -32,9 +51,6 @@ describe("the generated Site Module projection", () => {
     );
     expect(client).toContain(
       'import { phiModuleClientContributions as m_acme_status_client } from "@acme/status/client";',
-    );
-    expect(client).toContain(
-      'import { phiModuleAuthoringContributions as m_acme_status_authoring } from "@acme/status/authoring-client";',
     );
   });
 
