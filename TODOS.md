@@ -851,11 +851,11 @@ breaks is everything outside: bookmarks, foreign links, and the index entry with
   `site_page_scopes.id`, the variant the reference codec already issues -- and never the target path.
   That is what makes `/a -> /b -> /c` two rows that both resolve in one hop to wherever the Page is
   today: no chains, no cycles, no hop limit.
-- *The trigger:* the dedicated path-change command, inside its transaction. It is the only writer of a
-  Site path -- restoring, undoing, publishing and discarding never touch one -- so there is no second
-  place to forget. The condition is `published_revision_id` on the locked Scope at that moment. Never
-  published means the address was never public; withdrawn means it has been a 404 since, which a
-  redirect would undo.
+- *The trigger:* the publish that promotes a pending path, described in the item below. It is the one
+  place a live Site path changes, and it is the same place a Module address changes, so one comparison
+  writes both kinds of redirect instead of two mechanisms doing it separately. The condition is that the
+  Scope had a published revision before this publish: never published means the address was never
+  public, and withdrawn means it has been a 404 since, which a redirect would undo.
 - *The invariant:* the history holds only paths that no live Page occupies. A new Page claiming a
   remembered path deletes that row rather than being shadowed by it, and a Page renamed back onto its old
   path drops the row it made. Resolution order then does not matter, because the two sets never
@@ -866,6 +866,38 @@ breaks is everything outside: bookmarks, foreign links, and the index entry with
   and published -- because a 301 into a 404 is worse than the 404.
 - *Open:* whether the Builder shows the remembered addresses anywhere. Proposed no, for now: the
   invariant frees a path the moment somebody needs it, so there is nothing to administer.
+
+**A Page path changes through draft and publish, designed 2026-09-09, not built.** Renaming a Page is
+today the one content-shaped change that bypasses the draft entirely. The path-change command
+"preserves published/working revision pointers and creates no CMS revision or Undo/Redo entry", so the
+live Site changes the moment an operator types, while every edit to the page itself waits for a publish
+-- and the rename cannot be undone, because nothing recorded it. That asymmetry ends.
+
+- *Where the pending path lives:* the working draft revision's `meta_json`. Not a second column, and not
+  `tree_json`, which may hold no authoritative path. `site_page_scopes.path` stays the one locator
+  resolution reads -- a draft carries a proposal, not a second truth -- and in exchange the whole draft
+  apparatus comes along for free: discard, the revision list, and the Undo/Redo entry the command
+  explicitly could not offer.
+- *The guard runs twice, and only the second one is the truth.* When a pending path is written it is
+  checked against the live and pending paths of that Area so the Builder can object early; that check is
+  a query, and the concurrency test already shows a query alone lets two writers through. At publish the
+  partial unique index decides, and a publish that loses has to fail with something an operator can act
+  on. Advisory then authoritative is the shape the Module address question already has, where checks run
+  against the draft's active set and the activation settles it.
+- *Publish becomes a path operation.* In the same transaction that swaps the revision pointers, a draft
+  carrying a pending path updates the Scope column and writes the redirect row. The audit event naming
+  old path, new path, Scope, Area and actor moves there too, because that is where the path changes.
+- *Nothing else has to move.* Internal references persist Scope ids, so they resolve to the old path
+  before the publish and to the new one after, with no rewrite anywhere. `rootRoute` names a Page rather
+  than a path. Module route assignments already live in an Area revision and already publish.
+- *The Builder has to show a pending path* wherever it shows a path -- the Page catalog, Page settings,
+  navigation target pickers -- or the operator reads an address that visitors do not have. Routing stays
+  on the published path: a pending path is text, not a working address, and making it route would mean a
+  second route table for drafts.
+- *What this rewrites:* the "Explicit path change command" section of REFERENCES.md, whose closing
+  sentence about preserved revision pointers and absent Undo/Redo entries states the opposite of all of
+  the above, and whose collision step moves to publish. `site-page-path-change.pg.test.ts` moves its
+  collision and concurrency cases with it.
 
 **The Area states the head of its Pages, and the head is written** (2026-09-08, phis-ui, phis-server). The
 Shells workspace header lost its two root-route Selects to an Area settings dialog -- a header is about the
