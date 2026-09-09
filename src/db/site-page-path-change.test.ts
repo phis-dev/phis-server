@@ -74,6 +74,10 @@ async function change(siteId = 31, areaMask = 1, scopeId = 18, path = "/kontakt-
   return changeSitePagePath(siteId, areaMask, scopeId, path);
 }
 
+async function changeTo(path: string) {
+  return change(31, 1, 18, path);
+}
+
 async function failing(...args: Parameters<typeof change>) {
   try {
     await change(...args);
@@ -95,14 +99,15 @@ beforeEach(() => {
  * gives two Pages one path, and a pointer touched in passing loses a published revision.
  */
 describe("A Page path change", () => {
-  it("moves the Scope and reports what pointed at it", async () => {
+  it("proposes the move and reports what pointed at it", async () => {
     const db = pathChangeDb({ references: [{ source_kind: 1, count: "2" }, { source_kind: 4, count: "1" }] });
     const result = await change();
     expect(result).toMatchObject({
       pageScopeId: 18,
       areaMask: 1,
-      oldPath: "/kontakt",
-      path: "/kontakt-neu",
+      // The live address is unchanged: the Page answers on it until somebody publishes.
+      path: "/kontakt",
+      pendingPath: "/kontakt-neu",
       references: { total: 3, bySource: { page: 2, navigation: 0, content: 0, area: 1 } },
     });
     expect(db.texts()).toContain("COMMIT");
@@ -110,16 +115,25 @@ describe("A Page path change", () => {
     expect(db.release).toHaveBeenCalled();
   });
 
-  it("writes the path and nothing else, so the revision pointers survive the move", async () => {
+  it("writes the pending path and nothing else, so the live path and the pointers stand", async () => {
     const db = pathChangeDb();
     const result = await change();
     const update = db.find("UPDATE phis.site_page_scopes");
-    expect(update!.text).toMatch(/SET path = \$2, updated_at = NOW\(\)/u);
-    expect(update!.text).not.toMatch(/published_revision_id|working_draft_revision_id|tombstoned_at/u);
+    expect(update!.text).toMatch(/SET draft_path = \$2, updated_at = NOW\(\)/u);
+    expect(update!.text).not.toMatch(/SET path|published_revision_id|working_draft_revision_id|tombstoned_at/u);
     expect(update!.values).toEqual([18, "/kontakt-neu"]);
-    // The pointers are read before the move and answered unchanged: a rename is not a publish.
+    // The pointers are read before the write and answered unchanged: a rename is not a publish.
     expect(result.publishedRevisionId).toBe(184);
     expect(result.workingDraftRevisionId).toBe(190);
+  });
+
+  it("cancels a pending move when the Page is asked for the path it already answers on", async () => {
+    const db = pathChangeDb();
+    const result = await changeTo("/kontakt");
+    expect(result.pendingPath).toBeNull();
+    expect(db.find("UPDATE phis.site_page_scopes")!.values).toEqual([18, null]);
+    // Nothing contends with an address the Page already holds, so nothing is asked about it.
+    expect(db.find("AND (path = $3 OR draft_path = $3)")).toBeUndefined();
   });
 
   it("counts the affected references inside the transaction that moves the path", async () => {

@@ -29,18 +29,43 @@ describe("changeSitePagePath against PostgreSQL", () => {
     await closePhiTestPool();
   });
 
-  it("rewrites the path and preserves the revision pointers", async () => {
+  it("proposes the path and leaves the live one standing", async () => {
     const scopeId = await createPhiTestPageScope(site, "/pgtest-move-from");
 
     const result = await changeSitePagePath(site.id, 1, scopeId, "/pgtest-move-to");
 
-    expect(result).toMatchObject({ oldPath: "/pgtest-move-from", path: "/pgtest-move-to" });
+    expect(result).toMatchObject({ path: "/pgtest-move-from", pendingPath: "/pgtest-move-to" });
     const pool = await requirePhiTestDatabase();
-    const { rows } = await pool.query<{ path: string }>(
-      `SELECT path FROM phis.site_page_scopes WHERE id = $1`,
+    const { rows } = await pool.query<{ path: string; draft_path: string | null }>(
+      `SELECT path, draft_path FROM phis.site_page_scopes WHERE id = $1`,
       [scopeId],
     );
-    expect(rows[0]?.path).toBe("/pgtest-move-to");
+    // Visitors keep the address they had. Only a publish moves it.
+    expect(rows[0]?.path).toBe("/pgtest-move-from");
+    expect(rows[0]?.draft_path).toBe("/pgtest-move-to");
+  });
+
+  it("cancels a pending move when the Page is asked for the path it already answers on", async () => {
+    const scopeId = await createPhiTestPageScope(site, "/pgtest-cancel");
+    await changeSitePagePath(site.id, 1, scopeId, "/pgtest-cancel-elsewhere");
+
+    const result = await changeSitePagePath(site.id, 1, scopeId, "/pgtest-cancel");
+
+    expect(result.pendingPath).toBeNull();
+    const pool = await requirePhiTestDatabase();
+    const { rows } = await pool.query<{ draft_path: string | null }>(
+      `SELECT draft_path FROM phis.site_page_scopes WHERE id = $1`,
+      [scopeId],
+    );
+    expect(rows[0]?.draft_path).toBeNull();
+  });
+
+  it("refuses a pending path that another Page already holds as a pending one", async () => {
+    const first = await createPhiTestPageScope(site, "/pgtest-pending-a");
+    const second = await createPhiTestPageScope(site, "/pgtest-pending-b");
+    await changeSitePagePath(site.id, 1, first, "/pgtest-pending-target");
+
+    await expect(changeSitePagePath(site.id, 1, second, "/pgtest-pending-target")).rejects.toThrow();
   });
 
   it("leaves the path untouched when the transaction rolls back on a collision", async () => {
@@ -85,7 +110,7 @@ describe("changeSitePagePath against PostgreSQL", () => {
     });
 
     expect(observed.blockedWhileHeld).toBe(true);
-    expect(observed.result.path).toBe("/pgtest-locked-moved");
+    expect(observed.result.pendingPath).toBe("/pgtest-locked-moved");
   });
 
   it("refuses a Module-owned Scope without writing anything", async () => {
@@ -124,10 +149,21 @@ describe("changeSitePagePath against PostgreSQL", () => {
     const pool = await requirePhiTestDatabase();
     const { rows } = await pool.query<{ count: string }>(
       `SELECT count(*) AS count FROM phis.site_page_scopes
-       WHERE site_id = $1 AND area_id = 1 AND path = '/pgtest-contested'`,
+       WHERE site_id = $1 AND area_id = 1 AND draft_path = '/pgtest-contested'`,
       [site.id],
     );
     expect(rows[0]?.count).toBe("1");
+  });
+
+  it("reserves a pending path against a second Scope the same way the live one is reserved", async () => {
+    const pool = await requirePhiTestDatabase();
+    const holder = await createPhiTestPageScope(site, "/pgtest-pending-index-a");
+    const other = await createPhiTestPageScope(site, "/pgtest-pending-index-b");
+    await pool.query(`UPDATE phis.site_page_scopes SET draft_path = '/pgtest-pending-index' WHERE id = $1`, [holder]);
+
+    await expect(
+      pool.query(`UPDATE phis.site_page_scopes SET draft_path = '/pgtest-pending-index' WHERE id = $1`, [other]),
+    ).rejects.toMatchObject({ code: "23505" });
   });
 
   it("reserves a canonical path even while the Scope holding it is tombstoned", async () => {

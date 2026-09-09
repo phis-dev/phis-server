@@ -18,26 +18,41 @@ ownership to the Site.
 
 The Page revision payload may receive a resolved path in a read/render view model, but it must not persist
 an independently authoritative `tree_json.page.path`. Write and read code must converge on the Page Scope
-column for Site Pages and the route descriptor for Module Pages. Restoring, undoing, publishing, or
-discarding a Page revision never changes a Page Scope path.
+column for Site Pages and the route descriptor for Module Pages. Restoring and undoing a Page revision
+never change a Page Scope path. Publishing changes it exactly when a pending path stands, and discarding
+a Page draft discards that pending path; both are described under the path change command below.
 
 ## Explicit path change command
 
 A Site Page path change is a dedicated authenticated Builder command addressed by positive Page Scope
-id. It is not an ordinary Page Form/revision write. In one database transaction the command:
+id. It is not an ordinary Page Form/revision write, and it does not move the Page. In one database
+transaction the command:
 
 1. locks the Site-owned Scope and verifies the active Site and requested Area;
 2. rejects every Scope with `owner_module_id` or `preset_key` and every cross-Site target;
 3. normalizes and validates the new path, including reserved roots and Area policy;
-4. rejects a canonical-path collision;
+4. rejects a canonical-path collision against the live and pending paths of that Area;
 5. reads the maintained reference index for affected-reference counts;
-6. updates only the canonical Scope path and audit metadata; and
-7. emits a structured audit event containing old path, new path, Scope id, Area, actor, and affected
-   reference counts.
+6. writes `site_page_scopes.draft_path` and audit metadata; and
+7. emits a structured audit event containing the live path, the pending path, Scope id, Area, actor,
+   and affected reference counts.
 
-The command preserves published/working revision pointers and creates no CMS revision or Undo/Redo
-entry. Its response returns the resolved new path and affected-reference summary so Builder can refresh
-its Page catalog and route deliberately.
+Requesting the path the Page already answers on clears a pending change rather than storing a move to
+where it already is. The command preserves the canonical Scope path and the published/working revision
+pointers, and its response returns the live path, the pending path and the affected-reference summary.
+
+The address moves when the Page is published. `publishSitePageRevision` promotes `draft_path` into
+`path` in the transaction that swaps the revision pointers, and a rename with no other change publishes
+on its own without creating a revision. Discarding a Page draft discards a pending path with it.
+
+Two guards, and only the second decides. The collision query in step 4 exists so Builder can object
+while the operator still has the field open; two writers that neither read after the other commits both
+pass it. The partial unique indexes on `(site_id, area_id, path)` and `(site_id, area_id, draft_path)`
+are the guarantee, and a publish whose pending path lost its address in the meantime fails there rather
+than overwriting the Page that took it.
+
+Publishing is therefore the one place a live Site Page address changes, and the audit event naming the
+move is emitted there rather than where it was requested.
 
 ## Reference identities and resolution
 

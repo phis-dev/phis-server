@@ -1314,6 +1314,8 @@ CREATE TABLE IF NOT EXISTS phis.site_page_scopes (
   -- The Area's visibility mask, as in site_area_scopes above.
   area_id SMALLINT NOT NULL DEFAULT 1,
   path VARCHAR(512) NULL,
+  -- The path this Page will answer on once its pending change is published. NULL when none stands.
+  draft_path VARCHAR(512) NULL,
   owner_module_id VARCHAR(255) NULL,
   preset_key VARCHAR(255) NULL,
   tombstoned_at TIMESTAMPTZ NULL,
@@ -1327,12 +1329,22 @@ CREATE TABLE IF NOT EXISTS phis.site_page_scopes (
   ),
   CONSTRAINT site_page_scopes_module_id_check CHECK (
     owner_module_id IS NULL OR owner_module_id ~ '^@[^/]+/[^/]+(?:/[^/]+)*$'
+  ),
+  -- Only a Site-owned Page has a path of its own, so only a Site-owned Page can have a pending one.
+  CONSTRAINT site_page_scopes_draft_path_check CHECK (
+    draft_path IS NULL OR path IS NOT NULL
   )
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS site_page_scopes_site_area_path_unique_idx
   ON phis.site_page_scopes (site_id, area_id, path)
   WHERE path IS NOT NULL;
+
+-- The pending paths contend with each other exactly as the live ones do, and for the same reason: two
+-- Pages must not arrive at one address, and a query that checks for it lets a second writer through.
+CREATE UNIQUE INDEX IF NOT EXISTS site_page_scopes_site_area_draft_path_unique_idx
+  ON phis.site_page_scopes (site_id, area_id, draft_path)
+  WHERE draft_path IS NOT NULL;
 
 CREATE UNIQUE INDEX IF NOT EXISTS site_page_scopes_site_area_preset_unique_idx
   ON phis.site_page_scopes (site_id, area_id, owner_module_id, preset_key)

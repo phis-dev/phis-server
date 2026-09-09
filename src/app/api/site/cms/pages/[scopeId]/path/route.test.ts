@@ -41,8 +41,8 @@ const params = (scopeId = "18") => ({ params: Promise.resolve({ scopeId }) });
 const result = {
   pageScopeId: 18,
   areaMask: 1,
-  oldPath: "/kontakt",
-  path: "/kontakt-neu",
+  path: "/kontakt",
+  pendingPath: "/kontakt-neu",
   publishedRevisionId: 184,
   workingDraftRevisionId: 190,
   references: { total: 3, bySource: { page: 2, navigation: 0, content: 0, area: 1 } },
@@ -54,7 +54,7 @@ const result = {
  * distinguishes "that Page is gone" from "that path is taken" by the status alone.
  */
 describe("The Page path change command", () => {
-  it("reports the affected references to the audit trail, with both paths", async () => {
+  it("reports the affected references to the audit trail, with the live and the pending path", async () => {
     authorized();
     mocks.changePath.mockResolvedValue(result);
     const response = await POST(request({ area: "public", path: "/kontakt-neu" }), params());
@@ -68,7 +68,7 @@ describe("The Page path change command", () => {
         userId: 7,
         targetType: "page_scope",
         targetId: 18,
-        meta: { oldPath: "/kontakt", newPath: "/kontakt-neu", references: result.references },
+        meta: { path: "/kontakt", pendingPath: "/kontakt-neu", references: result.references },
       }),
     );
   });

@@ -36,6 +36,8 @@ export async function GET(request: NextRequest) {
       area,
       areaId: page.areaMask,
       path: page.path,
+      /* The address a publish would move this Page to. Null while nothing stands. */
+      pendingPath: page.draftPath,
       ownerModuleId: page.ownerModuleId,
       presetKey: page.presetKey,
       tombstoned: page.tombstonedAt != null,

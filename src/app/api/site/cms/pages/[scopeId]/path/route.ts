@@ -35,8 +35,12 @@ export async function POST(
       targetType: "page_scope",
       targetId: scopeId,
       meta: {
-        oldPath: result.oldPath,
-        newPath: result.path,
+        /*
+         * What was asked for, not what happened: the address only moves when the Page is published, and
+         * that move is audited where it happens. A pending path of null is a cancelled rename.
+         */
+        path: result.path,
+        pendingPath: result.pendingPath,
         references: result.references,
       },
     });

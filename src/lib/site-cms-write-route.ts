@@ -1135,6 +1135,11 @@ export async function handleSiteCmsPagePublish(request: NextRequest) {
         cmsPath: path,
         locale,
         revisionId: result.revisionId,
+        /*
+         * The rename is audited here rather than where it was requested, because this is where the
+         * address actually changes: a pending path that is never published never moved anything.
+         */
+        ...(result.moved ? { movedFrom: result.moved.movedFrom, movedTo: result.moved.movedTo } : {}),
       },
     });
 
@@ -1143,6 +1148,7 @@ export async function handleSiteCmsPagePublish(request: NextRequest) {
       path,
       revisionId: result.revisionId,
       page: result.page,
+      ...(result.moved ? { movedFrom: result.moved.movedFrom, movedTo: result.moved.movedTo } : {}),
     });
   } catch (error) {
     const detail = readSiteCmsErrorDetail(error);

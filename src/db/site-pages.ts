@@ -262,6 +262,8 @@ type SitePageScopeRecord = {
   siteId: number;
   areaMask: number;
   path: string | null;
+  /** The path a published change would move this Page to, or null while none stands. */
+  draftPath: string | null;
   ownerModuleId: string | null;
   presetKey: string | null;
   tombstonedAt: string | null;
@@ -861,13 +863,14 @@ async function getSitePageScopeWithDb(
     site_id: number;
     area_id: number;
     path: string | null;
+    draft_path: string | null;
     owner_module_id: string | null;
     preset_key: string | null;
     tombstoned_at: Date | string | null;
     published_revision_id: number | null;
     working_draft_revision_id: number | null;
   }>(
-    `SELECT id, site_id, area_id, path, owner_module_id, preset_key, tombstoned_at,
+    `SELECT id, site_id, area_id, path, draft_path, owner_module_id, preset_key, tombstoned_at,
             published_revision_id, working_draft_revision_id
      FROM phis.site_page_scopes
      WHERE site_id = $1
@@ -892,6 +895,7 @@ async function getSitePageScopeWithDb(
     siteId: row.site_id,
     areaMask: row.area_id,
     path: row.path,
+    draftPath: row.draft_path,
     ownerModuleId: row.owner_module_id,
     presetKey: row.preset_key,
     tombstonedAt: row.tombstoned_at == null
@@ -917,13 +921,14 @@ async function getSitePageScopeByIdWithDb(
     site_id: number;
     area_id: number;
     path: string | null;
+    draft_path: string | null;
     owner_module_id: string | null;
     preset_key: string | null;
     tombstoned_at: Date | string | null;
     published_revision_id: number | null;
     working_draft_revision_id: number | null;
   }>(
-    `SELECT id, site_id, area_id, path, owner_module_id, preset_key, tombstoned_at,
+    `SELECT id, site_id, area_id, path, draft_path, owner_module_id, preset_key, tombstoned_at,
             published_revision_id, working_draft_revision_id
      FROM phis.site_page_scopes
      WHERE id = $1 AND site_id = $2 AND area_id = $3
@@ -936,6 +941,7 @@ async function getSitePageScopeByIdWithDb(
     siteId: row.site_id,
     areaMask: row.area_id,
     path: row.path,
+    draftPath: row.draft_path,
     ownerModuleId: row.owner_module_id,
     presetKey: row.preset_key,
     tombstonedAt: row.tombstoned_at == null
@@ -965,6 +971,7 @@ export async function listSitePageScopes(siteId: number, areaMask: number): Prom
     site_id: number;
     area_id: number;
     path: string | null;
+    draft_path: string | null;
     owner_module_id: string | null;
     preset_key: string | null;
     tombstoned_at: Date | string | null;
@@ -977,6 +984,7 @@ export async function listSitePageScopes(siteId: number, areaMask: number): Prom
             site_id,
             area_id,
             path,
+            draft_path,
             owner_module_id,
             preset_key,
             tombstoned_at,
@@ -996,6 +1004,7 @@ export async function listSitePageScopes(siteId: number, areaMask: number): Prom
     siteId: row.site_id,
     areaMask: row.area_id,
     path: row.path,
+    draftPath: row.draft_path,
     ownerModuleId: row.owner_module_id,
     presetKey: row.preset_key,
     tombstonedAt: row.tombstoned_at == null
@@ -1070,6 +1079,7 @@ async function ensureSitePageScopeWithDb(
     site_id: number;
     area_id: number;
     path: string | null;
+    draft_path: string | null;
     owner_module_id: string | null;
     preset_key: string | null;
     tombstoned_at: Date | string | null;
@@ -1090,7 +1100,7 @@ async function ensureSitePageScopeWithDb(
        ? "site_id, area_id, path) WHERE path IS NOT NULL"
        : "site_id, area_id, owner_module_id, preset_key) WHERE owner_module_id IS NOT NULL"}
      DO UPDATE SET updated_at = NOW()
-     RETURNING id, site_id, area_id, path, owner_module_id, preset_key, tombstoned_at,
+     RETURNING id, site_id, area_id, path, draft_path, owner_module_id, preset_key, tombstoned_at,
                published_revision_id, working_draft_revision_id`,
     address.kind === "path"
       ? [siteId, areaMask, normalizedPath, null, null]
@@ -1102,6 +1112,7 @@ async function ensureSitePageScopeWithDb(
     siteId: rows[0]!.site_id,
     areaMask: rows[0]!.area_id,
     path: rows[0]!.path,
+    draftPath: rows[0]!.draft_path,
     ownerModuleId: rows[0]!.owner_module_id,
     presetKey: rows[0]!.preset_key,
     tombstonedAt: rows[0]!.tombstoned_at == null
@@ -2136,6 +2147,36 @@ export async function saveSiteAreaDraftRevision(
   }
 }
 
+/**
+ * Makes a pending path real, in the transaction that publishes the Page.
+ *
+ * This is the only place a live Site address changes, which is what lets one comparison here answer the
+ * redirect question for renamed Pages and moved Module addresses alike. The unique index decides: a
+ * pending path that lost its address between the rename and the publish fails here rather than
+ * overwriting the Page that took it.
+ */
+async function promoteSitePageDraftPathWithDb(
+  db: DbQueryable,
+  scope: SitePageScopeRecord,
+): Promise<{ movedFrom: string; movedTo: string } | null> {
+  if (scope.draftPath == null) {
+    return null;
+  }
+  if (scope.draftPath === scope.path) {
+    await db.query(`UPDATE phis.site_page_scopes SET draft_path = NULL WHERE id = $1`, [scope.id]);
+    return null;
+  }
+  try {
+    await db.query(
+      `UPDATE phis.site_page_scopes SET path = draft_path, draft_path = NULL, updated_at = NOW() WHERE id = $1`,
+      [scope.id],
+    );
+  } catch (error) {
+    throw toSitePagePathCollisionError(error);
+  }
+  return { movedFrom: scope.path ?? "", movedTo: scope.draftPath };
+}
+
 export async function publishSitePageRevision(
   siteId: number,
   input: {
@@ -2147,7 +2188,12 @@ export async function publishSitePageRevision(
     createdByUserId?: number | null;
     locale?: string | null;
   },
-): Promise<{ revisionId: number; page: SiteResolvedWidgetTree }> {
+): Promise<{
+  revisionId: number;
+  page: SiteResolvedWidgetTree;
+  /** The address this publish actually moved, so the audit trail names it where it happened. */
+  moved: { movedFrom: string; movedTo: string } | null;
+}> {
   const pool = getPool();
   const client = await pool.connect();
 
@@ -2162,6 +2208,26 @@ export async function publishSitePageRevision(
 
     const revisionId = input.revisionId ?? scope.workingDraftRevisionId;
     if (!Number.isInteger(revisionId) || (revisionId as number) <= 0) {
+      /*
+       * A rename on its own writes no revision, so this is a real state and not a mistake: there is a
+       * pending address and nothing else to publish. The Page keeps the revision it already had.
+       */
+      const movedOnly = await promoteSitePageDraftPathWithDb(client, scope);
+      if (movedOnly && scope.publishedRevisionId != null) {
+        const publishedRevision = await getSitePageRevisionByIdWithDb(client, scope.publishedRevisionId);
+        if (!publishedRevision || publishedRevision.pageScopeId !== scope.id) {
+          throw new Error("Published page revision pointer belongs to a different scope.");
+        }
+        const movedPage = await buildResolvedPageTreeFromRevisionWithDb(
+          client,
+          siteId,
+          { ...scope, path: movedOnly.movedTo, draftPath: null },
+          readValidatedPageRevisionTree(publishedRevision.treeJson),
+          options?.locale ?? null,
+        );
+        await client.query("COMMIT");
+        return { revisionId: publishedRevision.id, page: movedPage, moved: movedOnly };
+      }
       throw new Error("No page draft revision available to publish.");
     }
 
@@ -2203,11 +2269,13 @@ export async function publishSitePageRevision(
       publishedRevisionId: revision.id,
       workingDraftRevisionId: null,
     });
+    const moved = await promoteSitePageDraftPathWithDb(client, scope);
     await client.query("COMMIT");
 
     return {
       revisionId: revision.id,
       page,
+      moved,
     };
   } catch (error) {
     await client.query("ROLLBACK");
@@ -2889,9 +2957,21 @@ export async function deleteSitePageDraftRevision(
   try {
     await client.query("BEGIN");
     const scope = await getSitePageScopeWithDb(client, siteId, input.areaMask, input.address);
-    if (!scope || scope.workingDraftRevisionId == null) {
+    if (!scope) {
       await client.query("COMMIT");
       return { deleted: false };
+    }
+    /*
+     * A pending path is part of the draft and goes with it. A rename on its own writes no revision, so
+     * this is also the only thing there is to discard in that case.
+     */
+    const discardedPendingPath = scope.draftPath != null;
+    if (discardedPendingPath) {
+      await client.query(`UPDATE phis.site_page_scopes SET draft_path = NULL WHERE id = $1`, [scope.id]);
+    }
+    if (scope.workingDraftRevisionId == null) {
+      await client.query("COMMIT");
+      return { deleted: discardedPendingPath };
     }
 
     const removedDraft = await client.query<{ tree_json: Record<string, unknown> }>(
@@ -2991,6 +3071,29 @@ export async function getResolvedSitePageTree(
   return getResolvedSitePageTreeWithDb(getPool(), siteId, areaMask, address, locale ?? null);
 }
 
+/**
+ * Turns a unique-index violation on a Page address into the error the caller can act on.
+ *
+ * The two partial unique indexes are the real guard against two Pages arriving at one address: the
+ * collision query alone lets both writers through when neither reads after the other commits.
+ */
+function toSitePagePathCollisionError(error: unknown) {
+  return typeof error === "object" && error !== null && (error as { code?: unknown }).code === "23505"
+    ? new SitePagePathChangeError("path_collision", "Another Page already owns this canonical path.")
+    : error;
+}
+
+/**
+ * Moves a Site Page to another address, as a pending change that a publish makes real.
+ *
+ * The rename used to change the live Site the moment it was made: it wrote the Scope column, kept the
+ * revision pointers and recorded nothing, so it was the one content-shaped change that skipped the
+ * draft and could not be taken back. It writes `draft_path` now, and `publishSitePageRevision` promotes
+ * it -- which also makes publishing the one place a live address changes.
+ *
+ * Asking for the path a Page already answers on cancels a pending change rather than storing a move to
+ * where it already is.
+ */
 export async function changeSitePagePath(
   siteId: number,
   areaMask: number,
@@ -3012,26 +3115,40 @@ export async function changeSitePagePath(
     if (scope.ownerModuleId || scope.presetKey || scope.path == null) {
       throw new SitePagePathChangeError("module_owned", "Module-owned Page paths cannot be changed by the Site.");
     }
-    const { rows: collisions } = await client.query<{ id: number }>(
-      `SELECT id FROM phis.site_page_scopes
-       WHERE site_id = $1 AND area_id = $2 AND path = $3 AND id <> $4
-       LIMIT 1 FOR UPDATE`,
-      [siteId, areaMask, nextPath, pageScopeId],
-    );
-    if (collisions[0]) {
-      throw new SitePagePathChangeError("path_collision", "Another Page already owns this canonical path.");
+    const pendingPath = nextPath === scope.path ? null : nextPath;
+    if (pendingPath) {
+      /*
+       * Advisory, and deliberately so: it reads the live and the pending addresses of the Area together
+       * so the Builder can object while the operator still has the field open. It cannot be the
+       * guarantee -- two writers that neither read after the other commits both pass it -- which is why
+       * the unique index below, and the one at publish, are what actually decide.
+       */
+      const { rows: collisions } = await client.query<{ id: number }>(
+        `SELECT id FROM phis.site_page_scopes
+         WHERE site_id = $1 AND area_id = $2 AND id <> $4
+           AND (path = $3 OR draft_path = $3)
+         LIMIT 1 FOR UPDATE`,
+        [siteId, areaMask, pendingPath, pageScopeId],
+      );
+      if (collisions[0]) {
+        throw new SitePagePathChangeError("path_collision", "Another Page already owns this canonical path.");
+      }
     }
     const references = await countSiteCmsReferencesToPageWithDb(client, siteId, pageScopeId);
-    await client.query(
-      `UPDATE phis.site_page_scopes SET path = $2, updated_at = NOW() WHERE id = $1`,
-      [pageScopeId, nextPath],
-    );
+    try {
+      await client.query(
+        `UPDATE phis.site_page_scopes SET draft_path = $2, updated_at = NOW() WHERE id = $1`,
+        [pageScopeId, pendingPath],
+      );
+    } catch (error) {
+      throw toSitePagePathCollisionError(error);
+    }
     await client.query("COMMIT");
     return {
       pageScopeId,
       areaMask,
-      oldPath: scope.path,
-      path: nextPath,
+      path: scope.path,
+      pendingPath,
       publishedRevisionId: scope.publishedRevisionId,
       workingDraftRevisionId: scope.workingDraftRevisionId,
       references,

@@ -867,17 +867,19 @@ breaks is everything outside: bookmarks, foreign links, and the index entry with
 - *Open:* whether the Builder shows the remembered addresses anywhere. Proposed no, for now: the
   invariant frees a path the moment somebody needs it, so there is nothing to administer.
 
-**A Page path changes through draft and publish, designed 2026-09-09, not built.** Renaming a Page is
-today the one content-shaped change that bypasses the draft entirely. The path-change command
-"preserves published/working revision pointers and creates no CMS revision or Undo/Redo entry", so the
-live Site changes the moment an operator types, while every edit to the page itself waits for a publish
--- and the rename cannot be undone, because nothing recorded it. That asymmetry ends.
+**A Page path changes through draft and publish, built 2026-09-09.** Renaming a Page was the one
+content-shaped change that bypassed the draft entirely: the command wrote the Scope column, kept the
+revision pointers and recorded nothing, so the live Site changed the moment an operator typed while
+every edit to the page itself waited for a publish -- and the rename could not be taken back. Now the
+command writes a pending path and the publish promotes it.
 
-- *Where the pending path lives:* the working draft revision's `meta_json`. Not a second column, and not
-  `tree_json`, which may hold no authoritative path. `site_page_scopes.path` stays the one locator
-  resolution reads -- a draft carries a proposal, not a second truth -- and in exchange the whole draft
-  apparatus comes along for free: discard, the revision list, and the Undo/Redo entry the command
-  explicitly could not offer.
+- *Where the pending path lives:* `site_page_scopes.draft_path`, and **not** the working draft
+  revision's `meta_json`, which is what this item first proposed. Two things decided it. A page
+  revision's `meta_json` is rebuilt from scratch on every save and a new revision is written each time,
+  so a pending path stored there survives only as long as somebody remembers to carry it forward -- and
+  the pending paths need a partial unique index of their own, which is the guard this design leans on
+  and which a JSON field cannot carry as plainly. What that costs is the Undo/Redo entry this item
+  claimed would come for free: a rename is still not in the undo stack, only in the draft.
 - *The guard runs twice, and only the second one is the truth.* When a pending path is written it is
   checked against the live and pending paths of that Area so the Builder can object early; that check is
   a query, and the concurrency test already shows a query alone lets two writers through. At publish the
@@ -894,10 +896,11 @@ live Site changes the moment an operator types, while every edit to the page its
   navigation target pickers -- or the operator reads an address that visitors do not have. Routing stays
   on the published path: a pending path is text, not a working address, and making it route would mean a
   second route table for drafts.
-- *What this rewrites:* the "Explicit path change command" section of REFERENCES.md, whose closing
-  sentence about preserved revision pointers and absent Undo/Redo entries states the opposite of all of
-  the above, and whose collision step moves to publish. `site-page-path-change.pg.test.ts` moves its
-  collision and concurrency cases with it.
+- *What this rewrote:* the "Explicit path change command" section of both REFERENCES.md files, and the
+  sentence claiming that publishing never changes a Scope path. `site-page-path-change.pg.test.ts`
+  gained the pending-path index and the cancel case; the Builder now says a rename takes effect on
+  publish. **Still open:** Builder shows a pending path only in that message, not in the Page catalog,
+  the Page settings or the navigation target pickers, where REFERENCES.md now says it must.
 
 **The Area states the head of its Pages, and the head is written** (2026-09-08, phis-ui, phis-server). The
 Shells workspace header lost its two root-route Selects to an Area settings dialog -- a header is about the
