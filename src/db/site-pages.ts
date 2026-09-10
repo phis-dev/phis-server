@@ -3045,6 +3045,87 @@ export async function deleteSiteAreaDraftRevision(
   }
 }
 
+/**
+ * Removes the Site's own Area shell entirely, so the Module preset is what the Area resolves to again.
+ *
+ * The draft delete beside this one only ever discarded the working copy, which left the published
+ * revision standing: once an Area had been published, nothing could take the Site back to the preset it
+ * started from. That is what made a preset improvement invisible to any Site that had saved its shell
+ * once -- and, worse, unnoticeable, because the Area still rendered.
+ *
+ * Absence is the answer here rather than an empty tree. A Scope with no revisions reads as "this Site
+ * states no shell of its own", which is what the resolver already treats as a fall through to the
+ * preset; a published revision holding empty lists is the different, deliberate answer "this Site has a
+ * shell and it is empty", and that one is reached by publishing an empty draft, not by this call.
+ */
+export async function deleteSiteAreaOverride(
+  siteId: number,
+  input: {
+    areaMask: number;
+    sourcePreset: SitePresetIdentity;
+  },
+): Promise<{ deleted: boolean }> {
+  const pool = getPool();
+  const client = await pool.connect();
+
+  try {
+    await client.query("BEGIN");
+    const scope = await getSiteAreaScopeWithDb(client, siteId, input.areaMask, { forUpdate: true });
+    if (!scope) {
+      await client.query("COMMIT");
+      return { deleted: false };
+    }
+
+    /*
+     * The identity is checked against what the Area actually stands on -- its published revision, or its
+     * draft where nothing is published yet. A caller naming a different preset is asking about an Area
+     * this is not, and deleting on that request would remove a shell nobody asked about.
+     */
+    const identityRevisionId = scope.publishedRevisionId ?? scope.workingDraftRevisionId;
+    if (identityRevisionId != null) {
+      const revision = await getSiteAreaRevisionByIdWithDb(client, identityRevisionId);
+      if (!revision || !hasSamePresetIdentity(
+        readValidatedAreaRevisionTree(revision.treeJson).sourcePreset,
+        input.sourcePreset,
+      )) {
+        throw new Error("Area preset identity does not match the requested scope.");
+      }
+    }
+
+    await setSiteAreaScopePointersWithDb(client, scope.id, {
+      publishedRevisionId: null,
+      workingDraftRevisionId: null,
+      workingModuleDraftRevisionId: null,
+    });
+    const removed = await client.query<{ tree_json: Record<string, unknown> }>(
+      `DELETE FROM phis.site_area_revisions WHERE area_scope_id = $1 RETURNING tree_json`,
+      [scope.id],
+    );
+    for (const row of removed.rows) {
+      await deleteOrphanedSiteContentByIdsWithDb(
+        client,
+        siteId,
+        collectRevisionContentIds(row.tree_json ?? null),
+      );
+    }
+    await client.query(
+      `DELETE FROM phis.site_area_scopes
+       WHERE id = $1
+         AND published_revision_id IS NULL
+         AND working_draft_revision_id IS NULL
+         AND working_module_draft_revision_id IS NULL`,
+      [scope.id],
+    );
+    await client.query("COMMIT");
+    return { deleted: removed.rowCount != null && removed.rowCount > 0 };
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 export async function getExactSiteAreaPresetTree(
   siteId: number,
   areaMask: number,

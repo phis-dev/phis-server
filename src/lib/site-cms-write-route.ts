@@ -5,6 +5,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { ensureSiteMessageId, upsertSiteTranslationForSite } from "@/db/translations";
 import {
   deleteSiteAreaDraftRevision,
+  deleteSiteAreaOverride,
   deleteSiteAreaModulesDraftRevision,
   deleteSitePageDraftRevision,
   getSiteCurrentAreaDraft,
@@ -1009,6 +1010,82 @@ export async function handleSiteCmsAreaDelete(request: NextRequest) {
     return NextResponse.json(
       {
         error: readSiteCmsErrorMessage(error, "CMS area delete failed."),
+      },
+      { status: 500 },
+    );
+  }
+}
+
+/**
+ * Removes the Site's own Area shell, leaving the Module preset to answer for the Area again.
+ *
+ * Separate from the draft delete beside it because the two are different intentions: discarding a draft
+ * keeps what is published, and this discards the published shell as well. A caller that wanted only the
+ * former and reached this one would take the Site's live chrome with it, so it is a route of its own
+ * rather than a flag on that one.
+ */
+export async function handleSiteCmsAreaOverrideDelete(request: NextRequest) {
+  const { context, error } = await requireSiteBuilderApiContext(request);
+  if (error) {
+    return error;
+  }
+
+  const payload = (await readSiteCmsRequestJson(request)) as {
+    area?: unknown;
+    ownerModuleId?: unknown;
+    presetKey?: unknown;
+  } | null;
+  const area = readSiteCmsRequestSearchParam(request, "area") ?? (typeof payload?.area === "string" ? payload.area : null);
+  const sourcePreset = resolveCmsPresetIdentity({
+    ownerModuleId: readSiteCmsRequestSearchParam(request, "ownerModuleId") ??
+      (typeof payload?.ownerModuleId === "string" ? payload.ownerModuleId : null),
+    presetKey: readSiteCmsRequestSearchParam(request, "presetKey") ??
+      (typeof payload?.presetKey === "string" ? payload.presetKey : null),
+  });
+  if (!area || !sourcePreset) {
+    return NextResponse.json({ error: "area, ownerModuleId, and presetKey must be provided." }, { status: 400 });
+  }
+
+  const areaMask = resolveAreaMask(area);
+
+  try {
+    const result = await deleteSiteAreaOverride(context!.site!.id, {
+      areaMask,
+      sourcePreset,
+    });
+
+    if (result.deleted) {
+      logSiteCmsAuditEvent(PhiCmsAuditEvent.AreaOverrideDeleted, {
+        request,
+        siteKey: context!.site!.key,
+        area,
+        userId: context!.session?.userId ?? null,
+        targetType: "cms-area-override",
+        targetId: area,
+        meta: { areaMask },
+      });
+    }
+
+    return NextResponse.json({
+      areaMask,
+      deleted: result.deleted,
+    });
+  } catch (error) {
+    logRuntimeEvent("error", "cms.area_override_delete.failed", {
+      message: "CMS area override delete failed.",
+      siteKey: context!.site!.key,
+      userId: context!.session?.userId ?? null,
+      method: request.method,
+      path: request.nextUrl.pathname,
+      targetType: "cms-area-override",
+      error: normalizeLogThrowable(error),
+      meta: {
+        areaMask,
+      },
+    });
+    return NextResponse.json(
+      {
+        error: readSiteCmsErrorMessage(error, "CMS area override delete failed."),
       },
       { status: 500 },
     );
