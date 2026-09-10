@@ -1,43 +1,8 @@
-import { Client } from "pg";
-
 import { applySchemaBootstrap } from "@/app/(operator)/setup/actions";
 import type { BootstrapLocale, BootstrapMessages } from "@/bootstrap/i18n";
 import { SubmitButton } from "@/components/ui/submit-button";
+import { readPhiBootstrapSchemaStatus } from "@/db/bootstrap";
 import { readPhiRuntimeConfigSync } from "@/lib/config-files";
-
-async function readSchemaStatus(connectionString: string | undefined) {
-  if (!connectionString?.trim()) {
-    return null;
-  }
-
-  const client = new Client({ connectionString });
-  await client.connect();
-
-  try {
-    const schemaResult = await client.query<{ exists: boolean }>(
-      "SELECT EXISTS (SELECT 1 FROM pg_namespace WHERE nspname = 'phis') AS exists",
-    );
-    const schemaExists = schemaResult.rows[0]?.exists === true;
-
-    if (!schemaExists) {
-      return {
-        schemaExists: false,
-        tableCount: 0,
-      };
-    }
-
-    const tableResult = await client.query<{ count: string }>(
-      "SELECT COUNT(*)::text AS count FROM information_schema.tables WHERE table_schema = 'phis'",
-    );
-
-    return {
-      schemaExists: true,
-      tableCount: Number.parseInt(tableResult.rows[0]?.count ?? "0", 10) || 0,
-    };
-  } finally {
-    await client.end();
-  }
-}
 
 export async function SchemaSetupPanel({
   locale,
@@ -51,7 +16,7 @@ export async function SchemaSetupPanel({
   error: string | null;
 }) {
   const runtimeConfig = readPhiRuntimeConfigSync();
-  const schemaStatus = await readSchemaStatus(runtimeConfig.database?.uri);
+  const schemaStatus = await readPhiBootstrapSchemaStatus(runtimeConfig.database?.uri);
 
   return (
     <div className="ui_section_stack">

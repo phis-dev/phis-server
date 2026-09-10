@@ -243,3 +243,80 @@ the wrappers would only churn eleven call sites.
   (`ensureImageAssetVariant` returns null) and no client requests such URLs — `thumbnailUrl` is null
   for non-images. The dead `buildFallbackVariantSvg` implementation was removed with section 3; decide
   whether to implement the documented behavior or amend DB.md.
+
+## 6. Database boundary
+
+Surveyed 2026-09-10 while extending the reference index. The migration contract in
+[AGENTS.md](./AGENTS.md) puts runtime database execution and inline SQL exclusively under `src/db/`,
+and names CLI commands, route handlers, setup actions, components, and general-purpose libraries as
+callers of typed functions rather than issuers of queries.
+
+### 6.1 The boundary check missed every typed call — FIXED 2026-09-10
+
+`scripts/validate-db-sql-boundary.mjs` matched `.query(`/`.execute(` with the parenthesis directly
+behind the name, so any call that types its row shape -- `client.query<{ id: number }>(...)` -- passed
+unseen. That is most of them, because the rows have to be typed somewhere, and it meant the boundary
+went unenforced for exactly the queries big enough to want a type. The Asset delete guard was one of
+them, and it never appeared in a report. The pattern now accepts either bracket; the reported count
+rose from 30 call sites in 5 files to 60 in 15, which is the honest number and the baseline for the
+rest of this section.
+
+### 6.2 Runtime call sites moved under `src/db/` — FIXED 2026-09-10
+
+- The delete guard's Asset query is now `listSiteCmsReferencesToAsset` in `src/db/site-cms-references.ts`,
+  beside the other readers of the same index and its reconciliation rule. `src/lib/media-delete-guard.ts`
+  kept the mapping onto its own return type, which is what the route renders.
+- `deleteStoredPhiMediaAsset` no longer opens a transaction itself; `discardPhiMediaAssetsInTransaction`
+  in `src/db/media-discard.ts` holds it, next to the statements it wraps.
+- The three setup panels under `src/components/bootstrap/` each carried their own `pg` connection and
+  inline SQL, two of them the same Site query differing by one column. Both reads are now
+  `readPhiBootstrapSchemaStatus` and `readPhiBootstrapSites` in `src/db/bootstrap.ts`, which keeps the
+  connection of its own that setup needs -- the operator is typing a connection string nothing has
+  accepted yet, and the schema may be absent.
+
+### 6.3 The CLI executes directly, by a stated exemption — DECIDED 2026-09-10
+
+35 of the reported call sites were in `src/cli/*.mts`, and they could not move: every `src/db/` module
+opens with `import "server-only"`, that package is not linked into this package's `node_modules`, and
+it resolves only through Next's own bundler. A `src/db/` import therefore fails both under
+`--experimental-strip-types` and in the esbuild bundle. That is why the CLI has always written its own
+SQL.
+
+Three ways out were on the table. Dropping the marker for the modules the CLI needs was rejected: the
+marker is the Client boundary and stays everywhere it acts. Carrying the marker into the CLI is
+technically possible -- `server-only` resolves to an empty module under the `react-server` condition,
+verified with `node --conditions=react-server` -- but it needs the package linked, the condition set in
+both the direct and the bundled run, and a resolution hook for the `@/` aliases the database layer uses
+internally, since the CLI imports relatively today. For 35 sites that apply DDL, grant privileges,
+sweep storage and check installations, that is machinery bought for little.
+
+So the boundary is stated instead of stretched. AGENTS.md now says runtime code executes no SQL, naming
+route handlers, setup actions, components and general-purpose libraries, and exempts `src/cli/`, which
+holds the migration connection, applies DDL, and reaches no Client bundle. The exemption is explicitly
+not reversible: a CLI command must not become where a runtime query is written to avoid the boundary.
+`scripts/validate-db-sql-boundary.mjs` skips `src/cli` and is green again, which is the point -- a check
+that is permanently red is a check nobody reads.
+
+`src/lib/media-storage-cors-core.ts` was the same question in one file: shared by the Server and the
+CLI, it took a `Pool` so both could use it. It now takes the Profile rows instead and holds no SQL at
+all. The Server reads them through `readPhiMediaStorageCorsProfiles` in `src/db/media-storage-cors.ts`;
+the CLI reads them under its exemption. One derivation, two ways of reaching the database.
+
+### 6.4 Add-on capability execution sits in `src/lib/addons/` — OPEN, guarantee verified
+
+The 14 call sites the check still reports, in `data-capability.ts`, `assets-capability.ts`, and
+`capabilities.ts`. They execute
+statements Core derived from an Add-on's manifest, against Add-on schemas whose names and columns come
+from the descriptor. Moving the execution under `src/db/` would make the capability layer hold a typed
+function instead of a queryable, which strengthens the rule below rather than only satisfying the check.
+
+The rule itself was verified, not assumed: an Add-on never receives a database handle, at any point.
+`buildOperations` (`src/lib/addons/data-capability.ts:430`) returns a frozen object of `select`,
+`aggregate`, `insert`, `update`, `delete`; the queryable stays in the closure. `transaction` opens the
+client, hands the body that same object, and keeps `BEGIN`/`COMMIT`/`ROLLBACK` to itself, so an Add-on
+cannot commit, roll back, or hold a transaction open. The assets capability exposes `begin` and
+`finalize` only. Because the guarantee is the absence of a property, it rested on a comment; it is now
+pinned by `src/lib/addons/data-capability-handle.test.ts` -- exact key sets for the capability and for a
+transaction body, absence of `query`/`execute`/`connect`/`release`/`end` and the obvious field names,
+the transaction boundaries as Core's own, and the frozen object. SERVER_ADDONS.md section 15 is the
+contract this belongs to.

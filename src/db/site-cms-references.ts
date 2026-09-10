@@ -2,6 +2,7 @@ import "server-only";
 
 import type { PoolClient } from "pg";
 
+import { getPool } from "@/lib/db";
 import {
   collectPhiInternalReferencesFromText,
   readPhiInternalReference,
@@ -14,6 +15,7 @@ export const PhiCmsReferenceSourceKind = {
   Navigation: 2,
   Content: 3,
   Area: 4,
+  Theme: 5,
 } as const;
 
 export type PhiCmsReferenceSourceKind = typeof PhiCmsReferenceSourceKind[keyof typeof PhiCmsReferenceSourceKind];
@@ -23,6 +25,25 @@ export type SiteCmsReferenceWrite = {
   reference: PhiInternalReference;
   targetAreaId?: number;
 };
+
+/**
+ * Whether this field is how persisted config names an Asset.
+ *
+ * An Asset in a Markdown or HTML body is a `phis:asset/<id>` URI, and the string walk below finds it.
+ * Config never had that shape: a picture somebody picked is stored as the id itself, next to the
+ * variant, geometry and focal facts that belong to it -- `assetId` in an image source, `logoAssetId`
+ * in the Theme's brand record. A walk that only reads strings therefore saw none of them, which is
+ * the whole reason a picture sitting in a Widget could be deleted while it was on the page.
+ *
+ * The field name is the contract, not the surrounding object: an id lands under `assetId` or under a
+ * name ending in `AssetId`, whatever carries it. That keeps the rule readable in one line and makes a
+ * new picture-bearing Widget index itself, rather than needing this list extended -- and REFERENCES.md
+ * states it, so a Widget that stores an Asset anywhere else is authoring a reference nothing protects.
+ */
+function readPhiCmsAssetIdField(key: string, value: unknown): number | null {
+  if (key !== "assetId" && !key.endsWith("AssetId")) return null;
+  return Number.isInteger(value) && (value as number) > 0 ? (value as number) : null;
+}
 
 export function collectSiteCmsReferences(
   value: unknown,
@@ -60,7 +81,16 @@ export function collectSiteCmsReferences(
     }
     if (!node || typeof node !== "object") return;
     for (const [key, entry] of Object.entries(node as Record<string, unknown>)) {
-      visit(entry, `${location}/${key.replaceAll("~", "~0").replaceAll("/", "~1")}`);
+      const encodedKey = key.replaceAll("~", "~0").replaceAll("/", "~1");
+      const assetId = readPhiCmsAssetIdField(key, entry);
+      if (assetId != null) {
+        references.push({
+          location: `${location}/${encodedKey}`,
+          reference: { kind: "asset", assetId },
+        });
+        continue;
+      }
+      visit(entry, `${location}/${encodedKey}`);
     }
   };
   visit(value, "");
@@ -177,15 +207,102 @@ export async function replaceSiteCmsReferencesWithDb(
   );
 }
 
+/** One indexed reference to an Asset, with what its source Scope says about where it sits. */
+export type SiteCmsAssetReferenceRow = {
+  sourceKind: number;
+  sourceScopeId: number;
+  sourceRevisionId: number | null;
+  sourceLocation: string;
+  targetAreaId: number | null;
+  pagePath: string | null;
+  sourceAreaId: number | null;
+};
+
+/**
+ * Every live reference to one Asset, for the delete guard to refuse a deletion by.
+ *
+ * An Asset reference carries no target Area -- Assets are Site scoped. For an Area source the Area the
+ * reference sits in is what names it, so it is read from the source Scope instead.
+ *
+ * The Scope join is also what keeps this honest about drafts. Page, Navigation, Area, and Theme sources
+ * index the revision that was just written, and discarding a Working Draft removes that revision
+ * without touching its rows. Such a row names a revision the Scope no longer points at from any of its
+ * pointers, and is therefore disregarded here rather than swept somewhere else: the reader that would
+ * act on it is the one place that can tell. Publishing promotes the draft revision instead of creating
+ * one, so a published reference keeps matching. Content sources are exempt because their revision is a
+ * content version, and the orphan collector already removes their rows when a discarded Draft leaves
+ * the content unreferenced.
+ *
+ * An Area Scope carries three pointers. Its Module draft is a Working Draft in its own right -- the one
+ * a Module writes when somebody edits what the Module contributes -- and leaving it out read every
+ * picture a Module had just placed as the residue of a discarded draft.
+ */
+export async function listSiteCmsReferencesToAsset(
+  siteId: number,
+  assetId: number,
+): Promise<SiteCmsAssetReferenceRow[]> {
+  const { rows } = await getPool().query<{
+    source_kind: number;
+    source_scope_id: number;
+    source_revision_id: number | null;
+    source_location: string;
+    target_area_id: number | null;
+    page_path: string | null;
+    source_area_id: number | null;
+  }>(
+    `SELECT ref.source_kind, ref.source_scope_id, ref.source_revision_id,
+            ref.source_location, ref.target_area_id, page_scope.path AS page_path,
+            area_scope.area_id AS source_area_id
+     FROM phis.site_cms_references ref
+     LEFT JOIN phis.site_page_scopes page_scope
+       ON ref.source_kind = 1 AND page_scope.id = ref.source_scope_id
+     LEFT JOIN phis.site_nav_scopes nav_scope
+       ON ref.source_kind = 2 AND nav_scope.site_id = ref.site_id AND nav_scope.id = ref.source_scope_id
+     LEFT JOIN phis.site_area_scopes area_scope
+       ON ref.source_kind = 4 AND area_scope.site_id = ref.site_id AND area_scope.id = ref.source_scope_id
+     LEFT JOIN phis.site_theme_scopes theme_scope
+       ON ref.source_kind = 5 AND theme_scope.site_id = ref.site_id AND theme_scope.id = ref.source_scope_id
+     WHERE ref.site_id = $1 AND ref.target_asset_id = $2
+       AND (
+         ref.source_revision_id IS NULL
+         OR ref.source_kind = 3
+         OR (ref.source_kind = 1 AND ref.source_revision_id IN (
+              page_scope.published_revision_id, page_scope.working_draft_revision_id))
+         OR (ref.source_kind = 2 AND ref.source_revision_id IN (
+              nav_scope.published_revision_id, nav_scope.working_draft_revision_id))
+         OR (ref.source_kind = 4 AND ref.source_revision_id IN (
+              area_scope.published_revision_id, area_scope.working_draft_revision_id,
+              area_scope.working_module_draft_revision_id))
+         OR (ref.source_kind = 5 AND ref.source_revision_id IN (
+              theme_scope.published_revision_id, theme_scope.working_draft_revision_id))
+       )
+     ORDER BY ref.source_kind, ref.source_scope_id, ref.source_location`,
+    [siteId, assetId],
+  );
+  return rows.map((row) => ({
+    sourceKind: row.source_kind,
+    sourceScopeId: row.source_scope_id,
+    sourceRevisionId: row.source_revision_id,
+    sourceLocation: row.source_location,
+    targetAreaId: row.target_area_id,
+    pagePath: row.page_path,
+    sourceAreaId: row.source_area_id,
+  }));
+}
+
 export async function countSiteCmsReferencesToPageWithDb(
   db: DbQueryable,
   siteId: number,
   pageScopeId: number,
 ) {
   // The same reconciliation the Asset delete guard reads by: a row naming a revision its Scope points
-  // at from neither pointer belongs to a discarded Working Draft and is not an affected reference.
+  // at from none of its pointers belongs to a discarded Working Draft and is not an affected reference.
   // Counting it would report a rename as more disruptive than it is. Content sources are exempt --
   // their revision is a content version, and the orphan collector already removes their rows.
+  //
+  // An Area Scope has three pointers, not two: a Module draft is a live Working Draft of its own. The
+  // Theme source is absent here because it cannot name a Page -- it is Site wide, so it has no Area to
+  // resolve one in, and the writer rejects a Page reference that names none.
   const { rows } = await db.query<{ source_kind: number; count: string }>(
     `SELECT ref.source_kind, COUNT(*)::text AS count
      FROM phis.site_cms_references ref
@@ -204,7 +321,8 @@ export async function countSiteCmsReferencesToPageWithDb(
          OR (ref.source_kind = 2 AND ref.source_revision_id IN (
               nav_scope.published_revision_id, nav_scope.working_draft_revision_id))
          OR (ref.source_kind = 4 AND ref.source_revision_id IN (
-              area_scope.published_revision_id, area_scope.working_draft_revision_id))
+              area_scope.published_revision_id, area_scope.working_draft_revision_id,
+              area_scope.working_module_draft_revision_id))
        )
      GROUP BY ref.source_kind`,
     [siteId, pageScopeId],

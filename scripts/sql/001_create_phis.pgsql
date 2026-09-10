@@ -1453,7 +1453,7 @@ CREATE TABLE IF NOT EXISTS phis.site_cms_references (
   target_asset_id INT NULL REFERENCES phis.media_assets(id) ON DELETE RESTRICT,
   fragment VARCHAR(512) NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  CONSTRAINT site_cms_references_source_kind_check CHECK (source_kind IN (1, 2, 3, 4)),
+  CONSTRAINT site_cms_references_source_kind_check CHECK (source_kind IN (1, 2, 3, 4, 5)),
   CONSTRAINT site_cms_references_target_check CHECK (
     (target_kind = 1 AND target_page_scope_id IS NOT NULL AND target_area_id IS NOT NULL
       AND target_owner_module_id IS NULL AND target_preset_key IS NULL AND target_asset_id IS NULL) OR

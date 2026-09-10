@@ -2,6 +2,11 @@ import "server-only";
 
 import type { PoolClient } from "pg";
 
+import {
+  PhiCmsReferenceSourceKind,
+  collectSiteCmsReferences,
+  replaceSiteCmsReferencesWithDb,
+} from "@/db/site-cms-references";
 import { clearSiteConfigCache } from "@/db/site-config";
 import { getPool } from "@/lib/db";
 import { PhiCmsRevisionFlags } from "@phis/contracts/cms";
@@ -474,6 +479,20 @@ export async function saveSiteThemeDraftRevision(
       publishedRevisionId: scope.publishedRevisionId,
       workingDraftRevisionId: revision.id,
     });
+    /*
+     * A Theme carries pictures like any other authored tree: a ground somebody edited was uploaded on
+     * the way here and is an Asset of this Site from that moment, and the brand logo names one too.
+     * Without this the delete guard read the Theme as referencing nothing, and the picture the Site is
+     * built around was the one picture nothing protected. Inside the same transaction as the revision,
+     * so a rolled-back save leaves no reference behind.
+     */
+    await replaceSiteCmsReferencesWithDb(client, {
+      siteId,
+      sourceKind: PhiCmsReferenceSourceKind.Theme,
+      sourceScopeId: scope.id,
+      sourceRevisionId: revision.id,
+      references: collectSiteCmsReferences(tree),
+    });
 
     await client.query("COMMIT");
     return {
@@ -533,6 +552,18 @@ export async function publishSiteThemeRevision(
     await updateSiteThemeScopePointersWithDb(client, scope.id, {
       publishedRevisionId: revision.id,
       workingDraftRevisionId: null,
+    });
+    /*
+     * Rewritten rather than left standing, because this publish does not have to be the draft's own.
+     * A caller may name an older revision, and the draft pointer is cleared either way: whichever
+     * revision becomes the published one, its references are the Scope's whole set afterwards.
+     */
+    await replaceSiteCmsReferencesWithDb(client, {
+      siteId,
+      sourceKind: PhiCmsReferenceSourceKind.Theme,
+      sourceScopeId: scope.id,
+      sourceRevisionId: revision.id,
+      references: collectSiteCmsReferences(tree),
     });
 
     await client.query(

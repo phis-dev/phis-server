@@ -1,6 +1,6 @@
 import "server-only";
 
-import { getPool } from "@/lib/db";
+import { readPhiMediaStorageCorsProfiles } from "@/db/media-storage-cors";
 import { createPhisMediaStorageServiceForProfile } from "@/lib/media-storage";
 import type { PhisMediaStorageProviderId } from "@/lib/media-storage";
 import { reconcilePhiMediaStorageCorsWith } from "@/lib/media-storage-cors-core";
@@ -16,7 +16,7 @@ export type { PhiMediaStorageCorsGroup };
  * through the installed artifact.
  */
 export async function reconcilePhiMediaStorageCors(): Promise<PhiMediaStorageCorsGroup[]> {
-  return reconcilePhiMediaStorageCorsWith(getPool(), async (profile) => {
+  return reconcilePhiMediaStorageCorsWith(await readPhiMediaStorageCorsProfiles(), async (profile) => {
     const service = await createPhisMediaStorageServiceForProfile(
       {
         providerId: profile.providerId as PhisMediaStorageProviderId,

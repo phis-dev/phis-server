@@ -11,6 +11,7 @@ import { PHIS_SERVICE_KINDS } from "../lib/addons/core-services.ts";
 import {
   reconcilePhiMediaStorageCorsWith,
   type PhiMediaStorageCorsAdapter,
+  type PhiMediaStorageCorsProfile,
 } from "../lib/media-storage-cors-core.ts";
 import { buildPhiSecretReference } from "../lib/secrets/reference.ts";
 
@@ -275,8 +276,45 @@ export async function reconcileStorageCors(
   pool: Pool,
   readSecret: StorageSecretReader,
 ) {
-  return reconcilePhiMediaStorageCorsWith(pool, (profile) =>
-    resolveProviderAdapter(root, profile.providerId, profile.config, profile.secretReference, readSecret));
+  return reconcilePhiMediaStorageCorsWith(
+    await readStorageCorsProfiles(pool),
+    (profile) => resolveProviderAdapter(
+      root,
+      profile.providerId,
+      profile.config,
+      profile.secretReference,
+      readSecret,
+    ),
+  );
+}
+
+/**
+ * The same read the Server's database layer performs, here because the CLI cannot import that layer.
+ *
+ * `src/db/` modules are marked `server-only`, and that marker is the Client boundary -- so the CLI runs
+ * under the exemption in AGENTS.md and reads with the migration connection it already holds. The shared
+ * core takes these rows and holds no SQL of its own, which is what keeps one derivation for both.
+ */
+async function readStorageCorsProfiles(pool: Pool): Promise<PhiMediaStorageCorsProfile[]> {
+  const { rows } = await pool.query<{
+    id: number; site_id: number; provider_id: string; config: Record<string, unknown>;
+    secret_reference: string | null; site_key: string; public_base_url: string;
+  }>(
+    `SELECT p.id, p.site_id, p.provider_id, p.config, p.secret_reference,
+            s.key AS site_key, s.public_base_url
+     FROM phis.media_storage_profiles p
+     JOIN phis.sites s ON s.id = p.site_id
+     ORDER BY p.id`,
+  );
+  return rows.map((row): PhiMediaStorageCorsProfile => ({
+    id: row.id,
+    siteId: row.site_id,
+    siteKey: row.site_key,
+    providerId: row.provider_id,
+    config: row.config ?? {},
+    secretReference: row.secret_reference,
+    publicBaseUrl: row.public_base_url,
+  }));
 }
 
 /**

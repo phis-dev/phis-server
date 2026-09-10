@@ -40,10 +40,16 @@
 
 ## Migration contract
 
-- Runtime database execution and inline SQL belong exclusively under `src/db/`. CLI commands, route
-  handlers, setup actions, components, and general-purpose libraries must call typed database-library
-  functions instead of issuing queries directly. Versioned schema DDL remains in `scripts/sql/` and may
-  only be loaded and executed through a `src/db/` function.
+- Runtime database execution and inline SQL belong exclusively under `src/db/`. Route handlers, setup
+  actions, components, and general-purpose libraries must call typed database-library functions instead
+  of issuing queries directly. Versioned schema DDL remains in `scripts/sql/` and may only be loaded
+  and executed through a `src/db/` function; a library shared with the CLI takes what it needs as a
+  parameter rather than a pool, so its SQL lives under `src/db/` too.
+- `src/cli/` is exempt and executes directly. It is an operator tool: it holds the migration
+  connection, applies DDL, and reaches no Client bundle, which is the opposite of what the rule above
+  protects. The exemption is not a licence for the reverse -- a CLI command must not become the place a
+  runtime query is written to avoid the boundary, and `src/db/` modules stay marked `server-only`, which
+  is also why the CLI cannot import them. `scripts/validate-db-sql-boundary.mjs` enforces both halves.
 - PostgreSQL business data for this service lives in schema `phis`.
 - `phis.sites` owns the complete site configuration: `hostname`, `default_locale`, `flags`, `public_base_url`, `mail_from`, `mail_from_name`, `support_email`, `contact_recipient`, `medusa_base_url`, `medusa_publishable_key`, `customer_number_prefix`, and `form_guard_secret`.
 - The former `site_config` table is retired and must not be reintroduced in code or documentation.

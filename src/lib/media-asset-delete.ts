@@ -2,13 +2,12 @@ import "server-only";
 
 import type { MediaAssetRecord } from "@/db/media";
 import {
-  discardPhiMediaAssets,
+  discardPhiMediaAssetsInTransaction,
   forgetPhiDiscardedMediaObjects,
   readPhiDiscardedMediaObjects,
   type PhiDiscardedMediaObject,
 } from "@/db/media-discard";
 import { getMediaStorageProfile } from "@/db/media-spaces";
-import { getPool } from "@/lib/db";
 import { createPhisMediaStorageServiceForProfile } from "@/lib/media-storage";
 
 /**
@@ -78,18 +77,10 @@ export async function drainPhiDiscardedMediaObjects(input: {
  * store touched, and a failure there is a note that stays rather than a file that is lost track of.
  */
 export async function deleteStoredPhiMediaAsset(asset: MediaAssetRecord, siteKey?: string | null) {
-  const client = await getPool().connect();
-  let discarded;
-  try {
-    await client.query("BEGIN");
-    discarded = await discardPhiMediaAssets(client, { siteId: asset.siteId, assetIds: [asset.id] });
-    await client.query("COMMIT");
-  } catch (error) {
-    await client.query("ROLLBACK").catch(() => {});
-    throw error;
-  } finally {
-    client.release();
-  }
+  const discarded = await discardPhiMediaAssetsInTransaction({
+    siteId: asset.siteId,
+    assetIds: [asset.id],
+  });
 
   await drainPhiDiscardedMediaObjects({
     siteId: asset.siteId,

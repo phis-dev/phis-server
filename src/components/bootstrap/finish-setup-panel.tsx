@@ -1,14 +1,7 @@
-import { Client } from "pg";
-
 import type { BootstrapLocale, BootstrapMessages } from "@/bootstrap/i18n";
 import { FinishCompleteForm } from "@/components/bootstrap/finish-complete-form";
+import { readPhiBootstrapSites } from "@/db/bootstrap";
 import { readMergedPhiConfigSync, readPhiRuntimeConfigSync } from "@/lib/config-files";
-
-type BootstrapSiteRecord = {
-  key: string;
-  name: string;
-  publicBaseUrl: string;
-};
 
 function parseDatabaseUri(databaseUri: string | undefined) {
   if (!databaseUri?.trim()) {
@@ -25,37 +18,6 @@ function parseDatabaseUri(databaseUri: string | undefined) {
     };
   } catch {
     return null;
-  }
-}
-
-async function readBootstrapSites(connectionString: string | undefined) {
-  if (!connectionString?.trim()) {
-    return [];
-  }
-
-  const client = new Client({ connectionString });
-  await client.connect();
-
-  try {
-    const { rows } = await client.query<{
-      key: string;
-      name: string;
-      public_base_url: string;
-    }>(
-      `SELECT key, name, public_base_url
-       FROM phis.sites
-       ORDER BY id`,
-    );
-
-    return rows.map(
-      (row): BootstrapSiteRecord => ({
-        key: row.key,
-        name: row.name,
-        publicBaseUrl: row.public_base_url,
-      }),
-    );
-  } finally {
-    await client.end();
   }
 }
 
@@ -86,7 +48,7 @@ export async function FinishSetupPanel({
 }) {
   const runtimeConfig = readPhiRuntimeConfigSync();
   const mergedConfig = readMergedPhiConfigSync();
-  const sites = await readBootstrapSites(runtimeConfig.database?.uri);
+  const sites = await readPhiBootstrapSites(runtimeConfig.database?.uri);
   const parsedDatabase = parseDatabaseUri(runtimeConfig.database?.uri);
   const operatorSummary =
     runtimeConfig.platformSuperUsers?.length

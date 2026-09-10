@@ -1,50 +1,9 @@
 import Link from "next/link";
 
-import { Client } from "pg";
-
 import type { BootstrapLocale, BootstrapMessages } from "@/bootstrap/i18n";
 import { SiteCreationForm } from "@/components/bootstrap/site-creation-form";
+import { readPhiBootstrapSites } from "@/db/bootstrap";
 import { readMergedPhiConfigSync, readPhiRuntimeConfigSync } from "@/lib/config-files";
-
-type BootstrapSiteRecord = {
-  key: string;
-  name: string;
-  hostname: string;
-  publicBaseUrl: string;
-};
-
-async function readBootstrapSites(connectionString: string | undefined) {
-  if (!connectionString?.trim()) {
-    return [];
-  }
-
-  const client = new Client({ connectionString });
-  await client.connect();
-
-  try {
-    const { rows } = await client.query<{
-      key: string;
-      name: string;
-      hostname: string;
-      public_base_url: string;
-    }>(
-      `SELECT key, name, hostname, public_base_url
-       FROM phis.sites
-       ORDER BY id`,
-    );
-
-    return rows.map(
-      (row): BootstrapSiteRecord => ({
-        key: row.key,
-        name: row.name,
-        hostname: row.hostname,
-        publicBaseUrl: row.public_base_url,
-      }),
-    );
-  } finally {
-    await client.end();
-  }
-}
 
 export async function SiteSetupPanel({
   locale,
@@ -59,7 +18,7 @@ export async function SiteSetupPanel({
 }) {
   const runtimeConfig = readPhiRuntimeConfigSync();
   const mergedConfig = readMergedPhiConfigSync();
-  const sites = await readBootstrapSites(runtimeConfig.database?.uri);
+  const sites = await readPhiBootstrapSites(runtimeConfig.database?.uri);
   const hasSites = sites.length > 0;
   const allowedLocales =
     (

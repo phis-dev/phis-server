@@ -1,5 +1,3 @@
-import type { Pool } from "pg";
-
 /**
  * Which browser origins may deliver a body straight to a storage Provider.
  *
@@ -53,34 +51,17 @@ function readSiteOrigin(publicBaseUrl: string) {
   }
 }
 
-export async function readPhiMediaStorageCorsProfiles(pool: Pool) {
-  const { rows } = await pool.query<{
-    id: number; site_id: number; provider_id: string; config: Record<string, unknown>;
-    secret_reference: string | null; site_key: string; public_base_url: string;
-  }>(
-    `SELECT p.id, p.site_id, p.provider_id, p.config, p.secret_reference,
-            s.key AS site_key, s.public_base_url
-     FROM phis.media_storage_profiles p
-     JOIN phis.sites s ON s.id = p.site_id
-     ORDER BY p.id`,
-  );
-  return rows.map((row): PhiMediaStorageCorsProfile => ({
-    id: row.id,
-    siteId: row.site_id,
-    siteKey: row.site_key,
-    providerId: row.provider_id,
-    config: row.config ?? {},
-    secretReference: row.secret_reference,
-    publicBaseUrl: row.public_base_url,
-  }));
-}
-
+/**
+ * Takes the Profiles rather than a pool, because both callers reach the database differently.
+ *
+ * The Server asks its database layer; the CLI, which cannot import that layer, asks under its own
+ * exemption. Either way the shared half is what follows -- grouping by storage identity, deriving the
+ * origins, writing one rule per storage -- and it holds no SQL, which is what lets it be shared at all.
+ */
 export async function reconcilePhiMediaStorageCorsWith(
-  pool: Pool,
+  profiles: readonly PhiMediaStorageCorsProfile[],
   resolve: PhiMediaStorageCorsResolver,
 ): Promise<PhiMediaStorageCorsGroup[]> {
-  const profiles = await readPhiMediaStorageCorsProfiles(pool);
-
   const groups = new Map<string, {
     origins: Set<string>;
     profiles: Array<{ profileId: number; siteKey: string }>;

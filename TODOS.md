@@ -19,7 +19,16 @@ Implemented in the current baseline:
 - The Page source Tree/catalog emits stable opaque Page references; Navigation persists those references
   and renders the resolved path read-only, with the literal URL editor reserved for explicit external targets.
 - `phis.site_cms_references` is the maintained index, replaced transactionally per source scope by the
-  Page, Navigation, and trusted-content writes, and read by path-change reporting and the delete guards.
+  Page, Navigation, Area, Theme, and trusted-content writes, and read by path-change reporting and the
+  delete guards.
+- An Asset in persisted config is indexed from the field that carries its id -- `assetId`, or a name
+  ending in `AssetId` -- because that is how every picker stores one; the `phis:asset/<id>` URI form
+  belongs to trusted Markdown and HTML bodies. Before that, a picture in Widget, Region, or Theme config
+  was in no index at all and its Asset was deletable while the Site rendered it.
+- The Theme is the fifth source: Site wide, one Scope per Site, written by its draft save and rewritten
+  by its publish. It holds the Root background a Module's ground is taken over into and the brand logo.
+- Liveness reconciliation spans every pointer a Scope has, including an Area's Module Working Draft, and
+  both Area publishes rewrite their set because they merge a tree rather than only promoting a pointer.
 - The authoritative HTML write sanitizer accepts `phis:page/` and `phis:asset/` in the declared internal
   content channel, drops obfuscated and grammatically invalid variants, and permits `img` there. Bulk
   resolution, fragment preservation, Asset access enforcement, and the guarantee that no unresolved Phi

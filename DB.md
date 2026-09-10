@@ -310,8 +310,8 @@ Contract:
 - The list query stays index-backed by `(space_id, folder_id, created_at DESC, id DESC)`; the accessible Space is resolved once per request, never once per Asset.
 - Duplicate / comparison lookups use `(space_id, checksum_sha256)` with a partial `WHERE checksum_sha256 IS NOT NULL` index, so observable duplicate detection is scoped to one Space.
 - The list response should expose `pagination.total` so previewers and pagers can render accurate counts without loading the whole library.
-- Deleting a media asset must remove its owned `site_content(type=asset)` wrapper rows, but must be rejected while any widget/layout/page/area/navigation tree still references that content or asset.
-- The delete guard reads the maintained `site_cms_references` index rather than scanning revision JSON.
+- Deleting a media asset must remove its owned `site_content(type=asset)` wrapper rows, but must be rejected while any widget/layout/page/area/navigation tree or the Site Theme still references that content or asset.
+- The delete guard reads the maintained `site_cms_references` index rather than scanning revision JSON. It therefore protects exactly what that index records, which is why the reference forms in [REFERENCES.md](./REFERENCES.md) are normative rather than conventional.
 
 ### `phis.media_upload_sessions`
 
@@ -872,8 +872,9 @@ persist the referencing data. Broad revision-JSON scans are migration input and 
 - `UNIQUE (site_id, source_kind, source_scope_id, source_revision_id, source_location)`
 
 Contract:
-- `source_kind` is closed: `1 = page` (revision `tree_json`), `2 = navigation` (revision `tree_json`), `3 = content` (a trusted `site_content` HTML or Markdown body), `4 = area` (revision `tree_json`).
-- `source_scope_id` is the owning Page Scope, Navigation Scope, Area Scope, or `site_content.id` for the matching source kind. Writers replace the complete reference set for one `(site_id, source_kind, source_scope_id)` in the same transaction that persists the source.
+- `source_kind` is closed: `1 = page` (revision `tree_json`), `2 = navigation` (revision `tree_json`), `3 = content` (a trusted `site_content` HTML or Markdown body), `4 = area` (revision `tree_json`), `5 = theme` (revision `tree_json`).
+- `source_scope_id` is the owning Page Scope, Navigation Scope, Area Scope, Theme Scope, or `site_content.id` for the matching source kind. Writers replace the complete reference set for one `(site_id, source_kind, source_scope_id)` in the same transaction that persists the source.
+- An Asset reference in persisted config is a positive id in a field named `assetId` or in one whose name ends in `AssetId`; `phis:asset/<id>` is the form for trusted Markdown and HTML bodies. The collector reads exactly these two, so an Asset stored under any other shape has no index row and is deletable while the Site renders it. Normative in [REFERENCES.md](./REFERENCES.md).
 - `source_location` is a JSON-Pointer-style path into the source value, with `~0`/`~1` escaping and an appended `@<offset>` when several references are embedded in one string. Content sources use the persisted field name as the root, for example `/html@42`.
 - `target_kind` is closed: `1 = Site Page Scope`, `2 = Module preset Page`, `3 = Asset`. A CHECK constraint enforces that exactly the matching target columns are set.
 - Asset targets are validated against the Site Media Space on write; a reference to an Asset outside it aborts the transaction.
@@ -881,7 +882,8 @@ Contract:
 - The projection is read for path-change affected-reference counts, Page and Asset deletion diagnostics, and delete guards. It never rewrites reference owners: a stable identity already resolves to the new path.
 - Because a Widget body is persisted both in the revision `tree_json` and in its `site_content` row, one authored reference legitimately produces one Page-source row and one Content-source row. The per-source breakdown keeps that visible; the sum is a location count, not a distinct-authored-reference count.
 - The Area source is the `tree_json` counterpart to the Page source, written by the Area draft save inside the same transaction. It exists because Area-owned trusted bodies reach the index through the Content source, but a reference sitting in Area widget or Region config carries no content binding and so had no index row at all. Area revisions persisted before the source existed stay unindexed until their next save; no backfill pass exists. See [TODOS.md](./TODOS.md).
-- `source_revision_id` is what makes a row's own liveness readable. Page, Navigation, and Area sources index the revision that was just written, and discarding a Working Draft removes that revision without touching its rows. A row naming a revision the Scope points at from neither `published_revision_id` nor `working_draft_revision_id` is therefore dead by construction, and the readers that would act on it -- the Asset delete guard and the affected-reference count behind a path change -- disregard it over the same three Scope joins, instead of a sweep repairing it: the maintenance contract in [AGENTS.md](./AGENTS.md). Publishing promotes the draft revision rather than creating one, so a published reference keeps matching. Content sources are exempt: their revision is a content version, and the orphan collector already removes their rows when a discarded Draft leaves the content unreferenced.
+- The Theme source is the Site-wide carrier no CMS tree reaches. One Scope per Site, a key without an Area prefix, and it holds the Root background a Module's ground was taken over into plus the brand logo -- the pictures a Site is built around, and the ones nothing protected before this source existed. A Theme row names no Area, and a Page reference in a Theme is invalid because a Site-wide Scope has no Area to resolve one in. Written by the Theme draft save and rewritten by the Theme publish, which may promote a revision other than the current draft.
+- `source_revision_id` is what makes a row's own liveness readable. Page, Navigation, Area, and Theme sources index the revision that was just written, and discarding a Working Draft removes that revision without touching its rows. A row naming a revision its Scope points at from none of its pointers is therefore dead by construction, and the readers that would act on it -- the Asset delete guard and the affected-reference count behind a path change -- disregard it over the same Scope joins, instead of a sweep repairing it: the maintenance contract in [AGENTS.md](./AGENTS.md). An Area Scope has three such pointers: `published_revision_id`, `working_draft_revision_id`, and `working_module_draft_revision_id`, the Working Draft a Module writes for what it contributes. A publish that merges a tree instead of only promoting a pointer -- both Area publishes -- rewrites the set for the tree it published. Publishing promotes the draft revision rather than creating one, so a published reference keeps matching. Content sources are exempt: their revision is a content version, and the orphan collector already removes their rows when a discarded Draft leaves the content unreferenced.
 
 ### CMS node identity target contract
 
@@ -1064,6 +1066,7 @@ Contract:
   - optional `label`
   - `theme`, matching the JSON shape written to `phis.sites.theme`
 - Publish updates `site_theme_scopes.published_revision_id`, clears the working draft pointer, and writes the selected `tree_json.theme` to `phis.sites.theme`.
+- Both the draft save and the publish replace this Scope's set in `phis.site_cms_references` under source kind `5`, in their own transaction. A ground a Module shipped becomes an Asset of this Site the moment somebody edits it, and the brand logo names one too; without those rows the delete guard reads the Theme as referencing nothing.
 - The published site runtime object remains the live rendering source for pages, shells, navigation, and brand builder preview consumers unless they explicitly request a draft.
 
 ### `phis.site_groups`

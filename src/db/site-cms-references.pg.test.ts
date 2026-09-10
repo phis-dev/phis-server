@@ -7,6 +7,7 @@ import {
   createPhiTestPageReference,
   createPhiTestPageScope,
   createPhiTestSite,
+  createPhiTestThemeScope,
   dropPhiTestSites,
   requirePhiTestDatabase,
   type PhiTestSite,
@@ -56,6 +57,36 @@ describe("site_cms_references referential actions", () => {
 
     const { rows } = await pool.query(`SELECT id FROM phis.media_assets WHERE id = $1`, [asset]);
     expect(rows).toHaveLength(1);
+  });
+
+  it("refuses to delete an Asset the Site Theme points at", async () => {
+    // The Theme is the Site-wide source, and the picture it holds is the one a Module's ground was
+    // taken over into. Its rows have to hold the Asset down like any other source's do.
+    const pool = await requirePhiTestDatabase();
+    const themeScope = await createPhiTestThemeScope(site);
+    const asset = await createPhiTestAsset(site, "pgtest/asset-theme");
+    await createPhiTestAssetReference(site, themeScope, asset, 5);
+
+    await expect(
+      pool.query(`DELETE FROM phis.media_assets WHERE id = $1`, [asset]),
+    ).rejects.toMatchObject({ code: "23503" });
+
+    const { rows } = await pool.query(`SELECT id FROM phis.media_assets WHERE id = $1`, [asset]);
+    expect(rows).toHaveLength(1);
+  });
+
+  it("rejects a source kind the contract does not name", async () => {
+    const pool = await requirePhiTestDatabase();
+    const asset = await createPhiTestAsset(site, "pgtest/asset-kind");
+
+    await expect(
+      pool.query(
+        `INSERT INTO phis.site_cms_references (
+           site_id, source_kind, source_scope_id, source_location, target_kind, target_asset_id
+         ) VALUES ($1, 6, 1, 'pgtest', 3, $2)`,
+        [site.id, asset],
+      ),
+    ).rejects.toMatchObject({ code: "23514" });
   });
 
   it("releases the target once the reference is gone", async () => {

@@ -68,6 +68,13 @@ normal delivery-policy authorization on every resolution. User- and Group-Space 
 targets until an explicit authorized promotion copies or transfers them into the Site Space. Media Space,
 ownership, and delivery semantics are normative in [GROUPS_AND_STORAGE.md](./GROUPS_AND_STORAGE.md).
 
+Persisted config names an Asset by that id in a field called `assetId` or in one whose name ends in
+`AssetId`, and by no other means. The URI form belongs to Markdown and HTML bodies; a Widget image, a
+Region or Root background, a Module's ground, and the Theme's brand logo all carry the id itself
+alongside the variant, geometry, and focal facts that belong to it. This is what the reference
+collector reads, so an Asset stored under any other shape is a reference nothing protects: no index
+row, no delete diagnostic, and deletion of an Asset the Site is still rendering.
+
 Navigation and other structured internal links persist the reference, not an href. Their read models
 resolve the current locale-/Area-correct path. Explicit external targets persist a validated literal URL
 in a separate target variant. Root-relative strings are not an internal-reference fallback.
@@ -90,11 +97,19 @@ resolve again automatically. This is create/restore-time identity reuse, not a r
 normal reference resolution remains strictly Scope-id based.
 
 The server maintains an indexed projection of current structured Page and Asset references with their
-owning scope and source location. Page, Area, navigation, and trusted-content saves and imports update it
-transactionally, each replacing its own scope's complete set. The Area source carries what no content
-binding reaches: a reference sitting in Region or widget config. Path change
-uses it for audit/feedback but does not rewrite reference owners because their stable identity already
-resolves to the new path. Page and Asset deletion flows query the same index for affected-reference
+owning scope and source location. Page, Area, navigation, Theme, and trusted-content saves and imports
+update it transactionally, each replacing its own scope's complete set. The Area source carries what no
+content binding reaches: a reference sitting in Region or widget config. The Theme source carries what
+no CMS tree reaches at all: it is Site wide, one Scope per Site with a key that has no Area prefix, and
+it holds the Root background a Module's ground was taken over into and the brand logo. A Theme
+reference therefore names no Area, and a Page reference in a Theme is invalid because a Site-wide Scope
+has no Area to resolve one in. Path change uses the index for audit/feedback but does not rewrite
+reference owners because their stable identity already resolves to the new path.
+
+A Scope's set is replaced per Scope, and its rows stay readable across every revision that Scope points
+at: published, Working Draft, and — for an Area — the Module Working Draft. A publish that merges a
+tree, rather than only promoting a pointer, rewrites the set for the tree it published; a publish that
+may promote a revision other than the current draft does the same. Page and Asset deletion flows query the same index for affected-reference
 diagnostics; a Page deletion may retain unresolved references for the defined Draft diagnostic and Live
 omission behavior. Legacy raw internal paths must be migrated to one unambiguous target or reported for
 operator repair; live fallback lookup is forbidden.

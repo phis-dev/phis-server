@@ -74,10 +74,13 @@ describe("The Asset delete guard", () => {
     const statements = pool();
     await collectMediaAssetDeleteReferences(31, asset());
     const text = statements[0].text;
-    // Page, Navigation and Area each against their own Scope's two pointers.
+    // Page, Navigation and Theme each against their own Scope's two pointers, and an Area against its
+    // three: a Module Working Draft is a live source, so leaving it out read the picture a Module had
+    // just placed as the residue of a discarded draft.
     expect(text).toMatch(/ref\.source_kind = 1 AND ref\.source_revision_id IN \(\s*page_scope\.published_revision_id, page_scope\.working_draft_revision_id\)/u);
     expect(text).toMatch(/ref\.source_kind = 2 AND ref\.source_revision_id IN \(\s*nav_scope\.published_revision_id, nav_scope\.working_draft_revision_id\)/u);
-    expect(text).toMatch(/ref\.source_kind = 4 AND ref\.source_revision_id IN \(\s*area_scope\.published_revision_id, area_scope\.working_draft_revision_id\)/u);
+    expect(text).toMatch(/ref\.source_kind = 4 AND ref\.source_revision_id IN \(\s*area_scope\.published_revision_id, area_scope\.working_draft_revision_id,\s*area_scope\.working_module_draft_revision_id\)/u);
+    expect(text).toMatch(/ref\.source_kind = 5 AND ref\.source_revision_id IN \(\s*theme_scope\.published_revision_id, theme_scope\.working_draft_revision_id\)/u);
     expect(text).toMatch(/LEFT JOIN phis\.site_nav_scopes nav_scope/u);
   });
 

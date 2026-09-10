@@ -2535,6 +2535,19 @@ export async function publishSiteAreaRevision(
        WHERE id = $1`,
       [revision.id, PhiCmsRevisionFlags.Published, materializedTreeJson],
     );
+    // The same reason the Module publish rewrites them: the merge replaced this revision's tree, so
+    // what it references changed with it. A structure draft is cloned from what was published and
+    // then keeps its own copy of `config.modules` while a Module publish moves that config on; the
+    // merge takes the published one back, and the rows written for the draft's copy name whatever
+    // picture the Module had at clone time. Left alone, the picture now published is in no index and
+    // the one nobody uses any more is what the guard protects.
+    await replaceSiteCmsReferencesWithDb(client, {
+      siteId,
+      sourceKind: PhiCmsReferenceSourceKind.Area,
+      sourceScopeId: scope.id,
+      sourceRevisionId: revision.id,
+      references: collectSiteCmsReferences(materializedTree, { targetAreaId: input.areaMask }),
+    });
     await setSiteAreaScopePointersWithDb(client, scope.id, {
       publishedRevisionId: revision.id,
       workingDraftRevisionId: null,

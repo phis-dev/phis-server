@@ -61,7 +61,7 @@ describe("An Area's own tree is a reference source", () => {
   it("persists under the fourth source kind the schema allows", async () => {
     expect(PhiCmsReferenceSourceKind.Area).toBe(4);
     const ddl = await read("scripts/sql/001_create_phis.pgsql");
-    expect(ddl).toMatch(/source_kind_check CHECK \(source_kind IN \(1, 2, 3, 4\)\)/u);
+    expect(ddl).toMatch(/source_kind_check CHECK \(source_kind IN \(1, 2, 3, 4, 5\)\)/u);
   });
 
   it("replaces one Area Scope's whole set rather than appending to it", async () => {
@@ -108,11 +108,15 @@ describe("An Area reference is visible where references are read", () => {
   });
 
   it("names the Area it sits in when it blocks an Asset delete", async () => {
-    const source = await read("src/lib/media-delete-guard.ts");
-    expect(source).toMatch(/scope: "page" \| "navigation" \| "content" \| "area"/u);
-    expect(source).toMatch(/LEFT JOIN phis\.site_area_scopes area_scope\s*\n\s*ON ref\.source_kind = 4/u);
+    // The query moved under `src/db/` where the boundary in AGENTS.md puts it; the guard is what
+    // turns a row into the answer an operator reads, so the two halves are asserted apart.
+    const query = await read("src/db/site-cms-references.ts");
+    expect(query).toMatch(/LEFT JOIN phis\.site_area_scopes area_scope\s*\n\s*ON ref\.source_kind = 4/u);
+
+    const guard = await read("src/lib/media-delete-guard.ts");
+    expect(guard).toMatch(/scope: "page" \| "navigation" \| "content" \| "area"/u);
     // An Asset reference carries no target Area, so the Area is read from the source Scope.
-    expect(source).toMatch(/areaMask: row\.target_area_id \?\? row\.source_area_id/u);
-    expect(source).toMatch(/row\.source_kind === 4\s*\n?\s*\? "area"/u);
+    expect(guard).toMatch(/areaMask: row\.targetAreaId \?\? row\.sourceAreaId/u);
+    expect(guard).toMatch(/row\.sourceKind === 4\s*\n?\s*\? "area"/u);
   });
 });

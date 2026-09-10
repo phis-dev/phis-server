@@ -116,6 +116,31 @@ export async function discardPhiMediaAssets(
 }
 
 /**
+ * The same discard, in a transaction of its own, for a caller that has no client to lend it.
+ *
+ * A single-Asset deletion has nothing else to sit inside, and the transaction is still what makes the
+ * note and the removed row one fact. It belongs here rather than at the caller because that is where
+ * `BEGIN` is allowed to be written: the boundary in AGENTS.md puts database execution under `src/db/`,
+ * and a transaction is execution.
+ */
+export async function discardPhiMediaAssetsInTransaction(
+  input: { siteId: number; assetIds: readonly number[] },
+): Promise<PhiMediaDiscardResult> {
+  const client = await getPool().connect();
+  try {
+    await client.query("BEGIN");
+    const discarded = await discardPhiMediaAssets(client, input);
+    await client.query("COMMIT");
+    return discarded;
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+/**
  * The oldest notes still standing, for a caller about to talk to the store anyway.
  *
  * Bounded and ordered, because this is meant to be paid for by an ordinary request: an indexed read of

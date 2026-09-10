@@ -144,6 +144,16 @@ export async function createPhiTestPageScope(
   return rows[0]!.id;
 }
 
+/** The Site's own Theme Scope. Site wide by construction: one per Site, keyed without an Area. */
+export async function createPhiTestThemeScope(site: PhiTestSite, key = "pgtest"): Promise<number> {
+  const pool = await requirePhiTestDatabase();
+  const { rows } = await pool.query<{ id: number }>(
+    `INSERT INTO phis.site_theme_scopes (site_id, key) VALUES ($1, $2) RETURNING id`,
+    [site.id, key],
+  );
+  return rows[0]!.id;
+}
+
 export async function createPhiTestAsset(site: PhiTestSite, storageKey: string): Promise<number> {
   const pool = await requirePhiTestDatabase();
   const { rows } = await pool.query<{ id: number }>(
@@ -176,13 +186,15 @@ export async function createPhiTestAssetReference(
   site: PhiTestSite,
   sourceScopeId: number,
   targetAssetId: number,
+  /** The source this reference sits in; the Theme is `5` and is Site wide, so it carries no Area. */
+  sourceKind = 1,
 ): Promise<void> {
   const pool = await requirePhiTestDatabase();
   await pool.query(
     `INSERT INTO phis.site_cms_references (
        site_id, source_kind, source_scope_id, source_location, target_kind, target_asset_id
-     ) VALUES ($1, 1, $2, 'pgtest', 3, $3)`,
-    [site.id, sourceScopeId, targetAssetId],
+     ) VALUES ($1, $4, $2, 'pgtest', 3, $3)`,
+    [site.id, sourceScopeId, targetAssetId, sourceKind],
   );
 }
 
