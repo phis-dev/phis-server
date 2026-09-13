@@ -77,12 +77,26 @@ function hashContent(content: string) {
  * The Area hosts, and the projection they are given.
  *
  * Each host takes what this Site installed as an argument. A Site build cannot redirect an import that
- * happens inside `@phis/ui`, so the value has to arrive from here -- these twelve files are the whole of
- * the Skeleton's part in it, they are written once, and installing a Module never touches them again.
+ * happens inside `@phis/ui`, so the value has to arrive from here -- these thirteen files are the whole
+ * of the Skeleton's part in it, they are written once, and installing a Module never touches them again.
+ * The thirteenth is the document shell: a Theme is site-wide, so the root reads the Theme blocks the Site
+ * can follow from the installed union rather than from one Area's catalog.
  */
 function runtimeModuleFiles() {
   const areas: readonly ("public" | typeof AREAS[number])[] = ["public", ...AREAS];
-  return Object.fromEntries(areas.flatMap((area) => {
+  const root = {
+    "src/runtime-modules/root.ts":
+      `import { createPhiNextRootLayout } from "@phis/ui/next/root-route";\n\n`
+      + `import { PHI_SITE_MODULES } from "@/generated/site-modules";\n\n`
+      + `/**\n`
+      + ` * The document shell, given what this Site installed.\n`
+      + ` *\n`
+      + ` * The root reads the Theme blocks the Site can follow from the installed union -- a Theme is site-wide\n`
+      + ` * -- and, like every Area host, takes the projection as an argument rather than reaching for it.\n`
+      + ` */\n`
+      + `export const PhiSiteRootLayout = createPhiNextRootLayout(PHI_SITE_MODULES);\n`,
+  };
+  return Object.assign(root, Object.fromEntries(areas.flatMap((area) => {
     const name = area === "public" ? "Public" : AREA_NAMES[area];
     const upper = area.toUpperCase();
     return [
@@ -101,7 +115,7 @@ function runtimeModuleFiles() {
         + `  createPhi${name}RuntimeModuleClientBoundary(PHI_SITE_MODULES_CLIENT);\n`,
       ],
     ];
-  }));
+  })));
 }
 
 /**
@@ -136,53 +150,10 @@ const PHI_SITE_GITIGNORE = [
   "",
 ].join("\n");
 
-/**
- * The two Markdown bodies the code-owned Public presets fetch.
- *
- * `public-welcome-page` and `public-terms-page` render a Markdown Widget whose `sourceUrl` is
- * `/welcome.md` and `/terms-and-conditions.md`, served from the Site's own `public/` directory. A Site
- * generated without them answers its own root with "fetch failed" -- which is what the first scaffold
- * of a new Site did until this was noticed.
- *
- * They are placeholders and say so. Like the ignore file they are written once and never repaired: the
- * first thing an operator does with a new Site is replace them.
- */
-const PHI_SITE_PUBLIC_MARKDOWN = {
-  "public/welcome.md": `# Welcome to PHIS
-
-This site is using the shared markdown fallback for \`/\` until a CMS page is defined.
-
-## Next Steps
-
-- Create a real CMS page for \`/\` in \`phis\`.
-- Add navigation and area presets for the public shell.
-- Replace this fallback once the first site content is ready.
-
-## Useful Link
-
-- [Open phis.dev](https://phis.dev)
-`,
-  "public/terms-and-conditions.md": `# Terms and Conditions
-
-This software is provided as is, without any express or implied warranty.
-
-By using this site, you agree that the operators may change, suspend, or remove features at any time without prior notice.
-
-You are responsible for the accuracy of the information you submit and for keeping your account credentials secure.
-
-You must not use this service for unlawful activity, abuse, or attempts to interfere with the operation of the platform.
-
-To the maximum extent permitted by law, the operators are not liable for any direct, indirect, incidental, or consequential damages arising from the use of this software.
-
-If you do not agree to these terms, do not use this site.
-`,
-} as const;
-
 /** Written on `init`, left alone on `reconcile`: the Site owns these once they exist. */
 const PHI_SITE_OWNED_AFTER_INIT: readonly string[] = [
   "config/site-runtime.json",
   ".gitignore",
-  ...Object.keys(PHI_SITE_PUBLIC_MARKDOWN),
   ...PHI_SITE_MODULE_PROJECTION_FILES,
 ];
 
@@ -345,11 +316,10 @@ export function buildPhiSiteScaffoldFiles(context: PhiSiteScaffoldContext) {
     ...rootErrorAreaFile(),
     ...dynamicRootFiles(),
     ...Object.assign({}, ...AREAS.map(staticAreaFiles)),
-    "src/app/layout.tsx": `import { generatePhiNextRootMetadata, PhiNextRootLayout } from "@phis/ui/next/root-route";\n\nimport "./globals.css";\n\nexport const dynamic = "force-dynamic";\nexport const generateMetadata = generatePhiNextRootMetadata;\nexport default PhiNextRootLayout;\n`,
+    "src/app/layout.tsx": `import { generatePhiNextRootMetadata } from "@phis/ui/next/root-route";\n\nimport { PhiSiteRootLayout } from "@/runtime-modules/root";\n\nimport "./globals.css";\n\nexport const dynamic = "force-dynamic";\n\nexport const generateMetadata = generatePhiNextRootMetadata;\nexport default PhiSiteRootLayout;\n`,
     "src/app/page.tsx": `import { PhiNextSiteIndexPage } from "@phis/ui/next/root-route";\n\nexport const dynamic = "force-dynamic";\nexport default PhiNextSiteIndexPage;\n`,
     "src/app/globals.css": "/* Site-specific global overrides may be added here. */\n",
     ".gitignore": PHI_SITE_GITIGNORE,
-    ...PHI_SITE_PUBLIC_MARKDOWN,
     "src/app/not-found.tsx": `import { createPhiNextRootErrorPage } from "@phis/ui/next/area-route";\nimport { PHI_CMS_ROOT_ERROR_AREA } from "@/runtime-modules/root-error-area";\n\nexport default createPhiNextRootErrorPage(404, PHI_CMS_ROOT_ERROR_AREA);\n`,
     "src/app/forbidden.tsx": `import { createPhiNextRootErrorPage } from "@phis/ui/next/area-route";\nimport { PHI_CMS_ROOT_ERROR_AREA } from "@/runtime-modules/root-error-area";\n\nexport default createPhiNextRootErrorPage(403, PHI_CMS_ROOT_ERROR_AREA);\n`,
     "src/app/unauthorized.tsx": `import { createPhiNextRootErrorPage } from "@phis/ui/next/area-route";\nimport { PHI_CMS_ROOT_ERROR_AREA } from "@/runtime-modules/root-error-area";\n\nexport default createPhiNextRootErrorPage(401, PHI_CMS_ROOT_ERROR_AREA);\n`,

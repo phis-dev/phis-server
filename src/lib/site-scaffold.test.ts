@@ -131,12 +131,12 @@ describe("site scaffold", () => {
     expect(await readFile(path.join(root, ".gitignore"), "utf8")).toBe("node_modules/\n.env.local\n");
   });
 
-  it("ships the Markdown the code-owned Public presets fetch", () => {
-    // Without these the welcome and terms pages render "fetch failed" on a brand new Site.
+  it("hands the installed projection to the document shell as well", () => {
+    // A Theme is site-wide: the root reads Theme blocks from the installed union, not from one Area.
     const files = buildPhiSiteScaffoldFiles(context);
 
-    expect(files["public/welcome.md"]).toContain("#");
-    expect(files["public/terms-and-conditions.md"]).toContain("#");
+    expect(files["src/runtime-modules/root.ts"]).toContain("createPhiNextRootLayout(PHI_SITE_MODULES)");
+    expect(files["src/app/layout.tsx"]).toContain("@/runtime-modules/root");
   });
 
   it("repairs managed wrappers without overwriting runtime secrets or unknown files", async () => {

@@ -17,6 +17,11 @@
           "packageName": "@phis/dev",
           "origin": "resolved",
           "spec": "workspace:*"
+        },
+        {
+          "packageName": "@phis/example",
+          "origin": "resolved",
+          "spec": "workspace:*"
         }
       ]
     }
