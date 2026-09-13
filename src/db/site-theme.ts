@@ -88,8 +88,10 @@ function buildThemeRevisionSummary(
 ) {
   const preset = readString(input.theme.preset) ?? "custom";
   const presetVersion = typeof input.theme.presetVersion === "number" ? input.theme.presetVersion : null;
-  const overrides = toJsonRecord(input.theme.overrides);
-  const customOverrideCount = countRecordLeaves(overrides);
+  // What the Site owns beyond the blocks it follows: its palette, its style tokens, its component overrides.
+  const customOverrideCount = countRecordLeaves(toJsonRecord(input.theme.palette))
+    + countRecordLeaves(toJsonRecord(input.theme.style))
+    + countRecordLeaves(toJsonRecord(input.theme.components));
   const changed = stableJsonStringify(source?.theme ?? {}) !== stableJsonStringify(input.theme);
   const suffix = sourceRevisionId != null ? ` from revision #${sourceRevisionId}` : "";
   const versionLabel = presetVersion != null ? ` v${presetVersion}` : "";

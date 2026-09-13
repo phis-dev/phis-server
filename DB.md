@@ -142,8 +142,9 @@ Contract:
 - `shell.header.*`
 - `shell.sider.*`
 - `shell.footer.*`
-- `antd.token`
-- `antd.components`
+- `palette` (colour, per mode, in the shape a Module palette has)
+- `style.token`
+- `components`
 - The old 1:1 `site_config` shape is retired.
 - Public translation requests remain disabled by default. `translation.allowPublicReads` controls CDN-backed public reads, while `translation.allowPublicWrites` stays `false` unless a controlled public seed/import window is explicitly enabled.
 
