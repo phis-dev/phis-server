@@ -41,6 +41,21 @@ export function buildSessionCookieValue(sessionId: string, sessionSecret: string
   return `${sessionId}.${sessionSecret}`;
 }
 
+/**
+ * The shape `createSessionId` writes, which is also the shape `phis.user_sessions.id` stores.
+ *
+ * Reading the cookie has to state it, because the id goes straight into a `uuid` column and Postgres
+ * refuses a value that is not one -- `22P02`, raised from the query rather than returned as an empty
+ * result. An unreadable cookie is not a failed lookup that a caller can answer with "no session": it
+ * is a thrown error, and it came back as a 500 from every route that asks who is signed in. Including
+ * the Site locale resolution the Login page itself waits on, so the one page that could have replaced
+ * the cookie was the one page that could not be reached.
+ *
+ * A cookie whose id cannot name a session is no session, and that is what this returns.
+ */
+const SESSION_ID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export function parseSessionCookieValue(value?: string | null) {
   const raw = value?.trim() ?? "";
   if (!raw) {
@@ -55,7 +70,7 @@ export function parseSessionCookieValue(value?: string | null) {
   const sessionId = raw.slice(0, dotIndex).trim();
   const sessionSecret = raw.slice(dotIndex + 1).trim();
 
-  if (!sessionId || !sessionSecret) {
+  if (!sessionSecret || !SESSION_ID_PATTERN.test(sessionId)) {
     return null;
   }
 
