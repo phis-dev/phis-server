@@ -1019,6 +1019,56 @@ export async function listSitePageScopes(siteId: number, areaMask: number): Prom
   }));
 }
 
+export type SitePublishedPageAddressRecord = {
+  path: string | null;
+  ownerModuleId: string | null;
+  presetKey: string | null;
+  publishedAt: string;
+};
+
+/**
+ * Every Page of one Area that visitors can reach, with the time its live revision was written.
+ *
+ * Only the address and its identity: whether a Page is indexable, visible to a visitor or a redirect is
+ * answered by the Site resolving it, which is where those rules already live. A Module Page stored by
+ * the Site carries no path of its own -- its address comes from the route table -- so it is named by
+ * its preset identity instead.
+ */
+export async function listSitePublishedPageAddresses(
+  siteId: number,
+  areaMask: number,
+): Promise<SitePublishedPageAddressRecord[]> {
+  if (!Number.isInteger(siteId) || siteId <= 0 || !Number.isInteger(areaMask) || areaMask <= 0) {
+    return [];
+  }
+
+  const { rows } = await getPool().query<{
+    path: string | null;
+    owner_module_id: string | null;
+    preset_key: string | null;
+    published_at: Date | string;
+  }>(
+    `SELECT s.path,
+            s.owner_module_id,
+            s.preset_key,
+            r.created_at AS published_at
+     FROM phis.site_page_scopes s
+     JOIN phis.site_page_revisions r ON r.id = s.published_revision_id
+     WHERE s.site_id = $1
+       AND s.area_id = $2
+       AND s.tombstoned_at IS NULL
+     ORDER BY COALESCE(s.path, s.owner_module_id || '/' || s.preset_key) ASC`,
+    [siteId, areaMask],
+  );
+
+  return rows.map((row) => ({
+    path: row.path,
+    ownerModuleId: row.owner_module_id,
+    presetKey: row.preset_key,
+    publishedAt: row.published_at instanceof Date ? row.published_at.toISOString() : String(row.published_at),
+  }));
+}
+
 async function ensureSiteAreaScopeWithDb(
   db: DbQueryable,
   siteId: number,

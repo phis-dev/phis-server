@@ -81,6 +81,24 @@ describe("site scaffold", () => {
     }
   });
 
+  /*
+   * A crawler's two files are answered by the Public Area alone: the sitemap lists only what a visitor
+   * may index, and robots.txt names no staff Area -- importing another Area's bridge here would be the
+   * first step towards listing one.
+   */
+  it("answers sitemap.xml and robots.txt from the Public Area only", () => {
+    const files = buildPhiSiteScaffoldFiles(context);
+
+    expect(files["src/app/sitemap.xml/route.ts"]).toContain("buildPhiSitemapRouteHandler");
+    expect(files["src/app/robots.txt/route.ts"]).toContain("buildPhiRobotsRouteHandler");
+    for (const file of ["src/app/sitemap.xml/route.ts", "src/app/robots.txt/route.ts"]) {
+      expect(files[file]).toContain("@/runtime-modules/public");
+      for (const other of ["accounting", "admin", "app", "builder", "editor"]) {
+        expect(files[file]).not.toContain(`@/runtime-modules/${other}`);
+      }
+    }
+  });
+
   it("leaves no optional catch-all that would swallow an Area root", () => {
     // An optional catch-all matches the Area root too, so it would collide with the root branch's page
     // -- and Next refuses both catch-all kinds at one level outright.

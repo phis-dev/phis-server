@@ -830,18 +830,29 @@ the rule holds by itself once a Module can lose a path. And the read no longer r
 routes want one address the first claim answers and the second is absent, rather than the whole table
 failing to compile.
 
-**Add the rest of the public SEO surface:** `robots.txt`, a sitemap over published Public pages, canonical
-URLs, and durable redirects when a Page path changes. Renaming an indexed path without a redirect is only
-acceptable while nothing is indexed. The sitemap needs a decision first: the Site has locale prefixes, so
-either one entry per locale with `hreflang` alternates, or the default locale alone.
+**The public SEO surface, built 2026-09-13 (phis-ui, phis-server, Skeleton)** -- canonical, hreflang,
+sitemap and robots.txt. Durable redirects when a Page path changes are the part still open, below;
+renaming an indexed path without one is only acceptable while nothing is indexed.
 
-**Canonical** means `alternates.canonical`, which nothing emits today. The duplicate that makes it worth
-having is our own: `config.shell.rootRoute` renders a Page in place at the Area root, so `/en/` and
-`/en/terms-and-conditions` both answer 200 with the same document. That was the point -- a landing Page
-must not arrive through a forward, inside the Shell -- and the canonical is what pays for it. Not to be
-confused with `canonicalHref` in `server-helpers/cms-route.ts`, which is a computed 307 for a wrong
-locale prefix and shares only the word. `hreflang` alternates live in the same metadata field, so they
-wait on the same locale decision as the sitemap.
+- *Locales, decided:* every locale is listed, each version with the full `hreflang` set and `x-default`
+  for the default locale. Paths are locale-neutral, so a version differs only in its prefix; listing the
+  default locale alone would have left every translation unfindable.
+- *Canonical* is `alternates.canonical`, the Page's own absolute URL in its own locale, emitted only for
+  an indexable Public Page. The duplicate this section once named does not exist: a `forward` root answers
+  307 to its target and a `landing` root renders the Page whose path is `/`, so no Page answers under two
+  addresses. What the canonical still settles is query strings, trailing slashes and host variants. Not to
+  be confused with `canonicalHref` in `server-helpers/cms-route.ts`, a computed 307 for a wrong locale
+  prefix that shares only the word.
+- *Sitemap:* `GET /sitemap.xml`, 404 unless the Site has a public base and Public has `index` and
+  `sitemap` on. Candidates are the Area root, the exact Module routes and `GET /api/v1/site/public-pages`;
+  each is resolved as an anonymous page view and listed only when that view is not a redirect, not refused
+  and not `noindex` -- the rules are the request's, not a second copy of them. Dynamic routes are not
+  listed; nothing enumerates their segments. The error Pages ship `NoIndex` like the sign-in Pages.
+- *robots.txt:* allows everything and names the sitemap. No `Disallow` for the staff Areas, decided: the
+  file is public and would list them, and `noindex` keeps them out -- a crawler can only read it on a page
+  it may fetch.
+- *Open:* the sitemap resolves every candidate on each request and is not cached. Fine at tens of Pages;
+  a Site with thousands wants a cache keyed on publishes, or the 50,000-URL split into several files.
 
 **Durable redirects, designed 2026-09-08, not built.** Renaming a Page path drops the old address to a
 404 with no trace. Internal links do not notice -- references persist identity, never an href -- so what
@@ -934,7 +945,7 @@ the dialog still keeps its Admin out of the index.
 The write path is strict, as the switches' was: an unknown key, a non-boolean switch, a non-string title,
 a title over 200 characters, and a non-empty template without `%s` are each refused. That last one is not
 a formatting slip -- a template without the placeholder gives every Page in the Area the same title, which
-nothing downstream can detect. **Still unread:** the sitemap switch, which is the surface above.
+nothing downstream can detect. The sitemap switch is read since 2026-09-13, by the surface above.
 
 ## P2: Auth Module replacement and preset recovery
 
