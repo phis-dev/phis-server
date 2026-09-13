@@ -217,9 +217,11 @@ Pure builders can create and update builder drafts but cannot publish without an
 - CMS live reads stay on:
   - `GET /api/v1/site/area`
   - `GET /api/v1/site/page`
-- `GET /api/v1/site/public-pages` lists the published, non-tombstoned Public Pages as sitemap candidates:
-  address or preset identity plus the time the live revision was written, never content. Public only;
-  the Site resolves each candidate itself, so visibility, redirects and `noindex` stay decided in one place.
+- `GET /api/v1/site/area?path=/&include=publishedPages` adds `publishedPages` to the Public live read: the
+  published, non-tombstoned Public Pages as sitemap candidates -- path or preset identity, live revision id
+  and the time it was written, never content. Opt-in, Public only, live only; with the flag the read
+  answers 200 with `preset: null` while the Area has no published revision. The Site resolves each
+  candidate itself, so visibility, redirects and `noindex` stay decided in one place.
 - Normal live reads resolve the published CMS revision state only.
 - Normal published-live reads are the primary performance path and must not pay draft-preview or builder overhead.
 - `/public` and `/app` are the primary live-performance Areas and should stay on the published-only read path unless an explicit preview request is active.

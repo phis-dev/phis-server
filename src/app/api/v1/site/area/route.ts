@@ -1,9 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 
-import { getExactSiteAreaPresetTree, getSiteAreaDraftRevisionPreview, getSiteAreaRevisionReview } from "@/db/site-pages";
+import {
+  getExactSiteAreaPresetTree,
+  getSiteAreaDraftRevisionPreview,
+  getSiteAreaRevisionReview,
+  listSitePublishedPageAddresses,
+} from "@/db/site-pages";
 import { createJsonResponse } from "@/lib/api-response";
 import { guardApiV1 } from "@/lib/api-v1-guard";
 import { resolveCmsPath } from "@/lib/helpers/access";
+import { resolvePhisCmsAreaMask } from "@/lib/constants/cms-areas";
 import { requireSiteCmsPreviewApiContext } from "@/lib/guards/site-admin-api";
 import { normalizeLocale } from "@/lib/locale";
 import { requireSiteFromRequest } from "@/lib/site-context";
@@ -13,6 +19,8 @@ function resolveAreaPresetIdentity(url: URL) {
   const presetKey = url.searchParams.get("presetKey")?.trim() ?? "";
   return ownerModuleId && presetKey ? { ownerModuleId, presetKey } : null;
 }
+
+const PUBLISHED_PAGES_INCLUDE = "publishedPages";
 
 function resolveRequestLocale(request: Request) {
   const url = new URL(request.url);
@@ -52,6 +60,27 @@ export async function GET(request: NextRequest) {
       { error: "ownerModuleId and presetKey must be provided." },
       { status: 400 },
     );
+  }
+  /*
+   * `include=publishedPages` adds the Area's published Pages, as the candidates of the Site's sitemap.
+   *
+   * On this read because the sitemap already asks it -- the Area's `index` and `sitemap` switches are
+   * in the preset -- so one request answers both. Opt-in, because this is the live read every page
+   * view pays for. Public only: it is the one Area anything indexes, and a list of the staff Areas'
+   * addresses is what the Site keeps out of its robots.txt. Live only: a sitemap never reads a draft.
+   * With the flag the read answers even while the Area has no published revision, because Pages can
+   * be published before it is -- `preset` is then null rather than the whole answer a 404.
+   */
+  const include = url.searchParams.get("include")?.trim() ?? "";
+  if (include && include !== PUBLISHED_PAGES_INCLUDE) {
+    return NextResponse.json({ error: `include must be "${PUBLISHED_PAGES_INCLUDE}".` }, { status: 400 });
+  }
+  const includePublishedPages = include === PUBLISHED_PAGES_INCLUDE;
+  if (includePublishedPages && resolvedPath.areaMask !== resolvePhisCmsAreaMask("public")) {
+    return NextResponse.json({ error: "publishedPages is answered for the Public Area only." }, { status: 400 });
+  }
+  if (includePublishedPages && (revisionValue != null || reviewRevisionValue != null)) {
+    return NextResponse.json({ error: "publishedPages is answered on the live read only." }, { status: 400 });
   }
   if (reviewRevisionValue != null) {
     const revisionId = Number(reviewRevisionValue);
@@ -112,6 +141,16 @@ export async function GET(request: NextRequest) {
     locale,
     sourcePreset,
   );
+
+  if (includePublishedPages) {
+    const publishedPages = await listSitePublishedPageAddresses(site.id, resolvedPath.areaMask);
+    return createJsonResponse(request, {
+      areaMask: resolvedPath.areaMask,
+      sourcePreset: preset?.sourcePreset ?? sourcePreset,
+      preset,
+      publishedPages,
+    });
+  }
 
   if (!preset) {
     return NextResponse.json({ error: "Area preset override not found." }, { status: 404 });

@@ -1023,6 +1023,8 @@ export type SitePublishedPageAddressRecord = {
   path: string | null;
   ownerModuleId: string | null;
   presetKey: string | null;
+  /** The live revision. A publish replaces it, which is what tells a Site its sitemap is stale. */
+  revisionId: number;
   publishedAt: string;
 };
 
@@ -1046,11 +1048,13 @@ export async function listSitePublishedPageAddresses(
     path: string | null;
     owner_module_id: string | null;
     preset_key: string | null;
+    revision_id: number;
     published_at: Date | string;
   }>(
     `SELECT s.path,
             s.owner_module_id,
             s.preset_key,
+            r.id AS revision_id,
             r.created_at AS published_at
      FROM phis.site_page_scopes s
      JOIN phis.site_page_revisions r ON r.id = s.published_revision_id
@@ -1065,6 +1069,7 @@ export async function listSitePublishedPageAddresses(
     path: row.path,
     ownerModuleId: row.owner_module_id,
     presetKey: row.preset_key,
+    revisionId: row.revision_id,
     publishedAt: row.published_at instanceof Date ? row.published_at.toISOString() : String(row.published_at),
   }));
 }

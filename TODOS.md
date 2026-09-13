@@ -844,15 +844,20 @@ renaming an indexed path without one is only acceptable while nothing is indexed
   be confused with `canonicalHref` in `server-helpers/cms-route.ts`, a computed 307 for a wrong locale
   prefix that shares only the word.
 - *Sitemap:* `GET /sitemap.xml`, 404 unless the Site has a public base and Public has `index` and
-  `sitemap` on. Candidates are the Area root, the exact Module routes and `GET /api/v1/site/public-pages`;
+  `sitemap` on. Candidates are the Area root, the exact Module routes and the published Pages, which the
+  Public Area read adds on `include=publishedPages` -- the sitemap asks that read anyway, for its switches;
   each is resolved as an anonymous page view and listed only when that view is not a redirect, not refused
   and not `noindex` -- the rules are the request's, not a second copy of them. Dynamic routes are not
   listed; nothing enumerates their segments. The error Pages ship `NoIndex` like the sign-in Pages.
 - *robots.txt:* allows everything and names the sitemap. No `Disallow` for the staff Areas, decided: the
   file is public and would list them, and `noindex` keeps them out -- a crawler can only read it on a page
   it may fetch.
-- *Open:* the sitemap resolves every candidate on each request and is not cached. Fine at tens of Pages;
-  a Site with thousands wants a cache keyed on publishes, or the 50,000-URL split into several files.
+- *Cache, until the next publish:* the Site keeps the finished sitemap and rebuilds it only when a
+  fingerprint of what it was built from changes -- the published Pages with their live revision ids, the
+  Public Area preset, the active Modules, locales and public base. Every publish, unpublish, tombstone or
+  path change moves it. Pulled rather than pushed: the Core does not call Sites, so nothing has to reach
+  every instance. A Module update restarts the Site process, which empties the cache by itself.
+- *Open:* a Site with more than 50,000 URLs needs the sitemap split into several files.
 
 **Durable redirects, designed 2026-09-08, not built.** Renaming a Page path drops the old address to a
 404 with no trace. Internal links do not notice -- references persist identity, never an href -- so what
