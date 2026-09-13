@@ -1556,15 +1556,27 @@ function buildPageRevisionSummary(input: CmsPageWriteInput, source: CmsPageWrite
   const overlayDiff = diffRevisionNodes(source?.overlays ?? [], input.overlays);
   const titleChanged = (source?.page?.titleMsgId ?? null) !== (input.page?.titleMsgId ?? null);
   const descriptionChanged = (source?.page?.descriptionMsgId ?? null) !== (input.page?.descriptionMsgId ?? null);
+  /*
+   * Indexing is asked in the same dialog as the titles and is counted with them, because it is the same
+   * kind of change: a statement about the Page rather than about anything on it. It is read off the
+   * flags and not off a field of its own -- that is where it is stored.
+   */
+  const indexChanged =
+    hasPhiFlag(source?.page?.flags ?? 0, PhiCmsFlags.NoIndex) !==
+    hasPhiFlag(input.page?.flags ?? 0, PhiCmsFlags.NoIndex);
   const deleted = isDeletedPageRevision(input);
   const messageKey = deleted
     ? "page_deleted"
-    : titleChanged || descriptionChanged
+    : titleChanged || descriptionChanged || indexChanged
       ? "page_meta_changed"
       : widgetDiff.total + layoutDiff.total + overlayDiff.total > 0
         ? "page_nodes_changed"
         : "page_saved";
-  const metaLabels = [titleChanged ? "title" : "", descriptionChanged ? "description" : ""].filter(Boolean);
+  const metaLabels = [
+    titleChanged ? "title" : "",
+    descriptionChanged ? "description" : "",
+    indexChanged ? "indexing" : "",
+  ].filter(Boolean);
 
   return {
     message: deleted
@@ -1577,13 +1589,13 @@ function buildPageRevisionSummary(input: CmsPageWriteInput, source: CmsPageWrite
       sourceRevisionId,
       origin: sourceRevisionId == null ? "new" : "revision",
       changeKinds: [
-        ...(titleChanged || descriptionChanged ? ["page_meta"] : []),
+        ...(titleChanged || descriptionChanged || indexChanged ? ["page_meta"] : []),
         ...(widgetDiff.total > 0 ? ["widgets"] : []),
         ...(layoutDiff.total > 0 ? ["layouts"] : []),
         ...(overlayDiff.total > 0 ? ["overlays"] : []),
         ...(deleted ? ["deleted"] : []),
       ],
-      pageMeta: { titleChanged, descriptionChanged },
+      pageMeta: { titleChanged, descriptionChanged, indexChanged },
       nodes: { widgets: widgetDiff, layouts: layoutDiff, overlays: overlayDiff },
     },
   };
