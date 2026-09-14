@@ -5,7 +5,7 @@ import {
   getPhisAddonRegistryRecord,
   isPhisAddonEnabledForSite,
 } from "@/db/server-addons";
-import { hasPhisCoreCapability } from "@/lib/addons/core-capabilities";
+import { isPhisAddonCapabilityDeliverable } from "@/lib/addons/core-capabilities";
 import { isPhisServiceInterfaceCurrent } from "@/lib/addons/core-services";
 import {
   digestPhisAddonManifest,
@@ -101,7 +101,7 @@ export async function resolvePhisServiceProvider(
     ...entry.manifest.requiredCoreCapabilities,
     ...descriptor.requiredCoreCapabilities,
   ]) {
-    if (!hasPhisCoreCapability(capability)) {
+    if (!isPhisAddonCapabilityDeliverable(capability)) {
       throw new PhiServiceProviderUnavailableError(
         serviceKind,
         providerKey,

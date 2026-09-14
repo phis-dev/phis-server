@@ -34,6 +34,7 @@ import { getPool } from "@/lib/db";
 import { buildPhisAddonDataCapability } from "./data-capability.ts";
 import { buildPhisAddonRolesCapability } from "./roles-capability.ts";
 import { buildPhisAddonGroupsCapability } from "./groups-capability.ts";
+import { buildPhisAddonThreadsCapability } from "./threads-capability.ts";
 import { buildPhisAddonSecretsCapability } from "./secrets-capability.ts";
 import { buildPhisAddonSettingsCapability } from "./settings-capability.ts";
 import { buildPhisAddonStorageCapability } from "./storage-capability.ts";
@@ -329,6 +330,19 @@ export function buildPhisAddonCapabilities(input: {
   }
   if (required.includes(PHIS_CORE_CAPABILITIES.roles)) {
     capabilities.roles = roles;
+  }
+  if (required.includes(PHIS_CORE_CAPABILITIES.threads)) {
+    /*
+     * Bound to the acting user, and to nobody where there is none: a job holds no membership, so it
+     * gets a capability that can open a thread and refuses the calls that would have to answer "which
+     * threads are yours". `systemAuthority` is deliberately not read here -- it lifts row authority for
+     * an Add-on's own tables, and these are not its rows.
+     */
+    capabilities.threads = buildPhisAddonThreadsCapability({
+      addonId: input.manifest.addonId,
+      siteId,
+      actorUserId: input.actorUserId,
+    });
   }
   if (required.includes(PHIS_CORE_CAPABILITIES.groups)) {
     capabilities.groups = buildPhisAddonGroupsCapability({

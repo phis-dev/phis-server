@@ -92,8 +92,16 @@ export const SUPPORT_THREAD_TYPE_TEAM = 1;
 export const SUPPORT_THREAD_TYPE_MIXED = 2;
 export const SUPPORT_THREAD_TYPE_BROADCAST = 3;
 
+/** How many messages a thread detail carries unless the caller asks for a different window. */
+export const SUPPORT_THREAD_MESSAGE_PAGE_SIZE = 200;
+export const SUPPORT_THREAD_MESSAGE_MAX_PAGE_SIZE = 500;
+
 export const SUPPORT_THREAD_STATUS_OPEN = 0;
 export const SUPPORT_THREAD_STATUS_ARCHIVED = 1;
+const SUPPORT_THREAD_STATUSES = new Set([
+  SUPPORT_THREAD_STATUS_OPEN,
+  SUPPORT_THREAD_STATUS_ARCHIVED,
+]);
 
 export const SUPPORT_THREAD_RECIPIENT_TYPE_USER = 0;
 export const SUPPORT_THREAD_RECIPIENT_TYPE_TEAM = 1;
@@ -343,6 +351,8 @@ export type SupportThreadRecipientRecord = {
 export type SupportThreadDetailRecord = {
   thread: SupportThreadRecord;
   messages: SupportThreadMessageRecord[];
+  /** Whether older messages remain beyond the window `messages` carries. */
+  hasMoreMessages: boolean;
   recipients: SupportThreadRecipientRecord[];
 };
 
@@ -1019,10 +1029,18 @@ async function getSupportTeamMemberRowByIds(
   return rows[0] ?? null;
 }
 
+/**
+ * One thread row, as one viewer may see it.
+ *
+ * `viewerUserId` null means Core itself is asking -- a job or a hook running as an Add-on rather than
+ * as a person. There is nobody to test membership against then, so the visibility predicate is skipped
+ * rather than evaluated against an id nobody holds: passing 0 answered "not visible" for a row that had
+ * just been written, which is how a thread created without an author came back as null.
+ */
 async function getAccessibleSupportThreadRowById(
   queryable: DbQueryable,
   siteId: number,
-  userId: number,
+  viewerUserId: number | null,
   threadId: number,
 ) {
   const { rows } = await queryable.query<SupportThreadListRow>(
@@ -1073,7 +1091,8 @@ async function getAccessibleSupportThreadRowById(
      WHERE t.site_id = $1
        AND t.id = $3
        AND (
-         t.created_by_user_id = $2
+         $2::int IS NULL
+         OR t.created_by_user_id = $2
          OR EXISTS (
            SELECT 1
            FROM phis.support_thread_recipients recipient
@@ -1093,15 +1112,27 @@ async function getAccessibleSupportThreadRowById(
          )
        )
      LIMIT 1`,
-    [siteId, userId, threadId],
+    [siteId, viewerUserId, threadId],
   );
 
   return rows[0] ?? null;
 }
 
-async function listSupportThreadMessagesByThreadId(queryable: DbQueryable, threadId: number) {
+/**
+ * One window of a thread's messages, oldest first.
+ *
+ * Windowed rather than whole: a thread detail used to select every message it had, which is fine for
+ * the dozen a support thread usually carries and is not a bound. The window is taken from the newest
+ * end because that is the one a reader opens on, and `beforeMessageId` walks backwards from there.
+ */
+async function listSupportThreadMessagesByThreadId(
+  queryable: DbQueryable,
+  threadId: number,
+  options: { limit: number; beforeMessageId?: number | null } = { limit: SUPPORT_THREAD_MESSAGE_PAGE_SIZE },
+) {
+  const limit = Math.max(1, Math.min(options.limit, SUPPORT_THREAD_MESSAGE_MAX_PAGE_SIZE));
   const { rows } = await queryable.query<SupportThreadMessageRow>(
-    `SELECT
+    `SELECT * FROM (SELECT
        message.*,
        author.email_normalized AS author_email,
        profile.first_name,
@@ -1115,11 +1146,21 @@ async function listSupportThreadMessagesByThreadId(queryable: DbQueryable, threa
      LEFT JOIN phis.user_profiles profile
        ON profile.user_id = author.id
      WHERE message.thread_id = $1
-     ORDER BY message.created_at ASC, message.id ASC`,
-    [threadId],
+       AND ($3::int IS NULL OR message.id < $3)
+     ORDER BY message.created_at DESC, message.id DESC
+     LIMIT $2) recent
+     ORDER BY recent.created_at ASC, recent.id ASC`,
+    [threadId, limit + 1, options.beforeMessageId ?? null],
   );
 
-  return rows.map(mapSupportThreadMessage);
+  // One row over the limit is asked for and dropped again: it says whether anything older remains
+  // without a second count over the same rows.
+  const hasMore = rows.length > limit;
+  const windowRows = hasMore ? rows.slice(rows.length - limit) : rows;
+  return {
+    messages: windowRows.map(mapSupportThreadMessage),
+    hasMore,
+  };
 }
 
 async function listSupportThreadRecipientsByThreadId(queryable: DbQueryable, threadId: number) {
@@ -1491,21 +1532,36 @@ export async function listSupportThreadsForUser(
   };
 }
 
-export async function getSupportThreadDetail(siteId: number, userId: number, threadId: number) {
+/**
+ * One thread with a window of its messages and its recipients.
+ *
+ * `viewerUserId` null is Core asking on nobody's behalf -- see the row helper above. Every caller that
+ * acts for a person passes that person, and gets null for a thread they may not see.
+ */
+export async function getSupportThreadDetail(
+  siteId: number,
+  viewerUserId: number | null,
+  threadId: number,
+  options: { messageLimit?: number; beforeMessageId?: number | null } = {},
+) {
   const pool = getPool();
-  const threadRow = await getAccessibleSupportThreadRowById(pool, siteId, userId, threadId);
+  const threadRow = await getAccessibleSupportThreadRowById(pool, siteId, viewerUserId, threadId);
   if (!threadRow) {
     return null;
   }
 
-  const [messages, recipients] = await Promise.all([
-    listSupportThreadMessagesByThreadId(pool, threadId),
+  const [messageWindow, recipients] = await Promise.all([
+    listSupportThreadMessagesByThreadId(pool, threadId, {
+      limit: options.messageLimit ?? SUPPORT_THREAD_MESSAGE_PAGE_SIZE,
+      beforeMessageId: options.beforeMessageId ?? null,
+    }),
     listSupportThreadRecipientsByThreadId(pool, threadId),
   ]);
 
   return {
     thread: mapSupportThread(threadRow),
-    messages,
+    messages: messageWindow.messages,
+    hasMoreMessages: messageWindow.hasMore,
     recipients,
   } satisfies SupportThreadDetailRecord;
 }
@@ -1789,7 +1845,7 @@ export async function createSupportThread(input: CreateSupportThreadInput) {
     );
 
     await client.query("COMMIT");
-    return getSupportThreadDetail(input.siteId, input.createdByUserId ?? 0, threadId);
+    return getSupportThreadDetail(input.siteId, input.createdByUserId ?? null, threadId);
   } catch (error) {
     await client.query("ROLLBACK");
     throw error;
@@ -1948,6 +2004,167 @@ export async function markSupportThreadRead(siteId: number, userId: number, thre
 
     await client.query("COMMIT");
     return getSupportThreadDetail(siteId, userId, threadId);
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+export type UpdateSupportThreadInput = {
+  siteId: number;
+  threadId: number;
+  /** Null is Core acting on nobody's behalf; see `getAccessibleSupportThreadRowById`. */
+  actingUserId: number | null;
+  status?: number;
+  subject?: string | null;
+  flags?: number;
+};
+
+/**
+ * Changes what a thread is, rather than what it holds.
+ *
+ * Anyone who may see the thread may change it, which is the boundary every other thread call draws.
+ * `status` is one column on one row and therefore one answer for everyone in it: archiving takes the
+ * thread out of the active list for all its readers, it is not one reader hiding it. A per-reader
+ * version would be a second table, and nothing asks for one yet.
+ *
+ * Until now nothing wrote this column at all -- `SUPPORT_THREAD_STATUS_ARCHIVED` existed as a word with
+ * no way to reach it, and the only UPDATEs a thread ever saw set `updated_at`.
+ */
+export async function updateSupportThread(input: UpdateSupportThreadInput) {
+  if (input.status != null && !SUPPORT_THREAD_STATUSES.has(input.status)) {
+    throw new Error(`Unknown support thread status ${input.status}.`);
+  }
+
+  const pool = getPool();
+  const threadRow = await getAccessibleSupportThreadRowById(
+    pool,
+    input.siteId,
+    input.actingUserId,
+    input.threadId,
+  );
+  if (!threadRow) {
+    return null;
+  }
+
+  const assignments: string[] = [];
+  const params: unknown[] = [input.threadId];
+  if (input.status != null) {
+    params.push(input.status);
+    assignments.push(`status = $${params.length}`);
+  }
+  if (input.subject !== undefined) {
+    params.push(input.subject);
+    assignments.push(`subject = $${params.length}`);
+  }
+  if (input.flags != null) {
+    params.push(input.flags);
+    assignments.push(`flags = $${params.length}`);
+  }
+
+  if (assignments.length > 0) {
+    await pool.query(
+      `UPDATE phis.support_threads
+       SET ${assignments.join(", ")},
+           updated_at = NOW()
+       WHERE id = $1`,
+      params,
+    );
+  }
+
+  return getSupportThreadDetail(input.siteId, input.actingUserId, input.threadId);
+}
+
+export type AddSupportThreadRecipientsInput = {
+  siteId: number;
+  threadId: number;
+  actingUserId: number | null;
+  recipientUserIds?: number[];
+  recipientTeamIds?: number[];
+};
+
+/**
+ * Brings somebody else into a thread that already exists.
+ *
+ * Recipients used to be fixed at creation, so a thread that needed one more pair of eyes had to be
+ * started again. Adding is all this does: taking somebody out would hide messages they have already
+ * read and been able to answer, which is a different decision and needs its own call.
+ *
+ * The thread's `type` is derived again afterwards, because adding a team to a direct thread makes it a
+ * mixed one and the column would otherwise keep describing the thread it used to be.
+ */
+export async function addSupportThreadRecipients(input: AddSupportThreadRecipientsInput) {
+  const pool = getPool();
+  const client = await pool.connect();
+
+  try {
+    await client.query("BEGIN");
+
+    const threadRow = await getAccessibleSupportThreadRowById(
+      client,
+      input.siteId,
+      input.actingUserId,
+      input.threadId,
+    );
+    if (!threadRow) {
+      await client.query("ROLLBACK");
+      return null;
+    }
+
+    const requestedUserIds = normalizeUniqueIds(input.recipientUserIds);
+    const requestedTeamIds = normalizeUniqueIds(input.recipientTeamIds);
+    if (requestedUserIds.length === 0 && requestedTeamIds.length === 0) {
+      throw new Error("At least one support thread recipient is required.");
+    }
+
+    const userIds = await filterExistingSupportRecipientUserIds(client, input.siteId, requestedUserIds);
+    const teamIds = await filterExistingSupportRecipientTeamIds(client, input.siteId, requestedTeamIds);
+    if (userIds.length !== requestedUserIds.length || teamIds.length !== requestedTeamIds.length) {
+      throw new Error("One or more support thread recipients are invalid for the site.");
+    }
+
+    if (userIds.length > 0) {
+      await client.query(
+        `INSERT INTO phis.support_thread_recipients (thread_id, recipient_type, user_id)
+         SELECT $1, $2, unnest($3::int[])
+         ON CONFLICT DO NOTHING`,
+        [input.threadId, SUPPORT_THREAD_RECIPIENT_TYPE_USER, userIds],
+      );
+    }
+    if (teamIds.length > 0) {
+      await client.query(
+        `INSERT INTO phis.support_thread_recipients (thread_id, recipient_type, team_id)
+         SELECT $1, $2, unnest($3::int[])
+         ON CONFLICT DO NOTHING`,
+        [input.threadId, SUPPORT_THREAD_RECIPIENT_TYPE_TEAM, teamIds],
+      );
+    }
+
+    const { rows: recipientRows } = await client.query<{ user_id: number | null; team_id: number | null }>(
+      `SELECT user_id, team_id
+       FROM phis.support_thread_recipients
+       WHERE thread_id = $1`,
+      [input.threadId],
+    );
+    const allUserIds = recipientRows
+      .map((row) => row.user_id)
+      .filter((value): value is number => value != null);
+    const allTeamIds = recipientRows
+      .map((row) => row.team_id)
+      .filter((value): value is number => value != null);
+
+    await client.query(
+      `UPDATE phis.support_threads
+       SET type = $2,
+           updated_at = NOW()
+       WHERE id = $1`,
+      [input.threadId, resolveSupportThreadType(allUserIds, allTeamIds)],
+    );
+
+    await client.query("COMMIT");
+    return getSupportThreadDetail(input.siteId, input.actingUserId, input.threadId);
   } catch (error) {
     await client.query("ROLLBACK");
     throw error;

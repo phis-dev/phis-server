@@ -582,14 +582,20 @@ the grouping by `storageIdentity()` and the failure handling exist once.
 
 ## Core services for Add-ons
 
-An Add-on declares `requiredCoreCapabilities` in its manifest, Core keeps a list of the capabilities it
-offers -- `auth:v1`, `threads:v1`, `resource-links:v1`, `support:v1`, `groups:v1`, `storage:v1`, each
-with its own digest -- and the dispatcher refuses an Add-on whose declared capability this release does
-not carry.
+An Add-on declares `requiredCoreCapabilities` in its manifest, Core keeps a catalogue of the names it
+knows -- each with its own digest -- and the dispatcher refuses an Add-on whose declared capability this
+release cannot hand over.
 
-**Behind those declarations there is nothing.** An Add-on states that it needs `groups:v1` and then has
-no way to read a group. The declaration half exists; the delivery half does not, and building it is what
-turns the capability list from a compatibility gate into an extension surface.
+Nine of them are built and bound per request or per job: `authorization:v1`, `data:v1`, `threads:v1`,
+`groups:v1`, `storage:v1`, `assets:v1`, `secrets:v1`, `settings:v1`, `roles:v1`. The catalogue still
+names more than that, because a name may be reserved before anything builds it -- and the gate has to
+ask what is built rather than what is named. It used to ask the catalogue, so an Add-on requiring
+`resource-links:v1` passed every check and found `undefined` on its context, which is the one failure
+`PhisAddonCapabilities` promises cannot happen.
+
+**`resource-links:v1` is still a name with nothing behind it.** There is no `resource_links` table; the
+generic `support_ticket_links` row, with its `system` and `type`, is the cross-system reference that
+exists today.
 
 ### Where it goes, and where it does not
 

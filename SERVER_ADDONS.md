@@ -67,9 +67,12 @@ fallback:
 - `@phis/addon-sdk`. The contract package is published and depended on; the build-time half described in
   section 3 -- descriptor builders, result-type generation, a context double -- has no package yet.
 - Site-admin activation/configuration API and provider setup flows
-- Threads and Resource Link adapters in handler context. Six Capabilities are delivered, each bound to
-  the request or the job -- `authorization:v1`, `data:v1`, `storage:v1`, `secrets:v1`, `settings:v1`,
-  `groups:v1` -- and those two are not. A Storage Provider factory receives the restricted service
+- Resource Link adapters in handler context. Nine Capabilities are delivered, each bound to the request
+  or the job -- `authorization:v1`, `data:v1`, `threads:v1`, `groups:v1`, `storage:v1`, `assets:v1`,
+  `secrets:v1`, `settings:v1`, `roles:v1` -- and `resource-links:v1` is not, having no table behind it
+  either. An Add-on requiring it is now refused when it is admitted rather than finding `undefined` on
+  its context: the gate asks what Core can hand over, not what the catalogue can name. A Storage
+  Provider factory receives the restricted service
   context section 10 describes: one nullary reader bound at construction to the secret its own Storage
   Profile names, with no argument through which another could be named.
 - a Site-admin surface over what `phis addon config` writes. The values are stored, declared, and
@@ -1152,6 +1155,27 @@ asked separately.
 `user(userId)` answers null for somebody the actor shares no group with. That null is the point of the
 method: it is what stops a row's owner id from becoming a lookup into a Site's whole user table. An
 Add-on renders "listed by" and learns nothing else.
+
+### `threads:v1`
+
+Core's internal support threads, bounded by the acting user: `list`, `get`, `create`, `reply`,
+`addRecipients`, `archive`, `markRead`.
+
+The rule is the one `groups:v1` states, for the same reason -- **an Add-on sees what its actor sees.**
+A thread is visible to whoever created it, was named a recipient, or stands in a team that was, and
+every read here goes through that same predicate. There is no listing that steps outside it: a Site's
+threads are its people talking, and an Add-on is not a party to them. An author is projected as
+`groups:v1` projects one, so a display name and a company, never an address.
+
+**Without an actor only `create` is offered.** A job and a hook run as the Add-on rather than as a
+person, and a person is what thread visibility is made of -- an Add-on with no actor is in no thread, so
+there is nothing for it to list, read or answer, and the call is refused rather than quietly answering
+with everything or with nothing. It may still open a thread, naming its recipients as it goes, which is
+what an integration reporting an outside event needs.
+
+How such an integration later appends to the thread it opened is deliberately unanswered. It wants a
+thread the Add-on owns, and ownership of a thread is a thing to design when something real needs it.
+The first Add-on that has to hold a conversation open across events is the one that should decide it.
 
 ### `settings:v1`
 

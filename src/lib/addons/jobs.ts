@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 
 import type { PhisAddonBuildEntry, PhisAddonJobContext } from "./contract.ts";
 import { buildPhisAddonCapabilities } from "./capabilities.ts";
-import { hasPhisCoreCapability } from "./core-capabilities.ts";
+import { isPhisAddonCapabilityDeliverable } from "./core-capabilities.ts";
 import { getPhisAddonInstalledManifest } from "./installed.ts";
 import {
   digestPhisAddonManifest,
@@ -54,7 +54,7 @@ function requireEntry(addonId: string): PhisAddonBuildEntry {
     throw new PhisAddonJobError(`${addonId} has an invalid build manifest.`);
   }
   for (const capability of entry.manifest.requiredCoreCapabilities) {
-    if (!hasPhisCoreCapability(capability)) {
+    if (!isPhisAddonCapabilityDeliverable(capability)) {
       throw new PhisAddonJobError(`${addonId} requires the missing Core capability ${capability}.`);
     }
   }

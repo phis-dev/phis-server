@@ -24,7 +24,7 @@ import {
 } from "@/lib/addons/contract";
 import { buildPhisAddonCapabilities } from "@/lib/addons/capabilities";
 import { PhisAddonAssetError } from "@/lib/addons/assets-capability";
-import { hasPhisCoreCapability } from "@/lib/addons/core-capabilities";
+import { isPhisAddonCapabilityDeliverable } from "@/lib/addons/core-capabilities";
 import {
   digestPhisAddonManifest,
   validatePhisAddonManifest,
@@ -529,7 +529,7 @@ export async function dispatchPhisAddonRequest(
   }
   if (
     entry.manifest.requiredCoreCapabilities.some(
-      (capability) => !hasPhisCoreCapability(capability),
+      (capability) => !isPhisAddonCapabilityDeliverable(capability),
     )
   ) {
     logger.error("addon.core_capability.incompatible");
