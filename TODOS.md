@@ -892,6 +892,48 @@ breaks is everything outside: bookmarks, foreign links, and the index entry with
 - *Open:* whether the Builder shows the remembered addresses anywhere. Proposed no, for now: the
   invariant frees a path the moment somebody needs it, so there is nothing to administer.
 
+**Folder addresses, designed 2026-09-14, not built (phis-ui, phis-server).** A catalog folder is a path
+segment with Pages beneath it -- `/docs` while `/docs/guides/a` exists. Today it answers a 404, and a
+breadcrumb segment for it links there anyway.
+
+- *A Page is never a folder.* A Site Page whose path lies beneath another live Page's path is refused when
+  it is written, and so is the reverse -- a Page at `/docs` while `/docs/a` exists -- including a pending
+  path change that would do either. The Module catalog already keeps the two apart, a Page keyed by its
+  preset id and a folder by its segment; the catalog of Site Pages merges them only because it keys both
+  by path. This supersedes `+ child page` in phis-ui `BUILDER.md`. It can be relaxed later; nothing is
+  built on the rule being loose, and no data breaks it (checked 2026-09-14: the test installation holds
+  two Site Pages, neither beneath the other).
+- *The target is authored on the Navigation container.* A container mirrors a folder, and its Navigation
+  table row gets a Select of its direct children -- Pages and sub-containers -- showing their full paths,
+  in the Path cell that is a disabled input for a container today. "Docs" picks "Guides", "Guides" picks
+  `a`. What is stored is the chosen child, never a path composed
+  from the menu hierarchy, so `/docs/bingo` stays `/docs/bingo` wherever the container hangs. A
+  container's address is the folder its direct children share; children from different folders give it
+  none. The address is resolved when the Draft is saved, package namespace included, so outside Public it
+  is the path a request carries rather than the shorter one the Builder tree shows.
+- *One address, one target.* A folder can appear in several Navigations -- header, sider, quicklinks, a
+  custom set -- but an address cannot redirect to two places. Saving a Draft carries the choice into
+  every other Navigation holding the same folder, and a short message at the top says so. Undo stays per
+  Navigation; that gap is accepted, because the next save carries the value again and live follows the
+  latest publish.
+- *Live on publish, in one hop.* Publishing a Navigation resolves each container's chain down to a Page;
+  across Navigations the latest publish decides a folder address. The target is kept as the structured
+  reference Durable redirects use, never as a path, so a renamed target needs no republish. `/docs` answers 307 straight to `/docs/guides/a`, as a `forward` Area root does; the
+  locale prefix stays outside, since paths are locale-neutral. The lookup sits on the miss path only, and
+  because of the first rule a folder address never meets a Page path, so no precedence is needed.
+- *Write strict, read allow.* A choice outside the container's direct children cannot be saved.
+  Whatever goes stale afterwards -- the target left the folder, was tombstoned or unpublished, the chain
+  ends in a container without a choice, the folder lost its last Page -- reads as no target: a 404, with
+  the Navigation table marking the row. No check runs after saving.
+- *Breadcrumbs:* a folder segment links only when its address resolves to a Page; otherwise it is text.
+- *Sitemap:* unchanged in what it lists. A folder address is a redirect, and the sitemap lists no
+  redirects -- only the Pages behind them, which are already candidates.
+- *No store of its own.* A request for a folder address reads the target from the published Navigation,
+  and finds nothing means 404. It happens on the miss path only -- a request for a folder address is rare
+  outside crawlers -- so neither a lookup table nor a cache is needed. Carrying the choice on save keeps
+  the published Navigations agreeing; the latest publish deciding only covers the moment between two
+  publishes.
+
 **A Page path changes through draft and publish, built 2026-09-09.** Renaming a Page was the one
 content-shaped change that bypassed the draft entirely: the command wrote the Scope column, kept the
 revision pointers and recorded nothing, so the live Site changed the moment an operator typed while
