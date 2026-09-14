@@ -1162,45 +1162,6 @@ CREATE TABLE IF NOT EXISTS phis.support_thread_reads (
 CREATE INDEX IF NOT EXISTS support_thread_reads_user_read_idx
   ON phis.support_thread_reads (user_id, read_at DESC);
 
-CREATE TABLE IF NOT EXISTS phis.support_github_integrations (
-  id SERIAL PRIMARY KEY,
-  site_id SMALLINT NOT NULL REFERENCES phis.sites(id) ON DELETE CASCADE,
-  owner VARCHAR(128) NOT NULL,
-  repo VARCHAR(128) NOT NULL,
-  installation_id BIGINT NOT NULL,
-  sync_mode SMALLINT NOT NULL DEFAULT 0,
-  flags INT NOT NULL DEFAULT 0,
-  label_filter JSONB NOT NULL DEFAULT '[]'::jsonb,
-  created_by_user_id INT NULL REFERENCES phis.user_accounts(id) ON DELETE SET NULL,
-  updated_by_user_id INT NULL REFERENCES phis.user_accounts(id) ON DELETE SET NULL,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  CONSTRAINT support_github_integrations_site_repo_unique UNIQUE (site_id, owner, repo)
-);
-
-CREATE INDEX IF NOT EXISTS support_github_integrations_site_id_idx
-  ON phis.support_github_integrations (site_id);
-
-CREATE TABLE IF NOT EXISTS phis.support_github_mappings (
-  id SERIAL PRIMARY KEY,
-  ticket_id INT NOT NULL REFERENCES phis.support_tickets(id) ON DELETE CASCADE,
-  integration_id INT NOT NULL REFERENCES phis.support_github_integrations(id) ON DELETE CASCADE,
-  github_issue_number INT NOT NULL,
-  github_issue_node_id VARCHAR(128) NULL,
-  direction SMALLINT NOT NULL,
-  sync_state SMALLINT NOT NULL DEFAULT 0,
-  flags INT NOT NULL DEFAULT 0,
-  last_synced_at TIMESTAMPTZ NULL,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  CONSTRAINT support_github_mappings_ticket_issue_unique UNIQUE (ticket_id, integration_id, github_issue_number)
-);
-
-CREATE INDEX IF NOT EXISTS support_github_mappings_integration_issue_idx
-  ON phis.support_github_mappings (integration_id, github_issue_number);
-
-CREATE INDEX IF NOT EXISTS support_github_mappings_ticket_id_idx
-  ON phis.support_github_mappings (ticket_id);
-
 CREATE TABLE IF NOT EXISTS phis.tr_msg (
   id SERIAL PRIMARY KEY,
   msg TEXT NOT NULL,
