@@ -892,9 +892,9 @@ breaks is everything outside: bookmarks, foreign links, and the index entry with
 - *Open:* whether the Builder shows the remembered addresses anywhere. Proposed no, for now: the
   invariant frees a path the moment somebody needs it, so there is nothing to administer.
 
-**Folder addresses, designed 2026-09-14, not built (phis-ui, phis-server).** A catalog folder is a path
-segment with Pages beneath it -- `/docs` while `/docs/guides/a` exists. Today it answers a 404, and a
-breadcrumb segment for it links there anyway.
+**Folder addresses, designed 2026-09-14, the first rule built 2026-09-15 (phis-ui, phis-server).** A
+catalog folder is a path segment with Pages beneath it -- `/docs` while `/docs/guides/a` exists. Today it
+answers a 404.
 
 - *A Page is never a folder.* A Site Page whose path lies beneath another live Page's path is refused when
   it is written, and so is the reverse -- a Page at `/docs` while `/docs/a` exists -- including a pending
@@ -902,10 +902,19 @@ breadcrumb segment for it links there anyway.
   preset id and a folder by its segment; the catalog of Site Pages merges them only because it keys both
   by path. This supersedes `+ child page` in phis-ui `BUILDER.md`. It can be relaxed later; nothing is
   built on the rule being loose, and no data breaks it (checked 2026-09-14: the test installation holds
-  two Site Pages, neither beneath the other).
+  two Site Pages, neither beneath the other). *Built:* one check under a per-Area address lock in
+  `src/db/site-pages.ts`, run on create, move and the publish that promotes a move; live, pending and
+  tombstoned addresses all count, `/` is not a folder, and the answers are `409 path_collision` and
+  `409 path_nested` -- the publish used to answer a collision with 500. Creating now has its own route,
+  `POST /api/site/cms/page/create`, which answers `page_exists` with the Page instead of writing a blank
+  draft over it, and the Builder opens that Page.
 - *The target is authored on the Navigation container.* A container mirrors a folder, and its Navigation
   table row gets a Select of its direct children -- Pages and sub-containers -- showing their full paths,
-  in the Path cell that is a disabled input for a container today. "Docs" picks "Guides", "Guides" picks
+  in the Path cell that is a disabled input for a container today. The Path cell becomes a Select on every
+  row: a Page link offers the Pages of the catalog, drafts included, a container its direct children, and
+  only an external link accepts free text. It needs a Table contract extension, options that come from
+  the row (`rowOptionsPath` on the Provider field), not decided yet. In the overlay a container, custom or
+  a Module container's override, carries `folder: { address, choice }`. "Docs" picks "Guides", "Guides" picks
   `a`. What is stored is the chosen child, never a path composed
   from the menu hierarchy, so `/docs/bingo` stays `/docs/bingo` wherever the container hangs. A
   container's address is the folder its direct children share; children from different folders give it
@@ -913,11 +922,14 @@ breadcrumb segment for it links there anyway.
   is the path a request carries rather than the shorter one the Builder tree shows.
 - *One address, one target.* A folder can appear in several Navigations -- header, sider, quicklinks, a
   custom set -- but an address cannot redirect to two places. Saving a Draft carries the choice into
-  every other Navigation holding the same folder, and a short message at the top says so. Undo stays per
+  every other Navigation holding the same folder, in the server's save transaction, and a short message
+  at the top says so. Undo stays per
   Navigation; that gap is accepted, because the next save carries the value again and live follows the
   latest publish.
-- *Live on publish, in one hop.* Publishing a Navigation resolves each container's chain down to a Page;
-  across Navigations the latest publish decides a folder address. The target is kept as the structured
+- *Live on publish, in one hop.* The published Navigation decides; across Navigations the latest publish
+  decides a folder address. The chain is resolved down to a Page when the address is looked up, not
+  written at publish, so a publish stays a pointer move and a target deleted or unpublished since is
+  seen as it is. The target is kept as the structured
   reference Durable redirects use, never as a path, so a renamed target needs no republish. `/docs` answers 307 straight to `/docs/guides/a`, as a `forward` Area root does; the
   locale prefix stays outside, since paths are locale-neutral. The lookup sits on the miss path only, and
   because of the first rule a folder address never meets a Page path, so no precedence is needed.
@@ -926,6 +938,8 @@ breadcrumb segment for it links there anyway.
   ends in a container without a choice, the folder lost its last Page -- reads as no target: a 404, with
   the Navigation table marking the row. No check runs after saving.
 - *Breadcrumbs:* a folder segment links only when its address resolves to a Page; otherwise it is text.
+  Not part of this build: the breadcrumb Widget shows the Site, the Area and the whole path as one
+  segment and links none of them, so segment links are their own piece of work.
 - *Sitemap:* unchanged in what it lists. A folder address is a redirect, and the sitemap lists no
   redirects -- only the Pages behind them, which are already candidates.
 - *No store of its own.* A request for a folder address reads the target from the published Navigation,
@@ -933,6 +947,20 @@ breadcrumb segment for it links there anyway.
   outside crawlers -- so neither a lookup table nor a cache is needed. Carrying the choice on save keeps
   the published Navigations agreeing; the latest publish deciding only covers the moment between two
   publishes.
+
+**Published Navigation and Site config never reach a production Site again, found 2026-09-15, not
+built.** `phis-ui/gateway/site-nav.ts` and `gateway/site-config.ts` fetch with `force-cache` and a tag
+outside development, and nothing in the workspace invalidates either tag, so a publish changes nothing a
+visitor sees until the Site's cache is emptied. Invalidating the tag in the Site proxy that forwards the
+publish was considered and dropped: with several Site processes `revalidateTag` reaches only the one that
+handled the request, which is why tags were not meant to be used at all. The direction is the sitemap's
+-- the Site pulls a fingerprint of what it built from, the published revision ids, and reloads when it
+moves.
+
+**Resolving a Page reference ignores whether the Page is published, found 2026-09-15, open for
+discussion.** `POST /api/v1/site/references` and `projectSiteNavigationOverlayTargets` answer a path for
+a Scope that is not tombstoned, published or not. Collect ideas before changing it; folder addresses
+check publication themselves and do not wait on it.
 
 **A Page path changes through draft and publish, built 2026-09-09.** Renaming a Page was the one
 content-shaped change that bypassed the draft entirely: the command wrote the Scope column, kept the
