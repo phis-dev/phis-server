@@ -291,7 +291,7 @@ Contract:
 - `delivery_revision` invalidates previously granted delivery. A request carrying the current revision receives an immutable cache header; any other revision receives `max-age=0, must-revalidate`. Non-public policies are always `private, no-store`.
 - `presentation_flags` carries non-security display properties only, per `PhiMediaAssetFlags`. It never influences delivery or authorization.
 - Image variants inherit the lifecycle and delivery policy of their original; `variant_key` selects the rendition shape and `variant_version` is only the technical cache-buster.
-- `next/image` optimization is the canonical path for `public` Assets only; every other delivery policy is treated as `unoptimized` in the browser-facing contract.
+- `next/image` optimization is the canonical path for `public` Assets only; every other delivery policy is treated as `unoptimized` in the browser-facing contract. A `public` SVG original is `unoptimized` as well (`isPhiMediaAssetOriginalOptimizable`): the optimizer refuses `image/svg+xml`, and delivery URLs carry no `.svg` suffix by which `next/image` would notice on its own. Generated variants are raster and stay optimizable.
 - `blur_data_url` is an optional preview placeholder that can be generated for image assets and reused by remote `next/image` renderers.
 - `meta` is a generic JSONB extension point for asset-specific metadata. v1 starts with image focus data under `meta.image.focus.x` and `meta.image.focus.y`, both normalized to the `0..1` range. Later image regions and other asset-type metadata may reuse the same field under their own namespaced keys.
 - `content_type` is still stored as the exact MIME type, but the stable v1 media-kind filter contract should use these UX classes:
