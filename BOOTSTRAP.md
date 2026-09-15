@@ -64,6 +64,10 @@ A bootstrap generator should materialize the following site files:
 - `config/site-runtime.json`
 - `config/site-runtime.example.json`
 
+A running Site reads `config/site-runtime.json` once per process and never looks at it again. Whatever
+changes it after scaffolding -- a rotated internal token, a moved API base -- restarts the Site's services
+for the change to take effect; the scaffold's reconcile preserves the file and needs no restart.
+
 The generated `/api/auth/[[...path]]` route is the thin same-origin browser facade from
 `AUTHENTICATION.md`; it forwards only the approved Auth surface to `@phis/server` `/api/v1/auth/*` and does
 not contain Site-owned credential or identity logic.

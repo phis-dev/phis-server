@@ -958,14 +958,25 @@ answers a 404.
   the published Navigations agreeing; the latest publish deciding only covers the moment between two
   publishes.
 
-**Published Navigation and Site config never reach a production Site again, found 2026-09-15, not
-built.** `phis-ui/gateway/site-nav.ts` and `gateway/site-config.ts` fetch with `force-cache` and a tag
-outside development, and nothing in the workspace invalidates either tag, so a publish changes nothing a
-visitor sees until the Site's cache is emptied. Invalidating the tag in the Site proxy that forwards the
-publish was considered and dropped: with several Site processes `revalidateTag` reaches only the one that
-handled the request, which is why tags were not meant to be used at all. The direction is the sitemap's
--- the Site pulls a fingerprint of what it built from, the published revision ids, and reloads when it
-moves.
+**Published Navigation, Site config and translations never reach a production Site again, found
+2026-09-15, not built.** `phis-ui/gateway/site-nav.ts`, `gateway/site-config.ts` and `gateway/tr.ts` fetch
+with `force-cache` outside development -- two of them under a tag -- and nothing invalidates them; in Next
+16 such a response is kept indefinitely, even in a `force-dynamic` route. A publish or a translation edit
+changes nothing a visitor sees until the Site's cache is emptied, and the 60-second translation cache in
+front of `tr.ts` expires into the same stale answer. `gateway/form-guard.ts` does the same with a token
+issued per request, so a cached guard expires after `maxSubmitMs` and every submission is refused.
+
+- *Decided 2026-09-15:* no tags and no `force-cache`. The fetches become `no-store`, and the Site keeps
+  what it loaded in a cache of its own process that a publish passing through that process's Site proxy
+  clears at once, with a 60-second TTL so other Site processes follow within a minute. The form guard is
+  not cached at all.
+- *Considered and dropped:* invalidating a tag in the Site proxy reaches only the process that forwarded
+  the publish; a fingerprint checked on every page view costs a round trip per request -- measured on the
+  dev server, `/api/v1/site` takes about 8-10 ms and an ETag revalidation answering 304 just as long,
+  because the server computes the answer either way.
+- *Also to fix on the way:* `getResolvedSiteConfig` is called several times per page view with a fresh
+  object argument, so its React `cache()` never hits; without `force-cache` nothing would deduplicate it.
+  `gateway/CACHES.md` names outdated signatures and a wrong path.
 
 **Resolving a Page reference ignores whether the Page is published, found 2026-09-15, open for
 discussion.** `POST /api/v1/site/references` and `projectSiteNavigationOverlayTargets` answer a path for
