@@ -238,6 +238,7 @@ Pure builders can create and update builder drafts but cannot publish without an
   - `POST /api/site/cms/area/publish`
   - `GET /api/site/cms/page/draft`
   - `POST /api/site/cms/page`
+  - `POST /api/site/cms/page/create`
   - `DELETE /api/site/cms/page`
   - `POST /api/site/cms/page/publish`
   - `GET /api/site/cms/theme`
@@ -246,6 +247,8 @@ Pure builders can create and update builder drafts but cannot publish without an
   - `DELETE /api/site/cms/theme`
   - `POST /api/site/cms/theme/publish`
 - `POST /api/site/cms/area`, `POST /api/site/cms/page`, and `POST /api/site/cms/theme` now save draft revisions only.
+- `POST /api/site/cms/page/create` creates a Site Page and only creates: when a Page already holds the path it writes nothing and answers `409 page_exists` with that Page's `id`, `reference`, `path` and `tombstoned`, so the Builder opens it instead of laying a blank draft over it. A plain `POST /api/site/cms/page` addresses Pages by path as well and keeps attaching to the Page it finds.
+- A Page is never a folder. Creating, moving or publishing a move refuses an address that another Site Page holds live, pending or tombstoned (`409 path_collision`), and one that would lie beneath another Site Page or hold one beneath it (`409 path_nested`). The check runs under one address lock per Site and Area.
 - `POST /api/site/cms/*/publish` promotes a selected draft revision to the published revision pointer for the requested scope and requires publisher permissions.
 - `GET /api/site/cms/theme` exposes the Theme scope's explicit `publishedRevisionId` and `workingDraftRevisionId`; Builder clients use those pointers to distinguish the concrete Site Theme from immutable preset choices and must not infer ownership by comparing Theme payloads.
 - `GET /api/v1/site` exposes the same pointers as `site.themeRevision` so server-rendered Builder presets can select the Site-owned Theme before hydration. The Theme payload remains under `site.theme`; revision ownership metadata must not be embedded into the visual payload.

@@ -28,6 +28,8 @@ type ScopeRow = {
 function pathChangeDb(options: {
   scope?: Partial<ScopeRow> | null;
   collision?: boolean;
+  /** The conflicting Scope lies beneath the requested path or above it, rather than on it. */
+  nested?: boolean;
   references?: { source_kind: number; count: string }[];
 } = {}) {
   const statements: Statement[] = [];
@@ -50,8 +52,9 @@ function pathChangeDb(options: {
       if (text.includes("owner_module_id, preset_key, tombstoned_at")) {
         return { rows: scope ? [scope] : [] };
       }
-      if (text.includes("SELECT id FROM phis.site_page_scopes")) {
-        return { rows: options.collision ? [{ id: 44 }] : [] };
+      if (text.includes("AS nested")) {
+        if (options.nested) return { rows: [{ id: 45, path: "/kontakt-neu/team", draft_path: null, nested: true }] };
+        return { rows: options.collision ? [{ id: 44, path: "/kontakt-neu", draft_path: null, nested: false }] : [] };
       }
       if (text.includes("FROM phis.site_cms_references")) {
         return { rows: options.references ?? [] };
@@ -133,7 +136,7 @@ describe("A Page path change", () => {
     expect(result.pendingPath).toBeNull();
     expect(db.find("UPDATE phis.site_page_scopes")!.values).toEqual([18, null]);
     // Nothing contends with an address the Page already holds, so nothing is asked about it.
-    expect(db.find("AND (path = $3 OR draft_path = $3)")).toBeUndefined();
+    expect(db.find("AS nested")).toBeUndefined();
   });
 
   it("counts the affected references inside the transaction that moves the path", async () => {
@@ -200,7 +203,7 @@ describe("A Page path change keeps one path per Area", () => {
   it("counts a tombstoned Scope as the owner, because deletion reserves the path", async () => {
     const db = pathChangeDb({ collision: true });
     await failing();
-    const collision = db.find("SELECT id FROM phis.site_page_scopes");
+    const collision = db.find("AS nested");
     // No tombstone filter: a deleted Page keeps its path until the Scope is reactivated on it.
     expect(collision!.text).not.toMatch(/tombstoned_at/u);
     expect(collision!.text).toMatch(/FOR UPDATE/u);
@@ -209,7 +212,25 @@ describe("A Page path change keeps one path per Area", () => {
   it("looks for the collision in the addressed Site and Area only, and never against itself", async () => {
     const db = pathChangeDb();
     await change(31, 4, 18, "/kontakt-neu");
-    expect(db.find("SELECT id FROM phis.site_page_scopes")!.values).toEqual([31, 4, "/kontakt-neu", 18]);
+    expect(db.find("AS nested")!.values).toEqual([31, 4, "/kontakt-neu", 18]);
+  });
+
+  it("refuses a path that would put one Page beneath another, because a Page is never a folder", async () => {
+    const db = pathChangeDb({ nested: true });
+    const error = await failing();
+    expect(error.code).toBe("path_nested");
+    expect(error.message).toContain("/kontakt-neu/team");
+    expect(db.find("UPDATE phis.site_page_scopes")).toBeUndefined();
+    expect(db.find("ROLLBACK")).toBeDefined();
+  });
+
+  it("checks under the Area's address lock, so a concurrent create or move cannot slip past it", async () => {
+    const db = pathChangeDb();
+    await change(31, 4, 18, "/kontakt-neu");
+    const lock = db.find("pg_advisory_xact_lock");
+    expect(lock!.values).toEqual(["phis.site_page_addresses:31:4"]);
+    expect(db.index("pg_advisory_xact_lock")).toBeLessThan(db.index("AS nested"));
+    expect(db.index("AS nested")).toBeLessThan(db.index("UPDATE phis.site_page_scopes"));
   });
 
   it("reads the Scope through its Site and Area rather than by id alone", async () => {

@@ -330,11 +330,28 @@ export class SiteCmsDraftConflictError extends Error {
 
 export class SitePagePathChangeError extends Error {
   constructor(
-    readonly code: "invalid_path" | "page_not_found" | "module_owned" | "path_collision",
+    readonly code: "invalid_path" | "page_not_found" | "module_owned" | "path_collision" | "path_nested",
     message: string,
   ) {
     super(message);
     this.name = "SitePagePathChangeError";
+  }
+}
+
+/**
+ * Creating a Page at an address a Scope already holds. The create writes nothing then: the Builder that
+ * asked did not know the Page, and what it wants is to open it, not to lay a blank draft over it.
+ */
+export class SitePageExistsError extends Error {
+  readonly code = "page_exists";
+
+  constructor(
+    readonly pageScopeId: number,
+    readonly path: string,
+    readonly tombstoned: boolean,
+  ) {
+    super("A Page already exists at this path.");
+    this.name = "SitePageExistsError";
   }
 }
 
@@ -1127,6 +1144,16 @@ async function ensureSitePageScopeWithDb(
   const existing = await getSitePageScopeWithDb(db, siteId, areaMask, address, { forUpdate: true });
   if (existing) {
     return existing;
+  }
+  if (normalizedPath != null) {
+    // A new address: take the Area's address lock, look again -- another writer may have created it
+    // meanwhile, and a save that finds it attaches as before -- and only then check and insert.
+    await lockSitePageAddressesWithDb(db, siteId, areaMask);
+    const created = await getSitePageScopeWithDb(db, siteId, areaMask, address, { forUpdate: true });
+    if (created) {
+      return created;
+    }
+    await assertSitePageAddressFreeWithDb(db, siteId, areaMask, normalizedPath, null);
   }
 
   const { rows } = await db.query<{
@@ -1979,6 +2006,8 @@ export async function saveSitePageDraftRevision(
   options?: {
     createdByUserId?: number | null;
     message?: string | null;
+    /** Create a Site Page: refuse with `SitePageExistsError`, writing nothing, if its path is held. */
+    createOnly?: boolean;
   },
 ): Promise<{
   revisionId: number;
@@ -1996,6 +2025,16 @@ export async function saveSitePageDraftRevision(
     const requestedScopeId = input.sourcePreset == null && Number.isInteger(input.page?.id) && (input.page?.id ?? 0) > 0
       ? input.page!.id
       : null;
+    if (options?.createOnly) {
+      if (input.sourcePreset != null || requestedScopeId != null) {
+        throw new SitePagePathChangeError("invalid_path", "Only a Site Page addressed by its path can be created.");
+      }
+      await lockSitePageAddressesWithDb(client, siteId, areaMask);
+      const held = await getSitePageScopeWithDb(client, siteId, areaMask, resolveSitePageScopeAddress(input));
+      if (held) {
+        throw new SitePageExistsError(held.id, held.path ?? normalizeSiteCmsPath(input.path), held.tombstonedAt != null);
+      }
+    }
     const scope = requestedScopeId == null
       ? await ensureSitePageScopeWithDb(client, siteId, areaMask, resolveSitePageScopeAddress(input))
       : await getSitePageScopeByIdWithDb(client, siteId, areaMask, requestedScopeId, { forUpdate: true });
@@ -2233,6 +2272,10 @@ async function promoteSitePageDraftPathWithDb(
     await db.query(`UPDATE phis.site_page_scopes SET draft_path = NULL WHERE id = $1`, [scope.id]);
     return null;
   }
+  // The pending path was free when it was proposed; a Page created or moved since may have taken it or
+  // settled beneath it, and publishing is where the address actually changes.
+  await lockSitePageAddressesWithDb(db, scope.siteId, scope.areaMask);
+  await assertSitePageAddressFreeWithDb(db, scope.siteId, scope.areaMask, scope.draftPath, scope.id);
   try {
     await db.query(
       `UPDATE phis.site_page_scopes SET path = draft_path, draft_path = NULL, updated_at = NOW() WHERE id = $1`,
@@ -3238,6 +3281,61 @@ export async function getResolvedSitePageTree(
  * The two partial unique indexes are the real guard against two Pages arriving at one address: the
  * collision query alone lets both writers through when neither reads after the other commits.
  */
+/**
+ * Serialises every change to the Site Page addresses of one Area.
+ *
+ * The collision check reads other rows, and a read cannot see a row another writer has not committed.
+ * The unique indexes guard equality on their own, but "a Page is never a folder" is a prefix relation no
+ * index can express -- so the writers that create, move or promote an address take this lock first and
+ * the check becomes the guarantee rather than advice.
+ */
+async function lockSitePageAddressesWithDb(db: DbQueryable, siteId: number, areaMask: number) {
+  await db.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [
+    `phis.site_page_addresses:${siteId}:${areaMask}`,
+  ]);
+}
+
+/**
+ * Refuses an address another Site Page holds, and one that would put a Page beneath another Page or
+ * another Page beneath it: a Page is never a folder. Both the live and the pending address of every
+ * other Scope count, and a tombstoned Scope counts as well, because deletion reserves its path. `/` is
+ * the Area root slot, not a folder, so nothing lies beneath it in this sense.
+ *
+ * Callers hold `lockSitePageAddressesWithDb` for the transaction.
+ */
+async function assertSitePageAddressFreeWithDb(
+  db: DbQueryable,
+  siteId: number,
+  areaMask: number,
+  path: string,
+  exceptScopeId: number | null,
+) {
+  const { rows } = await db.query<{ id: number; path: string | null; draft_path: string | null; nested: boolean }>(
+    `SELECT id, path, draft_path, (path IS DISTINCT FROM $3 AND draft_path IS DISTINCT FROM $3) AS nested
+     FROM phis.site_page_scopes
+     WHERE site_id = $1 AND area_id = $2 AND ($4::integer IS NULL OR id <> $4)
+       AND (
+         path = $3 OR draft_path = $3
+         OR ($3 <> '/' AND (starts_with(path, $3 || '/') OR starts_with(draft_path, $3 || '/')))
+         OR (path <> '/' AND starts_with($3, path || '/'))
+         OR (draft_path <> '/' AND starts_with($3, draft_path || '/'))
+       )
+     ORDER BY nested, id
+     LIMIT 1 FOR UPDATE`,
+    [siteId, areaMask, path, exceptScopeId],
+  );
+  const conflict = rows[0];
+  if (!conflict) return;
+  if (!conflict.nested) {
+    throw new SitePagePathChangeError("path_collision", "Another Page already owns this canonical path.");
+  }
+  const other = conflict.path ?? conflict.draft_path ?? "";
+  throw new SitePagePathChangeError(
+    "path_nested",
+    `A Page is never a folder: this path and the Page at "${other}" would lie one beneath the other.`,
+  );
+}
+
 function toSitePagePathCollisionError(error: unknown) {
   return typeof error === "object" && error !== null && (error as { code?: unknown }).code === "23505"
     ? new SitePagePathChangeError("path_collision", "Another Page already owns this canonical path.")
@@ -3278,22 +3376,10 @@ export async function changeSitePagePath(
     }
     const pendingPath = nextPath === scope.path ? null : nextPath;
     if (pendingPath) {
-      /*
-       * Advisory, and deliberately so: it reads the live and the pending addresses of the Area together
-       * so the Builder can object while the operator still has the field open. It cannot be the
-       * guarantee -- two writers that neither read after the other commits both pass it -- which is why
-       * the unique index below, and the one at publish, are what actually decide.
-       */
-      const { rows: collisions } = await client.query<{ id: number }>(
-        `SELECT id FROM phis.site_page_scopes
-         WHERE site_id = $1 AND area_id = $2 AND id <> $4
-           AND (path = $3 OR draft_path = $3)
-         LIMIT 1 FOR UPDATE`,
-        [siteId, areaMask, pendingPath, pageScopeId],
-      );
-      if (collisions[0]) {
-        throw new SitePagePathChangeError("path_collision", "Another Page already owns this canonical path.");
-      }
+      // Under the Area's address lock, so the answer holds until this transaction commits; the unique
+      // index below stays as the last word on equality.
+      await lockSitePageAddressesWithDb(client, siteId, areaMask);
+      await assertSitePageAddressFreeWithDb(client, siteId, areaMask, pendingPath, pageScopeId);
     }
     const references = await countSiteCmsReferencesToPageWithDb(client, siteId, pageScopeId);
     try {

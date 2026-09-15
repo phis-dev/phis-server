@@ -19,6 +19,8 @@ import {
   saveSiteAreaModulesDraftRevision,
   saveSitePageDraftRevision,
   SiteCmsDraftConflictError,
+  SitePageExistsError,
+  SitePagePathChangeError,
   type SitePageScopeAddress,
 } from "@/db/site-pages";
 import { resolvePhisCmsAreaMask } from "@/lib/constants/cms-areas";
@@ -44,6 +46,7 @@ import {
   readSiteCmsRequestSearchParam,
 } from "@/lib/helpers/site-cms-route";
 import { normalizeSiteCmsPath } from "@/lib/helpers/cms-path";
+import { createPhiPageReference } from "@/lib/internal-references";
 import { normalizeLocale } from "@/lib/locale";
 import { logRuntimeEvent, normalizeLogThrowable } from "@/lib/log";
 import { logSiteCmsAuditEvent } from "@/lib/site-cms-audit";
@@ -214,6 +217,43 @@ async function applySitePageMetaPatch(input: {
 }
 
 export async function handleSiteCmsPageWrite(request: NextRequest) {
+  return writeSiteCmsPage(request, "save");
+}
+
+/**
+ * Creates a Site Page, and only creates: when a Scope already holds the path it writes nothing and answers
+ * `page_exists` with that Page, so the Builder can open it instead of laying a blank draft over it. A plain
+ * save cannot make that distinction -- it addresses Pages by path too, and finding one is its normal case.
+ */
+export async function handleSiteCmsPageCreate(request: NextRequest) {
+  return writeSiteCmsPage(request, "create");
+}
+
+/** The answer for an address a write could not take, in the shape the path-change command uses. */
+function toSitePageAddressErrorResponse(error: unknown) {
+  if (error instanceof SitePageExistsError) {
+    return NextResponse.json(
+      {
+        error: error.code,
+        message: error.message,
+        page: {
+          id: error.pageScopeId,
+          reference: createPhiPageReference({ kind: "site", pageScopeId: error.pageScopeId }),
+          path: error.path,
+          tombstoned: error.tombstoned,
+        },
+      },
+      { status: 409 },
+    );
+  }
+  if (error instanceof SitePagePathChangeError) {
+    const status = error.code === "path_collision" || error.code === "path_nested" ? 409 : 400;
+    return NextResponse.json({ error: error.code, message: error.message }, { status });
+  }
+  return null;
+}
+
+async function writeSiteCmsPage(request: NextRequest, mode: "save" | "create") {
   const { context, error } = await requireSiteBuilderApiContext(request);
   if (error) {
     return error;
@@ -243,6 +283,7 @@ export async function handleSiteCmsPageWrite(request: NextRequest) {
     });
     const draft = await saveSitePageDraftRevision(context!.site!.id, pageWriteInput.value, {
       createdByUserId: context!.session?.userId ?? null,
+      createOnly: mode === "create",
     });
 
     logSiteCmsAuditEvent(PhiCmsAuditEvent.PageDraftSaved, {
@@ -269,6 +310,10 @@ export async function handleSiteCmsPageWrite(request: NextRequest) {
       sourcePreset: draft.sourcePreset,
     });
   } catch (error) {
+    const addressResponse = toSitePageAddressErrorResponse(error);
+    if (addressResponse) {
+      return addressResponse;
+    }
     const detail = readSiteCmsErrorDetail(error);
     const message = readSiteCmsErrorMessage(error, "CMS page save failed.");
     logRuntimeEvent("error", "cms.page_write.failed", {
@@ -1250,7 +1295,9 @@ export async function handleSiteCmsPagePublish(request: NextRequest) {
         error: message,
         details: detail ? [detail] : [],
       },
-      { status: 500 },
+      // A pending path another Page took, or settled beneath, since it was proposed is a conflict the
+      // Builder can resolve, not a fault of the server.
+      { status: error instanceof SitePagePathChangeError ? 409 : 500 },
     );
   }
 }

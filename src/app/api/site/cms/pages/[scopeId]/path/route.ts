@@ -47,7 +47,9 @@ export async function POST(
     return NextResponse.json({ ...result });
   } catch (error) {
     if (error instanceof SitePagePathChangeError) {
-      const status = error.code === "page_not_found" ? 404 : error.code === "path_collision" ? 409 : 400;
+      const status = error.code === "page_not_found"
+        ? 404
+        : error.code === "path_collision" || error.code === "path_nested" ? 409 : 400;
       return NextResponse.json({ error: error.code, message: error.message }, { status });
     }
     throw error;
