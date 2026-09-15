@@ -959,8 +959,9 @@ answers a 404.
   publishes.
 
 **Published Navigation, Site config and translations never reach a production Site again, found
-2026-09-15, not built.** `phis-ui/gateway/site-nav.ts`, `gateway/site-config.ts` and `gateway/tr.ts` fetch
-with `force-cache` outside development -- two of them under a tag -- and nothing invalidates them; in Next
+2026-09-15, built for everything but translations.** `phis-ui/gateway/site-nav.ts`,
+`gateway/site-config.ts` and `gateway/tr.ts` fetch with `force-cache` outside development -- two of them
+under a tag -- and nothing invalidates them; in Next
 16 such a response is kept indefinitely, even in a `force-dynamic` route. A publish or a translation edit
 changes nothing a visitor sees until the Site's cache is emptied, and the 60-second translation cache in
 front of `tr.ts` expires into the same stale answer. `gateway/form-guard.ts` does the same with a token
@@ -977,6 +978,12 @@ issued per request, so a cached guard expires after `maxSubmitMs` and every subm
 - *Also to fix on the way:* `getResolvedSiteConfig` is called several times per page view with a fresh
   object argument, so its React `cache()` never hits; without `force-cache` nothing would deduplicate it.
   `gateway/CACHES.md` names outdated signatures and a wrong path.
+- *Built 2026-09-15:* the form guard is `no-store`. Site config and published Navigation live in
+  `phis-ui/gateway/site-read-cache.ts` outside development, and replace the React `cache()`. Publishing alone
+  does not clear it, since config and Navigation also carry the theme draft revision, settings, the logo's
+  media revision and Page paths: every write Core accepts through `/api/site` clears the whole process
+  cache. Navigation asked for a `revision` or a review bypasses it. The cache tags are gone.
+- *Still open:* `gateway/tr.ts` keeps `force-cache` until translations have been discussed.
 
 **Resolving a Page reference ignores whether the Page is published, found 2026-09-15, open for
 discussion.** `POST /api/v1/site/references` and `projectSiteNavigationOverlayTargets` answer a path for
