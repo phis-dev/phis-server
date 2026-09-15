@@ -56,6 +56,13 @@ describe("A Navigation container's folder", () => {
     }))).toThrow(/beneath its address/);
   });
 
+  it("may lead nowhere and keep its address, so a target chosen elsewhere can be carried to it", () => {
+    const parsed = parse(overlay({ customItems: [customContainer({ address: "/docs", target: null })] }));
+    expect(parsed.customItems[0]?.folder).toEqual({ address: "/docs", target: null });
+    expect(() => parse(overlay({ customItems: [customContainer({ address: null, target: null })] })))
+      .toThrow(/neither an address nor a target/);
+  });
+
   it("may have no address, when the container's children share no folder", () => {
     const parsed = parse(overlay({ customItems: [customContainer({ address: null, target: { kind: "page", reference: sitePage } })] }));
     expect(parsed.customItems[0]?.folder?.address).toBeNull();

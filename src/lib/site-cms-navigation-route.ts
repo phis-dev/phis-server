@@ -118,7 +118,7 @@ export async function handleSiteCmsNavigationWrite(request: NextRequest) {
   }
 
   const payload = (await readSiteCmsRequestJson(request)) as
-    | { key?: unknown; overlay?: unknown; nextNodeSequence?: unknown }
+    | { key?: unknown; overlay?: unknown; nextNodeSequence?: unknown; baseRevisionId?: unknown }
     | null;
   const key = typeof payload?.key === "string" ? payload.key : null;
   const overlay = payload?.overlay;
@@ -136,6 +136,7 @@ export async function handleSiteCmsNavigationWrite(request: NextRequest) {
         key,
         overlay,
         nextNodeSequence: payload.nextNodeSequence,
+        baseRevisionId: payload.baseRevisionId,
       },
       {
         createdByUserId: context!.session?.userId ?? null,
@@ -159,6 +160,8 @@ export async function handleSiteCmsNavigationWrite(request: NextRequest) {
       revisionId: draft.revisionId,
       nextNodeSequence: draft.nextNodeSequence,
       overlay: draft.overlay,
+      // The other Navigations of the Area this save carried a folder target into, with their new Drafts.
+      carriedOver: draft.carriedOver,
     });
   } catch (routeError) {
     logRuntimeEvent("error", "cms.navigation_write.failed", {

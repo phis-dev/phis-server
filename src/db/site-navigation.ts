@@ -45,7 +45,18 @@ export type SiteNavigationFolderTarget =
 export type SiteNavigationFolder = {
   /** Null when the container's direct children share no folder. */
   address: string | null;
-  target: SiteNavigationFolderTarget;
+  /**
+   * Null when the address leads nowhere, which answers 404. A container keeps its address even then, so a
+   * target chosen for the same folder in another Navigation can be carried over to it.
+   */
+  target: SiteNavigationFolderTarget | null;
+};
+
+export type SiteNavigationFolderCarry = {
+  key: string;
+  revisionId: number;
+  nextNodeSequence: number;
+  folders: { address: string; target: SiteNavigationFolderTarget | null }[];
 };
 
 export type SiteNavigationItemOverride = {
@@ -284,12 +295,61 @@ function normalizeSiteNavigationFolder(value: unknown, label: string): SiteNavig
   if (!isRecord(value)) {
     throw new Error(`${label} must be an object.`);
   }
-  const target = normalizeSiteNavigationFolderTarget(value.target, `${label} target`);
+  const target = value.target === null ? null : normalizeSiteNavigationFolderTarget(value.target, `${label} target`);
   const address = value.address === null ? null : readSiteNavigationFolderAddress(value.address, `${label} address`);
-  if (target.kind === "folder" && address != null && !target.address.startsWith(`${address}/`)) {
+  if (address == null && target == null) {
+    throw new Error(`${label} carries neither an address nor a target.`);
+  }
+  if (target?.kind === "folder" && address != null && !target.address.startsWith(`${address}/`)) {
     throw new Error(`${label} target must lie beneath its address.`);
   }
   return { address, target };
+}
+
+function encodeSiteNavigationFolderTarget(target: SiteNavigationFolderTarget | null) {
+  if (target == null) return "";
+  return target.kind === "page" ? `page:${target.reference}` : `folder:${target.address}`;
+}
+
+/**
+ * The target each folder address of a Navigation leads to. One address has one target: a Navigation that
+ * holds the same folder twice with two targets is refused, because a request can be answered only once.
+ */
+function collectSiteNavigationFolderTargets(overlay: SiteNavigationOverlay) {
+  const targets = new Map<string, SiteNavigationFolderTarget | null>();
+  for (const folder of [...overlay.customItems, ...overlay.itemOverrides].map((item) => item.folder)) {
+    if (!folder?.address) continue;
+    const known = targets.get(folder.address);
+    if (targets.has(folder.address) && encodeSiteNavigationFolderTarget(known ?? null) !== encodeSiteNavigationFolderTarget(folder.target)) {
+      throw new Error(`Navigation "${overlay.navKey}" leads the folder "${folder.address}" to two targets.`);
+    }
+    targets.set(folder.address, folder.target);
+  }
+  return targets;
+}
+
+/** The overlay with the given folder targets applied, and the addresses that actually changed. */
+function applySiteNavigationFolderTargets(
+  overlay: SiteNavigationOverlay,
+  targets: ReadonlyMap<string, SiteNavigationFolderTarget | null>,
+) {
+  const changed = new Set<string>();
+  const apply = <TItem extends { folder?: SiteNavigationFolder }>(item: TItem): TItem => {
+    const address = item.folder?.address;
+    if (!address || !targets.has(address)) return item;
+    const target = targets.get(address) ?? null;
+    if (encodeSiteNavigationFolderTarget(item.folder!.target) === encodeSiteNavigationFolderTarget(target)) return item;
+    changed.add(address);
+    return { ...item, folder: { address, target } };
+  };
+  return {
+    overlay: {
+      ...overlay,
+      itemOverrides: overlay.itemOverrides.map(apply),
+      customItems: overlay.customItems.map(apply),
+    },
+    changed,
+  };
 }
 
 function normalizeSiteNavigationItemOverride(value: unknown): SiteNavigationItemOverride {
@@ -740,9 +800,101 @@ export async function getSiteCurrentNavigationDraft(siteId: number, input: { key
   };
 }
 
+/**
+ * Carries the folder targets a save changed into every other Navigation of the Area that holds the same
+ * folder (TODOS.md, "Folder addresses": one address, one target). Only targets this save changed travel:
+ * a Navigation saved from an older state, with nobody touching its targets, must not carry those back.
+ * Each Navigation that takes one gets a new Draft revision on top of its current one -- a Navigation with
+ * only a published revision gets its first Draft -- and publishing stays each Navigation's own.
+ */
+async function carrySiteNavigationFolderTargetsWithDb(
+  db: DbQueryable,
+  siteId: number,
+  input: {
+    key: string;
+    overlay: SiteNavigationOverlay;
+    previousTreeJson: unknown;
+    createdByUserId: number | null;
+  },
+): Promise<SiteNavigationFolderCarry[]> {
+  const targets = collectSiteNavigationFolderTargets(input.overlay);
+  let previous = new Map<string, SiteNavigationFolderTarget | null>();
+  if (input.previousTreeJson != null) {
+    try {
+      previous = collectSiteNavigationFolderTargets(parseSiteNavigationOverlay(input.previousTreeJson, input.key));
+    } catch {
+      // A revision that no longer reads carries nothing to compare against: every target counts as changed.
+    }
+  }
+  const changed = new Map([...targets].filter(([address, target]) =>
+    encodeSiteNavigationFolderTarget(target) !== encodeSiteNavigationFolderTarget(previous.get(address) ?? null)));
+  if (changed.size === 0) return [];
+
+  const areaKey = input.key.slice(0, input.key.indexOf(":"));
+  const { rows: siblings } = await db.query<{ key: string }>(
+    `SELECT key FROM phis.site_nav_scopes
+     WHERE site_id = $1 AND starts_with(key, $2::text || ':') AND key <> $3
+     ORDER BY key
+     FOR UPDATE`,
+    [siteId, areaKey, input.key],
+  );
+  const carried: SiteNavigationFolderCarry[] = [];
+  for (const { key } of siblings) {
+    const scope = await getSiteNavigationScopeByKeyWithDb(db, siteId, key);
+    const sourceRevisionId = scope?.workingDraftRevisionId ?? scope?.publishedRevisionId ?? null;
+    const source = sourceRevisionId == null ? null : await getSiteNavigationRevisionByIdWithDb(db, sourceRevisionId);
+    if (!scope || !source) continue;
+    let sourceOverlay: SiteNavigationOverlay;
+    try {
+      sourceOverlay = parseSiteNavigationOverlay(source.treeJson, key);
+    } catch {
+      continue;
+    }
+    const next = applySiteNavigationFolderTargets(sourceOverlay, changed);
+    if (next.changed.size === 0) continue;
+    const revision = await insertSiteNavigationRevisionWithDb(db, {
+      navScopeId: scope.id,
+      flags: PhiCmsRevisionFlags.Draft,
+      nextNodeSequence: source.nextNodeSequence,
+      treeJson: next.overlay,
+      message: `Navigation: folder target carried from ${input.key} onto revision #${source.id}`,
+      metaJson: { messageKey: "navigation_folder_target_carried", sourceRevisionId: source.id, carriedFrom: input.key },
+      sourceRevisionId: source.id,
+      createdByUserId: input.createdByUserId,
+    });
+    await updateSiteNavigationScopePointersWithDb(db, scope.id, {
+      publishedRevisionId: scope.publishedRevisionId,
+      workingDraftRevisionId: revision.id,
+    });
+    await replaceSiteCmsReferencesWithDb(db, {
+      siteId,
+      sourceKind: PhiCmsReferenceSourceKind.Navigation,
+      sourceScopeId: scope.id,
+      sourceRevisionId: revision.id,
+      references: collectSiteCmsReferences(next.overlay, { targetAreaId: resolvePhisCmsAreaMask(areaKey) }),
+    });
+    carried.push({
+      key,
+      revisionId: revision.id,
+      nextNodeSequence: revision.nextNodeSequence,
+      folders: [...next.changed].map((address) => ({ address, target: changed.get(address) ?? null })),
+    });
+  }
+  return carried;
+}
+
 export async function saveSiteNavigationDraftRevision(
   siteId: number,
-  input: { key: string; overlay: unknown; nextNodeSequence: unknown },
+  input: {
+    key: string;
+    overlay: unknown;
+    nextNodeSequence: unknown;
+    /**
+     * The revision the saving editor's state came from. Folder targets are compared against it, so a
+     * target another Navigation carried in after the editor loaded is not mistaken for this save's change.
+     */
+    baseRevisionId?: unknown;
+  },
   options?: { createdByUserId?: number | null },
 ) {
   if (!Number.isInteger(siteId) || siteId <= 0) {
@@ -754,6 +906,13 @@ export async function saveSiteNavigationDraftRevision(
   const client = await getPool().connect();
   try {
     await client.query("BEGIN");
+    /*
+     * A save may carry folder targets into the other Navigations of its Area, so two saves in one Area
+     * would each hold their own scope and wait for the other's. Saves of one Area take turns instead.
+     */
+    await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [
+      `phis.site_navigation:${siteId}:${normalizedKey.slice(0, normalizedKey.indexOf(":"))}`,
+    ]);
     const scope = await upsertSiteNavigationScopeWithDb(client, siteId, {
       key: normalizedKey,
       label: overlay.label ?? normalizedKey.slice(normalizedKey.indexOf(":") + 1),
@@ -798,8 +957,17 @@ export async function saveSiteNavigationDraftRevision(
         targetAreaId: resolvePhisCmsAreaMask(areaKey),
       }),
     });
+    const baseRevision = Number.isInteger(input.baseRevisionId) && (input.baseRevisionId as number) > 0
+      ? await getSiteNavigationRevisionByIdWithDb(client, input.baseRevisionId as number)
+      : null;
+    const carriedOver = await carrySiteNavigationFolderTargetsWithDb(client, siteId, {
+      key: normalizedKey,
+      overlay,
+      previousTreeJson: baseRevision?.navScopeId === scope.id ? baseRevision.treeJson : sourceRevision?.treeJson ?? null,
+      createdByUserId: options?.createdByUserId ?? null,
+    });
     await client.query("COMMIT");
-    return { revisionId: revision.id, nextNodeSequence: revision.nextNodeSequence, overlay };
+    return { revisionId: revision.id, nextNodeSequence: revision.nextNodeSequence, overlay, carriedOver };
   } catch (error) {
     await client.query("ROLLBACK");
     throw error;
