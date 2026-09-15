@@ -923,8 +923,8 @@ answers a 404.
   folders, or only from the Area root, give it none. The address is refreshed on every edit in the table
   and resolved again when the Draft is saved or published, package namespace included, so outside Public it
   is the path a request carries rather than the shorter one the Builder tree shows.
-- *One address, one target.* A folder can appear in several Navigations -- header, sider, quicklinks, a
-  custom set -- but an address cannot redirect to two places. Saving a Draft carries the choice into
+- *One address, one target (built 2026-09-15).* A folder can appear in several Navigations -- header,
+  sider, quicklinks, a custom set -- but an address cannot redirect to two places. Saving a Draft carries the choice into
   every other Navigation holding the same folder, in the server's save transaction, and a short message
   at the top says so. Undo stays per
   Navigation; that gap is accepted, because the next save carries the value again and live follows the
@@ -932,14 +932,21 @@ answers a 404.
 - *Live on publish, in one hop.* The published Navigation decides; across Navigations the latest publish
   decides a folder address. The chain is resolved down to a Page when the address is looked up, not
   written at publish, so a publish stays a pointer move and a target deleted or unpublished since is
-  seen as it is. The target is kept as the structured
+  seen as it is. *Built 2026-09-15:* `resolvePublishedSiteNavigationFolderTarget` behind
+  `GET /api/v1/site/nav/folder?area=&path=` reads the published Navigations of the Area, newest published
+  revision first, follows sub-folder targets and answers a Page reference, refusing a Site Page that is
+  unpublished, tombstoned or in another Area; a Module Page is handed on for the Site, which alone knows
+  Module routes, to resolve. phis-ui asks it in `resolvePhiCmsRequest` only where no Page answers, and
+  answers with a bare Redirect page that the Layout turns into a 307 before the shell flushes, as it does
+  a forwarding Area root. A Navigation revision carries no publish time, so its creation time stands in,
+  as it already does for published Page addresses. The target is kept as the structured
   reference Durable redirects use, never as a path, so a renamed target needs no republish. `/docs` answers 307 straight to `/docs/guides/a`, as a `forward` Area root does; the
   locale prefix stays outside, since paths are locale-neutral. The lookup sits on the miss path only, and
   because of the first rule a folder address never meets a Page path, so no precedence is needed.
 - *Write strict, read allow.* A choice outside the container's direct children cannot be saved.
   Whatever goes stale afterwards -- the target left the folder, was tombstoned or unpublished, the chain
-  ends in a container without a choice, the folder lost its last Page -- reads as no target: a 404, with
-  the Navigation table marking the row. No check runs after saving.
+  ends in a container without a choice, the folder lost its last Page -- reads as no target: a 404, and
+  the Navigation table shows it as 404. No check runs after saving, and nothing repairs old data.
 - *Breadcrumbs:* a folder segment links only when its address resolves to a Page; otherwise it is text.
   Not part of this build: the breadcrumb Widget shows the Site, the Area and the whole path as one
   segment and links none of them, so segment links are their own piece of work.

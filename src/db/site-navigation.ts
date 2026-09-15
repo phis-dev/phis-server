@@ -883,6 +883,75 @@ async function carrySiteNavigationFolderTargetsWithDb(
   return carried;
 }
 
+/**
+ * Where a folder address leads on the live Site (TODOS.md, "Folder addresses"), as the Page reference at
+ * the end of its chain, or null for 404. It reads the published Navigations of the Area, the latest
+ * publish deciding when two disagree, and follows a sub-folder target to that folder's own target. Every
+ * step lies deeper than the one before, so the chain ends; the bound is only a guard. A Site Page must be
+ * published, not tombstoned and in this Area; a Module Page's route is the Site's to check.
+ */
+export async function resolvePublishedSiteNavigationFolderTarget(
+  siteId: number,
+  area: string,
+  address: string,
+): Promise<{ reference: string } | null> {
+  const areaKey = area.trim().toLowerCase();
+  if (!Number.isInteger(siteId) || siteId <= 0 || !isPhisCmsAreaKey(areaKey)) {
+    return null;
+  }
+  if (!address.startsWith("/") || address === "/" || normalizeSiteCmsPath(address) !== address) {
+    return null;
+  }
+  const pool = getPool();
+  const { rows } = await pool.query<{ key: string; tree_json: unknown }>(
+    `SELECT s.key, r.tree_json
+     FROM phis.site_nav_scopes s
+     JOIN phis.site_nav_revisions r ON r.id = s.published_revision_id
+     WHERE s.site_id = $1 AND starts_with(s.key, $2::text || ':')
+     ORDER BY r.created_at DESC, r.id DESC`,
+    [siteId, areaKey],
+  );
+  const targets = new Map<string, SiteNavigationFolderTarget | null>();
+  for (const row of rows) {
+    let overlay: SiteNavigationOverlay;
+    try {
+      overlay = parseSiteNavigationOverlay(row.tree_json, row.key);
+    } catch {
+      continue;
+    }
+    for (const folder of [...overlay.customItems, ...overlay.itemOverrides].map((item) => item.folder)) {
+      // Rows come newest first, so the first Navigation to name an address decides it.
+      if (folder?.address && !targets.has(folder.address)) {
+        targets.set(folder.address, folder.target);
+      }
+    }
+  }
+
+  let current = address;
+  for (let depth = 0; depth < 32; depth += 1) {
+    const target = targets.get(current);
+    if (!target) return null;
+    if (target.kind === "folder") {
+      if (!target.address.startsWith(`${current}/`)) return null;
+      current = target.address;
+      continue;
+    }
+    const parsed = readPhiPageReference(target.reference);
+    if (!parsed) return null;
+    if (parsed.target.kind === "module") {
+      return { reference: parsed.reference };
+    }
+    const { rows: pages } = await pool.query<{ id: number }>(
+      `SELECT id FROM phis.site_page_scopes
+       WHERE id = $1 AND site_id = $2 AND area_id = $3
+         AND published_revision_id IS NOT NULL AND tombstoned_at IS NULL`,
+      [parsed.target.pageScopeId, siteId, resolvePhisCmsAreaMask(areaKey)],
+    );
+    return pages[0] ? { reference: parsed.reference } : null;
+  }
+  return null;
+}
+
 export async function saveSiteNavigationDraftRevision(
   siteId: number,
   input: {
