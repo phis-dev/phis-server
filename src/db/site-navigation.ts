@@ -28,16 +28,24 @@ export type SiteNavigationItemPlacement = {
 };
 
 /**
+ * What a folder address leads to: a Page, by its reference, so a renamed Page needs nothing here, or a
+ * sub-folder, by its address, whose own target the lookup follows on. It names the target rather than a
+ * child of this Navigation, so the same folder in another Navigation can take it over unchanged.
+ */
+export type SiteNavigationFolderTarget =
+  | { kind: "page"; reference: string }
+  | { kind: "folder"; address: string };
+
+/**
  * Where a container leads when its folder address is requested (TODOS.md, "Folder addresses"). The
  * Builder resolves `address` when the Draft is saved -- the folder its direct children share, package
- * namespace included -- and `choice` names the direct child it leads to. The Navigation stores the
- * choice, not a path, so a renamed target needs nothing here; whether the choice is still a direct child
- * is decided when the address is looked up.
+ * namespace included -- and writes a `target` that one of those children stands for. Whether it still
+ * does is decided when the address is looked up.
  */
 export type SiteNavigationFolder = {
   /** Null when the container's direct children share no folder. */
   address: string | null;
-  choice: PhiCmsInstanceId;
+  target: SiteNavigationFolderTarget;
 };
 
 export type SiteNavigationItemOverride = {
@@ -246,20 +254,42 @@ function normalizeSiteNavigationPlacement(value: unknown): SiteNavigationItemPla
   return { parentId, index };
 }
 
+function readSiteNavigationFolderAddress(value: unknown, label: string) {
+  const address = readRequiredString(value, label);
+  // The Area root is a slot with its own route setting, never a folder address.
+  if (!address.startsWith("/") || address === "/" || normalizeSiteCmsPath(address) !== address) {
+    throw new Error(`${label} must be a canonical path below the Area root.`);
+  }
+  return address;
+}
+
+function normalizeSiteNavigationFolderTarget(value: unknown, label: string): SiteNavigationFolderTarget {
+  if (!isRecord(value)) {
+    throw new Error(`${label} must be an object.`);
+  }
+  if (value.kind === "page") {
+    const parsed = readPhiPageReference(value.reference);
+    if (!parsed) {
+      throw new Error(`${label} reference must be a Page reference.`);
+    }
+    return { kind: "page", reference: parsed.reference };
+  }
+  if (value.kind === "folder") {
+    return { kind: "folder", address: readSiteNavigationFolderAddress(value.address, `${label} address`) };
+  }
+  throw new Error(`${label} must lead to a page or a folder.`);
+}
+
 function normalizeSiteNavigationFolder(value: unknown, label: string): SiteNavigationFolder {
   if (!isRecord(value)) {
     throw new Error(`${label} must be an object.`);
   }
-  const choice = readNavigationInstanceId(value.choice, `${label} choice`);
-  if (value.address === null) {
-    return { address: null, choice };
+  const target = normalizeSiteNavigationFolderTarget(value.target, `${label} target`);
+  const address = value.address === null ? null : readSiteNavigationFolderAddress(value.address, `${label} address`);
+  if (target.kind === "folder" && address != null && !target.address.startsWith(`${address}/`)) {
+    throw new Error(`${label} target must lie beneath its address.`);
   }
-  const address = readRequiredString(value.address, `${label} address`);
-  // The Area root is a slot with its own route setting, never a folder address.
-  if (!address.startsWith("/") || address === "/" || normalizeSiteCmsPath(address) !== address) {
-    throw new Error(`${label} address must be a canonical path below the Area root.`);
-  }
-  return { address, choice };
+  return { address, target };
 }
 
 function normalizeSiteNavigationItemOverride(value: unknown): SiteNavigationItemOverride {

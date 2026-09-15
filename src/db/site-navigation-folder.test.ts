@@ -1,19 +1,19 @@
 import { describe, expect, it } from "vitest";
 
+import { collectSiteCmsReferences } from "@/db/site-cms-references";
 import { createPhiDraftCmsInstanceId, createPhiPresetCmsInstanceId } from "@/lib/cms/instance-id";
+import { createPhiPageReference } from "@/lib/internal-references";
 import { parseSiteNavigationOverlay } from "./site-navigation";
 
-const draftId = (sequence: number) =>
-  createPhiDraftCmsInstanceId({ domain: "navigation", draftRevisionId: 41, sequence });
+const container = createPhiDraftCmsInstanceId({ domain: "navigation", draftRevisionId: 41, sequence: 1 });
 const moduleContainerId = createPhiPresetCmsInstanceId({
   domain: "navigation",
   ownerModuleId: "@phis/ui/modules/docs",
   presetKey: "docs-nav",
   nodeKey: "docs",
 });
-
-const container = draftId(1);
-const guides = draftId(2);
+const sitePage = createPhiPageReference({ kind: "site", pageScopeId: 18 });
+const modulePage = createPhiPageReference({ kind: "module", ownerModuleId: "@phis/ui/modules/docs", presetKey: "start" });
 
 function overlay(parts: { customItems?: unknown[]; itemOverrides?: unknown[] }) {
   return {
@@ -34,64 +34,79 @@ function customContainer(folder: unknown) {
   };
 }
 
+const parse = (value: unknown) => parseSiteNavigationOverlay(value, "public:header");
+
 /**
- * A container's folder address and the child it leads to (TODOS.md, "Folder addresses"). The server
- * keeps the form strict; which child is a direct one is the Builder's write rule and the lookup's read.
+ * A container's folder address and what it leads to (TODOS.md, "Folder addresses"). The target names a
+ * Page or a sub-folder rather than a child of this Navigation, so another Navigation can take it over.
  */
 describe("A Navigation container's folder", () => {
-  it("is kept on a custom container, with its address and its choice", () => {
-    const parsed = parseSiteNavigationOverlay(
-      overlay({ customItems: [customContainer({ address: "/docs", choice: guides })] }),
-      "public:header",
-    );
+  it("leads to a Site Page or a Module Page by reference", () => {
+    for (const reference of [sitePage, modulePage]) {
+      const parsed = parse(overlay({ customItems: [customContainer({ address: "/docs", target: { kind: "page", reference } })] }));
+      expect(parsed.customItems[0]?.folder).toEqual({ address: "/docs", target: { kind: "page", reference } });
+    }
+  });
 
-    expect(parsed.customItems[0]?.folder).toEqual({ address: "/docs", choice: guides });
+  it("leads to a sub-folder beneath its own address", () => {
+    const folder = { address: "/docs", target: { kind: "folder", address: "/docs/guides" } };
+    expect(parse(overlay({ customItems: [customContainer(folder)] })).customItems[0]?.folder).toEqual(folder);
+    expect(() => parse(overlay({
+      customItems: [customContainer({ address: "/docs", target: { kind: "folder", address: "/manual/guides" } })],
+    }))).toThrow(/beneath its address/);
   });
 
   it("may have no address, when the container's children share no folder", () => {
-    const parsed = parseSiteNavigationOverlay(
-      overlay({ customItems: [customContainer({ address: null, choice: guides })] }),
-      "public:header",
-    );
+    const parsed = parse(overlay({ customItems: [customContainer({ address: null, target: { kind: "page", reference: sitePage } })] }));
+    expect(parsed.customItems[0]?.folder?.address).toBeNull();
+  });
 
-    expect(parsed.customItems[0]?.folder).toEqual({ address: null, choice: guides });
+  it("refuses a target that is neither a Page reference nor a canonical folder address", () => {
+    for (const target of [
+      { kind: "page", reference: "/docs/a" },
+      { kind: "folder", address: "docs/guides" },
+      { kind: "child", id: container },
+    ]) {
+      expect(() => parse(overlay({ customItems: [customContainer({ address: "/docs", target })] })), JSON.stringify(target))
+        .toThrow(/target/);
+    }
+  });
+
+  it("refuses an address that is not a canonical path below the Area root", () => {
+    for (const address of ["/", "docs", "/docs/"]) {
+      expect(() => parse(overlay({
+        customItems: [customContainer({ address, target: { kind: "page", reference: sitePage } })],
+      })), `"${address}" must be refused`).toThrow(/canonical path below the Area root/);
+    }
   });
 
   it("is refused on anything but a container", () => {
-    expect(() => parseSiteNavigationOverlay(overlay({
+    expect(() => parse(overlay({
       customItems: [{
         id: container,
         kind: "link",
         label: "Docs",
         target: { kind: "external", href: "https://example.org" },
         placement: { parentId: null, index: 0 },
-        folder: { address: "/docs", choice: guides },
+        folder: { address: "/docs", target: { kind: "page", reference: sitePage } },
       }],
-    }), "public:header")).toThrow(/folder only for containers/);
-  });
-
-  it("refuses an address that is not a canonical path below the Area root", () => {
-    for (const address of ["/", "docs", "/docs/"]) {
-      expect(() => parseSiteNavigationOverlay(
-        overlay({ customItems: [customContainer({ address, choice: guides })] }),
-        "public:header",
-      ), `"${address}" must be refused`).toThrow(/canonical path below the Area root/);
-    }
-  });
-
-  it("refuses a choice that is not a Navigation instance id", () => {
-    expect(() => parseSiteNavigationOverlay(
-      overlay({ customItems: [customContainer({ address: "/docs", choice: "guides" })] }),
-      "public:header",
-    )).toThrow(/choice/);
+    }))).toThrow(/folder only for containers/);
   });
 
   it("stands on its own on a Module container's override, which is not empty then", () => {
-    const parsed = parseSiteNavigationOverlay(
-      overlay({ itemOverrides: [{ id: moduleContainerId, folder: { address: "/docs", choice: guides } }] }),
-      "public:header",
-    );
+    const folder = { address: "/docs", target: { kind: "page", reference: sitePage } };
+    expect(parse(overlay({ itemOverrides: [{ id: moduleContainerId, folder }] })).itemOverrides[0])
+      .toEqual({ id: moduleContainerId, folder });
+  });
 
-    expect(parsed.itemOverrides[0]).toEqual({ id: moduleContainerId, folder: { address: "/docs", choice: guides } });
+  it("indexes a Page target as a reference, like a link's target", () => {
+    const parsed = parse(overlay({
+      customItems: [customContainer({ address: "/docs", target: { kind: "page", reference: sitePage } })],
+    }));
+    const references = collectSiteCmsReferences(parsed, { targetAreaId: 1 });
+    expect(references).toContainEqual(expect.objectContaining({
+      location: "/customItems/0/folder/target/reference",
+      reference: expect.objectContaining({ kind: "page" }),
+    }));
   });
 });

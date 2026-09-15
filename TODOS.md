@@ -908,17 +908,20 @@ answers a 404.
   `409 path_nested` -- the publish used to answer a collision with 500. Creating now has its own route,
   `POST /api/site/cms/page/create`, which answers `page_exists` with the Page instead of writing a blank
   draft over it, and the Builder opens that Page.
-- *The target is authored on the Navigation container.* A container mirrors a folder, and its Navigation
-  table row gets a Select of its direct children -- Pages and sub-containers -- showing their full paths,
-  in the Path cell that is a disabled input for a container today. The Path cell becomes a Select on every
-  row: a Page link offers the Pages of the catalog, drafts included, a container its direct children, and
-  only an external link accepts free text. It needs a Table contract extension, options that come from
-  the row (`rowOptionsPath` on the Provider field), not decided yet. In the overlay a container, custom or
-  a Module container's override, carries `folder: { address, choice }`. "Docs" picks "Guides", "Guides" picks
-  `a`. What is stored is the chosen child, never a path composed
-  from the menu hierarchy, so `/docs/bingo` stays `/docs/bingo` wherever the container hangs. A
-  container's address is the folder its direct children share; children from different folders give it
-  none. The address is resolved when the Draft is saved, package namespace included, so outside Public it
+- *The target is authored on the Navigation container (built 2026-09-15).* The Navigation table's Path
+  cell is a Select on every row, through options that come from the row (`rowOptionsPath`): a Site page
+  link offers the live Pages of its Area, a container its direct children -- links by their path,
+  sub-containers by their own folder address -- and only an external link takes free text. "Docs" picks
+  "Guides", "Guides" picks `a`. In the overlay a container, custom or a Module container's override,
+  carries `folder: { address, target }`. `target` names what the chosen child stands for -- a Page by
+  reference, Site or Module, or a sub-folder by address -- never the child's id, which exists in one
+  Navigation only, and never a path composed from the menu hierarchy, so `/docs/bingo` stays `/docs/bingo`
+  wherever the container hangs and another Navigation can take the target over unchanged. A Page target is
+  indexed like a link's target. "404" is a choice of its own: it clears a container's target, and it is
+  what a target no child stands for, or a link's deleted Page, reads as. A container's address is the
+  folder its direct children share, each child contributing the folder it lies in; children from different
+  folders, or only from the Area root, give it none. The address is refreshed on every edit in the table
+  and resolved again when the Draft is saved or published, package namespace included, so outside Public it
   is the path a request carries rather than the shorter one the Builder tree shows.
 - *One address, one target.* A folder can appear in several Navigations -- header, sider, quicklinks, a
   custom set -- but an address cannot redirect to two places. Saving a Draft carries the choice into
