@@ -16,6 +16,7 @@ import {
   type PhiCmsInstanceId,
   type PhiCmsInstanceOrigin,
 } from "@/lib/cms/instance-id";
+import { normalizeSiteCmsPath } from "@/lib/helpers/cms-path";
 import { readPhiPageReference } from "@/lib/internal-references";
 import { listSitePageScopes } from "@/db/site-pages";
 
@@ -26,11 +27,26 @@ export type SiteNavigationItemPlacement = {
   index: number;
 };
 
+/**
+ * Where a container leads when its folder address is requested (TODOS.md, "Folder addresses"). The
+ * Builder resolves `address` when the Draft is saved -- the folder its direct children share, package
+ * namespace included -- and `choice` names the direct child it leads to. The Navigation stores the
+ * choice, not a path, so a renamed target needs nothing here; whether the choice is still a direct child
+ * is decided when the address is looked up.
+ */
+export type SiteNavigationFolder = {
+  /** Null when the container's direct children share no folder. */
+  address: string | null;
+  choice: PhiCmsInstanceId;
+};
+
 export type SiteNavigationItemOverride = {
   id: PhiCmsInstanceId;
   label?: string;
   icon?: string | null;
   placement?: SiteNavigationItemPlacement;
+  /** Only meaningful on a Module container; the overlay cannot tell a Module item's kind. */
+  folder?: SiteNavigationFolder;
 };
 
 export type SiteNavigationCustomItem = {
@@ -43,6 +59,8 @@ export type SiteNavigationCustomItem = {
     | { kind: "external"; href: string };
   newTab?: boolean;
   placement: SiteNavigationItemPlacement;
+  /** Containers only. */
+  folder?: SiteNavigationFolder;
 };
 
 export type SiteNavigationOverlay = {
@@ -228,6 +246,22 @@ function normalizeSiteNavigationPlacement(value: unknown): SiteNavigationItemPla
   return { parentId, index };
 }
 
+function normalizeSiteNavigationFolder(value: unknown, label: string): SiteNavigationFolder {
+  if (!isRecord(value)) {
+    throw new Error(`${label} must be an object.`);
+  }
+  const choice = readNavigationInstanceId(value.choice, `${label} choice`);
+  if (value.address === null) {
+    return { address: null, choice };
+  }
+  const address = readRequiredString(value.address, `${label} address`);
+  // The Area root is a slot with its own route setting, never a folder address.
+  if (!address.startsWith("/") || address === "/" || normalizeSiteCmsPath(address) !== address) {
+    throw new Error(`${label} address must be a canonical path below the Area root.`);
+  }
+  return { address, choice };
+}
+
 function normalizeSiteNavigationItemOverride(value: unknown): SiteNavigationItemOverride {
   if (!isRecord(value)) {
     throw new Error("Navigation item override must be an object.");
@@ -236,7 +270,8 @@ function normalizeSiteNavigationItemOverride(value: unknown): SiteNavigationItem
   const hasLabel = Object.hasOwn(value, "label");
   const hasIcon = Object.hasOwn(value, "icon");
   const hasPlacement = Object.hasOwn(value, "placement");
-  if (!hasLabel && !hasIcon && !hasPlacement) {
+  const hasFolder = Object.hasOwn(value, "folder");
+  if (!hasLabel && !hasIcon && !hasPlacement && !hasFolder) {
     throw new Error(`Navigation item override "${id}" is empty.`);
   }
   const label = hasLabel ? readRequiredString(value.label, `Navigation item "${id}" label`) : undefined;
@@ -246,11 +281,13 @@ function normalizeSiteNavigationItemOverride(value: unknown): SiteNavigationItem
       : readRequiredString(value.icon, `Navigation item "${id}" icon`)
     : undefined;
   const placement = hasPlacement ? normalizeSiteNavigationPlacement(value.placement) : undefined;
+  const folder = hasFolder ? normalizeSiteNavigationFolder(value.folder, `Navigation item "${id}" folder`) : undefined;
   return {
     id,
     ...(label !== undefined ? { label } : {}),
     ...(hasIcon ? { icon } : {}),
     ...(placement ? { placement } : {}),
+    ...(folder ? { folder } : {}),
   };
 }
 
@@ -285,6 +322,12 @@ function normalizeSiteNavigationCustomItem(value: unknown): SiteNavigationCustom
   if (kind !== "link" && newTab !== undefined) {
     throw new Error(`Navigation custom item "${id}" permits link flags only for links.`);
   }
+  if (kind !== "container" && Object.hasOwn(value, "folder")) {
+    throw new Error(`Navigation custom item "${id}" permits a folder only for containers.`);
+  }
+  const folder = Object.hasOwn(value, "folder")
+    ? normalizeSiteNavigationFolder(value.folder, `Navigation custom item "${id}" folder`)
+    : undefined;
   return {
     id,
     kind,
@@ -293,6 +336,7 @@ function normalizeSiteNavigationCustomItem(value: unknown): SiteNavigationCustom
     ...(target !== undefined ? { target } : {}),
     ...(newTab !== undefined ? { newTab } : {}),
     placement: normalizeSiteNavigationPlacement(value.placement),
+    ...(folder ? { folder } : {}),
   };
 }
 
@@ -341,7 +385,7 @@ function normalizeSiteNavigationOverlay(value: unknown, expectedNavKey: string):
   };
 }
 
-function parseSiteNavigationOverlay(value: unknown, expectedNavKey: string) {
+export function parseSiteNavigationOverlay(value: unknown, expectedNavKey: string) {
   return normalizeSiteNavigationOverlay(value, expectedNavKey);
 }
 
