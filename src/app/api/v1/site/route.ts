@@ -4,6 +4,7 @@ import { getSiteRuntimeConfig } from "@/db/sites";
 import { createJsonResponse } from "@/lib/api-response";
 import { guardApiV1 } from "@/lib/api-v1-guard";
 import { requireSiteFromRequest } from "@/lib/site-context";
+import { getTranslationChangeMarkers } from "@/lib/translations";
 
 export async function GET(request: Request) {
   const guardError = guardApiV1(request, { requireInternalToken: true });
@@ -16,7 +17,10 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: "Site not found." }, { status: 404 });
   }
 
-  const config = await getSiteRuntimeConfig(site.id);
+  const [config, translationMarkers] = await Promise.all([
+    getSiteRuntimeConfig(site.id),
+    getTranslationChangeMarkers(site.id),
+  ]);
   if (!config) {
     return NextResponse.json({ error: "Site not found." }, { status: 404 });
   }
@@ -25,6 +29,7 @@ export async function GET(request: Request) {
     site: {
       id: site.id,
       ...config,
+      translationMarkers,
     },
   });
 }

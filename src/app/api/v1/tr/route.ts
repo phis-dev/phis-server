@@ -8,6 +8,7 @@ import { getConfiguredTranslationSupportedLocalesSync } from "@/lib/translation-
 import { parseTranslationContext } from "@/lib/translation-context";
 import { PHIS_SITE_KEY_HEADER } from "@/lib/constants/http-headers";
 import {
+  trackTranslationStandIns,
   translateBatchWithCache,
   translateExternalSiteBatchWithCache,
   translateSiteBatchWithCache,
@@ -149,7 +150,7 @@ async function handleTranslation(request: Request, payload: TranslationPayload) 
         ? await resolveSiteFromHeaders(request.headers)
         : null;
     const effectiveSourceLocale = sourceLocale?.trim() || site?.sourceLocale || PHI_CANONICAL_SOURCE_LOCALE;
-    const translation = site
+    const { value: translation, standIn } = await trackTranslationStandIns(async () => site
       ? normalizeLocale(effectiveSourceLocale) === normalizeLocale(site.sourceLocale)
         ? await translateSiteWithCache({
           siteId: site.id,
@@ -176,9 +177,10 @@ async function handleTranslation(request: Request, payload: TranslationPayload) 
           hash,
           allowWrite: tokenMode === "internal" || allowPublicWrites,
           format,
-        });
+        }));
 
-    return NextResponse.json({ translation });
+    // `provisional`: at least one answer is source text standing in for a failure; do not keep it.
+    return NextResponse.json({ translation, ...(standIn ? { provisional: true } : {}) });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Translation failed.";
     logRuntimeEvent("error", "translation.failed", {
@@ -244,7 +246,7 @@ async function handleBatchTranslation(request: Request, payload: TranslationPayl
         ? await resolveSiteFromHeaders(request.headers)
         : null;
     const effectiveSourceLocale = sourceLocale?.trim() || site?.sourceLocale || PHI_CANONICAL_SOURCE_LOCALE;
-    const translations = site
+    const { value: translations, standIn } = await trackTranslationStandIns(async () => site
       ? normalizeLocale(effectiveSourceLocale) === normalizeLocale(site.sourceLocale)
         ? await translateSiteBatchWithCache({
           siteId: site.id,
@@ -270,9 +272,9 @@ async function handleBatchTranslation(request: Request, payload: TranslationPayl
           ctx,
           allowWrite: tokenMode === "internal" || allowPublicWrites,
           format,
-        });
+        }));
 
-    return NextResponse.json({ translations });
+    return NextResponse.json({ translations, ...(standIn ? { provisional: true } : {}) });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Translation failed.";
     logRuntimeEvent("error", "translation.batch_failed", {

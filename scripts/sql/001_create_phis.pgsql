@@ -1215,6 +1215,114 @@ CREATE INDEX IF NOT EXISTS tr_site_lang_external_source_idx
   ON phis.tr_site_lang (locale, source_hash)
   WHERE source_hash IS NOT NULL;
 
+-- Change markers for the translation stores. A Site keeps translations without expiry and compares these
+-- on every Site config read; a different value empties that scope. Only equality means anything: the
+-- value is a fresh number per change, not a count, so a reset costs one refill and nothing else.
+CREATE SEQUENCE IF NOT EXISTS phis.tr_marker_seq AS BIGINT;
+
+CREATE TABLE IF NOT EXISTS phis.tr_marker (
+  scope VARCHAR(16) PRIMARY KEY CHECK (scope = 'global'),
+  marker BIGINT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS phis.tr_site_marker (
+  site_id SMALLINT PRIMARY KEY REFERENCES phis.sites(id) ON DELETE CASCADE,
+  marker BIGINT NOT NULL
+);
+
+-- The request path that fills a missing translation sets `phis.translation_fill` for its transaction and
+-- is skipped: it adds what no Site holds yet, and taking the marker row lock there would serialize every
+-- concurrent fill of a Site. Every other write moves the marker, whichever path it comes from.
+CREATE OR REPLACE FUNCTION phis.tr_touch_global_marker() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+  IF current_setting('phis.translation_fill', true) = 'on' THEN
+    RETURN NULL;
+  END IF;
+  INSERT INTO phis.tr_marker (scope, marker)
+  VALUES ('global', nextval('phis.tr_marker_seq'))
+  ON CONFLICT (scope) DO UPDATE SET marker = EXCLUDED.marker;
+  RETURN NULL;
+END;
+$$;
+
+-- `changed_rows` is the statement's transition table; a TRUNCATE has none and moves every Site. Rows whose
+-- message or Site is already gone in the same statement (a cascade) drop out of the join: the delete on
+-- `tr_site_msg` moves the marker for them, and a deleted Site has nothing left to mark.
+CREATE OR REPLACE FUNCTION phis.tr_touch_site_markers() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+  IF current_setting('phis.translation_fill', true) = 'on' THEN
+    RETURN NULL;
+  END IF;
+  IF TG_OP = 'TRUNCATE' THEN
+    INSERT INTO phis.tr_site_marker (site_id, marker)
+    SELECT sites.id, nextval('phis.tr_marker_seq') FROM phis.sites AS sites
+    ON CONFLICT (site_id) DO UPDATE SET marker = EXCLUDED.marker;
+  ELSIF TG_TABLE_NAME = 'tr_site_msg' THEN
+    INSERT INTO phis.tr_site_marker (site_id, marker)
+    SELECT touched.site_id, nextval('phis.tr_marker_seq')
+    FROM (
+      SELECT DISTINCT changed.site_id
+      FROM changed_rows AS changed
+      JOIN phis.sites AS sites ON sites.id = changed.site_id
+    ) AS touched
+    ON CONFLICT (site_id) DO UPDATE SET marker = EXCLUDED.marker;
+  ELSE
+    INSERT INTO phis.tr_site_marker (site_id, marker)
+    SELECT touched.site_id, nextval('phis.tr_marker_seq')
+    FROM (
+      SELECT DISTINCT msg.site_id
+      FROM changed_rows AS changed
+      JOIN phis.tr_site_msg AS msg ON msg.id = changed.msg_id
+    ) AS touched
+    ON CONFLICT (site_id) DO UPDATE SET marker = EXCLUDED.marker;
+  END IF;
+  RETURN NULL;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS tr_lang_touch_marker ON phis.tr_lang;
+CREATE TRIGGER tr_lang_touch_marker
+  AFTER INSERT OR UPDATE OR DELETE OR TRUNCATE ON phis.tr_lang
+  FOR EACH STATEMENT EXECUTE FUNCTION phis.tr_touch_global_marker();
+
+-- A trigger with a transition table serves one event, hence one per event.
+DROP TRIGGER IF EXISTS tr_site_lang_touch_marker_insert ON phis.tr_site_lang;
+CREATE TRIGGER tr_site_lang_touch_marker_insert
+  AFTER INSERT ON phis.tr_site_lang REFERENCING NEW TABLE AS changed_rows
+  FOR EACH STATEMENT EXECUTE FUNCTION phis.tr_touch_site_markers();
+
+DROP TRIGGER IF EXISTS tr_site_lang_touch_marker_update ON phis.tr_site_lang;
+CREATE TRIGGER tr_site_lang_touch_marker_update
+  AFTER UPDATE ON phis.tr_site_lang REFERENCING NEW TABLE AS changed_rows
+  FOR EACH STATEMENT EXECUTE FUNCTION phis.tr_touch_site_markers();
+
+DROP TRIGGER IF EXISTS tr_site_lang_touch_marker_delete ON phis.tr_site_lang;
+CREATE TRIGGER tr_site_lang_touch_marker_delete
+  AFTER DELETE ON phis.tr_site_lang REFERENCING OLD TABLE AS changed_rows
+  FOR EACH STATEMENT EXECUTE FUNCTION phis.tr_touch_site_markers();
+
+DROP TRIGGER IF EXISTS tr_site_lang_touch_marker_truncate ON phis.tr_site_lang;
+CREATE TRIGGER tr_site_lang_touch_marker_truncate
+  AFTER TRUNCATE ON phis.tr_site_lang
+  FOR EACH STATEMENT EXECUTE FUNCTION phis.tr_touch_site_markers();
+
+DROP TRIGGER IF EXISTS tr_site_msg_touch_marker_update ON phis.tr_site_msg;
+CREATE TRIGGER tr_site_msg_touch_marker_update
+  AFTER UPDATE ON phis.tr_site_msg REFERENCING NEW TABLE AS changed_rows
+  FOR EACH STATEMENT EXECUTE FUNCTION phis.tr_touch_site_markers();
+
+DROP TRIGGER IF EXISTS tr_site_msg_touch_marker_delete ON phis.tr_site_msg;
+CREATE TRIGGER tr_site_msg_touch_marker_delete
+  AFTER DELETE ON phis.tr_site_msg REFERENCING OLD TABLE AS changed_rows
+  FOR EACH STATEMENT EXECUTE FUNCTION phis.tr_touch_site_markers();
+
+DROP TRIGGER IF EXISTS tr_site_msg_touch_marker_truncate ON phis.tr_site_msg;
+CREATE TRIGGER tr_site_msg_touch_marker_truncate
+  AFTER TRUNCATE ON phis.tr_site_msg
+  FOR EACH STATEMENT EXECUTE FUNCTION phis.tr_touch_site_markers();
+
 CREATE TABLE IF NOT EXISTS phis.site_content (
   id SERIAL PRIMARY KEY,
   site_id SMALLINT NOT NULL REFERENCES phis.sites(id) ON DELETE CASCADE,

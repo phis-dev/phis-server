@@ -959,7 +959,7 @@ answers a 404.
   publishes.
 
 **Published Navigation, Site config and translations never reach a production Site again, found
-2026-09-15, built for everything but translations.** `phis-ui/gateway/site-nav.ts`,
+2026-09-15, built.** `phis-ui/gateway/site-nav.ts`,
 `gateway/site-config.ts` and `gateway/tr.ts` fetch with `force-cache` outside development -- two of them
 under a tag -- and nothing invalidates them; in Next
 16 such a response is kept indefinitely, even in a `force-dynamic` route. A publish or a translation edit
@@ -983,7 +983,14 @@ issued per request, so a cached guard expires after `maxSubmitMs` and every subm
   does not clear it, since config and Navigation also carry the theme draft revision, settings, the logo's
   media revision and Page paths: every write Core accepts through `/api/site` clears the whole process
   cache. Navigation asked for a `revision` or a review bypasses it. The cache tags are gone.
-- *Still open:* `gateway/tr.ts` keeps `force-cache` until translations have been discussed.
+- *Built 2026-09-15, translations:* `gateway/tr.ts` is `no-store`, and `helpers/translation-cache.ts`
+  keeps translations without expiry. `/api/v1/site` carries change markers for the global and the Site's
+  store, maintained by triggers and skipped for the fill path; a Site empties a store whose marker moved
+  (TRANSLATIONS.md, "Change markers"). `/api/v1/tr` marks stand-in answers `provisional`, and they are not
+  kept. `gateway/label-set.ts` no longer caches whole sets: that cache had no TTL and nobody cleared it,
+  and kept the source text of a failed request until a restart. A 60-second TTL and a `pg_stat` counter
+  were considered and dropped: the one re-reads what almost never changes, the other is per table and
+  invisible on a read replica.
 
 **Resolving a Page reference ignores whether the Page is published, found 2026-09-15, open for
 discussion.** `POST /api/v1/site/references` and `projectSiteNavigationOverlayTargets` answer a path for

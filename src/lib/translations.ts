@@ -1,5 +1,6 @@
 import "server-only";
 
+import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash } from "crypto";
 
 import {
@@ -11,10 +12,12 @@ import {
   findSiteExternalTranslationUnit,
   getSiteTranslations,
   getTranslations,
+  readTranslationChangeMarkers,
   upsertSiteTranslations,
   upsertTranslation,
 } from "@/db/translations";
 import { getPhisConfigSync } from "@/lib/config";
+import { getConfiguredTranslationSupportedLocalesSync } from "@/lib/translation-locale-options";
 import {
   PHI_CANONICAL_SOURCE_LOCALE,
   resolveDeepLSourceLang,
@@ -124,6 +127,57 @@ function getConfiguredTranslationMode() {
   return getPhisConfigSync().translation?.mode ?? "none";
 }
 
+/**
+ * Whether an answer is a stand-in: source text handed back because a provider or a single message
+ * failed, not because the store or the configuration says so. A Site keeps translations without expiry,
+ * so it must not keep these -- they would outlive the outage until somebody edited a translation.
+ */
+const translationStandIns = new AsyncLocalStorage<{ standIn: boolean }>();
+
+function recordTranslationStandIn() {
+  const state = translationStandIns.getStore();
+  if (state) {
+    state.standIn = true;
+  }
+}
+
+/** Runs one translation request and reports whether any answer in it is a stand-in. */
+export async function trackTranslationStandIns<T>(work: () => Promise<T>) {
+  const state = { standIn: false };
+  const value = await translationStandIns.run(state, work);
+  return { value, standIn: state.standIn };
+}
+
+/**
+ * What decides a source-text answer that is not a stand-in: with no provider, or for a locale that is not
+ * offered, the source text is the answer until the configuration changes. Folded into the markers so a
+ * changed configuration reaches Sites that kept those answers.
+ */
+function getTranslationConfigurationFingerprint() {
+  const config = getPhisConfigSync();
+  return createHash("sha256")
+    .update(JSON.stringify({
+      mode: getConfiguredTranslationMode(),
+      deepl: Boolean(config.deepl?.apiKey?.trim()),
+      locales: getConfiguredTranslationSupportedLocalesSync(),
+    }))
+    .digest("hex")
+    .slice(0, 12);
+}
+
+/**
+ * What a Site compares, on every Site config read, to know whether the translations it keeps are still
+ * the answer: one marker for the global store, one for its own. Opaque; only equality means anything.
+ */
+export async function getTranslationChangeMarkers(siteId: number) {
+  const stored = await readTranslationChangeMarkers(siteId);
+  const configuration = getTranslationConfigurationFingerprint();
+  return {
+    global: `${stored.global ?? "0"}.${configuration}`,
+    site: `${stored.site ?? "0"}.${configuration}`,
+  };
+}
+
 function isConfiguredSourceLocaleSupported(locale: string) {
   const mode = getConfiguredTranslationMode();
   if (mode === "custom") {
@@ -189,6 +243,7 @@ async function withMessageIsolation<T>(
   try {
     return await step();
   } catch (error) {
+    recordTranslationStandIn();
     logRuntimeEvent("warn", "translation.message_skipped", {
       message: "A single message could not be resolved in the catalogue. Falling back to source text for it.",
       error: normalizeLogThrowable(error),
@@ -308,6 +363,7 @@ async function requestConfiguredTranslationsOrFallback(input: {
         );
     return { translations, succeeded: true };
   } catch (error) {
+    recordTranslationStandIn();
     logExternalTranslationFallback({
       provider,
       locale: input.locale,

@@ -18,7 +18,7 @@ vi.mock("@/lib/log", async (importOriginal) => ({
   logRuntimeEvent: mocks.logRuntimeEvent,
 }));
 
-const { translateSiteBatchWithCache } = await import("@/lib/translations");
+const { trackTranslationStandIns, translateSiteBatchWithCache } = await import("@/lib/translations");
 
 /*
  * Catalogue identity can genuinely fail for one message: `tr_site_msg` is unique on
@@ -97,5 +97,52 @@ describe("translateSiteBatchWithCache", () => {
       format: "text",
     })).resolves.toEqual(["zwei", "drei"]);
     expect(mocks.logRuntimeEvent).not.toHaveBeenCalled();
+  });
+});
+
+/*
+ * A Site keeps translations without expiry. Source text that stands in for a failure must reach it
+ * marked, or the Site would keep it until somebody edited a translation.
+ */
+describe("trackTranslationStandIns", () => {
+  const batch = (msgs: string[]) => translateSiteBatchWithCache({
+    siteId: 1,
+    locale: "de",
+    sourceLocale: "en",
+    msgs,
+    ctx: "",
+    format: "text",
+  });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.getSiteTranslations.mockResolvedValue(new Map([[2, "zwei"], [3, "drei"]]));
+    mocks.ensureSiteMessageId.mockImplementation(async (_siteId: number, msg: string) => {
+      if (msg === "one") throw new Error("Hash collision detected for tr_site_msg");
+      return msg === "two" ? 2 : 3;
+    });
+  });
+
+  it("reports a batch in which a message fell back to its source text", async () => {
+    await expect(trackTranslationStandIns(() => batch(["one", "two"]))).resolves.toEqual({
+      value: ["one", "zwei"],
+      standIn: true,
+    });
+  });
+
+  it("does not report a batch the store answered in full", async () => {
+    await expect(trackTranslationStandIns(() => batch(["two", "three"]))).resolves.toEqual({
+      value: ["zwei", "drei"],
+      standIn: false,
+    });
+  });
+
+  it("keeps concurrent requests apart", async () => {
+    const [failed, answered] = await Promise.all([
+      trackTranslationStandIns(() => batch(["one"])),
+      trackTranslationStandIns(() => batch(["two"])),
+    ]);
+    expect(failed.standIn).toBe(true);
+    expect(answered.standIn).toBe(false);
   });
 });

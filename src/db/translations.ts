@@ -5,6 +5,34 @@ import { getPool } from "@/lib/db";
 
 type TranslationQueryClient = Pick<Pool | PoolClient, "query">;
 
+/**
+ * Marks the current transaction as the request path filling a translation no Site holds yet.
+ *
+ * The change-marker triggers (`phis.tr_touch_*_marker*` in 001_create_phis.pgsql) skip such a
+ * transaction: what it adds was a miss everywhere, so no Site has anything to empty, and moving the
+ * marker would take its row lock and serialize every concurrent fill of a Site. Every other write moves
+ * the marker. Must run inside the transaction it marks.
+ */
+async function markTranslationFill(client: TranslationQueryClient) {
+  await client.query("SELECT set_config('phis.translation_fill', 'on', true)");
+}
+
+async function inTranslationFill<T>(work: (client: PoolClient) => Promise<T>): Promise<T> {
+  const client = await getPool().connect();
+  try {
+    await client.query("BEGIN");
+    await markTranslationFill(client);
+    const result = await work(client);
+    await client.query("COMMIT");
+    return result;
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 function formatCollisionDetails(details: Record<string, unknown>) {
   return JSON.stringify(details);
 }
@@ -173,6 +201,23 @@ export async function getTranslations(
   return translationByHash;
 }
 
+/**
+ * The stored change markers of the global store and of one Site's store, or null for a store nothing
+ * has changed yet. Maintained by triggers in 001_create_phis.pgsql; read as text because only equality
+ * means anything.
+ */
+export async function readTranslationChangeMarkers(siteId: number) {
+  const { rows } = await getPool().query<{ global_marker: string | null; site_marker: string | null }>(
+    `SELECT (SELECT marker::text FROM phis.tr_marker WHERE scope = 'global') AS global_marker,
+            (SELECT marker::text FROM phis.tr_site_marker WHERE site_id = $1) AS site_marker`,
+    [siteId],
+  );
+  return {
+    global: rows[0]?.global_marker ?? null,
+    site: rows[0]?.site_marker ?? null,
+  };
+}
+
 export async function upsertTranslation(
   locale: string,
   msg: string,
@@ -181,8 +226,7 @@ export async function upsertTranslation(
   msgHash: string,
 ) {
   const msgId = await ensureMessageId(msg, ctx, normalizeMessageHash(msgHash));
-  const pool = getPool();
-  await pool.query(
+  await inTranslationFill((client) => client.query(
     `INSERT INTO phis.tr_lang (msg_id, locale, translation)
        VALUES ($1, $2, $3)
      ON CONFLICT (msg_id, locale)
@@ -190,7 +234,7 @@ export async function upsertTranslation(
                    updated_at = NOW()
      WHERE phis.tr_lang.source_hash IS NULL`,
     [msgId, locale, translation],
-  );
+  ));
 }
 
 export async function ensureGlobalExternalTranslationUnit(input: {
@@ -206,6 +250,7 @@ export async function ensureGlobalExternalTranslationUnit(input: {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
+    await markTranslationFill(client);
     await client.query(
       "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
       [`global:${input.sourceLocale}:${sourceHash}:${input.ctx}`],
@@ -338,6 +383,7 @@ export async function ensureSiteExternalTranslationUnit(input: {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
+    await markTranslationFill(client);
     await client.query(
       "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
       [`site:${input.siteId}:${input.sourceLocale}:${sourceHash}:${input.ctx}`],
@@ -454,8 +500,7 @@ export async function upsertSiteTranslations(
     return;
   }
 
-  const pool = getPool();
-  await pool.query(
+  await inTranslationFill((client) => client.query(
     `INSERT INTO phis.tr_site_lang (msg_id, locale, translation)
      SELECT *
      FROM UNNEST($1::int[], $2::varchar(8)[], $3::text[])
@@ -467,7 +512,7 @@ export async function upsertSiteTranslations(
       normalizedEntries.map((entry) => entry.locale),
       normalizedEntries.map((entry) => entry.translation),
     ],
-  );
+  ));
 }
 
 export type SiteTranslationListRow = {

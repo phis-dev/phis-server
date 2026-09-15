@@ -97,6 +97,28 @@ A skipped message is logged as `translation.message_skipped` with its stage, loc
 opening of the text. Failures that are not about one message -- a database that is unreachable, a
 provider that refuses the whole batch -- are not caught here and still surface.
 
+A request in which any answer is such a stand-in -- a skipped message, or a provider that failed and
+left source text behind -- carries `"provisional": true` next to `translation` or `translations`. A
+caller that keeps answers must not keep these: they end with the outage, not with an edit. Source text
+that is the answer by configuration (no provider, a locale that is not offered) is not provisional.
+
+## Change markers
+
+Sites keep translations without expiry. Core tells them when to let go: `/api/v1/site` carries
+`translationMarkers: { global, site }`, one opaque value for the global store (`tr_msg`, `tr_lang`) and
+one for the Site's (`tr_site_msg`, `tr_site_lang`). A Site compares them on every Site config read and
+empties a store whose marker differs from the one it saw last. Only equality means anything.
+
+- Triggers in `001_create_phis.pgsql` give a store a fresh marker in the same transaction as any write to
+  it, whichever path the write takes -- the editor, the phis CLI, a script, plain SQL -- including a
+  delete that arrives by cascade and a `TRUNCATE`.
+- The request path that fills a missing translation marks its transaction (`phis.translation_fill`) and
+  is skipped. What it adds was a miss for every Site, so nobody holds anything to empty, and taking the
+  marker row lock there would serialize every concurrent fill of a Site.
+- Each marker also carries a fingerprint of the translation configuration (mode, whether a DeepL key is
+  set, the offered locales), because that decides every answer that is source text by configuration.
+- The markers are rows, not statistics counters: a read replica sees them, with its replication lag.
+
 ## Content revisions and deletion
 
 Site content keeps stable content identity but immutable version text links:

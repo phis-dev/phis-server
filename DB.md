@@ -1386,6 +1386,20 @@ Contract:
 - `UNIQUE (msg_id, locale)`
 - partial index `(locale, source_hash) WHERE source_hash IS NOT NULL`
 
+### `phis.tr_marker` and `phis.tr_site_marker`
+
+- `tr_marker`: `scope VARCHAR(16) PRIMARY KEY CHECK (scope = 'global')`, `marker BIGINT NOT NULL`
+- `tr_site_marker`: `site_id SMALLINT PRIMARY KEY REFERENCES phis.sites(id) ON DELETE CASCADE`,
+  `marker BIGINT NOT NULL`
+- values from `phis.tr_marker_seq`; a store nothing has changed yet has no row
+
+Contract:
+- Maintained only by statement-level triggers on `tr_lang` (global) and on `tr_site_lang` and
+  `tr_site_msg` (per Site); application code never writes them. See TRANSLATIONS.md, "Change markers".
+- A transaction that ran `set_config('phis.translation_fill', 'on', true)` is skipped. Only the request
+  path filling a missing translation may set it.
+- Only equality of a marker means anything; it is not a count and not ordered.
+
 ## Content and Translation Model
 
 - The global `tr_*` tables remain reserved for `phi-core` text and global label sets that are not tied to any site.
