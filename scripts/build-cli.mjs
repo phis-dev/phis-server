@@ -7,11 +7,11 @@ const packageJson = JSON.parse(readFileSync(path.join(root, "package.json"), "ut
 const outfile = path.join(root, "dist", "phis.mjs");
 
 // Runtime dependencies stay external -- some are native (argon2, sharp) and none of them
-// can be inlined safely. The addon contract is the exception: it is constants and types,
-// and bundling it keeps the CLI usable without resolving a workspace package.
-const external = Object.keys(packageJson.dependencies ?? {}).filter(
-  (name) => name !== "@phis/addon-contract",
-);
+// can be inlined safely. Workspace packages are the exception: `@phis/contracts` is constants,
+// validators and types, and the package has no node_modules entry that could resolve it.
+const external = Object.entries(packageJson.dependencies ?? {})
+  .filter(([, version]) => !String(version).startsWith("workspace:"))
+  .map(([name]) => name);
 
 await build({
   entryPoints: [path.join(root, "src", "cli", "phis.mts")],

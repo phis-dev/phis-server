@@ -13,11 +13,17 @@ while [[ -h "$SCRIPT_PATH" ]]; do
 done
 
 ROOT_DIR="$(cd -P "$(dirname "$SCRIPT_PATH")" && pwd)"
-DIST_ENTRY="$ROOT_DIR/dist/cli/phis.mjs"
+DIST_ENTRY="$ROOT_DIR/dist/phis.mjs"
 SOURCE_ENTRY="$ROOT_DIR/src/cli/phis.mts"
 
 if [[ -z "${PHIS_ROOT:-}" ]]; then
   export PHIS_ROOT="$ROOT_DIR"
+fi
+
+# The bundle lives one directory below the app root, so the root it would derive from its own location
+# is wrong; this directory is the app root in a checkout and in the package alike.
+if [[ -z "${PHIS_APP_ROOT:-}" ]]; then
+  export PHIS_APP_ROOT="$ROOT_DIR"
 fi
 
 if ! command -v node >/dev/null 2>&1; then
@@ -27,6 +33,11 @@ fi
 
 if [[ -f "$DIST_ENTRY" ]]; then
   exec node "$DIST_ENTRY" "$@"
+fi
+
+if [[ ! -f "$SOURCE_ENTRY" ]]; then
+  echo "phis: neither $DIST_ENTRY nor $SOURCE_ENTRY exists." >&2
+  exit 1
 fi
 
 exec node \

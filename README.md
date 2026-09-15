@@ -625,7 +625,7 @@ Runtime config policy:
 
 Node support split:
 
-- packaged runtime and emitted `dist/cli/phis.mjs` support Node `20.19.2+`
+- packaged runtime and emitted `dist/phis.mjs` support Node `20.19.2+`
 - repository-local source CLI development uses Node `22+`
 - `pnpm phis` is a source-level development helper and is not the compatibility baseline for packaged deployments
 
@@ -760,8 +760,8 @@ An empty generated manifest is valid and makes both Add-on dispatch routes retur
 For an emitted operator build:
 
 - `pnpm build:cli`
-- `node dist/cli/phis.mjs config validate`
-- `node dist/cli/phis.mjs --root /srv/phis/stages/prod config validate`
+- `node dist/phis.mjs config validate`
+- `node dist/phis.mjs --root /srv/phis/stages/prod config validate`
 
 ## Notes
 

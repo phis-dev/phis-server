@@ -10,6 +10,7 @@ Group=phis
 WorkingDirectory=/usr/lib/phis/server
 Environment=NODE_ENV=production
 Environment=PHIS_ROOT=/srv/phis/stages/%i
+Environment=PHIS_APP_ROOT=/usr/lib/phis/server
 Environment=HOSTNAME=127.0.0.1
 EnvironmentFile=-/srv/phis/stages/%i/.env
 ExecStart=/usr/bin/node /usr/lib/phis/server/server.js

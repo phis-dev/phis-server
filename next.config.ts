@@ -16,18 +16,9 @@ const nextConfig: NextConfig = {
   env: {
     PHIS_RELEASE_ID: version,
   },
-  outputFileTracingExcludes: {
-    "/*": [
-      // The install root is deployment state, not build output. An Add-on that travelled inside the
-      // image would be back to being compiled in, which is the one thing this must never be.
-      "./addons/**/*",
-      "./debian/**/*",
-      "./docs/**/*",
-      "./AGENTS.md",
-      "./DB.md",
-      "./Roadmap.md",
-    ],
-  },
+  // What ships from the standalone output is chosen by name in `debian/rules`, not excluded here: the
+  // tracer copies the whole checkout through the instrumentation trace, which these excludes never
+  // reached -- the install root, sources, tests and config all travelled with them in place.
   reactCompiler: true,
   experimental: {
     externalDir: true,

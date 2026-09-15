@@ -17,18 +17,30 @@ override_dh_auto_install:
 # The app directory inside the standalone output carries the name of the checkout it was built from,
 # which is not ours to depend on -- spelling it out is what left the unit pointing at a path the build
 # had stopped producing. It is found by its entry point and lands under a fixed name.
+#
+# Only what runs is taken from it, by name. The file tracer copies the whole checkout into that
+# directory -- sources, tests, working documents, and `config/` with whatever runtime config and
+# secrets the build machine had -- and `outputFileTracingExcludes` does not reach the trace that does
+# it. A list of what to drop would miss the next file; a list of what to keep cannot.
 	app_dir=$$(dirname "$$(find .next/standalone -maxdepth 2 -name server.js -print -quit)"); \
 		test -n "$$app_dir" || { echo "no server.js in .next/standalone" >&2; exit 1; }; \
-		cp -a "$$app_dir/." debian/phis/usr/lib/phis/server/
+		cp -a "$$app_dir/server.js" "$$app_dir/package.json" "$$app_dir/.next" "$$app_dir/public" \
+			debian/phis/usr/lib/phis/server/
 	cp -a .next/static debian/phis/usr/lib/phis/server/.next/
-# Enforced here rather than trusted to the build. `next.config.ts` says the install root must never
-# travel inside the artifact, and the file tracer still copies it; the package is the last place that
-# can be sure, and the only one where being sure is verifiable.
-	rm -rf debian/phis/usr/lib/phis/server/addons \
-		debian/phis/usr/lib/phis/server/debian \
-		debian/phis/usr/lib/phis/server/docs \
-		debian/phis/usr/lib/phis/server/test \
-		debian/phis/usr/lib/phis/server/tsconfig.tsbuildinfo
+	rm -rf debian/phis/usr/lib/phis/server/.next/cache
+# Read at run time through the app root: the Core schema by setup and `phis schema apply`.
+	install -D -m 0644 scripts/sql/001_create_phis.pgsql \
+		debian/phis/usr/lib/phis/server/scripts/sql/001_create_phis.pgsql
+# The operator CLI, bundled by `build:cli`, and the wrapper `/usr/bin/phis` links to.
+	install -D -m 0755 dist/phis.mjs debian/phis/usr/lib/phis/server/dist/phis.mjs
+	install -m 0755 phis debian/phis/usr/lib/phis/server/phis
+# Enforced here rather than trusted to the build: the package is the last place that can be sure.
+	forbidden=$$(find debian/phis/usr/lib/phis/server \
+		\( -path '*/node_modules' -o -path '*/.next/static' \) -prune -o \
+		\( -name '*.md' -o -name '*.test.*' -o -name 'vitest*.config.*' -o -name 'phis-runtime.json' \
+		   -o -path '*/server/config' -o -path '*/server/src' -o -path '*/server/test' \
+		   -o -path '*/server/addons' -o -path '*/server/debian' -o -path '*/server/docs' \) -print); \
+		test -z "$$forbidden" || { echo "must not ship:" >&2; echo "$$forbidden" >&2; exit 1; }
 	find debian/phis/usr/lib/phis/node_modules -type d \( -name '*linuxmusl*' -o -name '*musl*' \) -prune -exec rm -rf {} +
 	find debian/phis/usr/lib/phis/node_modules/argon2/prebuilds -type f -name '*.musl.node' -delete
 	cd debian/phis/usr/lib/phis/node_modules && \
