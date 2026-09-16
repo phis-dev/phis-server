@@ -407,10 +407,18 @@ function appendAssetFilters(parts: string[], values: Array<number | string | num
   if (filters.since) { values.push(filters.since); parts.push(`AND created_at >= $${values.length}::timestamptz`); }
   if (filters.until) { values.push(filters.until); parts.push(`AND created_at <= $${values.length}::timestamptz`); }
   if (filters.kinds?.length) {
-    const clauses = filters.kinds.map((kind) => kind === "image" ? "LOWER(content_type) LIKE 'image/%'" : kind === "video" ? "LOWER(content_type) LIKE 'video/%'" : kind === "audio" ? "LOWER(content_type) LIKE 'audio/%'" : kind === "pdf" ? "LOWER(content_type) = 'application/pdf'" : kind === "markdown" ? "LOWER(content_type) = 'text/markdown'" : "FALSE");
+    const clauses = filters.kinds.map((kind) => kind === "image" ? "LOWER(content_type) LIKE 'image/%'" : kind === "video" ? "LOWER(content_type) LIKE 'video/%'" : kind === "audio" ? "LOWER(content_type) LIKE 'audio/%'" : kind === "pdf" ? "LOWER(content_type) = 'application/pdf'" : kind === "markdown" ? "LOWER(content_type) = 'text/markdown'" : kind === "font" ? MEDIA_FONT_CONTENT_TYPE_CLAUSE : "FALSE");
     parts.push(`AND (${clauses.join(" OR ")})`);
   }
 }
+
+/*
+ * The same spellings `resolvePhiMediaKindFromContentType` counts as a font. Without this clause `kind=font`
+ * fell to `FALSE`, and the Theme's font picker listed an empty library however many fonts were uploaded.
+ */
+const MEDIA_FONT_CONTENT_TYPE_CLAUSE = "(LOWER(content_type) LIKE 'font/%' OR LOWER(content_type) IN ("
+  + "'application/font-woff', 'application/x-font-woff', 'application/x-font-ttf', 'application/x-font-otf', "
+  + "'application/x-font-truetype', 'application/x-font-opentype', 'application/vnd.ms-fontobject'))";
 
 export async function createMediaAsset(input: {
   siteId: number; spaceId: number; spaceKind?: number | null; folderId?: number | null; createdByUserId?: number | null;
