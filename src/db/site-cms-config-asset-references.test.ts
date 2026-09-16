@@ -53,6 +53,19 @@ describe("An Asset id in persisted config is a reference", () => {
     expect(assetIdsOf({ brand: { logoAssetId: 4711 } })).toEqual([4711]);
   });
 
+  /*
+   * A font slot names its Asset as a URI rather than as an id, because what a slot holds is either a
+   * family name or a reference and one field carries both. The string walk is what finds it -- and it
+   * has to, or a typeface could be deleted out from under the Theme that renders in it.
+   */
+  it("finds the typeface a Theme renders in, named as a URI in a font slot", () => {
+    const value = {
+      fonts: { body: "phis:asset/91", mono: "Fira Mono", serif: "phis:asset/92" },
+    };
+    expect(locationsOf(value).sort()).toEqual(["/fonts/body", "/fonts/serif"]);
+    expect(assetIdsOf(value).sort((left, right) => left - right)).toEqual([91, 92]);
+  });
+
   it("keeps one row per field when two of them name the same Asset", () => {
     // Two places hold it, so two places lose their picture if it goes: the guard should name both.
     const value = {
