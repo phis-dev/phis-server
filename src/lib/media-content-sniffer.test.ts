@@ -31,6 +31,16 @@ describe("Media content sniffing", () => {
     expect(stored(Buffer.concat([text("RIFF"), bytes(0, 0, 0, 0), text("WAVE")]))).toBe("audio/wav");
   });
 
+  it("recognizes fonts, and does not confuse TrueType with an icon", () => {
+    expect(stored(text("wOF2...."))).toBe("font/woff2");
+    expect(stored(text("wOFF...."))).toBe("font/woff");
+    expect(stored(text("OTTO...."))).toBe("font/otf");
+    expect(stored(text("ttcf...."))).toBe("font/collection");
+    // The two magics are the same four bytes in a different order, and one must not answer for the other.
+    expect(stored(bytes(0x00, 0x01, 0x00, 0x00))).toBe("font/ttf");
+    expect(stored(bytes(0x00, 0x00, 0x01, 0x00))).toBe("image/vnd.microsoft.icon");
+  });
+
   it("recognizes documents, archives and executables", () => {
     expect(stored(text("%PDF-1.7"))).toBe("application/pdf");
     expect(stored(bytes(0x37, 0x7a, 0xbc, 0xaf, 0x27, 0x1c))).toBe("application/x-7z-compressed");

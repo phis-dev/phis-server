@@ -303,6 +303,8 @@ Contract:
   - `markdown` for `text/markdown`
   - `document` for Office/text-document MIME families such as `application/msword`, `application/vnd.openxmlformats-officedocument.wordprocessingml.document`, `application/rtf`, `text/plain`, and `application/vnd.oasis.opendocument.text`
   - `archive` for archive MIME families such as `application/zip`, `application/x-7z-compressed`, `application/x-rar-compressed`, and `application/x-tar`
+  - `font` for the registered `font/*` tree and the older `application/...` spellings of the same bytes (`application/font-woff`, `application/x-font-ttf`, `application/vnd.ms-fontobject`). A typeface is neither read nor downloaded but loaded by a stylesheet, and a Theme that owns its lettering must be able to find it again after the Module that brought it is gone -- which is a query on the kind, not a guess about content types. `media-content-sniffer.ts` recognizes `wOF2`, `wOFF`, `OTTO`, `ttcf` and the TrueType magic, so an uploaded font is stored as a font rather than falling through to `application/octet-stream`
+  - `binary` for arbitrary bytes offered as a download
   - `other` for anything that does not fit the above classes
 - List consumers must not read the media library unbounded. The public `GET /api/site/media` contract is paginated and requires `page` plus `pageSize`; detail reads belong on `GET /api/site/media/:id`.
 - The list contract may additionally filter by `since`, `until`, `folderId`, `kind`, `presentationFlags`, `query`, and `sort`.

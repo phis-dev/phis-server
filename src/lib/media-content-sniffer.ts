@@ -62,6 +62,19 @@ const SIGNATURES: readonly Signature[] = [
   { contentType: "audio/flac", offset: 0, bytes: ascii("fLaC") },
   { contentType: "audio/mpeg", offset: 0, bytes: ascii("ID3") },
   { contentType: "application/pdf", offset: 0, bytes: ascii("%PDF-") },
+  /*
+   * Fonts, so an upload is a font rather than a blob.
+   *
+   * Without a signature here the bytes fall through to `application/octet-stream`, which is stored and
+   * then read back as the `binary` kind -- and a Theme looking for the typeface it owns would be
+   * searching among installers. The TrueType magic `00 01 00 00` is not the icon magic `00 00 01 00`
+   * above it, so the two do not shadow each other.
+   */
+  { contentType: "font/woff2", offset: 0, bytes: ascii("wOF2") },
+  { contentType: "font/woff", offset: 0, bytes: ascii("wOFF") },
+  { contentType: "font/otf", offset: 0, bytes: ascii("OTTO") },
+  { contentType: "font/collection", offset: 0, bytes: ascii("ttcf") },
+  { contentType: "font/ttf", offset: 0, bytes: [0x00, 0x01, 0x00, 0x00] },
   { contentType: "application/x-7z-compressed", offset: 0, bytes: [0x37, 0x7a, 0xbc, 0xaf, 0x27, 0x1c] },
   { contentType: "application/x-rar-compressed", offset: 0, bytes: ascii("Rar!") },
   { contentType: "application/gzip", offset: 0, bytes: [0x1f, 0x8b] },
