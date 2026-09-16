@@ -27,7 +27,8 @@ const nextConfig: NextConfig = {
    */
   serverExternalPackages: ["harfbuzzjs", "wawoff2"],
   outputFileTracingIncludes: {
-    "/api/site/media/[id]/subsets/[subsetKey]": ["./node_modules/harfbuzzjs/dist/harfbuzz-subset.wasm"],
+    // A glob against the route path, where `[id]` would be a character class: the segments are wildcards.
+    "/api/site/media/*/subsets/*": ["./node_modules/harfbuzzjs/dist/harfbuzz-subset.wasm"],
   },
   experimental: {
     externalDir: true,
