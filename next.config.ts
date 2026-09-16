@@ -1,3 +1,4 @@
+import path from "node:path";
 import type { NextConfig } from "next";
 
 import { version } from "./package.json";
@@ -32,6 +33,11 @@ const nextConfig: NextConfig = {
   },
   experimental: {
     externalDir: true,
+  },
+  // The checkout is its own Git repository inside the workspace, and Next stops looking for the workspace
+  // at a repository boundary: without the root spelled out it never finds `next` in the workspace store.
+  turbopack: {
+    root: path.join(__dirname, ".."),
   },
 };
 

@@ -13,6 +13,8 @@ const eslintConfig = defineConfig([
     "build/**",
     "dist/**",
     "next-env.d.ts",
+    // Installed Add-ons: bundles put there at run time, not source of this checkout.
+    "addons/**",
   ]),
 ]);
 
