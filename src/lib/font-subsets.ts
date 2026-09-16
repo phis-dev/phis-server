@@ -3,6 +3,7 @@ import "server-only";
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { createRequire } from "node:module";
+import { join } from "node:path";
 import { inflateSync } from "node:zlib";
 
 import {
@@ -60,9 +61,23 @@ const HB_MEMORY_MODE_WRITABLE = 2;
 
 let harfBuzzSubset: Promise<HarfBuzzSubsetExports> | null = null;
 
+/*
+ * Resolved by Node at run time, from the project root, with a specifier the bundler cannot read.
+ * Turbopack rewrites every statically visible `require.resolve` in server code -- the `.wasm` specifier
+ * into a wasm module placeholder, the package itself into a `[project]/...` path -- and neither names a
+ * file on disk. The server's working directory is the project root in dev and in the standalone build,
+ * whose trace keeps the file (`outputFileTracingIncludes` in `next.config.ts`).
+ */
+const HARFBUZZ_SUBSET_WASM = ["harfbuzzjs", "dist", "harfbuzz-subset.wasm"];
+
+function resolveHarfBuzzSubsetWasmPath() {
+  const projectRequire = createRequire(join(process.cwd(), "package.json"));
+  return projectRequire.resolve(HARFBUZZ_SUBSET_WASM.join("/"));
+}
+
 /** One instance for the process: the module is stateless between calls and its memory is freed after each. */
 function loadHarfBuzzSubset() {
-  harfBuzzSubset ??= readFile(require.resolve("harfbuzzjs/dist/harfbuzz-subset.wasm"))
+  harfBuzzSubset ??= readFile(resolveHarfBuzzSubsetWasmPath())
     .then((bytes) => WebAssembly.instantiate(bytes, {}))
     .then(({ instance }) => instance.exports as unknown as HarfBuzzSubsetExports);
   return harfBuzzSubset;
