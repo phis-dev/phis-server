@@ -22,6 +22,8 @@ import {
   resolvePhiMediaStoredContentType,
   sniffPhiMediaContentType,
 } from "@/lib/media-content-sniffer";
+import { PhiMediaKind, resolvePhiMediaKindFromContentType } from "@/lib/constants/media";
+import { readPhiFontMetrics } from "@/lib/font-metrics";
 import { createPhisMediaStorageServiceForProfile } from "@/lib/media-storage";
 import { logRuntimeEvent, normalizeLogThrowable } from "@/lib/log";
 import { PHIS_CMS_AREA_KEYS } from "@/lib/constants/cms-areas";
@@ -68,6 +70,12 @@ const SVG_MIN_DISPLAY_DIMENSION = 48;
  */
 const PHI_SVG_SCAN_LIMIT_BYTES = 2 * 1024 * 1024;
 const PHI_IMAGE_DECODE_LIMIT_BYTES = 64 * 1024 * 1024;
+/*
+ * A whole font in hand, which is what reading its tables needs -- a woff2 keeps them behind one Brotli
+ * stream, so there is no prefix that answers. Generous for a format where a full family is well under a
+ * megabyte, and a ceiling all the same.
+ */
+const PHI_FONT_READ_LIMIT_BYTES = 16 * 1024 * 1024;
 
 function isSvgContentType(contentType: string) {
   return contentType.trim().toLowerCase().split(";", 1)[0] === "image/svg+xml";
@@ -383,6 +391,24 @@ export async function POST(
     ? await readImageMetadata(decodableBody, contentType)
     : { width: null, height: null, blurDataUrl: null };
 
+  /*
+   * A typeface states its own proportions, and this is the only moment anyone will read them.
+   *
+   * A font delivered from the Media library has no fallback face, so the browser sets the page in a
+   * substitute and reflows when the real file lands. The `size-adjust` and `*-override` descriptors
+   * that prevent it are arithmetic on numbers inside the file, and a render must not be opening font
+   * files to find them. So they are read here, once, and travel with the Asset.
+   *
+   * A font that cannot be read is still stored. It simply arrives without metrics, and a Theme that
+   * uses it falls back to an unadjusted face -- which is exactly where everything stood before.
+   */
+  const fontBody = resolvePhiMediaKindFromContentType(contentType) === PhiMediaKind.Font
+    && staged.byteSize <= PHI_FONT_READ_LIMIT_BYTES
+    ? await storageService.getObject(session.stagingStorageKey)
+    : null;
+  const fontMetrics = fontBody ? readPhiFontMetrics(fontBody) : null;
+  const assetMeta = fontMetrics ? { ...(session.meta ?? {}), font: fontMetrics } : session.meta ?? null;
+
   try {
     const targetStorageKey = session.finalStorageKey ?? session.stagingStorageKey;
     const finalObject = await storageService.copyObject({
@@ -423,7 +449,7 @@ export async function POST(
       width: imageMeta.width,
       height: imageMeta.height,
       blurDataUrl: imageMeta.blurDataUrl,
-      meta: session.meta ?? null,
+      meta: assetMeta,
       title: null,
       altText: null,
       lifecycleStatus: PhiMediaLifecycleStatus.Ready,
