@@ -10,7 +10,7 @@ import {
   type SiteMediaConfigRecord,
 } from "@/db/media-spaces";
 import { PhiImageAssetVariantKey, resolvePhiMediaKindFromContentType } from "@/lib/constants/media";
-import type { PhiMediaSpaceKind } from "@phis/contracts/media";
+import type { PhiFontMetrics, PhiMediaSpaceKind } from "@phis/contracts/media";
 
 type PublicMediaAssetProjection = Omit<MediaAssetRecord, "storageProfileId" | "storageKey"> & {
   deliveryUrl: string;
@@ -91,6 +91,43 @@ function projectFocalRect(meta: Record<string, unknown> | null): PhiMediaFocalRe
 }
 
 /**
+ * Projects the font metrics out of the same opaque blob.
+ *
+ * The second `meta` entry a public render consumes, and for the same reason as the focal rectangle: a
+ * Theme building a fallback `@font-face` needs the numbers, and `meta` does not travel wholesale. Read
+ * once at upload by `lib/font-metrics.ts`; nothing here re-derives them, it only refuses a shape that
+ * is not what that reader writes.
+ */
+function projectFontMetrics(meta: Record<string, unknown> | null): PhiFontMetrics | null {
+  const raw = meta?.font;
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const record = raw as Record<string, unknown>;
+  const unitsPerEm = typeof record.unitsPerEm === "number" ? record.unitsPerEm : 0;
+  // Without the grid every other number is unreadable, so a projection without it is no projection.
+  if (!Number.isFinite(unitsPerEm) || unitsPerEm <= 0) return null;
+  const number = (value: unknown) => (typeof value === "number" && Number.isFinite(value) ? value : 0);
+  const nullableNumber = (value: unknown) =>
+    (typeof value === "number" && Number.isFinite(value) ? value : null);
+  const oneOf = <T extends string>(value: unknown, allowed: readonly T[]) =>
+    (typeof value === "string" && (allowed as readonly string[]).includes(value) ? (value as T) : null);
+  return {
+    format: oneOf(record.format, ["sfnt", "woff", "woff2"] as const) ?? "sfnt",
+    familyName: typeof record.familyName === "string" && record.familyName.trim()
+      ? record.familyName.trim()
+      : null,
+    unitsPerEm,
+    ascent: number(record.ascent),
+    descent: number(record.descent),
+    lineGap: number(record.lineGap),
+    capHeight: nullableNumber(record.capHeight),
+    xHeight: nullableNumber(record.xHeight),
+    xWidthAvg: nullableNumber(record.xWidthAvg),
+    xWidthAvgSource: oneOf(record.xWidthAvgSource, ["glyphs", "os2"] as const),
+    category: oneOf(record.category, ["serif", "sans-serif", "monospace"] as const),
+  };
+}
+
+/**
  * The public rendering projection for a resolved `phis:asset/<id>` reference.
  *
  * This is deliberately not the management record minus storage internals. It carries only what a
@@ -116,6 +153,7 @@ export type PhiPublicMediaAssetReferenceResponse = {
   thumbnailUrl: string | null;
   previewUrl: string | null;
   focalRect: PhiMediaFocalRectProjection | null;
+  font: PhiFontMetrics | null;
 };
 
 export function serializeMediaAssetForPublicReference(
@@ -137,6 +175,7 @@ export function serializeMediaAssetForPublicReference(
     thumbnailUrl: resolveThumbnailUrl(asset),
     previewUrl: resolvePreviewUrl(asset),
     focalRect: projectFocalRect(asset.meta),
+    font: projectFontMetrics(asset.meta),
   };
 }
 

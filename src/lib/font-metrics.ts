@@ -2,6 +2,8 @@ import "server-only";
 
 import { brotliDecompressSync, inflateSync } from "node:zlib";
 
+import type { PhiFontMetrics } from "@phis/contracts/media";
+
 /**
  * What a typeface says about its own proportions, read out of the file.
  *
@@ -40,37 +42,11 @@ const WOFF2_KNOWN_TAGS = [
   "trak", "Zapf", "Silf", "Glat", "Gloc", "Feat", "Sill",
 ] as const;
 
-export type PhiFontMetrics = {
-  /** The container the numbers were read from, for a reader wondering what was parsed. */
-  format: "sfnt" | "woff" | "woff2";
-  familyName: string | null;
-  /** The grid every other number below is measured on. */
-  unitsPerEm: number;
-  ascent: number;
-  descent: number;
-  lineGap: number;
-  capHeight: number | null;
-  xHeight: number | null;
-  /**
-   * How wide running text sets, as an advance width on the same grid.
-   *
-   * `glyphs` is the average advance of the lowercase Latin letters and the space, which is what a line
-   * of prose is mostly made of. `os2` is the font's own `xAvgCharWidth`, taken when the advances cannot
-   * be read -- it averages every glyph in the file, so a family carrying Greek and Cyrillic reports a
-   * width no Latin paragraph will have. The source is recorded because the two are not equally good.
-   */
-  xWidthAvg: number | null;
-  xWidthAvgSource: "glyphs" | "os2" | null;
-  /**
-   * What the file says it is, for choosing the local substitute -- and `null` when it says nothing.
-   *
-   * Read from PANOSE where a font fills it in, from the `OS/2` family class otherwise. Neither is
-   * mandatory and plenty of good fonts leave both at zero (Lora, among the three this package ships),
-   * so the absence is reported rather than papered over with a guess: whoever picks the substitute can
-   * ask the person who uploaded the file, which is a better source than a coin toss.
-   */
-  category: "serif" | "sans-serif" | "monospace" | null;
-};
+/*
+ * The shape is the contract's: these numbers leave for the site UI on the Asset, and it builds the
+ * fallback face out of them. What lives here is the reading, not the vocabulary.
+ */
+export type { PhiFontMetrics } from "@phis/contracts/media";
 
 type TableMap = Map<string, Buffer>;
 

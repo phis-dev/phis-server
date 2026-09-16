@@ -57,7 +57,60 @@ describe("public Asset reference projection", () => {
       thumbnailUrl: "/api/site/media/7/variants/0?r=3&v=4",
       previewUrl: "/api/site/media/7/variants/1?r=3&v=4",
       focalRect: { x: 0.25, y: 0.5, width: 0.5, height: 0.5 },
+      font: null,
     });
+  });
+
+  /*
+   * The second `meta` entry a public render consumes, and the same rule as the focal rectangle: what a
+   * Theme needs for a fallback face travels as a typed field, and the rest of the blob stays home.
+   */
+  it("carries the font metrics a Theme builds a fallback face from", () => {
+    const projected = serializeMediaAssetForPublicReference({
+      ...asset,
+      contentType: "font/woff2",
+      meta: {
+        secretNote: "internal",
+        font: {
+          format: "woff2",
+          familyName: "Phi Test Sans",
+          unitsPerEm: 1000,
+          ascent: 935,
+          descent: -265,
+          lineGap: 0,
+          capHeight: 689,
+          xHeight: 527,
+          xWidthAvg: 460,
+          xWidthAvgSource: "glyphs",
+          category: "sans-serif",
+        },
+      },
+    });
+    expect(projected.kind).toBe("font");
+    expect(projected.font).toEqual({
+      format: "woff2",
+      familyName: "Phi Test Sans",
+      unitsPerEm: 1000,
+      ascent: 935,
+      descent: -265,
+      lineGap: 0,
+      capHeight: 689,
+      xHeight: 527,
+      xWidthAvg: 460,
+      xWidthAvgSource: "glyphs",
+      category: "sans-serif",
+    });
+  });
+
+  it("refuses metrics without the grid the rest of them are measured on", () => {
+    expect(serializeMediaAssetForPublicReference({
+      ...asset,
+      meta: { font: { unitsPerEm: 0, ascent: 935 } },
+    }).font).toBeNull();
+    expect(serializeMediaAssetForPublicReference({
+      ...asset,
+      meta: { font: { unitsPerEm: 1000, ascent: 935, category: "handwriting" } },
+    }).font?.category).toBeNull();
   });
 
   it("never leaks a management or storage field", () => {
