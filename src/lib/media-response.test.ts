@@ -99,7 +99,26 @@ describe("public Asset reference projection", () => {
       xWidthAvg: 460,
       xWidthAvgSource: "glyphs",
       category: "sans-serif",
+      coverage: null,
     });
+  });
+
+  it("carries the cuts a font was recorded to have, and nothing a stylesheet should not receive", () => {
+    const projected = serializeMediaAssetForPublicReference({
+      ...asset,
+      contentType: "font/woff2",
+      meta: {
+        font: {
+          unitsPerEm: 1000,
+          ascent: 935,
+          coverage: {
+            subsets: [0, 1, 15, 99, "latin"],
+            restRanges: [[0x3041, 0x3096], [5, 2], ["a", "b"], [0, 0x110000]],
+          },
+        },
+      },
+    });
+    expect(projected.font?.coverage).toEqual({ subsets: [0, 1, 15], restRanges: [[0x3041, 0x3096]] });
   });
 
   it("refuses metrics without the grid the rest of them are measured on", () => {

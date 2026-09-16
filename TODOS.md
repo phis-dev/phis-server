@@ -569,49 +569,29 @@ Remaining work:
 - Add release/instance readiness checks proving that all serving instances contain the same provider
   manifest and can resolve the required secrets before a Site profile becomes available.
 
-## P2: Cut uploaded fonts into unicode ranges
+## P2: Preload the unicode-range cuts a Site's locales need
 
 Implemented in the current baseline:
 
-- `font` is a Media kind, recognized from the bytes by `lib/media-content-sniffer.ts` (`wOF2`, `wOFF`,
-  `OTTO`, `ttcf`, and the TrueType magic).
-- `lib/font-metrics.ts` reads a typeface's own proportions at upload and stores them under `meta.font`,
-  so a Theme can write a fallback `@font-face` with `size-adjust` and the `*-override` descriptors. It
-  reads sfnt, woff and woff2, including the transformed `glyf`/`loca` pair whose length in a woff2
-  stream is the transformed one -- getting that wrong moves every table after it.
+- `font` is a Media kind, recognized from the bytes by `lib/media-content-sniffer.ts`, and
+  `lib/font-metrics.ts` stores a typeface's proportions under `meta.font` for the fallback face.
+- Uploaded fonts are cut into `unicode-range` subsets with HarfBuzz (`harfbuzzjs`'s raw
+  `harfbuzz-subset.wasm`, `wawoff2` for woff2). `meta.font.coverage` records at upload which cuts a file
+  can yield, including a `rest` cut for codepoints outside every named range; `phis.font_asset_subsets`
+  holds the cuts, produced lazily by `/api/site/media/[id]/subsets/[key]` and versioned by
+  `PHI_FONT_SUBSET_VERSION`. The Theme writes one `@font-face` per cut. See `DB.md`.
+- The cut is deliberately not derived from the Site's locales: they describe the interface, not the
+  content, and the list changes after the upload.
 
-What is left, and the shape it should take:
+What is left:
 
-- An uploaded font is whatever somebody uploaded, which for a full family with Cyrillic and Greek is
-  several times what a Latin page needs. The answer is not one subset but several cuts served with
-  `unicode-range`, so the browser fetches the one or two a page renders from. Do not derive the cut from
-  the Site's locales: they describe the interface, not the content, a customer's name will carry a glyph
-  outside them, and the list changes after the cut was made. Locales decide what is **preloaded**.
-- **`phis.font_asset_subsets`, not a row in `phis.image_asset_variants`.** That table's own contract
-  already says renditions are images only and that other kinds must not create rows in it, and its
-  columns agree: `width` and `height` are `NOT NULL` there and meaningless here, and loosening them
-  would withdraw the guarantee `next/image` rests on. The heavier objection is `variant_key`: it is a
-  closed vocabulary where `0` means thumbnail, and sharing the table would make `0` mean thumbnail or
-  latin depending on a column in another table. That is the coupling that let `PhiMediaAssetFlags`
-  drift between the two packages.
-- Columns in the shape of the sister table without its image half: `PRIMARY KEY (asset_id, subset_key)`,
-  `storage_profile_id`, `storage_key`, `content_type`, `bytes`, `checksum_sha256`, `subset_version`,
-  `flags`, timestamps, `UNIQUE (storage_profile_id, storage_key)`.
-- `subset_key` belongs in `@phis/contracts/media` as a closed vocabulary -- latin, latin-ext, cyrillic,
-  cyrillic-ext, greek, greek-ext, vietnamese, symbols -- because the number stands in the delivery URL
-  and both sides must read it the same way. The `unicode-range` text that goes with each key stays in
-  code beside the vocabulary, the way `PhiImageAssetVariantSpec` does: it is part of the rule, not of
-  the row. Follow the ranges Google's font CSS uses, so our declarations describe the cuts a typeface
-  actually divides along.
-- A route of its own, `/api/site/media/[id]/subsets/[key]`. `/variants/` answers a non-image kind with a
-  fixed SVG icon by contract, and overloading it would break that sentence.
-- Reuse the pattern and not the table: produce a cut on first request the way `ensureImageAssetVariant`
-  does, store it beside the original under its own prefix, bump `subset_version` to discard every cut
-  when the rule changes, and never touch the original -- it is what every later derivation reads.
-- The tools are permissive: HarfBuzz under the Old MIT license, reachable from Node as `harfbuzzjs`
-  (MIT) or `subset-font` (BSD-3-Clause), with `wawoff2` (MIT) for the woff2 container. fontTools is MIT
-  as well but is Python, which would put a second runtime in the server. Subsetting modifies the file,
-  and a few commercial webfont licenses forbid exactly that -- say so where an operator uploads.
+- Locales decide what is **preloaded**. A Site whose locales are all Latin-script should preload the
+  body font's `latin` cut (and `latin-ext` where a locale needs it) instead of nothing; the mapping from
+  locale to subset keys belongs beside the vocabulary in `@phis/contracts/media`.
+- Fonts uploaded before `coverage` existed have `coverage: null` and are delivered whole. Either
+  re-read their metrics in a one-off maintenance pass or leave re-upload to the operator.
+- Subsetting modifies the file, and a few commercial webfont licenses forbid exactly that -- say so
+  where an operator uploads.
 
 ## P2: Add the Groups package, Directory Providers, and Storage migration operations
 

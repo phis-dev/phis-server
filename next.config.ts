@@ -20,6 +20,15 @@ const nextConfig: NextConfig = {
   // tracer copies the whole checkout through the instrumentation trace, which these excludes never
   // reached -- the install root, sources, tests and config all travelled with them in place.
   reactCompiler: true,
+  /*
+   * The font cutter's two WebAssembly packages run from `node_modules` rather than from the bundle: a
+   * bundler that inlines them loses the files they load at run time. The subset module is read by path,
+   * which file tracing cannot see through, so the one route that cuts names it for the standalone output.
+   */
+  serverExternalPackages: ["harfbuzzjs", "wawoff2"],
+  outputFileTracingIncludes: {
+    "/api/site/media/[id]/subsets/[subsetKey]": ["./node_modules/harfbuzzjs/dist/harfbuzz-subset.wasm"],
+  },
   experimental: {
     externalDir: true,
   },

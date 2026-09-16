@@ -1,7 +1,7 @@
 import { brotliCompressSync } from "node:zlib";
 import { describe, expect, it } from "vitest";
 
-import { readPhiFontMetrics } from "@/lib/font-metrics";
+import { readPhiFontMetrics, resolvePhiFontCoverage } from "@/lib/font-metrics";
 
 /**
  * The numbers a Theme writes into `size-adjust`, read from a file nobody controls.
@@ -217,6 +217,28 @@ describe("Font metrics", () => {
     expect(metrics!.ascent).toBe(950);
     expect(metrics!.xWidthAvg).toBe(456);
     expect(metrics!.familyName).toBe("Phi Test Sans");
+  });
+
+  it("records which unicode cuts a font has characters in", () => {
+    // The fixture maps the space to "z", all of it inside the Latin cut and nothing outside.
+    expect(readPhiFontMetrics(buildSfnt())!.coverage).toEqual({ subsets: [0], restRanges: [] });
+    expect(readPhiFontMetrics(buildWoff2())!.coverage).toEqual({ subsets: [0], restRanges: [] });
+  });
+
+  it("names the cuts a character falls in, and keeps what falls in none as the font's own rest", () => {
+    const coverage = resolvePhiFontCoverage([0x41, 0x416, 0x1f00, 0x3042, 0x3043, 0x3045]);
+    // Latin, Cyrillic, Greek extended -- and the Hiragana, which no named cut holds.
+    expect(coverage.subsets).toEqual([0, 2, 5, 15]);
+    expect(coverage.restRanges).toEqual([[0x3042, 0x3043], [0x3045, 0x3045]]);
+  });
+
+  it("describes a scattered rest in a bounded number of ranges that still hold every character", () => {
+    const scattered = Array.from({ length: 600 }, (_, index) => 0x4e00 + index * 3);
+    const { restRanges } = resolvePhiFontCoverage(scattered);
+    expect(restRanges.length).toBeLessThanOrEqual(256);
+    for (const codepoint of scattered) {
+      expect(restRanges.some(([start, end]) => codepoint >= start && codepoint <= end)).toBe(true);
+    }
   });
 
   it("answers with nothing for bytes that are not a font", () => {

@@ -34,6 +34,7 @@
   "dependencies": {
     "@phis/contracts": "workspace:*",
     "argon2": "^0.44.0",
+    "harfbuzzjs": "^1.6.1",
     "next": "^16.2.10",
     "nodemailer": "^9.0.3",
     "openid-client": "^6.8.4",
@@ -41,7 +42,8 @@
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
     "sanitize-html": "2.17.5",
-    "sharp": "^0.35.3"
+    "sharp": "^0.35.3",
+    "wawoff2": "^2.0.1"
   },
   "devDependencies": {
     "@types/node": "^26.1.0",

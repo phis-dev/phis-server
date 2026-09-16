@@ -613,6 +613,58 @@ export async function upsertImageAssetVariant(input: {
   ); return rows[0] ? mapVariant(rows[0]) : null;
 }
 
+type FontSubsetRow = {
+  asset_id: number; subset_key: number; subset_version: number; storage_profile_id: number; storage_key: string;
+  content_type: string; bytes: number | string | null; checksum_algorithm: string | null; checksum_value: string | null;
+  flags: number; created_at: Date | string; updated_at: Date | string;
+};
+
+export type FontAssetSubsetRecord = {
+  assetId: number; subsetKey: number; subsetVersion: number; storageProfileId: number; storageKey: string;
+  contentType: string; bytes: number | null; checksumAlgorithm: string | null; checksumValue: string | null;
+  flags: number; createdAt: string; updatedAt: string;
+};
+
+const FONT_SUBSET_COLUMNS = `asset_id, subset_key, subset_version, storage_profile_id, storage_key, content_type, bytes,
+  checksum_algorithm, checksum_value, flags, created_at, updated_at`;
+
+function mapFontSubset(row: FontSubsetRow): FontAssetSubsetRecord {
+  return {
+    assetId: integer(row.asset_id), subsetKey: integer(row.subset_key), subsetVersion: integer(row.subset_version),
+    storageProfileId: integer(row.storage_profile_id), storageKey: row.storage_key, contentType: row.content_type,
+    bytes: row.bytes == null ? null : integer(row.bytes), checksumAlgorithm: row.checksum_algorithm,
+    checksumValue: row.checksum_value, flags: integer(row.flags), createdAt: iso(row.created_at), updatedAt: iso(row.updated_at),
+  };
+}
+
+export async function getFontAssetSubsetByAssetIdAndKey(assetId: number, subsetKey: number) {
+  const { rows } = await getPool().query<FontSubsetRow>(
+    `SELECT ${FONT_SUBSET_COLUMNS} FROM phis.font_asset_subsets WHERE asset_id = $1 AND subset_key = $2`,
+    [assetId, subsetKey],
+  );
+  return rows[0] ? mapFontSubset(rows[0]) : null;
+}
+
+export async function upsertFontAssetSubset(input: {
+  assetId: number; subsetKey: number; subsetVersion: number; storageProfileId: number; storageKey: string;
+  contentType: string; bytes?: number | null; checksumAlgorithm?: string | null; checksumValue?: string | null;
+  flags?: number;
+}) {
+  const { rows } = await getPool().query<FontSubsetRow>(
+    `INSERT INTO phis.font_asset_subsets (asset_id, subset_key, subset_version, storage_profile_id, storage_key,
+       content_type, bytes, checksum_algorithm, checksum_value, flags)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+     ON CONFLICT (asset_id, subset_key) DO UPDATE SET subset_version=EXCLUDED.subset_version,
+       storage_profile_id=EXCLUDED.storage_profile_id, storage_key=EXCLUDED.storage_key,
+       content_type=EXCLUDED.content_type, bytes=EXCLUDED.bytes, checksum_algorithm=EXCLUDED.checksum_algorithm,
+       checksum_value=EXCLUDED.checksum_value, flags=EXCLUDED.flags, updated_at=NOW()
+     RETURNING ${FONT_SUBSET_COLUMNS}`,
+    [input.assetId, input.subsetKey, input.subsetVersion, input.storageProfileId, input.storageKey, input.contentType,
+      input.bytes ?? null, input.checksumAlgorithm ?? null, input.checksumValue ?? null, input.flags ?? 0],
+  );
+  return rows[0] ? mapFontSubset(rows[0]) : null;
+}
+
 export async function createMediaUploadSession(input: {
   token: string; siteId: number; actorUserId: number; spaceId: number; folderId?: number | null;
   storageProfileId: number; status: number; filename: string; contentType: string; sizeBytes: number; kind: string;

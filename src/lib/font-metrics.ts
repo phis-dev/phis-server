@@ -2,7 +2,15 @@ import "server-only";
 
 import { brotliDecompressSync, inflateSync } from "node:zlib";
 
-import type { PhiFontMetrics } from "@phis/contracts/media";
+import {
+  isPhiCodepointInRanges,
+  PHI_FONT_SUBSET_RANGES,
+  PhiFontSubsetKey,
+  type PhiFontCoverage,
+  type PhiFontMetrics,
+  type PhiFontSubsetKeyValue,
+  type PhiUnicodeRange,
+} from "@phis/contracts/media";
 
 /**
  * What a typeface says about its own proportions, read out of the file.
@@ -208,9 +216,21 @@ const PHI_FONT_WIDTH_SAMPLE_WEIGHTS: Readonly<Record<string, number>> = {
   v: 0.0079, w: 0.0194, x: 0.0015, y: 0.0161, z: 0.0006, " ": 0.1774,
 };
 
-const PHI_FONT_WIDTH_SAMPLE = Object.keys(PHI_FONT_WIDTH_SAMPLE_WEIGHTS).join("");
+/*
+ * A ceiling on how many characters one font may map. The largest CJK families map well under a hundred
+ * thousand; a table claiming more is not a font this reads, and walking it would be the attack.
+ */
+const MAX_MAPPED_CODEPOINTS = 200_000;
+const MAX_CODEPOINT = 0x10ffff;
 
-function readCmapUnicodeMap(cmap: Buffer | undefined) {
+/**
+ * Every character the font maps to a glyph, with the glyph it maps to.
+ *
+ * From the best Unicode subtable the font offers: format 12 where there is one, since it reaches past
+ * the Basic Multilingual Plane, format 4 otherwise. A character that maps to glyph 0 is one the font
+ * does not have.
+ */
+function readCmapCodepoints(cmap: Buffer | undefined): Map<number, number> | null {
   if (!cmap || cmap.length < 4) return null;
   const numTables = cmap.readUInt16BE(2);
   let best: { offset: number; format: number } | null = null;
@@ -225,14 +245,19 @@ function readCmapUnicodeMap(cmap: Buffer | undefined) {
     const unicode = platformId === 0 || (platformId === 3 && (encodingId === 1 || encodingId === 10));
     if (!unicode) continue;
     if (format === 4 || format === 12) {
-      // Format 12 covers everything format 4 does, so it wins where a font offers both.
       if (!best || (format === 12 && best.format !== 12)) best = { offset, format };
     }
   }
   if (!best) return null;
 
   const map = new Map<number, number>();
+  const add = (codepoint: number, glyphId: number) => {
+    if (glyphId !== 0 && codepoint <= MAX_CODEPOINT) map.set(codepoint, glyphId);
+    return map.size <= MAX_MAPPED_CODEPOINTS;
+  };
+
   if (best.format === 4) {
+    if (best.offset + 14 > cmap.length) return null;
     const segCountX2 = cmap.readUInt16BE(best.offset + 6);
     const segCount = segCountX2 / 2;
     const endCodes = best.offset + 14;
@@ -240,46 +265,113 @@ function readCmapUnicodeMap(cmap: Buffer | undefined) {
     const idDeltas = startCodes + segCountX2;
     const idRangeOffsets = idDeltas + segCountX2;
     if (idRangeOffsets + segCountX2 > cmap.length) return null;
-    for (const character of PHI_FONT_WIDTH_SAMPLE) {
-      const code = character.codePointAt(0)!;
-      for (let segment = 0; segment < segCount; segment += 1) {
-        if (cmap.readUInt16BE(endCodes + segment * 2) < code) continue;
-        if (cmap.readUInt16BE(startCodes + segment * 2) > code) break;
-        const idDelta = cmap.readInt16BE(idDeltas + segment * 2);
-        const idRangeOffset = cmap.readUInt16BE(idRangeOffsets + segment * 2);
+    for (let segment = 0; segment < segCount; segment += 1) {
+      const start = cmap.readUInt16BE(startCodes + segment * 2);
+      const end = cmap.readUInt16BE(endCodes + segment * 2);
+      const idDelta = cmap.readInt16BE(idDeltas + segment * 2);
+      const idRangeOffset = cmap.readUInt16BE(idRangeOffsets + segment * 2);
+      // The terminating segment maps nothing but its own 0xFFFF.
+      if (start === 0xffff) continue;
+      for (let code = start; code <= end; code += 1) {
+        let glyphId: number;
         if (idRangeOffset === 0) {
-          map.set(code, (code + idDelta) & 0xffff);
-          break;
+          glyphId = (code + idDelta) & 0xffff;
+        } else {
+          const glyphOffset = idRangeOffsets + segment * 2 + idRangeOffset + (code - start) * 2;
+          if (glyphOffset + 2 > cmap.length) break;
+          const raw = cmap.readUInt16BE(glyphOffset);
+          glyphId = raw === 0 ? 0 : (raw + idDelta) & 0xffff;
         }
-        const start = cmap.readUInt16BE(startCodes + segment * 2);
-        const glyphOffset = idRangeOffsets + segment * 2 + idRangeOffset + (code - start) * 2;
-        if (glyphOffset + 2 > cmap.length) break;
-        const glyphId = cmap.readUInt16BE(glyphOffset);
-        if (glyphId !== 0) map.set(code, (glyphId + idDelta) & 0xffff);
-        break;
+        if (!add(code, glyphId)) return null;
       }
     }
     return map;
   }
 
+  if (best.offset + 16 > cmap.length) return null;
   const numGroups = cmap.readUInt32BE(best.offset + 12);
   for (let group = 0; group < numGroups; group += 1) {
     const record = best.offset + 16 + group * 12;
     if (record + 12 > cmap.length) break;
     const startCode = cmap.readUInt32BE(record);
-    const endCode = cmap.readUInt32BE(record + 4);
+    const endCode = Math.min(cmap.readUInt32BE(record + 4), MAX_CODEPOINT);
     const startGlyph = cmap.readUInt32BE(record + 8);
-    for (const character of PHI_FONT_WIDTH_SAMPLE) {
-      const code = character.codePointAt(0)!;
-      if (code >= startCode && code <= endCode) map.set(code, startGlyph + (code - startCode));
+    if (endCode < startCode) continue;
+    if (endCode - startCode > MAX_MAPPED_CODEPOINTS) return null;
+    for (let code = startCode; code <= endCode; code += 1) {
+      if (!add(code, startGlyph + (code - startCode))) return null;
     }
   }
   return map;
 }
 
+/*
+ * A bound on how many ranges the rest of a font is described in. A `unicode-range` is written into a
+ * stylesheet per face; a font whose leftover characters scatter into thousands of single codepoints
+ * is described coarser instead, closing the smallest gaps first -- which at worst makes a browser fetch
+ * the rest cut for a character the font turns out not to have.
+ */
+const MAX_REST_RANGES = 256;
+
+function compressCodepoints(codepoints: readonly number[]): PhiUnicodeRange[] {
+  const ranges: [number, number][] = [];
+  for (const codepoint of codepoints) {
+    const last = ranges.at(-1);
+    if (last && codepoint === last[1] + 1) last[1] = codepoint;
+    else ranges.push([codepoint, codepoint]);
+  }
+  let gap = 2;
+  let merged = ranges;
+  while (merged.length > MAX_REST_RANGES) {
+    const next: [number, number][] = [];
+    for (const current of merged) {
+      const last = next.at(-1);
+      if (last && current[0] - last[1] <= gap) last[1] = current[1];
+      else next.push([current[0], current[1]]);
+    }
+    merged = next;
+    gap *= 2;
+  }
+  return merged;
+}
+
+/**
+ * Which cuts a font has characters in, and what it has outside all of them.
+ *
+ * Exported for the cutting itself, which needs the characters a cut is made of and must agree with what
+ * was recorded at upload about which cuts exist.
+ */
+export function resolvePhiFontCoverage(codepoints: Iterable<number>): PhiFontCoverage {
+  const subsets = new Set<PhiFontSubsetKeyValue>();
+  const rest: number[] = [];
+  const named = Object.entries(PHI_FONT_SUBSET_RANGES) as unknown as [string, readonly PhiUnicodeRange[]][];
+  for (const codepoint of [...codepoints].sort((left, right) => left - right)) {
+    let inNamed = false;
+    for (const [key, ranges] of named) {
+      if (isPhiCodepointInRanges(codepoint, ranges)) {
+        subsets.add(Number(key) as PhiFontSubsetKeyValue);
+        inNamed = true;
+      }
+    }
+    if (!inNamed) rest.push(codepoint);
+  }
+  if (rest.length > 0) subsets.add(PhiFontSubsetKey.Rest);
+  return {
+    subsets: [...subsets].sort((left, right) => left - right),
+    restRanges: compressCodepoints(rest),
+  };
+}
+
+/** The characters a font maps, for cutting it; null for a file this cannot read. */
+export function readPhiFontCodepoints(buffer: Buffer): number[] | null {
+  const read = readTables(buffer);
+  const map = read ? readCmapCodepoints(read.tables.get("cmap")) : null;
+  return map ? [...map.keys()] : null;
+}
+
 function readAverageAdvance(tables: TableMap, numberOfHMetrics: number) {
   const hmtx = tables.get("hmtx");
-  const glyphIds = readCmapUnicodeMap(tables.get("cmap"));
+  const glyphIds = readCmapCodepoints(tables.get("cmap"));
   if (!hmtx || !glyphIds || glyphIds.size === 0 || numberOfHMetrics <= 0) return null;
   let total = 0;
   let weight = 0;
@@ -306,6 +398,7 @@ export function readPhiFontMetrics(buffer: Buffer): PhiFontMetrics | null {
 
   const unitsPerEm = head.readUInt16BE(18);
   if (!unitsPerEm) return null;
+  const codepoints = readCmapCodepoints(tables.get("cmap"));
 
   const os2 = tables.get("OS/2");
   /*
@@ -337,6 +430,7 @@ export function readPhiFontMetrics(buffer: Buffer): PhiFontMetrics | null {
     xWidthAvg: glyphWidth ?? (os2Width > 0 ? os2Width : null),
     xWidthAvgSource: glyphWidth ? "glyphs" : os2Width > 0 ? "os2" : null,
     category: readCategory(os2, post),
+    coverage: codepoints ? resolvePhiFontCoverage(codepoints.keys()) : null,
   };
 }
 

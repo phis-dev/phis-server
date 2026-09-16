@@ -295,7 +295,7 @@ Contract:
 - `next/image` optimization is the canonical path for `public` Assets only; every other delivery policy is treated as `unoptimized` in the browser-facing contract. A `public` SVG original is `unoptimized` as well (`isPhiMediaAssetOriginalOptimizable`): the optimizer refuses `image/svg+xml`, and delivery URLs carry no `.svg` suffix by which `next/image` would notice on its own. Generated variants are raster and stay optimizable.
 - `blur_data_url` is an optional preview placeholder that can be generated for image assets and reused by remote `next/image` renderers.
 - `meta` is a generic JSONB extension point for asset-specific metadata. v1 starts with image focus data under `meta.image.focus.x` and `meta.image.focus.y`, both normalized to the `0..1` range. Later image regions and other asset-type metadata may reuse the same field under their own namespaced keys.
-- `meta.font` carries what a typeface states about its own proportions, read once at upload by `lib/font-metrics.ts`: `unitsPerEm`, `ascent`, `descent`, `lineGap`, `capHeight`, `xHeight`, `xWidthAvg` with its `xWidthAvgSource`, the container `format`, the `familyName`, and a `category` of `serif`, `sans-serif`, `monospace` or `null`. It exists so a Theme can write a fallback `@font-face` with `size-adjust` and the `*-override` descriptors, which is what keeps the substitute from reflowing the page when the real file lands -- a render must never open a font file to find them. `xWidthAvg` is the frequency-weighted advance of the characters running text is made of, which is a tenth narrower than a flat mean over the same glyphs and the difference between a substitute that fits and one that does not. `category` is `null` where the file classifies itself in neither PANOSE nor the `OS/2` family class, which is common; the substitute is then the Theme's decision rather than a guess recorded as fact.
+- `meta.font` carries what a typeface states about its own proportions, read once at upload by `lib/font-metrics.ts`: `unitsPerEm`, `ascent`, `descent`, `lineGap`, `capHeight`, `xHeight`, `xWidthAvg` with its `xWidthAvgSource`, the container `format`, the `familyName`, and a `category` of `serif`, `sans-serif`, `monospace` or `null`. It exists so a Theme can write a fallback `@font-face` with `size-adjust` and the `*-override` descriptors, which is what keeps the substitute from reflowing the page when the real file lands -- a render must never open a font file to find them. `coverage` lists which `unicode-range` cuts the file can yield: `subsets`, the `PhiFontSubsetKey` values of the named ranges the font maps at least one codepoint in, and `restRanges`, the font's own codepoints outside every named range as at most 256 `[start, end]` pairs, which is what the `rest` cut (`15`) contains. It is `null` for fonts read before the reader knew it; those are delivered whole. `xWidthAvg` is the frequency-weighted advance of the characters running text is made of, which is a tenth narrower than a flat mean over the same glyphs and the difference between a substitute that fits and one that does not. `category` is `null` where the file classifies itself in neither PANOSE nor the `OS/2` family class, which is common; the substitute is then the Theme's decision rather than a guess recorded as fact.
 - `content_type` is still stored as the exact MIME type, but the stable v1 media-kind filter contract should use these UX classes:
   - `image` for `image/*`
   - `video` for `video/*`
@@ -398,6 +398,30 @@ Contract:
 - A variant binds to its own concrete Storage Profile and object key. Renderers resolve it through the Asset-id/variant delivery route and still provide `width`, `height`, and optional `blurDataURL` to `next/image` when rendering remote images.
 - The rendition table exists for images only; videos, PDFs, and other media types should not be squeezed into the same size-variant contract.
 - Variant requests for non-image media kinds return a fixed SVG preview icon and must not create `phis.image_asset_variants` rows.
+
+### `phis.font_asset_subsets`
+
+- `PRIMARY KEY (asset_id, subset_key)`
+- `asset_id INT NOT NULL REFERENCES phis.media_assets(id) ON DELETE CASCADE`
+- `subset_key SMALLINT NOT NULL`
+- `subset_version SMALLINT NOT NULL`
+- `storage_profile_id INT NOT NULL REFERENCES phis.media_storage_profiles(id) DEFERRABLE INITIALLY DEFERRED`
+- `storage_key VARCHAR(512) NOT NULL`
+- `content_type VARCHAR(128) NOT NULL`
+- `bytes BIGINT NULL`
+- `checksum_algorithm VARCHAR(16) NULL`, `checksum_value VARCHAR(128) NULL`, both set or both null
+- `flags INT NOT NULL DEFAULT 0`
+- `created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
+- `updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
+- `UNIQUE (storage_profile_id, storage_key)`
+
+Contract:
+- `font_asset_subsets` stores `unicode-range` cuts of a `font` Asset, one woff2 file per range; the original row and object in `media_assets` stay untouched and are what every cut is derived from.
+- `subset_key` is `PhiFontSubsetKey` from `@phis/contracts/media`: `0 = latin`, `1 = latin-ext`, `2 = cyrillic`, `3 = cyrillic-ext`, `4 = greek`, `5 = greek-ext`, `6 = vietnamese`, `7 = math`, `8 = symbols`, `15 = rest`. The ranges behind each key live beside the vocabulary (`PHI_FONT_SUBSET_RANGES`, following Google's font CSS), not in the row; For `rest`, the `unicode-range` text a Theme writes comes from the Asset's `meta.font.coverage.restRanges`.
+- Cuts are produced on first request to `/api/site/media/[id]/subsets/[key]` by `ensureFontAssetSubset` and stored beside the original under `<storage_key>.__subsets/<key>.woff2`. The cutter reads the codepoints from the original file itself, not from `meta`; a key the font maps no codepoint in answers 404 and creates no row.
+- `subset_version` is compared against `PHI_FONT_SUBSET_VERSION`; a row with an older version is recut on its next request, so changing the ranges or the cutter means bumping that constant.
+- It is not a row in `image_asset_variants`: that table is images-only, and a shared key column would make one number mean a thumbnail or a script depending on another table.
+- Discarding an Asset removes its cuts' storage objects together with its variants.
 
 ### Locale Capability Contract
 

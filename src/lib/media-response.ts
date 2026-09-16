@@ -10,7 +10,7 @@ import {
   type SiteMediaConfigRecord,
 } from "@/db/media-spaces";
 import { PhiImageAssetVariantKey, resolvePhiMediaKindFromContentType } from "@/lib/constants/media";
-import type { PhiFontMetrics, PhiMediaSpaceKind } from "@phis/contracts/media";
+import { isPhiFontSubsetKey, type PhiFontCoverage, type PhiFontMetrics, type PhiMediaSpaceKind } from "@phis/contracts/media";
 
 type PublicMediaAssetProjection = Omit<MediaAssetRecord, "storageProfileId" | "storageKey"> & {
   deliveryUrl: string;
@@ -124,7 +124,27 @@ function projectFontMetrics(meta: Record<string, unknown> | null): PhiFontMetric
     xWidthAvg: nullableNumber(record.xWidthAvg),
     xWidthAvgSource: oneOf(record.xWidthAvgSource, ["glyphs", "os2"] as const),
     category: oneOf(record.category, ["serif", "sans-serif", "monospace"] as const),
+    coverage: projectFontCoverage(record.coverage),
   };
+}
+
+/**
+ * The cuts a font was recorded to have, as the site UI declares its faces from them.
+ *
+ * Keys outside the contract are dropped and a rest range that is not a pair of codepoints is dropped,
+ * so what reaches a stylesheet is only what the upload reader could have written.
+ */
+function projectFontCoverage(value: unknown): PhiFontCoverage | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  const subsets = Array.isArray(record.subsets) ? record.subsets.filter(isPhiFontSubsetKey) : [];
+  const restRanges = Array.isArray(record.restRanges)
+    ? record.restRanges.filter((entry): entry is [number, number] =>
+      Array.isArray(entry) && entry.length === 2
+      && Number.isInteger(entry[0]) && Number.isInteger(entry[1])
+      && entry[0] >= 0 && entry[0] <= entry[1] && entry[1] <= 0x10ffff)
+    : [];
+  return subsets.length > 0 ? { subsets, restRanges } : null;
 }
 
 /**

@@ -617,6 +617,38 @@ CREATE TABLE IF NOT EXISTS phis.image_asset_variants (
   CONSTRAINT image_asset_variants_storage_unique UNIQUE (storage_profile_id, storage_key)
 );
 
+-- A typeface cut along one unicode range, produced on first request from the original the way an image
+-- rendition is.
+--
+-- A table of its own rather than rows in `image_asset_variants`: that table's width and height are
+-- NOT NULL for a reason `next/image` depends on, and its `variant_key` is a closed vocabulary where 0 is
+-- a thumbnail -- sharing it would make a number mean one thing or another by a column of a different
+-- table. `subset_key` follows `PhiFontSubsetKey` in `@phis/contracts/media`; `subset_version` is the
+-- rule a cut was made under, and a cut made under an older one is made again rather than served.
+CREATE TABLE IF NOT EXISTS phis.font_asset_subsets (
+  asset_id INT NOT NULL REFERENCES phis.media_assets(id) ON DELETE CASCADE,
+  subset_key SMALLINT NOT NULL,
+  subset_version SMALLINT NOT NULL,
+  storage_profile_id INT NOT NULL,
+  storage_key VARCHAR(512) NOT NULL,
+  content_type VARCHAR(128) NOT NULL,
+  bytes BIGINT NULL,
+  checksum_algorithm VARCHAR(16) NULL,
+  checksum_value VARCHAR(128) NULL,
+  CONSTRAINT font_asset_subsets_checksum_check CHECK (
+    (checksum_algorithm IS NULL) = (checksum_value IS NULL)
+  ),
+  flags INT NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (asset_id, subset_key),
+  CONSTRAINT font_asset_subsets_storage_profile_id_fkey
+    FOREIGN KEY (storage_profile_id)
+    REFERENCES phis.media_storage_profiles (id)
+    DEFERRABLE INITIALLY DEFERRED,
+  CONSTRAINT font_asset_subsets_storage_unique UNIQUE (storage_profile_id, storage_key)
+);
+
 -- The Asset a person shows as themselves on one Site.
 --
 -- Its own table rather than a column on `user_site_memberships`: an avatar is Site-scoped because the

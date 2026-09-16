@@ -57,6 +57,14 @@ export async function discardPhiMediaAssets(
     [assetIds],
   );
 
+  // Cuts of a typeface are objects of their own, and go the way the renditions of a picture go.
+  const { rows: fontSubsets } = await client.query<{ storage_profile_id: number; storage_key: string }>(
+    `DELETE FROM phis.font_asset_subsets
+      WHERE asset_id = ANY($1::int[])
+     RETURNING storage_profile_id, storage_key`,
+    [assetIds],
+  );
+
   const { rows: assets } = await client.query<{
     id: number; space_id: number; bytes: string | number | null;
     storage_profile_id: number; storage_key: string;
@@ -83,7 +91,7 @@ export async function discardPhiMediaAssets(
     );
   }
 
-  const objects = [...assets, ...variants];
+  const objects = [...assets, ...variants, ...fontSubsets];
   /*
    * `DO UPDATE` rather than `DO NOTHING`, so a key that is already on the list comes back as a row.
    *
