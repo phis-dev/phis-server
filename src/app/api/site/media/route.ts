@@ -53,7 +53,14 @@ export async function GET(request: NextRequest) {
     const pageSize = parsePositiveInt(url.searchParams.get("pageSize"));
     const id = parsePositiveInt(url.searchParams.get("id"));
     const folderId = parsePositiveInt(url.searchParams.get("folderId"));
-    const flags = parsePositiveInt(url.searchParams.get("flags"));
+    /*
+     * The name the list contract states in `DB.md`, and the one the site UI sends.
+     *
+     * It used to read `flags` here, which no caller has ever sent: a picked flag went out as
+     * `presentationFlags`, arrived unread, and the list came back unfiltered -- silently, because an
+     * absent filter is a valid request. The Mask picker and the Background Control both rest on it.
+     */
+    const presentationFlags = parsePositiveInt(url.searchParams.get("presentationFlags"));
     const kinds = [...new Set(url.searchParams.getAll("kind")
       .map((kind) => kind.trim())
       .filter(Boolean)
@@ -132,7 +139,7 @@ export async function GET(request: NextRequest) {
       folderId: folderIds && folderIds.length > 0 ? null : folderId,
       folderIds,
       query: q,
-      presentationFlags: flags,
+      presentationFlags,
       kinds,
       since,
       until,
@@ -146,7 +153,7 @@ export async function GET(request: NextRequest) {
       folderId: folderIds && folderIds.length > 0 ? null : folderId,
       folderIds,
       query: q,
-      presentationFlags: flags,
+      presentationFlags,
       kinds,
       since,
       until,

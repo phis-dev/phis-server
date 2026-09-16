@@ -34,8 +34,8 @@ export const PhisMediaSpaceKind = { Site: 1, User: 2, Group: 3, Addon: 4 } as co
 export type PhisMediaSpaceKindValue = (typeof PhisMediaSpaceKind)[keyof typeof PhisMediaSpaceKind];
 
 const MEDIA_SPACE_KIND_VALUES = new Set<number>(Object.values(PhisMediaSpaceKind));
-export const PhiMediaLifecycleStatus = { Pending: 1, Ready: 2, Archived: 3, Quarantined: 4, Failed: 5 } as const;
-export const PhiMediaDeliveryPolicy = { Public: 1, Authenticated: 2, User: 3, Group: 4, Internal: 5 } as const;
+// Both numbers reach the site UI in an Asset payload, so they are the contract's and not this file's.
+export { PhiMediaDeliveryPolicy, PhiMediaLifecycleStatus } from "@phis/contracts/media";
 
 export type MediaStorageProfileRecord = {
   id: number;
