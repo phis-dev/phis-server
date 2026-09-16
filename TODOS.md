@@ -569,7 +569,7 @@ Remaining work:
 - Add release/instance readiness checks proving that all serving instances contain the same provider
   manifest and can resolve the required secrets before a Site profile becomes available.
 
-## P2: Preload the unicode-range cuts a Site's locales need
+## P3: Unicode-range font cuts: leftovers
 
 Implemented in the current baseline:
 
@@ -583,11 +583,12 @@ Implemented in the current baseline:
 - The cut is deliberately not derived from the Site's locales: they describe the interface, not the
   content, and the list changes after the upload.
 
+- Each page preloads the body slot's cuts for its own locale: `Latin` always, plus the script cut the
+  language is written in (`resolvePhiFontPreloadSubsetKeys` in `@phis/contracts/media`). Other slots and
+  fonts without `coverage` are not preloaded.
+
 What is left:
 
-- Locales decide what is **preloaded**. A Site whose locales are all Latin-script should preload the
-  body font's `latin` cut (and `latin-ext` where a locale needs it) instead of nothing; the mapping from
-  locale to subset keys belongs beside the vocabulary in `@phis/contracts/media`.
 - Fonts uploaded before `coverage` existed have `coverage: null` and are delivered whole. Either
   re-read their metrics in a one-off maintenance pass or leave re-upload to the operator.
 - Subsetting modifies the file, and a few commercial webfont licenses forbid exactly that -- say so
