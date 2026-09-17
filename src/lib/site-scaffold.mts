@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
-import { access, cp, mkdir, readFile, readdir, rename, rmdir, stat, unlink, writeFile } from "node:fs/promises";
+import { access, cp, mkdir, readFile, readdir, rename, rmdir, stat, symlink, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import { buildSiteModuleProjection } from "../cli/modules.mts";
@@ -55,13 +55,30 @@ const AREA_NAMES = {
 } as const;
 
 export type PhiSiteScaffoldPackageManager = "pnpm" | "npm" | "yarn" | "bun";
-export type PhiSiteScaffoldContext = {
-  siteKey: string;
+export const PHI_SITE_SCAFFOLD_PACKAGE_MANAGERS: readonly PhiSiteScaffoldPackageManager[] = ["pnpm", "npm", "yarn", "bun"];
+
+/**
+ * What `init` writes into `config/site-runtime.json`, and nothing else does.
+ *
+ * Only `init` takes it. The file is per instance and the Site owns it from then on, so `reconcile` has no
+ * business knowing Core's address or the token -- and a value it did not need is a value it could write
+ * over the right one with.
+ */
+export type PhiSiteScaffoldRuntime = {
   publicBaseUrl: string;
   apiBaseUrl: string;
   internalToken: string;
+};
+
+export type PhiSiteScaffoldContext = {
+  siteKey: string;
+  /**
+   * The package manager an operator named. Absent, the Site's own is used -- see
+   * `resolvePhiSitePackageManager` -- and no lockfile is touched.
+   */
   packageManager?: PhiSiteScaffoldPackageManager;
   packageVersions?: Partial<Record<string, string>>;
+  runtime?: PhiSiteScaffoldRuntime;
 };
 /**
  * What reconcile did to one file. `removed` is a file an earlier scaffold wrote and this one no longer
@@ -75,9 +92,16 @@ export type PhiSiteScaffoldChange = {
 export type PhiSiteScaffoldResult = {
   version: number;
   root: string;
+  packageManager: PhiSiteScaffoldPackageManager;
   changes: PhiSiteScaffoldChange[];
 };
-export type PhiSiteReleaseArtifact = { releaseId: string; path: string; buildId: string };
+export type PhiSiteReleaseArtifact = {
+  releaseId: string;
+  path: string;
+  buildId: string;
+  /** Where Next put the app inside the standalone output, relative to the release; `""` at its top. */
+  appDirectory: string;
+};
 
 const DEFAULT_VERSIONS: Record<string, string> = {
   "@ant-design/icons": "6.3.4",
@@ -98,6 +122,19 @@ const PACKAGE_MANAGER_VERSIONS: Record<PhiSiteScaffoldPackageManager, string> = 
   yarn: "4.9.4",
   bun: "1.2.23",
 };
+const LOCKFILES: Record<PhiSiteScaffoldPackageManager, readonly string[]> = {
+  pnpm: ["pnpm-lock.yaml"],
+  npm: ["package-lock.json"],
+  yarn: ["yarn.lock"],
+  bun: ["bun.lock", "bun.lockb"],
+};
+
+/**
+ * The Node a Site runs on. Below 24.21 a React Flight render leaks through an Immediate that
+ * `async_context` holds on to, and a Site under load runs out of memory; the server and its CLI declare
+ * the same floor.
+ */
+const PHI_SITE_NODE_ENGINE = ">=24.21.0";
 
 function hashContent(content: string) {
   return createHash("sha256").update(content).digest("hex");
@@ -217,6 +254,8 @@ const PHI_SITE_GITIGNORE = [
   "build/",
   "tsconfig.tsbuildinfo",
   "config/site-runtime.json",
+  // Build output of `phis update`, one directory per release; nothing in it belongs in the history.
+  ".phis/releases/",
   "*.log",
   "",
 ].join("\n");
@@ -389,8 +428,7 @@ function proxyRoute(kind: "auth" | "site" | "addons" | "hooks") {
   return `import { ${factory} } from "@phis/ui/next/route-handlers";\n\nimport {\n  buildPhiNextProxyHeaders,\n  getPhiNextUpstreamBaseUrl,\n  getPhiNextProxyTimeoutMs,\n} from "@phis/ui/next/proxy-runtime";\n\nexport const dynamic = "force-dynamic";\nexport const runtime = "nodejs";\n\nconst handlers = ${factory}({\n  upstreamBaseUrl: getPhiNextUpstreamBaseUrl(),\n  timeoutMs: getPhiNextProxyTimeoutMs(),\n  logLabel: "[phi-site][/api/${kind} proxy]",\n  missingBaseUrlMessage: "Missing phis.apiBaseUrl for /api/${kind} proxy.",\n  buildHeaders: (request) => buildPhiNextProxyHeaders(request, "phi-site-${kind}-proxy/1.0"${headerOptions}),\n});\n\nexport const GET = handlers.GET;\nexport const POST = handlers.POST;\nexport const PUT = handlers.PUT;\nexport const PATCH = handlers.PATCH;\nexport const DELETE = handlers.DELETE;\nexport const OPTIONS = handlers.OPTIONS;\n`;
 }
 
-function packageJson(context: PhiSiteScaffoldContext) {
-  const manager = context.packageManager ?? "pnpm";
+function packageJson(context: PhiSiteScaffoldContext, manager: PhiSiteScaffoldPackageManager) {
   const versions = { ...DEFAULT_VERSIONS, ...(context.packageVersions ?? {}) };
   return `${JSON.stringify({
     name: context.siteKey,
@@ -405,12 +443,21 @@ function packageJson(context: PhiSiteScaffoldContext) {
     },
     dependencies: Object.fromEntries(Object.entries(versions).filter(([key]) => !key.startsWith("@types/") && key !== "typescript")),
     devDependencies: Object.fromEntries(Object.entries(versions).filter(([key]) => key.startsWith("@types/") || key === "typescript")),
-    engines: { node: ">=24" },
+    engines: { node: PHI_SITE_NODE_ENGINE },
     packageManager: `${manager}@${PACKAGE_MANAGER_VERSIONS[manager]}`,
   }, null, 2)}\n`;
 }
 
-export function buildPhiSiteScaffoldFiles(context: PhiSiteScaffoldContext) {
+/**
+ * The files the scaffold writes.
+ *
+ * `config/site-runtime.json` is among them only when the context carries the runtime values, which only
+ * `init` passes.
+ */
+export function buildPhiSiteScaffoldFiles(
+  context: PhiSiteScaffoldContext,
+  manager: PhiSiteScaffoldPackageManager = context.packageManager ?? "pnpm",
+) {
   const files: Record<string, string> = {
     ...runtimeModuleFiles(),
     ...siteModuleProjectionFiles(),
@@ -439,10 +486,14 @@ export function buildPhiSiteScaffoldFiles(context: PhiSiteScaffoldContext) {
     "src/app/media/[...asset]/route.ts": `import { buildPhiMediaProxyHandlers } from "@phis/ui/next/route-handlers";\nimport type { NextRequest } from "next/server";\nimport { buildPhiNextProxyHeaders, getPhiNextUpstreamBaseUrl, getPhiNextProxyTimeoutMs } from "@phis/ui/next/proxy-runtime";\nimport { PHIS_TOKEN_HEADER } from "@phis/ui/constants";\n\nexport const dynamic = "force-dynamic";\nexport const runtime = "nodejs";\nconst handlers = buildPhiMediaProxyHandlers({\n  upstreamBaseUrl: getPhiNextUpstreamBaseUrl(),\n  timeoutMs: getPhiNextProxyTimeoutMs(),\n  buildHeaders: (request) => { const headers = buildPhiNextProxyHeaders(request, "phi-site-media/1.0"); headers.delete("authorization"); headers.delete(PHIS_TOKEN_HEADER); return headers; },\n});\ntype Context = { params: Promise<{ asset?: string[] }> };\nasync function adapt(context: Context) { const { asset } = await context.params; return { params: Promise.resolve({ path: asset }) }; }\nexport async function GET(request: NextRequest, context: Context) { return handlers.GET(request, await adapt(context)); }\nexport async function HEAD(request: NextRequest, context: Context) { return handlers.HEAD(request, await adapt(context)); }\n`,
     "next.config.ts": `import type { NextConfig } from "next";\n\nconst nextConfig: NextConfig = {\n  output: "standalone",\n  reactStrictMode: true,\n  images: { localPatterns: [{ pathname: "/api/site/media/**" }] },\n  // Rendered Public pages live in this process's memory, addressed by the Site's change marker.\n  cacheHandler: require.resolve("@phis/ui/next/cache-handler"),\n  cacheMaxMemorySize: 0,\n  experimental: {\n    authInterrupts: true,\n    // A cached page the browser already holds is asked for again after this long, so a publish reaches an open tab.\n    staleTimes: { static: 30 },\n  },\n  transpilePackages: ["@phis/ui"],\n};\nexport default nextConfig;\n`,
     "tsconfig.json": `${JSON.stringify({ compilerOptions: { target: "ES2022", lib: ["dom", "dom.iterable", "esnext"], allowJs: false, skipLibCheck: true, strict: true, noEmit: true, esModuleInterop: true, module: "esnext", moduleResolution: "bundler", resolveJsonModule: true, isolatedModules: true, jsx: "react-jsx", incremental: true, plugins: [{ name: "next" }], paths: { "@/*": ["./src/*"] } }, include: ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts", ".next/dev/types/**/*.ts"], exclude: ["node_modules"] }, null, 2)}\n`,
-    "package.json": packageJson(context),
-    "config/site-runtime.example.json": `${JSON.stringify({ site: { key: context.siteKey }, phis: { apiBaseUrl: context.apiBaseUrl, internalToken: "" }, network: { internalApiTimeoutMs: 8000 } }, null, 2)}\n`,
-    "config/site-runtime.json": `${JSON.stringify({ site: { key: context.siteKey, publicUrl: context.publicBaseUrl }, phis: { apiBaseUrl: context.apiBaseUrl, internalToken: context.internalToken }, network: { internalApiTimeoutMs: 8000 } }, null, 2)}\n`,
+    "package.json": packageJson(context, manager),
+    // Canonical, so it holds nothing that differs per instance: the address and the token are filled in
+    // where the Site runs.
+    "config/site-runtime.example.json": `${JSON.stringify({ site: { key: context.siteKey, publicUrl: "" }, phis: { apiBaseUrl: "", internalToken: "" }, network: { internalApiTimeoutMs: 8000 } }, null, 2)}\n`,
   };
+  if (context.runtime) {
+    files["config/site-runtime.json"] = `${JSON.stringify({ site: { key: context.siteKey, publicUrl: context.runtime.publicBaseUrl }, phis: { apiBaseUrl: context.runtime.apiBaseUrl, internalToken: context.runtime.internalToken }, network: { internalApiTimeoutMs: 8000 } }, null, 2)}\n`;
+  }
   return files;
 }
 
@@ -464,15 +515,93 @@ async function readJsonRecord(target: string) {
   } catch { return {}; }
 }
 
-function mergePackageJson(current: Record<string, unknown>, canonicalText: string) {
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+/**
+ * The Site's `package.json` with what the scaffold needs added to it.
+ *
+ * Adds, and does not reset. A dependency, script or field the Site already has keeps the Site's value:
+ * the scaffold's versions are what a new Site starts from, not a floor an existing one is pulled back to
+ * -- a Site that moved `@phis/ui` on would otherwise lose it on every `update`. A dependency counts as
+ * present in either section, so moving one to `devDependencies` is not undone either.
+ *
+ * Two values are the scaffold's rather than the Site's. `engines.node` is a runtime requirement, and a
+ * Site declaring an older floor would install on a Node that leaks under rendering. `packageManager`
+ * follows a manager the operator named explicitly; otherwise the Site's own field stays.
+ */
+function mergePackageJson(
+  current: Record<string, unknown>,
+  canonicalText: string,
+  explicitManager: PhiSiteScaffoldPackageManager | undefined,
+) {
   const canonical = JSON.parse(canonicalText) as Record<string, unknown>;
-  return `${JSON.stringify({
-    ...current,
-    ...canonical,
-    scripts: { ...(current.scripts as Record<string, unknown> | undefined), ...(canonical.scripts as Record<string, unknown>) },
-    dependencies: { ...(current.dependencies as Record<string, unknown> | undefined), ...(canonical.dependencies as Record<string, unknown>) },
-    devDependencies: { ...(current.devDependencies as Record<string, unknown> | undefined), ...(canonical.devDependencies as Record<string, unknown>) },
-  }, null, 2)}\n`;
+  const merged: Record<string, unknown> = { ...current };
+  for (const [key, value] of Object.entries(canonical)) {
+    if (!(key in merged)) merged[key] = value;
+  }
+  merged.scripts = { ...asRecord(current.scripts) };
+  for (const [name, command] of Object.entries(asRecord(canonical.scripts))) {
+    if (!(name in (merged.scripts as Record<string, unknown>))) (merged.scripts as Record<string, unknown>)[name] = command;
+  }
+  const installed = new Set([...Object.keys(asRecord(current.dependencies)), ...Object.keys(asRecord(current.devDependencies))]);
+  for (const section of ["dependencies", "devDependencies"] as const) {
+    const next = { ...asRecord(current[section]) };
+    for (const [name, range] of Object.entries(asRecord(canonical[section]))) {
+      if (!installed.has(name)) next[name] = range;
+    }
+    merged[section] = next;
+  }
+  merged.engines = { ...asRecord(current.engines), node: asRecord(canonical.engines).node };
+  if (explicitManager && readDeclaredManagerName(current.packageManager) !== explicitManager) {
+    merged.packageManager = canonical.packageManager;
+  }
+  return `${JSON.stringify(merged, null, 2)}\n`;
+}
+
+function readDeclaredManagerName(value: unknown) {
+  return typeof value === "string" ? value.trim().split("@")[0] : undefined;
+}
+
+/**
+ * Which package manager a Site uses.
+ *
+ * The one an operator named, else the one the Site declares in `package.json`, else the one whose
+ * lockfile it has. A new Site starts on pnpm. An existing Site that says nothing is refused rather than
+ * assumed to be pnpm: the guess used to decide which lockfiles were deleted.
+ */
+export async function resolvePhiSitePackageManager(
+  root: string,
+  explicit: PhiSiteScaffoldPackageManager | undefined,
+  mode: "init" | "reconcile",
+): Promise<PhiSiteScaffoldPackageManager> {
+  if (explicit) return explicit;
+  if (mode === "init") return "pnpm";
+  const declared = readDeclaredManagerName((await readJsonRecord(path.join(root, "package.json"))).packageManager);
+  if (declared) {
+    if ((PHI_SITE_SCAFFOLD_PACKAGE_MANAGERS as readonly string[]).includes(declared)) {
+      return declared as PhiSiteScaffoldPackageManager;
+    }
+    throw new Error(`The Site at ${root} declares packageManager "${declared}", which phis does not run. Pass --package-manager.`);
+  }
+  const found: PhiSiteScaffoldPackageManager[] = [];
+  for (const manager of PHI_SITE_SCAFFOLD_PACKAGE_MANAGERS) {
+    for (const lockfile of LOCKFILES[manager]) {
+      if (await exists(path.join(root, lockfile))) {
+        found.push(manager);
+        break;
+      }
+    }
+  }
+  if (found.length === 1) return found[0];
+  if (found.length > 1) {
+    throw new Error(`The Site at ${root} has lockfiles of ${found.join(" and ")}. Pass --package-manager to say which one it uses.`);
+  }
+  throw new Error(
+    `The Site at ${root} names no package manager: package.json has no packageManager field and there is no lockfile. ` +
+    "Pass --package-manager.",
+  );
 }
 
 async function readPreviousManifestFiles(root: string): Promise<Record<string, string>> {
@@ -506,6 +635,9 @@ async function removeRetiredScaffoldFiles(
 ) {
   for (const [relativePath, hash] of Object.entries(previous)) {
     if (relativePath in current) continue;
+    // The Site's own files are never retired. `config/site-runtime.json` is written by `init` alone, so a
+    // reconcile does not list it -- and unchanged since `init` is exactly what a token file usually is.
+    if (PHI_SITE_OWNED_AFTER_INIT.includes(relativePath)) continue;
     const target = path.join(root, relativePath);
     if (!await exists(target)) continue;
     if (hashContent(await readFile(target, "utf8")) !== hash) {
@@ -520,26 +652,31 @@ async function removeRetiredScaffoldFiles(
 
 export async function reconcilePhiSiteScaffold(root: string, context: PhiSiteScaffoldContext, mode: "init" | "reconcile") {
   const resolvedRoot = path.resolve(root);
-  if (mode === "init" && await exists(resolvedRoot)) {
-    const info = await stat(resolvedRoot);
-    if (!info.isDirectory()) throw new Error(`Site target ${resolvedRoot} is not a directory.`);
-    const entries = await import("node:fs/promises").then(({ readdir }) => readdir(resolvedRoot));
-    if (entries.length > 0) throw new Error(`Site target ${resolvedRoot} already exists; use phis reconcile.`);
+  if (mode === "init") {
+    if (!context.runtime?.apiBaseUrl.trim() || !context.runtime.internalToken.trim()) {
+      throw new Error("phis init writes config/site-runtime.json and needs Core's address and the internal token.");
+    }
+    if (await exists(resolvedRoot)) {
+      const info = await stat(resolvedRoot);
+      if (!info.isDirectory()) throw new Error(`Site target ${resolvedRoot} is not a directory.`);
+      const entries = await readdir(resolvedRoot);
+      if (entries.length > 0) throw new Error(`Site target ${resolvedRoot} already exists; use phis reconcile.`);
+    }
+  } else if (!await exists(path.join(resolvedRoot, "package.json"))) {
+    throw new Error(`No Site at ${resolvedRoot} (no package.json); phis init creates one.`);
   }
   await mkdir(resolvedRoot, { recursive: true });
-  const selectedManager = context.packageManager ?? "pnpm";
-  const lockfiles: Record<PhiSiteScaffoldPackageManager, string> = {
-    pnpm: "pnpm-lock.yaml",
-    npm: "package-lock.json",
-    yarn: "yarn.lock",
-    bun: "bun.lock",
-  };
-  for (const [manager, lockfile] of Object.entries(lockfiles)) {
-    if (manager !== selectedManager && await exists(path.join(resolvedRoot, lockfile))) {
-      await unlink(path.join(resolvedRoot, lockfile));
+  const manager = await resolvePhiSitePackageManager(resolvedRoot, context.packageManager, mode);
+  // Only a manager the operator named replaces another one's lockfile; a Site's own choice is never undone.
+  if (context.packageManager) {
+    for (const other of PHI_SITE_SCAFFOLD_PACKAGE_MANAGERS) {
+      if (other === manager) continue;
+      for (const lockfile of LOCKFILES[other]) {
+        if (await exists(path.join(resolvedRoot, lockfile))) await unlink(path.join(resolvedRoot, lockfile));
+      }
     }
   }
-  const files = buildPhiSiteScaffoldFiles(context);
+  const files = buildPhiSiteScaffoldFiles(mode === "init" ? context : { ...context, runtime: undefined }, manager);
   const previousFiles = mode === "reconcile" ? await readPreviousManifestFiles(resolvedRoot) : {};
   const changes: PhiSiteScaffoldChange[] = [];
   for (const [relativePath, canonical] of Object.entries(files)) {
@@ -551,7 +688,7 @@ export async function reconcilePhiSiteScaffold(root: string, context: PhiSiteSca
       continue;
     }
     const desired = relativePath === "package.json" && alreadyExists
-      ? mergePackageJson(await readJsonRecord(target), canonical)
+      ? mergePackageJson(await readJsonRecord(target), canonical, context.packageManager)
       : canonical;
     const current = alreadyExists ? await readFile(target, "utf8") : null;
     if (current === desired) {
@@ -568,7 +705,7 @@ export async function reconcilePhiSiteScaffold(root: string, context: PhiSiteSca
     files: Object.fromEntries(Object.entries(files).map(([key, value]) => [key, hashContent(value)])),
   };
   await writeAtomic(path.join(resolvedRoot, ".phis/scaffold-manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`);
-  return { version: PHI_SITE_SCAFFOLD_VERSION, root: resolvedRoot, changes } satisfies PhiSiteScaffoldResult;
+  return { version: PHI_SITE_SCAFFOLD_VERSION, root: resolvedRoot, packageManager: manager, changes } satisfies PhiSiteScaffoldResult;
 }
 
 export function runPhiSitePackageCommand(root: string, manager: PhiSiteScaffoldPackageManager, args: string[]) {
@@ -586,11 +723,45 @@ export function resolvePhiSiteInstallArgs(manager: PhiSiteScaffoldPackageManager
   return ["install", ...(frozen ? ["--frozen-lockfile"] : [])];
 }
 
+/**
+ * Where Next put `server.js` inside `.next/standalone`.
+ *
+ * At the top only when the Site is its own tracing root. Inside a workspace Next traces from the
+ * workspace root and nests the app under its path from there -- `.next/standalone/<site dir>/server.js`,
+ * with `node_modules` at the top. The nesting is the Site's path relative to one of its ancestors, so the
+ * ancestors are tried nearest first rather than the output searched.
+ */
+async function findStandaloneAppDirectory(siteRoot: string, standaloneRoot: string) {
+  let ancestor = siteRoot;
+  while (true) {
+    const relative = path.relative(ancestor, siteRoot);
+    if (await exists(path.join(standaloneRoot, relative, "server.js"))) return relative;
+    const parent = path.dirname(ancestor);
+    if (parent === ancestor) break;
+    ancestor = parent;
+  }
+  throw new Error("Production build did not emit server.js under .next/standalone.");
+}
+
+const SITE_RUNTIME_CONFIG = "site-runtime.json";
+
+/**
+ * Copies the build into `.phis/releases/<release id>/`.
+ *
+ * The release holds no `config/site-runtime.json`. That file carries the internal token and is per
+ * instance, and Next's file tracer copies it into the standalone output all the same -- so it is left out
+ * of the copy by name, wherever the tracer put it. The standalone server changes into its own directory
+ * before it reads anything, so the release answers for the file with a relative link to the Site root's
+ * copy instead: a release run from where `phis update` built it reads the Site's current file, and one
+ * moved to another host is given that host's file at the link's place.
+ *
+ * Links inside the standalone output are copied as they are. Resolved, they would point back into
+ * `.next/standalone`, which the next build replaces underneath a release that is still running.
+ */
 export async function buildPhiSiteReleaseArtifact(root: string): Promise<PhiSiteReleaseArtifact> {
   const resolvedRoot = path.resolve(root);
   const standaloneRoot = path.join(resolvedRoot, ".next/standalone");
-  const serverEntry = path.join(standaloneRoot, "server.js");
-  if (!await exists(serverEntry)) throw new Error("Production build did not emit .next/standalone/server.js.");
+  const appDirectory = await findStandaloneAppDirectory(resolvedRoot, standaloneRoot);
   const buildId = (await readFile(path.join(resolvedRoot, ".next/BUILD_ID"), "utf8")).trim();
   if (!buildId) throw new Error("Production build did not emit a BUILD_ID.");
   const packageText = await readFile(path.join(resolvedRoot, "package.json"), "utf8");
@@ -599,20 +770,40 @@ export async function buildPhiSiteReleaseArtifact(root: string): Promise<PhiSite
   const releasesRoot = path.join(resolvedRoot, ".phis/releases");
   const target = path.join(releasesRoot, releaseId);
   const staging = path.join(releasesRoot, `.staging-${releaseId}`);
+  const stagingApp = path.join(staging, appDirectory);
   await mkdir(staging, { recursive: true });
-  await cp(standaloneRoot, staging, { recursive: true, force: false });
-  await mkdir(path.join(staging, ".next"), { recursive: true });
-  await cp(path.join(resolvedRoot, ".next/static"), path.join(staging, ".next/static"), { recursive: true, force: false });
-  for (const directory of ["public", "config"]) {
-    const source = path.join(resolvedRoot, directory);
-    if (await exists(source)) await cp(source, path.join(staging, directory), { recursive: true, force: false });
+  await cp(standaloneRoot, staging, {
+    recursive: true,
+    force: false,
+    verbatimSymlinks: true,
+    filter: (source) => path.basename(source) !== SITE_RUNTIME_CONFIG,
+  });
+  await mkdir(path.join(stagingApp, ".next"), { recursive: true });
+  await cp(path.join(resolvedRoot, ".next/static"), path.join(stagingApp, ".next/static"), { recursive: true, force: false });
+  const publicDirectory = path.join(resolvedRoot, "public");
+  if (await exists(publicDirectory)) {
+    await cp(publicDirectory, path.join(stagingApp, "public"), { recursive: true, force: false, verbatimSymlinks: true });
+  }
+  await mkdir(path.join(stagingApp, "config"), { recursive: true });
+  await symlink(
+    path.relative(path.join(target, appDirectory, "config"), path.join(resolvedRoot, "config", SITE_RUNTIME_CONFIG)),
+    path.join(stagingApp, "config", SITE_RUNTIME_CONFIG),
+  );
+  if (appDirectory) {
+    // One command starts every release, nested or not: `node server.js` in the release directory. The
+    // nested server changes into its own directory, so nothing else about it moves.
+    await writeAtomic(
+      path.join(staging, "server.js"),
+      `// Written by phis update: Next nested this Site's server under ${appDirectory}/.\nimport(${JSON.stringify(`./${appDirectory.split(path.sep).join("/")}/server.js`)});\n`,
+    );
   }
   await writeAtomic(path.join(staging, "release.json"), `${JSON.stringify({
     releaseId,
     scaffoldVersion: PHI_SITE_SCAFFOLD_VERSION,
     buildId,
+    appDirectory,
     createdAt: new Date().toISOString(),
   }, null, 2)}\n`);
   await rename(staging, target);
-  return { releaseId, path: target, buildId };
+  return { releaseId, path: target, buildId, appDirectory };
 }

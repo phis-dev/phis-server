@@ -4,7 +4,7 @@ Priority: optional
 Maintainer: Phisys Ltd. <debian@phisys.com>
 Build-Depends:
  debhelper-compat (= 13),
- nodejs (>= 20.19.2),
+ nodejs (>= 24.21.0),
  npm
 Standards-Version: 4.7.0
 Rules-Requires-Root: no
@@ -15,7 +15,7 @@ Depends:
  ${misc:Depends},
  ${shlibs:Depends},
  adduser,
- nodejs (>= 20.19.2)
+ nodejs (>= 24.21.0)
 Recommends:
  phis-host
 Suggests:

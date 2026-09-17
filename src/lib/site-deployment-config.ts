@@ -85,6 +85,8 @@ export type SiteDeploymentSettings = {
 
 export type SiteRenderOptions = {
   useSource?: boolean;
+  /** Which instance a systemd unit is for, as `phis site config runtime` numbers them. */
+  instanceIndex?: number;
 };
 
 function normalizeHost(host: string | undefined, fallback = DEFAULT_LOCAL_HOST) {
@@ -191,14 +193,29 @@ function requireInstancePort(instance: SiteLocation, target: SiteConfigTarget) {
   return instance.port;
 }
 
-function buildProxyHeaderLines(extraHeaders: string[] = []) {
+/** An nginx name for this Site: variable names allow letters, digits and `_` only. */
+function nginxName(site: SiteDeploymentRecord) {
+  return `phis_site_${site.key.replace(/[^a-z0-9_]/gi, "_")}`;
+}
+
+/**
+ * The headers every proxied request carries.
+ *
+ * `Connection` comes from the `map` the snippet opens with: empty for an ordinary request, so the pooled
+ * upstream connection stays open, and `upgrade` only when the browser asked for one. A constant
+ * `Connection "upgrade"` would close every pooled connection after one request.
+ *
+ * `$http_host` rather than `$host`: on a port other than 80 or 443 `$host` drops the port the browser's
+ * `Referer` keeps, and the Site's form relay compares the two and refuses every submit.
+ */
+function buildProxyHeaderLines(connectionVariable: string, extraHeaders: string[] = []) {
   return [
     "proxy_http_version 1.1;",
-    "proxy_set_header Host $host;",
+    "proxy_set_header Host $http_host;",
     "proxy_set_header Upgrade $http_upgrade;",
-    'proxy_set_header Connection "upgrade";',
+    `proxy_set_header Connection $${connectionVariable};`,
     "proxy_set_header X-Real-IP $remote_addr;",
-    "proxy_set_header X-Forwarded-Host $host;",
+    "proxy_set_header X-Forwarded-Host $http_host;",
     "proxy_set_header X-Forwarded-Proto $scheme;",
     "proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;",
     ...extraHeaders,
@@ -219,12 +236,29 @@ function buildProxyHeaderLines(extraHeaders: string[] = []) {
  *
  * The container profile is deliberately not the same: there, `0.0.0.0` is the interface the sibling
  * container reaches, and the boundary is `expose` rather than the bind address.
+ *
+ * One unit per instance: a Site with several gets one for each, chosen by `instanceIndex`, each on its own
+ * port and path. There is no stop step. `phis instance drain` withdraws the readiness a Core instance
+ * reports to the database; a Site reports none, and the proxy stops sending to it when it stops
+ * answering.
  */
-export function buildSystemdUnit(site: SiteDeploymentRecord, settings?: SiteDeploymentSettings) {
-  const instance = resolvePrimaryInstance(site, settings);
+export function buildSystemdUnit(
+  site: SiteDeploymentRecord,
+  settings?: SiteDeploymentSettings,
+  options?: SiteRenderOptions,
+) {
+  const instances = resolveSiteInstances(site, settings);
+  const instance = options?.instanceIndex === undefined
+    ? resolvePrimaryInstance(site, settings)
+    : instances[options.instanceIndex];
+  if (!instance) {
+    throw new Error(
+      `Site ${site.key} has ${instances.length} instance(s); --instance takes 0 to ${instances.length - 1}.`,
+    );
+  }
   const port = requireInstancePort(instance, "systemd");
   return `[Unit]
-Description=${site.name} site runtime
+Description=${site.name} site runtime (${instance.host}:${port})
 After=network.target
 
 [Service]
@@ -233,6 +267,9 @@ WorkingDirectory=${instance.path}
 Environment=NODE_ENV=production
 Environment=HOSTNAME=127.0.0.1
 Environment=PORT=${port}
+# Rendered Public pages are kept in this process's memory, 128 MB unless set here. Every instance holds
+# its own, so size the host for all of them.
+#Environment=PHIS_RENDER_CACHE_MB=128
 ExecStart=/usr/bin/node server.js
 Restart=always
 
@@ -255,6 +292,18 @@ export function buildDockerCompose(site: SiteDeploymentRecord, settings?: SiteDe
       - "${port}"`;
 }
 
+/**
+ * The nginx configuration for a Site: one pool over every instance, and the server block in front of it.
+ *
+ * The pool keeps connections to the instances open (`keepalive`), and its idle timeout sits below Node's
+ * keep-alive timeout of 5 seconds. The other way round nginx sends a request down a connection Node has
+ * just closed; a `GET` is retried on the next instance, a `POST` -- a form, a login, a publish -- fails
+ * with 502. The phis-host README ("Web server in front of several instances") has the measurements.
+ *
+ * `map` and `upstream` are valid only in nginx's `http` context, so the output is one file included
+ * there, which is what Debian's `sites-enabled/*` is. Their names carry the Site key, so the files of
+ * several Sites can be included side by side.
+ */
 export function buildNginxConfig(
   site: SiteDeploymentRecord,
   settings?: SiteDeploymentSettings,
@@ -264,30 +313,45 @@ export function buildNginxConfig(
     options?.useSource && hasSiteSourceOverride(site, settings)
       ? resolveSiteSource(site, settings)
       : null;
-  const target = source ?? resolvePrimaryInstance(site, settings);
-  const port = requireInstancePort(target, "nginx");
-  const upstreamHost = isLocalHost(target.host) ? "127.0.0.1" : target.host;
-  const upstreamUrl = `http://${upstreamHost}:${port}`;
+  const targets = source ? [source] : resolveSiteInstances(site, settings);
+  const servers = targets.map((target) => {
+    const port = requireInstancePort(target, "nginx");
+    return `${isLocalHost(target.host) ? "127.0.0.1" : target.host}:${port}`;
+  });
+  const name = nginxName(site);
+  const connection = `${name}_connection`;
   const hmrLocation = source
     ? `
   location = /_next/webpack-hmr {
-    proxy_pass ${upstreamUrl};
-${buildProxyHeaderLines([`proxy_set_header Origin ${upstreamUrl};`])}
+    proxy_pass http://${name};
+${buildProxyHeaderLines(connection, [`proxy_set_header Origin http://${servers[0]};`])}
     proxy_read_timeout 3600s;
     proxy_send_timeout 3600s;
   }
 `
     : "";
 
-  return `server {
+  return `# Include in nginx's http context (on Debian: /etc/nginx/sites-available/, linked from sites-enabled/).
+map $http_upgrade $${connection} {
+  default upgrade;
+  ""      "";
+}
+
+upstream ${name} {
+${servers.map((server) => `  server ${server};`).join("\n")}
+  keepalive 64;
+  # Below Node's keep-alive timeout of 5 s; otherwise a POST can land on a connection Node closed and fail with 502.
+  keepalive_timeout 4s;
+}
+
+server {
   listen 80;
   server_name ${site.hostname};
   client_max_body_size ${DEFAULT_NGINX_CLIENT_MAX_BODY_SIZE};
 ${hmrLocation}
-
   location / {
-    proxy_pass ${upstreamUrl};
-${buildProxyHeaderLines()}
+    proxy_pass http://${name};
+${buildProxyHeaderLines(connection)}
   }
 }`;
 }
@@ -380,7 +444,7 @@ export function renderSiteConfig(
     case "apache":
       return buildApacheConfig(site, settings);
     case "systemd":
-      return buildSystemdUnit(site, settings);
+      return buildSystemdUnit(site, settings, options);
     case "docker-compose":
       return buildDockerCompose(site, settings);
     case "runtime":

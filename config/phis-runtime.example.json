@@ -8,7 +8,8 @@
     }
   },
   "database": {
-    "uri": "postgresql://phis_dev_user:replace-with-password@127.0.0.1:5432/phis_dev"
+    "uri": "postgresql://phis_dev_user:replace-with-password@127.0.0.1:5432/phis_dev",
+    "migrationUri": "postgresql://phis_dev_migrator:replace-with-password@127.0.0.1:5432/phis_dev"
   },
   "api": {
     "internalToken": "replace-with-internal-token",
@@ -17,13 +18,6 @@
   "deepl": {
     "apiKey": "replace-with-deepl-api-key",
     "apiUrl": "https://api-free.deepl.com/v2/translate"
-  },
-  "registration": {
-    "intentEncryptionKey": "replace-with-64-char-hex-key"
-  },
-  "auth": {
-    "transactionEncryptionKey": "replace-with-64-char-hex-key",
-    "secrets": {}
   },
   "forms": {
     "timeouts": {

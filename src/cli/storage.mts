@@ -52,7 +52,9 @@ function getRequiredFlag(flags: FlagMap, key: string) {
   return value;
 }
 
-async function requireSite(pool: Pool, siteKey: string) {
+async function requireSite(pool: Pool, siteKeyInput: string) {
+  // Keys are stored lowercase, and every other command reads `--site` that way.
+  const siteKey = siteKeyInput.trim().toLowerCase();
   const { rows } = await pool.query<{ id: number; key: string }>(
     `SELECT id, key FROM phis.sites WHERE key = $1`,
     [siteKey],

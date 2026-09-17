@@ -145,7 +145,7 @@ import {
   PHI_SECRET_INITIAL_KEY_VERSION,
   type PhiSecretEncryptionKey,
 } from "../lib/secrets/crypto.ts";
-import { buildPhiSecretReference } from "../lib/secrets/reference.ts";
+import { buildPhiSecretReference, PHI_SECRET_SEGMENT_PATTERN } from "../lib/secrets/reference.ts";
 import { PHIS_TOKEN_HEADER } from "../lib/constants/http-headers.ts";
 import { PHIS_CMS_AREA_KEYS, resolvePhisCmsAreaMask } from "../lib/constants/cms-areas.ts";
 import {
@@ -154,30 +154,14 @@ import {
 } from "../db/site-module-usage.ts";
 import {
   buildPhiSiteReleaseArtifact,
+  PHI_SITE_SCAFFOLD_PACKAGE_MANAGERS,
   reconcilePhiSiteScaffold,
   resolvePhiSiteInstallArgs,
   runPhiSitePackageCommand,
   type PhiSiteScaffoldPackageManager,
+  type PhiSiteScaffoldRuntime,
 } from "../lib/site-scaffold.mts";
-
-type FlagMap = Map<string, string | boolean>;
-type ParsedArgv = {
-  flags: FlagMap;
-  positionals: string[];
-};
-
-const SHORT_FLAG_ALIASES = new Map<string, string>([
-  ["e", "email"],
-  ["u", "public-base-url"],
-  ["h", "hostname"],
-  ["k", "key"],
-  ["l", "locale"],
-  ["p", "password"],
-  ["n", "name"],
-  ["d", "disabled"],
-  ["j", "json"],
-  ["r", "root"],
-]);
+import { parsePhisArgv, type FlagMap } from "./argv.mts";
 
 let configRoot = getDefaultPhiRoot();
 
@@ -222,91 +206,114 @@ function printUsage() {
   console.log(`phis-cli ${packageJson.version}
 
 Usage:
-  Append [--json|-j] to any command for JSON output.
-  Append [--root|-r <path>] to run against another phis root. Defaults to the current working directory.
+  phis help | --help | -h                 Show this text.
+  phis --version | -v [--json]            Show the CLI version.
+
+  Global flags, accepted by every command:
+    --json|-j            Print the result as JSON.
+    --root|-r <path>     The phis root (the directory holding config/). Defaults to $PHIS_ROOT, else the
+                         current working directory. The ./phis wrapper sets $PHIS_ROOT to its own directory
+                         in a checkout; /usr/bin/phis from the Debian package sets it to /srv/phis/stages/prod.
+  Flags: --flag value or --flag=value. A flag that takes a value always takes the next word, so
+  --password -x works; a switch takes none. A flag the command does not read is refused.
+  Environment: PHIS_ROOT, PHIS_APP_ROOT, PHIS_INSTANCE_ID, PHIS_SKIP_VERSION_CHECK=1.
+  Reference: docs/CLI.md
 
   phis config
   phis config paths
   phis config validate
-  phis site list [--key|-k <site key>]
-  phis site add --key|-k <site key> --name|-n <site name> --hostname|-h <hostname> --public-base-url|-u <url> --source-locale <locale> --default-locale <locale> [--available-locales <csv>] --support-email|-e <email>
-  phis site del --key|-k <site key>
-  phis site enable --key|-k <site key>
-  phis site disable --key|-k <site key>
-  phis site set --key|-k <site key> [--name|-n <site name>] [--hostname|-h <hostname>] [--public-base-url|-u <url>] [--support-email|-e <email>]
-  phis site admin --site <site key> --email <email> [--password <pw>] [--first-name <n>] [--last-name <n>]
-  phis site admin --site <site key> --list
-  phis site admin --site <site key> --email <email> --revoke
-  phis site user --site <site key> --email <email> --password <pw> [--overwrite]
-  phis site locale add --key|-k <site key> --locale|-l <locale>
-  phis site config set source --key|-k <site key> [--source-host <host> --source-port <port> --source-path <path>]
-  phis site config add --key|-k <site key> --instance-host <host> [--instance-port <port>] --instance-path <path>
-  phis site config del --key|-k <site key> --instance-host <host>
-  phis site config nginx --key|-k <site key> [--source]
-  phis site config apache --key|-k <site key>
-  phis site config systemd --key|-k <site key>
-  phis site config docker-compose --key|-k <site key>
-  phis site config runtime --key|-k <site key>
-  phis site check --key|-k <site key> [--url <base url>]
-  phis operator list [--email|-e <email>]
-  phis operator add --email|-e <email> --password|-p <password> [--name|-n <display name>] [--disabled|-d]
-  phis operator del --email|-e <email>
-  phis operator passwd --email|-e <email> --password|-p <password>
-  phis operator enable --email|-e <email>
-  phis operator disable --email|-e <email>
-  phis auth restore-preset --site <site key>
-  phis auth import-secrets
-  phis secret init-key
-  phis secret set --name <name> [--site <site key>] [--addon <@scope/name>] [--value <value>]
-  phis secret check --name <name> [--site <site key>] [--addon <@scope/name>]
-  phis secret list [--site <site key>] [--addon <@scope/name>]
-  phis secret del --name <name> [--site <site key>] [--addon <@scope/name>]
-  phis init <site key> [--path <site source path>] [--package-manager pnpm|npm|yarn|bun]
-  phis reconcile <site key> [--path <site source path>] [--package-manager pnpm|npm|yarn|bun] [--install]
-  phis update <site key> [--path <site source path>] [--package-manager pnpm|npm|yarn|bun]
-  phis maintain [--task <id>] [--list] [--dry-run]
-  phis media check [--fix]
-  phis licenses check [--package <directory>]
-
-  phis storage list --site <site key>
-  phis storage add  --site <site key> --key <profile key> --provider <provider id>
-                    [--config <json|@file>] [--secret-name <name>|--secret-reference <ref>]
-  phis storage set  --site <site key> --key <profile key>
-                    [--config <json|@file>] [--replace] [--secret-name <name>|--secret-reference <ref>]
-  phis storage use  --site <site key> --key <profile key>
-  phis storage del  --site <site key> --key <profile key>
-  phis storage cors
-  phis storage probe --site <site key> [--key <profile key>]
 
   phis schema check
   phis schema apply
   phis schema drop [--force]
 
+  phis site list [--key|-k <site key>]
+  phis site add --key|-k <site key> --name|-n <site name> --hostname|-h <hostname> --public-base-url|-u <url>
+                --source-locale <locale> --default-locale <locale> [--available-locales <csv>]
+                --support-email|-e <email>
+  phis site set --key|-k <site key> [--name|-n <site name>] [--hostname|-h <hostname>] [--public-base-url|-u <url>] [--support-email|-e <email>]
+  phis site enable --key|-k <site key>
+  phis site disable --key|-k <site key>
+  phis site del --key|-k <site key>
+  phis site locale add --key|-k <site key> --locale|-l <locale>
+  phis site admin --site <site key> --email <email> [--password <pw>] [--first-name <n>] [--last-name <n>]
+  phis site admin --site <site key> --list
+  phis site admin --site <site key> --email <email> --revoke
+  phis site user --site <site key> --email <email> --password <pw> [--overwrite]
+  phis site check --key|-k <site key> [--url <base url>]
+  phis site config set source --key|-k <site key> [--source-host <host> --source-port <port> --source-path <path>]
+  phis site config add --key|-k <site key> --instance-host <host> [--instance-port <port>] --instance-path <path>
+  phis site config del --key|-k <site key> --instance-host <host>
+  phis site config nginx --key|-k <site key> [--source]
+  phis site config apache --key|-k <site key>
+  phis site config systemd --key|-k <site key> [--instance <n>]
+  phis site config docker-compose --key|-k <site key>
+  phis site config runtime --key|-k <site key>
+
+  phis init <site key> --api-base-url <url> [--path <site source path>] [--package-manager pnpm|npm|yarn|bun] [--install]
+  phis reconcile <site key> [--path <site source path>] [--package-manager pnpm|npm|yarn|bun] [--install]
+  phis update <site key> [--path <site source path>] [--package-manager pnpm|npm|yarn|bun]
+                         --path defaults to <sites.sourcePathRoot>/<site key>. Without --package-manager the
+                         Site's own is used (packageManager field, else its lockfile; pnpm for a new Site).
+
+  phis module list [--site <site key>]
+  phis module add   --site <site key> --package <@scope/name> [--spec <version or workspace:*>] [--path <site source path>]
+  phis module del   --site <site key> --package <@scope/name> [--force] [--path <site source path>]
+  phis module sync  --site <site key> [--path <site source path>]
+  phis module check --site <site key> [--package <@scope/name>] [--path <site source path>]
+
   phis addon list
   phis addon check
   phis addon install --artifact <path to addon.mjs>
   phis addon upgrade --addon <@scope/name> --artifact <path to addon.mjs> [--repackage]
-  phis addon remove --addon <@scope/name>
-  phis addon enable --addon <@scope/name>
-  phis addon disable --addon <@scope/name>
-  phis addon forget --addon <@scope/name>
-  phis addon site   --addon <@scope/name> [--site <site key> --enable [--without-module] | --disable]
-  phis addon storage --addon <@scope/name> --site <site key> [--quota-bytes <n>] [--max-objects <n>] [--unlimited] [--recount] [--sweep]
-  phis addon config --addon <@scope/name> --site <site key>
-  phis addon role   --site <site key> [--addon <@scope/name>] [--user <id>]
-                    [--grant <role> | --revoke <role>]
-                    [--name <setting> [--value <value>]]
-  phis addon job    --addon <@scope/name> --job <job id> --site <site key>
-                    [--api-base-url <url>]
-  phis addon reconcile
   phis addon migrate [--addon <@scope/name>]
-  phis addon purge --addon <@scope/name>
-  phis addon owner  --addon <@scope/name> --site <site key> [--from <user id>] --to <user id>
-  phis module list [--site <site key>]
-  phis module add --site <site key> --package <@scope/name> [--spec <version or workspace:*>]
-  phis module del --site <site key> --package <@scope/name> [--force]
-  phis module sync --site <site key>
-  phis module check --site <site key> [--package <@scope/name>]
+  phis addon enable  --addon <@scope/name>
+  phis addon disable --addon <@scope/name>
+  phis addon reconcile
+  phis addon remove  --addon <@scope/name>
+  phis addon purge   --addon <@scope/name>
+  phis addon forget  --addon <@scope/name>
+  phis addon site    --addon <@scope/name>
+  phis addon site    --addon <@scope/name> --site <site key> --enable [--without-module]
+  phis addon site    --addon <@scope/name> --site <site key> --disable
+  phis addon config  --addon <@scope/name> --site <site key> [--name <setting> [--value <value>]]
+  phis addon role    --site <site key> [--addon <@scope/name>] [--user <user id>]
+  phis addon role    --site <site key> --addon <@scope/name> --user <user id> --grant <role> | --revoke <role>
+  phis addon owner   --addon <@scope/name> --site <site key> [--from <user id>|none] --to <user id>
+  phis addon storage --addon <@scope/name> --site <site key> [--quota-bytes <n>] [--max-objects <n>] [--unlimited]
+                     [--sweep] [--recount]
+  phis addon job     --addon <@scope/name> --job <job id> --site <site key> --api-base-url <url>
+
+  phis storage list  --site <site key>
+  phis storage add   --site <site key> --key <profile key> --provider <provider id>
+                     [--config <json|@file>] [--secret-name <name>|--secret-reference <ref>]
+  phis storage set   --site <site key> --key <profile key>
+                     [--config <json|@file>] [--replace] [--secret-name <name>|--secret-reference <ref>]
+  phis storage use   --site <site key> --key <profile key>
+  phis storage del   --site <site key> --key <profile key>
+  phis storage cors
+  phis storage probe --site <site key> [--key <profile key>]
+
+  phis secret init-key
+  phis secret set   --name <name> [--site <site key>] [--addon <@scope/name>] [--value <value>]   (value from stdin without --value)
+  phis secret check --name <name> [--site <site key>] [--addon <@scope/name>]
+  phis secret list  [--site <site key>] [--addon <@scope/name>]
+  phis secret del   --name <name> [--site <site key>] [--addon <@scope/name>]
+
+  phis auth restore-preset --site <site key>
+  phis auth import-secrets
+
+  phis operator list [--email|-e <email>]
+  phis operator add --email|-e <email> --password|-p <password> [--name|-n <display name>] [--disabled|-d]
+  phis operator passwd --email|-e <email> --password|-p <password>
+  phis operator enable --email|-e <email>
+  phis operator disable --email|-e <email>
+  phis operator del --email|-e <email>
+
+  phis media check [--fix]
+  phis maintain [--list] [--task <id>] [--dry-run]
+  phis licenses check [--package <directory>]
+
   phis instance list [--stale-after <seconds>]
   phis instance drain [--id <instance id>]
   phis instance prune [--forget-after <seconds>]
@@ -324,43 +331,9 @@ function printVersion(json: boolean) {
   console.log(packageJson.version);
 }
 
-function parseArgv(argv: string[]): ParsedArgv {
-  const flags: FlagMap = new Map();
-  const positionals: string[] = [];
-
-  for (let index = 0; index < argv.length; index += 1) {
-    const current = argv[index];
-    if (!current.startsWith("-")) {
-      positionals.push(current);
-      continue;
-    }
-
-    const isLongFlag = current.startsWith("--");
-    const rawKey = current.slice(isLongFlag ? 2 : 1);
-    const key = isLongFlag ? rawKey : SHORT_FLAG_ALIASES.get(rawKey);
-    if (!key) {
-      throw new Error(`Unknown flag: ${current}`);
-    }
-
-    const next = argv[index + 1];
-    if (!next || next.startsWith("-")) {
-      flags.set(key, true);
-      continue;
-    }
-
-    flags.set(key, next);
-    index += 1;
-  }
-
-  return {
-    flags,
-    positionals,
-  };
-}
-
 function getRequiredFlag(flags: FlagMap, key: string) {
   const value = flags.get(key);
-  if (!value || typeof value !== "string") {
+  if (typeof value !== "string" || !value.trim()) {
     throw new Error(`Missing --${key}.`);
   }
 
@@ -798,6 +771,13 @@ async function createSite(flags: FlagMap, json: boolean) {
     throw new Error("Please complete all site fields.");
   }
 
+  if (!PHI_SECRET_SEGMENT_PATTERN.test(key)) {
+    throw new Error(
+      `Site key "${key}" must start with a lowercase letter or digit and hold only a-z, 0-9, ".", "_" ` +
+      "and \"-\", at most 64 characters: the key is part of every secret reference written for the Site.",
+    );
+  }
+
   try {
     new URL(publicBaseUrl);
   } catch {
@@ -952,6 +932,9 @@ function requireSecretEncryptionKey(): PhiSecretEncryptionKey {
  */
 async function readSecretValue(flags: FlagMap) {
   const inline = getOptionalFlag(flags, "value");
+  if (inline === "") {
+    throw new Error("--value is empty, and a secret cannot be. Use phis secret del to remove one.");
+  }
   if (inline) {
     console.warn("Reading a secret from --value exposes it to the process list and shell history.");
     return inline;
@@ -984,10 +967,42 @@ async function resolveSecretIdentity(flags: FlagMap) {
   };
 }
 
-function readSiteScaffoldPackageManager(flags: FlagMap): PhiSiteScaffoldPackageManager {
-  const value = getOptionalFlag(flags, "package-manager") ?? "pnpm";
-  if (value === "pnpm" || value === "npm" || value === "yarn" || value === "bun") return value;
-  throw new Error(`Unsupported package manager: ${value}.`);
+/** The manager an operator named, or undefined for the Site's own; see `resolvePhiSitePackageManager`. */
+function readSiteScaffoldPackageManager(flags: FlagMap): PhiSiteScaffoldPackageManager | undefined {
+  const value = getOptionalFlag(flags, "package-manager");
+  if (value === undefined) return undefined;
+  if ((PHI_SITE_SCAFFOLD_PACKAGE_MANAGERS as readonly string[]).includes(value)) {
+    return value as PhiSiteScaffoldPackageManager;
+  }
+  throw new Error(`Unsupported package manager: ${value}. Use ${PHI_SITE_SCAFFOLD_PACKAGE_MANAGERS.join(", ")}.`);
+}
+
+/**
+ * Core's address as the Site's server-side code reaches it.
+ *
+ * Given, never assumed. The phis root does not record where Core listens -- that is `PORT` and
+ * `HOSTNAME` in the environment of whatever starts it -- and the address a Site uses depends on the host
+ * the Site runs on and on anything placed in between, which the root cannot know either. A default here
+ * was a port nothing serves on, written into the Site's config where nobody looked until it failed.
+ */
+function readApiBaseUrlFlag(flags: FlagMap, command: string) {
+  const value = getOptionalFlag(flags, "api-base-url");
+  if (!value) {
+    throw new Error(
+      `phis ${command} needs --api-base-url, Core's address as seen from where the request is made ` +
+      "(for the Debian package http://127.0.0.1:5301 on the same host).",
+    );
+  }
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new Error(`--api-base-url is not a URL: ${value}`);
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    throw new Error(`--api-base-url must be an http or https URL: ${value}`);
+  }
+  return value.replace(/\/+$/, "");
 }
 
 /**
@@ -1183,12 +1198,16 @@ async function runSiteModuleCommand(command: string, flags: FlagMap, json: boole
   const state = readSiteModuleDesiredState(configRoot);
   const current = state.sites[site.key]?.modules ?? [];
 
+  /*
+   * Every command below reads or writes the Site's files. A Site root that is not there reads as "no
+   * package installed" to `check`, and `add`, `del` and `sync` would write the projection into a
+   * directory that is nobody's Site -- recorded as installed, and in no build.
+   */
+  if (!existsSync(path.join(siteRoot, "package.json"))) {
+    throw new Error(`No Site at ${siteRoot} (no package.json). Pass --path if the Site lives elsewhere.`);
+  }
+
   if (command === "check") {
-    // A Site root that is not there reads as "no package installed" otherwise, which sends an operator
-    // looking for the wrong fault.
-    if (!existsSync(path.join(siteRoot, "package.json"))) {
-      throw new Error(`No Site at ${siteRoot}. Pass --path if the Site lives elsewhere.`);
-    }
     const only = getOptionalFlag(flags, "package");
     const targets = only ? current.filter((entry) => entry.packageName === only) : current;
     if (only && targets.length === 0) {
@@ -1379,8 +1398,9 @@ async function runCoreSchemaCommand(
   }
 
   if (command === "drop") {
-    const migrationUri = database?.migrationUri?.trim();
-    if (!migrationUri) {
+    const migrationUri = database?.migrationUri?.trim() || null;
+    // The dry run only reads, with the serving connection, so it is available before the migration role is.
+    if (schemaDropConfirmed && !migrationUri) {
       throw new Error(
         `Missing database.migrationUri in ${getConfigPaths().runtime}. Add-on schemas belong to the ` +
         "migration role, so dropping them needs that connection and not the serving one.",
@@ -1534,16 +1554,26 @@ async function runSiteScaffoldCommand(
   if (!siteKeyInput?.trim()) throw new Error(`Missing site key for phis ${mode}.`);
   const site = await getSiteByKey(siteKeyInput);
   const mergedConfig = readCliMergedConfig();
-  const manager = readSiteScaffoldPackageManager(flags);
   const root = getOptionalFlag(flags, "path") ?? resolveSiteSource(site, mergedConfig.sites).path;
-  const apiBaseUrl = getOptionalFlag(flags, "api-base-url") ?? "http://127.0.0.1:3000";
+  let runtime: PhiSiteScaffoldRuntime | undefined;
+  if (mode === "init") {
+    const apiBaseUrl = readApiBaseUrlFlag(flags, "init");
+    const internalToken = mergedConfig.api?.internalToken?.trim() ?? "";
+    // A Site with an empty token is refused by Core on every call, and nothing says why until one fails.
+    if (!internalToken) {
+      throw new Error(
+        `Missing api.internalToken in ${getConfigPaths().runtime}. phis init copies it into the Site's ` +
+        "config/site-runtime.json; set it first (openssl rand -hex 32), then restart the server.",
+      );
+    }
+    runtime = { publicBaseUrl: site.publicBaseUrl ?? `https://${site.hostname}`, apiBaseUrl, internalToken };
+  }
   const result = await reconcilePhiSiteScaffold(root, {
     siteKey: site.key,
-    publicBaseUrl: site.publicBaseUrl ?? `https://${site.hostname}`,
-    apiBaseUrl,
-    internalToken: mergedConfig.api?.internalToken?.trim() ?? "",
-    packageManager: manager,
+    packageManager: readSiteScaffoldPackageManager(flags),
+    runtime,
   }, mode === "init" ? "init" : "reconcile");
+  const manager = result.packageManager;
   const shouldInstall = mode === "update" || flags.get("install") === true;
   if (shouldInstall) {
     await runPhiSitePackageCommand(result.root, manager, resolvePhiSiteInstallArgs(manager, false));
@@ -1553,12 +1583,20 @@ async function runSiteScaffoldCommand(
     await runPhiSitePackageCommand(result.root, manager, ["run", "build"]);
   }
   const release = mode === "update" ? await buildPhiSiteReleaseArtifact(result.root) : null;
+  // The release links to this file rather than carrying it, so a release built without it starts and fails.
+  const runtimeConfigMissing = mode === "update" && !existsSync(path.join(result.root, "config", "site-runtime.json"));
   if (json) {
-    printJson({ ok: true, action: `site.${mode}`, packageManager: manager, installed: shouldInstall, built: mode === "update", release, ...result });
+    printJson({ ok: true, action: `site.${mode}`, installed: shouldInstall, built: mode === "update", release, runtimeConfigMissing, ...result });
     return;
   }
   const changed = result.changes.filter((entry) => entry.action !== "unchanged");
-  console.log(`${mode === "init" ? "Initialized" : mode === "update" ? `Updated and built release ${release?.releaseId}` : "Reconciled"} ${site.key} at ${result.root}; ${changed.length} file(s) changed.`);
+  console.log(`${mode === "init" ? "Initialized" : mode === "update" ? `Updated and built release ${release?.releaseId}` : "Reconciled"} ${site.key} at ${result.root} with ${manager}; ${changed.length} file(s) changed.`);
+  if (runtimeConfigMissing) {
+    console.log(
+      `  note: ${path.join(result.root, "config", "site-runtime.json")} does not exist. The release reads it from ` +
+      "there; create it from config/site-runtime.example.json before starting the release.",
+    );
+  }
 }
 
 async function printSites(flags: FlagMap, json: boolean) {
@@ -1610,8 +1648,15 @@ async function printSiteConfig(targetInput: string, flags: FlagMap, json: boolea
     throw new Error(`Site ${site.key} has no source override configured.`);
   }
 
+  const instanceFlag = getOptionalFlag(flags, "instance");
+  const instanceIndex = instanceFlag === undefined ? undefined : Number(instanceFlag);
+  if (instanceIndex !== undefined && (!Number.isSafeInteger(instanceIndex) || instanceIndex < 0)) {
+    throw new Error(`--instance takes an instance number as phis site config runtime lists them, not "${instanceFlag}".`);
+  }
+
   const config = renderSiteConfig(target, site, siteSettings, {
     useSource,
+    instanceIndex,
   });
 
   if (json) {
@@ -2065,12 +2110,13 @@ function enforceInstanceVersion(root: string) {
 async function main() {
   const args = process.argv.slice(2);
 
+  // Only on a line that names no command: inside one, `-v` may be the value of a flag such as a password.
   if (args.includes("-v") || args.includes("--version")) {
-    const parsed = parseArgv(
-      args.filter((value) => value !== "-v" && value !== "--version"),
-    );
-    printVersion(isJsonOutput(parsed.flags));
-    return;
+    const parsed = parsePhisArgv(args.filter((value) => value !== "-v" && value !== "--version"));
+    if (parsed.positionals.length === 0) {
+      printVersion(isJsonOutput(parsed.flags));
+      return;
+    }
   }
 
   if (args.length === 0 || args[0] === "help" || args[0] === "--help" || args[0] === "-h") {
@@ -2078,7 +2124,7 @@ async function main() {
     return;
   }
 
-  const parsed = parseArgv(args);
+  const parsed = parsePhisArgv(args);
   const flags = parsed.flags;
   const json = isJsonOutput(flags);
   const root = getOptionalFlag(flags, "root");
@@ -2449,7 +2495,7 @@ async function main() {
        * It is not a signal handler inside the runtime because Next installs its own and exits; a
        * handler racing that usually loses and always looks as though it had not. Doing it from outside
        * is also the right order -- traffic should stop before the process does -- and it is what the
-       * generated unit's ExecStop calls. The row stays: an operator looking afterwards should still see
+       * packaged `debian/phis@.service` calls in ExecStop. The row stays: an operator looking afterwards should still see
        * that this instance was here and when it left.
        */
       const instanceId = getOptionalFlag(flags, "id") ?? resolvePhisInstanceId(configRoot);
@@ -2923,8 +2969,7 @@ async function main() {
      * runtime that would have to reproduce the loader, the pool, and the capability bindings.
      */
     const mergedConfig = readCliMergedConfig();
-    const apiBaseUrl = (getOptionalFlag(flags, "api-base-url")
-      ?? "http://127.0.0.1:3000").replace(/\/+$/, "");
+    const apiBaseUrl = readApiBaseUrlFlag(flags, "addon job");
     const internalToken = mergedConfig.api?.internalToken?.trim() ?? "";
     if (!internalToken) {
       throw new Error("Missing api.internalToken; a job is started through the serving instance.");
@@ -3282,8 +3327,13 @@ main()
     process.exitCode = 1;
   })
   .finally(async () => {
+    // Both, or the process waits out the idle timeout of whichever pool was left open before it exits.
     if (pool) {
       await pool.end();
       pool = null;
+    }
+    if (migrationPool) {
+      await migrationPool.end();
+      migrationPool = null;
     }
   });

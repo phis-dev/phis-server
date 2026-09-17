@@ -4,16 +4,16 @@
   "license": "Apache-2.0",
   "private": true,
   "engines": {
-    "node": ">=20.19.2"
+    "node": ">=24.21.0"
   },
   "devEngines": {
     "runtime": {
       "name": "node",
-      "version": ">=22",
+      "version": ">=24.21.0",
       "onFail": "error"
     },
     "packageManager": {
-      "name": "npm",
+      "name": "pnpm",
       "onFail": "error"
     }
   },
@@ -23,6 +23,8 @@
     "typecheck": "tsc --noEmit",
     "build:cli": "node scripts/build-cli.mjs",
     "db:boundary": "node scripts/validate-db-sql-boundary.mjs",
+    "docs:api": "node scripts/generate-api-reference.mjs",
+    "docs:api:check": "node scripts/generate-api-reference.mjs --check",
     "licenses:check": "pnpm phis licenses check",
     "start": "next start",
     "lint": "eslint",

@@ -6,7 +6,8 @@ Install layout
 
 - Application root: `/usr/lib/phis`
 - Standalone server root: `/usr/lib/phis/server`
-- CLI wrapper: `/usr/bin/phis`
+- CLI: `/usr/bin/phis`, operating on `/srv/phis/stages/prod` unless `PHIS_ROOT`
+  or `--root` names another stage
 - Default stage root: `/srv/phis/stages/prod`
 - Optional stage environment file: `/srv/phis/stages/<stage>/.env`
 
@@ -15,19 +16,20 @@ The packaged `systemd` template keeps the application working directory under
 `PHIS_ROOT`.
 The default `prod` stage listens on `127.0.0.1:5301`.
 
-The installed `/usr/bin/phis` symlink points to the bundled wrapper under
+The installed `/usr/bin/phis` runs the bundled wrapper under
 `/usr/lib/phis/server/phis`, so the CLI and the standalone runtime use the
-same traced dependency set.
+same traced dependency set. It sets `PHIS_ROOT` to `/srv/phis/stages/prod` when
+the variable is unset; the wrapper alone would take `/usr/lib/phis/server`,
+which holds no configuration.
 
 `server` is a fixed name the packaging chooses. Next's standalone output nests the
 application under the directory it was built from, and the packaging renames it on
 the way in rather than repeating that name -- a checkout renamed on disk must not
 be able to move an installed path.
 
-Runtime baseline:
-
-- the packaged standalone runtime and emitted CLI are validated with Node `20.19.2+`
-- the repository-local source CLI helper `npm run phis` is a development path and expects a newer Node toolchain
+Runtime baseline: Node `24.21.0` or later, for the runtime and the CLI alike.
+Earlier releases hold on to rendered pages under load (a leak in React Flight
+rendering fixed in Node 24.21).
 
 No runtime configuration is stored under `/etc/phis`. Stage-local mutable state
 belongs under `/srv/phis/stages/<stage>/`, while `phis-host` keeps its own host

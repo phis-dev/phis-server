@@ -19,7 +19,7 @@ await build({
   bundle: true,
   platform: "node",
   format: "esm",
-  target: "node22",
+  target: "node24",
   external,
   // esbuild keeps the entry point's own hashbang -- adding a banner duplicates it.
   logLevel: "info",

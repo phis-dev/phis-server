@@ -233,7 +233,8 @@ export type PhiSchemaDropPlan = {
  */
 export async function dropPhiCoreSchema(input: {
   uri: string;
-  migrationUri: string;
+  /** Needed only to carry the drop out; the plan is read with the serving connection. */
+  migrationUri: string | null;
   confirmed: boolean;
 }): Promise<PhiSchemaDropPlan> {
   const serving = new Client({ connectionString: input.uri });
@@ -258,6 +259,9 @@ export async function dropPhiCoreSchema(input: {
       return { addonSchemas, coreSchema: "phis", dropped: false };
     }
 
+    if (!input.migrationUri) {
+      throw new Error("Dropping the Add-on schemas needs database.migrationUri, the role that owns them.");
+    }
     const migration = new Client({ connectionString: input.migrationUri });
     await migration.connect();
     try {

@@ -1,0 +1,14 @@
+#!/bin/sh
+# /usr/bin/phis for the packaged server.
+#
+# The wrapper under /usr/lib/phis/server takes its own directory as the phis root when PHIS_ROOT is
+# unset, which is right in a checkout and wrong here: the application directory holds no config/, the
+# stage does. So the packaged command defaults to the stage the package creates and the unit serves,
+# /srv/phis/stages/prod -- the same root the server falls back to in production. PHIS_ROOT or --root
+# picks another stage.
+set -eu
+
+PHIS_ROOT="${PHIS_ROOT:-/srv/phis/stages/prod}"
+export PHIS_ROOT
+
+exec /usr/lib/phis/server/phis "$@"

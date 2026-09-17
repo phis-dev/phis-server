@@ -1,9 +1,10 @@
-import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { access, lstat, mkdir, mkdtemp, readFile, readdir, readlink, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
+  buildPhiSiteReleaseArtifact,
   buildPhiSiteScaffoldFiles,
   reconcilePhiSiteScaffold,
 } from "./site-scaffold.mts";
@@ -11,11 +12,21 @@ import {
 const roots: string[] = [];
 const context = {
   siteKey: "example-site",
-  publicBaseUrl: "https://example.test",
-  apiBaseUrl: "https://api.example.test",
-  internalToken: "server-secret",
   packageManager: "pnpm" as const,
+  runtime: {
+    publicBaseUrl: "https://example.test",
+    apiBaseUrl: "https://api.example.test",
+    internalToken: "server-secret",
+  },
 };
+/** What `reconcile` and `update` pass: no manager named, no runtime values. */
+const reconcileContext = { siteKey: "example-site" };
+
+async function scaffoldRoot() {
+  const root = await mkdtemp(path.join(tmpdir(), "phis-scaffold-"));
+  roots.push(root);
+  return root;
+}
 
 afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
@@ -115,6 +126,7 @@ describe("site scaffold", () => {
     const ignored = files[".gitignore"]!.split("\n");
 
     expect(ignored).toContain("config/site-runtime.json");
+    expect(ignored).toContain(".phis/releases/");
     expect(ignored).toContain("node_modules/");
     expect(ignored).toContain(".next/");
   });
@@ -233,4 +245,169 @@ describe("site scaffold", () => {
     await writeFile(path.join(root, "existing"), "x", "utf8");
     await expect(reconcilePhiSiteScaffold(root, context, "init")).rejects.toThrow(/use phis reconcile/);
   });
+
+  it("refuses init without Core's address and the internal token", async () => {
+    const root = await scaffoldRoot();
+    await expect(reconcilePhiSiteScaffold(root, { siteKey: "example-site" }, "init")).rejects.toThrow(/internal token/);
+    await expect(reconcilePhiSiteScaffold(root, {
+      ...context,
+      runtime: { ...context.runtime, internalToken: " " },
+    }, "init")).rejects.toThrow(/internal token/);
+  });
+
+  it("writes the runtime config on init only, and keeps no instance value in the example", async () => {
+    const root = await scaffoldRoot();
+    await reconcilePhiSiteScaffold(root, context, "init");
+    const written = JSON.parse(await readFile(path.join(root, "config/site-runtime.json"), "utf8"));
+    expect(written.phis).toEqual({ apiBaseUrl: "https://api.example.test", internalToken: "server-secret" });
+    const example = JSON.parse(await readFile(path.join(root, "config/site-runtime.example.json"), "utf8"));
+    expect(example.phis).toEqual({ apiBaseUrl: "", internalToken: "" });
+
+    // A clone has no runtime config (it is ignored); reconcile does not invent one.
+    await rm(path.join(root, "config/site-runtime.json"));
+    const result = await reconcilePhiSiteScaffold(root, reconcileContext, "reconcile");
+    await expect(access(path.join(root, "config/site-runtime.json"))).rejects.toThrow();
+    expect(result.changes.some((entry) => entry.path === "config/site-runtime.json")).toBe(false);
+  });
+
+  it("never retires the runtime config an earlier manifest listed", async () => {
+    const root = await scaffoldRoot();
+    await reconcilePhiSiteScaffold(root, context, "init");
+    const before = await readFile(path.join(root, "config/site-runtime.json"), "utf8");
+    await reconcilePhiSiteScaffold(root, reconcileContext, "reconcile");
+    await reconcilePhiSiteScaffold(root, reconcileContext, "reconcile");
+    expect(await readFile(path.join(root, "config/site-runtime.json"), "utf8")).toBe(before);
+  });
+
+  it("uses the Site's own package manager and leaves its lockfile alone", async () => {
+    const root = await scaffoldRoot();
+    await reconcilePhiSiteScaffold(root, { ...context, packageManager: "npm" }, "init");
+    await writeFile(path.join(root, "package-lock.json"), "{}\n", "utf8");
+
+    const result = await reconcilePhiSiteScaffold(root, reconcileContext, "reconcile");
+
+    expect(result.packageManager).toBe("npm");
+    expect(await readFile(path.join(root, "package-lock.json"), "utf8")).toBe("{}\n");
+    expect(JSON.parse(await readFile(path.join(root, "package.json"), "utf8")).packageManager).toMatch(/^npm@/);
+  });
+
+  it("reads the manager from the lockfile when package.json names none, and refuses to guess otherwise", async () => {
+    const root = await scaffoldRoot();
+    await reconcilePhiSiteScaffold(root, context, "init");
+    const packagePath = path.join(root, "package.json");
+    const manifest = JSON.parse(await readFile(packagePath, "utf8"));
+    delete manifest.packageManager;
+    await writeFile(packagePath, JSON.stringify(manifest), "utf8");
+
+    await expect(reconcilePhiSiteScaffold(root, reconcileContext, "reconcile")).rejects.toThrow(/--package-manager/);
+
+    await writeFile(path.join(root, "yarn.lock"), "", "utf8");
+    expect((await reconcilePhiSiteScaffold(root, reconcileContext, "reconcile")).packageManager).toBe("yarn");
+    await access(path.join(root, "yarn.lock"));
+  });
+
+  it("replaces another manager's lockfile only when the operator names a different manager", async () => {
+    const root = await scaffoldRoot();
+    await reconcilePhiSiteScaffold(root, context, "init");
+    await writeFile(path.join(root, "pnpm-lock.yaml"), "lockfileVersion: 9\n", "utf8");
+
+    await reconcilePhiSiteScaffold(root, { ...reconcileContext, packageManager: "npm" }, "reconcile");
+
+    await expect(access(path.join(root, "pnpm-lock.yaml"))).rejects.toThrow();
+    expect(JSON.parse(await readFile(path.join(root, "package.json"), "utf8")).packageManager).toMatch(/^npm@/);
+  });
+
+  it("adds what the scaffold needs to package.json and keeps the Site's versions and scripts", async () => {
+    const root = await scaffoldRoot();
+    await reconcilePhiSiteScaffold(root, context, "init");
+    const packagePath = path.join(root, "package.json");
+    const manifest = JSON.parse(await readFile(packagePath, "utf8"));
+    manifest.dependencies["@phis/ui"] = "^0.4.2";
+    manifest.dependencies["@acme/extra"] = "1.0.0";
+    manifest.dependencies.typescript = manifest.devDependencies.typescript;
+    delete manifest.devDependencies.typescript;
+    delete manifest.dependencies.antd;
+    manifest.scripts.build = "next build --debug";
+    delete manifest.scripts.typecheck;
+    manifest.packageManager = "pnpm@10.0.0";
+    manifest.engines = { node: ">=24", pnpm: ">=10" };
+    await writeFile(packagePath, JSON.stringify(manifest, null, 2), "utf8");
+
+    await reconcilePhiSiteScaffold(root, reconcileContext, "reconcile");
+    const merged = JSON.parse(await readFile(packagePath, "utf8"));
+
+    expect(merged.dependencies["@phis/ui"]).toBe("^0.4.2");
+    expect(merged.dependencies["@acme/extra"]).toBe("1.0.0");
+    expect(merged.dependencies.antd).toBe("6.6.4");
+    expect(merged.devDependencies.typescript).toBeUndefined();
+    expect(merged.scripts.build).toBe("next build --debug");
+    expect(merged.scripts.typecheck).toBe("tsc --noEmit");
+    expect(merged.packageManager).toBe("pnpm@10.0.0");
+    expect(merged.engines).toEqual({ node: ">=24.21.0", pnpm: ">=10" });
+  });
+
+  /*
+   * A release is build output next to the Site's repository. The token belongs to the instance, and a
+   * release that carried it was one `git add .` or one copied directory away from publishing it.
+   */
+  it("builds a release that holds no runtime config and still reads the Site's", async () => {
+    const root = await scaffoldRoot();
+    await reconcilePhiSiteScaffold(root, context, "init");
+    await fakeStandaloneBuild(root, "");
+
+    const release = await buildPhiSiteReleaseArtifact(root);
+
+    expect(release.appDirectory).toBe("");
+    expect(await listFiles(release.path)).not.toContain("server-secret");
+    const link = path.join(release.path, "config/site-runtime.json");
+    expect((await lstat(link)).isSymbolicLink()).toBe(true);
+    expect(await readlink(link)).toBe("../../../../config/site-runtime.json");
+    expect(JSON.parse(await readFile(link, "utf8")).phis.internalToken).toBe("server-secret");
+    await access(path.join(release.path, ".next/static/chunk.js"));
+    // A link in the build stays relative, so the next build cannot pull a release out from under itself.
+    expect(await readlink(path.join(release.path, "node_modules/next"))).toBe(".pnpm/next/node_modules/next");
+  });
+
+  it("finds server.js where Next nests it inside a workspace, and starts it from the release root", async () => {
+    const workspace = await scaffoldRoot();
+    const root = path.join(workspace, "sites", "acme");
+    await reconcilePhiSiteScaffold(root, context, "init");
+    await fakeStandaloneBuild(root, "sites/acme");
+
+    const release = await buildPhiSiteReleaseArtifact(root);
+
+    expect(release.appDirectory).toBe(path.join("sites", "acme"));
+    expect(await readFile(path.join(release.path, "server.js"), "utf8")).toContain('import("./sites/acme/server.js")');
+    await access(path.join(release.path, "sites/acme/.next/static/chunk.js"));
+    const link = path.join(release.path, "sites/acme/config/site-runtime.json");
+    expect(JSON.parse(await readFile(link, "utf8")).site.key).toBe("example-site");
+    expect(await listFiles(release.path)).not.toContain("server-secret");
+  });
 });
+
+/** What `next build` leaves for the release step, with the runtime config the file tracer copies in. */
+async function fakeStandaloneBuild(root: string, appDirectory: string) {
+  const app = path.join(root, ".next/standalone", appDirectory);
+  await mkdir(path.join(app, "config"), { recursive: true });
+  await writeFile(path.join(app, "server.js"), "// next\n", "utf8");
+  await writeFile(path.join(app, "config/site-runtime.json"), await readFile(path.join(root, "config/site-runtime.json")));
+  const modules = path.join(root, ".next/standalone/node_modules");
+  await mkdir(path.join(modules, ".pnpm/next/node_modules/next"), { recursive: true });
+  const { symlink } = await import("node:fs/promises");
+  await symlink(".pnpm/next/node_modules/next", path.join(modules, "next"));
+  await mkdir(path.join(root, ".next/static"), { recursive: true });
+  await writeFile(path.join(root, ".next/static/chunk.js"), "", "utf8");
+  await writeFile(path.join(root, ".next/BUILD_ID"), "build-1\n", "utf8");
+}
+
+/** Every regular file's content under a directory, without following links. */
+async function listFiles(directory: string): Promise<string> {
+  const parts: string[] = [];
+  for (const entry of await readdir(directory, { withFileTypes: true, recursive: true })) {
+    if (!entry.isFile()) continue;
+    const file = path.join(entry.parentPath, entry.name);
+    expect(entry.name, file).not.toBe("site-runtime.json");
+    parts.push(await readFile(file, "utf8"));
+  }
+  return parts.join("\n");
+}

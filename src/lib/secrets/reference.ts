@@ -12,7 +12,13 @@
 
 export const PHI_SECRET_REFERENCE_MAX_LENGTH = 512;
 
-const SEGMENT_PATTERN = /^[a-z0-9][a-z0-9._-]{0,63}$/;
+/**
+ * One segment of a reference: a secret name, and a Site key.
+ *
+ * Exported because a Site key has to be one before any secret can be written for it, and `phis site add`
+ * holds a new key to this rule rather than to a second copy that could drift from it.
+ */
+export const PHI_SECRET_SEGMENT_PATTERN = /^[a-z0-9][a-z0-9._-]{0,63}$/;
 const MODULE_ID_PATTERN = /^@[^/\s:]+\/[^/\s:]+(?:\/[^/\s:]+)*$/;
 
 export type PhiSecretOwner =
@@ -28,7 +34,7 @@ export type PhiSecretIdentity = {
 };
 
 function assertSegment(value: string, label: string) {
-  if (!SEGMENT_PATTERN.test(value)) {
+  if (!PHI_SECRET_SEGMENT_PATTERN.test(value)) {
     throw new Error(`${label} must be lowercase alphanumeric with . _ - and at most 64 characters.`);
   }
 }
@@ -85,7 +91,7 @@ export function parsePhiSecretReference(value: string): PhiSecretIdentity | null
 
   if (parts[index] === "site") {
     const key = parts[index + 1];
-    if (!key || !SEGMENT_PATTERN.test(key)) return null;
+    if (!key || !PHI_SECRET_SEGMENT_PATTERN.test(key)) return null;
     siteKey = key;
     index += 2;
   }
@@ -104,7 +110,7 @@ export function parsePhiSecretReference(value: string): PhiSecretIdentity | null
   }
 
   const name = parts[index];
-  if (name == null || index !== parts.length - 1 || !SEGMENT_PATTERN.test(name)) return null;
+  if (name == null || index !== parts.length - 1 || !PHI_SECRET_SEGMENT_PATTERN.test(name)) return null;
 
   return { owner, siteKey, name };
 }

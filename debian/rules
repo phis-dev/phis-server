@@ -31,9 +31,12 @@ override_dh_auto_install:
 # Read at run time through the app root: the Core schema by setup and `phis schema apply`.
 	install -D -m 0644 scripts/sql/001_create_phis.pgsql \
 		debian/phis/usr/lib/phis/server/scripts/sql/001_create_phis.pgsql
-# The operator CLI, bundled by `build:cli`, and the wrapper `/usr/bin/phis` links to.
+# The operator CLI, bundled by `build:cli`, and the wrapper `/usr/bin/phis` runs.
 	install -D -m 0755 dist/phis.mjs debian/phis/usr/lib/phis/server/dist/phis.mjs
 	install -m 0755 phis debian/phis/usr/lib/phis/server/phis
+# `/usr/bin/phis` is its own script rather than a link to the wrapper: it names the stage the wrapper would
+# otherwise take to be the application directory.
+	install -D -m 0755 debian/phis-cli debian/phis/usr/bin/phis
 # Enforced here rather than trusted to the build: the package is the last place that can be sure.
 	forbidden=$$(find debian/phis/usr/lib/phis/server \
 		\( -path '*/node_modules' -o -path '*/.next/static' \) -prune -o \

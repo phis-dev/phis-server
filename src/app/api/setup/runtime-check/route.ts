@@ -81,10 +81,19 @@ function classifyDisk(freeBytes: number) {
   return "verified" as const;
 }
 
+/**
+ * Node 24.21.0 or later, the floor `engines` declares. Earlier releases leak under React Flight
+ * rendering -- an Immediate held through `async_context` -- and a server under load runs out of memory.
+ */
+const PHIS_MINIMUM_NODE_VERSION = [24, 21, 0] as const;
+
 function isSupportedNodeVersion(version: string) {
-  const [majorString = "0"] = version.split(".");
-  const major = Number.parseInt(majorString, 10) || 0;
-  return major >= 22;
+  const parts = version.replace(/^v/, "").split(".").map((part) => Number.parseInt(part, 10) || 0);
+  for (const [index, minimum] of PHIS_MINIMUM_NODE_VERSION.entries()) {
+    const actual = parts[index] ?? 0;
+    if (actual !== minimum) return actual > minimum;
+  }
+  return true;
 }
 
 function runRuntimeCheck(checkId: RuntimeCheckKey) {
