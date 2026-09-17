@@ -357,8 +357,14 @@ nginx. The Site's proxy routes forward `/api/auth`, `/api/site`, `/api/addons` a
 server internally, so the server itself needs no public host name for the Site.
 Expose the operator UI (`/operator`) only to operators.
 
-The same keep-alive rule applies to a proxy in front of several server instances; the server's own
-`debian/phis.nginx.conf` proxies without a pool.
+The same keep-alive rule applies to a proxy in front of several server instances. The templates the
+package installs (`/usr/share/phis/templates/nginx/phis.conf` and `.../apache2/phis.conf`, copied to
+`sites-available/phis.conf` by `postinst`) carry it: an `upstream phis` pool with the instances the
+package runs — `phis@prod.service` on `127.0.0.1:5301` and a commented line for a second one —
+`keepalive 64`, `keepalive_timeout 4s`, the `Connection` map, and `Host $http_host`. Add a further
+instance of the same stage as a further line in that pool. Another stage is another installation with
+its own database: give it its own `upstream` and `server` block, never a line in this one. The Apache
+template is a `balancer://phis` with `ttl=4` per member, which is the same rule on that side.
 
 ## 9. Add Modules
 

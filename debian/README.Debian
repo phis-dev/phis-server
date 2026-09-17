@@ -58,6 +58,33 @@ Two cases need a hand:
 The runtime refuses to start in production when the value is missing or is not
 base64 of 32 bytes.
 
+Web server templates
+--------------------
+
+`postinst` copies `/usr/share/phis/templates/nginx/phis.conf` to
+`/etc/nginx/sites-available/phis.conf` and the Apache template to
+`/etc/apache2/sites-available/phis.conf` when the directory exists and the file
+is not there yet. Neither is enabled or reloaded; set `server_name`, add TLS,
+link it and reload by hand.
+
+Both proxy to a pool rather than to one address, because a pool is what the
+keep-alive rule applies to. Node closes an idle keep-alive connection after 5
+seconds; a proxy that holds its side longer hands out a connection the runtime
+has already closed, and the request dies -- a `GET` is retried, a `POST` (a
+login, a publish) answers `502`. nginx therefore gets `keepalive 64` with
+`keepalive_timeout 4s`, Apache `ttl=4` on each `BalancerMember`.
+
+The pool lists the instances this package runs: `phis@prod.service` on
+`127.0.0.1:5301`, plus a commented line for a second instance of the same stage,
+which needs a port of its own. Another stage is another installation with its own
+database and belongs in its own `upstream` and `server` block.
+
+`Host` is passed through unchanged (`$http_host`, `ProxyPreserveHost On`): on a
+port other than 80 or 443 nginx's `$host` drops the port that the browser's
+`Referer` keeps, and the form relay compares the two and refuses every submit.
+The nginx template holds a `map` and an `upstream`, which nginx allows only in
+the `http` context -- which is where Debian includes `sites-enabled/*`.
+
 Database bootstrap
 ------------------
 

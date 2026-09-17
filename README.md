@@ -153,6 +153,12 @@ A production stage runs the standalone `server.js` with `PHIS_ROOT=/srv/phis/sta
 package ships `phis@.service` for that. Loopback ports conventionally start at `5301` for the first
 stage and count up; the stage name does not determine the port.
 
+The package's proxy templates (`debian/phis.nginx.conf`, `debian/phis.apache2.conf`) put the instances
+of one stage in a pool — `upstream phis` with `keepalive 64` and `keepalive_timeout 4s`, or a
+`balancer://phis` with `ttl=4` — because a pooled connection held longer than Node's 5 s keep-alive
+timeout answers a `POST` with `502` ([README.Debian](./debian/README.Debian), phis-host `README.md`).
+A second stage is a second installation and gets its own pool and server block.
+
 `src/instrumentation.ts` starts the instance heartbeat into `phis.server_instances` and, in production,
 refuses to start without a valid `NEXT_SERVER_ACTIONS_ENCRYPTION_KEY`.
 
