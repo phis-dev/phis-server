@@ -31,7 +31,7 @@ normally second-factor or recovery (section 5).
 Besides `phis site admin`, the first Site Admin may be created through a single-use, short-lived setup
 token produced by `phis-cli`. First-time setup is accepted only while the Site has no Admin and the token
 is valid. It may bind a password, passkey, or validated external identity and must create the global user,
-Site membership, and Core Admin role claim atomically. Bootstrap tokens follow section 17: short-lived,
+Site membership, and Core Admin role claim atomically. Bootstrap tokens follow AUTHENTICATION.md section 15: short-lived,
 single-use, and invalid after successful consumption.
 
 ## 4. CLI emergency recovery

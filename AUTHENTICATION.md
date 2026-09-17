@@ -1,14 +1,14 @@
 # Phi Authentication Contract
 
-This document is the normative target v1 contract for Site authentication, global Phi user identity,
-authentication-method policy, account linking, Site sessions, bootstrap recovery, and the corresponding
-`@phis/ui` Auth Module. Authorization starts only after this contract has established a Site
-session and follows [AUTHORIZATION.md](./AUTHORIZATION.md).
+This document is the server-side contract for Site authentication, global Phi user identity,
+authentication-method policy, account linking, Site sessions, and bootstrap recovery. Authorization starts
+only after this contract has established a Site session and follows [AUTHORIZATION.md](./AUTHORIZATION.md).
+The presentation side -- the `@phis/ui/auth` Module, its Areas, the Auth UI provider, and the Account
+Widget -- is specified in [phis-ui AUTHENTICATION.md](../phis-ui/AUTHENTICATION.md).
 
-This contract intentionally breaks the pre-v1 ABI. Email-address upserts, `user_accounts.site_ids`, a
-Medusa-owned browser session, and UI-owned authentication decisions must not remain as parallel identity
-or session paths. The complete v1 schema is defined directly by `scripts/sql/001_create_phis.pgsql`; Core
-does not ship incremental migration scripts before v1.
+Email-address upserts, a Medusa-owned browser session, and UI-owned authentication decisions are not
+identity or session paths. The schema is defined by `scripts/sql/001_create_phis.pgsql`; table columns are
+described in [DB.md](./DB.md).
 
 Platform-operator authentication under `/api/operator/*` is a separate infrastructure boundary and is
 not covered by this Site-viewer contract.
@@ -19,8 +19,8 @@ not covered by this Site-viewer contract.
 
 - global Phi users, verified email addresses, credentials, external identities, and Site memberships;
 - Site authentication policy and provider-installation validation;
-- password verification, OAuth 2.0/OpenID Connect callbacks, WebAuthn, TOTP, one-time codes, recovery,
-  account linking, and session creation or revocation;
+- password verification, OAuth 2.0/OpenID Connect callbacks, TOTP, recovery codes, account linking, and
+  session creation or revocation;
 - CSRF protection, OAuth state, nonce, PKCE, redirect validation, rate limiting, and audit events;
 - the common first-party adapters for password, Google, Apple, GitHub, Microsoft identity platform,
   TOTP, and recovery codes. Passkey, email OTP, and SMS OTP are reserved method keys with policy fields
@@ -57,7 +57,7 @@ Site.
 
 The target model therefore has these hard rules:
 
-- `user_accounts` has no `site_ids` array and no home-Site identity rule;
+- `user_accounts` stores no Site list and has no home-Site identity rule;
 - a global user row does not itself permit login on any Site;
 - adding a Site never creates a second global user merely because the Site is new;
 - one Site may admit an existing global user according to its registration or invitation policy;
@@ -89,34 +89,32 @@ used for a login is validated for the current Site before this global mapping is
 several Site-specific provider clients to resolve to the same Phi user while preventing a client or
 audience accepted for Site A from being replayed as a login for Site B.
 
-## 4. Target persistence model
+## 4. Persistence model
 
-The normalized target model includes at least these relations:
+Authentication uses these relations:
 
-- `user_accounts`: global identity, global non-role state, locale preference, and timestamps;
-- `user_emails`: global user, normalized address, verification, primary state, source, and timestamps;
+- `user_accounts`: global identity, global flags, locale preference, and timestamps;
+- `user_emails`: global user, normalized address, verification time, primary flag, source, and timestamps;
 - `user_password_credentials`: one current password hash and credential-change metadata per user;
 - `user_auth_identities`: global user plus stable issuer and subject;
 - `user_site_memberships`: the unique global-user/Site relation and Site-local state;
 - `user_site_role_claims`: Site- and provider-scoped authorization claims;
 - `site_auth_config`: one versioned Site JSON document containing policy, enabled method/stage
   combinations, order, presentation, and non-secret provider installation configuration;
-- `user_auth_factors`: Site-scoped passkey, TOTP, and recovery-code enrollments with a compact numeric
-  factor type;
+- `user_auth_factors`: Site-scoped TOTP and recovery-code enrollments with a compact numeric factor type;
 - `user_site_external_accounts`: Site-scoped Medusa or other domain-system account mappings outside the
   Auth identity model;
-- `user_sessions`: Site membership, hashed session secret, authentication time, assurance/method state,
+- `user_sessions`: Site membership, hashed session secret, authentication time, assurance level,
+  workflow state (`auth_state`), the accepted Site policy revision, method keys, preserved `next` path,
   expiry, revocation, and request metadata;
-- short-lived authentication transactions and challenges, stored in PostgreSQL or an equivalent central
-  expiring store.
+- `auth_transactions`: short-lived, one-use provider and link transactions with hashed state and nonce and
+  an encrypted payload;
+- `user_password_reset_tokens`: hashed, expiring, one-use reset tokens per Site membership;
+- `registration_intents`: pending registrations awaiting email verification.
 
 Provider secrets, TOTP seeds, recovery codes, reset tokens, session secrets, and one-time codes are never
 stored in plaintext. A provider installation stores only an opaque secret reference where the deployment
 secret system is authoritative.
-
-The current `email_normalized`, `password_hash`, `medusa_customer_id`, `customer_number`, and `site_ids`
-fields on `user_accounts`, the `medusa_auth_token` session field, and email-based `ensureUserAccount()`
-upserts are migration input only. They are not a second target-v1 path.
 
 ## 5. Site authentication policy
 
@@ -133,10 +131,10 @@ installation key where applicable. The supported stages are:
 - `step-up`: raises assurance for a sensitive action or privileged session;
 - `recovery`: restores access after the normal method is unavailable.
 
-Method and stage are separate. Password, passkey, and Google/Apple/GitHub/Microsoft login are common
-primary methods. Passkeys may also satisfy second-factor or step-up policy. TOTP is a second-factor or
-step-up method. Email OTP may be enabled as primary, second-factor, or recovery according to Site policy.
-SMS OTP is normally second-factor or recovery. Recovery codes are recovery only.
+Method and stage are separate. The allowed stages per method key are fixed by `PHI_CORE_AUTH_METHODS`
+(`src/lib/site-auth/contracts.ts`): password and Google/Apple/GitHub/Microsoft login are `primary` or
+`step-up`; TOTP is `second-factor` or `step-up`; recovery codes are `recovery` only. The reserved keys
+`passkey`, `email-otp`, and `sms-otp` carry stage definitions but no adapter.
 
 The public Auth manifest exposes only currently usable method keys, stages, order, presentation metadata,
 and same-origin start actions. It exposes no client secret, secret reference, raw provider-installation id,
@@ -231,7 +229,7 @@ confirmation mechanism is the existing password; passkey and other linked-method
 transaction without changing the account-linking decision.
 
 Core Admin and other privileged accounts default to confirmation with an existing method, step-up, or
-`phis-cli` recovery. Email equality alone never moves an existing external identity, merges two users,
+`phis` CLI recovery. Email equality alone never moves an existing external identity, merges two users,
 or overrides a disabled account.
 
 Concurrent registration/link attempts must serialize on the unique email and external-identity keys. A
@@ -250,9 +248,10 @@ code. Recovery codes are generated once, displayed once, stored only as hashes, 
 Passkeys (WebAuthn) and email or SMS one-time codes are not implemented; see
 [AUTHENTICATION_PLANNED.md](./design/AUTHENTICATION_PLANNED.md).
 
-The server chooses the next challenge and returns an opaque challenge id plus a closed UI challenge kind.
-The client renders that challenge; it must not reconstruct the authentication state machine from enabled
-buttons or decide that MFA can be skipped.
+The server chooses the next step. `GET /api/v1/auth/workflow` returns the session's workflow state
+(`factor-enrollment-required`, `factor-challenge-required`, or `complete`), the method key, and the
+preserved `next` path. The client renders that state; it must not reconstruct the authentication state
+machine from enabled buttons or decide that MFA can be skipped.
 
 ## 9. Assurance gate and mandatory factor enrollment
 
@@ -266,8 +265,8 @@ anonymous
 ```
 
 Successful primary authentication does not by itself create a fully authorized Site session when the
-current Site policy requires greater assurance. Core may retain the intermediate state only in a
-short-lived Auth transaction or restricted pre-session. That state authorizes the current Auth workflow,
+current Site policy requires greater assurance. Core retains the intermediate state as a restricted session
+whose `auth_state` is not complete. That state authorizes the current Auth workflow,
 approved recovery/support escape paths, and Core logout only. It never authorizes App, Admin, Builder,
 Editor, Accounting, their APIs, or another protected resource.
 
@@ -327,125 +326,43 @@ server-validated relative Site paths.
 
 ## 11. HTTP boundary
 
-The canonical `@phis/server` API lives under `/api/v1/auth/*`. A Site runtime exposes the browser-facing
-same-origin facade under `/api/auth/*`, injects trusted Site/server credentials, forwards only approved
-headers and payload fields, and transports the host-bound session cookie. Browser code never receives the
-server API token or provider secret.
+The canonical `@phis/server` API lives under `/api/v1/auth/*` and requires the internal API token. A Site
+mounts the browser-facing same-origin facade `/api/auth/*` from `@phis/ui/next/route-handlers`; it forwards
+`/api/auth/<path>` to `/api/v1/auth/<path>`, injects the Site key and the internal token, and transports the
+host-bound session cookie. Browser code never receives the server API token or provider secret.
 
-The target facade includes these semantic operations:
+The `/api/v1/auth/*` operations are:
 
-- `GET /api/auth/manifest` and `GET /api/auth/me`;
-- `POST /api/auth/password/login`;
-- `POST /api/auth/providers/:provider/start`;
-- `GET /api/auth/providers/:provider/callback`;
-- `POST /api/auth/providers/link/confirm`;
-- `POST /api/auth/challenges/:challengeId/verify`;
-- `POST /api/auth/logout`;
-- authenticated identity, passkey, TOTP, recovery-code, and session-management operations under
-  `/api/auth/account/*`;
-- authorized Site Auth policy and provider-installation operations under `/api/auth/admin/*`.
+- `GET manifest`, `GET me`, `GET csrf`;
+- `POST password/login`, `POST password/reset/request`, `POST password/reset/confirm`;
+- `POST providers/:provider/start`, `GET providers/:provider/callback`, `POST providers/link/confirm`;
+- `GET workflow`, `POST workflow/verify`, `POST workflow/totp/enroll`, `POST workflow/totp/confirm`;
+- `POST logout`;
+- `GET account/security`, `DELETE account/factors/:factorId`, `DELETE account/sessions/:sessionId`;
+- `PATCH profile/name`, `PATCH profile/locale`, `PATCH profile/newsletter`, `PATCH profile/password`,
+  `POST profile/email/request`;
+- Site Admin operations: `PATCH admin/policy`, `PATCH admin/password-method`, `PATCH admin/totp-policy`,
+  `GET|POST|PATCH admin/installations`, `PATCH|DELETE admin/installations/:installationKey`,
+  `POST admin/installations/:installationKey/test`.
 
-Exact payload schemas are versioned wire contracts. Unknown method keys, challenge kinds, stages, callback
-origins, and fields are rejected. Redirect destinations are normalized relative Site paths from an
-allowlisted Area/path policy; open redirects are forbidden.
+The request and response schemas are listed in the generated [API reference](./docs/API.md).
 
-## 12. One multi-Area Auth Module
+The handlers under `src/app/api/auth/*` (`csrf`, `login`, `logout`, `me`, `password/reset/*`,
+`profile/*`) are the unguarded implementations that the matching `/api/v1/auth/*` routes wrap with the
+internal-token guard. They resolve the Site from request headers. The operator login form calls
+`/api/auth/csrf` directly.
 
-The first-party frontend feature is one logical optional Module, `@phis/ui/auth`, not separate
-login, settings, and account-security Modules. Its target Area eligibility is exactly `public`, `admin`,
-and `app`. App and every other authenticated Area consume an existing Core session without the Module;
-App activation supplies the first-party authenticated self-service security surface.
+Unknown method keys, stages, callback origins, and fields are rejected. Redirect destinations are
+normalized relative Site paths; open redirects are forbidden.
 
-The default Phi Site preset activates that same Module id in all three eligible Areas:
+## 12. Auth UI Module, Areas, and Account Widget
 
-- Public contributions: `/login`, `/logout`, `/register`, `/confirm`, `/reset-password`, the reusable
-  `PhiLoginWidget`, challenge/mandatory-enrollment surfaces, and the modal-capable Auth Controller;
-- Admin contribution: the Site Auth settings route through the Admin `settings` route mount. The module id
-  maps to the effective path `/settings/phis+ui+auth` and injects its navigation item below the
-  Area-owned Settings container;
-- App contribution: `/security`, a composed credential/identity/factor/recovery/session management
-  surface, an Account Widget menu contribution targeting effective `/app/security`, and in-place
-  reauthentication for an already mounted App document whose complete session subsequently expires.
+The first-party Auth Module, its Public/Admin/App contributions, the replaceable Auth UI provider, and the
+`PhiAccountWidget` boundary are specified in [phis-ui AUTHENTICATION.md](../phis-ui/AUTHENTICATION.md).
+Core's obligations toward them are the ones in this document: Core owns every security decision, and a
+provider submits responses to Core but cannot declare a factor, assurance result, or session complete.
 
-The App surface is available only to a complete Site session. Mandatory enrollment before session
-completion remains a Public Auth workflow even when it reuses the same presentation components.
-
-Navigation overlays may reorder, reparent, or tombstone those items without changing their effective
-route paths. Tombstoning the Area-owned Settings container hides its remaining subtree at runtime while
-Builder navigation authoring retains the disabled source items, as defined by the route-mount/navigation
-contract.
-
-The Auth Module owns one meaningful Area-mounted Auth Controller type. Its Public instance coordinates
-login modal, provider redirect, challenge, mandatory enrollment, and return-state presentation. Its Admin
-instance coordinates provider configuration status, setup tests, and settings feedback. Its App instance
-coordinates account-security presentation and in-place session reauthentication. No instance owns
-security decisions or secret state. Another authenticated Area may expose in-place reauthentication only
-when its resolved Auth provider projection explicitly declares `primary-login`.
-
-The same `PhiLoginWidget` is the content primitive for both the real `/login` Page and modal login. A
-modal is a container/host mode, not a second login implementation. `/<locale>/login` is a real localized
-Public Page resolved from the active Public Auth Module's canonical `/login` route preset, never a route
-whose only purpose is to open a modal.
-
-## 13. Replaceable Auth UI provider
-
-Runtime Modules may contribute an immutable, owner-scoped Auth UI provider descriptor and separate lazy
-Client implementation, following the existing provider/Client-manifest boundaries. Global mutable
-registries, import-side-effect registration, request-derived imports, and Core imports of the first-party
-login implementation are forbidden.
-
-For one Area's active module set:
-
-- zero Auth UI providers is valid and means that Area exposes no Auth presentation;
-- exactly one provider is the active presentation provider;
-- more than one provider is a hard descriptor-resolution error, never a first-match choice.
-
-A third party replaces authentication presentation by activating its Module and deactivating
-`@phis/ui/auth` in the relevant Areas. Tooling should offer an atomic Public, Admin, and App
-replacement, but Area activation remains independent: a Site may replace Public login while retaining the
-first-party Admin settings or App security surface when the provider contracts remain compatible.
-
-Every resolved Area projection of a provider descriptor declares its closed Core
-workflow-presentation capabilities, including the applicable primary-login, factor-challenge,
-factor-enrollment, recovery, account-security, and site-settings kinds. Capabilities are resolved per
-Area and must not be copied as one global union onto every eligible Area. Area eligibility does not imply
-support. Core rejects a policy activation when the active presentation cannot complete its required
-workflows and fails closed if a required capability later disappears. A provider submits responses to
-Core; it cannot declare a factor, assurance result, or session complete.
-
-The first-party Public projection exposes login and pre-session workflow presentation, Admin exposes Site
-settings, and App exposes account security plus `primary-login` for in-place session recovery. A
-third-party replacement may provide the same App capability or omit it; omission selects the canonical
-Public login redirect rather than a first-party or Core-owned modal fallback.
-
-The stable replacement route is `/login`. A third-party Auth Module replaces it by deactivating the
-first-party Module in Public and contributing its own canonical `/login` route preset and compatible Auth
-UI provider. Site access guards resolve that stable Public route and must never import, reactivate, or
-special-case the first-party login implementation. Area activation remains independent, so compatible
-first-party Admin settings or App security may remain active while Public login is replaced.
-
-The provider is presentation-only. It consumes the public Auth manifest and opaque server workflow. If a
-third party also needs new server behavior, its Module binds to its own Add-on under `SERVER_ADDONS.md`;
-that Add-on still returns Core-compatible identity and session outcomes.
-
-## 14. Account Widget and profile ownership
-
-`PhiAccountWidget` remains a Core/shared account surface because guest/account state, profile links,
-commerce links, and logout are useful in several Areas independently of the first-party Auth Module.
-
-It consumes the generic viewer/session snapshot. For a guest, it delegates login presentation to the
-single resolved Auth UI provider. If no provider is active, it must not import or silently render the
-first-party login form. For an authenticated viewer, it may invoke the Core logout action directly.
-
-The account menu accepts owner-scoped contributions such as profile, orders, billing, identity security,
-and logout. Personal profile data and user administration are not made Auth-Module concerns merely because
-they appear in the same menu. Credential, passkey, TOTP, linked-identity, and session management remain
-authentication-security surfaces.
-
-The first-party Auth Module contributes the Account Widget's security item and targets `/app/security`.
-The Account Widget does not import or implement that route and remains functional without Auth.
-
-## 15. Admin settings and secrets
+## 13. Admin settings and secrets
 
 The Auth Module's Admin settings surface is restricted by the Core Site-Admin policy and manages only the
 current Site. It may configure method/stage
@@ -462,22 +379,20 @@ non-secret identifiers. Secret creation, replacement, test, and rotation use an 
 flow and emit an audit event. Auth configuration is semantic Site state backed by normalized Auth tables
 and the secret store; it is not theme data, generic Module Storage, or browser-owned config.
 
-The store is `phis.server_secrets`, described in section 16 of
+The store is `phis.server_secrets`, described in
 [SERVER_ADDONS.md](./SERVER_ADDONS.md): one encrypted row per secret, under a root key that stays in each
 instance's runtime configuration. A provider installation holds the reference
 `site:<site key>:core:auth.<installation key>` and never a value.
 
-It used to be a line in `config/phis-runtime.json`, written there by an admin request. That made every
-provider an operator configured live on exactly one host -- a second instance cannot be handed that file
-without copying it, and a rotation had to reach every copy. An installation still carrying the old field
-runs `phis auth import-secrets` once; it moves the values into the store, rewrites the stored references,
-and removes the field.
+Provider secrets are never read from `config/phis-runtime.json`; configuration validation rejects an
+`auth.secrets` field. `phis auth import-secrets` moves the values of such a field into `phis.server_secrets`,
+rewrites the stored installation references, and removes the field from the file.
 
 The status an admin surface reports is an existence check, not a decryption, and so is the question the
 public method manifest asks about whether a provider is offered at all. Only a flow that actually
 authenticates resolves a value.
 
-## 16. Bootstrap, disablement, and preset restore
+## 14. Bootstrap, disablement, and preset restore
 
 The first Site Admin is created out of band through `phis site admin --site <site key> --email <email>`,
 which creates the global user with a password when the address is new, and writes the Site membership and
@@ -489,7 +404,7 @@ Disabling the Auth Module is permitted and has no hidden runtime fallback. Exist
 logout continue to work; login/settings routes contributed by the disabled Module do not. The Builder may
 warn when no Public Auth UI provider is active, but it must not auto-enable one.
 
-The CLI operation `phis-cli auth restore-preset --site <site-key>` is the semantic recovery contract. It
+The CLI operation `phis auth restore-preset --site <site-key>` is the semantic recovery contract. It
 restores the first-party `@phis/ui/auth` activation and its code-owned route presets in Public,
 Admin, and App. Because this is an explicit operator recovery command, it deactivates conflicting
 Auth UI provider Modules in those three Areas and reports every activation change, but does not uninstall
@@ -508,7 +423,7 @@ operator placed on such an item is ordinary Site customization, it locks nobody 
 repair. The command does not create users, enable authentication methods, overwrite provider policy,
 replace secrets, relink identities, or mutate sessions.
 
-## 17. Security and audit requirements
+## 15. Security and audit requirements
 
 All credential, provider-start, callback, code-verification, linking, enrollment, recovery, and logout
 operations use method-appropriate CSRF/replay protection and rate limits. Authentication transactions,

@@ -1,24 +1,27 @@
 # Phi Viewer Authorization Contract
 
-This document is the normative target v1 contract for Site-scoped viewer roles, provider-qualified
-group claims, access evaluation, persistence, and API enforcement in `@phis/server`. Site rendering and
+This document is the v1 contract for Site-scoped viewer roles, provider-qualified group claims, Add-on
+roles, access evaluation, persistence, and API enforcement in `@phis/server`. Site rendering and
 responsive visibility consume this contract through `@phis/ui`; they must not define a second
 authorization model. General group persistence, membership semantics, and Media Space authorization
 are governed by [GROUPS_AND_STORAGE.md](./GROUPS_AND_STORAGE.md). Local and external user/group Directory
-provider bindings and assertion provenance are governed by
+provider bindings and assertion provenance are designed in
 [DIRECTORY_PROVIDERS.md](./design/DIRECTORY_PROVIDERS.md).
 
 Authentication, global user identity, Site membership admission, and session creation are governed by
 [AUTHENTICATION.md](./AUTHENTICATION.md). This document begins after a valid Site session exists; role
 claims never serve as credentials or identity-linking evidence.
 
-The migration to this contract is an ABI break. The old Base/Custom flag transport and the new provider
-claim transport must not coexist as alternative authorization paths.
+The claim shapes, policy shapes, and the evaluator live in `@phis/contracts/access`
+(`phis-contracts/src/access.ts`). `@phis/server` re-exports them from `src/lib/authorization.ts` and adds
+only the named Core policies.
 
-## 1. Roles, providers, and claims
+## 1. Roles, groups, and claims
 
-A role is one stable flag in the namespace of exactly one role provider. A role is not an individual
-permission. A provider owns its flag meanings, labels, and assignment validation.
+There are three kinds of claim.
+
+**Core role claim.** Core's roles are bit flags in the namespace of the Core role provider
+`@phis/server/core`:
 
 ```ts
 type PhiRoleProviderId = `@${string}/${string}`;
@@ -29,64 +32,72 @@ type PhiViewerRoleClaim = {
 };
 ```
 
-`@phis/server/core` is the universal Core role provider. Every authenticated Site viewer has one
-effective Core claim, even when its flags are zero. An enabled compatible Add-on may contribute at most
-one additional claim for its own provider id.
+Every authenticated Site viewer has one effective Core claim, even when its flags are zero. A role is not
+an individual permission. A flag value that is not a non-negative integer is read as no flags.
 
-Role flag spaces are provider-local. The same numeric bit used by two providers has no relationship and
-cannot collide.
-
-A group is a stable provider-qualified Site audience, not a role or permission:
+**Group claim.** A group is a stable provider-qualified Site audience, not a role or permission:
 
 ```ts
 type PhiGroupProviderId = `@${string}/${string}`;
 
 type PhiViewerGroupClaim = {
   providerId: PhiGroupProviderId;
-  groupKeys: readonly string[];
+  key: string;
+  flags: number; // membership level bits: Member, Author, Editor, Manager
 };
 ```
 
-Group keys are provider-local and immutable after publication. Membership capabilities such as Member,
-Author, Editor, or Manager govern domain operations server-side; the shared visibility policy tests only
-effective membership in one of the declared groups.
+Group keys are provider-local and immutable after publication. Membership levels govern domain
+operations server-side; the shared access policy tests only effective membership in one of the declared
+groups.
+
+**Add-on role claim.** An Add-on's roles are named strings, declared in its manifest:
+
+```ts
+type PhiViewerAddonRoleClaim = {
+  providerId: PhiRoleProviderId; // the Add-on id
+  roles: readonly string[];
+};
+```
+
+Names rather than bits, because an Add-on's roles are declared in its own manifest: a bit position
+would have to be handed out and kept forever, and reordering the manifest would silently change what a
+policy means. Core never interprets the names.
 
 A Server Add-on never evaluates any of this itself. It declares `@phis/server/authorization:v1` and
-receives a bound evaluator on its request context, which answers whether the acting user may act on one
-of its rows, what level they hold in a group, and whether they hold a Site access. The evaluator answers
-and grants nothing: it is the consulting surface for this document, not a second place where the model
-is decided. See [SERVER_ADDONS.md](./SERVER_ADDONS.md), section 13.
+`@phis/server/roles:v1` and receives bound objects on its request context: whether the acting user may act
+on one of its rows, what level they hold in a group, whether they hold a Site access, and whether they
+hold one of the Add-on's own roles. These answer and grant nothing. See
+[SERVER_ADDONS.md](./SERVER_ADDONS.md), section 13.
 
 ## 2. Runtime authorization snapshot
 
-The authenticated viewer response exposes compact role claims, not expanded role names or permission
-lists:
+The authenticated viewer response (`GET /api/auth/me`, `user`) carries compact claims, not expanded
+role names or permission lists:
 
 ```ts
-type PhiViewerAuthorization = {
-  authenticated: boolean;
+{
   roleClaims: readonly PhiViewerRoleClaim[];
   groupClaims: readonly PhiViewerGroupClaim[];
+  addonRoleClaims: readonly PhiViewerAddonRoleClaim[];
   authorizationRevision: number;
-};
+}
 ```
 
-`authorizationRevision` changes whenever an effective Site membership, provider role assignment, or
-group membership changes. It is part of authorization-sensitive cache identity. Runtime snapshots carry
-only compact stable group keys; expanded group labels, descriptions, member lists, and domain metadata
-remain in dedicated authorized endpoints.
+`authorizationRevision` is the Site membership's `authorization_revision`. It changes whenever the Core
+role claim or a group membership changes, and is part of authorization-sensitive cache identity. Runtime
+snapshots carry only compact stable group keys; expanded group labels, descriptions, member lists, and
+domain metadata remain in dedicated authorized endpoints.
 
-`resolvedArea` is a separately derived landing preference. It does not authorize or prohibit Area
-access. Area access is evaluated through the same access policy as every other contribution.
+The response's `area` is a separately derived landing preference (`src/lib/user-area.ts`). It does not
+authorize or prohibit Area access. Area access is evaluated through the same access policy as every other
+contribution.
 
-The `admin` Area is the shared Site control-plane host for Core Admin and Developer viewers. Core
-Developer therefore resolves to `/admin`, while user/role/Site administration remains protected by
-Core-Admin-only contribution policies. Observability and developer tooling use the Core Developer
-policy and are also accessible to Core Admin through the Site-superuser override. There is no
-separate `dev` Area or `/dev` compatibility route in v1.
-
-Role catalogs, labels, and descriptions are loaded only by role-administration surfaces. They are not
-included in every viewer runtime response.
+The Areas are `public`, `app`, `admin`, `builder`, `editor`, and `accounting`
+(`src/lib/constants/cms-areas.ts`). The `admin` Area is the shared Site control-plane host for Core Admin
+and Developer viewers: Core Developer resolves to `admin`, while user, role and Site administration remain
+protected by Core-Admin-only policies. Observability and developer tooling use the Core Developer policy
+and are also reachable by Core Admin through the Site-superuser override.
 
 ## 3. Shared access policy
 
@@ -98,32 +109,26 @@ type PhiViewerAccessPolicy =
   | { access: "anyone" }
   | { access: "anonymous" }
   | { access: "authenticated" }
-  | {
-      access: "roles";
-      providerId: PhiRoleProviderId;
-      allowedRoleFlags: number;
-    }
-  | {
-      access: "groups";
-      providerId: PhiGroupProviderId;
-      allowedGroupKeys: readonly string[];
-    };
+  | { access: "roles"; providerId: PhiRoleProviderId; allowedRoleFlags: number }
+  | { access: "groups"; providerId: PhiGroupProviderId; allowedGroupKeys: readonly string[] }
+  | { access: "addon-roles"; providerId: PhiRoleProviderId; allowedRoles: readonly string[] };
 ```
 
-Combined `allowedRoleFlags` always means OR: the viewer needs at least one listed role. The v1 policy
-does not define `allFlags`, deny flags, arbitrary boolean policy trees, or implicit per-feature
-permission lists. Combined `allowedGroupKeys` also means OR and must contain at least one valid stable
-key.
+Combined `allowedRoleFlags`, `allowedGroupKeys`, and `allowedRoles` always mean OR: the viewer needs at
+least one. The v1 policy does not define `allFlags`, deny flags, arbitrary boolean policy trees, or
+implicit per-feature permission lists.
 
-Evaluation is:
+Evaluation (`canPhiAccessSubjectReach`) is:
 
-1. `anyone` always allows.
+1. A missing policy is `anyone`, and `anyone` always allows.
 2. `anonymous` allows only an unauthenticated viewer.
-3. `authenticated` allows any authenticated viewer.
-4. `roles` requires authentication and a matching provider claim.
-5. `groups` requires authentication and a matching effective provider group claim.
-6. For `roles` or `groups`, a viewer with the Core `Admin` role is allowed before provider-specific
-   matching.
+3. Every other policy requires authentication; `authenticated` then allows.
+4. For `roles`, `groups`, or `addon-roles`, a viewer with the Core `Admin` role is allowed before
+   provider-specific matching.
+5. `groups` requires a matching group claim of that provider.
+6. `addon-roles` requires a matching Add-on role claim of that provider. A viewer that carries no
+   `addonRoleClaims` is denied.
+7. `roles` requires `allowedRoleFlags > 0` and an overlapping flag in the claim of that provider.
 
 The Core Admin override is a normative Site-superuser rule. It applies to every Site-scoped Core or
 Add-on role or group policy, but it does not:
@@ -134,14 +139,20 @@ Add-on role or group policy, but it does not:
 - bypass an external provider's own authorization;
 - grant global operator, infrastructure, or cross-Site authority.
 
-A factual helper that asks whether a claim contains a role must not apply the Admin override. Only the
-access-policy evaluator applies it. The same rule applies to factual group-membership helpers.
+A factual helper that asks whether a claim contains a role (`hasProviderRole`, `hasPhiBaseRole`,
+`hasProviderGroup`, `hasProviderAddonRole`) does not apply the Admin override. Only the evaluator applies
+it.
+
+A Module may reference Core roles and groups, and additionally the roles and groups of its own
+`serverBinding` provider. Referencing a different provider creates an undeclared second dependency and is
+invalid (`isPhiAccessPolicyProviderOwned`). The Core provider is universal and does not count as a second
+binding.
 
 ## 4. Core role matrix
 
-Core keeps stable individual role flags such as Admin, Developer, Builder, Author, Publisher,
-Supporter, and Accountant. Reusable access groups are centrally declared masks, not separate
-permissions:
+Core keeps stable individual role flags (`PhiBaseRole`): Admin, Builder, Publisher, Author, Developer,
+Supporter, and Accountant. Reusable access policies are centrally declared masks in
+`src/lib/authorization.ts`, not separate permissions:
 
 ```text
 Site administration  = Admin only
@@ -149,104 +160,111 @@ Developer tools      = Developer
 Structure authoring  = Developer | Builder
 Content editing      = Developer | Author | Publisher
 Publishing           = Developer | Publisher
+Site Media           = Developer | Builder | Author | Publisher
 Support              = Developer | Supporter
 Accounting           = Developer | Accountant
 ```
 
-Core Admin is intentionally omitted from reusable masks because the evaluator grants the Site-admin
-override centrally.
+Core Admin is omitted from the masks because the evaluator grants the Site-admin override centrally.
+These are also the Site accesses an Add-on names in `grantableBy` or `hasSiteAccess`: `site-admin`,
+`developer-tools`, `structure-authoring`, `content-editing`, `publishing`, `site-media`, `support`,
+`accounting`.
 
-Site groups are not roles and follow their own split: creating or deleting a group, and granting or
-revoking the Manager level inside one, is `Developer | Admin`, while a group's Manager administers the
-Author, Editor and Member levels of their own group. Group membership never confers any Core role. The
-full table is in [GROUPS_AND_STORAGE.md](./GROUPS_AND_STORAGE.md).
+Site groups are not roles and follow their own split: creating a group, putting a retired group back in
+service, and granting or revoking the Manager level are `Developer | Admin`; a group's Manager retires
+their group and administers its Author, Editor and Member levels. There is no group deletion. Group
+membership never confers any Core role. The full table is in [GROUPS_AND_STORAGE.md](./GROUPS_AND_STORAGE.md).
 
-Only Core Admin may assign or remove Site user role claims. A Developer may receive provider roles such
-as an Add-on's `Admin` or `Maintainer` role, but those roles grant authority only inside that provider
-and never grant Core user or role administration.
+Only Core Admin may assign or remove Core role flags on a Site (the write methods of
+`/api/site/admin/users`, or
+`phis site admin` for the operator). Add-on roles are granted separately (section 5) and grant authority
+only inside that Add-on; they never grant Core user or role administration.
 
-## 5. Add-on role declarations
+## 5. Add-on roles
 
-An Add-on may declare a provider-local role catalog in its Add-on manifest:
+An Add-on declares named roles in its manifest, each with the policy that decides who may grant it
+(`PhisAddonRoleDescriptor` in `@phis/contracts/addon`):
 
 ```ts
 roles: [
-  { key: "maintainer", flag: 1 << 0, label: "Maintainer" },
-  { key: "triage", flag: 1 << 1, label: "Triage" },
+  { name: "market-admin", grantableBy: { siteAccess: "site-admin" } },
+  { name: "vendor",       grantableBy: { role: "market-admin" } },
 ]
 ```
 
-Role keys and flags are immutable ABI identities for a published provider version. `@phis/server`
-validates that:
+- A role name matches `^[a-z][a-z0-9-]{0,63}$` and is frozen from the first assignment.
+- `grantableBy` is either `{ siteAccess }`, one of the Site accesses in section 4, or `{ role }`, another
+  role of the same Add-on.
+- At least one role must be grantable by a Site access; a set in which every role is granted by another
+  role is refused at validation.
+- A Site Admin may always grant and revoke any role of any Add-on.
 
-- every flag is a single positive supported bit;
-- keys and flags are unique within the provider;
-- assigned flags are a subset of the active provider catalog;
-- an Add-on resolves or mutates only its own claim namespace;
-- only `@phis/server` constructs the Core claim.
+Assignments are stored in `phis.site_addon_user_roles` (`site_id`, `addon_id`, `user_id`, `role`,
+`granted_by_user_id`, `granted_at`), written by `POST`/`DELETE /api/site/addon-roles` after `grantableBy`
+is evaluated against the acting user, and by `phis addon role --grant`/`--revoke` for the operator.
+Add-ons never write this table.
 
-A Site Module may always reference Core roles. It may additionally reference roles of its own
-`serverBinding.providerId`. Referencing a different third-party provider creates an undeclared second
-dependency and is invalid.
+Add-on roles are checked in three places, all against the roles the current manifest declares:
 
-The Core provider is universal and does not count as a second Add-on binding.
+- the handler, through `roles:v1` (`has(role)`, `all()`);
+- a declared query stating `requiresRole` or `alsoAllowedByRole`;
+- a browser or server access policy `{ access: "addon-roles", providerId, allowedRoles }`, evaluated
+  against the viewer's `addonRoleClaims`.
+
+The full declaration, granting, and data-path rules are in [SERVER_ADDONS.md](./SERVER_ADDONS.md),
+section 13, *Add-on roles*.
 
 ## 6. Site-scoped persistence
 
-Core and Add-on role claims use one persistence path:
+Core role flags are stored in `phis.user_site_role_claims`:
 
 ```text
 user_site_role_claims
-├── site_id
 ├── user_id
+├── site_id
 ├── provider_id
-└── role_flags
+├── role_flags     INT, > 0
+├── created_at
+└── updated_at
 ```
 
-The primary key is `(site_id, user_id, provider_id)`. The row references the Site membership and is
-deleted with it. `role_flags` is an `INT`; each provider therefore owns its own bounded positive flag
-space.
+The primary key is `(user_id, site_id, provider_id)`. The row references the Site membership
+`(user_id, site_id)` and is deleted with it. The Core role assignment is the row whose provider is
+`@phis/server/core`. A zero assignment is represented by deleting the row; runtime resolution still
+materializes the authenticated viewer's effective Core claim with zero flags. Core writes only the Core
+provider's row.
 
-The Core role assignment is the row whose provider is `@phis/server/core`. The target v1 schema
-does not keep `base_role_flags` or `custom_role_flags` as parallel effective-authorization columns.
-
-A zero assignment is represented by deleting the provider row, except that runtime resolution still
-materializes the authenticated viewer's effective Core claim with zero flags.
-
-Provider claims are written only through an authorized generic `@phis/server` role-assignment service.
-Site Modules and Add-ons never write authorization tables directly.
+Add-on role assignments are stored in `phis.site_addon_user_roles` (section 5).
 
 Provider-qualified group claims use the one normalized `site_groups` and `site_group_members` path from
-`GROUPS_AND_STORAGE.md`. Group membership writers increment the same Site membership
-`authorization_revision`; Modules and Add-ons never maintain an independent effective-membership table.
+[GROUPS_AND_STORAGE.md](./GROUPS_AND_STORAGE.md). Core role and group membership writers increment the
+Site membership's `authorization_revision`; Modules and Add-ons never maintain an independent
+effective-membership table.
 
-## 7. Custom Site roles
+Claims are written only through authorized `@phis/server` routes and CLI commands. Site Modules and
+Add-ons never write authorization tables directly.
 
-A Site-defined custom role is a named administrative bundle that expands server-side into registered
-provider role flags. It is not another global numeric flag namespace.
+## 7. Provider lifecycle
 
-The viewer runtime receives only the resulting effective provider claims. Custom-role ids may be
-returned by dedicated user/role administration endpoints, but authorization never branches between
-Base Roles and Custom Roles.
+Claim effectiveness requires the provider to be `available` in the Site's capability snapshot: installed,
+registered, globally enabled, Site-enabled, compatible, and correctly configured. Core's own provider is
+always effective.
 
-## 8. Provider lifecycle
+- A role flag claim of an unavailable provider is omitted from the effective claims.
+- A group claim is omitted when the group's provider or the membership's source provider is unavailable,
+  when the group is retired, or when the membership has expired.
+- An Add-on role claim is omitted when the Add-on is not enabled globally or for the Site, and a role the
+  current manifest no longer declares is omitted from `addonRoleClaims` and from `roles:v1`.
 
-Disabling an Add-on preserves its persisted user claim rows but omits those claims from effective viewer
-authorization. Re-enabling a compatible provider restores them.
+Disabling or removing an Add-on keeps its persisted rows; re-enabling a compatible provider restores
+them. `phis addon purge` deletes the Add-on's role assignments and retires its groups. Core-owned groups
+remain effective when an optional Groups administration Module is disabled, because that Module is UI,
+not the security authority.
 
-The same lifecycle applies to provider-owned group claims. Core-owned groups remain effective when an
-optional Groups administration Module is disabled because that Module is UI, not the security
-authority.
+## 8. Enforcement
 
-Unknown or removed role bits make the provider claim diagnostically incompatible. They must not be
-silently masked into a partially valid assignment.
-
-Claim effectiveness requires the same provider state used by Server capability resolution: compiled,
-registered, globally enabled, Site-enabled, compatible, and correctly configured.
-
-## 9. Enforcement
-
-One pure evaluator implements this policy contract and is shared by:
+One pure evaluator, `canPhiAccessSubjectReach` from `@phis/contracts/access`, implements this policy
+contract. It is compiled once and used by `@phis/server` (as `canPhiViewerAccess`) and by `@phis/ui` for:
 
 - Site Area and Page access;
 - active route resolution;
@@ -258,16 +276,17 @@ One pure evaluator implements this policy contract and is shared by:
 Client evaluation is presentation only. Route resolution and every state-changing or protected read API
 must enforce the same policy server-side.
 
-CMS write validation accepts the same canonical policy object in Region, Layout, Surface, and Widget
-render-block config and in Command Toolbar button config. An explicitly present malformed policy makes
-the write invalid; it is never normalized to public access. Module artifact minima and provider
-ownership are resolved by the compiled `@phis/ui` Module catalog, while `@phis/server` remains
-the authority for claims and protected API operations.
+CMS write validation (`src/lib/cms/write-validation.ts`) checks the policy object in render-block config,
+in Command Toolbar button config, and in a Page's `accessPolicy`. An explicitly present malformed policy
+makes the write invalid; it is never normalized to public access. The validator accepts `anyone`,
+`anonymous`, `authenticated`, and `roles` policies; a `groups` or `addon-roles` policy is refused at
+write. Module artifact minima and provider ownership are resolved by the compiled `@phis/ui` Module
+catalog, while `@phis/server` remains the authority for claims and protected API operations.
 
-Role-specific convenience guards may exist, but they must delegate to the shared policy evaluator and
-must not reproduce independent `allowAdmin`, `allowDeveloper`, or similar decision logic.
+Role-specific convenience guards may exist, but they must delegate to the shared evaluator and must not
+reproduce independent `allowAdmin`, `allowDeveloper`, or similar decision logic.
 
-## 10. Responsive visibility
+## 9. Responsive visibility
 
 Viewport visibility is not authorization. `@phis/server` may persist the shared viewport flag matrix, but
 it must never use viewport or user-agent detection to grant API, Area, Page, or role access. The

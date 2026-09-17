@@ -74,39 +74,66 @@ The target PostgreSQL schema for `phis` is:
   - widget ownership remains site-local and must be validated against the referenced content site
 - `phis.sites.flags INT`
   - `1 << 0 = active`
-- `phis` CMS revision payload `flags`
+- `phis` CMS revision payload `flags` (`PhiCmsFlags` in `@phis/contracts/cms`; not every flag applies to every row kind)
   - `1 << 0 = site_custom`
   - `1 << 1 = hidden`
-  - `1 << 4 = collapsed`
+  - `1 << 2 = mobile_only`
+  - `1 << 3 = desktop_only`
+  - `1 << 4 = collapsed` (Regions)
+  - `1 << 5 = no_translate`
+  - `1 << 6 = no_index` (Pages)
 - `phis` CMS revision payload `viewportFlags SMALLINT`
   - `0 = unrestricted`
   - `1 << 0 = compact`
   - `1 << 1 = medium`
   - `1 << 2 = wide`
   - canonical persisted values are `0..6`; `7` normalizes to `0`
-- `phis` CMS revision payload `contentWidgets[].flags`
-  - `1 << 5 = no_translate`
-- `phis` CMS revision payload `visibilityMask`
+- `phis` CMS revision payload `visibilityMask`, and the `area_id` / `target_area_id` columns
+  (`PhiCmsVisibilityContext` in `@phis/contracts/cms`)
   - `1 << 0 = public_area`
   - `1 << 1 = app_area`
   - `1 << 3 = admin_area`
   - `1 << 4 = editor_area`
-  - `1 << 5 = dev_area`
   - `1 << 6 = accounting_area`
   - `1 << 8 = builder_area`
+  - bits `2`, `5`, and `7` are unassigned
 - `phis` CMS revision flags
   - `1 << 0 = draft`
   - `1 << 1 = published`
   - `1 << 2 = deleted` for page revisions whose payload marks the page as deleted
 - `phis.site_nav_scopes.flags INT`
-  - reserved for future set-level switches
-- `phis.user_accounts.flags INT`
-  - `1 << 0 = terms accepted`
+  - no bit is assigned
+- `phis.user_accounts.flags INT` (`PhiUserAccountFlag`)
+  - `1 << 0 = disabled`
+  - `1 << 1 = must change password`
+- `phis.user_emails.flags INT` (`PhiUserEmailFlag` in `@phis/contracts/access`)
+  - `1 << 0 = primary`; the partial unique index `user_emails_primary_user_idx` is defined on this bit
+- `phis.user_emails.source SMALLINT` (`PhiUserEmailSource` in `@phis/contracts/access`)
+  - `1 = operator`, `2 = admin`, `3 = registration`, `4 = self`, `5 = directory`, `9 = provider`
+  - `20 = Google`, `21 = Apple`, `22 = Microsoft`, `23 = GitHub`
 - `phis.user_site_role_claims.role_flags INT`
-  - site- and provider-scoped role matrix governed by `AUTHORIZATION.md`
+  - Core role matrix (`PhiBaseRole`) governed by `AUTHORIZATION.md`
 - `phis.user_site_memberships.user_site_flags INT`
   - `1 << 0 = disabled`
   - `1 << 1 = newsletter opt-in`
+- `phis.user_sessions.auth_state SMALLINT` (`PHI_AUTH_SESSION_STATES`)
+  - `1 = factor enrollment required`
+  - `2 = factor challenge required`
+  - `3 = complete`
+- `phis.site_media_config.flags INT` (`PhiSiteMediaFlags`)
+  - `1 << 0 = User Spaces available`
+  - `1 << 1 = Group Spaces available`
+- `phis.media_spaces.kind SMALLINT`
+  - `1 = site`, `2 = user`, `3 = group`, `4 = addon`
+- `phis.media_upload_sessions.purpose SMALLINT` (`PhiMediaUploadPurpose`)
+  - `1 = Media Asset`
+  - `2 = Add-on Asset`
+- `phis.server_addons.flags INT`
+  - `1 << 0 = globally enabled`
+- `phis.site_server_addons.flags INT`
+  - `1 << 0 = enable requested for the Site`
+- `phis.server_instances.flags INT`
+  - `1 << 0 = ready`
 
 ### `phis.sites`
 
@@ -117,7 +144,6 @@ The target PostgreSQL schema for `phis` is:
 - `default_locale VARCHAR(8) NOT NULL DEFAULT 'en'`
 - `available_locales VARCHAR(8)[] NOT NULL DEFAULT ARRAY['en']::VARCHAR(8)[]`
 - `flags INT NOT NULL DEFAULT 0`
-- `next_node_sequence BIGINT NOT NULL DEFAULT 1`
 - `theme JSONB NOT NULL DEFAULT '{}'::jsonb`
 - `public_base_url VARCHAR(512) NOT NULL`
 - `mail_from VARCHAR(320) NOT NULL`
@@ -132,36 +158,22 @@ The target PostgreSQL schema for `phis` is:
 - `updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
 
 Contract:
-- `sites` stores the complete site-wide runtime and business configuration, including canonical hostname, available locales, public URL, mail identity, commerce handoff values, and form guard secret.
-- `theme` stores public-facing presentation configuration only, such as fonts, shell options, and a constrained Ant Design token/component projection.
-- `theme` must not become a raw dump of arbitrary `ConfigProvider` state; it is a site-owned theme contract that the frontends map into Ant Design.
-- `theme` must not hold widget-instance configuration. Widget config belongs to widget rows in the CMS tables.
-- A first valid shape is:
-  - `fonts.body`
-- `fonts.mono`
-- `shell.header.*`
-- `shell.sider.*`
-- `shell.footer.*`
-- `palette` (colour, per mode, in the shape a Module palette has)
-- `style.token`
-- `components`
-- The old 1:1 `site_config` shape is retired.
-- Public translation requests remain disabled by default. `translation.allowPublicReads` controls CDN-backed public reads, while `translation.allowPublicWrites` stays `false` unless a controlled public seed/import window is explicitly enabled.
+- `sites` stores the Site-wide runtime and business configuration: canonical hostname, locales, public URL, mail identity, commerce handoff values, and the form guard secret.
+- The immutable Site source locale is not a column. It is `sites.overrides.<siteKey>.sourceLocale` in the runtime configuration, with `translation.sourceLocale` as the installation fallback; see [TRANSLATIONS.md](./TRANSLATIONS.md).
+- `theme` stores public-facing presentation configuration only. Its shape is the `theme` member of `PhiBlockRuntimeSite` in `phis-ui/types/widget-runtime.ts`: `mode`, `blocks`, `derivedFrom`, `preset`, `presetVersion`, `shape`, `fonts`, `rem`, `brand`, `contact`, `shell`, `root`, `palette`, `style.token`, `buttons`, `typography`, and `components`.
+- `theme` must not become a raw dump of arbitrary `ConfigProvider` state; it is a Site-owned theme contract that the frontends map into Ant Design.
+- `theme` must not hold widget-instance configuration. Widget config belongs to the CMS revision trees.
 
 ### Media Spaces, Folders, and Storage
 
-The normative schema and behavior for general Site groups, Media Spaces, folders, quotas, Storage
-Profiles, Assets, variants, uploads, and delivery is defined only in
-[GROUPS_AND_STORAGE.md](./GROUPS_AND_STORAGE.md). The sections below describe the implemented baseline
-tables; where they and the contract document disagree, the contract document wins.
+The behavior of general Site groups, Media Spaces, folders, quotas, Storage Profiles, Assets, variants,
+uploads, and delivery is defined in [GROUPS_AND_STORAGE.md](./GROUPS_AND_STORAGE.md). The sections below
+describe the tables.
 
-The pre-P0 `media_groups` table, the global `local | s3` Storage switch, the per-asset
-`storage_provider` / `storage_bucket` / `public_url` columns, and the `flags`-based visibility model are
-retired. They exist neither in `scripts/sql/001_create_phis.pgsql` nor in the typed `src/db/` layer, and
-must not be reintroduced as a compatibility path.
+There is no global Storage switch, no per-Asset provider, bucket, or public URL column, and no
+`flags`-based Asset visibility.
 
-- `sites.theme.brand.logoAssetId` is the canonical brand-logo reference when a site uploads a logo through the media library.
-- `sites.theme.brand.logoUrl` is a runtime projection of the referenced media asset and should not be treated as the canonical source of truth.
+- `sites.theme.brand.logo.light` and `.dark` are the brand logos. A logo with `sourceKind: "asset"` references the Asset by `assetId`; its `url` is a delivery projection and never the source of truth. `sourceKind: "url"` carries an external `sourceUrl`.
 - The binary payload lives in the object store selected by the Asset's concrete Storage Profile; the database stores metadata, ownership, quota accounting, and storage keys only.
 - Ownership, lifecycle, delivery, and presentation are four separate closed contracts. No single `flags` column expresses access any more.
 
@@ -176,12 +188,19 @@ must not be reintroduced as a compatibility path.
 - `flags INT NOT NULL DEFAULT 0`
 - `created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
 - `updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
+- `probe JSONB NULL`
+- `probed_at TIMESTAMPTZ NULL`
+- `checksum_algorithm VARCHAR(16) NULL`
 - `UNIQUE (site_id, key)` and `UNIQUE (id, site_id)`
+- CHECK: `provider_id` is a namespaced id; `config` is a JSON object
 
 Contract:
 - One profile is one concrete, operator-configured Storage target for one Site.
 - `provider_id` is a namespaced service-provider id such as `@phis/server/storage-local` and is validated against the manifest-declared provider registry; an unavailable provider fails closed.
-- `secret_reference` names a runtime-config secret. Credentials never live in this row, in Site administration, or in any browser payload.
+- `secret_reference` names a secret in the server secret store (`phis.server_secrets`), for example `site:acme:addon:@phis/storage-s3:secret-access-key`. Credentials never live in this row, in Site administration, or in any browser payload.
+- `flags` has no assigned bit.
+- `probe` is what `phis storage probe` (or the first upload that needs it) found the endpoint can do, as `PhisMediaStorageProbe` from `@phis/contracts`: whether it is writable, which digests it verifies against the bytes it stores, and whether a digest survives a multipart object. It is an observation, not configuration, and every probe replaces the previous one. `probed_at` is `NULL` when nothing was recorded; a Local Profile is answered without a recorded probe.
+- `checksum_algorithm` is the digest this Profile records, chosen once from the probe. Every Asset, variant, and font cut stored through the Profile records its digest under this algorithm, so digests within one Profile stay comparable.
 - Every Asset and every generated variant binds to a concrete profile. There is no global Storage switch and no persisted canonical public URL.
 
 ### `phis.media_spaces`
@@ -189,9 +208,10 @@ Contract:
 - `id SERIAL PRIMARY KEY`
 - `site_id SMALLINT NOT NULL REFERENCES phis.sites(id) ON DELETE CASCADE`
 - `kind SMALLINT NOT NULL`
-- `user_id INT NULL` (composite FK to `user_site_memberships`)
-- `group_id INT NULL` (composite FK to `site_groups`)
-- `default_storage_profile_id INT NOT NULL` (composite FK to `media_storage_profiles`)
+- `user_id INT NULL` (composite FK to `user_site_memberships`, `ON DELETE CASCADE`)
+- `group_id INT NULL` (composite FK to `site_groups`, deferred, no cascade)
+- `addon_id VARCHAR(255) NULL` (FK to `server_addons`, `ON DELETE CASCADE`)
+- `default_storage_profile_id INT NOT NULL` (composite FK to `media_storage_profiles`, deferred)
 - `quota_bytes BIGINT NULL`
 - `used_bytes BIGINT NOT NULL DEFAULT 0`
 - `reserved_bytes BIGINT NOT NULL DEFAULT 0`
@@ -201,10 +221,12 @@ Contract:
 - `UNIQUE (id, site_id)`
 
 Contract:
-- `kind` is the closed owner contract: `1 = site`, `2 = user`, `3 = group`. A CHECK constraint enforces that exactly the matching owner column is set.
-- A Site has at most one Site Space, one Space per member, and one Space per group; partial unique indexes enforce that.
+- `kind` is the closed owner contract: `1 = site`, `2 = user`, `3 = group`, `4 = addon`. A CHECK constraint enforces that exactly the matching owner column (`user_id`, `group_id`, `addon_id`, or none for the Site Space) is set.
+- A Site has at most one Site Space, one Space per member, one Space per group, and one Space per Add-on; partial unique indexes enforce that.
 - The Site Space owns Site presentation, CMS content, theme, and published download Assets. CMS, Builder, Editor, and `phis:asset` resolution are pinned to it.
-- `quota_bytes` is an explicit Space-level override. `NULL` inherits the Site default from `site_media_config` per [GROUPS_AND_STORAGE.md](./GROUPS_AND_STORAGE.md) section 7; what an absent Site default itself means is not defined by the contract yet. `used_bytes` is committed usage and `reserved_bytes` is in-flight upload reservation; both are non-negative.
+- An Add-on Space holds the files of one Add-on on one Site, so its quota is the Add-on's quota. It is removed with the Add-on's `server_addons` row.
+- A group Space is not removed with its group: the deferred foreign key fails, at commit, a transaction that deletes a group whose Space still exists, while a whole-Site delete still succeeds.
+- `quota_bytes` is an explicit Space-level override. `NULL` inherits the Site default for the Space kind from `site_media_config` (User, Group, or Add-on); a `NULL` Site default means no limit. The Site Space has no Site default. `used_bytes` is committed usage and `reserved_bytes` is in-flight upload reservation; both are non-negative.
 - Composite foreign keys on `(user_id, site_id)` and `(group_id, site_id)` make a cross-Site owner unrepresentable rather than merely rejected in code.
 
 ### `phis.media_folders`
@@ -231,26 +253,35 @@ Contract:
 - `site_id SMALLINT PRIMARY KEY REFERENCES phis.sites(id) ON DELETE CASCADE`
 - `default_user_quota_bytes BIGINT NULL`
 - `default_group_quota_bytes BIGINT NULL`
+- `max_user_quota_bytes BIGINT NULL`
+- `max_group_quota_bytes BIGINT NULL`
+- `default_addon_quota_bytes BIGINT NULL`
+- `max_addon_quota_bytes BIGINT NULL`
 - `flags INT NOT NULL DEFAULT 0`
 - `max_object_bytes BIGINT NOT NULL DEFAULT 26214400`
-- `allowed_content_types VARCHAR(160)[] NOT NULL DEFAULT ARRAY[]::VARCHAR(160)[]`
+- `user_space_content_kinds VARCHAR(32)[] NOT NULL DEFAULT ARRAY[]::VARCHAR(32)[]`
+- `group_space_content_kinds VARCHAR(32)[] NOT NULL DEFAULT ARRAY[]::VARCHAR(32)[]`
 - `allowed_storage_profile_ids INT[] NOT NULL DEFAULT ARRAY[]::INT[]`
 - `updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
+- CHECK: every quota column is `NULL` or non-negative; `max_object_bytes > 0`
 
 Contract:
 - Site-level media policy applied when a Space is resolved and when an upload is initialized.
-- `flags` carries Space availability per `PhiSiteMediaFlags`: `1 << 0` User Spaces, `1 << 1` Group Spaces. Availability is a capability and is deliberately separate from quota, so an unavailable Space kind is rejected as `space_kind_unavailable` rather than as an exhausted quota. The default `0` makes default-deny structural: a Site that was never configured grants no User or Group Space, and the Site Space is never governed by these flags.
-- `flags` is materialized, not administered. It is recomputed when an Area is published, as the union of `preset.config.mediaSpaceKinds` across every published Area of the Site, and nothing else writes it -- neither the administration route nor the installation configuration. See `GROUPS_AND_STORAGE.md` section 7.
-- `default_user_quota_bytes` and `default_group_quota_bytes` are inherited live by every Space of that kind whose own `quota_bytes` is `NULL`, so changing a default moves all non-overridden Spaces. A Space-level `0` is an explicit revocation, and lowering a limit below current usage blocks new reservations without deleting or hiding an Asset.
-- The row is materialized once from the versioned `media.defaults.*` installation defaults in `config/phis-config.json`, which seed capacity only. After that the row is authoritative and there is no request-time fallback to configuration, so raising an installation default never widens an existing Site.
-- An empty `allowed_content_types` or `allowed_storage_profile_ids` array means "no additional restriction beyond the operator-level profile state", not "nothing allowed".
+- `flags` carries Space availability per `PhiSiteMediaFlags`: `1 << 0` User Spaces, `1 << 1` Group Spaces. Availability is a capability and is separate from quota, so an unavailable Space kind is rejected as `space_kind_unavailable` rather than as an exhausted quota. The default `0` makes default-deny structural. The Site Space and Add-on Spaces are never governed by these flags.
+- `flags`, `user_space_content_kinds`, and `group_space_content_kinds` are materialized, not administered. `materializeSiteMediaAvailabilityWithDb` (`src/db/media-spaces.ts`) recomputes them when an Area is published, from `tree_json #> '{preset,config,modules,mediaSpaces}'` of every published Area revision of the Site. A `user` or `group` entry in that object makes the kind available; its `kinds` array contributes content kinds. The result is the union across Areas, deduplicated and sorted. Neither the administration route nor the installation configuration writes these columns. See [GROUPS_AND_STORAGE.md](./GROUPS_AND_STORAGE.md) section 7.
+- `user_space_content_kinds` and `group_space_content_kinds` list the `PhiMediaKind` values a User or Group Space accepts; upload init refuses any other kind with `415 content_type_not_allowed`. An empty list accepts nothing. The Site Space and Add-on Spaces are not restricted by these columns.
+- `default_user_quota_bytes`, `default_group_quota_bytes`, and `default_addon_quota_bytes` are inherited live by every Space of that kind whose own `quota_bytes` is `NULL`, so changing a default moves all non-overridden Spaces. A Space-level `0` is an explicit revocation, and lowering a limit below current usage blocks new reservations without deleting or hiding an Asset.
+- `max_user_quota_bytes`, `max_group_quota_bytes`, and `max_addon_quota_bytes` are the ceilings a Space-level override may not exceed; `NULL` is no ceiling.
+- `max_object_bytes` is the largest single object a Site accepts.
+- The row is materialized once, seeding `default_user_quota_bytes` and `default_group_quota_bytes` from `media.defaults.userQuotaBytes` and `media.defaults.groupQuotaBytes` in `config/phis-config.json`. After that the row is authoritative and there is no request-time fallback to configuration, so raising an installation default never widens an existing Site.
+- `allowed_storage_profile_ids` is not evaluated by any read path.
 
 ### `phis.media_assets`
 
 - `id SERIAL PRIMARY KEY`
 - `site_id SMALLINT NOT NULL REFERENCES phis.sites(id) ON DELETE CASCADE`
 - `space_id INT NOT NULL` (composite FK to `media_spaces`)
-- `folder_id INT NULL` (composite FK to `media_folders`, `ON DELETE SET NULL`)
+- `folder_id INT NULL` (composite FK to `media_folders`, `ON DELETE SET NULL (folder_id)`)
 - `created_by_user_id INT NULL REFERENCES phis.user_accounts(id) ON DELETE SET NULL`
 - `updated_by_user_id INT NULL REFERENCES phis.user_accounts(id) ON DELETE SET NULL`
 - `owner_user_id INT NULL REFERENCES phis.user_accounts(id) ON DELETE SET NULL` — authority, not history:
@@ -262,7 +293,7 @@ Contract:
 - `content_type VARCHAR(128) NOT NULL`
 - `variant_version SMALLINT NULL`
 - `bytes BIGINT NULL`
-- `checksum_sha256 CHAR(64) NULL`
+- `checksum_algorithm VARCHAR(16) NULL`, `checksum_value VARCHAR(128) NULL`, both set or both null
 - `width SMALLINT NULL`
 - `height SMALLINT NULL`
 - `blur_data_url TEXT NULL`
@@ -275,7 +306,7 @@ Contract:
 - `presentation_flags INT NOT NULL DEFAULT 0`
 - `created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
 - `updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
-- `UNIQUE (storage_profile_id, storage_key)`
+- `UNIQUE (id, site_id)` and `UNIQUE (storage_profile_id, storage_key)`
 
 Contract:
 - `site_id` plus `space_id` is the hard ownership boundary. Composite foreign keys pin the Space and the Folder to the same Site and Space, so a cross-Site or cross-Space Asset is unrepresentable.
@@ -308,12 +339,15 @@ Contract:
   - `binary` for arbitrary bytes offered as a download
   - `other` for anything that does not fit the above classes
 - List consumers must not read the media library unbounded. The public `GET /api/site/media` contract is paginated and requires `page` plus `pageSize`; detail reads belong on `GET /api/site/media/:id`.
-- The list contract may additionally filter by `since`, `until`, `folderId`, `kind`, `presentationFlags`, `query`, and `sort`.
-- `sort` is currently limited to `created_at_desc`.
+- `pageSize` is capped at `100`.
+- The list contract may additionally filter by `id`, `since`, `until`, `folderId`, `kind` (repeatable), `presentationFlags`, and `q`, and accepts `sort`.
+- `sort` accepts only `created_at_desc`.
 - The canonical "last 100 images" use-case is `page=1&pageSize=100` with `sort=created_at_desc`.
 - `since` and `until` filter by `created_at` in the Space-scoped media library.
 - The list query stays index-backed by `(space_id, folder_id, created_at DESC, id DESC)`; the accessible Space is resolved once per request, never once per Asset.
-- Duplicate / comparison lookups use `(space_id, checksum_sha256)` with a partial `WHERE checksum_sha256 IS NOT NULL` index, so observable duplicate detection is scoped to one Space.
+- `checksum_algorithm` names the digest in `checksum_value` (`PHIS_MEDIA_CHECKSUM_ALGORITHMS` in `@phis/contracts`: `sha256`, `sha512`, `xxhash128`, `crc64nvme`, `crc32c`, `crc32`, `md5`). A value is never stored without the algorithm that produced it. The same pair, with the same CHECK, exists on `media_upload_sessions`, `image_asset_variants`, and `font_asset_subsets`.
+- Duplicate detection uses the partial index `(space_id, checksum_algorithm, checksum_value)` `WHERE checksum_value IS NOT NULL AND checksum_algorithm IN ('sha256', 'sha512')`. It is scoped to one Space and compares only identity-strength digests; weaker digests still verify transfer integrity but are never compared.
+- `(space_id, owner_user_id) WHERE owner_user_id IS NOT NULL` is indexed for owner-scoped listings.
 - The list response should expose `pagination.total` so previewers and pagers can render accurate counts without loading the whole library.
 - Deleting a media asset must remove its owned `site_content(type=asset)` wrapper rows, but must be rejected while any widget/layout/page/area/navigation tree or the Site Theme still references that content or asset.
 - The delete guard reads the maintained `site_cms_references` index rather than scanning revision JSON. It therefore protects exactly what that index records, which is why the reference forms in [REFERENCES.md](./REFERENCES.md) are normative rather than conventional.
@@ -324,17 +358,20 @@ Contract:
 - `site_id SMALLINT NOT NULL REFERENCES phis.sites(id) ON DELETE CASCADE`
 - `actor_user_id INT NOT NULL REFERENCES phis.user_accounts(id) ON DELETE CASCADE`
 - `space_id INT NOT NULL` (composite FK to `media_spaces`)
-- `folder_id INT NULL` (composite FK to `media_folders`, `ON DELETE SET NULL`)
+- `folder_id INT NULL` (composite FK to `media_folders`, `ON DELETE SET NULL (folder_id)`)
 - `storage_profile_id INT NOT NULL` (composite FK to `media_storage_profiles`)
 - `status SMALLINT NOT NULL`
 - `filename VARCHAR(255) NOT NULL`
 - `content_type VARCHAR(128) NOT NULL`
 - `size_bytes BIGINT NOT NULL`
 - `kind VARCHAR(16) NOT NULL`
-- `checksum_sha256 CHAR(64) NULL`
+- `checksum_algorithm VARCHAR(16) NULL`, `checksum_value VARCHAR(128) NULL`, both set or both null
 - `meta JSONB NULL`
 - `presentation_flags INT NOT NULL DEFAULT 0`
 - `upload_plan_kind SMALLINT NOT NULL DEFAULT 1` (CHECK `IN (1, 2)`)
+- `purpose SMALLINT NOT NULL DEFAULT 1`
+- `purpose_ref JSONB NULL`
+- CHECK: `size_bytes > 0`; `(purpose = 1 AND purpose_ref IS NULL) OR (purpose = 2 AND purpose_ref IS NOT NULL)`
 - `staging_storage_key VARCHAR(512) NOT NULL`
 - `final_storage_key VARCHAR(512) NULL`
 - `expires_at TIMESTAMPTZ NOT NULL`
@@ -353,10 +390,11 @@ Contract:
 - Title and alt text are added later on the actual asset via the inspector PATCH flow.
 - `kind` reuses the existing `PhiMediaKind` contract from `@phis/server` and `phis-ui`.
 - `staging_storage_key` points to the staging object inside the bound profile; `final_storage_key` is the target key after finalize.
-- `checksum_sha256` is available for integrity and duplicate/comparison logic.
+- `checksum_algorithm` / `checksum_value` carry the digest recorded for the upload, as on `media_assets`.
+- `purpose` decides what the finished object becomes: `1` a Media Asset, `2` an Asset on an Add-on row. `purpose_ref` is required for `2` and names the Add-on, table, owner row, and slot (`{ addonId, table, ownerId, slot }`).
 - Finalize verifies the stored object before the Asset reaches `ready` and commits the quota reservation.
 - Successful finalize deletes the session row. Failed and expired uploads delete it as well, release the reservation, and clean staging objects; retries must request a fresh token.
-- `expires_at` is indexed so stale sessions can be cleaned up efficiently; `(space_id, status)` and `actor_user_id` are indexed for operational lookups.
+- `(space_id, status, expires_at)` and `(site_id, actor_user_id, created_at DESC)` are indexed.
 - The browser-facing contract is `POST /api/site/media/uploads/init`, `POST /api/site/media/uploads/:token/finalize`, and whatever the issued plan names for the body itself; no multipart parser is involved in the large-file path.
 - `upload_plan_kind` records which plan init issued: `1 = proxy-stream` (the body streams through `PUT /api/site/media/uploads/:token`), `2 = presigned-put` (the Provider takes the body directly). It is a property of the session rather than of the Storage Profile, because a Provider may answer differently for different bodies. It decides two things no later request can work out on its own: whether Core may receive this body at all, and whether "the body arrived" is a status Core set itself or something only the stored object can attest.
 - Duplicate detection and the size check happen at finalize, where every plan passes, rather than at the transport that happened to carry the body.
@@ -366,11 +404,11 @@ Contract:
 - `PRIMARY KEY (asset_id, variant_key)`
 - `asset_id INT NOT NULL REFERENCES phis.media_assets(id) ON DELETE CASCADE`
 - `variant_key SMALLINT NOT NULL`
-- `storage_profile_id INT NOT NULL REFERENCES phis.media_storage_profiles(id)`
+- `storage_profile_id INT NOT NULL REFERENCES phis.media_storage_profiles(id) DEFERRABLE INITIALLY DEFERRED`
 - `storage_key VARCHAR(512) NOT NULL`
 - `content_type VARCHAR(128) NOT NULL`
 - `bytes BIGINT NULL`
-- `checksum_sha256 CHAR(64) NULL`
+- `checksum_algorithm VARCHAR(16) NULL`, `checksum_value VARCHAR(128) NULL`, both set or both null
 - `width SMALLINT NOT NULL`
 - `height SMALLINT NOT NULL`
 - `blur_data_url TEXT NULL`
@@ -397,7 +435,7 @@ Contract:
 - `blur_data_url` is optional and may be generated for the original asset, for renditions, or both.
 - A variant binds to its own concrete Storage Profile and object key. Renderers resolve it through the Asset-id/variant delivery route and still provide `width`, `height`, and optional `blurDataURL` to `next/image` when rendering remote images.
 - The rendition table exists for images only; videos, PDFs, and other media types should not be squeezed into the same size-variant contract.
-- Variant requests for non-image media kinds return a fixed SVG preview icon and must not create `phis.image_asset_variants` rows.
+- `GET /api/site/media/[id]/variants/[variantKey]` answers `404` when no variant row exists after `ensureImageAssetVariant`, which is the case for every non-image Asset; such requests create no `phis.image_asset_variants` rows.
 
 ### `phis.font_asset_subsets`
 
@@ -423,35 +461,36 @@ Contract:
 - It is not a row in `image_asset_variants`: that table is images-only, and a shared key column would make one number mean a thumbnail or a script depending on another table.
 - Discarding an Asset removes its cuts' storage objects together with its variants.
 
-### Locale Capability Contract
+### `phis.user_site_avatars`
 
-- Locale support is two-level:
-  - `@phis/server` defines the platform-wide locale capability superset.
-  - each site defines a subset through `sites.default_locale` and `sites.available_locales`.
-- The platform-wide superset must cover at least every DeepL target language supported by the configured DeepL provider snapshot.
-- Sites must not offer locales that are unknown to the platform capability superset.
-- `sites.default_locale` must be one of `sites.available_locales`.
-- Locale identifiers should use BCP-47-style values where applicable, for example `de-DE`, `de-CH`, `en-US`, `en-GB`, `fr-FR`, `ja-JP`, `zh-Hans`, `zh-Hant`, `pt-BR`, and `pt-PT`.
-- The stored site locale is not necessarily identical to an external provider target:
-  - DeepL receives the resolved provider target, for example `de-CH -> DE`, `en-US -> EN-US`, `pt-BR -> PT-BR`, `zh-Hans -> ZH-HANS`.
-  - Ant Design receives the resolved UI locale key, for example `de-CH -> de_DE`, `en-GB -> en_GB`, `zh-Hans -> zh_CN`.
-  - Intl and `<html lang>` receive the effective site locale.
-  - Phi label sets use the resolved fallback chain, for example `de-CH -> de -> en`.
-- Locale validation, automatic translation targets, Ant Design locale mapping, text direction, and fallback chains must be derived centrally in `@phis/server`, not reimplemented in widgets or site apps.
-- Runtime locale resolution is exposed through `GET /api/v1/site/locale`. It returns the effective locale, provider targets, UI targets, direction, and fallback chain for the current request.
-- Site configuration can be cached by site key. Resolved runtime locale must not be cached as site config because it can depend on user session, locale cookie, explicit request locale, and `Accept-Language`.
-- `phis-ui` only consumes the resolved contract. Its locale-specific UI responsibility is loading the bundled UI locale modules that correspond to the resolved locale, for example Ant Design and Dayjs.
-- When DeepL adds target languages, the platform capability superset should be updated first; only then may sites opt into those locales.
-- `GET /api/v1/tr` translates a single message.
-- `POST /api/v1/tr` accepts either:
-  - a single `msg`
-  - or a `msgs` array for batch translation
-- Both request shapes may also carry `format=text|html`; `text` is the default and `html` means intentional translatable HTML markup.
-- Public translation requests must not send `x-phis-site-key`.
-- Internal translation requests use these rules:
-  - internal token + `x-phis-site-key` => site translation store (`tr_site_msg`, `tr_site_lang`)
-  - internal token without `x-phis-site-key` => global translation store (`tr_msg`, `tr_lang`) for `phi-core` text and global label sets
-- Public translation requests use the global translation store only, never the site store.
+- `user_id INT NOT NULL`
+- `site_id SMALLINT NOT NULL`
+- `asset_id INT NOT NULL`
+- `created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
+- `updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
+- `PRIMARY KEY (user_id, site_id)`
+- `FOREIGN KEY (user_id, site_id) REFERENCES phis.user_site_memberships(user_id, site_id) ON DELETE CASCADE`
+- `FOREIGN KEY (asset_id, site_id) REFERENCES phis.media_assets(id, site_id) ON DELETE CASCADE`
+- index on `asset_id`
+
+Contract:
+- One avatar per user per Site. It is Site-scoped because the Asset lives in that Site's User Space; both composite keys carry the Site, so a cross-Site avatar is unrepresentable.
+- An avatar is a personal setting, not a published reference: it has no `site_cms_references` row, and deleting the Asset removes the binding instead of being blocked.
+
+### `phis.media_discarded_objects`
+
+- `id BIGSERIAL PRIMARY KEY`
+- `site_id SMALLINT NOT NULL REFERENCES phis.sites(id) ON DELETE CASCADE`
+- `storage_profile_id INT NOT NULL`
+- `storage_key VARCHAR(512) NOT NULL`
+- `discarded_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
+- `UNIQUE (storage_profile_id, storage_key)`
+- index on `(site_id, discarded_at, id)`
+
+Contract:
+- A retry list for storage objects whose rows are already gone. An object store cannot join a transaction, so the transaction that removes Asset rows (and their variants), or an Add-on's Media Spaces, writes each object's key here; the object removal that follows deletes the note.
+- A note that survives is retried: later deletes drain the oldest notes of the Site in bounded batches (`drainPhiDiscardedMediaObjects` in `src/lib/media-asset-delete.ts`).
+- Discarding the same object twice is one note.
 
 ### `phis.user_accounts`
 
@@ -464,12 +503,12 @@ Contract:
 Contract:
 - `id` is the one global Phi user id and remains the same across Sites.
 - `preferred_locale` stores the user's preferred UI locale when explicitly captured from registration or later settings updates.
-- `flags` stores global non-role state such as terms acceptance.
+- `flags` stores global non-role state: `1 << 0` disabled, `1 << 1` must change password.
 - `user_accounts` contains no email, password, provider, commerce-account, or Site-membership shortcut.
 - Global account existence resolves here; durable login identities and Site admission resolve through the
-  normalized relations in `AUTHENTICATION.md`.
-- The former `email_normalized`, `medusa_customer_id`, `password_hash`, `customer_number`, and `site_ids`
-  columns are migration input only and must not remain as a parallel target-v1 identity path.
+  normalized relations in [AUTHENTICATION.md](./AUTHENTICATION.md).
+- The view `phis.user_account_directory` projects each account's primary address (or, without one, its
+  most recently verified address) as `email_normalized`.
 
 ### `phis.user_emails`
 
@@ -477,15 +516,21 @@ Contract:
 - `user_id INT NOT NULL REFERENCES phis.user_accounts(id) ON DELETE CASCADE`
 - `email_normalized VARCHAR(320) NOT NULL UNIQUE`
 - `verified_at TIMESTAMPTZ NOT NULL`
-- `is_primary BOOLEAN NOT NULL DEFAULT FALSE`
-- `source VARCHAR(64) NOT NULL`
+- `flags INT NOT NULL DEFAULT 0`
+- `source SMALLINT NOT NULL` (CHECK `IN (1, 2, 3, 4, 5, 9, 20, 21, 22, 23)`)
 - `created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
 - `updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
 
 Contract:
 - An accepted durable email belongs to exactly one global user; registration-intent email snapshots are
   not durable account-email rows.
-- At most one row per user is primary.
+- `flags & 1` marks the primary address. The partial unique index `user_emails_primary_user_idx` on
+  `(user_id) WHERE (flags & 1) <> 0` enforces at most one primary row per user, so the bit position is
+  fixed.
+- `source` records where the address came from (`PhiUserEmailSource`): values below `20` are Core
+  origins (`1` operator, `2` admin, `3` registration, `4` self, `5` directory, `9` an unnamed provider);
+  `20` and above are named providers (`20` Google, `21` Apple, `22` Microsoft, `23` GitHub). There is no
+  unknown value.
 - Email is a verified contact/discovery attribute, not an external identity key or unconditional linking
   proof.
 
@@ -532,60 +577,47 @@ Contract:
 Contract:
 - `user_site_flags` stores site-local state such as enabled/disabled access and newsletter consent.
 - `last_login_at` stores the last successful login for this user on this site.
-- `authorization_revision` changes whenever an effective provider claim changes and participates in
-  authorization-sensitive cache identity.
-- `user_site_memberships` is the Site membership and Site-state source; effective role authority is
-  stored in provider-scoped `user_site_role_claims`.
-- Authorization checks resolve through the provider-claim contract in `AUTHORIZATION.md`;
-  `user_accounts` does not carry role authority.
+- `authorization_revision` increments whenever the user's Core role claim or effective group membership
+  on the Site changes, and participates in authorization-sensitive cache identity.
+- `user_site_memberships` is the Site membership and Site-state source. Core role authority is stored in
+  `user_site_role_claims`, Add-on roles in `site_addon_user_roles`, and group membership in
+  `site_group_members`. `user_accounts` carries no role authority.
 - If no `user_site_memberships` row exists for `user_id + site_id`, the viewer cannot receive a Site
   session or authenticated Site role authority.
 - This relation is the only Site-admission source; `user_accounts` carries no parallel Site list.
-- Core roles are additive:
-  - `Admin` may perform all site-scoped actions, including user and role administration, site settings, and locale settings.
-  - `Developer` may use developer tools and logs and may do everything `Builder`, `Author`, `Publisher`, `Supporter`, and `Accountant` can do, but must not manage users, roles, site settings, or locale settings.
-  - `Builder` may create and update builder structure drafts, theme drafts, and navigation drafts, but cannot publish without an additional `Publisher` role.
-  - `Author` may perform editorial work, translations, and news/content authoring, but cannot publish drafts.
-  - `Publisher` may review, correct editorial content, and publish drafts, but cannot change builder structure, theme, or navigation.
-  - `Supporter` may work in support/ticket flows only.
-  - `Accountant` may work in accounting/billing flows only.
-- Standard staff area access is:
-  - `/admin`: `Admin`, `Developer`
-  - `/builder`: `Admin`, `Developer`, `Builder`
-  - `/editor`: `Admin`, `Developer`, `Author`, `Publisher`
-  - `/accounting`: `Admin`, `Developer`, `Accountant`
+- The Core roles, their meaning, and Area access are defined in [AUTHORIZATION.md](./AUTHORIZATION.md).
 
 ### `phis.user_site_role_claims`
 
-- `site_id SMALLINT NOT NULL`
 - `user_id INT NOT NULL`
-- `provider_id TEXT NOT NULL`
-- `role_flags INT NOT NULL`
+- `site_id SMALLINT NOT NULL`
+- `provider_id VARCHAR(255) NOT NULL` (CHECK: namespaced id)
+- `role_flags INT NOT NULL` (CHECK `role_flags > 0`)
 - `created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
 - `updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
-- `PRIMARY KEY (site_id, user_id, provider_id)`
+- `PRIMARY KEY (user_id, site_id, provider_id)`
 - `FOREIGN KEY (user_id, site_id) REFERENCES phis.user_site_memberships(user_id, site_id) ON DELETE CASCADE`
 
 Contract:
-- `@phis/server/core` stores the effective assigned Core role matrix.
-- Every enabled compatible Add-on owns an independent provider-local role bit space.
-- Persisted Add-on claims survive provider disablement but are omitted from effective runtime claims
-  until the provider is available again.
-- Assigned bits must be a subset of the active provider role catalog.
+- The row with `provider_id = '@phis/server/core'` stores the assigned Core role matrix (`PhiBaseRole`).
+  Core writes only that provider.
+- A row for another provider counts only while that provider is available in the Site capability
+  snapshot (`resolveEffectivePhiViewerRoleClaims`).
 - Zero assignments are represented by deleting the provider row.
-- Role claims are written only through the authorized Core role-assignment service.
-- The target v1 schema does not keep `base_role_flags` or `custom_role_flags` as parallel effective
-  authorization columns.
+- Add-on roles are not bit flags and are not stored here; see `phis.site_addon_user_roles`.
 
 ### `phis.site_auth_config`
 
 - `site_id SMALLINT PRIMARY KEY REFERENCES phis.sites(id) ON DELETE CASCADE`
-- `config_version SMALLINT NOT NULL DEFAULT 1`
-- `config JSONB NOT NULL`
+- `config_version SMALLINT NOT NULL DEFAULT 1` (CHECK `= 1`)
+- `policy_revision INT NOT NULL DEFAULT 1` (CHECK `> 0`)
+- `config JSONB NOT NULL` (default: password sign-in only, automatic registration, `verified-email-confirm` linking)
 - `updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
 
 Contract:
 - One row is the only Site-level Auth configuration source of truth.
+- Every configuration write increments `policy_revision`. A session established under an older revision is
+  re-evaluated against the current policy on its next read (see `user_sessions.auth_policy_revision`).
 - The closed version-1 document contains `policy`, `methods`, and `providers`.
 - Policy contains registration, linking, password, passkey, factor, recovery, session, and callback-origin
   settings.
@@ -619,32 +651,65 @@ Contract:
 - An external domain account is not an authentication identity unless a separate validated Auth adapter
   resolves it through `user_auth_identities`.
 
-### `phis.user_auth_factors` and Auth transactions
+### `phis.user_auth_factors`
 
 - `id UUID PRIMARY KEY`
 - `user_id INT NOT NULL`
 - `site_id SMALLINT NOT NULL`
-- `factor_type SMALLINT NOT NULL`
+- `factor_type SMALLINT NOT NULL` (CHECK `IN (1, 2, 3)`)
 - `factor_key BYTEA NULL`
 - `factor_data JSONB NOT NULL DEFAULT '{}'::jsonb`
-- encrypted-secret fields, label, confirmation/use/consumption timestamps
+- `secret_ciphertext TEXT NULL`
+- `secret_iv CHAR(24) NULL`
+- `secret_auth_tag CHAR(32) NULL`
+- `label VARCHAR(128) NULL`
+- `confirmed_at TIMESTAMPTZ NULL`
+- `created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
+- `updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
+- `last_used_at TIMESTAMPTZ NULL`
+- `consumed_at TIMESTAMPTZ NULL`
 - `FOREIGN KEY (user_id, site_id) REFERENCES phis.user_site_memberships(user_id, site_id) ON DELETE CASCADE`
+- `UNIQUE (user_id, site_id, factor_type, factor_key)`; partial unique index on `factor_key` where `factor_type = 1`
 
-Factor types are closed and numeric:
-
-- `1 = passkey`
-- `2 = TOTP`
-- `3 = recovery code`
-
+Contract:
+- Factor types are closed and numeric: `1 = passkey`, `2 = TOTP`, `3 = recovery code`.
+- A CHECK enforces the storage shape per type: TOTP rows carry the encrypted secret triple, no
+  `factor_key`, and are never consumed; passkey and recovery-code rows carry `factor_key` and no secret.
 - `factor_key` is raw binary WebAuthn credential-id material for passkeys and the raw hash for recovery
-  codes; it is not a UUID or a repeated textual method label.
+  codes; it is not a UUID or a repeated textual method label. A passkey credential id is unique across
+  all users.
 - Passkeys store only public WebAuthn credential material and RP/origin scope; private keys remain on the
   authenticator.
 - TOTP seeds are encrypted, recovery codes are hashed, and successful enrollment requires a confirmed
-  challenge.
-- Authentication transactions and challenges are opaque, expiring, and one-use. They bind the trusted
-  Site, provider installation or method, user/workflow when known, CSRF/OAuth correlation data, and safe
-  relative return destination.
+  challenge (`confirmed_at`). A used recovery code sets `consumed_at`.
+
+### `phis.auth_transactions`
+
+- `id UUID PRIMARY KEY`
+- `site_id SMALLINT NOT NULL REFERENCES phis.sites(id) ON DELETE CASCADE`
+- `provider_installation_key VARCHAR(64) NULL`
+- `user_id INT NULL REFERENCES phis.user_accounts(id) ON DELETE CASCADE`
+- `method_key VARCHAR(64) NOT NULL`
+- `stage VARCHAR(32) NOT NULL` (CHECK `IN ('primary', 'second-factor', 'step-up', 'recovery')`)
+- `state_hash CHAR(64) NOT NULL UNIQUE`
+- `nonce_hash CHAR(64) NULL`
+- `payload_ciphertext TEXT NOT NULL`
+- `payload_iv CHAR(24) NOT NULL`
+- `payload_auth_tag CHAR(32) NOT NULL`
+- `next_path VARCHAR(1024) NOT NULL`
+- `expires_at TIMESTAMPTZ NOT NULL`
+- `consumed_at TIMESTAMPTZ NULL`
+- `created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
+- index on `expires_at`
+
+Contract:
+- An Auth transaction is opaque, expiring, and one-use. It binds the trusted Site, provider installation
+  or method, stage, the user when known, OAuth/OIDC correlation data, and a safe relative return
+  destination (`next_path`).
+- Only hashes of the state and nonce are stored; the rest of the transaction payload is encrypted.
+- Consumption is one conditional `UPDATE` on `(site_id, state_hash)` that requires `consumed_at IS NULL`
+  and an unexpired row, so a replayed state finds nothing.
+- Expired rows, and rows consumed more than a day ago, are deleted by `deleteExpiredAuthTransactions`.
 
 ### `phis.user_sessions`
 
@@ -652,9 +717,12 @@ Factor types are closed and numeric:
 - `user_id INT NOT NULL`
 - `site_id SMALLINT NOT NULL`
 - `session_secret_hash CHAR(64) NOT NULL`
-- `authenticated_at TIMESTAMPTZ NOT NULL`
-- `assurance_level SMALLINT NOT NULL`
-- `auth_method_keys JSONB NOT NULL`
+- `authenticated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
+- `assurance_level SMALLINT NOT NULL DEFAULT 1` (CHECK `>= 0`)
+- `auth_state SMALLINT NOT NULL DEFAULT 3` (CHECK `IN (1, 2, 3)`)
+- `auth_policy_revision INT NOT NULL DEFAULT 1` (CHECK `> 0`)
+- `auth_method_keys VARCHAR(64)[] NOT NULL DEFAULT ARRAY[]::VARCHAR(64)[]`
+- `next_path VARCHAR(1024) NOT NULL DEFAULT '/'`
 - `expires_at TIMESTAMPTZ NOT NULL`
 - `last_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
 - `created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
@@ -669,8 +737,33 @@ Contract:
 - The browser receives only the opaque id/secret cookie transport; the stored secret is hashed.
 - Authentication methods and assurance describe how this session was established and support server-side
   step-up checks; they are not role claims.
+- `auth_state` is `3 = complete` only when the Site policy is satisfied. `1` (factor enrollment required)
+  and `2` (factor challenge required) sessions are not accepted as authenticated Site sessions; they
+  only carry the user through the factor workflow. Completing it sets `auth_state = 3` and assurance `2`.
+- `auth_policy_revision` is the `site_auth_config.policy_revision` the state was evaluated under. When the
+  Site policy revision is newer, the session is re-evaluated on read and rejected unless it is still
+  complete.
+- `next_path` is the normalized relative destination requested at sign-in, recorded with the session.
 - Provider access tokens are not session fields. Tokens retained for provider API access belong to a
   separate encrypted integration/Add-on store.
+
+### `phis.user_password_reset_tokens`
+
+- `id SERIAL PRIMARY KEY`
+- `user_id INT NOT NULL`
+- `site_id SMALLINT NOT NULL`
+- `token_hash CHAR(64) NOT NULL UNIQUE`
+- `expires_at TIMESTAMPTZ NOT NULL`
+- `consumed_at TIMESTAMPTZ NULL`
+- `created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
+- `FOREIGN KEY (user_id, site_id) REFERENCES phis.user_site_memberships(user_id, site_id) ON DELETE CASCADE`
+- indexes on `(user_id, site_id, expires_at DESC)` and `(site_id, expires_at DESC)`
+
+Contract:
+- A reset token is Site-scoped through the membership it belongs to.
+- Only the SHA-256 hex digest of the token is stored; the token itself is sent to the user once.
+- The lifetime defaults to two hours and is never shorter than 60 seconds.
+- Consuming a token sets `consumed_at` once; a consumed or expired token is not accepted.
 
 ### `phis.user_profiles`
 
@@ -744,11 +837,15 @@ Contract:
 - `category VARCHAR(64) NULL`
 - `tags TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[]`
 - `descriptor JSONB NOT NULL`
-- `submit_handler_key VARCHAR(128) NOT NULL`
+- `submit_handler_key VARCHAR(128) NULL`
 - `confirm_handler_key VARCHAR(128) NULL`
+- `preview_handler_key VARCHAR(128) NULL`
 - `default_config JSONB NOT NULL DEFAULT '{}'::jsonb`
 - `variant VARCHAR(64) NULL`
 - `config JSONB NOT NULL DEFAULT '{}'::jsonb`
+- `created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
+- `updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
+- `UNIQUE (site_id, form_id, version)`
 
 Contract:
 - `form_id` is the complete lowercase namespaced identity `<npm-package>/forms/<form-key>`.
@@ -756,10 +853,10 @@ Contract:
   metadata and never forms a second identity with `form_id`. Its package namespace must match the
   package namespace in `form_id`; SQL checks reject mismatches and malformed namespaced ids.
 - `status = 0` is the reserved Working Draft state, `status = 1` is Published, and `status = 2` is an
-  archived Published revision. Partial unique indexes reserve at most one Working Draft and one Published
-  revision per Site and Form. v1 initially writes Published revisions only; adding persistent Draft APIs
-  later requires no table change.
-- `descriptor` is one atomic versioned document with `schemaVersion = 1`, `fields`, and `actions`.
+  archived Published revision. Partial unique indexes allow at most one Working Draft and one Published
+  revision per Site and Form.
+- `descriptor` is one atomic versioned document with `schemaVersion = 1`, `fields`, and `actions`; a SQL
+  CHECK enforces that shape.
 - Split `fields` and `validation` columns are not part of v1.
 - The descriptor owns visual layout, fields, validation-provider references, labels, and actions only.
 - Execution targets, status, CSRF/guard policy, and server security stay in dedicated columns/config and
@@ -800,7 +897,7 @@ Contract:
   from [REFERENCES.md](./REFERENCES.md). The write sanitizer accepts `phis:page/<reference>` and
   `phis:asset/<asset-id>` there, and `img` exists in that channel because an Asset reference is expressed
   as an image source. Every other sanitizer caller keeps the external-only scheme set.
-- Only the canonical literal reference form survives. A value that reaches a `phi:` scheme through
+- Only the canonical literal reference form survives. A value that reaches a `phis:` scheme through
   percent-encoding or other obfuscation loses its `href`/`src` attribute rather than being repaired,
   and a well-formed scheme with an invalid reference grammar is dropped the same way.
 - Both channels index their surviving references into `site_cms_references` with `source_kind = content`
@@ -825,14 +922,20 @@ Contract:
 - `area_id SMALLINT NOT NULL DEFAULT 1`
 - `published_revision_id INT NULL`
 - `working_draft_revision_id INT NULL`
+- `working_module_draft_revision_id INT NULL`
 - `created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
 - `updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
 - `UNIQUE (site_id, area_id)`
 
 Contract:
 - One area scope exists per `site + area`.
-- `area_id` is the internal numeric area identifier for the concrete area. It is not a visibility mask.
-- The scope stores the current published revision pointer and the current working draft pointer.
+- `area_id` is the Area's visibility-mask bit from `PhiCmsVisibilityContext` (public `1`, app `2`, admin `8`,
+  editor `16`, accounting `64`, builder `256`), not an ordinal. The same holds for `site_page_scopes.area_id`
+  and `site_cms_references.target_area_id`.
+- The scope stores one published revision pointer and two Working Draft pointers: `working_draft_revision_id`
+  for the Area structure and `working_module_draft_revision_id` for the Area's Module selection. Both
+  drafts are ordinary `site_area_revisions` rows carrying a whole Area; each publish writes only the
+  fields its draft owns into the published revision and reads the rest from it.
 - Published live reads resolve directly through `site_area_scopes.published_revision_id` into the area revision payload.
 - No separate materialized live shell tables should sit between the published revision pointer and runtime rendering.
 
@@ -842,15 +945,21 @@ Contract:
 - `site_id SMALLINT NOT NULL REFERENCES phis.sites(id) ON DELETE CASCADE`
 - `area_id SMALLINT NOT NULL DEFAULT 1`
 - `path VARCHAR(512) NULL`
+- `draft_path VARCHAR(512) NULL`
 - `owner_module_id VARCHAR(255) NULL`
-- `preset_key VARCHAR(128) NULL`
+- `preset_key VARCHAR(255) NULL`
+- `tombstoned_at TIMESTAMPTZ NULL`
 - `published_revision_id INT NULL`
 - `working_draft_revision_id INT NULL`
 - `created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
 - `updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
 - `CHECK ((path IS NOT NULL AND owner_module_id IS NULL AND preset_key IS NULL) OR (path IS NULL AND owner_module_id IS NOT NULL AND preset_key IS NOT NULL))`
+- `CHECK (owner_module_id IS NULL OR owner_module_id ~ '^@[^/]+/[^/]+(?:/[^/]+)*$')`
+- `CHECK (draft_path IS NULL OR path IS NOT NULL)`
 - Partial unique index on `(site_id, area_id, path)` where `path IS NOT NULL`
+- Partial unique index on `(site_id, area_id, draft_path)` where `draft_path IS NOT NULL`
 - Partial unique index on `(site_id, area_id, owner_module_id, preset_key)` where `owner_module_id IS NOT NULL`
+- Index on `(site_id, area_id, tombstoned_at, id)`
 
 Contract:
 - A Site-authored exact Page has one immutable Scope id, one mutable canonical `path`, and no
@@ -860,13 +969,19 @@ Contract:
 - Exactly one address kind is populated. Path lookup is never used as a compatibility alias for a module-preset scope.
 - `area_id` is the internal numeric area identifier for the concrete area. It is not a visibility mask.
 - The scope stores the current published revision pointer and the current working draft pointer.
-- Site Page path mutation follows [REFERENCES.md](./REFERENCES.md): it is an explicit Scope command,
-  independent of revisions and Undo/Redo. Module Page paths remain descriptor-owned and immutable to the
-  Site.
+- Site Page path mutation follows [REFERENCES.md](./REFERENCES.md#explicit-path-change-command): it is an
+  explicit Scope command, independent of revisions and Undo/Redo. Module Page paths remain
+  descriptor-owned and immutable to the Site.
+- `draft_path` is the pending path of a Site Page: the path change command writes it, publishing the Page
+  moves it into `path` and clears it, and discarding the Page draft clears it. Pending paths contend for
+  addresses exactly as live paths do, through their own partial unique index.
 - Site Page deletion retains the Scope row and its canonical path. The deleted Page revision state is the
-  logical tombstone; the path stays reserved by the existing unique key. Creating or restoring a Site
-  Page at that path reactivates this Scope and reuses its immutable id rather than inserting another
+  logical tombstone; `tombstoned_at` is set by the Page draft save that marks the Page deleted and cleared
+  by any other Page draft save. The path stays reserved by the existing unique key. Creating or restoring a
+  Site Page at that path reactivates this Scope and reuses its immutable id rather than inserting another
   Scope. Runtime reference resolution remains id-based and never falls back to path matching.
+- Published Page listings, Navigation folder-address resolution, and Module usage ignore Scopes whose
+  `tombstoned_at` is set.
 - `tree_json.page.path` is not an independently writable source of truth. A read/render projection may
   carry the currently resolved path, but persistence resolves Site paths from the Scope column and Module
   paths from the active route descriptor.
@@ -880,7 +995,7 @@ Stable Page references and `phis:page/...` / `phis:asset/...` document reference
 never a copied path. Asset targets reuse `media_assets.id` and remain Site/access constrained.
 
 `phis.site_cms_references` is the maintained projection, updated transactionally by the same writes that
-persist the referencing data. Broad revision-JSON scans are migration input and not the lookup path.
+persist the referencing data. Revision JSON is never scanned to answer a reference lookup.
 
 ### `phis.site_cms_references`
 
@@ -910,8 +1025,8 @@ Contract:
 - `ON DELETE RESTRICT` on both target columns makes the index the enforcement point for Page and Asset deletion, not just a reporting aid.
 - The projection is read for path-change affected-reference counts, Page and Asset deletion diagnostics, and delete guards. It never rewrites reference owners: a stable identity already resolves to the new path.
 - Because a Widget body is persisted both in the revision `tree_json` and in its `site_content` row, one authored reference legitimately produces one Page-source row and one Content-source row. The per-source breakdown keeps that visible; the sum is a location count, not a distinct-authored-reference count.
-- The Area source is the `tree_json` counterpart to the Page source, written by the Area draft save inside the same transaction. It exists because Area-owned trusted bodies reach the index through the Content source, but a reference sitting in Area widget or Region config carries no content binding and so had no index row at all. Area revisions persisted before the source existed stay unindexed until their next save; no backfill pass exists. See [TODOS.md](./TODOS.md).
-- The Theme source is the Site-wide carrier no CMS tree reaches. One Scope per Site, a key without an Area prefix, and it holds the Root background a Module's ground was taken over into plus the brand logo -- the pictures a Site is built around, and the ones nothing protected before this source existed. A Theme row names no Area, and a Page reference in a Theme is invalid because a Site-wide Scope has no Area to resolve one in. Written by the Theme draft save and rewritten by the Theme publish, which may promote a revision other than the current draft.
+- The Area source is the `tree_json` counterpart to the Page source, written by the Area draft save inside the same transaction. Area-owned trusted bodies reach the index through the Content source; the Area source covers references in Area widget or Region config, which carry no content binding.
+- The Theme source is the Site-wide carrier no CMS tree reaches. One Scope per Site, a key without an Area prefix, and it holds the Root background a Module's ground was taken over into plus the brand logo. A Theme row names no Area, and a Page reference in a Theme is invalid because a Site-wide Scope has no Area to resolve one in. Written by the Theme draft save and rewritten by the Theme publish, which may promote a revision other than the current draft.
 - `source_revision_id` is what makes a row's own liveness readable. Page, Navigation, Area, and Theme sources index the revision that was just written, and discarding a Working Draft removes that revision without touching its rows. A row naming a revision its Scope points at from none of its pointers is therefore dead by construction, and the readers that would act on it -- the Asset delete guard and the affected-reference count behind a path change -- disregard it over the same Scope joins, instead of a sweep repairing it: the maintenance contract in [AGENTS.md](./AGENTS.md). An Area Scope has three such pointers: `published_revision_id`, `working_draft_revision_id`, and `working_module_draft_revision_id`, the Working Draft a Module writes for what it contributes. A publish that merges a tree instead of only promoting a pointer -- both Area publishes -- rewrites the set for the tree it published. Publishing promotes the draft revision rather than creating one, so a published reference keeps matching. Content sources are exempt: their revision is a content version, and the orphan collector already removes their rows when a discarded Draft leaves the content unreferenced.
 
 ### CMS node identity target contract
@@ -921,12 +1036,12 @@ Contract:
 - Layout type keys are exactly `<plugin-key>/<layout-type>`. Padding, background, border, radius, shadow, and effect are normal Layout config; no presentation kind or type-key suffix is persisted.
 - Region padding is stored flat as `padding`, `paddingTop`, `paddingRight`, `paddingBottom`, and `paddingLeft` inside the Region config in `tree_json`.
 - Codec v1 uses one version/origin header byte and one explicit closed domain byte (`area`, `page`, or `navigation`). Draft-origin ids then use six bytes for a safe 48-bit owning Draft revision id and four bytes for the Draft-local sequence. The complete id is never represented as one JavaScript number, and the earlier pre-domain v1 byte layout is invalid.
-- Every Area, Page, or Navigation Draft persists one monotonic `nextNodeSequence`. Deleted sequence values are never reused, and concurrent writes require Draft revision/version conflict detection.
+- Every Area, Page, or Navigation Draft persists one monotonic `nextNodeSequence`: Area and Page Drafts in revision `meta_json.draft.nextNodeSequence`, Navigation Drafts in `site_nav_revisions.next_node_sequence`. Deleted sequence values are never reused, and concurrent writes require Draft revision/version conflict detection.
 - Preset ids use a versioned Preset header, the domain byte, and an 80-bit deterministic hash of `(contractVersion, domain, ownerModuleId, presetKey, nodeKey)`. Preset version, Site, concrete Area key, route, browser/storage path, and node type do not participate.
 - Identity is independent of revision state and remains unchanged through Draft, review, preview, publish, reset, move, and config edits. Duplication or portable import creates a new target-owned Draft id; inserting into an in-memory fallback creates its Draft first.
 - Publish validates encoding/active-context uniqueness and every structural/signal reference, then updates the selected revision and its scope pointer in one transaction without identity materialization.
 - Exact backup/restore preserves ids, revisions, pointers, and DB sequences. Portable CMS import creates a target Draft and centrally remaps every internal reference; module-owned domain data participates only through declared module export/import hooks.
-- The current `phis.site_cms_node_id_seq` and numeric publish materializer are transitional implementation only and must be removed by the 96-bit v1 migration. No numeric CMS node id, negative-id lifecycle, CMS-node `instanceKey`, UUID alias, or compatibility reader remains afterward.
+- There is no numeric CMS node id, negative-id lifecycle, CMS-node `instanceKey`, UUID alias, or compatibility reader.
 
 ### `phis.site_area_revisions`
 
@@ -942,6 +1057,7 @@ Contract:
 
 Contract:
 - Area revisions are the persisted authoring source of truth for area drafts and published area state.
+- A Working Draft revision keeps its draft version and `nextNodeSequence` in `meta_json.draft`.
 - `tree_json` stores the concrete area as string field `area`.
 - `tree_json.sourcePreset` is mandatory and stores `ownerModuleId`, `presetKey`, and the positive `sourcePresetVersion` of the Area shell snapshot.
 - Forking a Draft from a Published snapshot preserves that source version. A newer installed preset never rewrites an existing Draft or Published snapshot.
@@ -965,6 +1081,7 @@ Contract:
 
 Contract:
 - Page revisions are the persisted authoring source of truth for page drafts and published page state.
+- A Working Draft revision keeps its draft version and `nextNodeSequence` in `meta_json.draft`.
 - `tree_json` stores the concrete area as string field `area`.
 - `tree_json.sourcePreset` is either `null` for a Site-authored exact Page or stores `ownerModuleId`, `presetKey`, and positive `sourcePresetVersion` for a module route snapshot.
 - Forking a Draft from a Published snapshot preserves that source version. A newer installed preset never rewrites an existing Draft or Published snapshot.
@@ -1010,14 +1127,9 @@ Contract:
 - `site_nav_scopes.key` is a canonical `area:key` identifier. Area base modules declare built-in surfaces and Sites
   may add additional keys inside the same Area namespace.
 - Runtime widget contracts reference declared navigation surfaces by `key`, not by database `id`.
-- Area modules may declare canonical keys such as:
-  - `public:header`
-  - `public:sidebar`
-  - `public:footer`
-  - `app:header`
-  - `app:sidebar`
-  - `admin:sidebar`
-  - `builder:sidebar`
+- Area definitions in `phis-ui/plugins/runtime-modules/area-definitions.ts` declare the built-in keys, for
+  example `public:header`, `public:footer`, `public:quicklinks`, `app:header`, `app:sidebar`,
+  `app:account`, `admin:sidebar`, and `builder:sidebar`.
 - The scope stores the current published revision pointer and the current working draft pointer.
 - Published live reads resolve directly through `site_nav_scopes.published_revision_id` into the navigation overlay payload.
 
@@ -1026,6 +1138,7 @@ Contract:
 - `id SERIAL PRIMARY KEY`
 - `nav_scope_id INT NOT NULL REFERENCES phis.site_nav_scopes(id) ON DELETE CASCADE`
 - `flags INT NOT NULL DEFAULT 0`
+- `next_node_sequence BIGINT NOT NULL DEFAULT 1` (CHECK `BETWEEN 1 AND 4294967296`)
 - `tree_json JSONB NOT NULL DEFAULT '{}'::jsonb`
 - `message VARCHAR(256) NULL`
 - `meta_json JSONB NOT NULL DEFAULT '{}'::jsonb`
@@ -1050,11 +1163,12 @@ Contract:
 - Missing modules leave their overrides and tombstones dormant; reinstalling the module reactivates them.
 - Route targets and hrefs are immutable descriptor data and are never accepted in the persistence ABI.
 - Runtime resolution combines active Area/module descriptors with the published overlay and translates the resulting labels in Shared UI.
-- `icon` overrides store a namespaced icon reference string that the frontend maps to its icon registry.
-- The initial icon namespace contract is:
-  - `antd:<icon-key>` for Ant Design icons resolved by the shared UI icon registry
-  - `asset:<path>` for controlled static assets served from the site `public/` tree
-- Additional namespaces such as `lucide:<icon-key>` require an explicit shared contract update before they are used.
+- `icon` overrides store a namespaced icon reference string resolved by `PhiIcon` in phis-ui:
+  - `antd:<icon-key>` (or a bare key) for Ant Design icons
+  - `iconify:<icon>` for Iconify icons
+  - `asset:<path>` for static assets served from the Site `public/` tree
+  - `<package>/layouts:<motif>` and `<package>/widgets:<motif>` for Builder icons
+- Any other namespace requires a shared contract update in `PhiIcon` before it is stored.
 
 ### `phis.site_theme_scopes`
 
@@ -1100,25 +1214,76 @@ Contract:
 
 ### `phis.site_groups`
 
-Defined in [GROUPS_AND_STORAGE.md](./GROUPS_AND_STORAGE.md), which owns the contract. Two columns there
-are worth naming here because they are schema decisions rather than behaviour:
+- `id SERIAL PRIMARY KEY`
+- `site_id SMALLINT NOT NULL REFERENCES phis.sites(id) ON DELETE CASCADE`
+- `provider_id VARCHAR(255) NOT NULL` (CHECK: namespaced id)
+- `key VARCHAR(160) NOT NULL` (CHECK `~ '^[a-z0-9][a-z0-9._-]{0,159}$'`)
+- `name VARCHAR(255) NOT NULL`
+- `flags INT NOT NULL DEFAULT 0`
+- `retired_at TIMESTAMPTZ NULL`
+- `created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
+- `updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
+- `UNIQUE (site_id, provider_id, key)` and `UNIQUE (id, site_id)`
+- index on `(site_id, LOWER(name), id)`
 
-- `site_media_config.flags` is on its way out. Which Space kinds a Site has is declared by its active
-  Modules and resolved as the union of those declarations, not stored as a switch; see
-  [GROUPS_AND_STORAGE.md](./GROUPS_AND_STORAGE.md), "Availability is separate from capacity". The
-  column still exists and is still read until the declaration path is implemented.
-- `retired_at TIMESTAMPTZ NULL` carries group retirement, which is what ends a group's service: the row
-  and its key stay, and a retired group grants nothing. `updated_at` cannot answer "retired since when"
-  -- every later edit overwrites it, which is why the state is its own column. See "Retiring a group".
-- The composite foreign key from `media_spaces` deliberately does not cascade. No surface deletes a
-  group, so this now guards against a stray statement rather than a supported operation: it fails
-  instead of taking a Space and its contents along. See "Who administers a group".
+Contract:
+- The group contract is defined in [GROUPS_AND_STORAGE.md](./GROUPS_AND_STORAGE.md).
+- `flags` follows `PhiSiteGroupFlags`: `1 << 0` shows each member's company to the other members.
+- `retired_at` carries group retirement, which replaces deletion: the row and its key stay, and a retired
+  group grants nothing. It is its own column because `updated_at` moves on every later edit. See
+  [GROUPS_AND_STORAGE.md](./GROUPS_AND_STORAGE.md#retiring-a-group).
+- The composite foreign key from `media_spaces` deliberately does not cascade: deleting a group that
+  still has a Space fails at commit instead of taking the Space and its contents along.
+
+### `phis.site_group_members`
+
+- `group_id INT NOT NULL`
+- `user_id INT NOT NULL`
+- `site_id SMALLINT NOT NULL`
+- `source_provider_id VARCHAR(255) NOT NULL` (CHECK: namespaced id)
+- `source_connection_key VARCHAR(160) NOT NULL DEFAULT 'local'`
+- `source_binding_or_assertion_key VARCHAR(512) NOT NULL`
+- `membership_flags SMALLINT NOT NULL`
+- `valid_until TIMESTAMPTZ NULL`
+- `provider_revision VARCHAR(255) NULL`
+- `created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
+- `updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
+- `PRIMARY KEY (group_id, user_id, source_provider_id, source_connection_key, source_binding_or_assertion_key)`
+- `FOREIGN KEY (group_id, site_id) REFERENCES phis.site_groups(id, site_id) ON DELETE CASCADE`
+- `FOREIGN KEY (user_id, site_id) REFERENCES phis.user_site_memberships(user_id, site_id) ON DELETE CASCADE`
+- indexes on `(site_id, user_id, group_id)` and `(site_id, group_id, user_id, valid_until)`
+
+Contract:
+- One row is one source's assertion of one user's membership in one group. The effective membership is the
+  union of the user's active rows for that group, so removing one source never removes another source's
+  contribution.
+- `membership_flags` is one of the cumulative levels of `PhiGroupMembershipFlags`: Member `1`, Author `3`,
+  Editor `7`, Manager `15`. A CHECK rejects any value that skips a lower bit.
+- Both composite keys carry `site_id`, so a member without a matching Site membership, or a cross-Site
+  membership, is unrepresentable.
+- Changing a user's effective membership increments that user's `user_site_memberships.authorization_revision`.
+
+### `phis.directory_connections`, `phis.directory_user_bindings`, `phis.directory_group_bindings`
+
+- `directory_connections`: `id SERIAL PRIMARY KEY`, `site_id`, `provider_id`, `connection_key`,
+  `config JSONB` (object), `secret_reference`, `state SMALLINT DEFAULT 1`,
+  `max_staleness_seconds INT DEFAULT 86400`, `provider_revision`, `cursor JSONB`, `last_completed_at`,
+  `last_error_at`, `created_at`, `updated_at`; `UNIQUE (site_id, provider_id, connection_key)`
+- `directory_user_bindings`: `site_id`, `user_id`, `provider_id`, `connection_key`, `external_subject`,
+  `status SMALLINT DEFAULT 1`, `provider_revision`, `last_observed_at`, `created_at`, `updated_at`;
+  primary key `(site_id, provider_id, connection_key, external_subject)`; foreign keys to
+  `user_site_memberships (user_id, site_id)` and `directory_connections`, both cascading
+- `directory_group_bindings`: the same shape with `group_id` instead of `user_id` and a foreign key to
+  `site_groups (id, site_id)`
+
+Contract:
+- These tables are reserved for external Directory Providers and are neither read nor written by Core.
+  Their contract is [design/DIRECTORY_PROVIDERS.md](./design/DIRECTORY_PROVIDERS.md).
 
 ### `phis.support_teams`
 
-This is the current Support-domain membership implementation. Under the approved target in
-[GROUPS_AND_STORAGE.md](./GROUPS_AND_STORAGE.md), generic membership moves to `site_groups` and
-`site_group_members`; `support_teams` remains only as a Support routing/profile relation.
+Support-domain teams and their membership. Moving Support membership onto general groups is planned in
+[design/GROUPS_AND_STORAGE_PLANNED.md](./design/GROUPS_AND_STORAGE_PLANNED.md#4-support-teams-on-general-groups).
 
 - `id SMALLSERIAL PRIMARY KEY`
 - `site_id SMALLINT NOT NULL REFERENCES phis.sites(id) ON DELETE CASCADE`
@@ -1423,7 +1588,7 @@ Contract:
 
 Contract:
 - Maintained only by statement-level triggers on `tr_lang` (global) and on `tr_site_lang` and
-  `tr_site_msg` (per Site); application code never writes them. See TRANSLATIONS.md, "Change markers".
+  `tr_site_msg` (per Site); application code never writes them. See [TRANSLATIONS.md](./TRANSLATIONS.md#change-markers).
 - A transaction that ran `set_config('phis.translation_fill', 'on', true)` is skipped. Only the request
   path filling a missing translation may set it.
 - Only equality of a marker means anything; it is not a count and not ordered.
@@ -1442,9 +1607,161 @@ Contract:
   at most every few seconds and empties its other read caches, Navigation among them, when it moved.
 - Only equality of a marker means anything; it is not a count and not ordered.
 
+### `phis.server_addons`
+
+- `addon_id VARCHAR(255) PRIMARY KEY`
+- `package_name VARCHAR(255) NOT NULL` (unique)
+- `package_version VARCHAR(64) NOT NULL`
+- `server_abi VARCHAR(64) NOT NULL`
+- `migration_version SMALLINT NOT NULL DEFAULT 0` (CHECK `>= 0`)
+- `manifest_digest CHAR(64) NOT NULL`
+- `release_build_id VARCHAR(255) NOT NULL` (indexed)
+- `schema_name VARCHAR(63) NULL` (CHECK `~ '^phis_addon_[a-z0-9_]+$'`, unique where not null)
+- `flags INT NOT NULL DEFAULT 0`
+- `installed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
+- `upgraded_at TIMESTAMPTZ NULL`
+- `activated_at TIMESTAMPTZ NULL`
+- `disabled_at TIMESTAMPTZ NULL`
+- `updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
+
+Contract:
+- One row per Add-on registered with the deployment. `phis addon reconcile` writes it from the desired
+  state and the installed manifest; `flags & 1` is the deployment-wide enable switch.
+- `schema_name` is the PostgreSQL schema holding the Add-on's tables, derived from the Add-on id once and
+  recorded. The unique index makes the database refuse a second Add-on whose id derives to the same
+  name. `NULL` means the Add-on owns no tables.
+- `phis addon purge` removes the row together with the Add-on's Site rows, role grants, migration
+  records, capabilities, secrets, schema, and Media Spaces; the Add-on's groups are retired, not deleted.
+  The Add-on lifecycle is defined in [SERVER_ADDONS.md](./SERVER_ADDONS.md).
+
+### `phis.server_capabilities`
+
+- `provider_id VARCHAR(255) NOT NULL`
+- `capability_id VARCHAR(255) NOT NULL` (unique)
+- `interface_digest CHAR(64) NOT NULL`
+- `release_build_id VARCHAR(255) NOT NULL`
+- `updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
+- `PRIMARY KEY (provider_id, capability_id)`
+
+Contract:
+- The registry of provided capabilities and their interface digests. `phis addon reconcile` rewrites the
+  Core rows (`provider_id = '@phis/server/core'`) from `PHIS_CORE_CAPABILITIES` and each Add-on's rows from
+  its manifest in the desired state. A capability id has exactly one provider.
+
+### `phis.site_server_addons`
+
+- `site_id SMALLINT NOT NULL REFERENCES phis.sites(id) ON DELETE CASCADE`
+- `addon_id VARCHAR(255) NOT NULL REFERENCES phis.server_addons(addon_id) ON DELETE RESTRICT`
+- `flags INT NOT NULL DEFAULT 0`
+- `configuration_status VARCHAR(32) NOT NULL DEFAULT 'missing'` (`missing`, `ready`, `invalid`)
+- `configuration_version SMALLINT NOT NULL DEFAULT 0`
+- `provider_account_reference VARCHAR(512) NULL`
+- `effective_status VARCHAR(32) NOT NULL DEFAULT 'disabled'` (`available`, `missing`, `disabled`,
+  `incompatible`, `misconfigured`, `unavailable`)
+- `diagnostic_code VARCHAR(128) NULL`
+- `configuration_json JSONB NOT NULL DEFAULT '{}'::jsonb`
+- `enabled_at TIMESTAMPTZ NULL`
+- `disabled_at TIMESTAMPTZ NULL`
+- `updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
+- `storage_quota_bytes BIGINT NULL`
+- `storage_quota_objects INT NULL`
+- `storage_used_bytes BIGINT NOT NULL DEFAULT 0`
+- `storage_used_objects INT NOT NULL DEFAULT 0` (CHECK: both used counters non-negative)
+- `PRIMARY KEY (site_id, addon_id)`; index on `addon_id`
+
+Contract:
+- One row per Site that has asked for an Add-on. `flags & 1` is the Site's enable request, written by
+  `phis addon site`.
+- `configuration_json` holds the Add-on's Site settings, written by `phis addon config`;
+  `configuration_status` says whether they satisfy the manifest.
+- An Add-on runs on a Site only when it is installed on the instance, enabled deployment-wide, requested
+  by the Site, and configured. The capability snapshot derives that from its sources and does not read
+  `effective_status`; `effective_status` and `diagnostic_code` are the diagnosis recorded by
+  `phis addon reconcile` for operators.
+- `storage_quota_bytes` and `storage_quota_objects` are the Core-enforced ceilings of the Add-on's object
+  store on this Site (`NULL` is no ceiling), set with `phis addon storage`. The used columns are running
+  totals maintained by the writes, not counted on demand.
+
+### `phis.site_addon_user_roles`
+
+- `site_id SMALLINT NOT NULL REFERENCES phis.sites(id) ON DELETE CASCADE`
+- `addon_id VARCHAR(255) NOT NULL REFERENCES phis.server_addons(addon_id) ON DELETE RESTRICT`
+- `user_id INT NOT NULL REFERENCES phis.user_accounts(id) ON DELETE CASCADE`
+- `role VARCHAR(120) NOT NULL` (CHECK `role <> ''`)
+- `granted_by_user_id INT NULL REFERENCES phis.user_accounts(id) ON DELETE SET NULL`
+- `granted_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
+- `PRIMARY KEY (site_id, addon_id, user_id, role)`; index on `(site_id, user_id)`
+
+Contract:
+- One row grants one named Add-on role to one user on one Site. The role vocabulary is declared in the
+  Add-on manifest ([SERVER_ADDONS.md](./SERVER_ADDONS.md)); Core stores and answers with the names and never
+  interprets them.
+- `role` is text, not a foreign key: the manifest is the only catalog. A grant naming a role the current
+  manifest no longer declares is reported, never deleted by Core.
+- Re-granting keeps the first grant's `granted_by_user_id` and `granted_at`.
+- Access checks read these rows through the `addon-roles` access policy defined in
+  [AUTHORIZATION.md](./AUTHORIZATION.md).
+
+### `phis.server_addon_migrations`
+
+- `addon_id VARCHAR(255) NOT NULL REFERENCES phis.server_addons(addon_id) ON DELETE RESTRICT`
+- `migration_version SMALLINT NOT NULL` (CHECK `> 0`)
+- `migration_id VARCHAR(255) NOT NULL`
+- `checksum CHAR(64) NOT NULL`
+- `release_build_id VARCHAR(255) NOT NULL`
+- `applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
+- `PRIMARY KEY (addon_id, migration_version)`
+
+Contract:
+- One row per applied Add-on schema version (`migration_id` is `schema-v<version>`), written by
+  `phis addon migrate`. Reapplying the same version with the same checksum is a no-op; the same version
+  with a different checksum, or a different version, is refused, and the remedy is a purge.
+
+### `phis.server_secrets`
+
+- `reference VARCHAR(512) PRIMARY KEY`
+- `site_id SMALLINT NULL REFERENCES phis.sites(id) ON DELETE CASCADE`
+- `addon_id VARCHAR(255) NULL REFERENCES phis.server_addons(addon_id) ON DELETE CASCADE`
+- `key_version SMALLINT NOT NULL DEFAULT 1` (CHECK `> 0`)
+- `ciphertext TEXT NOT NULL` (hex)
+- `iv CHAR(24) NOT NULL` (hex)
+- `auth_tag CHAR(32) NOT NULL` (hex)
+- `created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
+- `updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
+- partial indexes on `site_id` and on `addon_id`
+
+Contract:
+- Every secret the server holds, encrypted, so every instance reads the same store. The decryption key is
+  not in the database: it is `secrets.encryptionKey` in each instance's runtime configuration, and
+  `key_version` records which key version encrypted the row.
+- `reference` is the secret's readable name, for example `core:smtp-password`,
+  `site:acme:core:smtp-password`, or `site:acme:addon:@phis/storage-s3:secret-access-key`
+  (`src/lib/secrets/reference.ts`). `site_id` and `addon_id` are derived from the reference on write,
+  so deleting a Site or an Add-on removes its secrets.
+- Secrets are managed with `phis secret`.
+
+### `phis.server_instances`
+
+- `instance_id VARCHAR(255) PRIMARY KEY`
+- `release_build_id VARCHAR(255) NOT NULL`
+- `addon_manifest_digest CHAR(64) NOT NULL`
+- `addon_packages_json JSONB NOT NULL DEFAULT '{}'::jsonb`
+- `capability_digests_json JSONB NOT NULL DEFAULT '{}'::jsonb`
+- `flags INT NOT NULL DEFAULT 0`
+- `last_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
+- `started_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
+- index on `(release_build_id, (flags & 1) <> 0, last_seen_at DESC)`
+
+Contract:
+- Each serving instance reports what it holds: its release build, Add-on manifest digest, installed
+  Add-on package versions, and capability interface digests. The row is a self-report, never a poll.
+- `flags & 1` is readiness. A draining instance clears it and keeps its row; a reader treats an instance
+  as ready only when the bit is set and `last_seen_at` is recent, because a killed instance keeps the bit.
+- A report under an existing id refreshes the row and keeps `started_at`. `phis instance list` reads the table.
+
 ## Content and Translation Model
 
-- The global `tr_*` tables remain reserved for `phi-core` text and global label sets that are not tied to any site.
+- The global `tr_*` tables hold Core text, package and preset text, and global label sets that are not tied to any Site.
 - Site-facing content uses `tr_site_*` and must be isolated per site.
 - `tr_site_msg` is a translation anchor table, not a full content table.
 - `tr_site_lang` stores translated variants for a site-specific source message. A non-null

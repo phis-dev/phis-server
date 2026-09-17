@@ -4,17 +4,6 @@ This is the practical guide for shipping an Add-on. The normative rules stay in
 [SERVER_ADDONS.md](./SERVER_ADDONS.md); where this guide is more specific, it is specific about the
 same rules and cannot widen them.
 
-## Status
-
-**Implemented and proven.** A server was built and started with one Add-on installed, and a second
-Add-on was then installed, migrated, and enabled into that running process. Its routes and its hook
-answered from the same PID, with no rebuild and no restart. Tampering with an installed artifact makes
-it refuse to load rather than load the changed bytes.
-
-`phis addon upgrade` replaces an installed artifact in place, and `phis addon forget` takes an entry out
-of the desired state without reading it -- for the manifest that has become unreadable and that
-`remove` therefore refuses to touch.
-
 ## The one shape
 
 There is exactly one way an Add-on reaches a running server, and it is not a rebuild.
@@ -41,10 +30,11 @@ One export:
 
 ```js
 export const phisAddon = {
-  manifest,        // PhisAddonManifestV1
-  apiHandlers,     // optional
-  hookHandlers,    // optional
-  serviceFactories // optional
+  manifest,         // PhisAddonManifestV1
+  apiHandlers,      // optional
+  hookHandlers,     // optional
+  jobHandlers,      // optional
+  serviceFactories  // optional
 };
 ```
 
@@ -74,7 +64,7 @@ are documented in [SERVER_ADDONS.md](./SERVER_ADDONS.md). Two reminders that cat
 
 - A route `path` is relative to the fixed catch-all, so `ping` and `echo/:token`, never a leading
   slash and never `/api/v1/...`.
-- A handler name in a descriptor is a key in `apiHandlers` or `hookHandlers`. A descriptor naming a
+- A handler name in a descriptor is a key in `apiHandlers`, `hookHandlers`, or `jobHandlers`. A descriptor naming a
   handler the runtime does not export is a failed installation, not a 404 later.
 
 ### Tables
@@ -167,8 +157,8 @@ the runtime and never walk up. **Always write them with the `node:` prefix**, so
 except `node:*`" is something a reader can check at a glance.
 
 If a capability genuinely needs a native module, it does not belong in an in-process Add-on. It belongs
-in Core, or -- once the sidecar shape exists -- in a separate process. There is no third option, and
-until the sidecar exists the honest answer is that such an Add-on cannot be built yet.
+in Core, or in a separate process once the sidecar shape planned in
+[ADDONS_PLANNED.md](./design/ADDONS_PLANNED.md) exists. Until then such an Add-on cannot be built.
 
 The failure does at least surface early: `phis addon install` imports the artifact to read its
 manifest, so a native dependency touched at module scope is rejected at installation rather than at the
@@ -196,11 +186,11 @@ module scope empty.
   Core wrote those columns and Core answers about them: declare `@phis/server/authorization:v1` and
   ask `context.capabilities.authorization.mayActOnRow({ table, id, intent })`. Rebuilding the ladder
   locally is the parallel contract the Module guide forbids, and it will drift from Core's the first
-  time a level changes -- which has already happened once.
+  time a level changes.
 - **No global registration and no import-side-effect registration.** Both are covered by the
   no-top-level-side-effects rule and are not extension APIs.
 - **No unbounded work.** A handler is raced against its declared `timeoutMs`, and losing that race
-  answers the caller but does **not** cancel the handler. The context carries an `AbortSignal`;
+  answers the caller with 504 but does **not** cancel the handler. The context carries an `AbortSignal`;
   honour it. A handler that writes after its timeout will commit changes the caller was told did not
   happen.
 - **No assumption of being alone.** The process is shared by every Site on the instance.
@@ -216,6 +206,7 @@ phis addon reconcile
 phis addon migrate  --addon @acme/status
 phis addon enable   --addon @acme/status
 phis addon reconcile
+phis addon site     --addon @acme/status --site <site key> --enable
 ```
 
 What each step is for:
@@ -227,7 +218,15 @@ What each step is for:
 2. **`reconcile`** writes what is installed into the database registry for the named release.
 3. **`migrate`** derives and applies the schema. The Add-on is still disabled while this runs.
 4. **`enable`** marks it enabled in the desired state.
-5. **`reconcile`** publishes that to the registry, and the next request picks it up.
+5. **`reconcile`** publishes that to the registry. Routes that are not Site-scoped answer from here on.
+6. **`site --enable`** records that one Site asks for the Add-on and creates the groups its manifest
+   declares there. Site-scoped routes, hooks, jobs, and capabilities answer for that Site from the next
+   request. Repeat it per Site; `--disable` withdraws the request.
+
+When the package also has a Module half, add it to the Site and rebuild the Site before step 6
+(`phis module add --site <site key> --package <package>`); `site --enable` refuses otherwise.
+`--without-module` enables the server half on its own. Settings, storage quotas, and role grants for the
+Site follow with `phis addon config`, `phis addon storage`, and `phis addon role`.
 
 Installation never enables an Add-on, and an Add-on cannot enable itself.
 

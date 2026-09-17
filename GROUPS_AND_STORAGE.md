@@ -1,6 +1,6 @@
 # Site Groups, Media Spaces, and Storage Provider Contract
 
-This document defines the normative target-v1 contract for Site-scoped groups, Media ownership,
+This document defines the contract for Site-scoped groups, Media ownership,
 folders, quotas, binary Storage Providers, and protected Asset delivery in `@phis/server`. The Asset
 Collection, Picker, Inspector, and CMS reference projections in `@phis/ui` consume this
 contract; they must not define another ownership, authorization, or Storage model.
@@ -12,9 +12,8 @@ governed by [SERVER_ADDONS.md](./SERVER_ADDONS.md). Stable CMS Asset references 
 [REFERENCES.md](./REFERENCES.md). Local and future external user/group Directory providers are governed
 by [DIRECTORY_PROVIDERS.md](./design/DIRECTORY_PROVIDERS.md).
 
-This target is a v1 ABI break. The existing `media_groups` folder vocabulary, ambiguous Asset
-`user_id`, global `local | s3` switch, persisted public URL, and Storage-key delivery path must not
-remain as compatibility alternatives.
+Folders are not groups, an Asset has no ambiguous `user_id` owner, there is no global `local | s3`
+switch, no persisted public URL, and no delivery by Storage key.
 
 ## 1. Separation of concerns
 
@@ -43,17 +42,20 @@ site_groups
 ├── key
 ├── name
 ├── flags
+├── retired_at
 ├── created_at
 └── updated_at
 
 site_group_members
 ├── group_id
 ├── user_id
+├── site_id
 ├── source_provider_id
 ├── source_connection_key
 ├── source_binding_or_assertion_key
 ├── membership_flags
 ├── valid_until
+├── provider_revision
 ├── created_at
 └── updated_at
 ```
@@ -72,16 +74,17 @@ Manager  = may delete what anyone created, and administers membership
 ```
 
 Assignment validation enforces `Manager => Editor => Author => Member`; a higher level cannot exist
-without the lower effective levels. Numeric bit assignments are centralized with the other Core
-constants and must not be repeated by Modules.
+without the lower effective levels, and the `site_group_members_flags_check` constraint refuses such a
+row. The bits (Member `1`, Author `1|2`, Editor `1|2|4`, Manager `1|2|4|8`) are `PhiGroupMembershipFlags`
+in `@phis/contracts/site-groups` and are not repeated elsewhere.
 
 `Author` is a narrowing of `Editor`, not something beside it: "may edit only their own" is the same
 right with a smaller reach, so it sits below on the same ladder. Two consequences follow from the
 ordering rather than from a separate decision. An Editor inherits deleting their own work, so deletion
-is no longer wholly a Manager matter -- what still needs a Manager is deleting *someone else's*. And
+is not wholly a Manager matter -- what still needs a Manager is deleting *someone else's*. And
 "their own" needs the resource to say who owns it, and ownership is not authorship: `media_assets` carries
 `owner_user_id` beside `created_by_user_id`, and an Add-on table states `ownerScoped` so Core adds and
-answers for the same column (see [SERVER_ADDONS.md](./SERVER_ADDONS.md), section 15). A row whose owner is
+answers for the same column (see the database boundary in [SERVER_ADDONS.md](./SERVER_ADDONS.md)). A row whose owner is
 null belongs to nobody, and no level reaches it through ownership.
 
 The membership path is assertion- and provenance-aware from v1. Local Core membership and later LDAP,
@@ -128,22 +131,19 @@ Core stores no group edges until a case needs them -- local nesting, or a connec
 over edges instead of finished memberships. An edge table nobody writes to only ages against the code
 that will eventually need it.
 
-### A Module may bring a group
+### Groups an Add-on brings
 
-A Module that needs a shared place for its own domain -- accounting for receipts and invoices, support
-for incident attachments -- seeds an ordinary Core group when it is set up, and may set that group's
-quota override once as a starting value. It is a preset, not a second kind of group: provider-owned
-group kinds "must not create another effective group table or Client-only evaluator", and the group
-outlives the Module exactly as group data outlives `@phis/groups`.
+A Module does not create groups. An Add-on that needs groups for its own domain declares them in its
+manifest: `groups` for the groups every Site running it has, `groupWriter` for groups created at runtime
+(see [SERVER_ADDONS.md](./SERVER_ADDONS.md)). Either way the result is an ordinary Core group under the
+Add-on's provider id, not a second kind of group, and it outlives the Add-on like any other group data.
 
-A Module declares which Space kinds it needs and seeds what it owns. It does not switch availability on
-and it does not become a layer in quota resolution; both are covered in section 7.
+A Module declares which Space kinds it needs. It does not switch availability on and it does not become a
+layer in quota resolution; both are covered in section 7.
 
-Core owns persistence, the provider-neutral `groups:v1` route, the local provider, and enforcement
-because Pages, Navigation, Assets, and independent Modules may depend on group visibility. The optional
-P2 `@phis/groups` package contributes administration UI, presets, Controllers, and Providers; none of
-that feature UI belongs in `@phis/ui`. Disabling the package does not disable Core group
-enforcement or erase data.
+Core owns persistence, the provider-neutral `@phis/server/groups:v1` capability (`/api/v1/groups`), the
+local provider, and enforcement, because Pages, Navigation, Assets, and independent Modules may depend on
+group visibility. Deactivating the Groups Module does not disable Core group enforcement or erase data.
 
 ### Who sees a group's members
 
@@ -168,12 +168,12 @@ Those flags are display bits and never rights. Authority lives in the membership
 here would mean two places decide the same question, and the second one would be the one nobody
 remembers to check.
 
-`/admin/groups` is where a Site administers them, delivered by that Module: the groups with their
-member count and Space usage, the members of whichever group is selected, the form that creates one,
-and the level of a membership edited in the cell it is read in. A membership a provider contributes is
-listed but not editable -- it is read here and changed at its source. Entry is Developer, widened to Admin by the Core override, because creating a group is Site
-administration. A group's own Manager administers their group in `app`, where they are when they
-notice it needs doing.
+The Groups Module's Admin `/groups` Page is where a Site administers them: the groups with their member
+count and Space usage, the members of whichever group is selected, the form that creates one, and the
+level of a membership edited in the cell it is read in. A membership a provider contributes is listed but
+not editable -- it is read here and changed at its source. Entry is Developer, widened to Admin by the
+Core override, because creating a group is Site administration. A group's own Manager administers their
+group on the Module's App `/groups` Page.
 
 A browser session reaches all of it through `/api/site/groups` -- one address for the resource, with
 `?scope=site` for every group and the bare route for the ones the actor is in. Those are the same
@@ -182,12 +182,9 @@ membership write lived in two files. `groups:v1` under `/api/v1` stays separate:
 provider-neutral capability a Module speaks to, not a session surface. Both end in the same typed
 control-plane functions.
 
-The first-party `@phis/ui/groups` Module is the small half that belongs in the shared package
-rather than in that one: groups are needed often, the Module is thin enough not to weigh the package
-down, and shipping it here is what makes it installable without the CLI. It declares that a Site's
-groups need Group Spaces and carries the one form that creates a group -- one declaration, one form
-relaying to `groups:v1`, no Controller, `admin` only -- so the rich administration surface still has
-somewhere to land. Both can be active: the Module declares and creates, the package administers.
+The Groups Module is `@phis/ui/modules/groups` in the shared package, eligible in `admin` and `app`. It
+declares that a Site's groups need Group Spaces, carries the Admin and App Pages, and binds only to Core.
+Whether it moves to a separate package is an open question in the phis-ui `TODOS.md`.
 
 A later external Directory Add-on synchronizes provider assertions through the approved Core service.
 When that provider is disabled, missing, incompatible, misconfigured, or stale beyond its configured
@@ -203,9 +200,10 @@ general groups is planned in [GROUPS_AND_STORAGE_PLANNED.md](./design/GROUPS_AND
 Every Media Asset belongs to exactly one Media Space:
 
 ```text
-Site Space   = Site presentation, CMS content, theme, and published download Assets
-User Space   = one user's private application data inside one Site
-Group Space  = one Site group's shared application data
+Site Space    (1) = Site presentation, CMS content, theme, and published download Assets
+User Space    (2) = one user's private application data inside one Site
+Group Space   (3) = one Site group's shared application data
+Add-on Space  (4) = what one Server Add-on keeps on one Site
 ```
 
 The normalized owner is:
@@ -214,9 +212,10 @@ The normalized owner is:
 media_spaces
 ├── id
 ├── site_id
-├── kind                 SMALLINT: Site, User, or Group
+├── kind                 SMALLINT: Site, User, Group, or Add-on
 ├── user_id              nullable
 ├── group_id             nullable
+├── addon_id             nullable
 ├── default_storage_profile_id
 ├── quota_bytes          nullable override
 ├── used_bytes
@@ -228,12 +227,16 @@ media_spaces
 
 The Space kind determines the only valid owner columns:
 
-- Site Space has neither `user_id` nor `group_id` and is unique per Site;
+- Site Space has no owner column and is unique per Site;
 - User Space has exactly one `user_id` and is unique per `(site_id, user_id)`;
-- Group Space has exactly one `group_id` and is unique per group.
+- Group Space has exactly one `group_id` and is unique per `(site_id, group_id)`;
+- Add-on Space has exactly one `addon_id` and is unique per `(site_id, addon_id)`.
 
 The Site Space is not represented by a duplicate persisted `site` group. Its management authority is
 derived from the Core role matrix. User and Group Spaces may be created lazily on first authorized use.
+An Add-on Space is created on the Add-on's first use of the `assets` capability, on the Site's default
+Storage Profile. It is not browsable and appears in no Space listing; its contents are the Add-on's, its
+capacity is the Site's (section 7).
 
 A Group Space is materialized by the first authorized *write*, which is an Author operation.
 Discovery is a Member right and must not create the row: a group appears in the selectable Space list
@@ -241,15 +244,14 @@ from its membership alone, and reading it before anything has been written retur
 a group nobody has stored anything in leaves no trace, while everyone entitled to see it does.
 
 No surface deletes a group; retiring one is what ends its service, and the section below is the form.
-The foreign key from `media_spaces` to `site_groups` still does not cascade, so a stray delete against
-the database fails rather than taking a Space, its folders, and every Asset in it along. The constraint
-is `NO ACTION` rather than `RESTRICT` because it is evaluated at the end of the statement, so deleting
-a whole Site still cascades through in one go.
+The foreign key from `media_spaces` to `site_groups` does not cascade, so a stray delete against the
+database fails rather than taking a Space, its folders, and every Asset in it along. The constraint is
+`DEFERRABLE INITIALLY DEFERRED` rather than `RESTRICT`: it is checked at commit, so deleting a whole Site
+still cascades through in one transaction while deleting a lone group with a Space fails.
 
 ### Retiring a group
 
-Retiring a group rather than deleting it is the form, implemented as of 2026-08-25. Nothing deletes a
-group; whether a Directory reconciliation may ever remove one stays open and is a Directory question.
+Nothing deletes a group; whether a Directory reconciliation may ever remove one is a Directory question.
 
 - **A retired group keeps its `(site_id, provider_id, key)`.** Access policies are serialized against
   that provider-qualified key. Releasing it would let a new group of the same name inherit every policy
@@ -286,10 +288,6 @@ A Directory going away is a separate case and needs none of this: an unreachable
 become ineffective while local and other healthy sources remain, and recovery reuses the existing
 binding. The group row, its key, and its Space are untouched throughout.
 
-A Directory going away is a different case and is already settled: an unreachable source's assertions
-become ineffective while local and other healthy sources remain, and recovery reuses the existing
-binding. The group row and its Space are untouched throughout.
-
 An Asset records immutable `created_by_user_id` attribution separately from custody. An uploader is not
 the Asset's custodian; the owning Space is. The two are not the same question -- see section 6. Moving
 an Asset between Spaces is not implemented; the planned transfer of custody is in
@@ -297,15 +295,14 @@ an Asset between Spaces is not implemented; the planned transfer of custody is i
 
 ## 4. Folders
 
-`media_folders` replaces `media_groups`. Each Folder belongs to exactly one Space and may have one
-parent Folder in the same Space. `(space_id, parent_id, lower(name))` is unique.
+`media_folders` organizes Assets. Each Folder belongs to exactly one Space and may have one parent Folder
+in the same Space. `(space_id, parent_id, lower(name))` is unique.
 
 Folder identity is metadata only. Storage keys must not be derived from the mutable Folder path, and
-renaming or moving a Folder must not move binary objects. A Folder cannot be moved between Spaces; that
-operation is an explicit recursive Space transfer.
+renaming or moving a Folder must not move binary objects. A Folder cannot be moved between Spaces.
 
-Collection and Inspector APIs use `folderId` and `folderPath`. `groupId` and `groupPath` are not retained
-as aliases. The server returns only Spaces and Folders visible to the current viewer.
+Collection and Inspector APIs use `folderId` and `folderPath`. The server returns only Spaces and Folders
+visible to the current viewer.
 
 ### Addressing a Space
 
@@ -339,12 +336,15 @@ space_id
 folder_id nullable
 created_by_user_id nullable
 updated_by_user_id nullable
+owner_user_id nullable
 storage_profile_id
 storage_key
 original_name
 content_type
-bytes and checksum
-dimensions, blur preview, focal metadata, title, and alternative text
+variant_version nullable
+bytes
+checksum_algorithm and checksum_value, both null or both set
+width, height, blur_data_url, meta (including focal metadata), title, and alt_text
 lifecycle_status
 delivery_policy
 delivery_revision
@@ -352,13 +352,14 @@ presentation_flags
 timestamps
 ```
 
-`user_id`, `group_id`, string `storage_provider`, repeated bucket fields, and canonical `public_url` are
-removed. A private or signed URL is transient and cannot be persisted as Asset identity. Asset id plus
-Storage Profile plus Storage key is canonical.
+An Asset has no `user_id` or `group_id` owner column, no provider string, no bucket fields, and no
+stored public URL. A delivery URL is transient and is never persisted as Asset identity. Asset id plus
+Storage Profile plus Storage key is canonical, and `(storage_profile_id, storage_key)` is unique.
 
-Image variants retain `(asset_id, variant_key)` identity and record their concrete Storage Profile and
-Storage key. They do not resolve through the currently configured default Provider. Changing a Space's
-default profile affects only future objects until an explicit migration runs.
+Image variants (`image_asset_variants`) and font subsets (`font_asset_subsets`) keep `(asset_id,
+variant_key)` or `(asset_id, subset_key)` identity and record their concrete Storage Profile, Storage
+key, and checksum pair. They do not resolve through the currently configured default Provider. Changing a
+Space's default profile affects only future objects.
 
 Lifecycle, delivery, and presentation are separate closed contracts:
 
@@ -366,8 +367,8 @@ Lifecycle, delivery, and presentation are separate closed contracts:
 - delivery includes public, authenticated, user, group, and internal access;
 - presentation flags include non-security properties such as featured or mask behavior.
 
-The legacy `Private`, `Restricted`, and `Archived` flag mixture must not remain an alternative
-authorization path.
+The numeric values are `PhiMediaLifecycleStatus` and `PhiMediaDeliveryPolicy` in `@phis/contracts/media`.
+Presentation flags never carry authorization.
 
 ## 6. Authorization matrix
 
@@ -437,7 +438,9 @@ more of them. Administering the members of an existing group is the group's own 
 belong to Site administration either, or every membership change would queue behind an Admin.
 
 ```text
-create or delete a group                      = Developer | Admin
+create a group                                = Developer | Admin
+retire a group                                = that group's Manager, or Developer | Admin
+reactivate a retired group                    = Developer | Admin
 grant or revoke the Manager level             = Developer | Admin
 set the Site quota ceiling per Space kind     = Developer | Admin
 set Author, Editor and Member levels        = that group's Manager, or Developer | Admin
@@ -466,7 +469,7 @@ audience against the Page audience at publish is planned, not implemented.
 
 ### Custody, audience, and transfer
 
-A Space answers who pays for an Asset's bytes and who administers them. Delivery today still derives part
+A Space answers who pays for an Asset's bytes and who administers them. Delivery derives part
 of the audience from custody: policy `User` requires the Asset to sit in that user's User Space. Separating
 the two axes and moving Assets between Spaces are designed in
 [GROUPS_AND_STORAGE_PLANNED.md](./design/GROUPS_AND_STORAGE_PLANNED.md) and not implemented; there is no
@@ -474,8 +477,9 @@ transfer operation.
 
 ## 7. Quotas and upload reservations
 
-The Site Media configuration owns default User-Space and Group-Space quotas, allowed content types,
-maximum object sizes, and allowed Storage Profiles. A Space-level `quota_bytes` value is an explicit
+The Site Media configuration (`site_media_config`) owns the default User-, Group-, and Add-on-Space
+quotas, their ceilings, the maximum object size, and the allowed Storage Profiles. What a User or Group
+Space accepts is derived from the active Modules (below). A Space-level `quota_bytes` value is an explicit
 override; `NULL` inherits the Site default. Per-user administration writes the User Space override and
 does not alter global account identity.
 
@@ -491,9 +495,8 @@ need it. A Module states which Space kinds it requires; the Site's availability 
 declarations across its active Modules.
 
 ```text
-@phis/ui/groups   requires Group Spaces   general group use -- the one that exists today
-@phis/accounting          requires Group Spaces   plus its own group, seeded with a starting quota
-@phis/profile             requires User Spaces    an avatar is a User Space Asset
+@phis/ui/modules/groups   group: image, video, audio, pdf, markdown, document, archive
+@phis/ui/modules/avatar   user:  image
 ```
 
 One switch, not two. A Site that activates none of them has no User or Group Space, and activating a
@@ -510,14 +513,13 @@ The Site Space is not governed by any declaration. It always exists and is gover
 role matrix in section 6. A Group Space additionally requires its group to exist, which is ordinary
 Core data rather than a second switch.
 
-A Space kind that stops being available hides its Spaces rather than deleting anything, exactly as a
-disabled flag did before. The Assets remain, they keep counting against their quota, and Developer and
+A Space kind that stops being available hides its Spaces rather than deleting anything. The Assets remain, they keep counting against their quota, and Developer and
 Admin must still be able to see that they are there -- the same reasoning that keeps a group with a
 Space from being deleted.
 
-A Module declares a need; it never writes the availability itself. `@phis/groups` in particular is
-optional administration UI: a Module that seeds its own group speaks to the Core `groups:v1` route and
-works without it.
+A Module declares a need; it never writes the availability itself. Only User and Group Spaces are
+declarable (`PHI_DECLARABLE_MEDIA_SPACE_KINDS` in `@phis/contracts/media`): the Site Space always exists,
+and an Add-on Space comes with its Add-on.
 
 #### How a declaration reaches the control plane
 
@@ -526,17 +528,26 @@ active Modules of an Area as opaque ids. The declaration therefore travels with 
 control plane materializes the result rather than re-deriving it:
 
 ```text
-PhiRuntimeModuleDefinition.mediaSpaceKinds   the Module states its need
-└── resolvePhiDeclaredMediaSpaceKinds()      the Builder derives the Area's union when it saves
-    preset.config.mediaSpaceKinds            the Area preset carries it, next to runtimeModules
-    └── publishing an Area                   the control plane unions every *published* Area
-        site_media_config.flags              the materialized result, read at request time
+PhiRuntimeModuleDefinition.mediaSpaces           { user?: { kinds }, group?: { kinds } }
+└── resolvePhiDeclaredMediaSpaces()              the Builder derives the Area's union when it saves
+    preset.config.modules.mediaSpaces            the Area preset carries it, next to runtimeModules
+    └── publishing an Area                       the control plane unions every *published* Area
+        site_media_config.flags                  User/Group Spaces enabled bits
+        site_media_config.user_space_content_kinds
+        site_media_config.group_space_content_kinds
 ```
 
-`flags` stays a column and stays authoritative at request time, but it stops being a switch: nothing
-writes it except this materialization. `PATCH /api/site/admin/media` rejects `userSpacesEnabled` and
-`groupSpacesEnabled` instead of accepting them, the installation configuration seeds capacity only, and
-a Site that wants a kind activates a Module that needs it.
+`resolvePhiDeclaredMediaSpaces` lives in `@phis/ui` (`plugins/runtime-modules/settings.ts`) and is called
+by Builder persistence. The control plane reads `tree_json #> '{preset,config,modules,mediaSpaces}'` of
+every published Area revision (`materializeSiteMediaAvailabilityWithDb` in `src/db/media-spaces.ts`).
+A Space kind is available when any published Area declares it; its content kinds are the sorted union of
+the declared `kinds`. A declared Space kind with an empty `kinds` list accepts nothing.
+
+`flags` and the content-kind columns are authoritative at request time and nothing writes them except
+this materialization. `PATCH /api/site/admin/media` rejects `userSpacesEnabled` and `groupSpacesEnabled`,
+the installation configuration seeds capacity only, and a Site that wants a kind activates a Module that
+needs it. Upload `init` rejects a content type whose kind the destination User or Group Space does not
+accept; the Site Space and Add-on Spaces have no content-kind list.
 
 Publishing is the materializing act because publishing is what changes which Modules the Site actually
 runs. A draft therefore never widens a running Site, and the pointer and the availability it implies
@@ -544,7 +555,7 @@ move in one transaction so the two are never observable apart. Deactivating the 
 declared a kind narrows availability again on the next publish, which hides its Spaces without deleting
 anything -- the rule above.
 
-A kind the control plane does not know is ignored rather than rejected: a newer Module must not make an
+A Space kind the control plane does not know is ignored rather than rejected: a newer Module must not make an
 older control plane refuse a publish, and an undeclared kind is simply unavailable.
 
 ### Configuration layers
@@ -554,24 +565,28 @@ versioned operator-owned installation default, and an effective per-Site value. 
 of this: it comes from the Module declarations described above.
 
 ```text
-config/phis-config.json          versioned installation seeds, operator owned
-└── media.defaults.*             seeds site_media_config for a newly created Site
-    media.storageKeyPrefix       seeds the Local Storage Profile config
-    media.local.rootDir          seeds the Local Storage Profile config
+config/phis-config.json               versioned installation seeds, operator owned
+└── media.defaults.userQuotaBytes     seeds site_media_config for a newly created Site
+    media.defaults.groupQuotaBytes
+    media.storageKeyPrefix            seeds the Local Storage Profile config
+    media.local.rootDir               seeds the Local Storage Profile config
 
-site_media_config                the effective per-Site Media policy
+site_media_config                     the effective per-Site Media policy
 └── default_user_quota_bytes
     default_group_quota_bytes
+    default_addon_quota_bytes
     max_user_quota_bytes
     max_group_quota_bytes
+    max_addon_quota_bytes
+    max_object_bytes
+    allowed_storage_profile_ids
+    flags, user_space_content_kinds, group_space_content_kinds   (derived, see above)
 
-media_storage_profiles.config    the effective Provider configuration
+media_storage_profiles.config         the effective Provider configuration
 ```
 
 Capacity resolves in exactly two steps -- a Space's own override, otherwise the Site default for its
-kind -- and a Module never becomes a third. A Module that seeds a group may set that group's override
-once, as a starting value, in the same way configuration seeds a row. Afterwards the number belongs to
-the Space and to the Site, and the Module does not speak to it again.
+kind -- and a Module never becomes a third.
 
 The same rule governs both rows: configuration seeds them once at materialization and is never
 consulted again at request time. A Provider's configuration belongs to its Profile, so the Local
@@ -663,9 +678,9 @@ what makes the release happen exactly once.
 ### The upload plan
 
 How a body reaches storage is the Provider's to state and the Client's to carry out. `init` answers with
-a typed plan, and a generic executor obeys it without knowing which Provider issued it -- before the plan
-existed, the rule "one PUT, to a Core route, with the file's content type" lived in the Client as
-knowledge, which is true for Local storage and false for any Provider that takes a body directly.
+a typed plan, and a generic executor obeys it without knowing which Provider issued it. The Client holds
+no knowledge of where or how a body goes; that differs between Local storage and a Provider that takes a
+body directly.
 
 Two kinds exist: `proxy-stream`, where the body streams through Core with the Site session, and
 `presigned-put`, where the body goes to the Provider's own endpoint and Site credentials must not travel
@@ -683,7 +698,7 @@ Absent means no, and that makes when the probe runs part of the design rather th
 It runs where a Profile is written -- `storage add` and `storage set`, which replaces the old answer
 because it described the endpoint the old configuration reached -- and once, lazily, on the request that
 first needs it, for a Profile that reached service through neither: restored from a dump, written by a
-migration, configured before the probe existed. A failure is recorded like any other answer and not
+migration. A failure is recorded like any other answer and not
 retried per request, because an endpoint that is down would otherwise be dialled again by every upload
 into it; `phis storage probe` is what tries it again.
 
@@ -721,8 +736,7 @@ Which algorithm a Profile records is settled **once, when it is probed**, and re
 afterwards rather than derived again. Deriving it every time works only until the rule changes, and then
 it moves every already-probed Profile onto a new algorithm at once -- splitting each Space's objects
 into cohorts that can never be told to match. The consequence to accept is that duplicate detection is
-cohort-wise: two identical files recorded under different algorithms are not recognisably the same. That
-was already true before any of this; it was simply invisible.
+cohort-wise: two identical files recorded under different algorithms are not recognisably the same.
 
 ### Objects too large for one request
 
@@ -739,9 +753,6 @@ Where the answer is no, such an object is still **accepted and fully verified**,
 carries no digest that duplicate detection can use. Pulling the body back through Core to hash it was
 considered and rejected: duplicate detection is a saving, not a guarantee, and buying it for the largest
 objects with a full extra read of every byte inverts the cost it exists to avoid.
-
-The S3 Provider issues no multipart plan today (see `TODOS.md`), so the boundary is not reached: `nginx`
-caps a proxied body at `client_max_body_size 2g` and S3 accepts a single PUT up to 5 GB.
 
 Finalizing is always Core's: only the Server turns a delivered body into an Asset. It settles the staged
 object with the Provider first, carrying through whatever the plan asked the Client to report back,
@@ -770,18 +781,20 @@ is Site-scoped configuration selecting that Provider:
 media_storage_profiles
 ├── id
 ├── site_id
-├── key
+├── key                  unique per Site
 ├── provider_id
-├── configuration_json
-├── secret_reference
-├── configuration_version
-├── status
+├── config               JSONB object
+├── secret_reference     nullable
 ├── flags
-└── timestamps
+├── probe                nullable, the recorded probe result
+├── probed_at            nullable
+├── checksum_algorithm   nullable, settled by the probe
+├── created_at
+└── updated_at
 ```
 
-Configuration JSON contains only schema-validated non-secret settings. Credentials and encryption keys
-remain in the server secret facility under the Add-on, Site, and profile namespace; section 16 of
+`config` contains only schema-validated non-secret settings. Credentials and encryption keys remain in
+the server secret facility under the Add-on, Site, and profile namespace; the Secrets section of
 [SERVER_ADDONS.md](./SERVER_ADDONS.md) states what that facility is and why `secret_reference` does not
 name a storage location. A Site admin may
 select an operator-allowed profile but cannot install provider code, choose package versions, or read
@@ -796,13 +809,14 @@ S3-compatible server answers a multi-origin rule by echoing the whole list in a 
 `Access-Control-Allow-Origin` header, which every browser rejects; and a server-side test proves
 nothing here, because a server-side HTTP client has no same-origin policy to fail.
 
-The Storage Provider interface is stream-first and exposes only approved object operations:
+The Storage Provider interface is `PhisMediaStorageAdapter` in `@phis/contracts/media-storage` and exposes
+only approved object operations:
 
-- put and get stream;
-- head, delete, and copy;
-- create, complete, and abort a direct or multipart upload plan;
-- resolve public, signed, or proxy delivery;
-- report capabilities, limits, and diagnostics.
+- put (buffer or stream) and get;
+- read an object's leading bytes, head, delete, and copy;
+- create an upload plan and complete it;
+- apply a CORS policy;
+- probe capabilities and report a storage identity.
 
 `listPrefix` is a maintenance and reconciliation operation, never the normal Asset catalog. Database
 records remain the authoritative catalog.
@@ -834,8 +848,8 @@ multi-host or round-robin instances require a shared object store such as S3.
 
 The upload service returns a Provider-neutral upload plan:
 
-- Local may return an authenticated same-origin proxy stream;
-- S3 may return presigned PUT or multipart instructions;
+- Local returns an authenticated same-origin proxy stream (`proxy-stream`);
+- S3 may return a presigned PUT (`presigned-put`);
 - the Client follows the plan without branching on a Provider package id;
 - finalize always returns to `@phis/server` for authorization, verification, persistence, and quota commit.
 
@@ -913,17 +927,15 @@ can be placed anywhere by an author, including in Widgets that do not exist yet.
 enough to read it off, though: a Builder canvas renders the Area it edits, so its Area really is `app`
 while it previews the App. The signal partition settles it -- a live Area partition is someone working
 in that Area, a `canvas` partition is always authoring -- and both have to agree before a selector
-appears. Builder and Editor stay
-on the Site Space because that is where publishable content comes from: an Asset from a group cannot be
-rendered by a `phis:asset` reference, so offering it there would only produce images that vanish on the
-published page. It also keeps ordinary authoring independent of the optional `@phis/groups` package.
-Anyone who needs their groups switches to `/app`, where the same memberships apply.
+appears (`canPhiSurfaceSelectMediaSpace` in `@phis/ui`). Builder and Editor stay on the Site Space because
+that is where publishable content comes from: an Asset from a group cannot be rendered by a `phis:asset`
+reference, so offering it there would only produce images that vanish on the published page. It also
+keeps ordinary authoring independent of the Groups Module. Anyone who needs their groups switches to
+`/app`, where the same memberships apply.
 
-Administration does not get its Space selector in the shared picker either. Seeing other people's
-Spaces is its own surface, delivered by the Media module, where the view can be what that task actually
-needs -- grouped by user and group, with usage against quota and orphaned holdings -- rather than a
-picker bent into a different shape. Developer sees group Spaces there, Admin additionally User Spaces;
-another user's User Space is never listed anywhere and is reachable only by naming it, which is logged.
+Administration does not get a Space selector in the shared picker either. Another user's User Space is
+never listed; administration reaches it only by naming it as `user:<id>`, which only the Space quota route
+`PATCH /api/site/media/spaces/<address>` accepts, and only from Developer or Admin.
 
 A selector offers only Spaces the server returned as accessible. The Folder filter is scoped to the
 active Space. Upload inherits only the trusted active Space and explicitly selected Folder;

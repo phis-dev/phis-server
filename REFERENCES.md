@@ -1,9 +1,10 @@
 # Page Path and Internal Reference Contract
 
-This document defines the normative target-v1 `@phis/server` persistence, authorization, sanitization, and
-resolution contract for mutable Site Page paths and structured Page/Asset references. The corresponding
-UI and Authoring contract lives in `@phis/ui/REFERENCES.md`; both sides must use one wire format
-and must not introduce compatibility aliases.
+This document defines the `@phis/server` persistence, authorization, sanitization, and resolution
+contract for mutable Site Page paths and structured Page/Asset references. It is also the single
+statement of the shared wire rules: the `phis:page/` and `phis:asset/` URI forms, the `assetId` field
+convention, and the external-document sanitization rule. The Builder, Navigation, and Control side lives
+in [phis-ui REFERENCES.md](../phis-ui/REFERENCES.md). Both sides use one wire format and no aliases.
 
 ## Page identity and path ownership
 
@@ -24,8 +25,8 @@ a Page draft discards that pending path; both are described under the path chang
 
 ## Explicit path change command
 
-A Site Page path change is a dedicated authenticated Builder command addressed by positive Page Scope
-id. It is not an ordinary Page Form/revision write, and it does not move the Page. In one database
+A Site Page path change is a dedicated authenticated Builder command,
+`POST /api/site/cms/pages/:scopeId/path`, addressed by positive Page Scope id. It is not an ordinary Page Form/revision write, and it does not move the Page. In one database
 transaction the command:
 
 1. locks the Site-owned Scope and verifies the active Site and requested Area;
@@ -122,8 +123,9 @@ The serialized Page-reference payload is opaque outside the central reference co
 parses, and validates it; browser values do not authorize Site, Area, Module, or Page access. Asset
 references use the positive id of an Asset owned by the current Site's Site Media Space and repeat the
 normal delivery-policy authorization on every resolution. User- and Group-Space Assets are invalid CMS
-targets until an explicit authorized promotion copies or transfers them into the Site Space. Media Space,
-ownership, and delivery semantics are normative in [GROUPS_AND_STORAGE.md](./GROUPS_AND_STORAGE.md).
+targets. No operation moves or copies an Asset into the Site Space; the Site Space is not a transfer
+target, as recorded in [GROUPS_AND_STORAGE_PLANNED.md](./design/GROUPS_AND_STORAGE_PLANNED.md). Media
+Space, ownership, and delivery semantics are normative in [GROUPS_AND_STORAGE.md](./GROUPS_AND_STORAGE.md).
 
 Persisted config names an Asset by that id in a field called `assetId` or in one whose name ends in
 `AssetId`, and by no other means. The URI form belongs to Markdown and HTML bodies; a Widget image, a
@@ -166,10 +168,10 @@ reference owners because their stable identity already resolves to the new path.
 A Scope's set is replaced per Scope, and its rows stay readable across every revision that Scope points
 at: published, Working Draft, and — for an Area — the Module Working Draft. A publish that merges a
 tree, rather than only promoting a pointer, rewrites the set for the tree it published; a publish that
-may promote a revision other than the current draft does the same. Page and Asset deletion flows query the same index for affected-reference
-diagnostics; a Page deletion may retain unresolved references for the defined Draft diagnostic and Live
-omission behavior. Legacy raw internal paths must be migrated to one unambiguous target or reported for
-operator repair; live fallback lookup is forbidden.
+may promote a revision other than the current draft does the same. Page and Asset deletion flows query the
+same index for affected-reference diagnostics; a Page deletion may retain unresolved references for the
+defined Draft diagnostic and Live omission behavior. A raw internal path is not a reference, and no live
+lookup falls back to one.
 
 ## Trusted Markdown and HTML
 
@@ -198,14 +200,13 @@ the raw `meta` blob. Site Space membership, Ready lifecycle, and public delivery
 query, so an id that fails any of them is simply absent from the result and indistinguishable from a
 deleted one. Clients must not re-filter what the resolver returns; the guarantee is server-side.
 
-It preserves an optional Page fragment without treating it as identity. No unresolved `phi:` value may reach a DOM `href`/`src`, redirect, CSS URL, translation request,
-or Client-side resolver. Reference destinations are never translated; visible link text and image alt
+It preserves an optional Page fragment without treating it as identity. No unresolved `phis:` value may
+reach a DOM `href`/`src`, redirect, CSS URL, translation request, or Client-side resolver. Reference destinations are never translated; visible link text and image alt
 text remain translation units.
 
 An unresolved Page reference becomes non-interactive text. An unresolved Asset reference produces no
 media. Authoring receives a typed diagnostic with owner Scope and source location. Resolution never
-bypasses Page access, Site Space ownership, lifecycle status, delivery policy, delivery revision, or
-signed-URL policy. A stored public URL or Storage key is not an Asset-reference fallback.
+bypasses Page access, Site Space ownership, lifecycle status, delivery policy, or delivery revision. A stored public URL or Storage key is not an Asset-reference fallback.
 
 ## External document sanitization
 
@@ -214,7 +215,7 @@ hostname. Their trusted source classification comes from persisted Widget/provid
 document markup.
 
 Before translation and rendering, the server sanitizer rejects any URL form that normalizes to the
-reserved `phi:` scheme, including case, whitespace, character-reference, percent-encoding, redirect, and
+reserved `phis:` scheme, including case, whitespace, character-reference, percent-encoding, redirect, and
 nested-URL bypasses. A forbidden Page link is unwrapped while retaining visible text; a forbidden
 Asset/image node is removed. Authoring may receive a non-interactive diagnostic, but live output receives
 no placeholder URI.

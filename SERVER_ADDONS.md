@@ -2,8 +2,8 @@
 
 ## Status
 
-This document defines the normative target v1 contract for extending `@phis/server` and binding Site
-Modules to server capabilities.
+This document defines the v1 contract for extending `@phis/server` and binding Site Modules to server
+capabilities.
 
 Common Site authentication methods and session authority remain in Core under
 [AUTHENTICATION.md](./AUTHENTICATION.md); they are not optional Add-ons. A new authentication protocol may
@@ -20,70 +20,27 @@ The terminology is strict:
 Loading a package from request or database data, allowing a Module to install server code, or exposing
 direct database access to browser code violates this contract.
 
-### Implementation checkpoint
+### Not built
 
-The initial server/CLI foundation now provides:
+The following parts of this contract are not implemented. None of them is represented by a fallback:
 
-- the manifest, route, capability, migration-descriptor, and runtime-handler TypeScript ABI
-- strict CLI validation and deterministic SHA-256 manifest digests
-- operator-owned `config/phis-addons.json` desired state
-- CLI install, remove, list, validate, static-manifest build, enable, disable, and registry
-  reconciliation commands
-- runtime loading from the install root: a derived `file:` address per Add-on, digest-verified before
-  the first load, so installing one no longer rebuilds or restarts the server
-- the two fixed Add-on and hook catch-all routes
-- internal service-provider descriptors, resolved from the installed desired state. An Add-on declares
-  `(service kind, package-qualified provider key, interface digest, factory export, required Core
-  capabilities)`; Core checks the pair for uniqueness across the installation, refuses an interface
-  digest from a release it no longer offers, and applies the dispatcher's registry checks before
-  reaching a factory. There is no runtime registration to fall back to
-- exact declared method/path dispatch, authentication policy, body limit, rate-limit class, timeout,
-  runtime-manifest digest, Core capability, deployment-registry, and Site-state checks
-- the secret store with its first real reader. Authentication provider secrets are rows rather than
-  lines in `config/phis-runtime.json`, so a second instance can be given a root key instead of a file
-  copy; `phis auth import-secrets` moves an existing installation across once
-- the declarative schema descriptor and everything Core derives from it: the generated DDL, the schema
-  and its grants, the `information_schema` check afterwards, `phis addon migrate`, and `phis addon
-  purge`. An Add-on describes tables, columns, references, indexes, and structured constraints, and
-  ships no SQL; Core writes the Site, group and owner columns with their keys, resolves symbolic Core
-  references, and records the derived schema name under a unique index
-- the declarative query catalog and the compiled access path it implies. An Add-on declares named
-  queries, Core derives the statements once, and `data:v1` runs them by name. The Site filter is in the
-  statement rather than in the caller, Core writes the scope columns on insert, and a mutation is
-  refused by the row-level ladder before it runs
-- a Site-scoped read-only capability snapshot endpoint
-- mandatory Site Module server bindings with exact provider capability requirements
-- the initial Add-on, capability, Site activation, migration-history, and instance registry tables
-
-The following contract stages intentionally remain pending rather than being represented by a
-fallback:
-
-- the second half of the DDL separation. `phis-cli` migrates as its own role, and an Add-on schema is
-  owned by that role, so the serving role holds nothing but usage and data access there -- it cannot
-  create a table in an Add-on schema, and the migration role cannot create anything in `phis`. What
-  remains is `phis`: the serving role still holds `CREATE` on it, because `src/app/setup/actions.ts`
-  loads `001_create_phis.pgsql` from a request. Revoking it waits on that bootstrap moving to
-  `phis-cli`.
-- `@phis/addon-sdk`. The contract package is published and depended on; the build-time half described in
-  section 3 -- descriptor builders, result-type generation, a context double -- has no package yet.
-- Site-admin activation/configuration API and provider setup flows
-- Resource Link adapters in handler context. Nine Capabilities are delivered, each bound to the request
-  or the job -- `authorization:v1`, `data:v1`, `threads:v1`, `groups:v1`, `storage:v1`, `assets:v1`,
-  `secrets:v1`, `settings:v1`, `roles:v1` -- and `resource-links:v1` is not, having no table behind it
-  either. An Add-on requiring it is now refused when it is admitted rather than finding `undefined` on
-  its context: the gate asks what Core can hand over, not what the catalogue can name. A Storage
-  Provider factory receives the restricted service
-  context section 10 describes: one nullary reader bound at construction to the secret its own Storage
-  Profile names, with no argument through which another could be named.
-- a Site-admin surface over what `phis addon config` writes. The values are stored, declared, and
-  readable; what is missing is a page rather than a mechanism.
-- load-balancer rollout reconciliation. Every serving instance now writes `phis.server_instances` at
-  startup and on an interval, and `phis instance list` shows where the fleet disagrees about the
-  release or the Add-on set -- but nothing yet waits for that agreement, so activation still completes
-  while an instance is behind.
-- provider role catalogs, Site user claim persistence, and Add-on viewer-claim resolution defined by
-  `AUTHORIZATION.md`
-- a separately published reference Add-on used for end-to-end package tests
+- **DDL separation for `phis`.** An Add-on schema is owned by the migration role, and the serving role
+  holds only usage and data access there. The Core schema is not separated the same way: the serving role
+  owns the `phis` tables, because the operator setup page (`src/app/(operator)/setup/actions.ts`) applies
+  `scripts/sql/001_create_phis.pgsql` through `src/db/bootstrap.ts`, and `phis schema apply` runs as the
+  serving role (section 15).
+- **`@phis/addon-sdk`.** The build-time half described in section 3 -- descriptor builders, result-type
+  generation, a context double -- has no package.
+- **Capabilities without a delivery.** `@phis/server/authentication:v1`, `@phis/server/resource-links:v1`
+  and `@phis/server/support:v1` are named in the Core catalogue but are not bound to an Add-on context.
+  An Add-on requiring one of them is refused at dispatch, by the job runner, and when its service factory
+  is resolved (section 13).
+- **Site-admin activation and configuration.** A Site's request for an Add-on and its settings are
+  written by `phis addon site` and `phis addon config`. There is no Site-admin API or page for either, and
+  no provider setup flow.
+- **Rollout reconciliation.** Every serving instance writes `phis.server_instances` at startup and on an
+  interval, and `phis instance list` shows where instances disagree about the release or the Add-on set.
+  Nothing waits for that agreement: enabling an Add-on completes while an instance is behind (section 17).
 
 Provider-owned viewer roles and the universal Core role claim are governed by
 [AUTHORIZATION.md](./AUTHORIZATION.md). Add-on capability availability and viewer-role authorization
@@ -112,12 +69,13 @@ Examples:
 
 ### Add-on
 
-An Add-on is a namespaced, operator-installed extension compiled into `@phis/server`. It may contribute
-server routes, webhook handlers, jobs, migrations, external-service adapters, server-side providers,
-and versioned capabilities supported by the Add-on ABI.
+An Add-on is a namespaced, operator-installed server extension. It is never compiled into
+`@phis/server`: it is installed at runtime as one artifact (section 7). It may contribute server
+routes, webhook handlers, jobs, schema and query descriptors, server-side service providers, and
+versioned capabilities supported by the Add-on ABI.
 
-One package carries one product, and its name is the Add-on id. There is no `-server` postfix, and
-the two halves are told apart by their entrypoints rather than by two package names:
+One package carries one product, and its name is the Add-on id. There is no `-server` postfix; the two
+halves are told apart by their entrypoints rather than by two package names:
 
 ```text
 package:  @phis/github
@@ -125,11 +83,8 @@ addonId:  @phis/github
 modules:  @phis/github/modules/github
 ```
 
-The postfix was the older rule, from when a Module and an Add-on were separate packages. Section 4 of
-`design/DISTRIBUTION.md` forbids that arrangement -- the halves may not carry separate versions, digests or
-URLs, because anything that can drift eventually does -- and once they are one package the postfix says
-nothing the entrypoints do not say better. It also charged a rename to any package that had one half
-and grew the other.
+The halves may not carry separate versions, digests or URLs, because anything that can drift eventually
+does ([DISTRIBUTION.md](./design/DISTRIBUTION.md), section 4).
 
 Logical identity and physical package identity remain separate fields, and normally hold the same
 string. A replacement package may be named differently; the logical Add-on id is API and persistence
@@ -156,10 +111,10 @@ version is independent from provider package version.
 @phis/github/issues:v1
 ```
 
-The version sits in the id, which is why a Capability carries no separate interface digest the way a
-service kind does. A shape change raises the id to `:v2`, Core stops offering `:v1`, and an Add-on
-requiring the old one is refused at dispatch by name alone. A service kind has no version in its name
-and needs the digest to say the same thing.
+The version sits in the id. A capability's `interfaceDigest` identifies it in a snapshot; for Core
+capabilities it is derived from the id alone and describes no shape. A shape change raises the id to
+`:v2`, Core stops offering `:v1`, and an Add-on requiring the old one is refused at dispatch by name
+alone. A service kind has no version in its name and needs its interface digest to say the same thing.
 
 ### How a Capability reaches an Add-on
 
@@ -213,44 +168,45 @@ Reference bindings:
 @phis/github/modules/github  -> @phis/github
 ```
 
-## 3. Physical package separation
+## 3. Package halves and module graphs
 
-Site packages and server packages are separate publication and build units:
+One package may carry a Module half, an Add-on half, or both, under one name and one version. The halves
+are separated by entrypoint and by process, not by package:
 
 ```text
-@phis/support
-@phis/github
+@phis/marketplace            Module half: ".", "./server", "./client", "./authoring-client"
+@phis/marketplace/addon/*    Add-on half: "./addon/manifest", "./addon/runtime"
 ```
 
-A file or a `./server` export inside a Module package is not an Add-on and must never be compiled into
-`@phis/server`. `./server` belongs to the Module and runs in the Site process; the Add-on half is reached
-through `./addon/manifest` and `./addon/runtime` and runs in this one.
+A file or a `./server` export of the Module half is not an Add-on and is never loaded by `@phis/server`.
+`./server` belongs to the Module and runs in the Site process; the Add-on half is built from
+`./addon/runtime` into one artifact and runs in the `@phis/server` process.
 
 The separation is mandatory:
 
-- Site packages contain Site-runtime and authoring code.
-- Add-on packages contain server-only code.
-- `@phis/server` never imports a Site or React package.
-- A Site application never imports an Add-on package.
-- An Add-on never imports `phis-ui`.
-- Both sides may depend on a neutral, React-free contract package for shared wire schemas.
+- Module entrypoints contain Site-runtime and authoring code.
+- Add-on entrypoints contain server-only code.
+- `@phis/server` never imports a Site or React package, and never imports an Add-on package by name.
+- A Site application never imports an Add-on entrypoint.
+- An Add-on never imports `@phis/ui`.
+- Both sides may depend on the neutral, React-free `@phis/contracts` package for shared wire schemas.
 - Server-only and Site/Client entrypoints remain physically separate module graphs.
 
 Two neutral packages sit between the sides, and what separates them is when they run:
 
 - `@phis/contracts/addon` states what an Add-on declares or implements.
 - `@phis/contracts/access` states the authorization vocabulary `@phis/server` and `@phis/ui` both
-  evaluate -- claim shapes, policy shapes, and the evaluator itself. It lives there because both
-  decide the same question in different processes and cannot defer to each other: `@phis/server` in its
-  guards, the site while rendering and in the browser. One compiled source is the only arrangement in
-  which they cannot disagree, and they did disagree before it existed. `@phis/server` depends on it, which
-  is why nothing may enter it that does more than hand back data. Validation stays in Core: a check
-  shipped to an Add-on runs in the Add-on's address space, at the version the Add-on chose, and only if
-  the Add-on calls it, so it can never be the authoritative one.
-- `@phis/addon-sdk` carries what an author uses while building -- descriptor builders, generation of
-  result types from declared queries, and a context double for tests. It depends on the contract, and it
-  is a development dependency and nothing else. An Add-on with the SDK removed still runs; only its next
-  build lacks the generator.
+  evaluate -- claim shapes, policy shapes, and the one evaluator, `canPhiAccessSubjectReach`. It lives
+  there because both decide the same question in different processes and cannot defer to each other:
+  `@phis/server` in its guards, the Site while rendering and in the browser. One compiled source is the
+  only arrangement in which they cannot disagree. `@phis/server` depends on it, which is why nothing may
+  enter it that does more than hand back data. Validation stays in Core: a check shipped to an Add-on
+  runs in the Add-on's address space, at the version the Add-on chose, and only if the Add-on calls it,
+  so it can never be the authoritative one.
+- `@phis/addon-sdk` is to carry what an author uses while building -- descriptor builders, generation
+  of result types from declared queries, and a context double for tests. It is not built yet. It
+  depends on the contract and is a development dependency and nothing else: an Add-on with the SDK
+  removed still runs.
 
 The split is a boundary rather than a discipline. A package carrying runtime code can be installed twice
 at two versions, and anything stateful inside it would then exist twice; keeping the SDK out of the
@@ -290,24 +246,23 @@ computing a lossy value and then treating it as identity.
 
 ## 5. Add-on manifest
 
-Every physical Add-on package exports a server-only manifest containing at least:
+Every Add-on exports a server-only manifest, `PhisAddonManifestV1` from `@phis/contracts/addon`:
 
-- logical Add-on id
-- physical package name and package version
-- compatible `@phis/server` Add-on ABI range
-- immutable route namespace
-- provided capabilities and interface versions
-- internal service-provider descriptors when the Add-on implements a Core-owned service kind
-- required Core capabilities and version ranges
-- internal route descriptors
-- external hook descriptors
-- job descriptors
-- a schema descriptor when the Add-on owns tables, and the version it is at
-- declared queries when the Add-on reads its tables
-- manifest format version
+- `manifestVersion`
+- `addonId` (the logical id; the route namespace is derived from it), `packageName`, `packageVersion`
+- `serverAbi`: the compatible Add-on ABI range
+- `capabilities`: provided capabilities with their interface digests
+- `serviceProviders`: service-provider descriptors when the Add-on implements a Core-owned service kind
+- `requiredCoreCapabilities`: Core capability ids
+- `apiRoutes` and `hooks`: route descriptors with method, path, handler, authentication policy, body
+  limit, rate-limit class, and timeout
+- `jobs`
+- `schema`: the schema descriptor, or `null` when the Add-on owns no tables, and `migrationVersion`
+- `queries`: the declared query catalog
+- optional `settings`, `roles`, `groups`, `groupWriter`, and `modules`
 
-The built manifest has a deterministic digest covering route, capability, service-provider, job,
-schema, query, and migration descriptors. It never contains runtime secrets.
+The manifest digest is the SHA-256 of the manifest's canonical JSON and therefore covers every field. The
+manifest never contains runtime secrets.
 
 ### Adding to the manifest
 
@@ -321,10 +276,6 @@ because no stored manifest predates them.
 *meaning* changes, where an old manifest is not incomplete but wrong, and reading it under the new rules
 would install something subtly incorrect. Refusing is right there, and it is expensive on purpose.
 
-For the case nobody foresaw, `phis addon forget` removes an entry from the desired state without
-reading it. `remove` validates before it deletes, which is right when the state is sound and useless
-when it is not.
-
 The package exposes two explicit server entrypoints, both under `addon/`:
 
 ```text
@@ -332,16 +283,18 @@ The package exposes two explicit server entrypoints, both under `addon/`:
 @scope/package/addon/runtime
 ```
 
-`addon/manifest` exports `phisAddonManifest` and must be safe for CLI inspection without starting
-jobs, opening connections, or reading secrets. `addon/runtime` exports `phisAddon`; it contains the
-same manifest plus the declared handler maps and service factories. There is no package-root fallback.
+`addon/manifest` exports `phisAddonManifest` and must be safe for inspection without starting jobs,
+opening connections, or reading secrets. `addon/runtime` exports `phisAddon`: the same manifest plus the
+handler maps (`apiHandlers`, `hookHandlers`, `jobHandlers`) and `serviceFactories`. There is no
+package-root fallback. The installed artifact is `addon/runtime` bundled into one file, and Core reads
+the manifest from its `phisAddon.manifest` ([ADDON_HOWTO.md](./ADDON_HOWTO.md)).
 
 The `addon/` prefix is what keeps the halves apart inside one package. A Module already spends `./server`
 on its React Server Components -- code that runs in the *Site* process -- and an Add-on runs in this one.
 Two different processes called "server" in one package name is the kind of collision that surfaces at
 build time, in somebody else's build. The prefix also makes the one way these exports are ever resolved
-visible: Core loads the artifact by file path against its digest (`installed.ts`) and never by package
-name, so the only resolver that will ever meet `addon/runtime` is a Site build whose author reached for
+visible: Core loads the artifact by file path against its digest (`src/lib/addons/installed.ts`) and
+never by package name, so the only resolver that will ever meet `addon/runtime` is a Site build whose author reached for
 the wrong half.
 
 The prefix holds whether or not a Module half is present. A package with one half is not a different
@@ -369,7 +322,7 @@ No browser route, Site Module, persisted CMS value, Add-on handler, or database 
 - add a top-level Next.js route
 - globally enable server code
 
-Installation and upgrade are deployment operations, not Site configuration operations. They no longer
+Installation and upgrade are deployment operations, not Site configuration operations. They do not
 require a release: an Add-on is installed into a running server, and only a change to `@phis/server`
 itself is a build.
 
@@ -389,7 +342,7 @@ no bare import behind except `node:` builtins, because Node resolves a bare spec
 one left in place reaches whatever `node_modules` sits above the install root, including the server's
 own. An Add-on that cannot be bundled -- one needing a native binary or a runtime-loaded asset -- is
 therefore not an in-process Add-on at all. Its capability belongs in Core, or in the separate-process
-shape that is planned and does not exist yet.
+shape planned in [ADDONS_PLANNED.md](./design/ADDONS_PLANNED.md), section 3.
 
 The artifact's address is derived, never stored:
 
@@ -421,6 +374,30 @@ answer on one instance and fail on the others.
 Node cannot unload an ES module. The digest therefore travels in the load address as its cache key: a
 new digest is a different specifier, so the next dispatch reaches the new code while requests already
 in flight finish on the old one, and the superseded version stays resident until the process restarts.
+
+### Getting out of a state this release cannot validate
+
+A stored manifest can stop validating without the operator having touched anything: a Core release that
+renames a capability or a service kind invalidates every entry that named the old one. The manifest was
+right when it was written, and the digest means it cannot be edited by hand without breaking a second
+check.
+
+Reading the desired state in order to **run** an Add-on stays strict -- an invalid manifest is exactly
+what must not be executed. Reading it in order to **describe or change** it does not:
+
+```
+phis addon list       shows invalid entries first, by name, with what fails
+phis addon check      diagnoses before loading anything, and names the way out
+phis addon upgrade    replaces the entry, even from the same artifact when the entry is broken
+phis addon disable    and then remove, on an entry that does not validate
+```
+
+The exception in `upgrade` is the point of it: re-installing an unchanged artifact is normally refused
+as a no-op, but when the stored entry is what is broken, re-writing it is the repair. What gets written
+is validated either way, which is the check that actually protects anything.
+
+`phis addon forget` is the last resort: it removes an entry from the desired state without reading it,
+and leaves the artifact on disk for `phis addon check` to report.
 
 ## 8. Fixed Core routes
 
@@ -462,8 +439,8 @@ and external hooks never share an implicit authentication policy.
 #### A hook may be told its Site, and may still not write
 
 A hook is unauthenticated by construction -- that is what makes it callable by a payment provider, or by
-somebody else's Core reading a catalogue. Until a hook could name a Site it also had no capabilities at
-all, because every one of them is Site-scoped: it could verify a signature and touch no data.
+somebody else's Core reading a catalogue. Without a Site it has no capabilities at all, because every one
+of them is Site-scoped: it can verify a signature and touch no data.
 
 `siteScoped` on a hook descriptor changes only that. The Site comes from `x-phis-site-key`, the header
 every Site-scoped route already uses, and a hook that asks for one and does not get it answers 404 --
@@ -505,18 +482,19 @@ namespace or register outside its own route namespace.
 
 ## 10. Handler context
 
-An Add-on handler receives a scoped server context that may expose:
+An Add-on handler receives one argument, `PhisAddonRequestContext` from `@phis/contracts/addon`:
 
-- request and correlation ids
-- resolved Site identity
-- validated user/operator identity and permissions
-- a namespaced structured logger
-- a namespaced secret accessor
-- approved Core services such as Threads and Resource Links
-- its own Module Storage or repository boundary
-- approved job scheduling
-- restricted outbound HTTP support
-- a raw body only when the route descriptor requires signature verification
+- `addonId` and `requestId`
+- `method`, `url`, `headers`, the raw `body` bytes, the matched `path`, and its `pathParams`
+- `site`: `{ id, key, publicBaseUrl }` for a Site-scoped route, otherwise `null`
+- `actor`: a Site user, an operator, an internal caller, or `null` on a hook
+- `capabilities`: the Core capabilities the manifest declared, bound to this Site and actor (section 13)
+- `signal`: an `AbortSignal` that fires when the caller aborts or the declared `timeoutMs` elapses; a
+  timed-out request answers 504, and the handler is not cancelled
+
+There is no database handle, no general secret accessor, no logger, and no outbound HTTP client on the
+context. Mediated Module Storage is planned in [ADDONS_PLANNED.md](./design/ADDONS_PLANNED.md),
+section 2.
 
 Request values never define effective Site, Add-on identity, package name, secret namespace, or
 database namespace.
@@ -526,7 +504,7 @@ separate process or container behind an authenticated service boundary.
 
 ### Internal service providers
 
-An Add-on may implement a Core-owned in-process service kind through the same static build and
+An Add-on may implement a Core-owned in-process service kind through the same installation and
 activation boundary. This is the only extension path for infrastructure implementations such as an
 S3-compatible Media Storage Provider or a future LDAP/SCIM/Entra Directory Provider; a private loopback
 HTTP route, dynamic import, or Module-owned adapter is not an alternative.
@@ -563,6 +541,25 @@ fallback Provider. Storage-specific profile, upload, delivery, and migration rul
 [GROUPS_AND_STORAGE.md](./GROUPS_AND_STORAGE.md). User/group Directory bindings, scoped synchronization,
 and assertion provenance are designed in [DIRECTORY_PROVIDERS.md](./design/DIRECTORY_PROVIDERS.md).
 
+### Jobs
+
+A job is declared as `{ id, handler, suggestedInterval? }`, where `handler` names an entry in
+`jobHandlers`. It is run by `phis addon job --addon <id> --job <job id> --site <site key>`, which posts to
+the serving instance's internal `/api/v1/addons/jobs` route. It is not scheduled by Core, and the interval is documentation for the operator
+rather than a promise: `@phis/server` serves from several instances, so an in-process timer would fire once
+per instance for one intended run, and every Add-on would have to defend against a concurrency nobody
+asked for. The operator's own scheduler is one runner by construction.
+
+**A job has no actor.** It is the Add-on acting on its own data, not a person acting through it, so the
+row-level ladder has nobody to apply and `data:v1` writes with system authority. A job context carries
+`addonId`, `jobId`, `runId`, `site`, `capabilities`, and `signal`. That is
+exactly why a job is reachable only through the internal-token route and never from a request: an Add-on
+able to start its own job from a handler would have built itself a way around the ladder.
+
+The job runs in the serving process rather than in the CLI, against the release that instance actually
+serves. The CLI stays a caller instead of becoming a second runtime that would have to reproduce the
+loader, the pool, and the capability bindings.
+
 ## 11. Deployment and Site activation
 
 Code availability and Site use are separate states.
@@ -581,7 +578,8 @@ Only `phis-cli` controls:
 ### Site state
 
 An authorized Site administration surface may manage only an already installed and globally available
-Add-on for its own Site:
+Add-on for its own Site. No such surface exists yet; the operator writes this state with
+`phis addon site` and `phis addon config`:
 
 - requested enabled/disabled state
 - Site-scoped non-secret configuration
@@ -608,141 +606,63 @@ AND required Site configuration valid
 Disabling it for a Site stops Site-scoped routes, jobs, hooks, and capability projection for that Site.
 It does not delete data, secrets, provider installation records, or migration history.
 
-## 9a. Getting out of a state this release cannot validate
+### Asking for an Add-on on a Site
 
-A stored manifest can stop validating without the operator having touched anything: a Core release that
-renames a capability or a service kind invalidates every entry that named the old one. The manifest was
-right when it was written, and the digest means it cannot be edited by hand without breaking a second
-check.
+Three switches stand between an artifact on disk and a handler that answers, and they are three
+decisions by, in general, three different people:
 
-Reading the desired state in order to **run** an Add-on stays strict -- an invalid manifest is exactly
-what must not be executed. Reading it in order to **describe or change** it does not:
+| Switch | Where | Command |
+| --- | --- | --- |
+| the instance has it | desired state | `addon install` |
+| the instance allows it | `server_addons.flags` | `addon enable` |
+| the Site wants it | `site_server_addons` | `addon site --site … --enable` |
 
-```
-phis addon list       shows invalid entries first, by name, with what fails
-phis addon check      diagnoses before loading anything, and names the way out
-phis addon upgrade    replaces the entry, even from the same artifact when the entry is broken
-phis addon disable    and then remove, on an entry that does not validate
-```
+`addon config` and `addon storage` refuse a Site that has not asked for the Add-on and say that it
+has to be enabled first. Enabling for a Site also creates the groups the manifest declares; disabling retires them.
 
-The exception in `upgrade` is the point of it: re-installing an unchanged artifact is normally refused
-as a no-op, but when the stored entry is what is broken, re-writing it is the repair. What gets written
-is validated either way, which is the check that actually protects anything.
+What a Site asks for and what it gets stay separate columns. `effective_status` depends on the artifact
+loading, the capabilities resolving and the configuration being complete, and writing it beside the
+request would make it a guess.
 
-Without this, the only way out of an invalidated state was a text editor on `phis-addons.json` --
-including recomputing the manifest digest by hand, on a customer's machine, in a file they have never
-seen.
+`effective_status` is written by `reconcile` and read by no decision. Everything it could say is worked
+out by the capability snapshot from the sources that determine it -- desired state, registry, digests,
+migration level, request, configuration -- and reading a stored verdict back on top would make the
+answer depend on when it was last written. It is a diagnosis an operator can read without reproducing
+that reasoning.
 
-## 10a. Keeping the Core schema current
+`configuration_status` is derived rather than declared: a setting either has a value an operator wrote
+or a default the manifest states, and an Add-on that declares nothing configurable is ready the moment a
+Site asks for it. It is re-derived after every change, because clearing a setting can take a Site back
+out of readiness and a status that only ever moves one way is one that lies.
 
-`scripts/sql/001_create_phis.pgsql` is idempotent and always was, but nothing applied it after the first
-bootstrap. A release that adds a Core table therefore reached a running installation as a missing
-relation, and the way out was somebody with a database client -- which is how tables end up owned by
-whoever happened to have one rather than by the serving role, and how an Add-on's foreign key onto a
-Core table then fails for want of `REFERENCES`.
+### The Module half comes first
 
-```
-phis schema check      what this release declares that the database does not have
-phis schema apply      applies it, and re-grants the Core reference tables
-```
+A manifest may name the Modules its package's other half contributes, and that is the one thing Core
+cannot read off an artifact: whether a Module half exists at all. One package carries one product, so
+the package name is the manifest's own and there is nothing to resolve.
 
-Both run as the **serving role**, from `database.uri` and deliberately not from `migrationUri`: Core's
-tables belong to the serving role, exactly as bootstrap leaves them, and a table created by anyone else
-is one the application cannot later alter. `migrationUri` stays what section 15 says it is -- DDL
-authority for Add-on schemas, which are not Core's tables.
+**Enabling an Add-on for a Site requires that half to be there already.** The order is the opposite of
+[DISTRIBUTION.md](./design/DISTRIBUTION.md), section 6, and there is no contradiction: that section is
+about installing into an instance, this is about switching on for a Site.
 
-`apply` re-grants `REFERENCES` on the Core reference tables to the migration role every time, because a
-table this release adds may be one an Add-on is allowed to point at, and that grant is per table.
+The order costs nothing and removes a state. A Module whose Add-on is not enabled for the Site
+deactivates itself -- the capability snapshot is per Site, and an unavailable provider drops the Module
+out of routes, controllers, widgets, layouts and providers while its selection stays recorded. So the
+Module can be installed and built first, harmlessly, and enabling is then the cheap step that takes
+effect at once with no second build behind it. Enabling first would leave a Site with routes and no
+surface until somebody remembers to build, and disabling first would leave a surface calling routes that
+are gone.
 
-## 11a. Roles an Add-on defines
+`--without-module` enables the server half on its own, for the case that is genuinely meant.
 
-An Add-on that governs who may do what is always asking one of three questions, and answering all three
-with one tool is the mistake:
+Disabling needs no such rule: the Module deactivates itself the moment the Site's request is withdrawn,
+so there is no window to protect. Removing it for good is `phis module del` and a build, in that order
+and at leisure.
 
-| Question | Answered by |
-|---|---|
-| May this person do this **at all**? There is no row yet. | **Role** |
-| May this person touch **their own** row? | **`owner_user_id`** |
-| May several people share a row, each to a different depth? | **Group** and its ladder |
-
-The test: does the question concern a particular row? If not, it is a role. If yes and only the creator
-should reach it, ownership settles it. If yes and several people share it at different depths, it is a
-group.
-
-**A group is Core's vocabulary about shared rows; a role is the Add-on's vocabulary about actions.**
-Whatever Core evaluates has to be Core's word -- the ladder's four levels mean something to
-`mayActOnScopedRow`, which is why they cannot be replaced by names Core does not understand. Roles are
-opaque to Core by design: it stores them, answers `has()`, and never asks what `reviewer` means. The
-ladder also hangs on the group while a role hangs on the Add-on, so the same person is Editor in one
-group and Member in another -- a dimension a role does not have.
-
-### Declared in the manifest, held by Core
-
-```ts
-roles: [
-  { name: "market-admin", grantableBy: { siteAccess: "site-admin" } },
-  { name: "vendor",       grantableBy: { role: "market-admin" } },
-  { name: "reviewer",     grantableBy: { role: "market-admin" } },
-]
-```
-
-The same bargain as `settings`: the Add-on states its vocabulary, Core holds the assignments in
-`phis.site_addon_user_roles`, and the Add-on reads through `roles:v1` and never writes. There is no
-writer for the reason `settings:v1` and `secrets:v1` have none -- an Add-on able to grant its own roles
-could grant itself whatever those roles guard.
-
-`grantableBy` is how an Add-on decides for itself who may hand out its roles, **declaratively**. It lives
-in a manifest the digest covers, so the author sets the policy and the running code cannot rewrite it.
-Two safeguards come with it: a Site Admin may always grant any role of any Add-on, without which a badly
-declared graph locks everyone out with no way back; and a manifest whose roles only grant each other is
-refused, because nobody could ever enter that set.
-
-One Core table, not one per Add-on. That is what makes "what does this person hold on this Site" a single
-question across every installed Add-on -- with a private table per package, offboarding means visiting
-each of them in turn. `role` is stored as text because which roles exist is stated by the manifest and
-that is the only truth; a role table beside it would be a second one, drifting at the next update.
-
-### Reading, and what a new version drops
-
-`roles:v1` answers `has(role)` and `all()`, bound to the acting user, and filters against the roles the
-**current** manifest declares -- the same way a stored setting nobody declared is ignored rather than
-handed over. An Add-on never sees a role it does not know.
-
-An assignment naming a role a newer version no longer declares is **kept and reported**, never deleted.
-Deleting would be silent loss of access during an upgrade; reporting leaves the operator to decide.
-
-### Gating a surface on a role
-
-A role reaches the browser too, so a Module can leave out a link somebody would be refused anyway.
-`PhiViewerAccessPolicy` takes a fourth shape:
-
-```ts
-{ access: "addon-roles", providerId: "@acme/market", allowedRoles: ["vendor"] }
-```
-
-The held names travel with the viewer as `addonRoleClaims`, filtered to what the current manifest
-declares and to Add-ons enabled for this Site. A viewer that never carried them denies rather than
-assumes.
-
-The evaluator exists twice -- `@phis/ui/types/access` and `src/lib/authorization.ts` -- because
-`@phis/server` deliberately does not depend on the shared UI. Both were extended together and both are
-checked against the same cases; a viewer admitted by one and denied by the other is the worst shape this
-pair can take, since each side looks right on its own.
-
-**It is presentation, not protection.** Leaving a link out spares somebody a refusal; it does not make
-the page safe. The request behind the link is decided again by the handler, against `roles:v1`.
-
-### Granting
-
-`POST /api/site/addon-roles` with `{ addonId, role, userId }`, and `DELETE` for the reverse. Core resolves
-the descriptor from the stored manifest and evaluates `grantableBy` against the acting user. An Add-on's
-own surface renders the screen and calls this; it never decides the answer, so somebody who reaches the
-screen without the standing is refused here rather than there. Taking a role back needs the standing to
-have given it.
-
-On the command line, `phis addon role --site <key>` lists what each installed Add-on declares, `--user`
-shows what one person holds across Add-ons, and `--grant` / `--revoke` set it. The operator is above the
-Site Admin floor, because somebody has to appoint the first person who can appoint others.
+**A Service Provider is refused for a Site that never asked.** `resolvePhisServiceProvider`
+(`src/lib/addons/services.ts`) checks the Site's request for the providing Add-on. The Site is taken from
+the Storage Profile, whose `site_id` is `NOT NULL`, so no caller has to remember to pass it and none can
+drop it by omission.
 
 ## 12. Persistent registry
 
@@ -797,8 +717,12 @@ Write authority is fixed:
 
 - `phis-cli` writes installation, version, migration, release, and global state.
 - `@phis/server` startup/reconciliation writes observed build and instance state.
-- authorized Site administration writes only its Site's permitted enablement and configuration state.
+- authorized Site administration writes only its Site's permitted enablement and configuration state
+  (no such surface exists yet; see Status).
 - normal Site clients have no registry mutation authority.
+
+Package version, Add-on ABI version, capability version, migration version, and release build id are
+independent version axes and are never inferred from one another.
 
 ## 13. Core capability registry
 
@@ -808,10 +732,8 @@ The version lives inside the id, and it covers the shape, not the name. Renaming
 `@phis/server/<name>:v1` produces an id that was never offered, which to every consumer looks like a
 capability that does not exist -- no version moved, so nothing signals a break.
 
-This is not hypothetical. `auth` was renamed to `authentication` during development, the Site Module
-requesting it was not carried along, and the Auth module resolved a capability nobody offers: it
-deactivated itself, exactly as the contract says it must, and the Site silently had no login route. That
-was found by a person reporting a 404, not by anything in the build.
+A Module requiring a renamed capability deactivates itself, exactly as the contract says it must, and
+the Site silently loses what that Module contributed -- a login route, for example.
 
 From the first public release of `@phis/server`, a capability name may only gain a successor beside it, never
 be replaced in place. An installation that updates `@phis/ui` and `@phis/server` independently through npm
@@ -828,26 +750,33 @@ Core participates in the read-only discovery model as:
 @phis/server/core
 ```
 
-The Core capabilities are the ones `@phis/contracts/addon` names, and that subpath owns the spelling:
+The Core capabilities are the ones `PHIS_CORE_CAPABILITIES` in `@phis/contracts` names
+(`phis-contracts/src/core.ts`), and that package owns the spelling. Every id in it appears in the Core
+capability snapshot a Site's Modules are resolved against. Only the ones marked delivered are bound to an
+Add-on's context (`src/lib/addons/core-capabilities.ts`); an Add-on requiring any other is refused at
+dispatch, by the job runner, and when its service factory is resolved.
 
-```text
-@phis/server/authentication:v1
-@phis/server/authorization:v1
-@phis/server/data:v1
-@phis/server/groups:v1
-@phis/server/secrets:v1
-@phis/server/storage:v1
-@phis/server/threads:v1
-@phis/server/resource-links:v1
-@phis/server/support:v1
-```
+| Capability | Delivered to Add-ons |
+| --- | --- |
+| `@phis/server/authentication:v1` | no -- required by Core-bound Modules only |
+| `@phis/server/authorization:v1` | yes |
+| `@phis/server/data:v1` | yes |
+| `@phis/server/threads:v1` | yes |
+| `@phis/server/resource-links:v1` | no -- reserved, nothing implements it |
+| `@phis/server/support:v1` | no -- reserved |
+| `@phis/server/groups:v1` | yes |
+| `@phis/server/storage:v1` | yes |
+| `@phis/server/assets:v1` | yes |
+| `@phis/server/secrets:v1` | yes |
+| `@phis/server/settings:v1` | yes |
+| `@phis/server/roles:v1` | yes |
 
 Core descriptors are generated from the running release and reconciled into the registry. They are not
 editable Site settings and cannot be disabled per Site.
 
 ### `authorization:v1`
 
-The one Capability that is delivered rather than only declared. It answers "may this actor", in the
+It answers "may this actor", in the
 three places that question is decided: does the row belong to them, what level do they hold in its
 group, and what may they do on this Site at all.
 
@@ -940,7 +869,7 @@ Three things Core does here that an Add-on cannot influence:
 what to offer a user -- whether to render the delete control; the write path is what actually holds. A
 check an Add-on has to remember to call is one that eventually is not called.
 
-The transaction handle offers the same four operations and nothing else: no commit, no rollback, no
+The transaction handle offers the same five operations and nothing else: no commit, no rollback, no
 savepoint. Returning ends the unit of work, throwing undoes it, and an Add-on cannot leave one open
 because it never holds the thing that would stay open.
 
@@ -1046,8 +975,8 @@ the endpoint verifies one, it is **signed into the presigned request** and the e
 else -- so a wrong digest never becomes an object, and Core records the client's figure as true because a
 wrong one would not have got that far. Where it was not, the plan routes the body through Core, which
 hashes it in flight. Either way the digest is established rather than asserted, and where neither holds
-nothing is recorded: an `etag` is an HTTP header, and a column named `checksum_sha256` holding an MD5 is
-worse than one holding nothing.
+nothing is recorded: `checksum_algorithm` and `checksum_value` stay null. An `etag` is an HTTP header,
+and a recorded SHA-256 that is really an MD5 is worse than no checksum.
 
 Above a single PUT that stops being true -- a multipart object's `ChecksumSHA256` is a composite of the
 part digests and not the hash of anything. It does not arise under the two-gigabyte slot ceiling, which
@@ -1093,29 +1022,77 @@ dies before the object does leaves a file that nothing can name. So the key is *
 transaction** -- `phis.media_discarded_objects` -- and the removal that follows clears the note. What
 stays there is a retry list, read by an index, drained a few at a time by whatever deletes next.
 
-`phis maintain` still asks the other question: which Assets in an Add-on's Space does no link name. The
+`phis maintain` (task `addon-assets`) asks the other question: which Assets in an Add-on's Space does no link name. The
 note says what Core meant to remove; the join says what is actually unreferenced, and it is the only
 thing that catches what no note was ever written for -- a restored backup, a schema dropped by hand, an
 Add-on removed with its tables. It is the audit, not the mechanism.
 
+### `secrets:v1`
+
+`read(name)` and nothing else. The owner and the Site are bound, so another Add-on's secret cannot be
+named, and the resolver checks the owner a second time because a wrong binding and a wrong argument are
+different mistakes.
+
+There is no writer, and there should not be one. An operator sets a secret with `phis secret set`; a
+package that could write its own could plant one, and the store would stop being the operator's record
+of what they configured.
+
+### `groups:v1`
+
+Group facts, bounded by the acting user: `myGroups()`, `members(groupId)`, `user(userId)`, and
+`declared()`, which lists the groups this Add-on's manifest declared on this Site with their ids. Where
+the manifest declares a `groupWriter`, the same object also writes this Add-on's own groups (see *Groups an
+Add-on makes as it runs*).
+
+One rule decides every read about people -- **an Add-on sees what its actor sees.** Every answer is one the acting
+user could already have obtained through the Site's own group routes, projected exactly as those
+project it: a display name, a company only where the group's own flag discloses it, and never an
+address. That decision belongs to the group's Manager, and an Add-on inherits it rather than being
+asked separately.
+
+`user(userId)` answers null for somebody the actor shares no group with. That null is the point of the
+method: it is what stops a row's owner id from becoming a lookup into a Site's whole user table. An
+Add-on renders "listed by" and learns nothing else.
+
+#### Groups an Add-on declares
+
+An Add-on may declare the groups it needs in its manifest's `groups`, by key and name, and Core creates
+them on every Site that asks for the Add-on. Who is in a declared group stays with whoever administers
+the Site: without a `groupWriter`, `groups:v1` only reads, so a package cannot hand out standing.
+
+The group lives in `phis.site_groups` beside Core's own, told apart by `provider_id`. That is what makes
+it work everywhere without a second mechanism -- the ladder, the membership projection and the Site's
+group administration all read one table, and an Add-on's group is a group like any other. Core already
+filters group claims against the available providers, so a group belonging to a removed Add-on stops
+granting anything without anybody having to clean up.
+
+Groups are created when a Site asks for the Add-on, and caught up on `reconcile` for Sites that already
+run it -- a new release may declare a group its predecessor did not. Removal retires rather than deletes:
+a membership is a statement about a person made by whoever administers the Site, not the Add-on's data,
+and uninstalling a package must not quietly undo fifty of them. A retired group grants nothing either
+way, and a re-enabled Add-on finds its members still there.
+
 #### Groups an Add-on makes as it runs
 
 The `groups` list in a manifest is for the groups a Site always has -- known when the manifest was
-written, created per Site when the Site asks for the Add-on. `groupWriter` is for the other kind: one
-per vendor, per team, per tenant, whose number and names nobody knew in advance.
+written, created per Site when the Site asks for the Add-on. `groupWriter: { allowedBy }` is for the
+other kind: one per vendor, per team, per tenant, whose number and names nobody knew in advance. It adds
+four methods to `groups:v1`:
 
 ```text
-create(key, name)                  -> the group, made or already there
-addMember(groupId, userId, level)
-removeMember(groupId, userId)
-retire(groupId)
+create({ key, name })                    -> the group, made or already there
+addMember({ groupId, userId, level })    -> boolean
+removeMember({ groupId, userId })        -> boolean
+retire({ groupId })                      -> boolean
 ```
 
 It is a **declaration** rather than a capability an Add-on simply has, for the reason `grantableBy`
 exists: the manifest is covered by a digest the running code cannot rewrite, so the author states who
 may cause a group and Core decides whether the condition is met. Without it, "an Add-on may make groups"
-would mean "an Add-on may make itself an authority container and fill it". The same policy shape a
-role's `grantableBy` uses, evaluated by the same function, with the same Site Admin floor.
+would mean "an Add-on may make itself an authority container and fill it". `allowedBy` has the policy
+shape a role's `grantableBy` uses, is evaluated by the same function (`satisfiesPhisAddonGrantPolicy` in
+`src/lib/addons/role-granting.ts`), and has the same Site Admin floor. `addMember` also refuses a user who
+is not a member of the Site.
 
 **Ownership bounds the rest.** A group made here carries the Add-on's id as its provider, and every
 write checks that before it writes: group ids are integers out of one table, so without that check an
@@ -1131,30 +1108,6 @@ Nothing else changes: it is `phis.site_groups` with a different provider, so the
 projection and the Site's group administration all keep reading one table. Core already filters group
 claims against the available providers, so one of these stops granting anything the moment the Add-on is
 gone -- and comes back with it, members included.
-
-### `secrets:v1`
-
-`read(name)` and nothing else. The owner and the Site are bound, so another Add-on's secret cannot be
-named, and the resolver checks the owner a second time because a wrong binding and a wrong argument are
-different mistakes.
-
-There is no writer, and there should not be one. An operator sets a secret with `phis secret set`; a
-package that could write its own could plant one, and the store would stop being the operator's record
-of what they configured.
-
-### `groups:v1`
-
-Group facts, bounded by the acting user: `myGroups`, `members(groupId)`, `user(userId)`.
-
-One rule decides all of it -- **an Add-on sees what its actor sees.** Every answer is one the acting
-user could already have obtained through the Site's own group routes, projected exactly as those
-project it: a display name, a company only where the group's own flag discloses it, and never an
-address. That decision belongs to the group's Manager, and an Add-on inherits it rather than being
-asked separately.
-
-`user(userId)` answers null for somebody the actor shares no group with. That null is the point of the
-method: it is what stops a row's owner id from becoming a lookup into a Site's whole user table. An
-Add-on renders "listed by" and learns nothing else.
 
 ### `threads:v1`
 
@@ -1173,13 +1126,14 @@ there is nothing for it to list, read or answer, and the call is refused rather 
 with everything or with nothing. It may still open a thread, naming its recipients as it goes, which is
 what an integration reporting an outside event needs.
 
-How such an integration later appends to the thread it opened is deliberately unanswered. It wants a
-thread the Add-on owns, and ownership of a thread is a thing to design when something real needs it.
-The first Add-on that has to hold a conversation open across events is the one that should decide it.
+An Add-on without an actor cannot append to a thread it opened. That would need a thread the Add-on
+owns, which is not part of this contract.
 
 ### `settings:v1`
 
-`read(name)` and `all()`. What an operator configured with `phis addon config set`, stored in
+`read(name)` and `all()`. What an operator configured with
+`phis addon config --addon <id> --site <key> --name <setting> [--value <value>]` (without `--value` the
+setting is cleared; without `--name` the command lists the settings), stored in
 `site_server_addons.configuration_json` -- the row that already says whether the Add-on runs on that
 Site, which is where what it runs with belongs.
 
@@ -1191,32 +1145,214 @@ to its declared default; a stored key nobody declares is ignored; a stored value
 back rather than being handed over. An Add-on therefore reads exactly what it declared it would read,
 whatever has accumulated in the column across versions. As with secrets, there is no writer.
 
-## 13a. Capabilities an Add-on supplies
+### Add-on roles
 
-Section 1 already says a Capability is supplied by Core **or one Add-on**. The declaring half exists: a
-manifest states `capabilities`, the registry records them under `provider_id`, and the snapshot reports
-per provider whether what a Site's Modules require is being offered. Nothing lets a second Add-on reach
-such a Capability; the design is in [design/ADDONS_PLANNED.md](./design/ADDONS_PLANNED.md).
+`roles:v1` answers `has(role)` and `all()` for the acting user. The roles themselves are declared in the
+manifest, assigned in Core, and checked in three places: the handler, a declared query, and a browser
+access policy.
 
-## 12a. Jobs
+#### Three questions, three mechanisms
 
-A job is declared as `{ id, handler, suggestedInterval? }` and run by `phis addon job`, which posts to
-the serving instance. It is not scheduled by Core, and the interval is documentation for the operator
-rather than a promise: `@phis/server` serves from several instances, so an in-process timer would fire once
-per instance for one intended run, and every Add-on would have to defend against a concurrency nobody
-asked for. The operator's own scheduler is one runner by construction.
+An Add-on that governs who may do what is always asking one of three questions, and answering all three
+with one tool is the mistake:
 
-**A job has no actor.** It is the Add-on acting on its own data, not a person acting through it, so the
-row-level ladder has nobody to apply and `data:v1` writes with system authority inside one. That is
-exactly why a job is reachable only through the internal-token route and never from a request: an Add-on
-able to start its own job from a handler would have built itself a way around the ladder.
+| Question | Answered by |
+|---|---|
+| May this person do this **at all**? There is no row yet. | **Role** |
+| May this person touch **their own** row? | **`owner_user_id`** |
+| May several people share a row, each to a different depth? | **Group** and its ladder |
 
-The job runs in the serving process rather than in the CLI, against the release that instance actually
-serves. The CLI stays a caller instead of becoming a second runtime that would have to reproduce the
-loader, the pool, and the capability bindings.
+The test: does the question concern a particular row? If not, it is a role. If yes and only the creator
+should reach it, ownership settles it. If yes and several people share it at different depths, it is a
+group.
 
-Package version, Add-on ABI version, capability version, migration version, and release build id are
-independent version axes and are never inferred from one another.
+**A group is Core's vocabulary about shared rows; a role is the Add-on's vocabulary about actions.**
+Whatever Core evaluates has to be Core's word. The ladder's four levels are interpreted by
+`mayActOnScopedRow` (`src/lib/addons/capabilities.ts`): Author means "may change what is theirs", Editor
+"also what others wrote", Manager "also remove it". Core can apply that only because it knows what the
+words mean. Roles are opaque to Core by design: it stores them, answers `has()`, and compares a name. The
+ladder also hangs on the group while a role hangs on the Add-on, so the same person is Editor in one
+group and Member in another -- a dimension a role does not have.
+
+What already holds without any role:
+
+- Core writes the scope columns on insert, and a query descriptor has nowhere to name them, so an Add-on
+  cannot issue a row in somebody else's name.
+- Ownership works without any group. On a table that is `ownerScoped` and not `groupScoped`, the owner
+  reads and writes their rows and nobody else does.
+- A group means "everyone in here reads everything in here": a Member reads every row of the group. This
+  decides who may be put in a group -- never a customer, for instance.
+- An insert that names a group is refused unless the actor stands in it, loudly rather than silently: a
+  swallowed insert would look to the Add-on exactly like one that happened.
+- `data:v1` enforces the ladder on `update` and `delete` before the statement runs, whether or not the
+  Add-on declared `authorization:v1`.
+
+#### Declared in the manifest, held by Core
+
+```ts
+roles: [
+  { name: "market-admin", grantableBy: { siteAccess: "site-admin" } },
+  { name: "vendor",       grantableBy: { role: "market-admin" } },
+  { name: "reviewer",     grantableBy: { role: "market-admin" } },
+]
+```
+
+A role is `{ name, description?, grantableBy }` (`PhisAddonRoleDescriptor` in `@phis/contracts/addon`).
+`name` matches `^[a-z][a-z0-9-]{0,63}$` and is frozen from the first assignment: a grant is stored as
+text, and text does not follow a rename. `grantableBy` names exactly one of:
+
+- `{ siteAccess }` -- one of the Site accesses in `PHIS_SITE_ACCESS`: `site-admin`, `developer-tools`,
+  `structure-authoring`, `content-editing`, `publishing`, `site-media`, `support`, `accounting`
+- `{ role }` -- another role this same Add-on declares
+
+The same bargain as `settings`: the Add-on states its vocabulary, Core holds the assignments, and the
+Add-on reads through `roles:v1` and never writes. There is no writer for the reason `settings:v1` and
+`secrets:v1` have none -- an Add-on able to grant its own roles could grant itself whatever those roles
+guard.
+
+`grantableBy` is how an Add-on decides for itself who may hand out its roles, **declaratively**. It lives
+in a manifest the digest covers, so the author sets the policy and the running code cannot rewrite it.
+Manifest validation (`src/lib/addons/manifest.ts`) refuses a `role` that names a role the Add-on does not
+declare, and refuses a role set in which no role is grantable by a Site access, because nobody could ever
+enter such a set. A Site Admin may always grant any role of any Add-on, so a badly declared graph never
+locks a Site out.
+
+#### Where assignments are stored
+
+```sql
+CREATE TABLE phis.site_addon_user_roles (
+  site_id            SMALLINT     NOT NULL REFERENCES phis.sites(id) ON DELETE CASCADE,
+  addon_id           VARCHAR(255) NOT NULL REFERENCES phis.server_addons(addon_id) ON DELETE RESTRICT,
+  user_id            INT          NOT NULL REFERENCES phis.user_accounts(id) ON DELETE CASCADE,
+  role               VARCHAR(120) NOT NULL,
+  granted_by_user_id INT          NULL REFERENCES phis.user_accounts(id) ON DELETE SET NULL,
+  granted_at         TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (site_id, addon_id, user_id, role),
+  CHECK (role <> '')
+);
+CREATE INDEX site_addon_user_roles_site_user_idx ON phis.site_addon_user_roles (site_id, user_id);
+```
+
+One Core table, not one per Add-on. That is what makes "what does this person hold on this Site" a single
+question across every installed Add-on -- with a private table per package, offboarding means visiting
+each of them. `role` is text rather than a foreign key: which roles exist is stated by the manifest, and
+a role table beside it would be a second truth, drifting at the next update. The primary key serves the
+runtime read; the index serves "what does this person hold, across all Add-ons".
+
+`phis addon purge` deletes an Add-on's assignments. `phis addon remove` and `phis addon disable` keep
+them.
+
+#### Reading, and what a new version drops
+
+`roles:v1` answers `has(role)` and `all()`, bound to the acting user of the request. No user id leaves
+Core: the Add-on learns whether, never who. Without an actor both answer no.
+
+Results are filtered against the roles the **current** manifest declares, the same way a stored setting
+nobody declared is ignored rather than handed over. An Add-on never sees a role it does not know.
+
+An assignment naming a role a newer version no longer declares is **kept**, never deleted: deleting would
+be silent loss of access during an upgrade. `readPhisAddonOrphanedRoles` (`src/db/server-addon-roles.mts`)
+lists such assignments per Site and role for the operator to decide on.
+
+#### A role in a declared query
+
+A declared query may state `requiresRole`, and Core refuses to run it for an actor who does not hold the
+name. Core still learns nothing: it does not know that `curator` moderates, only that this query is for
+whoever is one.
+
+That is what makes a table nobody owns writable. Without an owner and without a group there is no row for
+Core to judge, so the ladder answers no to every update and delete -- right for a row that should belong
+to somebody, wrong for a catalogue, a rate table or a moderation note. Such an update or delete must state
+a role, and validation refuses it otherwise. On an owned or grouped table the role narrows rather than
+replaces: both have to be satisfied. `alsoAllowedByRole` widens instead, for moderation (section 15,
+*Declared queries*).
+
+#### Gating a surface on a role
+
+A role reaches the browser too, so a Module can leave out a link somebody would be refused anyway.
+`PhiViewerAccessPolicy` (`@phis/contracts/access`) has an `addon-roles` shape:
+
+```ts
+{ access: "addon-roles", providerId: "@acme/market", allowedRoles: ["vendor"] }
+```
+
+The held names travel with the viewer as `addonRoleClaims` (`/api/auth/me`), filtered to what the current
+manifest declares and to Add-ons enabled globally and for this Site (`src/lib/addons/viewer-roles.ts`). A
+viewer that carries no `addonRoleClaims` is denied. A Site Admin passes, as for every role and group
+policy. A Module may name only its own Add-on's roles (`isPhiAccessPolicyProviderOwned`).
+
+The evaluator is `canPhiAccessSubjectReach` in `@phis/contracts/access`, compiled once and used by both
+`@phis/server` and `@phis/ui`.
+
+**It is presentation, not protection.** Leaving a link out spares somebody a refusal; it does not make
+the page safe. The request behind the link is decided again by the handler, against `roles:v1`.
+
+#### Granting
+
+`POST /api/site/addon-roles` with `{ addonId, role, userId }` grants; `DELETE` with the same body
+revokes. Core resolves the descriptor from the installed manifest and evaluates `grantableBy` against the
+acting user (`src/lib/addons/role-granting.ts`): a Site access through the ordinary access policy, a role
+through `site_addon_user_roles`, and Site Admin always. Taking a role back needs the standing to have
+given it. An unknown Add-on or undeclared role answers 404, a refusal on standing 403.
+
+`GET /api/site/addon-roles` answers with every role of every installed Add-on the caller may grant, and
+with `?userId=` also what that person holds -- the latter only for a caller who may grant at least one
+role. One screen therefore serves an operator and a `market-admin` alike, because it shows what the
+viewer could grant rather than what exists.
+
+An Add-on's own surface renders the screen and calls these routes; it never decides the answer, so
+somebody who reaches the screen without the standing is refused here rather than there. Finding the
+person to grant to is not part of the role routes: `GET /api/site/groups/candidates` searches a Site's
+people by name or address, but only for a caller who manages some group.
+
+On the command line, `phis addon role --site <key>` lists what each installed Add-on declares
+(`--addon` narrows it), `--user <id>` shows what one person holds across Add-ons, and
+`--addon <id> --user <id> --grant <role>` / `--revoke <role>` set it. The operator is above the Site Admin
+floor, because somebody has to appoint the first person who can appoint others.
+
+#### A worked example: support
+
+Customers must not be in the team group -- a group grants read on everything in it. And an insert into a
+group-scoped table takes its group from a parameter, so a customer who is in no group cannot create such a
+row. Both facts push to two tables:
+
+```text
+requests   siteScoped, ownerScoped     what the customer files
+tickets    siteScoped, groupScoped     what a team runs
+```
+
+The customer files a `request`; Core writes `owner_user_id` from the bound actor, and only they can read
+or change it. An agent accepts it and creates a `ticket` in their team, which they may because they are in
+that group. The customer follows progress through a declared query filtered on the acting user, which Core
+substitutes and the Add-on cannot aim at anybody else.
+
+| Person | Role | Team A | Team B | Result |
+|---|---|---|---|---|
+| customer | -- | -- | -- | sees only their own requests |
+| agent K | `agent` | Editor | Member | works A, reads along in B |
+| agent O | `agent` | Member | Manager | reads along in A, closes in B |
+| lead R | `support-admin`, `supervisor` | Manager | Manager | grants roles, everything in both teams |
+
+K and O hold the **same role** and may do quite different things. That is the argument for the ladder
+staying per group. The role covers what has no row: opening the agent workspace, accepting a request
+into a team at all. The group covers which team's tickets and how deep. Ownership covers the customer.
+
+#### Not part of this contract
+
+- **Moving a row to another group.** The scope columns are absent from an update descriptor, and an
+  insert into a group the actor is not in is refused, so a ticket cannot be escalated from one team to
+  another. The shape such an operation would take is the one designed for Media Assets in
+  [GROUPS_AND_STORAGE_PLANNED.md](./design/GROUPS_AND_STORAGE_PLANNED.md), section 2: a named operation
+  with its own guard rather than a generic endpoint, Core and Add-on each checking what they know, the
+  client naming the occasion and never the target, and a durable record.
+- **Binding roles to groups** as well as to users.
+
+### Capabilities an Add-on supplies
+
+Section 1 says a Capability is supplied by Core **or one Add-on**. A manifest states `capabilities`, the
+registry records them under `provider_id`, and the capability snapshot reports per provider whether what
+a Site's Modules require is offered. Nothing lets a second Add-on reach such a Capability; the design is
+in [ADDONS_PLANNED.md](./design/ADDONS_PLANNED.md), section 1.
 
 ## 14. Capability requirements and diagnostics
 
@@ -1266,6 +1402,26 @@ its domain requires them, subject to these rules:
 
 Separate credentials carry migration authority. The role a running instance serves requests with holds
 no DDL grant, and the role `phis-cli` migrates with is not the role that serves.
+
+### Keeping the Core schema current
+
+`scripts/sql/001_create_phis.pgsql` is idempotent. The operator setup page applies it on the first
+bootstrap; afterwards a release that adds a Core table reaches a running installation through
+`phis schema`:
+
+```text
+phis schema check           what this release declares that the database does not have
+phis schema apply           applies the script, and re-grants the Core reference tables
+phis schema drop [--force]  drops every Add-on schema and then `phis`; without --force it only lists them
+```
+
+`check` and `apply` run as the **serving role**, from `database.uri` and deliberately not from
+`database.migrationUri`: Core's tables belong to the serving role, exactly as bootstrap leaves them, and a
+table created by anyone else is one the application cannot later alter. `migrationUri` is DDL authority
+for Add-on schemas, which are not Core's tables; `drop` needs it for that reason.
+
+`apply` re-grants `REFERENCES` on the Core reference tables to the migration role every time, because a
+table this release adds may be one an Add-on is allowed to point at, and that grant is per table.
 
 ### Table ownership
 
@@ -1356,11 +1512,11 @@ migrates an Add-on's schema needs `REFERENCES` on that table, and the Add-on's f
 migration time without it.
 
 Because Core writes the statements, these rules are mostly guaranteed rather than requested. The
-verification that remains has a different addressee than it used to: after applying a descriptor,
+verification that remains is addressed at Core's own generator: after applying a descriptor,
 `phis-cli` reads `information_schema` and refuses the result when a table sits outside the Add-on's
 schema, when a foreign key points at an Add-on from Core, when a delete rule is neither of the two
-permitted, or when a Site-scoped table is unbound. It is no longer defending against a hostile Add-on --
-it is checking Core's own generator, at the point where a generator bug is still cheap.
+permitted, or when a Site-scoped table is unbound. That is the point where a generator bug is still
+cheap.
 
 ### The schema descriptor
 
@@ -1372,11 +1528,11 @@ nullability and may state a default from a closed vocabulary -- a literal, or th
 
 An index states what it is for rather than how it is built: `ordered` for equality, ranges and the
 orderings a paged select runs under, `text` for substring search over one text column. Core maps `text`
-to a trigram index, which is what makes `contains` a lookup rather than a scan -- measured on 200,000
-rows, 72 ms without it and 0.5 ms with. A text index cannot be unique and cannot span columns, because
-it indexes fragments rather than values. The extension it needs is created by the Core schema script, so
-it is there before any Add-on asks for it; where a provider forbids it, the search still works and reads
-the whole table to do it, and `phis addon check` names the queries that pay for that.
+to a trigram (`gin_trgm_ops`) index, which is what makes `contains` a lookup rather than a scan. A text
+index cannot be unique and cannot span columns, because it indexes fragments rather than values. The
+`pg_trgm` extension it needs is created by the Core schema script, so it is there before any Add-on asks
+for it. Where a provider forbids the extension, migrating an Add-on with a text index fails;
+`phis schema check` and `phis schema apply` report the missing extension beforehand.
 
 Constraints are declared in structured form: a range on a number, an enumeration of permitted values,
 non-emptiness on text, a comparison between two columns of the same row, and null cardinality across a
@@ -1436,16 +1592,14 @@ The link is bound to the Site and cascades **both ways**, which is worth reading
   to deliver for that slot.** That is deliberate: it makes deleting a file a usable answer to somebody
   uploading rubbish, without destroying the record it was attached to.
 
-Because every row in that table is a finished file, the rule for a single-valued slot is a plain unique
-index. It was a partial one while a transfer in flight lived there too -- counting that row would have
-refused the very upload meant to replace the current file. The record of a transfer is Core's upload
-session now, and this table holds facts.
+Every row in that table is a finished file, so the rule for a single-valued slot is a plain unique index.
+A transfer in flight is recorded in Core's upload session, never in this table.
 
 ### Declared queries
 
 An Add-on does not query its tables. It declares the queries it needs -- what to read, under which
-filters, in which order, how many -- and Core compiles each into a statement at build time. A handler
-calls a query by name and passes parameters.
+filters, in which order, how many -- and Core derives each statement from the declaration. A handler
+calls a query by name through `data:v1` and passes parameters.
 
 The reason is the one that governs Site binding. Core builds the statement, so Core puts the Site filter
 in: a query against a Site-scoped table is bounded by the Site in the handler context, not by a
@@ -1455,8 +1609,8 @@ Site, and cannot express one that reaches past its own schema.
 Two further properties follow. No statement is assembled from values at request time, so there is no
 injection surface to reason about. And Core knows every query an Add-on will ever run before it is
 installed, which makes an admission judgement possible where runtime SQL allows none: an unbounded scan,
-a write without a filter, an ordering with no index behind it are all visible while the Add-on is being
-installed rather than while it is serving.
+a write without a filter, an ordering with no index behind it are visible in the manifest rather than
+only while the Add-on is serving.
 
 The declaration form carries what a real query needs and refuses what does not survive the boundary:
 
@@ -1464,14 +1618,11 @@ The declaration form carries what a real query needs and refuses what does not s
   absent is what switches it off. It compiles to one statement, `($n::TYPE IS NULL OR col = $n)`, and
   not to one statement per combination.
 
-  The combination form was the earlier plan, on the grounds that the null-tolerant predicate costs the
-  index. Measured on 200,000 rows it does not, because Core calls the database with statement text and
-  values and never with a `name`: an unnamed statement is planned at bind time with the real values, the
-  null test is folded away, and the comparison goes into the index condition just as a hand-written
-  filter would. Under a *prepared* statement it is a different story -- the index condition disappears
-  and 2,475 rows are read to return 25 -- which is why `data-capability.ts` says at the call site that
-  the unnamed form is load-bearing. The server's `plan_cache_mode` does not reach it; that governs the
-  cache for prepared statements, and there is none.
+  The null-tolerant predicate keeps the index because Core calls the database with statement text and
+  values and never with a statement `name`: an unnamed statement is planned at bind time with the real
+  values, the null test is folded away, and the comparison goes into the index condition as a
+  hand-written filter would. Under a *prepared* statement the index condition disappears, which is why
+  the unnamed form is load-bearing (`src/lib/addons/data-capability.ts`).
 - ordering is declared, and paging is by key rather than by offset. Core issues the cursor and reads it
   back; an Add-on passes it on without being able to see what it is made of.
 
@@ -1486,9 +1637,7 @@ The declaration form carries what a real query needs and refuses what does not s
 - text is searched with `contains`, which takes a column and a value and is the only search the
   vocabulary offers. It is an operator rather than a pattern: Core writes the statement and escapes the
   value, so a `%` in a search term is a character to look for rather than a wildcard that quietly
-  matches everything. Core's own code still writes `ILIKE` by hand in two places, which is what an
-  Add-on may not do -- not because the operator is worse there, but because the escaping is one detail
-  per author instead of one for everyone.
+  matches everything.
 - a query may state `requiresRole`, and Core refuses to run it for an actor who does not hold that
   name. Core learns no meaning from this -- it compares a name with what is stored, as `roles.has()`
   does -- and what the role stands for remains the Add-on's own pairing of role and query. It is what
@@ -1522,96 +1671,17 @@ The declaration form carries what a real query needs and refuses what does not s
   the ordering, total by construction because `GROUP BY` yields each combination once, which is also why
   they must be `NOT NULL`. There is no ordering by an aggregated value: ranking by an average would page
   on a key that is neither unique nor known before the group is computed.
-- a write declares what it returns.
-- a named sequence of queries runs as one transaction. Without one, every write stands alone and no
-  invariant spanning two tables can hold.
-- a join reaches only the Add-on's own tables. A join onto a Core table would fix Core's shape inside an
-  Add-on and undo what the symbolic reference just bought; what an Add-on may know about a user comes
-  from a Core service.
+- an `update` or `delete` addresses exactly one row by its primary key, through `idParameter`; there is
+  no `where` and no bulk form. Every mutation answers with the row it wrote.
+- several calls run as one unit of work inside `data:v1`'s `transaction(body)`. Without it, every write
+  stands alone and no invariant spanning two tables can hold.
+- there are no joins, not even between the Add-on's own tables. A join onto a Core table would fix
+  Core's shape inside an Add-on and undo what the symbolic reference buys; what an Add-on may know about
+  a user comes from a Core service.
 
-Result types are generated from the declared queries at the Add-on's own build time, by the SDK of
-section 3, because an Add-on is built separately and cannot read `@phis/server`'s generated artifacts.
-
-### Groups an Add-on needs
-
-An Add-on may declare the groups it needs, by key and name, and Core creates them on every Site that
-asks for the Add-on. It cannot create one at runtime and cannot put anybody in one — the groups
-capability reads and grants nothing. Who is in a group stays with whoever administers the Site, which is
-the point: a package must not be able to hand out standing.
-
-The group lives in `phis.site_groups` beside Core's own, told apart by `provider_id`. That is what makes
-it work everywhere without a second mechanism — the ladder, the membership projection and the Site's
-group administration all read one table, and an Add-on's group is a group like any other. Core already
-filters group claims against the available providers, so a group belonging to a removed Add-on stops
-granting anything without anybody having to clean up.
-
-Groups are created when a Site asks for the Add-on, and caught up on `reconcile` for Sites that already
-run it — a new release may declare a group its predecessor did not. Removal retires rather than deletes:
-a membership is a statement about a person made by whoever administers the Site, not the Add-on's data,
-and uninstalling a package must not quietly undo fifty of them. A retired group grants nothing either
-way, and a re-enabled Add-on finds its members still there.
-
-### Asking for an Add-on on a Site
-
-Three switches stand between an artifact on disk and a handler that answers, and they are three
-decisions by, in general, three different people:
-
-| Switch | Where | Command |
-| --- | --- | --- |
-| the instance has it | desired state | `addon install` |
-| the instance allows it | `server_addons.flags` | `addon enable` |
-| the Site wants it | `site_server_addons` | `addon site --site … --enable` |
-
-The third had no way to be made until it had a command: the row was declared in the first migration,
-read in two places, and written by nothing, so every installation so far carries an operator's
-hand-written `INSERT`. `addon config --site` still fails without it, and now says what to run.
-
-What a Site asks for and what it gets stay separate columns. `effective_status` depends on the artifact
-loading, the capabilities resolving and the configuration being complete, and writing it beside the
-request would make it a guess.
-
-`effective_status` is written by `reconcile` and read by no decision. Everything it could say is worked
-out by the capability snapshot from the sources that determine it — desired state, registry, digests,
-migration level, request, configuration — and reading a stored verdict back on top made the answer
-depend on when it was last written. Since nothing ever wrote it, the column sat at its default and every
-Add-on looked unavailable on every Site, which is why no dependent Module could activate anywhere. It
-stays as a diagnosis an operator can read without reproducing that reasoning.
-
-`configuration_status` is derived rather than declared: a setting either has a value an operator wrote
-or a default the manifest states, and an Add-on that declares nothing configurable is ready the moment a
-Site asks for it. It is re-derived after every change, because clearing a setting can take a Site back
-out of readiness and a status that only ever moves one way is one that lies. Until now nothing wrote the
-column at all, so the check that reads it could never have passed.
-
-### The Module half comes first
-
-A manifest may name the Modules its package's other half contributes, and that is the one thing Core
-cannot read off an artifact: whether a Module half exists at all. One package carries one product, so
-the package name is the manifest's own and there is nothing to resolve.
-
-**Enabling an Add-on for a Site requires that half to be there already.** The order is the opposite of
-section 6 of `design/DISTRIBUTION.md`, and there is no contradiction: that section is about installing into an
-instance, this is about switching on for a Site.
-
-The order costs nothing and removes a state. A Module whose Add-on is not enabled for the Site
-deactivates itself — the capability snapshot is per Site, and an unavailable provider drops the Module
-out of routes, controllers, widgets, layouts and providers while its selection stays recorded. So the
-Module can be installed and built first, harmlessly, and enabling is then the cheap step that takes
-effect at once with no second build behind it. Enabling first would leave a Site with routes and no
-surface until somebody remembers to build, and disabling first would leave a surface calling routes that
-are gone.
-
-`--without-module` enables the server half on its own, for the case that is genuinely meant.
-
-Disabling needs no such rule: the Module deactivates itself the moment the Site's request is withdrawn,
-so there is no window to protect. Removing it for good is `phis module del` and a build, in that order
-and at leisure.
-
-**A Service Provider is refused for a Site that never asked.** The check has been in `services.ts` since
-the beginning and could never fire: it is skipped when no Site is passed, and every Media caller passed
-none -- which was the only thing keeping uploads working, because the row it reads was written by
-nothing. The Site now travels in the Storage Profile, which has carried a `site_id NOT NULL` all along,
-so no caller has to remember to pass it and none can drop it by omission.
+Result types are to be generated from the declared queries at the Add-on's own build time by
+`@phis/addon-sdk` (section 3, not built), because an Add-on is built separately and cannot read
+`@phis/server`'s generated artifacts.
 
 ### Applying and removing a schema
 
@@ -1637,24 +1707,23 @@ the operator to reconcile twice. `server_addons.migration_version` holds the hig
 is written by the migration runner alone.
 
 Removal has two steps and only the second is destructive. Disabling an Add-on and uninstalling its
-package leave the schema and its rows untouched. `phis addon purge` drops the schema, clears the
-Add-on's Site assignments and applied-version rows, and deletes its catalog row -- which takes the
-Add-on's stored secrets with it, because credentials for something no longer installed have no reason to
-stay readable.
+package leave the schema, its rows, its role assignments, and its `storage:v1` objects untouched.
+`phis addon purge` drops the schema; deletes the Add-on's Site assignments, role assignments,
+applied-version rows, registry capabilities, and stored secrets; retires its groups (memberships stay);
+deletes its catalog row; and then removes the `storage:v1` objects of every Site it was enabled on.
 
 **The catalog row is also what the Add-on's Media Space hangs on**, and it cascades: the Space, its
 Assets, their variants. Nothing in that chain can reach a store, and afterwards nothing can name the
-objects either -- they sit under the Site's ordinary Media prefix, which `phis addon storage --purge`
-does not look at because that command removes the `storage:v1` prefix, in a Space the sweep can no
-longer ask about. So the purge writes their keys to `phis.media_discarded_objects` in the same
+objects either -- they sit under the Site's ordinary Media prefix, which the purge's `storage:v1` removal
+does not touch, in a Space `phis addon storage --sweep` can no longer ask about. So the purge writes their
+keys to `phis.media_discarded_objects` in the same
 transaction, before the cascade runs, and reports how many. Removing them is then a drain like any
 other.
 
 One case stays open and is not solvable here: an Add-on that was itself the Storage Provider. Its
 objects can only be reached through code that left with it, so the keys are recorded and the bytes are
-the operator's to remove with a client of their own. `phis addon storage --purge` already says as much
-in that situation.
-
+the operator's to remove with a client of their own. `phis addon purge` reports the objects it had to
+keep in that situation.
 
 ## 16. Secrets
 
@@ -1690,8 +1759,8 @@ and impossible to add afterwards, because by then there is ciphertext whose key 
 
 The root key is the one secret that stays out of the database, held in each instance's runtime
 configuration. It is the only material a new host needs before it can serve, and it changes far less
-often than what it protects. An instance that cannot resolve its root key does not report ready under
-section 17 and receives no traffic, rather than accepting requests whose secrets it cannot read.
+often than what it protects. It is `secrets.encryptionKey` in the runtime configuration, created with
+`phis secret init-key`.
 
 A secret row records the Add-on and, where applicable, the Site it belongs to, so removing either takes
 its secrets with it and an uninstall leaves nothing readable behind. Resolution is server-only and
@@ -1711,8 +1780,11 @@ Every instance reports:
 - local capability digests
 - readiness and last-seen timestamp
 
-`phis-cli` completes global activation only after the expected release is ready on all serving
-instances or old instances have left the load balancer.
+Instances write this to `phis.server_instances` at startup and on an interval. `phis instance list`
+shows where they disagree, `phis instance drain` clears an instance's ready bit, and `phis instance prune`
+removes instances that stopped reporting. Global activation is to complete only after the expected
+release is ready on all serving instances or old instances have left the load balancer; `phis addon
+enable` does not wait for that yet (see Status).
 
 Failure behavior:
 
@@ -1724,7 +1796,9 @@ Capability responses include local release identity so rollout drift is attribut
 
 ## 18. Threads and Resource Links
 
-Threads and Resource Links are Core services rather than Support-owned Add-ons.
+Threads and Resource Links are Core services rather than Support-owned Add-ons. Threads are implemented
+and reach Add-ons as `threads:v1`. Resource Links are not implemented: `resource-links:v1` is a reserved
+name with no table behind it, and the rules below are its contract.
 
 Threads provide:
 
@@ -1792,6 +1866,8 @@ Server Add-on:       none
 
 ### GitHub
 
+An illustrative binding; no GitHub package exists.
+
 ```text
 Package:             @phis/github
 Site Module:         @phis/github/modules/github
@@ -1818,7 +1894,7 @@ Core requirement:    @phis/server/resource-links:v1
 - Browser code never receives direct database, migration, DDL, or secret access.
 - Core and Add-on capabilities use the same versioned discovery format.
 - Deployment availability and Site enablement are separate.
-- Load-balanced activation is release- and instance-aware.
+- Load-balanced activation is release- and instance-aware (not yet enforced; see Status).
 - Missing server capabilities fail locally and observably without breaking unrelated Modules.
 - Internal service implementations use the one manifest-declared service-provider registry; Add-ons and
   Modules must not create provider-specific import, loopback-route, or fallback paths.

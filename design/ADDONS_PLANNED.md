@@ -120,7 +120,7 @@ like a Core release that had dropped something.
 Core builds the bound object at dispatch, from the provider's runtime, closed over **the caller's Site
 and the caller's actor**. This is the safety property the arrangement rests on. A provider running under
 its own identity would let any consumer borrow its authority, and the row-level ladder the consumer was
-measured against would end at the capability boundary. A job has no actor (section 12a), so a Capability
+measured against would end at the capability boundary. A job has no actor (SERVER_ADDONS.md section 10, "Jobs"), so a Capability
 called from one is called with none, and a provider that needs somebody must refuse rather than
 substitute itself.
 

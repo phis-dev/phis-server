@@ -15,7 +15,72 @@ This document defines the normative v1 translation-storage and provider contract
   source locale equals the canonical locale follows the ordinary canonical path.
 
 The Site source locale is selected when the Site is created and must not be changed later. Changing it
-would invalidate every canonical Site message and translation.
+would invalidate every canonical Site message and translation. It is stored as
+`sites.overrides.<siteKey>.sourceLocale` in the runtime configuration; `translation.sourceLocale` is only
+the installation fallback.
+
+## Locale capability
+
+Locale support has two levels:
+
+- `PHI_LOCALE_CAPABILITIES` in `src/lib/locale.ts` is the platform-wide capability superset. Every entry
+  states the locale key, `language`, optional `script` and `region`, text `direction`, `intlLocale`, the
+  DeepL target (`deeplTargetLang`), and the label fallback chain (`labelFallbacks`, by default locale,
+  language, `en`). Aliases such as `zh`/`zh-CN` for `zh-Hans` resolve to their entry.
+- Each Site offers a subset through `sites.default_locale` and `sites.available_locales`. A locale unknown
+  to the superset is dropped, and `default_locale` must be one of `available_locales`.
+
+Rules:
+
+- Locale identifiers use BCP-47-style values, for example `de-DE`, `de-CH`, `en-US`, `en-GB`, `es-419`,
+  `zh-Hans`, `zh-Hant`, `pt-BR`, and `pt-PT`.
+- A stored Site locale is not an external provider target. DeepL receives the resolved target
+  (`de-CH -> DE`, `en -> EN-GB`, `en-US -> EN-US`, `pt-BR -> PT-BR`, `zh-Hans -> ZH-HANS`); Intl and
+  `<html lang>` receive the effective locale; label sets use the fallback chain (`de-CH -> de -> en`).
+- Locale validation, DeepL targets, direction, and fallback chains are derived only from the capability
+  table in `@phis/server`. Widgets and Sites never carry their own table.
+- The Ant Design locale key is resolved in phis-ui (`helpers/antd-locale.ts`, for example
+  `de-CH -> de_DE`, `zh-Hans -> zh_CN`), which also loads the bundled Ant Design and Dayjs locale modules.
+- A locale DeepL gains is added to the capability table first; only then may a Site offer it.
+- The translation target locales of a Site are its available locales without its source locale. A Site
+  whose only locale is its source has an empty translation workspace.
+- Global Core, package, and preset translation requests are not Site-scoped. Phi-owned preset source text
+  is `en` and never inherits a Site locale.
+
+### Request locale resolution
+
+`GET /api/v1/site/locale` (internal token) resolves the locale of one request. The candidates, in order,
+are the explicit request locale (`locale` query parameter or `x-locale` header), the signed-in user's
+`preferred_locale`, the `phis_locale` cookie, and `Accept-Language`. The first candidate that matches an
+available Site locale, exactly or by language, wins; otherwise the Site default applies. The response
+carries the capability entry together with `requestedLocale` and `source`
+(`requested`, `user`, `cookie`, `browser`, or `default`).
+
+Site configuration is cacheable per Site. A resolved request locale is not, because it depends on the
+session, cookies, and request headers.
+
+### Translation requests
+
+- `GET /api/v1/tr` translates one `msg`. `POST /api/v1/tr` accepts one `msg` or a `msgs` array.
+- Both accept `format=text|html`; `text` is the default and `html` marks intentional translatable HTML.
+- A request with the internal token and `x-phis-site-key` uses the Site store (`tr_site_msg`,
+  `tr_site_lang`). A request without `x-phis-site-key` uses the global store (`tr_msg`, `tr_lang`).
+- A request with the public token must not send `x-phis-site-key` (`403`) and uses the global store only.
+  Public requests are refused unless `translation.allowPublicReads` is `true`, and they store new
+  translations only when `translation.allowPublicWrites` is `true`.
+- A target locale outside `translation.supportedLocales` answers with the source text.
+
+### Dynamic values
+
+- Translation sources contain only translatable text and stable placeholders. Names, email addresses,
+  company names, customer numbers, Site names, URLs, and other dynamic values are never embedded in a
+  string sent to `tr`, `trGlobal`, a label set, or `translateWithCache`.
+- Dynamic values use positional placeholders `%1`, `%2`, ... that are filled after translation, for example
+  `Hello %1,` with `%1 = recipientName`.
+- Label sets are static UI copy. They may contain placeholder templates such as `Login history for %1`,
+  never resolved user, profile, company, or email values.
+- Email templates translate the template line first and then insert recipient names, Site names, support
+  emails, and links into the `%n` placeholders.
 
 ## External and non-canonical sources
 
