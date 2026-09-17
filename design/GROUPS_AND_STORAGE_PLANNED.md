@@ -76,22 +76,14 @@ embedded by id. Publish validation additionally rejects an Asset whose delivery 
 the published Page audience. Promotion into the Site Space is not part of this: the Site Space is not a
 transfer target (section 2 above).
 
-## 4. Support teams on general groups
-
-Support teams remain a Support-domain profile because routing, queues, and ticket assignment are not
-generic membership properties. Their membership moves from `support_team_members` to
-`site_group_members`; the Support profile references exactly one group and retains only Support-specific
-state. Every effective group membership change increments the affected Site membership's
-`authorization_revision`.
-
-## 5. Signed delivery URLs
+## 4. Signed delivery URLs
 
 User, Group, authenticated, and internal Assets may be delivered through short-lived signed URLs as an
 alternative to private proxy responses. A signed link carries the Asset's `delivery_revision`, so
 incrementing the revision revokes every link issued before it. Protected responses never use shared
 public immutable caching, whichever path serves them.
 
-## 6. Storage migration job
+## 5. Storage migration job
 
 Changing an existing Asset's Storage Profile is an explicit resumable job:
 

@@ -31,8 +31,8 @@ The following parts of this contract are not implemented. None of them is repres
   serving role (section 15).
 - **`@phis/addon-sdk`.** The build-time half described in section 3 -- descriptor builders, result-type
   generation, a context double -- has no package.
-- **Capabilities without a delivery.** `@phis/server/authentication:v1`, `@phis/server/resource-links:v1`
-  and `@phis/server/support:v1` are named in the Core catalogue but are not bound to an Add-on context.
+- **Capabilities without a delivery.** `@phis/server/authentication:v1` and `@phis/server/support:v1`
+  are named in the Core catalogue but are not bound to an Add-on context.
   An Add-on requiring one of them is refused at dispatch, by the job runner, and when its service factory
   is resolved (section 13).
 - **Site-admin activation and configuration.** A Site's request for an Add-on and its settings are
@@ -762,7 +762,7 @@ dispatch, by the job runner, and when its service factory is resolved.
 | `@phis/server/authorization:v1` | yes |
 | `@phis/server/data:v1` | yes |
 | `@phis/server/threads:v1` | yes |
-| `@phis/server/resource-links:v1` | no -- reserved, nothing implements it |
+| `@phis/server/resource-links:v1` | yes |
 | `@phis/server/support:v1` | no -- reserved |
 | `@phis/server/groups:v1` | yes |
 | `@phis/server/storage:v1` | yes |
@@ -1111,23 +1111,42 @@ gone -- and comes back with it, members included.
 
 ### `threads:v1`
 
-Core's internal support threads, bounded by the acting user: `list`, `get`, `create`, `reply`,
-`addRecipients`, `archive`, `markRead`.
+Core's threads, bounded by whoever is behind the call: `list`, `get`, `create`, `reply`,
+`addParticipants`, `setStatus`, `markRead`, `findByExternalRef`.
 
-The rule is the one `groups:v1` states, for the same reason -- **an Add-on sees what its actor sees.**
-A thread is visible to whoever created it, was named a recipient, or stands in a team that was, and
-every read here goes through that same predicate. There is no listing that steps outside it: a Site's
-threads are its people talking, and an Add-on is not a party to them. An author is projected as
-`groups:v1` projects one, so a display name and a company, never an address.
+**With an actor** the rule is the one `groups:v1` states, for the same reason -- an Add-on sees what its
+actor sees. A thread is visible to its participants, and a group participates as a group, so its members
+are resolved when the thread is read. Every read here goes through that same predicate; there is no
+listing that steps outside it. An author is projected as `groups:v1` projects one: a display name and a
+company, never an address.
 
-**Without an actor only `create` is offered.** A job and a hook run as the Add-on rather than as a
-person, and a person is what thread visibility is made of -- an Add-on with no actor is in no thread, so
-there is nothing for it to list, read or answer, and the call is refused rather than quietly answering
-with everything or with nothing. It may still open a thread, naming its recipients as it goes, which is
-what an integration reporting an outside event needs.
+**Without an actor** -- a job, a verified hook, an event handler -- the Add-on reaches the threads it
+owns and the ones it is linked to. It owns what it opened with nobody behind it. It is linked to a
+thread when a `resource-links:v1` row of its own carries `Synced` and points at that thread, at a
+ticket, or at a ticket task whose thread it is, and that row was written by a person who could see the
+thread. The link is that person's consent for one integration and one conversation, and unlinking ends
+it. There is still no listing: an actorless Add-on arrives at a thread through the reference it
+recorded, never by walking.
 
-An Add-on without an actor cannot append to a thread it opened. That would need a thread the Add-on
-owns, which is not part of this contract.
+`list` and `markRead` are the two an actorless Add-on is refused, because both are questions about
+somebody's own inbox.
+
+What is withheld either way: an `Internal` message never reaches an Add-on, and a `Confidential` one
+arrives with its text removed and its flag set, so an interface can say why there is nothing to show.
+
+### `resource-links:v1`
+
+References from a Phi record into an Add-on's own system: `list`, `link`, `setState`, `unlink`,
+`findByExternalId`. The subject is a thread, a Support ticket, or a ticket task.
+
+Bounded twice. The provider is closed over, so an Add-on reads and writes its own links and sees no
+other's -- two integrations on one ticket do not have to know about each other, and removing one takes
+its references with it. And a subject has to be one the acting user may reach, asked of the subject's
+thread, because there is one answer to "may this person see this conversation".
+
+**Writing needs an actor.** A link is a person saying two records belong together, and it is that
+statement the actorless reach above rests on; a hook that could write its own would be granting itself
+the access the link is supposed to confer.
 
 ### `settings:v1`
 
@@ -1796,38 +1815,29 @@ Capability responses include local release identity so rollout drift is attribut
 
 ## 18. Threads and Resource Links
 
-Threads and Resource Links are Core services rather than Support-owned Add-ons. Threads are implemented
-and reach Add-ons as `threads:v1`. Resource Links are not implemented: `resource-links:v1` is a reserved
-name with no table behind it, and the rules below are its contract.
+Threads and Resource Links are Core services rather than Support-owned Add-ons, and both are
+implemented: they reach Add-ons as `threads:v1` and `resource-links:v1`, and a Site session reaches
+threads under `/api/site/threads`. Threads are no longer Support's own -- Support is one kind of thread
+among Direct, Group and CrossGroup, and membership is `site_groups` rather than a Support-owned table.
+[design/THREADS.md](./design/THREADS.md) records the reasoning; [DB.md](./DB.md) holds the tables.
 
-Threads provide:
+A thread carries its Site, its kind, its lifecycle, its participants, its messages, and per-reader read
+state. Two message flags decide what leaves and what is seen: `Internal` is who may read it -- Staff
+participants, and not the requester a Support note is written past -- and `Confidential` is where it may
+go, which is nowhere outside Core, an Add-on included.
 
-- Site ownership
-- subject and lifecycle
-- participants
-- visibility and authorization
-- messages
-- read state
-- namespaced Resource References
-- audit events
-
-Resource References identify domain objects without importing their Module:
-
-```text
-provider: @phis/support
-kind: ticket
-externalId: 4711
-```
+A Resource Link identifies a domain object without importing the Module that owns it:
 
 ```text
 provider: @phis/github
-kind: issue
+type: 20 (the provider's own vocabulary)
 externalId: owner/repository#123
 ```
 
-Resource Link projections may expose normalized label, URL, semantic status, icon key, synchronization
-state, and last synchronization timestamp. Core stores and authorizes the generic relation; the owning
-Add-on resolves provider-specific state.
+Core stores the relation, indexes it per Site and provider, and authorizes it through the subject's
+thread. What `20` means, and what a state of `3` means, belongs to the Add-on that wrote the row -- the
+same arrangement a role name has. A link carrying `Synced` additionally grants that Add-on actorless
+reach to the subject's thread, which is the one thing here that is not merely a reference.
 
 ## 19. Runtime coordination
 

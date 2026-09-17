@@ -35,9 +35,8 @@ export function hasPhisCoreCapability(capabilityId: string) {
  * The capabilities this release actually binds to a handler's context.
  *
  * The catalogue above is the vocabulary, and a name may be reserved in it long before anything builds
- * it -- `resource-links:v1` has no table behind it at all. Membership in the catalogue therefore says
- * what an Add-on may ask for, never what it will receive, and the two gates below have to ask this set
- * instead. Asking the catalogue let an Add-on declaring a reserved name pass the dispatcher, the job
+ * it -- `support:v1` is one today. Membership in the catalogue therefore says what an Add-on may ask
+ * for, never what it will receive, and the two gates below have to ask this set instead. Asking the catalogue let an Add-on declaring a reserved name pass the dispatcher, the job
  * runner and the service factory, and then find `undefined` where its capability should have been --
  * the opposite of what `PhisAddonCapabilities` states, that a capability this release does not offer
  * stops the Add-on rather than arriving as a broken object.
@@ -49,6 +48,7 @@ const DELIVERABLE_CAPABILITY_ID_SET = new Set<string>([
   CORE_CAPABILITY_IDS.authorization,
   CORE_CAPABILITY_IDS.data,
   CORE_CAPABILITY_IDS.threads,
+  CORE_CAPABILITY_IDS.resourceLinks,
   CORE_CAPABILITY_IDS.groups,
   CORE_CAPABILITY_IDS.storage,
   CORE_CAPABILITY_IDS.assets,

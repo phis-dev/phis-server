@@ -191,9 +191,10 @@ When that provider is disabled, missing, incompatible, misconfigured, or stale b
 bound, its effective assertions are omitted and protected resources fail closed while local and other
 healthy source assertions remain effective.
 
-Support teams remain a Support-domain profile because routing, queues, and ticket assignment are not
-generic membership properties. Their membership is still held in `support_team_members`; moving it onto
-general groups is planned in [GROUPS_AND_STORAGE_PLANNED.md](./design/GROUPS_AND_STORAGE_PLANNED.md).
+Support keeps a profile of its own because routing, queues, and ticket assignment are not generic
+membership properties. Its membership is not: a `support_queues` row names exactly one Site group, and
+who its people are is `site_group_members` like everybody else's. The Support-domain membership table is
+gone, and with it the second group system threads used to resolve against.
 
 ## 3. Media Spaces
 

@@ -7,7 +7,7 @@ import { normalizeString, readRequestBody } from "@/lib/helpers/request";
 
 export const dynamic = "force-dynamic";
 
-type AssignmentAction = "assign_to_me" | "assign_to_user" | "unassign" | "move_to_team";
+type AssignmentAction = "assign_to_me" | "assign_to_user" | "unassign" | "move_to_queue";
 
 function normalizeInteger(value: unknown) {
   if (typeof value === "number" && Number.isInteger(value)) {
@@ -29,7 +29,7 @@ function normalizeAction(value: unknown): AssignmentAction | null {
     normalized === "assign_to_me" ||
     normalized === "assign_to_user" ||
     normalized === "unassign" ||
-    normalized === "move_to_team"
+    normalized === "move_to_queue"
   ) {
     return normalized;
   }
@@ -61,13 +61,13 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
 
   try {
     const ticket =
-      action === "move_to_team"
+      action === "move_to_queue"
         ? await applySupportTicketAssignmentAction({
             siteId: site.id,
             ticketId,
             action,
             userId,
-            teamId: normalizeInteger(body.teamId) ?? 0,
+            queueId: normalizeInteger(body.queueId) ?? 0,
           })
         : action === "assign_to_user"
           ? await applySupportTicketAssignmentAction({

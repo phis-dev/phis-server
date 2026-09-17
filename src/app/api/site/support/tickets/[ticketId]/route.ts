@@ -76,7 +76,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
   const updated = await updateSupportTicket({
     siteId: site.id,
     ticketId,
-    type: normalizeInteger(body.type) ?? undefined,
+    typeId: normalizeInteger(body.typeId) ?? undefined,
     status: normalizeInteger(body.status) ?? undefined,
     channel: normalizeInteger(body.channel) ?? undefined,
     priority: normalizeInteger(body.priority) ?? undefined,
@@ -90,7 +90,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     assigneeUserId: Object.prototype.hasOwnProperty.call(body, "assigneeUserId")
       ? normalizeInteger(body.assigneeUserId)
       : undefined,
-    teamId: Object.prototype.hasOwnProperty.call(body, "teamId") ? normalizeInteger(body.teamId) : undefined,
+    queueId: Object.prototype.hasOwnProperty.call(body, "queueId") ? normalizeInteger(body.queueId) : undefined,
     subject: Object.prototype.hasOwnProperty.call(body, "subject") ? normalizeString(body.subject) : undefined,
     summary: Object.prototype.hasOwnProperty.call(body, "summary") ? normalizeNullableString(body.summary) : undefined,
     meta: Object.prototype.hasOwnProperty.call(body, "meta") ? normalizeJsonRecord(body.meta) : undefined,

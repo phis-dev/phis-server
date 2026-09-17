@@ -34,6 +34,7 @@ import { getPool } from "@/lib/db";
 import { buildPhisAddonDataCapability } from "./data-capability.ts";
 import { buildPhisAddonRolesCapability } from "./roles-capability.ts";
 import { buildPhisAddonGroupsCapability } from "./groups-capability.ts";
+import { buildPhisAddonResourceLinksCapability } from "./resource-links-capability.ts";
 import { buildPhisAddonThreadsCapability } from "./threads-capability.ts";
 import { buildPhisAddonSecretsCapability } from "./secrets-capability.ts";
 import { buildPhisAddonSettingsCapability } from "./settings-capability.ts";
@@ -339,6 +340,18 @@ export function buildPhisAddonCapabilities(input: {
      * an Add-on's own tables, and these are not its rows.
      */
     capabilities.threads = buildPhisAddonThreadsCapability({
+      addonId: input.manifest.addonId,
+      siteId,
+      actorUserId: input.actorUserId,
+    });
+  }
+  if (required.includes(PHIS_CORE_CAPABILITIES.resourceLinks)) {
+    /*
+     * The other half of the same rule. A link is what a person states, and what an Add-on may later
+     * act on without one -- so the actor is bound here exactly as it is above, and the provider is
+     * closed over so an Add-on can neither read nor overwrite another's references.
+     */
+    capabilities.resourceLinks = buildPhisAddonResourceLinksCapability({
       addonId: input.manifest.addonId,
       siteId,
       actorUserId: input.actorUserId,

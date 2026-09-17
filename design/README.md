@@ -14,8 +14,7 @@ design is built, its settled parts move into the owning contract and leave this 
 - [DISTRIBUTION.md](./DISTRIBUTION.md) -- package sources, the listing format, provenance, update checks,
   and delegated installation authority.
 - [GROUPS_AND_STORAGE_PLANNED.md](./GROUPS_AND_STORAGE_PLANNED.md) -- custody and audience, Asset transfer
-  between Spaces, audience validation at publish, Support teams on general groups, signed delivery URLs,
-  and the Storage migration job.
+  between Spaces, audience validation at publish, signed delivery URLs, and the Storage migration job.
 - [PUBLIC_ADDRESSES.md](./PUBLIC_ADDRESSES.md) -- Site Page against Module address collisions, a standing
   list of Public addresses, and durable redirects.
 - [THREADS.md](./THREADS.md) -- threads beyond Support: Staff, group and cross-group threads on Site

@@ -1,102 +1,56 @@
 import "server-only";
 
-import type {
-  PhisThreadDetail,
-  PhisThreadMessage,
-  PhisThreadSummary,
-  PhisThreadsCapabilityV1,
-} from "./contract.ts";
+import type { PhisThreadsCapabilityV1 } from "./contract.ts";
 import {
-  SUPPORT_THREAD_STATUS_ARCHIVED,
-  addSupportThreadMessage,
-  addSupportThreadRecipients,
-  createSupportThread,
-  getSupportThreadDetail,
-  listSupportThreadsForUser,
-  markSupportThreadRead,
-  updateSupportThread,
-  type SupportThreadDetailRecord,
-  type SupportThreadMessageRecord,
-  type SupportThreadRecord,
-} from "@/db/support";
+  addThreadMessage,
+  addThreadParticipants,
+  createThread,
+  findThreadByExternalRef,
+  getThreadDetail,
+  listThreadsForUser,
+  markThreadRead,
+  setThreadStatus,
+  type ThreadReader,
+} from "@/db/threads";
 
 export class PhisAddonThreadsError extends Error {}
 
 /**
- * Thread facts and thread writes, bounded by the acting user.
+ * Thread facts and thread writes, bounded by whoever is behind the call.
  *
- * The rule is the one `groups:v1` states: **an Add-on sees what its actor sees.** Every read below
- * goes through the same visibility predicate the Site's own thread routes go through -- created it,
- * named in it, or in a team named in it -- so there is no listing here that a person could not have
- * obtained themselves, and no way to turn a Site's threads into something an Add-on can walk.
+ * **With an actor** the rule is the one `groups:v1` states: an Add-on sees what its actor sees. Every
+ * read goes through the same visibility predicate Core's own thread routes go through, so there is no
+ * listing here a person could not have obtained themselves.
  *
- * A message body is handed over as it was written. Threads are internal support messaging, not a
- * customer-facing record, and the projection an Add-on gets of an author is the same three fields
- * `groups:v1` discloses -- never an address.
+ * **Without one** -- a job, a verified hook, an event -- the Add-on reaches the threads it owns and the
+ * ones a person linked it to, and nothing else. The link was written by somebody who could see the
+ * thread, which is what makes it consent rather than a standing permission; unlinking ends the reach.
+ *
+ * What is withheld either way: `Internal` messages never reach an Add-on, and a `Confidential` one
+ * arrives with its text removed and its flag set, so an interface can say why there is nothing to show.
  */
-
-function projectThread(record: SupportThreadRecord): PhisThreadSummary {
-  return {
-    id: record.id,
-    subject: record.subject,
-    status: record.status,
-    type: record.type,
-    createdAt: record.createdAt,
-    updatedAt: record.updatedAt,
-    latestMessageAt: record.latestMessageCreatedAt,
-    unread: record.unread,
-  };
-}
-
-function projectMessage(record: SupportThreadMessageRecord): PhisThreadMessage {
-  return {
-    id: record.id,
-    bodyText: record.bodyText,
-    bodyMarkdown: record.bodyMarkdown,
-    author: record.authorUserId == null
-      ? null
-      : {
-        userId: record.authorUserId,
-        displayName: record.authorDisplayName,
-        companyName: record.authorCompanyName,
-      },
-    createdAt: record.createdAt,
-  };
-}
-
-function projectDetail(record: SupportThreadDetailRecord): PhisThreadDetail {
-  return {
-    thread: projectThread(record.thread),
-    messages: record.messages.map(projectMessage),
-    hasMoreMessages: record.hasMoreMessages,
-    recipientUserIds: record.recipients
-      .map((recipient) => recipient.userId)
-      .filter((value): value is number => value != null),
-    recipientTeamIds: record.recipients
-      .map((recipient) => recipient.teamId)
-      .filter((value): value is number => value != null),
-  };
-}
-
 export function buildPhisAddonThreadsCapability(input: {
   addonId: string;
   siteId: number;
   actorUserId: number | null;
 }): PhisThreadsCapabilityV1 {
-  const { siteId, actorUserId } = input;
+  const { addonId, siteId, actorUserId } = input;
+
+  const reader: ThreadReader = actorUserId != null
+    ? { kind: "user", userId: actorUserId }
+    : { kind: "provider", providerId: addonId };
 
   /*
-   * Everything but `create` needs somebody to be bounded by.
+   * An inbox needs somebody to be an inbox for.
    *
-   * Thread visibility is made of membership, and an Add-on running as itself -- in a job, in a hook --
-   * is a member of nothing. The alternative would be a listing that steps around the predicate, which
-   * is the one thing this capability exists to prevent, so the call is refused instead of quietly
-   * answering with everything or with nothing.
+   * Ownership and links answer "may I touch this one" and never "what is there", so a listing for an
+   * Add-on acting as itself would have to invent an order over a Site's conversations -- the walk this
+   * capability exists to prevent. It finds its threads by the reference it recorded instead.
    */
   const requireActor = (call: string) => {
     if (actorUserId == null) {
       throw new PhisAddonThreadsError(
-        `${input.addonId} called threads.${call} with no acting user; only threads.create is available without one.`,
+        `${addonId} called threads.${call} with no acting user; without one an Add-on reaches only the threads it owns or is linked to, by id or by external reference.`,
       );
     }
     return actorUserId;
@@ -105,83 +59,84 @@ export function buildPhisAddonThreadsCapability(input: {
   return Object.freeze({
     async list(options = {}) {
       const userId = requireActor("list");
-      const result = await listSupportThreadsForUser(siteId, userId, {
+      const result = await listThreadsForUser(siteId, userId, {
         page: options.page,
         pageSize: options.pageSize,
         unreadOnly: options.unreadOnly,
       });
-      return result.rows.map(projectThread);
+      return result.rows;
     },
 
     async get(threadId, options = {}) {
-      const userId = requireActor("get");
-      const detail = await getSupportThreadDetail(siteId, userId, threadId, {
+      return getThreadDetail(siteId, reader, threadId, {
         messageLimit: options.messageLimit,
         beforeMessageId: options.beforeMessageId,
       });
-      return detail ? projectDetail(detail) : null;
     },
 
     async create(createInput) {
-      const detail = await createSupportThread({
+      const detail = await createThread({
         siteId,
+        kind: createInput.kind,
         subject: createInput.subject ?? null,
         message: createInput.message,
         messageMarkdown: createInput.messageMarkdown ?? null,
-        recipientUserIds: createInput.recipientUserIds,
-        recipientTeamIds: createInput.recipientTeamIds,
+        messageFlags: createInput.messageFlags,
+        participantUserIds: createInput.participantUserIds,
+        participantGroupIds: createInput.participantGroupIds,
         createdByUserId: actorUserId,
+        // With nobody behind the call the thread is the Add-on's own, which is what makes it reachable
+        // again: an integration that could open a thread and never return to it could not hold a
+        // conversation open at all.
+        ownerProviderId: actorUserId == null ? addonId : null,
+        externalRef: createInput.externalRef ?? null,
+        externalAuthor: createInput.externalAuthor ?? null,
       });
       if (!detail) {
-        throw new PhisAddonThreadsError(`${input.addonId} could not open a thread on site ${siteId}.`);
+        throw new PhisAddonThreadsError(`${addonId} could not open a thread on site ${siteId}.`);
       }
-      return projectDetail(detail);
+      return detail;
     },
 
     async reply(replyInput) {
-      const userId = requireActor("reply");
-      const detail = await addSupportThreadMessage({
+      return addThreadMessage({
         siteId,
         threadId: replyInput.threadId,
-        bodyText: replyInput.message,
-        bodyMarkdown: replyInput.messageMarkdown ?? null,
-        authorUserId: userId,
+        reader,
+        message: replyInput.message,
+        messageMarkdown: replyInput.messageMarkdown ?? null,
+        messageFlags: replyInput.messageFlags,
+        externalRef: replyInput.externalRef ?? null,
+        externalAuthor: replyInput.externalAuthor ?? null,
       });
-      return detail ? projectDetail(detail) : null;
     },
 
-    async addRecipients(recipientInput) {
-      const userId = requireActor("addRecipients");
-      const detail = await addSupportThreadRecipients({
+    async addParticipants(participantInput) {
+      return addThreadParticipants({
         siteId,
-        threadId: recipientInput.threadId,
-        actingUserId: userId,
-        recipientUserIds: recipientInput.recipientUserIds,
-        recipientTeamIds: recipientInput.recipientTeamIds,
+        threadId: participantInput.threadId,
+        reader,
+        participantUserIds: participantInput.participantUserIds,
+        participantGroupIds: participantInput.participantGroupIds,
       });
-      return detail ? projectDetail(detail) : null;
     },
 
-    async archive(threadId) {
-      const userId = requireActor("archive");
-      const detail = await updateSupportThread({
+    async setStatus(statusInput) {
+      return setThreadStatus({
         siteId,
-        threadId,
-        actingUserId: userId,
-        status: SUPPORT_THREAD_STATUS_ARCHIVED,
+        threadId: statusInput.threadId,
+        reader,
+        status: statusInput.status,
       });
-      return detail != null;
     },
 
     async markRead(readInput) {
       const userId = requireActor("markRead");
-      const detail = await markSupportThreadRead(
-        siteId,
-        userId,
-        readInput.threadId,
-        readInput.messageId ?? null,
-      );
-      return detail != null;
+      return markThreadRead(siteId, userId, readInput.threadId, readInput.messageId ?? null);
+    },
+
+    async findByExternalRef(externalRef) {
+      return findThreadByExternalRef({ siteId, providerId: addonId, externalRef });
     },
   } satisfies PhisThreadsCapabilityV1);
 }

@@ -15,6 +15,7 @@ import {
 import { getMediaAssetBySiteAndId } from "@/db/media";
 import { listSiteModuleBlockUsageWithDb } from "@/db/site-module-usage";
 import { materializeSiteMediaAvailabilityWithDb } from "@/db/media-spaces";
+import { materializeSiteThreadKindsWithDb } from "@/db/threads";
 import {
   collectSiteCmsContentReferences,
   collectSiteCmsReferences,
@@ -2688,6 +2689,7 @@ export async function publishSiteAreaRevision(
     // take it from and the draft's own config is what becomes real. So the availability is settled here
     // too, inside the same transaction: the pointer and what it implies must never be observable apart.
     await materializeSiteMediaAvailabilityWithDb(client, siteId);
+    await materializeSiteThreadKindsWithDb(client, siteId);
     await client.query("COMMIT");
 
     return {
@@ -2796,6 +2798,7 @@ export async function publishSiteAreaModulesRevision(
     // publish that changes it. Inside the same transaction: the pointer and the availability it implies
     // must never be observable apart.
     await materializeSiteMediaAvailabilityWithDb(client, siteId);
+    await materializeSiteThreadKindsWithDb(client, siteId);
     await client.query("COMMIT");
 
     return {

@@ -1287,13 +1287,40 @@ Contract:
 - These tables are reserved for external Directory Providers and are neither read nor written by Core.
   Their contract is [design/DIRECTORY_PROVIDERS.md](./design/DIRECTORY_PROVIDERS.md).
 
-### `phis.support_teams`
-
-Support-domain teams and their membership. Moving Support membership onto general groups is planned in
-[design/GROUPS_AND_STORAGE_PLANNED.md](./design/GROUPS_AND_STORAGE_PLANNED.md#4-support-teams-on-general-groups).
+### `phis.support_ticket_types`
 
 - `id SMALLSERIAL PRIMARY KEY`
 - `site_id SMALLINT NOT NULL REFERENCES phis.sites(id) ON DELETE CASCADE`
+- `key VARCHAR(64) NOT NULL`
+- `name VARCHAR(128) NOT NULL`
+- `flags INT NOT NULL DEFAULT 0`
+- `close_policy SMALLINT NOT NULL DEFAULT 0`
+- `requester_window_days SMALLINT NULL`
+- `sort_order SMALLINT NOT NULL DEFAULT 0`
+- `created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
+- `updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
+- `UNIQUE (site_id, key)`
+- `UNIQUE (id, site_id)`
+
+Contract:
+- What kinds of Support work a Site handles is the Site's own catalogue, not a vocabulary compiled into the server.
+- `flags` are `PhisSupportTicketTypeFlag` from `@phis/contracts/support`:
+  - `1 = External`: the conversation of tickets of this type is mirrored to a linked external system.
+  - `2 = CodeChange`: the work is a code change.
+- `External` is a flag rather than a type of its own because it cuts across every type; a bug may be handled internally or in the open.
+- `close_policy` is `PhisSupportClosePolicy`:
+  - `0 = Confirm`: a Supporter confirms.
+  - `1 = CodeAccepted`: a merged pull request completes the task, and the ticket resolves when every engineering task is done.
+- `CodeAccepted` requires the `CodeChange` flag: a type with no merge to wait for must not wait for one.
+- Neither policy resolves a ticket because an external issue was closed as not planned; that is a decision about the external work.
+- `requester_window_days` narrows or widens the Site default in `site_thread_config`; `NULL` takes it, and `0` means a Supporter closes the ticket.
+- `(id, site_id)` is unique so a ticket's composite foreign key cannot point at another Site's type.
+
+### `phis.support_queues`
+
+- `id SMALLSERIAL PRIMARY KEY`
+- `site_id SMALLINT NOT NULL REFERENCES phis.sites(id) ON DELETE CASCADE`
+- `group_id INT NOT NULL`
 - `key VARCHAR(64) NOT NULL`
 - `name VARCHAR(128) NOT NULL`
 - `flags INT NOT NULL DEFAULT 0`
@@ -1301,115 +1328,166 @@ Support-domain teams and their membership. Moving Support membership onto genera
 - `created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
 - `updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
 - `UNIQUE (site_id, key)`
+- `UNIQUE (id, site_id)`
+- `FOREIGN KEY (group_id, site_id) REFERENCES phis.site_groups (id, site_id)`
 
 Contract:
-- Support teams are site-scoped assignment queues such as `support_l1`, `dev`, or `billing`.
-- Team identity belongs to `site_id + key`; no global team catalog is required.
-- Deleting a site removes its support teams through cascade.
-- The bootstrap default set is:
-  - `support_l1`
-  - `support_l2`
-  - `dev`
-  - `billing`
-- New support tickets should default to `support_l1` when no explicit `team_id` is supplied.
+- A queue is where Support work is routed: `support_l1`, `dev`, `billing`. It replaces `support_teams`.
+- Membership is not here. A queue names one Site group, and who its people are is `site_group_members`, as it is for every other group on the Site.
+- Routing, queue order, and ticket assignment are Support-domain properties and are not generic membership properties, which is why the profile survives the move.
+- The group reference deliberately does not cascade, as `media_spaces` does not: no surface deletes a group, so this fails against a stray statement instead of taking a Site's routing with it.
+- New tickets default to the queue a Site marks as its entry queue when none is supplied.
 
-### `phis.support_team_members`
-
-- `team_id SMALLINT NOT NULL REFERENCES phis.support_teams(id) ON DELETE CASCADE`
-- `user_id INT NOT NULL REFERENCES phis.user_accounts(id) ON DELETE CASCADE`
-- `flags INT NOT NULL DEFAULT 0`
-- `created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
-- `PRIMARY KEY (team_id, user_id)`
-
-Contract:
-- Team membership is the site-scoped mapping between support teams and user accounts.
-- A user may belong to multiple teams within the same site.
-- Membership rows are operational, not historical; deleting a team or user removes the membership row.
-- Historical assignment auditing remains in `support_ticket_assignments`, so membership rows do not need `SET NULL` behavior.
-
-### `phis.support_threads`
+### `phis.threads`
 
 - `id SERIAL PRIMARY KEY`
 - `site_id SMALLINT NOT NULL REFERENCES phis.sites(id) ON DELETE CASCADE`
-- `ticket_id INT NULL REFERENCES phis.support_tickets(id) ON DELETE CASCADE`
-- `type SMALLINT NOT NULL`
+- `kind SMALLINT NOT NULL`
 - `status SMALLINT NOT NULL DEFAULT 0`
 - `subject VARCHAR(255) NULL`
 - `flags INT NOT NULL DEFAULT 0`
+- `owner_provider_id VARCHAR(255) NULL`
 - `created_by_user_id INT NULL REFERENCES phis.user_accounts(id) ON DELETE SET NULL`
+- `last_message_id INT NULL REFERENCES phis.thread_messages(id) ON DELETE SET NULL`
 - `created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
 - `updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
+- `UNIQUE (id, site_id)`
 
 Contract:
-- Threads are the internal support messaging container.
-- `ticket_id` is optional so a thread can be ticket-bound or stand alone as a team or direct conversation.
-- `type` is the recipient model:
-  - `0 = direct`
-  - `1 = team`
-  - `2 = mixed`
-  - `3 = broadcast`
-- `status` is the lifecycle:
-  - `0 = open`
-  - `1 = archived`
-- Threads are internal-only and are not customer-facing communication records.
+- A thread is a conversation between people on one Site, and no longer a Support-only container; see [design/THREADS.md](./design/THREADS.md).
+- `kind` is `PhisThreadKind` from `@phis/contracts/threads`:
+  - `0 = direct`, Staff to Staff between people who share a group
+  - `1 = group`, inside one group
+  - `2 = cross-group`, between groups, each participating as a whole
+  - `3 = support`, a requester and a queue's group
+- The kind is fixed when the thread is opened. A Site offers a kind only while one of its active Modules declares it in `site_thread_config`.
+- `status` is `0 = open`, `1 = archived`. One row carries it, so archiving closes the thread for everyone in it rather than hiding it from one reader.
+- `owner_provider_id` is the Add-on that opened the thread with no actor behind it, and is what lets it reach the thread again without one. `NULL` is Core's own, which is every thread a person opened.
+- A ticket's conversation is an ordinary thread; the reference lives on `support_tickets.thread_id`.
+- `last_message_id` is denormalized so an inbox orders and previews without a lateral join per row. The two tables reference each other, so the constraint is added after `thread_messages` exists.
+- `(id, site_id)` is unique so a ticket and its thread cannot end up on different Sites.
 
-### `phis.support_thread_messages`
+### `phis.thread_participants`
 
 - `id SERIAL PRIMARY KEY`
-- `thread_id INT NOT NULL REFERENCES phis.support_threads(id) ON DELETE CASCADE`
+- `thread_id INT NOT NULL REFERENCES phis.threads(id) ON DELETE CASCADE`
+- `participant_kind SMALLINT NOT NULL`
+- `user_id INT NULL REFERENCES phis.user_accounts(id) ON DELETE CASCADE`
+- `group_id INT NULL REFERENCES phis.site_groups(id) ON DELETE CASCADE`
+- `flags INT NOT NULL DEFAULT 0`
+- `created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
+
+Contract:
+- `participant_kind` is `0 = user`, `1 = group`, and exactly one of `user_id` or `group_id` is populated.
+- A group participates as a group. Its members are resolved when the thread is read, so somebody who joins afterwards is in the conversation and somebody who leaves is not; expanding a group into people here would freeze a membership that keeps moving.
+- Membership is `site_group_members`. `support_team_members` is gone, and threads no longer carry a second group system.
+- `flags` are `PhisThreadParticipantFlag`:
+  - `1 = Requester`: the person a Support thread is about.
+  - `2 = ExternalConsent`: this requester has acknowledged that the conversation is mirrored outside, without which their own messages are not exported.
+  - `4 = Left`, `8 = Muted`.
+- At most one participant per thread carries `Requester`: internal messages are written past that person, so a second one would make "hidden from them" a question with two answers.
+- Recommended uniqueness: `(thread_id, user_id)` where `user_id IS NOT NULL`, `(thread_id, group_id)` where `group_id IS NOT NULL`.
+
+### `phis.thread_messages`
+
+- `id SERIAL PRIMARY KEY`
+- `thread_id INT NOT NULL REFERENCES phis.threads(id) ON DELETE CASCADE`
+- `author_kind SMALLINT NOT NULL`
 - `author_user_id INT NULL REFERENCES phis.user_accounts(id) ON DELETE SET NULL`
+- `author_provider_id VARCHAR(255) NULL`
 - `body_text TEXT NOT NULL`
 - `body_markdown TEXT NULL`
+- `flags INT NOT NULL DEFAULT 0`
 - `meta JSONB NOT NULL DEFAULT '{}'::jsonb`
 - `created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
 - `updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
 
 Contract:
-- Thread messages are the actual internal messages inside a support thread.
-- User deletion must not delete historical messages; `author_user_id` falls back to `NULL`.
-- `meta` is reserved for lightweight additions such as mentions, client hints, or later attachment metadata.
+- This is the only message table. `support_ticket_messages` is gone: a ticket's conversation is its thread, so an integration synchronizes one model rather than two.
+- `author_kind` is `0 = user`, `1 = integration`, `2 = system`. An integration names the provider relaying it and carries the outside author in `meta`; it is not dressed up as a person.
+- User deletion must not delete historical messages; `author_user_id` falls back to `NULL` while the kind stays `user`.
+- `flags` are `PhisThreadMessageFlag`:
+  - `1 = Internal`: only Staff participants may read it. It replaces the ticket message `visibility` column.
+  - `2 = Confidential`: it may not leave Core -- not to an integration, not into a notification body, and not to an Add-on, which receives the message with its text withheld.
+  - `4 = Edited`, `8 = Redacted`, `16 = Imported`.
+- `Internal` and `Confidential` are independent because they answer different questions: who may read it, and where it may go. A customer may set the second on their own message.
+- `meta` carries the outside author's name and URL, mentions, and equivalent lightweight additions.
 
-### `phis.support_thread_recipients`
+### `phis.thread_message_refs`
 
-- `id SERIAL PRIMARY KEY`
-- `thread_id INT NOT NULL REFERENCES phis.support_threads(id) ON DELETE CASCADE`
-- `recipient_type SMALLINT NOT NULL`
-- `user_id INT NULL REFERENCES phis.user_accounts(id) ON DELETE CASCADE`
-- `team_id SMALLINT NULL REFERENCES phis.support_teams(id) ON DELETE CASCADE`
+- `site_id SMALLINT NOT NULL REFERENCES phis.sites(id) ON DELETE CASCADE`
+- `provider_id VARCHAR(255) NOT NULL`
+- `external_id VARCHAR(256) NOT NULL`
+- `message_id INT NOT NULL REFERENCES phis.thread_messages(id) ON DELETE CASCADE`
 - `flags INT NOT NULL DEFAULT 0`
 - `created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
+- `PRIMARY KEY (site_id, provider_id, external_id)`
 
 Contract:
-- Recipients define who should receive a thread.
-- `recipient_type`:
-  - `0 = user`
-  - `1 = team`
-- Exactly one of `user_id` or `team_id` must be populated on each row.
-- A thread may target direct users, whole teams, or both at once.
-- Team recipients are not expanded into per-user rows; team resolution happens dynamically via `support_team_members`.
-- Recommended uniqueness:
-  - unique `(thread_id, user_id)` where `user_id IS NOT NULL`
-  - unique `(thread_id, team_id)` where `team_id IS NOT NULL`
+- What an integration calls a message, so a delivery arriving twice writes one message and an outbound comment can be recognized when it comes back.
+- The Site is part of the key: one repository may be linked from two Sites, and the external id would otherwise collide between them.
+- `flags` are `1 = Imported`, `2 = Exported`. What came from outside is never sent back out, which is what stops a mirror from echoing.
+- It replaces `support_ticket_messages.external_message_ref`, which could hold one reference and could not be looked up by it.
 
-### `phis.support_thread_reads`
+### `phis.thread_reads`
 
-- `thread_id INT NOT NULL REFERENCES phis.support_threads(id) ON DELETE CASCADE`
+- `thread_id INT NOT NULL REFERENCES phis.threads(id) ON DELETE CASCADE`
 - `user_id INT NOT NULL REFERENCES phis.user_accounts(id) ON DELETE CASCADE`
-- `last_read_message_id INT NULL REFERENCES phis.support_thread_messages(id) ON DELETE SET NULL`
+- `last_read_message_id INT NULL REFERENCES phis.thread_messages(id) ON DELETE SET NULL`
 - `read_at TIMESTAMPTZ NULL`
 - `PRIMARY KEY (thread_id, user_id)`
 
 Contract:
-- Read state is tracked per user and per thread.
-- A user has access to a thread if they are a direct recipient or belong to a recipient team.
-- Unread notification counts can be derived by comparing the latest thread message against `last_read_message_id`.
-- This table is sufficient for dashboard message badges without adding a separate notification system in v1.
+- Read state is per user and per thread.
+- Unread counts are derived by comparing `threads.last_message_id` against `last_read_message_id`.
+- This is sufficient for dashboard badges without a separate notification system in v1.
+
+### `phis.site_thread_config`
+
+- `site_id SMALLINT PRIMARY KEY REFERENCES phis.sites(id) ON DELETE CASCADE`
+- `flags INT NOT NULL DEFAULT 0`
+- `requester_window_days SMALLINT NOT NULL DEFAULT 14`
+- `updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
+
+Contract:
+- `flags` are `PhisSiteThreadKindFlag`: `1 = Direct`, `2 = Group`, `4 = CrossGroup`, `8 = Support`.
+- It is not a switch an administrator flips. It is materialized from what the Site's active Modules declare, the way declared Media Space kinds are: a Site gains a kind by running a Module that needs it.
+- A kind that stops being declared hides its threads and deletes nothing; they return with the Module.
+- `requester_window_days` is how long a resolved ticket waits for its requester before closing itself, and a ticket type may narrow or widen it. `0` switches automatic closing off for the Site.
+
+### `phis.resource_links`
+
+- `id SERIAL PRIMARY KEY`
+- `site_id SMALLINT NOT NULL REFERENCES phis.sites(id) ON DELETE CASCADE`
+- `thread_id INT NULL REFERENCES phis.threads(id) ON DELETE CASCADE`
+- `ticket_id INT NULL REFERENCES phis.support_tickets(id) ON DELETE CASCADE`
+- `ticket_task_id INT NULL REFERENCES phis.support_ticket_tasks(id) ON DELETE CASCADE`
+- `provider_id VARCHAR(255) NOT NULL`
+- `type SMALLINT NOT NULL`
+- `external_id VARCHAR(256) NOT NULL`
+- `url TEXT NULL`
+- `state SMALLINT NULL`
+- `flags INT NOT NULL DEFAULT 0`
+- `meta JSONB NOT NULL DEFAULT '{}'::jsonb`
+- `created_by_user_id INT NULL REFERENCES phis.user_accounts(id) ON DELETE SET NULL`
+- `created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
+- `updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
+- `UNIQUE (site_id, provider_id, type, external_id)`
+
+Contract:
+- This is what `resource-links:v1` stores, and it replaces `support_ticket_links`. A ticket is no longer the only thing that may carry a reference.
+- Exactly one of `thread_id`, `ticket_id`, or `ticket_task_id` is populated. The subject is a real reference rather than a kind and a bare integer: a polymorphic id has no foreign key, and a link whose subject is gone is a row nothing cleans up.
+- `provider_id` is the Add-on that wrote the link and is the whole of the ownership rule: an Add-on reads and writes its own links and sees no others.
+- `type` and `state` are the provider's own vocabulary -- an issue, a pull request, open, merged. Core stores and indexes both and interprets neither, as it does not interpret a role name.
+- `flags` carry `1 = Synced`, which is also what lets that Add-on reach the subject's thread with no actor. Unlinking ends that reach, so a link that is only a pointer grants nothing.
+- Writing a link needs an acting user: it is a person saying these two things belong together, and it is that consent the actorless reach rests on.
+- A GitHub issue is linked to a ticket task rather than to the ticket, because one ticket may need several issues and resolving one does not resolve the Support work.
 
 ### `phis.support_tickets`
 
 - `id SERIAL PRIMARY KEY`
 - `site_id SMALLINT NOT NULL REFERENCES phis.sites(id) ON DELETE CASCADE`
-- `type SMALLINT NOT NULL`
+- `type_id SMALLINT NOT NULL`
 - `status SMALLINT NOT NULL DEFAULT 0`
 - `channel SMALLINT NOT NULL`
 - `priority SMALLINT NOT NULL DEFAULT 1`
@@ -1418,7 +1496,8 @@ Contract:
 - `requester_user_id INT NULL REFERENCES phis.user_accounts(id) ON DELETE SET NULL`
 - `requester_email VARCHAR(320) NULL`
 - `assignee_user_id INT NULL REFERENCES phis.user_accounts(id) ON DELETE SET NULL`
-- `team_id SMALLINT NULL REFERENCES phis.support_teams(id) ON DELETE SET NULL`
+- `queue_id SMALLINT NULL REFERENCES phis.support_queues(id) ON DELETE SET NULL`
+- `thread_id INT NOT NULL`
 - `subject VARCHAR(512) NOT NULL`
 - `summary TEXT NULL`
 - `meta JSONB NOT NULL DEFAULT '{}'::jsonb`
@@ -1432,6 +1511,9 @@ Contract:
 - `updated_by_user_id INT NULL REFERENCES phis.user_accounts(id) ON DELETE SET NULL`
 - `created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
 - `updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
+- `UNIQUE (thread_id)`
+- `FOREIGN KEY (thread_id, site_id) REFERENCES phis.threads (id, site_id)`
+- `FOREIGN KEY (type_id, site_id) REFERENCES phis.support_ticket_types (id, site_id)`
 
 Contract:
 - Support tickets are Phi-owned workflow records and remain independent from GitHub issues or Medusa records.
@@ -1439,31 +1521,10 @@ Contract:
 - `requester_email` may remain populated after `requester_user_id` becomes `NULL`; it is the only allowed lightweight requester fallback in the core ticket row.
 - User deletion must not delete the ticket; all user references use `ON DELETE SET NULL`.
 - Ticket-level `flags` are reserved for internal workflow/system bits, not for external-system ownership.
-- Cross-system relationships such as GitHub issues, PRs, Medusa orders, or CMS references belong in `support_ticket_links`, not in dedicated columns on the ticket row.
+- A ticket is the workflow record -- status, priority, assignment, tasks -- and everything anybody says about it is `thread_id`, the same thread model every other conversation on the Site uses. The ticket has exactly one, and it is not shared.
+- `type_id` is the Site's own type, which decides whether the conversation may leave the Site and what ends the ticket.
+- Cross-system relationships such as GitHub issues, PRs, Medusa orders, or CMS references belong in `resource_links`, not in dedicated columns on the ticket row. An issue is linked to a ticket task rather than to the ticket.
 - `meta` is the free-form extension field for lightweight origin or UI context such as locale, path, or browser hints.
-
-### `phis.support_ticket_messages`
-
-- `id SERIAL PRIMARY KEY`
-- `ticket_id INT NOT NULL REFERENCES phis.support_tickets(id) ON DELETE CASCADE`
-- `channel SMALLINT NOT NULL`
-- `visibility SMALLINT NOT NULL DEFAULT 0`
-- `author_type SMALLINT NOT NULL`
-- `flags INT NOT NULL DEFAULT 0`
-- `author_user_id INT NULL REFERENCES phis.user_accounts(id) ON DELETE SET NULL`
-- `external_message_ref VARCHAR(256) NULL`
-- `body_text TEXT NOT NULL`
-- `body_markdown TEXT NULL`
-- `meta JSONB NOT NULL DEFAULT '{}'::jsonb`
-- `created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
-- `updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
-
-Contract:
-- Messages are ticket-scoped conversation entries.
-- `visibility` distinguishes customer-visible replies from internal-only notes.
-- A message may originate from email, portal, API, GitHub, or internal authoring, but ticket ownership remains in Phi.
-- User deletion must not delete the message; `author_user_id` resolves to `NULL`.
-- No author-name or email snapshot columns are stored in message history.
 
 ### `phis.support_ticket_tasks`
 
@@ -1486,31 +1547,9 @@ Contract:
 
 Contract:
 - Tasks are internal work items attached to a support ticket and are distinct from the ticket's customer-facing lifecycle.
-- One ticket may carry multiple tasks, and resolving a GitHub issue does not by itself resolve the support ticket.
+- One ticket may carry multiple tasks, and resolving a GitHub issue does not by itself resolve the support ticket. An external issue is linked to the task rather than to the ticket, which is what keeps that true.
 - Tasks may be assigned independently from the ticket assignee.
 - User deletion must not delete the task; user references become `NULL`.
-
-### `phis.support_ticket_links`
-
-- `id SERIAL PRIMARY KEY`
-- `ticket_id INT NOT NULL REFERENCES phis.support_tickets(id) ON DELETE CASCADE`
-- `system SMALLINT NOT NULL`
-- `type SMALLINT NOT NULL`
-- `state SMALLINT NULL`
-- `flags INT NOT NULL DEFAULT 0`
-- `external_id VARCHAR(256) NOT NULL`
-- `external_key VARCHAR(256) NULL`
-- `external_url TEXT NULL`
-- `meta JSONB NOT NULL DEFAULT '{}'::jsonb`
-- `created_by_user_id INT NULL REFERENCES phis.user_accounts(id) ON DELETE SET NULL`
-- `created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
-
-Contract:
-- Links are the generic cross-system attachment model for support tickets.
-- A ticket may have multiple links across multiple systems at the same time.
-- `system` identifies the external source family such as `phi`, `medusa`, or `github`.
-- `type` identifies the concrete linked object such as `cms_page`, `medusa_order`, `github_issue`, or `github_pr`.
-- The core ticket row must not be overloaded with one-off foreign keys for external systems while this link table exists.
 
 ### `phis.support_ticket_assignments`
 
@@ -1518,17 +1557,17 @@ Contract:
 - `ticket_id INT NOT NULL REFERENCES phis.support_tickets(id) ON DELETE CASCADE`
 - `from_user_id INT NULL REFERENCES phis.user_accounts(id) ON DELETE SET NULL`
 - `to_user_id INT NULL REFERENCES phis.user_accounts(id) ON DELETE SET NULL`
-- `from_team_id SMALLINT NULL REFERENCES phis.support_teams(id) ON DELETE SET NULL`
-- `to_team_id SMALLINT NULL REFERENCES phis.support_teams(id) ON DELETE SET NULL`
+- `from_queue_id SMALLINT NULL REFERENCES phis.support_queues(id) ON DELETE SET NULL`
+- `to_queue_id SMALLINT NULL REFERENCES phis.support_queues(id) ON DELETE SET NULL`
 - `reason TEXT NULL`
 - `flags INT NOT NULL DEFAULT 0`
 - `created_by_user_id INT NULL REFERENCES phis.user_accounts(id) ON DELETE SET NULL`
 - `created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
 
 Contract:
-- Assignment rows are the audit trail for handoffs between users or teams.
+- Assignment rows are the audit trail for handoffs between users or queues.
 - The current assignee lives on `support_tickets`; assignment rows preserve the history of changes.
-- Team or user deletion must not delete assignment history; nullable references fall back to `NULL`.
+- Queue or user deletion must not delete assignment history; nullable references fall back to `NULL`.
 
 ### `phis.support_ticket_events`
 

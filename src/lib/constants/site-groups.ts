@@ -31,19 +31,33 @@ export function phiGroupLevelOf(flags: number): PhisGroupLevel | null {
 }
 
 /**
- * What a group's member list shows, not what anyone may do.
+ * What a group shows, and what it is used for -- never what anyone may do.
  *
- * `site_groups.flags` carries display bits only. Authority lives in the membership level, and putting
- * a right here would mean two places decide the same question. A Manager owns these for their group:
- * they know whether their group is one team or people from several companies working together.
+ * Authority lives in the membership level, and putting a right here would mean two places decide the
+ * same question. `ShowMemberCompany` is a Manager's to set: they know whether their group is one team
+ * or people from several companies working together.
+ *
+ * The two thread bits are not a person's right either; they switch a surface on for the whole group,
+ * the way a Media Space kind is available or not, and what anybody may then do there is still their
+ * level's answer. They exist because a group is also an audience: five thousand customers grouped for
+ * Page access must not become a chat room because the Site offers group threads. Creating groups is
+ * Site administration, so these are Developer's and Admin's -- and an Add-on's for the groups it owns,
+ * which is how customers in an Add-on's group come to talk to each other without the Site acting.
  */
 export const PhiSiteGroupFlags = {
   /** Show each member's company to the other members. Off by default: the least is disclosed first. */
   ShowMemberCompany: 1 << 0,
+  /** Members may hold group threads here. */
+  Threads: 1 << 1,
+  /** This group may address, and be addressed by, other groups. */
+  CrossGroupThreads: 1 << 2,
 } as const;
 
 export function normalizePhiSiteGroupFlags(value: unknown) {
-  const known = PhiSiteGroupFlags.ShowMemberCompany;
+  const known =
+    PhiSiteGroupFlags.ShowMemberCompany
+    | PhiSiteGroupFlags.Threads
+    | PhiSiteGroupFlags.CrossGroupThreads;
   return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value & known : 0;
 }
 

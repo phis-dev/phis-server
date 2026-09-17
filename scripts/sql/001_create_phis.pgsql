@@ -957,36 +957,223 @@ CREATE UNIQUE INDEX IF NOT EXISTS form_definitions_one_published_idx
   ON phis.form_definitions (site_id, form_id)
   WHERE status = 1;
 
-CREATE TABLE IF NOT EXISTS phis.support_teams (
+-- What kinds of work a Site's Support handles, and what each kind implies. It was a fixed list
+-- compiled into the server, which settled for every Site what kinds exist and left no way to say that
+-- one kind is handled in the open and another is not.
+CREATE TABLE IF NOT EXISTS phis.support_ticket_types (
   id SMALLSERIAL PRIMARY KEY,
   site_id SMALLINT NOT NULL REFERENCES phis.sites(id) ON DELETE CASCADE,
+  key VARCHAR(64) NOT NULL,
+  name VARCHAR(128) NOT NULL,
+  -- 1 = external (the conversation is mirrored to a linked system), 2 = code change.
+  flags INT NOT NULL DEFAULT 0,
+  -- 0 = a Supporter confirms, 1 = the merge is acceptance.
+  close_policy SMALLINT NOT NULL DEFAULT 0,
+  -- How long a resolved ticket of this type waits for its requester. NULL falls back to the Site's.
+  requester_window_days SMALLINT NULL,
+  sort_order SMALLINT NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT support_ticket_types_site_key_unique UNIQUE (site_id, key),
+  CONSTRAINT support_ticket_types_id_site_unique UNIQUE (id, site_id),
+  CONSTRAINT support_ticket_types_window_check
+    CHECK (requester_window_days IS NULL OR requester_window_days >= 0),
+  -- Waiting for a merge presumes there is one: a type without the code-change flag has nothing to wait
+  -- for, and its tickets are closed by a person.
+  CONSTRAINT support_ticket_types_close_policy_check
+    CHECK (close_policy = 0 OR (flags & 2) = 2)
+);
+
+-- Where Support work is routed. Membership is not here: a queue names one Site group, which is who its
+-- people are, and what is left is the routing that is not a membership property.
+CREATE TABLE IF NOT EXISTS phis.support_queues (
+  id SMALLSERIAL PRIMARY KEY,
+  site_id SMALLINT NOT NULL REFERENCES phis.sites(id) ON DELETE CASCADE,
+  group_id INT NOT NULL,
   key VARCHAR(64) NOT NULL,
   name VARCHAR(128) NOT NULL,
   flags INT NOT NULL DEFAULT 0,
   sort_order SMALLINT NOT NULL DEFAULT 0,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  CONSTRAINT support_teams_site_key_unique UNIQUE (site_id, key)
+  CONSTRAINT support_queues_site_key_unique UNIQUE (site_id, key),
+  CONSTRAINT support_queues_id_site_unique UNIQUE (id, site_id),
+  -- Deliberately without a cascade, as `media_spaces` is: no surface deletes a group, so this fails
+  -- against a stray statement instead of taking a Site's Support routing with it.
+  CONSTRAINT support_queues_group_site_fk
+    FOREIGN KEY (group_id, site_id)
+    REFERENCES phis.site_groups (id, site_id)
 );
 
-CREATE INDEX IF NOT EXISTS support_teams_site_id_idx
-  ON phis.support_teams (site_id);
+CREATE INDEX IF NOT EXISTS support_queues_group_id_idx
+  ON phis.support_queues (group_id);
 
-CREATE TABLE IF NOT EXISTS phis.support_team_members (
-  team_id SMALLINT NOT NULL REFERENCES phis.support_teams(id) ON DELETE CASCADE,
-  user_id INT NOT NULL REFERENCES phis.user_accounts(id) ON DELETE CASCADE,
+-- Threads are conversations between people on one Site: two colleagues, a group, two groups, or a
+-- requester and a Support queue. They were Support's own until the cases outside it arrived, which is
+-- why nothing here carries the `support_` prefix any more and why membership is `site_groups` rather
+-- than a second group system. See design/THREADS.md.
+CREATE TABLE IF NOT EXISTS phis.threads (
+  id SERIAL PRIMARY KEY,
+  site_id SMALLINT NOT NULL REFERENCES phis.sites(id) ON DELETE CASCADE,
+  -- 0 = direct, 1 = group, 2 = cross-group, 3 = support. Fixed when the thread is opened: it says which
+  -- conversation this is, and a Site offers each one only while a Module declares it.
+  kind SMALLINT NOT NULL,
+  -- 0 = open, 1 = archived. One row carries it, so archiving closes the thread for everyone in it
+  -- rather than hiding it from one reader.
+  status SMALLINT NOT NULL DEFAULT 0,
+  subject VARCHAR(255) NULL,
+  flags INT NOT NULL DEFAULT 0,
+  -- The Add-on that opened this thread with no actor behind it, and may therefore reach it again
+  -- without one. NULL is Core's own, which is every thread a person opened.
+  owner_provider_id VARCHAR(255) NULL,
+  created_by_user_id INT NULL REFERENCES phis.user_accounts(id) ON DELETE SET NULL,
+  -- The newest message, kept here so an inbox orders and previews without a lateral join per row. The
+  -- constraint is added after `thread_messages` exists, because the two reference each other.
+  last_message_id INT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT threads_owner_provider_id_check
+    CHECK (owner_provider_id IS NULL OR owner_provider_id ~ '^@[^/]+/[^/]+(?:/[^/]+)*$'),
+  -- What a ticket's composite foreign key points at, so a ticket and its thread cannot end up on
+  -- different Sites.
+  CONSTRAINT threads_id_site_unique UNIQUE (id, site_id)
+);
+
+CREATE INDEX IF NOT EXISTS threads_site_updated_idx
+  ON phis.threads (site_id, updated_at DESC, id DESC);
+
+CREATE INDEX IF NOT EXISTS threads_site_kind_updated_idx
+  ON phis.threads (site_id, kind, updated_at DESC, id DESC);
+
+CREATE INDEX IF NOT EXISTS threads_owner_provider_idx
+  ON phis.threads (owner_provider_id, site_id)
+  WHERE owner_provider_id IS NOT NULL;
+
+-- Who is in a thread. A group participates as a group: its members are resolved when the thread is
+-- read, so somebody who joins afterwards is in the conversation and somebody who leaves is not.
+-- Expanding a group into people here would freeze a membership that keeps moving.
+CREATE TABLE IF NOT EXISTS phis.thread_participants (
+  id SERIAL PRIMARY KEY,
+  thread_id INT NOT NULL REFERENCES phis.threads(id) ON DELETE CASCADE,
+  -- 0 = user, 1 = group.
+  participant_kind SMALLINT NOT NULL,
+  user_id INT NULL REFERENCES phis.user_accounts(id) ON DELETE CASCADE,
+  group_id INT NULL REFERENCES phis.site_groups(id) ON DELETE CASCADE,
+  -- 1 = requester, 2 = external consent, 4 = left, 8 = muted.
   flags INT NOT NULL DEFAULT 0,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  PRIMARY KEY (team_id, user_id)
+  CONSTRAINT thread_participants_kind_check CHECK (
+    (participant_kind = 0 AND user_id IS NOT NULL AND group_id IS NULL)
+    OR (participant_kind = 1 AND group_id IS NOT NULL AND user_id IS NULL)
+  )
 );
 
-CREATE INDEX IF NOT EXISTS support_team_members_user_id_idx
-  ON phis.support_team_members (user_id);
+CREATE INDEX IF NOT EXISTS thread_participants_thread_kind_idx
+  ON phis.thread_participants (thread_id, participant_kind);
+
+CREATE INDEX IF NOT EXISTS thread_participants_user_id_idx
+  ON phis.thread_participants (user_id)
+  WHERE user_id IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS thread_participants_group_id_idx
+  ON phis.thread_participants (group_id)
+  WHERE group_id IS NOT NULL;
+
+CREATE UNIQUE INDEX IF NOT EXISTS thread_participants_thread_user_unique_idx
+  ON phis.thread_participants (thread_id, user_id)
+  WHERE user_id IS NOT NULL;
+
+CREATE UNIQUE INDEX IF NOT EXISTS thread_participants_thread_group_unique_idx
+  ON phis.thread_participants (thread_id, group_id)
+  WHERE group_id IS NOT NULL;
+
+-- A thread is about at most one person. Internal messages are written past the requester, so a second
+-- one would make "hidden from them" a question with two answers.
+CREATE UNIQUE INDEX IF NOT EXISTS thread_participants_one_requester_idx
+  ON phis.thread_participants (thread_id)
+  WHERE (flags & 1) = 1;
+
+CREATE TABLE IF NOT EXISTS phis.thread_messages (
+  id SERIAL PRIMARY KEY,
+  thread_id INT NOT NULL REFERENCES phis.threads(id) ON DELETE CASCADE,
+  -- 0 = user, 1 = integration, 2 = system. An integration is not dressed up as a person: it names the
+  -- provider relaying it and carries the outside author in `meta`.
+  author_kind SMALLINT NOT NULL,
+  -- Deleting a user must not delete what they wrote, so this becomes NULL while the kind stays `user`.
+  author_user_id INT NULL REFERENCES phis.user_accounts(id) ON DELETE SET NULL,
+  author_provider_id VARCHAR(255) NULL,
+  body_text TEXT NOT NULL,
+  body_markdown TEXT NULL,
+  -- 1 = internal, 2 = confidential, 4 = edited, 8 = redacted, 16 = imported. `internal` is who may read
+  -- it; `confidential` is where it may go, which is nowhere outside Core.
+  flags INT NOT NULL DEFAULT 0,
+  meta JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT thread_messages_author_check CHECK (
+    (author_kind = 0 AND author_provider_id IS NULL)
+    OR (author_kind = 1 AND author_provider_id IS NOT NULL AND author_user_id IS NULL)
+    OR (author_kind = 2 AND author_provider_id IS NULL AND author_user_id IS NULL)
+  )
+);
+
+CREATE INDEX IF NOT EXISTS thread_messages_thread_created_idx
+  ON phis.thread_messages (thread_id, created_at ASC, id ASC);
+
+ALTER TABLE phis.threads
+  DROP CONSTRAINT IF EXISTS threads_last_message_id_fkey;
+
+ALTER TABLE phis.threads
+  ADD CONSTRAINT threads_last_message_id_fkey
+  FOREIGN KEY (last_message_id) REFERENCES phis.thread_messages(id) ON DELETE SET NULL;
+
+-- What an integration calls a message it relayed, so the same delivery arriving twice writes one
+-- message. The Site is part of the key because one repository may be linked from two Sites, and the
+-- external id would otherwise collide between them.
+CREATE TABLE IF NOT EXISTS phis.thread_message_refs (
+  site_id SMALLINT NOT NULL REFERENCES phis.sites(id) ON DELETE CASCADE,
+  provider_id VARCHAR(255) NOT NULL,
+  external_id VARCHAR(256) NOT NULL,
+  message_id INT NOT NULL REFERENCES phis.thread_messages(id) ON DELETE CASCADE,
+  -- 1 = imported, 2 = exported. What came from outside is never sent back out, which is what stops a
+  -- mirror from echoing.
+  flags INT NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (site_id, provider_id, external_id)
+);
+
+CREATE INDEX IF NOT EXISTS thread_message_refs_message_id_idx
+  ON phis.thread_message_refs (message_id);
+
+CREATE TABLE IF NOT EXISTS phis.thread_reads (
+  thread_id INT NOT NULL REFERENCES phis.threads(id) ON DELETE CASCADE,
+  user_id INT NOT NULL REFERENCES phis.user_accounts(id) ON DELETE CASCADE,
+  last_read_message_id INT NULL REFERENCES phis.thread_messages(id) ON DELETE SET NULL,
+  read_at TIMESTAMPTZ NULL,
+  PRIMARY KEY (thread_id, user_id)
+);
+
+CREATE INDEX IF NOT EXISTS thread_reads_user_read_idx
+  ON phis.thread_reads (user_id, read_at DESC);
+
+-- Which kinds of thread this Site offers. Materialized from what its active Modules declare, the way
+-- declared Media Space kinds are: a Site gains a kind by running a Module that needs it, and a kind
+-- that stops being declared hides its threads without deleting anything.
+CREATE TABLE IF NOT EXISTS phis.site_thread_config (
+  site_id SMALLINT PRIMARY KEY REFERENCES phis.sites(id) ON DELETE CASCADE,
+  -- 1 = direct, 2 = group, 4 = cross-group, 8 = support.
+  flags INT NOT NULL DEFAULT 0,
+  -- How long a resolved ticket waits for its requester, in days. 0 means it waits for a Supporter.
+  requester_window_days SMALLINT NOT NULL DEFAULT 14,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT site_thread_config_window_check CHECK (requester_window_days >= 0)
+);
 
 CREATE TABLE IF NOT EXISTS phis.support_tickets (
   id SERIAL PRIMARY KEY,
   site_id SMALLINT NOT NULL REFERENCES phis.sites(id) ON DELETE CASCADE,
-  type SMALLINT NOT NULL,
+  -- The Site's own type, which says whether this conversation may leave the Site and what ends it.
+  type_id SMALLINT NOT NULL,
   status SMALLINT NOT NULL DEFAULT 0,
   channel SMALLINT NOT NULL,
   priority SMALLINT NOT NULL DEFAULT 1,
@@ -995,7 +1182,11 @@ CREATE TABLE IF NOT EXISTS phis.support_tickets (
   requester_user_id INT NULL REFERENCES phis.user_accounts(id) ON DELETE SET NULL,
   requester_email VARCHAR(320) NULL,
   assignee_user_id INT NULL REFERENCES phis.user_accounts(id) ON DELETE SET NULL,
-  team_id SMALLINT NULL REFERENCES phis.support_teams(id) ON DELETE SET NULL,
+  queue_id SMALLINT NULL REFERENCES phis.support_queues(id) ON DELETE SET NULL,
+  -- The ticket's conversation. A ticket is the workflow record -- status, priority, assignment, tasks --
+  -- and everything anybody says about it is the thread, which is the same thread model every other
+  -- conversation on the Site uses.
+  thread_id INT NOT NULL,
   subject VARCHAR(512) NOT NULL,
   summary TEXT NULL,
   meta JSONB NOT NULL DEFAULT '{}'::jsonb,
@@ -1008,7 +1199,14 @@ CREATE TABLE IF NOT EXISTS phis.support_tickets (
   created_by_user_id INT NULL REFERENCES phis.user_accounts(id) ON DELETE SET NULL,
   updated_by_user_id INT NULL REFERENCES phis.user_accounts(id) ON DELETE SET NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT support_tickets_thread_unique UNIQUE (thread_id),
+  CONSTRAINT support_tickets_thread_site_fk
+    FOREIGN KEY (thread_id, site_id)
+    REFERENCES phis.threads (id, site_id),
+  CONSTRAINT support_tickets_type_site_fk
+    FOREIGN KEY (type_id, site_id)
+    REFERENCES phis.support_ticket_types (id, site_id)
 );
 
 CREATE INDEX IF NOT EXISTS support_tickets_site_status_updated_idx
@@ -1017,33 +1215,14 @@ CREATE INDEX IF NOT EXISTS support_tickets_site_status_updated_idx
 CREATE INDEX IF NOT EXISTS support_tickets_site_assignee_status_updated_idx
   ON phis.support_tickets (site_id, assignee_user_id, status, updated_at DESC, id DESC);
 
-CREATE INDEX IF NOT EXISTS support_tickets_site_team_status_updated_idx
-  ON phis.support_tickets (site_id, team_id, status, updated_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS support_tickets_site_queue_status_updated_idx
+  ON phis.support_tickets (site_id, queue_id, status, updated_at DESC, id DESC);
 
 CREATE INDEX IF NOT EXISTS support_tickets_site_requester_email_idx
   ON phis.support_tickets (site_id, requester_email);
 
 CREATE INDEX IF NOT EXISTS support_tickets_site_created_at_idx
   ON phis.support_tickets (site_id, created_at DESC, id DESC);
-
-CREATE TABLE IF NOT EXISTS phis.support_ticket_messages (
-  id SERIAL PRIMARY KEY,
-  ticket_id INT NOT NULL REFERENCES phis.support_tickets(id) ON DELETE CASCADE,
-  channel SMALLINT NOT NULL,
-  visibility SMALLINT NOT NULL DEFAULT 0,
-  author_type SMALLINT NOT NULL,
-  flags INT NOT NULL DEFAULT 0,
-  author_user_id INT NULL REFERENCES phis.user_accounts(id) ON DELETE SET NULL,
-  external_message_ref VARCHAR(256) NULL,
-  body_text TEXT NOT NULL,
-  body_markdown TEXT NULL,
-  meta JSONB NOT NULL DEFAULT '{}'::jsonb,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE INDEX IF NOT EXISTS support_ticket_messages_ticket_created_idx
-  ON phis.support_ticket_messages (ticket_id, created_at ASC, id ASC);
 
 CREATE TABLE IF NOT EXISTS phis.support_ticket_tasks (
   id SERIAL PRIMARY KEY,
@@ -1070,34 +1249,13 @@ CREATE INDEX IF NOT EXISTS support_ticket_tasks_ticket_sort_idx
 CREATE INDEX IF NOT EXISTS support_ticket_tasks_ticket_status_idx
   ON phis.support_ticket_tasks (ticket_id, status, updated_at DESC, id DESC);
 
-CREATE TABLE IF NOT EXISTS phis.support_ticket_links (
-  id SERIAL PRIMARY KEY,
-  ticket_id INT NOT NULL REFERENCES phis.support_tickets(id) ON DELETE CASCADE,
-  system SMALLINT NOT NULL,
-  type SMALLINT NOT NULL,
-  state SMALLINT NULL,
-  flags INT NOT NULL DEFAULT 0,
-  external_id VARCHAR(256) NOT NULL,
-  external_key VARCHAR(256) NULL,
-  external_url TEXT NULL,
-  meta JSONB NOT NULL DEFAULT '{}'::jsonb,
-  created_by_user_id INT NULL REFERENCES phis.user_accounts(id) ON DELETE SET NULL,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE INDEX IF NOT EXISTS support_ticket_links_ticket_id_idx
-  ON phis.support_ticket_links (ticket_id);
-
-CREATE INDEX IF NOT EXISTS support_ticket_links_external_lookup_idx
-  ON phis.support_ticket_links (system, external_id);
-
 CREATE TABLE IF NOT EXISTS phis.support_ticket_assignments (
   id SERIAL PRIMARY KEY,
   ticket_id INT NOT NULL REFERENCES phis.support_tickets(id) ON DELETE CASCADE,
   from_user_id INT NULL REFERENCES phis.user_accounts(id) ON DELETE SET NULL,
   to_user_id INT NULL REFERENCES phis.user_accounts(id) ON DELETE SET NULL,
-  from_team_id SMALLINT NULL REFERENCES phis.support_teams(id) ON DELETE SET NULL,
-  to_team_id SMALLINT NULL REFERENCES phis.support_teams(id) ON DELETE SET NULL,
+  from_queue_id SMALLINT NULL REFERENCES phis.support_queues(id) ON DELETE SET NULL,
+  to_queue_id SMALLINT NULL REFERENCES phis.support_queues(id) ON DELETE SET NULL,
   reason TEXT NULL,
   flags INT NOT NULL DEFAULT 0,
   created_by_user_id INT NULL REFERENCES phis.user_accounts(id) ON DELETE SET NULL,
@@ -1120,79 +1278,51 @@ CREATE TABLE IF NOT EXISTS phis.support_ticket_events (
 CREATE INDEX IF NOT EXISTS support_ticket_events_ticket_created_idx
   ON phis.support_ticket_events (ticket_id, created_at DESC, id DESC);
 
-CREATE TABLE IF NOT EXISTS phis.support_threads (
+-- References from a Phi record into another system. The provider is the Add-on that wrote the link and
+-- the whole of the ownership rule; a link carrying `synced` is also what lets that Add-on reach the
+-- record's thread with no actor, which is why unlinking ends that reach.
+CREATE TABLE IF NOT EXISTS phis.resource_links (
   id SERIAL PRIMARY KEY,
   site_id SMALLINT NOT NULL REFERENCES phis.sites(id) ON DELETE CASCADE,
+  -- Exactly one subject, as a real reference rather than a kind and a bare integer: a polymorphic id
+  -- has no foreign key, and a link whose subject is gone is a row nothing cleans up.
+  thread_id INT NULL REFERENCES phis.threads(id) ON DELETE CASCADE,
   ticket_id INT NULL REFERENCES phis.support_tickets(id) ON DELETE CASCADE,
+  ticket_task_id INT NULL REFERENCES phis.support_ticket_tasks(id) ON DELETE CASCADE,
+  provider_id VARCHAR(255) NOT NULL,
+  -- The provider's own vocabulary. Core stores and indexes both and interprets neither.
   type SMALLINT NOT NULL,
-  status SMALLINT NOT NULL DEFAULT 0,
-  subject VARCHAR(255) NULL,
+  external_id VARCHAR(256) NOT NULL,
+  url TEXT NULL,
+  state SMALLINT NULL,
+  -- 1 = synced.
   flags INT NOT NULL DEFAULT 0,
+  meta JSONB NOT NULL DEFAULT '{}'::jsonb,
   created_by_user_id INT NULL REFERENCES phis.user_accounts(id) ON DELETE SET NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT resource_links_provider_id_check
+    CHECK (provider_id ~ '^@[^/]+/[^/]+(?:/[^/]+)*$'),
+  CONSTRAINT resource_links_one_subject_check CHECK (
+    (thread_id IS NOT NULL)::int
+    + (ticket_id IS NOT NULL)::int
+    + (ticket_task_id IS NOT NULL)::int = 1
+  ),
+  CONSTRAINT resource_links_site_provider_external_unique
+    UNIQUE (site_id, provider_id, type, external_id)
 );
 
-CREATE INDEX IF NOT EXISTS support_threads_site_updated_idx
-  ON phis.support_threads (site_id, updated_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS resource_links_thread_idx
+  ON phis.resource_links (thread_id, provider_id)
+  WHERE thread_id IS NOT NULL;
 
-CREATE INDEX IF NOT EXISTS support_threads_ticket_updated_idx
-  ON phis.support_threads (ticket_id, updated_at DESC, id DESC)
+CREATE INDEX IF NOT EXISTS resource_links_ticket_idx
+  ON phis.resource_links (ticket_id, provider_id)
   WHERE ticket_id IS NOT NULL;
 
-CREATE TABLE IF NOT EXISTS phis.support_thread_messages (
-  id SERIAL PRIMARY KEY,
-  thread_id INT NOT NULL REFERENCES phis.support_threads(id) ON DELETE CASCADE,
-  author_user_id INT NULL REFERENCES phis.user_accounts(id) ON DELETE SET NULL,
-  body_text TEXT NOT NULL,
-  body_markdown TEXT NULL,
-  meta JSONB NOT NULL DEFAULT '{}'::jsonb,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE INDEX IF NOT EXISTS support_thread_messages_thread_created_idx
-  ON phis.support_thread_messages (thread_id, created_at ASC, id ASC);
-
-CREATE TABLE IF NOT EXISTS phis.support_thread_recipients (
-  id SERIAL PRIMARY KEY,
-  thread_id INT NOT NULL REFERENCES phis.support_threads(id) ON DELETE CASCADE,
-  recipient_type SMALLINT NOT NULL,
-  user_id INT NULL REFERENCES phis.user_accounts(id) ON DELETE CASCADE,
-  team_id SMALLINT NULL REFERENCES phis.support_teams(id) ON DELETE CASCADE,
-  flags INT NOT NULL DEFAULT 0,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE INDEX IF NOT EXISTS support_thread_recipients_thread_type_idx
-  ON phis.support_thread_recipients (thread_id, recipient_type);
-
-CREATE INDEX IF NOT EXISTS support_thread_recipients_user_id_idx
-  ON phis.support_thread_recipients (user_id)
-  WHERE user_id IS NOT NULL;
-
-CREATE INDEX IF NOT EXISTS support_thread_recipients_team_id_idx
-  ON phis.support_thread_recipients (team_id)
-  WHERE team_id IS NOT NULL;
-
-CREATE UNIQUE INDEX IF NOT EXISTS support_thread_recipients_thread_user_unique_idx
-  ON phis.support_thread_recipients (thread_id, user_id)
-  WHERE user_id IS NOT NULL;
-
-CREATE UNIQUE INDEX IF NOT EXISTS support_thread_recipients_thread_team_unique_idx
-  ON phis.support_thread_recipients (thread_id, team_id)
-  WHERE team_id IS NOT NULL;
-
-CREATE TABLE IF NOT EXISTS phis.support_thread_reads (
-  thread_id INT NOT NULL REFERENCES phis.support_threads(id) ON DELETE CASCADE,
-  user_id INT NOT NULL REFERENCES phis.user_accounts(id) ON DELETE CASCADE,
-  last_read_message_id INT NULL REFERENCES phis.support_thread_messages(id) ON DELETE SET NULL,
-  read_at TIMESTAMPTZ NULL,
-  PRIMARY KEY (thread_id, user_id)
-);
-
-CREATE INDEX IF NOT EXISTS support_thread_reads_user_read_idx
-  ON phis.support_thread_reads (user_id, read_at DESC);
+CREATE INDEX IF NOT EXISTS resource_links_ticket_task_idx
+  ON phis.resource_links (ticket_task_id, provider_id)
+  WHERE ticket_task_id IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS phis.tr_msg (
   id SERIAL PRIMARY KEY,

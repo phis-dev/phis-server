@@ -8,13 +8,13 @@ public or internal token, and `session` is the visitor's Site session with the a
 passes (see [AUTHORIZATION.md](../AUTHORIZATION.md)). A route with no access entry performs its own checks
 or none; read its source. Request and response shapes are not listed; the source is linked per route.
 
-135 routes.
+130 routes.
 
 ## Contents
 
 - [`/api/operator`](#apioperator) (5)
 - [`/api/setup`](#apisetup) (2)
-- [`/api/site`](#apisite) (65)
+- [`/api/site`](#apisite) (60)
 - [`/api/v1/addons`](#apiv1addons) (2)
 - [`/api/v1/admin`](#apiv1admin) (1)
 - [`/api/v1/auth`](#apiv1auth) (28)
@@ -134,32 +134,23 @@ Site administration, CMS, media and support API. A Site's `/api/site` proxy forw
 | POST | [`/api/site/media/uploads/{token}/finalize`](../src/app/api/site/media/uploads/[token]/finalize/route.ts) | Site session, checked in the handler; session (requireMediaSpaceWriteContext) |  |
 | POST | [`/api/site/media/uploads/{token}/report`](../src/app/api/site/media/uploads/[token]/report/route.ts) | Site session, checked in the handler; session (requireMediaSpaceWriteContext) |  |
 | POST | [`/api/site/media/uploads/init`](../src/app/api/site/media/uploads/init/route.ts) | Site session, checked in the handler; session (requireMediaSpaceWriteContext) |  |
-| GET | [`/api/site/support/recipients`](../src/app/api/site/support/recipients/route.ts) | session, `support` (requireSiteSupportApiContext) |  |
-| GET | [`/api/site/support/teams`](../src/app/api/site/support/teams/route.ts) | session, `support` (requireSiteSupportApiContext) |  |
-| POST | [`/api/site/support/teams`](../src/app/api/site/support/teams/route.ts) | session, `support` (requireSiteSupportApiContext) |  |
-| GET | [`/api/site/support/teams/{id}`](../src/app/api/site/support/teams/[id]/route.ts) | session, `support` (requireSiteSupportApiContext) |  |
-| PATCH | [`/api/site/support/teams/{id}`](../src/app/api/site/support/teams/[id]/route.ts) | session, `support` (requireSiteSupportApiContext) |  |
-| DELETE | [`/api/site/support/teams/{id}`](../src/app/api/site/support/teams/[id]/route.ts) | session, `support` (requireSiteSupportApiContext) |  |
-| GET | [`/api/site/support/teams/{id}/members`](../src/app/api/site/support/teams/[id]/members/route.ts) | session, `support` (requireSiteSupportApiContext) |  |
-| POST | [`/api/site/support/teams/{id}/members`](../src/app/api/site/support/teams/[id]/members/route.ts) | session, `support` (requireSiteSupportApiContext) |  |
-| DELETE | [`/api/site/support/teams/{id}/members/{userId}`](../src/app/api/site/support/teams/[id]/members/[userId]/route.ts) | session, `support` (requireSiteSupportApiContext) |  |
-| GET | [`/api/site/support/threads`](../src/app/api/site/support/threads/route.ts) | session, `support` (requireSiteSupportApiContext) |  |
-| POST | [`/api/site/support/threads`](../src/app/api/site/support/threads/route.ts) | session, `support` (requireSiteSupportApiContext) |  |
-| GET | [`/api/site/support/threads/{threadId}`](../src/app/api/site/support/threads/[threadId]/route.ts) | session, `support` (requireSiteSupportApiContext) |  |
-| POST | [`/api/site/support/threads/{threadId}/messages`](../src/app/api/site/support/threads/[threadId]/messages/route.ts) | session, `support` (requireSiteSupportApiContext) |  |
-| POST | [`/api/site/support/threads/{threadId}/read`](../src/app/api/site/support/threads/[threadId]/read/route.ts) | session, `support` (requireSiteSupportApiContext) |  |
+| GET | [`/api/site/support/queues`](../src/app/api/site/support/queues/route.ts) | session, `support` (requireSiteSupportApiContext) | The Site's Support queues. |
 | GET | [`/api/site/support/tickets`](../src/app/api/site/support/tickets/route.ts) | session, `support` (requireSiteSupportApiContext) |  |
 | POST | [`/api/site/support/tickets`](../src/app/api/site/support/tickets/route.ts) | session, `support` (requireSiteSupportApiContext) |  |
 | GET | [`/api/site/support/tickets/{ticketId}`](../src/app/api/site/support/tickets/[ticketId]/route.ts) | session, `support` (requireSiteSupportApiContext) |  |
 | PATCH | [`/api/site/support/tickets/{ticketId}`](../src/app/api/site/support/tickets/[ticketId]/route.ts) | session, `support` (requireSiteSupportApiContext) |  |
 | POST | [`/api/site/support/tickets/{ticketId}/assignment`](../src/app/api/site/support/tickets/[ticketId]/assignment/route.ts) | session, `support` (requireSiteSupportApiContext) |  |
-| POST | [`/api/site/support/tickets/{ticketId}/links`](../src/app/api/site/support/tickets/[ticketId]/links/route.ts) | session, `support` (requireSiteSupportApiContext) |  |
-| PATCH | [`/api/site/support/tickets/{ticketId}/links/{linkId}`](../src/app/api/site/support/tickets/[ticketId]/links/[linkId]/route.ts) | session, `support` (requireSiteSupportApiContext) |  |
-| DELETE | [`/api/site/support/tickets/{ticketId}/links/{linkId}`](../src/app/api/site/support/tickets/[ticketId]/links/[linkId]/route.ts) | session, `support` (requireSiteSupportApiContext) |  |
-| POST | [`/api/site/support/tickets/{ticketId}/messages`](../src/app/api/site/support/tickets/[ticketId]/messages/route.ts) | session, `support` (requireSiteSupportApiContext) |  |
 | POST | [`/api/site/support/tickets/{ticketId}/tasks`](../src/app/api/site/support/tickets/[ticketId]/tasks/route.ts) | session, `support` (requireSiteSupportApiContext) |  |
 | PATCH | [`/api/site/support/tickets/{ticketId}/tasks/{taskId}`](../src/app/api/site/support/tickets/[ticketId]/tasks/[taskId]/route.ts) | session, `support` (requireSiteSupportApiContext) |  |
 | DELETE | [`/api/site/support/tickets/{ticketId}/tasks/{taskId}`](../src/app/api/site/support/tickets/[ticketId]/tasks/[taskId]/route.ts) | session, `support` (requireSiteSupportApiContext) |  |
+| GET | [`/api/site/threads`](../src/app/api/site/threads/route.ts) | session, `authenticated` (requireSiteAuthenticatedApiContext) |  |
+| POST | [`/api/site/threads`](../src/app/api/site/threads/route.ts) | session, `authenticated` (requireSiteAuthenticatedApiContext) |  |
+| GET | [`/api/site/threads/{threadId}`](../src/app/api/site/threads/[threadId]/route.ts) | session, `authenticated` (requireSiteAuthenticatedApiContext) |  |
+| PATCH | [`/api/site/threads/{threadId}`](../src/app/api/site/threads/[threadId]/route.ts) | session, `authenticated` (requireSiteAuthenticatedApiContext) | Archiving and reopening. One row carries the status, so this is the thread closing for everyone. |
+| POST | [`/api/site/threads/{threadId}/messages`](../src/app/api/site/threads/[threadId]/messages/route.ts) | session, `authenticated` (requireSiteAuthenticatedApiContext) |  |
+| POST | [`/api/site/threads/{threadId}/participants`](../src/app/api/site/threads/[threadId]/participants/route.ts) | session, `authenticated` (requireSiteAuthenticatedApiContext) | Adds people or groups. It never removes: leaving is the participant's own flag, not somebody's edit. |
+| POST | [`/api/site/threads/{threadId}/read`](../src/app/api/site/threads/[threadId]/read/route.ts) | session, `authenticated` (requireSiteAuthenticatedApiContext) |  |
+| GET | [`/api/site/threads/candidates`](../src/app/api/site/threads/candidates/route.ts) | session, `authenticated` (requireSiteAuthenticatedApiContext) | Who this person may address, and which kinds of thread this Site offers. |
 | POST | [`/api/site/translation/detect`](../src/app/api/site/translation/detect/route.ts) | session, `structure-authoring` (requireSiteBuilderApiContext) |  |
 
 ## `/api/v1/addons`

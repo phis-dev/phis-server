@@ -38,10 +38,9 @@ live in [design/](./design/README.md). Nothing here describes current behaviour.
   lifecycle hook for resident resources, or a periodic rolling restart, is the direction.
 - **Install root isolation.** Guarantee that no ancestor of the install root contains `node_modules`, so a
   bare import in an artifact cannot resolve to the server's own packages.
-- **Core capabilities follow real Add-ons.** `resource-links:v1` is a reserved name with no table behind
-  it; `support_ticket_links` is the cross-system reference that exists. `images:v1` does not exist, and
-  since native dependencies are excluded from artifacts, an Add-on that needs image processing is
-  impossible today. Build each when an Add-on needs it, never as a speculative catalogue. A job runs
+- **Core capabilities follow real Add-ons.** `resource-links:v1` was built because the GitHub binding
+  needs it, and `threads:v1` was recut around the same case; `images:v1` does not exist, and since native
+  dependencies are excluded from artifacts, an Add-on that needs image processing is impossible today. Build each when an Add-on needs it, never as a speculative catalogue. A job runs
   without an actor, so any capability offered to jobs needs a narrower surface of its own.
 - **Validate both halves end to end** with the `@phis/github` reference binding of SERVER_ADDONS.md
   section 20.

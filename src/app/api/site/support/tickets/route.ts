@@ -6,7 +6,6 @@ import {
   SUPPORT_TICKET_CHANNEL_INTERNAL,
   SUPPORT_TICKET_PRIORITY_NORMAL,
   SUPPORT_TICKET_STATUS_NEW,
-  SUPPORT_TICKET_TYPE_QUESTION,
 } from "@/db/support";
 import { requireSiteSupportApiContext } from "@/lib/guards/site-admin-api";
 import { logRuntimeEvent } from "@/lib/log";
@@ -58,7 +57,7 @@ export async function GET(request: NextRequest) {
     status: parseOptionalInt(searchParams.get("status")),
     channel: parseOptionalInt(searchParams.get("channel")),
     assigneeUserId: parseOptionalInt(searchParams.get("assigneeUserId")),
-    teamId: parseOptionalInt(searchParams.get("teamId")),
+    queueId: parseOptionalInt(searchParams.get("queueId")),
     page,
     pageSize,
   });
@@ -88,9 +87,22 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Subject is required." }, { status: 400 });
   }
 
+  const typeId = normalizeInteger(body.typeId);
+  if (!typeId) {
+    return NextResponse.json({ error: "typeId is required." }, { status: 400 });
+  }
+
+  // The ticket and its thread are written together, so the first thing said is part of opening one.
+  const message = normalizeString(body.message);
+  if (!message) {
+    return NextResponse.json({ error: "message is required." }, { status: 400 });
+  }
+
   const ticket = await createSupportTicket({
     siteId: site.id,
-    type: normalizeInteger(body.type) ?? SUPPORT_TICKET_TYPE_QUESTION,
+    typeId,
+    message,
+    messageMarkdown: normalizeNullableString(body.messageMarkdown),
     status: normalizeInteger(body.status) ?? SUPPORT_TICKET_STATUS_NEW,
     channel: normalizeInteger(body.channel) ?? SUPPORT_TICKET_CHANNEL_INTERNAL,
     priority: normalizeInteger(body.priority) ?? SUPPORT_TICKET_PRIORITY_NORMAL,
@@ -98,7 +110,7 @@ export async function POST(request: NextRequest) {
     requesterUserId: normalizeInteger(body.requesterUserId),
     requesterEmail: normalizeNullableString(body.requesterEmail),
     assigneeUserId: normalizeInteger(body.assigneeUserId),
-    teamId: normalizeInteger(body.teamId),
+    queueId: normalizeInteger(body.queueId),
     subject,
     summary: normalizeNullableString(body.summary),
     meta: normalizeJsonRecord(body.meta),
@@ -114,7 +126,7 @@ export async function POST(request: NextRequest) {
     userId: context.session?.userId ?? null,
     meta: {
       ticketId: ticket?.ticket.id ?? null,
-      type: ticket?.ticket.type ?? null,
+      typeId: ticket?.ticket.typeId ?? null,
     },
   });
 

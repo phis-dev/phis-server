@@ -1,18 +1,12 @@
 import "server-only";
-import { PHI_CORE_ROLE_PROVIDER_ID } from "@/lib/authorization";
 
 import type { PoolClient } from "pg";
 
-import { getPool } from "@/lib/db";
-import { USER_SITE_FLAG_DISABLED } from "@/lib/user-site-flags";
+import { PhisSupportQueueFlag } from "@phis/contracts/support";
+import { PhisThreadKind } from "@phis/contracts/threads";
 
-export const SUPPORT_TICKET_TYPE_QUESTION = 0;
-export const SUPPORT_TICKET_TYPE_BUG = 1;
-export const SUPPORT_TICKET_TYPE_INCIDENT = 2;
-export const SUPPORT_TICKET_TYPE_BILLING = 3;
-export const SUPPORT_TICKET_TYPE_ACCESS = 4;
-export const SUPPORT_TICKET_TYPE_CONTENT = 5;
-export const SUPPORT_TICKET_TYPE_INTEGRATION = 6;
+import { getPool } from "@/lib/db";
+import { createThreadWithDb } from "@/db/threads";
 
 export const SUPPORT_TICKET_STATUS_NEW = 0;
 export const SUPPORT_TICKET_STATUS_TRIAGED = 1;
@@ -39,14 +33,6 @@ export const SUPPORT_TICKET_SEVERITY_MINOR = 0;
 export const SUPPORT_TICKET_SEVERITY_MAJOR = 1;
 export const SUPPORT_TICKET_SEVERITY_CRITICAL = 2;
 
-export const SUPPORT_TICKET_MESSAGE_VISIBILITY_PUBLIC = 0;
-export const SUPPORT_TICKET_MESSAGE_VISIBILITY_INTERNAL = 1;
-
-export const SUPPORT_TICKET_MESSAGE_AUTHOR_REQUESTER = 0;
-export const SUPPORT_TICKET_MESSAGE_AUTHOR_SUPPORTER = 1;
-export const SUPPORT_TICKET_MESSAGE_AUTHOR_SYSTEM = 2;
-export const SUPPORT_TICKET_MESSAGE_AUTHOR_INTEGRATION = 3;
-
 export const SUPPORT_TICKET_TASK_TYPE_INTERNAL = 0;
 export const SUPPORT_TICKET_TASK_TYPE_CUSTOMER_FOLLOWUP = 1;
 export const SUPPORT_TICKET_TASK_TYPE_ENGINEERING = 2;
@@ -59,19 +45,6 @@ export const SUPPORT_TICKET_TASK_STATUS_IN_PROGRESS = 1;
 export const SUPPORT_TICKET_TASK_STATUS_BLOCKED = 2;
 export const SUPPORT_TICKET_TASK_STATUS_DONE = 3;
 export const SUPPORT_TICKET_TASK_STATUS_CANCELED = 4;
-
-export const SUPPORT_TICKET_LINK_SYSTEM_PHI = 0;
-export const SUPPORT_TICKET_LINK_SYSTEM_MEDUSA = 1;
-export const SUPPORT_TICKET_LINK_SYSTEM_GITHUB = 2;
-
-export const SUPPORT_TICKET_LINK_TYPE_CMS_PAGE = 0;
-export const SUPPORT_TICKET_LINK_TYPE_CMS_REVISION = 1;
-export const SUPPORT_TICKET_LINK_TYPE_LOG_ENTRY = 2;
-export const SUPPORT_TICKET_LINK_TYPE_DEPLOYMENT = 3;
-export const SUPPORT_TICKET_LINK_TYPE_MEDUSA_ORDER = 10;
-export const SUPPORT_TICKET_LINK_TYPE_MEDUSA_RETURN = 11;
-export const SUPPORT_TICKET_LINK_TYPE_GITHUB_ISSUE = 20;
-export const SUPPORT_TICKET_LINK_TYPE_GITHUB_PR = 21;
 
 export const SUPPORT_TICKET_EVENT_CREATED = 0;
 export const SUPPORT_TICKET_EVENT_TRIAGED = 1;
@@ -87,35 +60,12 @@ export const SUPPORT_TICKET_EVENT_TASK_CREATED = 10;
 export const SUPPORT_TICKET_EVENT_TASK_COMPLETED = 11;
 export const SUPPORT_TICKET_EVENT_TASK_REOPENED = 12;
 
-export const SUPPORT_THREAD_TYPE_DIRECT = 0;
-export const SUPPORT_THREAD_TYPE_TEAM = 1;
-export const SUPPORT_THREAD_TYPE_MIXED = 2;
-export const SUPPORT_THREAD_TYPE_BROADCAST = 3;
-
-/** How many messages a thread detail carries unless the caller asks for a different window. */
-export const SUPPORT_THREAD_MESSAGE_PAGE_SIZE = 200;
-export const SUPPORT_THREAD_MESSAGE_MAX_PAGE_SIZE = 500;
-
-export const SUPPORT_THREAD_STATUS_OPEN = 0;
-export const SUPPORT_THREAD_STATUS_ARCHIVED = 1;
-const SUPPORT_THREAD_STATUSES = new Set([
-  SUPPORT_THREAD_STATUS_OPEN,
-  SUPPORT_THREAD_STATUS_ARCHIVED,
-]);
-
-export const SUPPORT_THREAD_RECIPIENT_TYPE_USER = 0;
-export const SUPPORT_THREAD_RECIPIENT_TYPE_TEAM = 1;
-
-export const SUPPORT_DEFAULT_TEAM_KEY_L1 = "support_l1";
-export const SUPPORT_DEFAULT_TEAM_KEY_L2 = "support_l2";
-export const SUPPORT_DEFAULT_TEAM_KEY_DEV = "dev";
-export const SUPPORT_DEFAULT_TEAM_KEY_BILLING = "billing";
-
 type DbQueryable = Pick<PoolClient, "query">;
 
 type SupportTicketListRow = {
   id: number;
-  type: number;
+  type_id: number;
+  thread_id: number;
   status: number;
   channel: number;
   priority: number;
@@ -125,8 +75,8 @@ type SupportTicketListRow = {
   requester_email: string | null;
   assignee_user_id: number | null;
   assignee_email: string | null;
-  team_id: number | null;
-  team_name: string | null;
+  queue_id: number | null;
+  queue_name: string | null;
   subject: string;
   summary: string | null;
   meta: Record<string, unknown> | null;
@@ -141,23 +91,6 @@ type SupportTicketListRow = {
   created_at: string;
   updated_at: string;
   total_count?: number;
-};
-
-type SupportTicketMessageRow = {
-  id: number;
-  ticket_id: number;
-  channel: number;
-  visibility: number;
-  author_type: number;
-  flags: number;
-  author_user_id: number | null;
-  author_email: string | null;
-  external_message_ref: string | null;
-  body_text: string;
-  body_markdown: string | null;
-  meta: Record<string, unknown> | null;
-  created_at: string;
-  updated_at: string;
 };
 
 type SupportTicketTaskRow = {
@@ -180,201 +113,13 @@ type SupportTicketTaskRow = {
   updated_at: string;
 };
 
-type SupportTicketLinkRow = {
-  id: number;
-  ticket_id: number;
-  system: number;
-  type: number;
-  state: number | null;
-  flags: number;
-  external_id: string;
-  external_key: string | null;
-  external_url: string | null;
-  meta: Record<string, unknown> | null;
-  created_by_user_id: number | null;
-  created_at: string;
-};
-
 type SupportTicketEventInsertPayload = Record<string, unknown>;
-
-type SupportTeamRow = {
-  id: number;
-  site_id: number;
-  key: string;
-  name: string;
-  flags: number;
-  sort_order: number;
-  created_at: string;
-  updated_at: string;
-};
-
-type SupportTeamMemberRow = {
-  team_id: number;
-  user_id: number;
-  flags: number;
-  created_at: string;
-  email_normalized: string;
-  first_name: string | null;
-  last_name: string | null;
-  company_name: string | null;
-  core_role_flags: number;
-  user_site_flags: number;
-};
-
-type SupportThreadListRow = {
-  id: number;
-  site_id: number;
-  ticket_id: number | null;
-  type: number;
-  status: number;
-  subject: string | null;
-  flags: number;
-  created_by_user_id: number | null;
-  created_at: string;
-  updated_at: string;
-  latest_message_id: number | null;
-  latest_message_body_text: string | null;
-  latest_message_created_at: string | null;
-  latest_message_author_user_id: number | null;
-  latest_message_author_email: string | null;
-  latest_message_author_display_name: string | null;
-  latest_message_author_company_name: string | null;
-  last_read_message_id: number | null;
-  total_count?: number;
-};
-
-type SupportThreadMessageRow = {
-  id: number;
-  thread_id: number;
-  author_user_id: number | null;
-  author_email: string | null;
-  author_display_name: string | null;
-  author_company_name: string | null;
-  body_text: string;
-  body_markdown: string | null;
-  meta: Record<string, unknown> | null;
-  created_at: string;
-  updated_at: string;
-};
-
-type SupportThreadRecipientRow = {
-  id: number;
-  thread_id: number;
-  recipient_type: number;
-  user_id: number | null;
-  team_id: number | null;
-  flags: number;
-  created_at: string;
-  user_email: string | null;
-  user_display_name: string | null;
-  user_company_name: string | null;
-  team_key: string | null;
-  team_name: string | null;
-};
-
-export type SupportTeamRecord = {
-  id: number;
-  siteId: number;
-  key: string;
-  name: string;
-  flags: number;
-  sortOrder: number;
-  createdAt: string;
-  updatedAt: string;
-};
-
-export type SupportTeamMemberRecord = {
-  teamId: number;
-  userId: number;
-  flags: number;
-  createdAt: string;
-  email: string;
-  firstName: string | null;
-  lastName: string | null;
-  companyName: string | null;
-  displayName: string;
-  coreRoleFlags: number;
-  siteFlags: number;
-};
-
-export type SupportThreadRecord = {
-  id: number;
-  siteId: number;
-  ticketId: number | null;
-  type: number;
-  status: number;
-  subject: string | null;
-  flags: number;
-  createdByUserId: number | null;
-  createdAt: string;
-  updatedAt: string;
-  latestMessageId: number | null;
-  latestMessageBodyText: string | null;
-  latestMessageCreatedAt: string | null;
-  latestMessageAuthorUserId: number | null;
-  latestMessageAuthorEmail: string | null;
-  latestMessageAuthorDisplayName: string | null;
-  latestMessageAuthorCompanyName: string | null;
-  lastReadMessageId: number | null;
-  unread: boolean;
-};
-
-export type SupportThreadMessageRecord = {
-  id: number;
-  threadId: number;
-  authorUserId: number | null;
-  authorEmail: string | null;
-  authorDisplayName: string | null;
-  authorCompanyName: string | null;
-  bodyText: string;
-  bodyMarkdown: string | null;
-  meta: Record<string, unknown>;
-  createdAt: string;
-  updatedAt: string;
-};
-
-export type SupportThreadRecipientRecord = {
-  id: number;
-  threadId: number;
-  recipientType: number;
-  userId: number | null;
-  teamId: number | null;
-  flags: number;
-  createdAt: string;
-  userEmail: string | null;
-  userDisplayName: string | null;
-  userCompanyName: string | null;
-  teamKey: string | null;
-  teamName: string | null;
-};
-
-export type SupportThreadDetailRecord = {
-  thread: SupportThreadRecord;
-  messages: SupportThreadMessageRecord[];
-  /** Whether older messages remain beyond the window `messages` carries. */
-  hasMoreMessages: boolean;
-  recipients: SupportThreadRecipientRecord[];
-};
-
-export type SupportInboxSummary = {
-  unreadCount: number;
-  hasUnread: boolean;
-  latestThreadAt: string | null;
-};
-
-export type SupportRecipientUserRecord = {
-  id: number;
-  email: string;
-  firstName: string | null;
-  lastName: string | null;
-  companyName: string | null;
-  displayName: string;
-  coreRoleFlags: number;
-};
 
 export type SupportTicketRecord = {
   id: number;
-  type: number;
+  typeId: number;
+  /** The ticket's conversation; everything anybody said about it is read through the thread surface. */
+  threadId: number;
   status: number;
   channel: number;
   priority: number;
@@ -384,8 +129,8 @@ export type SupportTicketRecord = {
   requesterEmail: string | null;
   assigneeUserId: number | null;
   assigneeEmail: string | null;
-  teamId: number | null;
-  teamName: string | null;
+  queueId: number | null;
+  queueName: string | null;
   subject: string;
   summary: string | null;
   meta: Record<string, unknown>;
@@ -397,23 +142,6 @@ export type SupportTicketRecord = {
   closedAt: string | null;
   createdByUserId: number | null;
   updatedByUserId: number | null;
-  createdAt: string;
-  updatedAt: string;
-};
-
-export type SupportTicketMessageRecord = {
-  id: number;
-  ticketId: number;
-  channel: number;
-  visibility: number;
-  authorType: number;
-  flags: number;
-  authorUserId: number | null;
-  authorEmail: string | null;
-  externalMessageRef: string | null;
-  bodyText: string;
-  bodyMarkdown: string | null;
-  meta: Record<string, unknown>;
   createdAt: string;
   updatedAt: string;
 };
@@ -438,58 +166,17 @@ export type SupportTicketTaskRecord = {
   updatedAt: string;
 };
 
-export type SupportTicketLinkRecord = {
-  id: number;
-  ticketId: number;
-  system: number;
-  type: number;
-  state: number | null;
-  flags: number;
-  externalId: string;
-  externalKey: string | null;
-  externalUrl: string | null;
-  meta: Record<string, unknown>;
-  createdByUserId: number | null;
-  createdAt: string;
-};
-
+/**
+ * A ticket and its work, without its conversation.
+ *
+ * What anybody said about the ticket is its thread, read through the thread surface with the reader's
+ * own visibility applied -- internal notes are withheld from the requester there, and reproducing that
+ * rule here would be the second answer that eventually disagrees with the first. Cross-system
+ * references are `resource_links`, and they are the linking Add-on's to read.
+ */
 export type SupportTicketDetailRecord = {
   ticket: SupportTicketRecord;
-  messages: SupportTicketMessageRecord[];
   tasks: SupportTicketTaskRecord[];
-  links: SupportTicketLinkRecord[];
-};
-
-export type CreateSupportTeamInput = {
-  siteId: number;
-  key: string;
-  name: string;
-  flags?: number;
-  sortOrder?: number;
-};
-
-export type UpdateSupportTeamInput = {
-  siteId: number;
-  teamId: number;
-  key?: string;
-  name?: string;
-  flags?: number;
-  sortOrder?: number;
-};
-
-export type UpsertSupportTeamMemberInput = {
-  siteId: number;
-  teamId: number;
-  userId: number;
-  flags?: number;
-};
-
-export type ListSupportThreadsOptions = {
-  ticketId?: number | null;
-  type?: number | null;
-  unreadOnly?: boolean;
-  page?: number;
-  pageSize?: number;
 };
 
 export type ListSupportTicketsOptions = {
@@ -497,14 +184,18 @@ export type ListSupportTicketsOptions = {
   status?: number | null;
   channel?: number | null;
   assigneeUserId?: number | null;
-  teamId?: number | null;
+  queueId?: number | null;
   page?: number;
   pageSize?: number;
 };
 
 export type CreateSupportTicketInput = {
   siteId: number;
-  type: number;
+  /** One of the Site's own ticket types, which decides what may leave the Site and what ends the ticket. */
+  typeId: number;
+  /** The first thing said about it, which opens the ticket's thread. */
+  message: string;
+  messageMarkdown?: string | null;
   status?: number;
   channel: number;
   priority?: number;
@@ -513,7 +204,7 @@ export type CreateSupportTicketInput = {
   requesterUserId?: number | null;
   requesterEmail?: string | null;
   assigneeUserId?: number | null;
-  teamId?: number | null;
+  queueId?: number | null;
   subject: string;
   summary?: string | null;
   meta?: Record<string, unknown>;
@@ -525,7 +216,7 @@ export type CreateSupportTicketInput = {
 export type UpdateSupportTicketInput = {
   siteId: number;
   ticketId: number;
-  type?: number;
+  typeId?: number;
   status?: number;
   channel?: number;
   priority?: number;
@@ -533,7 +224,7 @@ export type UpdateSupportTicketInput = {
   requesterUserId?: number | null;
   requesterEmail?: string | null;
   assigneeUserId?: number | null;
-  teamId?: number | null;
+  queueId?: number | null;
   subject?: string;
   summary?: string | null;
   meta?: Record<string, unknown>;
@@ -542,19 +233,6 @@ export type UpdateSupportTicketInput = {
   resolvedAt?: string | null;
   closedAt?: string | null;
   updatedByUserId?: number | null;
-};
-
-export type AddSupportTicketMessageInput = {
-  siteId: number;
-  ticketId: number;
-  channel: number;
-  visibility: number;
-  authorType: number;
-  authorUserId?: number | null;
-  externalMessageRef?: string | null;
-  bodyText: string;
-  bodyMarkdown?: string | null;
-  meta?: Record<string, unknown>;
 };
 
 export type AddSupportTicketTaskInput = {
@@ -573,20 +251,6 @@ export type AddSupportTicketTaskInput = {
   createdByUserId?: number | null;
 };
 
-export type AddSupportTicketLinkInput = {
-  siteId: number;
-  ticketId: number;
-  system: number;
-  type: number;
-  state?: number | null;
-  flags?: number;
-  externalId: string;
-  externalKey?: string | null;
-  externalUrl?: string | null;
-  meta?: Record<string, unknown>;
-  createdByUserId?: number | null;
-};
-
 export type UpdateSupportTicketTaskInput = {
   siteId: number;
   ticketId: number;
@@ -602,45 +266,6 @@ export type UpdateSupportTicketTaskInput = {
   dueAt?: string | null;
   completedAt?: string | null;
   updatedByUserId?: number | null;
-};
-
-export type UpdateSupportTicketLinkInput = {
-  siteId: number;
-  ticketId: number;
-  linkId: number;
-  system?: number;
-  type?: number;
-  state?: number | null;
-  flags?: number;
-  externalId?: string;
-  externalKey?: string | null;
-  externalUrl?: string | null;
-  meta?: Record<string, unknown>;
-  updatedByUserId?: number | null;
-};
-
-export type CreateSupportThreadInput = {
-  siteId: number;
-  ticketId?: number | null;
-  type?: number;
-  status?: number;
-  subject?: string | null;
-  flags?: number;
-  recipientUserIds?: number[];
-  recipientTeamIds?: number[];
-  message: string;
-  messageMarkdown?: string | null;
-  messageMeta?: Record<string, unknown>;
-  createdByUserId?: number | null;
-};
-
-export type AddSupportThreadMessageInput = {
-  siteId: number;
-  threadId: number;
-  bodyText: string;
-  bodyMarkdown?: string | null;
-  meta?: Record<string, unknown>;
-  authorUserId?: number | null;
 };
 
 export type SupportTicketAssignmentActionInput =
@@ -666,9 +291,9 @@ export type SupportTicketAssignmentActionInput =
   | {
       siteId: number;
       ticketId: number;
-      action: "move_to_team";
+      action: "move_to_queue";
       userId: number;
-      teamId: number;
+      queueId: number;
     };
 
 function toJsonRecord(value: Record<string, unknown> | null | undefined) {
@@ -686,7 +311,8 @@ function normalizeSearch(value?: string) {
 function mapSupportTicket(row: SupportTicketListRow): SupportTicketRecord {
   return {
     id: row.id,
-    type: row.type,
+    typeId: row.type_id,
+    threadId: row.thread_id,
     status: row.status,
     channel: row.channel,
     priority: row.priority,
@@ -696,8 +322,8 @@ function mapSupportTicket(row: SupportTicketListRow): SupportTicketRecord {
     requesterEmail: row.requester_email,
     assigneeUserId: row.assignee_user_id,
     assigneeEmail: row.assignee_email,
-    teamId: row.team_id,
-    teamName: row.team_name,
+    queueId: row.queue_id,
+    queueName: row.queue_name,
     subject: row.subject,
     summary: row.summary,
     meta: toJsonRecord(row.meta),
@@ -709,118 +335,6 @@ function mapSupportTicket(row: SupportTicketListRow): SupportTicketRecord {
     closedAt: row.closed_at,
     createdByUserId: row.created_by_user_id,
     updatedByUserId: row.updated_by_user_id,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-  };
-}
-
-function mapSupportTeam(row: SupportTeamRow): SupportTeamRecord {
-  return {
-    id: row.id,
-    siteId: row.site_id,
-    key: row.key,
-    name: row.name,
-    flags: row.flags,
-    sortOrder: row.sort_order,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-  };
-}
-
-function mapSupportTeamMember(row: SupportTeamMemberRow): SupportTeamMemberRecord {
-  const displayName = [row.first_name?.trim() ?? "", row.last_name?.trim() ?? ""]
-    .filter(Boolean)
-    .join(" ")
-    .trim();
-
-  return {
-    teamId: row.team_id,
-    userId: row.user_id,
-    flags: row.flags,
-    createdAt: row.created_at,
-    email: row.email_normalized,
-    firstName: row.first_name,
-    lastName: row.last_name,
-    companyName: row.company_name,
-    displayName: displayName || row.email_normalized,
-    coreRoleFlags: row.core_role_flags,
-    siteFlags: row.user_site_flags,
-  };
-}
-
-function mapSupportThread(row: SupportThreadListRow): SupportThreadRecord {
-  return {
-    id: row.id,
-    siteId: row.site_id,
-    ticketId: row.ticket_id,
-    type: row.type,
-    status: row.status,
-    subject: row.subject,
-    flags: row.flags,
-    createdByUserId: row.created_by_user_id,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-    latestMessageId: row.latest_message_id,
-    latestMessageBodyText: row.latest_message_body_text,
-    latestMessageCreatedAt: row.latest_message_created_at,
-    latestMessageAuthorUserId: row.latest_message_author_user_id,
-    latestMessageAuthorEmail: row.latest_message_author_email,
-    latestMessageAuthorDisplayName: row.latest_message_author_display_name,
-    latestMessageAuthorCompanyName: row.latest_message_author_company_name,
-    lastReadMessageId: row.last_read_message_id,
-    unread:
-      row.latest_message_id !== null &&
-      row.latest_message_id > (row.last_read_message_id ?? 0),
-  };
-}
-
-function mapSupportThreadMessage(row: SupportThreadMessageRow): SupportThreadMessageRecord {
-  return {
-    id: row.id,
-    threadId: row.thread_id,
-    authorUserId: row.author_user_id,
-    authorEmail: row.author_email,
-    authorDisplayName: row.author_display_name,
-    authorCompanyName: row.author_company_name,
-    bodyText: row.body_text,
-    bodyMarkdown: row.body_markdown,
-    meta: toJsonRecord(row.meta),
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-  };
-}
-
-function mapSupportThreadRecipient(row: SupportThreadRecipientRow): SupportThreadRecipientRecord {
-  return {
-    id: row.id,
-    threadId: row.thread_id,
-    recipientType: row.recipient_type,
-    userId: row.user_id,
-    teamId: row.team_id,
-    flags: row.flags,
-    createdAt: row.created_at,
-    userEmail: row.user_email,
-    userDisplayName: row.user_display_name,
-    userCompanyName: row.user_company_name,
-    teamKey: row.team_key,
-    teamName: row.team_name,
-  };
-}
-
-function mapSupportTicketMessage(row: SupportTicketMessageRow): SupportTicketMessageRecord {
-  return {
-    id: row.id,
-    ticketId: row.ticket_id,
-    channel: row.channel,
-    visibility: row.visibility,
-    authorType: row.author_type,
-    flags: row.flags,
-    authorUserId: row.author_user_id,
-    authorEmail: row.author_email,
-    externalMessageRef: row.external_message_ref,
-    bodyText: row.body_text,
-    bodyMarkdown: row.body_markdown,
-    meta: toJsonRecord(row.meta),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -845,23 +359,6 @@ function mapSupportTicketTask(row: SupportTicketTaskRow): SupportTicketTaskRecor
     updatedByUserId: row.updated_by_user_id,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
-  };
-}
-
-function mapSupportTicketLink(row: SupportTicketLinkRow): SupportTicketLinkRecord {
-  return {
-    id: row.id,
-    ticketId: row.ticket_id,
-    system: row.system,
-    type: row.type,
-    state: row.state,
-    flags: row.flags,
-    externalId: row.external_id,
-    externalKey: row.external_key,
-    externalUrl: row.external_url,
-    meta: toJsonRecord(row.meta),
-    createdByUserId: row.created_by_user_id,
-    createdAt: row.created_at,
   };
 }
 
@@ -892,8 +389,8 @@ async function insertSupportTicketAssignment(
     ticketId: number;
     fromUserId?: number | null;
     toUserId?: number | null;
-    fromTeamId?: number | null;
-    toTeamId?: number | null;
+    fromQueueId?: number | null;
+    toQueueId?: number | null;
     createdByUserId?: number | null;
     reason?: string | null;
   },
@@ -903,8 +400,8 @@ async function insertSupportTicketAssignment(
        ticket_id,
        from_user_id,
        to_user_id,
-       from_team_id,
-       to_team_id,
+       from_queue_id,
+       to_queue_id,
        reason,
        created_by_user_id
      )
@@ -913,8 +410,8 @@ async function insertSupportTicketAssignment(
       input.ticketId,
       input.fromUserId ?? null,
       input.toUserId ?? null,
-      input.fromTeamId ?? null,
-      input.toTeamId ?? null,
+      input.fromQueueId ?? null,
+      input.toQueueId ?? null,
       input.reason ?? null,
       input.createdByUserId ?? null,
     ],
@@ -926,12 +423,12 @@ async function getSupportTicketRowById(queryable: DbQueryable, siteId: number, t
     `SELECT
        t.*,
        assignee.email_normalized AS assignee_email,
-       team.name AS team_name
+       queue.name AS queue_name
      FROM phis.support_tickets t
      LEFT JOIN phis.user_account_directory assignee
        ON assignee.id = t.assignee_user_id
-     LEFT JOIN phis.support_teams team
-       ON team.id = t.team_id
+     LEFT JOIN phis.support_queues queue
+       ON queue.id = t.queue_id
      WHERE t.site_id = $1
        AND t.id = $2
      LIMIT 1`,
@@ -966,252 +463,6 @@ async function getSupportTicketTaskRowById(
   return rows[0] ?? null;
 }
 
-async function getSupportTicketLinkRowById(
-  queryable: DbQueryable,
-  siteId: number,
-  ticketId: number,
-  linkId: number,
-) {
-  const { rows } = await queryable.query<SupportTicketLinkRow>(
-    `SELECT l.*
-     FROM phis.support_ticket_links l
-     JOIN phis.support_tickets ticket
-       ON ticket.id = l.ticket_id
-     WHERE ticket.site_id = $1
-       AND l.ticket_id = $2
-       AND l.id = $3
-     LIMIT 1`,
-    [siteId, ticketId, linkId],
-  );
-
-  return rows[0] ?? null;
-}
-
-async function getSupportTeamMemberRowByIds(
-  queryable: DbQueryable,
-  siteId: number,
-  teamId: number,
-  userId: number,
-) {
-  const { rows } = await queryable.query<SupportTeamMemberRow>(
-    `SELECT
-       member.team_id,
-       member.user_id,
-       member.flags,
-       member.created_at,
-       account.email_normalized,
-       profile.first_name,
-       profile.last_name,
-       profile.company_name,
-       COALESCE(core_claim.role_flags, 0) AS core_role_flags,
-       COALESCE(membership.user_site_flags, 0) AS user_site_flags
-     FROM phis.support_team_members member
-     JOIN phis.support_teams team
-       ON team.id = member.team_id
-     JOIN phis.user_account_directory account
-       ON account.id = member.user_id
-     LEFT JOIN phis.user_profiles profile
-       ON profile.user_id = account.id
-     LEFT JOIN phis.user_site_memberships membership
-       ON membership.user_id = account.id
-      AND membership.site_id = team.site_id
-     LEFT JOIN phis.user_site_role_claims core_claim
-       ON core_claim.user_id = account.id
-      AND core_claim.site_id = team.site_id
-      AND core_claim.provider_id = '${PHI_CORE_ROLE_PROVIDER_ID}'
-     WHERE team.site_id = $1
-       AND member.team_id = $2
-       AND member.user_id = $3
-     LIMIT 1`,
-    [siteId, teamId, userId],
-  );
-
-  return rows[0] ?? null;
-}
-
-/**
- * One thread row, as one viewer may see it.
- *
- * `viewerUserId` null means Core itself is asking -- a job or a hook running as an Add-on rather than
- * as a person. There is nobody to test membership against then, so the visibility predicate is skipped
- * rather than evaluated against an id nobody holds: passing 0 answered "not visible" for a row that had
- * just been written, which is how a thread created without an author came back as null.
- */
-async function getAccessibleSupportThreadRowById(
-  queryable: DbQueryable,
-  siteId: number,
-  viewerUserId: number | null,
-  threadId: number,
-) {
-  const { rows } = await queryable.query<SupportThreadListRow>(
-    `SELECT
-       t.id,
-       t.site_id,
-       t.ticket_id,
-       t.type,
-       t.status,
-       t.subject,
-       t.flags,
-       t.created_by_user_id,
-       t.created_at,
-       t.updated_at,
-       latest.id AS latest_message_id,
-       latest.body_text AS latest_message_body_text,
-       latest.created_at AS latest_message_created_at,
-       latest.author_user_id AS latest_message_author_user_id,
-       latest.author_email AS latest_message_author_email,
-       latest.author_display_name AS latest_message_author_display_name,
-       latest.author_company_name AS latest_message_author_company_name,
-       reads.last_read_message_id
-     FROM phis.support_threads t
-     LEFT JOIN LATERAL (
-       SELECT
-         m.id,
-         m.body_text,
-         m.created_at,
-         m.author_user_id,
-         author.email_normalized AS author_email,
-         profile.first_name,
-         profile.last_name,
-         profile.company_name,
-         COALESCE(NULLIF(TRIM(CONCAT_WS(' ', profile.first_name, profile.last_name)), ''), author.email_normalized) AS author_display_name,
-         profile.company_name AS author_company_name
-       FROM phis.support_thread_messages m
-       LEFT JOIN phis.user_account_directory author
-         ON author.id = m.author_user_id
-       LEFT JOIN phis.user_profiles profile
-         ON profile.user_id = author.id
-       WHERE m.thread_id = t.id
-       ORDER BY m.created_at DESC, m.id DESC
-       LIMIT 1
-     ) latest ON true
-     LEFT JOIN phis.support_thread_reads reads
-       ON reads.thread_id = t.id
-      AND reads.user_id = $2
-     WHERE t.site_id = $1
-       AND t.id = $3
-       AND (
-         $2::int IS NULL
-         OR t.created_by_user_id = $2
-         OR EXISTS (
-           SELECT 1
-           FROM phis.support_thread_recipients recipient
-           WHERE recipient.thread_id = t.id
-             AND recipient.user_id = $2
-         )
-         OR EXISTS (
-           SELECT 1
-           FROM phis.support_thread_recipients recipient
-           JOIN phis.support_team_members member
-             ON member.team_id = recipient.team_id
-           JOIN phis.support_teams team
-             ON team.id = member.team_id
-           WHERE recipient.thread_id = t.id
-             AND member.user_id = $2
-             AND team.site_id = $1
-         )
-       )
-     LIMIT 1`,
-    [siteId, viewerUserId, threadId],
-  );
-
-  return rows[0] ?? null;
-}
-
-/**
- * One window of a thread's messages, oldest first.
- *
- * Windowed rather than whole: a thread detail used to select every message it had, which is fine for
- * the dozen a support thread usually carries and is not a bound. The window is taken from the newest
- * end because that is the one a reader opens on, and `beforeMessageId` walks backwards from there.
- */
-async function listSupportThreadMessagesByThreadId(
-  queryable: DbQueryable,
-  threadId: number,
-  options: { limit: number; beforeMessageId?: number | null } = { limit: SUPPORT_THREAD_MESSAGE_PAGE_SIZE },
-) {
-  const limit = Math.max(1, Math.min(options.limit, SUPPORT_THREAD_MESSAGE_MAX_PAGE_SIZE));
-  const { rows } = await queryable.query<SupportThreadMessageRow>(
-    `SELECT * FROM (SELECT
-       message.*,
-       author.email_normalized AS author_email,
-       profile.first_name,
-       profile.last_name,
-       profile.company_name,
-       COALESCE(NULLIF(TRIM(CONCAT_WS(' ', profile.first_name, profile.last_name)), ''), author.email_normalized) AS author_display_name,
-       profile.company_name AS author_company_name
-     FROM phis.support_thread_messages message
-     LEFT JOIN phis.user_account_directory author
-       ON author.id = message.author_user_id
-     LEFT JOIN phis.user_profiles profile
-       ON profile.user_id = author.id
-     WHERE message.thread_id = $1
-       AND ($3::int IS NULL OR message.id < $3)
-     ORDER BY message.created_at DESC, message.id DESC
-     LIMIT $2) recent
-     ORDER BY recent.created_at ASC, recent.id ASC`,
-    [threadId, limit + 1, options.beforeMessageId ?? null],
-  );
-
-  // One row over the limit is asked for and dropped again: it says whether anything older remains
-  // without a second count over the same rows.
-  const hasMore = rows.length > limit;
-  const windowRows = hasMore ? rows.slice(rows.length - limit) : rows;
-  return {
-    messages: windowRows.map(mapSupportThreadMessage),
-    hasMore,
-  };
-}
-
-async function listSupportThreadRecipientsByThreadId(queryable: DbQueryable, threadId: number) {
-  const { rows } = await queryable.query<SupportThreadRecipientRow>(
-    `SELECT
-       recipient.id,
-       recipient.thread_id,
-       recipient.recipient_type,
-       recipient.user_id,
-       recipient.team_id,
-       recipient.flags,
-       recipient.created_at,
-       account.email_normalized AS user_email,
-       profile.first_name,
-       profile.last_name,
-       profile.company_name,
-       COALESCE(NULLIF(TRIM(CONCAT_WS(' ', profile.first_name, profile.last_name)), ''), account.email_normalized) AS user_display_name,
-       profile.company_name AS user_company_name,
-       team.key AS team_key,
-       team.name AS team_name
-     FROM phis.support_thread_recipients recipient
-     LEFT JOIN phis.user_account_directory account
-       ON account.id = recipient.user_id
-     LEFT JOIN phis.user_profiles profile
-       ON profile.user_id = account.id
-     LEFT JOIN phis.support_teams team
-       ON team.id = recipient.team_id
-     WHERE recipient.thread_id = $1
-     ORDER BY recipient.id ASC`,
-    [threadId],
-  );
-
-  return rows.map(mapSupportThreadRecipient);
-}
-
-async function listSupportTicketMessagesByTicketId(queryable: DbQueryable, ticketId: number) {
-  const { rows } = await queryable.query<SupportTicketMessageRow>(
-    `SELECT
-       m.*,
-       author.email_normalized AS author_email
-     FROM phis.support_ticket_messages m
-     LEFT JOIN phis.user_account_directory author
-       ON author.id = m.author_user_id
-     WHERE m.ticket_id = $1
-     ORDER BY m.created_at ASC, m.id ASC`,
-    [ticketId],
-  );
-
-  return rows.map(mapSupportTicketMessage);
-}
-
 async function listSupportTicketTasksByTicketId(queryable: DbQueryable, ticketId: number) {
   const { rows } = await queryable.query<SupportTicketTaskRow>(
     `SELECT
@@ -1226,18 +477,6 @@ async function listSupportTicketTasksByTicketId(queryable: DbQueryable, ticketId
   );
 
   return rows.map(mapSupportTicketTask);
-}
-
-async function listSupportTicketLinksByTicketId(queryable: DbQueryable, ticketId: number) {
-  const { rows } = await queryable.query<SupportTicketLinkRow>(
-    `SELECT *
-     FROM phis.support_ticket_links
-     WHERE ticket_id = $1
-     ORDER BY created_at ASC, id ASC`,
-    [ticketId],
-  );
-
-  return rows.map(mapSupportTicketLink);
 }
 
 export async function listSupportTicketsForSite(siteId: number, options: ListSupportTicketsOptions = {}) {
@@ -1273,9 +512,9 @@ export async function listSupportTicketsForSite(siteId: number, options: ListSup
     conditions.push(`t.assignee_user_id = $${params.length}`);
   }
 
-  if (Number.isInteger(options.teamId)) {
-    params.push(options.teamId);
-    conditions.push(`t.team_id = $${params.length}`);
+  if (Number.isInteger(options.queueId)) {
+    params.push(options.queueId);
+    conditions.push(`t.queue_id = $${params.length}`);
   }
 
   const pageSize = Math.max(1, Math.min(200, Math.trunc(options.pageSize ?? 25) || 25));
@@ -1294,12 +533,12 @@ export async function listSupportTicketsForSite(siteId: number, options: ListSup
      SELECT
        base.*,
        assignee.email_normalized AS assignee_email,
-       team.name AS team_name
+       queue.name AS queue_name
      FROM base
      LEFT JOIN phis.user_account_directory assignee
        ON assignee.id = base.assignee_user_id
-     LEFT JOIN phis.support_teams team
-       ON team.id = base.team_id
+     LEFT JOIN phis.support_queues queue
+       ON queue.id = base.queue_id
      ORDER BY base.updated_at DESC, base.id DESC
      LIMIT $${params.length - 1}
      OFFSET $${params.length}`,
@@ -1314,577 +553,74 @@ export async function listSupportTicketsForSite(siteId: number, options: ListSup
   };
 }
 
-export async function listSupportTeams(siteId: number) {
+export type SupportQueueRecord = {
+  id: number;
+  siteId: number;
+  groupId: number;
+  key: string;
+  name: string;
+  flags: number;
+  sortOrder: number;
+};
+
+export async function listSupportQueues(siteId: number) {
   const pool = getPool();
-  const { rows } = await pool.query<SupportTeamRow>(
-    `SELECT id, site_id, key, name, flags, sort_order, created_at, updated_at
-     FROM phis.support_teams
+  const { rows } = await pool.query<{
+    id: number;
+    site_id: number;
+    group_id: number;
+    key: string;
+    name: string;
+    flags: number;
+    sort_order: number;
+  }>(
+    `SELECT id, site_id, group_id, key, name, flags, sort_order
+     FROM phis.support_queues
      WHERE site_id = $1
      ORDER BY sort_order ASC, id ASC`,
     [siteId],
   );
-
-  return rows.map(mapSupportTeam);
-}
-
-export async function listSupportRecipientUsers(siteId: number) {
-  const pool = getPool();
-  const { rows } = await pool.query<{
-    id: number;
-    email_normalized: string;
-    first_name: string | null;
-    last_name: string | null;
-    company_name: string | null;
-    core_role_flags: number;
-  }>(
-    `SELECT
-       account.id,
-       account.email_normalized,
-       profile.first_name,
-       profile.last_name,
-       profile.company_name,
-       COALESCE(core_claim.role_flags, 0) AS core_role_flags
-     FROM phis.user_site_memberships membership
-     JOIN phis.user_account_directory account
-       ON account.id = membership.user_id
-     LEFT JOIN phis.user_profiles profile
-       ON profile.user_id = account.id
-     LEFT JOIN phis.user_site_role_claims core_claim
-       ON core_claim.user_id = account.id
-      AND core_claim.site_id = membership.site_id
-      AND core_claim.provider_id = '${PHI_CORE_ROLE_PROVIDER_ID}'
-     WHERE membership.site_id = $1
-       AND (COALESCE(membership.user_site_flags, 0) & $2) = 0
-       AND EXISTS (
-         SELECT 1
-         FROM phis.user_site_role_claims claim
-         WHERE claim.user_id = membership.user_id
-           AND claim.site_id = membership.site_id
-       )
-     ORDER BY COALESCE(NULLIF(TRIM(CONCAT_WS(' ', profile.first_name, profile.last_name)), ''), account.email_normalized) ASC,
-              account.id ASC`,
-    [siteId, USER_SITE_FLAG_DISABLED],
-  );
-
   return rows.map((row) => ({
     id: row.id,
-    email: row.email_normalized,
-    firstName: row.first_name,
-    lastName: row.last_name,
-    companyName: row.company_name,
-    displayName:
-      [row.first_name?.trim() ?? "", row.last_name?.trim() ?? ""].filter(Boolean).join(" ").trim() ||
-      row.email_normalized,
-    coreRoleFlags: row.core_role_flags,
-  }));
+    siteId: row.site_id,
+    groupId: row.group_id,
+    key: row.key,
+    name: row.name,
+    flags: row.flags,
+    sortOrder: row.sort_order,
+  } satisfies SupportQueueRecord));
 }
 
-export async function listSupportTeamMembers(siteId: number, teamId: number) {
-  const pool = getPool();
-  const { rows } = await pool.query<SupportTeamMemberRow>(
-    `SELECT
-       member.team_id,
-       member.user_id,
-       member.flags,
-       member.created_at,
-       account.email_normalized,
-       profile.first_name,
-       profile.last_name,
-       profile.company_name,
-       COALESCE(core_claim.role_flags, 0) AS core_role_flags,
-       COALESCE(membership.user_site_flags, 0) AS user_site_flags
-     FROM phis.support_team_members member
-     JOIN phis.support_teams team
-       ON team.id = member.team_id
-     JOIN phis.user_account_directory account
-       ON account.id = member.user_id
-     LEFT JOIN phis.user_profiles profile
-       ON profile.user_id = account.id
-     LEFT JOIN phis.user_site_memberships membership
-       ON membership.user_id = account.id
-      AND membership.site_id = team.site_id
-     LEFT JOIN phis.user_site_role_claims core_claim
-       ON core_claim.user_id = account.id
-      AND core_claim.site_id = team.site_id
-      AND core_claim.provider_id = '${PHI_CORE_ROLE_PROVIDER_ID}'
-     WHERE team.site_id = $1
-       AND member.team_id = $2
-     ORDER BY COALESCE(profile.first_name, ''), COALESCE(profile.last_name, ''), account.email_normalized`,
-    [siteId, teamId],
-  );
-
-  return rows.map(mapSupportTeamMember);
-}
-
-export async function listSupportThreadsForUser(
-  siteId: number,
-  userId: number,
-  options: ListSupportThreadsOptions = {},
-) {
-  const pool = getPool();
-  const params: unknown[] = [siteId, userId];
-  const conditions: string[] = [
-    `t.site_id = $1`,
-    `(
-      t.created_by_user_id = $2
-      OR EXISTS (
-        SELECT 1
-        FROM phis.support_thread_recipients recipient
-        WHERE recipient.thread_id = t.id
-          AND recipient.user_id = $2
-      )
-      OR EXISTS (
-        SELECT 1
-        FROM phis.support_thread_recipients recipient
-        JOIN phis.support_team_members member
-          ON member.team_id = recipient.team_id
-        JOIN phis.support_teams team
-          ON team.id = member.team_id
-        WHERE recipient.thread_id = t.id
-          AND member.user_id = $2
-          AND team.site_id = $1
-      )
-    )`,
-  ];
-
-  if (Number.isInteger(options.ticketId) && (options.ticketId ?? 0) > 0) {
-    params.push(options.ticketId);
-    conditions.push(`t.ticket_id = $${params.length}`);
-  }
-
-  if (Number.isInteger(options.type)) {
-    params.push(options.type);
-    conditions.push(`t.type = $${params.length}`);
-  }
-
-  const pageSize = Math.max(1, Math.min(200, Math.trunc(options.pageSize ?? 25) || 25));
-  const page = Math.max(1, Math.trunc(options.page ?? 1) || 1);
-  const offset = (page - 1) * pageSize;
-  params.push(pageSize, offset);
-
-  const unreadCondition = options.unreadOnly
-    ? `AND latest.id IS NOT NULL AND latest.id > COALESCE(reads.last_read_message_id, 0)`
-    : "";
-
-  const { rows } = await pool.query<SupportThreadListRow>(
-    `WITH base AS (
-       SELECT
-         t.id,
-         t.site_id,
-         t.ticket_id,
-         t.type,
-         t.status,
-         t.subject,
-         t.flags,
-         t.created_by_user_id,
-         t.created_at,
-         t.updated_at,
-         latest.id AS latest_message_id,
-         latest.body_text AS latest_message_body_text,
-         latest.created_at AS latest_message_created_at,
-         latest.author_user_id AS latest_message_author_user_id,
-         latest.author_email AS latest_message_author_email,
-         latest.author_display_name AS latest_message_author_display_name,
-         latest.author_company_name AS latest_message_author_company_name,
-         reads.last_read_message_id,
-         COUNT(*) OVER()::int AS total_count
-       FROM phis.support_threads t
-       LEFT JOIN LATERAL (
-         SELECT
-           m.id,
-           m.body_text,
-           m.created_at,
-           m.author_user_id,
-           author.email_normalized AS author_email,
-           profile.first_name,
-           profile.last_name,
-           profile.company_name,
-           COALESCE(NULLIF(TRIM(CONCAT_WS(' ', profile.first_name, profile.last_name)), ''), author.email_normalized) AS author_display_name,
-           profile.company_name AS author_company_name
-         FROM phis.support_thread_messages m
-         LEFT JOIN phis.user_account_directory author
-           ON author.id = m.author_user_id
-         LEFT JOIN phis.user_profiles profile
-           ON profile.user_id = author.id
-         WHERE m.thread_id = t.id
-         ORDER BY m.created_at DESC, m.id DESC
-         LIMIT 1
-       ) latest ON true
-       LEFT JOIN phis.support_thread_reads reads
-         ON reads.thread_id = t.id
-        AND reads.user_id = $2
-       WHERE ${conditions.join(" AND ")}
-       ${unreadCondition}
-     )
-     SELECT *
-     FROM base
-     ORDER BY COALESCE(latest_message_created_at, updated_at) DESC, id DESC
-     LIMIT $${params.length - 1}
-     OFFSET $${params.length}`,
-    params,
-  );
-
-  return {
-    rows: rows.map(mapSupportThread),
-    total: rows[0]?.total_count ?? 0,
-    page,
-    pageSize,
-  };
+export async function getSupportQueueBySiteAndId(siteId: number, queueId: number) {
+  const queues = await listSupportQueues(siteId);
+  return queues.find((queue) => queue.id === queueId) ?? null;
 }
 
 /**
- * One thread with a window of its messages and its recipients.
+ * Whether somebody stands in the group a queue routes to.
  *
- * `viewerUserId` null is Core asking on nobody's behalf -- see the row helper above. Every caller that
- * acts for a person passes that person, and gets null for a thread they may not see.
+ * Queue membership is group membership -- there is no Support-owned membership table any more -- so
+ * this asks the one place every other membership question is asked, retirement and expiry included.
  */
-export async function getSupportThreadDetail(
-  siteId: number,
-  viewerUserId: number | null,
-  threadId: number,
-  options: { messageLimit?: number; beforeMessageId?: number | null } = {},
-) {
+export async function isSupportQueueMember(siteId: number, queueId: number, userId: number) {
   const pool = getPool();
-  const threadRow = await getAccessibleSupportThreadRowById(pool, siteId, viewerUserId, threadId);
-  if (!threadRow) {
-    return null;
-  }
-
-  const [messageWindow, recipients] = await Promise.all([
-    listSupportThreadMessagesByThreadId(pool, threadId, {
-      limit: options.messageLimit ?? SUPPORT_THREAD_MESSAGE_PAGE_SIZE,
-      beforeMessageId: options.beforeMessageId ?? null,
-    }),
-    listSupportThreadRecipientsByThreadId(pool, threadId),
-  ]);
-
-  return {
-    thread: mapSupportThread(threadRow),
-    messages: messageWindow.messages,
-    hasMoreMessages: messageWindow.hasMore,
-    recipients,
-  } satisfies SupportThreadDetailRecord;
-}
-
-export async function createSupportTeam(input: CreateSupportTeamInput) {
-  const pool = getPool();
-  const { rows } = await pool.query<SupportTeamRow>(
-    `INSERT INTO phis.support_teams (
-       site_id,
-       key,
-       name,
-       flags,
-       sort_order
-     )
-     VALUES ($1, $2, $3, $4, $5)
-     RETURNING id, site_id, key, name, flags, sort_order, created_at, updated_at`,
-    [input.siteId, input.key, input.name, input.flags ?? 0, input.sortOrder ?? 0],
-  );
-
-  return rows[0] ? mapSupportTeam(rows[0]) : null;
-}
-
-export async function getSupportTeamBySiteAndId(siteId: number, teamId: number) {
-  const pool = getPool();
-  const { rows } = await pool.query<SupportTeamRow>(
-    `SELECT id, site_id, key, name, flags, sort_order, created_at, updated_at
-     FROM phis.support_teams
-     WHERE site_id = $1
-       AND id = $2
+  const { rowCount } = await pool.query(
+    `SELECT 1
+     FROM phis.support_queues queue
+     JOIN phis.site_groups grp
+       ON grp.id = queue.group_id
+     JOIN phis.site_group_members member
+       ON member.group_id = queue.group_id
+      AND member.site_id = queue.site_id
+     WHERE queue.site_id = $1
+       AND queue.id = $2
+       AND member.user_id = $3
+       AND grp.retired_at IS NULL
+       AND (member.valid_until IS NULL OR member.valid_until > NOW())
      LIMIT 1`,
-    [siteId, teamId],
+    [siteId, queueId, userId],
   );
-
-  return rows[0] ? mapSupportTeam(rows[0]) : null;
-}
-
-export async function updateSupportTeam(input: UpdateSupportTeamInput) {
-  const pool = getPool();
-  const sets: string[] = [];
-  const params: unknown[] = [input.siteId, input.teamId];
-  const addSet = (column: string, value: unknown) => {
-    params.push(value);
-    sets.push(`${column} = $${params.length}`);
-  };
-
-  if (typeof input.key === "string") addSet("key", input.key);
-  if (typeof input.name === "string") addSet("name", input.name);
-  if (typeof input.flags === "number") addSet("flags", input.flags);
-  if (typeof input.sortOrder === "number") addSet("sort_order", input.sortOrder);
-  sets.push("updated_at = NOW()");
-
-  if (sets.length === 1) {
-    return getSupportTeamBySiteAndId(input.siteId, input.teamId);
-  }
-
-  const { rowCount } = await pool.query(
-    `UPDATE phis.support_teams
-     SET ${sets.join(", ")}
-     WHERE site_id = $1
-       AND id = $2`,
-    params,
-  );
-
-  if (!rowCount) {
-    return null;
-  }
-
-  return getSupportTeamBySiteAndId(input.siteId, input.teamId);
-}
-
-export async function deleteSupportTeamBySite(siteId: number, teamId: number) {
-  const pool = getPool();
-  const { rowCount } = await pool.query(
-    `DELETE FROM phis.support_teams
-     WHERE site_id = $1
-       AND id = $2`,
-    [siteId, teamId],
-  );
-
   return (rowCount ?? 0) > 0;
-}
-
-export async function upsertSupportTeamMember(input: UpsertSupportTeamMemberInput) {
-  const pool = getPool();
-  const { rows } = await pool.query<{ team_id: number; user_id: number }>(
-    `INSERT INTO phis.support_team_members (
-       team_id,
-       user_id,
-       flags
-     )
-     SELECT
-       team.id,
-       account.id,
-       $3
-     FROM phis.support_teams team
-     JOIN phis.user_site_memberships membership
-       ON membership.user_id = $2
-      AND membership.site_id = $1
-     JOIN phis.user_accounts account
-       ON account.id = membership.user_id
-     WHERE team.site_id = $1
-       AND team.id = $4
-     ON CONFLICT (team_id, user_id) DO UPDATE
-     SET flags = EXCLUDED.flags
-     RETURNING team_id, user_id`,
-    [input.siteId, input.userId, input.flags ?? 0, input.teamId],
-  );
-
-  if (!rows[0]) {
-    return null;
-  }
-
-  const member = await getSupportTeamMemberRowByIds(pool, input.siteId, rows[0].team_id, rows[0].user_id);
-  return member ? mapSupportTeamMember(member) : null;
-}
-
-async function filterExistingSupportRecipientUserIds(queryable: DbQueryable, siteId: number, userIds: number[]) {
-  if (userIds.length === 0) {
-    return [];
-  }
-
-  const { rows } = await queryable.query<{ id: number }>(
-    `SELECT user_id AS id
-     FROM phis.user_site_memberships
-     WHERE site_id = $1
-       AND user_id = ANY($2::int[])`,
-    [siteId, userIds],
-  );
-
-  return rows.map((row) => row.id);
-}
-
-async function filterExistingSupportRecipientTeamIds(queryable: DbQueryable, siteId: number, teamIds: number[]) {
-  if (teamIds.length === 0) {
-    return [];
-  }
-
-  const { rows } = await queryable.query<{ id: number }>(
-    `SELECT id
-     FROM phis.support_teams
-     WHERE site_id = $1
-       AND id = ANY($2::smallint[])`,
-    [siteId, teamIds],
-  );
-
-  return rows.map((row) => row.id);
-}
-
-function normalizeUniqueIds(values: number[] | undefined) {
-  return Array.from(
-    new Set((values ?? []).filter((value) => Number.isInteger(value) && value > 0)),
-  );
-}
-
-function resolveSupportThreadType(userIds: number[], teamIds: number[]) {
-  if (teamIds.length > 0 && userIds.length > 0) {
-    return SUPPORT_THREAD_TYPE_MIXED;
-  }
-  if (teamIds.length > 0) {
-    return SUPPORT_THREAD_TYPE_TEAM;
-  }
-  if (userIds.length === 1) {
-    return SUPPORT_THREAD_TYPE_DIRECT;
-  }
-  return SUPPORT_THREAD_TYPE_BROADCAST;
-}
-
-export async function createSupportThread(input: CreateSupportThreadInput) {
-  const pool = getPool();
-  const client = await pool.connect();
-
-  try {
-    await client.query("BEGIN");
-
-    if (input.ticketId) {
-      const ticket = await getSupportTicketRowById(client, input.siteId, input.ticketId);
-      if (!ticket) {
-        await client.query("ROLLBACK");
-        return null;
-      }
-    }
-
-    const requestedUserIds = normalizeUniqueIds(input.recipientUserIds);
-    const requestedTeamIds = normalizeUniqueIds(input.recipientTeamIds);
-    const userIds = await filterExistingSupportRecipientUserIds(client, input.siteId, requestedUserIds);
-    const teamIds = await filterExistingSupportRecipientTeamIds(client, input.siteId, requestedTeamIds);
-
-    if (userIds.length !== requestedUserIds.length || teamIds.length !== requestedTeamIds.length) {
-      throw new Error("One or more support thread recipients are invalid for the site.");
-    }
-
-    if (userIds.length === 0 && teamIds.length === 0) {
-      throw new Error("At least one support thread recipient is required.");
-    }
-
-    const type = input.type ?? resolveSupportThreadType(userIds, teamIds);
-    const { rows } = await client.query<{ id: number }>(
-      `INSERT INTO phis.support_threads (
-         site_id,
-         ticket_id,
-         type,
-         status,
-         subject,
-         flags,
-         created_by_user_id
-       )
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
-       RETURNING id`,
-      [
-        input.siteId,
-        input.ticketId ?? null,
-        type,
-        input.status ?? SUPPORT_THREAD_STATUS_OPEN,
-        input.subject ?? null,
-        input.flags ?? 0,
-        input.createdByUserId ?? null,
-      ],
-    );
-
-    const threadId = rows[0]?.id;
-    if (!threadId) {
-      throw new Error("Failed to create support thread.");
-    }
-
-    if (userIds.length > 0) {
-      await client.query(
-        `INSERT INTO phis.support_thread_recipients (thread_id, recipient_type, user_id)
-         SELECT $1, $2, unnest($3::int[])`,
-        [threadId, SUPPORT_THREAD_RECIPIENT_TYPE_USER, userIds],
-      );
-    }
-
-    if (teamIds.length > 0) {
-      await client.query(
-        `INSERT INTO phis.support_thread_recipients (thread_id, recipient_type, team_id)
-         SELECT $1, $2, unnest($3::int[])`,
-        [threadId, SUPPORT_THREAD_RECIPIENT_TYPE_TEAM, teamIds],
-      );
-    }
-
-    const messageRows = await client.query<{ id: number }>(
-      `INSERT INTO phis.support_thread_messages (
-         thread_id,
-         author_user_id,
-         body_text,
-         body_markdown,
-         meta
-       )
-       VALUES ($1, $2, $3, $4, $5::jsonb)
-       RETURNING id`,
-      [
-        threadId,
-        input.createdByUserId ?? null,
-        input.message,
-        input.messageMarkdown ?? null,
-        JSON.stringify(input.messageMeta ?? {}),
-      ],
-    );
-
-    if (input.createdByUserId) {
-      await client.query(
-        `INSERT INTO phis.support_thread_reads (
-           thread_id,
-           user_id,
-           last_read_message_id,
-           read_at
-         )
-         VALUES ($1, $2, $3, NOW())
-         ON CONFLICT (thread_id, user_id) DO UPDATE
-         SET last_read_message_id = EXCLUDED.last_read_message_id,
-             read_at = EXCLUDED.read_at`,
-        [threadId, input.createdByUserId, messageRows.rows[0]?.id ?? null],
-      );
-    }
-
-    await client.query(
-      `UPDATE phis.support_threads
-       SET updated_at = NOW()
-       WHERE id = $1`,
-      [threadId],
-    );
-
-    await client.query("COMMIT");
-    return getSupportThreadDetail(input.siteId, input.createdByUserId ?? null, threadId);
-  } catch (error) {
-    await client.query("ROLLBACK");
-    throw error;
-  } finally {
-    client.release();
-  }
-}
-
-export async function deleteSupportTeamMember(siteId: number, teamId: number, userId: number) {
-  const pool = getPool();
-  const { rowCount } = await pool.query(
-    `DELETE FROM phis.support_team_members member
-     USING phis.support_teams team
-     WHERE member.team_id = team.id
-       AND team.site_id = $1
-       AND member.team_id = $2
-       AND member.user_id = $3`,
-    [siteId, teamId, userId],
-  );
-
-  return (rowCount ?? 0) > 0;
-}
-
-export async function isSupportTeamMember(siteId: number, teamId: number, userId: number) {
-  const pool = getPool();
-  const { rows } = await pool.query<{ exists: boolean }>(
-    `SELECT EXISTS(
-       SELECT 1
-       FROM phis.support_team_members member
-       JOIN phis.support_teams team
-         ON team.id = member.team_id
-       WHERE team.site_id = $1
-         AND member.team_id = $2
-         AND member.user_id = $3
-     ) AS exists`,
-    [siteId, teamId, userId],
-  );
-
-  return rows[0]?.exists ?? false;
 }
 
 export async function isSupportSiteUser(siteId: number, userId: number) {
@@ -1902,277 +638,6 @@ export async function isSupportSiteUser(siteId: number, userId: number) {
   return rows[0]?.exists ?? false;
 }
 
-export async function addSupportThreadMessage(input: AddSupportThreadMessageInput) {
-  const pool = getPool();
-  const client = await pool.connect();
-
-  try {
-    await client.query("BEGIN");
-    const thread = await getAccessibleSupportThreadRowById(
-      client,
-      input.siteId,
-      input.authorUserId ?? 0,
-      input.threadId,
-    );
-    if (!thread) {
-      await client.query("ROLLBACK");
-      return null;
-    }
-
-    const { rows } = await client.query<{ id: number }>(
-      `INSERT INTO phis.support_thread_messages (
-         thread_id,
-         author_user_id,
-         body_text,
-         body_markdown,
-         meta
-       )
-       VALUES ($1, $2, $3, $4, $5::jsonb)
-       RETURNING id`,
-      [
-        input.threadId,
-        input.authorUserId ?? null,
-        input.bodyText,
-        input.bodyMarkdown ?? null,
-        JSON.stringify(input.meta ?? {}),
-      ],
-    );
-
-    await client.query(
-      `UPDATE phis.support_threads
-       SET updated_at = NOW()
-       WHERE id = $1`,
-      [input.threadId],
-    );
-
-    if (input.authorUserId) {
-      await client.query(
-        `INSERT INTO phis.support_thread_reads (
-           thread_id,
-           user_id,
-           last_read_message_id,
-           read_at
-         )
-         VALUES ($1, $2, $3, NOW())
-         ON CONFLICT (thread_id, user_id) DO UPDATE
-         SET last_read_message_id = EXCLUDED.last_read_message_id,
-             read_at = EXCLUDED.read_at`,
-        [input.threadId, input.authorUserId, rows[0]?.id ?? null],
-      );
-    }
-
-    await client.query("COMMIT");
-    return getSupportThreadDetail(input.siteId, input.authorUserId ?? 0, input.threadId);
-  } catch (error) {
-    await client.query("ROLLBACK");
-    throw error;
-  } finally {
-    client.release();
-  }
-}
-
-export async function markSupportThreadRead(siteId: number, userId: number, threadId: number, messageId?: number | null) {
-  const pool = getPool();
-  const client = await pool.connect();
-
-  try {
-    await client.query("BEGIN");
-    const thread = await getAccessibleSupportThreadRowById(client, siteId, userId, threadId);
-    if (!thread) {
-      await client.query("ROLLBACK");
-      return null;
-    }
-
-    const readMessageId =
-      Number.isInteger(messageId) && (messageId ?? 0) > 0
-        ? (messageId as number)
-        : thread.latest_message_id;
-
-    await client.query(
-      `INSERT INTO phis.support_thread_reads (
-         thread_id,
-         user_id,
-         last_read_message_id,
-         read_at
-       )
-       VALUES ($1, $2, $3, NOW())
-       ON CONFLICT (thread_id, user_id) DO UPDATE
-       SET last_read_message_id = EXCLUDED.last_read_message_id,
-           read_at = EXCLUDED.read_at`,
-      [threadId, userId, readMessageId ?? null],
-    );
-
-    await client.query("COMMIT");
-    return getSupportThreadDetail(siteId, userId, threadId);
-  } catch (error) {
-    await client.query("ROLLBACK");
-    throw error;
-  } finally {
-    client.release();
-  }
-}
-
-export type UpdateSupportThreadInput = {
-  siteId: number;
-  threadId: number;
-  /** Null is Core acting on nobody's behalf; see `getAccessibleSupportThreadRowById`. */
-  actingUserId: number | null;
-  status?: number;
-  subject?: string | null;
-  flags?: number;
-};
-
-/**
- * Changes what a thread is, rather than what it holds.
- *
- * Anyone who may see the thread may change it, which is the boundary every other thread call draws.
- * `status` is one column on one row and therefore one answer for everyone in it: archiving takes the
- * thread out of the active list for all its readers, it is not one reader hiding it. A per-reader
- * version would be a second table, and nothing asks for one yet.
- *
- * Until now nothing wrote this column at all -- `SUPPORT_THREAD_STATUS_ARCHIVED` existed as a word with
- * no way to reach it, and the only UPDATEs a thread ever saw set `updated_at`.
- */
-export async function updateSupportThread(input: UpdateSupportThreadInput) {
-  if (input.status != null && !SUPPORT_THREAD_STATUSES.has(input.status)) {
-    throw new Error(`Unknown support thread status ${input.status}.`);
-  }
-
-  const pool = getPool();
-  const threadRow = await getAccessibleSupportThreadRowById(
-    pool,
-    input.siteId,
-    input.actingUserId,
-    input.threadId,
-  );
-  if (!threadRow) {
-    return null;
-  }
-
-  const assignments: string[] = [];
-  const params: unknown[] = [input.threadId];
-  if (input.status != null) {
-    params.push(input.status);
-    assignments.push(`status = $${params.length}`);
-  }
-  if (input.subject !== undefined) {
-    params.push(input.subject);
-    assignments.push(`subject = $${params.length}`);
-  }
-  if (input.flags != null) {
-    params.push(input.flags);
-    assignments.push(`flags = $${params.length}`);
-  }
-
-  if (assignments.length > 0) {
-    await pool.query(
-      `UPDATE phis.support_threads
-       SET ${assignments.join(", ")},
-           updated_at = NOW()
-       WHERE id = $1`,
-      params,
-    );
-  }
-
-  return getSupportThreadDetail(input.siteId, input.actingUserId, input.threadId);
-}
-
-export type AddSupportThreadRecipientsInput = {
-  siteId: number;
-  threadId: number;
-  actingUserId: number | null;
-  recipientUserIds?: number[];
-  recipientTeamIds?: number[];
-};
-
-/**
- * Brings somebody else into a thread that already exists.
- *
- * Recipients used to be fixed at creation, so a thread that needed one more pair of eyes had to be
- * started again. Adding is all this does: taking somebody out would hide messages they have already
- * read and been able to answer, which is a different decision and needs its own call.
- *
- * The thread's `type` is derived again afterwards, because adding a team to a direct thread makes it a
- * mixed one and the column would otherwise keep describing the thread it used to be.
- */
-export async function addSupportThreadRecipients(input: AddSupportThreadRecipientsInput) {
-  const pool = getPool();
-  const client = await pool.connect();
-
-  try {
-    await client.query("BEGIN");
-
-    const threadRow = await getAccessibleSupportThreadRowById(
-      client,
-      input.siteId,
-      input.actingUserId,
-      input.threadId,
-    );
-    if (!threadRow) {
-      await client.query("ROLLBACK");
-      return null;
-    }
-
-    const requestedUserIds = normalizeUniqueIds(input.recipientUserIds);
-    const requestedTeamIds = normalizeUniqueIds(input.recipientTeamIds);
-    if (requestedUserIds.length === 0 && requestedTeamIds.length === 0) {
-      throw new Error("At least one support thread recipient is required.");
-    }
-
-    const userIds = await filterExistingSupportRecipientUserIds(client, input.siteId, requestedUserIds);
-    const teamIds = await filterExistingSupportRecipientTeamIds(client, input.siteId, requestedTeamIds);
-    if (userIds.length !== requestedUserIds.length || teamIds.length !== requestedTeamIds.length) {
-      throw new Error("One or more support thread recipients are invalid for the site.");
-    }
-
-    if (userIds.length > 0) {
-      await client.query(
-        `INSERT INTO phis.support_thread_recipients (thread_id, recipient_type, user_id)
-         SELECT $1, $2, unnest($3::int[])
-         ON CONFLICT DO NOTHING`,
-        [input.threadId, SUPPORT_THREAD_RECIPIENT_TYPE_USER, userIds],
-      );
-    }
-    if (teamIds.length > 0) {
-      await client.query(
-        `INSERT INTO phis.support_thread_recipients (thread_id, recipient_type, team_id)
-         SELECT $1, $2, unnest($3::int[])
-         ON CONFLICT DO NOTHING`,
-        [input.threadId, SUPPORT_THREAD_RECIPIENT_TYPE_TEAM, teamIds],
-      );
-    }
-
-    const { rows: recipientRows } = await client.query<{ user_id: number | null; team_id: number | null }>(
-      `SELECT user_id, team_id
-       FROM phis.support_thread_recipients
-       WHERE thread_id = $1`,
-      [input.threadId],
-    );
-    const allUserIds = recipientRows
-      .map((row) => row.user_id)
-      .filter((value): value is number => value != null);
-    const allTeamIds = recipientRows
-      .map((row) => row.team_id)
-      .filter((value): value is number => value != null);
-
-    await client.query(
-      `UPDATE phis.support_threads
-       SET type = $2,
-           updated_at = NOW()
-       WHERE id = $1`,
-      [input.threadId, resolveSupportThreadType(allUserIds, allTeamIds)],
-    );
-
-    await client.query("COMMIT");
-    return getSupportThreadDetail(input.siteId, input.actingUserId, input.threadId);
-  } catch (error) {
-    await client.query("ROLLBACK");
-    throw error;
-  } finally {
-    client.release();
-  }
-}
-
 export async function applySupportTicketAssignmentAction(input: SupportTicketAssignmentActionInput) {
   const pool = getPool();
   const client = await pool.connect();
@@ -2186,10 +651,10 @@ export async function applySupportTicketAssignmentAction(input: SupportTicketAss
     }
 
     if (input.action === "assign_to_me") {
-      if (existing.team_id) {
-        const member = await isSupportTeamMember(input.siteId, existing.team_id, input.userId);
+      if (existing.queue_id) {
+        const member = await isSupportQueueMember(input.siteId, existing.queue_id, input.userId);
         if (!member) {
-          throw new Error("You must belong to the assigned team before claiming this ticket.");
+          throw new Error("You must belong to the assigned queue before claiming this ticket.");
         }
       }
 
@@ -2208,8 +673,8 @@ export async function applySupportTicketAssignmentAction(input: SupportTicketAss
           ticketId: input.ticketId,
           fromUserId: existing.assignee_user_id,
           toUserId: input.userId,
-          fromTeamId: existing.team_id,
-          toTeamId: existing.team_id,
+          fromQueueId: existing.queue_id,
+          toQueueId: existing.queue_id,
           createdByUserId: input.userId,
           reason: "assign_to_me",
         });
@@ -2222,7 +687,7 @@ export async function applySupportTicketAssignmentAction(input: SupportTicketAss
             action: "assign_to_me",
             fromUserId: existing.assignee_user_id,
             toUserId: input.userId,
-            teamId: existing.team_id,
+            queueId: existing.queue_id,
           },
         });
       }
@@ -2234,10 +699,10 @@ export async function applySupportTicketAssignmentAction(input: SupportTicketAss
         throw new Error("Target user is not available for this site.");
       }
 
-      if (existing.team_id) {
-        const member = await isSupportTeamMember(input.siteId, existing.team_id, input.targetUserId);
+      if (existing.queue_id) {
+        const member = await isSupportQueueMember(input.siteId, existing.queue_id, input.targetUserId);
         if (!member) {
-          throw new Error("Target user must belong to the assigned team.");
+          throw new Error("Target user must belong to the assigned queue.");
         }
       }
 
@@ -2256,8 +721,8 @@ export async function applySupportTicketAssignmentAction(input: SupportTicketAss
           ticketId: input.ticketId,
           fromUserId: existing.assignee_user_id,
           toUserId: input.targetUserId,
-          fromTeamId: existing.team_id,
-          toTeamId: existing.team_id,
+          fromQueueId: existing.queue_id,
+          toQueueId: existing.queue_id,
           createdByUserId: input.userId,
           reason: "assign_to_user",
         });
@@ -2270,7 +735,7 @@ export async function applySupportTicketAssignmentAction(input: SupportTicketAss
             action: "assign_to_user",
             fromUserId: existing.assignee_user_id,
             toUserId: input.targetUserId,
-            teamId: existing.team_id,
+            queueId: existing.queue_id,
           },
         });
       }
@@ -2292,8 +757,8 @@ export async function applySupportTicketAssignmentAction(input: SupportTicketAss
           ticketId: input.ticketId,
           fromUserId: existing.assignee_user_id,
           toUserId: null,
-          fromTeamId: existing.team_id,
-          toTeamId: existing.team_id,
+          fromQueueId: existing.queue_id,
+          toQueueId: existing.queue_id,
           createdByUserId: input.userId,
           reason: "unassign",
         });
@@ -2306,38 +771,38 @@ export async function applySupportTicketAssignmentAction(input: SupportTicketAss
             action: "unassign",
             fromUserId: existing.assignee_user_id,
             toUserId: null,
-            teamId: existing.team_id,
+            queueId: existing.queue_id,
           },
         });
       }
     }
 
-    if (input.action === "move_to_team") {
-      const targetTeam = await getSupportTeamBySiteAndId(input.siteId, input.teamId);
-      if (!targetTeam) {
-        throw new Error("Target team not found.");
+    if (input.action === "move_to_queue") {
+      const targetQueue = await getSupportQueueBySiteAndId(input.siteId, input.queueId);
+      if (!targetQueue) {
+        throw new Error("Target queue not found.");
       }
 
-      if (existing.team_id !== input.teamId || existing.assignee_user_id !== null) {
+      if (existing.queue_id !== input.queueId || existing.assignee_user_id !== null) {
         await client.query(
           `UPDATE phis.support_tickets
-           SET team_id = $3,
+           SET queue_id = $3,
                assignee_user_id = NULL,
                updated_by_user_id = $4,
                updated_at = NOW()
            WHERE site_id = $1
              AND id = $2`,
-          [input.siteId, input.ticketId, input.teamId, input.userId],
+          [input.siteId, input.ticketId, input.queueId, input.userId],
         );
 
         await insertSupportTicketAssignment(client, {
           ticketId: input.ticketId,
           fromUserId: existing.assignee_user_id,
           toUserId: null,
-          fromTeamId: existing.team_id,
-          toTeamId: input.teamId,
+          fromQueueId: existing.queue_id,
+          toQueueId: input.queueId,
           createdByUserId: input.userId,
-          reason: "move_to_team",
+          reason: "move_to_queue",
         });
 
         await insertSupportTicketEvent(client, {
@@ -2345,11 +810,11 @@ export async function applySupportTicketAssignmentAction(input: SupportTicketAss
           eventType: SUPPORT_TICKET_EVENT_ASSIGNED,
           createdByUserId: input.userId,
           payload: {
-            action: "move_to_team",
+            action: "move_to_queue",
             fromUserId: existing.assignee_user_id,
             toUserId: null,
-            fromTeamId: existing.team_id,
-            toTeamId: input.teamId,
+            fromQueueId: existing.queue_id,
+            toQueueId: input.queueId,
           },
         });
       }
@@ -2372,17 +837,11 @@ export async function getSupportTicketDetail(siteId: number, ticketId: number) {
     return null;
   }
 
-  const [messages, tasks, links] = await Promise.all([
-    listSupportTicketMessagesByTicketId(pool, ticketId),
-    listSupportTicketTasksByTicketId(pool, ticketId),
-    listSupportTicketLinksByTicketId(pool, ticketId),
-  ]);
+  const tasks = await listSupportTicketTasksByTicketId(pool, ticketId);
 
   return {
     ticket: mapSupportTicket(ticketRow),
-    messages,
     tasks,
-    links,
   } satisfies SupportTicketDetailRecord;
 }
 
@@ -2392,23 +851,46 @@ export async function createSupportTicket(input: CreateSupportTicketInput) {
 
   try {
     await client.query("BEGIN");
-    const resolvedTeamId =
-      input.teamId ??
-      ((
-        await client.query<{ id: number }>(
-          `SELECT id
-           FROM phis.support_teams
+    /*
+     * Where this ticket lands, and the group that therefore sees it.
+     *
+     * An unrouted ticket is a ticket nobody is looking at, so a queue is required rather than defaulted
+     * to whatever happens to exist: either the caller names one, or the Site has marked one as where
+     * work arrives. Its group is what makes the ticket's thread visible to Support at all.
+     */
+    const queueRows = await client.query<{ id: number; group_id: number }>(
+      input.queueId != null
+        ? `SELECT id, group_id FROM phis.support_queues WHERE site_id = $1 AND id = $2`
+        : `SELECT id, group_id
+           FROM phis.support_queues
            WHERE site_id = $1
-             AND key = $2
+             AND (flags & ${PhisSupportQueueFlag.Entry}) <> 0
+           ORDER BY sort_order ASC, id ASC
            LIMIT 1`,
-          [input.siteId, SUPPORT_DEFAULT_TEAM_KEY_L1],
-        )
-      ).rows[0]?.id ?? null);
+      input.queueId != null ? [input.siteId, input.queueId] : [input.siteId],
+    );
+    const queue = queueRows.rows[0];
+    if (!queue) {
+      throw new Error("No Support queue to route this ticket to.");
+    }
+
+    const thread = await createThreadWithDb(client, {
+      siteId: input.siteId,
+      kind: PhisThreadKind.Support,
+      subject: input.subject,
+      message: input.message,
+      messageMarkdown: input.messageMarkdown ?? null,
+      participantUserIds: input.requesterUserId ? [input.requesterUserId] : [],
+      participantGroupIds: [queue.group_id],
+      requesterUserId: input.requesterUserId ?? null,
+      createdByUserId: input.createdByUserId ?? input.requesterUserId ?? null,
+    });
 
     const { rows } = await client.query<{ id: number }>(
       `INSERT INTO phis.support_tickets (
          site_id,
-         type,
+         type_id,
+         thread_id,
          status,
          channel,
          priority,
@@ -2417,7 +899,7 @@ export async function createSupportTicket(input: CreateSupportTicketInput) {
          requester_user_id,
          requester_email,
          assignee_user_id,
-         team_id,
+         queue_id,
          subject,
          summary,
          meta,
@@ -2426,11 +908,12 @@ export async function createSupportTicket(input: CreateSupportTicketInput) {
          created_by_user_id,
          updated_by_user_id
        )
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14::jsonb, $15, $16, $17, $17)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15::jsonb, $16, $17, $18, $18)
        RETURNING id`,
       [
         input.siteId,
-        input.type,
+        input.typeId,
+        thread.id,
         input.status ?? SUPPORT_TICKET_STATUS_NEW,
         input.channel,
         input.priority ?? SUPPORT_TICKET_PRIORITY_NORMAL,
@@ -2439,7 +922,7 @@ export async function createSupportTicket(input: CreateSupportTicketInput) {
         input.requesterUserId ?? null,
         input.requesterEmail ?? null,
         input.assigneeUserId ?? null,
-        resolvedTeamId,
+        queue.id,
         input.subject,
         input.summary ?? null,
         JSON.stringify(input.meta ?? {}),
@@ -2454,11 +937,11 @@ export async function createSupportTicket(input: CreateSupportTicketInput) {
       throw new Error("Failed to create support ticket.");
     }
 
-    if (input.assigneeUserId || resolvedTeamId) {
+    if (input.assigneeUserId || queue.id) {
       await insertSupportTicketAssignment(client, {
         ticketId,
         toUserId: input.assigneeUserId ?? null,
-        toTeamId: resolvedTeamId,
+        toQueueId: queue.id,
         createdByUserId: input.createdByUserId ?? null,
         reason: "initial_assignment",
       });
@@ -2471,7 +954,7 @@ export async function createSupportTicket(input: CreateSupportTicketInput) {
       payload: {
         status: input.status ?? SUPPORT_TICKET_STATUS_NEW,
         assigneeUserId: input.assigneeUserId ?? null,
-        teamId: resolvedTeamId,
+        queueId: queue.id,
       },
     });
 
@@ -2504,7 +987,7 @@ export async function updateSupportTicket(input: UpdateSupportTicketInput) {
       sets.push(`${column} = $${params.length}`);
     };
 
-    if (typeof input.type === "number") addSet("type", input.type);
+    if (typeof input.typeId === "number") addSet("type_id", input.typeId);
     if (typeof input.status === "number") addSet("status", input.status);
     if (typeof input.channel === "number") addSet("channel", input.channel);
     if (typeof input.priority === "number") addSet("priority", input.priority);
@@ -2512,7 +995,7 @@ export async function updateSupportTicket(input: UpdateSupportTicketInput) {
     if (input.requesterUserId !== undefined) addSet("requester_user_id", input.requesterUserId ?? null);
     if (input.requesterEmail !== undefined) addSet("requester_email", input.requesterEmail ?? null);
     if (input.assigneeUserId !== undefined) addSet("assignee_user_id", input.assigneeUserId ?? null);
-    if (input.teamId !== undefined) addSet("team_id", input.teamId ?? null);
+    if (input.queueId !== undefined) addSet("queue_id", input.queueId ?? null);
     if (typeof input.subject === "string") addSet("subject", input.subject);
     if (input.summary !== undefined) addSet("summary", input.summary ?? null);
     if (input.meta !== undefined) {
@@ -2536,14 +1019,14 @@ export async function updateSupportTicket(input: UpdateSupportTicketInput) {
 
     const assigneeChanged =
       (input.assigneeUserId !== undefined && (input.assigneeUserId ?? null) !== existing.assignee_user_id) ||
-      (input.teamId !== undefined && (input.teamId ?? null) !== existing.team_id);
+      (input.queueId !== undefined && (input.queueId ?? null) !== existing.queue_id);
     if (assigneeChanged) {
       await insertSupportTicketAssignment(client, {
         ticketId: input.ticketId,
         fromUserId: existing.assignee_user_id,
         toUserId: input.assigneeUserId !== undefined ? (input.assigneeUserId ?? null) : existing.assignee_user_id,
-        fromTeamId: existing.team_id,
-        toTeamId: input.teamId !== undefined ? (input.teamId ?? null) : existing.team_id,
+        fromQueueId: existing.queue_id,
+        toQueueId: input.queueId !== undefined ? (input.queueId ?? null) : existing.queue_id,
         createdByUserId: input.updatedByUserId ?? null,
         reason: "ticket_update",
       });
@@ -2554,8 +1037,8 @@ export async function updateSupportTicket(input: UpdateSupportTicketInput) {
         payload: {
           fromUserId: existing.assignee_user_id,
           toUserId: input.assigneeUserId !== undefined ? (input.assigneeUserId ?? null) : existing.assignee_user_id,
-          fromTeamId: existing.team_id,
-          toTeamId: input.teamId !== undefined ? (input.teamId ?? null) : existing.team_id,
+          fromQueueId: existing.queue_id,
+          toQueueId: input.queueId !== undefined ? (input.queueId ?? null) : existing.queue_id,
         },
       });
     }
@@ -2576,73 +1059,6 @@ export async function updateSupportTicket(input: UpdateSupportTicketInput) {
         },
       });
     }
-
-    await client.query("COMMIT");
-    return getSupportTicketDetail(input.siteId, input.ticketId);
-  } catch (error) {
-    await client.query("ROLLBACK");
-    throw error;
-  } finally {
-    client.release();
-  }
-}
-
-export async function addSupportTicketMessage(input: AddSupportTicketMessageInput) {
-  const pool = getPool();
-  const client = await pool.connect();
-
-  try {
-    await client.query("BEGIN");
-    const existing = await getSupportTicketRowById(client, input.siteId, input.ticketId);
-    if (!existing) {
-      await client.query("ROLLBACK");
-      return null;
-    }
-
-    const { rows } = await client.query<{ id: number }>(
-      `INSERT INTO phis.support_ticket_messages (
-         ticket_id,
-         channel,
-         visibility,
-         author_type,
-         flags,
-         author_user_id,
-         external_message_ref,
-         body_text,
-         body_markdown,
-         meta
-       )
-       VALUES ($1, $2, $3, $4, 0, $5, $6, $7, $8, $9::jsonb)
-       RETURNING id`,
-      [
-        input.ticketId,
-        input.channel,
-        input.visibility,
-        input.authorType,
-        input.authorUserId ?? null,
-        input.externalMessageRef ?? null,
-        input.bodyText,
-        input.bodyMarkdown ?? null,
-        JSON.stringify(input.meta ?? {}),
-      ],
-    );
-
-    await client.query(
-      `UPDATE phis.support_tickets
-       SET ${input.visibility === SUPPORT_TICKET_MESSAGE_VISIBILITY_PUBLIC ? "last_public_message_at" : "last_internal_message_at"} = NOW(),
-           updated_at = NOW(),
-           updated_by_user_id = $3
-       WHERE site_id = $1
-         AND id = $2`,
-      [input.siteId, input.ticketId, input.authorUserId ?? null],
-    );
-
-    await insertSupportTicketEvent(client, {
-      ticketId: input.ticketId,
-      eventType: SUPPORT_TICKET_EVENT_REPLIED,
-      createdByUserId: input.authorUserId ?? null,
-      payload: { visibility: input.visibility, messageId: rows[0]?.id ?? null },
-    });
 
     await client.query("COMMIT");
     return getSupportTicketDetail(input.siteId, input.ticketId);
@@ -2726,77 +1142,6 @@ export async function addSupportTicketTask(input: AddSupportTicketTaskInput) {
       eventType: SUPPORT_TICKET_EVENT_TASK_CREATED,
       createdByUserId: input.createdByUserId ?? null,
       payload: { taskId: rows[0]?.id ?? null },
-    });
-
-    await client.query("COMMIT");
-    return getSupportTicketDetail(input.siteId, input.ticketId);
-  } catch (error) {
-    await client.query("ROLLBACK");
-    throw error;
-  } finally {
-    client.release();
-  }
-}
-
-export async function addSupportTicketLink(input: AddSupportTicketLinkInput) {
-  const pool = getPool();
-  const client = await pool.connect();
-
-  try {
-    await client.query("BEGIN");
-    const existing = await getSupportTicketRowById(client, input.siteId, input.ticketId);
-    if (!existing) {
-      await client.query("ROLLBACK");
-      return null;
-    }
-
-    const { rows } = await client.query<{ id: number }>(
-      `INSERT INTO phis.support_ticket_links (
-         ticket_id,
-         system,
-         type,
-         state,
-         flags,
-         external_id,
-         external_key,
-         external_url,
-         meta,
-         created_by_user_id
-       )
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10)
-       RETURNING id`,
-      [
-        input.ticketId,
-        input.system,
-        input.type,
-        input.state ?? null,
-        input.flags ?? 0,
-        input.externalId,
-        input.externalKey ?? null,
-        input.externalUrl ?? null,
-        JSON.stringify(input.meta ?? {}),
-        input.createdByUserId ?? null,
-      ],
-    );
-
-    await client.query(
-      `UPDATE phis.support_tickets
-       SET updated_at = NOW(),
-           updated_by_user_id = $3
-       WHERE site_id = $1
-         AND id = $2`,
-      [input.siteId, input.ticketId, input.createdByUserId ?? null],
-    );
-
-    await insertSupportTicketEvent(client, {
-      ticketId: input.ticketId,
-      eventType: SUPPORT_TICKET_EVENT_LINKED,
-      createdByUserId: input.createdByUserId ?? null,
-      payload: {
-        linkId: rows[0]?.id ?? null,
-        system: input.system,
-        type: input.type,
-      },
     });
 
     await client.query("COMMIT");
@@ -2912,113 +1257,6 @@ export async function deleteSupportTicketTask(siteId: number, ticketId: number, 
          AND id = $2`,
       [siteId, ticketId, userId ?? null],
     );
-
-    await client.query("COMMIT");
-    return getSupportTicketDetail(siteId, ticketId);
-  } catch (error) {
-    await client.query("ROLLBACK");
-    throw error;
-  } finally {
-    client.release();
-  }
-}
-
-export async function updateSupportTicketLink(input: UpdateSupportTicketLinkInput) {
-  const pool = getPool();
-  const client = await pool.connect();
-
-  try {
-    await client.query("BEGIN");
-    const existing = await getSupportTicketLinkRowById(client, input.siteId, input.ticketId, input.linkId);
-    if (!existing) {
-      await client.query("ROLLBACK");
-      return null;
-    }
-
-    const sets: string[] = [];
-    const params: unknown[] = [input.linkId];
-    const addSet = (column: string, value: unknown) => {
-      params.push(value);
-      sets.push(`${column} = $${params.length}`);
-    };
-
-    if (typeof input.system === "number") addSet("system", input.system);
-    if (typeof input.type === "number") addSet("type", input.type);
-    if (input.state !== undefined) addSet("state", input.state ?? null);
-    if (typeof input.flags === "number") addSet("flags", input.flags);
-    if (typeof input.externalId === "string") addSet("external_id", input.externalId);
-    if (input.externalKey !== undefined) addSet("external_key", input.externalKey ?? null);
-    if (input.externalUrl !== undefined) addSet("external_url", input.externalUrl ?? null);
-    if (input.meta !== undefined) {
-      params.push(JSON.stringify(input.meta ?? {}));
-      sets.push(`meta = $${params.length}::jsonb`);
-    }
-
-    if (sets.length > 0) {
-      await client.query(
-        `UPDATE phis.support_ticket_links
-         SET ${sets.join(", ")}
-         WHERE id = $1`,
-        params,
-      );
-    }
-
-    await client.query(
-      `UPDATE phis.support_tickets
-       SET updated_at = NOW(),
-           updated_by_user_id = $3
-       WHERE site_id = $1
-         AND id = $2`,
-      [input.siteId, input.ticketId, input.updatedByUserId ?? null],
-    );
-
-    await client.query("COMMIT");
-    return getSupportTicketDetail(input.siteId, input.ticketId);
-  } catch (error) {
-    await client.query("ROLLBACK");
-    throw error;
-  } finally {
-    client.release();
-  }
-}
-
-export async function deleteSupportTicketLink(siteId: number, ticketId: number, linkId: number, userId?: number | null) {
-  const pool = getPool();
-  const client = await pool.connect();
-
-  try {
-    await client.query("BEGIN");
-    const existing = await getSupportTicketLinkRowById(client, siteId, ticketId, linkId);
-    if (!existing) {
-      await client.query("ROLLBACK");
-      return null;
-    }
-
-    await client.query(
-      `DELETE FROM phis.support_ticket_links
-       WHERE id = $1`,
-      [linkId],
-    );
-
-    await client.query(
-      `UPDATE phis.support_tickets
-       SET updated_at = NOW(),
-           updated_by_user_id = $3
-       WHERE site_id = $1
-         AND id = $2`,
-      [siteId, ticketId, userId ?? null],
-    );
-
-    await insertSupportTicketEvent(client, {
-      ticketId,
-      eventType: SUPPORT_TICKET_EVENT_UNLINKED,
-      createdByUserId: userId ?? null,
-      payload: {
-        linkId,
-        system: existing.system,
-        type: existing.type,
-      },
-    });
 
     await client.query("COMMIT");
     return getSupportTicketDetail(siteId, ticketId);

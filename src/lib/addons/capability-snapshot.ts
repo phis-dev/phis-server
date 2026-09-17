@@ -8,7 +8,10 @@ import {
   getPhisAddonBuildDigest,
   getPhisAddonInstalledManifest,
 } from "@/lib/addons/installed";
-import { PHIS_CORE_CAPABILITIES } from "@/lib/addons/core-capabilities";
+import {
+  PHIS_CORE_CAPABILITIES,
+  isPhisAddonCapabilityDeliverable,
+} from "@/lib/addons/core-capabilities";
 
 export type { PhiCapabilityState } from "@phis/contracts/server-capabilities";
 import type { PhiCapabilityState } from "@phis/contracts/server-capabilities";
@@ -27,7 +30,16 @@ export async function buildPhisCapabilitySnapshot(siteId: number) {
       providerId: "@phis/server/core",
       state: "available",
       diagnosticCode: null,
-      capabilities: [...PHIS_CORE_CAPABILITIES],
+      /*
+       * What Core can hand over, not what it can name.
+       *
+       * The snapshot is what a Site's Modules are activated against, and reporting the whole catalogue
+       * made a Module requiring a reserved name activate against a capability nothing builds -- the
+       * same mistake the dispatcher stopped making when it started asking this set. A reserved name is
+       * absent here rather than reported as available, so the Module stays off and says why.
+       */
+      capabilities: PHIS_CORE_CAPABILITIES.filter((capability) =>
+        isPhisAddonCapabilityDeliverable(capability.id)),
     },
   ];
 
