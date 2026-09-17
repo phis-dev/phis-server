@@ -1764,6 +1764,64 @@ Contract:
   `phis addon migrate`. Reapplying the same version with the same checksum is a no-op; the same version
   with a different checksum, or a different version, is refused, and the remedy is a purge.
 
+### `phis.addon_hook_deliveries`
+
+- `addon_id VARCHAR(255) NOT NULL REFERENCES phis.server_addons(addon_id) ON DELETE CASCADE`
+- `delivery_id VARCHAR(255) NOT NULL` (CHECK `<> ''`)
+- `received_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
+- `PRIMARY KEY (addon_id, delivery_id)`
+- index on `received_at`
+
+Contract:
+- One row per signed hook delivery Core has accepted, written by the dispatcher **after** the signature
+  verified and **before** the handler runs. A sender retrying a delivery it is unsure about carries the
+  first attempt's id; recognising it here is what keeps one webhook from becoming two messages in a
+  thread, and it is done once for every Add-on rather than in each handler.
+- The insert is the claim. Two instances handed the same retry both reach the statement and exactly one
+  inserts, which is the primary key's answer and not a read followed by a write.
+- Only a hook whose descriptor states `verification.deliveryIdHeader` produces rows. No Site column: a
+  delivery id is the sender's and is unique in their system, not per Site.
+- `phis maintain` (`hook-deliveries`) drops rows older than 30 days -- far past any sender's retry
+  window, because the cost of holding one too long is a row and the cost of dropping one too early is a
+  duplicate that will look like the Add-on's fault.
+
+### `phis.addon_event_outbox`
+
+- `id BIGSERIAL PRIMARY KEY`
+- `site_id SMALLINT NOT NULL REFERENCES phis.sites(id) ON DELETE CASCADE`
+- `addon_id VARCHAR(255) NOT NULL REFERENCES phis.server_addons(addon_id) ON DELETE CASCADE`
+- `event VARCHAR(120) NOT NULL` (CHECK `<> ''`)
+- `thread_id INT NOT NULL REFERENCES phis.threads(id) ON DELETE CASCADE`
+- `payload JSONB NOT NULL DEFAULT '{}'::jsonb`
+- `attempts SMALLINT NOT NULL DEFAULT 0`
+- `last_error TEXT NULL`
+- `created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
+- `delivered_at TIMESTAMPTZ NULL`
+- partial index `(addon_id, site_id, id) WHERE delivered_at IS NULL`
+
+Contract:
+- What Core owes an Add-on about a thread, written in the transaction that caused it
+  (`src/db/addon-events.ts`) and dispatched after the commit (`src/lib/addons/event-delivery.ts`).
+  Telling an integration from inside the request would tie a person's reply to a third party being
+  reachable; telling it before the commit would announce something that may still roll back.
+- **Recipients are the synced links and nothing else.** The insert selects the Add-ons holding a
+  `resource_links` row with `Synced` on that thread, its ticket, or its ticket task -- the same
+  predicate that decides whether an actorless Add-on may read the thread, asked in the other direction.
+  Delivering to every Add-on that merely declares the event would be the Site-wide listing `threads:v1`
+  refuses, arriving by push instead of by pull.
+- The insert joins `site_server_addons` and requires the Add-on to be requested-enabled and `ready`.
+  That also keeps the foreign key satisfiable: a link's `provider_id` is free text with a shape, and a
+  violation here would roll back the message that caused it.
+- **No echo.** The author is excluded, so a message an integration imported is never handed back to it.
+- `thread.link.removed` is the exception and is enqueued by name, before the delete, because a moment
+  later the link that would have selected it is gone.
+- Ordering is by `id`, not by `created_at`: two events in one transaction share a timestamp, and an
+  integration applying them out of order would leave the older state as the current one. Delivery stops
+  at the first failure for that Add-on and Site.
+- There is no attempt ceiling. A row nobody can deliver is a row an operator should see; what removes it
+  is the link or the thread going away, which takes it by cascade. `phis addon job run` drains what is
+  owed before the job it was asked for.
+
 ### `phis.server_secrets`
 
 - `reference VARCHAR(512) PRIMARY KEY`

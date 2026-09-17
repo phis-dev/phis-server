@@ -1,11 +1,15 @@
 import "server-only";
 
-import type {
-  PhisResourceLink,
-  PhisResourceLinkSubject,
+import {
+  PHIS_ADDON_EVENTS,
+  PhisResourceLinkFlag,
+  type PhisResourceLink,
+  type PhisResourceLinkSubject,
 } from "@phis/contracts/addon";
 
+import { enqueuePhisAddonThreadEventForProviderWithDb } from "@/db/addon-events";
 import { getPool } from "@/lib/db";
+import { schedulePhisAddonEventDelivery } from "@/lib/addons/event-trigger";
 
 export class PhisResourceLinkError extends Error {}
 
@@ -219,20 +223,86 @@ export async function setResourceLinkState(input: {
   return (rowCount ?? 0) > 0;
 }
 
+/**
+ * Removes a reference, and tells its Add-on that it is gone.
+ *
+ * The notification has to be written before the delete, which is why this is a transaction. Every other
+ * event finds its recipients through the synced links on the thread; this one is caused by the last of
+ * those links going away, so a moment later there would be nothing left to find it by -- and an Add-on
+ * never told would keep pointing at a conversation it can no longer read.
+ *
+ * Only a synced link produces one. An unsynced link conferred no reach, so its removal takes none away.
+ */
 export async function deleteResourceLink(input: {
   siteId: number;
   providerId: string;
   linkId: number;
 }) {
   const pool = getPool();
-  const { rowCount } = await pool.query(
-    `DELETE FROM phis.resource_links
-     WHERE id = $3
-       AND site_id = $1
-       AND provider_id = $2`,
-    [input.siteId, input.providerId, input.linkId],
-  );
-  return (rowCount ?? 0) > 0;
+  const client = await pool.connect();
+  let removed = false;
+  let siteId: number | null = null;
+
+  try {
+    await client.query("BEGIN");
+    const { rows } = await client.query<{
+      thread_id: number | null;
+      ticket_thread_id: number | null;
+      task_thread_id: number | null;
+      flags: number;
+    }>(
+      `SELECT link.thread_id,
+              ticket.thread_id AS ticket_thread_id,
+              task_ticket.thread_id AS task_thread_id,
+              link.flags
+       FROM phis.resource_links link
+       LEFT JOIN phis.support_tickets ticket
+         ON ticket.id = link.ticket_id
+       LEFT JOIN phis.support_ticket_tasks task
+         ON task.id = link.ticket_task_id
+       LEFT JOIN phis.support_tickets task_ticket
+         ON task_ticket.id = task.ticket_id
+       WHERE link.id = $3
+         AND link.site_id = $1
+         AND link.provider_id = $2
+       FOR UPDATE OF link`,
+      [input.siteId, input.providerId, input.linkId],
+    );
+
+    const link = rows[0];
+    if (link) {
+      const threadId = link.thread_id ?? link.ticket_thread_id ?? link.task_thread_id;
+      if (threadId != null && (link.flags & PhisResourceLinkFlag.Synced) !== 0) {
+        await enqueuePhisAddonThreadEventForProviderWithDb(client, {
+          siteId: input.siteId,
+          threadId,
+          addonId: input.providerId,
+          event: PHIS_ADDON_EVENTS.threadLinkRemoved,
+          payload: { linkId: input.linkId },
+        });
+      }
+      const { rowCount } = await client.query(
+        `DELETE FROM phis.resource_links
+         WHERE id = $3
+           AND site_id = $1
+           AND provider_id = $2`,
+        [input.siteId, input.providerId, input.linkId],
+      );
+      removed = (rowCount ?? 0) > 0;
+      siteId = input.siteId;
+    }
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+
+  if (removed && siteId != null) {
+    schedulePhisAddonEventDelivery(siteId);
+  }
+  return removed;
 }
 
 export async function findResourceLinkByExternalId(input: {

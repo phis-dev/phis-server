@@ -109,7 +109,7 @@ Site administration, CMS, media and support API. A Site's `/api/site` proxy forw
 | DELETE | [`/api/site/editor/translations`](../src/app/api/site/editor/translations/route.ts) | session, `roles` (requireSiteReviewApiContext); session, `content-editing` (requireSiteAuthorApiContext) |  |
 | GET | [`/api/site/groups`](../src/app/api/site/groups/route.ts) | session (requireSiteGroupMemberApiContext); session, `authenticated` (requireSiteAuthenticatedApiContext) |  |
 | POST | [`/api/site/groups`](../src/app/api/site/groups/route.ts) | session, `developer-tools` (requireSiteDeveloperApiContext) | Creating a group is Site administration: a group is an authorization unit Pages, Navigation, and Assets refer to, so group membership must never confer the authority to create more of them. |
-| PATCH | [`/api/site/groups`](../src/app/api/site/groups/route.ts) | session (requireSiteGroupManagerApiContext) | Writes one property of a group: how it displays its members, or whether it is still in service. |
+| PATCH | [`/api/site/groups`](../src/app/api/site/groups/route.ts) | session (requireSiteGroupManagerApiContext) |  |
 | PUT | [`/api/site/groups`](../src/app/api/site/groups/route.ts) | session (requireSiteGroupManagerApiContext) |  |
 | DELETE | [`/api/site/groups`](../src/app/api/site/groups/route.ts) | session (requireSiteGroupManagerApiContext) |  |
 | GET | [`/api/site/groups/candidates`](../src/app/api/site/groups/candidates/route.ts) | session (requireSiteGroupManagerAnywhereApiContext) |  |

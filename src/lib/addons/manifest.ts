@@ -6,6 +6,7 @@ import { validatePhisAddonSchemaDescriptor } from "./schema-descriptor.ts";
 import { PHIS_ADDON_ID_PATTERN } from "./schema-name.ts";
 import {
   PHIS_ADDON_ABI_VERSION,
+  PHIS_ADDON_EVENTS,
   PHIS_ADDON_MANIFEST_VERSION,
   PHIS_SITE_ACCESS,
   type PhisAddonApiRouteDescriptor,
@@ -42,6 +43,18 @@ const HTTP_METHODS = new Set(["DELETE", "GET", "PATCH", "POST", "PUT"]);
 const AUTH_POLICIES = new Set(["internal", "site-user", "site-admin", "operator"]);
 const SETTING_NAME_PATTERN = /^[a-z][a-z0-9-]{0,63}$/;
 const SITE_ACCESS_VALUES = new Set<string>(Object.values(PHIS_SITE_ACCESS));
+/** A header name, lowercase, because that is how `Headers.get` will look for it. */
+const HTTP_HEADER_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
+/**
+ * What `buildPhiSecretReference` accepts as a name.
+ *
+ * Stated here rather than imported: a manifest is validated by the CLI as well as by the server, and a
+ * validator that pulled in the secret machinery would pull a backend and a database with it. A name
+ * this refuses is one the reference builder would have thrown on at the first delivery instead.
+ */
+const SECRET_NAME_PATTERN = /^[a-z0-9][a-z0-9._-]{0,63}$/;
+const HOOK_VERIFICATION_SCHEMES = new Set(["hmac-sha256"]);
+const ADDON_EVENT_IDS = new Set<string>(Object.values(PHIS_ADDON_EVENTS));
 
 /**
  * Whether at least one role can be reached without already holding another.
@@ -212,8 +225,72 @@ function validateHook(
   if (value.siteScoped !== undefined && typeof value.siteScoped !== "boolean") {
     issues.push(`${field}.siteScoped must be a boolean when it is stated at all.`);
   }
+  validateHookVerification(value, field, issues);
 
   return true;
+}
+
+/**
+ * How this hook's caller can be believed, where it can be at all.
+ *
+ * Absent is a complete answer and the one most hooks give: an unverified hook reads and writes nothing,
+ * which is the rule rather than a degraded mode. What is refused here is a half-stated one -- a header
+ * without a secret, a scheme Core does not implement -- because each of those would be discovered at
+ * the first delivery, which is the worst moment to discover it.
+ */
+function validateHookVerification(
+  hook: Record<string, unknown>,
+  hookField: string,
+  issues: string[],
+) {
+  const value = hook.verification;
+  if (value === undefined) {
+    return;
+  }
+  const field = `${hookField}.verification`;
+  if (!isRecord(value)) {
+    issues.push(`${field} must be an object when it is stated at all.`);
+    return;
+  }
+
+  const scheme = readString(value.scheme, `${field}.scheme`, issues);
+  if (scheme && !HOOK_VERIFICATION_SCHEMES.has(scheme)) {
+    issues.push(`${field}.scheme is unsupported.`);
+  }
+
+  const header = readString(value.header, `${field}.header`, issues);
+  if (header && !HTTP_HEADER_PATTERN.test(header)) {
+    issues.push(`${field}.header must be a lowercase header name.`);
+  }
+
+  const secret = readString(value.secret, `${field}.secret`, issues);
+  if (secret && !SECRET_NAME_PATTERN.test(secret)) {
+    issues.push(`${field}.secret is not a secret name an operator could set.`);
+  }
+
+  if (value.prefix !== undefined && (typeof value.prefix !== "string" || value.prefix === "")) {
+    issues.push(`${field}.prefix must be a non-empty string when it is stated at all.`);
+  }
+
+  if (value.deliveryIdHeader !== undefined) {
+    const deliveryHeader = readString(
+      value.deliveryIdHeader,
+      `${field}.deliveryIdHeader`,
+      issues,
+    );
+    if (deliveryHeader && !HTTP_HEADER_PATTERN.test(deliveryHeader)) {
+      issues.push(`${field}.deliveryIdHeader must be a lowercase header name.`);
+    }
+  }
+
+  /*
+   * The secret is the operator's, set per Site. A hook that is not told which Site it was called for
+   * has no secret to check against, so the two fields are stated together or the hook is refused --
+   * the alternative is a hook that looks verified in the manifest and can never verify anything.
+   */
+  if (hook.siteScoped !== true) {
+    issues.push(`${hookField}.siteScoped must be true for a verified hook.`);
+  }
 }
 
 export function stablePhiJson(value: unknown): string {
@@ -417,6 +494,45 @@ export function validatePhisAddonManifest(
     jobIds.push(id);
   }
   assertUnique(jobIds, "jobs", issues);
+
+  /*
+   * The events this Add-on wants told about. Absent means none, like every field added after this
+   * manifest version was in the wild.
+   *
+   * Declaring one is not receiving it: an event reaches an Add-on only for a thread somebody linked it
+   * to. What is checked here is that the name is one Core emits -- a handler waiting on a typo would
+   * wait forever, and there is nothing at runtime that could report it.
+   */
+  const eventHandlers = Array.isArray(value.eventHandlers) ? value.eventHandlers : [];
+  if (value.eventHandlers !== undefined && !Array.isArray(value.eventHandlers)) {
+    issues.push("eventHandlers must be an array when it is stated at all.");
+  }
+  const eventHandlerIds: string[] = [];
+  const eventNames: string[] = [];
+  for (const [index, entry] of eventHandlers.entries()) {
+    if (!isRecord(entry)) {
+      issues.push(`eventHandlers[${index}] must be an object.`);
+      continue;
+    }
+    const id = readString(entry.id, `eventHandlers[${index}].id`, issues);
+    const event = readString(entry.event, `eventHandlers[${index}].event`, issues);
+    const handler = readString(entry.handler, `eventHandlers[${index}].handler`, issues);
+    if (id && !DESCRIPTOR_ID_PATTERN.test(id)) {
+      issues.push(`eventHandlers[${index}].id is invalid.`);
+    }
+    if (event && !ADDON_EVENT_IDS.has(event)) {
+      issues.push(`eventHandlers[${index}].event is not an event Core emits.`);
+    }
+    if (handler && !HANDLER_ID_PATTERN.test(handler)) {
+      issues.push(`eventHandlers[${index}].handler is invalid.`);
+    }
+    eventHandlerIds.push(id);
+    eventNames.push(event);
+  }
+  assertUnique(eventHandlerIds, "eventHandlers", issues);
+  // One handler per event. Two would need an order Core does not define, and an Add-on that wants two
+  // things to happen can do both in one function where the order is visible.
+  assertUnique(eventNames, "eventHandlers events", issues);
 
   let schema: PhisAddonSchemaDescriptor | null = null;
   if (value.schema === null) {

@@ -1,9 +1,11 @@
 # Threads: Planned Design
 
-**Status: design.** Nothing in this document is implemented. What holds today is the Support-domain
-thread model in [DB.md](../DB.md) (`support_threads`, `support_thread_messages`,
-`support_thread_recipients`, `support_thread_reads`), the Site routes under `/api/site/support/threads`,
-and `threads:v1` as [SERVER_ADDONS.md](../SERVER_ADDONS.md) section 13 describes it.
+**Status: sections 1 to 3 of the order in section 13 are built.** The schema, the visibility predicate,
+`/api/site/threads`, the recut `threads:v1`, `resource-links:v1`, verified hooks and the event outbox
+are in the server; [DB.md](../DB.md) holds the tables and
+[SERVER_ADDONS.md](../SERVER_ADDONS.md) sections 8, 10, 13 and 18 hold the contracts. What is described
+here and is **not** built is step 4 -- `@phis/ui/threads`, `@phis/support` on the new model, the group
+flags in the groups Module -- and step 5, `@phis/github`.
 
 Decisions taken while writing this are stated where they apply. Nothing in it is open at the time of
 writing; what remains is building it in the order of section 13.

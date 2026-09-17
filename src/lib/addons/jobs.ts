@@ -5,6 +5,7 @@ import { randomUUID } from "node:crypto";
 import type { PhisAddonBuildEntry, PhisAddonJobContext } from "./contract.ts";
 import { buildPhisAddonCapabilities } from "./capabilities.ts";
 import { isPhisAddonCapabilityDeliverable } from "./core-capabilities.ts";
+import { deliverPhisAddonEvents } from "./event-delivery.ts";
 import { getPhisAddonInstalledManifest } from "./installed.ts";
 import {
   digestPhisAddonManifest,
@@ -85,6 +86,17 @@ export async function runPhisAddonJob(input: {
   if (!await isPhisAddonEnabledForSite(addonId, site.id)) {
     throw new PhisAddonJobError(`${addonId} is not enabled for ${site.key}.`);
   }
+
+  /*
+   * What Core still owes this Add-on, before the job it was asked for.
+   *
+   * There is no scheduler here, so the operator's own is the only thing that runs on a clock -- and an
+   * event whose delivery failed has to ride along with something. It runs first because the job is
+   * likely to act on the state those events carry, and settling them afterwards would leave the job
+   * working from what it knew one run ago. A failure is already recorded against the row it belongs to,
+   * so nothing here stops the job from running.
+   */
+  await deliverPhisAddonEvents({ addonId, siteId: site.id });
 
   const runtimeModule = await entry.load();
   const handler = runtimeModule.phisAddon.jobHandlers?.[descriptor.handler];

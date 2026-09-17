@@ -26,6 +26,10 @@ export class PhisAddonThreadsError extends Error {}
  * ones a person linked it to, and nothing else. The link was written by somebody who could see the
  * thread, which is what makes it consent rather than a standing permission; unlinking ends the reach.
  *
+ * **From an unverified hook** it reads and writes nothing at all. A request nobody signed is a request
+ * from whoever found the address, and an integration's own thread is exactly what such a caller would
+ * want to write into.
+ *
  * What is withheld either way: `Internal` messages never reach an Add-on, and a `Confidential` one
  * arrives with its text removed and its flag set, so an interface can say why there is nothing to show.
  */
@@ -33,8 +37,25 @@ export function buildPhisAddonThreadsCapability(input: {
   addonId: string;
   siteId: number;
   actorUserId: number | null;
+  /** True when nobody authenticated and no signature stood in for them -- an unverified hook. */
+  unauthenticated?: boolean;
 }): PhisThreadsCapabilityV1 {
   const { addonId, siteId, actorUserId } = input;
+
+  /*
+   * Reads are refused here too, which `data:v1` does not do.
+   *
+   * A public row an Add-on chose to expose is one thing; a thread is somebody's conversation, and the
+   * reach an actorless Add-on has over one rests on a link a person wrote as consent. Handing that
+   * reach to whoever found an unsigned address would make the consent meaningless.
+   */
+  const requireBelievableCaller = (call: string) => {
+    if (input.unauthenticated) {
+      throw new PhisAddonThreadsError(
+        `${addonId} called threads.${call} from an unverified hook; a hook that touches threads declares how its caller can be believed.`,
+      );
+    }
+  };
 
   const reader: ThreadReader = actorUserId != null
     ? { kind: "user", userId: actorUserId }
@@ -68,6 +89,7 @@ export function buildPhisAddonThreadsCapability(input: {
     },
 
     async get(threadId, options = {}) {
+      requireBelievableCaller("get");
       return getThreadDetail(siteId, reader, threadId, {
         messageLimit: options.messageLimit,
         beforeMessageId: options.beforeMessageId,
@@ -75,6 +97,7 @@ export function buildPhisAddonThreadsCapability(input: {
     },
 
     async create(createInput) {
+      requireBelievableCaller("create");
       const detail = await createThread({
         siteId,
         kind: createInput.kind,
@@ -99,6 +122,7 @@ export function buildPhisAddonThreadsCapability(input: {
     },
 
     async reply(replyInput) {
+      requireBelievableCaller("reply");
       return addThreadMessage({
         siteId,
         threadId: replyInput.threadId,
@@ -112,6 +136,7 @@ export function buildPhisAddonThreadsCapability(input: {
     },
 
     async addParticipants(participantInput) {
+      requireBelievableCaller("addParticipants");
       return addThreadParticipants({
         siteId,
         threadId: participantInput.threadId,
@@ -122,6 +147,7 @@ export function buildPhisAddonThreadsCapability(input: {
     },
 
     async setStatus(statusInput) {
+      requireBelievableCaller("setStatus");
       return setThreadStatus({
         siteId,
         threadId: statusInput.threadId,
@@ -136,6 +162,7 @@ export function buildPhisAddonThreadsCapability(input: {
     },
 
     async findByExternalRef(externalRef) {
+      requireBelievableCaller("findByExternalRef");
       return findThreadByExternalRef({ siteId, providerId: addonId, externalRef });
     },
   } satisfies PhisThreadsCapabilityV1);

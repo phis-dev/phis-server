@@ -343,6 +343,9 @@ export function buildPhisAddonCapabilities(input: {
       addonId: input.manifest.addonId,
       siteId,
       actorUserId: input.actorUserId,
+      // A verified hook carries `systemAuthority`, which is what tells it apart from the unsigned
+      // request that reached the same address.
+      unauthenticated: input.unauthenticated === true && input.systemAuthority !== true,
     });
   }
   if (required.includes(PHIS_CORE_CAPABILITIES.resourceLinks)) {
@@ -355,6 +358,7 @@ export function buildPhisAddonCapabilities(input: {
       addonId: input.manifest.addonId,
       siteId,
       actorUserId: input.actorUserId,
+      unauthenticated: input.unauthenticated === true && input.systemAuthority !== true,
     });
   }
   if (required.includes(PHIS_CORE_CAPABILITIES.groups)) {

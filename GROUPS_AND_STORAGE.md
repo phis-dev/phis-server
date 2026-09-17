@@ -164,9 +164,23 @@ matched on name or address, capped, and answering with the name and company rath
 that may have been searched by. It is deliberately not per group -- the candidates are the Site's
 members either way, and a group id would only have dressed an unchanged list as a per-group one.
 
-Those flags are display bits and never rights. Authority lives in the membership level; a right stored
-here would mean two places decide the same question, and the second one would be the one nobody
+`ShowMemberCompany` is a display bit and never a right. Authority lives in the membership level; a right
+stored here would mean two places decide the same question, and the second one would be the one nobody
 remembers to check.
+
+Two further flags say what a group does with conversations rather than what it discloses.
+`Threads` lets its members hold a group thread, and `CrossGroupThreads` lets it address, and be
+addressed by, another group. They are not the switch that decides whether such conversations exist on
+the Site at all -- that is the union of what the Site's active Modules declare, materialized into
+`site_thread_config` (see [design/THREADS.md](./design/THREADS.md)). A Site can therefore run the groups
+Module and still have most of its groups be what they always were. `CrossGroupThreads` brings `Threads`
+with it and clearing `Threads` takes `CrossGroupThreads` away, because a group that may address others
+and may not hold a conversation is a state with no meaning; the rule lives in Core's `PATCH
+/api/site/groups`, so a second administration surface cannot come to a different conclusion about it.
+
+These are still not rights in the sense the membership level is: a flag says the group may, and who in
+it may is the level. What makes them the group's own is the same judgement `ShowMemberCompany` is --
+the Manager knows whether their group is a place where people talk.
 
 The Groups Module's Admin `/groups` Page is where a Site administers them: the groups with their member
 count and Space usage, the members of whichever group is selected, the form that creates one, and the

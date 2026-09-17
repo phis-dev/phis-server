@@ -2027,6 +2027,63 @@ CREATE TABLE IF NOT EXISTS phis.server_addon_migrations (
   CONSTRAINT server_addon_migrations_version_check CHECK (migration_version > 0)
 );
 
+-- Which signed deliveries this server has already accepted.
+--
+-- A webhook is retried whenever the sender is unsure it arrived, and a retry carries the delivery id of
+-- the first attempt. Without this table the second copy would be a second message in somebody's thread,
+-- and an integration would have to make every handler idempotent by itself -- which is exactly the work
+-- Core can do once, at the door, for every Add-on.
+--
+-- The row is written before the handler runs, not after. A delivery that was accepted and then failed
+-- halfway is not one to replay blindly: the sender's retry would repeat whatever the first attempt
+-- already did. What a handler needs to survive is stated in its own tables, where it can be seen.
+--
+-- No Site column. A delivery id is the sender's, unique in their system and not per Site, and a hook
+-- that is not Site-scoped has no Site to record anyway.
+CREATE TABLE IF NOT EXISTS phis.addon_hook_deliveries (
+  addon_id VARCHAR(255) NOT NULL REFERENCES phis.server_addons(addon_id) ON DELETE CASCADE,
+  delivery_id VARCHAR(255) NOT NULL,
+  received_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT addon_hook_deliveries_pkey PRIMARY KEY (addon_id, delivery_id),
+  CONSTRAINT addon_hook_deliveries_delivery_id_check CHECK (delivery_id <> '')
+);
+
+-- What `phis maintain` prunes by. The table grows by one row per delivery and is worth nothing after
+-- the sender has stopped retrying.
+CREATE INDEX IF NOT EXISTS addon_hook_deliveries_received_at_idx
+  ON phis.addon_hook_deliveries (received_at);
+
+-- What Core owes an Add-on, written in the transaction that caused it.
+--
+-- Telling an integration in the request that produced the change would tie a person's reply to a third
+-- party's availability, and a delivery attempted before the commit would announce something that may
+-- still roll back. The row is written with the change and dispatched after it; what fails waits for the
+-- next `phis addon job run`, which is the same reasoning that keeps Core without a scheduler.
+--
+-- `thread_id` is not payload. It is what bounds the delivery: a row exists only for an Add-on holding a
+-- synced link to that thread, so the outbox cannot become a Site-wide feed of every conversation
+-- arriving by push instead of by pull.
+CREATE TABLE IF NOT EXISTS phis.addon_event_outbox (
+  id BIGSERIAL PRIMARY KEY,
+  site_id SMALLINT NOT NULL REFERENCES phis.sites(id) ON DELETE CASCADE,
+  addon_id VARCHAR(255) NOT NULL REFERENCES phis.server_addons(addon_id) ON DELETE CASCADE,
+  event VARCHAR(120) NOT NULL,
+  thread_id INT NOT NULL REFERENCES phis.threads(id) ON DELETE CASCADE,
+  payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+  attempts SMALLINT NOT NULL DEFAULT 0,
+  last_error TEXT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  delivered_at TIMESTAMPTZ NULL,
+  CONSTRAINT addon_event_outbox_event_check CHECK (event <> '')
+);
+
+-- The dispatcher's read: what is still owed, oldest first, for one Add-on on one Site. Ordering by the
+-- key rather than by `created_at` is deliberate -- two events in the same transaction share a timestamp,
+-- and an integration replaying them out of order would apply the older state last.
+CREATE INDEX IF NOT EXISTS addon_event_outbox_pending_idx
+  ON phis.addon_event_outbox (addon_id, site_id, id)
+  WHERE delivered_at IS NULL;
+
 -- Every secret the server holds, encrypted, so more than one instance can read them.
 --
 -- A file-backed store needs every secret on every host and needs them again on every rotation; a row

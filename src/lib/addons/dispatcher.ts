@@ -25,6 +25,7 @@ import {
 import { buildPhisAddonCapabilities } from "@/lib/addons/capabilities";
 import { PhisAddonAssetError } from "@/lib/addons/assets-capability";
 import { isPhisAddonCapabilityDeliverable } from "@/lib/addons/core-capabilities";
+import { verifyPhisAddonHookDelivery } from "@/lib/addons/hook-verification";
 import {
   digestPhisAddonManifest,
   validatePhisAddonManifest,
@@ -600,6 +601,45 @@ export async function dispatchPhisAddonRequest(
       return bodyResult.error;
     }
 
+    /*
+     * Whether this hook's caller is believed, decided before the handler exists.
+     *
+     * A verified delivery then writes as a job does -- system authority over the Add-on's own tables,
+     * and the actorless thread reach a synced link confers. An unverified one keeps the rule it always
+     * had: it may read, and it may write nothing, because nothing tells it apart from anybody who found
+     * the address.
+     */
+    let verified = false;
+    const verification = kind === "hook"
+      ? (descriptor as PhisAddonHookDescriptor).verification
+      : undefined;
+    if (verification) {
+      const result = await verifyPhisAddonHookDelivery({
+        addonId,
+        siteKey: identity.site?.key ?? null,
+        descriptor: verification,
+        headers: request.headers,
+        body: bodyResult.body,
+      });
+      if (result.outcome === "rejected") {
+        logger.warn("addon.hook.unverified", { meta: { reason: result.reason } });
+        return NextResponse.json({ error: "Signature verification failed." }, { status: 401 });
+      }
+      if (result.outcome === "unavailable") {
+        // The operator has not finished configuring this Add-on, or the secret store is down. Saying
+        // so as 503 is what makes the sender retry once it is fixed; 401 would make it give up.
+        logger.error("addon.hook.secret_unavailable", { meta: { reason: result.reason } });
+        return unavailable(requestId);
+      }
+      if (result.outcome === "duplicate") {
+        // Accepted, and already handled. A retry is the sender being unsure, and the answer it needs is
+        // that there is nothing left to do -- not an error it will keep retrying.
+        logger.info("addon.hook.duplicate");
+        return NextResponse.json({ ok: true, duplicate: true });
+      }
+      verified = true;
+    }
+
     const runtimeModule = await entry.load();
     const runtime = runtimeModule.phisAddon;
     const runtimeValidation = validatePhisAddonManifest(runtime?.manifest);
@@ -647,6 +687,7 @@ export async function dispatchPhisAddonRequest(
           siteId: identity.site?.id ?? null,
           siteKey: identity.site?.key ?? null,
           actorUserId: identity.actor?.kind === "user" ? identity.actor.id : null,
+          systemAuthority: verified,
           unauthenticated: identity.actor === null,
         }),
         signal: request.signal,

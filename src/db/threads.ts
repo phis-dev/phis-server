@@ -3,6 +3,9 @@ import "server-only";
 import type { PoolClient } from "pg";
 
 import {
+  PHIS_ADDON_EVENTS,
+  PHIS_DECLARABLE_THREAD_KINDS,
+  PHIS_SITE_THREAD_KIND_FLAG_BY_DECLARATION,
   PhisResourceLinkFlag,
   PhisThreadKind,
   PhisThreadMessageFlag,
@@ -20,6 +23,9 @@ import {
 import { getPool } from "@/lib/db";
 import { PhiBaseRole } from "@phis/contracts/access";
 
+import { enqueuePhisAddonThreadEventWithDb } from "@/db/addon-events";
+import { schedulePhisAddonEventDelivery } from "@/lib/addons/event-trigger";
+
 import { PHI_CORE_ROLE_PROVIDER_ID } from "@/lib/authorization";
 import { PhiSiteGroupFlags } from "@/lib/constants/site-groups";
 import {
@@ -32,7 +38,6 @@ import {
   PHIS_THREAD_AUTHOR_KIND_INTEGRATION,
   PHIS_THREAD_AUTHOR_KIND_SYSTEM,
   PHIS_THREAD_AUTHOR_KIND_USER,
-  PhisSiteThreadKindFlag,
   siteThreadKindFlagOf,
 } from "@/lib/constants/threads";
 
@@ -757,6 +762,21 @@ async function insertMessage(
     );
   }
 
+  /*
+   * What the linked Add-ons are owed, written with the message rather than after it.
+   *
+   * `exceptProviderId` is the author: a message an integration just imported is not news to that
+   * integration, and telling it anyway is how two systems come to write the same sentence to each
+   * other without end.
+   */
+  await enqueuePhisAddonThreadEventWithDb(db, {
+    siteId: input.siteId,
+    threadId: input.threadId,
+    event: PHIS_ADDON_EVENTS.threadMessageCreated,
+    payload: { messageId },
+    exceptProviderId: input.authorProviderId,
+  });
+
   return messageId;
 }
 
@@ -878,6 +898,8 @@ export async function createThread(input: CreateThreadInput): Promise<PhisThread
     client.release();
   }
 
+  schedulePhisAddonEventDelivery(input.siteId);
+
   const openerId = input.createdByUserId ?? null;
   const reader: ThreadReader = openerId != null
     ? { kind: "user", userId: openerId }
@@ -952,6 +974,8 @@ export async function addThreadMessage(input: AddThreadMessageInput): Promise<Ph
     client.release();
   }
 
+  schedulePhisAddonEventDelivery(input.siteId);
+
   return getThreadDetail(input.siteId, input.reader, input.threadId);
 }
 
@@ -993,6 +1017,16 @@ export async function addThreadParticipants(
   return getThreadDetail(input.siteId, input.reader, input.threadId);
 }
 
+/**
+ * Moves a thread between open and archived.
+ *
+ * On a transaction, although the update is one statement, because it is not the only thing that has to
+ * happen: the Add-ons linked to this thread are owed the change, and a notification written outside the
+ * transaction that caused it is one that can survive a rollback and announce something that never was.
+ *
+ * A status that is already the one asked for answers yes and writes nothing -- the caller wanted the
+ * thread archived and it is, which is not a failure and is not a change worth telling anybody about.
+ */
 export async function setThreadStatus(input: {
   siteId: number;
   threadId: number;
@@ -1000,20 +1034,46 @@ export async function setThreadStatus(input: {
   status: PhisThreadStatusValue;
 }) {
   const pool = getPool();
-  const thread = await readThreadRow(pool, input.siteId, input.reader, input.threadId);
-  if (!thread) {
-    return false;
+  const client = await pool.connect();
+  let changed = false;
+  let seen = false;
+
+  try {
+    await client.query("BEGIN");
+    const thread = await readThreadRow(client, input.siteId, input.reader, input.threadId);
+    if (thread) {
+      seen = true;
+      const { rowCount } = await client.query(
+        `UPDATE phis.threads
+         SET status = $2,
+             updated_at = NOW()
+         WHERE id = $1
+           AND status IS DISTINCT FROM $2`,
+        [input.threadId, input.status],
+      );
+      changed = (rowCount ?? 0) > 0;
+      if (changed) {
+        await enqueuePhisAddonThreadEventWithDb(client, {
+          siteId: input.siteId,
+          threadId: input.threadId,
+          event: PHIS_ADDON_EVENTS.threadStatusChanged,
+          payload: { status: input.status },
+          exceptProviderId: input.reader.kind === "provider" ? input.reader.providerId : null,
+        });
+      }
+    }
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
   }
 
-  const { rowCount } = await pool.query(
-    `UPDATE phis.threads
-     SET status = $2,
-         updated_at = NOW()
-     WHERE id = $1
-       AND status IS DISTINCT FROM $2`,
-    [input.threadId, input.status],
-  );
-  return (rowCount ?? 0) > 0 || thread.status === input.status;
+  if (changed) {
+    schedulePhisAddonEventDelivery(input.siteId);
+  }
+  return seen;
 }
 
 export async function markThreadRead(
@@ -1241,12 +1301,14 @@ export async function materializeSiteThreadKindsWithDb(db: DbQueryable, siteId: 
   }
 
   // A kind this release does not know is ignored rather than refused: a newer Module must not make an
-  // older control plane reject a publish.
-  const flags =
-    (declared.has("direct") ? PhisSiteThreadKindFlag.Direct : 0)
-    | (declared.has("group") ? PhisSiteThreadKindFlag.Group : 0)
-    | (declared.has("crossGroup") ? PhisSiteThreadKindFlag.CrossGroup : 0)
-    | (declared.has("support") ? PhisSiteThreadKindFlag.Support : 0);
+  // older control plane reject a publish. The names come from the contract both ends read, so a Module
+  // and this materialization cannot drift into spelling the same kind two ways.
+  let flags = 0;
+  for (const kind of PHIS_DECLARABLE_THREAD_KINDS) {
+    if (declared.has(kind)) {
+      flags |= PHIS_SITE_THREAD_KIND_FLAG_BY_DECLARATION[kind];
+    }
+  }
 
   await db.query(
     `INSERT INTO phis.site_thread_config (site_id, flags)

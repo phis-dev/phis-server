@@ -147,6 +147,10 @@ export async function GET(request: NextRequest) {
         (membershipFlags & PhiGroupMembershipFlags.Manager) === PhiGroupMembershipFlags.Manager,
       memberCount: "memberCount" in group ? group.memberCount : null,
       showMemberCompany: (group.flags & PhiSiteGroupFlags.ShowMemberCompany) !== 0,
+      // What this group may do with conversations. Availability of the kind is the Site's, declared by
+      // the Modules it runs; these two say which groups actually use it.
+      threads: (group.flags & PhiSiteGroupFlags.Threads) !== 0,
+      crossGroupThreads: (group.flags & PhiSiteGroupFlags.CrossGroupThreads) !== 0,
       retired: group.retiredAt != null,
       retiredAt: group.retiredAt,
       spaceId: space?.id ?? null,
@@ -198,14 +202,47 @@ export async function POST(request: NextRequest) {
  * cannot be the authority that returns it. Requiring Developer or Admin there keeps the way back open
  * instead of making it depend on a right the operation itself removed.
  */
+/**
+ * The group flags a manager may set, by the name the body uses for each.
+ *
+ * A map rather than a branch per flag: every one of them is the same write, and the next flag should be
+ * a line here instead of another copy of the read-modify-write below.
+ */
+const PATCHABLE_GROUP_FLAGS = {
+  showMemberCompany: PhiSiteGroupFlags.ShowMemberCompany,
+  threads: PhiSiteGroupFlags.Threads,
+  crossGroupThreads: PhiSiteGroupFlags.CrossGroupThreads,
+} as const;
+
+/**
+ * Applies one flag, and the one dependency between them.
+ *
+ * A group that may address other groups but may not hold a conversation is a state with no meaning, so
+ * `crossGroupThreads` brings `Threads` with it and clearing `threads` takes `CrossGroupThreads` away.
+ * Stated here rather than left to whoever builds the administration surface: a second surface would
+ * have to know it too, and the one that forgot would write the meaningless state.
+ */
+function applyGroupFlag(flags: number, name: keyof typeof PATCHABLE_GROUP_FLAGS, enabled: boolean) {
+  const bit = PATCHABLE_GROUP_FLAGS[name];
+  let next = enabled ? flags | bit : flags & ~bit;
+  if (name === "crossGroupThreads" && enabled) {
+    next |= PhiSiteGroupFlags.Threads;
+  }
+  if (name === "threads" && !enabled) {
+    next &= ~PhiSiteGroupFlags.CrossGroupThreads;
+  }
+  return next;
+}
+
 export async function PATCH(request: NextRequest) {
   const groupId = parseId(request.nextUrl.searchParams.get("groupId"));
-  const body = await request.json().catch(() => null) as {
-    showMemberCompany?: unknown; retired?: unknown;
-  } | null;
-  const setsCompany = typeof body?.showMemberCompany === "boolean";
+  const body = await request.json().catch(() => null) as Record<string, unknown> | null;
+  const flagNames = (Object.keys(PATCHABLE_GROUP_FLAGS) as (keyof typeof PATCHABLE_GROUP_FLAGS)[])
+    .filter((name) => typeof body?.[name] === "boolean");
   const setsRetired = typeof body?.retired === "boolean";
-  if (!groupId || setsCompany === setsRetired) {
+  // Exactly one change per call. Two would need an order between retirement and a flag, and the log
+  // line below says what was done -- which it could not if it were two things.
+  if (!groupId || flagNames.length + (setsRetired ? 1 : 0) !== 1) {
     return NextResponse.json({ error: "invalid_group_patch" }, { status: 400 });
   }
   const guarded = await requireSiteGroupManagerApiContext(request, groupId);
@@ -240,10 +277,13 @@ export async function PATCH(request: NextRequest) {
     return NextResponse.json({ group: updated });
   }
 
+  const name = flagNames[0]!;
   return NextResponse.json({
-    group: await setSiteGroupFlags(siteId, groupId, body!.showMemberCompany
-      ? group.flags | PhiSiteGroupFlags.ShowMemberCompany
-      : group.flags & ~PhiSiteGroupFlags.ShowMemberCompany),
+    group: await setSiteGroupFlags(
+      siteId,
+      groupId,
+      applyGroupFlag(group.flags, name, body![name] as boolean),
+    ),
   });
 }
 

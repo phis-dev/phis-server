@@ -30,8 +30,25 @@ export function buildPhisAddonResourceLinksCapability(input: {
   addonId: string;
   siteId: number;
   actorUserId: number | null;
+  /** True when nobody authenticated and no signature stood in for them -- an unverified hook. */
+  unauthenticated?: boolean;
 }): PhisResourceLinksCapabilityV1 {
   const { addonId, siteId, actorUserId } = input;
+
+  /*
+   * An unverified hook reaches none of this, reads included.
+   *
+   * A link is the record of what an Add-on may later touch without anybody behind it. Letting whoever
+   * found an unsigned address read that list would hand them the map, and letting them change a state
+   * on it would let them move a ticket somebody else's work depends on.
+   */
+  const requireBelievableCaller = (call: string) => {
+    if (input.unauthenticated) {
+      throw new PhisAddonResourceLinksError(
+        `${addonId} called resourceLinks.${call} from an unverified hook; a hook that touches links declares how its caller can be believed.`,
+      );
+    }
+  };
 
   const requireActor = (call: string) => {
     if (actorUserId == null) {
@@ -64,6 +81,7 @@ export function buildPhisAddonResourceLinksCapability(input: {
 
   return Object.freeze({
     async list(subject) {
+      requireBelievableCaller("list");
       if (actorUserId != null) {
         const threadId = await resolveSubjectThreadId(siteId, subject);
         if (threadId == null) {
@@ -78,6 +96,7 @@ export function buildPhisAddonResourceLinksCapability(input: {
     },
 
     async link(linkInput) {
+      requireBelievableCaller("link");
       const userId = requireActor("link");
       await requireReachableSubject("link", linkInput.subject, userId);
       return upsertResourceLink({
@@ -94,6 +113,7 @@ export function buildPhisAddonResourceLinksCapability(input: {
     },
 
     async setState(stateInput) {
+      requireBelievableCaller("setState");
       return setResourceLinkState({
         siteId,
         providerId: addonId,
@@ -103,11 +123,13 @@ export function buildPhisAddonResourceLinksCapability(input: {
     },
 
     async unlink(linkId) {
+      requireBelievableCaller("unlink");
       requireActor("unlink");
       return deleteResourceLink({ siteId, providerId: addonId, linkId });
     },
 
     async findByExternalId(findInput) {
+      requireBelievableCaller("findByExternalId");
       return findResourceLinkByExternalId({
         siteId,
         providerId: addonId,

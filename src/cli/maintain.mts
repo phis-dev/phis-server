@@ -152,10 +152,55 @@ const orphanedAddonAssets: PhiMaintenanceTask = {
   },
 };
 
+/**
+ * The record of webhook deliveries that no sender will retry any more.
+ *
+ * Core writes one row per signed delivery so a retry is recognised as one rather than becoming a second
+ * message in somebody's thread. A sender gives up after days; the row is worth nothing after that, and
+ * keeping it costs a row per delivery forever.
+ *
+ * The window is deliberately far past any sender's: the cost of holding one too long is a row, and the
+ * cost of dropping one too early is a duplicate that will look like the Add-on's fault.
+ */
+const PHI_HOOK_DELIVERY_RETENTION_DAYS = 30;
+
+const settledHookDeliveries: PhiMaintenanceTask = {
+  id: "hook-deliveries",
+  summary: "Forget webhook deliveries nobody will retry.",
+  async run(pool, { dryRun }) {
+    if (dryRun) {
+      const { rows } = await pool.query<{ count: string }>(
+        `SELECT COUNT(*)::text AS count
+           FROM phis.addon_hook_deliveries
+          WHERE received_at < NOW() - make_interval(days => $1::int)`,
+        [PHI_HOOK_DELIVERY_RETENTION_DAYS],
+      );
+      const count = Number(rows[0]?.count ?? "0");
+      return {
+        cleared: 0,
+        detail: `Would forget ${count} delivery record(s) older than ${PHI_HOOK_DELIVERY_RETENTION_DAYS} day(s).`,
+      };
+    }
+    const { rowCount } = await pool.query(
+      `DELETE FROM phis.addon_hook_deliveries
+        WHERE received_at < NOW() - make_interval(days => $1::int)`,
+      [PHI_HOOK_DELIVERY_RETENTION_DAYS],
+    );
+    const cleared = rowCount ?? 0;
+    return {
+      cleared,
+      detail: cleared === 0
+        ? `Nothing older than ${PHI_HOOK_DELIVERY_RETENTION_DAYS} day(s).`
+        : `${cleared} delivery record(s).`,
+    };
+  },
+};
+
 /** Ordered as they run. A task must not depend on an earlier one having run first. */
 export const PHI_MAINTENANCE_TASKS: readonly PhiMaintenanceTask[] = Object.freeze([
   expiredUploadSessions,
   orphanedAddonAssets,
+  settledHookDeliveries,
 ]);
 
 /**

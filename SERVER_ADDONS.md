@@ -461,6 +461,41 @@ writing owner-less rows on an address anybody may call.
 This is why a public listing endpoint is a hook and not an API route: the reading it needs is available,
 and the writing it must not do is impossible rather than merely undone.
 
+#### A hook that needs to write says how it can be believed
+
+`verification` on a hook descriptor is how an unauthenticated address stops being anonymous:
+
+```ts
+verification?: {
+  scheme: "hmac-sha256";
+  header: string;            // "x-hub-signature-256"
+  prefix?: string;           // "sha256="
+  secret: string;            // a secret name an operator has set for this Add-on on this Site
+  deliveryIdHeader?: string; // "x-github-delivery"
+}
+```
+
+Core checks it before the handler is even looked up (`src/lib/addons/hook-verification.ts`), over the
+**raw body**: parsing first and re-serialising would digest something the sender never sent, and every
+key ordering would be a way for the two to differ. The comparison is timing-safe, and it is made here
+rather than in each handler because a signature compared with `===` inside somebody's route is a
+signature compared in variable time.
+
+- `secret` is resolved per Site, through the same reference machinery `secrets:v1` uses, so a verified
+  hook is necessarily `siteScoped: true` -- the manifest refuses one that is not.
+- `deliveryIdHeader`, where stated, is claimed in `phis.addon_hook_deliveries` after the signature
+  matched and before the handler runs. A repeat answers `200 {"ok":true,"duplicate":true}`, which is
+  what makes the sender stop retrying; an error would make it retry harder.
+- A missing or unreadable secret answers **503**, not 401. The caller did nothing wrong, and 503 is what
+  makes the sender try again once the operator has finished configuring the Add-on.
+- A bad signature answers **401** and nothing else happens.
+
+**A verified delivery writes as a job does**: system authority over the Add-on's own tables, and the
+actorless thread reach of section 18. An unverified hook keeps the rule above -- it may read `data:v1`,
+and `threads:v1` and `resource-links:v1` refuse it outright, reads included, because the reach those two
+confer rests on a link a person wrote as consent and handing it to whoever found an unsigned address
+would make that consent meaningless.
+
 ## 9. Dispatch contract
 
 Before an Add-on handler receives a request, Core verifies:
@@ -559,6 +594,33 @@ able to start its own job from a handler would have built itself a way around th
 The job runs in the serving process rather than in the CLI, against the release that instance actually
 serves. The CLI stays a caller instead of becoming a second runtime that would have to reproduce the
 loader, the pool, and the capability bindings.
+
+### Events
+
+A job is the Add-on asking. An event is Core telling.
+
+An Add-on declares `eventHandlers: [{ id, event, handler }]`, where `event` is one of
+`thread.message.created`, `thread.message.updated`, `thread.status.changed`, `thread.link.removed`, and
+`handler` names an entry in `eventHandlers` on the runtime. One handler per event: two would need an
+order Core does not define, and an Add-on wanting two things to happen can do both in one function where
+the order is visible.
+
+**Declaring an event is not receiving it.** An event reaches an Add-on only for a thread the Add-on
+holds a `Synced` resource link to -- the same predicate that decides whether it may read that thread at
+all. Delivering every thread event to every declaring Add-on would be the Site-wide listing `threads:v1`
+refuses, arriving by push instead of by pull. A message the Add-on itself imported is never handed back
+to it, which is what stops an echo.
+
+Core writes the row in the transaction that caused it (`phis.addon_event_outbox`) and dispatches after
+the commit. The request that caused it tries once and reports nothing -- the person was writing a
+message, not operating an integration -- and `phis addon job run` drains what is still owed before the
+job it was asked for. Delivery is in key order and stops at the first failure for that Add-on and Site,
+because events about one thread are a sequence and applying them out of order leaves a state that never
+happened.
+
+An event context carries `addonId`, `event`, `deliveryId` (the outbox key, stable across retries),
+`site`, `subject: { threadId, messageId }`, `capabilities`, and `signal`. Like a job, it runs with no
+actor and system authority: Core is telling the Add-on about a thread it is already allowed to reach.
 
 ## 11. Deployment and Site activation
 
