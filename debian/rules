@@ -4,12 +4,16 @@ ARTIFACT_DIR ?= ..
 %:
 	dh $@
 
+# The package is assembled from artifacts built beforehand: the package build reads no registry,
+# runs no package manager and needs no network. What it installs is produced in the workspace,
+# where the lockfile and `@phis/contracts` are -- neither of which exists in this source tree.
 override_dh_auto_configure:
-	npm ci
+	:
 
 override_dh_auto_build:
-	npm run build
-	npm run build:cli
+	test -d .next/standalone || { echo "missing .next/standalone -- run 'pnpm build' in the workspace first" >&2; exit 1; }
+	test -d .next/static || { echo "missing .next/static -- run 'pnpm build' in the workspace first" >&2; exit 1; }
+	test -f dist/phis.mjs || { echo "missing dist/phis.mjs -- run 'pnpm build:cli' in the workspace first" >&2; exit 1; }
 
 override_dh_auto_install:
 	install -d debian/phis/usr/lib/phis/server
@@ -55,9 +59,9 @@ override_dh_auto_install:
 override_dh_auto_test:
 	:
 
+# Nothing to clean: `.next` and `dist` are this build's input, not its output.
 override_dh_auto_clean:
-	rm -rf .next dist
-	dh_auto_clean
+	:
 
 override_dh_installsystemd:
 	dh_installsystemd --no-enable --no-start

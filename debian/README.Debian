@@ -117,7 +117,35 @@ recommended companion for host-side bootstrap and lifecycle tasks such as:
 Build workflow
 --------------
 
-Use `./scripts/build-deb.sh` to build the Debian package out of a copy under
-`/tmp/phis-builds/phis/src`. The resulting `.deb`, `.changes`, and `.buildinfo`
-files are written to `/tmp/phis-builds/phis/artifacts/` instead of the project
-parent directory.
+Two steps, in this order:
+
+1. Build the artifacts in the workspace:
+
+       pnpm install
+       pnpm --filter "@phis/server..." run build
+       pnpm --filter @phis/server run build:cli
+
+   The trailing `...` builds `@phis/contracts` first, which the server build
+   resolves through `dist/`.
+
+   This produces `.next/standalone`, `.next/static` and `dist/phis.mjs`.
+
+2. Package them:
+
+       ./scripts/build-deb.sh
+
+   It copies the checkout -- including those three artifacts, without
+   `.next/cache` and the workspace `node_modules` -- to
+   `/tmp/phis-builds/phis/src` and builds there. The resulting `.deb`,
+   `.changes` and `.buildinfo` land in `/tmp/phis-builds/phis/artifacts/`
+   instead of the project parent directory.
+
+The package build itself only copies. It runs no package manager, reads no
+registry and needs no network: `debian/rules` checks that the three artifacts
+are present and otherwise names the command that produces them. This is why the
+build has no toolchain among its `Build-Depends` -- the build the artifacts come
+out of belongs to the workspace, which carries the lockfile and `@phis/contracts`,
+neither of which is part of this source package. The consequence to be aware of:
+the `.deb` is not reproducible from the source package alone, and `debian/rules
+clean` deliberately leaves `.next` and `dist` alone, because they are this
+build's input rather than its output.

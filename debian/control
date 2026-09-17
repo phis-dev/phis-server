@@ -3,9 +3,7 @@ Section: web
 Priority: optional
 Maintainer: Phisys Ltd. <debian@phisys.com>
 Build-Depends:
- debhelper-compat (= 13),
- nodejs (>= 24.21.0),
- npm
+ debhelper-compat (= 13)
 Standards-Version: 4.7.0
 Rules-Requires-Root: no
 

@@ -8,6 +8,16 @@ ARTIFACT_ROOT="${BUILD_ROOT}/artifacts"
 PACKAGE_VERSION="$(dpkg-parsechangelog -l "${REPO_ROOT}/debian/changelog" -SVersion)"
 HOST_ARCH="$(dpkg-architecture -qDEB_HOST_ARCH)"
 
+# The package build only copies; everything it installs is built here, in the workspace, where the
+# lockfile and @phis/contracts are. Build it with `pnpm build && pnpm build:cli` before packaging.
+for artifact in .next/standalone .next/static dist/phis.mjs; do
+  if [ ! -e "${REPO_ROOT}/${artifact}" ]; then
+    printf 'missing %s -- run "pnpm build && pnpm build:cli" before building the package\n' \
+      "${artifact}" >&2
+    exit 1
+  fi
+done
+
 rm -rf "${SOURCE_ROOT}"
 rm -rf "${ARTIFACT_ROOT}"
 mkdir -p "${SOURCE_ROOT}"
@@ -16,8 +26,7 @@ mkdir -p "${ARTIFACT_ROOT}"
 cd "${REPO_ROOT}"
 tar \
   --exclude-vcs \
-  --exclude='./.next' \
-  --exclude='./dist' \
+  --exclude='./.next/cache' \
   --exclude='./node_modules' \
   --exclude='./debian/.debhelper' \
   --exclude='./debian/phis' \
