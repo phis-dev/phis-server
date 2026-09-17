@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 
+import { readSiteReadMarker } from "@/db/site-read-marker";
 import { getSiteRuntimeConfig } from "@/db/sites";
 import { createJsonResponse } from "@/lib/api-response";
 import { guardApiV1 } from "@/lib/api-v1-guard";
@@ -17,9 +18,10 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: "Site not found." }, { status: 404 });
   }
 
-  const [config, translationMarkers] = await Promise.all([
+  const [config, translationMarkers, readMarker] = await Promise.all([
     getSiteRuntimeConfig(site.id),
     getTranslationChangeMarkers(site.id),
+    readSiteReadMarker(site.id),
   ]);
   if (!config) {
     return NextResponse.json({ error: "Site not found." }, { status: 404 });
@@ -30,6 +32,7 @@ export async function GET(request: Request) {
       id: site.id,
       ...config,
       translationMarkers,
+      readMarker: readMarker ?? "0",
     },
   });
 }

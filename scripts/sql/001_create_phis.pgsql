@@ -1633,6 +1633,112 @@ ALTER TABLE phis.site_nav_revisions
 ALTER TABLE phis.site_theme_revisions
   ADD COLUMN IF NOT EXISTS meta_json JSONB NOT NULL DEFAULT '{}'::jsonb;
 
+-- Change marker for what a Site keeps of its published data between reads: its config (the `sites` row,
+-- theme record and locales included) and its Navigation, whose targets are published Pages, plus the
+-- published Areas and Theme any cache of rendered pages rests on. `GET /api/v1/site` carries it; every
+-- process of a Site refreshes its config at most every few seconds and empties its other read caches when
+-- the marker moved, so a publish reaches all of them within that interval, not only the process the write
+-- passed through. As with the translation markers, only equality means anything.
+--
+-- Drafts do not move it. The Builder saves drafts as an author works and a Site holds nothing of a draft,
+-- so a marker that moved on them would only empty every Site process's cache for no change it could see.
+CREATE SEQUENCE IF NOT EXISTS phis.site_read_marker_seq AS BIGINT;
+
+CREATE TABLE IF NOT EXISTS phis.site_read_marker (
+  site_id SMALLINT PRIMARY KEY REFERENCES phis.sites(id) ON DELETE CASCADE,
+  marker BIGINT NOT NULL
+);
+
+-- A statement trigger with transition tables, as for the translation markers. On the scope tables only a
+-- published pointer that changed counts (and for Pages the address and tombstone, which publishing
+-- writes); an inserted or deleted scope always counts. Rows whose Site is gone in the same statement drop
+-- out of the join: a deleted Site has nothing left to mark.
+CREATE OR REPLACE FUNCTION phis.site_read_touch_markers() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+  IF TG_OP = 'TRUNCATE' THEN
+    INSERT INTO phis.site_read_marker (site_id, marker)
+    SELECT sites.id, nextval('phis.site_read_marker_seq') FROM phis.sites AS sites
+    ON CONFLICT (site_id) DO UPDATE SET marker = EXCLUDED.marker;
+  ELSIF TG_TABLE_NAME = 'sites' THEN
+    INSERT INTO phis.site_read_marker (site_id, marker)
+    SELECT touched.id, nextval('phis.site_read_marker_seq')
+    FROM (SELECT DISTINCT new_rows.id FROM new_rows JOIN phis.sites AS sites ON sites.id = new_rows.id) AS touched
+    ON CONFLICT (site_id) DO UPDATE SET marker = EXCLUDED.marker;
+  ELSIF TG_OP = 'INSERT' THEN
+    INSERT INTO phis.site_read_marker (site_id, marker)
+    SELECT touched.site_id, nextval('phis.site_read_marker_seq')
+    FROM (SELECT DISTINCT new_rows.site_id FROM new_rows JOIN phis.sites AS sites ON sites.id = new_rows.site_id) AS touched
+    ON CONFLICT (site_id) DO UPDATE SET marker = EXCLUDED.marker;
+  ELSIF TG_OP = 'DELETE' THEN
+    INSERT INTO phis.site_read_marker (site_id, marker)
+    SELECT touched.site_id, nextval('phis.site_read_marker_seq')
+    FROM (SELECT DISTINCT old_rows.site_id FROM old_rows JOIN phis.sites AS sites ON sites.id = old_rows.site_id) AS touched
+    ON CONFLICT (site_id) DO UPDATE SET marker = EXCLUDED.marker;
+  ELSIF TG_TABLE_NAME = 'site_page_scopes' THEN
+    INSERT INTO phis.site_read_marker (site_id, marker)
+    SELECT touched.site_id, nextval('phis.site_read_marker_seq')
+    FROM (
+      SELECT DISTINCT new_rows.site_id
+      FROM new_rows
+      JOIN old_rows ON old_rows.id = new_rows.id
+      JOIN phis.sites AS sites ON sites.id = new_rows.site_id
+      WHERE new_rows.published_revision_id IS DISTINCT FROM old_rows.published_revision_id
+         OR new_rows.path IS DISTINCT FROM old_rows.path
+         OR new_rows.tombstoned_at IS DISTINCT FROM old_rows.tombstoned_at
+    ) AS touched
+    ON CONFLICT (site_id) DO UPDATE SET marker = EXCLUDED.marker;
+  ELSE
+    INSERT INTO phis.site_read_marker (site_id, marker)
+    SELECT touched.site_id, nextval('phis.site_read_marker_seq')
+    FROM (
+      SELECT DISTINCT new_rows.site_id
+      FROM new_rows
+      JOIN old_rows ON old_rows.id = new_rows.id
+      JOIN phis.sites AS sites ON sites.id = new_rows.site_id
+      WHERE new_rows.published_revision_id IS DISTINCT FROM old_rows.published_revision_id
+    ) AS touched
+    ON CONFLICT (site_id) DO UPDATE SET marker = EXCLUDED.marker;
+  END IF;
+  RETURN NULL;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS sites_touch_read_marker_update ON phis.sites;
+CREATE TRIGGER sites_touch_read_marker_update
+  AFTER UPDATE ON phis.sites REFERENCING NEW TABLE AS new_rows
+  FOR EACH STATEMENT EXECUTE FUNCTION phis.site_read_touch_markers();
+
+DO $$
+DECLARE
+  scope_table TEXT;
+BEGIN
+  -- One trigger per event and table: a trigger with transition tables serves one event.
+  FOREACH scope_table IN ARRAY ARRAY['site_page_scopes', 'site_area_scopes', 'site_nav_scopes', 'site_theme_scopes'] LOOP
+    EXECUTE format('DROP TRIGGER IF EXISTS %1$s_touch_read_marker_insert ON phis.%1$s', scope_table);
+    EXECUTE format(
+      'CREATE TRIGGER %1$s_touch_read_marker_insert AFTER INSERT ON phis.%1$s '
+      'REFERENCING NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION phis.site_read_touch_markers()',
+      scope_table);
+    EXECUTE format('DROP TRIGGER IF EXISTS %1$s_touch_read_marker_update ON phis.%1$s', scope_table);
+    EXECUTE format(
+      'CREATE TRIGGER %1$s_touch_read_marker_update AFTER UPDATE ON phis.%1$s '
+      'REFERENCING OLD TABLE AS old_rows NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION phis.site_read_touch_markers()',
+      scope_table);
+    EXECUTE format('DROP TRIGGER IF EXISTS %1$s_touch_read_marker_delete ON phis.%1$s', scope_table);
+    EXECUTE format(
+      'CREATE TRIGGER %1$s_touch_read_marker_delete AFTER DELETE ON phis.%1$s '
+      'REFERENCING OLD TABLE AS old_rows FOR EACH STATEMENT EXECUTE FUNCTION phis.site_read_touch_markers()',
+      scope_table);
+    EXECUTE format('DROP TRIGGER IF EXISTS %1$s_touch_read_marker_truncate ON phis.%1$s', scope_table);
+    EXECUTE format(
+      'CREATE TRIGGER %1$s_touch_read_marker_truncate AFTER TRUNCATE ON phis.%1$s '
+      'FOR EACH STATEMENT EXECUTE FUNCTION phis.site_read_touch_markers()',
+      scope_table);
+  END LOOP;
+END;
+$$;
+
 CREATE TABLE IF NOT EXISTS phis.server_addons (
   addon_id VARCHAR(255) PRIMARY KEY,
   package_name VARCHAR(255) NOT NULL,

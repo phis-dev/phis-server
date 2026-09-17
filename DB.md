@@ -1428,6 +1428,20 @@ Contract:
   path filling a missing translation may set it.
 - Only equality of a marker means anything; it is not a count and not ordered.
 
+### `phis.site_read_marker`
+
+- `site_id SMALLINT PRIMARY KEY REFERENCES phis.sites(id) ON DELETE CASCADE`, `marker BIGINT NOT NULL`
+- values from `phis.site_read_marker_seq`; a Site nothing was published for yet has no row
+
+Contract:
+- Maintained only by statement-level triggers (`phis.site_read_touch_markers()`): any update of the
+  `sites` row; an inserted or deleted row of `site_page_scopes`, `site_area_scopes`, `site_nav_scopes` or
+  `site_theme_scopes`; an update there only when `published_revision_id` changed, and for Pages also
+  `path` or `tombstoned_at`. Draft pointers do not move it. Application code never writes it.
+- `GET /api/v1/site` carries it as `readMarker` (`"0"` without a row). A Site process refreshes its config
+  at most every few seconds and empties its other read caches, Navigation among them, when it moved.
+- Only equality of a marker means anything; it is not a count and not ordered.
+
 ## Content and Translation Model
 
 - The global `tr_*` tables remain reserved for `phi-core` text and global label sets that are not tied to any site.

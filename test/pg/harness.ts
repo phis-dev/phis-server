@@ -17,6 +17,7 @@ export const PHI_TEST_SITE_KEY_PREFIX = "pgtest-";
 const REQUIRED_TABLES = [
   "sites",
   "site_page_scopes",
+  "site_read_marker",
   "site_cms_references",
   "media_assets",
   "media_spaces",
