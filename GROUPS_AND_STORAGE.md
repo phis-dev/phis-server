@@ -10,7 +10,7 @@ Roles, group claims, and shared resource visibility are governed by
 [AUTHORIZATION.md](./AUTHORIZATION.md). Server extension loading and Storage Provider factories are
 governed by [SERVER_ADDONS.md](./SERVER_ADDONS.md). Stable CMS Asset references are governed by
 [REFERENCES.md](./REFERENCES.md). Local and future external user/group Directory providers are governed
-by [DIRECTORY_PROVIDERS.md](./DIRECTORY_PROVIDERS.md).
+by [DIRECTORY_PROVIDERS.md](./design/DIRECTORY_PROVIDERS.md).
 
 This target is a v1 ABI break. The existing `media_groups` folder vocabulary, ambiguous Asset
 `user_id`, global `local | s3` switch, persisted public URL, and Storage-key delivery path must not
@@ -88,7 +88,7 @@ The membership path is assertion- and provenance-aware from v1. Local Core membe
 SCIM, Entra, or other Directory assertions may contribute independently to one effective membership.
 The effective flags are the union of active source rows; removing one source must not remove another
 source's contribution. Exact provider bindings, synchronization, expiry, and account-linking behavior
-follow `DIRECTORY_PROVIDERS.md`.
+follow `design/DIRECTORY_PROVIDERS.md`.
 
 Provider-owned group kinds may add provider-local metadata, but they use the same Core membership and
 authorization path. They must not create another effective group table or Client-only evaluator.
@@ -195,8 +195,8 @@ bound, its effective assertions are omitted and protected resources fail closed 
 healthy source assertions remain effective.
 
 Support teams remain a Support-domain profile because routing, queues, and ticket assignment are not
-generic membership properties. Their membership moves to `site_group_members`; the Support profile
-references exactly one group and retains only Support-specific state.
+generic membership properties. Their membership is still held in `support_team_members`; moving it onto
+general groups is planned in [GROUPS_AND_STORAGE_PLANNED.md](./design/GROUPS_AND_STORAGE_PLANNED.md).
 
 ## 3. Media Spaces
 
@@ -291,10 +291,9 @@ become ineffective while local and other healthy sources remain, and recovery re
 binding. The group row and its Space are untouched throughout.
 
 An Asset records immutable `created_by_user_id` attribution separately from custody. An uploader is not
-the Asset's custodian; the owning Space is. The two are not the same question and the delivery policy
-reads the first, not the second -- see section 6. Moving an Asset between Spaces is an explicit transfer
-of custody requiring source and destination authorization, quota reservation, reference validation, and,
-when required, physical Storage migration.
+the Asset's custodian; the owning Space is. The two are not the same question -- see section 6. Moving
+an Asset between Spaces is not implemented; the planned transfer of custody is in
+[GROUPS_AND_STORAGE_PLANNED.md](./design/GROUPS_AND_STORAGE_PLANNED.md).
 
 ## 4. Folders
 
@@ -462,74 +461,16 @@ Asset deletion additionally requires a zero authoritative reference count. CMS r
 delete diagnostics follow [REFERENCES.md](./REFERENCES.md).
 
 Builder, Editor, and Public CMS resolution use only Site Space Assets. A User or Group Asset cannot be
-embedded into published Site content merely because its id is known. Publish validation rejects an Asset
-whose delivery audience is narrower than the published Page audience.
+embedded into published Site content merely because its id is known. Validating an Asset's delivery
+audience against the Page audience at publish is planned, not implemented.
 
-### What a Space answers, and what it must not
+### Custody, audience, and transfer
 
-A Space answers two questions: who pays for these bytes, and who administers them. It must not also
-answer who may read them.
-
-Deriving the audience from custody is what breaks the first real case. A submitted receipt belongs in
-its accounting group's custody -- a business record has to outlive the account of whoever handed it in,
-and must not sit on that person's quota forever. But its audience is not the group: another member of
-the same group has no business reading someone's receipt. Today that separation cannot be expressed at
-all. Delivery policy `Group` reaches every effective member of the owning group, and policy `User`
-additionally demands that the Space itself be a User Space -- so a receipt in group custody marked
-`User` would be readable by nobody, not even its submitter.
-
-Two rules keep the axes apart:
-
-- **`User` means the person the file belongs to, not the Space it sits in**: its `created_by_user_id`,
-  and the owner of the Space when that Space is a User Space. Custody may then move without the audience
-  moving with it.
-- **Material a Module mediates is `Internal`**: no browser URL reaches it, and the Module decides on its
-  own surface who is shown it, because only the Module knows that this is the handler of invoice 4711.
-  Core is not the place where that question can be answered.
-
-A per-Asset audience descriptor -- naming people, groups, or roles independently of both custody and
-purpose -- is deliberately not introduced. The two rules above carry every case in sight, and a
-descriptor nothing fills would only be a contract to get wrong later.
-
-### Moving an Asset between Spaces
-
-Transfer is a change of custody and nothing else. It does not widen, narrow, or otherwise touch an
-Asset's audience: what a transferred Asset was readable by before, it is readable by afterwards.
-
-There is deliberately no generic transfer endpoint: what does not exist as a route cannot be called. The
-mechanism is server-internal and reachable only from a Module handler, which has already authorized its
-own operation.
-
-The two sides check what each of them knows:
-
-```text
-Core     may the actor reach the SOURCE Space?     the ordinary Space authorization
-         is the Asset in a usable state?           lifecycle, Space membership
-         does it fit the TARGET quota?             the atomic reservation
-Module   is the occasion real?                     "invoice 4711 belongs to this user"
-```
-
-A client names the occasion, never the target. "A receipt for invoice 4711" leaves the destination to
-the Module, which derives it; a request that could name a Space would have bypassed the authorization
-before anything was checked.
-
-Submissions are created in the submitter's own Space and only then taken over by the occasion. That is
-also what limits abuse without any additional mechanism: whoever floods a group fills their own quota
-first, because the file is theirs until the operation accepts it. How many submissions one occasion
-accepts is the Module's business -- Core counts bytes, not meaning.
-
-Whether a transfer copies or moves follows from the occasion. A submitter may keep their receipt; a
-record taken into custody does not need to stay behind in two places.
-
-The Site Space is not a transfer target. Nothing produces publishable material outside it: Builder and
-Editor write into it directly, and CMS resolution reads only from it. A promotion command would be a
-crossing without a case, and the case is what would have to define whether it copies, what happens to
-the audience, and who may invoke it. When a contributor flow exists that authors publishable material
-without Site Space authority, that is when this is decided -- not before.
-
-Every transfer is recorded durably with source, target, actor, occasion, and mode, queryable per Space.
-If a group does fill up, that record is what says who put what there, and on what grounds; a rotating
-log file cannot answer it.
+A Space answers who pays for an Asset's bytes and who administers them. Delivery today still derives part
+of the audience from custody: policy `User` requires the Asset to sit in that user's User Space. Separating
+the two axes and moving Assets between Spaces are designed in
+[GROUPS_AND_STORAGE_PLANNED.md](./design/GROUPS_AND_STORAGE_PLANNED.md) and not implemented; there is no
+transfer operation.
 
 ## 7. Quotas and upload reservations
 
@@ -904,8 +845,8 @@ asynchronous jobs as appropriate.
 
 Canonical delivery resolves by stable Asset id and optional variant key, not by a browser-supplied
 Storage key. Public Site Assets may resolve to an immutable proxy or CDN URL. User, Group,
-authenticated, and internal Assets use private proxy responses or short-lived signed URLs. Protected
-responses never use shared public immutable caching.
+authenticated, and internal Assets use private proxy responses; signed delivery URLs are planned, not
+implemented. Protected responses never use shared public immutable caching.
 
 ### Who may see an Asset
 
@@ -937,23 +878,15 @@ content resolves through the Core resolver, which admits Site Space Assets only 
 from embedding someone else's file. A Module rendering its own collection resolves through its own data
 source and is bound by the delivery policy alone. Neither needs to be relaxed for the other.
 
-`delivery_revision` invalidates previously issued grants without changing Asset identity. A `change
-key` operation increments this revision and revokes old signed links. Physical provider encryption-key
-rotation is a separate operator Storage migration and must not be conflated with delivery grant
-rotation.
+`delivery_revision` invalidates previously delivered URLs without changing Asset identity: every Asset
+update increments it. Physical provider encryption-key rotation is a separate operator Storage migration
+and must not be conflated with delivery revision rotation.
 
 ## 11. Storage migration and failure behavior
 
-Changing an existing Asset's profile is an explicit resumable job:
-
-1. copy to the target Provider;
-2. verify size, checksum, content type, and required metadata;
-3. atomically switch the Asset or variant profile/key while preserving its id;
-4. retain the old object for a bounded recovery window;
-5. remove it only after successful reconciliation.
-
-A failed migration leaves the original binding authoritative. Folder moves, title edits, and delivery
-policy changes do not start Storage migration.
+An Asset keeps the Storage Profile it was stored under; nothing moves an existing Asset to another
+profile. Folder moves, title edits, and delivery policy changes do not touch storage. The migration job
+is designed in [GROUPS_AND_STORAGE_PLANNED.md](./design/GROUPS_AND_STORAGE_PLANNED.md).
 
 Normal queries resolve accessible Space ids once per request and filter indexed Asset and Folder rows.
 They must not issue one membership query per Asset or list a Storage prefix. Group membership changes

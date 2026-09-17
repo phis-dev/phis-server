@@ -37,7 +37,7 @@ export type SiteNavigationFolderTarget =
   | { kind: "folder"; address: string };
 
 /**
- * Where a container leads when its folder address is requested (TODOS.md, "Folder addresses"). The
+ * Where a container leads when its folder address is requested (REFERENCES.md, "Folder addresses"). The
  * Builder resolves `address` when the Draft is saved -- the folder its direct children share, package
  * namespace included -- and writes a `target` that one of those children stands for. Whether it still
  * does is decided when the address is looked up.
@@ -802,7 +802,7 @@ export async function getSiteCurrentNavigationDraft(siteId: number, input: { key
 
 /**
  * Carries the folder targets a save changed into every other Navigation of the Area that holds the same
- * folder (TODOS.md, "Folder addresses": one address, one target). Only targets this save changed travel:
+ * folder (REFERENCES.md, "Folder addresses": one address, one target). Only targets this save changed travel:
  * a Navigation saved from an older state, with nobody touching its targets, must not carry those back.
  * Each Navigation that takes one gets a new Draft revision on top of its current one -- a Navigation with
  * only a published revision gets its first Draft -- and publishing stays each Navigation's own.
@@ -884,7 +884,7 @@ async function carrySiteNavigationFolderTargetsWithDb(
 }
 
 /**
- * Where a folder address leads on the live Site (TODOS.md, "Folder addresses"), as the Page reference at
+ * Where a folder address leads on the live Site (REFERENCES.md, "Folder addresses"), as the Page reference at
  * the end of its chain, or null for 404. It reads the published Navigations of the Area, the latest
  * publish deciding when two disagree, and follows a sub-folder target to that folder's own target. Every
  * step lies deeper than the one before, so the chain ends; the bound is only a guard. A Site Page must be

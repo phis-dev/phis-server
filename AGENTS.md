@@ -106,8 +106,8 @@
 - General Site groups, Media Spaces, folders, quotas, Storage Profiles, Storage Provider Add-ons, and
   protected Asset delivery must follow the normative target v1 contract in `GROUPS_AND_STORAGE.md`.
 - Provider-neutral Site user/group administration, stable Directory bindings, membership provenance,
-  scoped synchronization, and future LDAP/SCIM/Entra Add-ons must follow the normative target v1
-  contract in `DIRECTORY_PROVIDERS.md`.
+  scoped synchronization, and future LDAP/SCIM/Entra Add-ons must follow the design
+  in `design/DIRECTORY_PROVIDERS.md`.
 - Site/client extensions are Modules; server extensions are Add-ons. Every Module binds to exactly one
   Add-on or to Core.
 - One package carries one product, named for the product and not for the half. The Add-on half is

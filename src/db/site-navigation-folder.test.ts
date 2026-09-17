@@ -37,7 +37,7 @@ function customContainer(folder: unknown) {
 const parse = (value: unknown) => parseSiteNavigationOverlay(value, "public:header");
 
 /**
- * A container's folder address and what it leads to (TODOS.md, "Folder addresses"). The target names a
+ * A container's folder address and what it leads to (REFERENCES.md, "Folder addresses"). The target names a
  * Page or a sub-folder rather than a child of this Navigation, so another Navigation can take it over.
  */
 describe("A Navigation container's folder", () => {

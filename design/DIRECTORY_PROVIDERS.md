@@ -1,5 +1,11 @@
 # User and Group Directory Provider Contract
 
+**Status: design.** Nothing beyond local groups is implemented. Core serves local groups through
+`groups:v1` and records a source Provider, connection, and assertion key on each membership row; the
+`directory_connections`, `directory_user_bindings`, and `directory_group_bindings` tables exist but
+nothing reads or writes them, and the Groups routes return no authority metadata or operation
+capabilities yet.
+
 This document defines the normative target-v1 extension boundary that allows Site user and group
 administration to use local Core data in v1 and LDAP, Active Directory, SCIM, Entra ID, or another
 Directory Provider later without changing the public Users/Groups ABI.
@@ -9,11 +15,11 @@ facade, stable Phi identities, operation capabilities, and membership provenance
 providers. Implementing an external Directory Provider is deferred work; defining a second Users or
 Groups API is forbidden.
 
-Authentication and account linking remain governed by [AUTHENTICATION.md](./AUTHENTICATION.md).
-Viewer claims and access evaluation remain governed by [AUTHORIZATION.md](./AUTHORIZATION.md). General
+Authentication and account linking remain governed by [AUTHENTICATION.md](../AUTHENTICATION.md).
+Viewer claims and access evaluation remain governed by [AUTHORIZATION.md](../AUTHORIZATION.md). General
 groups and Group Media Spaces remain governed by
-[GROUPS_AND_STORAGE.md](./GROUPS_AND_STORAGE.md). Provider loading remains governed by
-[SERVER_ADDONS.md](./SERVER_ADDONS.md).
+[GROUPS_AND_STORAGE.md](../GROUPS_AND_STORAGE.md). Provider loading remains governed by
+[SERVER_ADDONS.md](../SERVER_ADDONS.md).
 
 ## 1. Permanent Core facade
 
@@ -130,7 +136,7 @@ an AD `managedBy`, a naming convention, an owner relation -- may assert it. Dire
 equivalent of the cumulative Member/Author/Editor/Manager ladder in the first place: LDAP and AD groups
 have members and nothing else, SCIM carries `members`. Letting a source assert Manager would also make
 the level unrevocable locally, because provider-managed assertions are not locally editable, and
-[GROUPS_AND_STORAGE.md](./GROUPS_AND_STORAGE.md) reserves granting and revoking it to Developer and
+[GROUPS_AND_STORAGE.md](../GROUPS_AND_STORAGE.md) reserves granting and revoking it to Developer and
 Admin. A Site whose memberships come from a Directory therefore has its Editors and Managers named
 locally, as a second source row beside the asserted one.
 
@@ -231,7 +237,7 @@ Nested groups are resolved by the Provider or reconciliation service with explic
 cycle, and timeout limits. Core stores the resulting effective assertions and does not recursively query
 the external Directory during viewer requests. Core groups are flat and carry no edges of their own; the
 reasoning, and the shape any future nesting has to take, is in
-[GROUPS_AND_STORAGE.md](./GROUPS_AND_STORAGE.md).
+[GROUPS_AND_STORAGE.md](../GROUPS_AND_STORAGE.md).
 
 A flattened membership still says where it came from. `source_binding_or_assertion_key` names the
 Directory group that actually asserted it, not the group the row hangs on, so a nested membership stays
@@ -257,7 +263,7 @@ and Groups reconciliation services and never writes Core authorization tables di
 
 Examples of later physical packages are `@phis/ldap`, `@phis/scim`, and
 `@phis/entra`. Their SDKs and protocol clients remain server-only and never enter
-`@phis/ui`, `@phis/groups`, a Site package, or a browser bundle.
+`@phis/ui`, a Site package, or a browser bundle.
 
 ## 10. Package and priority boundary
 
@@ -265,10 +271,9 @@ The local `groups:v1` Core route, provider-ready projection, provenance-aware me
 identities, and operation capabilities are v1/P0 foundations. They do not require a Groups Module or
 Directory Add-on.
 
-The first-party Groups administration UI is a separate P2 package, `@phis/groups`, installed and
-activated through `phis-cli`. It binds to the Core `groups:v1` capability and contains its own Module
-presets, Providers, Controllers, Forms, labels, and Admin/App paths. None of that feature UI belongs in
-`@phis/ui`.
+The first-party Groups administration UI is the Groups Runtime Module `@phis/ui/modules/groups`, which
+ships inside `@phis/ui` and binds to Core. It contributes the Admin and App `/groups` pages, and it
+holds no Directory Provider code: a Directory changes what the Core routes return, not the Module.
 
 Actual LDAP, Active Directory, SCIM, Entra, or other Directory Provider Add-ons are P2 implementations.
 Adding one must not change the Core route family, Phi identities, access-policy shape, group references,

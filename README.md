@@ -59,12 +59,13 @@ The normative target v1 Site viewer-role, provider-claim, persistence, and acces
 lives in [AUTHORIZATION.md](./AUTHORIZATION.md).
 
 The provider-neutral Site user/group administration and future LDAP, Active Directory, SCIM, Entra, or
-other Directory Add-on boundary lives in [DIRECTORY_PROVIDERS.md](./DIRECTORY_PROVIDERS.md).
+other Directory Add-on boundary lives in [DIRECTORY_PROVIDERS.md](./design/DIRECTORY_PROVIDERS.md).
 
 The normative target v1 global-user, Site authentication-method, identity-linking, session, Auth Module,
 and CLI-recovery contract lives in [AUTHENTICATION.md](./AUTHENTICATION.md).
 
 Approved but not yet implemented infrastructure and contract work is tracked in [TODOS.md](./TODOS.md).
+Designs and plans that are not contracts live in [design/](./design/README.md).
 
 The terminology is strict:
 
@@ -222,6 +223,14 @@ Pure builders can create and update builder drafts but cannot publish without an
   and the time it was written, never content. Opt-in, Public only, live only; with the flag the read
   answers 200 with `preset: null` while the Area has no published revision. The Site resolves each
   candidate itself, so visibility, redirects and `noindex` stay decided in one place.
+- An Area states the head of its Pages in `config.shell.meta`, beside `rootRoute`, and it travels with the
+  Area structure draft: `titleTemplate` and `defaultTitle` (strings), `index` and `sitemap` (booleans). The
+  Area write refuses an unknown key, a switch that is not a boolean, a title that is not a string or is
+  longer than 200 characters, and a non-empty `titleTemplate` without `%s`, because a template without the
+  placeholder gives every Page of the Area the same title. The Site reads these answers for the page title,
+  `robots`, and the sitemap; every Area but Public is `noindex` whatever is stored. Canonical and
+  `hreflang` alternates, `/sitemap.xml`, and `robots.txt` are rendered by the Site and specified in
+  `@phis/ui` (`README.md`, `NEXT_INTEGRATION.md`).
 - Normal live reads resolve the published CMS revision state only.
 - Normal published-live reads are the primary performance path and must not pay draft-preview or builder overhead.
 - `/public` and `/app` are the primary live-performance Areas and should stay on the published-only read path unless an explicit preview request is active.

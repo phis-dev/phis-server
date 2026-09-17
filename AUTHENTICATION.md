@@ -22,8 +22,9 @@ not covered by this Site-viewer contract.
 - password verification, OAuth 2.0/OpenID Connect callbacks, WebAuthn, TOTP, one-time codes, recovery,
   account linking, and session creation or revocation;
 - CSRF protection, OAuth state, nonce, PKCE, redirect validation, rate limiting, and audit events;
-- the common first-party adapters for password, passkey, Google, Apple, GitHub, Microsoft identity
-  platform, TOTP, email OTP, SMS OTP, and recovery codes.
+- the common first-party adapters for password, Google, Apple, GitHub, Microsoft identity platform,
+  TOTP, and recovery codes. Passkey, email OTP, and SMS OTP are reserved method keys with policy fields
+  but no adapter; their design is in [AUTHENTICATION_PLANNED.md](./design/AUTHENTICATION_PLANNED.md).
 
 The first-party Site/client Auth Module is `@phis/ui/auth`. It owns presentation and browser
 orchestration only. It may render login, registration, challenge, enrollment, recovery, and Site Auth
@@ -242,19 +243,12 @@ Password credentials are global user credentials whose availability is controlle
 hashing, verification, rehash policy, reset-token consumption, and session revocation are Core-only
 operations. Login and recovery responses must not disclose whether an email or account exists.
 
-Passkeys use WebAuthn. Enrollment and assertion validation are server-generated challenges bound to the
-Site's approved origin and RP id. A passkey credential stores the credential id, public key, signature
-counter/backup state, transports where useful, user handle, RP scope, and timestamps; the private key
-never leaves the authenticator. A passkey may serve as primary authentication or satisfy a stronger
-factor according to Site policy.
-
 TOTP enrollment is Site-scoped. Core creates the secret and `otpauth` payload; the Auth UI may render its
 QR code and manual setup key. Enrollment becomes active only after the user confirms a valid six-digit
 code. Recovery codes are generated once, displayed once, stored only as hashes, and consumed atomically.
 
-Email and SMS delivery are transports, not trust authorities. Core creates and validates the one-time
-challenge while the configured mail/SMS service only delivers it. Codes are short-lived, attempt-limited,
-single-use, and bound to Site, user/workflow, and intended stage.
+Passkeys (WebAuthn) and email or SMS one-time codes are not implemented; see
+[AUTHENTICATION_PLANNED.md](./design/AUTHENTICATION_PLANNED.md).
 
 The server chooses the next challenge and returns an opaque challenge id plus a closed UI challenge kind.
 The client renders that challenge; it must not reconstruct the authentication state machine from enabled
@@ -485,13 +479,11 @@ authenticates resolves a value.
 
 ## 16. Bootstrap, disablement, and preset restore
 
-The first Site Admin is created out of band through `phis-cli` or through a single-use, short-lived setup
-token produced by `phis-cli`. First-time setup is accepted only while the Site has no Admin and the token
-is valid. It may bind a password, passkey, or validated external identity and must create the global user,
-Site membership, and Core Admin role claim atomically. Public registration never grants an Admin role.
-
-`phis-cli` also owns emergency recovery: unlock an Admin, reset factors, revoke sessions, or issue a new
-single-use bootstrap flow under explicit operator authority.
+The first Site Admin is created out of band through `phis site admin --site <site key> --email <email>`,
+which creates the global user with a password when the address is new, and writes the Site membership and
+the Core Admin role claim in one transaction. `--list` and `--revoke` read and remove the grant. Public
+registration never grants an Admin role. A setup-token flow and further CLI recovery operations are
+planned in [AUTHENTICATION_PLANNED.md](./design/AUTHENTICATION_PLANNED.md).
 
 Disabling the Auth Module is permitted and has no hidden runtime fallback. Existing sessions and Core
 logout continue to work; login/settings routes contributed by the disabled Module do not. The Builder may

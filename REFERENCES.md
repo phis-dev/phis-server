@@ -54,6 +54,63 @@ than overwriting the Page that took it.
 Publishing is therefore the one place a live Site Page address changes, and the audit event naming the
 move is emitted there rather than where it was requested.
 
+## A Page is never a folder
+
+A Site Page whose path lies beneath another Site Page's path in the same Area is refused when it is
+written, and so is the reverse -- a Page at `/docs` while `/docs/a` exists. Live, pending, and tombstoned
+addresses all count, because deletion reserves a path; `/` is the Area root slot and not a folder. The
+check runs on create, on the path change command, and on the publish that promotes a pending path.
+
+Equality is guarded by the partial unique indexes, but "beneath" is a prefix relation no index can
+express. Every writer that creates, moves, or promotes an address therefore takes a per-Area transaction
+lock (`pg_advisory_xact_lock` in `src/db/site-pages.ts`) before the check, which makes the check the
+guarantee rather than advice. The answers are `409 path_collision` for an address another Page holds and
+`409 path_nested` for one that would put a Page beneath another, with `{ error, message }`.
+
+## Creating a Page
+
+`POST /api/site/cms/page/create` creates a Site Page and only creates. When a Scope already holds the
+path, it writes nothing and answers `409 page_exists` with the Page -- `{ id, reference, path, tombstoned }`
+-- so the Builder opens that Page instead of laying a blank draft over it. A plain save cannot make that
+distinction: it addresses Pages by path too, and finding one is its normal case. A tombstoned Scope on
+the path counts as holding it and is answered the same way, with `tombstoned: true`. The address rules
+above apply to the path of a new Page.
+
+## Folder addresses
+
+A folder is a path segment with Pages beneath it -- `/docs` while `/docs/guides/a` exists. Because a Page
+is never a folder, a folder address never meets a Page path, and a request for one is answered from the
+published Navigation rather than from a store of its own.
+
+- *The target is authored on the Navigation container.* A container, custom or a Module container's
+  override, carries `folder: { address, target }` in the Navigation overlay. `target` names what the
+  chosen direct child stands for -- a Page by reference, Site or Module, or a sub-folder by address --
+  never the child's id, which exists in one Navigation only, and never a path composed from the menu
+  hierarchy. A Page target is indexed like a link's target. No target means 404.
+- *The address* is the folder the container's direct children share, each child contributing the folder
+  it lies in; children from different folders, or only from the Area root, give it none. It is resolved
+  again when the Draft is saved or published, package namespace included, so outside Public it is the path
+  a request carries.
+- *Write strict, read allow.* A target outside the container's direct children cannot be saved, and one
+  Navigation holding the same folder twice with two targets is refused. Whatever goes stale afterwards --
+  the target left the folder, was tombstoned or unpublished, the chain ends in a container without a
+  target, the folder lost its last Page -- reads as no target. No check runs after saving, and nothing
+  repairs stored data.
+- *One address, one target.* A folder can appear in several Navigations of an Area. Saving a Draft carries
+  a changed target into every other Navigation holding the same folder, in the save transaction. Undo stays
+  per Navigation; the next save carries the value again.
+- *Live on publish, in one hop.* `GET /api/v1/site/nav/folder?area=&path=` (internal token) reads the
+  published Navigations of the Area, newest published revision first, follows sub-folder targets, and
+  answers `{ reference }` for a Page, or 404. It refuses a Site Page that is unpublished, tombstoned, or in
+  another Area; a Module Page reference is handed to the Site, which alone knows Module routes. A
+  Navigation revision carries no publish time, so its creation time stands in. The chain is resolved at
+  lookup rather than written at publish, so a publish stays a pointer move and a renamed target needs no
+  republish.
+- *At the Site* the lookup sits on the miss path only: the Site asks it where no Page answers and turns a
+  reference into a 307, as it does for a forwarding Area root. The locale prefix stays outside, since paths
+  are locale-neutral.
+- *Sitemap:* a folder address is a redirect and is not listed; the Pages behind it already are.
+
 ## Reference identities and resolution
 
 Structured internal Page targets contain one stable target variant:

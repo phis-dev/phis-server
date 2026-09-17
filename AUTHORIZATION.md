@@ -6,7 +6,7 @@ responsive visibility consume this contract through `@phis/ui`; they must not de
 authorization model. General group persistence, membership semantics, and Media Space authorization
 are governed by [GROUPS_AND_STORAGE.md](./GROUPS_AND_STORAGE.md). Local and external user/group Directory
 provider bindings and assertion provenance are governed by
-[DIRECTORY_PROVIDERS.md](./DIRECTORY_PROVIDERS.md).
+[DIRECTORY_PROVIDERS.md](./design/DIRECTORY_PROVIDERS.md).
 
 Authentication, global user identity, Site membership admission, and session creation are governed by
 [AUTHENTICATION.md](./AUTHENTICATION.md). This document begins after a valid Site session exists; role

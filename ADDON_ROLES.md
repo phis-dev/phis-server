@@ -209,8 +209,9 @@ The Add-on data path has no transfer. A ticket cannot be escalated from one team
 scope columns are absent from an update descriptor by construction -- there is nowhere to name
 `group_id`, and inserting into a foreign group is refused for the reason above.
 
-The shape it would have to take is already written down for Media Assets in `GROUPS_AND_STORAGE.md` §6,
-"Moving an Asset between Spaces", and the reasoning transfers unchanged:
+The shape it would have to take is already written down for Media Assets in
+[GROUPS_AND_STORAGE_PLANNED.md](./design/GROUPS_AND_STORAGE_PLANNED.md), "Moving an Asset between Spaces",
+and the reasoning transfers unchanged:
 
 - **No generic endpoint.** "What does not exist as a route cannot be called." A named operation with its
   own guard, not a hole in a general one.
