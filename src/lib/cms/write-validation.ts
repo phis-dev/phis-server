@@ -19,7 +19,7 @@ import {
 } from "@/lib/cms/instance-id";
 import { collectCmsSignalRouteErrors } from "@/lib/cms/signal-validation";
 import { readPhiPageReference } from "@/lib/internal-references";
-import type { PhiRoleProviderId, PhiViewerAccessPolicy } from "@/lib/authorization";
+import { readPhiViewerAccessPolicy, type PhiViewerAccessPolicy } from "@/lib/authorization";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -214,6 +214,20 @@ function readOptionalInteger(value: unknown, label: string, errors: string[], op
   return readInteger(value, label, errors, options);
 }
 
+/**
+ * Reads a stored access policy through the vocabulary both processes compile.
+ *
+ * The shapes and their field grammars belong to `@phis/contracts/access`, so this asks the shared reader
+ * instead of restating it. Restating it is what went wrong: this validator knew four of the six shapes,
+ * so a Page, Area or node whose visibility was bound to a Site group or to an Add-on role was refused at
+ * write while the evaluator on both ends was perfectly able to decide it.
+ *
+ * Shape only, as everywhere else on this path. Whether the named provider is installed, enabled for this
+ * Site and compatible is the reader's question, asked again on every request -- an Add-on switched off
+ * long after this write contributes no claims, so its policy matches nobody. That is a Page nobody but a
+ * Site Admin sees, not a stored policy that has become invalid, and refusing it here would instead make
+ * the Page unsavable for as long as the Add-on is off.
+ */
 function readViewerAccessPolicy(
   value: unknown,
   label: string,
@@ -226,29 +240,12 @@ function readViewerAccessPolicy(
     errors.push(`${label} must be an access policy object.`);
     return undefined;
   }
-  if (
-    value.access === "anyone" ||
-    value.access === "anonymous" ||
-    value.access === "authenticated"
-  ) {
-    return { access: value.access };
+  const policy = readPhiViewerAccessPolicy(value);
+  if (!policy) {
+    errors.push(`${label} is invalid.`);
+    return undefined;
   }
-  if (
-    value.access === "roles" &&
-    typeof value.providerId === "string" &&
-    /^@[^/]+\/[^/]+(?:\/[^/]+)*$/.test(value.providerId) &&
-    typeof value.allowedRoleFlags === "number" &&
-    Number.isInteger(value.allowedRoleFlags) &&
-    value.allowedRoleFlags > 0
-  ) {
-    return {
-      access: "roles",
-      providerId: value.providerId as PhiRoleProviderId,
-      allowedRoleFlags: value.allowedRoleFlags,
-    };
-  }
-  errors.push(`${label} is invalid.`);
-  return undefined;
+  return policy;
 }
 
 function readNullableOptionalInteger(value: unknown, label: string, errors: string[], options?: {

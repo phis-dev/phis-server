@@ -184,3 +184,147 @@ describe("CMS overlay write validation", () => {
     }
   });
 });
+
+/**
+ * The write path against the whole access vocabulary, because it once knew only part of it: a Page bound
+ * to a Site group or to an Add-on role could not be saved at all, while the evaluator both processes
+ * share decided that same policy without difficulty.
+ */
+describe("CMS access policy write validation", () => {
+  function withPagePolicy(accessPolicy: unknown) {
+    const payload = buildPagePayload();
+    (payload.page as Record<string, unknown>).accessPolicy = accessPolicy;
+    return validateCmsPageWriteInput(payload);
+  }
+
+  function withNodePolicy(accessPolicy: unknown) {
+    const payload = buildPagePayload();
+    payload.contentWidgets[0]!.config = { accessPolicy };
+    return validateCmsPageWriteInput(payload);
+  }
+
+  it.each([
+    ["anyone", { access: "anyone" }],
+    ["anonymous", { access: "anonymous" }],
+    ["authenticated", { access: "authenticated" }],
+    ["roles", { access: "roles", providerId: "@phis/server/core", allowedRoleFlags: 3 }],
+    ["groups", { access: "groups", providerId: "@phis/server/core", allowedGroupKeys: ["press-team"] }],
+    ["addon-roles", { access: "addon-roles", providerId: "@acme/shop", allowedRoles: ["shop-manager"] }],
+  ])("accepts a %s policy on a Page", (_shape, accessPolicy) => {
+    const result = withPagePolicy(accessPolicy);
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.page?.accessPolicy).toEqual(accessPolicy);
+    }
+  });
+
+  it("accepts a groups policy on a node's config", () => {
+    const result = withNodePolicy({
+      access: "groups",
+      providerId: "@phis/server/core",
+      allowedGroupKeys: ["press-team", "board"],
+    });
+
+    expect(result.ok).toBe(true);
+  });
+
+  it("accepts an addon-roles policy on a Command Toolbar button", () => {
+    const payload = buildPagePayload();
+    payload.contentWidgets[0]!.config = {
+      buttons: [{
+        accessPolicy: { access: "addon-roles", providerId: "@acme/shop", allowedRoles: ["shop-manager"] },
+      }],
+    };
+
+    expect(validateCmsPageWriteInput(payload).ok).toBe(true);
+  });
+
+  it("stores each named group and role once", () => {
+    const result = withPagePolicy({
+      access: "groups",
+      providerId: "@phis/server/core",
+      allowedGroupKeys: ["press-team", "press-team"],
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.page?.accessPolicy).toEqual({
+        access: "groups",
+        providerId: "@phis/server/core",
+        allowedGroupKeys: ["press-team"],
+      });
+    }
+  });
+
+  /*
+   * An Add-on that is not installed is not a bad policy. Its claims are simply absent, so the evaluator
+   * matches nobody and the surface stays hidden until the Add-on comes back -- refusing the write would
+   * instead make the Page unsavable for as long as the Add-on is off, and would lose what the author meant.
+   */
+  it("accepts a policy naming an Add-on this Server has never seen", () => {
+    const result = withPagePolicy({
+      access: "addon-roles",
+      providerId: "@nobody/never-installed",
+      allowedRoles: ["reviewer"],
+    });
+
+    expect(result.ok).toBe(true);
+  });
+
+  it.each([
+    ["an unknown access kind", { access: "everyone" }],
+    ["a provider id that is not package-qualified", {
+      access: "groups", providerId: "core", allowedGroupKeys: ["press-team"],
+    }],
+    ["a groups policy naming no group", {
+      access: "groups", providerId: "@phis/server/core", allowedGroupKeys: [],
+    }],
+    ["a group key outside the stored grammar", {
+      access: "groups", providerId: "@phis/server/core", allowedGroupKeys: ["Press Team"],
+    }],
+    ["a group key that is not a string", {
+      access: "groups", providerId: "@phis/server/core", allowedGroupKeys: [7],
+    }],
+    ["an addon-roles policy naming no role", {
+      access: "addon-roles", providerId: "@acme/shop", allowedRoles: [],
+    }],
+    ["a role name outside the manifest grammar", {
+      access: "addon-roles", providerId: "@acme/shop", allowedRoles: ["Shop Manager"],
+    }],
+    ["a roles policy with no flags set", {
+      access: "roles", providerId: "@phis/server/core", allowedRoleFlags: 0,
+    }],
+    ["a roles policy with negative flags", {
+      access: "roles", providerId: "@phis/server/core", allowedRoleFlags: -1,
+    }],
+    ["a groups policy carrying role flags instead of keys", {
+      access: "groups", providerId: "@phis/server/core", allowedRoleFlags: 3,
+    }],
+  ])("refuses %s", (_reason, accessPolicy) => {
+    const result = withPagePolicy(accessPolicy);
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.details).toContain("page.accessPolicy is invalid.");
+    }
+  });
+
+  it("refuses a malformed policy on a node rather than reading it as public", () => {
+    const result = withNodePolicy({ access: "groups", providerId: "@phis/server/core" });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.details).toContain("contentWidgets[0].config.accessPolicy is invalid.");
+    }
+  });
+
+  it("refuses a policy that is not an object at all", () => {
+    const result = withPagePolicy("authenticated");
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.details).toContain("page.accessPolicy must be an access policy object.");
+    }
+  });
+});

@@ -278,10 +278,20 @@ must enforce the same policy server-side.
 
 CMS write validation (`src/lib/cms/write-validation.ts`) checks the policy object in render-block config,
 in Command Toolbar button config, and in a Page's `accessPolicy`. An explicitly present malformed policy
-makes the write invalid; it is never normalized to public access. The validator accepts `anyone`,
-`anonymous`, `authenticated`, and `roles` policies; a `groups` or `addon-roles` policy is refused at
-write. Module artifact minima and provider ownership are resolved by the compiled `@phis/ui` Module
-catalog, while `@phis/server` remains the authority for claims and protected API operations.
+makes the write invalid; it is never normalized to public access. The validator accepts every shape in
+section 3 and refuses anything else, by reading the policy through `readPhiViewerAccessPolicy` from
+`@phis/contracts/access` rather than restating the shapes: the provider id, the group keys, the Add-on
+role names, and `allowedRoleFlags > 0` are checked exactly as the evaluator's own reader checks them. A
+Page's `accessPolicy` is stored as that reader returns it, with each group key and role name once.
+
+A stored policy states a requirement, not a fact about the Server. Whether the named provider is
+installed, enabled for the Site, compatible, and correctly configured is decided on every read
+(section 7), so a policy naming an Add-on that is absent is **accepted at write and matches nobody at
+render**: its claims are simply not among the viewer's, so the surface is hidden until the Add-on is back,
+apart from the Core Admin override. Refusing it at write would instead make the Page unsavable for as
+long as the Add-on is off and lose what the author stated. Module artifact minima and provider ownership
+are resolved by the compiled `@phis/ui` Module catalog, while `@phis/server` remains the authority for
+claims and protected API operations.
 
 Role-specific convenience guards may exist, but they must delegate to the shared evaluator and must not
 reproduce independent `allowAdmin`, `allowDeveloper`, or similar decision logic.
