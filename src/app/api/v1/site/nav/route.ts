@@ -36,7 +36,9 @@ export async function GET(request: NextRequest) {
   if (rawEffectiveRevision.length > 0 && !hasRevision) {
     return NextResponse.json({ error: "Invalid nav revision." }, { status: 400 });
   }
-  if (rawReviewRevision.length > 0) {
+  // Any stored revision may be a draft, so asking for one by id takes the same session a review does.
+  // The internal token alone only proves the Site is asking, not that the visitor may see unpublished work.
+  if (hasRevision) {
     const { error } = await requireSiteCmsPreviewApiContext(request);
     if (error) {
       return error;
