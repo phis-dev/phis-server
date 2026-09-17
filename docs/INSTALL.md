@@ -258,7 +258,7 @@ What `init` writes (scaffold version 3):
 | `src/app/(static)/static-render/[marker]/[mode]/[root]/` | Route group for the anonymous Public Area render that is cached per page, locale and colour scheme. |
 | `src/app/api/{auth,site,addons,hooks}/[[...path]]/route.ts`, `src/app/api/site/forms/route.ts` | Thin proxies to `@phis/server`. |
 | `src/app/api/site/module-diagnostics/route.ts`, `src/app/api/site/navigation-target/route.ts` | Used by `phis site check` and navigation. |
-| `src/app/media/[...asset]/route.ts`, `src/app/sitemap.xml/route.ts`, `src/app/robots.txt/route.ts` | Media delivery and crawler files. |
+| `src/app/sitemap.xml/route.ts`, `src/app/robots.txt/route.ts` | The crawler files. Asset bytes travel through the `/api/site` proxy. |
 | `src/app/globals.css` | Empty Site stylesheet. |
 | `src/runtime-modules/` | Area hosts that receive the Module projection. |
 | `src/generated/site-modules.ts`, `site-modules-client.ts`, `site-modules-authoring-client.ts`, `site-modules-fonts.ts` | The Module projection, empty until `phis module add`. |
@@ -353,8 +353,8 @@ block on port 80 for the Site's host name with `client_max_body_size 2g`, `proxy
 of 5 s when you edit it: otherwise nginx reuses connections Node has closed and `POST` requests fail
 with `502` (the phis-host README, section "Web server in front of several instances", has the details
 and the Apache equivalent). Add TLS (a `listen 443 ssl` block and certificates), enable it and reload
-nginx. The Site's proxy routes forward `/api/auth`, `/api/site`, `/api/addons`, `/api/hooks` and
-`/media` to the server internally, so the server itself needs no public host name for the Site.
+nginx. The Site's proxy routes forward `/api/auth`, `/api/site`, `/api/addons` and `/api/hooks` to the
+server internally, so the server itself needs no public host name for the Site.
 Expose the operator UI (`/operator`) only to operators.
 
 The same keep-alive rule applies to a proxy in front of several server instances; the server's own
