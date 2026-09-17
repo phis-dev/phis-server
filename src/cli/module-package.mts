@@ -133,6 +133,32 @@ function statesCssSideEffects(sideEffects: unknown) {
   return false;
 }
 
+/**
+ * Whether an installed package declares typefaces through a `./fonts` boundary.
+ *
+ * The one entrypoint that cannot be read at all: it calls `next/font/local` at module scope, which
+ * throws outside a Next build, and `phis module` loads no Module anyway. What it can see is the
+ * package's own manifest in the Site's `node_modules` -- the same file `check` reads the four fixed
+ * entrypoints from -- so the export map is taken as the declaration.
+ *
+ * The subpath is optional, so its absence is an answer and not a fault. A package that exports it and
+ * ships no file behind it is a broken package and says so at the Site's build; leaving it out of the
+ * projection here would instead be a Site whose Modules quietly render in the core families.
+ */
+export function siteModulePackageDeclaresFonts(siteRoot: string, packageName: string) {
+  const manifestFile = path.join(
+    siteRoot,
+    "node_modules",
+    ...packageName.split("/"),
+    "package.json",
+  );
+  if (!existsSync(manifestFile)) {
+    return false;
+  }
+  const manifest = JSON.parse(readFileSync(manifestFile, "utf8")) as PackageManifest;
+  return resolveExportTarget(manifest, "./fonts") !== null;
+}
+
 export function inspectSiteModulePackage(
   siteRoot: string,
   packageName: string,

@@ -305,18 +305,12 @@ function rootErrorAreaFile() {
 
 function siteModuleProjectionFiles() {
   // Exactly what `phis module` writes for no Modules, so the first `module add` changes only the lists.
-  const { server, client, authoringClient } = buildSiteModuleProjection([]);
+  const { server, client, authoringClient, fonts } = buildSiteModuleProjection([], []);
   return {
     "src/generated/site-modules.ts": server,
     "src/generated/site-modules-client.ts": client,
     "src/generated/site-modules-authoring-client.ts": authoringClient,
-    "src/generated/site-modules-fonts.ts":
-      `import type { PhiModuleFontContributions } from "@phis/ui/module";\n\n`
-      + `/**\n`
-      + ` * The typefaces installed Modules declare through a \`./fonts\` boundary; the root layout composes the\n`
-      + ` * font catalogue from them once. Empty until a Module that ships one is installed.\n`
-      + ` */\n`
-      + `export const PHI_SITE_MODULE_FONTS: PhiModuleFontContributions = [];\n`,
+    "src/generated/site-modules-fonts.ts": fonts,
   };
 }
 

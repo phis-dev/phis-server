@@ -456,6 +456,12 @@ A Site Module is a package the Site build imports through the generated projecti
 `src/generated/site-modules*.ts`. The desired state is `config/phis-modules.json` in the phis root.
 `module` commands never fetch packages and never build.
 
+The projection is four files, written together: `site-modules.ts` (Server), `site-modules-client.ts`,
+`site-modules-authoring-client.ts`, and `site-modules-fonts.ts`. The fourth lists only the packages
+that export `./fonts`, read from each package's `exports` in the Site's `node_modules` — the boundary
+itself calls `next/font/local` and throws outside a Next build, so the manifest is what decides it. A
+package that is not installed yet reads as one without typefaces; `sync` picks it up once it is.
+
 `--path` (default: the Site source path as for `init`) selects the Site repository for every command
 except `list`. Those commands refuse to run when the directory holds no `package.json`
 (`No Site at <path>`), so a wrong `--path` does not record a Module for a directory no build reads.
@@ -471,7 +477,9 @@ package is also added to the Site's `package.json` dependencies (origin `resolve
 package must already be resolvable (origin `local`). Then inspects the installed package and prints
 its issues, or `not installed yet` before the package manager ran. Exits `1` when the inspection
 finds issues. Next: install dependencies, rebuild the Site, activate the Module for an Area in the
-Builder.
+Builder. When the package was not installed yet, run `phis module sync` after the install as well:
+the font projection is read from the installed package, and without it a Module's typefaces stay out
+of the build.
 
 ### `phis module del --site <site key> --package <@scope/name> [--force] [--path <dir>]`
 
@@ -482,8 +490,9 @@ Rebuild the Site afterwards.
 
 ### `phis module sync --site <site key> [--path <dir>]`
 
-Rewrites the projection from the desired state, for example after a scaffold or a hand edit. Rebuild
-afterwards.
+Rewrites the projection from the desired state, for example after a scaffold, a hand edit, or the
+install that followed an `add`. The installed packages are read again, so a `./fonts` boundary that
+arrived with the install reaches `site-modules-fonts.ts` here. Rebuild afterwards.
 
 ### `phis module check --site <site key> [--package <@scope/name>] [--path <dir>]`
 

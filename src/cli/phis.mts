@@ -1230,7 +1230,10 @@ async function runSiteModuleCommand(command: string, flags: FlagMap, json: boole
     if (json) {
       printJson({ site: site.key, root: siteRoot, ...result });
     } else {
-      console.log(`Wrote the projection for ${site.key} (${result.moduleCount} Module(s)); rebuild the Site.`);
+      console.log(
+        `Wrote the projection for ${site.key} (${result.moduleCount} Module(s), ` +
+        `${result.fontPackages.length} with typefaces); rebuild the Site.`,
+      );
     }
     return;
   }
@@ -1261,6 +1264,16 @@ async function runSiteModuleCommand(command: string, flags: FlagMap, json: boole
       console.log(
         `Installed ${packageName} for ${site.key}. Install dependencies and rebuild the Site; then activate the Module for an Area in the Builder.`,
       );
+      if (report.root === null) {
+        /*
+         * Whether a package ships typefaces is read from the package itself, which is not there yet.
+         * Recorded now and projected without its `./fonts` boundary, the Site would build without the
+         * Module's lettering and nothing would say so.
+         */
+        console.log(
+          `  Then run phis module sync --site ${site.key}, so a ./fonts boundary of the package reaches the projection.`,
+        );
+      }
       reportSiteModulePackages(site.key, [report]);
     }
     if (report.issues.length > 0) {

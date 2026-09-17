@@ -111,6 +111,17 @@ tracked here because the server contract depends on them.
 
 ## Site bootstrap and releases
 
+- **A Module from a tarball and `transpilePackages`.** `phis module add` records the package, writes the
+  dependency and rewrites the projection, and nothing names the package in the Site's `next.config.ts`. A
+  Module linked from a workspace resolves to a path outside `node_modules` and Next compiles it either
+  way; one installed from a tarball is not compiled, and its `./fonts` boundary -- a `next/font/local`
+  call Next evaluates only in a module it compiles -- then contributes no typefaces and says nothing
+  ([phis-ui NEXT_INTEGRATION.md](../phis-ui/NEXT_INTEGRATION.md#fonts)). It is not written from the CLI
+  today because `next.config.ts` is a Site-owned source file that `reconcile` leaves alone: editing it
+  would mean parsing whatever the Site has made of it, and a regex over somebody's config is how a Site
+  loses its cache handler. The projection is the place it belongs -- a generated list of the installed
+  package names that the scaffold's `next.config.ts` spreads into `transpilePackages`, so the list follows
+  what is installed instead of the operator's memory.
 - **One first-install flow.** A new Site needs `phis site add` before `phis init`. Provide one documented,
   transactional CLI flow that registers and validates the Site and then materializes its scaffold, leaving
   neither a partially registered Site nor a partial source tree on failure.

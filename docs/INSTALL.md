@@ -370,7 +370,10 @@ phis update acme --path /opt/phis/sources/acme
 ```
 
 `module add` records the Module in `config/phis-modules.json`, adds the dependency when `--spec` is
-given, and rewrites `src/generated/site-modules*.ts`. `update` installs and builds a new release;
+given, and rewrites `src/generated/site-modules*.ts` — including `site-modules-fonts.ts`, which lists
+the installed packages that export `./fonts`. A package added before it is installed is not yet
+readable, so run `phis module sync --site acme --path /opt/phis/sources/acme` after the install to
+pick up the typefaces it ships. `update` installs and builds a new release;
 deploy it (step 7) and restart the Site service. Then activate the Module for an Area in the Builder.
 `phis module check --site acme` inspects the installed packages
 ([CLI.md](./CLI.md#module-site-modules)).
