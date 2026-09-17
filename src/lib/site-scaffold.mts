@@ -3,6 +3,8 @@ import { spawn } from "node:child_process";
 import { access, cp, mkdir, readFile, readdir, rename, rmdir, stat, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 
+import { buildSiteModuleProjection } from "../cli/modules.mts";
+
 export const PHI_SITE_SCAFFOLD_VERSION = 3;
 
 const AREAS = ["accounting", "admin", "app", "builder", "editor"] as const;
@@ -78,16 +80,16 @@ export type PhiSiteScaffoldResult = {
 export type PhiSiteReleaseArtifact = { releaseId: string; path: string; buildId: string };
 
 const DEFAULT_VERSIONS: Record<string, string> = {
-  "@ant-design/icons": "6.3.2",
+  "@ant-design/icons": "6.3.4",
   "@ant-design/nextjs-registry": "1.3.0",
   "@phis/ui": "0.1.0",
-  antd: "6.5.1",
-  next: "16.2.11",
-  react: "19.2.8",
-  "react-dom": "19.2.8",
-  "@types/node": "26.1.0",
-  "@types/react": "19.2.17",
-  "@types/react-dom": "19.2.3",
+  antd: "6.6.4",
+  next: "16.3.5",
+  react: "19.3.0",
+  "react-dom": "19.3.0",
+  "@types/node": "26.6.1",
+  "@types/react": "19.3.0",
+  "@types/react-dom": "19.3.0",
   typescript: "6.0.3",
 };
 const PACKAGE_MANAGER_VERSIONS: Record<PhiSiteScaffoldPackageManager, string> = {
@@ -115,17 +117,19 @@ function runtimeModuleFiles() {
   const root = {
     "src/runtime-modules/root.ts":
       `import { createPhiNextRootLayout } from "@phis/ui/next/root-route";\n\n`
-      + `import { PHI_SITE_MODULES } from "@/generated/site-modules";\n\n`
+      + `import { PHI_SITE_MODULES } from "@/generated/site-modules";\n`
+      + `import { PHI_SITE_MODULE_FONTS } from "@/generated/site-modules-fonts";\n\n`
       + `/**\n`
       + ` * The document shell, given what this Site installed.\n`
       + ` *\n`
       + ` * The root reads the Theme blocks the Site can follow from the installed union -- a Theme is site-wide\n`
       + ` * -- and, like every Area host, takes the projection as an argument rather than reaching for it.\n`
       + ` */\n`
-      + `export const PhiSiteRootLayout = createPhiNextRootLayout(PHI_SITE_MODULES);\n`,
+      + `export const PhiSiteRootLayout = createPhiNextRootLayout(PHI_SITE_MODULES, PHI_SITE_MODULE_FONTS);\n`,
     "src/runtime-modules/root-static.ts":
       `import { createPhiNextStaticRootLayout } from "@phis/ui/next/root-route";\n\n`
       + `import { PHI_SITE_MODULES } from "@/generated/site-modules";\n`
+      + `import { PHI_SITE_MODULE_FONTS } from "@/generated/site-modules-fonts";\n`
       + `import { PhiPublicRuntimeModuleClientBoundary } from "@/runtime-modules/public-client";\n\n`
       + `/**\n`
       + ` * The document shell of the static tree. Only the Public Area renders there, so its Client boundary\n`
@@ -133,11 +137,30 @@ function runtimeModuleFiles() {
       + ` */\n`
       + `export const PhiSiteStaticRootLayout = createPhiNextStaticRootLayout(\n`
       + `  PHI_SITE_MODULES,\n`
-      + `  [],\n`
+      + `  PHI_SITE_MODULE_FONTS,\n`
       + `  PhiPublicRuntimeModuleClientBoundary,\n`
       + `);\n`,
   };
-  return Object.assign(root, Object.fromEntries(areas.flatMap((area) => {
+  const catalogs = {
+    "src/runtime-modules/area-catalogs.ts":
+      `import type { PhiSiteAreaRuntimeModuleCatalogLoader } from "@phis/ui/gateway";\n\n`
+      + `/**\n`
+      + ` * The Module catalog of one Area, loaded rather than imported.\n`
+      + ` *\n`
+      + ` * A Bridge carries its Area's server catalog, and that catalog names the Area's Widget plugins, so a\n`
+      + ` * static import of all six puts every Area's Builder and Admin Clients into whatever graph reaches\n`
+      + ` * this file. The Form gateway runs for every Area and learns which one only from the request.\n`
+      + ` *\n`
+      + ` * An Area this Site does not host answers null, and the caller refuses rather than guessing.\n`
+      + ` */\n`
+      + `export const loadPhiSiteAreaRuntimeModuleCatalog: PhiSiteAreaRuntimeModuleCatalogLoader = async (area) => {\n`
+      + `  switch (area) {\n`
+      + areas.map((area) =>
+        `    case "${area}":\n      return (await import("@/runtime-modules/${area}")).PHI_${area.toUpperCase()}_CMS_SITE_BRIDGE.runtimeModuleCatalog;\n`,
+      ).join("")
+      + `    default:\n      return null;\n  }\n};\n`,
+  };
+  return Object.assign(root, catalogs, Object.fromEntries(areas.flatMap((area) => {
     const name = area === "public" ? "Public" : AREA_NAMES[area];
     const upper = area.toUpperCase();
     return [
@@ -151,9 +174,14 @@ function runtimeModuleFiles() {
         `src/runtime-modules/${area}-client.tsx`,
         `"use client";\n\n`
         + `import { createPhi${name}RuntimeModuleClientBoundary } from "@phis/ui/next/areas/${area}-client";\n\n`
-        + `import { PHI_SITE_MODULES_CLIENT } from "@/generated/site-modules-client";\n\n`
-        + `export const Phi${name}RuntimeModuleClientBoundary =\n`
-        + `  createPhi${name}RuntimeModuleClientBoundary(PHI_SITE_MODULES_CLIENT);\n`,
+        + `import { PHI_SITE_MODULES_CLIENT } from "@/generated/site-modules-client";\n`
+        // Only the Builder hosts authoring; every other Area must not reach that half of the projection.
+        + (area === "builder"
+          ? `import { PHI_SITE_MODULES_AUTHORING_CLIENT } from "@/generated/site-modules-authoring-client";\n\n`
+            + `export const Phi${name}RuntimeModuleClientBoundary =\n`
+            + `  createPhi${name}RuntimeModuleClientBoundary(PHI_SITE_MODULES_CLIENT, PHI_SITE_MODULES_AUTHORING_CLIENT);\n`
+          : `\nexport const Phi${name}RuntimeModuleClientBoundary =\n`
+            + `  createPhi${name}RuntimeModuleClientBoundary(PHI_SITE_MODULES_CLIENT);\n`),
       ],
     ];
   })));
@@ -168,6 +196,8 @@ function runtimeModuleFiles() {
 export const PHI_SITE_MODULE_PROJECTION_FILES = [
   "src/generated/site-modules.ts",
   "src/generated/site-modules-client.ts",
+  "src/generated/site-modules-authoring-client.ts",
+  "src/generated/site-modules-fonts.ts",
 ] as const;
 
 /**
@@ -235,17 +265,19 @@ function rootErrorAreaFile() {
 }
 
 function siteModuleProjectionFiles() {
+  // Exactly what `phis module` writes for no Modules, so the first `module add` changes only the lists.
+  const { server, client, authoringClient } = buildSiteModuleProjection([]);
   return {
-    "src/generated/site-modules.ts":
-      `import { collectPhiSiteModuleServerAreaContributions } from "@phis/ui/module/projection";\n\n`
-      + `/**\n * Generated by \`phis module\`. Do not edit.\n */\n`
-      + `export const PHI_SITE_MODULES = collectPhiSiteModuleServerAreaContributions([]);\n`,
-    "src/generated/site-modules-client.ts":
-      `"use client";\n\n`
-      + `import { collectPhiSiteModuleClientContributions } from "@phis/ui/module/projection/client";\n\n`
-      + `/**\n * Generated by \`phis module\`. Do not edit.\n */\n`
-      + `export const PHI_SITE_MODULES_CLIENT = collectPhiSiteModuleClientContributions({\n`
-      + `  definitions: [],\n  clients: [],\n  authoring: [],\n});\n`,
+    "src/generated/site-modules.ts": server,
+    "src/generated/site-modules-client.ts": client,
+    "src/generated/site-modules-authoring-client.ts": authoringClient,
+    "src/generated/site-modules-fonts.ts":
+      `import type { PhiModuleFontContributions } from "@phis/ui/module";\n\n`
+      + `/**\n`
+      + ` * The typefaces installed Modules declare through a \`./fonts\` boundary; the root layout composes the\n`
+      + ` * font catalogue from them once. Empty until a Module that ships one is installed.\n`
+      + ` */\n`
+      + `export const PHI_SITE_MODULE_FONTS: PhiModuleFontContributions = [];\n`,
   };
 }
 
@@ -272,7 +304,7 @@ function staticAreaFiles(area: typeof AREAS[number]) {
     [`${SITE_APP}/${area}/layout.tsx`]: `import { ${bridge} } from "@/runtime-modules/${area}";\nimport { createPhiNextStaticAreaBoundary } from "@phis/ui/next/area-route";\nimport { Phi${name}RuntimeModuleClientBoundary } from "@/runtime-modules/${area}-client";\n\nexport const dynamic = "force-dynamic";\n\nexport default createPhiNextStaticAreaBoundary("${area}", ${bridge}, Phi${name}RuntimeModuleClientBoundary);\n`,
     [`${SITE_APP}/${area}/(root)/page.tsx`]: areaPage,
     [`${SITE_APP}/${area}/(pages)/[...path]/page.tsx`]: areaPage,
-    [`${SITE_APP}/${area}/not-found.tsx`]: `import { ${bridge} } from "@/runtime-modules/${area}";\nimport { createPhiNextStaticAreaNotFound } from "@phis/ui/next/area-route";\n\nexport const dynamic = "force-dynamic";\n\nexport default createPhiNextStaticAreaNotFound(${bridge});\n`,
+    [`${SITE_APP}/${area}/not-found.tsx`]: `import { ${bridge} } from "@/runtime-modules/${area}";\nimport { createPhiNextStaticAreaNotFound } from "@phis/ui/next/area-route";\n\nexport const dynamic = "force-dynamic";\n\nexport default createPhiNextStaticAreaNotFound(${bridge}, "${area}");\n`,
   };
   for (const [group, chrome] of AREA_BRANCHES) {
     files[`${SITE_APP}/${area}/${group}/layout.tsx`] = `import { ${bridge} } from "@/runtime-modules/${area}";\nimport { createPhiNextStaticAreaLayout } from "@phis/ui/next/area-route";\n\nexport const dynamic = "force-dynamic";\n\nexport default createPhiNextStaticAreaLayout("${area}", ${bridge}, ${chrome});\n`;
@@ -295,7 +327,7 @@ function dynamicRootFiles() {
     [`${SITE_APP}/[root]/layout.tsx`]: `import { createPhiNextDynamicRootBoundary } from "@phis/ui/next/area-route";\nimport { PhiPublicRuntimeModuleClientBoundary } from "@/runtime-modules/public-client";\nimport { PHI_PUBLIC_CMS_SITE_BRIDGE } from "@/runtime-modules/public";\n\nexport const dynamic = "force-dynamic";\n\nexport default createPhiNextDynamicRootBoundary(\n  PHI_PUBLIC_CMS_SITE_BRIDGE,\n  PhiPublicRuntimeModuleClientBoundary,\n);\n`,
     [`${SITE_APP}/[root]/(root)/page.tsx`]: rootPage,
     [`${SITE_APP}/[root]/(pages)/[...path]/page.tsx`]: rootPage,
-    [`${SITE_APP}/[root]/not-found.tsx`]: `import { createPhiNextStaticAreaNotFound } from "@phis/ui/next/area-route";\nimport { PHI_PUBLIC_CMS_SITE_BRIDGE } from "@/runtime-modules/public";\n\nexport const dynamic = "force-dynamic";\n\nexport default createPhiNextStaticAreaNotFound(PHI_PUBLIC_CMS_SITE_BRIDGE);\n`,
+    [`${SITE_APP}/[root]/not-found.tsx`]: `import { createPhiNextStaticAreaNotFound } from "@phis/ui/next/area-route";\nimport { PHI_PUBLIC_CMS_SITE_BRIDGE } from "@/runtime-modules/public";\n\nexport const dynamic = "force-dynamic";\n\nexport default createPhiNextStaticAreaNotFound(PHI_PUBLIC_CMS_SITE_BRIDGE, "public");\n`,
   };
   for (const [group, chrome] of AREA_BRANCHES) {
     files[`${SITE_APP}/[root]/${group}/layout.tsx`] = `import { createPhiNextDynamicRootLayout } from "@phis/ui/next/area-route";\nimport { PHI_PUBLIC_CMS_SITE_BRIDGE } from "@/runtime-modules/public";\n\nexport const dynamic = "force-dynamic";\n\nexport default createPhiNextDynamicRootLayout(PHI_PUBLIC_CMS_SITE_BRIDGE, ${chrome});\n`;
@@ -398,7 +430,7 @@ export function buildPhiSiteScaffoldFiles(context: PhiSiteScaffoldContext) {
     "src/app/api/site/[[...path]]/route.ts": proxyRoute("site"),
     "src/app/api/addons/[[...path]]/route.ts": proxyRoute("addons"),
     "src/app/api/hooks/[[...path]]/route.ts": proxyRoute("hooks"),
-    "src/app/api/site/forms/route.ts": `import { buildPhiSiteFormRouteHandlers } from "@phis/ui/gateway";\nimport { buildPhiNextProxyHeaders, getPhiNextUpstreamBaseUrl, getPhiNextProxyTimeoutMs } from "@phis/ui/next/proxy-runtime";\n\nexport const dynamic = "force-dynamic";\nexport const runtime = "nodejs";\nconst handlers = buildPhiSiteFormRouteHandlers({\n  upstreamBaseUrl: getPhiNextUpstreamBaseUrl(),\n  timeoutMs: getPhiNextProxyTimeoutMs(),\n  missingBaseUrlMessage: "Missing phis.apiBaseUrl for /api/site/forms proxy.",\n  buildHeaders: (request) => buildPhiNextProxyHeaders(request, "phi-site-forms/1.0"),\n});\nexport const GET = handlers.GET;\nexport const POST = handlers.POST;\n`,
+    "src/app/api/site/forms/route.ts": `import { buildPhiSiteFormRouteHandlers } from "@phis/ui/gateway";\nimport { buildPhiNextProxyHeaders, getPhiNextUpstreamBaseUrl, getPhiNextProxyTimeoutMs } from "@phis/ui/next/proxy-runtime";\nimport { loadPhiSiteAreaRuntimeModuleCatalog } from "@/runtime-modules/area-catalogs";\n\nexport const dynamic = "force-dynamic";\nexport const runtime = "nodejs";\nconst handlers = buildPhiSiteFormRouteHandlers({\n  upstreamBaseUrl: getPhiNextUpstreamBaseUrl(),\n  timeoutMs: getPhiNextProxyTimeoutMs(),\n  missingBaseUrlMessage: "Missing phis.apiBaseUrl for /api/site/forms proxy.",\n  buildHeaders: (request) => buildPhiNextProxyHeaders(request, "phi-site-forms/1.0"),\n  loadRuntimeModuleCatalog: loadPhiSiteAreaRuntimeModuleCatalog,\n});\nexport const GET = handlers.GET;\nexport const POST = handlers.POST;\n`,
     [`${SITE_APP}/builder/api/[[...path]]/route.ts`]: `export { POST } from "@phis/ui/builder-api-route";\n\nexport const dynamic = "force-dynamic";\nexport const runtime = "nodejs";\n`,
     "src/app/api/site/module-diagnostics/route.ts": `import { buildPhiSiteModuleDiagnosticsRouteHandler } from "@phis/ui/next/module-diagnostics-route";\n${["accounting", "admin", "app", "builder", "editor", "public"].map((area) => `import { PHI_${area.toUpperCase()}_CMS_SITE_BRIDGE } from "@/runtime-modules/${area}";`).join("\n")}\n\nexport const dynamic = "force-dynamic";\nexport const runtime = "nodejs";\nexport const GET = buildPhiSiteModuleDiagnosticsRouteHandler({ bridgesByArea: {\n${["public", "app", "admin", "builder", "editor", "accounting"].map((area) => `  ${area}: PHI_${area.toUpperCase()}_CMS_SITE_BRIDGE,`).join("\n")}\n} });\n`,
     "src/app/api/site/navigation-target/route.ts": `import { buildPhiNavigationTargetRouteHandler } from "@phis/ui/next/navigation-target-route";\n${["accounting", "admin", "app", "builder", "editor", "public"].map((area) => `import { PHI_${area.toUpperCase()}_CMS_SITE_BRIDGE } from "@/runtime-modules/${area}";`).join("\n")}\n\nexport const dynamic = "force-dynamic";\nexport const runtime = "nodejs";\nexport const GET = buildPhiNavigationTargetRouteHandler({ bridgesByArea: {\n${["public", "app", "admin", "builder", "editor", "accounting"].map((area) => `  ${area}: PHI_${area.toUpperCase()}_CMS_SITE_BRIDGE,`).join("\n")}\n} });\n`,

@@ -135,7 +135,9 @@ describe("site scaffold", () => {
     // A Theme is site-wide: the root reads Theme blocks from the installed union, not from one Area.
     const files = buildPhiSiteScaffoldFiles(context);
 
-    expect(files["src/runtime-modules/root.ts"]).toContain("createPhiNextRootLayout(PHI_SITE_MODULES)");
+    expect(files["src/runtime-modules/root.ts"]).toContain(
+      "createPhiNextRootLayout(PHI_SITE_MODULES, PHI_SITE_MODULE_FONTS)",
+    );
     expect(files["src/app/(site)/layout.tsx"]).toContain("@/runtime-modules/root");
   });
 
@@ -205,6 +207,24 @@ describe("site scaffold", () => {
     expect(await readFile(path.join(root, "src/app/[root]/(root)/page.tsx"), "utf8")).toBe("edited by the Site\n");
     const rewritten = JSON.parse(await readFile(manifestPath, "utf8"));
     expect(rewritten.files["src/app/layout.tsx"]).toBeUndefined();
+  });
+
+  /*
+   * What the canonical Skeleton needs to compile and to answer a Form: a generated Site that differed
+   * here built nothing -- an Area 404 without its Area, a Form gateway without the catalog loader it
+   * requires, a Builder host without the authoring half of the projection.
+   */
+  it("wires what the Skeleton's routes require", () => {
+    const files = buildPhiSiteScaffoldFiles(context);
+
+    expect(files["src/app/(site)/admin/not-found.tsx"]).toContain('PHI_ADMIN_CMS_SITE_BRIDGE, "admin"');
+    expect(files["src/app/(site)/[root]/not-found.tsx"]).toContain('PHI_PUBLIC_CMS_SITE_BRIDGE, "public"');
+    expect(files["src/app/api/site/forms/route.ts"]).toContain("loadRuntimeModuleCatalog: loadPhiSiteAreaRuntimeModuleCatalog");
+    expect(files["src/runtime-modules/area-catalogs.ts"]).toContain('case "accounting"');
+    expect(files["src/runtime-modules/builder-client.tsx"]).toContain("PHI_SITE_MODULES_AUTHORING_CLIENT");
+    expect(files["src/runtime-modules/public-client.tsx"]).not.toContain("AUTHORING");
+    expect(files["src/generated/site-modules-authoring-client.ts"]).toContain("PHI_SITE_MODULES_AUTHORING_CLIENT");
+    expect(files["src/generated/site-modules-fonts.ts"]).toContain("PHI_SITE_MODULE_FONTS");
   });
 
   it("refuses init over a non-empty target", async () => {
