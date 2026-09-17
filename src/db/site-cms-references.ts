@@ -31,8 +31,8 @@ export type SiteCmsReferenceWrite = {
  *
  * An Asset in a Markdown or HTML body is a `phis:asset/<id>` URI, and the string walk below finds it.
  * Config never had that shape: a picture somebody picked is stored as the id itself, next to the
- * variant, geometry and focal facts that belong to it -- `assetId` in an image source, `logoAssetId`
- * in the Theme's brand record. A walk that only reads strings therefore saw none of them, which is
+ * variant, geometry and focal facts that belong to it -- `assetId` in an image source, and in each
+ * mode of the Theme's brand Logo. A walk that only reads strings therefore saw none of them, which is
  * the whole reason a picture sitting in a Widget could be deleted while it was on the page.
  *
  * The field name is the contract, not the surrounding object: an id lands under `assetId` or under a

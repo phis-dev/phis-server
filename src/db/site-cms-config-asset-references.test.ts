@@ -48,9 +48,17 @@ describe("An Asset id in persisted config is a reference", () => {
     ]);
   });
 
-  it("finds the brand logo, which names its Asset without an image source around it", () => {
-    expect(locationsOf({ brand: { logoAssetId: 4711 } })).toEqual(["/brand/logoAssetId"]);
-    expect(assetIdsOf({ brand: { logoAssetId: 4711 } })).toEqual([4711]);
+  it("finds the brand logo of each mode, which names its Asset without an image source around it", () => {
+    const theme = {
+      brand: {
+        logo: {
+          light: { sourceKind: "asset", assetId: 4711 },
+          dark: { sourceKind: "asset", assetId: 4712 },
+        },
+      },
+    };
+    expect(locationsOf(theme)).toEqual(["/brand/logo/dark/assetId", "/brand/logo/light/assetId"]);
+    expect(assetIdsOf(theme)).toEqual([4711, 4712]);
   });
 
   /*

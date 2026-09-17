@@ -588,15 +588,30 @@ export async function getSiteRuntimeConfig(siteId: number) {
       ? { ...(theme.brand as Record<string, unknown>) }
       : null;
 
-  if (brand && typeof brand.logoAssetId === "number" && Number.isInteger(brand.logoAssetId)) {
-    const asset = await getMediaAssetById(brand.logoAssetId);
-    if (asset) {
-      brand.logoUrl = `/api/site/media/${asset.id}/content?r=${asset.deliveryRevision}`;
-      brand.logoAssetId = asset.id;
+  /*
+   * The Logo is one picture per mode. Each Asset-bound mode gets its delivered address with the
+   * revision, and the first alt text an Asset carries stands in where the Brand states none.
+   */
+  const logos = brand && typeof brand.logo === "object" && brand.logo !== null
+    ? { ...(brand.logo as Record<string, unknown>) }
+    : null;
+  if (brand && logos) {
+    for (const mode of ["light", "dark"] as const) {
+      const logo = logos[mode];
+      if (!logo || typeof logo !== "object") continue;
+      const { sourceKind, assetId } = logo as { sourceKind?: unknown; assetId?: unknown };
+      if (sourceKind !== "asset" || typeof assetId !== "number" || !Number.isInteger(assetId)) continue;
+      const asset = await getMediaAssetById(assetId);
+      if (!asset) continue;
+      logos[mode] = {
+        ...(logo as Record<string, unknown>),
+        url: `/api/site/media/${asset.id}/content?r=${asset.deliveryRevision}`,
+      };
       if (!brand.logoAlt && asset.altText) {
         brand.logoAlt = asset.altText;
       }
     }
+    brand.logo = logos;
   }
 
   return {
