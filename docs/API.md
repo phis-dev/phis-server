@@ -8,12 +8,11 @@ public or internal token, and `session` is the visitor's Site session with the a
 passes (see [AUTHORIZATION.md](../AUTHORIZATION.md)). A route with no access entry performs its own checks
 or none; read its source. Request and response shapes are not listed; the source is linked per route.
 
-145 routes.
+135 routes.
 
 ## Contents
 
-- [`/api/auth`](#apiauth) (11)
-- [`/api/operator`](#apioperator) (4)
+- [`/api/operator`](#apioperator) (5)
 - [`/api/setup`](#apisetup) (2)
 - [`/api/site`](#apisite) (65)
 - [`/api/v1/addons`](#apiv1addons) (2)
@@ -29,30 +28,13 @@ or none; read its source. Request and response shapes are not listed; the source
 - [`/api/v1/site`](#apiv1site) (15)
 - [`/api/v1/tr`](#apiv1tr) (1)
 
-## `/api/auth`
-
-Session-based account endpoints a Site's `/api/auth` proxy forwards.
-
-| Method | Address | Access | Description |
-|---|---|---|---|
-| GET | [`/api/auth/csrf`](../src/app/api/auth/csrf/route.ts) | -- |  |
-| POST | [`/api/auth/login`](../src/app/api/auth/login/route.ts) | CSRF token |  |
-| POST | [`/api/auth/logout`](../src/app/api/auth/logout/route.ts) | CSRF token; Site session, checked in the handler |  |
-| GET | [`/api/auth/me`](../src/app/api/auth/me/route.ts) | Site session, checked in the handler |  |
-| POST | [`/api/auth/password/reset/confirm`](../src/app/api/auth/password/reset/confirm/route.ts) | -- |  |
-| POST | [`/api/auth/password/reset/request`](../src/app/api/auth/password/reset/request/route.ts) | -- |  |
-| POST | [`/api/auth/profile/email/request`](../src/app/api/auth/profile/email/request/route.ts) | CSRF token; Site session, checked in the handler |  |
-| PATCH | [`/api/auth/profile/locale`](../src/app/api/auth/profile/locale/route.ts) | CSRF token; Site session, checked in the handler |  |
-| PATCH | [`/api/auth/profile/name`](../src/app/api/auth/profile/name/route.ts) | CSRF token; Site session, checked in the handler |  |
-| PATCH | [`/api/auth/profile/newsletter`](../src/app/api/auth/profile/newsletter/route.ts) | CSRF token; Site session, checked in the handler |  |
-| PATCH | [`/api/auth/profile/password`](../src/app/api/auth/profile/password/route.ts) | CSRF token; Site session, checked in the handler |  |
-
 ## `/api/operator`
 
 Operator console authentication.
 
 | Method | Address | Access | Description |
 |---|---|---|---|
+| GET | [`/api/operator/auth/csrf`](../src/app/api/operator/auth/csrf/route.ts) | -- | The CSRF token the operator login form sends back. The operator console is served by this server, so it asks here rather than through a Site's `/api/auth` door, which reaches Core only with the Site's token. |
 | POST | [`/api/operator/auth/login`](../src/app/api/operator/auth/login/route.ts) | setup mode (`bootstrap.enabled`); CSRF token |  |
 | POST | [`/api/operator/auth/logout`](../src/app/api/operator/auth/logout/route.ts) | -- |  |
 | POST | [`/api/operator/auth/refresh`](../src/app/api/operator/auth/refresh/route.ts) | operator session |  |

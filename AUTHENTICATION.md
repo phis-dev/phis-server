@@ -347,10 +347,10 @@ The `/api/v1/auth/*` operations are:
 
 The request and response schemas are listed in the generated [API reference](./docs/API.md).
 
-The handlers under `src/app/api/auth/*` (`csrf`, `login`, `logout`, `me`, `password/reset/*`,
-`profile/*`) are the unguarded implementations that the matching `/api/v1/auth/*` routes wrap with the
-internal-token guard. They resolve the Site from request headers. The operator login form calls
-`/api/auth/csrf` directly.
+The implementations of `csrf`, `password/login`, `logout`, `me`, `password/reset/*` and `profile/*` live
+in `src/lib/site-auth/handlers/` and are reachable only through the matching `/api/v1/auth/*` routes, which
+require the internal token. A Site's `/api/auth` door forwards to them. The operator console asks
+`/api/operator/auth/csrf` for its own token.
 
 Unknown method keys, stages, callback origins, and fields are rejected. Redirect destinations are
 normalized relative Site paths; open redirects are forbidden.

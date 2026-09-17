@@ -9,8 +9,6 @@ import { hashPassword, verifyPasswordHash } from "@/lib/password";
 import { requireSiteFromRequest } from "@/lib/site-context";
 import { revokeUserSessions } from "@/db/user-sessions";
 
-export const dynamic = "force-dynamic";
-
 type ProfilePasswordPayload = {
   currentPassword?: unknown;
   newPassword?: unknown;

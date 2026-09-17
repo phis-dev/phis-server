@@ -53,7 +53,7 @@ export function OperatorLoginForm({ labels, errors }: OperatorLoginFormProps) {
     setIsPending(true);
 
     try {
-      const csrfResponse = await fetch("/api/auth/csrf", {
+      const csrfResponse = await fetch("/api/operator/auth/csrf", {
         method: "GET",
         credentials: "same-origin",
       });

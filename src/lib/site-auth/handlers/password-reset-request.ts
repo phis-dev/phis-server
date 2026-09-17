@@ -12,8 +12,6 @@ import { logRuntimeEvent } from "@/lib/log";
 import { requireSiteFromRequest } from "@/lib/site-context";
 import { isUserAccountEnabled } from "@/lib/user-flags";
 
-export const dynamic = "force-dynamic";
-
 type RequestPayload = {
   email?: unknown;
   locale?: unknown;

@@ -1,6 +1,6 @@
 import type { NextRequest } from "next/server";
 
-import { PATCH as handleProfileName } from "@/app/api/auth/profile/name/route";
+import { PATCH as handleProfileName } from "@/lib/site-auth/handlers/profile-name";
 import { guardApiV1 } from "@/lib/api-v1-guard";
 
 export const dynamic = "force-dynamic";

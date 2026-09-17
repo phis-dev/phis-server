@@ -4,8 +4,6 @@ import { getSessionFromRequest, revokeSession } from "@/db/user-sessions";
 import { clearAreaCookie, clearCsrfCookie, clearSessionCookie, verifyCsrfRequest } from "@/lib/auth";
 import { requireSiteFromRequest } from "@/lib/site-context";
 
-export const dynamic = "force-dynamic";
-
 export async function POST(request: NextRequest) {
   const site = await requireSiteFromRequest(request);
   if (!site) {

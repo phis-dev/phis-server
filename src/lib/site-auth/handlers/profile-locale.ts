@@ -8,8 +8,6 @@ import { requireSiteFromRequest } from "@/lib/site-context";
 import { verifyCsrfRequest } from "@/lib/auth";
 import { resolveSiteLocale } from "@/lib/locale";
 
-export const dynamic = "force-dynamic";
-
 type ProfileLocalePayload = {
   locale?: unknown;
 };

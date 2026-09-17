@@ -1,6 +1,6 @@
 import type { NextRequest } from "next/server";
 
-import { POST as handlePasswordResetConfirm } from "@/app/api/auth/password/reset/confirm/route";
+import { POST as handlePasswordResetConfirm } from "@/lib/site-auth/handlers/password-reset-confirm";
 import { guardApiV1 } from "@/lib/api-v1-guard";
 
 export const dynamic = "force-dynamic";

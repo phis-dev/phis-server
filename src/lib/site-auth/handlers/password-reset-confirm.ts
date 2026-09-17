@@ -10,8 +10,6 @@ import { PhiUserAccountFlag } from "@/lib/constants/user-account-flags";
 import { hashPassword } from "@/lib/password";
 import { requireSiteFromRequest } from "@/lib/site-context";
 
-export const dynamic = "force-dynamic";
-
 type ConfirmPayload = {
   token?: unknown;
   password?: unknown;

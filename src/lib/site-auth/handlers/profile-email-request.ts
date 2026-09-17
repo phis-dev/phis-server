@@ -13,8 +13,6 @@ import { logRuntimeEvent } from "@/lib/log";
 import { verifyPasswordHash } from "@/lib/password";
 import { requireSiteFromRequest } from "@/lib/site-context";
 
-export const dynamic = "force-dynamic";
-
 type ProfileEmailRequestPayload = {
   email?: unknown;
   currentPassword?: unknown;

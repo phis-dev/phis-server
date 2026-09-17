@@ -1,6 +1,6 @@
 import type { NextRequest } from "next/server";
 
-import { PATCH as handleProfileLocale } from "@/app/api/auth/profile/locale/route";
+import { PATCH as handleProfileLocale } from "@/lib/site-auth/handlers/profile-locale";
 import { guardApiV1 } from "@/lib/api-v1-guard";
 
 export const dynamic = "force-dynamic";

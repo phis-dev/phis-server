@@ -1,6 +1,6 @@
 import type { NextRequest } from "next/server";
 
-import { GET as handleViewer } from "@/app/api/auth/me/route";
+import { GET as handleViewer } from "@/lib/site-auth/handlers/viewer";
 import { guardApiV1 } from "@/lib/api-v1-guard";
 
 export const dynamic = "force-dynamic";

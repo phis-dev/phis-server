@@ -1,4 +1,4 @@
-import { GET as handleCsrf } from "@/app/api/auth/csrf/route";
+import { GET as handleCsrf } from "@/lib/site-auth/handlers/csrf";
 import { guardApiV1 } from "@/lib/api-v1-guard";
 
 export const dynamic = "force-dynamic";

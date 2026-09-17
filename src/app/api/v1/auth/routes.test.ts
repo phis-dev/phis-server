@@ -42,7 +42,7 @@ vi.mock("@/lib/site-auth/assurance", () => ({
   beginSiteAuthenticationSession: mocks.beginSession,
 }));
 vi.mock("@/db/user-accounts", () => ({ getUserAccountById: mocks.getUser }));
-vi.mock("@/app/api/auth/login/route", () => ({ POST: mocks.legacyPasswordLogin }));
+vi.mock("@/lib/site-auth/handlers/password-login", () => ({ POST: mocks.legacyPasswordLogin }));
 vi.mock("@/lib/log", () => ({
   logRuntimeEvent: vi.fn(),
   normalizeLogThrowable: (error: unknown) => error,

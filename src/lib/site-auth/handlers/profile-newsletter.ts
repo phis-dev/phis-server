@@ -7,8 +7,6 @@ import { verifyCsrfRequest } from "@/lib/auth";
 import { requireSiteFromRequest } from "@/lib/site-context";
 import { USER_SITE_FLAG_NEWSLETTER_OPT_IN } from "@/lib/user-site-flags";
 
-export const dynamic = "force-dynamic";
-
 type NewsletterPayload = {
   newsletterOptIn?: unknown;
 };

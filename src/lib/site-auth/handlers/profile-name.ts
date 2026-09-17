@@ -7,8 +7,6 @@ import { getSessionFromRequest } from "@/db/user-sessions";
 import { verifyCsrfRequest } from "@/lib/auth";
 import { requireSiteFromRequest } from "@/lib/site-context";
 
-export const dynamic = "force-dynamic";
-
 type ProfileNamePayload = {
   firstName?: unknown;
   lastName?: unknown;

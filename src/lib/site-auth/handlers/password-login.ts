@@ -25,8 +25,6 @@ import { isUserAccountEnabled } from "@/lib/user-flags";
 import { beginSiteAuthenticationSession } from "@/lib/site-auth/assurance";
 import { normalizeAuthNextPath, PHI_AUTH_SESSION_STATES } from "@/lib/site-auth/contracts";
 
-export const dynamic = "force-dynamic";
-
 type LoginPayload = {
   email?: unknown;
   password?: unknown;
