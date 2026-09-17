@@ -1484,6 +1484,15 @@ async function runAddonRoleCommand(flags: FlagMap, json: boolean) {
         }.`,
       );
     }
+    if (grant) {
+      const { rows: memberships } = await pool.query(
+        "SELECT 1 FROM phis.user_site_memberships WHERE user_id = $1 AND site_id = $2",
+        [userId, site.id],
+      );
+      if (memberships.length === 0) {
+        throw new Error(`User ${userId} is not a member of ${site.key}; a role is held on a Site by its members.`);
+      }
+    }
     const changed = grant
       ? await grantPhisAddonUserRole(pool, {
         addonId,

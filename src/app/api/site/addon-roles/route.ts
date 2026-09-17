@@ -12,6 +12,7 @@ import {
   revokePhisAddonUserRole,
 } from "@/db/server-addon-roles.mts";
 import { getPool } from "@/lib/db";
+import { getUserSiteMembership } from "@/db/user-site-memberships";
 import { logRuntimeEvent } from "@/lib/log";
 
 export const dynamic = "force-dynamic";
@@ -91,7 +92,7 @@ export async function POST(request: NextRequest) {
     siteId: context.site.id,
     actorUserId: context.session.userId,
     role: input.role,
-    declared: readPhisAddonDeclaredRoles(input.addonId),
+    declared: await readPhisAddonDeclaredRoles(input.addonId, context.site.id),
   });
   if (!verdict.allowed) {
     // An unknown Add-on and an undeclared role are the caller's mistake and say so; a refusal on
@@ -99,6 +100,12 @@ export async function POST(request: NextRequest) {
     // the Site's staffing.
     const status = verdict.reason === "not_permitted" ? 403 : 404;
     return NextResponse.json({ error: verdict.reason }, { status });
+  }
+
+  // A role is held on a Site by somebody who belongs to it. A grant to anyone else would be a row nobody
+  // on this Site can see or take back through user administration.
+  if (!await getUserSiteMembership(input.userId, context.site.id)) {
+    return NextResponse.json({ error: "user_not_member" }, { status: 404 });
   }
 
   const granted = await grantPhisAddonUserRole(getPool(), {
@@ -134,7 +141,7 @@ export async function DELETE(request: NextRequest) {
     siteId: context.site.id,
     actorUserId: context.session.userId,
     role: input.role,
-    declared: readPhisAddonDeclaredRoles(input.addonId),
+    declared: await readPhisAddonDeclaredRoles(input.addonId, context.site.id),
   });
   if (!verdict.allowed) {
     const status = verdict.reason === "not_permitted" ? 403 : 404;

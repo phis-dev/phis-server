@@ -1276,7 +1276,7 @@ A role reaches the browser too, so a Module can leave out a link somebody would 
 { access: "addon-roles", providerId: "@acme/market", allowedRoles: ["vendor"] }
 ```
 
-The held names travel with the viewer as `addonRoleClaims` (`/api/auth/me`), filtered to what the current
+The held names travel with the viewer as `addonRoleClaims` (`/api/v1/auth/me`, reached through a Site's `/api/auth/me`), filtered to what the current
 manifest declares and to Add-ons enabled globally and for this Site (`src/lib/addons/viewer-roles.ts`). A
 viewer that carries no `addonRoleClaims` is denied. A Site Admin passes, as for every role and group
 policy. A Module may name only its own Add-on's roles (`isPhiAccessPolicyProviderOwned`).

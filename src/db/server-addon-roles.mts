@@ -89,26 +89,44 @@ export async function grantPhisAddonUserRole(
     grantedByUserId: number | null;
   },
 ) {
-  const { rowCount } = await db.query(
-    `INSERT INTO phis.site_addon_user_roles
-       (site_id, addon_id, user_id, role, granted_by_user_id)
-     VALUES ($1, $2, $3, $4, $5)
-     ON CONFLICT (site_id, addon_id, user_id, role) DO NOTHING`,
+  // The membership's authorization revision moves in the same statement: a role an Add-on policy reads is
+  // part of what a viewer may do, and anything that keeps a viewer's answer by revision must see it change.
+  const { rows } = await db.query<{ changed: number }>(
+    `WITH granted AS (
+       INSERT INTO phis.site_addon_user_roles
+         (site_id, addon_id, user_id, role, granted_by_user_id)
+       VALUES ($1, $2, $3, $4, $5)
+       ON CONFLICT (site_id, addon_id, user_id, role) DO NOTHING
+       RETURNING user_id
+     ), bumped AS (
+       UPDATE phis.user_site_memberships
+          SET authorization_revision = authorization_revision + 1, updated_at = NOW()
+        WHERE site_id = $1 AND user_id IN (SELECT user_id FROM granted)
+     )
+     SELECT COUNT(*)::int AS changed FROM granted`,
     [input.siteId, input.addonId, input.userId, input.role, input.grantedByUserId],
   );
-  return (rowCount ?? 0) > 0;
+  return (rows[0]?.changed ?? 0) > 0;
 }
 
 export async function revokePhisAddonUserRole(
   db: Queryable,
   input: { addonId: string; siteId: number; userId: number; role: string },
 ) {
-  const { rowCount } = await db.query(
-    `DELETE FROM phis.site_addon_user_roles
-      WHERE site_id = $1 AND addon_id = $2 AND user_id = $3 AND role = $4`,
+  const { rows } = await db.query<{ changed: number }>(
+    `WITH revoked AS (
+       DELETE FROM phis.site_addon_user_roles
+        WHERE site_id = $1 AND addon_id = $2 AND user_id = $3 AND role = $4
+       RETURNING user_id
+     ), bumped AS (
+       UPDATE phis.user_site_memberships
+          SET authorization_revision = authorization_revision + 1, updated_at = NOW()
+        WHERE site_id = $1 AND user_id IN (SELECT user_id FROM revoked)
+     )
+     SELECT COUNT(*)::int AS changed FROM revoked`,
     [input.siteId, input.addonId, input.userId, input.role],
   );
-  return (rowCount ?? 0) > 0;
+  return (rows[0]?.changed ?? 0) > 0;
 }
 
 /**

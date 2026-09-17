@@ -72,7 +72,7 @@ hold one of the Add-on's own roles. These answer and grant nothing. See
 
 ## 2. Runtime authorization snapshot
 
-The authenticated viewer response (`GET /api/auth/me`, `user`) carries compact claims, not expanded
+The authenticated viewer response (`GET /api/v1/auth/me`, `user`; a Site's `/api/auth/me`) carries compact claims, not expanded
 role names or permission lists:
 
 ```ts

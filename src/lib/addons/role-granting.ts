@@ -6,6 +6,7 @@ import { getPhisAddonInstalledManifest } from "./installed.ts";
 import { readPhisAddonUserRoles } from "@/db/server-addon-roles.mts";
 import { getPool } from "@/lib/db";
 import { getEffectiveUserSiteAuthorization } from "@/db/user-site-memberships";
+import { isPhisAddonEnabledForSite } from "@/db/server-addons";
 import {
   canPhiViewerAccess,
   PHI_ACCESS_ACCOUNTING,
@@ -45,10 +46,18 @@ export type PhisAddonRoleGrantVerdict =
   | { allowed: true; descriptor: PhisAddonRoleDescriptor }
   | { allowed: false; reason: "addon_unknown" | "role_undeclared" | "not_permitted" };
 
-/** The roles one installed, Site-enabled Add-on declares, or null when it is not installed here. */
-export function readPhisAddonDeclaredRoles(addonId: string) {
+/**
+ * The roles an Add-on declares, or null when it is not installed or not enabled on this Site.
+ *
+ * A role of an Add-on the Site does not run guards nothing here, and handing it out would leave a grant
+ * that silently starts to count the day somebody enables the Add-on.
+ */
+export async function readPhisAddonDeclaredRoles(addonId: string, siteId: number) {
   const entry = getPhisAddonInstalledManifest()[addonId];
-  return entry ? entry.manifest.roles ?? [] : null;
+  if (!entry || !await isPhisAddonEnabledForSite(addonId, siteId)) {
+    return null;
+  }
+  return entry.manifest.roles ?? [];
 }
 
 async function holdsSiteAccess(siteId: number, userId: number, access: string) {
@@ -141,7 +150,10 @@ export async function readPhisAddonGrantableRoles(input: {
   const installed = getPhisAddonInstalledManifest();
   const grantable: { addonId: string; role: PhisAddonRoleDescriptor }[] = [];
   for (const entry of Object.values(installed)) {
-    for (const role of entry.manifest.roles ?? []) {
+    if (!entry.manifest.roles?.length || !await isPhisAddonEnabledForSite(entry.manifest.addonId, input.siteId)) {
+      continue;
+    }
+    for (const role of entry.manifest.roles) {
       const verdict = await mayGrantPhisAddonRole({
         addonId: entry.manifest.addonId,
         siteId: input.siteId,

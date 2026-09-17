@@ -70,6 +70,30 @@ describe("Add-on roles", () => {
     });
   }
 
+  /*
+   * A role an Add-on policy reads is part of what a viewer may do, so whatever keeps a viewer's answer by
+   * `authorization_revision` must see a grant and a revoke -- and only a change, not a repeated no-op.
+   */
+  it("moves the member's authorization revision with every grant and revoke that changes something", async () => {
+    const pool = await requirePhiTestDatabase();
+    const member = await createPhiTestUser(site);
+    const revision = async () => (await pool.query<{ authorization_revision: number }>(
+      `SELECT authorization_revision FROM phis.user_site_memberships WHERE user_id = $1 AND site_id = $2`,
+      [member, site.id],
+    )).rows[0]!.authorization_revision;
+    const input = { addonId: ADDON, siteId: site.id, userId: member, role: "vendor", grantedByUserId: admin };
+
+    const before = await revision();
+    expect(await grantPhisAddonUserRole(pool, input)).toBe(true);
+    expect(await revision()).toBe(before + 1);
+    expect(await grantPhisAddonUserRole(pool, input)).toBe(false);
+    expect(await revision()).toBe(before + 1);
+    expect(await revokePhisAddonUserRole(pool, input)).toBe(true);
+    expect(await revision()).toBe(before + 2);
+    expect(await revokePhisAddonUserRole(pool, input)).toBe(false);
+    expect(await revision()).toBe(before + 2);
+  });
+
   it("grants once, and says so when a second grant adds nothing", async () => {
     const pool = await requirePhiTestDatabase();
     const input = { addonId: ADDON, siteId: site.id, userId: vendor, role: "vendor", grantedByUserId: admin };
