@@ -1,11 +1,31 @@
 import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
-import { access, cp, mkdir, readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
+import { access, cp, mkdir, readFile, readdir, rename, rmdir, stat, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 
-export const PHI_SITE_SCAFFOLD_VERSION = 2;
+export const PHI_SITE_SCAFFOLD_VERSION = 3;
 
 const AREAS = ["accounting", "admin", "app", "builder", "editor"] as const;
+
+/**
+ * The two route trees, each under its own root Layout.
+ *
+ * `(site)` holds every route that reads the request: the Areas, the Public Area for a signed-in visitor
+ * or a request with a query, and the refusal routes. `(static)` holds the Public Area as one anonymous
+ * render per page, locale and colour scheme, which Next keeps and serves to every visitor the proxy sends
+ * there. Two trees need two root Layouts, and Next allows that only with each inside a route group --
+ * the request-reading document shell would otherwise sit above the static tree too. The doors to Core,
+ * the media route and the crawler files render no document, so they stay outside both.
+ */
+const SITE_APP = "src/app/(site)";
+const STATIC_APP = "src/app/(static)/static-render/[marker]/[mode]/[root]";
+
+/**
+ * What every static route file declares. `force-static` rather than `error`: the static loaders read no
+ * request at all, and every read from Core is `no-store`, which `error` refuses outright. The minute is
+ * the ceiling for what the change marker in the address does not see, such as a replaced Asset.
+ */
+const STATIC_SEGMENT_CONFIG = `export const dynamic = "force-static";\nexport const revalidate = 60;\n`;
 
 /**
  * The two branches every Area is routed through, and how much of the Area each one draws.
@@ -41,7 +61,15 @@ export type PhiSiteScaffoldContext = {
   packageManager?: PhiSiteScaffoldPackageManager;
   packageVersions?: Partial<Record<string, string>>;
 };
-export type PhiSiteScaffoldChange = { path: string; action: "created" | "repaired" | "unchanged" };
+/**
+ * What reconcile did to one file. `removed` is a file an earlier scaffold wrote and this one no longer
+ * does, deleted because it was still exactly as written; `kept` is such a file the Site had changed, left
+ * in place for its owner to move or delete.
+ */
+export type PhiSiteScaffoldChange = {
+  path: string;
+  action: "created" | "repaired" | "unchanged" | "removed" | "kept";
+};
 export type PhiSiteScaffoldResult = {
   version: number;
   root: string;
@@ -95,6 +123,19 @@ function runtimeModuleFiles() {
       + ` * -- and, like every Area host, takes the projection as an argument rather than reaching for it.\n`
       + ` */\n`
       + `export const PhiSiteRootLayout = createPhiNextRootLayout(PHI_SITE_MODULES);\n`,
+    "src/runtime-modules/root-static.ts":
+      `import { createPhiNextStaticRootLayout } from "@phis/ui/next/root-route";\n\n`
+      + `import { PHI_SITE_MODULES } from "@/generated/site-modules";\n`
+      + `import { PhiPublicRuntimeModuleClientBoundary } from "@/runtime-modules/public-client";\n\n`
+      + `/**\n`
+      + ` * The document shell of the static tree. Only the Public Area renders there, so its Client boundary\n`
+      + ` * is mounted here rather than in a \`[root]\` Layout, and the request-reading root never imports it.\n`
+      + ` */\n`
+      + `export const PhiSiteStaticRootLayout = createPhiNextStaticRootLayout(\n`
+      + `  PHI_SITE_MODULES,\n`
+      + `  [],\n`
+      + `  PhiPublicRuntimeModuleClientBoundary,\n`
+      + `);\n`,
   };
   return Object.assign(root, Object.fromEntries(areas.flatMap((area) => {
     const name = area === "public" ? "Public" : AREA_NAMES[area];
@@ -228,18 +269,18 @@ function staticAreaFiles(area: typeof AREAS[number]) {
   const bridge = `PHI_${upper}_CMS_SITE_BRIDGE`;
   const areaPage = `import { ${bridge} } from "@/runtime-modules/${area}";\nimport { createPhiNextStaticAreaPage } from "@phis/ui/next/area-route";\n\nexport const dynamic = "force-dynamic";\n\nconst route = createPhiNextStaticAreaPage("${area}", ${bridge});\n\nexport const generateMetadata = route.generateMetadata;\nexport default route.Page;\n`;
   const files: Record<string, string> = {
-    [`src/app/${area}/layout.tsx`]: `import { ${bridge} } from "@/runtime-modules/${area}";\nimport { createPhiNextStaticAreaBoundary } from "@phis/ui/next/area-route";\nimport { Phi${name}RuntimeModuleClientBoundary } from "@/runtime-modules/${area}-client";\n\nexport const dynamic = "force-dynamic";\n\nexport default createPhiNextStaticAreaBoundary("${area}", ${bridge}, Phi${name}RuntimeModuleClientBoundary);\n`,
-    [`src/app/${area}/(root)/page.tsx`]: areaPage,
-    [`src/app/${area}/(pages)/[...path]/page.tsx`]: areaPage,
-    [`src/app/${area}/not-found.tsx`]: `import { ${bridge} } from "@/runtime-modules/${area}";\nimport { createPhiNextStaticAreaNotFound } from "@phis/ui/next/area-route";\n\nexport const dynamic = "force-dynamic";\n\nexport default createPhiNextStaticAreaNotFound(${bridge});\n`,
+    [`${SITE_APP}/${area}/layout.tsx`]: `import { ${bridge} } from "@/runtime-modules/${area}";\nimport { createPhiNextStaticAreaBoundary } from "@phis/ui/next/area-route";\nimport { Phi${name}RuntimeModuleClientBoundary } from "@/runtime-modules/${area}-client";\n\nexport const dynamic = "force-dynamic";\n\nexport default createPhiNextStaticAreaBoundary("${area}", ${bridge}, Phi${name}RuntimeModuleClientBoundary);\n`,
+    [`${SITE_APP}/${area}/(root)/page.tsx`]: areaPage,
+    [`${SITE_APP}/${area}/(pages)/[...path]/page.tsx`]: areaPage,
+    [`${SITE_APP}/${area}/not-found.tsx`]: `import { ${bridge} } from "@/runtime-modules/${area}";\nimport { createPhiNextStaticAreaNotFound } from "@phis/ui/next/area-route";\n\nexport const dynamic = "force-dynamic";\n\nexport default createPhiNextStaticAreaNotFound(${bridge});\n`,
   };
   for (const [group, chrome] of AREA_BRANCHES) {
-    files[`src/app/${area}/${group}/layout.tsx`] = `import { ${bridge} } from "@/runtime-modules/${area}";\nimport { createPhiNextStaticAreaLayout } from "@phis/ui/next/area-route";\n\nexport const dynamic = "force-dynamic";\n\nexport default createPhiNextStaticAreaLayout("${area}", ${bridge}, ${chrome});\n`;
+    files[`${SITE_APP}/${area}/${group}/layout.tsx`] = `import { ${bridge} } from "@/runtime-modules/${area}";\nimport { createPhiNextStaticAreaLayout } from "@phis/ui/next/area-route";\n\nexport const dynamic = "force-dynamic";\n\nexport default createPhiNextStaticAreaLayout("${area}", ${bridge}, ${chrome});\n`;
   }
   for (const [slot, regionType] of ROOT_SLOTS) {
     const slotPage = `import { PhiCmsRegionType } from "@phis/ui/cms/root-slot-page";\n\nimport { ${bridge} } from "@/runtime-modules/${area}";\nimport { createPhiNextStaticAreaSlotPage } from "@phis/ui/next/area-route";\n\nexport const dynamic = "force-dynamic";\n\nexport default createPhiNextStaticAreaSlotPage(\n  "${area}",\n  ${bridge},\n  PhiCmsRegionType.${regionType},\n);\n`;
-    files[`src/app/${area}/(root)/@${slot}/page.tsx`] = slotPage;
-    files[`src/app/${area}/(pages)/@${slot}/[...path]/page.tsx`] = slotPage;
+    files[`${SITE_APP}/${area}/(root)/@${slot}/page.tsx`] = slotPage;
+    files[`${SITE_APP}/${area}/(pages)/@${slot}/[...path]/page.tsx`] = slotPage;
   }
   return files;
 }
@@ -251,18 +292,46 @@ function staticAreaFiles(area: typeof AREAS[number]) {
 function dynamicRootFiles() {
   const rootPage = `import { createPhiNextDynamicRootPage } from "@phis/ui/next/area-route";\nimport { PHI_PUBLIC_CMS_SITE_BRIDGE } from "@/runtime-modules/public";\n\nexport const dynamic = "force-dynamic";\n\nconst route = createPhiNextDynamicRootPage(PHI_PUBLIC_CMS_SITE_BRIDGE);\n\nexport const generateMetadata = route.generateMetadata;\nexport default route.Page;\n`;
   const files: Record<string, string> = {
-    "src/app/[root]/layout.tsx": `import { createPhiNextDynamicRootBoundary } from "@phis/ui/next/area-route";\nimport { PhiPublicRuntimeModuleClientBoundary } from "@/runtime-modules/public-client";\nimport { PHI_PUBLIC_CMS_SITE_BRIDGE } from "@/runtime-modules/public";\n\nexport const dynamic = "force-dynamic";\n\nexport default createPhiNextDynamicRootBoundary(\n  PHI_PUBLIC_CMS_SITE_BRIDGE,\n  PhiPublicRuntimeModuleClientBoundary,\n);\n`,
-    "src/app/[root]/(root)/page.tsx": rootPage,
-    "src/app/[root]/(pages)/[...path]/page.tsx": rootPage,
-    "src/app/[root]/not-found.tsx": `import { createPhiNextStaticAreaNotFound } from "@phis/ui/next/area-route";\nimport { PHI_PUBLIC_CMS_SITE_BRIDGE } from "@/runtime-modules/public";\n\nexport const dynamic = "force-dynamic";\n\nexport default createPhiNextStaticAreaNotFound(PHI_PUBLIC_CMS_SITE_BRIDGE);\n`,
+    [`${SITE_APP}/[root]/layout.tsx`]: `import { createPhiNextDynamicRootBoundary } from "@phis/ui/next/area-route";\nimport { PhiPublicRuntimeModuleClientBoundary } from "@/runtime-modules/public-client";\nimport { PHI_PUBLIC_CMS_SITE_BRIDGE } from "@/runtime-modules/public";\n\nexport const dynamic = "force-dynamic";\n\nexport default createPhiNextDynamicRootBoundary(\n  PHI_PUBLIC_CMS_SITE_BRIDGE,\n  PhiPublicRuntimeModuleClientBoundary,\n);\n`,
+    [`${SITE_APP}/[root]/(root)/page.tsx`]: rootPage,
+    [`${SITE_APP}/[root]/(pages)/[...path]/page.tsx`]: rootPage,
+    [`${SITE_APP}/[root]/not-found.tsx`]: `import { createPhiNextStaticAreaNotFound } from "@phis/ui/next/area-route";\nimport { PHI_PUBLIC_CMS_SITE_BRIDGE } from "@/runtime-modules/public";\n\nexport const dynamic = "force-dynamic";\n\nexport default createPhiNextStaticAreaNotFound(PHI_PUBLIC_CMS_SITE_BRIDGE);\n`,
   };
   for (const [group, chrome] of AREA_BRANCHES) {
-    files[`src/app/[root]/${group}/layout.tsx`] = `import { createPhiNextDynamicRootLayout } from "@phis/ui/next/area-route";\nimport { PHI_PUBLIC_CMS_SITE_BRIDGE } from "@/runtime-modules/public";\n\nexport const dynamic = "force-dynamic";\n\nexport default createPhiNextDynamicRootLayout(PHI_PUBLIC_CMS_SITE_BRIDGE, ${chrome});\n`;
+    files[`${SITE_APP}/[root]/${group}/layout.tsx`] = `import { createPhiNextDynamicRootLayout } from "@phis/ui/next/area-route";\nimport { PHI_PUBLIC_CMS_SITE_BRIDGE } from "@/runtime-modules/public";\n\nexport const dynamic = "force-dynamic";\n\nexport default createPhiNextDynamicRootLayout(PHI_PUBLIC_CMS_SITE_BRIDGE, ${chrome});\n`;
   }
   for (const [slot, regionType] of ROOT_SLOTS) {
     const slotPage = `import { PhiCmsRegionType } from "@phis/ui/cms/root-slot-page";\nimport { createPhiNextDynamicRootSlotPage } from "@phis/ui/next/area-route";\nimport { PHI_PUBLIC_CMS_SITE_BRIDGE } from "@/runtime-modules/public";\n\nexport const dynamic = "force-dynamic";\n\nexport default createPhiNextDynamicRootSlotPage(\n  PHI_PUBLIC_CMS_SITE_BRIDGE,\n  PhiCmsRegionType.${regionType},\n);\n`;
-    files[`src/app/[root]/(root)/@${slot}/page.tsx`] = slotPage;
-    files[`src/app/[root]/(pages)/@${slot}/[...path]/page.tsx`] = slotPage;
+    files[`${SITE_APP}/[root]/(root)/@${slot}/page.tsx`] = slotPage;
+    files[`${SITE_APP}/[root]/(pages)/@${slot}/[...path]/page.tsx`] = slotPage;
+  }
+  return files;
+}
+
+/**
+ * The Public Area's static tree: the same two branches as `[root]`, reading nothing from the request.
+ *
+ * The proxy rewrites an anonymous read without a query to `/static-render/<marker>/<mode>/<locale>/...`
+ * (`@phis/ui/next/site-proxy`). Its Layouts sit inside the catch-all, where they are given the page's
+ * segments -- the dynamic tree's Layouts derive them from a request header this tree may not read. The
+ * refusal route is given no params, so it reads the locale from \`next/root-params\`.
+ */
+function staticPublicFiles() {
+  const bridgeImport = `import { PHI_PUBLIC_CMS_SITE_BRIDGE } from "@/runtime-modules/public";\n`;
+  const noParams = `export async function generateStaticParams() {\n  return [];\n}\n`;
+  const page = `import { createPhiNextStaticPublicPage } from "@phis/ui/next/area-route";\n${bridgeImport}\n${STATIC_SEGMENT_CONFIG}${noParams}\nconst route = createPhiNextStaticPublicPage(PHI_PUBLIC_CMS_SITE_BRIDGE);\n\nexport const generateMetadata = route.generateMetadata;\nexport default route.Page;\n`;
+  const files: Record<string, string> = {
+    [`${STATIC_APP}/layout.tsx`]: `import { generatePhiNextStaticRootMetadata } from "@phis/ui/next/root-route";\n\nimport { PhiSiteStaticRootLayout } from "@/runtime-modules/root-static";\n\nimport "@/app/globals.css";\n\n${STATIC_SEGMENT_CONFIG}${noParams}\nexport const generateMetadata = generatePhiNextStaticRootMetadata;\nexport default PhiSiteStaticRootLayout;\n`,
+    [`${STATIC_APP}/not-found.tsx`]: `import { root } from "next/root-params";\nimport { createPhiNextStaticPublicNotFound } from "@phis/ui/next/area-route";\n${bridgeImport}\nconst PhiStaticPublicNotFound = createPhiNextStaticPublicNotFound(PHI_PUBLIC_CMS_SITE_BRIDGE);\n\nexport default async function StaticPublicNotFound() {\n  return <PhiStaticPublicNotFound locale={await root()} />;\n}\n`,
+    [`${STATIC_APP}/(root)/page.tsx`]: page,
+    [`${STATIC_APP}/(pages)/[...path]/page.tsx`]: page,
+    [`${STATIC_APP}/(root)/layout.tsx`]: `import { createPhiNextStaticPublicLayout } from "@phis/ui/next/area-route";\n${bridgeImport}\n${STATIC_SEGMENT_CONFIG}\nexport default createPhiNextStaticPublicLayout(PHI_PUBLIC_CMS_SITE_BRIDGE, "none");\n`,
+    [`${STATIC_APP}/(pages)/[...path]/layout.tsx`]: `import { createPhiNextStaticPublicLayout } from "@phis/ui/next/area-route";\n${bridgeImport}\n${STATIC_SEGMENT_CONFIG}\nexport default createPhiNextStaticPublicLayout(PHI_PUBLIC_CMS_SITE_BRIDGE, "shell");\n`,
+  };
+  for (const [slot, regionType] of ROOT_SLOTS) {
+    const slotPage = `import { PhiCmsRegionType } from "@phis/ui/cms/root-slot-page";\nimport { createPhiNextStaticPublicSlotPage } from "@phis/ui/next/area-route";\n${bridgeImport}\n${STATIC_SEGMENT_CONFIG}\nexport default createPhiNextStaticPublicSlotPage(\n  PHI_PUBLIC_CMS_SITE_BRIDGE,\n  PhiCmsRegionType.${regionType},\n);\n`;
+    files[`${STATIC_APP}/(root)/@${slot}/page.tsx`] = slotPage;
+    files[`${STATIC_APP}/(pages)/[...path]/@${slot}/page.tsx`] = slotPage;
   }
   return files;
 }
@@ -315,27 +384,28 @@ export function buildPhiSiteScaffoldFiles(context: PhiSiteScaffoldContext) {
     ...siteModuleProjectionFiles(),
     ...rootErrorAreaFile(),
     ...dynamicRootFiles(),
+    ...staticPublicFiles(),
     ...Object.assign({}, ...AREAS.map(staticAreaFiles)),
-    "src/app/layout.tsx": `import { generatePhiNextRootMetadata } from "@phis/ui/next/root-route";\n\nimport { PhiSiteRootLayout } from "@/runtime-modules/root";\n\nimport "./globals.css";\n\nexport const dynamic = "force-dynamic";\n\nexport const generateMetadata = generatePhiNextRootMetadata;\nexport default PhiSiteRootLayout;\n`,
-    "src/app/page.tsx": `import { PhiNextSiteIndexPage } from "@phis/ui/next/root-route";\n\nexport const dynamic = "force-dynamic";\nexport default PhiNextSiteIndexPage;\n`,
+    [`${SITE_APP}/layout.tsx`]: `import { generatePhiNextRootMetadata } from "@phis/ui/next/root-route";\n\nimport { PhiSiteRootLayout } from "@/runtime-modules/root";\n\nimport "@/app/globals.css";\n\nexport const dynamic = "force-dynamic";\n\nexport const generateMetadata = generatePhiNextRootMetadata;\nexport default PhiSiteRootLayout;\n`,
+    [`${SITE_APP}/page.tsx`]: `import { PhiNextSiteIndexPage } from "@phis/ui/next/root-route";\n\nexport const dynamic = "force-dynamic";\nexport default PhiNextSiteIndexPage;\n`,
     "src/app/globals.css": "/* Site-specific global overrides may be added here. */\n",
     ".gitignore": PHI_SITE_GITIGNORE,
-    "src/app/not-found.tsx": `import { createPhiNextRootErrorPage } from "@phis/ui/next/area-route";\nimport { PHI_CMS_ROOT_ERROR_AREA } from "@/runtime-modules/root-error-area";\n\nexport default createPhiNextRootErrorPage(404, PHI_CMS_ROOT_ERROR_AREA);\n`,
-    "src/app/forbidden.tsx": `import { createPhiNextRootErrorPage } from "@phis/ui/next/area-route";\nimport { PHI_CMS_ROOT_ERROR_AREA } from "@/runtime-modules/root-error-area";\n\nexport default createPhiNextRootErrorPage(403, PHI_CMS_ROOT_ERROR_AREA);\n`,
-    "src/app/unauthorized.tsx": `import { createPhiNextRootErrorPage } from "@phis/ui/next/area-route";\nimport { PHI_CMS_ROOT_ERROR_AREA } from "@/runtime-modules/root-error-area";\n\nexport default createPhiNextRootErrorPage(401, PHI_CMS_ROOT_ERROR_AREA);\n`,
+    [`${SITE_APP}/not-found.tsx`]: `import { createPhiNextRootErrorPage } from "@phis/ui/next/area-route";\nimport { PHI_CMS_ROOT_ERROR_AREA } from "@/runtime-modules/root-error-area";\n\nexport default createPhiNextRootErrorPage(404, PHI_CMS_ROOT_ERROR_AREA);\n`,
+    [`${SITE_APP}/forbidden.tsx`]: `import { createPhiNextRootErrorPage } from "@phis/ui/next/area-route";\nimport { PHI_CMS_ROOT_ERROR_AREA } from "@/runtime-modules/root-error-area";\n\nexport default createPhiNextRootErrorPage(403, PHI_CMS_ROOT_ERROR_AREA);\n`,
+    [`${SITE_APP}/unauthorized.tsx`]: `import { createPhiNextRootErrorPage } from "@phis/ui/next/area-route";\nimport { PHI_CMS_ROOT_ERROR_AREA } from "@/runtime-modules/root-error-area";\n\nexport default createPhiNextRootErrorPage(401, PHI_CMS_ROOT_ERROR_AREA);\n`,
     "src/proxy.ts": `import type { NextRequest } from "next/server";\nimport { proxyPhiNextSiteRequest } from "@phis/ui/next/site-proxy";\n\nexport function proxy(request: NextRequest) {\n  return proxyPhiNextSiteRequest(request);\n}\n\nexport const config = { matcher: "/:path*" };\n`,
     "src/app/api/auth/[[...path]]/route.ts": proxyRoute("auth"),
     "src/app/api/site/[[...path]]/route.ts": proxyRoute("site"),
     "src/app/api/addons/[[...path]]/route.ts": proxyRoute("addons"),
     "src/app/api/hooks/[[...path]]/route.ts": proxyRoute("hooks"),
     "src/app/api/site/forms/route.ts": `import { buildPhiSiteFormRouteHandlers } from "@phis/ui/gateway";\nimport { buildPhiNextProxyHeaders, getPhiNextUpstreamBaseUrl, getPhiNextProxyTimeoutMs } from "@phis/ui/next/proxy-runtime";\n\nexport const dynamic = "force-dynamic";\nexport const runtime = "nodejs";\nconst handlers = buildPhiSiteFormRouteHandlers({\n  upstreamBaseUrl: getPhiNextUpstreamBaseUrl(),\n  timeoutMs: getPhiNextProxyTimeoutMs(),\n  missingBaseUrlMessage: "Missing phis.apiBaseUrl for /api/site/forms proxy.",\n  buildHeaders: (request) => buildPhiNextProxyHeaders(request, "phi-site-forms/1.0"),\n});\nexport const GET = handlers.GET;\nexport const POST = handlers.POST;\n`,
-    "src/app/builder/api/[[...path]]/route.ts": `export { POST } from "@phis/ui/builder-api-route";\n\nexport const dynamic = "force-dynamic";\nexport const runtime = "nodejs";\n`,
+    [`${SITE_APP}/builder/api/[[...path]]/route.ts`]: `export { POST } from "@phis/ui/builder-api-route";\n\nexport const dynamic = "force-dynamic";\nexport const runtime = "nodejs";\n`,
     "src/app/api/site/module-diagnostics/route.ts": `import { buildPhiSiteModuleDiagnosticsRouteHandler } from "@phis/ui/next/module-diagnostics-route";\n${["accounting", "admin", "app", "builder", "editor", "public"].map((area) => `import { PHI_${area.toUpperCase()}_CMS_SITE_BRIDGE } from "@/runtime-modules/${area}";`).join("\n")}\n\nexport const dynamic = "force-dynamic";\nexport const runtime = "nodejs";\nexport const GET = buildPhiSiteModuleDiagnosticsRouteHandler({ bridgesByArea: {\n${["public", "app", "admin", "builder", "editor", "accounting"].map((area) => `  ${area}: PHI_${area.toUpperCase()}_CMS_SITE_BRIDGE,`).join("\n")}\n} });\n`,
     "src/app/api/site/navigation-target/route.ts": `import { buildPhiNavigationTargetRouteHandler } from "@phis/ui/next/navigation-target-route";\n${["accounting", "admin", "app", "builder", "editor", "public"].map((area) => `import { PHI_${area.toUpperCase()}_CMS_SITE_BRIDGE } from "@/runtime-modules/${area}";`).join("\n")}\n\nexport const dynamic = "force-dynamic";\nexport const runtime = "nodejs";\nexport const GET = buildPhiNavigationTargetRouteHandler({ bridgesByArea: {\n${["public", "app", "admin", "builder", "editor", "accounting"].map((area) => `  ${area}: PHI_${area.toUpperCase()}_CMS_SITE_BRIDGE,`).join("\n")}\n} });\n`,
     "src/app/sitemap.xml/route.ts": `import { buildPhiSitemapRouteHandler } from "@phis/ui/next/seo-routes";\nimport { PHI_PUBLIC_CMS_SITE_BRIDGE } from "@/runtime-modules/public";\n\nexport const dynamic = "force-dynamic";\nexport const runtime = "nodejs";\nexport const GET = buildPhiSitemapRouteHandler({ bridge: PHI_PUBLIC_CMS_SITE_BRIDGE });\n`,
     "src/app/robots.txt/route.ts": `import { buildPhiRobotsRouteHandler } from "@phis/ui/next/seo-routes";\nimport { PHI_PUBLIC_CMS_SITE_BRIDGE } from "@/runtime-modules/public";\n\nexport const dynamic = "force-dynamic";\nexport const runtime = "nodejs";\nexport const GET = buildPhiRobotsRouteHandler({ bridge: PHI_PUBLIC_CMS_SITE_BRIDGE });\n`,
     "src/app/media/[...asset]/route.ts": `import { buildPhiMediaProxyHandlers } from "@phis/ui/gateway";\nimport type { NextRequest } from "next/server";\nimport { buildPhiNextProxyHeaders, getPhiNextUpstreamBaseUrl, getPhiNextProxyTimeoutMs } from "@phis/ui/next/proxy-runtime";\nimport { PHIS_TOKEN_HEADER } from "@phis/ui/constants";\n\nexport const dynamic = "force-dynamic";\nexport const runtime = "nodejs";\nconst handlers = buildPhiMediaProxyHandlers({\n  upstreamBaseUrl: getPhiNextUpstreamBaseUrl(),\n  timeoutMs: getPhiNextProxyTimeoutMs(),\n  buildHeaders: (request) => { const headers = buildPhiNextProxyHeaders(request, "phi-site-media/1.0"); headers.delete("authorization"); headers.delete(PHIS_TOKEN_HEADER); return headers; },\n});\ntype Context = { params: Promise<{ asset?: string[] }> };\nasync function adapt(context: Context) { const { asset } = await context.params; return { params: Promise.resolve({ path: asset }) }; }\nexport async function GET(request: NextRequest, context: Context) { return handlers.GET(request, await adapt(context)); }\nexport async function HEAD(request: NextRequest, context: Context) { return handlers.HEAD(request, await adapt(context)); }\n`,
-    "next.config.ts": `import type { NextConfig } from "next";\n\nconst nextConfig: NextConfig = {\n  output: "standalone",\n  reactStrictMode: true,\n  images: { localPatterns: [{ pathname: "/api/site/media/**" }] },\n  experimental: { authInterrupts: true },\n  transpilePackages: ["@phis/ui"],\n};\nexport default nextConfig;\n`,
+    "next.config.ts": `import type { NextConfig } from "next";\n\nconst nextConfig: NextConfig = {\n  output: "standalone",\n  reactStrictMode: true,\n  images: { localPatterns: [{ pathname: "/api/site/media/**" }] },\n  // Rendered Public pages live in this process's memory, addressed by the Site's change marker.\n  cacheHandler: require.resolve("@phis/ui/next/cache-handler"),\n  cacheMaxMemorySize: 0,\n  experimental: {\n    authInterrupts: true,\n    // A cached page the browser already holds is asked for again after this long, so a publish reaches an open tab.\n    staleTimes: { static: 30 },\n  },\n  transpilePackages: ["@phis/ui"],\n};\nexport default nextConfig;\n`,
     "tsconfig.json": `${JSON.stringify({ compilerOptions: { target: "ES2022", lib: ["dom", "dom.iterable", "esnext"], allowJs: false, skipLibCheck: true, strict: true, noEmit: true, esModuleInterop: true, module: "esnext", moduleResolution: "bundler", resolveJsonModule: true, isolatedModules: true, jsx: "react-jsx", incremental: true, plugins: [{ name: "next" }], paths: { "@/*": ["./src/*"] } }, include: ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts", ".next/dev/types/**/*.ts"], exclude: ["node_modules"] }, null, 2)}\n`,
     "package.json": packageJson(context),
     "config/site-runtime.example.json": `${JSON.stringify({ site: { key: context.siteKey }, phis: { apiBaseUrl: context.apiBaseUrl, internalToken: "" }, network: { internalApiTimeoutMs: 8000 } }, null, 2)}\n`,
@@ -373,6 +443,49 @@ function mergePackageJson(current: Record<string, unknown>, canonicalText: strin
   }, null, 2)}\n`;
 }
 
+async function readPreviousManifestFiles(root: string): Promise<Record<string, string>> {
+  const manifest = await readJsonRecord(path.join(root, ".phis/scaffold-manifest.json"));
+  const files = manifest.files;
+  return files && typeof files === "object" && !Array.isArray(files) ? files as Record<string, string> : {};
+}
+
+/** Removes the directories a removed file leaves empty, up to the Site root and no further. */
+async function removeEmptyParents(root: string, target: string) {
+  let directory = path.dirname(target);
+  while (directory.startsWith(`${root}${path.sep}`)) {
+    if ((await readdir(directory)).length > 0) return;
+    await rmdir(directory);
+    directory = path.dirname(directory);
+  }
+}
+
+/**
+ * The files an earlier scaffold wrote that this one does not, as the manifest of that run lists them.
+ *
+ * A route that moved -- every Area into `(site)` when the static tree arrived -- would otherwise stay at
+ * its old address beside the new one, and Next refuses two routes for one path. Only a file still exactly
+ * as it was written is deleted: one the Site edited is its owner's, and is reported instead.
+ */
+async function removeRetiredScaffoldFiles(
+  root: string,
+  previous: Record<string, string>,
+  current: Record<string, string>,
+  changes: PhiSiteScaffoldChange[],
+) {
+  for (const [relativePath, hash] of Object.entries(previous)) {
+    if (relativePath in current) continue;
+    const target = path.join(root, relativePath);
+    if (!await exists(target)) continue;
+    if (hashContent(await readFile(target, "utf8")) !== hash) {
+      changes.push({ path: relativePath, action: "kept" });
+      continue;
+    }
+    await unlink(target);
+    await removeEmptyParents(root, target);
+    changes.push({ path: relativePath, action: "removed" });
+  }
+}
+
 export async function reconcilePhiSiteScaffold(root: string, context: PhiSiteScaffoldContext, mode: "init" | "reconcile") {
   const resolvedRoot = path.resolve(root);
   if (mode === "init" && await exists(resolvedRoot)) {
@@ -395,6 +508,7 @@ export async function reconcilePhiSiteScaffold(root: string, context: PhiSiteSca
     }
   }
   const files = buildPhiSiteScaffoldFiles(context);
+  const previousFiles = mode === "reconcile" ? await readPreviousManifestFiles(resolvedRoot) : {};
   const changes: PhiSiteScaffoldChange[] = [];
   for (const [relativePath, canonical] of Object.entries(files)) {
     const target = path.join(resolvedRoot, relativePath);
@@ -415,6 +529,7 @@ export async function reconcilePhiSiteScaffold(root: string, context: PhiSiteSca
     await writeAtomic(target, desired);
     changes.push({ path: relativePath, action: alreadyExists ? "repaired" : "created" });
   }
+  await removeRetiredScaffoldFiles(resolvedRoot, previousFiles, files, changes);
   const manifest = {
     version: PHI_SITE_SCAFFOLD_VERSION,
     siteKey: context.siteKey,

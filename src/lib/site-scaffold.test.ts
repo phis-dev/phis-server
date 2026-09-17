@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -24,10 +24,10 @@ afterEach(async () => {
 describe("site scaffold", () => {
   it("generates every canonical route family and exact dependencies", () => {
     const files = buildPhiSiteScaffoldFiles(context);
-    expect(files["src/app/[root]/(root)/page.tsx"]).toContain("createPhiNextDynamicRootPage");
-    expect(files["src/app/[root]/(pages)/[...path]/page.tsx"]).toContain("createPhiNextDynamicRootPage");
-    expect(files["src/app/admin/(pages)/@drawer/[...path]/page.tsx"]).toContain("PhiCmsRegionType.Drawer");
-    expect(files["src/app/admin/(root)/@drawer/page.tsx"]).toContain("PhiCmsRegionType.Drawer");
+    expect(files["src/app/(site)/[root]/(root)/page.tsx"]).toContain("createPhiNextDynamicRootPage");
+    expect(files["src/app/(site)/[root]/(pages)/[...path]/page.tsx"]).toContain("createPhiNextDynamicRootPage");
+    expect(files["src/app/(site)/admin/(pages)/@drawer/[...path]/page.tsx"]).toContain("PhiCmsRegionType.Drawer");
+    expect(files["src/app/(site)/admin/(root)/@drawer/page.tsx"]).toContain("PhiCmsRegionType.Drawer");
     expect(files["src/app/api/site/forms/route.ts"]).toContain("buildPhiSiteFormRouteHandlers");
     /*
      * The door a Module half reaches its own Add-on half through. Without it a Site proxies `/api/site`
@@ -50,14 +50,14 @@ describe("site scaffold", () => {
   it("draws the Shell below an Area root and nothing around the root itself", () => {
     const files = buildPhiSiteScaffoldFiles(context);
 
-    expect(files["src/app/builder/(root)/layout.tsx"]).toContain('PHI_BUILDER_CMS_SITE_BRIDGE, "none"');
-    expect(files["src/app/builder/(pages)/layout.tsx"]).toContain('PHI_BUILDER_CMS_SITE_BRIDGE, "shell"');
-    expect(files["src/app/[root]/(root)/layout.tsx"]).toContain('PHI_PUBLIC_CMS_SITE_BRIDGE, "none"');
-    expect(files["src/app/[root]/(pages)/layout.tsx"]).toContain('PHI_PUBLIC_CMS_SITE_BRIDGE, "shell"');
+    expect(files["src/app/(site)/builder/(root)/layout.tsx"]).toContain('PHI_BUILDER_CMS_SITE_BRIDGE, "none"');
+    expect(files["src/app/(site)/builder/(pages)/layout.tsx"]).toContain('PHI_BUILDER_CMS_SITE_BRIDGE, "shell"');
+    expect(files["src/app/(site)/[root]/(root)/layout.tsx"]).toContain('PHI_PUBLIC_CMS_SITE_BRIDGE, "none"');
+    expect(files["src/app/(site)/[root]/(pages)/layout.tsx"]).toContain('PHI_PUBLIC_CMS_SITE_BRIDGE, "shell"');
 
     // The Area's own Layout holds the guards and providers, and draws no Region of its own.
-    expect(files["src/app/builder/layout.tsx"]).toContain("createPhiNextStaticAreaBoundary");
-    expect(files["src/app/[root]/layout.tsx"]).toContain("createPhiNextDynamicRootBoundary");
+    expect(files["src/app/(site)/builder/layout.tsx"]).toContain("createPhiNextStaticAreaBoundary");
+    expect(files["src/app/(site)/[root]/layout.tsx"]).toContain("createPhiNextDynamicRootBoundary");
   });
 
   /*
@@ -77,7 +77,7 @@ describe("site scaffold", () => {
     }
 
     for (const route of ["not-found", "unauthorized", "forbidden"]) {
-      expect(files[`src/app/${route}.tsx`]).toContain("PHI_CMS_ROOT_ERROR_AREA");
+      expect(files[`src/app/(site)/${route}.tsx`]).toContain("PHI_CMS_ROOT_ERROR_AREA");
     }
   });
 
@@ -136,21 +136,75 @@ describe("site scaffold", () => {
     const files = buildPhiSiteScaffoldFiles(context);
 
     expect(files["src/runtime-modules/root.ts"]).toContain("createPhiNextRootLayout(PHI_SITE_MODULES)");
-    expect(files["src/app/layout.tsx"]).toContain("@/runtime-modules/root");
+    expect(files["src/app/(site)/layout.tsx"]).toContain("@/runtime-modules/root");
   });
 
   it("repairs managed wrappers without overwriting runtime secrets or unknown files", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "phis-scaffold-"));
     roots.push(root);
     await reconcilePhiSiteScaffold(root, context, "init");
-    await writeFile(path.join(root, "src/app/page.tsx"), "broken\n", "utf8");
+    await writeFile(path.join(root, "src/app/(site)/page.tsx"), "broken\n", "utf8");
     await writeFile(path.join(root, "config/site-runtime.json"), "{\"secret\":true}\n", "utf8");
     await writeFile(path.join(root, "SITE_OWNED.txt"), "keep\n", "utf8");
     const result = await reconcilePhiSiteScaffold(root, context, "reconcile");
-    expect(result.changes.find((entry) => entry.path === "src/app/page.tsx")?.action).toBe("repaired");
-    expect(await readFile(path.join(root, "src/app/page.tsx"), "utf8")).toContain("PhiNextSiteIndexPage");
+    expect(result.changes.find((entry) => entry.path === "src/app/(site)/page.tsx")?.action).toBe("repaired");
+    expect(await readFile(path.join(root, "src/app/(site)/page.tsx"), "utf8")).toContain("PhiNextSiteIndexPage");
     expect(await readFile(path.join(root, "config/site-runtime.json"), "utf8")).toBe("{\"secret\":true}\n");
     expect(await readFile(path.join(root, "SITE_OWNED.txt"), "utf8")).toBe("keep\n");
+  });
+
+  /*
+   * The Public Area twice: once reading the request, once for every anonymous visitor. Each tree needs
+   * its own root Layout, which Next allows only inside route groups -- so no document shell may be left
+   * at the top of `src/app`, where it would sit above both.
+   */
+  it("gives the static Public tree its own root and reads nothing of the request there", () => {
+    const files = buildPhiSiteScaffoldFiles(context);
+    const staticRoot = "src/app/(static)/static-render/[marker]/[mode]/[root]";
+
+    expect(files["src/app/layout.tsx"]).toBeUndefined();
+    expect(files["src/app/(site)/layout.tsx"]).toContain("PhiSiteRootLayout");
+    expect(files[`${staticRoot}/layout.tsx`]).toContain("PhiSiteStaticRootLayout");
+    expect(files["src/runtime-modules/root-static.ts"]).toContain("PhiPublicRuntimeModuleClientBoundary");
+    expect(files["src/runtime-modules/root.ts"]).not.toContain("public-client");
+    expect(files[`${staticRoot}/(root)/layout.tsx`]).toContain('PHI_PUBLIC_CMS_SITE_BRIDGE, "none"');
+    expect(files[`${staticRoot}/(pages)/[...path]/layout.tsx`]).toContain('PHI_PUBLIC_CMS_SITE_BRIDGE, "shell"');
+    expect(files[`${staticRoot}/(pages)/[...path]/@hero/page.tsx`]).toContain("PhiCmsRegionType.Hero");
+    expect(files[`${staticRoot}/not-found.tsx`]).toContain('from "next/root-params"');
+
+    const staticFiles = Object.entries(files).filter(([file]) => file.startsWith("src/app/(static)/"));
+    for (const [file, content] of staticFiles) {
+      expect(content, file).not.toContain("force-dynamic");
+      if (!file.endsWith("not-found.tsx")) expect(content, file).toContain('dynamic = "force-static"');
+    }
+    expect(files["next.config.ts"]).toContain('require.resolve("@phis/ui/next/cache-handler")');
+  });
+
+  it("removes what an earlier scaffold wrote and this one no longer does, unless the Site changed it", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "phis-scaffold-"));
+    roots.push(root);
+    await reconcilePhiSiteScaffold(root, context, "init");
+    const manifestPath = path.join(root, ".phis/scaffold-manifest.json");
+    const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
+    // What an earlier scaffold would have left: the old root Layout and a route the Site since edited.
+    const retired = "export default function OldLayout() { return null; }\n";
+    await writeFile(path.join(root, "src/app/layout.tsx"), retired, "utf8");
+    await mkdir(path.join(root, "src/app/[root]/(root)"), { recursive: true });
+    await writeFile(path.join(root, "src/app/[root]/(root)/page.tsx"), "edited by the Site\n", "utf8");
+    const { createHash } = await import("node:crypto");
+    const hash = (content: string) => createHash("sha256").update(content).digest("hex");
+    manifest.files["src/app/layout.tsx"] = hash(retired);
+    manifest.files["src/app/[root]/(root)/page.tsx"] = hash("as the scaffold wrote it\n");
+    await writeFile(manifestPath, JSON.stringify(manifest), "utf8");
+
+    const result = await reconcilePhiSiteScaffold(root, context, "reconcile");
+
+    expect(result.changes.find((entry) => entry.path === "src/app/layout.tsx")?.action).toBe("removed");
+    await expect(access(path.join(root, "src/app/layout.tsx"))).rejects.toThrow();
+    expect(result.changes.find((entry) => entry.path === "src/app/[root]/(root)/page.tsx")?.action).toBe("kept");
+    expect(await readFile(path.join(root, "src/app/[root]/(root)/page.tsx"), "utf8")).toBe("edited by the Site\n");
+    const rewritten = JSON.parse(await readFile(manifestPath, "utf8"));
+    expect(rewritten.files["src/app/layout.tsx"]).toBeUndefined();
   });
 
   it("refuses init over a non-empty target", async () => {
