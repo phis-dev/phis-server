@@ -303,6 +303,25 @@ An Add-on that throws answers 503 with the request id and leaves the process hea
 is enabled in the registry but whose artifact is missing on this instance answers as unavailable and
 is logged; it does not take anything else down.
 
+## 6a. Your data on Public pages
+
+A Site renders a Public page **once for every anonymous visitor** and serves it from memory
+(`@phis/ui` `STATIC_RENDERING.md`). Two consequences reach an Add-on even though its own routes are never
+rendered that way:
+
+- **What your Add-on stores can be up to 60 seconds old on a Public page.** A page is rendered again
+  within seconds only when Builder content is published or a translation is written. A write to your
+  Add-on -- a booking, an order, a new entry, a price -- does not do that; a Widget that renders the data
+  on the server shows it at the next render, at most a minute later. If a write must be visible at once
+  -- a slot that is gone, a product that sold out -- the Widget loads that part in the browser from your
+  route.
+- **A Public page's server render is anonymous.** It carries no visitor session to your routes, and
+  whatever it renders is shown to everybody. Per-visitor answers (the visitor's own bookings, a CSRF or
+  one-time token, anything role-dependent) are requested by the browser, where the session travels with
+  the request.
+
+Signed-in visitors and requests with a query are rendered per request and see current data.
+
 ## 7. Multiple instances
 
 The artifact is per-instance state, the registry is shared. Both halves have to be true at once:
