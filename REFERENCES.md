@@ -74,8 +74,10 @@ guarantee rather than advice. The answers are `409 path_collision` for an addres
 path, it writes nothing and answers `409 page_exists` with the Page -- `{ id, reference, path, tombstoned }`
 -- so the Builder opens that Page instead of laying a blank draft over it. A plain save cannot make that
 distinction: it addresses Pages by path too, and finding one is its normal case. A tombstoned Scope on
-the path counts as holding it and is answered the same way, with `tombstoned: true`. The address rules
-above apply to the path of a new Page.
+the path counts as holding it and is answered the same way, with `tombstoned: true` -- which says the
+deletion was published, because that is when the tombstone is written. A Page whose deletion is only
+drafted is a live Page and is answered with `tombstoned: false`. The address rules above apply to the
+path of a new Page.
 
 ## Folder addresses
 
@@ -148,6 +150,13 @@ immutable id, and canonical `(site_id, area_id, path)` ownership; deletion does 
 reference back into a raw path or silently discard it from a Navigation Draft. Authoring resolves the
 missing target to a typed deleted diagnostic so the row remains repairable; Live navigation omits the
 unresolved link entirely.
+
+Deletion is a draft like every other change to a Page, and publishing is what performs it. The draft
+marks the Page deleted; `site_page_scopes.tombstoned_at` is written by the publish, so until then the Page
+resolves, stays in the sitemap and stays a valid Navigation target, and discarding the draft leaves no
+trace of it. Publishing a later revision that is not marked deleted clears the tombstone again, which is
+how a deleted Page comes back. What outlives the draft is the address: the path is reserved from the
+moment the Scope exists, tombstoned or not (*A Page is never a folder*, above).
 
 The transactional Page-create/restore workflow must include tombstoned Scopes in canonical-path lookup.
 When the requested path belongs to a tombstoned Site Page in the same Site and Area, it reactivates that

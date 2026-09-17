@@ -976,12 +976,19 @@ Contract:
   moves it into `path` and clears it, and discarding the Page draft clears it. Pending paths contend for
   addresses exactly as live paths do, through their own partial unique index.
 - Site Page deletion retains the Scope row and its canonical path. The deleted Page revision state is the
-  logical tombstone; `tombstoned_at` is set by the Page draft save that marks the Page deleted and cleared
-  by any other Page draft save. The path stays reserved by the existing unique key. Creating or restoring a
-  Site Page at that path reactivates this Scope and reuses its immutable id rather than inserting another
-  Scope. Runtime reference resolution remains id-based and never falls back to path matching.
-- Published Page listings, Navigation folder-address resolution, and Module usage ignore Scopes whose
-  `tombstoned_at` is set.
+  logical tombstone; `tombstoned_at` is the published side of it and is written only by
+  `publishSitePageRevision`: publishing a revision marked deleted sets it, keeping the time a first
+  publish of that deletion wrote, and publishing a revision that is not marked deleted clears it, which is
+  the restore. A draft that marks the Page deleted writes no Scope state at all, so the published Page
+  keeps resolving until the deletion is published, and discarding or deleting that draft revision leaves
+  the published row exactly as the last publish left it. The path stays reserved by the existing unique
+  key. Creating or restoring a Site Page at that path reactivates this Scope and reuses its immutable id
+  rather than inserting another Scope. Runtime reference resolution remains id-based and never falls back
+  to path matching.
+- Published Page listings, the sitemap, Navigation folder-address resolution, and Module usage ignore
+  Scopes whose `tombstoned_at` is set. They therefore see a deletion when it is published and not before.
+  The address rules are the exception and count a tombstoned Scope as holding its path, because deletion
+  reserves it.
 - `tree_json.page.path` is not an independently writable source of truth. A read/render projection may
   carry the currently resolved path, but persistence resolves Site paths from the Scope column and Module
   paths from the active route descriptor.
@@ -1602,7 +1609,8 @@ Contract:
 - Maintained only by statement-level triggers (`phis.site_read_touch_markers()`): any update of the
   `sites` row; an inserted or deleted row of `site_page_scopes`, `site_area_scopes`, `site_nav_scopes` or
   `site_theme_scopes`; an update there only when `published_revision_id` changed, and for Pages also
-  `path` or `tombstoned_at`. Draft pointers do not move it. Application code never writes it.
+  `path` or `tombstoned_at` -- all three of which only a publish writes. Draft pointers do not move it,
+  and neither does a draft that marks a Page deleted. Application code never writes it.
 - `GET /api/v1/site` carries it as `readMarker` (`"0"` without a row). A Site process refreshes its config
   at most every few seconds and empties its other read caches, Navigation among them, when it moved.
 - Only equality of a marker means anything; it is not a count and not ordered.

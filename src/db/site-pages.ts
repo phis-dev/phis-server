@@ -2100,13 +2100,9 @@ export async function saveSitePageDraftRevision(
           sourceRevisionId,
           createdByUserId: options?.createdByUserId ?? null,
         });
-    await client.query(
-      `UPDATE phis.site_page_scopes
-       SET tombstoned_at = $2,
-           updated_at = NOW()
-       WHERE id = $1`,
-      [scope.id, isDeletedPageRevision(input) ? new Date() : null],
-    );
+    // No tombstone here. A draft that marks the Page deleted says what the next publish will do, and the
+    // tombstone is what the live Site reads; writing it on the save took the Page off the Site before
+    // anybody published the deletion, and moved the Site read marker while doing it.
     await setSitePageScopePointersWithDb(client, scope.id, {
       publishedRevisionId: scope.publishedRevisionId,
       workingDraftRevisionId: revision.id,
@@ -2287,6 +2283,29 @@ async function promoteSitePageDraftPathWithDb(
   return { movedFrom: scope.path ?? "", movedTo: scope.draftPath };
 }
 
+/**
+ * Writes the published deletion state, in the transaction that publishes the Page.
+ *
+ * The tombstone is the Site's copy of "this Page is gone": published listings, Navigation targets, the
+ * sitemap and Module usage all read it, and it moves the Site read marker so every Site process notices.
+ * That makes it published state, and publishing the only thing allowed to write it -- a Page marked for
+ * deletion in a draft keeps answering until the deletion is published, and discarding that draft leaves
+ * this column exactly as the last publish left it.
+ *
+ * The time is kept once. Publishing a deleted Page again republishes the same deletion rather than
+ * restating when it happened, and clearing it is the restore: a publish whose revision is not deleted
+ * says the Page is back.
+ */
+async function setSitePageScopeTombstoneWithDb(db: DbQueryable, scopeId: number, deleted: boolean) {
+  await db.query(
+    `UPDATE phis.site_page_scopes
+     SET tombstoned_at = CASE WHEN $2 THEN COALESCE(tombstoned_at, NOW()) ELSE NULL END,
+         updated_at = NOW()
+     WHERE id = $1`,
+    [scopeId, deleted],
+  );
+}
+
 export async function publishSitePageRevision(
   siteId: number,
   input: {
@@ -2365,9 +2384,10 @@ export async function publishSitePageRevision(
       options?.locale ?? null,
     );
 
+    const deleted = isDeletedPageRevision(revisionTree, revision.flags);
     const nextFlags =
       PhiCmsRevisionFlags.Published |
-      (isDeletedPageRevision(revisionTree, revision.flags) ? PhiCmsRevisionFlags.Deleted : 0);
+      (deleted ? PhiCmsRevisionFlags.Deleted : 0);
     await client.query(
       `UPDATE phis.site_page_revisions
        SET flags = $2,
@@ -2379,6 +2399,7 @@ export async function publishSitePageRevision(
       publishedRevisionId: revision.id,
       workingDraftRevisionId: null,
     });
+    await setSitePageScopeTombstoneWithDb(client, scope.id, deleted);
     const moved = await promoteSitePageDraftPathWithDb(client, scope);
     await client.query("COMMIT");
 
@@ -3097,6 +3118,11 @@ export async function deleteSitePageDraftRevision(
       return { deleted: discardedPendingPath };
     }
 
+    /*
+     * The draft goes and the published row stays as it was, tombstone included: a discarded deletion was
+     * never published, and a discarded restore does not undo the deletion that was. Nothing is cleared
+     * here -- `setSitePageScopeTombstoneWithDb` runs on publish and nowhere else.
+     */
     const removedDraft = await client.query<{ tree_json: Record<string, unknown> }>(
       `DELETE FROM phis.site_page_revisions WHERE id = $1 RETURNING tree_json`,
       [scope.workingDraftRevisionId],
