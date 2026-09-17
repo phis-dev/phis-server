@@ -18,3 +18,6 @@ design is built, its settled parts move into the owning contract and leave this 
   and the Storage migration job.
 - [PUBLIC_ADDRESSES.md](./PUBLIC_ADDRESSES.md) -- Site Page against Module address collisions, a standing
   list of Public addresses, and durable redirects.
+- [THREADS.md](./THREADS.md) -- threads beyond Support: Staff, group and cross-group threads on Site
+  groups, message confidentiality, actorless Add-on access through owned and linked threads, verified
+  hooks, events to Add-ons, and the two-way GitHub Add-on.
