@@ -78,6 +78,29 @@ only where the group sets `ShowMemberCompany`, address never.
 
 A retired group grants nothing here either: sharing a retired group is sharing no group.
 
+### The Site with no shared group
+
+The rule above has a consequence worth stating before somebody meets it as a bug: two Staff who share no
+group cannot start a conversation. On a Site with no groups at all nobody can; on a Site whose groups
+follow its teams, a developer and a supporter cannot, which is exactly the ad-hoc contact -- *can you
+look at this* -- that a thread is most useful for.
+
+**This is correct and stays.** The alternative is a Site-wide Staff list, and the section above refuses
+one deliberately: a person is visible to another only through a group they share. Bending it for
+`Direct` would not be a small exception, it would be that list, reachable by every Core role holder and
+arriving without the Site ever deciding to have one.
+
+**The answer is a group, not a rule.** A Site that wants its Staff to reach each other gives them a
+group -- and then the existing rule does it, with the existing candidates route and no special case
+anywhere. What the threads Module deliberately does **not** do is seed one: a group containing everybody
+who holds a Core role is a Site-wide Staff list by another name, and whether to have one is the Site's
+decision rather than a Module's to take on its behalf.
+
+Two consequences follow. **Admin and Developer are the way in**, and their reach -- already settled below
+-- is what lets a Site that has just installed the Module hold its first conversation and form the group
+from there. And **the candidates route says why it is empty**: a blank list reads as a broken surface,
+where *you share no group with anyone yet* is the one sentence that leads somebody to the fix.
+
 ### Thread kinds
 
 | Kind | May open | Participants | Available when |
@@ -625,6 +648,28 @@ is not installed.
 
 ## 13. Modules
 
+### One conversation view, and more than one listing
+
+The widgets three Modules share are the **conversation** and the **composer**. The **listing** is not
+shared, and the tempting version of this -- one inbox holding everything a person may see -- is wrong for
+a reason that only shows up at the scale a working Site has.
+
+A Supporter may see every ticket standing in their queue's group. Put those in the same list as messages
+from colleagues and the list is mostly other people's unclaimed work: fifty rows, of which five are
+theirs. Worse, it is the wrong ordering. Ticket work is done by status, priority and the two clocks;
+correspondence is done by recency. A single list has to pick one, and whichever it picks makes the other
+kind of work harder than it was before.
+
+So: **the inbox lists `Direct`, `Group` and `CrossGroup`.** Support threads are listed by Support's own
+surfaces -- the queue view for work that is not yet anybody's, the customer widget for one's own
+requests. This is not two inboxes to check, because nothing appears in both and nothing is in one by
+accident: the kind decides, and the kind is already what the Site declared.
+
+What that buys is that the listing can embody a way of working while the conversation stays identical.
+A Supporter reading a customer's reply and a colleague reading a direct message are looking at the same
+widget, with the same attachment rules and the same composer beneath it. Only the way they arrived
+differs -- and arriving is exactly the part that should differ.
+
 - **`@phis/ui/threads`** -- thin, first-party, like `@phis/ui/groups`: inbox, conversation, composer, the
   candidates picker. Declares `Direct`. The composer is where an attachment is offered, so it is the one
   surface both other Modules reuse for it rather than each growing its own. **The Module and its
@@ -636,7 +681,10 @@ is not installed.
   offering something the control plane is about to refuse.
 - **`@phis/support`** -- declares `Support` and the User Space its requesters submit into
   ([SUPPORT.md](./SUPPORT.md)); seeds its group; ticket and queue surfaces; a customer widget listing
-  only the viewer's own Support threads. Reuses the thread widgets by Layout composition.
+  only the viewer's own Support threads. Reuses the thread widgets by Layout composition: its ticket
+  panel -- status, queue, assignee, tasks, the two clocks, what is left of the requester's allowance --
+  sits beside the conversation and learns which ticket from the same runtime signal the composer
+  listens on. One mechanism for all three Modules, and no extension point inside anybody's widget.
 - **groups Module** -- group spaces; declares `Group` and, by setting, `CrossGroup`; administers the
   group flags for Core groups.
 - **`@phis/github` Module half** -- a link panel widget beside a ticket's conversation, wired by a
