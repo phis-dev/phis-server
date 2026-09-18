@@ -8,40 +8,48 @@ import {
   getPhisAddonBuildDigest,
   getPhisAddonInstalledManifest,
 } from "@/lib/addons/installed";
-import {
-  PHIS_CORE_CAPABILITIES,
-  isPhisAddonCapabilityDeliverable,
-} from "@/lib/addons/core-capabilities";
+import { PHIS_CORE_CAPABILITIES } from "@/lib/addons/core-capabilities";
 
 export type { PhiCapabilityState } from "@phis/contracts/server-capabilities";
 import type { PhiCapabilityState } from "@phis/contracts/server-capabilities";
 
+type PhisCapabilitySnapshotProvider = {
+  providerId: string;
+  state: PhiCapabilityState;
+  diagnosticCode: string | null;
+  capabilities: Array<{
+    id: string;
+    interfaceDigest: string;
+  }>;
+};
+
+/**
+ * Core's own entry: everything it names, not only what it hands over.
+ *
+ * Two questions are asked of this list and only one of them is about receiving something. An Add-on
+ * runs inside this server and a capability reaches it as an object bound to its request, so a name
+ * nothing builds has to stop it -- which is what the dispatcher, the job runner, the service factory
+ * and the event delivery each ask `isPhisAddonCapabilityDeliverable` before they admit one. A Site
+ * Module runs in the Site and is never handed an object at all: its binding asks whether this server
+ * does the thing, and `authentication:v1` is exactly such a name. Core performs authentication; it
+ * simply has nothing to give an Add-on about it.
+ *
+ * Answering the Module's question with the Add-on's answer switched the first-party Auth Module off,
+ * and with it the login route every Area behind a session sends people to. SERVER_ADDONS.md section 13
+ * states what stands here: every id appears in this snapshot, and only the delivered ones are bound to
+ * an Add-on's context.
+ */
+export function createPhisCoreCapabilityProvider(): PhisCapabilitySnapshotProvider {
+  return {
+    providerId: "@phis/server/core",
+    state: "available",
+    diagnosticCode: null,
+    capabilities: [...PHIS_CORE_CAPABILITIES],
+  };
+}
+
 export async function buildPhisCapabilitySnapshot(siteId: number) {
-  const providers: Array<{
-    providerId: string;
-    state: PhiCapabilityState;
-    diagnosticCode: string | null;
-    capabilities: Array<{
-      id: string;
-      interfaceDigest: string;
-    }>;
-  }> = [
-    {
-      providerId: "@phis/server/core",
-      state: "available",
-      diagnosticCode: null,
-      /*
-       * What Core can hand over, not what it can name.
-       *
-       * The snapshot is what a Site's Modules are activated against, and reporting the whole catalogue
-       * made a Module requiring a reserved name activate against a capability nothing builds -- the
-       * same mistake the dispatcher stopped making when it started asking this set. A reserved name is
-       * absent here rather than reported as available, so the Module stays off and says why.
-       */
-      capabilities: PHIS_CORE_CAPABILITIES.filter((capability) =>
-        isPhisAddonCapabilityDeliverable(capability.id)),
-    },
-  ];
+  const providers: PhisCapabilitySnapshotProvider[] = [createPhisCoreCapabilityProvider()];
 
   for (const [addonId, entry] of Object.entries(
     getPhisAddonInstalledManifest(),
