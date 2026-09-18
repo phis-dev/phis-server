@@ -31,8 +31,9 @@ The following parts of this contract are not implemented. None of them is repres
   serving role (section 15).
 - **`@phis/addon-sdk`.** The build-time half described in section 3 -- descriptor builders, result-type
   generation, a context double -- has no package.
-- **Capabilities without a delivery.** `@phis/server/authentication:v1` and `@phis/server/support:v1`
-  are named in the Core catalogue but are not bound to an Add-on context.
+- **Capabilities without a delivery.** `@phis/server/authentication:v1` is named in the Core catalogue
+  but is not bound to an Add-on context. It is a name a Site Module asks about -- Core performs
+  authentication -- and there is nothing to hand an Add-on about it.
   An Add-on requiring one of them is refused at dispatch, by the job runner, and when its service factory
   is resolved (section 13).
 - **Site-admin activation and configuration.** A Site's request for an Add-on and its settings are
@@ -492,9 +493,9 @@ signature compared in variable time.
 
 **A verified delivery writes as a job does**: system authority over the Add-on's own tables, and the
 actorless thread reach of section 18. An unverified hook keeps the rule above -- it may read `data:v1`,
-and `threads:v1` and `resource-links:v1` refuse it outright, reads included, because the reach those two
-confer rests on a link a person wrote as consent and handing it to whoever found an unsigned address
-would make that consent meaningless.
+and `threads:v1`, `resource-links:v1` and `support:v1` refuse it outright, reads included, because the
+reach those three confer rests on a link a person wrote as consent and handing it to whoever found an
+unsigned address would make that consent meaningless.
 
 ## 9. Dispatch contract
 
@@ -825,7 +826,7 @@ dispatch, by the job runner, and when its service factory is resolved.
 | `@phis/server/data:v1` | yes |
 | `@phis/server/threads:v1` | yes |
 | `@phis/server/resource-links:v1` | yes |
-| `@phis/server/support:v1` | no -- reserved |
+| `@phis/server/support:v1` | yes |
 | `@phis/server/groups:v1` | yes |
 | `@phis/server/storage:v1` | yes |
 | `@phis/server/assets:v1` | yes |
@@ -1221,6 +1222,23 @@ thread, because there is one answer to "may this person see this conversation".
 **Writing needs an actor.** A link is a person saying two records belong together, and it is that
 statement the actorless reach above rests on; a hook that could write its own would be granting itself
 the access the link is supposed to confer.
+
+### `support:v1`
+
+The workflow record around a conversation -- the type, the queue, the status, the work: `get`,
+`findByThread`, `create`, `listTasks`, `addTask`, `setTaskStatus`. It exists so a package in its own
+repository can reach a Site's tickets without depending on `@phis/support`, which is only the Module;
+the tables and the rules are Core's.
+
+Reach is the thread's answer and never a second one: a ticket is readable exactly when its thread is,
+which for an actorless Add-on means the two ways above -- it opened the thread, or somebody linked it
+and marked the link synced. There is no listing and no search, for the reason `resource-links:v1` has
+none.
+
+**It does not move a ticket's status.** An issue completes its task, and whether that finishes the
+Support work depends on the type's close policy and on the other tasks -- which an integration cannot
+see all of. A type and a queue are named by key rather than by id, because an id means nothing in an
+Add-on's configuration; a key that names nothing is refused rather than quietly routed elsewhere.
 
 ### `settings:v1`
 

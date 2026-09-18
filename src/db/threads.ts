@@ -546,6 +546,22 @@ async function readMessageWindow(
   };
 }
 
+/**
+ * Whether one reader may reach one thread, and nothing else about it.
+ *
+ * The same predicate `getThreadDetail` runs, without loading the conversation. It exists so that a
+ * record hanging off a thread -- a Support ticket -- can be gated by the thread's answer rather than by
+ * a second rule written over its own row. Two rules would eventually disagree, and the one that let
+ * somebody in would be the one nobody had looked at.
+ */
+export async function canReaderSeeThread(
+  siteId: number,
+  reader: ThreadReader,
+  threadId: number,
+): Promise<boolean> {
+  return await readThreadRow(getPool(), siteId, reader, threadId) != null;
+}
+
 export async function getThreadDetail(
   siteId: number,
   reader: ThreadReader,

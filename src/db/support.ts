@@ -211,6 +211,16 @@ export type CreateSupportTicketInput = {
   firstResponseDueAt?: string | null;
   resolutionDueAt?: string | null;
   createdByUserId?: number | null;
+  /**
+   * The Add-on opening this ticket as its own, where no person is behind it.
+   *
+   * It is the thread that records it, and that is the whole of the Add-on's later reach: a ticket
+   * arriving from a watched repository has nobody who could link it afterwards, so ownership is what
+   * lets the integration read back what it opened.
+   */
+  ownerProviderId?: string | null;
+  /** Idempotency for an inbound event: the other system's id for the thing that opened this. */
+  externalRef?: string | null;
 };
 
 export type UpdateSupportTicketInput = {
@@ -884,6 +894,8 @@ export async function createSupportTicket(input: CreateSupportTicketInput) {
       participantGroupIds: [queue.group_id],
       requesterUserId: input.requesterUserId ?? null,
       createdByUserId: input.createdByUserId ?? input.requesterUserId ?? null,
+      ownerProviderId: input.ownerProviderId ?? null,
+      externalRef: input.externalRef ?? null,
     });
 
     const { rows } = await client.query<{ id: number }>(
@@ -1266,4 +1278,125 @@ export async function deleteSupportTicketTask(siteId: number, ticketId: number, 
   } finally {
     client.release();
   }
+}
+
+/**
+ * One ticket with the type it was opened under, for a caller that has to decide from the type.
+ *
+ * The type is joined rather than looked up afterwards because what an integration decides -- whether
+ * anything may leave the Site, and what ends the ticket -- it decides from the flags and the close
+ * policy. Two calls to learn one thing is two chances for them to disagree.
+ */
+export type SupportTicketWithTypeRecord = {
+  id: number;
+  threadId: number;
+  subject: string;
+  status: number;
+  queueId: number | null;
+  typeId: number;
+  typeKey: string;
+  typeFlags: number;
+  typeClosePolicy: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
+const TICKET_WITH_TYPE_SQL = `
+  SELECT ticket.id,
+         ticket.thread_id,
+         ticket.subject,
+         ticket.status,
+         ticket.queue_id,
+         ticket.type_id,
+         type.key AS type_key,
+         type.flags AS type_flags,
+         type.close_policy AS type_close_policy,
+         ticket.created_at,
+         ticket.updated_at
+  FROM phis.support_tickets ticket
+  JOIN phis.support_ticket_types type
+    ON type.id = ticket.type_id AND type.site_id = ticket.site_id`;
+
+type TicketWithTypeRow = {
+  id: number;
+  thread_id: number;
+  subject: string;
+  status: number;
+  queue_id: number | null;
+  type_id: number;
+  type_key: string;
+  type_flags: number;
+  type_close_policy: number;
+  created_at: string;
+  updated_at: string;
+};
+
+function mapTicketWithType(row: TicketWithTypeRow): SupportTicketWithTypeRecord {
+  return {
+    id: row.id,
+    threadId: row.thread_id,
+    subject: row.subject,
+    status: row.status,
+    queueId: row.queue_id,
+    typeId: row.type_id,
+    typeKey: row.type_key,
+    typeFlags: row.type_flags,
+    typeClosePolicy: row.type_close_policy,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+export async function getSupportTicketWithType(siteId: number, ticketId: number) {
+  const { rows } = await getPool().query<TicketWithTypeRow>(
+    `${TICKET_WITH_TYPE_SQL} WHERE ticket.site_id = $1 AND ticket.id = $2`,
+    [siteId, ticketId],
+  );
+  return rows[0] ? mapTicketWithType(rows[0]) : null;
+}
+
+/** The ticket a thread carries, for an event that arrived naming the conversation and not the record. */
+export async function findSupportTicketByThread(siteId: number, threadId: number) {
+  const { rows } = await getPool().query<TicketWithTypeRow>(
+    `${TICKET_WITH_TYPE_SQL} WHERE ticket.site_id = $1 AND ticket.thread_id = $2`,
+    [siteId, threadId],
+  );
+  return rows[0] ? mapTicketWithType(rows[0]) : null;
+}
+
+/**
+ * A type or a queue by the key the Site knows it as.
+ *
+ * By key and never by id, because an id means nothing in an Add-on's configuration and would not
+ * survive the Site being rebuilt. A retired row answers nothing: it is still named by the tickets that
+ * already carry it, and it is offered to nothing new.
+ */
+export async function getSupportTicketTypeIdByKey(siteId: number, key: string) {
+  const { rows } = await getPool().query<{ id: number }>(
+    `SELECT id FROM phis.support_ticket_types
+     WHERE site_id = $1 AND key = $2 AND retired_at IS NULL`,
+    [siteId, key],
+  );
+  return rows[0]?.id ?? null;
+}
+
+export async function getSupportQueueIdByKey(siteId: number, key: string) {
+  const { rows } = await getPool().query<{ id: number }>(
+    `SELECT id FROM phis.support_queues
+     WHERE site_id = $1 AND key = $2 AND retired_at IS NULL`,
+    [siteId, key],
+  );
+  return rows[0]?.id ?? null;
+}
+
+/** The ticket one task belongs to, so a task id can be checked against the same reach as its ticket. */
+export async function getSupportTicketIdForTask(siteId: number, taskId: number) {
+  const { rows } = await getPool().query<{ ticket_id: number }>(
+    `SELECT task.ticket_id
+     FROM phis.support_ticket_tasks task
+     JOIN phis.support_tickets ticket ON ticket.id = task.ticket_id
+     WHERE ticket.site_id = $1 AND task.id = $2`,
+    [siteId, taskId],
+  );
+  return rows[0]?.ticket_id ?? null;
 }

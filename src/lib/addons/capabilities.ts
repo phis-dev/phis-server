@@ -35,6 +35,7 @@ import { buildPhisAddonDataCapability } from "./data-capability.ts";
 import { buildPhisAddonRolesCapability } from "./roles-capability.ts";
 import { buildPhisAddonGroupsCapability } from "./groups-capability.ts";
 import { buildPhisAddonResourceLinksCapability } from "./resource-links-capability.ts";
+import { buildPhisAddonSupportCapability } from "./support-capability.ts";
 import { buildPhisAddonThreadsCapability } from "./threads-capability.ts";
 import { buildPhisAddonSecretsCapability } from "./secrets-capability.ts";
 import { buildPhisAddonSettingsCapability } from "./settings-capability.ts";
@@ -355,6 +356,18 @@ export function buildPhisAddonCapabilities(input: {
      * closed over so an Add-on can neither read nor overwrite another's references.
      */
     capabilities.resourceLinks = buildPhisAddonResourceLinksCapability({
+      addonId: input.manifest.addonId,
+      siteId,
+      actorUserId: input.actorUserId,
+      unauthenticated: input.unauthenticated === true && input.systemAuthority !== true,
+    });
+  }
+  if (required.includes(PHIS_CORE_CAPABILITIES.support)) {
+    /*
+     * The third of the same rule. A ticket is reached through its thread, so the actor is bound here as
+     * it is above and an unverified hook reaches none of it.
+     */
+    capabilities.support = buildPhisAddonSupportCapability({
       addonId: input.manifest.addonId,
       siteId,
       actorUserId: input.actorUserId,

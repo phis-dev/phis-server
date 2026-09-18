@@ -35,8 +35,9 @@ What stands in the way today:
   "for when something real needs it". GitHub is that.
 - **An unauthenticated hook may call `threads.create`.** The hook rule says a request with no actor may
   read and may not write; `threads:v1` does not apply it.
-- **The capability snapshot reports the whole catalogue as available**, including `resource-links:v1`
-  and `support:v1`, which nothing builds. `@phis/support` requires both and activates anyway.
+- ~~**The capability snapshot reports the whole catalogue as available**, including `resource-links:v1`
+  and `support:v1`, which nothing builds.~~ Fixed: the snapshot reports the catalogue, and the gate that
+  admits an Add-on asks what Core delivers instead. Both are delivered now.
 
 ## 2. Vocabulary: groups, not teams
 
@@ -421,9 +422,10 @@ because a link is a person saying two things belong together.
 `assets:v1` lives in `assets.ts`: `list`, `get`, `create`, `reply`, `addParticipants`, `setStatus`,
 `markRead`, `findByExternalRef`.
 
-**The capability snapshot** reports what Core delivers, not what its catalogue names.
-`@phis/support` then requires `threads:v1` and `resource-links:v1`; `support:v1` stays reserved until
-something builds it.
+**The capability snapshot** reports the catalogue; the gate that admits an Add-on asks what Core
+delivers. `@phis/support` requires `threads:v1`, `resource-links:v1` and `support:v1`, and all three are
+built -- the last so that a package in its own repository, `@phis/github` among them, can reach a Site's
+tickets without depending on the Support Module.
 
 ## 9. Add-ons without an actor
 

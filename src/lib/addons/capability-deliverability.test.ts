@@ -15,8 +15,9 @@ import {
  * factory, and then find `undefined` where its capability should have been. That is the failure
  * `PhisAddonCapabilities` promises does not happen.
  *
- * Which names those are moves as Core builds them -- `resource-links:v1` was the original example and is
- * deliverable now -- so the two lists are asserted against each other rather than written out here.
+ * Which names those are moves as Core builds them -- `resource-links:v1` was the original example, then
+ * `support:v1`, and both are deliverable now -- so the two lists are asserted against each other rather
+ * than written out here.
  */
 describe("core capability deliverability", () => {
   const manifestRequiring = (ids: string[]) => ({
@@ -31,8 +32,13 @@ describe("core capability deliverability", () => {
     }
     expect(isPhisAddonCapabilityDeliverable(PHIS_CORE_CAPABILITIES.threads)).toBe(true);
     expect(isPhisAddonCapabilityDeliverable(PHIS_CORE_CAPABILITIES.resourceLinks)).toBe(true);
-    // Named and reserved, built by nothing: the case this gate exists for.
-    expect(isPhisAddonCapabilityDeliverable(PHIS_CORE_CAPABILITIES.support)).toBe(false);
+    expect(isPhisAddonCapabilityDeliverable(PHIS_CORE_CAPABILITIES.support)).toBe(true);
+    /*
+     * Named and reserved, handed to nobody: the case this gate exists for. A Site Module asks whether
+     * this server performs authentication and is told yes; an Add-on asking to be handed an object
+     * about it is stopped here, because there is no object.
+     */
+    expect(isPhisAddonCapabilityDeliverable(PHIS_CORE_CAPABILITIES.authentication)).toBe(false);
     expect(isPhisAddonCapabilityDeliverable("@phis/server/not-a-capability:v1")).toBe(false);
   });
 
@@ -58,10 +64,7 @@ describe("core capability deliverability", () => {
 
   it("builds nothing for a capability it declares undeliverable", () => {
     const capabilities = buildPhisAddonCapabilities({
-      manifest: manifestRequiring([
-        PHIS_CORE_CAPABILITIES.support,
-        PHIS_CORE_CAPABILITIES.authentication,
-      ]),
+      manifest: manifestRequiring([PHIS_CORE_CAPABILITIES.authentication]),
       manifestDigest: "probe",
       siteId: 1,
       siteKey: "probe-site",
