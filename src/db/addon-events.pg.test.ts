@@ -3,7 +3,7 @@ import { describe, expect, it, beforeAll, afterAll } from "vitest";
 import { PHIS_ADDON_EVENTS, PhisSiteThreadKindFlag, PhisThreadKind } from "@phis/contracts/addon";
 
 import {
-  activatePhiTestAddonForSite,
+  enablePhiTestAddonForSite,
   closePhiTestPool,
   createPhiTestSite,
   createPhiTestUser,
@@ -34,18 +34,6 @@ async function offerThreadKinds(site: PhiTestSite) {
      VALUES ($1, $2)
      ON CONFLICT (site_id) DO UPDATE SET flags = EXCLUDED.flags`,
     [site.id, PhisSiteThreadKindFlag.Direct],
-  );
-}
-
-/** Installed is not the same as usable: the enqueue asks for both, so a test has to say both. */
-async function makeAddonReady(site: PhiTestSite, addonId: string) {
-  await activatePhiTestAddonForSite(site, addonId);
-  const pool = await requirePhiTestDatabase();
-  await pool.query(
-    `UPDATE phis.site_server_addons
-     SET flags = 1, configuration_status = 'ready'
-     WHERE site_id = $1 AND addon_id = $2`,
-    [site.id, addonId],
   );
 }
 
@@ -91,7 +79,7 @@ describe("the Add-on event outbox", () => {
     await requirePhiTestDatabase();
     const site = await createPhiTestSite("events-unlinked");
     await offerThreadKinds(site);
-    await makeAddonReady(site, ADDON_ID);
+    await enablePhiTestAddonForSite(site, ADDON_ID);
     const author = await createPhiTestUser(site);
 
     const threadId = await openThread(site, author);
@@ -111,8 +99,8 @@ describe("the Add-on event outbox", () => {
     await requirePhiTestDatabase();
     const site = await createPhiTestSite("events-linked");
     await offerThreadKinds(site);
-    await makeAddonReady(site, ADDON_ID);
-    await makeAddonReady(site, OTHER_ADDON_ID);
+    await enablePhiTestAddonForSite(site, ADDON_ID);
+    await enablePhiTestAddonForSite(site, OTHER_ADDON_ID);
     const author = await createPhiTestUser(site);
 
     const threadId = await openThread(site, author);
@@ -143,7 +131,7 @@ describe("the Add-on event outbox", () => {
     await requirePhiTestDatabase();
     const site = await createPhiTestSite("events-echo");
     await offerThreadKinds(site);
-    await makeAddonReady(site, ADDON_ID);
+    await enablePhiTestAddonForSite(site, ADDON_ID);
     const author = await createPhiTestUser(site);
 
     const threadId = await openThread(site, author);
@@ -174,7 +162,7 @@ describe("the Add-on event outbox", () => {
     await requirePhiTestDatabase();
     const site = await createPhiTestSite("events-status");
     await offerThreadKinds(site);
-    await makeAddonReady(site, ADDON_ID);
+    await enablePhiTestAddonForSite(site, ADDON_ID);
     const author = await createPhiTestUser(site);
 
     const threadId = await openThread(site, author);
@@ -211,7 +199,7 @@ describe("the Add-on event outbox", () => {
     await requirePhiTestDatabase();
     const site = await createPhiTestSite("events-unlink");
     await offerThreadKinds(site);
-    await makeAddonReady(site, ADDON_ID);
+    await enablePhiTestAddonForSite(site, ADDON_ID);
     const author = await createPhiTestUser(site);
 
     const threadId = await openThread(site, author);

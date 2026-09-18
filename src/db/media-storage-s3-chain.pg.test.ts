@@ -8,6 +8,7 @@ import {
   closePhiTestPool,
   createPhiTestSite,
   dropPhiTestSites,
+  enablePhiTestAddonForSite,
   requirePhiTestDatabase,
   type PhiTestSite,
 } from "../../test/pg/harness";
@@ -39,6 +40,9 @@ describe.skipIf(!configured)("a Storage Profile that names the S3 Add-on", () =>
   beforeAll(async () => {
     const pool = await requirePhiTestDatabase();
     site = await createPhiTestSite("s3-chain");
+    // The Provider resolves only for a Site the Add-on is actually enabled on, which is the check this
+    // test exists to go through rather than around.
+    await enablePhiTestAddonForSite(site, "@phis/storage-s3");
     const reference = buildPhiSecretReference({
       owner: { kind: "addon", addonId: "@phis/storage-s3" },
       siteKey: site.key,
@@ -115,6 +119,32 @@ describe.skipIf(!configured)("a Storage Profile that names the S3 Add-on", () =>
     expect(settled?.contentType).toBe("image/png");
     await storage.deleteObject("chain/staging.bin");
     await storage.deleteObject("chain/settled.png");
+  });
+
+  it("hands a body back as a stream, which is what delivery asks for", async () => {
+    const storage = await createPhisMediaStorageServiceForProfile(profile, site.key);
+    const body = "streamed out of the bucket, never held whole";
+
+    const head = await storage.putObjectStream({
+      storageKey: "chain/streamed.txt",
+      body: new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode(body));
+          controller.close();
+        },
+      }),
+      contentType: "text/plain",
+    });
+    expect(head.byteSize).toBe(body.length);
+
+    const stream = await storage.getObjectStream("chain/streamed.txt");
+    expect(stream).not.toBeNull();
+    expect(await new Response(stream!).text()).toBe(body);
+
+    // Absence is null here too, so delivery answers 404 rather than raising at whoever is reading.
+    expect(await storage.getObjectStream("chain/never-written.txt")).toBeNull();
+
+    await storage.deleteObject("chain/streamed.txt");
   });
 
   it("refuses a Provider no build declares", async () => {

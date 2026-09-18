@@ -419,6 +419,27 @@ export async function closePhiTestPool(): Promise<void> {
  * Settings live on that row, so a test that configures an Add-on needs it to exist -- exactly as an
  * operator does, which is why the CLI refuses to configure an Add-on that was never enabled here.
  */
+/**
+ * Installed is not the same as usable.
+ *
+ * Every read that asks whether an Add-on may act on a Site asks for both -- the requested-enabled bit
+ * and a configuration that is ready -- so a test that only installs one is testing a state no running
+ * Site is ever in.
+ */
+export async function enablePhiTestAddonForSite(
+  site: PhiTestSite,
+  addonId: string,
+): Promise<void> {
+  await activatePhiTestAddonForSite(site, addonId);
+  const pool = await requirePhiTestDatabase();
+  await pool.query(
+    `UPDATE phis.site_server_addons
+     SET flags = 1, configuration_status = 'ready'
+     WHERE site_id = $1 AND addon_id = $2`,
+    [site.id, addonId],
+  );
+}
+
 export async function activatePhiTestAddonForSite(
   site: PhiTestSite,
   addonId: string,
