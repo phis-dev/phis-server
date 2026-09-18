@@ -627,7 +627,13 @@ is not installed.
 
 - **`@phis/ui/threads`** -- thin, first-party, like `@phis/ui/groups`: inbox, conversation, composer, the
   candidates picker. Declares `Direct`. The composer is where an attachment is offered, so it is the one
-  surface both other Modules reuse for it rather than each growing its own.
+  surface both other Modules reuse for it rather than each growing its own. **The Module and its
+  composer exist**; the inbox, the conversation and the candidates picker do not. The composer learns
+  which conversation it is writing in from a signal on the `thread` channel, which is what lets it sit
+  beside a conversation without either knowing the other's shape -- and until the conversation is built,
+  nothing dispatches that signal, so the composer says so rather than writing into a guess. It also
+  declares the User Space, because a composer offering a file on a Site with no User Spaces would be
+  offering something the control plane is about to refuse.
 - **`@phis/support`** -- declares `Support` and the User Space its requesters submit into
   ([SUPPORT.md](./SUPPORT.md)); seeds its group; ticket and queue surfaces; a customer widget listing
   only the viewer's own Support threads. Reuses the thread widgets by Layout composition.
@@ -645,7 +651,8 @@ is not installed.
    `resource_links`; the predicate of section 7.
 3. Core surfaces: `/api/site/threads`, `threads:v1` recut, `resource-links:v1`, verified hooks, the
    event outbox, the snapshot fix.
-4. Modules: `@phis/ui/threads`, `@phis/support` on the new model, group flags in the groups Module.
+4. Modules: `@phis/ui/threads` -- the Module and its composer exist, the inbox, the conversation and the
+   candidates picker do not -- `@phis/support` on the new model, group flags in the groups Module.
 5. ~~Attachments: `thread_message_assets`, the delivery route, the Asset delete path, and
    `@phis/support` declaring the User Space ([SUPPORT.md](./SUPPORT.md)).~~ Built, `threads:v1`
    included. What is not is the composer that offers one: it lives in `@phis/ui/threads`, step 4.
