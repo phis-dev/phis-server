@@ -178,26 +178,27 @@ function runtimeModuleFiles() {
       + `  PhiPublicRuntimeModuleClientBoundary,\n`
       + `);\n`,
   };
-  const catalogs = {
-    "src/runtime-modules/area-catalogs.ts":
-      `import type { PhiSiteAreaRuntimeModuleCatalogLoader } from "@phis/ui/next/route-handlers";\n\n`
+  const bridges = {
+    "src/runtime-modules/area-bridges.ts":
+      `import type { PhiSiteAreaBridgeLoader } from "@phis/ui/next/route-handlers";\n\n`
       + `/**\n`
-      + ` * The Module catalog of one Area, loaded rather than imported.\n`
+      + ` * The Bridge of one Area, loaded rather than imported.\n`
       + ` *\n`
       + ` * A Bridge carries its Area's server catalog, and that catalog names the Area's Widget plugins, so a\n`
       + ` * static import of all six puts every Area's Builder and Admin Clients into whatever graph reaches\n`
-      + ` * this file. The Form gateway runs for every Area and learns which one only from the request.\n`
+      + ` * this file. The \`/api/site\` door answers every request and learns from the path whether a Bridge\n`
+      + ` * is wanted at all.\n`
       + ` *\n`
       + ` * An Area this Site does not host answers null, and the caller refuses rather than guessing.\n`
       + ` */\n`
-      + `export const loadPhiSiteAreaRuntimeModuleCatalog: PhiSiteAreaRuntimeModuleCatalogLoader = async (area) => {\n`
+      + `export const loadPhiSiteAreaBridge: PhiSiteAreaBridgeLoader = async (area) => {\n`
       + `  switch (area) {\n`
       + areas.map((area) =>
-        `    case "${area}":\n      return (await import("@/runtime-modules/${area}")).PHI_${area.toUpperCase()}_CMS_SITE_BRIDGE.runtimeModuleCatalog;\n`,
+        `    case "${area}":\n      return (await import("@/runtime-modules/${area}")).PHI_${area.toUpperCase()}_CMS_SITE_BRIDGE;\n`,
       ).join("")
       + `    default:\n      return null;\n  }\n};\n`,
   };
-  return Object.assign(root, catalogs, Object.fromEntries(areas.flatMap((area) => {
+  return Object.assign(root, bridges, Object.fromEntries(areas.flatMap((area) => {
     const name = area === "public" ? "Public" : AREA_NAMES[area];
     const upper = area.toUpperCase();
     return [
@@ -419,7 +420,14 @@ function proxyRoute(kind: "auth" | "site" | "addons" | "hooks") {
   // The hooks door faces outward: what arrives on it came from the open internet and must not pick up
   // a claim to have come from inside on the way through.
   const headerOptions = kind === "hooks" ? ", { internalToken: false }" : "";
-  return `import { ${factory} } from "@phis/ui/next/route-handlers";\n\nimport {\n  buildPhiNextProxyHeaders,\n  getPhiNextUpstreamBaseUrl,\n  getPhiNextProxyTimeoutMs,\n} from "@phis/ui/next/proxy-runtime";\n\nexport const dynamic = "force-dynamic";\nexport const runtime = "nodejs";\n\nconst handlers = ${factory}({\n  upstreamBaseUrl: getPhiNextUpstreamBaseUrl(),\n  timeoutMs: getPhiNextProxyTimeoutMs(),\n  logLabel: "[phi-site][/api/${kind} proxy]",\n  missingBaseUrlMessage: "Missing phis.apiBaseUrl for /api/${kind} proxy.",\n  buildHeaders: (request) => buildPhiNextProxyHeaders(request, "phi-site-${kind}-proxy/1.0"${headerOptions}),\n});\n\nexport const GET = handlers.GET;\nexport const POST = handlers.POST;\nexport const PUT = handlers.PUT;\nexport const PATCH = handlers.PATCH;\nexport const DELETE = handlers.DELETE;\nexport const OPTIONS = handlers.OPTIONS;\n`;
+  // The Site door hands over its Bridges, because a few paths under `/api/site` are answered from this
+  // Site's own Modules rather than upstream. Which ones is @phis/ui's to decide and to revise; a Site's
+  // route files are written once and then belong to the installation.
+  const bridgeImport = kind === "site"
+    ? `import { loadPhiSiteAreaBridge } from "@/runtime-modules/area-bridges";\n`
+    : "";
+  const bridgeOption = kind === "site" ? `  loadAreaBridge: loadPhiSiteAreaBridge,\n` : "";
+  return `import { ${factory} } from "@phis/ui/next/route-handlers";\n\nimport {\n  buildPhiNextProxyHeaders,\n  getPhiNextUpstreamBaseUrl,\n  getPhiNextProxyTimeoutMs,\n} from "@phis/ui/next/proxy-runtime";\n${bridgeImport}\nexport const dynamic = "force-dynamic";\nexport const runtime = "nodejs";\n\nconst handlers = ${factory}({\n  upstreamBaseUrl: getPhiNextUpstreamBaseUrl(),\n  timeoutMs: getPhiNextProxyTimeoutMs(),\n  logLabel: "[phi-site][/api/${kind} proxy]",\n  missingBaseUrlMessage: "Missing phis.apiBaseUrl for /api/${kind} proxy.",\n  buildHeaders: (request) => buildPhiNextProxyHeaders(request, "phi-site-${kind}-proxy/1.0"${headerOptions}),\n${bridgeOption}});\n\nexport const GET = handlers.GET;\nexport const POST = handlers.POST;\nexport const PUT = handlers.PUT;\nexport const PATCH = handlers.PATCH;\nexport const DELETE = handlers.DELETE;\nexport const OPTIONS = handlers.OPTIONS;\n`;
 }
 
 function packageJson(context: PhiSiteScaffoldContext, manager: PhiSiteScaffoldPackageManager) {
@@ -471,10 +479,7 @@ export function buildPhiSiteScaffoldFiles(
     "src/app/api/site/[[...path]]/route.ts": proxyRoute("site"),
     "src/app/api/addons/[[...path]]/route.ts": proxyRoute("addons"),
     "src/app/api/hooks/[[...path]]/route.ts": proxyRoute("hooks"),
-    "src/app/api/site/forms/route.ts": `import { buildPhiSiteFormRouteHandlers } from "@phis/ui/next/route-handlers";\nimport { buildPhiNextProxyHeaders, getPhiNextUpstreamBaseUrl, getPhiNextProxyTimeoutMs } from "@phis/ui/next/proxy-runtime";\nimport { loadPhiSiteAreaRuntimeModuleCatalog } from "@/runtime-modules/area-catalogs";\n\nexport const dynamic = "force-dynamic";\nexport const runtime = "nodejs";\nconst handlers = buildPhiSiteFormRouteHandlers({\n  upstreamBaseUrl: getPhiNextUpstreamBaseUrl(),\n  timeoutMs: getPhiNextProxyTimeoutMs(),\n  missingBaseUrlMessage: "Missing phis.apiBaseUrl for /api/site/forms proxy.",\n  buildHeaders: (request) => buildPhiNextProxyHeaders(request, "phi-site-forms/1.0"),\n  loadRuntimeModuleCatalog: loadPhiSiteAreaRuntimeModuleCatalog,\n});\nexport const GET = handlers.GET;\nexport const POST = handlers.POST;\n`,
     [`${SITE_APP}/builder/api/[[...path]]/route.ts`]: `export { POST } from "@phis/ui/builder-api-route";\n\nexport const dynamic = "force-dynamic";\nexport const runtime = "nodejs";\n`,
-    "src/app/api/site/module-diagnostics/route.ts": `import { buildPhiSiteModuleDiagnosticsRouteHandler } from "@phis/ui/next/module-diagnostics-route";\n${["accounting", "admin", "app", "builder", "editor", "public"].map((area) => `import { PHI_${area.toUpperCase()}_CMS_SITE_BRIDGE } from "@/runtime-modules/${area}";`).join("\n")}\n\nexport const dynamic = "force-dynamic";\nexport const runtime = "nodejs";\nexport const GET = buildPhiSiteModuleDiagnosticsRouteHandler({ bridgesByArea: {\n${["public", "app", "admin", "builder", "editor", "accounting"].map((area) => `  ${area}: PHI_${area.toUpperCase()}_CMS_SITE_BRIDGE,`).join("\n")}\n} });\n`,
-    "src/app/api/site/navigation-target/route.ts": `import { buildPhiNavigationTargetRouteHandler } from "@phis/ui/next/navigation-target-route";\n${["accounting", "admin", "app", "builder", "editor", "public"].map((area) => `import { PHI_${area.toUpperCase()}_CMS_SITE_BRIDGE } from "@/runtime-modules/${area}";`).join("\n")}\n\nexport const dynamic = "force-dynamic";\nexport const runtime = "nodejs";\nexport const GET = buildPhiNavigationTargetRouteHandler({ bridgesByArea: {\n${["public", "app", "admin", "builder", "editor", "accounting"].map((area) => `  ${area}: PHI_${area.toUpperCase()}_CMS_SITE_BRIDGE,`).join("\n")}\n} });\n`,
     "src/app/sitemap.xml/route.ts": `import { buildPhiSitemapRouteHandler } from "@phis/ui/next/seo-routes";\nimport { PHI_PUBLIC_CMS_SITE_BRIDGE } from "@/runtime-modules/public";\n\nexport const dynamic = "force-dynamic";\nexport const runtime = "nodejs";\nexport const GET = buildPhiSitemapRouteHandler({ bridge: PHI_PUBLIC_CMS_SITE_BRIDGE });\n`,
     "src/app/robots.txt/route.ts": `import { buildPhiRobotsRouteHandler } from "@phis/ui/next/seo-routes";\nimport { PHI_PUBLIC_CMS_SITE_BRIDGE } from "@/runtime-modules/public";\n\nexport const dynamic = "force-dynamic";\nexport const runtime = "nodejs";\nexport const GET = buildPhiRobotsRouteHandler({ bridge: PHI_PUBLIC_CMS_SITE_BRIDGE });\n`,
     "next.config.ts": `import type { NextConfig } from "next";\n\nconst nextConfig: NextConfig = {\n  output: "standalone",\n  reactStrictMode: true,\n  images: { localPatterns: [{ pathname: "/api/site/media/**" }] },\n  // Rendered Public pages live in this process's memory, addressed by the Site's change marker.\n  cacheHandler: require.resolve("@phis/ui/next/cache-handler"),\n  cacheMaxMemorySize: 0,\n  experimental: {\n    authInterrupts: true,\n    // A cached page the browser already holds is asked for again after this long, so a publish reaches an open tab.\n    staleTimes: { static: 30 },\n  },\n  transpilePackages: ["@phis/ui"],\n};\nexport default nextConfig;\n`,

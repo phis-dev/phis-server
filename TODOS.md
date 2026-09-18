@@ -190,7 +190,7 @@ tracked here because the server contract depends on them.
 - **CMS route prologues.** The CMS read and write route helpers in `src/lib/site-cms-*.ts` repeat near
   identical guard and parameter prologues; one context builder would serve them.
 - **Server-side logging in `phis-ui`.** `gateway/tr.ts`, `navigation-descriptor-resolver.server.ts`,
-  `server-helpers/runtime.ts`, `server-helpers/cms-request.ts`, `next/navigation-target-route.ts`, and
+  `server-helpers/runtime.ts`, `server-helpers/cms-request.ts`, `gateway/navigation-target-route.ts`, and
   `plugins/runtime-modules/resolver.ts` write through `console.*` instead of `net/log.ts`, so journald
   receives more than one format. Keep `net/log.ts` field-identical with `src/lib/log.ts`.
 

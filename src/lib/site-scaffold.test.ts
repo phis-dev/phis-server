@@ -39,7 +39,14 @@ describe("site scaffold", () => {
     expect(files["src/app/(site)/[root]/(pages)/[...path]/page.tsx"]).toContain("createPhiNextDynamicRootPage");
     expect(files["src/app/(site)/admin/(pages)/@drawer/[...path]/page.tsx"]).toContain("PhiCmsRegionType.Drawer");
     expect(files["src/app/(site)/admin/(root)/@drawer/page.tsx"]).toContain("PhiCmsRegionType.Drawer");
-    expect(files["src/app/api/site/forms/route.ts"]).toContain("buildPhiSiteFormRouteHandlers");
+    /*
+     * Forms, Module diagnostics and navigation targets are answered from the Site rather than upstream,
+     * and none of them is a route file: a Site's routes are written once and belong to the installation
+     * from then on, so an address spelled here could never be revised. The `/api/site` door takes them.
+     */
+    expect(files["src/app/api/site/forms/route.ts"]).toBeUndefined();
+    expect(files["src/app/api/site/module-diagnostics/route.ts"]).toBeUndefined();
+    expect(files["src/app/api/site/navigation-target/route.ts"]).toBeUndefined();
     /*
      * The door a Module half reaches its own Add-on half through. Without it a Site proxies `/api/site`
      * and `/api/auth` and nothing else, so every call an Add-on's surface makes ends at the Site's 404
@@ -223,16 +230,18 @@ describe("site scaffold", () => {
 
   /*
    * What the canonical Skeleton needs to compile and to answer a Form: a generated Site that differed
-   * here built nothing -- an Area 404 without its Area, a Form gateway without the catalog loader it
-   * requires, a Builder host without the authoring half of the projection.
+   * here built nothing -- an Area 404 without its Area, a Site door without the Bridge loader the paths
+   * it answers itself require, a Builder host without the authoring half of the projection.
    */
   it("wires what the Skeleton's routes require", () => {
     const files = buildPhiSiteScaffoldFiles(context);
 
     expect(files["src/app/(site)/admin/not-found.tsx"]).toContain('PHI_ADMIN_CMS_SITE_BRIDGE, "admin"');
     expect(files["src/app/(site)/[root]/not-found.tsx"]).toContain('PHI_PUBLIC_CMS_SITE_BRIDGE, "public"');
-    expect(files["src/app/api/site/forms/route.ts"]).toContain("loadRuntimeModuleCatalog: loadPhiSiteAreaRuntimeModuleCatalog");
-    expect(files["src/runtime-modules/area-catalogs.ts"]).toContain('case "accounting"');
+    expect(files["src/app/api/site/[[...path]]/route.ts"]).toContain("loadAreaBridge: loadPhiSiteAreaBridge");
+    expect(files["src/runtime-modules/area-bridges.ts"]).toContain('case "accounting"');
+    // Only the Site door takes them; the other three proxies have no Site knowledge to hand over.
+    expect(files["src/app/api/auth/[[...path]]/route.ts"]).not.toContain("loadAreaBridge");
     expect(files["src/runtime-modules/builder-client.tsx"]).toContain("PHI_SITE_MODULES_AUTHORING_CLIENT");
     expect(files["src/runtime-modules/public-client.tsx"]).not.toContain("AUTHORING");
     expect(files["src/generated/site-modules-authoring-client.ts"]).toContain("PHI_SITE_MODULES_AUTHORING_CLIENT");

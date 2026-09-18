@@ -118,9 +118,50 @@ Site administration rather than a group operation, because a queue names a group
 A queue owns routing and never membership. Who is in the group a queue routes to is answered by the
 group surfaces, which already exist.
 
+### A seed is not a third `mediaSpaces`
+
+Two declarations of that shape exist -- `mediaSpaces` and `threadKinds` -- and the temptation is to read
+a seed as the next one. It is not. Both of those are **availability**: the Site's is the union across its
+active Modules, two Modules declaring the same thing do not collide, and a declaration withdrawn hides
+what it offered without deleting anything. Publish recomputes them from the union every time, and that is
+safe precisely because there is nothing there to lose.
+
+A queue and a ticket type are rows with identity, and tickets point at them. None of the three holds:
+two Modules asking for "an Entry queue" cannot be merged into one, a second publish must not produce a
+second queue, and deactivating Support must not take a queue that open tickets are routed through. So a
+seed is its own kind of declaration, and it has its own rules.
+
+**Keyed, not unioned.** Each seeded row is named by a stable key the Module writes, and the schema is
+already built for it: `support_queues` and `support_ticket_types` both carry `UNIQUE (site_id, key)`,
+and `site_groups` carries `UNIQUE (site_id, provider_id, key)` -- where `provider_id` is the Module that
+asked for the group, in the `@scope/name` form its CHECK constraint requires.
+
+**Created when absent, and never rewritten.** This is what makes it safe to run on every publish. The
+alternative takes an administrator's rename or re-flag away again at the next one, which is the opposite
+of administration. A Site that has been set up keeps what it decided.
+
+**Never deleted.** A Module that stops being active stops offering its surfaces, exactly as a withdrawn
+`threadKind` does. The rows stay, because tickets are pointed at them and because `support_queues` has
+deliberately no cascade from its group. `site_groups` already answers this with `retired_at` -- "the row
+and its key stay, and a retired group grants nothing" -- and queues and types need the same rather than a
+delete path. That is the one schema consequence of all this.
+
+**Declared as data, not as a callback.** A Module states its seed as a literal beside `mediaSpaces`, and
+the control plane reads it. A function the control plane calls would put Module code in the publish path
+and make a seed unreadable before it has run. The group comes with it: `support_queues.group_id` is
+`NOT NULL`, so what Support declares is a small graph -- a group named by its key, and a queue naming
+that key -- and the order is the materializer's to resolve, not the Module's to script.
+
+**Materialized where availability is.** The same publish pass that writes `site_media_config`, in Core.
+Not in the Site: a Site's route files and scripts are written when it is installed and belong to the
+installation from then on. And seed-once-then-authoritative is not a new idea here --
+[GROUPS_AND_STORAGE.md](../GROUPS_AND_STORAGE.md) section 7 already says it of the Media configuration
+row, which installation configuration seeds exactly once and is never consulted for again.
+
 ## 5. Order
 
-1. Seeding and administration of queues and ticket types, with the requestable flag in the contract.
+1. The declared seed and its materialization, the administration of queues and ticket types, and the
+   requestable flag in the contract.
 2. The types listing and the requester route, with the `External` notice.
 3. Attachments on a submission, once [THREADS.md](./THREADS.md) section 5 is built.
 4. Custody transfer on acceptance into a queue.
