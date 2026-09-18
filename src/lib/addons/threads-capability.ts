@@ -107,6 +107,13 @@ export function buildPhisAddonThreadsCapability(input: {
         messageFlags: createInput.messageFlags,
         participantUserIds: createInput.participantUserIds,
         participantGroupIds: createInput.participantGroupIds,
+        /*
+         * Whose files these have to be follows whoever the write is attributed to, which is the same
+         * rule as the ownership below. Acting for a person, an Add-on attaches that person's; acting as
+         * itself, its own. Neither can reach into the other's Space, which is what keeps a record off a
+         * quota nobody agreed to carry.
+         */
+        assetIds: createInput.assetIds,
         createdByUserId: actorUserId,
         // With nobody behind the call the thread is the Add-on's own, which is what makes it reachable
         // again: an integration that could open a thread and never return to it could not hold a
@@ -130,6 +137,7 @@ export function buildPhisAddonThreadsCapability(input: {
         message: replyInput.message,
         messageMarkdown: replyInput.messageMarkdown ?? null,
         messageFlags: replyInput.messageFlags,
+        assetIds: replyInput.assetIds,
         externalRef: replyInput.externalRef ?? null,
         externalAuthor: replyInput.externalAuthor ?? null,
       });

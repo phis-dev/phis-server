@@ -647,9 +647,8 @@ is not installed.
    event outbox, the snapshot fix.
 4. Modules: `@phis/ui/threads`, `@phis/support` on the new model, group flags in the groups Module.
 5. ~~Attachments: `thread_message_assets`, the delivery route, the Asset delete path, and
-   `@phis/support` declaring the User Space ([SUPPORT.md](./SUPPORT.md)).~~ Built in Core. What is not
-   is the composer that offers one -- it lives in `@phis/ui/threads`, which is step 4 -- and the
-   `threads:v1` half, which `@phis/github` needs and which arrives with step 6.
+   `@phis/support` declaring the User Space ([SUPPORT.md](./SUPPORT.md)).~~ Built, `threads:v1`
+   included. What is not is the composer that offers one: it lives in `@phis/ui/threads`, step 4.
 6. `@phis/github`.
 
 Attachments come before the GitHub Add-on because that Add-on has to say what it does with a file

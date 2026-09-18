@@ -11,6 +11,7 @@ import {
   createPhiTestSite,
   createPhiTestUser,
   dropPhiTestSites,
+  enablePhiTestAddonForSite,
   requirePhiTestDatabase,
   setPhiTestMediaConfig,
   type PhiTestSite,
@@ -196,6 +197,49 @@ describe.skipIf(!configured)("thread attachments", () => {
       `DELETE FROM phis.media_assets WHERE id = $1`,
       [rows[0]!.id],
     )).rejects.toThrow(/thread_message_assets/);
+  });
+
+  it("lets an Add-on attach from its own Space and nobody else's", async () => {
+    const pool = await requirePhiTestDatabase();
+    const addonId = "@phis/pgtest-attach";
+    // An Add-on Space belongs to an Add-on the Site actually runs; `media_spaces_addon_fk` says so.
+    await enablePhiTestAddonForSite(site, addonId);
+    const spaces = await pool.query<{ id: number }>(
+      `INSERT INTO phis.media_spaces (site_id, kind, addon_id, default_storage_profile_id)
+       VALUES ($1, 4, $2, $3) RETURNING id`,
+      [site.id, addonId, site.storageProfileId],
+    );
+    const imported = await pool.query<{ id: number }>(
+      `INSERT INTO phis.media_assets
+         (site_id, space_id, storage_profile_id, storage_key, original_name, content_type,
+          bytes, lifecycle_status, delivery_policy)
+       VALUES ($1, $2, $3, 'k/imported.png', 'imported.png', 'image/png', 12, 2, 1)
+       RETURNING id`,
+      [site.id, spaces.rows[0]!.id, site.storageProfileId],
+    );
+
+    const thread = await createThread({
+      siteId: site.id,
+      kind: PhisThreadKind.Group,
+      message: "Arrived from the repository.",
+      participantGroupIds: [groupId],
+      // No actor: the thread is the Add-on's own, and so is the file it hangs on it.
+      ownerProviderId: addonId,
+      assetIds: [imported.rows[0]!.id],
+    });
+    const seen = await getThreadDetail(site.id, { kind: "provider", providerId: addonId }, thread.thread.id);
+    expect(seen!.messages[0]!.assets).toHaveLength(1);
+
+    // A person's file is not the Add-on's to attach, whatever it can read.
+    const theirs = await uploadInto(requester, "not-yours.txt");
+    await expect(createThread({
+      siteId: site.id,
+      kind: PhisThreadKind.Group,
+      message: "Not mine.",
+      participantGroupIds: [groupId],
+      ownerProviderId: addonId,
+      assetIds: [theirs],
+    })).rejects.toThrow(PhisThreadAttachmentError);
   });
 
   it("takes the links with the message, because a link to nothing records nothing", async () => {

@@ -1207,7 +1207,15 @@ recorded, never by walking.
 somebody's own inbox.
 
 What is withheld either way: an `Internal` message never reaches an Add-on, and a `Confidential` one
-arrives with its text removed and its flag set, so an interface can say why there is nothing to show.
+arrives with its text removed and its flag set, so an interface can say why there is nothing to show --
+and with the text goes what hung on it, because an attachment travels inside the message rather than
+beside it.
+
+`create` and `reply` take `assetIds`, files from the Add-on's own Space written through `assets:v1`.
+Custody follows whoever the write is attributed to: acting for a person an Add-on attaches that person's
+files, acting as itself its own, and neither reaches into the other's Space. Who may read one is the
+message's answer and never the Space's, so a file an Add-on attaches is read by everyone in the
+conversation, and one it is shown does not thereby become its own.
 
 ### `resource-links:v1`
 
