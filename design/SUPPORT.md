@@ -1,12 +1,13 @@
 # Support: Planned Design
 
-**Status: the workflow and its administration exist, the way in does not.** `support_tickets`,
+**Status: the way in exists; what a requester may bring with it does not.** `support_tickets`,
 `support_ticket_types`, `support_queues`, `support_ticket_tasks` and their events are in the schema; the
 routes under `/api/site/support` open, read, assign and work tickets; `@phis/support` reads the Core
 threads of [THREADS.md](./THREADS.md). The declared seed of section 4 is built: a Site that publishes an
-Area running `@phis/support` now gets its group, its entry queue and one ticket type, and the routes of
-section 4 administer both from there. What is described here and is **not** built is everything a person
-who is not Staff needs in order to ask for help at all, and attachments on a submission.
+Area running `@phis/support` now gets its group, its entry queue and one ticket type; section 4's routes
+administer both from there; and section 2's requester route and type listing are the way in. What is
+described here and is **not** built is attachments on a submission and the custody transfer that follows
+one.
 
 This document is Support's half. The conversation is not in it: a ticket's messages are a Core thread,
 and who reads them, what an attachment is, and how it is delivered are settled in
@@ -22,21 +23,22 @@ That split is why `@phis/support` binds `threads:v1` and `resource-links:v1` and
 of its own. It is also why this document can be short: what Support adds to a conversation is who is
 responsible for it and when it is done.
 
-## 2. There is no way in
+## 2. The way in
 
-Every route under `/api/site/support` is behind `requireSiteSupportApiContext`, which is
-`Developer | Supporter`, widened to Admin. `POST /api/site/support/tickets` -- the one call that opens a
-ticket -- is among them, and it requires a `typeId` that no route hands out: there is no types listing
-anywhere.
+Every route under `/api/site/support` used to be behind `requireSiteSupportApiContext`, which is
+`Developer | Supporter`, widened to Admin. `POST /api/site/support/tickets` -- the one call that opened a
+ticket -- was among them, and it required a `typeId` that no route handed out: there was no types listing
+anywhere. A customer could not open a ticket, and if they could they would have had nothing to name.
 
-So today a customer cannot open a ticket, and if they could they would have nothing to name. Three
-things are missing, and they are not independent.
+`GET /api/site/support/request/types` and `POST /api/site/support/request` are that way in, behind the
+Site's ordinary session. Three things had to be settled together, and they were not independent.
 
 ### A route for the person asking
 
-A requester route is not the Supporter route with a softer guard. It takes a subject, a first message,
-a type, and nothing else -- no queue, no priority, no assignee, no severity. Those are answers about how
-the work will be run, and letting the person asking write them would let them jump their own ticket.
+A requester route is not the Supporter route with a softer guard. `POST /api/site/support/request` takes
+a subject, a first message, a type, and nothing else -- no queue, no priority, no assignee, no severity.
+Those are answers about how the work will be run, and letting the person asking write them would let
+them jump their own ticket.
 
 Who may call it is the Site's ordinary authenticated session. `support_tickets.requester_user_id` is
 nullable beside `requester_email` because a ticket also arrives from an address or from an integration,
@@ -61,13 +63,23 @@ outward, the person must be told before they write rather than after, and what s
 already fixed in [THREADS.md](./THREADS.md) section 4: internal notes, confidential messages, system
 messages, and whatever arrived from the integration to begin with.
 
+So the listing carries `external` per type, and the request route refuses an `External` type that
+arrives without an acknowledgement, recording it as `PhisThreadParticipantFlag.ExternalConsent` on the
+requester's participant row. The consent belongs to the moment they wrote: a ticket opened without it
+would leave the integration of [THREADS.md](./THREADS.md) section 12 chasing somebody afterwards for
+permission they were never asked for. The exact wording the notice uses follows the linked repository's
+visibility and is that section's, not this one's.
+
 ### Which queue it lands in
 
 Nothing, because `PhisSupportQueueFlag.Entry` has already decided it. A requester never names a queue;
 work with no queue named lands in the Entry queue, and a Site with no Entry queue refuses the ticket
 rather than dropping it wherever the first row happens to be. The requester route therefore takes no
-`queueId` at all, and the one failure it can have for that reason is a Site that has not finished
-setting itself up.
+`queueId` at all, and the one failure it can have for that reason -- a Site that has not finished
+setting itself up -- answers 503 and says so, because the person asking can do nothing about it.
+
+A type the Site does not offer a requester is treated as absent rather than forbidden. Answering "not
+this one" would tell whoever asked that a Staff-only type exists and what it is called.
 
 ## 3. What a requester attaches, and who pays for it
 
@@ -178,9 +190,10 @@ row, which installation configuration seeds exactly once and is never consulted 
 
 1. ~~The declared seed and its materialization, the administration of queues and ticket types, and the
    requestable flag in the contract.~~ Built, apart from a surface in `@phis/support` to drive it.
-2. The types listing and the requester route, with the `External` notice.
+2. ~~The types listing and the requester route, with the `External` notice.~~ Built.
 3. Attachments on a submission, once [THREADS.md](./THREADS.md) section 5 is built.
 4. Custody transfer on acceptance into a queue.
 
 Step 1 was first because both of the others fail without it, and its seeded half is what turns a Site
-with the Module switched on into a Site that can answer anybody at all.
+with the Module switched on into a Site that can answer anybody at all. What remains is steps 3 and 4,
+and both wait on [THREADS.md](./THREADS.md) section 5.

@@ -76,6 +76,14 @@ export type CreateThreadInput = {
   participantUserIds?: number[];
   participantGroupIds?: number[];
   requesterUserId?: number | null;
+  /**
+   * The requester has acknowledged that this conversation is mirrored outside.
+   *
+   * Recorded when the thread opens rather than asked for later: the acknowledgement belongs to the
+   * moment the person wrote, and a ticket opened without it would have to have its requester chased
+   * afterwards for consent they were never asked for.
+   */
+  requesterExternalConsent?: boolean;
   createdByUserId?: number | null;
   /** The Add-on opening this thread as its own, where no person is behind it. */
   ownerProviderId?: string | null;
@@ -673,10 +681,16 @@ async function insertParticipants(
     userIds: number[];
     groupIds: number[];
     requesterUserId?: number | null;
+    /** The requester has been told the conversation is mirrored outside, and said yes. */
+    requesterExternalConsent?: boolean;
   },
 ) {
   for (const userId of input.userIds) {
-    const flags = userId === input.requesterUserId ? PhisThreadParticipantFlag.Requester : 0;
+    const isRequester = userId === input.requesterUserId;
+    const flags = isRequester
+      ? PhisThreadParticipantFlag.Requester
+        | (input.requesterExternalConsent ? PhisThreadParticipantFlag.ExternalConsent : 0)
+      : 0;
     await db.query(
       `INSERT INTO phis.thread_participants (thread_id, participant_kind, user_id, flags)
        VALUES ($1, $2, $3, $4)
@@ -871,6 +885,7 @@ export async function createThreadWithDb(
       userIds: participantUserIds,
       groupIds,
       requesterUserId: input.requesterUserId ?? null,
+      requesterExternalConsent: input.requesterExternalConsent ?? false,
     });
 
     const isStaff = await readerIsStaff(

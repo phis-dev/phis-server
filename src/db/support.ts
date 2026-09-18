@@ -2,7 +2,7 @@ import "server-only";
 
 import type { PoolClient } from "pg";
 
-import { PhisSupportQueueFlag } from "@phis/contracts/support";
+import { PhisSupportQueueFlag, PhisSupportTicketTypeFlag } from "@phis/contracts/support";
 import { PhisThreadKind } from "@phis/contracts/threads";
 
 import { getPool } from "@/lib/db";
@@ -221,6 +221,8 @@ export type CreateSupportTicketInput = {
   ownerProviderId?: string | null;
   /** Idempotency for an inbound event: the other system's id for the thing that opened this. */
   externalRef?: string | null;
+  /** The requester acknowledged that a ticket of this type is mirrored outside. */
+  requesterExternalConsent?: boolean;
 };
 
 export type UpdateSupportTicketInput = {
@@ -900,6 +902,7 @@ export async function createSupportTicket(input: CreateSupportTicketInput) {
       createdByUserId: input.createdByUserId ?? input.requesterUserId ?? null,
       ownerProviderId: input.ownerProviderId ?? null,
       externalRef: input.externalRef ?? null,
+      requesterExternalConsent: input.requesterExternalConsent ?? false,
     });
 
     const { rows } = await client.query<{ id: number }>(
@@ -1681,4 +1684,67 @@ export async function updateSupportTicketType(input: {
   if (!rowCount) {
     throw new SupportAdministrationError("This Site has no such ticket type.");
   }
+}
+
+/**
+ * The ticket types a requester may choose, and nothing else about them.
+ *
+ * A narrower answer than the Staff catalogue and not a filtered view of it: a requester is told the key,
+ * the name, and whether the conversation leaves the Site. What ends the ticket, how long the requester
+ * window is, and what order Staff keeps the catalogue in are answers about how the work will be run.
+ *
+ * Retired types are absent, and so is every type without `Requestable` -- which is every type a Site has
+ * not yet looked at, because the flag is off on anything a Module's seed brought with it.
+ */
+export type RequestableSupportTicketType = {
+  key: string;
+  name: string;
+  /** The conversation of a ticket of this type is mirrored to a linked external system. */
+  external: boolean;
+};
+
+export async function listRequestableSupportTicketTypes(siteId: number) {
+  const { rows } = await getPool().query<{ key: string; name: string; flags: number }>(
+    `SELECT key, name, flags
+     FROM phis.support_ticket_types
+     WHERE site_id = $1
+       AND retired_at IS NULL
+       AND (flags & ${PhisSupportTicketTypeFlag.Requestable}) <> 0
+     ORDER BY sort_order ASC, id ASC`,
+    [siteId],
+  );
+  return rows.map((row) => ({
+    key: row.key,
+    name: row.name,
+    external: (row.flags & PhisSupportTicketTypeFlag.External) !== 0,
+  } satisfies RequestableSupportTicketType));
+}
+
+/** One requestable type by key, for the route that has to check what it was handed. */
+export async function getRequestableSupportTicketType(siteId: number, key: string) {
+  const { rows } = await getPool().query<{ id: number; flags: number }>(
+    `SELECT id, flags
+     FROM phis.support_ticket_types
+     WHERE site_id = $1
+       AND key = $2
+       AND retired_at IS NULL
+       AND (flags & ${PhisSupportTicketTypeFlag.Requestable}) <> 0`,
+    [siteId, key],
+  );
+  return rows[0]
+    ? { id: rows[0].id, external: (rows[0].flags & PhisSupportTicketTypeFlag.External) !== 0 }
+    : null;
+}
+
+/** Whether the Site has somewhere for a ticket that names no queue to land. */
+export async function hasSupportEntryQueue(siteId: number) {
+  const { rows } = await getPool().query<{ id: number }>(
+    `SELECT id FROM phis.support_queues
+     WHERE site_id = $1
+       AND retired_at IS NULL
+       AND (flags & ${PhisSupportQueueFlag.Entry}) <> 0
+     LIMIT 1`,
+    [siteId],
+  );
+  return rows.length > 0;
 }

@@ -8,13 +8,13 @@ public or internal token, and `session` is the visitor's Site session with the a
 passes (see [AUTHORIZATION.md](../AUTHORIZATION.md)). A route with no access entry performs its own checks
 or none; read its source. Request and response shapes are not listed; the source is linked per route.
 
-133 routes.
+135 routes.
 
 ## Contents
 
 - [`/api/operator`](#apioperator) (5)
 - [`/api/setup`](#apisetup) (2)
-- [`/api/site`](#apisite) (63)
+- [`/api/site`](#apisite) (65)
 - [`/api/v1/addons`](#apiv1addons) (2)
 - [`/api/v1/admin`](#apiv1admin) (1)
 - [`/api/v1/auth`](#apiv1auth) (28)
@@ -137,6 +137,8 @@ Site administration, CMS, media and support API. A Site's `/api/site` proxy forw
 | GET | [`/api/site/support/queues`](../src/app/api/site/support/queues/route.ts) | session, `support` (requireSiteSupportApiContext) | The Site's Support queues. |
 | POST | [`/api/site/support/queues`](../src/app/api/site/support/queues/route.ts) | session, `developer-tools` (requireSiteDeveloperApiContext) | Adds a queue. |
 | PATCH | [`/api/site/support/queues/{queueId}`](../src/app/api/site/support/queues/[queueId]/route.ts) | session, `developer-tools` (requireSiteDeveloperApiContext) | Edits one queue: its name, the group it routes to, its order, and whether it is retired. |
+| POST | [`/api/site/support/request`](../src/app/api/site/support/request/route.ts) | session, `authenticated` (requireSiteAuthenticatedApiContext) | The way in for the person asking. |
+| GET | [`/api/site/support/request/types`](../src/app/api/site/support/request/types/route.ts) | session, `authenticated` (requireSiteAuthenticatedApiContext) | What a person who is not Staff may ask for. |
 | GET | [`/api/site/support/ticket-types`](../src/app/api/site/support/ticket-types/route.ts) | session, `support` (requireSiteSupportApiContext) | The Site's ticket types. |
 | POST | [`/api/site/support/ticket-types`](../src/app/api/site/support/ticket-types/route.ts) | session, `developer-tools` (requireSiteDeveloperApiContext) | Adds a ticket type. |
 | PATCH | [`/api/site/support/ticket-types/{typeId}`](../src/app/api/site/support/ticket-types/[typeId]/route.ts) | session, `developer-tools` (requireSiteDeveloperApiContext) | Edits one ticket type, and is where a Site decides who may ask for it. |
