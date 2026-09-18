@@ -8,7 +8,10 @@ import { clearSiteConfigCache } from "@/db/site-config";
 import { getSessionFromRequest } from "@/db/user-sessions";
 import { requireMediaAssetContext } from "@/lib/guards/site-media-api";
 import { collectMediaAssetDeleteReferences } from "@/lib/media-delete-guard";
-import { deleteStoredPhiMediaAsset } from "@/lib/media-asset-delete";
+import {
+  PhiMediaAssetStillAttachedError,
+  deleteStoredPhiMediaAsset,
+} from "@/lib/media-asset-delete";
 import { logRuntimeEvent } from "@/lib/log";
 import { serializeMediaAssetForDetail } from "@/lib/media-response";
 import { PHIS_CMS_AREA_KEYS, resolvePhisCmsAreaKey } from "@/lib/constants/cms-areas";
@@ -238,6 +241,21 @@ export async function DELETE(
       ok: deleted,
     });
   } catch (error) {
+    /*
+     * A thread message still points at it. Answered in the same shape as a CMS reference refusal,
+     * because to whoever is looking at the Asset the two are one thing: something still needs this
+     * file. What differs is only which record says so, and the message carries that.
+     */
+    if (error instanceof PhiMediaAssetStillAttachedError) {
+      return NextResponse.json(
+        {
+          error: "media_asset_in_use",
+          message: error.message,
+          references: [],
+        },
+        { status: 409 },
+      );
+    }
     const message = resolveMediaAssetDeleteErrorMessage(error);
     logRuntimeEvent("error", "media.asset.delete_failed", {
       message: error instanceof Error ? error.message : message,

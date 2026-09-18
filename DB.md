@@ -1437,6 +1437,23 @@ Contract:
 - `flags` are `1 = Imported`, `2 = Exported`. What came from outside is never sent back out, which is what stops a mirror from echoing.
 - It replaces `support_ticket_messages.external_message_ref`, which could hold one reference and could not be looked up by it.
 
+### `phis.thread_message_assets`
+
+- `message_id INT NOT NULL REFERENCES phis.thread_messages(id) ON DELETE CASCADE`
+- `asset_id INT NOT NULL REFERENCES phis.media_assets(id) ON DELETE NO ACTION DEFERRABLE INITIALLY DEFERRED`
+- `flags INT NOT NULL DEFAULT 0`
+- `sort_order SMALLINT NOT NULL DEFAULT 0`
+- `created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
+- `PRIMARY KEY (message_id, asset_id)`
+
+Contract:
+- What a message carries besides its text. See `design/THREADS.md` section 5.
+- **The audience is the message's, never the Asset's Space.** An attachment is readable by whoever may read the message it hangs on, and that is the whole rule. Custody says who pays for the bytes and who administers them, which for one conversation would give a different answer depending on who happened to attach the file — and none of them expresses that an `Internal` note is invisible to the customer reading the thread around it.
+- The asymmetry between the two arms is the point. A message that goes takes its links with it, because a link to nothing records nothing; an Asset a message still names does not go at all. That refusal is what stops a submitter pulling the evidence out from under a ticket, and no separate retention rule has to be remembered.
+- A deferred `NO ACTION` rather than `RESTRICT`: the same refusal at a different moment, and the only one available. `RESTRICT` is checked the instant the referenced row goes and cannot be deferred, while deleting a Site reaches this table down two cascades in no fixed order. Checked at commit, a Site goes and a single attached Asset still does not.
+- Attaching sets the Asset's `delivery_policy` to `5 = Internal`, so no address reaches it by its own id, whichever Space holds it. The only way to its bytes is `GET /api/site/threads/{threadId}/messages/{messageId}/assets/{assetId}`.
+- Custody follows the uploader: a person attaches from their own User Space, an Add-on from its own Add-on Space. Attaching somebody else's file is refused.
+
 ### `phis.thread_reads`
 
 - `thread_id INT NOT NULL REFERENCES phis.threads(id) ON DELETE CASCADE`

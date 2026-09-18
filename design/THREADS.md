@@ -199,19 +199,25 @@ case in sight, and a descriptor nothing fills is only a contract to get wrong la
 ```text
 thread_message_assets
 ├── message_id   → thread_messages(id)   ON DELETE CASCADE
-├── asset_id     → media_assets(id)      ON DELETE RESTRICT
+├── asset_id     → media_assets(id)      ON DELETE NO ACTION DEFERRABLE INITIALLY DEFERRED
 ├── flags
 └── sort_order
 ```
 
-`CASCADE` on the message and `RESTRICT` on the Asset, and the asymmetry is the point. A message that
-goes takes its links with it, because a link to nothing is not a record of anything. An Asset that
-something still hangs on does not go at all.
+`CASCADE` on the message and a refusal on the Asset, and the asymmetry is the point. A message that goes
+takes its links with it, because a link to nothing is not a record of anything. An Asset that something
+still hangs on does not go at all.
 
-That `RESTRICT` is what stops a submitter pulling the evidence out from under a ticket. They own the
-file -- it sits in their Space, on their quota, and everything else about it is theirs -- but while a
-message points at it, their delete is refused. Nothing else has to be built for that, and no separate
-retention rule has to be remembered.
+That refusal is what stops a submitter pulling the evidence out from under a ticket. They own the file
+-- it sits in their Space, on their quota, and everything else about it is theirs -- but while a message
+points at it, their delete is refused. Nothing else has to be built for that, and no separate retention
+rule has to be remembered.
+
+It is a deferred `NO ACTION` rather than `RESTRICT`, which is the same refusal at a different moment and
+is the only one available. `RESTRICT` is checked the instant the referenced row goes and cannot be
+deferred, and deleting a Site reaches this table twice -- down the message's cascade and down the
+Asset's -- in no fixed order, so the Asset's arm would refuse a link the message's arm was about to take
+away. Checked at commit instead, a Site goes and a single attached Asset still does not.
 
 **The CMS reference index is not the place for this.** [REFERENCES.md](../REFERENCES.md) admits only
 Site Space Assets as reference targets and says User and Group Space Assets are invalid ones, which is
@@ -640,8 +646,10 @@ is not installed.
 3. Core surfaces: `/api/site/threads`, `threads:v1` recut, `resource-links:v1`, verified hooks, the
    event outbox, the snapshot fix.
 4. Modules: `@phis/ui/threads`, `@phis/support` on the new model, group flags in the groups Module.
-5. Attachments: `thread_message_assets`, the delivery route, the Asset delete path, and
-   `@phis/support` declaring the User Space ([SUPPORT.md](./SUPPORT.md)).
+5. ~~Attachments: `thread_message_assets`, the delivery route, the Asset delete path, and
+   `@phis/support` declaring the User Space ([SUPPORT.md](./SUPPORT.md)).~~ Built in Core. What is not
+   is the composer that offers one -- it lives in `@phis/ui/threads`, which is step 4 -- and the
+   `threads:v1` half, which `@phis/github` needs and which arrives with step 6.
 6. `@phis/github`.
 
 Attachments come before the GitHub Add-on because that Add-on has to say what it does with a file

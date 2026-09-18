@@ -7,6 +7,14 @@ import { normalizeString, readRequestBody } from "@/lib/helpers/request";
 
 export const dynamic = "force-dynamic";
 
+function normalizeIdArray(value: unknown) {
+  return Array.isArray(value)
+    ? value
+        .map((entry) => (typeof entry === "number" && Number.isInteger(entry) ? entry : null))
+        .filter((entry): entry is number => entry != null && entry > 0)
+    : [];
+}
+
 function parsePositiveId(value: string) {
   const parsed = Number.parseInt(value.trim(), 10);
   return Number.isInteger(parsed) && parsed > 0 ? parsed : 0;
@@ -45,6 +53,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       messageMarkdown: normalizeString(body.messageMarkdown) || null,
       // Normalized against who is writing: `Internal` needs Staff, and the flags Core owns are ignored.
       messageFlags: typeof body.messageFlags === "number" ? body.messageFlags : 0,
+      assetIds: normalizeIdArray(body.assetIds),
     });
   } catch (cause) {
     if (cause instanceof PhisThreadError) {

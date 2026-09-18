@@ -56,3 +56,11 @@ export function siteThreadKindFlagOf(kind: PhisThreadKindValue) {
       return 0;
   }
 }
+
+/**
+ * How many files one message carries.
+ *
+ * A bound rather than a policy: what each file may weigh is `site_media_config.max_object_bytes`, one
+ * number per Site. This stops one message turning into a folder, which is what a second message is for.
+ */
+export const PHIS_THREAD_MESSAGE_MAX_ASSETS = 10;

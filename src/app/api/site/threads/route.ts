@@ -102,6 +102,8 @@ export async function POST(request: NextRequest) {
       messageFlags: normalizeInteger(body.messageFlags) ?? 0,
       participantUserIds: normalizeIdArray(body.participantUserIds),
       participantGroupIds: normalizeIdArray(body.participantGroupIds),
+      // The writer's own files, hung on the opening message. Who may read them is this message's answer.
+      assetIds: normalizeIdArray(body.assetIds),
       createdByUserId: userId,
     });
   } catch (cause) {

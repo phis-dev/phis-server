@@ -9,6 +9,7 @@ import {
 } from "@/db/media-discard";
 import { getMediaStorageProfile } from "@/db/media-spaces";
 import { createPhisMediaStorageServiceForProfile } from "@/lib/media-storage";
+import { countThreadAttachmentsForAsset } from "@/db/threads";
 
 /**
  * How many older notes a caller clears while it is at the store anyway.
@@ -66,6 +67,25 @@ export async function drainPhiDiscardedMediaObjects(input: {
 }
 
 /**
+ * An Asset a message still points at. See `design/THREADS.md` section 5.
+ *
+ * The database already refuses this, through `ON DELETE RESTRICT` on `thread_message_assets` -- which is
+ * the whole retention rule and needs no collector, no index and no second bookkeeping. What it does not
+ * do is say why, and a constraint violation surfacing as a 500 is a deletion whoever tried it will try
+ * again. So the count is asked first, and the refusal is a sentence.
+ */
+export class PhiMediaAssetStillAttachedError extends Error {
+  constructor(readonly attachments: number) {
+    super(
+      attachments === 1
+        ? "This file is attached to a message and cannot be deleted while it hangs there."
+        : `This file is attached to ${attachments} messages and cannot be deleted while it hangs there.`,
+    );
+    this.name = "PhiMediaAssetStillAttachedError";
+  }
+}
+
+/**
  * Removes a Media Asset and everything that stands behind it: the derived variants, the file, the row.
  *
  * One implementation because dropping the row alone looks like a complete deletion and is not. It gives
@@ -77,6 +97,18 @@ export async function drainPhiDiscardedMediaObjects(input: {
  * store touched, and a failure there is a note that stays rather than a file that is lost track of.
  */
 export async function deleteStoredPhiMediaAsset(asset: MediaAssetRecord, siteKey?: string | null) {
+  /*
+   * Asked before the transaction rather than caught after it.
+   *
+   * This is what stops a submitter pulling the evidence out from under a ticket: the file stays theirs,
+   * on their quota, and everything else about it is theirs -- but while a message points at it, their
+   * delete is refused. Racing this check loses to the constraint, which is the right way round.
+   */
+  const attachments = await countThreadAttachmentsForAsset(asset.siteId, asset.id);
+  if (attachments > 0) {
+    throw new PhiMediaAssetStillAttachedError(attachments);
+  }
+
   const discarded = await discardPhiMediaAssetsInTransaction({
     siteId: asset.siteId,
     assetIds: [asset.id],

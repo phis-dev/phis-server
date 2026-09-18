@@ -1155,6 +1155,38 @@ CREATE TABLE IF NOT EXISTS phis.thread_message_refs (
 CREATE INDEX IF NOT EXISTS thread_message_refs_message_id_idx
   ON phis.thread_message_refs (message_id);
 
+-- What a message carries besides its text. See design/THREADS.md section 5.
+--
+-- The audience is the message's, never the Asset's Space: an attachment is readable by whoever may read
+-- the message it hangs on, and that is the whole rule. Custody says who pays for the bytes and who
+-- administers them, which for one conversation would give four different answers depending on who
+-- happened to attach the file -- and none of them expresses that an `Internal` note is invisible to the
+-- customer reading the thread around it.
+CREATE TABLE IF NOT EXISTS phis.thread_message_assets (
+  message_id INT NOT NULL REFERENCES phis.thread_messages(id) ON DELETE CASCADE,
+  -- Deliberately refusing, against the message's CASCADE. A message that goes takes its links with it,
+  -- because a link to nothing records nothing; an Asset something still hangs on does not go at all.
+  -- That is what stops a submitter pulling the evidence out from under a ticket: the file stays theirs,
+  -- on their quota, but their delete is refused while a message points at it.
+  --
+  -- `NO ACTION` deferred rather than `RESTRICT`, which is the same refusal at a different moment and is
+  -- the only one available: RESTRICT is checked the instant the row goes and cannot be deferred. It has
+  -- to be, because deleting a Site reaches this table twice -- down the message's cascade and down the
+  -- Asset's -- in no fixed order. Checked at commit, the message side has already taken the link away,
+  -- so the Site goes; a single Asset a message still names fails the same check, and does not.
+  asset_id INT NOT NULL REFERENCES phis.media_assets(id) ON DELETE NO ACTION
+    DEFERRABLE INITIALLY DEFERRED,
+  flags INT NOT NULL DEFAULT 0,
+  sort_order SMALLINT NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (message_id, asset_id)
+);
+
+-- Asked from the Asset's side by the delete path, which has to say "still attached" rather than let a
+-- constraint violation surface as one.
+CREATE INDEX IF NOT EXISTS thread_message_assets_asset_id_idx
+  ON phis.thread_message_assets (asset_id);
+
 CREATE TABLE IF NOT EXISTS phis.thread_reads (
   thread_id INT NOT NULL REFERENCES phis.threads(id) ON DELETE CASCADE,
   user_id INT NOT NULL REFERENCES phis.user_accounts(id) ON DELETE CASCADE,

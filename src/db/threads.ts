@@ -14,6 +14,7 @@ import {
   type PhisThreadDetail,
   type PhisThreadKindValue,
   type PhisThreadMessage,
+  type PhisThreadMessageAsset,
   type PhisThreadMessageAuthor,
   type PhisThreadParticipant,
   type PhisThreadStatusValue,
@@ -21,6 +22,8 @@ import {
 } from "@phis/contracts/addon";
 
 import { getPool } from "@/lib/db";
+import { PhisMediaSpaceKind } from "@/db/media-spaces";
+import { PhiMediaDeliveryPolicy } from "@phis/contracts/media";
 import { PhiBaseRole } from "@phis/contracts/access";
 
 import { enqueuePhisAddonThreadEventWithDb } from "@/db/addon-events";
@@ -29,6 +32,7 @@ import { schedulePhisAddonEventDelivery } from "@/lib/addons/event-trigger";
 import { PHI_CORE_ROLE_PROVIDER_ID } from "@/lib/authorization";
 import { PhiSiteGroupFlags } from "@/lib/constants/site-groups";
 import {
+  PHIS_THREAD_MESSAGE_MAX_ASSETS,
   PHIS_THREAD_MESSAGE_MAX_PAGE_SIZE,
   PHIS_THREAD_MESSAGE_PAGE_SIZE,
   PHIS_THREAD_MESSAGE_REF_EXPORTED,
@@ -85,6 +89,13 @@ export type CreateThreadInput = {
    */
   requesterExternalConsent?: boolean;
   createdByUserId?: number | null;
+  /**
+   * Files to hang on the opening message.
+   *
+   * Each has to be the writer's own -- their User Space, or an Add-on's own Space -- because custody
+   * follows the uploader. Who may read them is the message's answer and never the Space's.
+   */
+  assetIds?: readonly number[];
   /** The Add-on opening this thread as its own, where no person is behind it. */
   ownerProviderId?: string | null;
   externalRef?: string | null;
@@ -101,6 +112,8 @@ export type AddThreadMessageInput = {
   messageMeta?: Record<string, unknown>;
   externalRef?: string | null;
   externalAuthor?: { name: string; url?: string } | null;
+  /** Files to hang on this reply; the writer's own, as on `CreateThreadInput`. */
+  assetIds?: readonly number[];
 };
 
 export type AddThreadParticipantsInput = {
@@ -325,7 +338,11 @@ function projectAuthor(row: ThreadMessageRow): PhisThreadMessageAuthor {
  * everything that is not a person on this Site -- an Add-on included, whatever its actor could read --
  * while the flag itself is handed over, so an interface can say why there is nothing to show.
  */
-function projectMessage(row: ThreadMessageRow, reader: ThreadReader): PhisThreadMessage {
+function projectMessage(
+  row: ThreadMessageRow,
+  reader: ThreadReader,
+  assets: PhisThreadMessageAsset[] = [],
+): PhisThreadMessage {
   const withheld =
     (row.flags & PhisThreadMessageFlag.Redacted) !== 0
     || ((row.flags & PhisThreadMessageFlag.Confidential) !== 0 && reader.kind === "provider");
@@ -336,9 +353,63 @@ function projectMessage(row: ThreadMessageRow, reader: ThreadReader): PhisThread
     bodyText: withheld ? null : row.body_text,
     bodyMarkdown: withheld ? null : row.body_markdown,
     flags: row.flags,
+    // Withheld with the text it belonged to. A redacted message kept its files listed would say what
+    // was taken away, and a confidential one would hand an Add-on the thing the flag exists to stop.
+    assets: withheld ? [] : assets,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
+}
+
+/**
+ * What hangs on a window of messages, read in one query and handed back per message.
+ *
+ * It is read for the messages that survived the window's own filtering and never for a message id a
+ * caller supplied, which is what keeps the audience the message's: a reader who is not shown an
+ * `Internal` note is not shown its files either, without a second rule saying so.
+ */
+async function readMessageAssets(
+  db: DbQueryable,
+  threadId: number,
+  messageIds: readonly number[],
+): Promise<Map<number, PhisThreadMessageAsset[]>> {
+  const byMessage = new Map<number, PhisThreadMessageAsset[]>();
+  if (messageIds.length === 0) {
+    return byMessage;
+  }
+  const { rows } = await db.query<{
+    message_id: number;
+    asset_id: number;
+    original_name: string;
+    content_type: string;
+    bytes: string | number | null;
+    flags: number;
+  }>(
+    `SELECT link.message_id,
+            link.asset_id,
+            asset.original_name,
+            asset.content_type,
+            asset.bytes,
+            link.flags
+     FROM phis.thread_message_assets link
+     JOIN phis.media_assets asset ON asset.id = link.asset_id
+     WHERE link.message_id = ANY($1::int[])
+     ORDER BY link.message_id ASC, link.sort_order ASC, link.asset_id ASC`,
+    [messageIds],
+  );
+  for (const row of rows) {
+    const list = byMessage.get(row.message_id) ?? [];
+    list.push({
+      assetId: row.asset_id,
+      fileName: row.original_name,
+      contentType: row.content_type,
+      byteSize: Number(row.bytes ?? 0),
+      flags: row.flags,
+      href: `/api/site/threads/${threadId}/messages/${row.message_id}/assets/${row.asset_id}`,
+    });
+    byMessage.set(row.message_id, list);
+  }
+  return byMessage;
 }
 
 function projectParticipant(row: ThreadParticipantRow): PhisThreadParticipant {
@@ -596,10 +667,11 @@ export async function getThreadDetail(
     }),
   ]);
 
+  const assets = await readMessageAssets(pool, threadId, window.messages.map((row) => row.id));
   return {
     thread: projectThread(thread),
     participants: participants.map(projectParticipant),
-    messages: window.messages.map((row) => projectMessage(row, reader)),
+    messages: window.messages.map((row) => projectMessage(row, reader, assets.get(row.id) ?? [])),
     hasMoreMessages: window.hasMore,
   };
 }
@@ -894,7 +966,7 @@ export async function createThreadWithDb(
       openerId != null ? { kind: "user", userId: openerId } : { kind: "system" },
     );
 
-    await insertMessage(client, {
+    const messageId = await insertMessage(client, {
       siteId: input.siteId,
       threadId,
       authorUserId: openerId,
@@ -907,6 +979,14 @@ export async function createThreadWithDb(
       }),
       meta: authorMeta(input.messageMeta, input.externalAuthor),
       externalRef: input.externalRef ?? null,
+    });
+
+    await attachAssetsWithDb(client, {
+      siteId: input.siteId,
+      messageId,
+      assetIds: input.assetIds ?? [],
+      attacherUserId: openerId,
+      attacherProviderId: input.ownerProviderId ?? null,
     });
 
     return { id: threadId };
@@ -982,7 +1062,7 @@ export async function addThreadMessage(input: AddThreadMessageInput): Promise<Ph
     const authorUserId = input.reader.kind === "user" ? input.reader.userId : null;
     const isStaff = await readerIsStaff(client, input.siteId, input.reader);
 
-    await insertMessage(client, {
+    const messageId = await insertMessage(client, {
       siteId: input.siteId,
       threadId: input.threadId,
       authorUserId,
@@ -995,6 +1075,14 @@ export async function addThreadMessage(input: AddThreadMessageInput): Promise<Ph
       }),
       meta: authorMeta(input.messageMeta, input.externalAuthor),
       externalRef: input.externalRef ?? null,
+    });
+
+    await attachAssetsWithDb(client, {
+      siteId: input.siteId,
+      messageId,
+      assetIds: input.assetIds ?? [],
+      attacherUserId: authorUserId,
+      attacherProviderId: providerId,
     });
 
     await client.query("COMMIT");
@@ -1351,4 +1439,140 @@ export async function materializeSiteThreadKindsWithDb(db: DbQueryable, siteId: 
     [siteId, flags],
   );
   return flags;
+}
+
+/**
+ * Hanging files on a message, and the one question that has to be asked before they hang.
+ *
+ * Custody follows the uploader: a person writes into their own User Space, an Add-on into its own
+ * ([design/THREADS.md](../../design/THREADS.md) section 5). So the check here is not "may you read this
+ * Asset" but "is this yours" -- attaching somebody else's file would put a record on their quota that
+ * they did not agree to carry, and would let a reader of one conversation drag a file out of another.
+ *
+ * The audience is not asked at all. It is the message's, and it stays the message's.
+ */
+export class PhisThreadAttachmentError extends Error {}
+
+async function attachAssetsWithDb(
+  db: DbQueryable,
+  input: {
+    siteId: number;
+    messageId: number;
+    assetIds: readonly number[];
+    attacherUserId: number | null;
+    attacherProviderId: string | null;
+  },
+) {
+  const assetIds = normalizeUniqueIds([...input.assetIds]);
+  if (assetIds.length === 0) {
+    return;
+  }
+  if (assetIds.length > PHIS_THREAD_MESSAGE_MAX_ASSETS) {
+    throw new PhisThreadAttachmentError(
+      `A message carries at most ${PHIS_THREAD_MESSAGE_MAX_ASSETS} files.`,
+    );
+  }
+
+  const { rows } = await db.query<{ id: number }>(
+    `SELECT asset.id
+     FROM phis.media_assets asset
+     JOIN phis.media_spaces space ON space.id = asset.space_id
+     WHERE asset.site_id = $1
+       AND asset.id = ANY($2::int[])
+       AND (
+         ($3::int IS NOT NULL AND space.kind = ${PhisMediaSpaceKind.User} AND space.user_id = $3::int)
+         OR ($4::varchar IS NOT NULL AND space.kind = ${PhisMediaSpaceKind.Addon} AND space.addon_id = $4::varchar)
+       )`,
+    [input.siteId, assetIds, input.attacherUserId, input.attacherProviderId],
+  );
+  if (rows.length !== assetIds.length) {
+    // One message for absent and for somebody else's: telling them apart would confirm that an Asset
+    // this writer may not touch exists.
+    throw new PhisThreadAttachmentError(
+      "A message can only carry files of your own that this Site holds.",
+    );
+  }
+
+  /*
+   * The delivery policy is set here rather than trusted from the upload.
+   *
+   * An attachment is reached through the message that names it and by no other address, whichever Space
+   * holds the bytes. Leaving the Asset's own policy as it came would let a file that was public before
+   * it was attached stay public afterwards, which is not what attaching it said.
+   */
+  await db.query(
+    `UPDATE phis.media_assets
+     SET delivery_policy = ${PhiMediaDeliveryPolicy.Internal}, updated_at = NOW()
+     WHERE site_id = $1 AND id = ANY($2::int[]) AND delivery_policy <> ${PhiMediaDeliveryPolicy.Internal}`,
+    [input.siteId, assetIds],
+  );
+
+  for (const [index, assetId] of assetIds.entries()) {
+    await db.query(
+      `INSERT INTO phis.thread_message_assets (message_id, asset_id, sort_order)
+       VALUES ($1, $2, $3)
+       ON CONFLICT (message_id, asset_id) DO NOTHING`,
+      [input.messageId, assetId, index],
+    );
+  }
+}
+
+/**
+ * Whether one Asset hangs on one message of one thread, for the delivery route.
+ *
+ * Every part of the address is checked against the others. An Asset attached to a message of another
+ * thread is not reachable through this one, so guessing an id gets nowhere that the thread's own
+ * predicate has not already admitted the reader to.
+ */
+export async function readThreadMessageAsset(input: {
+  siteId: number;
+  reader: ThreadReader;
+  threadId: number;
+  messageId: number;
+  assetId: number;
+}) {
+  const pool = getPool();
+  const thread = await readThreadRow(pool, input.siteId, input.reader, input.threadId);
+  if (!thread) {
+    return null;
+  }
+  // `Internal` is Staff's to read, and an attachment is not a way around that.
+  const includeInternal = await readerIsStaff(pool, input.siteId, input.reader);
+  const { rows } = await pool.query<{ asset_id: number; flags: number }>(
+    `SELECT link.asset_id, message.flags
+     FROM phis.thread_message_assets link
+     JOIN phis.thread_messages message ON message.id = link.message_id
+     WHERE message.thread_id = $1
+       AND message.id = $2
+       AND link.asset_id = $3
+       AND (message.flags & ${PhisThreadMessageFlag.Redacted}) = 0
+       AND ($4::boolean OR (message.flags & ${PhisThreadMessageFlag.Internal}) = 0)`,
+    [input.threadId, input.messageId, input.assetId, includeInternal],
+  );
+  if (!rows[0]) {
+    return null;
+  }
+  /*
+   * A `Confidential` message is withheld from an Add-on entirely, bodies and files alike. It is the one
+   * flag that says where a thing may go rather than who may read it, and an attachment is a thing that
+   * can go somewhere.
+   */
+  if (input.reader.kind === "provider"
+    && (rows[0].flags & PhisThreadMessageFlag.Confidential) !== 0) {
+    return null;
+  }
+  return { assetId: rows[0].asset_id };
+}
+
+/** What still hangs on a message, asked from the Asset's side by the delete path. */
+export async function countThreadAttachmentsForAsset(siteId: number, assetId: number) {
+  const { rows } = await getPool().query<{ count: string }>(
+    `SELECT COUNT(*) AS count
+     FROM phis.thread_message_assets link
+     JOIN phis.thread_messages message ON message.id = link.message_id
+     JOIN phis.threads thread ON thread.id = message.thread_id
+     WHERE thread.site_id = $1 AND link.asset_id = $2`,
+    [siteId, assetId],
+  );
+  return Number(rows[0]?.count ?? 0);
 }
