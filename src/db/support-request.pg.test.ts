@@ -59,7 +59,7 @@ describe.skipIf(!configured)("support requests", () => {
   it("offers nothing before the Site has looked at its catalogue", async () => {
     await createSupportTicketType({ siteId: site.id, key: "seeded", name: "Seeded" });
     // A type a Module's seed brought with it is Staff-only until the Site says otherwise.
-    expect(await listRequestableSupportTicketTypes(site.id)).toEqual([]);
+    expect(await listRequestableSupportTicketTypes(site.id, requester)).toEqual([]);
     expect(await getRequestableSupportTicketType(site.id, "seeded")).toBeNull();
   });
 
@@ -77,16 +77,16 @@ describe.skipIf(!configured)("support requests", () => {
       flags: PhisSupportTicketTypeFlag.Requestable,
     });
 
-    const offered = await listRequestableSupportTicketTypes(site.id);
+    const offered = await listRequestableSupportTicketTypes(site.id, requester);
     expect(offered).toEqual([
-      { key: "bug", name: "Bug", external: true },
-      { key: "question", name: "Question", external: false },
+      { key: "bug", name: "Bug", external: true, allowance: null },
+      { key: "question", name: "Question", external: false, allowance: null },
     ]);
     // The Staff-only type is absent rather than listed as forbidden: naming it would say it exists.
     expect(offered.some((type) => type.key === "seeded")).toBe(false);
 
     await updateSupportTicketType({ siteId: site.id, typeId: outward, retired: true });
-    expect((await listRequestableSupportTicketTypes(site.id)).map((type) => type.key))
+    expect((await listRequestableSupportTicketTypes(site.id, requester)).map((type) => type.key))
       .toEqual(["question"]);
     await updateSupportTicketType({ siteId: site.id, typeId: outward, retired: false });
   });

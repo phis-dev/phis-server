@@ -49,6 +49,36 @@ export function readSupportFlag(value: unknown) {
 }
 
 /**
+ * The requester allowance, which is a pair or nothing at all.
+ *
+ * Three answers rather than two. `undefined` is "the body did not mention it", `null` is "remove the
+ * limit", and a pair is "this many per period" -- and the middle one has to be sayable, because a Site
+ * that set a limit and wants it gone would otherwise have no way to say so that is not also "leave it".
+ *
+ * The two halves are read together because the schema refuses them apart: a count with no period does
+ * not say five of what. Returning `false` is how a half-written pair is reported, so the route can
+ * refuse it as a malformed request instead of letting the constraint do it as a 500.
+ */
+export function readSupportAllowanceInput(value: unknown) {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (value === null) {
+    return null;
+  }
+  if (typeof value !== "object") {
+    return false as const;
+  }
+  const pair = value as { limit?: unknown; period?: unknown };
+  const limit = readSupportInteger(pair.limit);
+  const period = readSupportInteger(pair.period);
+  if (limit == null || limit < 0 || (period !== 1 && period !== 2)) {
+    return false as const;
+  }
+  return { limit, period: period as 1 | 2 };
+}
+
+/**
  * Turns a refusal this module raised into a 409, and lets everything else through to the handler.
  *
  * 409 rather than 400: a duplicate key, a group that is not there, the last entry queue -- none of them

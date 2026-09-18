@@ -13,6 +13,7 @@ import { readRequestBody } from "@/lib/helpers/request";
 import {
   readSupportAdministrationKey,
   readSupportAdministrationName,
+  readSupportAllowanceInput,
   readSupportInteger,
   refuseSupportAdministration,
 } from "@/lib/guards/site-support-administration";
@@ -64,6 +65,13 @@ export async function POST(request: NextRequest) {
   if (!key || !name) {
     return NextResponse.json({ error: "A ticket type needs a key and a name." }, { status: 400 });
   }
+  const requesterAllowance = readSupportAllowanceInput(body.requesterAllowance);
+  if (requesterAllowance === false) {
+    return NextResponse.json(
+      { error: "An allowance is a count and a period (1 = month, 2 = year), or null for none." },
+      { status: 400 },
+    );
+  }
 
   try {
     const id = await createSupportTicketType({
@@ -73,6 +81,7 @@ export async function POST(request: NextRequest) {
       flags: readSupportInteger(body.flags) ?? 0,
       closePolicy: readSupportInteger(body.closePolicy) ?? 0,
       requesterWindowDays: readSupportInteger(body.requesterWindowDays),
+      requesterAllowance,
       sortOrder: readSupportInteger(body.sortOrder) ?? 0,
     });
     return NextResponse.json({ id }, { status: 201 });

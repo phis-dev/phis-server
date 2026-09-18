@@ -2,11 +2,18 @@ import "server-only";
 
 import type { PoolClient } from "pg";
 
-import { PhisSupportQueueFlag, PhisSupportTicketTypeFlag } from "@phis/contracts/support";
+import {
+  PhisSupportAllowancePeriod,
+  PhisSupportQueueFlag,
+  PhisSupportTicketTypeFlag,
+  type PhisSupportAllowance,
+  type PhisSupportAllowancePeriodValue,
+} from "@phis/contracts/support";
 import { PhisThreadKind } from "@phis/contracts/threads";
 
 import { getPool } from "@/lib/db";
 import { createThreadWithDb } from "@/db/threads";
+import { consumeSupportAllowanceWithDb, readSupportAllowance } from "@/db/support-allowance";
 
 export const SUPPORT_TICKET_STATUS_NEW = 0;
 export const SUPPORT_TICKET_STATUS_TRIAGED = 1;
@@ -219,6 +226,14 @@ export type CreateSupportTicketInput = {
    * lets the integration read back what it opened.
    */
   ownerProviderId?: string | null;
+  /**
+   * Whether this ticket spends the requester's own allowance, and may be refused for want of it.
+   *
+   * Only the self-service route sets it. A Supporter opening a ticket for somebody, or an integration
+   * opening one for work that arrived from outside, is not somebody asking for their own budget: it
+   * neither spends it nor can be stopped by it. See `src/db/support-allowance.ts`.
+   */
+  enforceRequesterAllowance?: boolean;
   /** Idempotency for an inbound event: the other system's id for the thing that opened this. */
   externalRef?: string | null;
   /** The requester acknowledged that a ticket of this type is mirrored outside. */
@@ -890,6 +905,24 @@ export async function createSupportTicket(input: CreateSupportTicketInput) {
       throw new Error("No Support queue to route this ticket to.");
     }
 
+    /*
+     * Spent before the thread exists, and inside the same transaction.
+     *
+     * Refusing after the conversation has been opened would leave a thread nobody can reach behind every
+     * refusal, and the rollback that undoes it is the same rollback that would have to put the request
+     * back if the insert failed later. One transaction answers both.
+     */
+    let allowanceGrantId: number | null = null;
+    if (input.enforceRequesterAllowance && input.requesterUserId != null) {
+      const spent = await consumeSupportAllowanceWithDb(client, {
+        siteId: input.siteId,
+        userId: input.requesterUserId,
+        typeId: input.typeId,
+        selfServiceChannel: SUPPORT_TICKET_CHANNEL_PORTAL,
+      });
+      allowanceGrantId = spent.grantId;
+    }
+
     const thread = await createThreadWithDb(client, {
       siteId: input.siteId,
       kind: PhisThreadKind.Support,
@@ -919,6 +952,7 @@ export async function createSupportTicket(input: CreateSupportTicketInput) {
          requester_email,
          assignee_user_id,
          queue_id,
+         allowance_grant_id,
          subject,
          summary,
          meta,
@@ -927,7 +961,7 @@ export async function createSupportTicket(input: CreateSupportTicketInput) {
          created_by_user_id,
          updated_by_user_id
        )
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15::jsonb, $16, $17, $18, $18)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $19, $13, $14, $15::jsonb, $16, $17, $18, $18)
        RETURNING id`,
       [
         input.siteId,
@@ -948,6 +982,7 @@ export async function createSupportTicket(input: CreateSupportTicketInput) {
         input.firstResponseDueAt ?? null,
         input.resolutionDueAt ?? null,
         input.createdByUserId ?? null,
+        allowanceGrantId,
       ],
     );
 
@@ -1430,6 +1465,8 @@ export type SupportTicketTypeRecord = {
   flags: number;
   closePolicy: number;
   requesterWindowDays: number | null;
+  /** How many of this type one person may open for themselves per period; `null` is no limit. */
+  requesterAllowance: { limit: number; period: PhisSupportAllowancePeriodValue } | null;
   sortOrder: number;
   retiredAt: string | null;
 };
@@ -1443,10 +1480,13 @@ export async function listSupportTicketTypes(siteId: number) {
     flags: number;
     close_policy: number;
     requester_window_days: number | null;
+    requester_allowance: number | null;
+    requester_allowance_period: number;
     sort_order: number;
     retired_at: string | null;
   }>(
-    `SELECT id, site_id, key, name, flags, close_policy, requester_window_days, sort_order, retired_at
+    `SELECT id, site_id, key, name, flags, close_policy, requester_window_days,
+            requester_allowance, requester_allowance_period, sort_order, retired_at
      FROM phis.support_ticket_types
      WHERE site_id = $1
      ORDER BY sort_order ASC, id ASC`,
@@ -1460,6 +1500,12 @@ export async function listSupportTicketTypes(siteId: number) {
     flags: row.flags,
     closePolicy: row.close_policy,
     requesterWindowDays: row.requester_window_days,
+    // The pair as it is stored. Whoever administers the catalogue is the one who set it, and a listing
+    // that showed the count without the period would not say five of what.
+    requesterAllowance: row.requester_allowance == null ? null : {
+      limit: row.requester_allowance,
+      period: row.requester_allowance_period as PhisSupportAllowancePeriodValue,
+    },
     sortOrder: row.sort_order,
     retiredAt: row.retired_at,
   } satisfies SupportTicketTypeRecord));
@@ -1621,12 +1667,22 @@ export async function createSupportTicketType(input: {
   flags?: number;
   closePolicy?: number;
   requesterWindowDays?: number | null;
+  /**
+   * How many of this type one person may open for themselves per period. Absent is no limit.
+   *
+   * One field for both halves rather than two, because they are one statement: a count without a period
+   * does not say five of what, and a period without a count limits nothing while looking as though it
+   * does. The schema refuses the half-written pair either way; this is what keeps a caller from having
+   * to find that out.
+   */
+  requesterAllowance?: { limit: number; period: PhisSupportAllowancePeriodValue } | null;
   sortOrder?: number;
 }) {
   const { rows } = await getPool().query<{ id: number }>(
     `INSERT INTO phis.support_ticket_types
-       (site_id, key, name, flags, close_policy, requester_window_days, sort_order)
-     VALUES ($1, $2, $3, $4, $5, $6, $7)
+       (site_id, key, name, flags, close_policy, requester_window_days,
+        requester_allowance, requester_allowance_period, sort_order)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
      ON CONFLICT (site_id, key) DO NOTHING
      RETURNING id`,
     [
@@ -1636,6 +1692,8 @@ export async function createSupportTicketType(input: {
       input.flags ?? 0,
       input.closePolicy ?? 0,
       input.requesterWindowDays ?? null,
+      input.requesterAllowance?.limit ?? null,
+      input.requesterAllowance?.period ?? PhisSupportAllowancePeriod.None,
       input.sortOrder ?? 0,
     ],
   );
@@ -1652,6 +1710,8 @@ export async function updateSupportTicketType(input: {
   flags?: number;
   closePolicy?: number;
   requesterWindowDays?: number | null;
+  /** Absent leaves it as it was; `null` removes the limit. See `createSupportTicketType`. */
+  requesterAllowance?: { limit: number; period: PhisSupportAllowancePeriodValue } | null;
   sortOrder?: number;
   retired?: boolean;
 }) {
@@ -1661,6 +1721,11 @@ export async function updateSupportTicketType(input: {
          flags = COALESCE($4, flags),
          close_policy = COALESCE($5, close_policy),
          requester_window_days = CASE WHEN $6::boolean THEN $7::smallint ELSE requester_window_days END,
+         -- Both halves move on the one flag, so the pair the CHECK insists on cannot be written apart.
+         requester_allowance = CASE WHEN $10::boolean THEN $11::smallint ELSE requester_allowance END,
+         requester_allowance_period = CASE
+           WHEN $10::boolean THEN $12::smallint ELSE requester_allowance_period
+         END,
          sort_order = COALESCE($8, sort_order),
          retired_at = CASE
            WHEN $9::boolean IS NULL THEN retired_at
@@ -1679,6 +1744,9 @@ export async function updateSupportTicketType(input: {
       input.requesterWindowDays ?? null,
       input.sortOrder ?? null,
       input.retired ?? null,
+      input.requesterAllowance !== undefined,
+      input.requesterAllowance?.limit ?? null,
+      input.requesterAllowance?.period ?? PhisSupportAllowancePeriod.None,
     ],
   );
   if (!rowCount) {
@@ -1701,11 +1769,28 @@ export type RequestableSupportTicketType = {
   name: string;
   /** The conversation of a ticket of this type is mirrored to a linked external system. */
   external: boolean;
+  /**
+   * What this person has left of it, or `null` where the type has no limit.
+   *
+   * Carried here because a refusal after somebody has written their request is a refusal at the worst
+   * possible moment. What ends the ticket and how long the requester window is stay out of this listing
+   * for the reason above; how many they may still ask for is not an answer about how the work will be
+   * run, it is the only thing on this list they can act on.
+   */
+  allowance: PhisSupportAllowance | null;
 };
 
-export async function listRequestableSupportTicketTypes(siteId: number) {
-  const { rows } = await getPool().query<{ key: string; name: string; flags: number }>(
-    `SELECT key, name, flags
+export async function listRequestableSupportTicketTypes(siteId: number, userId: number) {
+  const pool = getPool();
+  const { rows } = await pool.query<{
+    id: number;
+    key: string;
+    name: string;
+    flags: number;
+    requester_allowance: number | null;
+    requester_allowance_period: number;
+  }>(
+    `SELECT id, key, name, flags, requester_allowance, requester_allowance_period
      FROM phis.support_ticket_types
      WHERE site_id = $1
        AND retired_at IS NULL
@@ -1713,11 +1798,25 @@ export async function listRequestableSupportTicketTypes(siteId: number) {
      ORDER BY sort_order ASC, id ASC`,
     [siteId],
   );
-  return rows.map((row) => ({
+
+  /*
+   * One read per limited type, and deliberately not one statement for all of them.
+   *
+   * The list is a handful of rows -- what a Site offers the public, not what it has -- and the statement
+   * that answered them together would be a second copy of the arithmetic the request route refuses by.
+   * Two copies of that is how somebody gets told they have one left and is then turned away.
+   */
+  return Promise.all(rows.map(async (row) => ({
     key: row.key,
     name: row.name,
     external: (row.flags & PhisSupportTicketTypeFlag.External) !== 0,
-  } satisfies RequestableSupportTicketType));
+    allowance: row.requester_allowance == null ? null : await readSupportAllowance(pool, {
+      siteId,
+      userId,
+      selfServiceChannel: SUPPORT_TICKET_CHANNEL_PORTAL,
+      type: row,
+    }),
+  } satisfies RequestableSupportTicketType)));
 }
 
 /** One requestable type by key, for the route that has to check what it was handed. */

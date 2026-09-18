@@ -27,8 +27,16 @@ export async function GET(request: NextRequest) {
     return error;
   }
   const site = context?.site;
-  if (!site) {
+  const userId = context?.session?.userId ?? null;
+  if (!site || !userId) {
     return NextResponse.json({ error: "Authentication required." }, { status: 401 });
   }
-  return NextResponse.json({ rows: await listRequestableSupportTicketTypes(site.id) });
+  /*
+   * The listing is this person's, which is why it takes their id.
+   *
+   * What they may still ask for is part of what a type is to them, and it belongs here rather than in
+   * the refusal: being turned away after writing the request is being turned away at the worst possible
+   * moment. See [design/SUPPORT.md](../../../../../../design/SUPPORT.md) section 5.
+   */
+  return NextResponse.json({ rows: await listRequestableSupportTicketTypes(site.id, userId) });
 }

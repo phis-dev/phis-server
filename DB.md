@@ -1296,12 +1296,15 @@ Contract:
 - `flags INT NOT NULL DEFAULT 0`
 - `close_policy SMALLINT NOT NULL DEFAULT 0`
 - `requester_window_days SMALLINT NULL`
+- `requester_allowance SMALLINT NULL`
+- `requester_allowance_period SMALLINT NOT NULL DEFAULT 0`
 - `retired_at TIMESTAMPTZ NULL`
 - `sort_order SMALLINT NOT NULL DEFAULT 0`
 - `created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
 - `updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
 - `UNIQUE (site_id, key)`
 - `UNIQUE (id, site_id)`
+- `CHECK (requester_allowance_period IN (0, 1, 2) AND (requester_allowance IS NULL) = (requester_allowance_period = 0) AND (requester_allowance IS NULL OR requester_allowance >= 0))`
 
 Contract:
 - What kinds of Support work a Site handles is the Site's own catalogue, not a vocabulary compiled into the server.
@@ -1318,6 +1321,10 @@ Contract:
 - `requester_window_days` narrows or widens the Site default in `site_thread_config`; `NULL` takes it, and `0` means a Supporter closes the ticket.
 - `(id, site_id)` is unique so a ticket's composite foreign key cannot point at another Site's type.
 - `retired_at` replaces deleting a type, as `site_groups` does it: the row and its key stay, a retired type is offered to nobody, and the tickets already opened with it keep naming it.
+- `requester_allowance` is how many of this type one person may open for themselves per period; `NULL` is no limit, which is what a type has until a Site says otherwise. The opposite default from `Requestable`, and not a contradiction: a flag that is off offers nothing, where a limit arriving by default would refuse people on a Site that never asked for one.
+- `requester_allowance_period` is `PhisSupportAllowancePeriod`: `0 = None`, `1 = Month`, `2 = Year`. A calendar period, unlike `requester_window_days` on the same row, which is a rolling window because it measures one ticket's silence.
+- The pair is written as an equality of two `IS NULL` tests rather than as two cases OR'd together, because `NULL >= 0` is `NULL`, `false OR NULL` is `NULL`, and a CHECK that evaluates to `NULL` passes -- which would let through exactly the half-written pair it exists to refuse.
+- Only tickets the person opened for themselves count against it: `channel = 0` and `requester_user_id` theirs. A Supporter opening one on somebody's behalf neither spends the budget nor can be refused for want of it.
 - A Site's first type arrives from a Module's declared seed and is created by key, never rewritten afterwards. See `design/SUPPORT.md` section 4.
 
 ### `phis.support_queues`
@@ -1343,6 +1350,36 @@ Contract:
 - The group reference deliberately does not cascade, as `media_spaces` does not: no surface deletes a group, so this fails against a stray statement instead of taking a Site's routing with it.
 - New tickets default to the queue a Site marks as its entry queue when none is supplied.
 - `flags` are `PhisSupportQueueFlag`: `1 = Entry`.
+
+### `phis.support_allowance_grants`
+
+- `id SERIAL PRIMARY KEY`
+- `site_id SMALLINT NOT NULL REFERENCES phis.sites(id) ON DELETE CASCADE`
+- `type_id SMALLINT NOT NULL`
+- `user_id INT NOT NULL REFERENCES phis.user_accounts(id) ON DELETE CASCADE`
+- `provider_id VARCHAR(128) NOT NULL`
+- `reference VARCHAR(190) NOT NULL`
+- `amount SMALLINT NOT NULL`
+- `consumed SMALLINT NOT NULL DEFAULT 0`
+- `expires_at TIMESTAMPTZ NULL`
+- `revoked_at TIMESTAMPTZ NULL`
+- `created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
+- `updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
+- `UNIQUE (site_id, provider_id, reference)`
+- `CHECK (amount > 0 AND consumed >= 0 AND consumed <= amount)`
+- `CHECK (provider_id ~ '^@[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._-]*$')`
+- `FOREIGN KEY (type_id, site_id) REFERENCES phis.support_ticket_types (id, site_id)`
+
+Contract:
+- Requests handed to one person on top of the periodic allowance their ticket type gives everybody.
+- A stock, not a raised limit. The limit on the type renews and is lost at each calendar boundary; a grant does not renew and survives the boundary until it is spent or expires.
+- A ticket spends the periodic allowance first and reaches a grant only when that is empty, so somebody handed ten does not find them eaten in a month the free ones would have covered.
+- Grants are consumed oldest-expiry first, so a stock about to lapse is the one that gets used.
+- `type_id` is always set. The allowance a grant adds to is the type's, so a grant naming no type would be a number with nothing to add it to.
+- `reference` is the granting Add-on's own name for the occasion, and is what makes granting idempotent: a payment provider retries its webhook, and a second call answers with the first grant rather than a second stock. A retry carrying a different amount never rewrites one already partly spent.
+- `consumed` is counted here rather than derived from the tickets: a ticket may be deleted, and a stock that refilled itself when one was would be a way to get more by throwing work away.
+- `revoked_at` stops the unspent remainder on a refund or chargeback and leaves the tickets already opened against it standing.
+- Who writes it is by design not Support: whether a customer paid for more lives in whatever sold it to them. `support:v1` carries `allowance`, `grant` and `revokeGrant`. See `design/SUPPORT.md` section 5.
 - `retired_at` replaces deleting a queue, as `site_groups` does it: nothing routes to a retired queue, and the tickets standing in it are still in it.
 - A Site's entry queue and its group arrive from a Module's declared seed, created by key on publish and never rewritten afterwards. See `design/SUPPORT.md` section 4.
 
@@ -1522,6 +1559,7 @@ Contract:
 - `requester_email VARCHAR(320) NULL`
 - `assignee_user_id INT NULL REFERENCES phis.user_accounts(id) ON DELETE SET NULL`
 - `queue_id SMALLINT NULL REFERENCES phis.support_queues(id) ON DELETE SET NULL`
+- `allowance_grant_id INT NULL REFERENCES phis.support_allowance_grants(id) ON DELETE SET NULL`
 - `thread_id INT NOT NULL`
 - `subject VARCHAR(512) NOT NULL`
 - `summary TEXT NULL`
@@ -1550,6 +1588,7 @@ Contract:
 - `type_id` is the Site's own type, which decides whether the conversation may leave the Site and what ends the ticket.
 - Cross-system relationships such as GitHub issues, PRs, Medusa orders, or CMS references belong in `resource_links`, not in dedicated columns on the ticket row. An issue is linked to a ticket task rather than to the ticket.
 - `meta` is the free-form extension field for lightweight origin or UI context such as locale, path, or browser hints.
+- `allowance_grant_id` is which granted stock this ticket came out of, or `NULL` for the type's periodic allowance. Not a flag: the id is what lets whoever handed the stock over say which requests it was spent on, and "was this a paid one" falls out of the same column.
 
 ### `phis.support_ticket_tasks`
 

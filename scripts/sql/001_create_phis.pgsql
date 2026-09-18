@@ -974,6 +974,14 @@ CREATE TABLE IF NOT EXISTS phis.support_ticket_types (
   close_policy SMALLINT NOT NULL DEFAULT 0,
   -- How long a resolved ticket of this type waits for its requester. NULL falls back to the Site's.
   requester_window_days SMALLINT NULL,
+  -- How many of this type one person may open for themselves per period. NULL is no limit, which is
+  -- what a type has until a Site says otherwise: a limit is a restriction, and one that arrived by
+  -- default would refuse people on a Site that never asked for it.
+  requester_allowance SMALLINT NULL,
+  -- 0 = none, 1 = calendar month, 2 = calendar year. A calendar period and not a rolling window of
+  -- days, unlike `requester_window_days` above: that one measures a single ticket's silence and starts
+  -- when the ticket does, where this is a budget somebody has to be able to name the start of.
+  requester_allowance_period SMALLINT NOT NULL DEFAULT 0,
   -- Retirement, which replaces deleting a type, as `site_groups` does it: the row and its key stay,
   -- a retired type is offered to nobody, and the tickets already opened with it keep naming it.
   retired_at TIMESTAMPTZ NULL,
@@ -987,7 +995,21 @@ CREATE TABLE IF NOT EXISTS phis.support_ticket_types (
   -- Waiting for a merge presumes there is one: a type without the code-change flag has nothing to wait
   -- for, and its tickets are closed by a person.
   CONSTRAINT support_ticket_types_close_policy_check
-    CHECK (close_policy = 0 OR (flags & 2) = 2)
+    CHECK (close_policy = 0 OR (flags & 2) = 2),
+  -- The two halves of the allowance are one statement and cannot be half-written. A count without a
+  -- period does not say five of what, and a period without a count limits nothing while looking as
+  -- though it does -- which is the version somebody would discover by being let through.
+  --
+  -- Written as an equality of two IS NULL tests rather than as the two cases OR'd together, because the
+  -- obvious spelling does not hold. `requester_allowance >= 0` is NULL when the column is, `false OR
+  -- NULL` is NULL, and a CHECK that evaluates to NULL passes. The half-written pair this exists to
+  -- refuse is exactly the one that would have been let through.
+  CONSTRAINT support_ticket_types_allowance_check
+    CHECK (
+      requester_allowance_period IN (0, 1, 2)
+      AND (requester_allowance IS NULL) = (requester_allowance_period = 0)
+      AND (requester_allowance IS NULL OR requester_allowance >= 0)
+    )
 );
 
 -- Where Support work is routed. Membership is not here: a queue names one Site group, which is who its
@@ -1017,6 +1039,57 @@ CREATE TABLE IF NOT EXISTS phis.support_queues (
 
 CREATE INDEX IF NOT EXISTS support_queues_group_id_idx
   ON phis.support_queues (group_id);
+
+-- Requests handed to one person on top of the periodic allowance their ticket type gives everybody.
+--
+-- A stock and not a raised limit, and the difference is what the table is for. The limit on the type
+-- renews and is lost at each boundary; this is bought or granted, does not renew, and survives the
+-- boundary until it is spent or expires. A ticket spends the periodic allowance first and reaches this
+-- only when that is empty, so somebody who was handed ten does not find them eaten in a month the free
+-- ones would have covered.
+--
+-- Who writes it is by design not Support. Whether a customer paid for more is knowledge that lives in
+-- whatever sold it to them, which is another Add-on; Support states the arithmetic and hands over
+-- `support:v1`'s `grant`. See design/SUPPORT.md section 5.
+CREATE TABLE IF NOT EXISTS phis.support_allowance_grants (
+  id SERIAL PRIMARY KEY,
+  site_id SMALLINT NOT NULL REFERENCES phis.sites(id) ON DELETE CASCADE,
+  -- Always a type, never "any type". The allowance it adds to is the type's, so a grant that named none
+  -- would be a number with nothing to add it to -- and the question of which types it counted against
+  -- would be asked for the first time by whoever was refused.
+  type_id SMALLINT NOT NULL,
+  user_id INT NOT NULL REFERENCES phis.user_accounts(id) ON DELETE CASCADE,
+  -- The Add-on that handed it over, in the `@scope/name` form every provider id takes.
+  provider_id VARCHAR(128) NOT NULL,
+  -- The granter's own name for the occasion: an order number, a contract line. Unique per provider,
+  -- which is what makes granting idempotent -- a payment provider retries its webhook, and a shop with
+  -- no reference to give would hand over the ten twice and never notice.
+  reference VARCHAR(190) NOT NULL,
+  amount SMALLINT NOT NULL,
+  -- Spent, counted here rather than derived from the tickets: a ticket may be deleted, and a stock that
+  -- refilled itself when one was would be a way to get more by throwing work away.
+  consumed SMALLINT NOT NULL DEFAULT 0,
+  expires_at TIMESTAMPTZ NULL,
+  -- A refund, a chargeback, a contract that ended. The unspent remainder stops counting; the tickets
+  -- already opened against it stand, because a payment reversed later does not un-have a conversation.
+  revoked_at TIMESTAMPTZ NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT support_allowance_grants_provider_id_check
+    CHECK (provider_id ~ '^@[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._-]*$'),
+  CONSTRAINT support_allowance_grants_reference_unique
+    UNIQUE (site_id, provider_id, reference),
+  CONSTRAINT support_allowance_grants_amount_check
+    CHECK (amount > 0 AND consumed >= 0 AND consumed <= amount),
+  CONSTRAINT support_allowance_grants_type_site_fk
+    FOREIGN KEY (type_id, site_id)
+    REFERENCES phis.support_ticket_types (id, site_id)
+);
+
+-- What the consumption pass reads: this person's live stock of this type, oldest expiry first.
+CREATE INDEX IF NOT EXISTS support_allowance_grants_user_type_idx
+  ON phis.support_allowance_grants (site_id, user_id, type_id, expires_at NULLS LAST, id)
+  WHERE revoked_at IS NULL;
 
 -- Threads are conversations between people on one Site: two colleagues, a group, two groups, or a
 -- requester and a Support queue. They were Support's own until the cases outside it arrived, which is
@@ -1225,6 +1298,10 @@ CREATE TABLE IF NOT EXISTS phis.support_tickets (
   requester_email VARCHAR(320) NULL,
   assignee_user_id INT NULL REFERENCES phis.user_accounts(id) ON DELETE SET NULL,
   queue_id SMALLINT NULL REFERENCES phis.support_queues(id) ON DELETE SET NULL,
+  -- Which granted stock this ticket came out of, or NULL where it came out of the periodic allowance.
+  -- Not a flag: the id is what lets whoever sold the stock say which requests their customer spent it
+  -- on, and "was this a paid one" is answered by the same column for free.
+  allowance_grant_id INT NULL REFERENCES phis.support_allowance_grants(id) ON DELETE SET NULL,
   -- The ticket's conversation. A ticket is the workflow record -- status, priority, assignment, tasks --
   -- and everything anybody says about it is the thread, which is the same thread model every other
   -- conversation on the Site uses.

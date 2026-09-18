@@ -18,9 +18,18 @@ import {
   type SupportTicketTaskRecord,
   type SupportTicketWithTypeRecord,
   SUPPORT_TICKET_CHANNEL_API,
+  SUPPORT_TICKET_CHANNEL_PORTAL,
   SUPPORT_TICKET_TASK_TYPE_ENGINEERING,
 } from "@/db/support";
+import {
+  SupportAllowanceError,
+  getSupportAllowance,
+  grantSupportAllowance,
+  revokeSupportAllowanceGrant,
+} from "@/db/support-allowance";
 import { canReaderSeeThread } from "@/db/threads";
+import { isPhiSiteMember } from "@/db/server-addon-owner.mts";
+import { getPool } from "@/lib/db";
 import type { PhisSupportClosePolicyValue } from "@phis/contracts/support";
 
 export class PhisAddonSupportError extends Error {}
@@ -113,6 +122,22 @@ export function buildPhisAddonSupportCapability(input: {
       return null;
     }
     return ticket;
+  };
+
+  /*
+   * The one thing on this capability that names a person instead of reaching a ticket.
+   *
+   * The allowance is about somebody before there is any ticket to be linked to, so the reach that
+   * answers everything else here has nothing to answer with. The bound is the Site's, and it is the one
+   * `groups:v1` already uses for the same unavoidable reason: the person must be a member of this Site.
+   * What that leaves an Add-on able to do is give a member of its own Site something -- which is what a
+   * Site installed it to do -- and it is still shut to an unverified hook like everything else.
+   */
+  const reachPerson = async (call: string, userId: number) => {
+    requireBelievableCaller(call);
+    if (!await isPhiSiteMember(getPool(), siteId, userId)) {
+      throw new PhisAddonSupportError(`User ${userId} is not a member of this Site.`);
+    }
   };
 
   const requireTicket = async (call: string, ticketId: number) => {
@@ -234,6 +259,53 @@ export function buildPhisAddonSupportCapability(input: {
         throw new PhisAddonSupportError(`${addonId} moved a task that could not be read back.`);
       }
       return asTask(moved);
+    },
+
+    async allowance({ userId, typeKey }) {
+      await reachPerson("allowance", userId);
+      const allowance = await getSupportAllowance({
+        siteId,
+        userId,
+        typeKey,
+        selfServiceChannel: SUPPORT_TICKET_CHANNEL_PORTAL,
+      });
+      if (!allowance) {
+        throw new PhisAddonSupportError(
+          `${addonId} asked about the allowance of type "${typeKey}", which this Site does not have.`,
+        );
+      }
+      return allowance;
+    },
+
+    async grant({ userId, typeKey, amount, reference, expiresAt }) {
+      await reachPerson("grant", userId);
+      try {
+        return await grantSupportAllowance({
+          siteId,
+          userId,
+          typeKey,
+          providerId: addonId,
+          reference,
+          amount,
+          expiresAt: expiresAt ?? null,
+        });
+      } catch (cause) {
+        if (cause instanceof SupportAllowanceError) {
+          throw new PhisAddonSupportError(`${addonId} could not grant: ${cause.message}`);
+        }
+        throw cause;
+      }
+    },
+
+    async revokeGrant({ reference }) {
+      requireBelievableCaller("revokeGrant");
+      /*
+       * No membership check and no user id, because the reference already names one grant.
+       *
+       * `provider_id` is in the WHERE rather than checked after: a grant somebody else made is not found
+       * rather than refused, which is the same shape every other refusal here takes.
+       */
+      return revokeSupportAllowanceGrant({ siteId, providerId: addonId, reference });
     },
   } satisfies PhisSupportCapabilityV1);
 }

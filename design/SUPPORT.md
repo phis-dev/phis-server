@@ -5,9 +5,10 @@
 routes under `/api/site/support` open, read, assign and work tickets; `@phis/support` reads the Core
 threads of [THREADS.md](./THREADS.md). The declared seed of section 4 is built: a Site that publishes an
 Area running `@phis/support` now gets its group, its entry queue and one ticket type; section 4's routes
-administer both from there; and section 2's requester route and type listing are the way in. What is
-described here and is **not** built is attachments on a submission and the custody transfer that follows
-one.
+administer both from there; and section 2's requester route and type listing are the way in. Section 5's
+allowance is built too: a Site can say how many requests one person gets per period, and `support:v1`
+lets another Add-on hand somebody more. What is described here and is **not** built is attachments on a
+submission and the custody transfer that follows one.
 
 This document is Support's half. The conversation is not in it: a ticket's messages are a Core thread,
 and who reads them, what an attachment is, and how it is delivered are settled in
@@ -186,14 +187,95 @@ installation from then on. And seed-once-then-authoritative is not a new idea he
 [GROUPS_AND_STORAGE.md](../GROUPS_AND_STORAGE.md) section 7 already says it of the Media configuration
 row, which installation configuration seeds exactly once and is never consulted for again.
 
-## 5. Order
+## 5. How much one person may ask for
+
+A Site that answers everybody answers some people more than it can afford to. The limit is the Site's to
+set, and the exception to it is by design not the Site's to know: whether a customer paid for ten more
+lives in whatever sold them, which is another package entirely. So what Support holds is the arithmetic,
+and `support:v1` is where somebody else moves the number.
+
+### Two numbers that are not the same kind of thing
+
+**The periodic allowance** sits on the ticket type -- `requester_allowance` and
+`requester_allowance_period` -- and is what everybody gets. It renews at the calendar boundary and what
+goes unused is gone. It is `NULL` until a Site says otherwise, which is the opposite default from
+`Requestable` and for a reason that does not contradict it: a flag that is off offers nothing, where a
+limit that arrived by default would refuse people on a Site that never asked for one.
+
+**A grant** is a stock handed to one person: `support_allowance_grants`, with an amount, a `consumed`
+counter, an optional expiry and the provider that made it. It does not renew, and it is not lost at the
+boundary.
+
+A ticket spends the periodic allowance first and reaches the stock only when that is empty. The other
+order is the one that looks equivalent and is not: it would spend somebody's ten in a month the free five
+would have covered, and they would find them gone without having asked for anything unusual.
+
+The period is a calendar month or a calendar year, not a rolling window of days -- unlike
+`requester_window_days`, the other clock on the same table. That one measures a single ticket's silence
+and rightly starts when the ticket does. This is a budget, and a budget somebody can plan around is one
+whose start they can name: "five this year" is a sentence, "five in any three hundred and sixty-five
+days" is an audit.
+
+### The limit is per type, and that is the statement
+
+There is no Site-wide total. A Site with three requestable types, each allowing five, has given each
+person fifteen -- five of each, which is what it said. This is worth stating rather than discovering,
+because the alternative reading ("five requests, of whatever kind") is the one people assume. A Site that
+means one budget across everything offers one requestable type; a Site that offers three is making three
+separate promises.
+
+The grant names a type for the same reason. A grant that named none would be a number with nothing to add
+it to, and which types it counted against would be a question first asked by whoever was refused.
+
+### What counts, and what cannot be stopped by it
+
+Only what the person opened for themselves: `channel = PORTAL` and `requester_user_id` theirs. A
+Supporter opening a ticket on somebody's behalf is a decision taken by somebody entitled to take it, so
+it neither spends that person's budget nor can be refused for want of it. Without that line the budget
+would be spendable by Staff and unspendable by the person it belongs to.
+
+Consumption happens inside the transaction that opens the ticket, before the thread exists: refusing
+afterwards would leave a conversation nobody can reach behind every refusal. It is serialized per person
+and type with a transaction-scoped advisory lock, because the count and the spend are two statements and
+two requests arriving together would otherwise both read four-of-five and both pass.
+
+`support_tickets.allowance_grant_id` records which stock a ticket came out of, or `NULL` for the periodic
+allowance. Not a flag: the id is what lets whoever sold the stock say which requests their customer spent
+it on, and "was this a paid one" falls out of the same column.
+
+### What the interface is, and the one thing it breaks
+
+`support:v1` gains `allowance`, `grant` and `revokeGrant`. Granting is idempotent on the granter's own
+`reference` -- a payment provider retries its webhook, and a shop with no reference to give would hand
+over the ten twice and never notice. Revoking stops the unspent remainder and leaves the tickets already
+opened against it standing, because a payment reversed later does not un-have a conversation.
+
+These three name a person, which nothing else on that capability does: its whole doctrine is that an
+Add-on reaches what it was given and never walks a Site's records. The doctrine is not bent here, it
+simply has nothing to answer with -- the allowance is about somebody before there is any ticket to be
+linked to. The bound is the one `groups:v1` already uses for the same unavoidable reason: the person must
+be a member of this Site, and an unverified hook reaches none of it. What that leaves an Add-on able to
+do is give a member of its own Site something, which is what the Site installed it to do.
+
+What a requester may still ask for is carried on `GET /api/site/support/request/types`, per type,
+computed by the same function the refusal uses. Two copies of that arithmetic is how somebody is told
+they have one left and then turned away.
+
+## 6. Order
 
 1. ~~The declared seed and its materialization, the administration of queues and ticket types, and the
    requestable flag in the contract.~~ Built, apart from a surface in `@phis/support` to drive it.
 2. ~~The types listing and the requester route, with the `External` notice.~~ Built.
-3. Attachments on a submission, once [THREADS.md](./THREADS.md) section 5 is built.
-4. Custody transfer on acceptance into a queue.
+3. ~~The allowance, and the three calls on `support:v1` that let somebody else hand over more.~~ Built.
+4. Attachments on a submission, once [THREADS.md](./THREADS.md) section 5 is built.
+5. Custody transfer on acceptance into a queue.
 
 Step 1 was first because both of the others fail without it, and its seeded half is what turns a Site
-with the Module switched on into a Site that can answer anybody at all. What remains is steps 3 and 4,
-and both wait on [THREADS.md](./THREADS.md) section 5.
+with the Module switched on into a Site that can answer anybody at all. Step 3 could come before the
+attachments because it is about who may ask rather than about what they may bring. What remains is steps
+4 and 5, and both wait on [THREADS.md](./THREADS.md) section 5.
+
+Nothing in any of this has a surface. Setting a limit, handing somebody a stock and seeing what one has
+left are all HTTP, as the queue and type administration is: `@phis/support` still has no administration
+screen, and no Module shows a requester their remaining count. The listing carries it so that a surface
+can, when one exists.

@@ -6,6 +6,7 @@ import {
   getRequestableSupportTicketType,
   hasSupportEntryQueue,
 } from "@/db/support";
+import { SupportAllowanceExhaustedError } from "@/db/support-allowance";
 import { requireSiteAuthenticatedApiContext } from "@/lib/guards/site-admin-api";
 import { logRuntimeEvent } from "@/lib/log";
 import { normalizeString, readRequestBody } from "@/lib/helpers/request";
@@ -94,16 +95,42 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const created = await createSupportTicket({
-    siteId: site.id,
-    typeId: type.id,
-    subject,
-    message,
-    channel: SUPPORT_TICKET_CHANNEL_PORTAL,
-    requesterUserId,
-    createdByUserId: requesterUserId,
-    requesterExternalConsent: type.external,
-  });
+  let created;
+  try {
+    created = await createSupportTicket({
+      siteId: site.id,
+      typeId: type.id,
+      subject,
+      message,
+      channel: SUPPORT_TICKET_CHANNEL_PORTAL,
+      requesterUserId,
+      createdByUserId: requesterUserId,
+      requesterExternalConsent: type.external,
+      /*
+       * This is the route the allowance is about, and the only one.
+       *
+       * A Supporter opening a ticket for somebody, or an integration opening one for work that arrived
+       * from a repository, is not this person asking for their own budget: neither spends it, and
+       * neither can be stopped by it. See `src/db/support-allowance.ts`.
+       */
+      enforceRequesterAllowance: true,
+    });
+  } catch (cause) {
+    if (cause instanceof SupportAllowanceExhaustedError) {
+      /*
+       * 429 and the numbers, because this is the one refusal the person can act on.
+       *
+       * Saying only "no" would leave them to guess whether to wait, to ask somebody, or to buy more, and
+       * the answer to that is `periodStart` and what is on the account. Whether more can be bought is
+       * not Support's to say -- that is whatever sold it, if anything did.
+       */
+      return NextResponse.json(
+        { error: "You have used the requests you have of this kind.", allowance: cause.allowance },
+        { status: 429 },
+      );
+    }
+    throw cause;
+  }
   if (!created) {
     return NextResponse.json({ error: "The request could not be opened." }, { status: 500 });
   }
