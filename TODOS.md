@@ -39,6 +39,10 @@ tracked here because the server contract depends on them.
   administration surface over Core services, with no S3-specific UI or endpoint. A Site surface that
   writes a profile reconciles bucket CORS through `reconcilePhiMediaStorageCorsWith`, as the CLI does.
 - **Presigned PUT versus proxied stream** has no setting; the S3 Provider always issues `presigned-put`.
+- **`max_object_bytes` is a default nobody chose**, and it bounds three different things through one
+  number -- Site policy, what a Storage path can carry, and how much `storage:v1` holds in memory.
+  Raising it to 128 MiB and giving `storage:v1` a streaming shape land together
+  ([GROUPS_AND_STORAGE_PLANNED.md](./design/GROUPS_AND_STORAGE_PLANNED.md) section 6).
 - **Multipart upload plan.** The upload-plan ABI knows `proxy-stream` and `presigned-put`. Add multipart as
   a plan kind when the S3 Provider implements it, with abort and expiry cleaning staged parts and
   reservations. Until then `nginx` caps a proxied body at 2 GB and S3 accepts a single PUT up to 5 GB.

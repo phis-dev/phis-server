@@ -96,3 +96,72 @@ Changing an existing Asset's Storage Profile is an explicit resumable job:
 A failed migration leaves the original binding authoritative and is never reinterpreted through a Local
 fallback. Folder moves, title edits, and delivery policy changes do not start Storage migration. Progress
 is operator-visible.
+
+## 6. What bounds one object
+
+`site_media_config.max_object_bytes` is one number per Site, and three different questions hide behind
+it. Raising it -- which a Site running Support has to do, because a log or a recording of a fault is
+larger than the default -- is what makes them come apart.
+
+### The number nobody chose
+
+The default is `26214400`, twenty-five mebibytes, and it is the column's default rather than a decision.
+The row's materialization seeds `default_user_quota_bytes` and `default_group_quota_bytes` from
+`config/phis-config.json` and takes this one as it finds it, so no installation and no Site has ever
+stated it.
+
+It is also not derived from what the transport can carry. On the `proxy-stream` path the body streams
+through the process and the shipped `nginx` profile caps a proxied body at 2 GB; on `presigned-put` the
+body does not reach Core at all and a single S3 PUT ends at 5 GB. Both are in `TODOS.md` beside the
+multipart plan kind that would pass them. Twenty-five mebibytes is two orders of magnitude below the
+nearer of the two.
+
+For comparison, what the neighbours ship: PHP's `upload_max_filesize` is 2 M against a `post_max_size`
+of 8 M, so 2 MB is what a stock PHP accepts; WordPress adds no limit of its own on a single Site and
+reports the smaller of those two, while its multisite network setting defaults to 1500 KB; hosts in
+practice run 64 M to 128 M. The default here is above what a standard ships and below what anybody keeps.
+
+**It should be 128 MiB.** Above every realistic attachment and ordinary web video, an order of magnitude
+under the proxied ceiling, and in line with what operators configure rather than with what a default
+that nobody keeps says.
+
+### Policy, transport, and shape
+
+- **Policy** is what this Site is willing to accept at all. It belongs to the Site, it is
+  `max_object_bytes`, and the CHECK that keeps it above zero is right: an unbounded upload is not a
+  state the schema offers.
+- **Transport** is what this path can carry. It belongs to the Storage Profile and the plan kind, and
+  today the Profile contributes nothing to it. A Site holding its Site Space locally and its group
+  Spaces on an S3-compatible Provider has one number for both, which must therefore be the smaller.
+  Making it path-aware is not hard but is not free either: `uploads/init` checks the size before it
+  resolves the Space, and therefore before it knows which Profile or which plan applies. The check would
+  have to move after the resolution, which changes which refusal a client sees first.
+- **Shape** is whether an API hands over bytes or a stream, and it is the axis that makes raising the
+  number unsafe. `storage:v1` takes `body: Uint8Array` on `put` and returns one from `get`, so both
+  directions materialize a whole object in memory, and both are bounded by this same column -- by
+  intent: *"an operator who raised it for Media raised it here too, and one limit is easier to reason
+  about than two."* The rule is right. The shape is what makes it cost something.
+
+### `storage:v1` should stream
+
+Not because the capability is for large objects in general -- it is explicitly not the Media library,
+and what a person uploads, browses and references belongs in a Media Space. But two of the three uses it
+names for itself, a release artifact and an export waiting to be fetched, are exactly the things that
+grow, and `get` returning the whole object is the more expensive half of the two.
+
+The layer underneath is already there: `putObjectStream` exists and is what the media proxy path uses.
+The read side is the work, since `getObject` returns `Buffer | null` today and would need a streaming
+sibling -- native for S3, a file read stream for Local.
+
+**It is free now and an ABI break later.** No package in the workspace calls `storage:v1`: the
+marketplace Add-on, the one that looked like a caller, uses declared `assets:v1` slots, whose bytes on a
+presigned plan never pass in front of Core at all. Before v1 this is a shape nobody has adopted.
+
+Nothing else moves with it. The store's ceilings stay what they are -- bytes and objects per Add-on per
+Site, on `site_server_addons` -- and `usage()` keeps explaining a refusal before it happens.
+
+### The order this implies
+
+The default raise and the shape change land together. Raising the number first would quietly raise how
+much an Add-on may hand Core in one buffer, which is the one consequence nobody asking for larger
+attachments is asking for.

@@ -1,14 +1,16 @@
 # Threads: Planned Design
 
-**Status: sections 1 to 3 of the order in section 13 are built.** The schema, the visibility predicate,
+**Status: sections 1 to 3 of the order in section 14 are built.** The schema, the visibility predicate,
 `/api/site/threads`, the recut `threads:v1`, `resource-links:v1`, verified hooks and the event outbox
 are in the server; [DB.md](../DB.md) holds the tables and
 [SERVER_ADDONS.md](../SERVER_ADDONS.md) sections 8, 10, 13 and 18 hold the contracts. What is described
 here and is **not** built is step 4 -- `@phis/ui/threads`, `@phis/support` on the new model, the group
-flags in the groups Module -- and step 5, `@phis/github`.
+flags in the groups Module -- step 5, attachments, and step 6, `@phis/github`.
 
-Decisions taken while writing this are stated where they apply. Nothing in it is open at the time of
-writing; what remains is building it in the order of section 13.
+Decisions taken while writing this are stated where they apply. One question is deliberately left open
+and is named where it arises: whether an attachment on an `External` ticket is mirrored outward, which
+belongs to the Add-on that would carry it. What otherwise remains is building it in the order of
+section 14.
 
 ## 1. Why the current model is not enough
 
@@ -161,7 +163,130 @@ message. What it withholds is every path out of Core:
 Both may be raised after writing. Lowering either is Admin-only and leaves a system message, because
 lowering releases something the author meant to hold back.
 
-## 5. Schema
+## 5. Attachments
+
+A thread carries text and nothing else. `thread_messages` holds `body_text` and `body_markdown`, and no
+row in the schema points an Asset at a message or at a ticket. Every case in section 1 wants files: a
+customer sends the log that shows the fault, a colleague drops a screenshot into a group, and an issue
+imported from GitHub arrives with what hung on it.
+
+### The conversation is the audience
+
+An attachment is readable by whoever may read the message it hangs on. That is the whole rule.
+
+It has to be, because the alternative is to derive it from custody, and custody cannot answer it. A
+Media Space says who pays for bytes and who administers them
+([GROUPS_AND_STORAGE.md](../GROUPS_AND_STORAGE.md) section 6). The four kinds would give one
+conversation four different answers depending on who happened to attach the file: a customer may write
+into their own User Space and nowhere else, a Supporter is an Author in the queue's group, an Add-on has
+a Space of its own. The same thread, three custodians, and no reader who is the same in all three.
+
+Section 4 already cuts finer than any Space can. An `Internal` note is invisible to the customer in a
+thread the customer otherwise reads, and no custodian expresses that -- the file would sit in the same
+Space as the message beside it. The message is where the answer already lives, so reading it from there
+costs no new vocabulary and cannot drift from the body it belongs to.
+
+This is [GROUPS_AND_STORAGE_PLANNED.md](./GROUPS_AND_STORAGE_PLANNED.md) section 1 applied: `Internal`
+is what material a Module mediates carries, and the mediator decides on its own surface who is shown it.
+Threads are the first mediator. They are Core's rather than a Module's, so the decision is Core's too,
+and every thread kind and every Add-on inherits it without asking.
+
+A per-Asset audience descriptor stays refused, for the reason that document gives: the rules carry every
+case in sight, and a descriptor nothing fills is only a contract to get wrong later.
+
+### The link
+
+```text
+thread_message_assets
+├── message_id   → thread_messages(id)   ON DELETE CASCADE
+├── asset_id     → media_assets(id)      ON DELETE RESTRICT
+├── flags
+└── sort_order
+```
+
+`CASCADE` on the message and `RESTRICT` on the Asset, and the asymmetry is the point. A message that
+goes takes its links with it, because a link to nothing is not a record of anything. An Asset that
+something still hangs on does not go at all.
+
+That `RESTRICT` is what stops a submitter pulling the evidence out from under a ticket. They own the
+file -- it sits in their Space, on their quota, and everything else about it is theirs -- but while a
+message points at it, their delete is refused. Nothing else has to be built for that, and no separate
+retention rule has to be remembered.
+
+**The CMS reference index is not the place for this.** [REFERENCES.md](../REFERENCES.md) admits only
+Site Space Assets as reference targets and says User and Group Space Assets are invalid ones, which is
+right and must not be relaxed. It also explains why that index exists: CMS references hide inside opaque
+bodies and have to be collected. An attachment is a row. A foreign key does the whole job, with no
+collector, no index maintenance and no delete diagnostic of its own -- but the Asset delete path has to
+learn about it, or a refusal that should read as "still attached" arrives as a constraint violation.
+
+### Delivery
+
+```text
+GET /api/site/threads/:threadId/messages/:messageId/assets/:assetId
+```
+
+Core's route, on the thread surface, authorized by the predicate of section 7 and the flags of section
+4. The delivery policy of such an Asset is `Internal`: no browser URL reaches the Asset by its own id,
+whichever Space holds it, and the only way to its bytes is through the message that names it.
+
+One route serves all of it. A customer's upload in their User Space, a Supporter's in theirs, a file an
+Add-on imported into its Add-on Space -- the reader is decided the same way each time, because none of
+the three questions the route asks is about where the bytes sit.
+
+### Whoever attaches it writes into their own Space
+
+Custody follows the uploader, never the thread:
+
+```text
+a person        their own User Space
+an Add-on       its own Add-on Space
+```
+
+One rule rather than a table of cases. The tempting second case -- let Staff write straight into the
+queue's group Space, since they are Authors there -- is refused: it would make custody depend on who is
+speaking, and the transfer below would then need two shapes. The other tempting case, granting a
+requester a one-off write into the group, is worse: that is writing into a group you are not in, and it
+makes flooding free.
+
+This is [GROUPS_AND_STORAGE_PLANNED.md](./GROUPS_AND_STORAGE_PLANNED.md) section 2's submission model,
+and it carries its own abuse bound: whoever floods fills their own quota first, because the file is
+theirs until an occasion accepts it.
+
+It follows that a Site whose customers attach anything must have the User Space kind available, and
+availability is a Module declaration
+([GROUPS_AND_STORAGE.md](../GROUPS_AND_STORAGE.md) section 7). `@phis/support` declares it; see
+[SUPPORT.md](./SUPPORT.md). A Site that runs no Module declaring `user` has no requester attachments,
+and is refused as unavailable rather than as over quota.
+
+### What custody transfer does not change
+
+Taking a ticket's files into the queue group's custody -- so the record outlives the account that
+handed it in and stops sitting on that person's quota -- is
+[GROUPS_AND_STORAGE_PLANNED.md](./GROUPS_AND_STORAGE_PLANNED.md) section 2, and it is not built.
+
+Attachments do not wait for it. Because the audience never came from custody, a transfer moves who pays
+and who administers and touches nothing about who reads -- which is exactly what that section requires
+of a transfer and could not have promised if the two axes were the same one. The order in section 14
+therefore builds attachments first and leaves the transfer to its own occasion.
+
+### What leaves Core
+
+`Confidential` already forbids every path out (section 4), attachments included.
+
+Whether an ordinary attachment on an `External` ticket is mirrored outward is left to section 12. It
+cannot be answered here: the bytes sit in a Space the Add-on cannot reach, so the answer is a mechanism
+and not a policy, and the Add-on that would need it is the one that has to state what it does with an
+attachment that arrives the other way.
+
+### One object cap, and what it is not
+
+The largest single object is `site_media_config.max_object_bytes`, one number per Site, and a support
+attachment is the case that first makes the default look wrong. What that number is, what it is not, and
+why it is not per Storage Profile is in
+[GROUPS_AND_STORAGE_PLANNED.md](./GROUPS_AND_STORAGE_PLANNED.md) section 6.
+
+## 6. Schema
 
 Reshaped freely: this is before v1, so existing rows are swept rather than migrated behind a shim.
 
@@ -234,14 +359,14 @@ Leaving:
 - The fixed `SUPPORT_TICKET_TYPE_*` vocabulary becomes a Site catalogue,
   `support_ticket_types (id, site_id, key, name, flags, close_policy SMALLINT, requester_window_days
   SMALLINT, sort_order)`, with `TicketTypeFlag: External, CodeChange` and `close_policy`
-  `Confirm | CodeAccepted`; `support_tickets.type` becomes `type_id` (section 11).
+  `Confirm | CodeAccepted`; `support_tickets.type` becomes `type_id` (section 12).
 - `support_ticket_messages` goes. A ticket has exactly one thread (`support_tickets.thread_id`, unique,
   not null); its visibility becomes `MessageFlag.Internal`, its `external_message_ref` a
   `thread_message_refs` row. A ticket stays the workflow record -- status, priority, assignment, tasks --
   and the thread is its conversation.
 - `support_ticket_links` goes into `resource_links`.
 
-## 6. One visibility predicate
+## 7. One visibility predicate
 
 A thread is visible to a user when all of these hold:
 
@@ -256,7 +381,7 @@ A message is visible when its thread is, and additionally not `Internal` unless 
 This is one function in the database layer. The Site routes and `threads:v1` call it and nothing else,
 which is what keeps the two projections from drifting again.
 
-## 7. Contracts
+## 8. Contracts
 
 `@phis/contracts/src/threads.ts` owns the shape both surfaces return:
 
@@ -300,9 +425,9 @@ because a link is a person saying two things belong together.
 `@phis/support` then requires `threads:v1` and `resource-links:v1`; `support:v1` stays reserved until
 something builds it.
 
-## 8. Add-ons without an actor
+## 9. Add-ons without an actor
 
-With an actor, `threads:v1` is what it is today, through the predicate in section 6.
+With an actor, `threads:v1` is what it is today, through the predicate in section 7.
 
 Without one -- a job, a verified hook, an event handler -- an Add-on reaches a thread when either holds:
 
@@ -320,7 +445,7 @@ idempotent on `externalRef`, `setStatus`, `findByExternalRef`. A reply is writte
 `author_kind = Integration`. `Internal` messages are never handed to an actorless Add-on;
 `Confidential` ones arrive with their bodies withheld.
 
-## 9. Verified hooks
+## 10. Verified hooks
 
 A hook descriptor gains:
 
@@ -340,9 +465,9 @@ pruned by age).
 
 - **An unverified hook writes nothing** -- not `data:v1`, and no longer `threads.create`.
 - **A verified hook** writes as a job does: system authority over its own tables, and the actorless
-  thread access of section 8.
+  thread access of section 9.
 
-## 10. Events to Add-ons
+## 11. Events to Add-ons
 
 Outbound synchronization needs Core to tell an Add-on that something happened; today nothing does.
 
@@ -352,11 +477,11 @@ transaction as the change, dispatches it after commit, and `phis addon job run` 
 consistent with Core keeping no scheduler.
 
 **An event reaches only an Add-on linked to that thread.** Delivering every thread event to every
-declaring Add-on would be the Site-wide listing section 8 refuses, arriving by push instead of by pull.
+declaring Add-on would be the Site-wide listing section 9 refuses, arriving by push instead of by pull.
 Messages carrying `Imported` from that same provider are not delivered back to it, which is what stops
 an echo.
 
-## 11. `@phis/github`
+## 12. `@phis/github`
 
 One package, both halves, requiring `threads`, `resource-links`, `data`, `secrets`, `settings`, `roles`.
 
@@ -387,7 +512,7 @@ thing every capability is built to rule out.
 ### The ticket type decides what leaves
 
 Ticket types stop being a fixed vocabulary and become a Site catalogue, `support_ticket_types`
-(section 5), each with flags and a close policy:
+(section 6), each with flags and a close policy:
 
 ```text
 TicketTypeFlag.External     the ticket's conversation is mirrored to GitHub
@@ -490,25 +615,34 @@ beside `upload-sessions` and `addon-assets`, which an operator already runs from
 Add-on job, because closing a Support ticket is Core's work and must keep happening when `@phis/github`
 is not installed.
 
-## 12. Modules
+## 13. Modules
 
 - **`@phis/ui/threads`** -- thin, first-party, like `@phis/ui/groups`: inbox, conversation, composer, the
-  candidates picker. Declares `Direct`.
-- **`@phis/support`** -- declares `Support`; seeds its group; ticket and queue surfaces; a customer
-  widget listing only the viewer's own Support threads. Reuses the thread widgets by Layout composition.
+  candidates picker. Declares `Direct`. The composer is where an attachment is offered, so it is the one
+  surface both other Modules reuse for it rather than each growing its own.
+- **`@phis/support`** -- declares `Support` and the User Space its requesters submit into
+  ([SUPPORT.md](./SUPPORT.md)); seeds its group; ticket and queue surfaces; a customer widget listing
+  only the viewer's own Support threads. Reuses the thread widgets by Layout composition.
 - **groups Module** -- group spaces; declares `Group` and, by setting, `CrossGroup`; administers the
   group flags for Core groups.
 - **`@phis/github` Module half** -- a link panel widget beside a ticket's conversation, wired by a
   runtime signal carrying the ticket id: create or link an issue, the tasks it produced, their state,
   and the export notice of an `External` ticket.
 
-## 13. Order
+## 14. Order
 
 1. Contracts: `threads.ts`, `PhiBaseRole.Staff`, group flags, ticket type flags and close policies,
    `resource-links:v1`, hook `verification`, `eventHandlers`.
 2. Schema sweep: threads, participants on groups, queues, ticket types, ticket messages into threads,
-   `resource_links`; the predicate of section 6.
+   `resource_links`; the predicate of section 7.
 3. Core surfaces: `/api/site/threads`, `threads:v1` recut, `resource-links:v1`, verified hooks, the
    event outbox, the snapshot fix.
 4. Modules: `@phis/ui/threads`, `@phis/support` on the new model, group flags in the groups Module.
-5. `@phis/github`.
+5. Attachments: `thread_message_assets`, the delivery route, the Asset delete path, and
+   `@phis/support` declaring the User Space ([SUPPORT.md](./SUPPORT.md)).
+6. `@phis/github`.
+
+Attachments come before the GitHub Add-on because that Add-on has to say what it does with a file
+arriving from outside and with one leaving, and neither question can be answered while a message cannot
+carry a file at all. They come after the Modules because the composer that offers one lives in
+`@phis/ui/threads`.
