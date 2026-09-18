@@ -27,7 +27,7 @@ function config(overrides: Partial<SiteMediaConfigRecord> = {}): SiteMediaConfig
     maxGroupQuotaBytes: null,
     defaultAddonQuotaBytes: null,
     maxAddonQuotaBytes: null,
-    maxObjectBytes: 26_214_400,
+    maxObjectBytes: 134_217_728,
     ...overrides,
   };
 }

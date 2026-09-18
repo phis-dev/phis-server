@@ -955,6 +955,18 @@ The bytes go through the Site's configured Storage Provider, so an operator who 
 moved its Add-ons with it. The Site's `max_object_bytes` bounds a single object, because one limit is
 easier to reason about than two.
 
+Both directions are streams. A release artifact and an export waiting to be fetched are the two uses
+here that grow, and a buffer would have made the largest object a Site allows the memory one call costs
+on a path that only moves bytes. `put` therefore takes a `ReadableStream` and a declared `byteSize`, and
+`get` answers with one; an Add-on that already holds its bytes wraps them in a one-chunk
+`ReadableStream`.
+
+The size is declared because the ceiling is booked before a byte is written -- nothing can be booked
+that has not been stated. It is not taken on trust: Core counts while it writes, ends a body at the
+first byte past what it claimed, and refuses one that turns out shorter, removing the object and the
+booking together. A write that overwrote something has already destroyed it by then, which is why a
+refused write leaves the key empty rather than restored.
+
 What the store may hold in total is bounded separately, per Add-on and per Site, in bytes and in
 objects -- two hundred thousand small files cost a listing, a backup and a provider bill even when the
 bytes are unremarkable, and no byte limit says so. The operator sets both with `phis addon storage`;

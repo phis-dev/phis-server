@@ -23,9 +23,8 @@ What stands in the way today:
 - **Only Support roles reach threads.** Every thread route is guarded by `PHI_ACCESS_SUPPORT`
   (`Developer | Supporter`, widened to Admin). A Builder cannot write to a Publisher.
 - **Membership is a second group system.** Thread visibility joins `support_team_members`, while
-  [GROUPS_AND_STORAGE.md](../GROUPS_AND_STORAGE.md) makes `site_groups` the one membership source and
-  [GROUPS_AND_STORAGE_PLANNED.md](./GROUPS_AND_STORAGE_PLANNED.md) section 4 already moves Support team
-  membership onto it.
+  [GROUPS_AND_STORAGE.md](../GROUPS_AND_STORAGE.md) makes `site_groups` the one membership source.
+  (Settled by step 2: the table is gone and a queue references a group.)
 - **The recipient list is the Site's user list with addresses.** `listSupportRecipientUsers` answers
   every user holding a claim, with `email`. The Site route and `threads:v1` project the same thread two
   ways -- with addresses and without -- and `@phis/support` types itself against the first.
@@ -281,9 +280,10 @@ attachment that arrives the other way.
 
 ### One object cap, and what it is not
 
-The largest single object is `site_media_config.max_object_bytes`, one number per Site, and a support
-attachment is the case that first makes the default look wrong. What that number is, what it is not, and
-why it is not per Storage Profile is in
+The largest single object is `site_media_config.max_object_bytes`, one number per Site, defaulting to
+128 MiB, and delivery streams rather than reads -- so what an attachment may weigh is a Site's policy
+rather than the memory a download costs ([GROUPS_AND_STORAGE.md](../GROUPS_AND_STORAGE.md) section 7).
+That it does not yet know which Storage path will carry the object is
 [GROUPS_AND_STORAGE_PLANNED.md](./GROUPS_AND_STORAGE_PLANNED.md) section 6.
 
 ## 6. Schema

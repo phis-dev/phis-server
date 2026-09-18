@@ -28,8 +28,10 @@ async function deliver(request: NextRequest, rawId: string) {
     ...mediaDeliverySafetyHeaders(contentType, asset.originalName),
   });
   if (request.method === "HEAD") return new NextResponse(null, { status: 200, headers });
-  const body = await storage.getObject(asset.storageKey);
-  return body ? new NextResponse(new Uint8Array(body), { status: 200, headers }) : new NextResponse(null, { status: 404 });
+  // Streamed, not read: delivery only moves bytes, and holding the object would make the largest
+  // one a Site accepts the memory a single download costs.
+  const body = await storage.getObjectStream(asset.storageKey);
+  return body ? new NextResponse(body, { status: 200, headers }) : new NextResponse(null, { status: 404 });
 }
 
 export async function GET(request: NextRequest, context: { params: Promise<{ id: string }> }) {

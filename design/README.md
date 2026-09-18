@@ -15,7 +15,7 @@ design is built, its settled parts move into the owning contract and leave this 
   and delegated installation authority.
 - [GROUPS_AND_STORAGE_PLANNED.md](./GROUPS_AND_STORAGE_PLANNED.md) -- custody and audience, Asset transfer
   between Spaces, audience validation at publish, signed delivery URLs, the Storage migration job, and
-  what bounds a single object.
+  a ceiling that knows which path an object takes.
 - [PUBLIC_ADDRESSES.md](./PUBLIC_ADDRESSES.md) -- Site Page against Module address collisions, a standing
   list of Public addresses, and durable redirects.
 - [SUPPORT.md](./SUPPORT.md) -- the way in for the person asking: a requester route, which ticket types

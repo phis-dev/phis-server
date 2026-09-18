@@ -39,9 +39,9 @@ tracked here because the server contract depends on them.
   administration surface over Core services, with no S3-specific UI or endpoint. A Site surface that
   writes a profile reconciles bucket CORS through `reconcilePhiMediaStorageCorsWith`, as the CLI does.
 - **Presigned PUT versus proxied stream** has no setting; the S3 Provider always issues `presigned-put`.
-- **`max_object_bytes` is a default nobody chose**, and it bounds three different things through one
-  number -- Site policy, what a Storage path can carry, and how much `storage:v1` holds in memory.
-  Raising it to 128 MiB and giving `storage:v1` a streaming shape land together
+- **`max_object_bytes` does not know which path an object takes.** One Site number bounds a proxied
+  body and a presigned PUT alike, although the two carry wildly different sizes. Making it
+  Profile-aware means moving the size check in `uploads/init` after the Space resolution
   ([GROUPS_AND_STORAGE_PLANNED.md](./design/GROUPS_AND_STORAGE_PLANNED.md) section 6).
 - **Multipart upload plan.** The upload-plan ABI knows `proxy-stream` and `presigned-put`. Add multipart as
   a plan kind when the S3 Provider implements it, with abort and expiry cleaning staged parts and
@@ -57,9 +57,9 @@ tracked here because the server contract depends on them.
 - **Audience validation at publish**
   ([GROUPS_AND_STORAGE_PLANNED.md](./design/GROUPS_AND_STORAGE_PLANNED.md) section 3).
 - **Signed delivery URLs**
-  ([GROUPS_AND_STORAGE_PLANNED.md](./design/GROUPS_AND_STORAGE_PLANNED.md) section 5).
+  ([GROUPS_AND_STORAGE_PLANNED.md](./design/GROUPS_AND_STORAGE_PLANNED.md) section 4).
 - **Storage migration job** with operator-visible progress
-  ([GROUPS_AND_STORAGE_PLANNED.md](./design/GROUPS_AND_STORAGE_PLANNED.md) section 6), plus provider health
+  ([GROUPS_AND_STORAGE_PLANNED.md](./design/GROUPS_AND_STORAGE_PLANNED.md) section 5), plus provider health
   and capacity diagnostics, optional scanning or quarantine integration, and a CDN projection. Prefix
   listing stays a maintenance tool and never replaces the Asset catalog.
 - **Explicit Media response projection.** `serializeMediaAssetForTile` and `…Detail` expose the full
@@ -76,8 +76,6 @@ tracked here because the server contract depends on them.
 
 ## Groups and directories
 
-- **Support teams on general groups.** Support keeps its own `support_team_members`
-  ([GROUPS_AND_STORAGE_PLANNED.md](./design/GROUPS_AND_STORAGE_PLANNED.md) section 4).
 - **Provider-ready group projections.** Add authority metadata and per-operation capabilities to the
   `groups:v1` routes and a Directory-binding repository boundary
   ([DIRECTORY_PROVIDERS.md](./design/DIRECTORY_PROVIDERS.md) sections 3 and 5). The `directory_*` tables

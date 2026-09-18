@@ -41,9 +41,9 @@ async function deliver(
     ...mediaDeliverySafetyHeaders(contentType, asset.originalName),
   });
   if (request.method === "HEAD") return new NextResponse(null, { status: 200, headers });
-  const body = await storage.getObject(variant.storageKey);
+  const body = await storage.getObjectStream(variant.storageKey);
   return body
-    ? new NextResponse(new Uint8Array(body), { status: 200, headers })
+    ? new NextResponse(body, { status: 200, headers })
     : new NextResponse(null, { status: 404 });
 }
 

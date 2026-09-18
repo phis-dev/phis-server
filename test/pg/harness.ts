@@ -340,7 +340,7 @@ export async function setPhiTestMediaConfig(
     `INSERT INTO phis.site_media_config (
        site_id, default_user_quota_bytes, default_group_quota_bytes, max_object_bytes,
        user_space_content_kinds, group_space_content_kinds
-     ) VALUES ($1, $2, $3, COALESCE($4, 26214400),
+     ) VALUES ($1, $2, $3, COALESCE($4, 134217728),
        COALESCE($5::varchar(32)[], ARRAY[]::varchar(32)[]),
        COALESCE($6::varchar(32)[], ARRAY[]::varchar(32)[]))
      ON CONFLICT (site_id) DO UPDATE

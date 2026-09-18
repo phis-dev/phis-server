@@ -311,6 +311,25 @@ export class PhisLocalMediaStorageAdapter implements PhisMediaStorageAdapter {
     }
   }
 
+  async getObjectStream(storageKey: string): Promise<ReadableStream<Uint8Array> | null> {
+    const filePath = this.resolveFilePath(storageKey);
+
+    /*
+     * Opened before the stream is built, so a missing object is `null` here rather than an error that
+     * surfaces once somebody is already reading the response.
+     */
+    let handle: FileHandle;
+    try {
+      handle = await open(filePath, "r");
+    } catch {
+      return null;
+    }
+
+    return Readable.toWeb(
+      handle.createReadStream({ autoClose: true }),
+    ) as ReadableStream<Uint8Array>;
+  }
+
   async copyObject(input: {
     sourceKey: string;
     targetKey: string;
@@ -655,6 +674,10 @@ export class PhisMediaStorageService {
 
   getObject(storageKey: string) {
     return this.adapter.getObject(storageKey);
+  }
+
+  getObjectStream(storageKey: string) {
+    return this.adapter.getObjectStream(storageKey);
   }
 
   readObjectHead(storageKey: string, byteLength: number) {

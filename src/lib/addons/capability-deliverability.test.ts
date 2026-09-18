@@ -11,9 +11,12 @@ import {
  * The gate that admits an Add-on has to ask what Core can hand over, not what Core can name.
  *
  * The catalogue in `@phis/contracts` is a vocabulary and reserves names before anything builds them.
- * Asking it let an Add-on requiring `resource-links:v1` -- which has no table, let alone a capability --
- * pass the dispatcher, the job runner and the service factory, and then find `undefined` where its
- * capability should have been. That is the failure `PhisAddonCapabilities` promises does not happen.
+ * Asking it let an Add-on requiring a reserved name pass the dispatcher, the job runner and the service
+ * factory, and then find `undefined` where its capability should have been. That is the failure
+ * `PhisAddonCapabilities` promises does not happen.
+ *
+ * Which names those are moves as Core builds them -- `resource-links:v1` was the original example and is
+ * deliverable now -- so the two lists are asserted against each other rather than written out here.
  */
 describe("core capability deliverability", () => {
   const manifestRequiring = (ids: string[]) => ({
@@ -27,7 +30,9 @@ describe("core capability deliverability", () => {
       expect(hasPhisCoreCapability(id)).toBe(true);
     }
     expect(isPhisAddonCapabilityDeliverable(PHIS_CORE_CAPABILITIES.threads)).toBe(true);
-    expect(isPhisAddonCapabilityDeliverable(PHIS_CORE_CAPABILITIES.resourceLinks)).toBe(false);
+    expect(isPhisAddonCapabilityDeliverable(PHIS_CORE_CAPABILITIES.resourceLinks)).toBe(true);
+    // Named and reserved, built by nothing: the case this gate exists for.
+    expect(isPhisAddonCapabilityDeliverable(PHIS_CORE_CAPABILITIES.support)).toBe(false);
     expect(isPhisAddonCapabilityDeliverable("@phis/server/not-a-capability:v1")).toBe(false);
   });
 
@@ -54,7 +59,6 @@ describe("core capability deliverability", () => {
   it("builds nothing for a capability it declares undeliverable", () => {
     const capabilities = buildPhisAddonCapabilities({
       manifest: manifestRequiring([
-        PHIS_CORE_CAPABILITIES.resourceLinks,
         PHIS_CORE_CAPABILITIES.support,
         PHIS_CORE_CAPABILITIES.authentication,
       ]),

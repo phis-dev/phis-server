@@ -46,6 +46,37 @@ function normalizeRelativeKey(key: string) {
 
 export class PhisAddonStorageError extends Error {}
 
+/**
+ * A body that turned out longer than it said, distinguishable from every other write failure.
+ *
+ * It travels as its own type rather than as a `PhisAddonStorageError` because it is raised from inside
+ * the stream, where the booking has not yet been given back -- and the handler that gives it back is the
+ * one that tells the two apart.
+ */
+class OverlongBody extends Error {}
+
+/**
+ * The same bytes, counted on their way past, refusing to carry more than were promised.
+ *
+ * The ceiling has already been checked against the declared size; this is what keeps the declaration
+ * from being merely a claim. It ends the write at the first byte past it rather than at the end, so a
+ * body that would not have fitted never finishes arriving.
+ */
+function countedStream(body: ReadableStream<Uint8Array>, declaredBytes: number) {
+  let seen = 0;
+  return body.pipeThrough(
+    new TransformStream<Uint8Array, Uint8Array>({
+      transform(chunk, controller) {
+        seen += chunk.byteLength;
+        if (seen > declaredBytes) {
+          throw new OverlongBody();
+        }
+        controller.enqueue(chunk);
+      },
+    }),
+  );
+}
+
 function requireKey(key: string) {
   const normalized = normalizeRelativeKey(key);
   if (!normalized) {
@@ -74,14 +105,17 @@ export function buildPhisAddonStorageCapability(input: {
 }): PhisStorageCapabilityV1 {
   const { addonId, siteId, siteKey, readMaxObjectBytes } = input;
   return Object.freeze({
-    async put({ key, body, contentType }) {
+    async put({ key, body, byteSize, contentType }) {
       const relative = requireKey(key);
+      if (!Number.isInteger(byteSize) || byteSize <= 0) {
+        throw new PhisAddonStorageError("A write must state a whole number of bytes above zero.");
+      }
       // The Site's own ceiling, not one this file invents: an operator who raised it for Media raised
       // it here too, and one limit is easier to reason about than two.
       const maxObjectBytes = await readMaxObjectBytes();
-      if (body.byteLength > maxObjectBytes) {
+      if (byteSize > maxObjectBytes) {
         throw new PhisAddonStorageError(
-          `Object is ${body.byteLength} bytes; this Site allows ${maxObjectBytes}.`,
+          `Object is ${byteSize} bytes; this Site allows ${maxObjectBytes}.`,
         );
       }
       const { service, prefix } = await resolveStorage(siteId, siteKey, addonId);
@@ -96,7 +130,7 @@ export function buildPhisAddonStorageCapability(input: {
        * had never actually grown.
        */
       const existing = await service.headObject(storageKey).catch(() => null);
-      const deltaBytes = body.byteLength - (existing?.byteSize ?? 0);
+      const deltaBytes = byteSize - (existing?.byteSize ?? 0);
       const deltaObjects = existing ? 0 : 1;
 
       /*
@@ -126,15 +160,58 @@ export function buildPhisAddonStorageCapability(input: {
         );
       }
 
+      /*
+       * The declaration is a promise, and this is what happens when it is not kept.
+       *
+       * Both ways of breaking it leave the same thing behind: a key holding something nobody asked for,
+       * booked as the size that was claimed. So both end the same way -- the object goes and the whole
+       * booking with it, down to nothing rather than back to what was there. What was there is gone
+       * either way: this write overwrote it before it turned out to be wrong, and no reversal puts it
+       * back.
+       */
+      const refuseWritten = async (message: string) => {
+        await service.deleteObject(storageKey).catch(() => {});
+        await bookPhisAddonStorage(getPool(), {
+          addonId, siteId, bytes: -byteSize, objects: -1,
+        }).catch(() => {});
+        return new PhisAddonStorageError(message);
+      };
+
       try {
-        await service.putObject({ storageKey, body: Buffer.from(body), contentType });
+        // A body longer than stated ends in `countedStream` before the extra byte is written; a shorter
+        // one can only be seen afterwards, by what landed.
+        const head = await service.putObjectStream({
+          storageKey,
+          body: countedStream(body, byteSize),
+          contentType,
+        });
+        if (head.byteSize !== byteSize) {
+          throw await refuseWritten(
+            `The body was ${head.byteSize} bytes, not the ${byteSize} it declared.`,
+          );
+        }
       } catch (error) {
+        // Settled above, booking included.
+        if (error instanceof PhisAddonStorageError) {
+          throw error;
+        }
+        if (error instanceof OverlongBody) {
+          throw await refuseWritten(
+            `The body was longer than the ${byteSize} bytes it declared.`,
+          );
+        }
+        /*
+         * A failure of the storage itself, which is the one case where what was there may still be
+         * there. The booking goes back to what it was rather than to nothing, because the object this
+         * write would have replaced is the Provider's to have kept or torn, and Core cannot tell which
+         * from here.
+         */
         await bookPhisAddonStorage(getPool(), {
           addonId, siteId, bytes: -deltaBytes, objects: -deltaObjects,
         }).catch(() => {});
         throw error;
       }
-      return { key: relative, byteSize: body.byteLength };
+      return { key: relative, byteSize };
     },
 
     async usage() {
@@ -148,9 +225,9 @@ export function buildPhisAddonStorageCapability(input: {
       // The head carries the content type; the object is only bytes. Both or nothing, so a caller never
       // has to guess what it was handed.
       const head = await service.headObject(storageKey).catch(() => null);
-      const body = head ? await service.getObject(storageKey).catch(() => null) : null;
+      const body = head ? await service.getObjectStream(storageKey).catch(() => null) : null;
       return head && body
-        ? { body: new Uint8Array(body), contentType: head.contentType }
+        ? { body, byteSize: head.byteSize, contentType: head.contentType }
         : null;
     },
 

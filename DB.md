@@ -258,7 +258,7 @@ Contract:
 - `default_addon_quota_bytes BIGINT NULL`
 - `max_addon_quota_bytes BIGINT NULL`
 - `flags INT NOT NULL DEFAULT 0`
-- `max_object_bytes BIGINT NOT NULL DEFAULT 26214400`
+- `max_object_bytes BIGINT NOT NULL DEFAULT 134217728`
 - `user_space_content_kinds VARCHAR(32)[] NOT NULL DEFAULT ARRAY[]::VARCHAR(32)[]`
 - `group_space_content_kinds VARCHAR(32)[] NOT NULL DEFAULT ARRAY[]::VARCHAR(32)[]`
 - `allowed_storage_profile_ids INT[] NOT NULL DEFAULT ARRAY[]::INT[]`
@@ -272,7 +272,7 @@ Contract:
 - `user_space_content_kinds` and `group_space_content_kinds` list the `PhiMediaKind` values a User or Group Space accepts; upload init refuses any other kind with `415 content_type_not_allowed`. An empty list accepts nothing. The Site Space and Add-on Spaces are not restricted by these columns.
 - `default_user_quota_bytes`, `default_group_quota_bytes`, and `default_addon_quota_bytes` are inherited live by every Space of that kind whose own `quota_bytes` is `NULL`, so changing a default moves all non-overridden Spaces. A Space-level `0` is an explicit revocation, and lowering a limit below current usage blocks new reservations without deleting or hiding an Asset.
 - `max_user_quota_bytes`, `max_group_quota_bytes`, and `max_addon_quota_bytes` are the ceilings a Space-level override may not exceed; `NULL` is no ceiling.
-- `max_object_bytes` is the largest single object a Site accepts.
+- `max_object_bytes` is the largest single object a Site accepts, in Media and in an Add-on's `storage:v1` store alike. The default is 128 MiB: what a conversation carries -- a log, a recording of a fault, an archive of both -- rather than what a transport imposes, since the proxied path carries 2 GB and a single S3 PUT 5 GB. It is not a per-path limit and does not know which Storage Profile will serve the object; `uploads/init` checks it before it resolves the Space. Nothing reads it from configuration, so it is the one column here a Site starts with rather than inherits.
 - The row is materialized once, seeding `default_user_quota_bytes` and `default_group_quota_bytes` from `media.defaults.userQuotaBytes` and `media.defaults.groupQuotaBytes` in `config/phis-config.json`. After that the row is authoritative and there is no request-time fallback to configuration, so raising an installation default never widens an existing Site.
 - `allowed_storage_profile_ids` is not evaluated by any read path.
 

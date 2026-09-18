@@ -326,7 +326,9 @@ CREATE TABLE IF NOT EXISTS phis.site_media_config (
   default_addon_quota_bytes BIGINT NULL,
   max_addon_quota_bytes BIGINT NULL,
   flags INT NOT NULL DEFAULT 0,
-  max_object_bytes BIGINT NOT NULL DEFAULT 26214400,
+  -- 128 MiB. Large enough for what a conversation carries -- a log, a recording of a fault, an
+  -- archive of both -- and two orders of magnitude under what either delivery path can carry.
+  max_object_bytes BIGINT NOT NULL DEFAULT 134217728,
   -- What a delegated Space accepts, derived from the active Modules on publish and never written by an
   -- administrator, exactly as `flags` is. Only a Module knows what its Space is for. The Site Space has
   -- no column here on purpose: its authority is PHI_ACCESS_SITE_MEDIA, a role rather than a list, and

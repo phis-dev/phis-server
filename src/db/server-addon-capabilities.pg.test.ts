@@ -190,15 +190,33 @@ describe("where an Add-on's bytes go", () => {
     });
   }
 
+  /** What a caller holding bytes hands to a store that takes a stream. */
+  function sending(bytes: Uint8Array) {
+    return {
+      body: new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(bytes);
+          controller.close();
+        },
+      }),
+      byteSize: bytes.byteLength,
+    };
+  }
+
+  async function collect(body: ReadableStream<Uint8Array>) {
+    return new Uint8Array(await new Response(body).arrayBuffer());
+  }
+
   it("round-trips an object under a key the Add-on chose", async () => {
     const store = storage();
     await store.put({
       key: "artifacts/addon.mjs",
-      body: new TextEncoder().encode("hello"),
+      ...sending(new TextEncoder().encode("hello")),
       contentType: "text/javascript",
     });
     const read = await store.get("artifacts/addon.mjs");
-    expect(new TextDecoder().decode(read!.body)).toBe("hello");
+    expect(new TextDecoder().decode(await collect(read!.body))).toBe("hello");
+    expect(read!.byteSize).toBe(5);
     expect(read!.contentType).toBe("text/javascript");
     expect(await store.head("artifacts/addon.mjs")).toMatchObject({
       key: "artifacts/addon.mjs",
@@ -216,7 +234,7 @@ describe("where an Add-on's bytes go", () => {
 
   it("removes what it put", async () => {
     const store = storage();
-    await store.put({ key: "gone.txt", body: new Uint8Array([1]), contentType: "text/plain" });
+    await store.put({ key: "gone.txt", ...sending(new Uint8Array([1])), contentType: "text/plain" });
     expect(await store.remove("gone.txt")).toBe(true);
     expect(await store.head("gone.txt")).toBeNull();
   });
@@ -232,27 +250,54 @@ describe("where an Add-on's bytes go", () => {
     const store = storage();
     await expect(store.put({
       key: "big.bin",
-      body: new Uint8Array(128),
+      ...sending(new Uint8Array(128)),
       contentType: "application/octet-stream",
     })).rejects.toThrow(/this Site allows 64/);
+    // Refused on what it declared, so nothing was read and nothing was written.
+    expect(await store.head("big.bin")).toBeNull();
   });
 
   it("counts what it holds, so an Add-on can say why a write was refused", async () => {
     const store = storage();
     const before = await store.usage();
-    await store.put({ key: "counted.bin", body: new Uint8Array(9), contentType: "text/plain" });
+    await store.put({ key: "counted.bin", ...sending(new Uint8Array(9)), contentType: "text/plain" });
     const after = await store.usage();
     expect(after.bytes - before.bytes).toBe(9);
     expect(after.objects - before.objects).toBe(1);
 
     // An overwrite is the difference and no new object: an Add-on rewriting one file each hour must not
     // be charged as though it kept every version.
-    await store.put({ key: "counted.bin", body: new Uint8Array(4), contentType: "text/plain" });
+    await store.put({ key: "counted.bin", ...sending(new Uint8Array(4)), contentType: "text/plain" });
     const rewritten = await store.usage();
     expect(rewritten.bytes - before.bytes).toBe(4);
     expect(rewritten.objects - before.objects).toBe(1);
 
     await store.remove("counted.bin");
+    expect(await store.usage()).toMatchObject({ bytes: before.bytes, objects: before.objects });
+  });
+
+  it("holds a body to the size it declared, in both directions", async () => {
+    const store = storage();
+    const before = await store.usage();
+
+    await expect(store.put({
+      key: "overlong.bin",
+      ...sending(new Uint8Array(20)),
+      byteSize: 8,
+      contentType: "application/octet-stream",
+    })).rejects.toThrow(/longer than the 8 bytes/);
+
+    await expect(store.put({
+      key: "short.bin",
+      ...sending(new Uint8Array(3)),
+      byteSize: 8,
+      contentType: "application/octet-stream",
+    })).rejects.toThrow(/was 3 bytes, not the 8/);
+
+    // Neither object is there, and neither is on the books: a declaration that was not kept buys
+    // nothing, not even the space it asked for.
+    expect(await store.head("overlong.bin")).toBeNull();
+    expect(await store.head("short.bin")).toBeNull();
     expect(await store.usage()).toMatchObject({ bytes: before.bytes, objects: before.objects });
   });
 
@@ -268,7 +313,7 @@ describe("where an Add-on's bytes go", () => {
 
     await expect(store.put({
       key: "over.bin",
-      body: new Uint8Array(8),
+      ...sending(new Uint8Array(8)),
       contentType: "application/octet-stream",
     })).rejects.toThrow(/store on this Site is full/);
     // Refused before the bytes were written, never after: the object must not be there.

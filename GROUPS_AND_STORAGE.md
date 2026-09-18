@@ -617,6 +617,26 @@ installation default therefore does not silently widen existing Sites, and a Sit
 configured keeps its values across releases. The row is also what makes the values correct once a Site
 runs on more than one Instance: a JSON file lives on one host, while every Instance reads the same row.
 
+### The largest single object
+
+`max_object_bytes` is one number per Site, it defaults to 128 MiB, and it is the one value in this row
+that configuration never seeds -- a Site starts with it rather than inheriting it. It bounds a Media
+upload and an Add-on's `storage:v1` write alike, because an operator who raised it for one raised it for
+the other, and one limit is easier to reason about than two.
+
+It states what this Site is willing to accept, not what a path can carry. Those are much larger and they
+differ: the proxied stream ends where the reverse proxy does, a single presigned PUT where the Provider
+does. Nothing derives the number from either, and `uploads/init` checks it before it resolves the Space
+-- so before it could know which Storage Profile or which plan applies. A per-path ceiling is designed
+in [GROUPS_AND_STORAGE_PLANNED.md](./design/GROUPS_AND_STORAGE_PLANNED.md) section 6 and is not
+implemented.
+
+What the number costs has been kept off the delivery path deliberately. Serving an object streams it
+from the Provider rather than reading it, so a large Asset costs what is in flight instead of its whole
+size, and the same holds for `storage:v1` in both directions. Only code that has to look at every byte
+-- image processing, font subsetting, content sniffing -- holds one, and what those accept is bounded by
+what they are for rather than by this column.
+
 ### Resolving an effective quota
 
 `quota_bytes` on a Space is capacity only, and resolution is live rather than a creation-time snapshot:

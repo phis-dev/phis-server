@@ -38,10 +38,10 @@ describe("Media acceptance limits against PostgreSQL", () => {
     await closePhiTestPool();
   });
 
-  it("starts a Site at 25 MB with no Space declared for anything", async () => {
+  it("starts a Site at 128 MiB with no Space declared for anything", async () => {
     const config = await ensureSiteMediaConfig(site.id);
 
-    expect(config.maxObjectBytes).toBe(26_214_400);
+    expect(config.maxObjectBytes).toBe(134_217_728);
     expect(config.userSpaceContentKinds).toEqual([]);
     expect(config.groupSpaceContentKinds).toEqual([]);
     // Nothing has been published, so no Module has said what a delegated Space is for.
@@ -49,8 +49,8 @@ describe("Media acceptance limits against PostgreSQL", () => {
     // The Site Space needs no declaration; a role decides there.
     expect(isPhiMediaContentAllowedInSpace("application/x-msdownload", space(PhisMediaSpaceKind.Site), config))
       .toBe(true);
-    expect(isPhiMediaObjectSizeAllowed(26_214_400, config)).toBe(true);
-    expect(isPhiMediaObjectSizeAllowed(26_214_401, config)).toBe(false);
+    expect(isPhiMediaObjectSizeAllowed(134_217_728, config)).toBe(true);
+    expect(isPhiMediaObjectSizeAllowed(134_217_729, config)).toBe(false);
   });
 
   it("reads back a derived list as a list, per Space kind", async () => {
