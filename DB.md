@@ -1296,6 +1296,7 @@ Contract:
 - `flags INT NOT NULL DEFAULT 0`
 - `close_policy SMALLINT NOT NULL DEFAULT 0`
 - `requester_window_days SMALLINT NULL`
+- `retired_at TIMESTAMPTZ NULL`
 - `sort_order SMALLINT NOT NULL DEFAULT 0`
 - `created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
 - `updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
@@ -1307,6 +1308,7 @@ Contract:
 - `flags` are `PhisSupportTicketTypeFlag` from `@phis/contracts/support`:
   - `1 = External`: the conversation of tickets of this type is mirrored to a linked external system.
   - `2 = CodeChange`: the work is a code change.
+  - `4 = Requestable`: a requester may choose this type. Off by default, so a type a Site adds is Staff-only until the Site says otherwise.
 - `External` is a flag rather than a type of its own because it cuts across every type; a bug may be handled internally or in the open.
 - `close_policy` is `PhisSupportClosePolicy`:
   - `0 = Confirm`: a Supporter confirms.
@@ -1315,6 +1317,8 @@ Contract:
 - Neither policy resolves a ticket because an external issue was closed as not planned; that is a decision about the external work.
 - `requester_window_days` narrows or widens the Site default in `site_thread_config`; `NULL` takes it, and `0` means a Supporter closes the ticket.
 - `(id, site_id)` is unique so a ticket's composite foreign key cannot point at another Site's type.
+- `retired_at` replaces deleting a type, as `site_groups` does it: the row and its key stay, a retired type is offered to nobody, and the tickets already opened with it keep naming it.
+- A Site's first type arrives from a Module's declared seed and is created by key, never rewritten afterwards. See `design/SUPPORT.md` section 4.
 
 ### `phis.support_queues`
 
@@ -1324,6 +1328,7 @@ Contract:
 - `key VARCHAR(64) NOT NULL`
 - `name VARCHAR(128) NOT NULL`
 - `flags INT NOT NULL DEFAULT 0`
+- `retired_at TIMESTAMPTZ NULL`
 - `sort_order SMALLINT NOT NULL DEFAULT 0`
 - `created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
 - `updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
@@ -1337,6 +1342,9 @@ Contract:
 - Routing, queue order, and ticket assignment are Support-domain properties and are not generic membership properties, which is why the profile survives the move.
 - The group reference deliberately does not cascade, as `media_spaces` does not: no surface deletes a group, so this fails against a stray statement instead of taking a Site's routing with it.
 - New tickets default to the queue a Site marks as its entry queue when none is supplied.
+- `flags` are `PhisSupportQueueFlag`: `1 = Entry`.
+- `retired_at` replaces deleting a queue, as `site_groups` does it: nothing routes to a retired queue, and the tickets standing in it are still in it.
+- A Site's entry queue and its group arrive from a Module's declared seed, created by key on publish and never rewritten afterwards. See `design/SUPPORT.md` section 4.
 
 ### `phis.threads`
 

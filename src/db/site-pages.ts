@@ -16,6 +16,7 @@ import { getMediaAssetBySiteAndId } from "@/db/media";
 import { listSiteModuleBlockUsageWithDb } from "@/db/site-module-usage";
 import { materializeSiteMediaAvailabilityWithDb } from "@/db/media-spaces";
 import { materializeSiteThreadKindsWithDb } from "@/db/threads";
+import { materializeSiteModuleSeedsWithDb } from "@/db/module-seeds";
 import {
   collectSiteCmsContentReferences,
   collectSiteCmsReferences,
@@ -2690,6 +2691,7 @@ export async function publishSiteAreaRevision(
     // too, inside the same transaction: the pointer and what it implies must never be observable apart.
     await materializeSiteMediaAvailabilityWithDb(client, siteId);
     await materializeSiteThreadKindsWithDb(client, siteId);
+    await materializeSiteModuleSeedsWithDb(client, siteId);
     await client.query("COMMIT");
 
     return {
@@ -2799,6 +2801,7 @@ export async function publishSiteAreaModulesRevision(
     // must never be observable apart.
     await materializeSiteMediaAvailabilityWithDb(client, siteId);
     await materializeSiteThreadKindsWithDb(client, siteId);
+    await materializeSiteModuleSeedsWithDb(client, siteId);
     await client.query("COMMIT");
 
     return {

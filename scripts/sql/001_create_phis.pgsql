@@ -967,12 +967,16 @@ CREATE TABLE IF NOT EXISTS phis.support_ticket_types (
   site_id SMALLINT NOT NULL REFERENCES phis.sites(id) ON DELETE CASCADE,
   key VARCHAR(64) NOT NULL,
   name VARCHAR(128) NOT NULL,
-  -- 1 = external (the conversation is mirrored to a linked system), 2 = code change.
+  -- 1 = external (the conversation is mirrored to a linked system), 2 = code change,
+  -- 4 = offered to requesters.
   flags INT NOT NULL DEFAULT 0,
   -- 0 = a Supporter confirms, 1 = the merge is acceptance.
   close_policy SMALLINT NOT NULL DEFAULT 0,
   -- How long a resolved ticket of this type waits for its requester. NULL falls back to the Site's.
   requester_window_days SMALLINT NULL,
+  -- Retirement, which replaces deleting a type, as `site_groups` does it: the row and its key stay,
+  -- a retired type is offered to nobody, and the tickets already opened with it keep naming it.
+  retired_at TIMESTAMPTZ NULL,
   sort_order SMALLINT NOT NULL DEFAULT 0,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -994,7 +998,11 @@ CREATE TABLE IF NOT EXISTS phis.support_queues (
   group_id INT NOT NULL,
   key VARCHAR(64) NOT NULL,
   name VARCHAR(128) NOT NULL,
+  -- 1 = the entry queue, where work with no queue named arrives.
   flags INT NOT NULL DEFAULT 0,
+  -- Retirement, which replaces deleting a queue, as `site_groups` does it: the row and its key stay,
+  -- nothing routes to a retired queue, and the tickets standing in it are still in it.
+  retired_at TIMESTAMPTZ NULL,
   sort_order SMALLINT NOT NULL DEFAULT 0,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
