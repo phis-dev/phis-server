@@ -1,11 +1,12 @@
 # Threads: Planned Design
 
-**Status: sections 1 to 3 of the order in section 14 are built.** The schema, the visibility predicate,
-`/api/site/threads`, the recut `threads:v1`, `resource-links:v1`, verified hooks and the event outbox
-are in the server; [DB.md](../DB.md) holds the tables and
+**Status: sections 1 to 3 of the order in section 14 are built, and section 4 is under way.** The
+schema, the visibility predicate, `/api/site/threads`, the recut `threads:v1`, `resource-links:v1`,
+verified hooks and the event outbox are in the server; [DB.md](../DB.md) holds the tables and
 [SERVER_ADDONS.md](../SERVER_ADDONS.md) sections 8, 10, 13 and 18 hold the contracts. What is described
-here and is **not** built is step 4 -- `@phis/ui/threads`, `@phis/support` on the new model, the group
-flags in the groups Module -- step 5, attachments, and step 6, `@phis/github`.
+here and is **not** built is the rest of step 4 -- the inbox and the candidates picker of
+`@phis/ui/threads`, `@phis/support` on the new model, the group flags in the groups Module -- and step
+6, `@phis/github`. Step 5, attachments, is built.
 
 Decisions taken while writing this are stated where they apply. One question is deliberately left open
 and is named where it arises: whether an attachment on an `External` ticket is mirrored outward, which
@@ -672,13 +673,20 @@ differs -- and arriving is exactly the part that should differ.
 
 - **`@phis/ui/threads`** -- thin, first-party, like `@phis/ui/groups`: inbox, conversation, composer, the
   candidates picker. Declares `Direct`. The composer is where an attachment is offered, so it is the one
-  surface both other Modules reuse for it rather than each growing its own. **The Module and its
-  composer exist**; the inbox, the conversation and the candidates picker do not. The composer learns
-  which conversation it is writing in from a signal on the `thread` channel, which is what lets it sit
-  beside a conversation without either knowing the other's shape -- and until the conversation is built,
-  nothing dispatches that signal, so the composer says so rather than writing into a guess. It also
-  declares the User Space, because a composer offering a file on a Site with no User Spaces would be
-  offering something the control plane is about to refuse.
+  surface both other Modules reuse for it rather than each growing its own. **The Module, its composer
+  and its conversation exist**; the inbox and the candidates picker do not. It also declares the User
+  Space, because a composer offering a file on a Site with no User Spaces would be offering something
+  the control plane is about to refuse.
+
+  The two widgets know nothing of each other and talk on the `thread` channel. The conversation
+  **announces** the one it has open -- after it is open, never before, so nothing is pointed at a thread
+  that turned out to be absent or out of reach -- and the composer listens. A conversation it was
+  *told* about it does not re-announce: whoever broadcast a selection told every listener at once, and
+  an echo on a channel you also listen to is a loop. Writing sends `reload` rather than a second
+  `change`, because the conversation has not changed, only its contents: `change` would put every
+  listener through switching threads, which for the composer means clearing a reply somebody is halfway
+  through. Until an inbox exists, `?thread=` on the address is what selects one -- which is also what a
+  link in a notification needs, so it is not scaffolding that gets thrown away.
 - **`@phis/support`** -- declares `Support` and the User Space its requesters submit into
   ([SUPPORT.md](./SUPPORT.md)); seeds its group; ticket and queue surfaces; a customer widget listing
   only the viewer's own Support threads. Reuses the thread widgets by Layout composition: its ticket
@@ -699,7 +707,7 @@ differs -- and arriving is exactly the part that should differ.
    `resource_links`; the predicate of section 7.
 3. Core surfaces: `/api/site/threads`, `threads:v1` recut, `resource-links:v1`, verified hooks, the
    event outbox, the snapshot fix.
-4. Modules: `@phis/ui/threads` -- the Module and its composer exist, the inbox, the conversation and the
+4. Modules: `@phis/ui/threads` -- the Module, its composer and its conversation exist, the inbox and the
    candidates picker do not -- `@phis/support` on the new model, group flags in the groups Module.
 5. ~~Attachments: `thread_message_assets`, the delivery route, the Asset delete path, and
    `@phis/support` declaring the User Space ([SUPPORT.md](./SUPPORT.md)).~~ Built, `threads:v1`
