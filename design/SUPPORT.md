@@ -1,12 +1,12 @@
 # Support: Planned Design
 
-**Status: the workflow exists, the way in does not.** `support_tickets`, `support_ticket_types`,
-`support_queues`, `support_ticket_tasks` and their events are in the schema; the routes under
-`/api/site/support` open, read, assign and work tickets; `@phis/support` reads the Core threads of
-[THREADS.md](./THREADS.md). The declared seed of section 4 is built: a Site that publishes an Area
-running `@phis/support` now gets its group, its entry queue and one ticket type. What is described here
-and is **not** built is everything a person who is not Staff needs in order to ask for help at all, the
-administration of the queues and types once they exist, and attachments on a submission.
+**Status: the workflow and its administration exist, the way in does not.** `support_tickets`,
+`support_ticket_types`, `support_queues`, `support_ticket_tasks` and their events are in the schema; the
+routes under `/api/site/support` open, read, assign and work tickets; `@phis/support` reads the Core
+threads of [THREADS.md](./THREADS.md). The declared seed of section 4 is built: a Site that publishes an
+Area running `@phis/support` now gets its group, its entry queue and one ticket type, and the routes of
+section 4 administer both from there. What is described here and is **not** built is everything a person
+who is not Staff needs in order to ask for help at all, and attachments on a submission.
 
 This document is Support's half. The conversation is not in it: a ticket's messages are a Core thread,
 and who reads them, what an attachment is, and how it is delivered are settled in
@@ -50,8 +50,11 @@ chosen by someone with no way to know that.
 
 `PhisSupportTicketTypeFlag.Requestable` says it, and is built: a type is offered to requesters, or it is
 not. Default off, so a Site that adds a type gets a Staff-only one until it says otherwise -- the same
-default-deny shape `site_media_config.flags` uses, for the same reason. What is not built is anything
-that reads it: there is still no types listing, and nothing that sets the flag.
+default-deny shape `site_media_config.flags` uses, for the same reason. `PATCH
+/api/site/support/ticket-types/{typeId}` is where a Site turns it on, and that route is the looking-at
+which the default assumes has not happened. What is still missing is the listing a requester reads: the
+one under `/api/site/support/ticket-types` is the Staff catalogue, behind the Supporter role, and shows
+every type.
 
 `External` then becomes a thing the route has to say out loud. Where a requestable type mirrors
 outward, the person must be told before they write rather than after, and what still never leaves is
@@ -105,19 +108,28 @@ None of this is built: it is
 caller. Attachments do not wait for it -- [THREADS.md](./THREADS.md) section 5 explains why the audience
 is unaffected either way.
 
-## 4. Queues and types have no administration
+## 4. Queues and types, and how a Site administers them
 
 A Site used to install Support and have no type to open a ticket with and no Entry queue to route it
 to: nothing wrote `support_queues` or `support_ticket_types` at all, and the Supporter path failed on
 that as surely as the requester path would have.
 
 What a Site needs is small and has to be exact -- one queue marked `Entry` and the group it routes to,
-one ticket type, not requestable -- and it is now a declared seed, materialized on publish
-(`src/db/module-seeds.ts`, and the rules below). What is still missing is everything past that: there
-is no route and no CLI command to add a second queue, rename one, retire one, or mark a type
-requestable. That is Site administration rather than a group operation, because a queue names a group
-and creating groups is `Developer | Admin`
-([GROUPS_AND_STORAGE.md](../GROUPS_AND_STORAGE.md) section 6).
+one ticket type, not requestable -- and it is a declared seed, materialized on publish
+(`src/db/module-seeds.ts`, and the rules below). Everything past that is administration, and it is
+built: `POST`/`PATCH` under `/api/site/support/queues` and `/api/site/support/ticket-types`, behind
+`Developer | Admin` rather than the Supporter role the listings use, because a queue names a group and
+creating groups is Site administration
+([GROUPS_AND_STORAGE.md](../GROUPS_AND_STORAGE.md) section 6). There is no CLI command, and no
+administration surface in `@phis/support` yet.
+
+Three rules hold that administration together, and each is the seed's consequence. **A key is never
+edited**: it is what the seed finds its own rows by, so changing one would not rename a row, it would
+make the next publish create a second one beside it. **Nothing is deleted**, only retired, because
+tickets standing in a queue or opened under a type keep naming it. And **a Site cannot administer away
+its own way in**: the `Entry` mark moves between queues in one statement and cannot simply be cleared,
+since a Site without one refuses every ticket that names no queue -- which is every ticket a requester
+opens.
 
 A queue owns routing and never membership. Who is in the group a queue routes to is answered by the
 group surfaces, which already exist.
@@ -164,8 +176,8 @@ row, which installation configuration seeds exactly once and is never consulted 
 
 ## 5. Order
 
-1. ~~The declared seed and its materialization, and the requestable flag in the contract.~~ Built.
-   What remains of this step is the administration of queues and ticket types.
+1. ~~The declared seed and its materialization, the administration of queues and ticket types, and the
+   requestable flag in the contract.~~ Built, apart from a surface in `@phis/support` to drive it.
 2. The types listing and the requester route, with the `External` notice.
 3. Attachments on a submission, once [THREADS.md](./THREADS.md) section 5 is built.
 4. Custody transfer on acceptance into a queue.

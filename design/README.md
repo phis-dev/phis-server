@@ -19,8 +19,8 @@ design is built, its settled parts move into the owning contract and leave this 
 - [PUBLIC_ADDRESSES.md](./PUBLIC_ADDRESSES.md) -- Site Page against Module address collisions, a standing
   list of Public addresses, and durable redirects.
 - [SUPPORT.md](./SUPPORT.md) -- the way in for the person asking: a requester route, which ticket types
-  they may see, administering queues and types, what a submission brings with it, and how a Module
-  declares rows a Site needs written rather than made available.
+  they may see, what a submission brings with it, and -- both built -- how a Module declares rows a Site
+  needs written rather than made available, and how a Site administers them afterwards.
 - [THREADS.md](./THREADS.md) -- threads beyond Support: Staff, group and cross-group threads on Site
   groups, message confidentiality, attachments and who may read one, actorless Add-on access through
   owned and linked threads, verified hooks, events to Add-ons, and the two-way GitHub Add-on.

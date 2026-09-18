@@ -571,6 +571,8 @@ export type SupportQueueRecord = {
   name: string;
   flags: number;
   sortOrder: number;
+  /** Set once the Site has retired the queue: nothing routes to it, and what stands in it still does. */
+  retiredAt: string | null;
 };
 
 export async function listSupportQueues(siteId: number) {
@@ -583,8 +585,9 @@ export async function listSupportQueues(siteId: number) {
     name: string;
     flags: number;
     sort_order: number;
+    retired_at: string | null;
   }>(
-    `SELECT id, site_id, group_id, key, name, flags, sort_order
+    `SELECT id, site_id, group_id, key, name, flags, sort_order, retired_at
      FROM phis.support_queues
      WHERE site_id = $1
      ORDER BY sort_order ASC, id ASC`,
@@ -598,6 +601,7 @@ export async function listSupportQueues(siteId: number) {
     name: row.name,
     flags: row.flags,
     sortOrder: row.sort_order,
+    retiredAt: row.retired_at,
   } satisfies SupportQueueRecord));
 }
 
@@ -1399,4 +1403,282 @@ export async function getSupportTicketIdForTask(siteId: number, taskId: number) 
     [siteId, taskId],
   );
   return rows[0]?.ticket_id ?? null;
+}
+
+/**
+ * Administering the Site's queues and ticket types.
+ *
+ * A key is never among what these change. It is what a Module's declared seed finds its own rows by
+ * ([design/SUPPORT.md](../../design/SUPPORT.md) section 4), so renaming one would not rename a row --
+ * it would make the next publish create a second one beside it. The name is what a Site calls the
+ * thing, and that is editable; the key is what the machinery calls it, and it is not.
+ *
+ * Retirement replaces deletion throughout, as it does for groups. Tickets already routed to a queue or
+ * opened under a type keep naming it, and nothing new is offered either.
+ */
+
+export class SupportAdministrationError extends Error {}
+
+export type SupportTicketTypeRecord = {
+  id: number;
+  siteId: number;
+  key: string;
+  name: string;
+  flags: number;
+  closePolicy: number;
+  requesterWindowDays: number | null;
+  sortOrder: number;
+  retiredAt: string | null;
+};
+
+export async function listSupportTicketTypes(siteId: number) {
+  const { rows } = await getPool().query<{
+    id: number;
+    site_id: number;
+    key: string;
+    name: string;
+    flags: number;
+    close_policy: number;
+    requester_window_days: number | null;
+    sort_order: number;
+    retired_at: string | null;
+  }>(
+    `SELECT id, site_id, key, name, flags, close_policy, requester_window_days, sort_order, retired_at
+     FROM phis.support_ticket_types
+     WHERE site_id = $1
+     ORDER BY sort_order ASC, id ASC`,
+    [siteId],
+  );
+  return rows.map((row) => ({
+    id: row.id,
+    siteId: row.site_id,
+    key: row.key,
+    name: row.name,
+    flags: row.flags,
+    closePolicy: row.close_policy,
+    requesterWindowDays: row.requester_window_days,
+    sortOrder: row.sort_order,
+    retiredAt: row.retired_at,
+  } satisfies SupportTicketTypeRecord));
+}
+
+/**
+ * Leaves exactly one queue marked as where unrouted work arrives.
+ *
+ * The flag decides a routing question that has one answer, and the read that resolves it takes the
+ * first row it finds -- so two queues carrying it is not a richer configuration, it is a Site whose
+ * routing depends on `sort_order`. Clearing the others is done in the same transaction as setting this
+ * one, because a moment with none would refuse every ticket arriving in it.
+ */
+async function moveEntryFlagWithDb(client: PoolClient, siteId: number, queueId: number) {
+  await client.query(
+    `UPDATE phis.support_queues
+     SET flags = flags & ~${PhisSupportQueueFlag.Entry}, updated_at = NOW()
+     WHERE site_id = $1 AND id <> $2 AND (flags & ${PhisSupportQueueFlag.Entry}) <> 0`,
+    [siteId, queueId],
+  );
+}
+
+export async function createSupportQueue(input: {
+  siteId: number;
+  groupId: number;
+  key: string;
+  name: string;
+  flags?: number;
+  sortOrder?: number;
+}) {
+  const client = await getPool().connect();
+  try {
+    await client.query("BEGIN");
+    // The group is the Site's, and a retired one routes nowhere -- so a queue may not be pointed at it.
+    const { rows: groups } = await client.query<{ id: number }>(
+      `SELECT id FROM phis.site_groups
+       WHERE site_id = $1 AND id = $2 AND retired_at IS NULL`,
+      [input.siteId, input.groupId],
+    );
+    if (!groups[0]) {
+      throw new SupportAdministrationError("A queue routes to a group this Site does not have.");
+    }
+    const { rows } = await client.query<{ id: number }>(
+      `INSERT INTO phis.support_queues (site_id, group_id, key, name, flags, sort_order)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       ON CONFLICT (site_id, key) DO NOTHING
+       RETURNING id`,
+      [
+        input.siteId,
+        input.groupId,
+        input.key,
+        input.name,
+        input.flags ?? 0,
+        input.sortOrder ?? 0,
+      ],
+    );
+    if (!rows[0]) {
+      throw new SupportAdministrationError(`This Site already has a queue keyed "${input.key}".`);
+    }
+    if (((input.flags ?? 0) & PhisSupportQueueFlag.Entry) !== 0) {
+      await moveEntryFlagWithDb(client, input.siteId, rows[0].id);
+    }
+    await client.query("COMMIT");
+    return rows[0].id;
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+export async function updateSupportQueue(input: {
+  siteId: number;
+  queueId: number;
+  groupId?: number;
+  name?: string;
+  flags?: number;
+  sortOrder?: number;
+  retired?: boolean;
+}) {
+  const client = await getPool().connect();
+  try {
+    await client.query("BEGIN");
+    const { rows: existing } = await client.query<{ flags: number; retired_at: string | null }>(
+      `SELECT flags, retired_at FROM phis.support_queues
+       WHERE site_id = $1 AND id = $2 FOR UPDATE`,
+      [input.siteId, input.queueId],
+    );
+    if (!existing[0]) {
+      throw new SupportAdministrationError("This Site has no such queue.");
+    }
+    const flags = input.flags ?? existing[0].flags;
+    const retired = input.retired ?? existing[0].retired_at != null;
+
+    /*
+     * A Site without an entry queue refuses every ticket that names none, which is every ticket a
+     * requester opens. Retiring the one that carries the flag, or taking the flag off it without
+     * putting it anywhere, is therefore refused here rather than discovered by the next customer.
+     */
+    if ((flags & PhisSupportQueueFlag.Entry) !== 0 && retired) {
+      throw new SupportAdministrationError(
+        "The entry queue cannot be retired; mark another queue as the entry queue first.",
+      );
+    }
+    if ((existing[0].flags & PhisSupportQueueFlag.Entry) !== 0
+      && (flags & PhisSupportQueueFlag.Entry) === 0) {
+      throw new SupportAdministrationError(
+        "A Site needs an entry queue; mark another queue as the entry queue instead of clearing this one.",
+      );
+    }
+
+    if (input.groupId != null) {
+      const { rows: groups } = await client.query<{ id: number }>(
+        `SELECT id FROM phis.site_groups
+         WHERE site_id = $1 AND id = $2 AND retired_at IS NULL`,
+        [input.siteId, input.groupId],
+      );
+      if (!groups[0]) {
+        throw new SupportAdministrationError("A queue routes to a group this Site does not have.");
+      }
+    }
+
+    await client.query(
+      `UPDATE phis.support_queues
+       SET group_id = COALESCE($3, group_id),
+           name = COALESCE($4, name),
+           flags = $5,
+           sort_order = COALESCE($6, sort_order),
+           retired_at = CASE WHEN $7::boolean THEN COALESCE(retired_at, NOW()) ELSE NULL END,
+           updated_at = NOW()
+       WHERE site_id = $1 AND id = $2`,
+      [
+        input.siteId,
+        input.queueId,
+        input.groupId ?? null,
+        input.name ?? null,
+        flags,
+        input.sortOrder ?? null,
+        retired,
+      ],
+    );
+    if ((flags & PhisSupportQueueFlag.Entry) !== 0) {
+      await moveEntryFlagWithDb(client, input.siteId, input.queueId);
+    }
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+export async function createSupportTicketType(input: {
+  siteId: number;
+  key: string;
+  name: string;
+  flags?: number;
+  closePolicy?: number;
+  requesterWindowDays?: number | null;
+  sortOrder?: number;
+}) {
+  const { rows } = await getPool().query<{ id: number }>(
+    `INSERT INTO phis.support_ticket_types
+       (site_id, key, name, flags, close_policy, requester_window_days, sort_order)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)
+     ON CONFLICT (site_id, key) DO NOTHING
+     RETURNING id`,
+    [
+      input.siteId,
+      input.key,
+      input.name,
+      input.flags ?? 0,
+      input.closePolicy ?? 0,
+      input.requesterWindowDays ?? null,
+      input.sortOrder ?? 0,
+    ],
+  );
+  if (!rows[0]) {
+    throw new SupportAdministrationError(`This Site already has a ticket type keyed "${input.key}".`);
+  }
+  return rows[0].id;
+}
+
+export async function updateSupportTicketType(input: {
+  siteId: number;
+  typeId: number;
+  name?: string;
+  flags?: number;
+  closePolicy?: number;
+  requesterWindowDays?: number | null;
+  sortOrder?: number;
+  retired?: boolean;
+}) {
+  const { rowCount } = await getPool().query(
+    `UPDATE phis.support_ticket_types
+     SET name = COALESCE($3, name),
+         flags = COALESCE($4, flags),
+         close_policy = COALESCE($5, close_policy),
+         requester_window_days = CASE WHEN $6::boolean THEN $7::smallint ELSE requester_window_days END,
+         sort_order = COALESCE($8, sort_order),
+         retired_at = CASE
+           WHEN $9::boolean IS NULL THEN retired_at
+           WHEN $9::boolean THEN COALESCE(retired_at, NOW())
+           ELSE NULL
+         END,
+         updated_at = NOW()
+     WHERE site_id = $1 AND id = $2`,
+    [
+      input.siteId,
+      input.typeId,
+      input.name ?? null,
+      input.flags ?? null,
+      input.closePolicy ?? null,
+      input.requesterWindowDays !== undefined,
+      input.requesterWindowDays ?? null,
+      input.sortOrder ?? null,
+      input.retired ?? null,
+    ],
+  );
+  if (!rowCount) {
+    throw new SupportAdministrationError("This Site has no such ticket type.");
+  }
 }
