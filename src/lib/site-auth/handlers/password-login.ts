@@ -17,13 +17,12 @@ import {
   verifyCsrfRequest,
   createCsrfToken,
 } from "@/lib/auth";
-import { phiUserThemeModeName } from "@phis/contracts/access";
 import { resolveSiteLocale } from "@/lib/locale";
 import { logRuntimeEvent, normalizeLogThrowable } from "@/lib/log";
 import { verifyPasswordHash } from "@/lib/password";
 import { requireSiteFromRequest } from "@/lib/site-context";
 import { resolvePhiUserArea } from "@/lib/user-area";
-import { isUserAccountEnabled } from "@/lib/user-flags";
+import { isUserAccountEnabled, resolveUserThemeModeName } from "@/lib/user-flags";
 import { beginSiteAuthenticationSession } from "@/lib/site-auth/assurance";
 import { normalizeAuthNextPath, PHI_AUTH_SESSION_STATES } from "@/lib/site-auth/contracts";
 
@@ -223,7 +222,7 @@ export async function POST(request: NextRequest) {
     });
     // Signing in on a browser this account has not used before is exactly when the mirror earns its
     // keep, and withdrawing the choice has to clear a cookie that browser may already carry.
-    setThemeModeCookie(response, phiUserThemeModeName(user.themeMode), session.expiresAt);
+    setThemeModeCookie(response, resolveUserThemeModeName(user.flags), session.expiresAt);
     return response;
   } catch (error) {
     const message = error instanceof Error ? error.message : "Login failed.";

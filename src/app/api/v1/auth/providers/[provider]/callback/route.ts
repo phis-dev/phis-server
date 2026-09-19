@@ -14,7 +14,7 @@ import {
   setSessionCookie,
   setThemeModeCookie,
 } from "@/lib/auth";
-import { phiUserThemeModeName } from "@phis/contracts/access";
+import { resolveUserThemeModeName } from "@/lib/user-flags";
 import { guardApiV1 } from "@/lib/api-v1-guard";
 import { resolveSiteLocale } from "@/lib/locale";
 import { logRuntimeEvent } from "@/lib/log";
@@ -131,7 +131,7 @@ export async function GET(request: NextRequest, context: Context) {
       sameSite: "lax",
       expires: session.expiresAt,
     });
-    setThemeModeCookie(response, phiUserThemeModeName(user?.themeMode ?? null), session.expiresAt);
+    setThemeModeCookie(response, resolveUserThemeModeName(user?.flags), session.expiresAt);
     logRuntimeEvent("info", complete ? "auth.provider.success" : "auth.provider.factor_required", {
       message: complete ? "Provider login succeeded." : "Provider login requires another factor.",
       siteKey: siteContext.site.key,

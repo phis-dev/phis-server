@@ -8,7 +8,7 @@ import { getSessionFromRequest, touchSession } from "@/db/user-sessions";
 import { requireSiteFromRequest } from "@/lib/site-context";
 import { resolvePhiUserArea } from "@/lib/user-area";
 import { USER_SITE_FLAG_NEWSLETTER_OPT_IN } from "@/lib/user-site-flags";
-import { phiUserThemeModeName } from "@phis/contracts/access";
+import { resolveUserThemeModeName } from "@/lib/user-flags";
 
 function buildDisplayName(input: {
   email: string;
@@ -76,7 +76,7 @@ export async function GET(request: NextRequest) {
        * somebody who never said; nobody but the browser can answer "system", so the absence of a choice
        * travels as `system` and is resolved where `prefers-color-scheme` is known.
        */
-      themeMode: phiUserThemeModeName(user.themeMode),
+      themeMode: resolveUserThemeModeName(user.flags),
       authentication: {
         authenticatedAt: session.authenticatedAt,
         assuranceLevel: session.assuranceLevel,

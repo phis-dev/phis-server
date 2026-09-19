@@ -5,7 +5,7 @@ import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypt
 import type { NextRequest, NextResponse } from "next/server";
 
 import { readPhiClientIp } from "@/lib/helpers/request";
-import type { PhiUserThemeModeName } from "@phis/contracts/access";
+import type { PhiUserThemeModeName } from "@/lib/user-flags";
 
 export const SESSION_COOKIE_NAME = "phis_session";
 export const CSRF_COOKIE_NAME = "phis_csrf";

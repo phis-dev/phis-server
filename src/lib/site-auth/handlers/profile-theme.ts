@@ -6,9 +6,9 @@ import { getSessionFromRequest } from "@/db/user-sessions";
 import { requireSiteFromRequest } from "@/lib/site-context";
 import { setThemeModeCookie, verifyCsrfRequest } from "@/lib/auth";
 import {
-  phiUserThemeModeFromName,
-  phiUserThemeModeName,
-} from "@phis/contracts/access";
+  resolveUserThemeModeFlagUpdate,
+  resolveUserThemeModeName,
+} from "@/lib/user-flags";
 
 type ProfileThemePayload = {
   themeMode?: unknown;
@@ -47,23 +47,20 @@ export async function PATCH(request: NextRequest) {
   }
 
   /*
-   * `system` stores `null`, so the reading cannot lean on the value alone: `undefined` is the name that
-   * is not one of the three, and it is refused rather than stored as "follow the browser", which would
-   * look like the person had asked for it.
+   * Two bits on the account, not a field of its own: every answer clears both and then sets at most
+   * one, so "back to system" is simply the update that sets nothing and needs no case of its own.
    */
-  const requestedThemeMode = phiUserThemeModeFromName(payload.themeMode);
-  if (requestedThemeMode === undefined) {
+  const update = resolveUserThemeModeFlagUpdate(payload.themeMode);
+  if (!update) {
     return NextResponse.json({ error: "Unsupported theme mode." }, { status: 400 });
   }
 
-  const updated = await updateUserAccountProfileFields(user.id, {
-    themeMode: requestedThemeMode,
-  });
+  const updated = await updateUserAccountProfileFields(user.id, update);
   if (!updated) {
     return NextResponse.json({ error: "Failed to update theme mode." }, { status: 500 });
   }
 
-  const themeMode = phiUserThemeModeName(updated.themeMode);
+  const themeMode = resolveUserThemeModeName(updated.flags);
   const response = NextResponse.json({ themeMode });
   setThemeModeCookie(
     response,

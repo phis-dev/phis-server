@@ -21,10 +21,6 @@ The target PostgreSQL schema for `phis` is:
   - `4 = consumed`
 - `phis.registration_intents.flags INT`
   - `1 << 0 = newsletter opt-in`
-- `phis.user_accounts.theme_mode SMALLINT`
-  - `NULL = follow the browser`
-  - `1 = light`
-  - `2 = dark`
 - `phis.site_content.type SMALLINT`
   - `0 = news`
   - `1 = page`
@@ -110,6 +106,7 @@ The target PostgreSQL schema for `phis` is:
 - `phis.user_accounts.flags INT` (`PhiUserAccountFlag`)
   - `1 << 0 = disabled`
   - `1 << 1 = must change password`
+  - `1 << 2 = Theme light`, `1 << 3 = Theme dark`; neither = follow the browser
 - `phis.user_emails.flags INT` (`PhiUserEmailFlag` in `@phis/contracts/access`)
   - `1 << 0 = primary`; the partial unique index `user_emails_primary_user_idx` is defined on this bit
 - `phis.user_emails.source SMALLINT` (`PhiUserEmailSource` in `@phis/contracts/access`)
@@ -500,19 +497,17 @@ Contract:
 
 - `id SERIAL PRIMARY KEY`
 - `preferred_locale VARCHAR(8) NULL`
-- `theme_mode SMALLINT NULL`
 - `flags INT NOT NULL DEFAULT 0`
 - `created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
 - `updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
-- `CONSTRAINT user_accounts_theme_mode_check CHECK (theme_mode IS NULL OR theme_mode IN (1, 2))`
 
 Contract:
 - `id` is the one global Phi user id and remains the same across Sites.
 - `preferred_locale` stores the user's preferred UI locale when explicitly captured from registration or later settings updates.
-- `theme_mode` stores which half of the Theme the account asked for. NULL means it asked for none, and the
-  browser's `prefers-color-scheme` speaks for it; there is no number for that state, because a second way
-  to say it would be a second thing to keep in agreement.
-- `flags` stores global non-role state: `1 << 0` disabled, `1 << 1` must change password.
+- `flags` stores global non-role state: `1 << 0` disabled, `1 << 1` must change password, `1 << 2` Theme
+  light, `1 << 3` Theme dark. Neither Theme bit means the account chose no half and the browser's
+  `prefers-color-scheme` speaks for it, so a new account is already right at `flags = 0`; both set is a
+  contradiction nothing writes and is read as neither.
 - `user_accounts` contains no email, password, provider, commerce-account, or Site-membership shortcut.
 - Global account existence resolves here; durable login identities and Site admission resolve through the
   normalized relations in [AUTHENTICATION.md](./AUTHENTICATION.md).
