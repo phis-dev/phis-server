@@ -57,6 +57,7 @@ vi.mock("@/lib/auth", () => ({
   clearAreaCookie: vi.fn(),
   setCsrfCookie: vi.fn(),
   setSessionCookie: vi.fn(),
+  setThemeModeCookie: vi.fn(),
   setAuthLinkCookie: vi.fn(),
   clearAuthLinkCookie: vi.fn(),
 }));

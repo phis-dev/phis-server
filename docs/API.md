@@ -8,7 +8,7 @@ public or internal token, and `session` is the visitor's Site session with the a
 passes (see [AUTHORIZATION.md](../AUTHORIZATION.md)). A route with no access entry performs its own checks
 or none; read its source. Request and response shapes are not listed; the source is linked per route.
 
-136 routes.
+137 routes.
 
 ## Contents
 
@@ -17,7 +17,7 @@ or none; read its source. Request and response shapes are not listed; the source
 - [`/api/site`](#apisite) (66)
 - [`/api/v1/addons`](#apiv1addons) (2)
 - [`/api/v1/admin`](#apiv1admin) (1)
-- [`/api/v1/auth`](#apiv1auth) (28)
+- [`/api/v1/auth`](#apiv1auth) (29)
 - [`/api/v1/email`](#apiv1email) (1)
 - [`/api/v1/forms`](#apiv1forms) (8)
 - [`/api/v1/groups`](#apiv1groups) (3)
@@ -212,6 +212,7 @@ Versioned API a Site calls server-to-server with its token (`x-phis-token`), and
 | PATCH | [`/api/v1/auth/profile/name`](../src/app/api/v1/auth/profile/name/route.ts) | internal token |  |
 | PATCH | [`/api/v1/auth/profile/newsletter`](../src/app/api/v1/auth/profile/newsletter/route.ts) | internal token |  |
 | PATCH | [`/api/v1/auth/profile/password`](../src/app/api/v1/auth/profile/password/route.ts) | internal token |  |
+| PATCH | [`/api/v1/auth/profile/theme`](../src/app/api/v1/auth/profile/theme/route.ts) | internal token |  |
 | GET | [`/api/v1/auth/providers/{provider}/callback`](../src/app/api/v1/auth/providers/[provider]/callback/route.ts) | internal token |  |
 | POST | [`/api/v1/auth/providers/{provider}/start`](../src/app/api/v1/auth/providers/[provider]/start/route.ts) | CSRF token; internal token |  |
 | POST | [`/api/v1/auth/providers/link/confirm`](../src/app/api/v1/auth/providers/link/confirm/route.ts) | CSRF token; internal token |  |

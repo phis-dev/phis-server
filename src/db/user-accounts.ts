@@ -2,7 +2,12 @@ import "server-only";
 
 import type { PoolClient } from "pg";
 
-import { PhiUserEmailFlag, type PhiUserEmailSourceValue } from "@phis/contracts/access";
+import {
+  PhiUserEmailFlag,
+  isPhiUserThemeMode,
+  type PhiUserEmailSourceValue,
+  type PhiUserThemeModeValue,
+} from "@phis/contracts/access";
 
 import { getPool } from "@/lib/db";
 
@@ -27,6 +32,7 @@ export type UserAccountRecord = {
   medusaCustomerId: string | null;
   passwordHash: string | null;
   preferredLocale: string | null;
+  themeMode: PhiUserThemeModeValue | null;
   siteIds: number[];
   flags: number;
   customerNumber: string | null;
@@ -38,6 +44,7 @@ type UserAccountRow = {
   medusa_customer_id: string | null;
   password_hash: string | null;
   preferred_locale: string | null;
+  theme_mode: number | null;
   site_ids: number[] | null;
   flags: number;
   customer_number: string | null;
@@ -54,6 +61,9 @@ function mapUserAccountRow(row: UserAccountRow): UserAccountRecord {
     medusaCustomerId: row.medusa_customer_id,
     passwordHash: row.password_hash,
     preferredLocale: row.preferred_locale,
+    // A column value the vocabulary does not name is no answer at all, so it reads as none rather than
+    // as a mode nobody offers. The schema check refuses to store one; this is what a hand-edited row gets.
+    themeMode: isPhiUserThemeMode(row.theme_mode) ? row.theme_mode : null,
     siteIds: row.site_ids ?? [],
     flags: row.flags,
     customerNumber: row.customer_number,
@@ -66,6 +76,7 @@ function userAccountProjection(siteParam: number) {
                  external.external_account_id AS medusa_customer_id,
                  password.password_hash,
                  account.preferred_locale,
+                 account.theme_mode,
                  COALESCE(memberships.site_ids, ARRAY[]::smallint[]) AS site_ids,
                  account.flags,
                  external.customer_number
@@ -287,6 +298,14 @@ export async function updateUserAccountProfileFields(
     /** Where the new address came from. Required whenever `email` is given, for the reason above. */
     emailSource?: PhiUserEmailSourceValue;
     preferredLocale?: string | null;
+    /**
+     * Which half of the Theme to store, where `null` is "follow the browser".
+     *
+     * Absent and `null` mean different things here and cannot share one parameter: `null` is a choice
+     * being withdrawn and has to reach the column, while absent must leave a stored choice alone. The
+     * statement is told which of the two it is rather than guessing from the value.
+     */
+    themeMode?: PhiUserThemeModeValue | null;
     setFlags?: number;
     clearFlags?: number;
   } = {},
@@ -336,19 +355,23 @@ export async function updateUserAccountProfileFields(
     const { rows } = await client.query<{
       id: number;
       preferred_locale: string | null;
+      theme_mode: number | null;
       flags: number;
     }>(
       `UPDATE phis.user_accounts
        SET preferred_locale = COALESCE($2, preferred_locale),
+           theme_mode = CASE WHEN $5::boolean THEN $6::smallint ELSE theme_mode END,
            flags = ((flags & ~($3::integer)) | ($4::integer)),
            updated_at = NOW()
        WHERE id = $1
-       RETURNING id, preferred_locale, flags`,
+       RETURNING id, preferred_locale, theme_mode, flags`,
       [
         userId,
         input.preferredLocale ?? null,
         input.clearFlags ?? 0,
         input.setFlags ?? 0,
+        input.themeMode !== undefined,
+        input.themeMode ?? null,
       ],
     );
     const email = await client.query<{ email_normalized: string }>(
@@ -365,6 +388,7 @@ export async function updateUserAccountProfileFields(
           id: rows[0].id,
           emailNormalized: email.rows[0].email_normalized,
           preferredLocale: rows[0].preferred_locale,
+          themeMode: isPhiUserThemeMode(rows[0].theme_mode) ? rows[0].theme_mode : null,
           flags: rows[0].flags,
         }
       : null;

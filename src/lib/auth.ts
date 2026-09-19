@@ -5,10 +5,13 @@ import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypt
 import type { NextRequest, NextResponse } from "next/server";
 
 import { readPhiClientIp } from "@/lib/helpers/request";
+import type { PhiUserThemeModeName } from "@phis/contracts/access";
 
 export const SESSION_COOKIE_NAME = "phis_session";
 export const CSRF_COOKIE_NAME = "phis_csrf";
 export const AREA_COOKIE_NAME = "phis_area";
+/** Named here and read in phis-ui as `PHI_THEME_MODE_COOKIE`; the two have to agree. */
+export const THEME_MODE_COOKIE_NAME = "phis_theme_mode";
 export const AUTH_LINK_COOKIE_NAME = "phis_auth_link";
 
 const SESSION_TTL_SECONDS = 60 * 60 * 24 * 14;
@@ -172,6 +175,41 @@ export function clearAreaCookie(response: NextResponse) {
     secure: isProduction(),
     path: "/",
     expires: new Date(0),
+  });
+}
+
+/**
+ * The account's Theme choice, mirrored where readers without a session can see it.
+ *
+ * Two of them cannot ask who is asking: the static proxy picks a render before any session is
+ * resolved, and the script that runs before the first paint has none either. So the choice travels in
+ * the request, the way `phis_locale` does -- the account remains where it is decided.
+ *
+ * `system` is the absence of a choice and clears the cookie rather than writing a third value. That
+ * also matters on a browser this person has not used before: a stale cookie would otherwise outvote an
+ * account that has since withdrawn its choice.
+ */
+export function setThemeModeCookie(
+  response: NextResponse,
+  themeMode: PhiUserThemeModeName,
+  expiresAt?: Date,
+) {
+  if (themeMode === "system") {
+    response.cookies.set(THEME_MODE_COOKIE_NAME, "", {
+      httpOnly: false,
+      sameSite: "lax",
+      secure: isProduction(),
+      path: "/",
+      expires: new Date(0),
+    });
+    return;
+  }
+  response.cookies.set(THEME_MODE_COOKIE_NAME, themeMode, {
+    httpOnly: false,
+    sameSite: "lax",
+    secure: isProduction(),
+    path: "/",
+    ...(expiresAt ? { expires: expiresAt } : {}),
   });
 }
 

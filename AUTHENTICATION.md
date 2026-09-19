@@ -339,8 +339,8 @@ The `/api/v1/auth/*` operations are:
 - `GET workflow`, `POST workflow/verify`, `POST workflow/totp/enroll`, `POST workflow/totp/confirm`;
 - `POST logout`;
 - `GET account/security`, `DELETE account/factors/:factorId`, `DELETE account/sessions/:sessionId`;
-- `PATCH profile/name`, `PATCH profile/locale`, `PATCH profile/newsletter`, `PATCH profile/password`,
-  `POST profile/email/request`;
+- `PATCH profile/name`, `PATCH profile/locale`, `PATCH profile/theme`, `PATCH profile/newsletter`,
+  `PATCH profile/password`, `POST profile/email/request`;
 - Site Admin operations: `PATCH admin/policy`, `PATCH admin/password-method`, `PATCH admin/totp-policy`,
   `GET|POST|PATCH admin/installations`, `PATCH|DELETE admin/installations/:installationKey`,
   `POST admin/installations/:installationKey/test`.

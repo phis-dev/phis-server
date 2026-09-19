@@ -30,12 +30,17 @@ CREATE TABLE IF NOT EXISTS phis.sites (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+-- `theme_mode` is NULL for an account that has not chosen, which means the browser speaks for it
+-- (PhiUserThemeMode has no number for "system" for that reason). The check names the two that exist,
+-- so a writer that invents a third is refused here rather than read back as a mode nobody offers.
 CREATE TABLE IF NOT EXISTS phis.user_accounts (
   id SERIAL PRIMARY KEY,
   preferred_locale VARCHAR(8) NULL,
+  theme_mode SMALLINT NULL,
   flags INT NOT NULL DEFAULT 0,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT user_accounts_theme_mode_check CHECK (theme_mode IS NULL OR theme_mode IN (1, 2))
 );
 
 CREATE TABLE IF NOT EXISTS phis.user_emails (

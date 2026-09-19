@@ -13,9 +13,11 @@ import {
   readRequestUserAgent,
   setCsrfCookie,
   setSessionCookie,
+  setThemeModeCookie,
   verifyCsrfRequest,
   createCsrfToken,
 } from "@/lib/auth";
+import { phiUserThemeModeName } from "@phis/contracts/access";
 import { resolveSiteLocale } from "@/lib/locale";
 import { logRuntimeEvent, normalizeLogThrowable } from "@/lib/log";
 import { verifyPasswordHash } from "@/lib/password";
@@ -219,6 +221,9 @@ export async function POST(request: NextRequest) {
       sameSite: "lax",
       expires: session.expiresAt,
     });
+    // Signing in on a browser this account has not used before is exactly when the mirror earns its
+    // keep, and withdrawing the choice has to clear a cookie that browser may already carry.
+    setThemeModeCookie(response, phiUserThemeModeName(user.themeMode), session.expiresAt);
     return response;
   } catch (error) {
     const message = error instanceof Error ? error.message : "Login failed.";
