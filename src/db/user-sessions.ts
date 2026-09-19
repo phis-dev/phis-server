@@ -364,14 +364,33 @@ export async function touchSession(sessionId: string, request?: NextRequest) {
   );
 }
 
-export async function revokeUserSessions(userId: number) {
+/**
+ * Every open session of this account, optionally sparing the one that asked.
+ *
+ * A new password is what somebody is told to set when they think another person is signed in as them,
+ * and that advice does nothing unless the sessions fall with it: a stolen cookie outlives a password
+ * change otherwise, and the intruder never has to know the new one.
+ *
+ * `exceptSessionId` is who is doing the changing. They proved the old password a moment ago, so there is
+ * nothing left to establish and no reason to throw them out of the page they are standing on. Left out
+ * where there is nobody to spare -- a password reset arrives through a mail link, with every session on
+ * the account belonging to before.
+ *
+ * Account-wide rather than per Site, because a password is the account's and not one Site's.
+ */
+export async function revokeUserSessions(
+  userId: number,
+  options: { exceptSessionId?: string } = {},
+) {
   const pool = getPool();
+  const exceptSessionId = options.exceptSessionId ?? null;
   await pool.query(
     `UPDATE phis.user_sessions
      SET revoked_at = NOW()
      WHERE user_id = $1
-       AND revoked_at IS NULL`,
-    [userId],
+       AND revoked_at IS NULL
+       AND ($2::text IS NULL OR id <> $2::text)`,
+    [userId, exceptSessionId],
   );
 }
 

@@ -84,7 +84,14 @@ export async function PATCH(request: NextRequest) {
   await updateUserAccountPasswordHash(user.id, passwordHash, {
     clearFlags: PhiUserAccountFlag.MustChangePassword,
   });
-  await revokeUserSessions(user.id);
+  /*
+   * Everywhere else is signed out; here is not.
+   *
+   * The point of the revoke is somebody else holding a session, so it has to be every other one. This
+   * one belongs to whoever just proved the old password, and taking it would answer a password change
+   * with a login screen.
+   */
+  await revokeUserSessions(user.id, { exceptSessionId: session.id });
 
   return NextResponse.json({});
 }
