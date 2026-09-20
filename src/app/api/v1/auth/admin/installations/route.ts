@@ -14,7 +14,10 @@ import {
   normalizeAuthInstallationKey,
 } from "@/lib/site-auth/installation-catalog";
 import { applyAuthInstallationPatch } from "@/lib/site-auth/admin-installations";
-import { requireAuthAdminSectionContext } from "@/lib/site-auth/admin-sections";
+import {
+  requireAuthAdminSectionContext,
+  requireAuthAdminSectionReadContext,
+} from "@/lib/site-auth/admin-sections";
 import { buildSiteAuthSecretReference, writeSiteAuthSecret } from "@/lib/site-auth/secret-store";
 import { logRuntimeEvent } from "@/lib/log";
 import { normalizeString } from "@/lib/helpers/request";
@@ -27,7 +30,7 @@ async function resolveSitePublicUrl(siteId: number) {
 }
 
 export async function GET(request: NextRequest) {
-  const { context, error } = await requireAuthAdminSectionContext(request);
+  const { context, error } = await requireAuthAdminSectionReadContext(request);
   if (error || !context) {
     return error ?? NextResponse.json({ error: "Authentication required." }, { status: 401 });
   }
