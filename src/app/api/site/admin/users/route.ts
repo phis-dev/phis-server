@@ -594,7 +594,6 @@ export async function PATCH(request: NextRequest) {
   return NextResponse.json({
     userId: updated.id,
     enabled: enabledValue,
-    siteFlags: updated.siteFlags,
     siteFlagTags: buildUserSiteFlagTags(updated.siteFlags),
   });
 }

@@ -204,7 +204,6 @@ export async function POST(request: NextRequest) {
         id: user.id,
         email: user.emailNormalized,
         name: user.emailNormalized,
-        flags: user.flags,
       },
     });
 

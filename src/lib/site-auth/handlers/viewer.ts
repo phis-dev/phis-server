@@ -63,12 +63,10 @@ export async function GET(request: NextRequest) {
       id: user.id,
       email: user.emailNormalized,
       name,
-      flags: user.flags,
       roleClaims: siteRole.roleClaims,
       groupClaims: siteRole.groupClaims,
       addonRoleClaims: await readPhiViewerAddonRoleClaims(site.id, user.id),
       authorizationRevision: siteRole.authorizationRevision,
-      siteFlags: siteRole.siteFlags,
       newsletterOptIn: (siteRole.siteFlags & USER_SITE_FLAG_NEWSLETTER_OPT_IN) === USER_SITE_FLAG_NEWSLETTER_OPT_IN,
       preferredLocale: user.preferredLocale ?? site.defaultLocale,
       /*
