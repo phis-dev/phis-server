@@ -50,9 +50,13 @@ export async function buildPublicAuthManifest(siteId: number): Promise<PhiPublic
           label: typeof method.presentation.label === "string"
             ? method.presentation.label
             : fallback?.label ?? method.methodKey,
+          // The Site's own mark if it set one, the provider's otherwise -- the same fall back the label
+          // above takes, because a button with a name and no mark reads as the odd one out in a row.
           ...(typeof method.presentation.icon === "string"
             ? { icon: method.presentation.icon }
-            : {}),
+            : "icon" in (fallback ?? {}) && typeof (fallback as { icon?: unknown }).icon === "string"
+              ? { icon: (fallback as { icon: string }).icon }
+              : {}),
           ...(method.providerInstallationKey
             ? { installationKey: method.providerInstallationKey }
             : {}),

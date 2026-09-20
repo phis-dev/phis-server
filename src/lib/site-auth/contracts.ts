@@ -48,18 +48,32 @@ export const PHI_AUTH_SESSION_STATES = {
 export type PhiAuthSessionState =
   (typeof PHI_AUTH_SESSION_STATES)[keyof typeof PHI_AUTH_SESSION_STATES];
 
+/**
+ * The methods Core knows, and how each one presents itself when the Site says nothing.
+ *
+ * `icon` is the provider's own mark, because that is what a person scans a row of sign-in buttons for:
+ * the word "Google" and the word "GitHub" are the same shape from a metre away, the marks are not. It
+ * sits beside the label for the same reason the label is here -- a Site may override either through
+ * `PhiAuthMethodPresentation`, and what it does not override has to come from somewhere.
+ *
+ * The names are the `antd:` set, which the icon registry bundles. Not `iconify:`, although that prefix
+ * is supported: these are Core defaults on a public Login page, so every Site ships them without anyone
+ * choosing them, and an Iconify icon is fetched from Iconify's API by the visitor's browser. A Builder
+ * picking one opts into that; a default may not opt in on their behalf. A method with no mark of its own
+ * (a password, a code) states none and its button stays text.
+ */
 export const PHI_CORE_AUTH_METHODS = {
   password: { stages: ["primary", "step-up"], label: "Email and password" },
   passkey: { stages: ["primary", "second-factor", "step-up"], label: "Passkey" },
-  google: { stages: ["primary", "step-up"], label: "Google" },
-  apple: { stages: ["primary", "step-up"], label: "Apple" },
-  github: { stages: ["primary", "step-up"], label: "GitHub" },
-  microsoft: { stages: ["primary", "step-up"], label: "Microsoft" },
+  google: { stages: ["primary", "step-up"], label: "Google", icon: "antd:google" },
+  apple: { stages: ["primary", "step-up"], label: "Apple", icon: "antd:apple" },
+  github: { stages: ["primary", "step-up"], label: "GitHub", icon: "antd:github" },
+  microsoft: { stages: ["primary", "step-up"], label: "Microsoft", icon: "antd:windows" },
   totp: { stages: ["second-factor", "step-up"], label: "Authenticator app" },
   "email-otp": { stages: ["primary", "second-factor", "recovery"], label: "Email code" },
   "sms-otp": { stages: ["second-factor", "recovery"], label: "SMS code" },
   "recovery-code": { stages: ["recovery"], label: "Recovery code" },
-} as const satisfies Record<string, { stages: readonly PhiAuthStage[]; label: string }>;
+} as const satisfies Record<string, { stages: readonly PhiAuthStage[]; label: string; icon?: string }>;
 
 export type PhiCoreAuthMethodKey = keyof typeof PHI_CORE_AUTH_METHODS;
 
