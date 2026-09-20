@@ -9,7 +9,7 @@ import type { PoolClient } from "pg";
  * query lives here, alone, rather than once per caller.
  *
  * It needs no Module knowledge to answer: a stored node carries its owner inside its type, as in
- * "@phis/dev/modules/site/widgets/note". It looks at the published revision, because that is what a
+ * "@phis/example/modules/site/widgets/note". It looks at the published revision, because that is what a
  * visitor gets; an unsaved draft takes its blocks away when it is published, which is a different
  * sentence and belongs in a different place.
  */
