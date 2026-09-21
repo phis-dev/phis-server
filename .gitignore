@@ -35,9 +35,16 @@ yarn-error.log*
 .env*
 !.env.dev.example
 !.env.prod.example
+
+# deployment state: written by the operator and the CLI, never by a source change.
+# What is installed on a machine is not a property of the source, so an install must not
+# show up as a diff. The .example files carry the shape a fresh root starts from; the CLI
+# reads an absent file as an empty state and writes the real one itself.
 config/phis-runtime.json
 config/phis-instance.json
-!config/phis-runtime.example.json
+config/phis-modules.json
+config/phis-addons.json
+!config/*.example.json
 
 # vercel
 .vercel

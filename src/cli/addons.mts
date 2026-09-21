@@ -99,10 +99,22 @@ function writeArtifactAtomic(filePath: string, bytes: Buffer) {
   renameSync(temporaryPath, filePath);
 }
 
+/**
+ * Absence is an empty state, not an error.
+ *
+ * An installation that never installed an Add-on has no file, the same way one that never added a
+ * Module has none (`src/cli/modules.mts`). Refusing to read it made every `addon list` on a fresh
+ * machine look like a fault, and made the file something a checkout had to carry -- which put
+ * deployment state under version control, where every install showed up as a source change.
+ */
+function emptyAddonDesiredState(): PhisAddonDesiredState {
+  return { formatVersion: 1, addons: [] };
+}
+
 export function readAddonDesiredState(root: string) {
   const { desiredState } = getAddonPaths(root);
   if (!existsSync(desiredState)) {
-    throw new Error(`Missing Add-on desired state: ${desiredState}`);
+    return emptyAddonDesiredState();
   }
 
   let parsed: unknown;
@@ -142,7 +154,7 @@ export function readAddonDesiredStateForChange(root: string): {
 } {
   const { desiredState } = getAddonPaths(root);
   if (!existsSync(desiredState)) {
-    throw new Error(`Missing Add-on desired state: ${desiredState}`);
+    return { state: emptyAddonDesiredState(), invalid: [] };
   }
   let parsed: unknown;
   try {
@@ -629,13 +641,13 @@ export async function removeAddon(root: string, flags: FlagMap) {
 export function forgetAddon(root: string, flags: FlagMap) {
   const addonId = getRequiredFlag(flags, "addon");
   const { desiredState } = getAddonPaths(root);
-  if (!existsSync(desiredState)) {
-    throw new Error(`Missing Add-on desired state: ${desiredState}`);
-  }
-  const parsed = JSON.parse(readFileSync(desiredState, "utf8")) as {
-    formatVersion?: unknown;
-    addons?: unknown;
-  };
+  // No file is no entry, which the check below already has the right words for.
+  const parsed = existsSync(desiredState)
+    ? (JSON.parse(readFileSync(desiredState, "utf8")) as {
+        formatVersion?: unknown;
+        addons?: unknown;
+      })
+    : {};
   const addons = Array.isArray(parsed.addons) ? parsed.addons : [];
   const remaining = addons.filter(
     (addon) => !(addon && typeof addon === "object" && (addon as { addonId?: unknown }).addonId === addonId),

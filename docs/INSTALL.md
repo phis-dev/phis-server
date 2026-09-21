@@ -95,7 +95,7 @@ install -d -o phis -g phis /srv/phis/stages/prod/config
 | --- | --- |
 | `config/phis-config.json` | Copy from `phis-server/config/phis-config.json` and adjust. |
 | `config/phis-runtime.json` | Create; start from `phis-server/config/phis-runtime.example.json` (Debian: `/usr/share/doc/phis/examples/`). Contains secrets: mode `0600`, owned by the service account. |
-| `config/phis-addons.json` | Create as `{"formatVersion": 1, "addons": []}`. Every `phis addon` command refuses to run without it. |
+| `config/phis-addons.json` | Optional; `phis addon install` creates it. |
 | `config/phis-modules.json` | Optional; `phis module add` creates it. |
 
 In `phis-config.json`, check at least:

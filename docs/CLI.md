@@ -117,7 +117,7 @@ All paths are relative to the root.
 | `config/phis-config.json` | the operator | Static configuration: `sites.*` path roots and base port, `translation`, `media`, `email`, `forms`, `bootstrap.enabled`. |
 | `config/phis-runtime.json` | the operator, `/setup`, and the CLI | Deployment values and secrets: `database.uri`, `database.migrationUri`, `api.internalToken`, `secrets.encryptionKey`, `auth.transactionEncryptionKey`, `registration.intentEncryptionKey`, `platformSuperUsers`, `sites.overrides`. Values here override `phis-config.json`. |
 | `config/phis-instance.json` | the CLI | The version stamp above. |
-| `config/phis-addons.json` | `addon` commands | Desired state of server Add-ons. Must exist before any `addon` command; an empty one is `{"formatVersion": 1, "addons": []}`. |
+| `config/phis-addons.json` | `addon` commands | Desired state of server Add-ons. Absent means none. |
 | `config/phis-modules.json` | `module add|del` | Desired state of Site Modules per Site. Absent means none. |
 | `addons/<scope>/<name>/<version>/addon.mjs` | `addon install|upgrade` | Installed Add-on artifacts. |
 
@@ -506,7 +506,7 @@ database registry is what the server dispatches against, and `reconcile` publish
 The release id recorded is the CLI's package version. The lifecycle is described in
 [ADDON_HOWTO.md](../ADDON_HOWTO.md#5-how-it-is-installed-and-activated).
 
-Every `addon` command needs `config/phis-addons.json` to exist.
+An absent `config/phis-addons.json` reads as no Add-ons installed; the first `addon install` writes it.
 
 ### `phis addon list`
 

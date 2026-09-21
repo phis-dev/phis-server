@@ -60,12 +60,15 @@ and the application directory otherwise; the CLI uses the current working direct
 | --- | --- | --- |
 | `config/phis-config.json` | yes | Versioned, non-secret defaults. |
 | `config/phis-runtime.json` | no | Local values and secrets for this installation; overrides `phis-config.json`. |
-| `config/phis-addons.json` | yes | Installed Add-ons and their desired global state, written by `phis addon`. |
-| `config/phis-modules.json` | yes | Site Module packages, written by `phis module`. |
+| `config/phis-addons.json` | no | Installed Add-ons and their desired global state, written by `phis addon`. |
+| `config/phis-modules.json` | no | Site Module packages, written by `phis module`. |
 | `config/phis-instance.json` | no | The phis version that last operated this root. |
 
 The effective configuration is the code default (`DEFAULT_CONFIG` in `src/lib/config-core.ts`), then
 `phis-config.json`, then `phis-runtime.json`. `config/phis-runtime.example.json` shows the shape.
+The three files the CLI writes are deployment state, not source: what is installed on one machine is
+not a property of the repository, so they are untracked and an absent one reads as empty. The
+`.example.json` beside each shows what a fresh root starts from.
 `phis config validate` checks the merged result.
 
 | Key | Meaning |
