@@ -4,7 +4,6 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { applyPhisAddonSchema, dropPhisAddonSchema } from "./server-addon-schema.mts";
 import { grantPhisAddonUserRole, revokePhisAddonUserRole } from "./server-addon-roles.mts";
 import { getPhisConfigSync } from "@/lib/config";
-import { quotePhiIdentifier } from "@/lib/addons/schema-ddl";
 import { buildPhisAddonCapabilities } from "@/lib/addons/capabilities";
 import {
   closePhiTestPool,

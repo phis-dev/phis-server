@@ -218,7 +218,6 @@ describe("putting a file on a row", () => {
      * Booking on finalize would let a store be filled by uploads that are merely started: the ceiling
      * would hold on paper while the objects accumulated underneath it.
      */
-    const pool = await requirePhiTestDatabase();
     const before = await usage();
     const reservation = await assets().begin({
       table: "offering", ownerId: offeringId, slot: "package",
@@ -303,7 +302,6 @@ describe("putting a file on a row", () => {
   });
 
   it("replaces a single-valued slot in one step, and gives the old space back", async () => {
-    const pool = await requirePhiTestDatabase();
     const before = await usage();
     const [displaced] = await assets().list({ table: "offering", ownerId: offeringId, slot: "package" });
     const displacedKey = await storageKeyOf(displaced!.mediaAssetId);
@@ -380,7 +378,6 @@ describe("putting a file on a row", () => {
      * that has given back more than it holds hands an Add-on room it does not have -- and the ceiling
      * then guards nothing.
      */
-    const pool = await requirePhiTestDatabase();
     const reservation = await assets().begin({
       table: "offering", ownerId: offeringId, slot: "shots",
       contentType: "image/png", sizeBytes: 6,
@@ -443,7 +440,6 @@ describe("putting a file on a row", () => {
      * bytes back to the Space and leaves them in the bucket -- and with the row goes the storage key,
      * so from that moment nothing can find the object again. Every visible sign says the file is gone.
      */
-    const pool = await requirePhiTestDatabase();
     const before = await usage();
     const held = await assets().list({ table: "offering", ownerId: offeringId, slot: "package" });
     const key = await storageKeyOf(held[0]!.mediaAssetId);

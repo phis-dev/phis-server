@@ -5,7 +5,6 @@ import {
   PHIS_SITE_ACCESS,
   type PhisAddonCapabilities,
   type PhisAuthorizationCapabilityV1,
-  type PhisGroupLevel,
   type PhisRowIntent,
   type PhisSiteAccess,
 } from "./contract.ts";

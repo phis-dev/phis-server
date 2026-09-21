@@ -305,13 +305,12 @@ async function dispatchAddonAssetRequest(
   request: NextRequest,
   context: {
     entry: ReturnType<typeof getPhisAddonInstalledManifest>[string];
-    addonId: string;
     path: string;
     requestId: string;
     logger: ReturnType<typeof createLogger>;
   },
 ) {
-  const { entry, addonId, path, requestId, logger } = context;
+  const { entry, path, requestId, logger } = context;
   const route = readAssetRoute(request.method, path);
   if (!route) {
     return notFound();
@@ -539,7 +538,7 @@ export async function dispatchPhisAddonRequest(
 
   if (kind === "api" && isPhisAddonAssetPath(path)) {
     return await dispatchAddonAssetRequest(request, {
-      entry, addonId, path, requestId, logger,
+      entry, path, requestId, logger,
     });
   }
 

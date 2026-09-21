@@ -13,7 +13,6 @@ import {
   type PhisAddonDesiredState,
   type PhisAddonHookDescriptor,
   type PhisAddonManifestV1,
-  type PhisAddonQueryCatalog,
   type PhisAddonSchemaDescriptor,
 } from "./contract.ts";
 
@@ -709,9 +708,8 @@ export function validatePhisAddonManifest(
 
   // As with `settings`: absent means none, and is what every manifest written before queries existed
   // says. Stating it is only required to be right, not to be present.
-  let queries: PhisAddonQueryCatalog | null = null;
   if (value.queries != null) {
-    queries = validatePhisAddonQueryCatalog(
+    validatePhisAddonQueryCatalog(
       value.queries,
       schema,
       "queries",

@@ -7,7 +7,7 @@ export type {
   PhiLogger,
   PhiLoggerContext,
 } from "@phis/contracts/logging";
-import type { PhiLogEvent, PhiLogLevel, PhiLogService, PhiLoggerContext, PhiLogger } from "@phis/contracts/logging";
+import type { PhiLogEvent, PhiLogLevel, PhiLoggerContext, PhiLogger } from "@phis/contracts/logging";
 
 function serializeError(error: unknown) {
   if (error instanceof Error) {
