@@ -473,6 +473,15 @@ export function buildPhiSiteScaffoldFiles(
     [`${SITE_APP}/not-found.tsx`]: `import { createPhiNextRootErrorPage } from "@phis/ui/next/area-route";\nimport { PHI_CMS_ROOT_ERROR_AREA } from "@/runtime-modules/root-error-area";\n\nexport default createPhiNextRootErrorPage(404, PHI_CMS_ROOT_ERROR_AREA);\n`,
     [`${SITE_APP}/forbidden.tsx`]: `import { createPhiNextRootErrorPage } from "@phis/ui/next/area-route";\nimport { PHI_CMS_ROOT_ERROR_AREA } from "@/runtime-modules/root-error-area";\n\nexport default createPhiNextRootErrorPage(403, PHI_CMS_ROOT_ERROR_AREA);\n`,
     [`${SITE_APP}/unauthorized.tsx`]: `import { createPhiNextRootErrorPage } from "@phis/ui/next/area-route";\nimport { PHI_CMS_ROOT_ERROR_AREA } from "@/runtime-modules/root-error-area";\n\nexport default createPhiNextRootErrorPage(401, PHI_CMS_ROOT_ERROR_AREA);\n`,
+    /*
+     * The 500, and the only refusal route that is not a Page.
+     *
+     * It sits outside both route groups because it is the boundary of last resort: the root Layouts
+     * are plausible throwers themselves, and a boundary below a Layout does not catch that Layout.
+     * Being outermost, it replaces the document -- so it renders its own `<html>`, asks the CMS for
+     * nothing, and there is no `/error/500` preset for a Site to edit in its stead.
+     */
+    "src/app/global-error.tsx": `"use client";\n\nexport { PhiNextGlobalErrorPage as default } from "@phis/ui/next/global-error";\n`,
     "src/proxy.ts": `import type { NextRequest } from "next/server";\nimport { proxyPhiNextSiteRequest } from "@phis/ui/next/site-proxy";\n\nexport function proxy(request: NextRequest) {\n  return proxyPhiNextSiteRequest(request);\n}\n\nexport const config = { matcher: "/:path*" };\n`,
     "src/app/api/auth/[[...path]]/route.ts": proxyRoute("auth"),
     "src/app/api/site/[[...path]]/route.ts": proxyRoute("site"),

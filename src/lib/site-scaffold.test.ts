@@ -98,6 +98,14 @@ describe("site scaffold", () => {
     for (const route of ["not-found", "unauthorized", "forbidden"]) {
       expect(files[`src/app/(site)/${route}.tsx`]).toContain("PHI_CMS_ROOT_ERROR_AREA");
     }
+
+    /*
+     * The 500 is the one refusal that resolves nothing. It is reached only once rendering has failed,
+     * so a CMS tree is exactly what it cannot ask for -- and it belongs outside the route groups,
+     * because a boundary inside one does not catch that group's own root Layout.
+     */
+    expect(files["src/app/global-error.tsx"]).toContain("PhiNextGlobalErrorPage");
+    expect(files["src/app/(site)/global-error.tsx"]).toBeUndefined();
   });
 
   /*
