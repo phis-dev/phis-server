@@ -274,8 +274,8 @@ const PHI_SITE_OWNED_AFTER_INIT: readonly string[] = [
  * Both halves are loaded rather than imported outright. These routes are the fallback boundary for the
  * whole app, so whatever this value reaches joins every route's Client manifest and every page's chunk
  * group -- the Bridge as much as the Boundary, because a Bridge carries its Area's server catalog and
- * that catalog names the Widget plugins. Public answers for every Area; an Area that wants its own
- * wording carries its own refusal route inside its own segment.
+ * that catalog names the Widget plugins. Public answers for every Area, and no Area carries refusal
+ * routes of its own -- see the generated comment below for why one there could never catch anything.
  */
 function rootErrorAreaFile() {
   return {
@@ -290,9 +290,10 @@ function rootErrorAreaFile() {
       + ` * group -- the Bridge as much as the Boundary, because a Bridge carries its Area's server catalog and\n`
       + ` * that catalog names the Widget plugins.\n`
       + ` *\n`
-      + ` * Public answers for every Area. An Area that wants its own wording puts a \`not-found.tsx\`,\n`
-      + ` * \`unauthorized.tsx\` or \`forbidden.tsx\` in its own segment, which catches the refusal inside that\n`
-      + ` * Area's shell and never reaches here.\n`
+      + ` * Public answers for every Area, and these are the only refusal routes the Site has. One placed\n`
+      + ` * inside an Area could never catch anything: existence is decided by the Area's shell rather than\n`
+      + ` * by the Page, because deciding it below the shell arrives after the flush and answers 200 instead\n`
+      + ` * of 404. The shell is the thrower, so the refusal is always caught above it.\n`
       + ` */\n`
       + `export const PHI_CMS_ROOT_ERROR_AREA: PhiNextRootErrorArea = {\n`
       + `  loadBridge: () =>\n`
@@ -338,7 +339,6 @@ function staticAreaFiles(area: typeof AREAS[number]) {
     [`${SITE_APP}/${area}/layout.tsx`]: `import { ${bridge} } from "@/runtime-modules/${area}";\nimport { createPhiNextStaticAreaBoundary } from "@phis/ui/next/area-route";\nimport { Phi${name}RuntimeModuleClientBoundary } from "@/runtime-modules/${area}-client";\n\nexport const dynamic = "force-dynamic";\n\nexport default createPhiNextStaticAreaBoundary("${area}", ${bridge}, Phi${name}RuntimeModuleClientBoundary);\n`,
     [`${SITE_APP}/${area}/(root)/page.tsx`]: areaPage,
     [`${SITE_APP}/${area}/(pages)/[...path]/page.tsx`]: areaPage,
-    [`${SITE_APP}/${area}/not-found.tsx`]: `import { ${bridge} } from "@/runtime-modules/${area}";\nimport { createPhiNextStaticAreaNotFound } from "@phis/ui/next/area-route";\n\nexport const dynamic = "force-dynamic";\n\nexport default createPhiNextStaticAreaNotFound(${bridge}, "${area}");\n`,
   };
   for (const [group, chrome] of AREA_BRANCHES) {
     files[`${SITE_APP}/${area}/${group}/layout.tsx`] = `import { ${bridge} } from "@/runtime-modules/${area}";\nimport { createPhiNextStaticAreaLayout } from "@phis/ui/next/area-route";\n\nexport const dynamic = "force-dynamic";\n\nexport default createPhiNextStaticAreaLayout("${area}", ${bridge}, ${chrome});\n`;
@@ -361,7 +361,6 @@ function dynamicRootFiles() {
     [`${SITE_APP}/[root]/layout.tsx`]: `import { createPhiNextDynamicRootBoundary } from "@phis/ui/next/area-route";\nimport { PhiPublicRuntimeModuleClientBoundary } from "@/runtime-modules/public-client";\nimport { PHI_PUBLIC_CMS_SITE_BRIDGE } from "@/runtime-modules/public";\n\nexport const dynamic = "force-dynamic";\n\nexport default createPhiNextDynamicRootBoundary(\n  PHI_PUBLIC_CMS_SITE_BRIDGE,\n  PhiPublicRuntimeModuleClientBoundary,\n);\n`,
     [`${SITE_APP}/[root]/(root)/page.tsx`]: rootPage,
     [`${SITE_APP}/[root]/(pages)/[...path]/page.tsx`]: rootPage,
-    [`${SITE_APP}/[root]/not-found.tsx`]: `import { createPhiNextStaticAreaNotFound } from "@phis/ui/next/area-route";\nimport { PHI_PUBLIC_CMS_SITE_BRIDGE } from "@/runtime-modules/public";\n\nexport const dynamic = "force-dynamic";\n\nexport default createPhiNextStaticAreaNotFound(PHI_PUBLIC_CMS_SITE_BRIDGE, "public");\n`,
   };
   for (const [group, chrome] of AREA_BRANCHES) {
     files[`${SITE_APP}/[root]/${group}/layout.tsx`] = `import { createPhiNextDynamicRootLayout } from "@phis/ui/next/area-route";\nimport { PHI_PUBLIC_CMS_SITE_BRIDGE } from "@/runtime-modules/public";\n\nexport const dynamic = "force-dynamic";\n\nexport default createPhiNextDynamicRootLayout(PHI_PUBLIC_CMS_SITE_BRIDGE, ${chrome});\n`;

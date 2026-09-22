@@ -94,6 +94,7 @@ describe("site scaffold", () => {
       expect(area).not.toContain(`@/runtime-modules/${other}`);
     }
 
+    // The Site's only refusal routes, and the reason the Areas carry none is pinned further down.
     for (const route of ["not-found", "unauthorized", "forbidden"]) {
       expect(files[`src/app/(site)/${route}.tsx`]).toContain("PHI_CMS_ROOT_ERROR_AREA");
     }
@@ -230,14 +231,21 @@ describe("site scaffold", () => {
 
   /*
    * What the canonical Skeleton needs to compile and to answer a Form: a generated Site that differed
-   * here built nothing -- an Area 404 without its Area, a Site door without the Bridge loader the paths
-   * it answers itself require, a Builder host without the authoring half of the projection.
+   * here built nothing -- a Site door without the Bridge loader the paths it answers itself require, a
+   * Builder host without the authoring half of the projection. What it must not carry is here too.
    */
   it("wires what the Skeleton's routes require", () => {
     const files = buildPhiSiteScaffoldFiles(context);
 
-    expect(files["src/app/(site)/admin/not-found.tsx"]).toContain('PHI_ADMIN_CMS_SITE_BRIDGE, "admin"');
-    expect(files["src/app/(site)/[root]/not-found.tsx"]).toContain('PHI_PUBLIC_CMS_SITE_BRIDGE, "public"');
+    /*
+     * No Area carries a refusal route. One there could never catch anything: existence is decided by
+     * the Area's shell rather than by the Page, so that the status line can still say 404, and Next
+     * catches a shell's refusal above the shell. Generating them cost a resolution per request each
+     * and answered exactly what the root route answers.
+     */
+    for (const area of ["[root]", "accounting", "admin", "app", "builder", "editor"]) {
+      expect(files[`src/app/(site)/${area}/not-found.tsx`]).toBeUndefined();
+    }
     expect(files["src/app/api/site/[[...path]]/route.ts"]).toContain("loadAreaBridge: loadPhiSiteAreaBridge");
     expect(files["src/runtime-modules/area-bridges.ts"]).toContain('case "accounting"');
     // Only the Site door takes them; the other three proxies have no Site knowledge to hand over.
