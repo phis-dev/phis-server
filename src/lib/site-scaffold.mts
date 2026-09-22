@@ -294,6 +294,9 @@ function rootErrorAreaFile() {
       + ` * inside an Area could never catch anything: existence is decided by the Area's shell rather than\n`
       + ` * by the Page, because deciding it below the shell arrives after the flush and answers 200 instead\n`
       + ` * of 404. The shell is the thrower, so the refusal is always caught above it.\n`
+      + ` *\n`
+      + ` * The 500 is not among them and needs none of this. It is reached once rendering has already\n`
+      + ` * failed, so it resolves nothing and rebuilds nothing: a fixed page at \`src/app/global-error.tsx\`.\n`
       + ` */\n`
       + `export const PHI_CMS_ROOT_ERROR_AREA: PhiNextRootErrorArea = {\n`
       + `  loadBridge: () =>\n`
