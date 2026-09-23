@@ -95,6 +95,20 @@ export function buildSessionExpiresAt() {
   return new Date(Date.now() + SESSION_TTL_SECONDS * 1000);
 }
 
+/**
+ * `sameSite: "lax"` is load-bearing for `/api/site`, and it is the only thing bearing it.
+ *
+ * Those routes verify no CSRF token -- `verifyCsrfRequest` guards `/api/v1/auth/*` and nothing else --
+ * so what keeps a foreign page from writing in a signed-in visitor's name is this attribute plus the
+ * absence of CORS headers. Together they hold: `Lax` withholds the cookie from a cross-site POST, and a
+ * `PATCH` or a JSON body needs a preflight that no route answers. Nothing in the application takes part.
+ *
+ * So the day this becomes `none` -- an embedding, an iframe, a third-party surface asking for it -- the
+ * 32 POST routes under `/api/site` lose their protection at once, and the request that reaches them may
+ * change Site configuration. The check belongs in `requireSiteRoleApiContext`, which every one of them
+ * already passes through; the work is on the calling side, where each writer has to send the header. Do
+ * that first, not afterwards.
+ */
 export function setSessionCookie(response: NextResponse, sessionId: string, sessionSecret: string, expiresAt: Date) {
   response.cookies.set(SESSION_COOKIE_NAME, buildSessionCookieValue(sessionId, sessionSecret), {
     httpOnly: true,
