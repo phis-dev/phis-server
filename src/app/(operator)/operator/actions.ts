@@ -1,5 +1,7 @@
 "use server";
 
+import { PHIS_SERVICE_KINDS } from "@/lib/addons/core-services";
+import { listPhisServiceProviders } from "@/lib/addons/services";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 
@@ -352,6 +354,7 @@ export async function updateOperatorSupportedLocales(formData: FormData) {
   );
   const mode = normalizeTranslationMode(String(formData.get("translationMode") ?? "none"));
   const deeplKey = String(formData.get("translationDeeplKey") ?? "").trim();
+  const addonProviderKey = String(formData.get("translationAddonProviderKey") ?? "").trim();
   const deeplEndpoint = String(formData.get("translationDeeplEndpoint") ?? "").trim();
   const publicToken = String(formData.get("translationPublicToken") ?? "").trim();
   const allowPublicReads = String(formData.get("translationAllowPublicReads") ?? "false") === "true";
@@ -367,6 +370,31 @@ export async function updateOperatorSupportedLocales(formData: FormData) {
 
   if (mode === "deepl" && (!deeplKey || !deeplEndpoint)) {
     redirect(buildTranslationsHref({ error: "Please provide a DeepL key and endpoint.", mode }));
+  }
+
+  /*
+   * `add-on` needs a provider, and only one that could actually run.
+   *
+   * Refused here rather than accepted and discovered later: an installation saved with a disabled or
+   * interface-mismatched Add-on selected would look configured and translate nothing, which is the
+   * state this check exists to prevent. With none installed there is nothing to select and the mode
+   * cannot be saved at all.
+   */
+  if (mode === "add-on") {
+    const available = listPhisServiceProviders(PHIS_SERVICE_KINDS.translation)
+      .filter((provider) => provider.enabled && provider.interfaceCurrent);
+    if (available.length === 0) {
+      redirect(buildTranslationsHref({
+        error: "No installed add-on offers translation.",
+        mode,
+      }));
+    }
+    if (!available.some((provider) => provider.providerKey === addonProviderKey)) {
+      redirect(buildTranslationsHref({
+        error: "Please select an installed translation add-on.",
+        mode,
+      }));
+    }
   }
 
   if (allowPublicWrites && !allowPublicReads) {
@@ -443,6 +471,7 @@ export async function updateOperatorSupportedLocales(formData: FormData) {
     translation: {
       ...runtimeConfig.translation,
       mode,
+      providerKey: mode === "add-on" ? addonProviderKey : "",
       supportedLocales,
       allowPublicReads,
       allowPublicWrites,

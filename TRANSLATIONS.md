@@ -160,9 +160,12 @@ only one: a loopback HTTP route, a dynamic import, or a Module-owned adapter is 
 
 **Several implementations may be installed, and the operator selects one.** Uniqueness is on
 `(service kind, provider key)`, not on the kind, so an installation may hold a vendor provider and a
-local one and switch between them without uninstalling either. `add-on` with nothing selected, or with
-a selection whose provider is not installed and ready, is an installation that cannot translate -- and
-it says so rather than choosing on the operator's behalf.
+local one and switch between them without uninstalling either. The selection is
+`translation.providerKey`, and `add-on` cannot be saved without one: with nothing installed there is
+nothing to select and the mode is refused, and a provider that is installed but disabled or built
+against another interface is offered in the list and cannot be chosen. An installation saved with an
+unusable selection would look configured and translate nothing, which is the state the refusal exists
+to prevent.
 
 `translation.customEndpoint` is gone. It configured an HTTP endpoint that translated and could say
 nothing else about itself, so an installation could not learn which languages it accepted without

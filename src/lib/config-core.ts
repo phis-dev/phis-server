@@ -127,6 +127,14 @@ export type PhisConfig = {
      * operator selected. `none` returns source text.
      */
     mode?: "deepl" | "cdn+deepl" | "add-on" | "none";
+    /**
+     * Which translation service provider `add-on` mode uses, as the provider key of a manifest.
+     *
+     * Several implementations may be installed, so naming the kind is not enough -- uniqueness is on
+     * `(service kind, provider key)`. Empty while nothing is selected, which is also what an
+     * installation with no such Add-on can only ever have.
+     */
+    providerKey?: string;
     cdnBaseUrl?: string;
     supportedLocales?: string[];
     allowedLocales?: string[];

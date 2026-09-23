@@ -50,6 +50,10 @@ type OperatorTranslationsLabels = {
   cdnEndpointHelp: string;
   modeAddon: string;
   modeAddonDescription: string;
+  addonProvider: string;
+  addonProviderHelp: string;
+  addonProviderEmpty: string;
+  addonProviderUnset: string;
   customSchema: string;
   customSchemaTitle: string;
   customSchemaIntro: string;
@@ -98,6 +102,8 @@ export function OperatorTranslationsPanel({
   initialAllowPublicReads,
   initialAllowPublicWrites,
   initialPublicToken,
+  addonProviders,
+  initialAddonProviderKey,
 }: {
   labels: OperatorTranslationsLabels;
   mode: TranslationMode;
@@ -114,6 +120,13 @@ export function OperatorTranslationsPanel({
   initialAllowPublicReads: boolean;
   initialAllowPublicWrites: boolean;
   initialPublicToken: string;
+  addonProviders: ReadonlyArray<{
+    addonId: string;
+    providerKey: string;
+    enabled: boolean;
+    interfaceCurrent: boolean;
+  }>;
+  initialAddonProviderKey: string;
 }) {
   const router = useRouter();
   const [selectedLocales, setSelectedLocales] = useState<string[]>(configuredLocales);
@@ -125,6 +138,7 @@ export function OperatorTranslationsPanel({
   const [allowPublicWrites, setAllowPublicWrites] = useState(initialAllowPublicWrites);
   const [confirmEnablePublicWrites, setConfirmEnablePublicWrites] = useState(false);
   const [publicToken, setPublicToken] = useState(initialPublicToken);
+  const [addonProviderKey, setAddonProviderKey] = useState(initialAddonProviderKey);
   const [showCustomSchema, setShowCustomSchema] = useState(false);
   const lockedLocaleSet = new Set(lockedLocales);
   const notifications = [
@@ -238,6 +252,47 @@ export function OperatorTranslationsPanel({
                         </span>
                       </span>
                     </label>
+
+                    {mode === "add-on" && option.value === "add-on" ? (
+                      <div className="ui_choice_fields ui_choice_fields_inline">
+                        <div className="ui_field">
+                          <span className="operator-field_label_row">
+                            <span className="ui_field_label">{labels.addonProvider}</span>
+                            <FieldHelpBadge helpText={labels.addonProviderHelp} />
+                          </span>
+                          {/*
+                            Nothing installed means nothing to choose, and the control says which of the
+                            two it is: an operator has to be able to tell "none offered" from "none
+                            picked yet". A disabled or interface-mismatched provider is listed and not
+                            selectable, so an Add-on that is present but unusable does not look absent.
+                          */}
+                          <select
+                            className="ui_input"
+                            name="translationAddonProviderKey"
+                            value={addonProviderKey}
+                            disabled={addonProviders.length === 0}
+                            onChange={(event) => setAddonProviderKey(event.target.value)}
+                          >
+                            <option value="">
+                              {addonProviders.length === 0
+                                ? labels.addonProviderEmpty
+                                : labels.addonProviderUnset}
+                            </option>
+                            {addonProviders.map((provider) => (
+                              <option
+                                key={provider.providerKey}
+                                value={provider.providerKey}
+                                disabled={!provider.enabled || !provider.interfaceCurrent}
+                              >
+                                {`${provider.addonId} -- ${provider.providerKey}`}
+                                {provider.enabled ? "" : " (disabled)"}
+                                {provider.interfaceCurrent ? "" : " (interface mismatch)"}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      </div>
+                    ) : null}
 
                     {mode === "cdn+deepl" && option.value === "cdn+deepl" ? (
                       <div className="ui_choice_fields ui_choice_fields_inline">

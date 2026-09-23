@@ -88,6 +88,11 @@ export const OPERATOR_TRANSLATIONS_LABELS = {
   modeAddon: "Translation add-on",
   modeAddonDescription:
     "Hand translation to the service provider an add-on supplies and the operator selects. What it talks to is the provider's own business.",
+  addonProvider: "Translation add-on",
+  addonProviderHelp:
+    "Which installed add-on translates. Several may be installed; exactly one is used. An add-on that is disabled or was built against another interface is listed and cannot be chosen.",
+  addonProviderEmpty: "No installed add-on offers translation.",
+  addonProviderUnset: "Select an add-on",
   customSchema: "Schema",
   customSchemaTitle: "Custom translation schema",
   customSchemaIntro:

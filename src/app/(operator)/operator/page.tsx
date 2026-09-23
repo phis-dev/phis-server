@@ -1,3 +1,5 @@
+import { PHIS_SERVICE_KINDS } from "@/lib/addons/core-services";
+import { listPhisServiceProviders } from "@/lib/addons/services";
 import { redirect } from "next/navigation";
 
 import {
@@ -191,6 +193,8 @@ export default async function OperatorPage({
         initialAllowPublicReads={config.translation?.allowPublicReads === true}
         initialAllowPublicWrites={config.translation?.allowPublicWrites === true}
         initialPublicToken={config.api?.publicToken?.trim() ?? ""}
+        addonProviders={listPhisServiceProviders(PHIS_SERVICE_KINDS.translation)}
+        initialAddonProviderKey={config.translation?.providerKey?.trim() ?? ""}
       />
     );
   }

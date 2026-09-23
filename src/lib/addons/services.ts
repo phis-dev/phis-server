@@ -67,6 +67,43 @@ function findDeclaringEntry(serviceKind: string, providerKey: string) {
   return null;
 }
 
+/**
+ * Which installed Add-ons offer an implementation of one service kind.
+ *
+ * For an operator choosing between them. It reports what each one is rather than filtering to the
+ * usable ones, because "installed but disabled" and "built against another interface" are answers a
+ * person configuring this needs to see -- a list that silently omitted them would leave somebody
+ * wondering where their Add-on went.
+ *
+ * Not a resolution. Nothing is loaded and no factory runs; that is `resolvePhisServiceProvider`, which
+ * checks all of this again at the moment it matters.
+ */
+export function listPhisServiceProviders(serviceKind: string) {
+  const providers: Array<{
+    addonId: string;
+    providerKey: string;
+    enabled: boolean;
+    interfaceCurrent: boolean;
+  }> = [];
+  for (const [addonId, entry] of Object.entries(getPhisAddonInstalledManifest())) {
+    for (const descriptor of entry.manifest.serviceProviders) {
+      if (descriptor.serviceKind !== serviceKind) {
+        continue;
+      }
+      providers.push({
+        addonId,
+        providerKey: descriptor.providerKey,
+        enabled: entry.enabled,
+        interfaceCurrent: isPhisServiceInterfaceCurrent(
+          descriptor.serviceKind,
+          descriptor.interfaceDigest,
+        ),
+      });
+    }
+  }
+  return providers;
+}
+
 export async function resolvePhisServiceProvider(
   serviceKind: string,
   providerKey: string,
