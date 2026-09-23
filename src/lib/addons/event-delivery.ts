@@ -12,7 +12,7 @@ import {
   markPhisAddonEventFailed,
   type PhisAddonEventRow,
 } from "@/db/addon-events";
-import { getPool } from "@/lib/db";
+import { getSiteIdentityById } from "@/db/sites";
 import { logRuntimeEvent } from "@/lib/log";
 
 /**
@@ -33,11 +33,7 @@ const EVENT_TIMEOUT_MS = 15_000;
 const EVENT_BATCH_SIZE = 200;
 
 async function readSite(siteId: number) {
-  const { rows } = await getPool().query<{ id: number; key: string }>(
-    `SELECT id, key FROM phis.sites WHERE id = $1 LIMIT 1`,
-    [siteId],
-  );
-  return rows[0] ?? null;
+  return getSiteIdentityById(siteId);
 }
 
 async function invokeEventHandler(input: {

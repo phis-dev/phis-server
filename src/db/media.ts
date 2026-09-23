@@ -722,6 +722,25 @@ export async function updateMediaUploadSessionByToken(token: string, input: {
   return rows[0] ? mapUpload(rows[0]) : null;
 }
 
+/**
+ * An upload session closed as finished, in the transaction that made it true.
+ *
+ * Not `updateMediaUploadSessionByToken`: that one sets values a caller passes, and the useful part here
+ * is `final_storage_key = staging_storage_key` -- a column taking another column's value, which says
+ * that the file stayed where it was staged rather than repeating a key the caller would have to read
+ * first and could get wrong. It takes the connection because the Asset row and the Space counters are
+ * written beside it and either all of it holds or none.
+ */
+export async function completeMediaUploadSessionWithDb(db: DbQueryable, token: string, status: number) {
+  await db.query(
+    `UPDATE phis.media_upload_sessions
+        SET status = $2, finalized_at = NOW(), final_storage_key = staging_storage_key,
+            updated_at = NOW()
+      WHERE token = $1`,
+    [token, status],
+  );
+}
+
 export async function deleteMediaUploadSessionByToken(token: string) {
   const result = await getPool().query(`DELETE FROM phis.media_upload_sessions WHERE token = $1`, [token.trim()]); return (result.rowCount ?? 0) > 0;
 }

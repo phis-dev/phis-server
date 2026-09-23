@@ -12,6 +12,7 @@ import type {
 import {
   PhiMediaDeliveryPolicy,
   PhisMediaSpaceKind,
+  commitMediaSpaceReservationWithDb,
   ensureAddonMediaSpace,
   ensureSiteMediaConfig,
   getMediaStorageProfile,
@@ -22,6 +23,7 @@ import {
 import { resolvePhiMediaDeliveryUrl } from "@/lib/media-response";
 import {
   abortMediaUploadSessionByToken,
+  completeMediaUploadSessionWithDb,
   createMediaAsset,
   createMediaUploadSession,
   getMediaAssetBySiteAndId,
@@ -391,14 +393,11 @@ export function buildPhisAddonAssetsCapability(input: {
       try {
         await client.query("BEGIN");
         // Reservation becomes usage in the same act that creates the row it paid for.
-        const { rows: committed } = await client.query<{ id: number }>(
-          `UPDATE phis.media_spaces
-              SET reserved_bytes = GREATEST(0, reserved_bytes - $2),
-                  used_bytes = used_bytes + $2, updated_at = NOW()
-            WHERE id = $1 RETURNING id`,
-          [space.id, session.sizeBytes],
-        );
-        if (!committed[0]) {
+        const committed = await commitMediaSpaceReservationWithDb(client, {
+          spaceId: space.id,
+          bytes: session.sizeBytes,
+        });
+        if (!committed) {
           throw new PhisAddonAssetError("The Space reservation is no longer available.");
         }
         const asset = await createMediaAsset({
@@ -444,13 +443,7 @@ export function buildPhisAddonAssetsCapability(input: {
             }),
           });
         }
-        await client.query(
-          `UPDATE phis.media_upload_sessions
-              SET status = $2, finalized_at = NOW(), final_storage_key = staging_storage_key,
-                  updated_at = NOW()
-            WHERE token = $1`,
-          [token, PhiMediaUploadSessionStatus.Completed],
-        );
+        await completeMediaUploadSessionWithDb(client, token, PhiMediaUploadSessionStatus.Completed);
         await client.query("COMMIT");
       } catch (error) {
         await client.query("ROLLBACK").catch(() => {});

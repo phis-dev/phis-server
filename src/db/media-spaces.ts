@@ -455,6 +455,31 @@ export async function reserveMediaSpaceQuota(input: { spaceId: number; bytes: nu
   return Boolean(rows[0]);
 }
 
+/**
+ * A reservation becoming usage, in the transaction that creates the row it paid for.
+ *
+ * The two counters move in one statement because they are one fact: the bytes stop being promised at
+ * the moment they start being held. It takes the connection rather than the pool for the same reason --
+ * the Asset row, the link and the finished upload session are written beside it, and a commit that
+ * landed while any of those failed would leave a Space charged for a file nobody can reach.
+ *
+ * `false` means the reservation was not there to commit, which the caller has to treat as a refusal
+ * rather than a retry: something else already released or committed it.
+ */
+export async function commitMediaSpaceReservationWithDb(
+  db: MediaSpaceDbQueryable,
+  input: { spaceId: number; bytes: number },
+) {
+  const { rows } = await db.query<{ id: number }>(
+    `UPDATE phis.media_spaces
+        SET reserved_bytes = GREATEST(0, reserved_bytes - $2),
+            used_bytes = used_bytes + $2, updated_at = NOW()
+      WHERE id = $1 RETURNING id`,
+    [input.spaceId, input.bytes],
+  );
+  return Boolean(rows[0]);
+}
+
 export async function releaseMediaSpaceReservation(input: { spaceId: number; bytes: number }) {
   await getPool().query(
     `UPDATE phis.media_spaces SET reserved_bytes = GREATEST(0, reserved_bytes - $2), updated_at = NOW()

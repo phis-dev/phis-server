@@ -212,6 +212,22 @@ export async function getSiteByKey(input: string) {
   return site;
 }
 
+/**
+ * A Site's id and key, with no judgement attached.
+ *
+ * Deliberately without the active filter `getSiteByKey` applies: the caller is Add-on event delivery,
+ * which is working through rows that were written when the Site was whatever it was, and dropping the
+ * Site here would turn a delivery into a silent no-op rather than the failure it is. Naming the Site is
+ * not the place to decide whether it may be served.
+ */
+export async function getSiteIdentityById(siteId: number) {
+  const { rows } = await getPool().query<{ id: number; key: string }>(
+    `SELECT id, key FROM phis.sites WHERE id = $1 LIMIT 1`,
+    [siteId],
+  );
+  return rows[0] ?? null;
+}
+
 export async function listSites() {
   const pool = getPool();
   const { rows } = await pool.query<{

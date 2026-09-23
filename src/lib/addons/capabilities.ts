@@ -113,6 +113,7 @@ async function readRowScope(
   const siteFilter = descriptor.siteScoped
     ? ` AND ${quotePhiIdentifier(PHIS_ADDON_SITE_COLUMN)} = $2`
     : "";
+  // db-boundary-exempt: the schema and table are an Add-on's own, named at runtime from its manifest.
   const { rows } = await getPool().query<{ owner_user_id: number | null; group_id: number | null }>(
     `SELECT ${columns}
        FROM ${quotePhiIdentifier(schemaName)}.${quotePhiIdentifier(table)}

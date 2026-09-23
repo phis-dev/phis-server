@@ -326,6 +326,7 @@ async function run(
   }
 
   if (!query.paging) {
+    // db-boundary-exempt: the Add-on brought this SQL and owns the tables it names.
     const result = await db.query(
       query.sql,
       resolveBindings(query, query.bindings, bound, args, parameters, { size: 0, keys: [] }),
@@ -360,6 +361,7 @@ async function run(
    * So: no `name` here, and no prepared-statement layer above it. The server-side `plan_cache_mode` does
    * not reach this -- that one governs the cache for prepared statements, and there is none.
    */
+  // db-boundary-exempt: the Add-on brought this SQL and owns the tables it names.
   const result = await db.query(
     keys.length > 0 ? paging.sql : query.sql,
     resolveBindings(
