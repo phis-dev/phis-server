@@ -117,6 +117,31 @@ capabilities it is derived from the id alone and describes no shape. A shape cha
 `:v2`, Core stops offering `:v1`, and an Add-on requiring the old one is refused at dispatch by name
 alone. A service kind has no version in its name and needs its interface digest to say the same thing.
 
+### One supplier, and what happens when there are two
+
+"Supplied by Core or one Add-on" is a count, not a turn of phrase. A capability names a single place an
+installation goes for that interface, and two Add-ons claiming the same id is not a preference to
+resolve but an installation that has not been decided.
+
+It is refused in two places, and both are needed:
+
+- **`phis` refuses the second install.** That is where a person makes the mistake, and it is the only
+  place they can be told before anything depends on it.
+- **Resolution refuses a double claim.** The capability is reported unavailable with a diagnostic code,
+  and an Add-on requiring it is refused as though nobody offered it.
+
+The CLI check alone would make this a request rather than an invariant: an install root is a directory,
+and a directory can be written to by something other than `phis`. The resolver is what makes the
+guarantee hold; the CLI is what makes it legible.
+
+**Picking one is not an option.** Choosing by load order or alphabetically produces an installation that
+works, routed through a supplier nobody selected, and the operator finds out when the behaviour is
+wrong rather than when the configuration is. Refusing to start is the other overreach -- a misplaced
+directory must not take the server down.
+
+The end state is the same one an installation reaches when it names a capability nobody supplies: off,
+with a reason. One state, not two.
+
 ### How a Capability reaches an Add-on
 
 Declaring one is not receiving one. `requiredCoreCapabilities` decides whether the Add-on may run at

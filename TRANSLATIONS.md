@@ -118,6 +118,51 @@ Only registered flags are accepted. The complete leading flag envelope is remove
 request. Any remaining text is sent as provider context; if none remains, provider context is omitted.
 Brackets appearing later in natural-language context are preserved.
 
+## Translation modes
+
+The operator sets one mode. It names where a translation comes from, and there are four:
+
+| mode | who translates |
+| --- | --- |
+| `deepl` | DeepL |
+| `cdn+deepl` | the CDN first, DeepL for whatever it does not answer |
+| `add-on` | the Add-on that supplies `@phis/server/translation:v1` |
+| `none` | nobody |
+
+**The chain lives inside a mode, not in the operator's hands.** `cdn+deepl` asks the CDN and falls
+through to DeepL; the operator states an arrangement, not a rule set. `deepl` is the same arrangement
+without the CDN in front, and it is a real choice rather than a leftover: the CDN answers first, so an
+installation that has worded its own global messages picks `deepl` to keep them.
+
+**The CDN only ever serves global messages.** A CDN can hold translations of text that is the same
+everywhere -- `phis.tr_msg` and the label sets above it. It cannot hold a translation of a Site's own
+string, and it cannot hold one of a message somebody wrote a minute ago. `tr_site_msg` is never served
+from it, and neither is anything outside this contract.
+
+**`none` is the last link of every chain, not a fourth thing.** When no step answers, the source text
+is returned unchanged and the result is marked as not succeeded. That is what the other modes already
+do when their provider fails, which is why a stand-in is recorded and must not be stored.
+
+**`add-on` hands the whole question over.** An Add-on is asked for a translation and answers with one;
+whether it consulted a CDN, a local model, or a vendor of its own is its business and is not configured
+here. Exactly one Add-on may supply the capability
+([SERVER_ADDONS.md](./SERVER_ADDONS.md)), so `add-on` with no supplier -- or with two -- is an
+installation that cannot translate, and it says so rather than choosing.
+
+`translation.customEndpoint` is gone. It configured an HTTP endpoint that translated and could say
+nothing else about itself, so an installation could not learn which languages it accepted without
+sending it text to find out. An Add-on declares what it supports on an interface that already exists
+and is already versioned by its digest.
+
+### Which targets a mode can reach
+
+For `deepl` and `cdn+deepl` the answer is already in `PHI_LOCALE_CAPABILITIES`: a locale carries its
+`deeplTargetLang`, and a locale DeepL gains is added to the capability table before a Site may offer
+it. There is no second list to fetch and no live query to depend on.
+
+For `add-on` the table cannot answer, because the supplier is not DeepL. The Add-on declares its own
+reachable targets, and an installation offers the intersection with the Site's available locales.
+
 ## Provider requests
 
 - `sourceLocale` is sent as the provider's source-language parameter and never encoded into context.

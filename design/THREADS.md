@@ -1,6 +1,6 @@
 # Threads: Planned Design
 
-**Status: sections 1 to 3 of the order in section 14 are built, and section 4 is under way.** The
+**Status: sections 1 to 3 of the order in section 15 are built, and section 4 is under way.** The
 schema, the visibility predicate, `/api/site/threads`, the recut `threads:v1`, `resource-links:v1`,
 verified hooks and the event outbox are in the server; [DB.md](../DB.md) holds the tables and
 [SERVER_ADDONS.md](../SERVER_ADDONS.md) sections 8, 10, 13 and 18 hold the contracts. What is described
@@ -11,7 +11,7 @@ here and is **not** built is the rest of step 4 -- the inbox and the candidates 
 Decisions taken while writing this are stated where they apply. One question is deliberately left open
 and is named where it arises: whether an attachment on an `External` ticket is mirrored outward, which
 belongs to the Add-on that would carry it. What otherwise remains is building it in the order of
-section 14.
+section 15.
 
 ## 1. Why the current model is not enough
 
@@ -297,7 +297,7 @@ handed it in and stops sitting on that person's quota -- is
 
 Attachments do not wait for it. Because the audience never came from custody, a transfer moves who pays
 and who administers and touches nothing about who reads -- which is exactly what that section requires
-of a transfer and could not have promised if the two axes were the same one. The order in section 14
+of a transfer and could not have promised if the two axes were the same one. The order in section 15
 therefore builds attachments first and leaves the transfer to its own occasion.
 
 ### What leaves Core
@@ -699,7 +699,59 @@ differs -- and arriving is exactly the part that should differ.
   runtime signal carrying the ticket id: create or link an issue, the tasks it produced, their state,
   and the export notice of an `External` ticket.
 
-## 14. Order
+## 14. The language a message is written in
+
+**Planned, like the rest of this document.**
+
+### The stored fact
+
+`thread_messages` carries the language its body is written in: `source_lang VARCHAR(8) NULL`, a locale
+from `PHI_LOCALE_CAPABILITIES` in the form every other locale in this schema uses. It sits on the
+message and not on the thread, because two people writing in different languages is the case it exists
+for -- one language per conversation would be wrong in exactly the situation that makes it useful.
+
+`NULL` means not declared. It is not a claim that the message is in the Site's default language, and
+nothing may read it as one.
+
+**It is not a translation provider's catalogue.** A provider is swapped and a language leaves its list;
+the message from two years ago is still written in Portuguese. What a provider can reach decides what
+is offered at translation time and never what may be stored, which is why the vocabulary is the
+platform capability table and not a vendor's.
+
+**The writer declares it.** The interface locale of the person writing is not the language they are
+writing in -- somebody with a German interface answers an English customer in English -- so a surface
+offers a choice rather than taking the UI locale silently. The declaration is the message author's; the
+server stores what it is given.
+
+### Translating one, on request
+
+A translation of a message is a view of it. **The original always remains and nothing is persisted:**
+not the translated text, not a record that it was shown.
+
+- **Only when asked.** Never automatic, never a consequence of two languages differing, and never
+  ahead of time. A Site that shows a thread shows originals.
+- **One message at a time**, into one target locale the caller names.
+- **`Confidential` refuses.** A translation is the body leaving Core, which is the one thing that flag
+  forbids (section 4). The refusal is here, not in the surface that asked: a Site fetching a body and
+  posting it to a provider itself would have moved it out already, which is why the call is Core's.
+- **`Internal` does not refuse**, because it answers a different question. Whoever may read the message
+  may read it translated.
+- **`Edited` is never set.** That flag means a person changed the message.
+- **No store, no cache, no marker.** The translation machinery in
+  [TRANSLATIONS.md](../TRANSLATIONS.md) exists for messages that are stored, keyed and versioned; a
+  conversation body is none of those and must not enter `tr_msg`, `tr_site_msg`, or the change-marker
+  path. What is shared with that contract is the provider mode and nothing above it.
+- **The body sent is `body_markdown` when there is one, otherwise `body_text`.** Providers pass the
+  control characters through, so the richer body costs nothing and loses nothing.
+
+Whether an installation can translate at all is the mode of [TRANSLATIONS.md](../TRANSLATIONS.md),
+reported as `@phis/server/translation:v1` so a Site can decide whether to offer the control before it
+draws one that cannot work.
+
+**What is given up by not persisting:** there is afterwards no record that a translation was shown, so
+nothing can say what a support agent actually read. That is accepted, not overlooked.
+
+## 15. Order
 
 1. Contracts: `threads.ts`, `PhiBaseRole.Staff`, group flags, ticket type flags and close policies,
    `resource-links:v1`, hook `verification`, `eventHandlers`.
@@ -713,6 +765,12 @@ differs -- and arriving is exactly the part that should differ.
    `@phis/support` declaring the User Space ([SUPPORT.md](./SUPPORT.md)).~~ Built, `threads:v1`
    included. What is not is the composer that offers one: it lives in `@phis/ui/threads`, step 4.
 6. `@phis/github`.
+7. The message language of section 14: the column, the capability that says whether this installation
+   can translate, and the route that translates one message and stores nothing.
+
+Step 7 is last because it is the only one that is worth nothing on its own. A stored language is read
+by a surface offering a choice, and there is no reason to translate a message until people are writing
+them in more than one language -- which is a state a Site arrives at, not one it is configured into.
 
 Attachments come before the GitHub Add-on because that Add-on has to say what it does with a file
 arriving from outside and with one leaving, and neither question can be answered while a message cannot
