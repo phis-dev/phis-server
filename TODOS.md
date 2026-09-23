@@ -209,6 +209,15 @@ then, and both are `phis-cli`:
 - **`schema apply` can only create.** There is no `ALTER TABLE` anywhere in `src/cli/` or `src/db/` for
   the Core schema, so applying a changed script to a live database is a no-op for every table that
   already exists.
+- **The migration role may not be able to alter.** The CLI takes its connection from
+  `database.migrationUri` and says why -- migration authority is meant to be separate from the runtime
+  role. On the development database every table in `phis` is nevertheless owned by the runtime role,
+  and the migration role is in no group that would lend it ownership, so `ALTER TABLE` is refused with
+  `must be owner of table`. Creating hides this, because `CREATE TABLE` needs a privilege on the schema
+  rather than on a table and makes its creator the owner; it surfaces the first time something changes
+  instead of creating. Whichever way it is settled -- the migrator owns the tables, is granted what it
+  needs, or `migrationUri` means something narrower than its name -- it has to be settled before an
+  alter path is written, or that path will be written against a role that cannot run it.
 
 Whatever is built for it reports what it found before it changes anything, and is idempotent. No silent
 backfill and no scheduler, on the same terms as the section below.
