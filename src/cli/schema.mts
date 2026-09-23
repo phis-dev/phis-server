@@ -67,6 +67,17 @@ export type PhiSchemaApplyResult = {
    * repair to run.
    */
   missingExtensions: string[];
+  /**
+   * How many objects the script found already in place, counted from PostgreSQL's own notices.
+   *
+   * `null` for a check, which changes nothing and has nothing to count. For an apply it is the honest
+   * half of the answer that `created` cannot give: the script reaches far past `CREATE TABLE` -- columns,
+   * constraints and indexes are all nursed along with `IF NOT EXISTS` -- so a run that creates no table
+   * may still have added a column, and a run that adds nothing at all looks exactly the same from the
+   * table list. The server says "already exists, skipping" for each one it passes over, so counting
+   * those separates "there was nothing to do" from "something was done that tables do not show".
+   */
+  alreadyPresent: number | null;
 };
 
 /**
@@ -91,6 +102,7 @@ export async function checkPhiCoreSchema(input: {
       created: [],
       grantedTo: null,
       missingExtensions: await missingExtensions(client, sql),
+      alreadyPresent: null,
     };
   } finally {
     await client.end();
@@ -106,6 +118,21 @@ export async function applyPhiCoreSchema(input: {
   const client = new Client({ connectionString: input.uri });
   await client.connect();
   try {
+    /*
+     * What the server passed over, in its own words.
+     *
+     * `CREATE TABLE IF NOT EXISTS` and its relatives raise a notice naming each object they skip, and
+     * that is the only place this run says anything about columns, constraints and indexes -- the table
+     * list before and after cannot see them. Counting notices is not the same as knowing what changed,
+     * but it tells apart the two cases that looked identical: nothing to do, and something done.
+     */
+    let alreadyPresent = 0;
+    client.on("notice", (notice) => {
+      if (notice.message?.includes("already exists, skipping")) {
+        alreadyPresent += 1;
+      }
+    });
+
     const before = await presentTables(client);
     await client.query(sql);
     const after = await presentTables(client);
@@ -195,6 +222,7 @@ export async function applyPhiCoreSchema(input: {
       grantedTo,
       // After running the script, so this reports what the database refused rather than what it lacked.
       missingExtensions: await missingExtensions(client, sql),
+      alreadyPresent,
     };
   } finally {
     await client.end();

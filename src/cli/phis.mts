@@ -1372,7 +1372,16 @@ async function runCoreSchemaCommand(
     if (json) {
       printJson(result);
     } else if (result.missing.length === 0) {
-      console.log(`Core schema is current (${result.declared} tables).`);
+      /*
+       * What was compared, rather than a verdict the comparison cannot support.
+       *
+       * This reads `CREATE TABLE` lines and asks `pg_tables`, so it is blind to every column,
+       * constraint and index the script also nurses along. "Current" was therefore a clean bill of
+       * health for an installation missing a column a release had added -- exactly the case this
+       * command exists to catch.
+       */
+      console.log(`All ${result.declared} declared table(s) are present.`);
+      console.log("Table names only -- columns, constraints and indexes are not compared.");
       for (const extension of result.missingExtensions) {
         console.log(`  extension ${extension} is not installed.`);
       }
@@ -1399,11 +1408,21 @@ async function runCoreSchemaCommand(
       printJson(result);
       return;
     }
+    /*
+     * The script ran; saying so is the part that is always true.
+     *
+     * "Already current" was said on a run that had just added a column, because the sentence was built
+     * from the table list and the script reaches much further than that. What it created in tables is
+     * worth naming; what it found in place is the server's own count and says the rest.
+     */
     console.log(
       result.created.length === 0
-        ? `Core schema was already current (${result.declared} tables).`
-        : `Created ${result.created.length} table(s): ${result.created.join(", ")}.`,
+        ? `Applied the schema script; no table was missing (${result.declared} declared).`
+        : `Applied the schema script; created ${result.created.length} table(s): ${result.created.join(", ")}.`,
     );
+    if (result.alreadyPresent) {
+      console.log(`${result.alreadyPresent} object(s) were already in place and were left as they are.`);
+    }
     if (result.grantedTo) {
       console.log(`Re-granted REFERENCES on the Core reference tables to ${result.grantedTo}.`);
     }
