@@ -744,9 +744,10 @@ not the translated text, not a record that it was shown.
 - **The body sent is `body_markdown` when there is one, otherwise `body_text`.** Providers pass the
   control characters through, so the richer body costs nothing and loses nothing.
 
-Whether an installation can translate at all is the mode of [TRANSLATIONS.md](../TRANSLATIONS.md),
-reported as `@phis/server/translation:v1` so a Site can decide whether to offer the control before it
-draws one that cannot work.
+Whether an installation can translate at all is the mode of [TRANSLATIONS.md](../TRANSLATIONS.md) --
+for `add-on`, whether the selected provider of the `@phis/server/service/translation` kind is installed
+and ready. A Site is told the answer and nothing about how it was reached, so it can decide whether to
+offer the control before drawing one that cannot work.
 
 **What is given up by not persisting:** there is afterwards no record that a translation was shown, so
 nothing can say what a support agent actually read. That is accepted, not overlooked.

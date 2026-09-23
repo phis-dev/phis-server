@@ -567,8 +567,9 @@ separate process or container behind an authenticated service boundary.
 
 An Add-on may implement a Core-owned in-process service kind through the same installation and
 activation boundary. This is the only extension path for infrastructure implementations such as an
-S3-compatible Media Storage Provider or a future LDAP/SCIM/Entra Directory Provider; a private loopback
-HTTP route, dynamic import, or Module-owned adapter is not an alternative.
+S3-compatible Media Storage Provider, a future LDAP/SCIM/Entra Directory Provider, or a translation
+unit ([TRANSLATIONS.md](./TRANSLATIONS.md)); a private loopback HTTP route, dynamic import, or
+Module-owned adapter is not an alternative.
 
 Each manifest descriptor declares:
 
