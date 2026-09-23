@@ -17,11 +17,14 @@ import {
   upsertTranslation,
 } from "@/db/translations";
 import { getPhisConfigSync } from "@/lib/config";
+import {
+  getConfiguredTranslationMode,
+  normalizeBatchMessages,
+  requestPhisTranslationUnit,
+} from "@/lib/translation-unit";
 import { getConfiguredTranslationSupportedLocalesSync } from "@/lib/translation-locale-options";
 import {
   PHI_CANONICAL_SOURCE_LOCALE,
-  resolveDeepLSourceLang,
-  resolveDeepLTargetLang,
   resolvePhiLocaleCapability,
 } from "@/lib/locale";
 import { logRuntimeEvent, normalizeLogThrowable } from "@/lib/log";
@@ -31,12 +34,7 @@ import {
   type TranslationContextFlag,
 } from "@/lib/translation-context";
 
-const DEFAULT_DEEPL_URL = "https://api-free.deepl.com/v2/translate";
 const TR_HASH_PREFIX_LENGTH = 50;
-const DEEPL_MAX_CONCURRENT_REQUESTS = 1;
-const DEEPL_CIRCUIT_BREAKER_MS = 30_000;
-const DEEPL_MAX_REQUEST_BYTES = 128 * 1024;
-const DEEPL_MAX_TEXTS_PER_REQUEST = 50;
 type TranslationFormat = "text" | "html";
 
 type TranslationInput = {
@@ -77,10 +75,6 @@ type BatchTranslationInput = {
 };
 
 const SHA256_HEX_LENGTH = 64;
-let activeDeepLRequests = 0;
-let deepLCircuitOpenUntil = 0;
-const deepLQueue: Array<() => void> = [];
-const inFlightDeepLRequests = new Map<string, Promise<string[]>>();
 
 function normalizeLocaleKey(locale: string) {
   return locale.trim().toLowerCase().split(/[-_]/)[0] ?? "";
@@ -100,10 +94,6 @@ function normalizeProvidedHash(hash: string) {
   return normalized;
 }
 
-function normalizeBatchMessages(msgs: string[]) {
-  return msgs.map((msg) => msg.trim()).filter(Boolean);
-}
-
 function normalizeTranslationFormat(format?: string | null): TranslationFormat {
   return format === "html" ? "html" : "text";
 }
@@ -121,10 +111,6 @@ function buildTranslationCacheContext(input: {
     flags.push("extern");
   }
   return buildTranslationContext({ context: input.ctx, flags });
-}
-
-function getConfiguredTranslationMode() {
-  return getPhisConfigSync().translation?.mode ?? "none";
 }
 
 /**
@@ -186,47 +172,6 @@ function isConfiguredSourceLocaleSupported(locale: string) {
   return mode === "deepl" && resolvePhiLocaleCapability(locale) != null;
 }
 
-function buildExternalTranslationCacheKey(input: {
-  provider: "custom" | "deepl";
-  locale: string;
-  sourceLocale?: string;
-  ctx?: string;
-  format: TranslationFormat;
-  msgs: string[];
-}) {
-  return JSON.stringify({
-    provider: input.provider,
-    locale: input.locale,
-    sourceLocale: input.sourceLocale ?? "",
-    ctx: input.ctx ?? "",
-    format: input.format,
-    msgs: input.msgs,
-  });
-}
-
-function logExternalTranslationFallback(input: {
-  provider: "custom" | "deepl";
-  locale: string;
-  sourceLocale?: string;
-  ctx?: string;
-  format: TranslationFormat;
-  msgCount: number;
-  error: unknown;
-}) {
-  logRuntimeEvent("warn", "translation.external_fallback", {
-    message: "External translation failed. Falling back to source text.",
-    error: normalizeLogThrowable(input.error),
-    meta: {
-      provider: input.provider,
-      locale: input.locale,
-      sourceLocale: input.sourceLocale ?? null,
-      ctx: input.ctx ?? null,
-      format: input.format,
-      msgCount: input.msgCount,
-    },
-  });
-}
-
 /**
  * Runs one message's catalogue step and reports failure instead of raising it.
  *
@@ -260,60 +205,18 @@ async function withMessageIsolation<T>(
   }
 }
 
-function openDeepLCircuitBreaker() {
-  deepLCircuitOpenUntil = Date.now() + DEEPL_CIRCUIT_BREAKER_MS;
-}
-
-async function acquireDeepLSlot() {
-  if (activeDeepLRequests < DEEPL_MAX_CONCURRENT_REQUESTS) {
-    activeDeepLRequests += 1;
-    return;
-  }
-
-  await new Promise<void>((resolve) => {
-    deepLQueue.push(resolve);
-  });
-  activeDeepLRequests += 1;
-}
-
-function releaseDeepLSlot() {
-  activeDeepLRequests = Math.max(0, activeDeepLRequests - 1);
-  const next = deepLQueue.shift();
-  if (next) {
-    next();
-  }
-}
-
-async function runDeepLRequest(
-  cacheKey: string,
-  request: () => Promise<string[]>,
-) {
-  if (Date.now() < deepLCircuitOpenUntil) {
-    throw new Error("DeepL circuit breaker is open.");
-  }
-
-  const inFlight = inFlightDeepLRequests.get(cacheKey);
-  if (inFlight) {
-    return inFlight;
-  }
-
-  const promise = (async () => {
-    await acquireDeepLSlot();
-    try {
-      return await request();
-    } finally {
-      releaseDeepLSlot();
-    }
-  })();
-
-  inFlightDeepLRequests.set(cacheKey, promise);
-  try {
-    return await promise;
-  } finally {
-    inFlightDeepLRequests.delete(cacheKey);
-  }
-}
-
+/**
+ * The store's way of asking the translation unit, and the one thing it adds.
+ *
+ * The provider call itself moved to `translation-unit.ts`; what stays here is the flag envelope and
+ * the stand-in accounting, because both belong to how a translation is *stored* rather than to how it
+ * is obtained. `getProviderTranslationContext` strips `[html]` and `[extern]` so a provider is handed
+ * natural language and nothing else.
+ *
+ * A stand-in is recorded for `failed` and not for `unconfigured`, which is the distinction the old
+ * shape carried by having the call sit in the `catch` and not on the early return. An installation
+ * that does not translate is not having an outage.
+ */
 async function requestConfiguredTranslationsOrFallback(input: {
   locale: string;
   msgs: string[];
@@ -321,213 +224,17 @@ async function requestConfiguredTranslationsOrFallback(input: {
   sourceLocale: string;
   format: TranslationFormat;
 }) {
-  const normalizedTexts = normalizeBatchMessages(input.msgs);
-  if (normalizedTexts.length === 0) {
-    return { translations: [] as string[], succeeded: true };
-  }
-
-  const translationMode = getConfiguredTranslationMode();
-  const hasDeepLKey = Boolean(getPhisConfigSync().deepl?.apiKey?.trim());
-
-  if (translationMode !== "custom" && (translationMode !== "deepl" || !hasDeepLKey)) {
-    return { translations: normalizedTexts, succeeded: false };
-  }
-
-  const provider = translationMode === "custom" ? "custom" : "deepl";
-  const providerContext = getProviderTranslationContext(input.ctx);
-  const cacheKey = buildExternalTranslationCacheKey({
-    provider,
+  const result = await requestPhisTranslationUnit({
     locale: input.locale,
+    msgs: input.msgs,
+    ctx: getProviderTranslationContext(input.ctx),
     sourceLocale: input.sourceLocale,
-    ctx: providerContext,
     format: input.format,
-    msgs: normalizedTexts,
   });
-
-  try {
-    const translations = provider === "custom"
-      ? await requestCustomTranslations({
-          locale: input.locale,
-          msgs: normalizedTexts,
-          ctx: providerContext,
-          sourceLocale: input.sourceLocale,
-          format: input.format,
-        })
-      : await requestDeepL(
-          normalizedTexts,
-          input.locale,
-          providerContext,
-          input.sourceLocale,
-          input.format,
-          cacheKey,
-        );
-    return { translations, succeeded: true };
-  } catch (error) {
+  if (result.outcome === "failed") {
     recordTranslationStandIn();
-    logExternalTranslationFallback({
-      provider,
-      locale: input.locale,
-      sourceLocale: input.sourceLocale,
-      ctx: providerContext,
-      format: input.format,
-      msgCount: normalizedTexts.length,
-      error,
-    });
-    return { translations: normalizedTexts, succeeded: false };
   }
-}
-
-async function requestCustomTranslations(input: {
-  locale: string;
-  msgs: string[];
-  ctx?: string;
-  sourceLocale?: string;
-  format?: TranslationFormat;
-}) {
-  const endpoint = getPhisConfigSync().translation?.customEndpoint?.trim();
-  if (!endpoint) {
-    throw new Error("Missing translation.customEndpoint in runtime config.");
-  }
-
-  const normalizedTexts = normalizeBatchMessages(input.msgs);
-  if (normalizedTexts.length === 0) {
-    return [];
-  }
-
-  const response = await fetch(endpoint, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      locale: input.locale,
-      msgs: normalizedTexts,
-      ctx: input.ctx?.trim() || undefined,
-      sourceLocale: input.sourceLocale?.trim() || undefined,
-      ...(input.format && input.format !== "text" ? { format: input.format } : {}),
-    }),
-    cache: "no-store",
-  });
-
-  if (!response.ok) {
-    const details = await response.text();
-    throw new Error(`Custom translation request failed: ${response.status} ${details}`);
-  }
-
-  const data = (await response.json()) as {
-    translation?: string;
-    translations?: string[];
-  };
-
-  if (normalizedTexts.length === 1 && typeof data.translation === "string") {
-    return [data.translation];
-  }
-
-  if (Array.isArray(data.translations) && data.translations.length === normalizedTexts.length) {
-    return data.translations.map((entry) => String(entry ?? ""));
-  }
-
-  throw new Error("Custom translation response did not include matching translations.");
-}
-
-async function requestDeepL(
-  texts: string[],
-  locale: string,
-  context?: string,
-  sourceLocale?: string,
-  format: TranslationFormat = "text",
-  cacheKeyPrefix = "deepl",
-) {
-  const apiKey = getPhisConfigSync().deepl?.apiKey?.trim();
-  if (!apiKey) {
-    throw new Error("Missing deepl.apiKey in config/phis-runtime.json.");
-  }
-
-  const normalizedTexts = normalizeBatchMessages(texts);
-  if (normalizedTexts.length === 0) {
-    return [];
-  }
-
-  const url = getPhisConfigSync().deepl?.apiUrl?.trim() ?? DEFAULT_DEEPL_URL;
-  const createParams = (batch: readonly string[]) => {
-    const params = new URLSearchParams({
-      target_lang: resolveDeepLTargetLang(locale),
-    });
-    const normalizedSourceLocale = sourceLocale?.trim() ? resolveDeepLSourceLang(sourceLocale) : "";
-    if (normalizedSourceLocale && normalizedSourceLocale !== resolveDeepLSourceLang(locale)) {
-      params.set("source_lang", normalizedSourceLocale);
-    }
-    for (const text of batch) {
-      params.append("text", text);
-    }
-    if (context?.trim()) {
-      params.set("context", context.trim());
-    }
-    if (format === "html") {
-      params.set("tag_handling", "html");
-      params.set("tag_handling_version", "v2");
-    }
-    return params;
-  };
-
-  const batches: string[][] = [];
-  let currentBatch: string[] = [];
-  for (const text of normalizedTexts) {
-    const candidate = [...currentBatch, text];
-    const candidateBytes = Buffer.byteLength(createParams(candidate).toString(), "utf8");
-    if (candidate.length > DEEPL_MAX_TEXTS_PER_REQUEST || candidateBytes > DEEPL_MAX_REQUEST_BYTES) {
-      if (currentBatch.length === 0) {
-        throw new Error("One DeepL translation unit exceeds the 128 KiB request limit.");
-      }
-      batches.push(currentBatch);
-      currentBatch = [text];
-      if (Buffer.byteLength(createParams(currentBatch).toString(), "utf8") > DEEPL_MAX_REQUEST_BYTES) {
-        throw new Error("One DeepL translation unit exceeds the 128 KiB request limit.");
-      }
-    } else {
-      currentBatch = candidate;
-    }
-  }
-  if (currentBatch.length > 0) {
-    batches.push(currentBatch);
-  }
-
-  // Batches are fired concurrently and bounded by the global DeepL slot semaphore, so
-  // DEEPL_MAX_CONCURRENT_REQUESTS is the single knob for provider concurrency. At the current limit
-  // of 1 this behaves exactly like the previous sequential loop.
-  const translatedBatches = await Promise.all(batches.map((batch, batchIndex) => {
-    const params = createParams(batch);
-    return runDeepLRequest(`${cacheKeyPrefix}:${batchIndex}`, async () => {
-      const response = await fetch(url, {
-        method: "POST",
-        headers: {
-          Authorization: `DeepL-Auth-Key ${apiKey}`,
-          "Content-Type": "application/x-www-form-urlencoded",
-        },
-        body: params.toString(),
-        cache: "no-store",
-      });
-
-      if (!response.ok) {
-        const details = await response.text();
-        if (response.status === 429 || response.status === 500 || response.status === 503) {
-          openDeepLCircuitBreaker();
-        }
-        throw new Error(`DeepL request failed: ${response.status} ${details}`);
-      }
-
-      const data = (await response.json()) as {
-        translations?: Array<{ text?: string }>;
-      };
-      const values = data.translations?.map((item) => item.text ?? "") ?? [];
-      if (values.length !== batch.length) {
-        throw new Error("DeepL response missing translation text.");
-      }
-      return values;
-    });
-  }));
-
-  return translatedBatches.flat();
+  return { translations: result.translations, succeeded: result.succeeded };
 }
 
 function sameLocale(left: string, right: string) {
@@ -949,50 +656,4 @@ export async function translateExternalSiteBatchWithCache(input: SiteBatchTransl
     ctx: input.ctx?.trim() ?? "",
     format: normalizeTranslationFormat(input.format),
   });
-}
-
-export async function detectTranslationSourceLocale(input: {
-  text: string;
-  targetLocale: string;
-}) {
-  const sample = input.text.trim().slice(0, 16_000);
-  if (!sample || getConfiguredTranslationMode() !== "deepl") {
-    return null;
-  }
-  const apiKey = getPhisConfigSync().deepl?.apiKey?.trim();
-  if (!apiKey) {
-    return null;
-  }
-
-  const params = new URLSearchParams({
-    target_lang: resolveDeepLTargetLang(input.targetLocale),
-    text: sample,
-  });
-  const url = getPhisConfigSync().deepl?.apiUrl?.trim() ?? DEFAULT_DEEPL_URL;
-  const cacheKey = buildExternalTranslationCacheKey({
-    provider: "deepl",
-    locale: input.targetLocale,
-    format: "text",
-    msgs: [sample],
-  });
-  const [detected = ""] = await runDeepLRequest(`detect:${cacheKey}`, async () => {
-    const response = await fetch(url, {
-      method: "POST",
-      headers: {
-        Authorization: `DeepL-Auth-Key ${apiKey}`,
-        "Content-Type": "application/x-www-form-urlencoded",
-      },
-      body: params.toString(),
-      cache: "no-store",
-    });
-    if (!response.ok) {
-      const details = await response.text();
-      throw new Error(`DeepL language detection failed: ${response.status} ${details}`);
-    }
-    const data = (await response.json()) as {
-      translations?: Array<{ detected_source_language?: string }>;
-    };
-    return [data.translations?.[0]?.detected_source_language ?? ""];
-  });
-  return resolvePhiLocaleCapability(detected)?.locale ?? null;
 }

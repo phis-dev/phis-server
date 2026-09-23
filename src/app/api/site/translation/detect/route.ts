@@ -5,7 +5,7 @@ import {
   buildExternalDocumentLanguageSample,
   loadExternalDocument,
 } from "@/lib/external-document";
-import { detectTranslationSourceLocale } from "@/lib/translations";
+import { detectTranslationSourceLocale } from "@/lib/translation-unit";
 
 export const dynamic = "force-dynamic";
 
