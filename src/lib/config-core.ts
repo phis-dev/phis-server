@@ -118,9 +118,16 @@ export type PhisConfig = {
   };
   translation?: {
     sourceLocale?: string;
-    mode?: "deepl" | "cdn" | "custom" | "none";
+    /**
+     * Where a translation comes from. See TRANSLATIONS.md, "Translation modes".
+     *
+     * `cdn+deepl` asks the CDN first and DeepL for what it does not answer; `deepl` is the same without
+     * the CDN in front, which an installation that words its own global messages wants, because the CDN
+     * answers first and would win. `add-on` hands the question to the translation service provider the
+     * operator selected. `none` returns source text.
+     */
+    mode?: "deepl" | "cdn+deepl" | "add-on" | "none";
     cdnBaseUrl?: string;
-    customEndpoint?: string;
     supportedLocales?: string[];
     allowedLocales?: string[];
     allowPublicWrites?: boolean;
@@ -174,7 +181,6 @@ export const DEFAULT_CONFIG: PhisConfig = {
     sourceLocale: "en",
     mode: "none",
     cdnBaseUrl: "https://cdn.phis.dev",
-    customEndpoint: "",
     supportedLocales: ["en"],
     allowedLocales: ["en"],
     allowPublicWrites: false,

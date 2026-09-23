@@ -282,9 +282,8 @@ export async function saveTranslationSettings(
   const mode = String(formData.get("translationMode") ?? "").trim();
   const deeplKey = String(formData.get("deeplKey") ?? "").trim();
   const deeplEndpoint = String(formData.get("deeplEndpoint") ?? "").trim();
-  const customEndpoint = String(formData.get("customEndpoint") ?? "").trim();
 
-  if (mode !== "deepl" && mode !== "cdn" && mode !== "custom" && mode !== "none") {
+  if (mode !== "deepl" && mode !== "cdn+deepl" && mode !== "add-on" && mode !== "none") {
     redirect(buildTranslationsStepHref(locale, "Please choose a translation mode."));
   }
 
@@ -297,15 +296,6 @@ export async function saveTranslationSettings(
     );
   }
 
-  if (mode === "custom" && !customEndpoint) {
-    redirect(
-      buildTranslationsStepHref(
-        locale,
-        "A custom endpoint is required for the custom translation mode.",
-      ),
-    );
-  }
-
   const runtimeConfig = readPhiRuntimeConfigSync();
 
   writePhiRuntimeConfigSync({
@@ -313,7 +303,6 @@ export async function saveTranslationSettings(
     translation: {
       ...runtimeConfig.translation,
       mode,
-      customEndpoint: mode === "custom" ? customEndpoint : "",
     },
     deepl:
       mode === "deepl"

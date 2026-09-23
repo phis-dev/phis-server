@@ -185,7 +185,6 @@ export default async function OperatorPage({
         validationError={translationError}
         successMessage={translationSuccess ? translationsLabels.success : null}
         successNotificationId={translationSuccess}
-        initialCustomEndpoint={config.translation?.customEndpoint?.trim() ?? ""}
         cdnBaseUrl={getConfiguredCdnBaseUrlSync()}
         deeplApiKey={config.deepl?.apiKey?.trim() ?? ""}
         deeplApiUrl={config.deepl?.apiUrl?.trim() ?? ""}

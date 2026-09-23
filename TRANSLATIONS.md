@@ -134,6 +134,12 @@ through to DeepL; the operator states an arrangement, not a rule set. `deepl` is
 without the CDN in front, and it is a real choice rather than a leftover: the CDN answers first, so an
 installation that has worded its own global messages picks `deepl` to keep them.
 
+**A DeepL key is optional under `cdn+deepl`.** The CDN holds the platform's own messages, so an
+installation with a CDN and no key still has a translated interface; what it does not have is Site
+content and conversation messages. The CDN is therefore asked before the key is considered at all --
+deciding on the key first would make a half-configured installation translate nothing, which is not
+what the operator configured.
+
 **The CDN only ever serves global messages.** A CDN can hold translations of text that is the same
 everywhere -- `phis.tr_msg` and the label sets above it. It cannot hold a translation of a Site's own
 string, and it cannot hold one of a message somebody wrote a minute ago. `tr_site_msg` is never served

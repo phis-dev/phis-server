@@ -79,18 +79,15 @@ export const OPERATOR_TRANSLATIONS_LABELS = {
   deeplEndpoint: "DeepL endpoint",
   deeplEndpointHelp:
     "The configured DeepL API endpoint used by phis for translation requests.",
-  modeCdn: "phis CDN",
+  modeCdn: "phis CDN, then DeepL",
   modeCdnDescription:
-    "Translate the UI through the cdn.phis.dev connection. Site content is not translated automatically.",
+    "Ask the CDN for the platform's own messages first and DeepL for the rest. A DeepL key is optional: without one the interface is still translated, and only site content and conversation messages are not.",
   cdnEndpoint: "CDN endpoint",
   cdnEndpointHelp:
     "The phis CDN base URL comes from phis-config.json and is used for the shared locale and UI translation source.",
-  modeCustom: "Custom translation endpoint",
-  modeCustomDescription:
-    "Forward translation requests to your own translation API endpoint. Supported locales stay operator-defined.",
-  customEndpoint: "Custom endpoint",
-  customEndpointHelp:
-    "phis forwards translation requests to this endpoint in the phis translation payload format and expects the matching response back.",
+  modeAddon: "Translation add-on",
+  modeAddonDescription:
+    "Hand translation to the service provider an add-on supplies and the operator selects. What it talks to is the provider's own business.",
   customSchema: "Schema",
   customSchemaTitle: "Custom translation schema",
   customSchemaIntro:

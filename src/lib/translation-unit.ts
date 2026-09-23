@@ -141,7 +141,7 @@ async function runDeepLRequest(
 }
 
 function buildProviderRequestKey(input: {
-  provider: "custom" | "deepl";
+  provider: "deepl";
   locale: string;
   sourceLocale?: string;
   ctx?: string;
@@ -159,7 +159,7 @@ function buildProviderRequestKey(input: {
 }
 
 function logProviderFallback(input: {
-  provider: "custom" | "deepl";
+  provider: "deepl";
   locale: string;
   sourceLocale?: string;
   ctx?: string;
@@ -181,57 +181,62 @@ function logProviderFallback(input: {
   });
 }
 
-async function requestCustomTranslations(input: {
+/**
+ * The CDN, asked with the route it mirrors.
+ *
+ * The CDN offers the same calls this server does, token-free, so this is `/api/v1/tr` with the batch
+ * payload the route already takes and no token and no Site header. Nothing about the request shape is
+ * invented here: it is the public form of our own route, which is why a Site header would be refused
+ * and why only global messages can come back at all.
+ *
+ * `provisional` is the answer that matters. It means the CDN itself fell back to source text, so taking
+ * it would be taking an untranslated string from one step and calling the chain finished. That counts as
+ * not answered, and the next step gets its turn.
+ *
+ * Coarse on purpose: the flag covers a batch, so a batch the CDN knows all but one of goes on to the
+ * next step whole. The mirrored contract has no per-entry answer, and inventing one here would be
+ * inventing a contract with somebody else's service.
+ */
+async function requestCdnTranslations(input: {
   locale: string;
   msgs: string[];
   ctx?: string;
   sourceLocale?: string;
-  format?: PhisTranslationUnitFormat;
-}) {
-  const endpoint = getPhisConfigSync().translation?.customEndpoint?.trim();
-  if (!endpoint) {
-    throw new Error("Missing translation.customEndpoint in runtime config.");
+  format: PhisTranslationUnitFormat;
+}): Promise<string[] | null> {
+  const baseUrl = (getPhisConfigSync().translation?.cdnBaseUrl?.trim() || "").replace(/\/+$/, "");
+  if (!baseUrl) {
+    return null;
   }
 
-  const normalizedTexts = normalizeBatchMessages(input.msgs);
-  if (normalizedTexts.length === 0) {
-    return [];
-  }
-
-  const response = await fetch(endpoint, {
+  const response = await fetch(`${baseUrl}/api/v1/tr`, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       locale: input.locale,
-      msgs: normalizedTexts,
+      msgs: input.msgs,
       ctx: input.ctx?.trim() || undefined,
       sourceLocale: input.sourceLocale?.trim() || undefined,
-      ...(input.format && input.format !== "text" ? { format: input.format } : {}),
+      ...(input.format !== "text" ? { format: input.format } : {}),
     }),
     cache: "no-store",
   });
 
   if (!response.ok) {
-    const details = await response.text();
-    throw new Error(`Custom translation request failed: ${response.status} ${details}`);
+    return null;
   }
 
   const data = (await response.json()) as {
-    translation?: string;
-    translations?: string[];
+    translations?: unknown;
+    provisional?: unknown;
   };
-
-  if (normalizedTexts.length === 1 && typeof data.translation === "string") {
-    return [data.translation];
+  if (data.provisional === true || !Array.isArray(data.translations)) {
+    return null;
   }
-
-  if (Array.isArray(data.translations) && data.translations.length === normalizedTexts.length) {
-    return data.translations.map((entry) => String(entry ?? ""));
+  if (data.translations.length !== input.msgs.length) {
+    return null;
   }
-
-  throw new Error("Custom translation response did not include matching translations.");
+  return data.translations.map((entry) => String(entry ?? ""));
 }
 
 async function requestDeepL(
@@ -352,13 +357,47 @@ export async function requestPhisTranslationUnit(
   const translationMode = getConfiguredTranslationMode();
   const hasDeepLKey = Boolean(getPhisConfigSync().deepl?.apiKey?.trim());
 
-  if (translationMode !== "custom" && (translationMode !== "deepl" || !hasDeepLKey)) {
+  /*
+   * `add-on` has a name and no resolver yet.
+   *
+   * The service kind exists in `@phis/contracts` and nothing in this release asks for a factory of it,
+   * so an installation set to `add-on` cannot translate. That is `unconfigured` and not `failed`: there
+   * is no outage, there is nothing selected, and a Site must not be told to ask again.
+   */
+  if (translationMode === "add-on" || translationMode === "none") {
     return { translations: normalizedTexts, succeeded: false, outcome: "unconfigured" };
   }
 
-  const provider = translationMode === "custom" ? "custom" : "deepl";
+  /*
+   * The CDN is a step, not a provider, and it comes before the question of a DeepL key.
+   *
+   * `cdn+deepl` without a key is a usable installation: the CDN answers for the platform's own
+   * messages, so the interface is translated and only what the CDN does not hold goes untranslated.
+   * Deciding on the key first would have made that installation translate nothing at all -- the
+   * operator configured a working half and got none of it.
+   *
+   * A failure reaching the CDN is not a failure of the chain, which is why this sits outside the try
+   * below and falls through silently.
+   */
+  if (translationMode === "cdn+deepl") {
+    const fromCdn = await requestCdnTranslations({
+      locale: input.locale,
+      msgs: normalizedTexts,
+      ctx: input.ctx,
+      sourceLocale: input.sourceLocale,
+      format: input.format,
+    }).catch(() => null);
+    if (fromCdn) {
+      return { translations: fromCdn, succeeded: true, outcome: "translated" };
+    }
+  }
+
+  if (!hasDeepLKey) {
+    return { translations: normalizedTexts, succeeded: false, outcome: "unconfigured" };
+  }
+
   const requestKey = buildProviderRequestKey({
-    provider,
+    provider: "deepl",
     locale: input.locale,
     sourceLocale: input.sourceLocale,
     ctx: input.ctx,
@@ -367,26 +406,18 @@ export async function requestPhisTranslationUnit(
   });
 
   try {
-    const translations = provider === "custom"
-      ? await requestCustomTranslations({
-          locale: input.locale,
-          msgs: normalizedTexts,
-          ctx: input.ctx,
-          sourceLocale: input.sourceLocale,
-          format: input.format,
-        })
-      : await requestDeepL(
-          normalizedTexts,
-          input.locale,
-          input.ctx,
-          input.sourceLocale,
-          input.format,
-          requestKey,
-        );
+    const translations = await requestDeepL(
+      normalizedTexts,
+      input.locale,
+      input.ctx,
+      input.sourceLocale,
+      input.format,
+      requestKey,
+    );
     return { translations, succeeded: true, outcome: "translated" };
   } catch (error) {
     logProviderFallback({
-      provider,
+      provider: "deepl",
       locale: input.locale,
       sourceLocale: input.sourceLocale,
       ctx: input.ctx,

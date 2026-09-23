@@ -45,13 +45,12 @@ export const bootstrapDe = {
   translationAiLinkLabel: "DeepL",
   translationAiLinkAfter: ".",
   translationAiLinkHref: "https://www.deepl.com/pro/change-plan#api",
-  translationCdnLabel: "CDN-basierte Translation",
+  translationCdnLabel: "CDN, dann DeepL",
   translationCdnDescription:
-    "Die UI wird über die Verbindung zu cdn.phis.dev übersetzt. Site-Inhalte werden nicht automatisch übersetzt.",
-  translationCustomLabel: "Custom-Übersetzungsendpoint",
-  translationCustomDescription:
-    "Übersetzungsanfragen an einen eigenen API-Endpunkt weiterleiten. So kann der Betreiber eine eigene Translation-Engine hinter der phis-Translation-API anbinden.",
-  translationCustomEndpointLabel: "Custom-Endpunkt",
+    "Die Texte der Plattform zuerst bei cdn.phis.dev anfragen, den Rest bei DeepL. Ein DeepL-Schlüssel ist optional: ohne ihn wird die Oberfläche trotzdem übersetzt, nur Site-Inhalte und Konversationsnachrichten nicht.",
+  translationAddonLabel: "Übersetzungs-Add-on",
+  translationAddonDescription:
+    "Die Übersetzung übernimmt der Service-Anbieter, den ein Add-on liefert und der Operator auswählt. Womit er arbeitet, ist seine Sache.",
   translationEnglishLabel: "UI englisch",
   translationEnglishDescription:
     "Admin- und Editor-UI bleiben englisch. Die Sites müssen Übersetzungen selbst verwalten.",

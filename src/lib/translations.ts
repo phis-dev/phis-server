@@ -164,12 +164,17 @@ export async function getTranslationChangeMarkers(siteId: number) {
   };
 }
 
+/**
+ * Whether this installation can take text written in that language as a source.
+ *
+ * For the two DeepL modes the capability table answers it, which is where a locale's DeepL source is
+ * recorded. `add-on` would be the selected provider's probe -- `sourceLangs` on
+ * `PhisTranslationProbe` -- and until one can be resolved there is nothing to ask, so nothing is
+ * supported. `none` supports nothing for the same reason.
+ */
 function isConfiguredSourceLocaleSupported(locale: string) {
   const mode = getConfiguredTranslationMode();
-  if (mode === "custom") {
-    return true;
-  }
-  return mode === "deepl" && resolvePhiLocaleCapability(locale) != null;
+  return (mode === "deepl" || mode === "cdn+deepl") && resolvePhiLocaleCapability(locale) != null;
 }
 
 /**

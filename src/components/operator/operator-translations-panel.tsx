@@ -13,7 +13,6 @@ import { Switch } from "@/components/ui/switch";
 import type { TranslationMode } from "@/lib/translation-locale-options";
 
 const DEFAULT_DEEPL_ENDPOINT = "https://api-free.deepl.com/v2/translate";
-const CUSTOM_ENDPOINT_PLACEHOLDER = "https://localhost:8080/api/v1/translate";
 
 type LocaleOption = {
   code: string;
@@ -49,10 +48,8 @@ type OperatorTranslationsLabels = {
   modeCdnDescription: string;
   cdnEndpoint: string;
   cdnEndpointHelp: string;
-  modeCustom: string;
-  modeCustomDescription: string;
-  customEndpoint: string;
-  customEndpointHelp: string;
+  modeAddon: string;
+  modeAddonDescription: string;
   customSchema: string;
   customSchemaTitle: string;
   customSchemaIntro: string;
@@ -95,7 +92,6 @@ export function OperatorTranslationsPanel({
   validationError,
   successMessage,
   successNotificationId,
-  initialCustomEndpoint,
   cdnBaseUrl,
   deeplApiKey,
   deeplApiUrl,
@@ -112,7 +108,6 @@ export function OperatorTranslationsPanel({
   validationError: string | null;
   successMessage: string | null;
   successNotificationId: string | null;
-  initialCustomEndpoint: string;
   cdnBaseUrl: string;
   deeplApiKey: string;
   deeplApiUrl: string;
@@ -122,7 +117,6 @@ export function OperatorTranslationsPanel({
 }) {
   const router = useRouter();
   const [selectedLocales, setSelectedLocales] = useState<string[]>(configuredLocales);
-  const [customEndpoint, setCustomEndpoint] = useState(initialCustomEndpoint);
   const [editableDeeplApiKey, setEditableDeeplApiKey] = useState(deeplApiKey);
   const [editableDeeplApiUrl, setEditableDeeplApiUrl] = useState(
     deeplApiUrl || DEFAULT_DEEPL_ENDPOINT,
@@ -172,7 +166,6 @@ export function OperatorTranslationsPanel({
 
         <form className="ui_form" action={updateOperatorSupportedLocales}>
           <input type="hidden" name="translationMode" value={mode} />
-          <input type="hidden" name="translationCustomEndpoint" value={customEndpoint} />
           <input type="hidden" name="translationDeeplKey" value={editableDeeplApiKey} />
           <input type="hidden" name="translationDeeplEndpoint" value={editableDeeplApiUrl} />
           <input
@@ -205,14 +198,14 @@ export function OperatorTranslationsPanel({
                     description: labels.modeDeeplDescription,
                   },
                   {
-                    value: "cdn",
+                    value: "cdn+deepl",
                     label: labels.modeCdn,
                     description: labels.modeCdnDescription,
                   },
                   {
-                    value: "custom",
-                    label: labels.modeCustom,
-                    description: labels.modeCustomDescription,
+                    value: "add-on",
+                    label: labels.modeAddon,
+                    description: labels.modeAddonDescription,
                   },
                   {
                     value: "none",
@@ -246,7 +239,7 @@ export function OperatorTranslationsPanel({
                       </span>
                     </label>
 
-                    {mode === "cdn" && option.value === "cdn" ? (
+                    {mode === "cdn+deepl" && option.value === "cdn+deepl" ? (
                       <div className="ui_choice_fields ui_choice_fields_inline">
                         <div className="ui_field">
                           <span className="operator-field_label_row">
@@ -292,33 +285,7 @@ export function OperatorTranslationsPanel({
                       </div>
                     ) : null}
 
-                    {mode === "custom" && option.value === "custom" ? (
-                      <div className="ui_choice_fields ui_choice_fields_inline">
-                        <div className="ui_field">
-                          <span className="operator-field_label_row">
-                            <span className="ui_field_label">{labels.customEndpoint}</span>
-                            <FieldHelpBadge helpText={labels.customEndpointHelp} />
-                          </span>
-                          <div className="ui_inline_action_row">
-                            <input
-                              className="ui_input"
-                              type="url"
-                              value={customEndpoint}
-                              onChange={(event) => setCustomEndpoint(event.target.value)}
-                              placeholder={CUSTOM_ENDPOINT_PLACEHOLDER}
-                            />
-                            <Button
-                              variant="secondary"
-                              type="button"
-                              onClick={() => setShowCustomSchema(true)}
-                            >
-                              {labels.customSchema}
-                            </Button>
-                          </div>
-                        </div>
-                      </div>
-                    ) : null}
-                  </div>
+                                      </div>
                 ))}
               </div>
             </div>

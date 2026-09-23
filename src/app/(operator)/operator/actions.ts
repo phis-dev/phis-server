@@ -98,46 +98,6 @@ async function verifyCdnMode() {
   }
 }
 
-async function verifyCustomMode(endpoint: string) {
-  const { signal, clear } = createTimeoutSignal(2000);
-
-  try {
-    const response = await fetch(endpoint, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        locale: "en",
-        msg: "phis operator validation",
-        ctx: "phis operator validation",
-        sourceLocale: readMergedPhiConfigSync().translation?.sourceLocale ?? "en",
-      }),
-      cache: "no-store",
-      signal,
-    });
-
-    if (!response.ok) {
-      const details = await response.text();
-      throw new Error(`Custom endpoint check failed: ${response.status} ${details}`);
-    }
-
-    const data = (await response.json()) as {
-      translation?: string;
-      translations?: string[];
-    };
-
-    if (
-      typeof data.translation !== "string" &&
-      !(Array.isArray(data.translations) && data.translations.length > 0)
-    ) {
-      throw new Error("Custom endpoint check failed: invalid response payload.");
-    }
-  } finally {
-    clear();
-  }
-}
-
 function buildSitesHref(input?: {
   error?: string;
   action?: "create" | "settings";
@@ -391,7 +351,6 @@ export async function updateOperatorSupportedLocales(formData: FormData) {
     formData.getAll("translationSupportedLocales").map((value) => String(value ?? "")),
   );
   const mode = normalizeTranslationMode(String(formData.get("translationMode") ?? "none"));
-  const customEndpoint = String(formData.get("translationCustomEndpoint") ?? "").trim();
   const deeplKey = String(formData.get("translationDeeplKey") ?? "").trim();
   const deeplEndpoint = String(formData.get("translationDeeplEndpoint") ?? "").trim();
   const publicToken = String(formData.get("translationPublicToken") ?? "").trim();
@@ -408,10 +367,6 @@ export async function updateOperatorSupportedLocales(formData: FormData) {
 
   if (mode === "deepl" && (!deeplKey || !deeplEndpoint)) {
     redirect(buildTranslationsHref({ error: "Please provide a DeepL key and endpoint.", mode }));
-  }
-
-  if (mode === "custom" && !customEndpoint) {
-    redirect(buildTranslationsHref({ error: "Please provide a custom endpoint.", mode }));
   }
 
   if (allowPublicWrites && !allowPublicReads) {
@@ -438,10 +393,13 @@ export async function updateOperatorSupportedLocales(formData: FormData) {
         apiKey: deeplKey,
         apiUrl: deeplEndpoint,
       });
-    } else if (mode === "cdn") {
+    } else if (mode === "cdn+deepl") {
       await verifyCdnMode();
-    } else if (mode === "custom") {
-      await verifyCustomMode(customEndpoint);
+      // The key is optional here: a CDN alone translates the platform's own messages, which is a
+      // working installation. It is checked when it is there so a wrong key is caught now.
+      if (deeplKey || deeplEndpoint) {
+        await verifyDeepLMode({ apiKey: deeplKey, apiUrl: deeplEndpoint });
+      }
     }
   } catch (error) {
     const message =
@@ -485,7 +443,6 @@ export async function updateOperatorSupportedLocales(formData: FormData) {
     translation: {
       ...runtimeConfig.translation,
       mode,
-      customEndpoint: mode === "custom" ? customEndpoint : "",
       supportedLocales,
       allowPublicReads,
       allowPublicWrites,

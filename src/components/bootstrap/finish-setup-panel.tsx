@@ -26,12 +26,12 @@ function resolveTranslationModeLabel(messages: BootstrapMessages, mode: string |
     return messages.translationAiLabel;
   }
 
-  if (mode === "cdn") {
+  if (mode === "cdn+deepl") {
     return messages.translationCdnLabel;
   }
 
-  if (mode === "custom") {
-    return messages.translationCustomLabel;
+  if (mode === "add-on") {
+    return messages.translationAddonLabel;
   }
 
   return messages.translationEnglishLabel;

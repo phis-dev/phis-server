@@ -62,10 +62,9 @@ export type BootstrapMessages = {
   translationAiLinkAfter: string;
   translationAiLinkHref: string;
   translationCdnLabel: string;
+  translationAddonLabel: string;
+  translationAddonDescription: string;
   translationCdnDescription: string;
-  translationCustomLabel: string;
-  translationCustomDescription: string;
-  translationCustomEndpointLabel: string;
   translationEnglishLabel: string;
   translationEnglishDescription: string;
   translationContinueLabel: string;

@@ -6,10 +6,9 @@ import type { BootstrapMessages } from "@/bootstrap/i18n";
 import { saveTranslationSettings } from "@/app/(operator)/setup/actions";
 import { SubmitButton } from "@/components/ui/submit-button";
 
-type TranslationMode = "deepl" | "cdn" | "custom" | "none";
+type TranslationMode = "deepl" | "cdn+deepl" | "add-on" | "none";
 
 const DEFAULT_DEEPL_FREE_ENDPOINT = "https://api-free.deepl.com/v2/translate";
-const CUSTOM_ENDPOINT_PLACEHOLDER = "https://localhost:8080/api/v1/translate";
 
 export function TranslationSetupPanel({
   locale,
@@ -18,7 +17,6 @@ export function TranslationSetupPanel({
   initialMode,
   initialDeeplKey,
   initialDeeplEndpoint,
-  initialCustomEndpoint,
   error,
 }: {
   locale: "en" | "de";
@@ -27,7 +25,6 @@ export function TranslationSetupPanel({
   initialMode?: TranslationMode | null;
   initialDeeplKey?: string | null;
   initialDeeplEndpoint?: string | null;
-  initialCustomEndpoint?: string | null;
   error?: string | null;
 }) {
   const [mode, setMode] = useState<TranslationMode | null>(initialMode ?? null);
@@ -35,7 +32,6 @@ export function TranslationSetupPanel({
   const [deeplEndpoint, setDeeplEndpoint] = useState(
     initialDeeplEndpoint ?? DEFAULT_DEEPL_FREE_ENDPOINT,
   );
-  const [customEndpoint, setCustomEndpoint] = useState(initialCustomEndpoint ?? "");
 
   const canContinue = useMemo(() => {
     const normalizedDeeplKey = typeof deeplKey === "string" ? deeplKey : "";
@@ -49,12 +45,8 @@ export function TranslationSetupPanel({
       );
     }
 
-    if (mode === "custom") {
-      return customEndpoint.trim().length > 0;
-    }
-
-    return mode === "cdn" || mode === "none";
-  }, [customEndpoint, deeplEndpoint, deeplKey, mode]);
+    return mode === "cdn+deepl" || mode === "add-on" || mode === "none";
+  }, [deeplEndpoint, deeplKey, mode]);
 
   return (
     <div className="ui_section_stack">
@@ -67,7 +59,6 @@ export function TranslationSetupPanel({
           <input type="hidden" name="translationMode" value={mode ?? ""} />
           <input type="hidden" name="deeplKey" value={deeplKey} />
           <input type="hidden" name="deeplEndpoint" value={deeplEndpoint} />
-          <input type="hidden" name="customEndpoint" value={customEndpoint} />
 
           <div className="ui_choice_list">
             <div
@@ -141,9 +132,9 @@ export function TranslationSetupPanel({
                 className="ui_choice_input"
                 type="radio"
                 name="translationMode"
-                value="cdn"
-                checked={mode === "cdn"}
-                onChange={() => setMode("cdn")}
+                value="cdn+deepl"
+                checked={mode === "cdn+deepl"}
+                onChange={() => setMode("cdn+deepl")}
               />
               <span className="ui_choice_content">
                 <span className="ui_choice_title">
@@ -154,47 +145,6 @@ export function TranslationSetupPanel({
                 </span>
               </span>
             </label>
-
-            <div
-              className="ui_card_selectable ui_choice ui_choice_group"
-              data-selected={mode === "custom" ? "true" : "false"}
-            >
-              <label className="ui_choice_header">
-                <input
-                  className="ui_choice_input"
-                  type="radio"
-                  name="translationMode"
-                  value="custom"
-                  checked={mode === "custom"}
-                  onChange={() => setMode("custom")}
-                />
-                <span className="ui_choice_content">
-                  <span className="ui_choice_title">
-                    {messages.translationCustomLabel}
-                  </span>
-                  <span className="ui_choice_description">
-                    {messages.translationCustomDescription}
-                  </span>
-                </span>
-              </label>
-
-              {mode === "custom" ? (
-                <div className="ui_choice_fields ui_choice_fields_inline">
-                  <label className="ui_field">
-                    <span className="ui_field_label">
-                      {messages.translationCustomEndpointLabel}
-                    </span>
-                    <input
-                      className="ui_input"
-                      type="url"
-                      value={customEndpoint}
-                      onChange={(event) => setCustomEndpoint(event.target.value)}
-                      placeholder={CUSTOM_ENDPOINT_PLACEHOLDER}
-                    />
-                  </label>
-                </div>
-              ) : null}
-            </div>
 
             <label className="ui_card_selectable ui_choice">
               <input

@@ -58,17 +58,14 @@ export default async function SetupPage({
   const initialDeeplKey = mergedConfig.deepl?.apiKey?.trim() ?? "";
   const initialDeeplEndpoint =
     mergedConfig.deepl?.apiUrl?.trim() || "https://api-free.deepl.com/v2/translate";
-  const initialCustomEndpoint = mergedConfig.translation?.customEndpoint?.trim() ?? "";
   const initialTranslationMode =
     mergedConfig.translation?.mode === "deepl" ||
-    mergedConfig.translation?.mode === "cdn" ||
-    mergedConfig.translation?.mode === "custom" ||
+    mergedConfig.translation?.mode === "cdn+deepl" ||
+    mergedConfig.translation?.mode === "add-on" ||
     mergedConfig.translation?.mode === "none"
       ? mergedConfig.translation.mode
       : initialDeeplKey || mergedConfig.deepl?.apiUrl?.trim()
         ? "deepl"
-        : initialCustomEndpoint
-          ? "custom"
         : null;
 
   return (
@@ -96,7 +93,6 @@ export default async function SetupPage({
           initialMode={initialTranslationMode}
           initialDeeplKey={initialDeeplKey}
           initialDeeplEndpoint={initialDeeplEndpoint}
-          initialCustomEndpoint={initialCustomEndpoint}
           error={translationErrorParam ?? null}
         />
       ) : step === "database" ? (

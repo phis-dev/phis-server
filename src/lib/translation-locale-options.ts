@@ -10,7 +10,7 @@ export type TranslationLocaleOption = {
   label: string;
 };
 
-export type TranslationMode = "deepl" | "cdn" | "custom" | "none";
+export type TranslationMode = "deepl" | "cdn+deepl" | "add-on" | "none";
 
 type TranslationLocaleSourceState = {
   mode: TranslationMode;
@@ -32,8 +32,8 @@ const localeSourceCache = new Map<
 export function normalizeTranslationMode(input?: string | null): TranslationMode {
   const normalized = input?.trim().toLowerCase();
   return normalized === "deepl" ||
-    normalized === "cdn" ||
-    normalized === "custom" ||
+    normalized === "cdn+deepl" ||
+    normalized === "add-on" ||
     normalized === "none"
     ? normalized
     : "none";
@@ -199,13 +199,18 @@ async function getLocaleSourceOptions(mode: TranslationMode) {
     return cached.options;
   }
 
+  /*
+   * Where the catalogue of selectable locales comes from, which is not the same question as who
+   * translates. `cdn+deepl` reads it from the CDN because that is the list the CDN has translations
+   * for; `deepl` asks DeepL directly. `add-on` and `none` fall back to the static catalogue, because
+   * neither has a list of its own to read here -- a selected provider states its reach through its
+   * probe, not through this.
+   */
   const options =
     mode === "deepl"
       ? await fetchDeepLLocaleOptions()
-      : mode === "cdn"
+      : mode === "cdn+deepl"
         ? await fetchCdnLocaleOptions()
-        : mode === "custom"
-          ? getStaticLocaleCatalogOptions()
         : getStaticLocaleCatalogOptions();
 
   localeSourceCache.set(cacheKey, {

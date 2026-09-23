@@ -83,11 +83,11 @@ not a property of the repository, so they are untracked and an absent one reads 
 | `secrets.encryptionKeyVersion` | Positive integer version of that key. |
 | `auth.transactionEncryptionKey` | 64 hex characters. Encrypts authentication transaction state. |
 | `registration.intentEncryptionKey` | 64 hex characters. Encrypts the password held by a pending registration intent. |
-| `deepl.apiKey`, `deepl.apiUrl` | DeepL access when `translation.mode` is `deepl`. |
-| `translation.mode` | `deepl`, `cdn`, `custom`, or `none`. |
+| `deepl.apiKey`, `deepl.apiUrl` | DeepL access, for the `deepl` and `cdn+deepl` modes. |
+| `translation.mode` | `deepl`, `cdn+deepl`, `add-on`, or `none`. See [TRANSLATIONS.md](./TRANSLATIONS.md). |
 | `translation.sourceLocale` | Installation fallback for a Site source locale. |
 | `translation.supportedLocales` | Locales the installation offers. `translation.allowedLocales` is read when `supportedLocales` is absent. |
-| `translation.cdnBaseUrl`, `translation.customEndpoint` | Upstream for the `cdn` and `custom` modes. |
+| `translation.cdnBaseUrl` | The CDN the `cdn+deepl` mode asks first. It mirrors this server's own routes without a token. |
 | `translation.allowPublicReads`, `translation.allowPublicWrites` | Whether a public-token request may read from `/api/v1/tr` and `/api/v1/locales`, and whether it may write translations through `/api/v1/tr`. |
 | `platformSuperUsers` | Platform operators, written by `phis operator`. |
 | `bootstrap.enabled` | Serves the setup pages; completing setup sets it to `false`. |
