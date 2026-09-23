@@ -574,6 +574,7 @@ Contract:
 - `user_site_flags INT NOT NULL DEFAULT 0`
 - `authorization_revision INT NOT NULL DEFAULT 0`
 - `last_login_at TIMESTAMPTZ NULL`
+- `module_state JSONB NOT NULL DEFAULT '{}'::jsonb`
 - `created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
 - `updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
 - `UNIQUE (user_id, site_id)`
@@ -586,6 +587,17 @@ Contract:
 - `user_site_memberships` is the Site membership and Site-state source. Core role authority is stored in
   `user_site_role_claims`, Add-on roles in `site_addon_user_roles`, and group membership in
   `site_group_members`. `user_accounts` carries no role authority.
+- `module_state` holds what a person decided, under keys a Module owns: an object whose keys are
+  `<package>/<key>` and whose values follow the shapes in `@phis/contracts/user-state` (`flag`, `marker`,
+  `value`, `set`). It is deliberately not `meta`: Core writes its own columns, a Module writes only
+  through the validating route, and separate names keep a stray write across that line out of the
+  question. A key that was never written is absent rather than defaulted, and what absence means belongs
+  to the Module that declared the key. Core's own account facts stay bit flags in `user_site_flags` and
+  `user_accounts.flags`; this exists because bits cannot be allocated to an unknown number of Modules.
+  Every write names one key and sets that path alone, so two Modules writing at the same moment do not
+  overwrite each other. The column is not read while a session resolves -- `user_sessions` selects only
+  `user_site_flags` from this row, and a value paid for on every request would be the wrong trade for
+  something a minority of renders needs.
 - If no `user_site_memberships` row exists for `user_id + site_id`, the viewer cannot receive a Site
   session or authenticated Site role authority.
 - This relation is the only Site-admission source; `user_accounts` carries no parallel Site list.

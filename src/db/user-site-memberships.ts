@@ -223,3 +223,89 @@ export async function setUserSiteFlags(
   const row = rows[0];
   return row ? mapMembership(row, await readRoleClaims(pool, userId, siteId)) : null;
 }
+
+/**
+ * What this Site's Modules kept about this person, read on its own.
+ *
+ * Deliberately not part of `UserSiteMembershipRecord`. `user_sessions` joins this same row on every
+ * request that resolves a session and takes one integer out of it; an object carried along there would
+ * be paid for by every request, including the ones that render nothing. The renders that want it ask
+ * for it.
+ *
+ * `null` means there is no membership. An empty object means there is one and nothing was ever written.
+ */
+export async function getPhiUserModuleState(userId: number, siteId: number) {
+  const pool = getPool();
+  const { rows } = await pool.query<{ module_state: Record<string, unknown> }>(
+    `SELECT module_state
+     FROM phis.user_site_memberships
+     WHERE user_id = $1 AND site_id = $2`,
+    [userId, siteId],
+  );
+  return rows[0]?.module_state ?? null;
+}
+
+/** One key's value, for the write that has to know what is already there. */
+export async function getPhiUserModuleStateKey(userId: number, siteId: number, key: string) {
+  const pool = getPool();
+  const { rows } = await pool.query<{ value: unknown }>(
+    `SELECT module_state -> $3 AS value
+     FROM phis.user_site_memberships
+     WHERE user_id = $1 AND site_id = $2`,
+    [userId, siteId, key],
+  );
+  return rows.length > 0 ? rows[0].value ?? null : null;
+}
+
+/**
+ * One key written, and every other namespace left exactly as it was.
+ *
+ * `jsonb_set` on the single path is what makes two Modules writing in the same moment harmless: reading
+ * the column, changing it and writing it back would let the later write carry the earlier one's stale
+ * copy of everything else, and on a row shared by every Module of a Site that is not a rare case.
+ *
+ * `monotonic` belongs to the `marker` shape, whose promise is that it never moves backwards. The caller
+ * has already checked the shape, but a check outside the statement cannot keep that promise: two tabs
+ * answering out of order would still unread what somebody read. `GREATEST` decides it where the write
+ * happens, so the late answer changes nothing instead of losing the later mark.
+ */
+export async function setPhiUserModuleStateKey(
+  userId: number,
+  siteId: number,
+  key: string,
+  value: unknown,
+  options?: { monotonic?: boolean },
+) {
+  const pool = getPool();
+  const assignment = options?.monotonic
+    ? `jsonb_set(module_state, ARRAY[$3], to_jsonb(GREATEST(
+         COALESCE((module_state #>> ARRAY[$3])::numeric, $4::numeric), $4::numeric)), true)`
+    : `jsonb_set(module_state, ARRAY[$3], $4::jsonb, true)`;
+  const parameter = options?.monotonic ? value : JSON.stringify(value ?? null);
+  const { rows } = await pool.query<{ value: unknown }>(
+    `UPDATE phis.user_site_memberships
+     SET module_state = ${assignment}, updated_at = NOW()
+     WHERE user_id = $1 AND site_id = $2
+     RETURNING module_state -> $3 AS value`,
+    [userId, siteId, key, parameter],
+  );
+  return rows.length > 0 ? rows[0].value ?? null : null;
+}
+
+/**
+ * One key removed, which is not the same as writing a falsy value.
+ *
+ * An absent key is what a Module reads as "never decided", and a Site that offers somebody a way back --
+ * showing a dismissed card again -- needs that state rather than a `false` that means the same thing
+ * only by convention.
+ */
+export async function clearPhiUserModuleStateKey(userId: number, siteId: number, key: string) {
+  const pool = getPool();
+  const { rowCount } = await pool.query(
+    `UPDATE phis.user_site_memberships
+     SET module_state = module_state - $3, updated_at = NOW()
+     WHERE user_id = $1 AND site_id = $2`,
+    [userId, siteId, key],
+  );
+  return (rowCount ?? 0) > 0;
+}

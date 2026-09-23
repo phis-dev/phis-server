@@ -8,13 +8,13 @@ public or internal token, and `session` is the visitor's Site session with the a
 passes (see [AUTHORIZATION.md](../AUTHORIZATION.md)). A route with no access entry performs its own checks
 or none; read its source. Request and response shapes are not listed; the source is linked per route.
 
-137 routes.
+138 routes.
 
 ## Contents
 
 - [`/api/operator`](#apioperator) (5)
 - [`/api/setup`](#apisetup) (2)
-- [`/api/site`](#apisite) (66)
+- [`/api/site`](#apisite) (67)
 - [`/api/v1/addons`](#apiv1addons) (2)
 - [`/api/v1/admin`](#apiv1admin) (1)
 - [`/api/v1/auth`](#apiv1auth) (29)
@@ -160,6 +160,9 @@ Site administration, CMS, media and support API. A Site's `/api/site` proxy forw
 | POST | [`/api/site/threads/{threadId}/read`](../src/app/api/site/threads/[threadId]/read/route.ts) | session, `authenticated` (requireSiteAuthenticatedApiContext) |  |
 | GET | [`/api/site/threads/candidates`](../src/app/api/site/threads/candidates/route.ts) | session, `authenticated` (requireSiteAuthenticatedApiContext) | Who this person may address, and which kinds of thread this Site offers. |
 | POST | [`/api/site/translation/detect`](../src/app/api/site/translation/detect/route.ts) | session, `structure-authoring` (requireSiteBuilderApiContext) |  |
+| GET | [`/api/site/user-state`](../src/app/api/site/user-state/route.ts) | session, `authenticated` (requireSiteAuthenticatedApiContext) | Everything this Site's active Modules kept about the person asking. |
+| PATCH | [`/api/site/user-state`](../src/app/api/site/user-state/route.ts) | session, `authenticated` (requireSiteAuthenticatedApiContext) | One key written, every other namespace on the row untouched. |
+| DELETE | [`/api/site/user-state`](../src/app/api/site/user-state/route.ts) | session, `authenticated` (requireSiteAuthenticatedApiContext) | One key removed, which is not the same as writing a falsy value. |
 
 ## `/api/v1/addons`
 
@@ -191,7 +194,7 @@ Versioned API a Site calls server-to-server with its token (`x-phis-token`), and
 | DELETE | [`/api/v1/auth/account/factors/{factorId}`](../src/app/api/v1/auth/account/factors/[factorId]/route.ts) | CSRF token; Site session, checked in the handler; internal token |  |
 | GET | [`/api/v1/auth/account/security`](../src/app/api/v1/auth/account/security/route.ts) | Site session, checked in the handler; internal token |  |
 | DELETE | [`/api/v1/auth/account/sessions/{sessionId}`](../src/app/api/v1/auth/account/sessions/[sessionId]/route.ts) | CSRF token; Site session, checked in the handler; internal token |  |
-| GET | [`/api/v1/auth/admin/installations`](../src/app/api/v1/auth/admin/installations/route.ts) | session (requireAuthAdminSectionContext) |  |
+| GET | [`/api/v1/auth/admin/installations`](../src/app/api/v1/auth/admin/installations/route.ts) | session (requireAuthAdminSectionReadContext) |  |
 | POST | [`/api/v1/auth/admin/installations`](../src/app/api/v1/auth/admin/installations/route.ts) | session (requireAuthAdminSectionContext) |  |
 | PATCH | [`/api/v1/auth/admin/installations`](../src/app/api/v1/auth/admin/installations/route.ts) | session (requireAuthAdminSectionContext) | Collection-level update used by the descriptor Form relay (its upstream path is static): the installation key travels in the body; the applied logic is identical to the URL-addressed PATCH route. |
 | PATCH | [`/api/v1/auth/admin/installations/{installationKey}`](../src/app/api/v1/auth/admin/installations/[installationKey]/route.ts) | session (requireAuthAdminSectionContext) |  |

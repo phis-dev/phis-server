@@ -119,15 +119,28 @@ CREATE TABLE IF NOT EXISTS phis.user_site_memberships (
   user_site_flags INT NOT NULL DEFAULT 0,
   authorization_revision INT NOT NULL DEFAULT 0,
   last_login_at TIMESTAMPTZ NULL,
+  module_state JSONB NOT NULL DEFAULT '{}'::jsonb,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   CONSTRAINT user_site_memberships_user_site_unique UNIQUE (user_id, site_id),
   CONSTRAINT user_site_memberships_authorization_revision_check
-    CHECK (authorization_revision >= 0)
+    CHECK (authorization_revision >= 0),
+  CONSTRAINT user_site_memberships_module_state_check
+    CHECK (jsonb_typeof(module_state) = 'object')
 );
 
 CREATE INDEX IF NOT EXISTS user_site_memberships_site_id_idx
   ON phis.user_site_memberships (site_id);
+
+ALTER TABLE phis.user_site_memberships
+  ADD COLUMN IF NOT EXISTS module_state JSONB NOT NULL DEFAULT '{}'::jsonb;
+
+ALTER TABLE phis.user_site_memberships
+  DROP CONSTRAINT IF EXISTS user_site_memberships_module_state_check;
+
+ALTER TABLE phis.user_site_memberships
+  ADD CONSTRAINT user_site_memberships_module_state_check
+  CHECK (jsonb_typeof(module_state) = 'object');
 
 CREATE TABLE IF NOT EXISTS phis.user_site_role_claims (
   user_id INT NOT NULL,
