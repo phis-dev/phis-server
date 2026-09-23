@@ -7,6 +7,17 @@ Before v1, `scripts/sql/001_create_phis.pgsql` is the only Core schema source of
 changes are integrated there directly and the development database is recreated or adjusted in place;
 there are no incremental Core migration scripts.
 
+**A column added here does not reach a database that already exists, and nothing reports it.** The
+script creates with `CREATE TABLE IF NOT EXISTS`, so an existing table is skipped whole, and
+`phis schema check` reads `CREATE TABLE` lines against `pg_tables` -- table names only, blind to every
+column, constraint and index. An installation missing a column a change added is told that all declared
+tables are present, which is true and useless. Recreating or altering the development database by hand
+is therefore part of making the change, not a step somebody may discover later.
+
+That is a pre-v1 arrangement and ends with v1: the CLI has to learn to compare columns and to carry an
+alter path before an installation exists that cannot be recreated. See
+[TODOS.md](./TODOS.md), "Post-v1: Core schema evolution".
+
 ## Target phis schema
 
 The target PostgreSQL schema for `phis` is:
@@ -1458,6 +1469,7 @@ Contract:
 - `author_provider_id VARCHAR(255) NULL`
 - `body_text TEXT NOT NULL`
 - `body_markdown TEXT NULL`
+- `source_lang VARCHAR(8) NULL`
 - `flags INT NOT NULL DEFAULT 0`
 - `meta JSONB NOT NULL DEFAULT '{}'::jsonb`
 - `created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
@@ -1472,6 +1484,9 @@ Contract:
   - `2 = Confidential`: it may not leave Core -- not to an integration, not into a notification body, and not to an Add-on, which receives the message with its text withheld.
   - `4 = Edited`, `8 = Redacted`, `16 = Imported`.
 - `Internal` and `Confidential` are independent because they answer different questions: who may read it, and where it may go. A customer may set the second on their own message.
+- `source_lang` is the language the body is written in, declared by its author, as a locale of `PHI_LOCALE_CAPABILITIES`. It sits on the message and not on the thread because a conversation may hold more than one language, which is the case it exists for.
+- `NULL` means not declared. It is never to be read as the Site's default language, and it is not a claim that the message needs no translation.
+- The vocabulary is the platform capability table and never a translation provider's catalogue. A provider is swapped and a language leaves its list; what a provider can reach decides what is offered at translation time and never what may be stored. See [design/THREADS.md](./design/THREADS.md) section 14 and [TRANSLATIONS.md](./TRANSLATIONS.md).
 - `meta` carries the outside author's name and URL, mentions, and equivalent lightweight additions.
 
 ### `phis.thread_message_refs`

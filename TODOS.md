@@ -194,6 +194,25 @@ tracked here because the server contract depends on them.
   `plugins/runtime-modules/resolver.ts` write through `console.*` instead of `net/log.ts`, so journald
   receives more than one format. Keep `net/log.ts` field-identical with `src/lib/log.ts`.
 
+## Post-v1: Core schema evolution
+
+Not v1 work. Until v1 the development database is recreated or adjusted by hand, which is what
+[DB.md](./DB.md) states and what every schema change in this repository has relied on.
+
+What ends that arrangement is the first installation nobody may drop. Two things are missing before
+then, and both are `phis-cli`:
+
+- **`schema check` compares table names only.** It reads `CREATE TABLE` lines and asks `pg_tables`, so a
+  database missing a column a release added is reported as current. The command's own comment already
+  names that as the case it exists to catch. Column, constraint and index comparison is the smaller half
+  and the one that has to come first, because nothing can be repaired that nothing can detect.
+- **`schema apply` can only create.** There is no `ALTER TABLE` anywhere in `src/cli/` or `src/db/` for
+  the Core schema, so applying a changed script to a live database is a no-op for every table that
+  already exists.
+
+Whatever is built for it reports what it found before it changes anything, and is idempotent. No silent
+backfill and no scheduler, on the same terms as the section below.
+
 ## Post-v1: CMS payload migration policy
 
 Not v1 work. v1 accepts ABI breaks and ships no fallback, shim, or compatibility reader, so this section
