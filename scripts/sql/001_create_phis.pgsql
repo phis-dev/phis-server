@@ -1200,10 +1200,13 @@ CREATE TABLE IF NOT EXISTS phis.thread_messages (
   author_provider_id VARCHAR(255) NULL,
   body_text TEXT NOT NULL,
   body_markdown TEXT NULL,
-  -- The language the body is written in, declared by whoever wrote it. NULL is `not declared` and is
-  -- never to be read as the Site's default. It names a locale from the platform capability table, not
-  -- a translation provider's list: a provider is swapped and a language leaves its list, while the
-  -- message stays written in what it was written in.
+  -- The language the body is written in, where an integration recorded it. Only the threads capability
+  -- writes it: no person is asked and no Site route accepts it, because a translator determines the
+  -- source language itself. So a value present means an integration said so, and NULL means nobody did.
+  -- NULL is never to be read as the Site's default. It names a locale from the platform capability
+  -- table, not a translation provider's list: a provider is swapped and a language leaves its list,
+  -- while the message stays written in what it was written in. Its case is filtering and routing, which
+  -- detection cannot do -- nothing that comes into being while somebody reads fits a WHERE clause.
   source_lang VARCHAR(8) NULL,
   -- 1 = internal, 2 = confidential, 4 = edited, 8 = redacted, 16 = imported. `internal` is who may read
   -- it; `confidential` is where it may go, which is nowhere outside Core.

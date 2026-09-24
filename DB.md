@@ -1484,8 +1484,11 @@ Contract:
   - `2 = Confidential`: it may not leave Core -- not to an integration, not into a notification body, and not to an Add-on, which receives the message with its text withheld.
   - `4 = Edited`, `8 = Redacted`, `16 = Imported`.
 - `Internal` and `Confidential` are independent because they answer different questions: who may read it, and where it may go. A customer may set the second on their own message.
-- `source_lang` is the language the body is written in, declared by its author, as a locale of `PHI_LOCALE_CAPABILITIES`. It sits on the message and not on the thread because a conversation may hold more than one language, which is the case it exists for.
+- `source_lang` is the language the body is written in, as a locale of `PHI_LOCALE_CAPABILITIES`. It sits on the message and not on the thread because a conversation may hold more than one language, which is the case it exists for.
+- **Only an integration writes it**, through the threads capability's `create` and `reply`. No person is asked for it and no Site route accepts it: a translator determines the source language itself, so a picker would have asked everyone who writes for an answer that is available for nothing. Since no surface writes it, a value present means an integration said so and `NULL` means nobody did, with no flag needed to tell the two apart.
+- **What earns it its place is filtering, not translating.** Routing Portuguese enquiries to people who speak Portuguese, or counting which languages enquiries arrive in, needs a stored column, because nothing that comes into being while somebody reads can appear in a `WHERE` clause.
 - `NULL` means not declared. It is never to be read as the Site's default language, and it is not a claim that the message needs no translation.
+- Core checks that the key is well-formed and not that it is true. An integration asserting `de` over Portuguese text misleads every reader of it, including a filter; no guard exists for that yet, and section 14 says why.
 - The vocabulary is the platform capability table and never a translation provider's catalogue. A provider is swapped and a language leaves its list; what a provider can reach decides what is offered at translation time and never what may be stored. See [design/THREADS.md](./design/THREADS.md) section 14 and [TRANSLATIONS.md](./TRANSLATIONS.md).
 - `meta` carries the outside author's name and URL, mentions, and equivalent lightweight additions.
 
