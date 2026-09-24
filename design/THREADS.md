@@ -701,7 +701,8 @@ differs -- and arriving is exactly the part that should differ.
 
 ## 14. The language a message is written in
 
-**The stored fact is built. Translating one is planned, like the rest of this document.**
+**The column is built and only an integration writes it. Translating one is planned, like the rest of
+this document.**
 
 ### The stored fact
 
@@ -713,21 +714,41 @@ for -- one language per conversation would be wrong in exactly the situation tha
 `NULL` means not declared. It is not a claim that the message is in the Site's default language, and
 nothing may read it as one.
 
-**It is not a translation provider's catalogue.** A provider is swapped and a language leaves its list;
-the message from two years ago is still written in Portuguese. What a provider can reach decides what
-is offered at translation time and never what may be stored, which is why the vocabulary is the
-platform capability table and not a vendor's.
+**No person is asked, and no Site route accepts it.** The obvious design -- the writer declares it in a
+picker -- was built and taken out again. A translator determines the source language itself, so asking
+would have put a field in front of everyone who writes for an answer that is available for nothing; and
+the only thing a declared language would have bought is deciding *whether there is anything to
+translate*, which pays where translating happens automatically and it never does here. It happens when
+one person presses one button, and that person is the better filter.
 
-**The writer declares it.** The interface locale of the person writing is not the language they are
-writing in -- somebody with a German interface answers an English customer in English -- so a surface
-offers a choice rather than taking the UI locale silently. The declaration is the message author's.
+**An integration writes it, because an integration already knows.** A mail header, the locale of the
+page a form was submitted from, the browser language a chat widget saw -- these are facts that arrive
+with the message and are lost if there is nowhere to put them. The write path is therefore exactly one:
+`messageSourceLang` on the threads capability's `create` and `reply`. Nothing else sets it.
+
+This is what keeps the column readable. Since no surface writes it, a value present means an integration
+said so and `NULL` means nobody did, with no flag needed to tell the two apart.
+
+**It is also the only kind of value a filter can use.** Routing Portuguese enquiries to the people who
+speak Portuguese, or counting which languages enquiries arrive in, needs a stored column: nothing that
+comes into being while somebody reads can appear in a `WHERE` clause. That, rather than translation, is
+the case that earns the column its place.
+
+**It is not a translation provider's catalogue.** A provider is swapped and a language leaves its list;
+the message from two years ago is still written in Portuguese. What a provider can reach decides what is
+offered at translation time and never what may be stored, which is why the vocabulary is the platform
+capability table and not a vendor's.
 
 **The server stores what it is given, or refuses it.** A key the platform capability table does not
-know is a 400 and not a stored `NULL`: the two say different things, and a surface sending a key nobody
-recognises has a bug its writer would never learn about if Core absorbed it. Aliases resolve on the way
-in, so `zh-CN` is stored as `zh-Hans` and one language is one key however it arrived. The rule lives in
-`db/threads.ts` and therefore holds for the Add-on capability's `create` and `reply` exactly as it holds
-for the Site routes.
+know is a 400 and not a stored `NULL`: the two say different things, and an integration sending a key
+nobody recognises has a bug its author would never learn about if Core absorbed it. Aliases resolve on
+the way in, so `zh-CN` is stored as `zh-Hans` and one language is one key however it arrived.
+
+**An integration asserts, and nothing contradicts it.** Core checks that the key is well-formed, not
+that it is true: an integrator writing `de` over Portuguese text misleads every reader, including a
+filter that routes on it. No guard is built for this, because no Add-on delivers messages yet and a rule
+nobody can break is a rule nobody can read the purpose of. It is named here so that the first one to
+deliver messages is the occasion to decide, rather than the occasion to discover.
 
 **Withheld with the body.** A `Redacted` message, and a `Confidential` one projected for an Add-on,
 report `NULL` -- for the reason their assets are withheld (section 4): what a withdrawn message was

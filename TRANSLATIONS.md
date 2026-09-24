@@ -231,6 +231,42 @@ left source text behind -- carries `"provisional": true` next to `translation` o
 caller that keeps answers must not keep these: they end with the outage, not with an edit. Source text
 that is the answer by configuration (no provider, a locale that is not offered) is not provisional.
 
+## What DeepL actually does
+
+Measured against the Free API on 2026-09-24, because several decisions elsewhere rest on it and a guess
+in a document outlives the person who guessed.
+
+**Billing is by source text.** A request is charged the length of what is sent, never of what comes
+back, and a `context` parameter is **not charged at all**. Sending the surrounding sentence as context
+therefore costs nothing, while sending the same words as another text to translate costs their full
+length. This is why a translation that wants coherence should reach for `context` rather than for a
+bigger batch.
+
+**There is no detection without translation.** `/v2/translate` rejects a request without `target_lang`
+(`400`, and nothing is billed), and no separate detection endpoint exists. Leaving `source_lang` out
+detects the language as a by-product of a real, billed translation, which is the only way to get the
+answer. `detectTranslationSourceLocale` therefore pays for a translation it throws away -- correct, and
+worth knowing before anybody calls it in a loop.
+
+**Detection is per text within a batch.** Three texts in English, Portuguese and French in one request
+each came back with their own correct `detected_source_language`. DeepL's own wording is that texts in
+one request share no context with each other, which is the other side of the same fact: a batch is a
+transport detail to DeepL as much as it is to us, and batching buys throughput, never quality.
+
+**Source equal to target returns the text unchanged.** A German sentence asked for German came back
+byte-identical, with and without an explicit `source_lang` -- and was billed in full. So such a request
+wastes money but does not corrupt text. Note what this does *not* cover: a Provider behind `add-on` mode
+gives no such assurance, and one built on a model may well rewrite.
+
+**`context` demonstrably changes the answer.** `bank` alone translates to `Bank`; with a context sentence
+about a river it becomes `Ufer`, with one about depositing money it stays `Bank`. The context never
+appears in the output.
+
+**Free tier limits**: 500,000 characters per month (readable from `/v2/usage` as `character_limit`), 128
+KiB per request. No maximum number of `text` parameters per request is documented -- our
+`DEEPL_MAX_TEXTS_PER_REQUEST` of 50 is a limit we chose, not one DeepL states. Rate limiting answers
+`429` with no documented request-per-second figure; concurrency was not measured.
+
 ## Change markers
 
 Sites keep translations without expiry. Core tells them when to let go: `/api/v1/site` carries
