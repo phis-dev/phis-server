@@ -39,6 +39,18 @@ const DEEPL_MAX_CONCURRENT_REQUESTS = 1;
 const DEEPL_CIRCUIT_BREAKER_MS = 30_000;
 const DEEPL_MAX_REQUEST_BYTES = 128 * 1024;
 const DEEPL_MAX_TEXTS_PER_REQUEST = 50;
+/**
+ * How much text a language detection sends, and therefore what it costs.
+ *
+ * DeepL has no detection endpoint: `target_lang` is mandatory, and the language comes back as a field on
+ * a translation that is billed by the length of what was sent. A detection is a translation nobody reads.
+ * This used to send 16 KiB, written in the belief that looking at a document was free.
+ *
+ * 600 characters is several sentences, which is far more than identification needs, with room for a
+ * document that opens on a title or a line of boilerplate in another language. Sending an entire article
+ * does not make DeepL recognise Portuguese any better -- it only makes the answer cost thirty times more.
+ */
+export const DEEPL_DETECTION_SAMPLE_CHARS = 600;
 
 export type PhisTranslationUnitFormat = "text" | "html";
 
@@ -84,6 +96,22 @@ export function normalizeBatchMessages(msgs: string[]) {
 
 export function getConfiguredTranslationMode() {
   return getPhisConfigSync().translation?.mode ?? "none";
+}
+
+/**
+ * Whether this mode ever asks DeepL, which is a different question from whether a key is configured.
+ *
+ * It exists because the two callers drifted apart once already. `cdn` did not translate at all, so a
+ * plain `mode === "deepl"` was the whole truth; when it became `cdn+deepl` and DeepL turned into that
+ * mode's second step, one caller learned about it and the other kept refusing -- and refused silently,
+ * which is the worst shape that answer can take. A new mode now has one place to be considered, and both
+ * callers inherit it.
+ *
+ * Deliberately not folded together with the key check: the CDN step runs before the key matters, and a
+ * `cdn+deepl` installation with no key is a working installation rather than a broken one.
+ */
+export function translationModeUsesDeepL(mode = getConfiguredTranslationMode()) {
+  return mode === "deepl" || mode === "cdn+deepl";
 }
 
 function openDeepLCircuitBreaker() {
@@ -364,7 +392,7 @@ export async function requestPhisTranslationUnit(
    * so an installation set to `add-on` cannot translate. That is `unconfigured` and not `failed`: there
    * is no outage, there is nothing selected, and a Site must not be told to ask again.
    */
-  if (translationMode === "add-on" || translationMode === "none") {
+  if (!translationModeUsesDeepL(translationMode)) {
     return { translations: normalizedTexts, succeeded: false, outcome: "unconfigured" };
   }
 
@@ -432,17 +460,22 @@ export async function requestPhisTranslationUnit(
 /**
  * Which language a sample is in, when only the provider can say.
  *
- * DeepL's own answer, taken from a translation it was going to perform anyway, which is why this is
- * here and not in the store: it is a provider call with the provider's queue, its circuit breaker and
- * its key. `null` for every other mode, and for a provider that cannot detect -- not knowing is an
- * answer the caller already has to handle.
+ * **This is a billed translation whose output is discarded**, because DeepL offers no other way to ask:
+ * there is no detection endpoint, `target_lang` is required, and the language arrives as a field beside
+ * a translation. An earlier version of this comment claimed the translation was going to happen anyway.
+ * It was not, and that mistake is what made the sample 16 KiB.
+ *
+ * It lives here rather than in the store because it is a provider call and wants the provider's queue,
+ * its circuit breaker and its key. `null` where the mode never asks DeepL, and for a provider that
+ * cannot detect -- not knowing is an answer the caller already has to handle. Nothing is cached beyond
+ * requests in flight, so each call is paid for again.
  */
 export async function detectTranslationSourceLocale(input: {
   text: string;
   targetLocale: string;
 }) {
-  const sample = input.text.trim().slice(0, 16_000);
-  if (!sample || getConfiguredTranslationMode() !== "deepl") {
+  const sample = input.text.trim().slice(0, DEEPL_DETECTION_SAMPLE_CHARS);
+  if (!sample || !translationModeUsesDeepL()) {
     return null;
   }
   const apiKey = getPhisConfigSync().deepl?.apiKey?.trim();

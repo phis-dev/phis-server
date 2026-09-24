@@ -3,6 +3,8 @@ import "server-only";
 import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
 
+import { DEEPL_DETECTION_SAMPLE_CHARS } from "@/lib/translation-unit";
+
 const EXTERNAL_DOCUMENT_MAX_BYTES = 2 * 1024 * 1024;
 const EXTERNAL_DOCUMENT_TIMEOUT_MS = 10_000;
 
@@ -115,5 +117,5 @@ export function buildExternalDocumentLanguageSample(
       .replace(/!?(\[[^\]]*\])\([^)]*\)/g, "$1")
       .replace(/^\s{0,3}[#>*+-]+\s*/gm, " ")
       .replace(/[|*_~]/g, " ");
-  return plain.replace(/\s+/g, " ").trim().slice(0, 16_000);
+  return plain.replace(/\s+/g, " ").trim().slice(0, DEEPL_DETECTION_SAMPLE_CHARS);
 }

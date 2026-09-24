@@ -245,8 +245,12 @@ bigger batch.
 **There is no detection without translation.** `/v2/translate` rejects a request without `target_lang`
 (`400`, and nothing is billed), and no separate detection endpoint exists. Leaving `source_lang` out
 detects the language as a by-product of a real, billed translation, which is the only way to get the
-answer. `detectTranslationSourceLocale` therefore pays for a translation it throws away -- correct, and
-worth knowing before anybody calls it in a loop.
+answer. `detectTranslationSourceLocale` therefore pays for a translation it throws away.
+
+That is why its sample is `DEEPL_DETECTION_SAMPLE_CHARS`, 600 characters. It was 16 KiB, written while
+this cost was thought to be zero, which in the Free tier is about thirty detections before the month is
+spent. Identification needs a fraction of that, and nothing is cached past requests in flight, so every
+detection is paid for again.
 
 **Detection is per text within a batch.** Three texts in English, Portuguese and French in one request
 each came back with their own correct `detected_source_language`. DeepL's own wording is that texts in
