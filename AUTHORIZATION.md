@@ -266,18 +266,26 @@ not the security authority.
 One pure evaluator, `canPhiAccessSubjectReach` from `@phis/contracts/access`, implements this policy
 contract. It is compiled once and used by `@phis/server` (as `canPhiViewerAccess`) and by `@phis/ui` for:
 
-- Site Area and Page access;
-- active route resolution;
+- Site **Area** access;
 - Navigation projection;
 - server-rendered artifact filtering;
 - Site API guards;
 - client display helpers.
 
-Client evaluation is presentation only. Route resolution and every state-changing or protected read API
-must enforce the same policy server-side.
+**Not for route resolution, and not per Page.** An Area decides who may enter it; inside one, every
+viewer it admitted reaches the same addresses. A route that resolved differently per reader made the
+compiled route table, a stored Page reference and the Area's own front door three answers instead of
+one, and it protected nothing: a script asks an API, never a Page. A Module that must not show a given
+person what its Page holds returns a different tree, and refuses the matching operations here.
+`@phis/ui` ACCESS.md section 5 states the same rule from the rendering side.
+
+Client evaluation is presentation only. Every state-changing or protected read API must enforce this
+policy server-side; that enforcement is the boundary, and it is the only one.
 
 CMS write validation (`src/lib/cms/write-validation.ts`) checks the policy object in render-block config,
-in Command Toolbar button config, and in a Page's `accessPolicy`. An explicitly present malformed policy
+in Command Toolbar button config, and in a Page's `accessPolicy`. A stored Page policy is validated and
+persisted but no longer decides whether the Page is routed -- see above; what it may still narrow is an
+artifact inside it. An explicitly present malformed policy
 makes the write invalid; it is never normalized to public access. The validator accepts every shape in
 section 3 and refuses anything else, by reading the policy through `readPhiViewerAccessPolicy` from
 `@phis/contracts/access` rather than restating the shapes: the provider id, the group keys, the Add-on
