@@ -1,6 +1,10 @@
+import { readdir, rm } from "node:fs/promises";
+import path from "node:path";
+
 import type { Pool, PoolClient } from "pg";
 
 import { getPool } from "@/lib/db";
+import { getPhisConfigSync } from "@/lib/config";
 
 /**
  * Integration fixtures for the tests that only PostgreSQL can decide -- referential actions, row
@@ -13,6 +17,14 @@ import { getPool } from "@/lib/db";
  * its cascade.
  */
 export const PHI_TEST_SITE_KEY_PREFIX = "pgtest-";
+
+/**
+ * What a test Add-on's store directory is called.
+ *
+ * `@pgtest/capabilities` becomes `phis_addon_pgtest_capabilities`, and every Add-on id these tests use
+ * begins `@pgtest/`, so this prefix names their directories and no real Add-on's.
+ */
+const PHI_TEST_ADDON_DIRECTORY_PREFIX = "phis_addon_pgtest_";
 
 const REQUIRED_TABLES = [
   "sites",
@@ -200,7 +212,51 @@ export async function createPhiTestAssetReference(
 }
 
 /**
- * Removes every `pgtest-` Site, then every `pgtest-` user account.
+ * Removes on disk what the database rows had behind them.
+ *
+ * Deleting a Site row leaves its bytes, and `media_discarded_objects` is the production answer for that
+ * -- a maintenance pass these tests never run. So what a run wrote stayed: one afternoon left 111
+ * directories under one Add-on's store, growing with every run.
+ *
+ * Every deletion is named rather than swept. A directory is removed only when its own name carries a
+ * test prefix, only directly inside one of the three places a fixture can write, and never the place
+ * itself. Anything unexpected -- no configured root, a relative one, a directory that is not there --
+ * removes nothing, because this runs against the development installation's real media root and a
+ * clean-up that guesses is worse than one that skips.
+ *
+ * Failures are swallowed per entry. A leftover file is a nuisance; a test suite that reports a cleanup
+ * error as its own result is a lie about what it tested.
+ */
+async function dropPhiTestMediaFiles(): Promise<void> {
+  const media = getPhisConfigSync().media;
+  const root = media?.local?.rootDir?.trim();
+  if (!root || !path.isAbsolute(root)) {
+    return;
+  }
+
+  const sitePrefix = media?.storageKeyPrefix?.trim() || "sites";
+  const places: Array<{ dir: string; prefix: string }> = [
+    { dir: path.join(root, sitePrefix), prefix: PHI_TEST_SITE_KEY_PREFIX },
+    { dir: path.join(root, sitePrefix, "uploads-temp"), prefix: PHI_TEST_SITE_KEY_PREFIX },
+    { dir: path.join(root, "addons"), prefix: PHI_TEST_ADDON_DIRECTORY_PREFIX },
+  ];
+
+  for (const place of places) {
+    const entries = await readdir(place.dir).catch(() => null);
+    if (!entries) {
+      continue;
+    }
+    for (const entry of entries) {
+      if (!entry.startsWith(place.prefix)) {
+        continue;
+      }
+      await rm(path.join(place.dir, entry), { recursive: true, force: true }).catch(() => undefined);
+    }
+  }
+}
+
+/**
+ * Removes every `pgtest-` Site, then every `pgtest-` user account, then what they left on disk.
  *
  * The Site delete relies on the cascade graph being closed, which `sites-cascade.pg.test.ts` pins --
  * if that test fails, this stops cleaning up and says so loudly. User accounts need the second pass
@@ -221,6 +277,7 @@ export async function dropPhiTestSites(): Promise<number> {
      )`,
     [`${PHI_TEST_SITE_KEY_PREFIX}%`],
   );
+  await dropPhiTestMediaFiles();
   return rowCount ?? 0;
 }
 
