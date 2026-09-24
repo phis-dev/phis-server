@@ -43,7 +43,6 @@
     "sourceLocale": "en",
     "mode": "none",
     "cdnBaseUrl": "https://cdn.phis.dev",
-    "customEndpoint": "",
     "supportedLocales": [
       "de",
       "en",
