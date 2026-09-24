@@ -3,8 +3,14 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest
 /*
  * Through the endpoints a Site actually calls, against the development database: `/api/v1/tr` fills and
  * answers, `/api/v1/site` hands out the change markers. Only what does not belong in a test is replaced
- * -- the token guard, and the translation provider, which stands in as a `custom` endpoint on a stubbed
- * `fetch` so no request leaves the process.
+ * -- the token guard, and the translation provider, which stands in on a stubbed `fetch` so no request
+ * leaves the process.
+ *
+ * The mode is `deepl` pointed at an unroutable host. It used to be `custom`, a mode that no longer
+ * exists: an endpoint speaking our own request shape was replaced by the `add-on` service kind, and this
+ * file kept testing the path that went with it. Which provider answers is beside the point here -- what
+ * is under test is what the store and the markers do with a translation that arrives, is edited, is
+ * deleted, or fails -- so it uses the one mode that reaches a provider today.
  */
 
 const PROVIDER = "https://translation-provider.invalid/translate";
@@ -16,22 +22,24 @@ vi.mock("@/lib/api-v1-guard", () => ({
 
 vi.mock("@/lib/config", async (importOriginal) => {
   const original = await importOriginal<typeof import("@/lib/config")>();
-  const withCustomProvider = () => {
+  const withStubbedProvider = () => {
     const config = original.getPhisConfigSync();
     return {
       ...config,
       translation: {
         ...config.translation,
-        mode: "custom" as const,
-        customEndpoint: PROVIDER,
+        mode: "deepl" as const,
         supportedLocales: ["en", "de"],
       },
+      // A key has to be present or the unit answers `unconfigured` before it ever calls out, and the
+      // URL is what the `fetch` stub below recognizes.
+      deepl: { apiKey: "test-key", apiUrl: PROVIDER },
     };
   };
   return {
     ...original,
-    getPhisConfigSync: withCustomProvider,
-    getPhisConfig: async () => withCustomProvider(),
+    getPhisConfigSync: withStubbedProvider,
+    getPhisConfig: async () => withStubbedProvider(),
   };
 });
 
@@ -89,11 +97,24 @@ describe("translation change markers through /api/v1/tr and /api/v1/site", () =>
     // The endpoints resolve only an active Site; the harness creates them inactive.
     const pool = await requirePhiTestDatabase();
     await pool.query("UPDATE phis.sites SET flags = flags | $2 WHERE id = $1", [site.id, SITE_FLAG_ACTIVE]);
+    /*
+     * Speaks DeepL on the wire and plain arrays to the tests.
+     *
+     * The stub translates between the two so each case can stay a one-liner: it unpacks the form-encoded
+     * `text` parameters, hands them to `provider` as strings, and wraps whatever comes back into DeepL's
+     * `{ translations: [{ text }] }`. A failure response is passed through untouched, which is the whole
+     * point of the outage case.
+     */
     globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
       if (String(input) !== PROVIDER) {
         return realFetch(input, init);
       }
-      return provider((JSON.parse(String(init?.body)) as { msgs: string[] }).msgs);
+      const answer = provider(new URLSearchParams(String(init?.body)).getAll("text"));
+      if (!answer.ok) {
+        return answer;
+      }
+      const { translations } = await answer.json() as { translations: string[] };
+      return Response.json({ translations: translations.map((text) => ({ text })) });
     }) as typeof fetch;
   });
 
@@ -146,7 +167,10 @@ describe("translation change markers through /api/v1/tr and /api/v1/site", () =>
   });
 
   it("marks a provider failure provisional, stores nothing and moves no marker", async () => {
-    provider.mockImplementation(() => new Response("unavailable", { status: 503 }));
+    // 502 and not 503: the unit opens its circuit breaker for thirty seconds on 429, 500 and 503, and a
+    // test that leaves module state behind decides the outcome of whatever runs next. Any `!ok` fails
+    // the request, so the case is unchanged.
+    provider.mockImplementation(() => new Response("unavailable", { status: 502 }));
     const before = await markers();
 
     expect(await tr("Outage probe")).toEqual({ translations: ["Outage probe"], provisional: true });
