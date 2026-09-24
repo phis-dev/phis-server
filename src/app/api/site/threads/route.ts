@@ -99,6 +99,8 @@ export async function POST(request: NextRequest) {
       subject: normalizeString(body.subject) || null,
       message,
       messageMarkdown: normalizeString(body.messageMarkdown) || null,
+      // What the writer said they wrote in. Refused if the platform does not know the key, never guessed.
+      messageSourceLang: normalizeString(body.messageSourceLang) || null,
       messageFlags: normalizeInteger(body.messageFlags) ?? 0,
       participantUserIds: normalizeIdArray(body.participantUserIds),
       participantGroupIds: normalizeIdArray(body.participantGroupIds),

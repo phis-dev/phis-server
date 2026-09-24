@@ -30,6 +30,7 @@ import { enqueuePhisAddonThreadEventWithDb } from "@/db/addon-events";
 import { schedulePhisAddonEventDelivery } from "@/lib/addons/event-trigger";
 
 import { PHI_CORE_ROLE_PROVIDER_ID } from "@/lib/authorization";
+import { resolvePhiLocaleCapability } from "@/lib/locale";
 import { PhiSiteGroupFlags } from "@/lib/constants/site-groups";
 import {
   PHIS_THREAD_MESSAGE_MAX_ASSETS,
@@ -75,6 +76,8 @@ export type CreateThreadInput = {
   subject?: string | null;
   message: string;
   messageMarkdown?: string | null;
+  /** What the opening message is written in. See `normalizeMessageSourceLang`. */
+  messageSourceLang?: string | null;
   messageFlags?: number;
   messageMeta?: Record<string, unknown>;
   participantUserIds?: number[];
@@ -108,6 +111,8 @@ export type AddThreadMessageInput = {
   reader: ThreadReader;
   message: string;
   messageMarkdown?: string | null;
+  /** What this message is written in. See `normalizeMessageSourceLang`. */
+  messageSourceLang?: string | null;
   messageFlags?: number;
   messageMeta?: Record<string, unknown>;
   externalRef?: string | null;
@@ -150,6 +155,7 @@ type ThreadMessageRow = {
   author_company_name: string | null;
   body_text: string;
   body_markdown: string | null;
+  source_lang: string | null;
   flags: number;
   meta: Record<string, unknown> | null;
   created_at: string;
@@ -352,6 +358,9 @@ function projectMessage(
     author: projectAuthor(row),
     bodyText: withheld ? null : row.body_text,
     bodyMarkdown: withheld ? null : row.body_markdown,
+    // Withheld with the text, for the reason the files are. What a withdrawn message was written in is
+    // still something about the message nobody may read any more.
+    sourceLang: withheld ? null : row.source_lang,
     flags: row.flags,
     // Withheld with the text it belonged to. A redacted message kept its files listed would say what
     // was taken away, and a confidential one would hand an Add-on the thing the flag exists to stop.
@@ -603,6 +612,7 @@ async function readMessageWindow(
             profile.company_name AS author_company_name,
             message.body_text,
             message.body_markdown,
+            message.source_lang,
             message.flags,
             message.meta,
             message.created_at,
@@ -674,6 +684,33 @@ export async function getThreadDetail(
     messages: window.messages.map((row) => projectMessage(row, reader, assets.get(row.id) ?? [])),
     hasMoreMessages: window.hasMore,
   };
+}
+
+/**
+ * Resolves the declared source language, or refuses it.
+ *
+ * The vocabulary is the platform's locale capability table and deliberately not the Site's own locale
+ * list: what a Site publishes in is one question, and what a person wrote in is another. A customer
+ * writing Portuguese to a Site that runs German and English has still written Portuguese, and dropping
+ * the fact because the Site does not publish it would lose exactly what makes the field worth having.
+ *
+ * Absent or empty is `not declared` and stores null. Anything the table does not know is refused rather
+ * than quietly nulled: a picker that sends an unknown key is broken, and the writer would never learn
+ * it. Aliases resolve -- `zh-CN` is stored as `zh-Hans` -- so one language is one key however it
+ * arrived.
+ */
+function normalizeMessageSourceLang(value: string | null | undefined) {
+  const raw = typeof value === "string" ? value.trim() : "";
+  if (!raw) {
+    return null;
+  }
+
+  const capability = resolvePhiLocaleCapability(raw);
+  if (!capability) {
+    throw new PhisThreadError(`Unknown message language: ${raw}`);
+  }
+
+  return capability.locale;
 }
 
 /**
@@ -790,6 +827,7 @@ async function insertMessage(
     authorProviderId: string | null;
     bodyText: string;
     bodyMarkdown: string | null;
+    sourceLang: string | null;
     flags: number;
     meta: Record<string, unknown>;
     externalRef?: string | null;
@@ -809,10 +847,11 @@ async function insertMessage(
        author_provider_id,
        body_text,
        body_markdown,
+       source_lang,
        flags,
        meta
      )
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb)
      RETURNING id`,
     [
       input.threadId,
@@ -821,6 +860,7 @@ async function insertMessage(
       input.authorProviderId,
       input.bodyText,
       input.bodyMarkdown,
+      input.sourceLang,
       input.flags,
       JSON.stringify(input.meta),
     ],
@@ -973,6 +1013,7 @@ export async function createThreadWithDb(
       authorProviderId: input.ownerProviderId ?? null,
       bodyText: input.message,
       bodyMarkdown: input.messageMarkdown ?? null,
+      sourceLang: normalizeMessageSourceLang(input.messageSourceLang),
       flags: normalizeMessageFlags(input.messageFlags, {
         isStaff,
         imported: Boolean(input.externalRef),
@@ -1069,6 +1110,7 @@ export async function addThreadMessage(input: AddThreadMessageInput): Promise<Ph
       authorProviderId: providerId,
       bodyText: input.message,
       bodyMarkdown: input.messageMarkdown ?? null,
+      sourceLang: normalizeMessageSourceLang(input.messageSourceLang),
       flags: normalizeMessageFlags(input.messageFlags, {
         isStaff,
         imported: Boolean(input.externalRef),

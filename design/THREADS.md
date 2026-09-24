@@ -701,7 +701,7 @@ differs -- and arriving is exactly the part that should differ.
 
 ## 14. The language a message is written in
 
-**Planned, like the rest of this document.**
+**The stored fact is built. Translating one is planned, like the rest of this document.**
 
 ### The stored fact
 
@@ -720,8 +720,18 @@ platform capability table and not a vendor's.
 
 **The writer declares it.** The interface locale of the person writing is not the language they are
 writing in -- somebody with a German interface answers an English customer in English -- so a surface
-offers a choice rather than taking the UI locale silently. The declaration is the message author's; the
-server stores what it is given.
+offers a choice rather than taking the UI locale silently. The declaration is the message author's.
+
+**The server stores what it is given, or refuses it.** A key the platform capability table does not
+know is a 400 and not a stored `NULL`: the two say different things, and a surface sending a key nobody
+recognises has a bug its writer would never learn about if Core absorbed it. Aliases resolve on the way
+in, so `zh-CN` is stored as `zh-Hans` and one language is one key however it arrived. The rule lives in
+`db/threads.ts` and therefore holds for the Add-on capability's `create` and `reply` exactly as it holds
+for the Site routes.
+
+**Withheld with the body.** A `Redacted` message, and a `Confidential` one projected for an Add-on,
+report `NULL` -- for the reason their assets are withheld (section 4): what a withdrawn message was
+written in is still something about a message this reader may not have.
 
 ### Translating one, on request
 

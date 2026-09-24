@@ -51,6 +51,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       reader: { kind: "user", userId },
       message,
       messageMarkdown: normalizeString(body.messageMarkdown) || null,
+      messageSourceLang: normalizeString(body.messageSourceLang) || null,
       // Normalized against who is writing: `Internal` needs Staff, and the flags Core owns are ignored.
       messageFlags: typeof body.messageFlags === "number" ? body.messageFlags : 0,
       assetIds: normalizeIdArray(body.assetIds),
