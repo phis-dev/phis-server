@@ -1117,6 +1117,11 @@ CREATE TABLE IF NOT EXISTS phis.threads (
   -- 0 = open, 1 = archived. One row carries it, so archiving closes the thread for everyone in it
   -- rather than hiding it from one reader.
   status SMALLINT NOT NULL DEFAULT 0,
+  -- The name of the whole chain: the row in an inbox, the heading over the messages, what a
+  -- notification is called. Nullable for the integration path alone -- a mail can arrive with an empty
+  -- Subject header and is still a conversation, and losing the message to protect a heading would be the
+  -- wrong trade. A person opening one is asked for it and the Site route refuses without it, so NULL in
+  -- practice means an integration had none.
   subject VARCHAR(255) NULL,
   flags INT NOT NULL DEFAULT 0,
   -- The Add-on that opened this thread with no actor behind it, and may therefore reach it again

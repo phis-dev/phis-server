@@ -1427,6 +1427,7 @@ Contract:
 
 Contract:
 - A thread is a conversation between people on one Site, and no longer a Support-only container; see [design/THREADS.md](./design/THREADS.md).
+- `subject` is the name of the whole chain: the inbox row, the heading over the messages, what a notification is called. It is **nullable for the integration path alone** -- a mail can arrive with an empty subject header and is still a conversation, and losing the message to protect a heading would be the wrong trade. A person opening one is asked for it, and `POST /api/site/threads` refuses without it, so `NULL` in practice means an integration had none. A thread with no subject is displayed under the names of whoever is in it.
 - `kind` is `PhisThreadKind` from `@phis/contracts/threads`:
   - `0 = direct`, Staff to Staff between people who share a group
   - `1 = group`, inside one group

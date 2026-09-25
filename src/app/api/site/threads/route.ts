@@ -83,9 +83,25 @@ export async function POST(request: NextRequest) {
 
   const body = await readRequestBody(request);
   const message = normalizeString(body.message);
+  const subject = normalizeString(body.subject);
   const kind = normalizeInteger(body.kind);
   if (!message) {
     return NextResponse.json({ error: "message is required." }, { status: 400 });
+  }
+  /*
+   * A person opening a conversation names it, and this route is only ever a person.
+   *
+   * The subject is the name of the whole chain -- the inbox row, the heading over the messages, what a
+   * notification is called -- so a conversation without one ends up named after whoever is in it. The
+   * column is nullable and stays that way for the integration path, where a mail can genuinely arrive
+   * with an empty subject header and is still a conversation; losing the message to protect a heading
+   * would be the wrong trade. Here the person who could say it in four words is the one asking.
+   *
+   * Refused on the route and not only in the form: a validated field a route does not hold to is a
+   * courtesy, and the surface is not the only thing that can call this.
+   */
+  if (!subject) {
+    return NextResponse.json({ error: "subject is required." }, { status: 400 });
   }
   if (kind == null) {
     return NextResponse.json({ error: "kind is required." }, { status: 400 });
@@ -96,7 +112,7 @@ export async function POST(request: NextRequest) {
     thread = await createThread({
       siteId: site.id,
       kind: kind as PhisThreadKindValue,
-      subject: normalizeString(body.subject) || null,
+      subject,
       message,
       messageMarkdown: normalizeString(body.messageMarkdown) || null,
       messageFlags: normalizeInteger(body.messageFlags) ?? 0,
