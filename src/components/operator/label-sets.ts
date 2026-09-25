@@ -93,6 +93,9 @@ export const OPERATOR_TRANSLATIONS_LABELS = {
     "Which installed add-on translates. Several may be installed; exactly one is used. An add-on that is disabled or was built against another interface is listed and cannot be chosen.",
   addonProviderEmpty: "No installed add-on offers translation.",
   addonProviderUnset: "Select an add-on",
+  addonSecret: "Add-on secret",
+  addonSecretHelp:
+    "The secret reference the selected add-on is given, in the form addon:@scope/name:api-key. It names a stored secret and never holds one. Leave it empty for an add-on that needs no credential.",
   customSchema: "Schema",
   customSchemaTitle: "Custom translation schema",
   customSchemaIntro:

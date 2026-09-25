@@ -135,6 +135,19 @@ export type PhisConfig = {
      * installation with no such Add-on can only ever have.
      */
     providerKey?: string;
+    /**
+     * The secret the selected translation Provider is given, as a secret reference.
+     *
+     * Installation-wide and therefore here, not in an Add-on's per-Site configuration: which translator
+     * an installation uses is an installation's decision, and the Provider is handed no Site at all. The
+     * reference names the secret and never holds it -- `addon:@scope/name:api-key` -- and Core resolves
+     * it, because the configuration that names it is Core's and an Add-on asking for its own reference
+     * would be an Add-on trusted to ask only for its own.
+     *
+     * Empty is a Provider that needs none, which is a real case: one that talks to a model on the same
+     * machine has nothing to authenticate with.
+     */
+    secretReference?: string;
     cdnBaseUrl?: string;
     supportedLocales?: string[];
     allowedLocales?: string[];

@@ -195,6 +195,7 @@ export default async function OperatorPage({
         initialPublicToken={config.api?.publicToken?.trim() ?? ""}
         addonProviders={listPhisServiceProviders(PHIS_SERVICE_KINDS.translation)}
         initialAddonProviderKey={config.translation?.providerKey?.trim() ?? ""}
+        initialAddonSecretReference={config.translation?.secretReference?.trim() ?? ""}
       />
     );
   }

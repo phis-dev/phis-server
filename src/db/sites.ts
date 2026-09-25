@@ -553,6 +553,40 @@ function mapSiteRuntimeConfigRow(
   };
 }
 
+/**
+ * The locale codes a Site publishes in, and nothing else about it.
+ *
+ * `SiteRecord` deliberately does not carry them: it is the row every request resolves from a header, and
+ * a list nobody needs on most requests does not belong in it. `getSiteRuntimeConfig` has them, along with
+ * the theme, the logo and a revision join -- far too much to ask for a list of language codes.
+ *
+ * The default locale leads, and is included even where the column somehow is not: a Site always publishes
+ * in its own default language, and a caller offering the list would otherwise offer everything but it.
+ */
+export async function readSiteAvailableLocales(siteId: number) {
+  if (!Number.isInteger(siteId) || siteId <= 0) {
+    return [];
+  }
+  const { rows } = await getPool().query<{
+    default_locale: string;
+    available_locales: string[] | null;
+  }>(
+    `SELECT sites.default_locale, sites.available_locales
+     FROM phis.sites AS sites
+     WHERE sites.id = $1
+     LIMIT 1`,
+    [siteId],
+  );
+  const row = rows[0];
+  if (!row) {
+    return [];
+  }
+  return Array.from(new Set([
+    row.default_locale,
+    ...(Array.isArray(row.available_locales) ? row.available_locales : []),
+  ].filter(Boolean)));
+}
+
 export async function getSiteRuntimeConfig(siteId: number) {
   if (!Number.isInteger(siteId) || siteId <= 0) {
     return null;

@@ -235,6 +235,14 @@ async function requestConfiguredTranslationsOrFallback(input: {
     ctx: getProviderTranslationContext(input.ctx),
     sourceLocale: input.sourceLocale,
     format: input.format,
+    /*
+     * The store's texts are the platform's own, which is what the CDN step is for.
+     *
+     * Everything that reaches this function is a keyed message out of `tr_msg` or `tr_site_msg`. A
+     * conversation body never does -- it is not stored, keyed or versioned, and it goes to the unit
+     * directly as `private`, so no CDN ever sees it.
+     */
+    audience: "platform",
   });
   if (result.outcome === "failed") {
     recordTranslationStandIn();

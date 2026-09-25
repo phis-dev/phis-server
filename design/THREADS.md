@@ -701,8 +701,7 @@ differs -- and arriving is exactly the part that should differ.
 
 ## 14. The language a message is written in
 
-**The column is built and only an integration writes it. Translating one is planned, like the rest of
-this document.**
+**The column is built and only an integration writes it. Translating one is built too.**
 
 ### The stored fact
 
@@ -726,8 +725,20 @@ page a form was submitted from, the browser language a chat widget saw -- these 
 with the message and are lost if there is nowhere to put them. The write path is therefore exactly one:
 `messageSourceLang` on the threads capability's `create` and `reply`. Nothing else sets it.
 
-This is what keeps the column readable. Since no surface writes it, a value present means an integration
-said so and `NULL` means nobody did, with no flag needed to tell the two apart.
+**A translation fills it too, and says that it did.** The language a provider recognised comes back as a
+field on a translation that was paid for anyway, so throwing it away would have left the column empty for
+every message a person ever wrote -- which is to say for almost all of them, since no surface declares one.
+It is stored only where the column is `NULL`, and it carries `LangDetected` (32).
+
+That flag is the difference between an assertion and a guess. An integration states the language from
+something it has; a translator states what a model made of the text, which is right for a paragraph and a
+coin toss for a message that says "bongo". Anything routing or counting on this column has to be able to
+see which of the two it is looking at, and a flag is where that lives rather than a comment. A declared
+language is never replaced by a recognised one, `updated_at` is left alone, and `Edited` is not set --
+nobody changed the message.
+
+Storing it is best effort. The reader asked to read a message; a column that did not get filled in is not a
+reason to answer them with an error.
 
 **It is also the only kind of value a filter can use.** Routing Portuguese enquiries to the people who
 speak Portuguese, or counting which languages enquiries arrive in, needs a stored column: nothing that
@@ -756,12 +767,21 @@ written in is still something about a message this reader may not have.
 
 ### Translating one, on request
 
+`POST /api/site/threads/<threadId>/messages/<messageId>/translate`, with the target locale in the body,
+answering the translated text, the target, and the language it came out of where anybody said so.
+`GET /api/site/translation` says beforehand whether this installation translates for this Site and into
+which of its locales, so a surface can decide whether the control may exist at all.
+
 A translation of a message is a view of it. **The original always remains and nothing is persisted:**
 not the translated text, not a record that it was shown.
 
 - **Only when asked.** Never automatic, never a consequence of two languages differing, and never
   ahead of time. A Site that shows a thread shows originals.
-- **One message at a time**, into one target locale the caller names.
+- **One message at a time**, into one target locale the caller names. A Site surface names the reader's
+  own configured language and offers no choice at the message: a translation is billed by the text sent
+  whether or not anybody reads it, and a language picker on every row invites trying two more of them on
+  the same paragraph. Core does not enforce that -- it accepts the locale it is given -- but it is why the
+  first-party surface asks for one.
 - **`Confidential` refuses.** A translation is the body leaving Core, which is the one thing that flag
   forbids (section 4). The refusal is here, not in the surface that asked: a Site fetching a body and
   posting it to a provider itself would have moved it out already, which is why the call is Core's.
@@ -774,11 +794,30 @@ not the translated text, not a record that it was shown.
   path. What is shared with that contract is the provider mode and nothing above it.
 - **The body sent is `body_markdown` when there is one, otherwise `body_text`.** Providers pass the
   control characters through, so the richer body costs nothing and loses nothing.
+- **Nothing around the message is sent with it.** Handing the neighbouring messages to the provider as
+  translator context was built here and taken out again. The measurement that argued for it -- context is
+  request-wide and is not billed -- is about the bill. What nobody has measured is what a provider does
+  with a context that is long and in a third language, which in a mixed thread is what the message before
+  this one usually is. The field stays in the provider contract, unused from here until somebody measures
+  it.
+- **The CDN step never sees it.** `cdn+deepl` asks the CDN first by POSTing the text to it, which is
+  right for the platform's own message catalogue and wrong for something somebody wrote an hour ago.
+  Every request to the translation unit therefore states an audience, `platform` or `private`, and a
+  conversation body is `private` -- required rather than defaulted, because the safe value is the one a
+  caller would forget.
+- **The target must be one the Site publishes in**, refused with 400 otherwise, for the reason it is not
+  offered: a translation into a language the Site has no locale for is text nobody here can read
+  afterwards.
 
 Whether an installation can translate at all is the mode of [TRANSLATIONS.md](../TRANSLATIONS.md) --
 for `add-on`, whether the selected provider of the `@phis/server/service/translation` kind is installed
 and ready. A Site is told the answer and nothing about how it was reached, so it can decide whether to
 offer the control before drawing one that cannot work.
+
+It is deliberately not part of the capability snapshot, although an earlier note planned it there. That
+snapshot carries one verdict per capability *provider* and Core's is unconditionally available, because
+Core is the server answering; translation is configuration rather than interface, so folding it in would
+have meant a Core entry that turns `misconfigured` and takes every unrelated first-party Module with it.
 
 **What is given up by not persisting:** there is afterwards no record that a translation was shown, so
 nothing can say what a support agent actually read. That is accepted, not overlooked.

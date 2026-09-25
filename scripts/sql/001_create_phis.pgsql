@@ -1200,16 +1200,22 @@ CREATE TABLE IF NOT EXISTS phis.thread_messages (
   author_provider_id VARCHAR(255) NULL,
   body_text TEXT NOT NULL,
   body_markdown TEXT NULL,
-  -- The language the body is written in, where an integration recorded it. Only the threads capability
-  -- writes it: no person is asked and no Site route accepts it, because a translator determines the
-  -- source language itself. So a value present means an integration said so, and NULL means nobody did.
+  -- The language the body is written in. Nobody is asked for it: no person gets a language picker and no
+  -- Site route accepts one, because a translator determines the source language itself. Two things write
+  -- it. An integration declares it through the threads capability, from something it has -- a mail header,
+  -- the locale of a form's page. And a translation of a message that declared none stores what the
+  -- provider recognised, because that arrives free with a translation somebody paid for and dropping it
+  -- would leave the column empty for everything a person ever wrote. The second carries flag 32,
+  -- LangDetected, and never overwrites the first: a declaration is not a guess, and a guess about five
+  -- characters is a coin toss that a router must be able to recognise as one.
   -- NULL is never to be read as the Site's default. It names a locale from the platform capability
   -- table, not a translation provider's list: a provider is swapped and a language leaves its list,
   -- while the message stays written in what it was written in. Its case is filtering and routing, which
-  -- detection cannot do -- nothing that comes into being while somebody reads fits a WHERE clause.
+  -- reading cannot do -- nothing that comes into being while somebody reads fits a WHERE clause.
   source_lang VARCHAR(8) NULL,
-  -- 1 = internal, 2 = confidential, 4 = edited, 8 = redacted, 16 = imported. `internal` is who may read
-  -- it; `confidential` is where it may go, which is nowhere outside Core.
+  -- 1 = internal, 2 = confidential, 4 = edited, 8 = redacted, 16 = imported, 32 = lang_detected.
+  -- `internal` is who may read it; `confidential` is where it may go, which is nowhere outside Core;
+  -- `lang_detected` says source_lang was recognised by a translator rather than declared by a deliverer.
   flags INT NOT NULL DEFAULT 0,
   meta JSONB NOT NULL DEFAULT '{}'::jsonb,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),

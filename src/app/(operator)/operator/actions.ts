@@ -15,6 +15,7 @@ import {
 } from "@/lib/config-files";
 import { resetPhisConfigCache } from "@/lib/config";
 import { getOperatorSession } from "@/lib/operator-auth";
+import { isPhiSecretReference } from "@/lib/secrets/reference";
 import { PHIS_TOKEN_HEADER } from "@/lib/constants/http-headers";
 import {
   getConfiguredCdnBaseUrlSync,
@@ -355,6 +356,8 @@ export async function updateOperatorSupportedLocales(formData: FormData) {
   const mode = normalizeTranslationMode(String(formData.get("translationMode") ?? "none"));
   const deeplKey = String(formData.get("translationDeeplKey") ?? "").trim();
   const addonProviderKey = String(formData.get("translationAddonProviderKey") ?? "").trim();
+  const addonSecretReference =
+    String(formData.get("translationAddonSecretReference") ?? "").trim();
   const deeplEndpoint = String(formData.get("translationDeeplEndpoint") ?? "").trim();
   const publicToken = String(formData.get("translationPublicToken") ?? "").trim();
   const allowPublicReads = String(formData.get("translationAllowPublicReads") ?? "false") === "true";
@@ -392,6 +395,18 @@ export async function updateOperatorSupportedLocales(formData: FormData) {
     if (!available.some((provider) => provider.providerKey === addonProviderKey)) {
       redirect(buildTranslationsHref({
         error: "Please select an installed translation add-on.",
+        mode,
+      }));
+    }
+    /*
+     * A malformed reference is refused now rather than resolved to null later.
+     *
+     * Null is the answer for an add-on that needs no credential, so a typo saved here would look exactly
+     * like a deliberate blank and translate nothing for a reason nobody could see.
+     */
+    if (addonSecretReference && !isPhiSecretReference(addonSecretReference)) {
+      redirect(buildTranslationsHref({
+        error: "That is not a valid secret reference.",
         mode,
       }));
     }
@@ -472,6 +487,7 @@ export async function updateOperatorSupportedLocales(formData: FormData) {
       ...runtimeConfig.translation,
       mode,
       providerKey: mode === "add-on" ? addonProviderKey : "",
+      secretReference: mode === "add-on" ? addonSecretReference : "",
       supportedLocales,
       allowPublicReads,
       allowPublicWrites,

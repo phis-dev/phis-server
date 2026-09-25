@@ -54,13 +54,35 @@ export const DEEPL_DETECTION_SAMPLE_CHARS = 600;
 
 export type PhisTranslationUnitFormat = "text" | "html";
 
+/**
+ * Whose text this is, and the one thing that decides it.
+ *
+ * `platform` is the platform's own message catalogue: the same English sentence on every installation,
+ * which is what makes a shared step in front of the provider possible at all. `private` is text that
+ * belongs to one installation and nobody else -- a conversation body above all -- and it therefore skips
+ * the CDN step, because that step is a POST of the text to somebody else's service.
+ *
+ * It is a required field and not a default, because the safe value is the one a caller would forget. A
+ * body sent to the CDN cannot be unsent, and nothing in a request's shape would have revealed it.
+ */
+export type PhisTranslationUnitAudience = "platform" | "private";
+
 export type PhisTranslationUnitRequest = {
   locale: string;
   msgs: string[];
   /** Natural-language context for the provider; the storage flag envelope never reaches here. */
   ctx?: string;
-  sourceLocale: string;
+  /**
+   * What the text is written in, or `null` for "whoever translates decides".
+   *
+   * Null is a real case and not an omission. A conversation body carries a declared language only where
+   * an integration recorded one, and inventing the Site's default in its place would tell a provider
+   * German about Portuguese text. Every provider this unit talks to detects for itself, so null is an
+   * answer rather than a gap.
+   */
+  sourceLocale: string | null;
   format: PhisTranslationUnitFormat;
+  audience: PhisTranslationUnitAudience;
 };
 
 /**
@@ -83,12 +105,32 @@ export type PhisTranslationUnitResult = {
    * an easy one to move.
    */
   outcome: "translated" | "unconfigured" | "failed";
+  /**
+   * Which language each text turned out to be in, where whoever translated said so.
+   *
+   * As many entries as `translations`, in its order, and empty when nothing reported any -- a provider
+   * that does not detect, or an answer that is not a translation. It is a *result*, which is the whole
+   * reason nobody has to be asked beforehand: one translation into a target already carries the source
+   * it came out of, so a second billed call to find that out would be paying twice for one fact.
+   */
+  detectedSourceLocales: Array<string | null>;
 };
 
 let activeDeepLRequests = 0;
 let deepLCircuitOpenUntil = 0;
 const deepLQueue: Array<() => void> = [];
-const inFlightDeepLRequests = new Map<string, Promise<string[]>>();
+/**
+ * What one DeepL request answers with: the texts, and what it read them as.
+ *
+ * Both arrive in the same response and the detection is per text, so they travel together rather than
+ * being asked for twice.
+ */
+type DeepLBatchAnswer = {
+  texts: string[];
+  detected: string[];
+};
+
+const inFlightDeepLRequests = new Map<string, Promise<DeepLBatchAnswer>>();
 
 export function normalizeBatchMessages(msgs: string[]) {
   return msgs.map((msg) => msg.trim()).filter(Boolean);
@@ -140,7 +182,7 @@ function releaseDeepLSlot() {
 
 async function runDeepLRequest(
   cacheKey: string,
-  request: () => Promise<string[]>,
+  request: () => Promise<DeepLBatchAnswer>,
 ) {
   if (Date.now() < deepLCircuitOpenUntil) {
     throw new Error("DeepL circuit breaker is open.");
@@ -271,10 +313,10 @@ async function requestDeepL(
   texts: string[],
   locale: string,
   context?: string,
-  sourceLocale?: string,
+  sourceLocale?: string | null,
   format: PhisTranslationUnitFormat = "text",
   cacheKeyPrefix = "deepl",
-) {
+): Promise<DeepLBatchAnswer> {
   const apiKey = getPhisConfigSync().deepl?.apiKey?.trim();
   if (!apiKey) {
     throw new Error("Missing deepl.apiKey in config/phis-runtime.json.");
@@ -282,7 +324,7 @@ async function requestDeepL(
 
   const normalizedTexts = normalizeBatchMessages(texts);
   if (normalizedTexts.length === 0) {
-    return [];
+    return { texts: [], detected: [] };
   }
 
   const url = getPhisConfigSync().deepl?.apiUrl?.trim() ?? DEFAULT_DEEPL_URL;
@@ -354,17 +396,30 @@ async function requestDeepL(
       }
 
       const data = (await response.json()) as {
-        translations?: Array<{ text?: string }>;
+        translations?: Array<{ text?: string; detected_source_language?: string }>;
       };
       const values = data.translations?.map((item) => item.text ?? "") ?? [];
       if (values.length !== batch.length) {
         throw new Error("DeepL response missing translation text.");
       }
-      return values;
+      /*
+       * Detection is per text and not per request, measured.
+       *
+       * Which is why this is an array beside the texts rather than one value for the batch: two texts in
+       * one request can come back read as two different languages, and collapsing them would invent an
+       * agreement DeepL never claimed.
+       */
+      return {
+        texts: values,
+        detected: data.translations?.map((item) => item.detected_source_language ?? "") ?? [],
+      };
     });
   }));
 
-  return translatedBatches.flat();
+  return {
+    texts: translatedBatches.flatMap((answer) => answer.texts),
+    detected: translatedBatches.flatMap((answer) => answer.detected),
+  };
 }
 
 /**
@@ -379,21 +434,44 @@ export async function requestPhisTranslationUnit(
 ): Promise<PhisTranslationUnitResult> {
   const normalizedTexts = normalizeBatchMessages(input.msgs);
   if (normalizedTexts.length === 0) {
-    return { translations: [], succeeded: true, outcome: "translated" };
+    return { translations: [], succeeded: true, outcome: "translated", detectedSourceLocales: [] };
   }
 
   const translationMode = getConfiguredTranslationMode();
   const hasDeepLKey = Boolean(getPhisConfigSync().deepl?.apiKey?.trim());
 
   /*
-   * `add-on` has a name and no resolver yet.
+   * `add-on` asks the Provider the operator selected, and asks nothing else.
    *
-   * The service kind exists in `@phis/contracts` and nothing in this release asks for a factory of it,
-   * so an installation set to `add-on` cannot translate. That is `unconfigured` and not `failed`: there
-   * is no outage, there is nothing selected, and a Site must not be told to ask again.
+   * No CDN step in front of it and no DeepL behind it: an operator who chose a Provider chose it, and a
+   * chain that quietly reached a second translator would make an installation's answer depend on which
+   * one happened to be reachable. What the Provider talks to is the Provider's business.
    */
+  if (translationMode === "add-on") {
+    /*
+     * Reached for, not held.
+     *
+     * The Add-on path reaches the installed manifest, the registry and the secret store. A static import
+     * would put all three in the graph of every translation this server performs, and a DeepL
+     * installation has no business loading the Add-on machinery at all.
+     */
+    const { requestTranslationFromAddon } = await import("@/lib/translation-addon");
+    return await requestTranslationFromAddon({
+      texts: normalizedTexts,
+      locale: input.locale,
+      sourceLocale: input.sourceLocale,
+      ctx: input.ctx,
+      format: input.format,
+    });
+  }
+
   if (!translationModeUsesDeepL(translationMode)) {
-    return { translations: normalizedTexts, succeeded: false, outcome: "unconfigured" };
+    return {
+      translations: normalizedTexts,
+      succeeded: false,
+      outcome: "unconfigured",
+      detectedSourceLocales: [],
+    };
   }
 
   /*
@@ -407,34 +485,46 @@ export async function requestPhisTranslationUnit(
    * A failure reaching the CDN is not a failure of the chain, which is why this sits outside the try
    * below and falls through silently.
    */
-  if (translationMode === "cdn+deepl") {
+  if (translationMode === "cdn+deepl" && input.audience === "platform") {
     const fromCdn = await requestCdnTranslations({
       locale: input.locale,
       msgs: normalizedTexts,
       ctx: input.ctx,
-      sourceLocale: input.sourceLocale,
+      sourceLocale: input.sourceLocale ?? undefined,
       format: input.format,
     }).catch(() => null);
     if (fromCdn) {
-      return { translations: fromCdn, succeeded: true, outcome: "translated" };
+      return {
+        translations: fromCdn,
+        succeeded: true,
+        outcome: "translated",
+        // The mirrored route answers with text and says nothing about what it read, so nothing is
+        // claimed here. Absent is the honest shape for a step that was never asked.
+        detectedSourceLocales: [],
+      };
     }
   }
 
   if (!hasDeepLKey) {
-    return { translations: normalizedTexts, succeeded: false, outcome: "unconfigured" };
+    return {
+      translations: normalizedTexts,
+      succeeded: false,
+      outcome: "unconfigured",
+      detectedSourceLocales: [],
+    };
   }
 
   const requestKey = buildProviderRequestKey({
     provider: "deepl",
     locale: input.locale,
-    sourceLocale: input.sourceLocale,
+    sourceLocale: input.sourceLocale ?? undefined,
     ctx: input.ctx,
     format: input.format,
     msgs: normalizedTexts,
   });
 
   try {
-    const translations = await requestDeepL(
+    const answer = await requestDeepL(
       normalizedTexts,
       input.locale,
       input.ctx,
@@ -442,18 +532,30 @@ export async function requestPhisTranslationUnit(
       input.format,
       requestKey,
     );
-    return { translations, succeeded: true, outcome: "translated" };
+    return {
+      translations: answer.texts,
+      succeeded: true,
+      outcome: "translated",
+      detectedSourceLocales: answer.detected.map(
+        (code) => resolvePhiLocaleCapability(code)?.locale ?? null,
+      ),
+    };
   } catch (error) {
     logProviderFallback({
       provider: "deepl",
       locale: input.locale,
-      sourceLocale: input.sourceLocale,
+      sourceLocale: input.sourceLocale ?? undefined,
       ctx: input.ctx,
       format: input.format,
       msgCount: normalizedTexts.length,
       error,
     });
-    return { translations: normalizedTexts, succeeded: false, outcome: "failed" };
+    return {
+      translations: normalizedTexts,
+      succeeded: false,
+      outcome: "failed",
+      detectedSourceLocales: [],
+    };
   }
 }
 
@@ -494,7 +596,7 @@ export async function detectTranslationSourceLocale(input: {
     format: "text",
     msgs: [sample],
   });
-  const [detected = ""] = await runDeepLRequest(`detect:${cacheKey}`, async () => {
+  const { detected: [detected = ""] } = await runDeepLRequest(`detect:${cacheKey}`, async () => {
     const response = await fetch(url, {
       method: "POST",
       headers: {
@@ -511,7 +613,7 @@ export async function detectTranslationSourceLocale(input: {
     const data = (await response.json()) as {
       translations?: Array<{ detected_source_language?: string }>;
     };
-    return [data.translations?.[0]?.detected_source_language ?? ""];
+    return { texts: [], detected: [data.translations?.[0]?.detected_source_language ?? ""] };
   });
   return resolvePhiLocaleCapability(detected)?.locale ?? null;
 }

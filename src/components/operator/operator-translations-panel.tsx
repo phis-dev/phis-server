@@ -54,6 +54,8 @@ type OperatorTranslationsLabels = {
   addonProviderHelp: string;
   addonProviderEmpty: string;
   addonProviderUnset: string;
+  addonSecret: string;
+  addonSecretHelp: string;
   customSchema: string;
   customSchemaTitle: string;
   customSchemaIntro: string;
@@ -104,6 +106,7 @@ export function OperatorTranslationsPanel({
   initialPublicToken,
   addonProviders,
   initialAddonProviderKey,
+  initialAddonSecretReference,
 }: {
   labels: OperatorTranslationsLabels;
   mode: TranslationMode;
@@ -127,6 +130,7 @@ export function OperatorTranslationsPanel({
     interfaceCurrent: boolean;
   }>;
   initialAddonProviderKey: string;
+  initialAddonSecretReference: string;
 }) {
   const router = useRouter();
   const [selectedLocales, setSelectedLocales] = useState<string[]>(configuredLocales);
@@ -139,6 +143,7 @@ export function OperatorTranslationsPanel({
   const [confirmEnablePublicWrites, setConfirmEnablePublicWrites] = useState(false);
   const [publicToken, setPublicToken] = useState(initialPublicToken);
   const [addonProviderKey, setAddonProviderKey] = useState(initialAddonProviderKey);
+  const [addonSecretReference, setAddonSecretReference] = useState(initialAddonSecretReference);
   const [showCustomSchema, setShowCustomSchema] = useState(false);
   const lockedLocaleSet = new Set(lockedLocales);
   const notifications = [
@@ -290,6 +295,25 @@ export function OperatorTranslationsPanel({
                               </option>
                             ))}
                           </select>
+                        </div>
+                        <div className="ui_field">
+                          <span className="operator-field_label_row">
+                            <span className="ui_field_label">{labels.addonSecret}</span>
+                            <FieldHelpBadge helpText={labels.addonSecretHelp} />
+                          </span>
+                          {/*
+                            A reference and not a key, so this is an ordinary text input. What it names
+                            is stored encrypted elsewhere; masking the name would hide the one part an
+                            operator has to be able to read back.
+                          */}
+                          <input
+                            className="ui_input"
+                            type="text"
+                            name="translationAddonSecretReference"
+                            value={addonSecretReference}
+                            placeholder="addon:@scope/name:api-key"
+                            onChange={(event) => setAddonSecretReference(event.target.value)}
+                          />
                         </div>
                       </div>
                     ) : null}

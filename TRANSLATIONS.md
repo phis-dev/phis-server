@@ -167,6 +167,30 @@ against another interface is offered in the list and cannot be chosen. An instal
 unusable selection would look configured and translate nothing, which is the state the refusal exists
 to prevent.
 
+**The call itself.** `add-on` resolves the selected provider through the service-provider registry --
+installed, enabled, interface-current, registry-matched -- and instantiates its factory once, keyed by
+the selection *and* the manifest digest, so an upgraded Add-on and a changed selection are both a
+different adapter rather than a stale one. Nothing else is consulted: no CDN step in front and no DeepL
+behind it, because an operator who chose a provider chose it, and a chain that quietly reached a second
+translator would make an installation's answer depend on which one happened to be reachable.
+
+Not resolvable is `unconfigured` and a provider that threw is `failed`, which is the same distinction
+every other mode reports and the reason it matters here too: only the second will be right again later
+without anybody changing anything. The reason a provider is unusable is logged and never returned -- a
+Site is told that translation is unavailable, not which Add-on an operator misconfigured.
+
+**A provider's secret is `translation.secretReference`,** a reference that names a stored secret and
+never holds one. It sits in the installation's translation configuration rather than in the Add-on's
+per-Site settings for the reason the service context carries no Site at all: which translator an
+installation uses is an installation's decision. Core resolves it as Core, because the configuration
+that names it is Core-owned state and an Add-on resolving its own reference would be an Add-on trusted
+to ask only for its own. Empty is a provider that needs none, which is a real case.
+
+A provider gets `null` where a Storage Profile passes its configuration row. There is no profile row to
+configure a translator in, so its secret is the only thing an operator can hand it today; a provider
+that needs an endpoint or a model name has nowhere to read one from, and that is a gap in the
+configuration rather than something to paper over.
+
 `translation.customEndpoint` is gone. It configured an HTTP endpoint that translated and could say
 nothing else about itself, so an installation could not learn which languages it accepted without
 sending it text to find out. A service provider is installed, version-checked, digest-checked and
@@ -181,6 +205,39 @@ it. There is no second list to fetch and no live query to depend on.
 For `add-on` the table cannot answer, because the provider is not DeepL. The selected provider declares
 its own reachable targets, and an installation offers the intersection with the Site's available
 locales.
+
+### Whose text it is
+
+Every request to the translation unit states an **audience**, and it is required rather than defaulted:
+
+| audience | what it is | what follows |
+| --- | --- | --- |
+| `platform` | a keyed message out of `tr_msg` or `tr_site_msg` | the CDN step may answer it |
+| `private` | text belonging to one installation -- a conversation body above all | the CDN step is skipped |
+
+The CDN step is a POST of the text to somebody else's service. That is the right thing for the
+platform's own catalogue, which is the same English sentence on every installation and the only reason a
+shared step is possible at all. It is the wrong thing for a message somebody wrote to a support agent an
+hour ago.
+
+It is required and has no default because the safe value is the one a caller would forget. A body sent
+to the CDN cannot be unsent, and nothing in a request's shape would have revealed that it had been.
+
+**A conversation body never reaches this store at all.** It is not keyed, hashed or versioned, so it has
+no place in `tr_msg`, `tr_site_msg` or the change-marker path; it goes to the translation unit directly
+as `private` and its answer is returned and dropped. What the two share is the provider mode and
+nothing above it.
+
+**`sourceLocale` is nullable, and null is an answer.** It means "whoever translates decides", which is
+the ordinary case for a conversation body: nobody writing on a Site is asked which language they are
+writing in, because every provider detects it for itself. Core must never put a Site's default there --
+that would tell a translator German about Portuguese text.
+
+**The detected source language comes back.** A DeepL translation reports what it read each text as, per
+text and not per request, so a caller that wanted only the language has already paid for it by asking
+for one translation -- which is why nothing asks twice. It arrives as `detectedSourceLocales` beside the
+translations, empty where whoever answered reports nothing: the CDN step says nothing about what it
+read, and the Provider contract has no field for it.
 
 ## Provider requests
 

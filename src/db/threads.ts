@@ -1606,6 +1606,122 @@ export async function readThreadMessageAsset(input: {
   return { assetId: rows[0].asset_id };
 }
 
+export type ThreadMessageTranslationSource = {
+  messageId: number;
+  flags: number;
+  /** `body_markdown` where there is one: control characters survive a translation, so it loses nothing. */
+  body: string;
+  /** What an integration recorded, or null for "whoever translates decides". */
+  sourceLang: string | null;
+};
+
+/**
+ * One message, prepared for a translation nobody keeps.
+ *
+ * The audience is the reader's, exactly as it is for an attachment: a `Redacted` message is nothing to
+ * anybody, an `Internal` note is Staff's, and a `Confidential` body is withheld from anything that is not
+ * a person on this Site. `Confidential` is *not* refused here, because it is refused for a reason this
+ * function does not know -- a translation sends the body out of Core, which is the flag's whole subject --
+ * and the route that is about to send it is where that reads as a rule rather than as a coincidence. The
+ * flags come back so it can.
+ *
+ * **This message and nothing around it.** Sending the neighbouring messages along as translator context
+ * was built here and taken out again: a preceding message can be arbitrarily long and can be in a third
+ * language, and what a provider does with a long foreign-language context is something we have not
+ * measured -- for DeepL, and cannot for an Add-on nobody has written yet. What was measured is only that
+ * context is request-wide and not billed, which is an argument about cost and not about the answer. The
+ * field stays in the provider contract, unused from here, until somebody measures what it does.
+ */
+export async function readThreadMessageForTranslation(input: {
+  siteId: number;
+  reader: ThreadReader;
+  threadId: number;
+  messageId: number;
+}): Promise<ThreadMessageTranslationSource | null> {
+  const pool = getPool();
+  const thread = await readThreadRow(pool, input.siteId, input.reader, input.threadId);
+  if (!thread) {
+    return null;
+  }
+  const includeInternal = await readerIsStaff(pool, input.siteId, input.reader);
+
+  const { rows } = await pool.query<{
+    body_text: string;
+    body_markdown: string | null;
+    source_lang: string | null;
+    flags: number;
+  }>(
+    `SELECT message.body_text, message.body_markdown, message.source_lang, message.flags
+     FROM phis.thread_messages message
+     WHERE message.thread_id = $1
+       AND message.id = $2
+       AND (message.flags & ${PhisThreadMessageFlag.Redacted}) = 0
+       AND ($3::boolean OR (message.flags & ${PhisThreadMessageFlag.Internal}) = 0)`,
+    [input.threadId, input.messageId, includeInternal],
+  );
+  const row = rows[0];
+  if (!row) {
+    return null;
+  }
+  if (input.reader.kind === "provider"
+    && (row.flags & PhisThreadMessageFlag.Confidential) !== 0) {
+    return null;
+  }
+
+  return {
+    messageId: input.messageId,
+    flags: row.flags,
+    body: row.body_markdown?.trim() || row.body_text,
+    sourceLang: row.source_lang,
+  };
+}
+
+/**
+ * Keeps a language a translator recognised, for a message that declared none.
+ *
+ * The recognition arrives as a field on a translation somebody already paid for, so not keeping it would
+ * mean the column stays empty for everything a person ever wrote -- and the column exists for the one
+ * thing a reader cannot do: appear in a `WHERE` clause. Routing Portuguese enquiries to whoever speaks
+ * Portuguese needs a stored value.
+ *
+ * **`LangDetected` comes with it, because a recognition is a guess.** An integration states the language
+ * from something it has; a translator states what a model made of the text, which is right for a paragraph
+ * and a coin toss for a message that says "bongo". Whatever routes or counts on this column has to be able
+ * to see which of the two it has, and the flag is that difference rather than a comment somewhere.
+ *
+ * **A declared language is never overwritten**, which is what `source_lang IS NULL` in the predicate says:
+ * the assertion of whoever delivered the message beats the guess of whoever translated it, and two
+ * translations of the same message do not race each other into different answers. `updated_at` is left
+ * alone and `Edited` is not set -- nobody changed this message.
+ *
+ * The answer is whether a row was written, for a caller that logs it. Nothing about it is worth failing a
+ * translation over: the reader asked to read something, not to have a column filled in.
+ */
+export async function recordDetectedThreadMessageSourceLang(input: {
+  siteId: number;
+  threadId: number;
+  messageId: number;
+  locale: string;
+}): Promise<boolean> {
+  const capability = resolvePhiLocaleCapability(input.locale);
+  if (!capability) {
+    return false;
+  }
+  const { rowCount } = await getPool().query(
+    `UPDATE phis.thread_messages AS message
+        SET source_lang = $4,
+            flags = message.flags | ${PhisThreadMessageFlag.LangDetected}
+       FROM phis.threads AS thread
+      WHERE thread.id = message.thread_id
+        AND thread.site_id = $1
+        AND message.thread_id = $2
+        AND message.id = $3
+        AND message.source_lang IS NULL`,
+    [input.siteId, input.threadId, input.messageId, capability.locale],
+  );
+  return (rowCount ?? 0) > 0;
+}
+
 /** What still hangs on a message, asked from the Asset's side by the delete path. */
 export async function countThreadAttachmentsForAsset(siteId: number, assetId: number) {
   const { rows } = await getPool().query<{ count: string }>(
