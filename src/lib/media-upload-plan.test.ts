@@ -133,6 +133,22 @@ describe("The plan a session was issued", () => {
     expect([...new Set(altered)].sort()).toEqual(["media_spaces", "threads"]);
   });
 
+  it("is granted by Core from the Profile's probe, not decided by the Provider", async () => {
+    /*
+     * The grant follows from `verifiesWholeMultipartObject`, because an object assembled from parts on an
+     * endpoint that does not keep a whole-object digest carries a checksum of part digests -- and
+     * duplicate detection reads that digest. Local storage answers no without a probe: there is no remote
+     * endpoint to ask and Core hashes every byte it writes.
+     */
+    const probe = await read("src/lib/media-storage-profile-probe.ts");
+    expect(probe).toMatch(/phiMediaStorageProfileMayAssembleFromParts/u);
+    expect(probe).toMatch(/verifiesWholeMultipartObject === true/u);
+
+    const route = await read("src/app/api/site/media/uploads/init/route.ts");
+    expect(route).toMatch(/phiMediaStorageProfileMayAssembleFromParts\(profile, site\.key\)/u);
+    expect(route).toMatch(/mayAssembleFromParts: true/u);
+  });
+
   it("decides who may deliver the body", () => {
     expect(isPhiMediaUploadBodyProxied(PhiMediaUploadPlanKind.ProxyStream)).toBe(true);
     expect(isPhiMediaUploadBodyProxied(PhiMediaUploadPlanKind.PresignedPut)).toBe(false);

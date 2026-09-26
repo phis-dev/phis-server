@@ -30,6 +30,7 @@ import {
   readRequestedMediaSpaceId,
   requireMediaSpaceWriteContext,
 } from "@/lib/guards/site-media-api";
+import { phiMediaStorageProfileMayAssembleFromParts } from "@/lib/media-storage-profile-probe";
 import { nextMediaError, readJsonBody } from "../_helpers";
 import { normalizeString } from "@/lib/helpers/request";
 import { PHIS_AREA_HEADER } from "@/lib/constants/http-headers";
@@ -289,6 +290,15 @@ export async function POST(request: NextRequest) {
   const expiresAt = new Date(Date.now() + 1000 * 60 * 60 * 24).toISOString();
   // How the body is to be delivered is the Provider's to state, not the Client's to assume. Core owns
   // its own route table, so the address it would receive a body at is handed over rather than guessed.
+  /*
+   * Whether this Profile may answer with an object assembled from parts.
+   *
+   * Core's decision rather than the Provider's, because it follows from what the Profile's probe
+   * established and a Provider does not grade its own endpoint. Without it a large body stays one
+   * request, which is the honest trade: a resumable upload is worth a lot, and not as much as every
+   * object over one part losing the digest duplicate detection compares.
+   */
+  const mayAssembleFromParts = await phiMediaStorageProfileMayAssembleFromParts(profile, site.key);
   const plan = await storageService.createUploadPlan({
     token,
     storageKey: tempStorageKey,
@@ -296,6 +306,7 @@ export async function POST(request: NextRequest) {
     sizeBytes: size,
     expiresAt,
     proxyUploadUrl: `/api/site/media/uploads/${token}`,
+    ...(mayAssembleFromParts ? { mayAssembleFromParts: true } : {}),
   });
   const uploadPlanKind = resolvePhiMediaUploadPlanKind(plan.kind);
 
