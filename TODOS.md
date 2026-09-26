@@ -51,9 +51,46 @@ tracked here because the server contract depends on them.
   than untidy: an incomplete multipart upload is billed until it is aborted and does not appear in
   `ListObjectsV2`, so the lifecycle rule it needs is `AbortIncompleteMultipartUpload`, reconciled the way
   CORS already is.
-- **Multipart upload plan.** The upload-plan ABI knows `proxy-stream` and `presigned-put`. Add multipart as
-  a plan kind when the S3 Provider implements it, with abort and expiry cleaning staged parts and
-  reservations. Until then `nginx` caps a proxied body at 2 GB and S3 accepts a single PUT up to 5 GB.
+- **Multipart is built and cannot be granted, and the reason is the checksum.** `multipart-put` exists end
+  to end: the plan kind, `provider_upload_id` on the session, the S3 Provider signing a `UploadPart` per
+  part, the Client slicing and retrying, `completeUpload` assembling, and a reported failure aborting the
+  assembly. What gates it is `mayAssembleFromParts`, which Core grants from the Profile's probe answering
+  `verifiesWholeMultipartObject` -- and that answer can never be yes. **Measured against Garage v2.3.0,
+  and it is the S3 specification rather than a Garage limitation:** `ChecksumType: FULL_OBJECT` is accepted
+  only for `CRC32`, `CRC32C` and `CRC64NVME`; `SHA1` and `SHA256` take `COMPOSITE` alone. So the probe
+  pairs the verified strong algorithm with a type the API forbids, the grant never arrives, and the branch
+  is unreachable on every compliant endpoint.
+
+  The decision that unblocks it is which digest a multipart object carries:
+
+  - **A `COMPOSITE` SHA-256** is `SHA256` over the concatenated binary part digests with `-<parts>`
+    appended. It is as collision-resistant as SHA-256 for "are these the same bytes", so it *is* a usable
+    duplicate-detection key -- but only within one partitioning. Ours is reproducible, because
+    `resolveMultipartPartSize` is a pure function of the size and the same file has the same size. Two
+    conditions come with it: it must be its own algorithm in `PHIS_MEDIA_CHECKSUM_ALGORITHMS` carrying the
+    part size, never recorded as `sha256`; and the part-size rule is frozen once objects exist under it,
+    or the corpus splits the way the checksum-algorithm comment already warns about. The part count is in
+    the value, so a differing partitioning is a non-match and never a false match.
+  - **A `FULL_OBJECT` CRC** is verified over the whole object but is not comparable -- CRC is linear, which
+    `PHIS_MEDIA_COMPARABLE_CHECKSUM_ALGORITHMS` already excludes. It is integrity evidence, not identity.
+  - **Neither**, which is what `GROUPS_AND_STORAGE.md` already promises: "accepted and fully verified, part
+    by part; it simply carries no digest that duplicate detection can use." `finalize` needs no change for
+    this -- it records nothing where nothing can be attested and skips the duplicate query.
+
+  **The measurement that decides it, and it has not been made:** whether S3 requires a checksum on every
+  part once the upload is opened with `ChecksumAlgorithm`, and whether that requirement survives a part URL
+  whose signature does not cover the header. Without it the composite is the Client's claim rather than
+  something the endpoint verified, and then only the third option is honest. Garage runs locally, so this
+  is cheap -- see the reference note on running the live suite.
+
+  Two findings from the same run, unrelated to the grant: the S3 probe never deleted its own object, so
+  every `storage add` and `storage set` left a nineteen-byte object in the bucket (fixed); and Garage
+  verifies a declared `SHA256` but accepts a wrong `SHA512`, which the probe reports as a finding rather
+  than a verified algorithm.
+
+  Transport ceilings, unchanged: `nginx` caps a proxied body at 2 GB, and on this installation
+  `s3.phis.dev` is also behind `nginx` with the same 2 GB, so the "single PUT up to 5 GB" figure does not
+  apply here.
 - **Object key prefix ownership.** Core writes `sites/<key>/…` and an S3 profile may add its own bucket
   prefix, so a profile configured with `sites/<key>` stores under `sites/<key>/sites/<key>/…`. Decide the
   owner, and have a profile form state what Core prepends.
