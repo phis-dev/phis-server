@@ -6,7 +6,7 @@ import {
 } from "@/db/media";
 import { getSessionFromRequest } from "@/db/user-sessions";
 import { logRuntimeEvent } from "@/lib/log";
-import { removePhiMediaUploadStagingObject } from "@/lib/media-upload-staging";
+import { discardPhiMediaUploadStaging } from "@/lib/media-upload-staging";
 import { PhiMediaUploadPurpose, PhiMediaUploadSessionStatus } from "@/lib/media-upload-sessions";
 import { requireMediaSpaceWriteContext } from "@/lib/guards/site-media-api";
 import { requireSiteFromRequest } from "@/lib/site-context";
@@ -109,11 +109,13 @@ export async function POST(
    * reservation. The result travels into the entry below rather than being swallowed, because `null`
    * there means an object may still be sitting in a bucket with nothing coming back for it.
    */
-  const stagingRemoved = await removePhiMediaUploadStagingObject({
+  const stagingRemoved = await discardPhiMediaUploadStaging({
     siteId: site.id,
     siteKey: site.key,
     storageProfileId: session.storageProfileId,
     stagingStorageKey: session.stagingStorageKey,
+    // Set only for a multipart plan, and then the remains are parts to abort rather than an object.
+    providerUploadId: session.providerUploadId,
   });
 
   logRuntimeEvent(reason === "cancelled" ? "info" : "error", "media.upload.client_failed", {
