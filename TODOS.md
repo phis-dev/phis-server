@@ -43,6 +43,14 @@ tracked here because the server contract depends on them.
   body and a presigned PUT alike, although the two carry wildly different sizes. Making it
   Profile-aware means moving the size check in `uploads/init` after the Space resolution
   ([GROUPS_AND_STORAGE_PLANNED.md](./design/GROUPS_AND_STORAGE_PLANNED.md) section 6).
+- **Abandoned staging objects have no sweeper.** Expiry releases the reservation and leaves the object,
+  which `DB.md` now states correctly. The two owners the code names do not exist: the storage contract has
+  `applyCorsPolicy` and no lifecycle counterpart, so an S3 Profile cannot be given an expiry rule the way
+  it is given CORS through `reconcilePhiMediaStorageCorsWith`; and there is no operator command for the
+  Local Provider (`phis media check --fix` is about file ownership). Multipart makes this urgent rather
+  than untidy: an incomplete multipart upload is billed until it is aborted and does not appear in
+  `ListObjectsV2`, so the lifecycle rule it needs is `AbortIncompleteMultipartUpload`, reconciled the way
+  CORS already is.
 - **Multipart upload plan.** The upload-plan ABI knows `proxy-stream` and `presigned-put`. Add multipart as
   a plan kind when the S3 Provider implements it, with abort and expiry cleaning staged parts and
   reservations. Until then `nginx` caps a proxied body at 2 GB and S3 accepts a single PUT up to 5 GB.
@@ -168,6 +176,22 @@ tracked here because the server contract depends on them.
   storage outside the database hosts' failure domain.
 - Document and rehearse failover, rejoin, restore, and full-host loss before calling the tier highly
   available.
+
+## Server Add-ons
+
+- **One invalid Add-on desired state answers 500 on every viewer resolution.**
+  `buildPhisCapabilitySnapshot` validates the whole of `config/phis-addons.json` and throws when any entry
+  fails, so `GET /api/v1/site/capabilities` and `GET /api/v1/auth/me` answer 500 and a Site stops rendering
+  entirely -- observed when the `mediaStorage` interface digest was raised while the installed
+  `@phis/storage-s3` still recorded the previous one. The Module side already degrades gracefully in exactly
+  this situation: `resolvePhiRuntimeModuleServerBinding` reports `capability_missing`, the Module leaves
+  `activeModuleIds`, and its Widgets raise a local `missing-module` without disturbing anything else. So the
+  snapshot should drop an entry it cannot validate and let that path carry it, rather than refusing the
+  whole build. Two questions come with it: whether digest validation belongs at install and reconcile only,
+  as [SERVER_ADDONS.md](./SERVER_ADDONS.md) describes it ("at install, with the value quoted back, rather
+  than at the first call"), and why `phis addon check` validated the same state without complaint while the
+  serving process refused it. The pre-v1 rule in `@phis/contracts`' README avoids the trigger; it does not
+  make the failure mode acceptable.
 
 ## Code hygiene
 

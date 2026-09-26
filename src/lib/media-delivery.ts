@@ -36,6 +36,61 @@ export function mediaDeliveryCacheControl(request: NextRequest, asset: MediaAsse
     : "public, max-age=0, must-revalidate";
 }
 
+/**
+ * Which bytes a request asked for, or why it gets the whole object instead.
+ *
+ * `full` is the answer to anything this does not have to honour, and RFC 9110 permits that: no header, a
+ * unit other than `bytes`, syntax that does not parse, or more than one range. Several ranges would mean a
+ * multipart body, which nothing that plays media asks for and which would be a second response format to
+ * get right for no one's benefit -- so a request for two ranges is served completely, which is always
+ * correct if never clever.
+ *
+ * `unsatisfiable` is the one case that must not become `full`: a first byte at or past the end of the
+ * object is a `416`, because answering it with the whole file tells a player its seek succeeded.
+ *
+ * A suffix range longer than the object, and a last byte past the end, are both clamped rather than
+ * refused. That is what the specification asks for, and a player that asks for "the last megabyte" of a
+ * smaller file means the file.
+ */
+export type PhiMediaRangeRequest =
+  | { kind: "full" }
+  | { kind: "unsatisfiable" }
+  | { kind: "range"; offset: number; length: number };
+
+export function parsePhiMediaRangeRequest(
+  header: string | null | undefined,
+  byteSize: number,
+): PhiMediaRangeRequest {
+  const value = header?.trim();
+  if (!value) return { kind: "full" };
+
+  const match = /^bytes=(\d*)-(\d*)$/u.exec(value);
+  if (!match) return { kind: "full" };
+
+  const [, rawFirst, rawLast] = match;
+  if (!rawFirst && !rawLast) return { kind: "full" };
+
+  // An empty object has no byte to serve, so every range over it is unsatisfiable.
+  if (byteSize <= 0) return { kind: "unsatisfiable" };
+
+  if (!rawFirst) {
+    const suffix = Number(rawLast);
+    if (!Number.isSafeInteger(suffix) || suffix <= 0) return { kind: "unsatisfiable" };
+    const offset = Math.max(0, byteSize - suffix);
+    return { kind: "range", offset, length: byteSize - offset };
+  }
+
+  const first = Number(rawFirst);
+  if (!Number.isSafeInteger(first) || first < 0) return { kind: "full" };
+  if (first >= byteSize) return { kind: "unsatisfiable" };
+
+  if (!rawLast) return { kind: "range", offset: first, length: byteSize - first };
+
+  const last = Number(rawLast);
+  if (!Number.isSafeInteger(last) || last < first) return { kind: "full" };
+  return { kind: "range", offset: first, length: Math.min(last, byteSize - 1) - first + 1 };
+}
+
 /*
  * What a browser may be allowed to render in place.
  *

@@ -25,6 +25,8 @@ export type {
   PhiMediaUploadPlanKindKey,
   PhisMediaObjectHead,
   PhisMediaObjectInput,
+  PhisMediaObjectRange,
+  PhisMediaObjectRangeStream,
   PhisMediaObjectStreamInput,
   PhisMediaStorageAdapter,
   PhisMediaStorageConfig,
@@ -40,6 +42,8 @@ import type {
   PhiMediaUploadPlanInput,
   PhisMediaObjectHead,
   PhisMediaObjectInput,
+  PhisMediaObjectRange,
+  PhisMediaObjectRangeStream,
   PhisMediaObjectStreamInput,
   PhisMediaStorageAdapter,
   PhisMediaStorageConfig,
@@ -328,6 +332,55 @@ export class PhisLocalMediaStorageAdapter implements PhisMediaStorageAdapter {
     return Readable.toWeb(
       handle.createReadStream({ autoClose: true }),
     ) as ReadableStream<Uint8Array>;
+  }
+
+  /**
+   * A slice of a file, so a browser can seek in a video without fetching what came before it.
+   *
+   * `stat` on the open handle rather than on the path: the size that clamps the read has to be the size
+   * of the file this stream will read, not of whatever the name pointed at a moment earlier.
+   */
+  async getObjectRangeStream(
+    storageKey: string,
+    range: PhisMediaObjectRange,
+  ): Promise<PhisMediaObjectRangeStream | null> {
+    const filePath = this.resolveFilePath(storageKey);
+
+    let handle: FileHandle;
+    try {
+      handle = await open(filePath, "r");
+    } catch {
+      return null;
+    }
+
+    try {
+      const { size } = await handle.stat();
+      const offset = Math.max(0, Math.min(range.offset, size));
+      const length = Math.max(0, Math.min(range.length, size - offset));
+
+      if (length === 0) {
+        // `end` is inclusive, so a zero-length read would ask for `end < start` and throw. Nothing to
+        // read is an empty body, which is what a caller clamped to the end of the object gets.
+        await handle.close().catch(() => {});
+        return {
+          body: new ReadableStream<Uint8Array>({ start: (controller) => controller.close() }),
+          range: { offset, length: 0 },
+          byteSize: size,
+        };
+      }
+
+      return {
+        body: Readable.toWeb(
+          // `end` is inclusive: the last byte served, not the one after it.
+          handle.createReadStream({ start: offset, end: offset + length - 1, autoClose: true }),
+        ) as ReadableStream<Uint8Array>,
+        range: { offset, length },
+        byteSize: size,
+      };
+    } catch {
+      await handle.close().catch(() => {});
+      return null;
+    }
   }
 
   async copyObject(input: {
@@ -678,6 +731,10 @@ export class PhisMediaStorageService {
 
   getObjectStream(storageKey: string) {
     return this.adapter.getObjectStream(storageKey);
+  }
+
+  getObjectRangeStream(storageKey: string, range: PhisMediaObjectRange) {
+    return this.adapter.getObjectRangeStream(storageKey, range);
   }
 
   readObjectHead(storageKey: string, byteLength: number) {

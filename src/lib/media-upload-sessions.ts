@@ -41,13 +41,36 @@ export type PhiMediaUploadSessionStatusValue =
 export const PhiMediaUploadPlanKind = {
   ProxyStream: 1,
   PresignedPut: 2,
+  MultipartPut: 3,
 } as const;
 
 export type PhiMediaUploadPlanKindValue =
   (typeof PhiMediaUploadPlanKind)[keyof typeof PhiMediaUploadPlanKind];
 
+/**
+ * A total map and not a ternary with a default.
+ *
+ * The default used to be `ProxyStream`, which is the one answer that must never be reached by accident:
+ * it is what entitles Core to receive the body, and a plan kind that fell through to it would open the
+ * proxy route for an upload the Provider is taking directly. A kind nobody has mapped is a throw.
+ */
+const PHI_MEDIA_UPLOAD_PLAN_KIND_VALUES: Readonly<Record<PhiMediaUploadPlanKindKey, PhiMediaUploadPlanKindValue>> = {
+  "proxy-stream": PhiMediaUploadPlanKind.ProxyStream,
+  "presigned-put": PhiMediaUploadPlanKind.PresignedPut,
+  "multipart-put": PhiMediaUploadPlanKind.MultipartPut,
+};
+
 export function resolvePhiMediaUploadPlanKind(kind: PhiMediaUploadPlanKindKey): PhiMediaUploadPlanKindValue {
-  return kind === "presigned-put" ? PhiMediaUploadPlanKind.PresignedPut : PhiMediaUploadPlanKind.ProxyStream;
+  const value = PHI_MEDIA_UPLOAD_PLAN_KIND_VALUES[kind];
+  if (!value) {
+    throw new Error(`Unknown upload plan kind "${kind}".`);
+  }
+  return value;
+}
+
+/** Whether the Provider is assembling this body out of several requests. */
+export function isPhiMediaUploadAssembledFromParts(planKind: number) {
+  return planKind === PhiMediaUploadPlanKind.MultipartPut;
 }
 
 /** Core receives the body itself only on the plan that says so. */

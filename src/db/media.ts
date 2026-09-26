@@ -146,6 +146,8 @@ export type MediaUploadSessionRecord = {
   presentationFlags: number;
   stagingStorageKey: string;
   finalStorageKey: string | null;
+  /** The Provider's handle on a body it is assembling from parts, so cleanup can name it. */
+  providerUploadId: string | null;
   expiresAt: string;
   uploadedAt: string | null;
   finalizedAt: string | null;
@@ -244,14 +246,15 @@ type UploadRow = {
   storage_profile_id: number; status: number; filename: string; content_type: string; size_bytes: number | string;
   kind: string; upload_plan_kind: number; checksum_algorithm: string | null; checksum_value: string | null; meta: unknown; presentation_flags: number;
   purpose: number; purpose_ref: unknown;
-  staging_storage_key: string; final_storage_key: string | null; expires_at: Date | string;
+  staging_storage_key: string; final_storage_key: string | null; provider_upload_id: string | null;
+  expires_at: Date | string;
   uploaded_at: Date | string | null; finalized_at: Date | string | null; created_at: Date | string; updated_at: Date | string;
 };
 
 const UPLOAD_COLUMNS = `token, site_id, actor_user_id, space_id, folder_id, storage_profile_id, status,
   purpose, purpose_ref,
   filename, content_type, size_bytes, kind, upload_plan_kind, checksum_algorithm, checksum_value, meta, presentation_flags,
-  staging_storage_key, final_storage_key, expires_at, uploaded_at, finalized_at, created_at, updated_at`;
+  staging_storage_key, final_storage_key, provider_upload_id, expires_at, uploaded_at, finalized_at, created_at, updated_at`;
 
 function nullableIso(value: Date | string | null) { return value == null ? null : iso(value); }
 
@@ -263,6 +266,7 @@ function mapUpload(row: UploadRow): MediaUploadSessionRecord {
     contentType: row.content_type, sizeBytes: integer(row.size_bytes), kind: row.kind,
     uploadPlanKind: integer(row.upload_plan_kind), checksumAlgorithm: row.checksum_algorithm, checksumValue: row.checksum_value, meta: record(row.meta), presentationFlags: integer(row.presentation_flags),
     stagingStorageKey: row.staging_storage_key, finalStorageKey: row.final_storage_key,
+    providerUploadId: row.provider_upload_id,
     expiresAt: iso(row.expires_at), uploadedAt: nullableIso(row.uploaded_at), finalizedAt: nullableIso(row.finalized_at),
     purpose: integer(row.purpose), purposeRef: record(row.purpose_ref),
     createdAt: iso(row.created_at), updatedAt: iso(row.updated_at),
@@ -679,7 +683,7 @@ export async function createMediaUploadSession(input: {
   uploadPlanKind: number;
   checksumAlgorithm?: string | null; checksumValue?: string | null;
   meta?: Record<string, unknown> | null; presentationFlags?: number;
-  stagingStorageKey: string; finalStorageKey?: string | null; expiresAt: string;
+  stagingStorageKey: string; finalStorageKey?: string | null; providerUploadId?: string | null; expiresAt: string;
   uploadedAt?: string | null; finalizedAt?: string | null;
   /** What this upload becomes when it lands. Media unless something else asked for it. */
   purpose?: number; purposeRef?: Record<string, unknown> | null;
@@ -687,15 +691,17 @@ export async function createMediaUploadSession(input: {
   const { rows } = await getPool().query<UploadRow>(
     `INSERT INTO phis.media_upload_sessions (token, site_id, actor_user_id, space_id, folder_id,
        storage_profile_id, status, filename, content_type, size_bytes, kind, upload_plan_kind,
-       checksum_algorithm, checksum_value, meta, presentation_flags, staging_storage_key, final_storage_key, expires_at,
+       checksum_algorithm, checksum_value, meta, presentation_flags, staging_storage_key, final_storage_key,
+       provider_upload_id, expires_at,
        uploaded_at, finalized_at, purpose, purpose_ref)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15::jsonb,$16,$17,$18,$19,$20,$21,$22,$23::jsonb)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15::jsonb,$16,$17,$18,$19,$20,$21,$22,$23,$24::jsonb)
      RETURNING ${UPLOAD_COLUMNS}`,
     [input.token,input.siteId,input.actorUserId,input.spaceId,input.folderId??null,input.storageProfileId,input.status,
       input.filename,input.contentType,input.sizeBytes,input.kind,input.uploadPlanKind,
       input.checksumAlgorithm??null,input.checksumValue??null,
       jsonbOrNull(input.meta),
-      input.presentationFlags??0,input.stagingStorageKey,input.finalStorageKey??null,input.expiresAt,input.uploadedAt??null,input.finalizedAt??null,
+      input.presentationFlags??0,input.stagingStorageKey,input.finalStorageKey??null,
+      input.providerUploadId??null,input.expiresAt,input.uploadedAt??null,input.finalizedAt??null,
       input.purpose??PhiMediaUploadPurpose.Media,jsonbOrNull(input.purposeRef)],
   ); return rows[0] ? mapUpload(rows[0]) : null;
 }

@@ -95,14 +95,48 @@ describe("The plan a session was issued", () => {
   it("is persisted as the kind, not as the plan", async () => {
     expect(resolvePhiMediaUploadPlanKind("proxy-stream")).toBe(PhiMediaUploadPlanKind.ProxyStream);
     expect(resolvePhiMediaUploadPlanKind("presigned-put")).toBe(PhiMediaUploadPlanKind.PresignedPut);
+    expect(resolvePhiMediaUploadPlanKind("multipart-put")).toBe(PhiMediaUploadPlanKind.MultipartPut);
     const ddl = await read("scripts/sql/001_create_phis.pgsql");
     expect(ddl).toMatch(/upload_plan_kind SMALLINT NOT NULL DEFAULT 1/u);
-    expect(ddl).toMatch(/media_upload_sessions_plan_kind_check CHECK \(upload_plan_kind IN \(1, 2\)\)/u);
+    expect(ddl).toMatch(/media_upload_sessions_plan_kind_check CHECK \(upload_plan_kind IN \(1, 2, 3\)\)/u);
+  });
+
+  it("refuses a kind nobody mapped rather than reading it as the proxied one", () => {
+    // The default used to be ProxyStream, which is the one answer that entitles Core to receive the body.
+    expect(() => resolvePhiMediaUploadPlanKind("sftp-put" as never)).toThrow(/Unknown upload plan kind/u);
+  });
+
+  it("keeps the Provider's handle on a body it assembles, and only for that plan", async () => {
+    // Cleanup has to be able to name an incomplete multipart upload without the browser that began it,
+    // because that browser is exactly what has gone away.
+    const ddl = await read("scripts/sql/001_create_phis.pgsql");
+    expect(ddl).toMatch(/provider_upload_id VARCHAR\(512\) NULL/u);
+    expect(ddl).toMatch(
+      /media_upload_sessions_provider_upload_id_check\s+CHECK \(\(upload_plan_kind = 3\) = \(provider_upload_id IS NOT NULL\)\)/u,
+    );
+  });
+
+  it("declares every column in its CREATE, so no installation is upgraded by reapplying the script", async () => {
+    /*
+     * `DB.md` says a column added to the script does not reach a database that already exists and that
+     * nothing reports it, so altering the development database by hand is part of making the change. A
+     * dozen `ADD COLUMN IF NOT EXISTS` statements used to contradict that in the file itself, which read
+     * like the way to make a change while quietly upgrading only whoever reapplied the script.
+     *
+     * The two `ALTER TABLE` statements left are circular foreign keys, which cannot be declared before
+     * both tables exist. They are structure rather than migration.
+     */
+    const ddl = await read("scripts/sql/001_create_phis.pgsql");
+    expect(ddl).not.toMatch(/ADD COLUMN/u);
+    expect(ddl).not.toMatch(/ALTER COLUMN/u);
+    const altered = [...ddl.matchAll(/^ALTER TABLE phis\.([a-z_]+)$/gmu)].map((match) => match[1]);
+    expect([...new Set(altered)].sort()).toEqual(["media_spaces", "threads"]);
   });
 
   it("decides who may deliver the body", () => {
     expect(isPhiMediaUploadBodyProxied(PhiMediaUploadPlanKind.ProxyStream)).toBe(true);
     expect(isPhiMediaUploadBodyProxied(PhiMediaUploadPlanKind.PresignedPut)).toBe(false);
+    expect(isPhiMediaUploadBodyProxied(PhiMediaUploadPlanKind.MultipartPut)).toBe(false);
     // An unknown kind is not a proxy plan: a body arriving at Core under one would be unaccounted.
     expect(isPhiMediaUploadBodyProxied(99)).toBe(false);
   });

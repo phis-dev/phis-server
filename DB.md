@@ -14,6 +14,14 @@ column, constraint and index. An installation missing a column a change added is
 tables are present, which is true and useless. Recreating or altering the development database by hand
 is therefore part of making the change, not a step somebody may discover later.
 
+The script declares every column and every check inside its `CREATE TABLE`, and nothing is added to a
+table afterwards. It used to carry `ADD COLUMN IF NOT EXISTS` for a dozen columns, which read like the way
+to make a change and was not one: it upgraded whoever reapplied the script and left every other
+installation exactly as blind as the paragraph above describes. The only `ALTER TABLE` left is a pair of
+circular foreign keys -- `threads.last_message_id` and `media_spaces.addon_id` -- which cannot be declared
+until both tables exist, and each is dropped before it is added so the script stays runnable twice. Those
+two are structure, not migration, and both say so where they stand.
+
 That is a pre-v1 arrangement and ends with v1: the CLI has to learn to compare columns and to carry an
 alter path before an installation exists that cannot be recreated. See
 [TODOS.md](./TODOS.md), "Post-v1: Core schema evolution".
@@ -405,7 +413,7 @@ Contract:
 - `checksum_algorithm` / `checksum_value` carry the digest recorded for the upload, as on `media_assets`.
 - `purpose` decides what the finished object becomes: `1` a Media Asset, `2` an Asset on an Add-on row. `purpose_ref` is required for `2` and names the Add-on, table, owner row, and slot (`{ addonId, table, ownerId, slot }`).
 - Finalize verifies the stored object before the Asset reaches `ready` and commits the quota reservation.
-- Successful finalize deletes the session row. Failed and expired uploads delete it as well, release the reservation, and clean staging objects; retries must request a fresh token.
+- Successful finalize deletes the session row and, where the plan staged onto a different key, the staging object with it. A failure the Client reports to `POST /api/site/media/uploads/:token/report` deletes the row, releases the reservation, and removes that session's staging object -- the Profile, the key and the authority are all in hand there. Expiry deletes the row and releases the reservation but **leaves the staging object**: `releaseExpiredMediaUploadSessions` runs on whichever request next wants that Space's capacity, and reaching the Providers of sessions it never held a plan for is not a request's business. For S3 that object belongs to a bucket lifecycle rule and for Local to a deliberate operator command, and **neither exists yet** ([TODOS.md](./TODOS.md), "Media and storage"). Retries must request a fresh token in every case.
 - `(space_id, status, expires_at)` and `(site_id, actor_user_id, created_at DESC)` are indexed.
 - The browser-facing contract is `POST /api/site/media/uploads/init`, `POST /api/site/media/uploads/:token/finalize`, and whatever the issued plan names for the body itself; no multipart parser is involved in the large-file path.
 - `upload_plan_kind` records which plan init issued: `1 = proxy-stream` (the body streams through `PUT /api/site/media/uploads/:token`), `2 = presigned-put` (the Provider takes the body directly). It is a property of the session rather than of the Storage Profile, because a Provider may answer differently for different bodies. It decides two things no later request can work out on its own: whether Core may receive this body at all, and whether "the body arrived" is a status Core set itself or something only the stored object can attest.

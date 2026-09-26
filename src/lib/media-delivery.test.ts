@@ -26,7 +26,12 @@ import {
   PhiMediaLifecycleStatus,
   PhisMediaSpaceKind,
 } from "@/db/media-spaces";
-import { canDeliverMediaAsset, mediaDeliveryCacheControl, mediaDeliverySafetyHeaders } from "./media-delivery";
+import {
+  canDeliverMediaAsset,
+  mediaDeliveryCacheControl,
+  mediaDeliverySafetyHeaders,
+  parsePhiMediaRangeRequest,
+} from "./media-delivery";
 
 function asset(
   deliveryPolicy: number,
@@ -244,5 +249,50 @@ describe("What a delivered object is allowed to do", () => {
   it("never emits an empty filename", () => {
     expect(mediaDeliverySafetyHeaders("application/pdf", "   ")["content-disposition"])
       .toContain('filename="download"');
+  });
+});
+
+describe("parsePhiMediaRangeRequest", () => {
+  const SIZE = 1000;
+
+  it("serves the whole object where there is nothing to honour", () => {
+    for (const header of [null, undefined, "", "   ", "items=0-9", "bytes=", "bytes=x-y", "bytes=0-9, 20-29"]) {
+      expect(parsePhiMediaRangeRequest(header, SIZE)).toEqual({ kind: "full" });
+    }
+  });
+
+  it("reads a closed range inclusively at both ends", () => {
+    expect(parsePhiMediaRangeRequest("bytes=0-99", SIZE)).toEqual({ kind: "range", offset: 0, length: 100 });
+    expect(parsePhiMediaRangeRequest("bytes=500-500", SIZE)).toEqual({ kind: "range", offset: 500, length: 1 });
+  });
+
+  it("reads an open range to the end of the object", () => {
+    expect(parsePhiMediaRangeRequest("bytes=900-", SIZE)).toEqual({ kind: "range", offset: 900, length: 100 });
+    expect(parsePhiMediaRangeRequest("bytes=0-", SIZE)).toEqual({ kind: "range", offset: 0, length: SIZE });
+  });
+
+  it("reads a suffix range from the end", () => {
+    expect(parsePhiMediaRangeRequest("bytes=-100", SIZE)).toEqual({ kind: "range", offset: 900, length: 100 });
+    // A player asking for more tail than there is means the whole file, which the specification clamps.
+    expect(parsePhiMediaRangeRequest("bytes=-5000", SIZE)).toEqual({ kind: "range", offset: 0, length: SIZE });
+  });
+
+  it("clamps a last byte past the end rather than refusing it", () => {
+    expect(parsePhiMediaRangeRequest("bytes=990-5000", SIZE)).toEqual({ kind: "range", offset: 990, length: 10 });
+  });
+
+  it("refuses a first byte at or past the end, because a whole body would look like a successful seek", () => {
+    expect(parsePhiMediaRangeRequest(`bytes=${SIZE}-`, SIZE)).toEqual({ kind: "unsatisfiable" });
+    expect(parsePhiMediaRangeRequest("bytes=2000-2999", SIZE)).toEqual({ kind: "unsatisfiable" });
+    expect(parsePhiMediaRangeRequest("bytes=-0", SIZE)).toEqual({ kind: "unsatisfiable" });
+  });
+
+  it("has no byte to serve out of an empty object", () => {
+    expect(parsePhiMediaRangeRequest("bytes=0-", 0)).toEqual({ kind: "unsatisfiable" });
+    expect(parsePhiMediaRangeRequest(null, 0)).toEqual({ kind: "full" });
+  });
+
+  it("ignores a reversed range instead of inventing one", () => {
+    expect(parsePhiMediaRangeRequest("bytes=500-100", SIZE)).toEqual({ kind: "full" });
   });
 });

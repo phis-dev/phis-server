@@ -132,16 +132,6 @@ CREATE TABLE IF NOT EXISTS phis.user_site_memberships (
 CREATE INDEX IF NOT EXISTS user_site_memberships_site_id_idx
   ON phis.user_site_memberships (site_id);
 
-ALTER TABLE phis.user_site_memberships
-  ADD COLUMN IF NOT EXISTS module_state JSONB NOT NULL DEFAULT '{}'::jsonb;
-
-ALTER TABLE phis.user_site_memberships
-  DROP CONSTRAINT IF EXISTS user_site_memberships_module_state_check;
-
-ALTER TABLE phis.user_site_memberships
-  ADD CONSTRAINT user_site_memberships_module_state_check
-  CHECK (jsonb_typeof(module_state) = 'object');
-
 CREATE TABLE IF NOT EXISTS phis.user_site_role_claims (
   user_id INT NOT NULL,
   site_id SMALLINT NOT NULL,
@@ -305,6 +295,9 @@ CREATE TABLE IF NOT EXISTS phis.media_storage_profiles (
   flags INT NOT NULL DEFAULT 0,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  probe JSONB NULL,
+  probed_at TIMESTAMPTZ NULL,
+  checksum_algorithm VARCHAR(16) NULL,
   CONSTRAINT media_storage_profiles_provider_id_check
     CHECK (provider_id ~ '^@[^/]+/[^/]+(?:/[^/]+)*$'),
   CONSTRAINT media_storage_profiles_config_check CHECK (jsonb_typeof(config) = 'object'),
@@ -320,11 +313,6 @@ CREATE TABLE IF NOT EXISTS phis.media_storage_profiles (
 -- Settled per Profile rather than per upload because duplicate detection compares digests, and two
 -- objects are only comparable under the same algorithm: an adapter picking freshly on every plan would
 -- split one Space's objects into cohorts that can never be told to be the same, and silently.
-ALTER TABLE phis.media_storage_profiles
-  ADD COLUMN IF NOT EXISTS probe JSONB NULL,
-  ADD COLUMN IF NOT EXISTS probed_at TIMESTAMPTZ NULL,
-  ADD COLUMN IF NOT EXISTS checksum_algorithm VARCHAR(16) NULL;
-
 CREATE TABLE IF NOT EXISTS phis.site_media_config (
   site_id SMALLINT PRIMARY KEY REFERENCES phis.sites(id) ON DELETE CASCADE,
   default_user_quota_bytes BIGINT NULL,
@@ -567,6 +555,14 @@ CREATE TABLE IF NOT EXISTS phis.media_upload_sessions (
   purpose_ref JSONB NULL,
   staging_storage_key VARCHAR(512) NOT NULL,
   final_storage_key VARCHAR(512) NULL,
+  /*
+   * The Provider's own handle on a body it is assembling from parts.
+   *
+   * Kept because the one thing a Client cannot be asked to do is report an upload it has stopped
+   * existing to report. An abandoned multipart upload is billed until it is aborted and does not appear
+   * in a listing, so whoever cleans up has to be able to name it without the browser that started it.
+   */
+  provider_upload_id VARCHAR(512) NULL,
   expires_at TIMESTAMPTZ NOT NULL,
   uploaded_at TIMESTAMPTZ NULL,
   finalized_at TIMESTAMPTZ NULL,
@@ -585,7 +581,9 @@ CREATE TABLE IF NOT EXISTS phis.media_upload_sessions (
     REFERENCES phis.media_storage_profiles (id, site_id)
     DEFERRABLE INITIALLY DEFERRED,
   CONSTRAINT media_upload_sessions_size_check CHECK (size_bytes > 0),
-  CONSTRAINT media_upload_sessions_plan_kind_check CHECK (upload_plan_kind IN (1, 2)),
+  CONSTRAINT media_upload_sessions_plan_kind_check CHECK (upload_plan_kind IN (1, 2, 3)),
+  CONSTRAINT media_upload_sessions_provider_upload_id_check
+    CHECK ((upload_plan_kind = 3) = (provider_upload_id IS NOT NULL)),
   CONSTRAINT media_upload_sessions_purpose_check CHECK (
     (purpose = 1 AND purpose_ref IS NULL) OR (purpose = 2 AND purpose_ref IS NOT NULL)
   )
@@ -595,7 +593,6 @@ CREATE INDEX IF NOT EXISTS media_upload_sessions_space_status_idx
   ON phis.media_upload_sessions (space_id, status, expires_at);
 CREATE INDEX IF NOT EXISTS media_upload_sessions_actor_idx
   ON phis.media_upload_sessions (site_id, actor_user_id, created_at DESC);
-
 
 CREATE TABLE IF NOT EXISTS phis.image_asset_variants (
   asset_id INT NOT NULL REFERENCES phis.media_assets(id) ON DELETE CASCADE,
@@ -949,12 +946,6 @@ CREATE TABLE IF NOT EXISTS phis.form_definitions (
   CONSTRAINT form_definitions_site_form_version_unique UNIQUE (site_id, form_id, version)
 );
 
--- v1 has no migration chain. Reapplying the canonical schema must bring an
--- existing development database to the current ABI without recreating it.
-ALTER TABLE phis.form_definitions
-  ALTER COLUMN submit_handler_key DROP NOT NULL,
-  ADD COLUMN IF NOT EXISTS preview_handler_key VARCHAR(128) NULL;
-
 CREATE INDEX IF NOT EXISTS form_definitions_site_id_form_id_idx
   ON phis.form_definitions (site_id, form_id, version DESC, id DESC);
 
@@ -1235,6 +1226,14 @@ CREATE TABLE IF NOT EXISTS phis.thread_messages (
 CREATE INDEX IF NOT EXISTS thread_messages_thread_created_idx
   ON phis.thread_messages (thread_id, created_at ASC, id ASC);
 
+-- Added here rather than with the table: `threads.last_message_id` points at a row in
+-- `thread_messages`, which points back at `threads`, and one of the two directions has to be declared
+-- after both tables exist.
+--
+-- Dropped and re-added rather than added once, because that is a constraint's `IF NOT EXISTS`: the
+-- script has to be runnable against a database that already has it. Columns do not need this -- they
+-- belong in their `CREATE TABLE` and a development database that predates one is altered by hand
+-- ([DB.md](../../DB.md)).
 ALTER TABLE phis.threads
   DROP CONSTRAINT IF EXISTS threads_last_message_id_fkey;
 
@@ -1494,9 +1493,6 @@ CREATE TABLE IF NOT EXISTS phis.tr_lang (
   CONSTRAINT tr_lang_msg_locale_unique UNIQUE (msg_id, locale)
 );
 
-ALTER TABLE phis.tr_lang
-  ADD COLUMN IF NOT EXISTS source_hash BYTEA NULL;
-
 CREATE INDEX IF NOT EXISTS tr_lang_external_source_idx
   ON phis.tr_lang (locale, source_hash)
   WHERE source_hash IS NOT NULL;
@@ -1520,9 +1516,6 @@ CREATE TABLE IF NOT EXISTS phis.tr_site_lang (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   CONSTRAINT tr_site_lang_msg_locale_unique UNIQUE (msg_id, locale)
 );
-
-ALTER TABLE phis.tr_site_lang
-  ADD COLUMN IF NOT EXISTS source_hash BYTEA NULL;
 
 CREATE INDEX IF NOT EXISTS tr_site_lang_external_source_idx
   ON phis.tr_site_lang (locale, source_hash)
@@ -1889,31 +1882,6 @@ CREATE TABLE IF NOT EXISTS phis.site_theme_revisions (
 CREATE INDEX IF NOT EXISTS site_theme_revisions_scope_idx
   ON phis.site_theme_revisions (theme_scope_id, created_at DESC, id DESC);
 
-ALTER TABLE phis.site_area_revisions
-  ADD COLUMN IF NOT EXISTS meta_json JSONB NOT NULL DEFAULT '{}'::jsonb;
-
-ALTER TABLE phis.site_area_scopes
-  ADD COLUMN IF NOT EXISTS working_module_draft_revision_id INT NULL;
-
-ALTER TABLE phis.site_page_revisions
-  ADD COLUMN IF NOT EXISTS meta_json JSONB NOT NULL DEFAULT '{}'::jsonb;
-
-ALTER TABLE phis.site_nav_revisions
-  ADD COLUMN IF NOT EXISTS meta_json JSONB NOT NULL DEFAULT '{}'::jsonb;
-
-ALTER TABLE phis.site_nav_revisions
-  ADD COLUMN IF NOT EXISTS next_node_sequence BIGINT NOT NULL DEFAULT 1;
-
-ALTER TABLE phis.site_nav_revisions
-  DROP CONSTRAINT IF EXISTS site_nav_revisions_next_node_sequence_check;
-
-ALTER TABLE phis.site_nav_revisions
-  ADD CONSTRAINT site_nav_revisions_next_node_sequence_check
-  CHECK (next_node_sequence >= 1 AND next_node_sequence <= 4294967296);
-
-ALTER TABLE phis.site_theme_revisions
-  ADD COLUMN IF NOT EXISTS meta_json JSONB NOT NULL DEFAULT '{}'::jsonb;
-
 -- Change marker for what a Site keeps of its published data between reads: its config (the `sites` row,
 -- theme record and locales included) and its Navigation, whose targets are published Pages, plus the
 -- published Areas and Theme any cache of rendered pages rests on. `GET /api/v1/site` carries it; every
@@ -2084,6 +2052,10 @@ CREATE TABLE IF NOT EXISTS phis.site_server_addons (
   enabled_at TIMESTAMPTZ NULL,
   disabled_at TIMESTAMPTZ NULL,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  storage_quota_bytes BIGINT NULL,
+  storage_quota_objects INT NULL,
+  storage_used_bytes BIGINT NOT NULL DEFAULT 0,
+  storage_used_objects INT NOT NULL DEFAULT 0,
   CONSTRAINT site_server_addons_site_addon_unique PRIMARY KEY (site_id, addon_id),
   CONSTRAINT site_server_addons_configuration_version_check CHECK (configuration_version >= 0),
   CONSTRAINT site_server_addons_configuration_status_check CHECK (
@@ -2098,7 +2070,9 @@ CREATE TABLE IF NOT EXISTS phis.site_server_addons (
       'misconfigured',
       'unavailable'
     )
-  )
+  ),
+  CONSTRAINT site_server_addons_storage_used_check
+    CHECK (storage_used_bytes >= 0 AND storage_used_objects >= 0)
 );
 
 CREATE INDEX IF NOT EXISTS site_server_addons_addon_id_idx
@@ -2128,18 +2102,6 @@ ALTER TABLE phis.media_spaces
 -- NULL is "no ceiling", the same reading as `media_spaces.quota_bytes`, and the used columns are a
 -- running total rather than something counted on demand: counting means listing the store, which is the
 -- unbounded operation the ceiling exists to prevent.
-ALTER TABLE phis.site_server_addons
-  ADD COLUMN IF NOT EXISTS storage_quota_bytes BIGINT NULL,
-  ADD COLUMN IF NOT EXISTS storage_quota_objects INT NULL,
-  ADD COLUMN IF NOT EXISTS storage_used_bytes BIGINT NOT NULL DEFAULT 0,
-  ADD COLUMN IF NOT EXISTS storage_used_objects INT NOT NULL DEFAULT 0;
-
-ALTER TABLE phis.site_server_addons
-  DROP CONSTRAINT IF EXISTS site_server_addons_storage_used_check;
-ALTER TABLE phis.site_server_addons
-  ADD CONSTRAINT site_server_addons_storage_used_check
-    CHECK (storage_used_bytes >= 0 AND storage_used_objects >= 0);
-
 -- What roles of an Add-on one user holds on one Site.
 --
 -- The vocabulary belongs to the Add-on and is declared in its manifest; the assignments belong here, in

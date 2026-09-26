@@ -6,6 +6,7 @@ import {
 } from "@/db/media";
 import { getSessionFromRequest } from "@/db/user-sessions";
 import { logRuntimeEvent } from "@/lib/log";
+import { removePhiMediaUploadStagingObject } from "@/lib/media-upload-staging";
 import { PhiMediaUploadPurpose, PhiMediaUploadSessionStatus } from "@/lib/media-upload-sessions";
 import { requireMediaSpaceWriteContext } from "@/lib/guards/site-media-api";
 import { requireSiteFromRequest } from "@/lib/site-context";
@@ -103,6 +104,18 @@ export async function POST(
 
   await abortMediaUploadSessionByToken(token);
 
+  /*
+   * After the abort and never before it: a Provider that cannot be reached must not also keep the
+   * reservation. The result travels into the entry below rather than being swallowed, because `null`
+   * there means an object may still be sitting in a bucket with nothing coming back for it.
+   */
+  const stagingRemoved = await removePhiMediaUploadStagingObject({
+    siteId: site.id,
+    siteKey: site.key,
+    storageProfileId: session.storageProfileId,
+    stagingStorageKey: session.stagingStorageKey,
+  });
+
   logRuntimeEvent(reason === "cancelled" ? "info" : "error", "media.upload.client_failed", {
     message: `Client reported ${reason} for upload session ${token}.`,
     siteKey: site.key,
@@ -115,6 +128,9 @@ export async function POST(
       spaceId: session.spaceId,
       storageProfileId: session.storageProfileId,
       uploadPlanKind: session.uploadPlanKind,
+      stagingStorageKey: session.stagingStorageKey,
+      // `null` is the one that needs reading: the object may still be there and nothing will return for it.
+      stagingRemoved,
       originalName: session.filename,
       contentType: session.contentType,
       sizeBytes: session.sizeBytes,
