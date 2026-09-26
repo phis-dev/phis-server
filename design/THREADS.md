@@ -434,7 +434,12 @@ PhisThreadDetail       thread, participants, messages, hasMoreMessages
 The types move out of `capabilities.ts`. `@phis/support` drops `PhiSupportInbox*` and uses these.
 
 **Site API.** `/api/site/threads` belongs to Core and requires a Site session; which kinds a person may
-reach is the predicate's answer, not the guard's. Needed beyond today: status changes, adding
+reach is the predicate's answer, not the guard's. One message write is offered at two addresses:
+`POST /api/site/threads/<threadId>/messages` for a caller holding a thread id, and
+`POST /api/site/threads/messages` with `threadId` in the body, which is what a declared Form submits to --
+a Form handler relays to one static path and sends its values, and the conversation is one of them. Both
+are the same write, sharing one implementation, and neither trusts the id: the row is read through the
+caller's own visibility predicate, so one they may not see is not found. Needed beyond today: status changes, adding
 participants, message paging (`beforeMessageId`), a status filter, and a candidates route that answers
 the people and groups this actor may address -- projections, capped, never addresses.
 `/api/site/support` keeps tickets and queues.
@@ -651,8 +656,8 @@ is not installed.
 
 ### One conversation view, and more than one listing
 
-The widgets three Modules share are the **conversation** and the **composer**. The **listing** is not
-shared, and the tempting version of this -- one inbox holding everything a person may see -- is wrong for
+The two surfaces three Modules share are the **conversation** and the **composer** -- a widget and, since
+the composer became a declared Form, a Form id. The **listing** is not shared, and the tempting version of this -- one inbox holding everything a person may see -- is wrong for
 a reason that only shows up at the scale a working Site has.
 
 A Supporter may see every ticket standing in their queue's group. Put those in the same list as messages
@@ -678,21 +683,25 @@ differs -- and arriving is exactly the part that should differ.
   Space, because a composer offering a file on a Site with no User Spaces would be offering something
   the control plane is about to refuse.
 
-  The two widgets know nothing of each other and talk on the `thread` channel. The conversation
-  **announces** the one it has open -- after it is open, never before, so nothing is pointed at a thread
-  that turned out to be absent or out of reach -- and the composer listens. A conversation it was
-  *told* about it does not re-announce: whoever broadcast a selection told every listener at once, and
-  an echo on a channel you also listen to is a loop. Writing sends `reload` rather than a second
-  `change`, because the conversation has not changed, only its contents: `change` would put every
-  listener through switching threads, which for the composer means clearing a reply somebody is halfway
-  through. Until an inbox exists, `?thread=` on the address is what selects one -- which is also what a
+  The composer is not a widget: it is the `threads/message` Form, placed through the one generic Form
+  Widget, with a hidden conversation field, a message and the shared upload field. What it is told and what
+  it says are unchanged, only the shape is -- a Form cannot listen on the `thread` channel, so the Module's
+  Controller sends the open conversation into that hidden field and the route names which field it is.
+
+  The conversation widget and the composer know nothing of each other and are joined on the `thread`
+  channel by that Controller. The conversation **announces** the one it has open -- after it is open, never
+  before, so nothing is pointed at a thread that turned out to be absent or out of reach. A conversation it
+  was *told* about it does not re-announce: whoever broadcast a selection told every listener at once, and
+  an echo on a channel you also listen to is a loop. A written message produces `reload` rather than a
+  second `change`, because the conversation has not changed, only its contents: `change` would put every
+  listener through switching threads, which means clearing a reply somebody is halfway through. Until an inbox exists, `?thread=` on the address is what selects one -- which is also what a
   link in a notification needs, so it is not scaffolding that gets thrown away.
 - **`@phis/support`** -- declares `Support` and the User Space its requesters submit into
   ([SUPPORT.md](./SUPPORT.md)); seeds its group; ticket and queue surfaces; a customer widget listing
   only the viewer's own Support threads. Reuses the thread widgets by Layout composition: its ticket
   panel -- status, queue, assignee, tasks, the two clocks, what is left of the requester's allowance --
-  sits beside the conversation and learns which ticket from the same runtime signal the composer
-  listens on. One mechanism for all three Modules, and no extension point inside anybody's widget.
+  sits beside the conversation and learns which ticket from the same runtime signal that fills the
+  composer's conversation field. One mechanism for all three Modules, and no extension point inside anybody's widget.
 - **groups Module** -- group spaces; declares `Group` and, by setting, `CrossGroup`; administers the
   group flags for Core groups.
 - **`@phis/github` Module half** -- a link panel widget beside a ticket's conversation, wired by a
