@@ -26,6 +26,7 @@ import {
   completeMediaUploadSessionWithDb,
   createMediaAsset,
   createMediaUploadSession,
+  getMediaAssetBySiteAndChecksum,
   getMediaAssetBySiteAndId,
   getMediaUploadSessionByToken,
 } from "@/db/media";
@@ -388,6 +389,54 @@ export function buildPhisAddonAssetsCapability(input: {
         );
       }
 
+      /*
+       * The digest, settled the same way the upload route settles it.
+       *
+       * The session's own first: it was signed into the request, so the endpoint refused anything that did
+       * not match, or Core hashed the body as it streamed. Failing that, whatever the Provider can attest
+       * about the stored object -- an MD5 from a single-request ETag is evidence of an intact transfer and
+       * is recorded as that, never compared. Where neither holds, nothing is recorded.
+       */
+      const settledChecksum = session.checksumAlgorithm && session.checksumValue
+        ? { algorithm: session.checksumAlgorithm, value: session.checksumValue }
+        : stored.checksum ?? null;
+      if (
+        session.checksumAlgorithm && session.checksumValue && stored.checksum &&
+        (stored.checksum.algorithm !== session.checksumAlgorithm ||
+          stored.checksum.value !== session.checksumValue)
+      ) {
+        await service.deleteObject(session.stagingStorageKey).catch(() => {});
+        await abortMediaUploadSessionByToken(token);
+        throw new PhisAddonAssetError(
+          `Reservation ${token} was signed for ${session.checksumAlgorithm}:${session.checksumValue} and the ` +
+          `stored object carries ${stored.checksum.algorithm}:${stored.checksum.value}.`,
+        );
+      }
+
+      /*
+       * Duplicate detection, which this path did not do.
+       *
+       * The upload route refuses a body whose digest already names an Asset in the same Space, and there is
+       * no reason an Add-on's upload should be the exception: it would mean the same file stored twice,
+       * charged twice against the Space, with nothing able to tell the two rows apart. Scoped to this
+       * Space, as the route's is, and only for digests strong enough to answer the question --
+       * `getMediaAssetBySiteAndChecksum` decides that.
+       *
+       * The existing Asset is named rather than reused. Pointing this slot at an Asset the Add-on did not
+       * upload is a decision about custody, not a saving.
+       */
+      if (settledChecksum) {
+        const existing = await getMediaAssetBySiteAndChecksum(siteId, space.id, settledChecksum);
+        if (existing) {
+          await service.deleteObject(session.stagingStorageKey).catch(() => {});
+          await abortMediaUploadSessionByToken(token);
+          throw new PhisAddonAssetError(
+            `What was delivered for reservation ${token} is already stored in this Space as Asset ` +
+            `${existing.id}.`,
+          );
+        }
+      }
+
       const client = await getPool().connect();
       let linked: { id: string; supersededMediaAssetId: number | null };
       try {
@@ -410,16 +459,9 @@ export function buildPhisAddonAssetsCapability(input: {
           originalName: session.filename,
           contentType: session.contentType,
           bytes: stored.byteSize,
-          /*
-           * The digest, established rather than asserted.
-           *
-           * Where the endpoint verifies, the client's figure is true because a wrong one would have been
-           * refused. Where Core streamed the body, Core hashed it. Where neither holds, nothing is
-           * recorded: an `etag` is an HTTP header and not a content hash, and a digest whose algorithm
-           * is a guess is worse than none, because it invites a comparison.
-           */
-          checksumAlgorithm: session.checksumAlgorithm ?? null,
-          checksumValue: session.checksumValue ?? null,
+          // Settled above, where it is also compared against what is already in the Space.
+          checksumAlgorithm: settledChecksum?.algorithm ?? null,
+          checksumValue: settledChecksum?.value ?? null,
           deliveryPolicy: DELIVERY_POLICIES[declared.delivery ?? "public"],
         }, client);
         if (!asset) {

@@ -297,7 +297,7 @@ CREATE TABLE IF NOT EXISTS phis.media_storage_profiles (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   probe JSONB NULL,
   probed_at TIMESTAMPTZ NULL,
-  checksum_algorithm VARCHAR(16) NULL,
+  checksum_algorithm VARCHAR(24) NULL,
   CONSTRAINT media_storage_profiles_provider_id_check
     CHECK (provider_id ~ '^@[^/]+/[^/]+(?:/[^/]+)*$'),
   CONSTRAINT media_storage_profiles_config_check CHECK (jsonb_typeof(config) = 'object'),
@@ -456,7 +456,7 @@ CREATE TABLE IF NOT EXISTS phis.media_assets (
    * whose algorithm is unstated is a number the reader has to guess the meaning of, and guessing wrong
    * is how an MD5 gets compared against a SHA-256.
    */
-  checksum_algorithm VARCHAR(16) NULL,
+  checksum_algorithm VARCHAR(24) NULL,
   checksum_value VARCHAR(128) NULL,
   CONSTRAINT media_assets_checksum_check CHECK (
     (checksum_algorithm IS NULL) = (checksum_value IS NULL)
@@ -505,10 +505,17 @@ CREATE INDEX IF NOT EXISTS media_assets_space_folder_created_idx
  * The algorithm is part of the key because two digests are only comparable under the same one. Without
  * it a Space whose Storage Profile changed would hold two sets of numbers answering different
  * questions, and the index would silently stop finding anything.
+ *
+ * `sha256-composite` belongs here for the same reason the other two do. It is SHA256 over the part
+ * digests of a body divided by a fixed rule, which a browser can produce for a file too large to hash
+ * whole -- Web Crypto has no incremental digest. Its value carries the division, so two of them are
+ * comparable exactly when they describe the same division, and the algorithm list has to name it or the
+ * query that reads these digests would run without an index on the very objects that are largest.
  */
 CREATE INDEX IF NOT EXISTS media_assets_space_checksum_idx
   ON phis.media_assets (space_id, checksum_algorithm, checksum_value)
-  WHERE checksum_value IS NOT NULL AND checksum_algorithm IN ('sha256', 'sha512');
+  WHERE checksum_value IS NOT NULL
+    AND checksum_algorithm IN ('sha256', 'sha512', 'sha256-composite');
 -- "what is mine in this Space", which is the question an Author's listing asks.
 CREATE INDEX IF NOT EXISTS media_assets_space_owner_idx
   ON phis.media_assets (space_id, owner_user_id) WHERE owner_user_id IS NOT NULL;
@@ -534,7 +541,7 @@ CREATE TABLE IF NOT EXISTS phis.media_upload_sessions (
    * whose algorithm is unstated is a number the reader has to guess the meaning of, and guessing wrong
    * is how an MD5 gets compared against a SHA-256.
    */
-  checksum_algorithm VARCHAR(16) NULL,
+  checksum_algorithm VARCHAR(24) NULL,
   checksum_value VARCHAR(128) NULL,
   CONSTRAINT media_upload_sessions_checksum_check CHECK (
     (checksum_algorithm IS NULL) = (checksum_value IS NULL)
@@ -610,7 +617,7 @@ CREATE TABLE IF NOT EXISTS phis.image_asset_variants (
    * whose algorithm is unstated is a number the reader has to guess the meaning of, and guessing wrong
    * is how an MD5 gets compared against a SHA-256.
    */
-  checksum_algorithm VARCHAR(16) NULL,
+  checksum_algorithm VARCHAR(24) NULL,
   checksum_value VARCHAR(128) NULL,
   CONSTRAINT image_asset_variants_checksum_check CHECK (
     (checksum_algorithm IS NULL) = (checksum_value IS NULL)
@@ -645,7 +652,7 @@ CREATE TABLE IF NOT EXISTS phis.font_asset_subsets (
   storage_key VARCHAR(512) NOT NULL,
   content_type VARCHAR(128) NOT NULL,
   bytes BIGINT NULL,
-  checksum_algorithm VARCHAR(16) NULL,
+  checksum_algorithm VARCHAR(24) NULL,
   checksum_value VARCHAR(128) NULL,
   CONSTRAINT font_asset_subsets_checksum_check CHECK (
     (checksum_algorithm IS NULL) = (checksum_value IS NULL)

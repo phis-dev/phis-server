@@ -30,7 +30,12 @@ import {
   readRequestedMediaSpaceId,
   requireMediaSpaceWriteContext,
 } from "@/lib/guards/site-media-api";
-import { phiMediaStorageProfileMayAssembleFromParts } from "@/lib/media-storage-profile-probe";
+import { phiMediaStorageProfileChecksumAlgorithm } from "@/lib/media-storage-profile-probe";
+import {
+  buildPhiMediaUploadPlanChecksum,
+  phiMediaUploadMayAssembleFromParts,
+  readPhiMediaClientDigest,
+} from "@/lib/media-upload-digest";
 import { nextMediaError, readJsonBody } from "../_helpers";
 import { normalizeString } from "@/lib/helpers/request";
 import { PHIS_AREA_HEADER } from "@/lib/constants/http-headers";
@@ -186,6 +191,26 @@ export async function POST(request: NextRequest) {
   }
 
   /*
+   * What the Client says it is about to send.
+   *
+   * Optional, and refused rather than ignored when it is malformed or the wrong shape for the declared
+   * size: a digest that is quietly dropped leaves an Asset that cannot be deduplicated and nothing that
+   * says why. Which shape applies follows from the size, so it is read after `size` is known.
+   */
+  const digestReading = readPhiMediaClientDigest({
+    sizeBytes: size,
+    sha256: payload.sha256,
+    partSha256: payload.partSha256,
+  });
+  if (!digestReading.ok) {
+    const message = digestReading.error === "checksum_shape"
+      ? "A body of this size is described by part checksums, or by a whole-object checksum, but not both."
+      : "Invalid checksum: expected lowercase hex SHA-256 digests.";
+    return nextMediaError(digestReading.error, message, 400);
+  }
+  const clientDigest = digestReading.digest;
+
+  /*
    * How much fits is a Site question, so it is answered before the Space is even resolved: the answer
    * is the same wherever the file was headed, and a refusal here never holds capacity it will not use.
    */
@@ -291,14 +316,21 @@ export async function POST(request: NextRequest) {
   // How the body is to be delivered is the Provider's to state, not the Client's to assume. Core owns
   // its own route table, so the address it would receive a body at is handed over rather than guessed.
   /*
-   * Whether this Profile may answer with an object assembled from parts.
-   *
-   * Core's decision rather than the Provider's, because it follows from what the Profile's probe
-   * established and a Provider does not grade its own endpoint. Without it a large body stays one
-   * request, which is the honest trade: a resumable upload is worth a lot, and not as much as every
-   * object over one part losing the digest duplicate detection compares.
+   * Whether this Profile may answer with an object assembled from parts: Core's decision, from the size
+   * alone. Above one part a resumable upload is worth having, and nothing is traded away for it -- an
+   * assembled object carries `sha256-composite`, which duplicate detection compares.
    */
-  const mayAssembleFromParts = await phiMediaStorageProfileMayAssembleFromParts(profile, site.key);
+  const mayAssembleFromParts = phiMediaUploadMayAssembleFromParts(size);
+  /*
+   * The digest the Client claims, turned into something Core may assert.
+   *
+   * Only under a Profile whose endpoint was measured to verify SHA-256, because that verification is the
+   * whole basis for recording a number Core never computed: the digest is signed into the upload request
+   * and a body that does not match it is refused at the endpoint. Under any other Profile the claim is
+   * dropped and the body's digest is whatever its path can establish.
+   */
+  const profileChecksumAlgorithm = await phiMediaStorageProfileChecksumAlgorithm(profile, site.key);
+  const planChecksum = buildPhiMediaUploadPlanChecksum(clientDigest, profileChecksumAlgorithm);
   const plan = await storageService.createUploadPlan({
     token,
     storageKey: tempStorageKey,
@@ -307,8 +339,27 @@ export async function POST(request: NextRequest) {
     expiresAt,
     proxyUploadUrl: `/api/site/media/uploads/${token}`,
     ...(mayAssembleFromParts ? { mayAssembleFromParts: true } : {}),
+    ...planChecksum,
   });
   const uploadPlanKind = resolvePhiMediaUploadPlanKind(plan.kind);
+  /*
+   * Recorded on the session only where the plan actually carries it into the request.
+   *
+   * A proxied body is hashed by Core as it streams, and that figure is the better one: measured here
+   * rather than asserted anywhere. Writing the claim onto the session as well would mean finalize
+   * preferring the claim over the measurement, which is the wrong way round.
+   */
+  const sessionChecksum = planChecksum.checksum && plan.kind !== "proxy-stream"
+    ? { checksumAlgorithm: planChecksum.checksum.algorithm, checksumValue: planChecksum.checksum.value }
+    : {};
+  /*
+   * An assembly has a name at the Provider, and only the session can keep it.
+   *
+   * Without it an abandoned multipart upload cannot be aborted: the parts are billed, they do not appear
+   * in a listing, and the Client that could have named the upload is the thing that went away. The schema
+   * requires it for exactly this plan kind and forbids it for the others.
+   */
+  const providerUpload = plan.kind === "multipart-put" ? { providerUploadId: plan.uploadId } : {};
 
   try {
     const uploadSession = await createMediaUploadSession({
@@ -329,6 +380,8 @@ export async function POST(request: NextRequest) {
       stagingStorageKey: tempStorageKey,
       finalStorageKey,
       expiresAt,
+      ...sessionChecksum,
+      ...providerUpload,
     });
 
     if (!uploadSession) {

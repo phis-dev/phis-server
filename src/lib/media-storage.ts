@@ -590,7 +590,6 @@ export class PhisLocalMediaStorageAdapter implements PhisMediaStorageAdapter {
     return {
       writable: findings.length === 0,
       verifiedAlgorithms: [],
-      verifiesWholeMultipartObject: false,
       findings,
     };
   }

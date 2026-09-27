@@ -35,7 +35,6 @@ describe("probing the built-in storage", () => {
       writable: true,
       // Nothing is delivered here by a client, so there is no claim to check and none is claimed.
       verifiedAlgorithms: [],
-      verifiesWholeMultipartObject: false,
       findings: [],
     });
   });

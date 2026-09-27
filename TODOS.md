@@ -47,50 +47,44 @@ tracked here because the server contract depends on them.
   which `DB.md` now states correctly. The two owners the code names do not exist: the storage contract has
   `applyCorsPolicy` and no lifecycle counterpart, so an S3 Profile cannot be given an expiry rule the way
   it is given CORS through `reconcilePhiMediaStorageCorsWith`; and there is no operator command for the
-  Local Provider (`phis media check --fix` is about file ownership). Multipart makes this urgent rather
-  than untidy: an incomplete multipart upload is billed until it is aborted and does not appear in
+  Local Provider (`phis media check --fix` is about file ownership). Multipart is in use now, which makes
+  this urgent rather than untidy: an incomplete multipart upload is billed until it is aborted and does not appear in
   `ListObjectsV2`, so the lifecycle rule it needs is `AbortIncompleteMultipartUpload`, reconciled the way
   CORS already is.
-- **Multipart is built and cannot be granted, and the reason is the checksum.** `multipart-put` exists end
-  to end: the plan kind, `provider_upload_id` on the session, the S3 Provider signing a `UploadPart` per
-  part, the Client slicing and retrying, `completeUpload` assembling, and a reported failure aborting the
-  assembly. What gates it is `mayAssembleFromParts`, which Core grants from the Profile's probe answering
-  `verifiesWholeMultipartObject` -- and that answer can never be yes. **Measured against Garage v2.3.0,
-  and it is the S3 specification rather than a Garage limitation:** `ChecksumType: FULL_OBJECT` is accepted
-  only for `CRC32`, `CRC32C` and `CRC64NVME`; `SHA1` and `SHA256` take `COMPOSITE` alone. So the probe
-  pairs the verified strong algorithm with a type the API forbids, the grant never arrives, and the branch
-  is unreachable on every compliant endpoint.
+- **Digests for direct uploads, and what is left of it.** A body delivered straight to an S3 endpoint used
+  to reach `finalize` with an `md5` read off the ETag, which duplicate detection never compares -- so no
+  Asset stored through an S3 Profile was deduplicable, at any size. The Client now hashes before it asks
+  for a session and `uploads/init` signs that digest into the upload request, which is what makes a figure
+  Core never computed recordable: the endpoint refuses a body that does not match it. Measured against
+  Garage v2.3.0, and so is everything below.
 
-  The decision that unblocks it is which digest a multipart object carries:
+  Above one part the digest is per part and the assembled object carries `sha256-composite`. That is not a
+  weaker answer, it is the only one available: `ChecksumType: FULL_OBJECT` is accepted for `CRC32`,
+  `CRC32C` and `CRC64NVME` alone, while `SHA1` and `SHA256` take `COMPOSITE` -- so the whole-object digest
+  the old `mayAssembleFromParts` waited for can never exist, and the permission it gated never opened. It
+  is a size question now. A part's digest has to be *signed*, and a presigner puts it in the query string:
+  a checksum header outside the signed set is refused, sent alone or repeating the signed value. Which is
+  why the division is a contract rule both sides compute rather than a Provider's arithmetic, and why the
+  Client hashes per part at all -- Web Crypto has no incremental digest, so hashing a two-gigabyte file
+  whole would mean holding it in memory.
 
-  - **A `COMPOSITE` SHA-256** is `SHA256` over the concatenated binary part digests with `-<parts>`
-    appended. It is as collision-resistant as SHA-256 for "are these the same bytes", so it *is* a usable
-    duplicate-detection key -- but only within one partitioning. Ours is reproducible, because
-    `resolveMultipartPartSize` is a pure function of the size and the same file has the same size. Two
-    conditions come with it: it must be its own algorithm in `PHIS_MEDIA_CHECKSUM_ALGORITHMS` carrying the
-    part size, never recorded as `sha256`; and the part-size rule is frozen once objects exist under it,
-    or the corpus splits the way the checksum-algorithm comment already warns about. The part count is in
-    the value, so a differing partitioning is a non-match and never a false match.
-  - **A `FULL_OBJECT` CRC** is verified over the whole object but is not comparable -- CRC is linear, which
-    `PHIS_MEDIA_COMPARABLE_CHECKSUM_ALGORITHMS` already excludes. It is integrity evidence, not identity.
-  - **Neither**, which is what `GROUPS_AND_STORAGE.md` already promises: "accepted and fully verified, part
-    by part; it simply carries no digest that duplicate detection can use." `finalize` needs no change for
-    this -- it records nothing where nothing can be attested and skips the duplicate query.
+  What is left:
 
-  **The measurement that decides it, and it has not been made:** whether S3 requires a checksum on every
-  part once the upload is opened with `ChecksumAlgorithm`, and whether that requirement survives a part URL
-  whose signature does not cover the header. Without it the composite is the Client's claim rather than
-  something the endpoint verified, and then only the third option is honest. Garage runs locally, so this
-  is cheap -- see the reference note on running the live suite.
-
-  Two findings from the same run, unrelated to the grant: the S3 probe never deleted its own object, so
-  every `storage add` and `storage set` left a nineteen-byte object in the bucket (fixed); and Garage
-  verifies a declared `SHA256` but accepts a wrong `SHA512`, which the probe reports as a finding rather
-  than a verified algorithm.
-
-  Transport ceilings, unchanged: `nginx` caps a proxied body at 2 GB, and on this installation
-  `s3.phis.dev` is also behind `nginx` with the same 2 GB, so the "single PUT up to 5 GB" figure does not
-  apply here.
+  - **The part-size rule is frozen now that objects can exist under it.** `resolvePhiMediaUploadPartSizeBytes`
+    and `PHIS_MEDIA_UPLOAD_MAX_PART_COUNT` decide what a `sha256-composite` value means, and the value
+    names the division so a changed rule is a non-match rather than a false match. Changing either is a
+    decision about every object already stored, not a tuning knob, and there is nothing in the build that
+    would stop somebody editing them.
+  - **Nothing re-derives a digest for an Asset stored before this.** Those rows keep their `md5`, or none,
+    and stay outside duplicate detection. Whether that is worth a maintenance task is open; re-reading
+    every object to hash it is the cost the composite exists to avoid.
+  - **A Profile recording SHA-512 gets no digest for a direct upload.** These are SHA-256 digests and a
+    SHA-512 Profile cannot compare them, so the claim is dropped. Garage verifies a declared `SHA256` but
+    accepts a wrong `SHA512`, so in practice no probed endpoint here chooses SHA-512 -- but a Profile could
+    still be recorded that way, and then its large objects silently carry nothing.
+  - **The 2 GB transport ceiling is unchanged**: `nginx` caps a proxied body, and on this installation
+    `s3.phis.dev` sits behind `nginx` with the same limit, so the "single PUT up to 5 GB" figure does not
+    apply here. Multipart does not raise it, because the parts go to the same host.
 - **Object key prefix ownership.** Core writes `sites/<key>/…` and an S3 profile may add its own bucket
   prefix, so a profile configured with `sites/<key>` stores under `sites/<key>/sites/<key>/…`. Decide the
   owner, and have a profile form state what Core prepends.

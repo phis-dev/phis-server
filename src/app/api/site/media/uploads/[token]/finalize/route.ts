@@ -308,6 +308,41 @@ export async function POST(
   const stagedChecksum = session.checksumAlgorithm && session.checksumValue
     ? { algorithm: session.checksumAlgorithm, value: session.checksumValue }
     : staged.checksum ?? null;
+
+  /*
+   * Where both sides have an opinion, they have to agree.
+   *
+   * The session's digest was signed into the upload and the Provider's was read off the stored object, so
+   * two different answers mean one of them is not about these bytes -- a Provider that ignored the digest
+   * it was handed, an object written by something else at the same key, or an assembly divided differently
+   * than Core believes. Recording either would put a wrong figure in the column duplicate detection
+   * compares, and a wrong figure there refuses somebody else's upload later.
+   */
+  if (
+    session.checksumAlgorithm && session.checksumValue && staged.checksum &&
+    (staged.checksum.algorithm !== session.checksumAlgorithm || staged.checksum.value !== session.checksumValue)
+  ) {
+    await abortMediaUploadSessionByToken(token);
+    logRuntimeEvent("error", "media.upload.checksum_mismatch", {
+      area: resolveRequestArea(request),
+      userId: authSession.userId,
+      message: "The stored object's digest is not the one the upload was signed for.",
+      siteKey: site.key,
+      method: request.method,
+      path: request.nextUrl.pathname,
+      meta: {
+        signed: `${session.checksumAlgorithm}:${session.checksumValue}`,
+        stored: `${staged.checksum.algorithm}:${staged.checksum.value}`,
+        sizeBytes: session.sizeBytes,
+      },
+    });
+    return nextMediaError(
+      "checksum_mismatch",
+      "The stored object does not carry the checksum this upload was signed for.",
+      409,
+    );
+  }
+
   if (stagedChecksum) {
     const existingAsset = await getMediaAssetBySiteAndChecksum(site.id, session.spaceId, stagedChecksum);
     if (existingAsset) {

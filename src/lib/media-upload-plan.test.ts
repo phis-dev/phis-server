@@ -133,20 +133,27 @@ describe("The plan a session was issued", () => {
     expect([...new Set(altered)].sort()).toEqual(["media_spaces", "threads"]);
   });
 
-  it("is granted by Core from the Profile's probe, not decided by the Provider", async () => {
+  it("is decided by Core from the size, and never by the Provider", async () => {
     /*
-     * The grant follows from `verifiesWholeMultipartObject`, because an object assembled from parts on an
-     * endpoint that does not keep a whole-object digest carries a checksum of part digests -- and
-     * duplicate detection reads that digest. Local storage answers no without a probe: there is no remote
-     * endpoint to ask and Core hashes every byte it writes.
+     * The grant used to follow from the Profile's probe answering whether a whole-object digest survives
+     * an assembly, and that answer can never be yes: the S3 API accepts `ChecksumType: FULL_OBJECT` for
+     * the CRC algorithms alone. So the permission never opened and multipart was unreachable. It is a size
+     * question now, and what an assembled object carries is `sha256-composite`.
+     *
+     * Read out of the source because what is being pinned is where the decision lives, not what it
+     * returns: a Provider that decided this for itself would be grading its own endpoint.
      */
-    const probe = await read("src/lib/media-storage-profile-probe.ts");
-    expect(probe).toMatch(/phiMediaStorageProfileMayAssembleFromParts/u);
-    expect(probe).toMatch(/verifiesWholeMultipartObject === true/u);
-
     const route = await read("src/app/api/site/media/uploads/init/route.ts");
-    expect(route).toMatch(/phiMediaStorageProfileMayAssembleFromParts\(profile, site\.key\)/u);
+    expect(route).toMatch(/phiMediaUploadMayAssembleFromParts\(size\)/u);
     expect(route).toMatch(/mayAssembleFromParts: true/u);
+    expect(await read("src/lib/media-storage-profile-probe.ts"))
+      .not.toMatch(/phiMediaStorageProfileMayAssembleFromParts/u);
+
+    /*
+     * And an assembly's name is kept, because the schema requires it for this plan kind and because an
+     * abandoned multipart upload cannot be aborted without it.
+     */
+    expect(route).toMatch(/providerUploadId: plan\.uploadId/u);
   });
 
   it("decides who may deliver the body", () => {

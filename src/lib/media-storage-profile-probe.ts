@@ -23,10 +23,8 @@ import { logRuntimeEvent, normalizeLogThrowable } from "@/lib/log";
 const LOCAL_PROBE: PhisMediaStorageProbe = {
   writable: true,
   verifiedAlgorithms: [],
-  verifiesWholeMultipartObject: false,
   findings: ["Core's own storage: nothing is delivered to it by a client, so there is nothing to verify."],
 };
-
 
 export type PhiMediaStorageProfileForProbe = {
   id: number;
@@ -85,7 +83,6 @@ export async function ensurePhiMediaStorageProfileProbe(
     probe = {
       writable: false,
       verifiedAlgorithms: [],
-      verifiesWholeMultipartObject: false,
       findings: [`The Provider could not be reached: ${
         error instanceof Error ? error.message.trim() : "no reason given"
       }`],
@@ -116,6 +113,15 @@ export async function ensurePhiMediaStorageProfileProbe(
   return probe;
 }
 
+/*
+ * Whether a body arrives in parts is not probed and is not a property of the Profile.
+ *
+ * It used to be: the permission followed from the probe answering whether a whole-object digest survives
+ * an assembly. That answer can never be yes -- `ChecksumType: FULL_OBJECT` is accepted for the CRC
+ * algorithms alone -- so the permission never opened. It is a size question now, in
+ * `phiMediaUploadMayAssembleFromParts`, and what an assembled object carries is `sha256-composite`.
+ */
+
 /**
  * The digest this Profile records for a body delivered straight to the endpoint, probing once if
  * nobody ever asked.
@@ -124,34 +130,6 @@ export async function ensurePhiMediaStorageProfileProbe(
  * Absent evidence reads as null: treating silence as a yes is how an unverified digest ends up
  * recorded as a checked one.
  */
-/**
- * Whether this Profile's endpoint keeps a whole-object digest for a body that arrives in parts.
- *
- * The permission Core hands to `createUploadPlan` as `mayAssembleFromParts`, and the reason it is a
- * permission: where the answer is no, an object built from parts carries a checksum of part digests --
- * a number hashing no bytes anybody uploaded -- and duplicate detection reads that digest. So such a body
- * stays a single request however large it is, because an object nobody can compare is worse than an
- * upload that has to succeed in one go.
- *
- * Read rather than derived, and probed once where nothing was recorded, exactly as the algorithm below
- * is. Local storage answers no and needs no probe: there is no remote endpoint to ask, and Core hashes
- * every byte it writes.
- */
-export async function phiMediaStorageProfileMayAssembleFromParts(
-  profile: PhiMediaStorageProfileForProbe,
-  siteKey?: string | null,
-): Promise<boolean> {
-  if (profile.providerId === PHI_LOCAL_MEDIA_STORAGE_PROVIDER_ID) return false;
-
-  const recorded = await readMediaStorageProfileProbe(profile.siteId, profile.id);
-  if (!recorded) return false;
-  if (recorded.probedAt) return recorded.probe?.verifiesWholeMultipartObject === true;
-
-  await ensurePhiMediaStorageProfileProbe(profile, siteKey);
-  const probed = await readMediaStorageProfileProbe(profile.siteId, profile.id);
-  return probed?.probe?.verifiesWholeMultipartObject === true;
-}
-
 export async function phiMediaStorageProfileChecksumAlgorithm(
   profile: PhiMediaStorageProfileForProbe,
   siteKey?: string | null,

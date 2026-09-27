@@ -362,7 +362,6 @@ export type StorageProfileProbeResult = {
   probed: boolean;
   writable?: boolean;
   verifiedAlgorithms?: string[];
-  verifiesWholeMultipartObject?: boolean;
   chosenAlgorithm?: string | null;
   findings: string[];
 };
@@ -403,7 +402,6 @@ export async function probeOneStorageProfile(
     probe = {
       writable: false,
       verifiedAlgorithms: [],
-      verifiesWholeMultipartObject: false,
       findings: [`The Provider could not be reached: ${
         error instanceof Error ? error.message.trim() : "no reason given"
       }`],

@@ -2739,8 +2739,7 @@ async function main() {
           (profile.probed
             ? `${profile.writable ? "writable" : "NOT WRITABLE"}, ` +
               `verifies ${profile.verifiedAlgorithms?.length ? profile.verifiedAlgorithms.join("/") : "nothing"}, ` +
-              `recording ${profile.chosenAlgorithm ?? "no digest of its own"}` +
-              (profile.verifiesWholeMultipartObject ? ", whole-object digest survives multipart" : "")
+              `recording ${profile.chosenAlgorithm ?? "no digest of its own"}`
             : "not probed"),
         );
         for (const finding of profile.findings) {

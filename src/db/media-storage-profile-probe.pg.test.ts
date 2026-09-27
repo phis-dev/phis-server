@@ -99,7 +99,7 @@ describe("probing a Storage Profile on first use", () => {
       `UPDATE phis.media_storage_profiles
           SET probe = $2::jsonb, probed_at = NOW(), checksum_algorithm = 'sha256' WHERE id = $1`,
       [profile.id, JSON.stringify({
-        writable: true, verifiedAlgorithms: ["sha256"], verifiesWholeMultipartObject: false, findings: [],
+        writable: true, verifiedAlgorithms: ["sha256"], findings: [],
       })],
     );
 

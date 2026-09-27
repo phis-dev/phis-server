@@ -757,7 +757,8 @@ A digest reaches the column three ways, and the algorithm is recorded with it ev
 
 **Not every digest may answer every question.** Two grades exist, and only one of them identifies:
 
-- **Identity-grade**: SHA-256 and SHA-512. Duplicate detection compares these.
+- **Identity-grade**: SHA-256, SHA-512, and the composite of SHA-256 part digests that an object
+  assembled from parts carries. Duplicate detection compares these.
 - **Integrity-grade**: CRC32/CRC32C/CRC64NVME, MD5, XXHASH. These prove a transfer intact and are
   recorded as such, and are never compared.
 
@@ -775,19 +776,34 @@ cohort-wise: two identical files recorded under different algorithms are not rec
 
 ### Objects too large for one request
 
-A checksum signed into a PUT covers that PUT. Above the single-request limit an object arrives in parts,
-and the digest of the assembled object is normally a composite of the part digests -- correct, and about
-nothing anyone uploaded.
+A checksum signed into a PUT covers that PUT. Above one part an object arrives in pieces, and each piece
+carries its own digest -- signed into its own request, so a part whose bytes do not match is refused there
+and never joins the object. What the assembled object then carries is `sha256-composite`: SHA-256 over the
+concatenated part digests, with the division named in the value.
 
-The probe therefore asks a sharper question than "does this endpoint support whole-object checksums":
-`verifiesWholeMultipartObject` is true only where the endpoint will compute one of the *identity-grade*
-algorithms over the whole assembled object. With a CRC most endpoints will, and a CRC cannot answer
-whether two objects are the same.
+That is an identity-grade digest rather than a missing one, and the reason is worth stating because the
+opposite was believed here for a while. A whole-object SHA-256 over an assembled object cannot be had at
+all: the S3 API accepts `ChecksumType: FULL_OBJECT` only for the CRC algorithms, and `SHA256` takes
+`COMPOSITE` alone. Measured, not read. So there is nothing to trade away -- the choice is between the
+composite and no digest, and the composite answers "are these the same bytes" as hard as SHA-256 does,
+within one division.
 
-Where the answer is no, such an object is still **accepted and fully verified**, part by part; it simply
-carries no digest that duplicate detection can use. Pulling the body back through Core to hash it was
-considered and rejected: duplicate detection is a saving, not a guarantee, and buying it for the largest
-objects with a full extra read of every byte inverts the cost it exists to avoid.
+The division is therefore part of the contract rather than a Provider's private arithmetic
+(`resolvePhiMediaUploadPartSizeBytes`), and **frozen once objects exist under it**. Both sides compute it:
+the Client has to know the boundaries to hash them before a plan exists, and the Provider has to address
+the same ones. A changed rule yields a different value for the same file, which is a non-match and never
+a false match -- but it splits the corpus, so changing it is a decision about every stored object.
+
+The Client hashes per part for a reason of its own: Web Crypto has no incremental digest, so a whole-object
+SHA-256 of a two-gigabyte file means holding two gigabytes in memory. Per part, one part is resident. This
+is why the composite is not a lesser answer for large objects; it is the only answer a browser can give.
+
+Pulling the body back through Core to hash it whole was considered and rejected: duplicate detection is a
+saving, not a guarantee, and buying it for the largest objects with a full extra read of every byte inverts
+the cost it exists to avoid.
+
+Whether a body arrives in parts is Core's decision and follows from its size alone. It used to follow from
+the probe, which is what the impossible question above was for.
 
 Finalizing is always Core's: only the Server turns a delivered body into an Asset. It settles the staged
 object with the Provider first, carrying through whatever the plan asked the Client to report back,
