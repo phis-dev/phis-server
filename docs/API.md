@@ -8,13 +8,13 @@ public or internal token, and `session` is the visitor's Site session with the a
 passes (see [AUTHORIZATION.md](../AUTHORIZATION.md)). A route with no access entry performs its own checks
 or none; read its source. Request and response shapes are not listed; the source is linked per route.
 
-138 routes.
+141 routes.
 
 ## Contents
 
 - [`/api/operator`](#apioperator) (5)
 - [`/api/setup`](#apisetup) (2)
-- [`/api/site`](#apisite) (67)
+- [`/api/site`](#apisite) (70)
 - [`/api/v1/addons`](#apiv1addons) (2)
 - [`/api/v1/admin`](#apiv1admin) (1)
 - [`/api/v1/auth`](#apiv1auth) (29)
@@ -117,8 +117,8 @@ Site administration, CMS, media and support API. A Site's `/api/site` proxy forw
 | GET | [`/api/site/media/{id}`](../src/app/api/site/media/[id]/route.ts) | session (requireMediaAssetContext) |  |
 | PATCH | [`/api/site/media/{id}`](../src/app/api/site/media/[id]/route.ts) | session (requireMediaAssetContext) |  |
 | DELETE | [`/api/site/media/{id}`](../src/app/api/site/media/[id]/route.ts) | Site session, checked in the handler; session (requireMediaAssetContext) |  |
-| GET | [`/api/site/media/{id}/content`](../src/app/api/site/media/[id]/content/route.ts) | Asset delivery policy (public Assets need no session) |  |
-| HEAD | [`/api/site/media/{id}/content`](../src/app/api/site/media/[id]/content/route.ts) | Asset delivery policy (public Assets need no session) |  |
+| GET | [`/api/site/media/{id}/content`](../src/app/api/site/media/[id]/content/route.ts) | Asset delivery policy (public Assets need no session) | The bytes of one Asset, whole or in part. |
+| HEAD | [`/api/site/media/{id}/content`](../src/app/api/site/media/[id]/content/route.ts) | Asset delivery policy (public Assets need no session) | The bytes of one Asset, whole or in part. |
 | PUT | [`/api/site/media/{id}/owner`](../src/app/api/site/media/[id]/owner/route.ts) | Site session, checked in the handler; session (requireMediaAssetContext) | Handing one Asset over. |
 | GET | [`/api/site/media/{id}/subsets/{subsetKey}`](../src/app/api/site/media/[id]/subsets/[subsetKey]/route.ts) | Asset delivery policy (public Assets need no session) |  |
 | HEAD | [`/api/site/media/{id}/subsets/{subsetKey}`](../src/app/api/site/media/[id]/subsets/[subsetKey]/route.ts) | Asset delivery policy (public Assets need no session) |  |
@@ -154,11 +154,14 @@ Site administration, CMS, media and support API. A Site's `/api/site` proxy forw
 | POST | [`/api/site/threads`](../src/app/api/site/threads/route.ts) | session, `authenticated` (requireSiteAuthenticatedApiContext) |  |
 | GET | [`/api/site/threads/{threadId}`](../src/app/api/site/threads/[threadId]/route.ts) | session, `authenticated` (requireSiteAuthenticatedApiContext) |  |
 | PATCH | [`/api/site/threads/{threadId}`](../src/app/api/site/threads/[threadId]/route.ts) | session, `authenticated` (requireSiteAuthenticatedApiContext) | Archiving and reopening. One row carries the status, so this is the thread closing for everyone. |
-| POST | [`/api/site/threads/{threadId}/messages`](../src/app/api/site/threads/[threadId]/messages/route.ts) | session, `authenticated` (requireSiteAuthenticatedApiContext) |  |
+| POST | [`/api/site/threads/{threadId}/messages`](../src/app/api/site/threads/[threadId]/messages/route.ts) | session, `authenticated` (requireSiteAuthenticatedApiContext) | Writing into one conversation, addressed by path. |
 | GET | [`/api/site/threads/{threadId}/messages/{messageId}/assets/{assetId}`](../src/app/api/site/threads/[threadId]/messages/[messageId]/assets/[assetId]/route.ts) | session, `authenticated` (requireSiteAuthenticatedApiContext) | The bytes of one attachment, reached through the message that names it. |
+| POST | [`/api/site/threads/{threadId}/messages/{messageId}/translate`](../src/app/api/site/threads/[threadId]/messages/[messageId]/translate/route.ts) | session, `authenticated` (requireSiteAuthenticatedApiContext) | One message, read in another language, and nothing kept. |
 | POST | [`/api/site/threads/{threadId}/participants`](../src/app/api/site/threads/[threadId]/participants/route.ts) | session, `authenticated` (requireSiteAuthenticatedApiContext) | Adds people or groups. It never removes: leaving is the participant's own flag, not somebody's edit. |
 | POST | [`/api/site/threads/{threadId}/read`](../src/app/api/site/threads/[threadId]/read/route.ts) | session, `authenticated` (requireSiteAuthenticatedApiContext) |  |
 | GET | [`/api/site/threads/candidates`](../src/app/api/site/threads/candidates/route.ts) | session, `authenticated` (requireSiteAuthenticatedApiContext) | Who this person may address, and which kinds of thread this Site offers. |
+| POST | [`/api/site/threads/messages`](../src/app/api/site/threads/messages/route.ts) | session, `authenticated` (requireSiteAuthenticatedApiContext) | The same write as `/api/site/threads/{threadId}/messages`, with the conversation in the body. |
+| GET | [`/api/site/translation`](../src/app/api/site/translation/route.ts) | session, `authenticated` (requireSiteAuthenticatedApiContext) | Whether this installation translates for this Site, and into what. |
 | POST | [`/api/site/translation/detect`](../src/app/api/site/translation/detect/route.ts) | session, `structure-authoring` (requireSiteBuilderApiContext) |  |
 | GET | [`/api/site/user-state`](../src/app/api/site/user-state/route.ts) | session, `authenticated` (requireSiteAuthenticatedApiContext) | Everything this Site's active Modules kept about the person asking. |
 | PATCH | [`/api/site/user-state`](../src/app/api/site/user-state/route.ts) | session, `authenticated` (requireSiteAuthenticatedApiContext) | One key written, every other namespace on the row untouched. |
