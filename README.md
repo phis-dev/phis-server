@@ -225,3 +225,32 @@ itself. How to build one is in [ADDON_HOWTO.md](./ADDON_HOWTO.md), the server co
 | [TODOS.md](./TODOS.md) | Approved work that is not implemented. |
 | [Roadmap.md](./Roadmap.md) | Larger direction. |
 | [THIRD-PARTY-NOTICES.md](./THIRD-PARTY-NOTICES.md) | Third-party licenses. |
+
+## Distribution
+
+A release is a tag. Pushing `v<version>` builds the standalone server, the CLI bundle and the schema file
+once, and ships both forms of that one build: the Debian package `phis`, attached to the GitHub release,
+and the npm package `@phis/server`. The tag must agree with `package.json` and with `debian/changelog`, or
+the workflow refuses it before anything is built.
+
+| Installed from | What it carries | Described in |
+| --- | --- | --- |
+| `phis_<version>_<arch>.deb` | The stage layout, the systemd unit, `/usr/bin/phis`, the proxy templates, and the traced `node_modules`: the install reads no registry and needs no network. | [debian/README.Debian](./debian/README.Debian), [docs/INSTALL.md](./docs/INSTALL.md) |
+| `@phis/server` from npm | The same server, the same CLI and the same schema file, with the runtime dependencies resolved by npm instead. No stage layout, no unit, no proxy configuration. | [docs/INSTALL.md](./docs/INSTALL.md) |
+
+The published tarball is not this checkout. `pnpm package:dist` assembles it by naming what belongs in it
+(`scripts/prepare-package-dist.mjs`), and `scripts/validate-package-dist.mjs` then refuses an artifact that
+is missing the schema file or that carries an installation's own `config/`. The workspace manifest stays
+`private`: the assembled tree is the only thing in this repository that can be published, which is what
+keeps a real installation's runtime configuration out of a registry.
+
+## Stability
+
+`phis` is pre-v1 (`0.x`). Any release may change a contract, a route, or a stored shape without a
+compatibility layer or a migration path; callers and stored data are updated together with the release.
+Upgrade `@phis/server`, `@phis/ui`, `@phis/contracts` and the installed Add-on packages together, and pin
+exact versions.
+
+## License
+
+Apache-2.0. See [LICENSE](./LICENSE) and [NOTICE](./NOTICE).

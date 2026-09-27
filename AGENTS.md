@@ -14,6 +14,9 @@
   `dist/phis.mjs`.
 - `scripts/sql/001_create_phis.pgsql` is the Core schema.
 - `config/` holds the tracked configuration files; `debian/` the package.
+- `scripts/prepare-package-dist.mjs` assembles `package/`, the tree the npm tarball is published from, and
+  `scripts/validate-package-dist.mjs` refuses it if it is incomplete or carries deployment state. The
+  workspace manifest stays `private`, so nothing but that tree can be published.
 - Repository config is centralized in `next.config.ts`, `tsconfig.json`, and `eslint.config.mjs`.
 
 ## Build, Test, and Development Commands
@@ -36,6 +39,11 @@
 - `pnpm exec tsc --noEmit` runs the TypeScript check without a production build.
 - When the app already runs in dev mode, prefer `pnpm exec tsc --noEmit` plus `pnpm lint` as the default verification path.
 - Run `pnpm build` only when production behavior, bundling, routing, or SSR output must be verified explicitly.
+- `pnpm package:dist` assembles and validates the publishable tree from an existing `pnpm build` and
+  `pnpm build:cli`; `pnpm package:pack` runs all three and packs the tarball. A `v*` tag runs the release
+  (`.github/workflows/release.yml`), which publishes the same build as both `@phis/server` on npm and the
+  Debian package on the GitHub release. A release needs the tag, `package.json` and `debian/changelog` to
+  agree.
 
 ## Project Intent
 

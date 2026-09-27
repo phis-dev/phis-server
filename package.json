@@ -2,6 +2,18 @@
   "name": "@phis/server",
   "version": "0.1.0",
   "license": "Apache-2.0",
+  "description": "The phis control plane: the server that answers for Sites, Spaces, media, authorization, translations and Add-ons, and the phis operator CLI that installs, configures and migrates an installation.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/phis-dev/phis-server.git"
+  },
+  "homepage": "https://github.com/phis-dev/phis-server#readme",
+  "bugs": {
+    "url": "https://github.com/phis-dev/phis-server/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "private": true,
   "engines": {
     "node": ">=24.21.0"
@@ -22,6 +34,8 @@
     "build": "next build",
     "typecheck": "tsc --noEmit",
     "build:cli": "node scripts/build-cli.mjs",
+    "package:dist": "node scripts/prepare-package-dist.mjs && node scripts/validate-package-dist.mjs",
+    "package:pack": "pnpm build && pnpm build:cli && pnpm package:dist && pnpm --dir package pack --pack-destination ..",
     "auth:config-keys": "node scripts/validate-auth-installation-config-keys.mjs",
     "db:boundary": "node scripts/validate-db-sql-boundary.mjs",
     "docs:api": "node scripts/generate-api-reference.mjs",
@@ -35,7 +49,7 @@
     "phis:dist": "node ./dist/phis.mjs"
   },
   "dependencies": {
-    "@phis/contracts": "workspace:*",
+    "@phis/contracts": "^0.4.0",
     "argon2": "^0.45.1",
     "harfbuzzjs": "^1.6.1",
     "next": "^16.3.5",

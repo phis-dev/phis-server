@@ -21,6 +21,10 @@
 /build
 /dist
 
+# the published tarball and the tree it is packed from, assembled by `package:dist` from the build
+/package
+*.tgz
+
 # misc
 .DS_Store
 *.pem

@@ -1,0 +1,108 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  # The Debian package is attached to the release this workflow creates, which is a write.
+  contents: write
+  # Mints the OIDC token that npm trades for a short-lived publish credential.
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    # Holds the job until a reviewer releases it, and narrows which runs npm will
+    # accept an OIDC token from. The name must match the trusted publisher on npmjs.com.
+    environment: npm-publish
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          # The latest 24, not a pinned one: releases before 24.21 hold on to finished React Flight
+          # renders and run out of memory under load, which is what `engines` states as the minimum.
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+
+      # Trusted publishing needs npm 11.5.1 or newer; the npm bundled with Node trails it.
+      - name: Use an npm that can publish without a token
+        run: npm install -g npm@latest
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+
+      # Two distributions come out of this tag and both are named after it, so both are checked against it.
+      # A Debian package whose changelog disagrees installs under a version that is not the one released.
+      - name: Refuse a tag that disagrees with what the sources call this release
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          pkg="$(node -p "require('./package.json').version")"
+          if [ "$tag" != "$pkg" ]; then
+            echo "Tag $GITHUB_REF_NAME carries $tag, package.json says $pkg" >&2
+            exit 1
+          fi
+          deb="$(sed -nE '1s/.*\(([^)]+)\).*/\1/p' debian/changelog)"
+          if [ "${deb%%-*}" != "$tag" ]; then
+            echo "Tag $GITHUB_REF_NAME carries $tag, debian/changelog says $deb" >&2
+            exit 1
+          fi
+
+      # The repository is a member of a larger workspace and carries no lockfile or workspace file of its
+      # own, so a release writes the two settings it needs from that workspace: the dependencies whose
+      # build scripts may run, and the @phis siblings exempt from the minimum release age -- one may have
+      # been released minutes ago.
+      - name: Install as a package of its own
+        run: |
+          printf 'allowBuilds:\n  argon2: true\n  esbuild: true\n  sharp: true\n  unrs-resolver: true\nminimumReleaseAgeExclude:\n  - "@phis/*"\n' > pnpm-workspace.yaml
+          pnpm install --no-frozen-lockfile
+
+      - run: pnpm typecheck
+      - run: pnpm lint
+      - run: pnpm test
+
+      # The three checks that hold a source change to what it claims: the generated API reference, the
+      # boundary that keeps SQL out of the app, and the authentication configuration keys.
+      - run: pnpm docs:api:check
+      - run: pnpm db:boundary
+      - run: pnpm auth:config-keys
+
+      # The three inputs both distributions are assembled from. Built once here, so that what npm
+      # publishes and what the Debian package installs are the same server and the same CLI.
+      - run: pnpm build
+      - run: pnpm build:cli
+      - run: pnpm package:dist
+
+      - name: Build the Debian package
+        env:
+          # `..` by default, which outside a source tree is the runner's home; named here so the upload
+          # below knows where to look.
+          ARTIFACT_DIR: ${{ runner.temp }}/artifacts
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends debhelper dpkg-dev
+          mkdir -p "$ARTIFACT_DIR"
+          # `-nc` because `debian/clean` lists `.next` and `dist`: for an operator they are leftovers to
+          # remove, but here they are this build's inputs, and the clean target would delete them.
+          # `-b` builds the binary package alone -- there is no source package to sign or upload.
+          dpkg-buildpackage -us -uc -b -nc
+
+      # Before the publish, because this is the half that can still fail: a tarball on the registry cannot
+      # be recalled, and a release without its package can be attached to afterwards.
+      - name: Attach the Debian package to the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ARTIFACT_DIR: ${{ runner.temp }}/artifacts
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "$GITHUB_REF_NAME" \
+            --generate-notes \
+            "$ARTIFACT_DIR"/*.deb
+
+      # Last, because it is the one step nothing undoes.
+      - name: Publish
+        working-directory: package
+        run: npm publish

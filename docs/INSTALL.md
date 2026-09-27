@@ -81,6 +81,31 @@ the packaged `phis-config.json`, and `.env` holding `PORT=5301`, `HOSTNAME=127.0
 `PHIS_ROOT` names another stage ([CLI.md](./CLI.md#running-the-cli)). Continue with the configuration
 below.
 
+### From the npm package
+
+`@phis/server` on npm carries the same standalone server, the same operator CLI and the same schema file
+as the Debian package, with the runtime dependencies resolved by npm instead of copied in beside them.
+What it does not carry is the machine: no service account, no stage, no service unit, no proxy
+configuration, and no generated `NEXT_SERVER_ACTIONS_ENCRYPTION_KEY` -- which production requires and
+every Instance of one installation has to share. Take those from [debian/](../debian/) where the
+installation needs them.
+
+```sh
+npm install -g @phis/server
+phis --help                          # the bin wrapper names the application root the CLI reads
+```
+
+The server is the standalone `server.js` in the package directory:
+
+```sh
+PHIS_ROOT=/srv/phis/stages/prod PORT=5301 HOSTNAME=127.0.0.1 \
+  node "$(npm root -g)/@phis/server/server.js"
+```
+
+This path is prepared and has not yet been proven by an install
+([TODOS.md](../TODOS.md#site-bootstrap-and-releases)); the Debian package is the one in use. Continue with
+the configuration below either way.
+
 ### The phis root
 
 The phis root is the directory the server and the CLI read `config/` from. The server takes it from
