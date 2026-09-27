@@ -124,6 +124,54 @@ Only registered flags are accepted. The complete leading flag envelope is remove
 request. Any remaining text is sent as provider context; if none remains, provider context is omitted.
 Brackets appearing later in natural-language context are preserved.
 
+### Somebody else's strings in the global store
+
+An application that is not this platform can be given write access to the global store. Its strings have
+nothing to do with the Label Sets, and they must not share a key space with them.
+
+**The application names itself in a header, and the server builds the context.** A write from outside
+carries its application name in `x-phis-app`, and what is stored is that name in front of the context the
+caller sent: `acme: ui label set`. The stored context is the server's construction, never the caller's
+string, which is what makes this a rule rather than an agreement -- whatever a caller sends, its entries
+begin with its own name and cannot land in a register of the platform's own.
+
+**The same header applies to reads.** Identity is `(msg_hash, ctx)`, so a message stored under
+`acme: ui label set` is found only by a request whose context resolves to exactly that. An application
+therefore sends the header on both, and sends `ui label set` either way. Prefixing writes alone would
+have it store under one key and read under another: nothing found, nothing wrong, and the data correct in
+the table all along.
+
+**The header names which door, and that decides what a write may do.** Without it a request is in the
+platform's own space, and a public caller there may fill in a translation for a message the catalogue
+already holds -- it may not create one. With it a request is in the application's own space, where
+creating is the point. So the two rights are not the same grant: filling the platform's catalogue can
+stand open, while creating entries needs a window that is opened deliberately and is short -- ten minutes
+at most, closing by itself rather than waiting to be switched off.
+
+**What the header is not is an identity.** Anybody holding the public token can claim any name, so it
+does not protect one application from another. It protects the platform's space from all of them. What
+bounds the rest is how narrowly and how briefly write access is granted, and the rate limit on the route.
+
+**The name is part of a key, so it is checked like one.** A leading `[` is refused: the flag envelope
+above is reserved, and an application calling itself `[html]` would forge a storage flag. The name plus
+the caller's context must fit `ctx`'s 128 characters, and an overlong one is refused rather than
+truncated -- a cut context silently merges two key spaces into one, which is the collision this whole
+rule exists to prevent. And the name is normalised, so `Acme`, `acme ` and `acme` are one space rather
+than three an application would search in vain.
+
+None of it can be undone later: the global store has no deletion path, and a protected external variant
+is kept by contract, so an entry written this way stays.
+
+The prefix also stays within the rule this section opens with rather than bending it. `ctx` reaches the
+provider as translation context once the flag envelope is stripped, and "acme: ui label set" is natural
+language that reads correctly to a translator -- it says the text is a caption and not a sentence. A URL,
+a message key or a resource id would not be, and they stay out of it for the reason they always did.
+
+**Not built yet**: the server does not read `x-phis-app`, does not construct the prefix, and has no
+window. `translation.allowPublicWrites` today grants a public caller both rights at once, for as long as
+it is on. Until the above is implemented, the prefix is the caller's to keep and nothing stops a write
+under one of the platform's own registers.
+
 ## Translation modes
 
 The operator sets one mode. It names where a translation comes from, and there are four:
