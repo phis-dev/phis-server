@@ -154,6 +154,29 @@ everywhere -- `phis.tr_msg` and the label sets above it. It cannot hold a transl
 string, and it cannot hold one of a message somebody wrote a minute ago. `tr_site_msg` is never served
 from it, and neither is anything outside this contract.
 
+**And only messages written in the canonical source language.** A shared answer needs a shared
+identity, and identity here is the exact canonical text: `msg_hash` over the first 50 characters of
+`msg`, plus `ctx`. An external source variant has none. Its `tr_msg` row is owned by a *generated*
+canonical result (steps 2 and 3 of "External and non-canonical sources" below), so the same German
+sentence becomes one English text on this installation and a slightly different one on the next -- two
+hashes for one string. A mirror can hold neither of them, and whichever it does answer, it answers for
+another text.
+
+So a Module not written in the canonical source locale is translated by every installation that runs it,
+on that installation's own key, and the CDN never carries those strings. This is not a gap left open for
+later: it is what sharing costs when the thing to be shared is produced locally. Everything first-party
+is English, so this concerns Modules from elsewhere.
+
+The way in is to declare the canonical text instead of generating it. A package that ships its English
+beside its own language has an identity every installation agrees on, and its strings are ordinary
+catalogue entries with nothing special about them. No part of this contract asks a package for that
+today, and a local pre-translation is not a substitute: it produces an identity that looks shareable and
+is not, which is the worst of the three states because nothing about it fails.
+
+What this costs today is one wasted round trip. The CDN step is asked whenever the mode is `cdn+deepl`
+and the audience is `platform`, which an external unit's requests are; the mirror does not hold the text
+and the step falls through to DeepL. The answer is right, the request was pointless.
+
 **`none` is the last link of every chain, not a fourth thing.** When no step answers, the source text
 is returned unchanged and the result is marked as not succeeded. That is what the other modes already
 do when their provider fails, which is why a stand-in is recorded and must not be stored.
