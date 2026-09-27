@@ -28,7 +28,8 @@ export type PhiSiteModulePackageIssueCode =
   | "declaration_missing"
   | "declaration_invalid"
   | "declaration_foreign_module"
-  | "declaration_unknown_category";
+  | "declaration_unknown_category"
+  | "server_only_in_client_graph";
 
 export type PhiSiteModulePackageIssue = {
   code: PhiSiteModulePackageIssueCode;
@@ -52,11 +53,15 @@ const ENTRYPOINTS = [
 
 const SHARED_RUNTIMES = ["react", "@phis/ui"] as const;
 
+/** The three whose graph the browser gets. `./server` may reach whatever it likes. */
+const CLIENT_REACHABLE = [".", "./client", "./authoring-client"] as const;
+
 type PackageManifest = {
   name?: string;
   exports?: Record<string, unknown>;
   dependencies?: Record<string, string>;
   sideEffects?: unknown;
+  phis?: { serverOnlyExports?: unknown };
 };
 
 /**
@@ -157,6 +162,123 @@ export function siteModulePackageDeclaresFonts(siteRoot: string, packageName: st
   }
   const manifest = JSON.parse(readFileSync(manifestFile, "utf8")) as PackageManifest;
   return resolveExportTarget(manifest, "./fonts") !== null;
+}
+
+/*
+ * Which of a dependency's doors may not be opened from a file the browser reaches.
+ *
+ * Read from the dependency itself rather than known here: `@phis/ui` walks its own export map and
+ * records the subpaths whose graph reaches `server-only` or `next/headers`
+ * (`scripts/validate-module-boundary-exports.mjs`). A package that states nothing is not assumed to be
+ * safe -- there is simply nothing to check it against, and inventing a list would report faults that
+ * are this function's.
+ */
+function readServerOnlyExports(siteRoot: string, packageName: string) {
+  const manifestFile = path.join(siteRoot, "node_modules", ...packageName.split("/"), "package.json");
+  if (!existsSync(manifestFile)) {
+    return null;
+  }
+  let manifest: PackageManifest;
+  try {
+    manifest = JSON.parse(readFileSync(manifestFile, "utf8")) as PackageManifest;
+  } catch {
+    return null;
+  }
+  const declared = manifest.phis?.serverOnlyExports;
+  return Array.isArray(declared)
+    ? new Set(declared.filter((entry): entry is string => typeof entry === "string"))
+    : null;
+}
+
+/** `@scope/name/a/b` -> the package and `./a/b`; a bare name -> the package and `.`. */
+function splitSpecifier(specifier: string) {
+  const segments = specifier.split("/");
+  const owned = specifier.startsWith("@") ? segments.slice(0, 2) : segments.slice(0, 1);
+  const rest = segments.slice(owned.length);
+  return { packageName: owned.join("/"), subpath: rest.length > 0 ? `./${rest.join("/")}` : "." };
+}
+
+const STATIC_IMPORT_PATTERN =
+  /(?:^|\n)\s*((?:import|export)\b[^;'"]*?\bfrom\s*(['"])([^'"]+)\2|import\s*(['"])([^'"]+)\4)/g;
+
+/**
+ * The specifiers a built file imports eagerly.
+ *
+ * Comments are stripped first, because a comment quotes an import as often as code makes one. A
+ * multi-line `export { ... } from "..."` counts: those are what a barrel is made of, and a pattern that
+ * required one line would miss exactly the edge this check exists for. `import type` cannot appear in
+ * built JavaScript, so nothing has to be filtered out.
+ *
+ * Static edges only. A `dynamic(() => import(...))` is its own chunk and its own question; what makes a
+ * barrel dangerous is that it arrives with whatever imported it.
+ */
+function readStaticSpecifiers(source: string) {
+  const code = source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:"'`])\/\/.*$/gm, "$1");
+  const specifiers: string[] = [];
+  for (const match of code.matchAll(STATIC_IMPORT_PATTERN)) {
+    const specifier = match[3] ?? match[5];
+    if (specifier) {
+      specifiers.push(specifier);
+    }
+  }
+  return specifiers;
+}
+
+function resolveRelative(fromFile: string, specifier: string) {
+  const base = path.resolve(path.dirname(fromFile), specifier);
+  for (const candidate of [base, `${base}.js`, `${base}.mjs`, path.join(base, "index.js")]) {
+    if (existsSync(candidate) && !candidate.endsWith(path.sep)) {
+      return candidate;
+    }
+  }
+  return null;
+}
+
+/**
+ * The first server-only door a Client-reachable file opens, and how it was reached.
+ *
+ * The definition is the reason this matters: the generated Client projection imports
+ * `phiModuleDefinitions` from the package root, so everything the root's graph touches is in the
+ * browser graph. A `server-only` module there does not fail to compile -- it answers 500 on every page
+ * of the Site, with an import trace that names the barrel and not the file that reached for it.
+ */
+function findServerOnlyReach(root: string, siteRoot: string, manifest: PackageManifest) {
+  const lists = new Map<string, Set<string> | null>();
+  const seen = new Set<string>();
+  const queue: { file: string; trail: string[] }[] = [];
+
+  for (const subpath of CLIENT_REACHABLE) {
+    const target = resolveExportTarget(manifest, subpath);
+    const file = target ? path.join(root, target) : null;
+    if (file && existsSync(file)) {
+      queue.push({ file, trail: [target as string] });
+    }
+  }
+
+  while (queue.length > 0) {
+    const { file, trail } = queue.shift()!;
+    if (seen.has(file)) {
+      continue;
+    }
+    seen.add(file);
+    for (const specifier of readStaticSpecifiers(readFileSync(file, "utf8"))) {
+      if (specifier.startsWith(".")) {
+        const next = resolveRelative(file, specifier);
+        if (next) {
+          queue.push({ file: next, trail: [...trail, path.relative(root, next)] });
+        }
+        continue;
+      }
+      const { packageName, subpath } = splitSpecifier(specifier);
+      if (!lists.has(packageName)) {
+        lists.set(packageName, readServerOnlyExports(siteRoot, packageName));
+      }
+      if (lists.get(packageName)?.has(subpath)) {
+        return { specifier, trail };
+      }
+    }
+  }
+  return null;
 }
 
 export function inspectSiteModulePackage(
@@ -295,6 +417,18 @@ export function inspectSiteModulePackage(
       message:
         'The package ships CSS but states no side effects, so a bundler may drop the imports. State ' +
         'sideEffects: ["**/*.css"] instead of false.',
+    });
+  }
+
+  const serverOnly = findServerOnlyReach(root, siteRoot, manifest);
+  if (serverOnly) {
+    issues.push({
+      code: "server_only_in_client_graph",
+      message:
+        `${serverOnly.trail.join(" -> ")} imports "${serverOnly.specifier}", which that package ` +
+        "states is server-only. Reached from an entrypoint the browser gets, so the Site answers 500 " +
+        "on every page rather than failing to build. Import it only from ./server, or take the " +
+        "narrower door.",
     });
   }
 

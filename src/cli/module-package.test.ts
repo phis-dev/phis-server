@@ -63,6 +63,26 @@ function codesFor(siteRoot: string) {
   return inspectSiteModulePackage(siteRoot, PACKAGE).issues.map((issue) => issue.code);
 }
 
+/**
+ * A dependency that says which of its doors are server-only.
+ *
+ * Written into the Site's `node_modules` because that is where the check reads it: the list belongs to
+ * the package that knows, not to this process. `@phis/ui` computes its own with
+ * `scripts/validate-module-boundary-exports.mjs`.
+ */
+function writeNeighbour(siteRoot: string, serverOnlyExports: string[] | null) {
+  const root = path.join(siteRoot, "node_modules", "@phis", "ui");
+  mkdirSync(root, { recursive: true });
+  writeFileSync(
+    path.join(root, "package.json"),
+    JSON.stringify({
+      name: "@phis/ui",
+      ...(serverOnlyExports ? { phis: { serverOnlyExports } } : {}),
+    }),
+  );
+  return siteRoot;
+}
+
 describe("inspecting a built Module package", () => {
   it("passes a package that is put together correctly", () => {
     expect(codesFor(writePackage({}))).toEqual([]);
@@ -141,6 +161,65 @@ describe("inspecting a built Module package", () => {
         phis: { sourceLocale: "en", modules: [{ moduleId: `${PACKAGE}/modules/w`, category: "logistics" }] },
       },
     }))).toEqual(["declaration_unknown_category"]);
+  });
+
+  /*
+   * The one fault that fails at neither the package's build nor the Site's.
+   *
+   * A Module definition is read on both sides of the seam -- the generated Client projection imports it
+   * from the package root -- so a `server-only` module anywhere in that graph reaches the browser. It
+   * compiles, and then every page of the Site answers 500 with an import trace naming the barrel it came
+   * through rather than the file that reached for it.
+   */
+  it("catches a server-only door opened from a file the browser reaches", () => {
+    const siteRoot = writeNeighbour(writePackage({
+      files: {
+        "dist/index.js": 'import { ids } from "./form-ids.js";\nexport const phiModuleDefinitions = [ids];\n',
+        "dist/form-ids.js": 'import { createPhiFormId } from "@phis/ui/forms";\nexport const ids = createPhiFormId("a");\n',
+      },
+    }), ["./forms", "./server-helpers"]);
+    const report = inspectSiteModulePackage(siteRoot, PACKAGE);
+    expect(report.issues.map((issue) => issue.code)).toEqual(["server_only_in_client_graph"]);
+    // The trail names the way in, because the import trace at render time does not.
+    expect(report.issues[0]?.message).toContain("dist/index.js -> dist/form-ids.js");
+    expect(report.issues[0]?.message).toContain('"@phis/ui/forms"');
+  });
+
+  it("finds it through a multi-line re-export, which is what a barrel is made of", () => {
+    const siteRoot = writeNeighbour(writePackage({
+      files: {
+        "dist/client.js": '"use client";\nexport {\n  a,\n  b,\n} from "@phis/ui/server-helpers";\n',
+      },
+    }), ["./server-helpers"]);
+    expect(codesFor(siteRoot)).toEqual(["server_only_in_client_graph"]);
+  });
+
+  it("leaves the Server entrypoint alone, which may reach whatever it likes", () => {
+    const siteRoot = writeNeighbour(writePackage({
+      files: {
+        "dist/server.js":
+          'import { x } from "@phis/ui/server-helpers";\nexport const phiModuleServerContributions = [x];\n',
+      },
+    }), ["./server-helpers"]);
+    expect(codesFor(siteRoot)).toEqual([]);
+  });
+
+  it("says nothing when the neighbour states nothing, rather than assuming either answer", () => {
+    const siteRoot = writeNeighbour(writePackage({
+      files: {
+        "dist/index.js": 'import "@phis/ui/server-helpers";\nexport const phiModuleDefinitions = [];\n',
+      },
+    }), null);
+    expect(codesFor(siteRoot)).toEqual([]);
+  });
+
+  it("passes a door the neighbour does not call server-only", () => {
+    const siteRoot = writeNeighbour(writePackage({
+      files: {
+        "dist/index.js": 'import { x } from "@phis/ui/constants";\nexport const phiModuleDefinitions = [x];\n',
+      },
+    }), ["./forms", "./server-helpers"]);
+    expect(codesFor(siteRoot)).toEqual([]);
   });
 
   it("catches CSS that a bundler would be free to drop", () => {
