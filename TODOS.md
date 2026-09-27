@@ -255,25 +255,50 @@ tracked here because the server contract depends on them.
 - **Complete release artifact.** Record the lockfile, scaffold manifest, Module projection, and bound
   Add-on capability requirements in one immutable versioned artifact. Production Instances deploy that
   artifact and never build independently.
-- **Rolling release.** Health-check a candidate before promotion, keep a previously healthy Instance
-  serving throughout, remove an Instance from routing before replacing it, and stop on failure with the
-  previous release active. A single-Instance Site needs a temporary candidate slot on a distinct port,
-  socket, or network namespace.
+- **Replace an Instance on one host without dropping a request.** Health-check the candidate before
+  promoting it, take the old Instance out of routing before replacing it, and stop on failure with the
+  previous release still serving. A single-Instance Site needs a temporary candidate slot on a distinct
+  port, socket, or network namespace. This is the one host's own update, and it belongs here; co-ordinating
+  it across hosts does not (see [Infrastructure management](#infrastructure-management-belongs-to-phis-host)).
 - **Post-operation verification.** After init, reconcile, update, or rollback, verify routes, dependency
   graph, build, health endpoint, active release, and proxy target; a failed verification never promotes a
   partial scaffold or leaves every Instance unavailable.
-
-## Multi-host Instances
-
-- **Upstreams from healthy Instances.** Proxy configuration resolves one primary Instance from
-  `SiteLocation` in `config/phis-runtime.json` (`src/lib/site-deployment-config.ts`). Generate upstreams
-  from the healthy, same-release rows of `phis.server_instances`. Instances on one host need distinct ports
-  or isolated sockets.
-- **Release distribution** to remote hosts with authenticated transport, host health checks, drain and
-  promotion, rollback, and a consistent release inventory.
 - **Direct Source proxy mode** stays development-only.
 
+## Infrastructure management belongs to phis-host
+
+Where the line falls, and why it is drawn here rather than left to whatever gets built first.
+
+**One host is self-sufficient in this repository.** Creating the database and its two roles, applying the
+schema, registering and scaffolding a Site, generating its systemd and proxy configuration, building a
+release artifact, and replacing that host's own Instance without dropping a request: all of it is `phis` and
+its CLI, Apache-2.0, and complete without anything bought. An installation that needed a commercial
+component in order to run at all would make that licence a formality, and a reader would be right to say so.
+
+**What begins where a second host does is `phis-host`.** Fleet inventory, authenticated transport between
+hosts, central health, drain and promotion across Instances, provisioning for many tenants: operational work
+whose value grows with the number of hosts. That is what a company pays for and what a single operator does
+not need, so it is a separate product and never a prerequisite. Its licence is decided there, not here.
+
+The consequence for this list: the two entries below were written here before the line existed. They are
+kept as a record of what is intended and of where it now goes -- neither is work for this repository.
+
+- **Upstreams from healthy Instances.** Proxy configuration resolves one primary Instance from
+  `SiteLocation` in `config/phis-runtime.json` (`src/lib/site-deployment-config.ts`). Generating upstreams
+  from the healthy, same-release rows of `phis.server_instances` is the fleet's question. What stays here is
+  the single endpoint that configuration names, and that Instances on one host need distinct ports or
+  isolated sockets.
+- **Release distribution** to remote hosts with authenticated transport, host health checks, drain and
+  promotion, rollback, and a consistent release inventory. Building the artifact is this repository's
+  (see [Complete release artifact](#site-bootstrap-and-releases)); moving it between hosts is not.
+
 ## PostgreSQL high availability
+
+Split by the same line. What this repository owes a highly available database is to work correctly against
+**one** endpoint that may fail over beneath it -- reconnecting, not assuming a connection outlives a query,
+and never treating replication as multi-primary. Building and operating the topology that endpoint stands in
+front of is infrastructure work, and belongs with
+[phis-host](#infrastructure-management-belongs-to-phis-host).
 
 - Define and automate a multi-host primary/standby topology with streaming replication, and make the
   asynchronous or synchronous durability choice explicit per deployment class.
