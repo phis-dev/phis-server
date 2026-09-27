@@ -25,6 +25,19 @@ export const PhiMediaUploadSessionStatus = {
   Failed: 5,
   Expired: 6,
   Aborted: 7,
+  /**
+   * The body was in flight and the page carrying it went away; what arrived is still there.
+   *
+   * Its own status rather than a flavour of `Aborted`, because the two are opposites: an abort is the
+   * teardown -- row gone, reservation released, remains discarded -- and this is the one ending where the
+   * remains are worth keeping. A body delivered in parts is the only one that can be carried on, so this
+   * is only ever reached from a multipart plan; anything else has nothing to hold on to.
+   *
+   * It is also what "resumable" means. A session at this status said it stopped, so continuing it cannot
+   * collide with a page that is still sending -- which is why the status is set when the Client reports
+   * the departure and cleared again the moment somebody takes the upload over.
+   */
+  Interrupted: 8,
 } as const;
 
 export type PhiMediaUploadSessionStatusValue =
@@ -76,6 +89,20 @@ export function isPhiMediaUploadAssembledFromParts(planKind: number) {
 /** Core receives the body itself only on the plan that says so. */
 export function isPhiMediaUploadBodyProxied(planKind: number) {
   return planKind === PhiMediaUploadPlanKind.ProxyStream;
+}
+
+/**
+ * Whether what is left of this session could be carried on rather than started again.
+ *
+ * Both halves are needed and neither implies the other. Only an assembly leaves anything a second page
+ * could build on -- a single `PUT` that stopped halfway wrote bytes nobody attested and nobody can name.
+ * And only a session that *said* it stopped may be taken over: one still at `Pending` or `Uploading` may
+ * have a page sending into it right now, and two pages writing the same part numbers would leave whichever
+ * finalized second holding a session that is already gone.
+ */
+export function isPhiMediaUploadResumable(planKind: number, status: number) {
+  return isPhiMediaUploadAssembledFromParts(planKind)
+    && status === PhiMediaUploadSessionStatus.Interrupted;
 }
 
 export function createPhiMediaUploadSessionToken() {

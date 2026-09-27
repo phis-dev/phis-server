@@ -3,11 +3,16 @@ import { NextRequest, NextResponse } from "next/server";
 import {
   abortMediaUploadSessionByToken,
   getMediaUploadSessionByToken,
+  updateMediaUploadSessionByToken,
 } from "@/db/media";
 import { getSessionFromRequest } from "@/db/user-sessions";
 import { logRuntimeEvent } from "@/lib/log";
 import { discardPhiMediaUploadStaging } from "@/lib/media-upload-staging";
-import { PhiMediaUploadPurpose, PhiMediaUploadSessionStatus } from "@/lib/media-upload-sessions";
+import {
+  isPhiMediaUploadAssembledFromParts,
+  PhiMediaUploadPurpose,
+  PhiMediaUploadSessionStatus,
+} from "@/lib/media-upload-sessions";
 import { requireMediaSpaceWriteContext } from "@/lib/guards/site-media-api";
 import { requireSiteFromRequest } from "@/lib/site-context";
 import { nextMediaError } from "../../_helpers";
@@ -24,6 +29,13 @@ import { nextMediaError } from "../../_helpers";
  * This route does not judge the reason. It records what the Client claims, releases the reservation,
  * and leaves a journal entry the Site's log can be read for; a Client that lies about it can only
  * abandon its own session, which it could do by saying nothing at all.
+ *
+ * One reason is the exception, and it is the opposite of a teardown. `interrupted` says the page carrying
+ * the body went away while it was still in flight, and where that body was travelling in parts the parts
+ * that arrived are at the Provider, paid for and perfectly good. Such a session keeps its row, its
+ * reservation and its parts, and the next `uploads/init` for the same file carries it on instead of asking
+ * for those bytes again. Every other reason, and `interrupted` on a plan that leaves nothing behind, is
+ * still the teardown: row gone, reservation released, staged remains discarded.
  */
 
 export const dynamic = "force-dynamic";
@@ -35,7 +47,17 @@ const REPORTABLE_REASONS = new Set([
   "storage_rejected",
   /** A person stopped it. */
   "cancelled",
-  /** Anything the Client could not place in the three above. */
+  /**
+   * The page carrying the body went away while it was still in flight.
+   *
+   * Told apart from `cancelled` because the two call for opposite things. A person who stops an upload has
+   * decided against it, and what was sent is waste to be cleared. A page that is reloaded, crashes or is
+   * closed decided nothing -- and where the body was travelling in parts, the parts that arrived are the
+   * expensive half of the work and are perfectly good. Reported as one word until now, which meant every
+   * reload threw them away.
+   */
+  "interrupted",
+  /** Anything the Client could not place in the four above. */
   "client_error",
 ]);
 
@@ -101,6 +123,50 @@ export async function POST(
   const detail = typeof payload?.detail === "string"
     ? payload.detail.trim().slice(0, MAX_DETAIL_LENGTH)
     : null;
+
+  /*
+   * The one report that is not a teardown.
+   *
+   * A body delivered in parts leaves them at the Provider, and a page that went away mid-upload is the
+   * case they exist for: the reload cost nothing, the parts are still good, and the next attempt at the
+   * same file joins this assembly instead of paying for those bytes twice. So the row stays -- with its
+   * reservation, because the parts really are held -- and only its status changes to say what happened.
+   *
+   * `expires_at` is not moved. The session's life is the reservation's life, and a report that extended it
+   * would let anybody hold a Space's capacity indefinitely by interrupting an upload over and over. What
+   * was not carried on inside that window is swept like any other expired session, and the storage's own
+   * abort rule reaches the parts if the sweep never does.
+   *
+   * Only an assembly, and only one the Provider named: without that name nothing can be continued *or*
+   * aborted later, so a session lacking it is torn down here like any other failure.
+   */
+  if (
+    reason === "interrupted"
+    && isPhiMediaUploadAssembledFromParts(session.uploadPlanKind)
+    && session.providerUploadId
+  ) {
+    await updateMediaUploadSessionByToken(token, {
+      status: PhiMediaUploadSessionStatus.Interrupted,
+    });
+    logRuntimeEvent("info", "media.upload.interrupted", {
+      message: `Upload session ${token} was interrupted with its parts kept for a later attempt.`,
+      siteKey: site.key,
+      method: request.method,
+      path: request.nextUrl.pathname,
+      userId: authSession.userId,
+      meta: {
+        reason,
+        detail,
+        spaceId: session.spaceId,
+        storageProfileId: session.storageProfileId,
+        originalName: session.filename,
+        sizeBytes: session.sizeBytes,
+        // Until this moment, so an operator can see how long the parts may still be taken over for.
+        expiresAt: session.expiresAt,
+      },
+    });
+    return NextResponse.json({ token, status: "interrupted", resumable: true });
+  }
 
   await abortMediaUploadSessionByToken(token);
 

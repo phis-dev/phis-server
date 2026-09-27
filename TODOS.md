@@ -69,6 +69,33 @@ tracked here because the server contract depends on them.
     and does not fail on the lifecycle one, which is right -- a storage without object lifecycle still has a
     CORS rule worth writing -- but nothing then tells an operator that this particular storage will go on
     accumulating. It is a line in `phis storage cors` output and nothing more.
+- **An upload sent in parts survives the page it was started from, and what is left is the crash.** A body
+  above one part leaves its parts at the Provider, and until now a reload threw them away: the Client
+  reported `cancelled` on `pagehide`, which is the teardown. It reports `interrupted` instead where the plan
+  was an assembly, the session keeps its row, its reservation and its parts at status `Interrupted`, and the
+  next `uploads/init` for the same file answers with that session -- signed addresses for the parts still
+  missing, and the entity tags of the ones already stored, which exist nowhere else now that the page that
+  read them is gone. The Provider is asked what it holds (`resumeUploadPlan` over `ListParts`); Core keeps no
+  tally that could disagree with the storage. Identity is the `sha256-composite` and nothing weaker, and the
+  `expires_at` is never moved, so continuing is not a way to hold a Space's capacity open. Verified against
+  Garage v2.3.0, including that the assembled object carries the same digest a single run would have
+  produced.
+
+  What is left:
+
+  - **A browser that crashes reports nothing, so its parts are not offered.** `pagehide` covers a reload, a
+    closed tab and a navigation away, which is the ordinary case; a killed process, a power cut or a crashed
+    tab sends no beacon at all, and that session sits at `Pending` until the sweep removes it and aborts its
+    assembly. Offering those too would mean treating a session that may have a page sending into it right
+    now as resumable, and two pages writing the same part numbers is worse than one re-upload. It would take
+    something a page renews while it is delivering -- a heartbeat on the session -- to tell the two apart.
+  - **Continuing is only ever offered for a file the person picks again.** A `File` handle cannot survive a
+    reload, so nothing can restart by itself; what the digest buys is that re-picking the same file is
+    recognised as the same bytes rather than merely the same name. A person who renames the file before
+    picking it again uploads it again, because the Asset takes its name from the session.
+  - **An Add-on's own reservation cannot be carried on.** `assets:v1` never asks for `mayAssembleFromParts`,
+    so its plan is a single PUT at any size and there is nothing to continue. The Client half is shared and
+    already carries what it would need.
 - **Digests for direct uploads, and what is left of it.** A body delivered straight to an S3 endpoint used
   to reach `finalize` with an `md5` read off the ETag, which duplicate detection never compares -- so no
   Asset stored through an S3 Profile was deduplicable, at any size. The Client now hashes before it asks

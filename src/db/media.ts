@@ -4,7 +4,11 @@ import type { PoolClient } from "pg";
 
 import { getPool } from "@/lib/db";
 import { isPhisMediaIdentityChecksum } from "@phis/contracts/addon";
-import { PhiMediaUploadPurpose } from "@/lib/media-upload-sessions";
+import {
+  PhiMediaUploadPlanKind,
+  PhiMediaUploadPurpose,
+  PhiMediaUploadSessionStatus,
+} from "@/lib/media-upload-sessions";
 import {
   PhiMediaDeliveryPolicy,
   PhiMediaLifecycleStatus,
@@ -813,6 +817,58 @@ export async function createMediaUploadSession(input: {
 
 export async function getMediaUploadSessionByToken(token: string) {
   const { rows } = await getPool().query<UploadRow>(`SELECT ${UPLOAD_COLUMNS} FROM phis.media_upload_sessions WHERE token = $1`, [token.trim()]);
+  return rows[0] ? mapUpload(rows[0]) : null;
+}
+
+/**
+ * The interrupted session that an upload of exactly this file would be carrying on, or null.
+ *
+ * Every column in the condition is doing work, because what is at stake is mixing two files' parts into
+ * one object:
+ *
+ * - The digest is the identity. It is the composite of the part digests the Client just computed, so a
+ *   match means byte-for-byte the same body divided the same way -- the only evidence that the parts
+ *   already at the Provider belong to the file now in hand. Without a recorded digest there is nothing to
+ *   match on and nothing is offered, which is why this takes it rather than accepting a null.
+ * - The size as well, although the digest covers it, because it is what the divisions follow from.
+ * - The actor and the Space, because a reservation belongs to whoever made it in the Space it was made in.
+ *   Handing somebody another person's parts would be handing them another person's bytes.
+ * - The filename, because the Asset takes its name from the session: the same bytes offered under another
+ *   name are a different Asset, and quietly giving it the old name is worse than uploading again.
+ * - `status` and the plan kind through `isPhiMediaUploadResumable`'s rule -- only an assembly leaves parts,
+ *   and only a session that reported it stopped may be taken over.
+ * - The purpose, because it decides what the finished object becomes. A Media upload taking over a session
+ *   reserved for an Add-on's row would finalize somebody else's slot into a Media Asset. Unreachable today,
+ *   since `assets:v1` never asks for an assembly, and stated anyway: this is the condition whose absence
+ *   would only be noticed the day that changes.
+ *
+ * Newest first, for the case of somebody who interrupted the same file twice: the later attempt is the one
+ * with more parts at the Provider, and the earlier one expires on its own.
+ */
+export async function findResumableMediaUploadSession(input: {
+  siteId: number;
+  spaceId: number;
+  actorUserId: number;
+  filename: string;
+  sizeBytes: number;
+  checksumAlgorithm: string;
+  checksumValue: string;
+}) {
+  const { rows } = await getPool().query<UploadRow>(
+    `SELECT ${UPLOAD_COLUMNS} FROM phis.media_upload_sessions
+      WHERE site_id = $1 AND space_id = $2 AND actor_user_id = $3
+        AND upload_plan_kind = $4 AND status = $5 AND expires_at > NOW()
+        AND filename = $6 AND size_bytes = $7
+        AND checksum_algorithm = $8 AND checksum_value = $9
+        AND purpose = $10
+        AND provider_upload_id IS NOT NULL
+      ORDER BY created_at DESC
+      LIMIT 1`,
+    [input.siteId, input.spaceId, input.actorUserId,
+      PhiMediaUploadPlanKind.MultipartPut, PhiMediaUploadSessionStatus.Interrupted,
+      input.filename, input.sizeBytes, input.checksumAlgorithm, input.checksumValue,
+      PhiMediaUploadPurpose.Media],
+  );
   return rows[0] ? mapUpload(rows[0]) : null;
 }
 

@@ -97,16 +97,26 @@ describe("Releasing what expired sessions still hold", () => {
   });
 
   /*
-   * And the remains are removed after the response rather than before the plan. A storage call in front of
-   * the plan would hang the upload a person is waiting for on objects that are no longer anybody's -- while
-   * dropping them entirely would leave objects nothing can find, since their rows are gone.
+   * And the remains are removed after the response rather than in front of the plan. A storage call in the
+   * request path would hang the upload a person is waiting for on objects that are no longer anybody's --
+   * while dropping them entirely would leave objects nothing can find, since their rows are gone.
+   *
+   * What says "after the response" is `after`, and only that. It used to be read off the source order as
+   * well -- the discard sitting below `createUploadPlan` -- and that reading stopped meaning anything once
+   * the handler gained an earlier exit for an upload it carries on rather than opens. So the order that is
+   * held to now is the one that can still go wrong: the cleanup has to be registered before the first way
+   * out of the handler, or the path that reserves nothing is the path that sweeps and never cleans up.
    */
-  it("removes what they left at the Provider after the response, not before the plan", async () => {
+  it("removes what they left at the Provider after the response, whichever way the request ends", async () => {
     const route = await read("src/app/api/site/media/uploads/init/route.ts");
+    const scheduled = route.indexOf("after(async () => {");
     const discard = route.indexOf("discardReleasedPhiMediaUploadStaging({");
-    const plan = route.indexOf("storageService.createUploadPlan({");
-    expect(discard).toBeGreaterThan(plan);
-    expect(route).toMatch(/after\(async \(\) => \{/u);
+    const firstExit = route.indexOf("return NextResponse.json({");
+    expect(scheduled).toBeGreaterThan(-1);
+    // Inside the deferred block, which is what keeps a storage out of the request a person is waiting on.
+    expect(discard).toBeGreaterThan(scheduled);
+    // And registered before any answer is sent, so no exit leaves the swept remains to nobody.
+    expect(scheduled).toBeLessThan(firstExit);
   });
 });
 

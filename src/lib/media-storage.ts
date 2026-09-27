@@ -24,6 +24,8 @@ export type {
   PhiMediaUploadPlan,
   PhiMediaUploadPlanInput,
   PhiMediaUploadPlanKindKey,
+  PhiMediaUploadResumeInput,
+  PhiMediaUploadResumption,
   PhisMediaObjectHead,
   PhisMediaObjectInput,
   PhisMediaObjectRange,
@@ -42,6 +44,7 @@ import type {
   PhiMediaUploadCompletionInput,
   PhiMediaUploadPlan,
   PhiMediaUploadPlanInput,
+  PhiMediaUploadResumeInput,
   PhisMediaObjectHead,
   PhisMediaObjectInput,
   PhisMediaObjectRange,
@@ -560,6 +563,18 @@ export class PhisLocalMediaStorageAdapter implements PhisMediaStorageAdapter {
   }
 
   /**
+   * Nothing to carry on: this Provider never divides a body, so no assembly of it is ever open.
+   *
+   * A proxied body either finished streaming through Core or did not, and what a half-written staging file
+   * holds is not something a second request may build on -- the bytes were never attested and the Client
+   * cannot say which of them arrived. So the honest answer is the same one it would give for an upload it
+   * has never heard of.
+   */
+  async resumeUploadPlan(): Promise<null> {
+    return null;
+  }
+
+  /**
    * Nothing to permit: a browser never addresses this Provider.
    *
    * Local storage is only ever reached through Core's own routes, so every request to it is
@@ -780,6 +795,11 @@ export class PhisMediaStorageService {
 
   createUploadPlan(input: PhiMediaUploadPlanInput) {
     return this.adapter.createUploadPlan(input);
+  }
+
+  /** States how the rest of an assembly a Client stopped delivering is to be delivered. */
+  resumeUploadPlan(input: PhiMediaUploadResumeInput) {
+    return this.adapter.resumeUploadPlan(input);
   }
 
   probeCapabilities() {

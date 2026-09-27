@@ -38,6 +38,7 @@ import {
   readPhiMediaClientDigest,
 } from "@/lib/media-upload-digest";
 import { discardReleasedPhiMediaUploadStaging } from "@/lib/media-upload-staging";
+import { findPhiMediaUploadToResume } from "@/lib/media-upload-resume";
 import { nextMediaError, readJsonBody } from "../_helpers";
 import { normalizeString } from "@/lib/helpers/request";
 import { PHIS_AREA_HEADER } from "@/lib/constants/http-headers";
@@ -302,64 +303,20 @@ export async function POST(request: NextRequest) {
    * no longer anybody's.
    */
   const released = await releaseExpiredMediaUploadSessions(space.id);
-  if (!await reserveMediaSpaceQuota({ spaceId: space.id, bytes: size })) {
-    return refuseUpload(request, actor, {
-      reason: "media_quota_exceeded",
-      message: "Media Space quota exceeded.",
-      status: 413,
-      meta: { spaceId: space.id, spaceKind: space.kind, requestedBytes: size },
-    });
-  }
   const storageService = await createPhisMediaStorageServiceForProfile(profile, site.key)
-  const token = createPhiMediaUploadSessionToken();
   const kind = resolvePhiMediaUploadSessionKind(contentType);
-  const tempStorageKey = storageService.createUploadTempStorageKey({
-    siteKey: site.key,
-    token,
-    originalName: filename,
-  });
-  const finalStorageKey = storageService.createStorageKey({
-    siteKey: site.key,
-  });
-  const expiresAt = new Date(Date.now() + PHI_MEDIA_UPLOAD_SESSION_TTL_MS).toISOString();
-  // How the body is to be delivered is the Provider's to state, not the Client's to assume. Core owns
-  // its own route table, so the address it would receive a body at is handed over rather than guessed.
-  /*
-   * Whether this Profile may answer with an object assembled from parts: Core's decision, from the size
-   * alone. Above one part a resumable upload is worth having, and nothing is traded away for it -- an
-   * assembled object carries `sha256-composite`, which duplicate detection compares.
-   */
-  const mayAssembleFromParts = phiMediaUploadMayAssembleFromParts(size);
-  /*
-   * The digest the Client claims, turned into something Core may assert.
-   *
-   * Only under a Profile whose endpoint was measured to verify SHA-256, because that verification is the
-   * whole basis for recording a number Core never computed: the digest is signed into the upload request
-   * and a body that does not match it is refused at the endpoint. Under any other Profile the claim is
-   * dropped and the body's digest is whatever its path can establish.
-   */
-  const profileChecksumAlgorithm = await phiMediaStorageProfileChecksumAlgorithm(profile, site.key);
-  const planChecksum = buildPhiMediaUploadPlanChecksum(clientDigest, profileChecksumAlgorithm);
-  const plan = await storageService.createUploadPlan({
-    token,
-    storageKey: tempStorageKey,
-    contentType,
-    sizeBytes: size,
-    expiresAt,
-    proxyUploadUrl: `/api/site/media/uploads/${token}`,
-    ...(mayAssembleFromParts ? { mayAssembleFromParts: true } : {}),
-    ...planChecksum,
-  });
-  const uploadPlanKind = resolvePhiMediaUploadPlanKind(plan.kind);
-
   /*
    * The expired sessions' remains, cleaned up once this response is out.
    *
-   * Here and not before it, because a storage call has no business delaying the plan this request came for.
-   * And here rather than nowhere, because the rows are already gone: what is not removed now is reachable
-   * only through the Provider's own lifecycle rule. Sessions naming another Profile are left to exactly
-   * that -- their objects are in another storage, and opening it would mean reading a secret on behalf of an
-   * upload that has nothing to do with it.
+   * Registered here rather than further down so that it covers every way out of this handler below --
+   * including the upload that is carried on rather than opened, which reserves nothing and would otherwise
+   * be the one path where a sweep found remains and nobody removed them.
+   *
+   * After the response, because a storage call has no business delaying the plan this request came for. And
+   * at all, because the rows are already gone: what is not removed now is reachable only through the
+   * Provider's own lifecycle rule. Sessions naming another Profile are left to exactly that -- their objects
+   * are in another storage, and opening it would mean reading a secret on behalf of an upload that has
+   * nothing to do with it.
    */
   if (released.length > 0) {
     after(async () => {
@@ -384,6 +341,132 @@ export async function POST(request: NextRequest) {
       });
     });
   }
+  /*
+   * Whether this Profile may answer with an object assembled from parts: Core's decision, from the size
+   * alone. Above one part a resumable upload is worth having, and nothing is traded away for it -- an
+   * assembled object carries `sha256-composite`, which duplicate detection compares.
+   */
+  const mayAssembleFromParts = phiMediaUploadMayAssembleFromParts(size);
+  /*
+   * The digest the Client claims, turned into something Core may assert.
+   *
+   * Only under a Profile whose endpoint was measured to verify SHA-256, because that verification is the
+   * whole basis for recording a number Core never computed: the digest is signed into the upload request
+   * and a body that does not match it is refused at the endpoint. Under any other Profile the claim is
+   * dropped and the body's digest is whatever its path can establish.
+   */
+  const profileChecksumAlgorithm = await phiMediaStorageProfileChecksumAlgorithm(profile, site.key);
+  const planChecksum = buildPhiMediaUploadPlanChecksum(clientDigest, profileChecksumAlgorithm);
+
+  /*
+   * An upload of this very file that a page stopped delivering, carried on instead of paid for twice.
+   *
+   * Here, ahead of the reservation, because the session being taken over is still holding one: its parts
+   * are at the Provider and the Space is already charged for them. Reserving again would charge it twice
+   * for one body, and a Space near its limit would refuse the retry of an upload it is itself holding the
+   * capacity for.
+   *
+   * Which file it is comes from the digest and from nothing weaker -- see `media-upload-resume.ts`. Only a
+   * body above one part can be continued at all, which is the same condition that allows the plan.
+   */
+  const resumed = mayAssembleFromParts
+    ? await findPhiMediaUploadToResume({
+        siteId: site.id,
+        siteKey: site.key,
+        spaceId: space.id,
+        actorUserId: authSession.userId,
+        filename,
+        sizeBytes: size,
+        storageProfileId: profile.id,
+        checksum: planChecksum.checksum ?? null,
+        // The same digests a fresh plan would sign, so the parts still missing are signed as they were.
+        partChecksums: planChecksum.partChecksums ?? [],
+        storage: storageService,
+        folderId,
+        presentationFlags: presentationFlags ?? 0,
+        meta: meta ?? null,
+      })
+    : null;
+  if (resumed) {
+    logRuntimeEvent("info", "media.upload.resumed", {
+      area: resolveRequestArea(request),
+      message:
+        `Upload session ${resumed.token} was taken over with ${resumed.uploaded.length} part(s) already stored.`,
+      siteKey: site.key,
+      userId: authSession.userId,
+      method: request.method,
+      path: request.nextUrl.pathname,
+      meta: {
+        spaceId: space.id,
+        storageProfileId: profile.id,
+        originalName: filename,
+        sizeBytes: size,
+        stored: resumed.uploaded.length,
+        remaining: resumed.remainingParts,
+      },
+    });
+    return NextResponse.json({
+      token: resumed.token,
+      plan: resumed.plan,
+      /*
+       * The parts the storage already holds, with the tags a completion has to name.
+       *
+       * They travel beside the plan rather than inside it because they are not addresses to deliver to:
+       * nobody is to send those parts again. The Client names them at finalize together with the ones it
+       * sends now, and it is the only place they could come from -- the page that put them there is gone.
+       */
+      uploaded: resumed.uploaded,
+      /** So a Client can tell a continued upload from a fresh one, in its own reporting and its progress. */
+      resumed: true,
+      finalizeUrl: `/api/site/media/uploads/${resumed.token}/finalize`,
+      reportUrl: `/api/site/media/uploads/${resumed.token}/report`,
+      expiresAt: resumed.expiresAt,
+      session: {
+        token: resumed.token,
+        status: resumed.status,
+        filename,
+        contentType,
+        sizeBytes: size,
+        kind,
+        folderId,
+        meta,
+        presentationFlags,
+      },
+    });
+  }
+
+  if (!await reserveMediaSpaceQuota({ spaceId: space.id, bytes: size })) {
+    return refuseUpload(request, actor, {
+      reason: "media_quota_exceeded",
+      message: "Media Space quota exceeded.",
+      status: 413,
+      meta: { spaceId: space.id, spaceKind: space.kind, requestedBytes: size },
+    });
+  }
+  const token = createPhiMediaUploadSessionToken();
+  const tempStorageKey = storageService.createUploadTempStorageKey({
+    siteKey: site.key,
+    token,
+    originalName: filename,
+  });
+  const finalStorageKey = storageService.createStorageKey({
+    siteKey: site.key,
+  });
+  const expiresAt = new Date(Date.now() + PHI_MEDIA_UPLOAD_SESSION_TTL_MS).toISOString();
+  // How the body is to be delivered is the Provider's to state, not the Client's to assume. Core owns
+  // its own route table, so the address it would receive a body at is handed over rather than guessed.
+  const plan = await storageService.createUploadPlan({
+    token,
+    storageKey: tempStorageKey,
+    contentType,
+    sizeBytes: size,
+    expiresAt,
+    proxyUploadUrl: `/api/site/media/uploads/${token}`,
+    ...(mayAssembleFromParts ? { mayAssembleFromParts: true } : {}),
+    ...planChecksum,
+  });
+  const uploadPlanKind = resolvePhiMediaUploadPlanKind(plan.kind);
+
   /*
    * Recorded on the session only where the plan actually carries it into the request.
    *
