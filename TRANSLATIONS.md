@@ -67,9 +67,11 @@ session, cookies, and request headers.
   `tr_site_lang`). A request without `x-phis-site-key` uses the global store (`tr_msg`, `tr_lang`).
 - A request with the public token must not send `x-phis-site-key` (`403`) and uses the global store only.
   Public requests are refused unless `translation.allowPublicReads` is `true`, and they store new
-  translations only when `translation.allowPublicWrites` is `true`. A public read that may not store
-  answers a message the store does not hold with the source text and `"provisional": true`: it never
-  asked a provider, so what it hands back states nothing about that message except that it is not here.
+  translations only when `translation.allowPublicWrites` is `true` -- and then only for messages the
+  catalogue already holds, unless the request names an application and the window for new messages is
+  open. A public request that may not have a missing message translated answers with the source text and
+  `"provisional": true`: it never asked a provider, so what it hands back states nothing about that
+  message except that it is not here.
 - Public requests to `/api/v1/tr` are rate limited per address with an allowance of their own, because a
   batch of up to 50 messages is not a page fetching its own data and a cold caller asks once per Label
   Set. The internal token is not counted. A refused request answers `429` with `Retry-After`, which a
@@ -167,10 +169,13 @@ provider as translation context once the flag envelope is stripped, and "acme: u
 language that reads correctly to a translator -- it says the text is a caption and not a sentence. A URL,
 a message key or a resource id would not be, and they stay out of it for the reason they always did.
 
-**Not built yet**: the server does not read `x-phis-app`, does not construct the prefix, and has no
-window. `translation.allowPublicWrites` today grants a public caller both rights at once, for as long as
-it is on. Until the above is implemented, the prefix is the caller's to keep and nothing stops a write
-under one of the platform's own registers.
+**Where the two rights are settled.** `translation.allowPublicWrites` grants the first one and stands
+until it is taken away. The second is `translation.allowPublicWritesUntil`, an ISO timestamp naming when
+the window closes: absent is closed, a moment in the past is closed, and what the operator opens is
+capped at ten minutes where it is written rather than where it is read -- clamping a stored end against
+"now" on every read would keep any window permanently ten minutes from closing. Taking
+`allowPublicWrites` away clears the timestamp with it, so switching writes back on later does not reopen
+a door somebody opened this morning.
 
 ## Translation modes
 

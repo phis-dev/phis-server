@@ -9,6 +9,7 @@ import {
   ensureSiteMessageId,
   ensureSiteExternalTranslationUnit,
   findGlobalExternalTranslationUnit,
+  findGlobalMessageHashes,
   findSiteExternalTranslationUnit,
   getSiteTranslations,
   getTranslations,
@@ -23,6 +24,7 @@ import {
   requestPhisTranslationUnit,
 } from "@/lib/translation-unit";
 import { getConfiguredTranslationSupportedLocalesSync } from "@/lib/translation-locale-options";
+import type { PhisTranslationWriteMode } from "@/lib/translation-write-mode";
 import {
   PHI_CANONICAL_SOURCE_LOCALE,
   resolvePhiLocaleCapability,
@@ -43,7 +45,7 @@ type TranslationInput = {
   msg: string;
   ctx?: string | null;
   hash?: string | null;
-  allowWrite?: boolean;
+  write?: PhisTranslationWriteMode;
   format?: TranslationFormat | null;
 };
 
@@ -70,7 +72,7 @@ type BatchTranslationInput = {
   sourceLocale?: string;
   msgs: string[];
   ctx?: string | null;
-  allowWrite?: boolean;
+  write?: PhisTranslationWriteMode;
   format?: TranslationFormat | null;
 };
 
@@ -115,9 +117,9 @@ function buildTranslationCacheContext(input: {
 
 /**
  * Whether an answer is a stand-in: source text handed back in place of a translation, because a provider
- * or a single message failed, or because the request was not allowed to fill what it found missing. A
- * Site keeps translations without expiry, so it must not keep these -- they would outlive the outage
- * until somebody edited a translation.
+ * or a single message failed, or because the request was not allowed to have what it found missing
+ * translated. A Site keeps translations without expiry, so it must not keep these -- they would outlive
+ * the outage until somebody edited a translation.
  *
  * An installation that translates nothing is not standing in for anything: there is no step after
  * `none`, so its source text is the final answer and marking it would say an outage where there is a
@@ -271,15 +273,36 @@ export async function translateWithCache(input: TranslationInput) {
     sourceLocale: input.sourceLocale,
     msgs: [input.msg],
     ctx: input.ctx,
-    allowWrite: input.allowWrite,
+    write: input.write,
     format: input.format,
   });
   return translation;
 }
 
+/**
+ * Which of the messages a request missed it may actually have translated.
+ *
+ * `extend` may have all of them: a message nobody here has seen is created on the way in, which is the
+ * point of that right. `fill` may have the ones the catalogue already holds and no others -- and the ones
+ * it may not have are not refused, they are simply not here, which is the honest answer to give for them.
+ */
+async function resolveAskableHashes(
+  write: PhisTranslationWriteMode,
+  pending: Array<{ msg: string; hash: string }>,
+  cacheContext: string,
+) {
+  if (write === "none") {
+    return new Set<string>();
+  }
+  if (write === "extend") {
+    return new Set(pending.map((entry) => entry.hash));
+  }
+  return await findGlobalMessageHashes(pending, cacheContext);
+}
+
 async function translateCanonicalGlobalBatch(input: Required<Pick<BatchTranslationInput, "locale" | "msgs">> & {
   ctx: string;
-  allowWrite: boolean;
+  write: PhisTranslationWriteMode;
   format: TranslationFormat;
 }) {
   const cacheContext = buildTranslationCacheContext({ ctx: input.ctx, format: input.format });
@@ -296,15 +319,34 @@ async function translateCanonicalGlobalBatch(input: Required<Pick<BatchTranslati
     return true;
   });
 
-  if (input.allowWrite && pending.length > 0) {
+  const askableHashes = pending.length > 0
+    ? await resolveAskableHashes(input.write, pending, cacheContext)
+    : new Set<string>();
+  const askable = pending.filter((entry) => askableHashes.has(entry.hash));
+  const withheld = pending.filter((entry) => !askableHashes.has(entry.hash));
+
+  /*
+   * What was missed and may not be asked for is the absence of a translation, not one.
+   *
+   * This is the read that may not write at all, and the one that may only fill a message the catalogue
+   * holds. In both cases the source text goes back because there is nothing else to send -- and it goes
+   * back marked, because the installation behind it has a provider after this step and may only take that
+   * turn if it can tell an answer from a miss.
+   */
+  if (withheld.length > 0) {
+    recordTranslationStandIn();
+    withheld.forEach((entry) => result.set(entry.msg, entry.msg));
+  }
+
+  if (askable.length > 0) {
     const fresh = await requestConfiguredTranslationsOrFallback({
       locale: input.locale,
-      msgs: pending.map((entry) => entry.msg),
+      msgs: askable.map((entry) => entry.msg),
       ctx: input.ctx,
       sourceLocale: PHI_CANONICAL_SOURCE_LOCALE,
       format: input.format,
     });
-    await Promise.all(pending.map(async (entry, index) => {
+    await Promise.all(askable.map(async (entry, index) => {
       const value = fresh.translations[index] ?? entry.msg;
       if (fresh.succeeded && value !== entry.msg) {
         // The translation itself is in hand; failing to cache it is not a reason to withhold it.
@@ -315,16 +357,6 @@ async function translateCanonicalGlobalBatch(input: Required<Pick<BatchTranslati
       }
       result.set(entry.msg, value);
     }));
-  } else {
-    /*
-     * Nothing was asked, so what is missing from the store is missing from the answer. This is the
-     * public read: it may not fill `tr_lang`, and the source text it hands back for a miss is the
-     * absence of a translation rather than one.
-     */
-    if (pending.length > 0) {
-      recordTranslationStandIn();
-    }
-    pending.forEach((entry) => result.set(entry.msg, entry.msg));
   }
   return input.msgs.map((msg) => result.get(msg) ?? msg);
 }
@@ -332,7 +364,7 @@ async function translateCanonicalGlobalBatch(input: Required<Pick<BatchTranslati
 async function translateExternalGlobalBatch(input: Required<Pick<BatchTranslationInput, "locale" | "msgs">> & {
   sourceLocale: string;
   ctx: string;
-  allowWrite: boolean;
+  write: PhisTranslationWriteMode;
   format: TranslationFormat;
 }) {
   /*
@@ -347,7 +379,12 @@ async function translateExternalGlobalBatch(input: Required<Pick<BatchTranslatio
   ) {
     return input.msgs;
   }
-  if (!input.allowWrite) {
+  /*
+   * An external unit is created, not filled: its `tr_msg` row is owned by a canonical result this
+   * installation produces. So the right it needs is the one to extend the catalogue, and a request
+   * without it has not looked at anything -- hence the mark.
+   */
+  if (input.write !== "extend") {
     recordTranslationStandIn();
     return input.msgs;
   }
@@ -456,7 +493,7 @@ export async function translateBatchWithCache({
   sourceLocale,
   msgs,
   ctx,
-  allowWrite,
+  write,
   format,
 }: BatchTranslationInput) {
   const normalizedLocale = locale.trim();
@@ -476,7 +513,7 @@ export async function translateBatchWithCache({
       sourceLocale: normalizedSourceLocale,
       msgs: normalizedMsgs,
       ctx: rawCtx,
-      allowWrite: allowWrite ?? true,
+      write: write ?? "extend",
       format: translationFormat,
     });
   }
@@ -484,7 +521,7 @@ export async function translateBatchWithCache({
     locale: normalizedLocale,
     msgs: normalizedMsgs,
     ctx: rawCtx,
-    allowWrite: allowWrite ?? true,
+    write: write ?? "extend",
     format: translationFormat,
   });
 }

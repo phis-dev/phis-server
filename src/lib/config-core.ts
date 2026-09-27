@@ -153,6 +153,15 @@ export type PhisConfig = {
     allowedLocales?: string[];
     allowPublicWrites?: boolean;
     allowPublicReads?: boolean;
+    /**
+     * When the window for creating global messages closes, as an ISO timestamp.
+     *
+     * `allowPublicWrites` says a public caller may write; this says until when it may write messages
+     * nobody here has seen yet. Absent is closed, because a window has to be opened deliberately, and
+     * it is capped at ten minutes where it is written (`PHIS_TRANSLATION_WRITE_WINDOW_MAX_MS`). It runs
+     * out by being read rather than by being switched off, so nothing has to remember to close it.
+     */
+    allowPublicWritesUntil?: string;
   };
 };
 

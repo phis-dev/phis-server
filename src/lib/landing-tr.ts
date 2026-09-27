@@ -139,7 +139,7 @@ async function translateGlobalBatchCached(locale: string, msgs: string[], ctx: s
         locale,
         msgs: normalizedMsgs,
         ctx,
-        allowWrite: true,
+        write: "extend",
       }),
       GLOBAL_TRANSLATION_BATCH_TIMEOUT_MS,
     );

@@ -192,6 +192,7 @@ export default async function OperatorPage({
         deeplApiUrl={config.deepl?.apiUrl?.trim() ?? ""}
         initialAllowPublicReads={config.translation?.allowPublicReads === true}
         initialAllowPublicWrites={config.translation?.allowPublicWrites === true}
+        initialAllowPublicWritesUntil={config.translation?.allowPublicWritesUntil?.trim() ?? ""}
         initialPublicToken={config.api?.publicToken?.trim() ?? ""}
         addonProviders={listPhisServiceProviders(PHIS_SERVICE_KINDS.translation)}
         initialAddonProviderKey={config.translation?.providerKey?.trim() ?? ""}

@@ -206,6 +206,45 @@ export async function getTranslations(
  * has changed yet. Maintained by triggers in 001_create_phis.pgsql; read as text because only equality
  * means anything.
  */
+/**
+ * Which of these messages the global catalogue already holds, by hash.
+ *
+ * `getTranslations` starts at `tr_lang`, so it cannot tell "no translation for this locale" from "no
+ * such message here" -- and that is the distinction a caller allowed to fill the catalogue but not to
+ * extend it turns on (TRANSLATIONS.md, "Somebody else's strings in the global store"). Asked separately
+ * rather than folded into that query: only the restricted path needs it, and only for what it missed.
+ *
+ * A hash whose stored message is a different text counts as absent. `msg_hash` covers the opening of a
+ * message, so a collision is two messages to us and one key to the column; the requested one is not in
+ * the catalogue, and treating it as present would fill in a translation under somebody else's text.
+ */
+export async function findGlobalMessageHashes(
+  entries: Array<{ msg: string; hash: string }>,
+  ctx: string,
+) {
+  const normalized = entries
+    .map((entry) => ({ msg: entry.msg, hash: normalizeMessageHash(entry.hash) }))
+    .filter((entry) => entry.msg.trim());
+  if (normalized.length === 0) {
+    return new Set<string>();
+  }
+
+  const { rows } = await getPool().query<{ msg_hash: string; msg: string }>(
+    `SELECT encode(msg_hash, 'hex') AS msg_hash, msg
+       FROM phis.tr_msg
+      WHERE ctx = $1
+        AND encode(msg_hash, 'hex') = ANY($2::text[])`,
+    [ctx, Array.from(new Set(normalized.map((entry) => entry.hash)))],
+  );
+
+  const storedByHash = new Map(rows.map((row) => [row.msg_hash, row.msg]));
+  return new Set(
+    normalized
+      .filter((entry) => storedByHash.get(entry.hash) === entry.msg)
+      .map((entry) => entry.hash),
+  );
+}
+
 export async function readTranslationChangeMarkers(siteId: number) {
   const { rows } = await getPool().query<{ global_marker: string | null; site_marker: string | null }>(
     `SELECT (SELECT marker::text FROM phis.tr_marker WHERE scope = 'global') AS global_marker,

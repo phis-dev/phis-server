@@ -156,13 +156,13 @@ describe("trackTranslationStandIns", () => {
  * and the installation that asked has DeepL waiting after this step: unmarked, the English string
  * arrives there as the translation and is never translated at all.
  */
-describe("a read-only read of the global store", () => {
+describe("a read of the global store that may not write", () => {
   const read = (msgs: string[]) => trackTranslationStandIns(() => translateBatchWithCache({
     locale: "de",
     sourceLocale: "en",
     msgs,
     ctx: "",
-    allowWrite: false,
+    write: "none",
     format: "text",
   }));
 

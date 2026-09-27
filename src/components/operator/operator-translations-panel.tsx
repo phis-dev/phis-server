@@ -1,9 +1,13 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
-import { updateOperatorSupportedLocales } from "@/app/(operator)/operator/actions";
+import {
+  closeOperatorTranslationWriteWindow,
+  openOperatorTranslationWriteWindow,
+  updateOperatorSupportedLocales,
+} from "@/app/(operator)/operator/actions";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { MultiSelectMenu } from "@/components/ui/multi-select-menu";
@@ -13,6 +17,11 @@ import { Switch } from "@/components/ui/switch";
 import type { TranslationMode } from "@/lib/translation-locale-options";
 
 const DEFAULT_DEEPL_ENDPOINT = "https://api-free.deepl.com/v2/translate";
+
+function formatRemainingTime(remainingMs: number) {
+  const seconds = Math.ceil(remainingMs / 1000);
+  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
+}
 
 type LocaleOption = {
   code: string;
@@ -38,6 +47,13 @@ type OperatorTranslationsLabels = {
   publicWritesEnable: string;
   cancel: string;
   localeSelectionPlaceholder: string;
+  writeWindow: string;
+  writeWindowHelp: string;
+  writeWindowOpen: string;
+  writeWindowClose: string;
+  writeWindowOpenState: string;
+  writeWindowClosedState: string;
+  writeWindowNeedsWrites: string;
   modeDeepl: string;
   modeDeeplDescription: string;
   deeplKey: string;
@@ -103,6 +119,7 @@ export function OperatorTranslationsPanel({
   deeplApiUrl,
   initialAllowPublicReads,
   initialAllowPublicWrites,
+  initialAllowPublicWritesUntil,
   initialPublicToken,
   addonProviders,
   initialAddonProviderKey,
@@ -122,6 +139,8 @@ export function OperatorTranslationsPanel({
   deeplApiUrl: string;
   initialAllowPublicReads: boolean;
   initialAllowPublicWrites: boolean;
+  /** When the window for new messages closes, as an ISO timestamp; empty is closed. */
+  initialAllowPublicWritesUntil: string;
   initialPublicToken: string;
   addonProviders: ReadonlyArray<{
     addonId: string;
@@ -145,6 +164,37 @@ export function OperatorTranslationsPanel({
   const [addonProviderKey, setAddonProviderKey] = useState(initialAddonProviderKey);
   const [addonSecretReference, setAddonSecretReference] = useState(initialAddonSecretReference);
   const [showCustomSchema, setShowCustomSchema] = useState(false);
+
+  /*
+   * The countdown is what an operator reads, never what decides. The server compares the stored end
+   * against its own clock on every request; this says how long that will keep answering yes, and asks
+   * for a fresh render when it runs out so the panel stops offering a window that has closed.
+   *
+   * The clock is the state and the remaining time is derived from it, rather than the other way round: a
+   * stored remainder would have to be corrected from inside the effect every time the stored end
+   * changed, and that is a render chasing its own state.
+   */
+  const writeWindowEnd = Date.parse(initialAllowPublicWritesUntil || "");
+  const [clockMs, setClockMs] = useState(() => Date.now());
+  const writeWindowRemainingMs = Number.isFinite(writeWindowEnd)
+    ? Math.max(0, writeWindowEnd - clockMs)
+    : 0;
+  const writeWindowIsOpen = writeWindowRemainingMs > 0;
+
+  useEffect(() => {
+    if (!Number.isFinite(writeWindowEnd) || writeWindowEnd <= Date.now()) {
+      return;
+    }
+    const ticker = window.setInterval(() => {
+      const now = Date.now();
+      setClockMs(now);
+      if (now >= writeWindowEnd) {
+        window.clearInterval(ticker);
+        router.refresh();
+      }
+    }, 1000);
+    return () => window.clearInterval(ticker);
+  }, [router, writeWindowEnd]);
   const lockedLocaleSet = new Set(lockedLocales);
   const notifications = [
     ...(sourceError && !validationError
@@ -453,6 +503,46 @@ export function OperatorTranslationsPanel({
             <SubmitButton idleLabel={labels.save} pendingLabel={labels.savePending} />
           </div>
         </form>
+      </section>
+
+      {/*
+        * A section of its own, because opening the window is an act and not a setting. Inside the form
+        * above, every save would push its end forward, and a window nobody opened on purpose is the one
+        * thing this is built to prevent.
+        */}
+      <section className="ui_card">
+        <p className="ui_section_title">{labels.writeWindow}</p>
+        <p className="ui_section_body">{labels.writeWindowHelp}</p>
+
+        {initialAllowPublicWrites ? (
+          <form
+            className="ui_form"
+            action={
+              writeWindowIsOpen
+                ? closeOperatorTranslationWriteWindow
+                : openOperatorTranslationWriteWindow
+            }
+          >
+            {/*
+              * The server renders this too, a moment earlier than the browser hydrates it, so the second
+              * it names can differ by one. That difference is the clock and not a disagreement about
+              * what to draw.
+              */}
+            <p className="ui_section_body" suppressHydrationWarning>
+              {writeWindowIsOpen
+                ? `${labels.writeWindowOpenState} ${formatRemainingTime(writeWindowRemainingMs)}`
+                : labels.writeWindowClosedState}
+            </p>
+            <div className="ui_form_footer">
+              <SubmitButton
+                idleLabel={writeWindowIsOpen ? labels.writeWindowClose : labels.writeWindowOpen}
+                pendingLabel={labels.savePending}
+              />
+            </div>
+          </form>
+        ) : (
+          <p className="ui_section_body">{labels.writeWindowNeedsWrites}</p>
+        )}
       </section>
 
       {confirmEnablePublicWrites ? (

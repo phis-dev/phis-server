@@ -6,7 +6,12 @@ import { PHI_CANONICAL_SOURCE_LOCALE } from "@/lib/locale";
 import { resolveSiteFromHeaders } from "@/lib/site-context";
 import { getConfiguredTranslationSupportedLocalesSync } from "@/lib/translation-locale-options";
 import { parseTranslationContext } from "@/lib/translation-context";
-import { PHIS_SITE_KEY_HEADER } from "@/lib/constants/http-headers";
+import {
+  buildPhisTranslationAppContext,
+  readPhisTranslationAppName,
+} from "@/lib/translation-app-context";
+import { resolvePhisTranslationWriteMode } from "@/lib/translation-write-mode";
+import { PHIS_APP_HEADER, PHIS_SITE_KEY_HEADER } from "@/lib/constants/http-headers";
 import {
   trackTranslationStandIns,
   translateBatchWithCache,
@@ -106,6 +111,51 @@ function validateBatchPayload(payload: TranslationPayload) {
   return { locale, msgs, ctx, sourceLocale, format };
 }
 
+/**
+ * The key space this request writes and reads in, which the server builds rather than the caller.
+ *
+ * An application outside the platform names itself in `PHIS_APP_HEADER`, and its name goes in front of
+ * the context it sent, so its messages cannot share a key with a Label Set of ours (TRANSLATIONS.md,
+ * "Somebody else's strings in the global store"). The same header on a read is what finds them again:
+ * identity is `(msg_hash, ctx)`, so prefixing writes alone would store under one key and look under
+ * another -- nothing found, nothing wrong, and the rows correct in the table all along.
+ *
+ * A name that cannot be part of a key is refused rather than repaired. Truncating an overlong one would
+ * merge two spaces into one silently, which is the collision the namespace exists to prevent.
+ */
+function resolveTranslationNamespace(request: Request, ctx: string) {
+  const named = readPhisTranslationAppName(request.headers.get(PHIS_APP_HEADER));
+  if (named.kind === "invalid") {
+    return { error: NextResponse.json({ error: named.reason }, { status: 400 }) };
+  }
+  if (named.kind === "absent") {
+    return { named: false, ctx };
+  }
+
+  /*
+   * An application's space is the global store's. A request that names a Site is asking for that Site's
+   * own catalogue, and partitioning that by an application would divide text belonging to somebody who
+   * never asked for it.
+   */
+  if (request.headers.get(PHIS_SITE_KEY_HEADER)?.trim()) {
+    return {
+      error: NextResponse.json(
+        {
+          error:
+            "An application namespace belongs to the global store, and this request names a Site.",
+        },
+        { status: 400 },
+      ),
+    };
+  }
+
+  const built = buildPhisTranslationAppContext(named.app, ctx);
+  if (built.kind === "invalid") {
+    return { error: NextResponse.json({ error: built.reason }, { status: 400 }) };
+  }
+  return { named: true, ctx: built.context };
+}
+
 async function handleTranslation(request: Request, payload: TranslationPayload) {
   const guardError = guardApiV1(request);
   if (guardError) {
@@ -123,15 +173,20 @@ async function handleTranslation(request: Request, payload: TranslationPayload) 
     return validated;
   }
 
-  const { locale, msg, ctx, hash, sourceLocale, format } = validated;
+  const { locale, msg, hash, sourceLocale, format } = validated;
+  const namespace = resolveTranslationNamespace(request, validated.ctx);
+  if (namespace.error) {
+    return namespace.error;
+  }
+  const ctx = namespace.ctx ?? validated.ctx;
   const normalizedLocale = normalizeLocale(locale);
   const config = await getPhisConfig();
   const allowedLocales = new Set(getConfiguredTranslationSupportedLocalesSync());
-  const allowPublicWrites = config.translation?.allowPublicWrites === true;
   const allowPublicReads = config.translation?.allowPublicReads === true;
   if (tokenMode === "public" && !allowPublicReads) {
     return NextResponse.json({ error: "Forbidden." }, { status: 403 });
   }
+  const write = resolvePhisTranslationWriteMode({ tokenMode, named: namespace.named === true });
   if (!allowedLocales.has(normalizedLocale)) {
     logRuntimeEvent("warn", "translation.locale_not_allowed", {
       area: "tr",
@@ -175,7 +230,7 @@ async function handleTranslation(request: Request, payload: TranslationPayload) 
           msg,
           ctx,
           hash,
-          allowWrite: tokenMode === "internal" || allowPublicWrites,
+          write,
           format,
         }));
 
@@ -217,15 +272,20 @@ async function handleBatchTranslation(request: Request, payload: TranslationPayl
     return validated;
   }
 
-  const { locale, msgs, ctx, sourceLocale, format } = validated;
+  const { locale, msgs, sourceLocale, format } = validated;
+  const namespace = resolveTranslationNamespace(request, validated.ctx);
+  if (namespace.error) {
+    return namespace.error;
+  }
+  const ctx = namespace.ctx ?? validated.ctx;
   const normalizedLocale = normalizeLocale(locale);
   const config = await getPhisConfig();
   const allowedLocales = new Set(getConfiguredTranslationSupportedLocalesSync());
-  const allowPublicWrites = config.translation?.allowPublicWrites === true;
   const allowPublicReads = config.translation?.allowPublicReads === true;
   if (tokenMode === "public" && !allowPublicReads) {
     return NextResponse.json({ error: "Forbidden." }, { status: 403 });
   }
+  const write = resolvePhisTranslationWriteMode({ tokenMode, named: namespace.named === true });
   if (!allowedLocales.has(normalizedLocale)) {
     logRuntimeEvent("warn", "translation.locale_not_allowed", {
       area: "tr",
@@ -270,7 +330,7 @@ async function handleBatchTranslation(request: Request, payload: TranslationPayl
           sourceLocale: effectiveSourceLocale,
           msgs,
           ctx,
-          allowWrite: tokenMode === "internal" || allowPublicWrites,
+          write,
           format,
         }));
 

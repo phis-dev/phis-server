@@ -17,6 +17,7 @@ import { resetPhisConfigCache } from "@/lib/config";
 import { getOperatorSession } from "@/lib/operator-auth";
 import { isPhiSecretReference } from "@/lib/secrets/reference";
 import { PHIS_TOKEN_HEADER } from "@/lib/constants/http-headers";
+import { PHIS_TRANSLATION_WRITE_WINDOW_MAX_MS } from "@/lib/translation-write-mode";
 import {
   getConfiguredCdnBaseUrlSync,
   getConfiguredTranslationSupportedLocalesSync,
@@ -340,6 +341,74 @@ export async function deleteOperatorSiteTranslations(formData: FormData) {
   );
 }
 
+/**
+ * Opening and closing the window in which an application may create global messages.
+ *
+ * Its own act, and deliberately not a field in the form above: saving unrelated settings would otherwise
+ * push the end of the window forward every time, and "opened deliberately" is the whole point of it
+ * (TRANSLATIONS.md, "Somebody else's strings in the global store").
+ *
+ * The end is stored, not a duration, so it runs out by being read. Nothing has to remember to close it,
+ * and a process that was down while it expired comes back with it closed.
+ */
+export async function openOperatorTranslationWriteWindow() {
+  if (isBootstrapEnabled()) {
+    redirect("/setup");
+  }
+
+  const session = await getOperatorSession();
+  if (!session) {
+    redirect("/operator/login");
+  }
+
+  const runtimeConfig = readMergedPhiConfigSync();
+  if (runtimeConfig.translation?.allowPublicWrites !== true) {
+    redirect(
+      buildTranslationsHref({
+        error: "Public write access has to be enabled and saved before a window can be opened.",
+      }),
+    );
+  }
+
+  writePhiRuntimeConfigSync({
+    ...runtimeConfig,
+    translation: {
+      ...runtimeConfig.translation,
+      allowPublicWritesUntil: new Date(
+        Date.now() + PHIS_TRANSLATION_WRITE_WINDOW_MAX_MS,
+      ).toISOString(),
+    },
+  });
+  resetPhisConfigCache();
+  revalidatePath("/operator");
+
+  redirect(buildTranslationsHref({ success: true }));
+}
+
+export async function closeOperatorTranslationWriteWindow() {
+  if (isBootstrapEnabled()) {
+    redirect("/setup");
+  }
+
+  const session = await getOperatorSession();
+  if (!session) {
+    redirect("/operator/login");
+  }
+
+  const runtimeConfig = readMergedPhiConfigSync();
+  writePhiRuntimeConfigSync({
+    ...runtimeConfig,
+    translation: {
+      ...runtimeConfig.translation,
+      allowPublicWritesUntil: "",
+    },
+  });
+  resetPhisConfigCache();
+  revalidatePath("/operator");
+
+  redirect(buildTranslationsHref({ success: true }));
+}
+
 export async function updateOperatorSupportedLocales(formData: FormData) {
   if (isBootstrapEnabled()) {
     redirect("/setup");
@@ -491,6 +560,13 @@ export async function updateOperatorSupportedLocales(formData: FormData) {
       supportedLocales,
       allowPublicReads,
       allowPublicWrites,
+      /*
+       * Taking the right away closes the window with it. A timestamp left standing would reopen the
+       * door the moment somebody switched writes back on, hours after anybody had that in mind.
+       */
+      allowPublicWritesUntil: allowPublicWrites
+        ? runtimeConfig.translation?.allowPublicWritesUntil ?? ""
+        : "",
     },
     deepl: {
       ...runtimeConfig.deepl,

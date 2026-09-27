@@ -63,11 +63,20 @@ export const OPERATOR_TRANSLATIONS_LABELS = {
     "External clients use this token to read the global translation endpoint. Change it here to rotate access.",
   publicWrites: "Allow public write access",
   publicWritesHint:
-    "Allow the global translation endpoint to accept write requests with the configured public token.",
+    "Let a request with the public token have a missing translation filled in for a message this installation already holds. Adding messages it has never seen is a separate window below.",
   publicWritesWarningTitle: "Enable public write access?",
   publicWritesWarningDescription:
-    "This should only be enabled in trusted internal company networks or temporarily to seed languages. If you do not know exactly what you are doing, leave it disabled.",
+    "A caller's miss then reaches this installation's translation provider and is billed to it, for any locale the installation offers. What it cannot do is add messages of its own. Leave this disabled unless the callers are known to you.",
   publicWritesEnable: "Enable public writes",
+  writeWindow: "Window for new messages",
+  writeWindowHelp:
+    "Public write access lets an application fill in translations for messages this installation already holds. Adding messages it has never seen needs this window, which stays open for ten minutes and closes by itself. An application names itself in the x-phis-app header and its messages are stored under that name.",
+  writeWindowOpen: "Open for ten minutes",
+  writeWindowClose: "Close now",
+  writeWindowOpenState: "New messages can be added for",
+  writeWindowClosedState:
+    "Closed. An application can fill in translations for messages this installation already holds, and cannot add new ones.",
+  writeWindowNeedsWrites: "Enable public write access and save, then the window can be opened.",
   cancel: "Cancel",
   localeSelectionPlaceholder: "Select locales",
   modeDeepl: "DeepL targets",

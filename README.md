@@ -87,8 +87,9 @@ not a property of the repository, so they are untracked and an absent one reads 
 | `translation.mode` | `deepl`, `cdn+deepl`, `add-on`, or `none`. See [TRANSLATIONS.md](./TRANSLATIONS.md). |
 | `translation.sourceLocale` | Installation fallback for a Site source locale. |
 | `translation.supportedLocales` | Locales the installation offers. `translation.allowedLocales` is read when `supportedLocales` is absent. |
-| `translation.cdnBaseUrl` | The CDN the `cdn+deepl` mode asks first. It mirrors this server's own routes without a token. |
-| `translation.allowPublicReads`, `translation.allowPublicWrites` | Whether a public-token request may read from `/api/v1/tr` and `/api/v1/locales`, and whether it may write translations through `/api/v1/tr`. |
+| `translation.cdnBaseUrl` | The CDN the `cdn+deepl` mode asks first. It mirrors this server's own routes, and is asked with `api.phisCdnPublicToken`. |
+| `translation.allowPublicReads`, `translation.allowPublicWrites` | Whether a public-token request may read from `/api/v1/tr` and `/api/v1/locales`, and whether it may write translations through `/api/v1/tr`. A write reaches messages the catalogue already holds; adding new ones needs the window below. |
+| `translation.allowPublicWritesUntil` | When the window for adding new global messages closes, as an ISO timestamp. Absent is closed. Opened from the operator UI for ten minutes at a time, by an application naming itself in `x-phis-app` ([TRANSLATIONS.md](./TRANSLATIONS.md)). |
 | `platformSuperUsers` | Platform operators, written by `phis operator`. |
 | `bootstrap.enabled` | Serves the setup pages; completing setup sets it to `false`. |
 | `runtime.containerized` | The operator overview reports the deployment as a container. Default `false`. |
