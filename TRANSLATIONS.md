@@ -285,6 +285,55 @@ nothing else about itself, so an installation could not learn which languages it
 sending it text to find out. A service provider is installed, version-checked, digest-checked and
 activated before Core resolves its factory, and it declares what it supports on the way in.
 
+### How a mirror is served
+
+**A mirror is a deployment, not a feature.** Nothing in this codebase makes an installation a CDN. A
+mirror is an ordinary phis-server that a reverse proxy publishes under a host name of its own, with two
+paths reachable and nothing else, which is why `translation.cdnBaseUrl` names a *server* address. The
+installation behind it is ordinary in every other respect, and its own mode is not `cdn+deepl`: a mirror
+pointed at itself would ask over HTTP for what it had just failed to find in its own tables.
+
+**Two doors, matched exactly.** `POST /api/v1/tr` is what a reader asks in batches, `GET /api/v1/tr`
+answers a single message, and `GET /api/v1/locales` is what the operator's CDN check and the locale
+options read. A prefix match would make `/api/v1/tr/anything` a door as well; an exact match keeps the
+surface countable. A query string is not part of a path and needs no allowance of its own.
+
+**What the host name must not publish** is everything else the process serves: `/operator`, `/setup`
+while `bootstrap.enabled` is true, and the internal `/api/v1` routes. Those refuse a caller without the
+internal token, so an unfiltered mirror is surface rather than a leak -- but a second public name for the
+control plane is a second place to get it wrong, and the setup pages have no login at all, which is the
+one case where the difference is not academic.
+
+**The filter belongs to the proxy, not to a route.** A route cannot decline to be routed to, and which
+paths a host name answers is what a reverse proxy is for. The mirror's *correctness* does not depend on
+it either: the guard, `translation.allowPublicReads`, the write mode and the rate limit all hold on an
+unfiltered installation too. The filter bounds what else that host name is, which is a deployment
+question and stays with the deployment -- the shipped nginx template publishes `location /`, so a
+mirror's vhost is a deliberate departure from it ([docs/INSTALL.md](./docs/INSTALL.md), "Web server and
+service units").
+
+**A mirror answers nobody until `api.publicToken` is set.** Without it `getApiV1TokenMode` cannot return
+`public` for any request and the mirror refuses every batch with `403`. A reader takes that for "not held
+there" and falls through to its own provider, so the failure is invisible: the mirror looks reachable,
+every installation pointed at it pays its own provider, and nothing anywhere logs a complaint. It is the
+first thing to check when a mirror seems to help nobody.
+
+**Never through a Site.** A Site's proxy routes -- `/api/auth`, `/api/site`, `/api/addons`,
+`/api/hooks` -- are the ordinary way something outside reaches this server, and they are the wrong way
+here. They strip every `x-phis-*` and `authorization` header the caller sent and set the installation's
+*internal* token, which is right for a Site's own traffic and ruinous for this one: a batch arriving that
+way is `internal`, and `internal` means the write mode `extend` with no window, no application namespace
+and no rate limit. The public/internal distinction is what this endpoint is built on, and a Site proxy
+exists to erase it. The Skeleton takes no new routes either, so there would be nothing to add there.
+
+**A mirror is not a cache in front of a translator; it is a store that already holds the answer.** Every
+request is resolved from `phis.tr_msg` and `phis.tr_lang`, so there is nothing to warm and nothing to
+invalidate. An edge cache in front of a mirror is possible, and it is the only thing that would earn the
+name CDN, but it has two conditions. A batch read is a `POST` with its messages in the body, which an
+ordinary proxy cache does not key on; and an answer carrying `provisional` must never be stored, because
+a stand-in is source text and a cache that keeps one serves an untranslated string for as long as its
+lifetime lasts. A cache that cannot read the body cannot see that flag either.
+
 ### Which targets a mode can reach
 
 For `deepl` and `cdn+deepl` the answer is already in `PHI_LOCALE_CAPABILITIES`: a locale carries its

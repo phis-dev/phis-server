@@ -76,7 +76,7 @@ not a property of the repository, so they are untracked and an absent one reads 
 | `database.uri` | Connection of the serving role: the running server, and `phis schema check`/`apply` for the Core schema. |
 | `database.migrationUri` | Connection of the migration role, which owns Add-on schemas: `phis addon migrate`, `phis addon purge`, `phis schema drop`. There is no fallback to `database.uri`. |
 | `api.internalToken` | Token with internal scope, used by Site runtimes. The setup pages generate one. |
-| `api.publicToken` | Optional token without internal scope. |
+| `api.publicToken` | Optional token without internal scope. An installation that serves as a translation mirror needs one, or it refuses every reader with `403` ([TRANSLATIONS.md](./TRANSLATIONS.md), "How a mirror is served"). |
 | `api.phisCdnPublicToken` | Token this installation sends when it reads global translations from `translation.cdnBaseUrl`. |
 | `api.disableRateLimit` | Turns off the per-address rate limit of `/api/v1/*`. |
 | `secrets.encryptionKey` | 64 hex characters. Key for the encrypted secret store `phis.server_secrets`; an instance without it does not report ready. `phis secret init-key` writes it. |
@@ -87,7 +87,7 @@ not a property of the repository, so they are untracked and an absent one reads 
 | `translation.mode` | `deepl`, `cdn+deepl`, `add-on`, or `none`. See [TRANSLATIONS.md](./TRANSLATIONS.md). |
 | `translation.sourceLocale` | Installation fallback for a Site source locale. |
 | `translation.supportedLocales` | Locales the installation offers. `translation.allowedLocales` is read when `supportedLocales` is absent. |
-| `translation.cdnBaseUrl` | The CDN the `cdn+deepl` mode asks first. It mirrors this server's own routes, and is asked with `api.phisCdnPublicToken`. |
+| `translation.cdnBaseUrl` | The CDN the `cdn+deepl` mode asks first. It mirrors this server's own routes, and is asked with `api.phisCdnPublicToken`. A server address, never a Site's: a Site's proxy routes replace a public token with the internal one. |
 | `translation.allowPublicReads`, `translation.allowPublicWrites` | Whether a public-token request may read from `/api/v1/tr` and `/api/v1/locales`, and whether it may write translations through `/api/v1/tr`. A write reaches messages the catalogue already holds; adding new ones needs the window below. |
 | `translation.allowPublicWritesUntil` | When the window for adding new global messages closes, as an ISO timestamp. Absent is closed. Opened from the operator UI for ten minutes at a time, by an application naming itself in `x-phis-app` ([TRANSLATIONS.md](./TRANSLATIONS.md)). |
 | `platformSuperUsers` | Platform operators, written by `phis operator`. |

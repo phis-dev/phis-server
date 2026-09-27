@@ -366,6 +366,49 @@ instance of the same stage as a further line in that pool. Another stage is anot
 its own database: give it its own `upstream` and `server` block, never a line in this one. The Apache
 template is a `balancer://phis` with `ttl=4` per member, which is the same rule on that side.
 
+### A translation mirror
+
+An installation that other installations read global translations from -- `translation.cdnBaseUrl` on
+their side, `cdn+deepl` as their mode -- is published differently from a Site or an operator host. It
+needs `api.publicToken` set and `translation.allowPublicReads` on, and its host name answers two paths
+and nothing else:
+
+```nginx
+server {
+    listen 443 ssl;
+    server_name cdn.example.test;
+
+    # certificates, HSTS
+
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-Host $host;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+
+    location = /api/v1/tr {
+        proxy_pass http://127.0.0.1:5301;
+    }
+
+    location = /api/v1/locales {
+        proxy_pass http://127.0.0.1:5301;
+    }
+
+    location / {
+        return 404;
+    }
+}
+```
+
+Exact matches, so `/api/v1/tr/anything` is not a door too. The `404` is the point of the block: the
+`location /` the templates above carry would publish the operator UI, the setup pages and every internal
+`/api/v1` route under this host name as well. They refuse a caller without the internal token, so an
+unfiltered mirror is surface rather than a leak, but the setup pages have no login of their own. A mirror
+is never published through a Site's proxy routes -- they set the internal token, which turns every
+caller into a trusted one; [TRANSLATIONS.md](../TRANSLATIONS.md), "How a mirror is served", has the
+reasoning and what an edge cache in front would have to respect.
+
 ## 9. Add Modules
 
 A Site Module is a package the Site build includes.
