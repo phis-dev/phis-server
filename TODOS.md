@@ -229,14 +229,6 @@ tracked here because the server contract depends on them.
   against, but that tag has to be pushed and its own release has to succeed before a tag here can get
   through its typecheck. Nothing changes locally in the meantime: `linkWorkspacePackages` keeps linking the
   local sibling for as long as its version satisfies the range.
-- **The npm distribution has never been installed from.** The composition is written down and the validator
-  refuses an artifact that is incomplete or that carries deployment state, but neither has run against a
-  production build: the standalone output exists only after `next build`, and this checkout serves a
-  development one. Before the first tag, pack it with `pnpm package:pack`, install the tarball into an empty
-  directory, and check the two things no file list can: that `server.js` starts against the dependencies npm
-  resolved rather than the ones the file tracer copied, and that `phis` still finds its application root
-  through npm's `bin` symlink. `debian/rules` selects the same three inputs on its own terms, and its
-  `must not ship` guard is what has kept that path honest; the Debian install root is the proven one.
 - **A Module from a tarball and `transpilePackages`.** `phis module add` records the package, writes the
   dependency and rewrites the projection, and nothing names the package in the Site's `next.config.ts`. A
   Module linked from a workspace resolves to a path outside `node_modules` and Next compiles it either

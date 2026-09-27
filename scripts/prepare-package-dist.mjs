@@ -73,14 +73,25 @@ const applicationDirectory = await findStandaloneApplicationDirectory();
 await rm(distDirectory, { recursive: true, force: true });
 await mkdir(distDirectory, { recursive: true });
 
-// The server Next built, and the client assets it serves. `static` is not part of the standalone output.
+/*
+ * The server Next built, and the client assets it serves. `static` is not part of the standalone output.
+ *
+ * Dereferenced, because the build links rather than copies. The packages Next treats as external -- `pg`,
+ * `argon2`, `sharp` and the rest -- are linked into `.next/node_modules` under a hashed name, and those
+ * links point into the workspace's pnpm store by a relative path that means nothing anywhere else. Packed
+ * as links they are simply dropped, and the installed server then fails on the first module it loads,
+ * naming a package no manifest contains. Followed here instead, so the tarball carries the directories
+ * themselves.
+ */
 for (const entry of ["server.js", ".next", "public"]) {
   await cp(path.join(applicationDirectory, entry), path.join(distDirectory, entry), {
     recursive: true,
+    dereference: true,
   });
 }
 await cp(path.join(packageRoot, ".next", "static"), path.join(distDirectory, ".next", "static"), {
   recursive: true,
+  dereference: true,
 });
 // Rendered pages and fetch results from the build machine. They are not part of the release, and one of
 // them is a page as some other installation's database answered it.

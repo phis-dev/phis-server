@@ -83,12 +83,11 @@ below.
 
 ### From the npm package
 
-`@phis/server` on npm carries the same standalone server, the same operator CLI and the same schema file
-as the Debian package, with the runtime dependencies resolved by npm instead of copied in beside them.
-What it does not carry is the machine: no service account, no stage, no service unit, no proxy
-configuration, and no generated `NEXT_SERVER_ACTIONS_ENCRYPTION_KEY` -- which production requires and
-every Instance of one installation has to share. Take those from [debian/](../debian/) where the
-installation needs them.
+`@phis/server` on npm carries the same standalone server, the same operator CLI and the same schema file as
+the Debian package, with the runtime dependencies resolved by npm instead of copied in beside them. What it
+does not carry is the machine: no service account, no stage, no service unit, no proxy configuration, and no
+generated `NEXT_SERVER_ACTIONS_ENCRYPTION_KEY` -- which production requires and every Instance of one
+installation has to share. Take those from [debian/](../debian/) where the installation needs them.
 
 ```sh
 npm install -g @phis/server
@@ -99,12 +98,13 @@ The server is the standalone `server.js` in the package directory:
 
 ```sh
 PHIS_ROOT=/srv/phis/stages/prod PORT=5301 HOSTNAME=127.0.0.1 \
+  NEXT_SERVER_ACTIONS_ENCRYPTION_KEY=... \
   node "$(npm root -g)/@phis/server/server.js"
 ```
 
-This path is prepared and has not yet been proven by an install
-([TODOS.md](../TODOS.md#site-bootstrap-and-releases)); the Debian package is the one in use. Continue with
-the configuration below either way.
+`npm install` warns that it did not run `argon2`'s install script. It is not needed: both native packages
+ship prebuilt binaries, and hashing and image processing work from the installed tarball as it is. Continue
+with the configuration below.
 
 ### The phis root
 

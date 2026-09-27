@@ -128,7 +128,16 @@ const forbidden = [
     reason: "an environment file",
   },
   {
-    matches: (relativePath) => relativePath.split("/").includes("node_modules"),
+    /*
+     * A `node_modules` of the package's own is refused; the one inside `.next` is not, and the difference
+     * is who put it there. The build writes `.next/node_modules` itself, holding the packages it treats as
+     * external under a hashed name that the emitted chunks import by -- it is output, and the server does
+     * not start without it. Anything else under that name is an install that npm performs for whoever
+     * receives this, from the manifest.
+     */
+    matches: (relativePath) =>
+      relativePath.split("/").includes("node_modules")
+      && !relativePath.startsWith(".next/node_modules/"),
     reason: "installed dependencies, which npm resolves from the manifest instead",
   },
   {
@@ -156,6 +165,24 @@ const forbidden = [
 let fileCount = 0;
 let totalBytes = 0;
 for (const entry of await readdir(distDirectory, { withFileTypes: true, recursive: true })) {
+  /*
+   * A symbolic link is refused before anything else, and it is the mistake that reads as a success
+   * everywhere else.
+   *
+   * `next build` links the packages it treats as external into `.next/node_modules` under a hashed name,
+   * and every listing walks straight through such a link as if the package were there. npm then strips
+   * `node_modules` out of a tarball whatever `files` says, and would break the link even if it did not, so
+   * the artifact arrives without the module the server loads first -- while every check that stats files
+   * still passes. Whatever the answer to that is, it is not a link in a tarball.
+   */
+  if (entry.isSymbolicLink()) {
+    refuse(
+      `The built package must not ship the link ${
+        path.relative(distDirectory, path.join(entry.parentPath, entry.name))
+      } -- a tarball carries no symbolic links, and what this one points at is the build machine's store.`,
+    );
+    continue;
+  }
   if (!entry.isFile()) {
     continue;
   }
