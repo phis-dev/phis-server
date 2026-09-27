@@ -85,6 +85,13 @@ tracked here because the server contract depends on them.
   - **The 2 GB transport ceiling is unchanged**: `nginx` caps a proxied body, and on this installation
     `s3.phis.dev` sits behind `nginx` with the same limit, so the "single PUT up to 5 GB" figure does not
     apply here. Multipart does not raise it, because the parts go to the same host.
+- **An S3 Profile whose endpoint is `http://` is unusable from an `https://` Site, and the error says
+  nothing.** The browser blocks the presigned PUT as mixed content and the page sees `TypeError: Failed to
+  fetch` -- not a CORS message, not a status, nothing naming the cause. `publicEndpoint` is what solves it
+  (the address a browser resolves, signed for, while Core keeps talking to the internal one), so the fix is
+  to require it: a Profile whose `endpoint` is `http` and whose `publicEndpoint` is unset cannot serve a
+  browser on any Site that is served over TLS, and neither `storage add` nor the probe says so. Measured
+  from a real browser against the dev Garage.
 - **Object key prefix ownership.** Core writes `sites/<key>/…` and an S3 profile may add its own bucket
   prefix, so a profile configured with `sites/<key>` stores under `sites/<key>/sites/<key>/…`. Decide the
   owner, and have a profile form state what Core prepends.
