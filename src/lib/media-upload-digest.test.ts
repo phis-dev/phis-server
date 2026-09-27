@@ -2,8 +2,10 @@ import { createHash } from "node:crypto";
 
 import { describe, expect, it } from "vitest";
 import {
+  PHIS_MEDIA_UPLOAD_MAX_PART_COUNT,
   PHIS_MEDIA_UPLOAD_PART_SIZE_BYTES,
   resolvePhiMediaUploadPartCount,
+  resolvePhiMediaUploadPartSizeBytes,
 } from "@phis/contracts/addon";
 
 import {
@@ -146,5 +148,50 @@ describe("what the plan is told", () => {
     expect(buildPhiMediaUploadPlanChecksum(parts, "sha512")).toEqual({});
     expect(buildPhiMediaUploadPlanChecksum(whole, null)).toEqual({});
     expect(buildPhiMediaUploadPlanChecksum(null, "sha256")).toEqual({});
+  });
+});
+
+/**
+ * The division, pinned to its actual numbers.
+ *
+ * **If this file fails, do not adjust it.** A `sha256-composite` value means "these bytes, divided this way",
+ * and the division is written into it -- so changing the rule gives the same file a different value. Nothing
+ * breaks loudly: duplicate detection simply stops matching anything stored under the old rule, and the corpus
+ * quietly becomes two that can never be told to be the same. A failure here is therefore a decision about
+ * every object already stored, and the only honest ways through it are to leave the numbers alone or to
+ * re-derive every affected digest on purpose.
+ *
+ * The arithmetic itself -- the floor, the ceiling, the point where the part grows instead of the count -- is
+ * tested in phis-storage-s3, relative to these constants. This is the part that says what the constants are.
+ */
+describe("the frozen division", () => {
+  it("is sixteen mebibytes, and at most a thousand parts", () => {
+    expect(PHIS_MEDIA_UPLOAD_PART_SIZE_BYTES).toBe(16 * 1024 * 1024);
+    expect(PHIS_MEDIA_UPLOAD_MAX_PART_COUNT).toBe(1000);
+  });
+
+  it("divides these sizes into exactly these parts", () => {
+    // Written out rather than computed, so a changed rule cannot agree with the test that encodes it.
+    expect(resolvePhiMediaUploadPartCount(1)).toBe(1);
+    expect(resolvePhiMediaUploadPartCount(16 * 1024 * 1024)).toBe(1);
+    expect(resolvePhiMediaUploadPartCount(16 * 1024 * 1024 + 1)).toBe(2);
+    expect(resolvePhiMediaUploadPartCount(100 * 1024 * 1024)).toBe(7);
+    expect(resolvePhiMediaUploadPartCount(2 * 1024 * 1024 * 1024)).toBe(128);
+    // Past the thousand-part ceiling the part grows instead of the count: 20 GiB in 976 parts of 21 MiB.
+    expect(resolvePhiMediaUploadPartSizeBytes(20 * 1024 * 1024 * 1024)).toBe(21 * 1024 * 1024);
+    expect(resolvePhiMediaUploadPartCount(20 * 1024 * 1024 * 1024)).toBe(976);
+  });
+
+  it("produces this exact value for these exact part digests", () => {
+    const parts = ["one", "two"].map(digestOf);
+    // The recorded form: the fold, the count, the part size. All three decide whether two of them match.
+    expect(buildPhiMediaCompositeChecksum(parts, 20 * 1024 * 1024))
+      .toBe(`${createHash("sha256").update(Buffer.concat(parts.map((p) => Buffer.from(p, "hex")))).digest("hex")}-2-16777216`);
+  });
+
+  it("gives the same file the same value twice, which is the whole point", () => {
+    const parts = ["a", "b", "c"].map(digestOf);
+    const size = 40 * 1024 * 1024;
+    expect(buildPhiMediaCompositeChecksum(parts, size)).toBe(buildPhiMediaCompositeChecksum(parts, size));
   });
 });

@@ -555,6 +555,111 @@ export async function getMediaAssetBySiteAndChecksum(
   ); return rows[0] ? mapAsset(rows[0]) : null;
 }
 
+/** An Asset whose digest cannot answer "is this the same file", and where its bytes are. */
+export type PhiMediaAssetWithoutIdentityChecksum = {
+  id: number;
+  spaceId: number;
+  storageProfileId: number;
+  storageKey: string;
+  bytes: number;
+};
+
+/**
+ * The Assets duplicate detection cannot see, oldest first, and how many more there are.
+ *
+ * "Cannot see" is the same test the comparison makes: an `md5` off a single-request ETag, or nothing at all,
+ * is recorded as evidence that a transfer was intact and is never compared. Every Asset delivered straight to
+ * a storage before Core asked the Client for a digest is in here.
+ *
+ * Oldest first so repeated runs walk the corpus in a stable order rather than revisiting the same page, and
+ * the count of the rest is returned with them because the caller is bounded and an operator needs to know
+ * whether to run it again.
+ */
+export async function listMediaAssetsWithoutIdentityChecksum(
+  siteId: number,
+  limit: number,
+): Promise<{ assets: PhiMediaAssetWithoutIdentityChecksum[]; remaining: number }> {
+  const predicate = `site_id = $1
+      AND (checksum_algorithm IS NULL OR checksum_algorithm NOT IN ('sha256', 'sha512', 'sha256-composite'))`;
+  const { rows } = await getPool().query<{
+    id: number; space_id: number; storage_profile_id: number; storage_key: string; bytes: string | number;
+  }>(
+    `SELECT id, space_id, storage_profile_id, storage_key, bytes
+       FROM phis.media_assets
+      WHERE ${predicate}
+      ORDER BY id
+      LIMIT $2`,
+    [siteId, limit],
+  );
+  const { rows: counted } = await getPool().query<{ total: string }>(
+    `SELECT COUNT(*)::bigint AS total FROM phis.media_assets WHERE ${predicate}`,
+    [siteId],
+  );
+  const total = Number(counted[0]?.total ?? 0);
+  return {
+    assets: rows.map((row) => ({
+      id: row.id,
+      spaceId: row.space_id,
+      storageProfileId: row.storage_profile_id,
+      storageKey: row.storage_key,
+      bytes: Number(row.bytes),
+    })),
+    remaining: Math.max(0, total - rows.length),
+  };
+}
+
+/**
+ * Records a digest for one Asset, and says whether it now names another Asset in the same Space.
+ *
+ * The duplicate is reported rather than acted on. Two Assets holding the same bytes is a fact about the
+ * corpus; which of them should go is a decision with owners, Folders and references behind it. What matters
+ * here is that the figure is written -- from now on an upload of those bytes is recognised -- and that nobody
+ * has to discover the collision by accident later.
+ *
+ * The lookup runs before the write and in the same transaction, so it cannot report a duplicate against the
+ * row it is about to change.
+ */
+export async function setMediaAssetChecksum(input: {
+  id: number;
+  siteId: number;
+  algorithm: string;
+  value: string;
+}): Promise<{ duplicateOfAssetId: number | null } | null> {
+  const client = await getPool().connect();
+  try {
+    await client.query("BEGIN");
+    const { rows: own } = await client.query<{ space_id: number }>(
+      `SELECT space_id FROM phis.media_assets WHERE id = $1 AND site_id = $2 FOR UPDATE`,
+      [input.id, input.siteId],
+    );
+    if (!own[0]) {
+      await client.query("ROLLBACK");
+      return null;
+    }
+    const { rows: existing } = await client.query<{ id: number }>(
+      `SELECT id FROM phis.media_assets
+        WHERE site_id = $1 AND space_id = $2 AND checksum_algorithm = $3 AND checksum_value = $4
+          AND id <> $5
+        ORDER BY id
+        LIMIT 1`,
+      [input.siteId, own[0].space_id, input.algorithm, input.value, input.id],
+    );
+    await client.query(
+      `UPDATE phis.media_assets
+          SET checksum_algorithm = $3, checksum_value = $4, updated_at = NOW()
+        WHERE id = $1 AND site_id = $2`,
+      [input.id, input.siteId, input.algorithm, input.value],
+    );
+    await client.query("COMMIT");
+    return { duplicateOfAssetId: existing[0]?.id ?? null };
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 export async function getMediaAssetById(id: number) {
   const { rows } = await getPool().query<AssetRow>(`SELECT ${ASSET_COLUMNS} FROM phis.media_assets WHERE id = $1`, [id]);
   return rows[0] ? mapAsset(rows[0]) : null;

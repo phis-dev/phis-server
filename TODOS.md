@@ -93,9 +93,17 @@ tracked here because the server contract depends on them.
     names the division so a changed rule is a non-match rather than a false match. Changing either is a
     decision about every object already stored, not a tuning knob, and there is nothing in the build that
     would stop somebody editing them.
-  - **Nothing re-derives a digest for an Asset stored before this.** Those rows keep their `md5`, or none,
-    and stay outside duplicate detection. Whether that is worth a maintenance task is open; re-reading
-    every object to hash it is the cost the composite exists to avoid.
+  - **Assets stored before this can be given a digest, by an operator.**
+    `POST /api/v1/media/checksums/recompute?site=<key>&limit=<n>` reads each object back and records the digest
+    a Provider would report for it -- a plain SHA-256 where the object arrived whole, the composite where its
+    ETag says it was assembled, and nothing where the divisions are not this system's. Bounded by `limit`,
+    because each one is a whole object read from storage, and it answers with how many are left. Idempotent: an
+    Asset with an identity-grade digest is no longer selected.
+
+    What it cannot do is decide about what it finds. A digest that turns out to name another Asset in the same
+    Space is recorded and reported, because which of two Assets holding the same bytes should go is a decision
+    with owners, Folders and references behind it. There is no surface that shows an operator those reports
+    other than the response and the log.
   - **A Profile recording SHA-512 gets no digest for a direct upload.** These are SHA-256 digests and a
     SHA-512 Profile cannot compare them, so the claim is dropped. Garage verifies a declared `SHA256` but
     accepts a wrong `SHA512`, so in practice no probed endpoint here chooses SHA-512 -- but a Profile could

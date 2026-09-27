@@ -8,7 +8,7 @@ public or internal token, and `session` is the visitor's Site session with the a
 passes (see [AUTHORIZATION.md](../AUTHORIZATION.md)). A route with no access entry performs its own checks
 or none; read its source. Request and response shapes are not listed; the source is linked per route.
 
-141 routes.
+142 routes.
 
 ## Contents
 
@@ -23,7 +23,7 @@ or none; read its source. Request and response shapes are not listed; the source
 - [`/api/v1/groups`](#apiv1groups) (3)
 - [`/api/v1/hooks`](#apiv1hooks) (1)
 - [`/api/v1/locales`](#apiv1locales) (1)
-- [`/api/v1/media`](#apiv1media) (1)
+- [`/api/v1/media`](#apiv1media) (2)
 - [`/api/v1/news`](#apiv1news) (1)
 - [`/api/v1/site`](#apiv1site) (15)
 - [`/api/v1/tr`](#apiv1tr) (1)
@@ -288,7 +288,8 @@ Versioned API a Site calls server-to-server with its token (`x-phis-token`), and
 
 | Method | Address | Access | Description |
 |---|---|---|---|
-| POST | [`/api/v1/media/storage-policies/reconcile`](../src/app/api/v1/media/storage-policies/reconcile/route.ts) | internal token | Writes each storage's CORS and lifecycle rules from the Site registry |
+| POST | [`/api/v1/media/checksums/recompute`](../src/app/api/v1/media/checksums/recompute/route.ts) | internal token | Gives Assets stored before this a digest duplicate detection can compare. |
+| POST | [`/api/v1/media/storage-policies/reconcile`](../src/app/api/v1/media/storage-policies/reconcile/route.ts) | internal token | Writes every storage's rules from the Site registry: who may write to it, and what it is to clean up. |
 
 ## `/api/v1/news`
 

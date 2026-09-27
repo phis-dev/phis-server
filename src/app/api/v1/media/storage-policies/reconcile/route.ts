@@ -1,9 +1,3 @@
-import { NextResponse, type NextRequest } from "next/server";
-
-import { guardApiV1 } from "@/lib/api-v1-guard";
-import { logRuntimeEvent } from "@/lib/log";
-import { reconcilePhiMediaStoragePolicies } from "@/lib/media-storage-policies";
-
 /**
  * Writes every storage's rules from the Site registry: who may write to it, and what it is to clean up.
  *
@@ -15,6 +9,12 @@ import { reconcilePhiMediaStoragePolicies } from "@/lib/media-storage-policies";
  * Operator-facing, internal token only. There is no Site-scoped variant: a rule covers every Site a
  * storage serves, so a single Site could otherwise withdraw another's permission by reconciling.
  */
+
+import { NextResponse, type NextRequest } from "next/server";
+
+import { guardApiV1 } from "@/lib/api-v1-guard";
+import { logRuntimeEvent } from "@/lib/log";
+import { reconcilePhiMediaStoragePolicies } from "@/lib/media-storage-policies";
 
 export const dynamic = "force-dynamic";
 
