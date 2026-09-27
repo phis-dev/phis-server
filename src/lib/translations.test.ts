@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   ensureSiteMessageId: vi.fn(),
   getSiteTranslations: vi.fn(),
+  getTranslations: vi.fn(),
   upsertSiteTranslations: vi.fn(),
   logRuntimeEvent: vi.fn(),
 }));
@@ -11,6 +12,7 @@ vi.mock("@/db/translations", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/db/translations")>()),
   ensureSiteMessageId: mocks.ensureSiteMessageId,
   getSiteTranslations: mocks.getSiteTranslations,
+  getTranslations: mocks.getTranslations,
   upsertSiteTranslations: mocks.upsertSiteTranslations,
 }));
 vi.mock("@/lib/log", async (importOriginal) => ({
@@ -18,7 +20,8 @@ vi.mock("@/lib/log", async (importOriginal) => ({
   logRuntimeEvent: mocks.logRuntimeEvent,
 }));
 
-const { trackTranslationStandIns, translateSiteBatchWithCache } = await import("@/lib/translations");
+const { trackTranslationStandIns, translateBatchWithCache, translateSiteBatchWithCache } =
+  await import("@/lib/translations");
 
 /*
  * Catalogue identity can genuinely fail for one message: `tr_site_msg` is unique on
@@ -144,5 +147,47 @@ describe("trackTranslationStandIns", () => {
     ]);
     expect(failed.standIn).toBe(true);
     expect(answered.standIn).toBe(false);
+  });
+});
+
+/*
+ * The global store read by a request that may not fill it, which is what a mirror behind `cdn.phis.dev`
+ * answers. A miss there is the one case where source text travels back without anybody having failed,
+ * and the installation that asked has DeepL waiting after this step: unmarked, the English string
+ * arrives there as the translation and is never translated at all.
+ */
+describe("a read-only read of the global store", () => {
+  const read = (msgs: string[]) => trackTranslationStandIns(() => translateBatchWithCache({
+    locale: "de",
+    sourceLocale: "en",
+    msgs,
+    ctx: "",
+    allowWrite: false,
+    format: "text",
+  }));
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    // The store holds every message but "one".
+    mocks.getTranslations.mockImplementation(async (
+      _locale: string,
+      entries: Array<{ msg: string; hash: string }>,
+    ) => new Map(
+      entries.filter((entry) => entry.msg !== "one").map((entry) => [entry.hash, `${entry.msg}-de`]),
+    ));
+  });
+
+  it("marks a batch it could not answer in full", async () => {
+    await expect(read(["one", "two"])).resolves.toEqual({
+      value: ["one", "two-de"],
+      standIn: true,
+    });
+  });
+
+  it("marks nothing in a batch the store held", async () => {
+    await expect(read(["two", "three"])).resolves.toEqual({
+      value: ["two-de", "three-de"],
+      standIn: false,
+    });
   });
 });

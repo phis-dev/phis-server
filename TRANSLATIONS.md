@@ -67,7 +67,9 @@ session, cookies, and request headers.
   `tr_site_lang`). A request without `x-phis-site-key` uses the global store (`tr_msg`, `tr_lang`).
 - A request with the public token must not send `x-phis-site-key` (`403`) and uses the global store only.
   Public requests are refused unless `translation.allowPublicReads` is `true`, and they store new
-  translations only when `translation.allowPublicWrites` is `true`.
+  translations only when `translation.allowPublicWrites` is `true`. A public read that may not store
+  answers a message the store does not hold with the source text and `"provisional": true`: it never
+  asked a provider, so what it hands back states nothing about that message except that it is not here.
 - A target locale outside `translation.supportedLocales` answers with the source text.
 
 ### Dynamic values
@@ -133,6 +135,13 @@ The operator sets one mode. It names where a translation comes from, and there a
 through to DeepL; the operator states an arrangement, not a rule set. `deepl` is the same arrangement
 without the CDN in front, and it is a real choice rather than a leftover: the CDN answers first, so an
 installation that has worded its own global messages picks `deepl` to keep them.
+
+**The CDN is asked with a token, because it is our own route on somebody else's installation.** The
+request is the public form of `/api/v1/tr`: `api.phisCdnPublicToken` in `x-phis-token`, no Site header,
+global messages only. A mirror refuses a request that carries no token at all, so an installation with a
+`translation.cdnBaseUrl` and no token is answered `403` for every batch -- which the step reads as "not
+held there" and falls through, quietly turning `cdn+deepl` into `deepl`. The operator's CDN check sends
+the same token and reports the refusal.
 
 **A DeepL key is optional under `cdn+deepl`.** The CDN holds the platform's own messages, so an
 installation with a CDN and no key still has a translated interface; what it does not have is Site
@@ -283,10 +292,18 @@ A skipped message is logged as `translation.message_skipped` with its stage, loc
 opening of the text. Failures that are not about one message -- a database that is unreachable, a
 provider that refuses the whole batch -- are not caught here and still surface.
 
-A request in which any answer is such a stand-in -- a skipped message, or a provider that failed and
-left source text behind -- carries `"provisional": true` next to `translation` or `translations`. A
-caller that keeps answers must not keep these: they end with the outage, not with an edit. Source text
-that is the answer by configuration (no provider, a locale that is not offered) is not provisional.
+A request in which any answer is such a stand-in -- a skipped message, a provider that failed and left
+source text behind, or a read that was not allowed to fill what it found missing -- carries
+`"provisional": true` next to `translation` or `translations`. A caller that keeps answers must not keep
+these: they end with the outage, not with an edit. Source text that is the answer by configuration (no
+provider, a locale that is not offered) is not provisional.
+
+The third case is the public read, and it is there for the caller behind it rather than for this store.
+An installation asking a mirror has DeepL after that step, and it may only take that turn if a miss
+arrives marked; unmarked, the English source text would be stored as the translation and the string
+would never be translated again. That is also why the flag stays coarse: it covers the batch, the
+mirrored route states no per-entry answer, and a caller inventing one would be inventing a contract with
+somebody else's service.
 
 ## What DeepL actually does
 

@@ -114,9 +114,17 @@ function buildTranslationCacheContext(input: {
 }
 
 /**
- * Whether an answer is a stand-in: source text handed back because a provider or a single message
- * failed, not because the store or the configuration says so. A Site keeps translations without expiry,
- * so it must not keep these -- they would outlive the outage until somebody edited a translation.
+ * Whether an answer is a stand-in: source text handed back in place of a translation, because a provider
+ * or a single message failed, or because the request was not allowed to fill what it found missing. A
+ * Site keeps translations without expiry, so it must not keep these -- they would outlive the outage
+ * until somebody edited a translation.
+ *
+ * An installation that translates nothing is not standing in for anything: there is no step after
+ * `none`, so its source text is the final answer and marking it would say an outage where there is a
+ * configuration. A public read of the global store is the other case. It reads `tr_lang` and may not
+ * fill it, so its source text means "not here" to an installation that has DeepL waiting behind this
+ * step -- and unmarked it would arrive there as a translation, which is a string that never gets
+ * translated again.
  */
 const translationStandIns = new AsyncLocalStorage<{ standIn: boolean }>();
 
@@ -308,6 +316,14 @@ async function translateCanonicalGlobalBatch(input: Required<Pick<BatchTranslati
       result.set(entry.msg, value);
     }));
   } else {
+    /*
+     * Nothing was asked, so what is missing from the store is missing from the answer. This is the
+     * public read: it may not fill `tr_lang`, and the source text it hands back for a miss is the
+     * absence of a translation rather than one.
+     */
+    if (pending.length > 0) {
+      recordTranslationStandIn();
+    }
     pending.forEach((entry) => result.set(entry.msg, entry.msg));
   }
   return input.msgs.map((msg) => result.get(msg) ?? msg);
@@ -319,11 +335,20 @@ async function translateExternalGlobalBatch(input: Required<Pick<BatchTranslatio
   allowWrite: boolean;
   format: TranslationFormat;
 }) {
+  /*
+   * Three ways out with the source text, and only two of them are answers. Source and target being one
+   * language is the translation, and an unsupported source language is rendered unchanged by contract --
+   * but a request that may not write never reaches the store at all, so what it returns says nothing
+   * about what is in there and must not be read as an answer.
+   */
   if (
     sameLocale(input.locale, input.sourceLocale) ||
-    !input.allowWrite ||
     !isConfiguredSourceLocaleSupported(input.sourceLocale)
   ) {
+    return input.msgs;
+  }
+  if (!input.allowWrite) {
+    recordTranslationStandIn();
     return input.msgs;
   }
 

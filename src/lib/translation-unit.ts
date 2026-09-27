@@ -1,6 +1,7 @@
 import "server-only";
 
 import { getPhisConfigSync } from "@/lib/config";
+import { PHIS_TOKEN_HEADER } from "@/lib/constants/http-headers";
 import {
   resolveDeepLSourceLang,
   resolveDeepLTargetLang,
@@ -254,10 +255,16 @@ function logProviderFallback(input: {
 /**
  * The CDN, asked with the route it mirrors.
  *
- * The CDN offers the same calls this server does, token-free, so this is `/api/v1/tr` with the batch
- * payload the route already takes and no token and no Site header. Nothing about the request shape is
- * invented here: it is the public form of our own route, which is why a Site header would be refused
- * and why only global messages can come back at all.
+ * The CDN offers the same calls this server does, so this is `/api/v1/tr` with the batch payload the
+ * route already takes, the public token this installation was given, and no Site header. Nothing about
+ * the request shape is invented here: it is the public form of our own route, which is why a Site header
+ * would be refused and why only global messages can come back at all.
+ *
+ * The token belongs to that shape rather than being an addition to it. `guardApiV1` refuses a request
+ * carrying no token at all, and `api.publicToken` is what a mirror recognises a public read by -- so an
+ * installation with a `cdnBaseUrl` and no `api.phisCdnPublicToken` is answered 403 for every batch and
+ * reads it as "the CDN does not hold these". This call went out without one for a while, which made
+ * `cdn+deepl` a slower `deepl` and nothing more. The operator's CDN check sends the same token.
  *
  * `provisional` is the answer that matters. It means the CDN itself fell back to source text, so taking
  * it would be taking an untranslated string from one step and calling the chain finished. That counts as
@@ -279,9 +286,13 @@ async function requestCdnTranslations(input: {
     return null;
   }
 
+  const token = getPhisConfigSync().api?.phisCdnPublicToken?.trim();
   const response = await fetch(`${baseUrl}/api/v1/tr`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { [PHIS_TOKEN_HEADER]: token } : {}),
+    },
     body: JSON.stringify({
       locale: input.locale,
       msgs: input.msgs,
