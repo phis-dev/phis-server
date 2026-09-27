@@ -41,14 +41,32 @@ beforeEach(() => {
  */
 describe("Releasing what expired sessions still hold", () => {
   it("removes the expired rows of one Space and gives their bytes back in one statement", async () => {
-    const db = pool(() => [{ released: 3 }]);
-    await expect(releaseExpiredMediaUploadSessions(5)).resolves.toBe(3);
+    const db = pool(() => [
+      { storage_profile_id: 7, staging_storage_key: "sites/uploads-temp/demo/a/x.bin", provider_upload_id: null },
+      { storage_profile_id: 7, staging_storage_key: "sites/uploads-temp/demo/b/y.mp4", provider_upload_id: "2~abc" },
+    ]);
+    await expect(releaseExpiredMediaUploadSessions(5)).resolves.toEqual([
+      { storageProfileId: 7, stagingStorageKey: "sites/uploads-temp/demo/a/x.bin", providerUploadId: null },
+      { storageProfileId: 7, stagingStorageKey: "sites/uploads-temp/demo/b/y.mp4", providerUploadId: "2~abc" },
+    ]);
     expect(db.statements).toHaveLength(1);
     const [statement] = db.statements;
     expect(statement.text).toMatch(/DELETE FROM phis\.media_upload_sessions/u);
     expect(statement.text).toMatch(/UPDATE phis\.media_spaces/u);
     expect(statement.text).toMatch(/reserved_bytes = GREATEST\(0, s\.reserved_bytes - f\.bytes\)/u);
     expect(statement.values).toEqual([5]);
+  });
+
+  /*
+   * The row is the only record of where an expired session's remains are, and deleting it is what frees the
+   * reservation. Returning them is therefore the difference between an object something can still find and
+   * one only a storage lifecycle rule will ever reach.
+   */
+  it("hands back where the remains are, including the name of an unfinished assembly", async () => {
+    const db = pool(() => []);
+    await releaseExpiredMediaUploadSessions(5);
+    expect(db.statements[0].text)
+      .toMatch(/RETURNING size_bytes, storage_profile_id, staging_storage_key, provider_upload_id/u);
   });
 
   it("touches only sessions of the Space that was asked, and only expired ones", async () => {
@@ -59,13 +77,13 @@ describe("Releasing what expired sessions still hold", () => {
 
   it("reports nothing released when nothing had expired", async () => {
     pool(() => []);
-    await expect(releaseExpiredMediaUploadSessions(5)).resolves.toBe(0);
+    await expect(releaseExpiredMediaUploadSessions(5)).resolves.toEqual([]);
   });
 
   it("does not go to the database for something that cannot be a Space", async () => {
     const db = pool();
     for (const spaceId of [0, -1, 1.5, Number.NaN]) {
-      await expect(releaseExpiredMediaUploadSessions(spaceId)).resolves.toBe(0);
+      await expect(releaseExpiredMediaUploadSessions(spaceId)).resolves.toEqual([]);
     }
     expect(db.statements).toHaveLength(0);
   });
@@ -76,6 +94,19 @@ describe("Releasing what expired sessions still hold", () => {
     const reserved = route.indexOf("reserveMediaSpaceQuota({ spaceId: space.id");
     expect(released).toBeGreaterThan(-1);
     expect(released).toBeLessThan(reserved);
+  });
+
+  /*
+   * And the remains are removed after the response rather than before the plan. A storage call in front of
+   * the plan would hang the upload a person is waiting for on objects that are no longer anybody's -- while
+   * dropping them entirely would leave objects nothing can find, since their rows are gone.
+   */
+  it("removes what they left at the Provider after the response, not before the plan", async () => {
+    const route = await read("src/app/api/site/media/uploads/init/route.ts");
+    const discard = route.indexOf("discardReleasedPhiMediaUploadStaging({");
+    const plan = route.indexOf("storageService.createUploadPlan({");
+    expect(discard).toBeGreaterThan(plan);
+    expect(route).toMatch(/after\(async \(\) => \{/u);
   });
 });
 

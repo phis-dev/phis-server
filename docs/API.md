@@ -288,7 +288,7 @@ Versioned API a Site calls server-to-server with its token (`x-phis-token`), and
 
 | Method | Address | Access | Description |
 |---|---|---|---|
-| POST | [`/api/v1/media/cors/reconcile`](../src/app/api/v1/media/cors/reconcile/route.ts) | internal token |  |
+| POST | [`/api/v1/media/storage-policies/reconcile`](../src/app/api/v1/media/storage-policies/reconcile/route.ts) | internal token | Writes each storage's CORS and lifecycle rules from the Site registry |
 
 ## `/api/v1/news`
 

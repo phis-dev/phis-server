@@ -867,6 +867,8 @@ only approved object operations:
 - read an object's leading bytes, head, delete, and copy;
 - create an upload plan and complete it;
 - apply a CORS policy;
+- apply a lifecycle policy -- which unfinished uploads the storage may abort, and how long a staged body may
+  sit under the staging prefixes, because neither is visible to anything that could sweep them;
 - probe capabilities and report a storage identity.
 
 `listPrefix` is a maintenance and reconciliation operation, never the normal Asset catalog. Database

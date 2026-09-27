@@ -9,10 +9,11 @@ import type { PhisMediaStorageAdapter, PhisMediaStorageProbe } from "@phis/contr
 import { loadInstalledAddonRuntime, readAddonDesiredState } from "./addons.mts";
 import { PHIS_SERVICE_KINDS } from "../lib/addons/core-services.ts";
 import {
-  reconcilePhiMediaStorageCorsWith,
-  type PhiMediaStorageCorsAdapter,
-  type PhiMediaStorageCorsProfile,
-} from "../lib/media-storage-cors-core.ts";
+  reconcilePhiMediaStoragePoliciesWith,
+  type PhiMediaStoragePolicyAdapter,
+  type PhiMediaStoragePolicyProfile,
+} from "../lib/media-storage-policies-core.ts";
+import { readMergedPhiConfigSync } from "../lib/config-files-cli.ts";
 import { buildPhiSecretReference } from "../lib/secrets/reference.ts";
 
 /**
@@ -197,8 +198,8 @@ export type StorageSecretReader = (reference: string) => Promise<string | null>;
 /**
  * Builds a Provider the way Core would, through the artifact the operator installed.
  *
- * Returns null for a Provider a browser never addresses -- Core's Local storage is reached only through
- * Core's own routes, so every request to it is same-origin and there is no rule to write.
+ * Returns null for a Provider that needs neither rule -- Core's Local storage is reached only through Core's
+ * own routes, so every request to it is same-origin, and its files are Core's own to remove.
  */
 async function resolveProviderAdapter(
   root: string,
@@ -206,7 +207,7 @@ async function resolveProviderAdapter(
   config: Record<string, unknown>,
   secretReference: string | null,
   readSecret: StorageSecretReader,
-): Promise<PhiMediaStorageCorsAdapter | null> {
+): Promise<PhiMediaStoragePolicyAdapter | null> {
   if (providerId === PHI_LOCAL_MEDIA_STORAGE_PROVIDER_ID) {
     return null;
   }
@@ -225,7 +226,7 @@ async function resolveProviderAdapter(
     providerId,
     siteKey: null,
     readSecret: () => (secretReference ? readSecret(secretReference) : Promise.resolve(null)),
-  }) as PhiMediaStorageCorsAdapter;
+  }) as PhiMediaStoragePolicyAdapter;
 }
 
 /**
@@ -270,16 +271,17 @@ async function resolveProbeAdapter(
  *
  * A presigned upload is a cross-origin request, and the rule lives in the storage itself -- the
  * browser's preflight never reaches this platform at all. Someone therefore has to push it, and after a
- * Profile changed is exactly when it is wrong. The derivation is shared with the Server; only the way a
- * Provider is reached differs.
+ * Profile changed is exactly when it is wrong. The same occasion writes the lifecycle rule, which is the
+ * only thing that ever stops paying for an upload nobody completed. The derivation is shared with the
+ * Server; only the way a Provider is reached differs.
  */
-export async function reconcileStorageCors(
+export async function reconcileStoragePolicies(
   root: string,
   pool: Pool,
   readSecret: StorageSecretReader,
 ) {
-  return reconcilePhiMediaStorageCorsWith(
-    await readStorageCorsProfiles(pool),
+  return reconcilePhiMediaStoragePoliciesWith(
+    await readStoragePolicyProfiles(root, pool),
     (profile) => resolveProviderAdapter(
       root,
       profile.providerId,
@@ -297,7 +299,10 @@ export async function reconcileStorageCors(
  * under the exemption in AGENTS.md and reads with the migration connection it already holds. The shared
  * core takes these rows and holds no SQL of its own, which is what keeps one derivation for both.
  */
-async function readStorageCorsProfiles(pool: Pool): Promise<PhiMediaStorageCorsProfile[]> {
+async function readStoragePolicyProfiles(
+  root: string,
+  pool: Pool,
+): Promise<PhiMediaStoragePolicyProfile[]> {
   const { rows } = await pool.query<{
     id: number; site_id: number; provider_id: string; config: Record<string, unknown>;
     secret_reference: string | null; site_key: string; public_base_url: string;
@@ -308,7 +313,9 @@ async function readStorageCorsProfiles(pool: Pool): Promise<PhiMediaStorageCorsP
      JOIN phis.sites s ON s.id = p.site_id
      ORDER BY p.id`,
   );
-  return rows.map((row): PhiMediaStorageCorsProfile => ({
+  // Read the same way the Server reads it, from the merged configuration rather than from a second default.
+  const storageKeyPrefix = readMergedPhiConfigSync(root).media?.storageKeyPrefix ?? "sites";
+  return rows.map((row): PhiMediaStoragePolicyProfile => ({
     id: row.id,
     siteId: row.site_id,
     siteKey: row.site_key,
@@ -316,6 +323,7 @@ async function readStorageCorsProfiles(pool: Pool): Promise<PhiMediaStorageCorsP
     config: row.config ?? {},
     secretReference: row.secret_reference,
     publicBaseUrl: row.public_base_url,
+    storageKeyPrefix,
   }));
 }
 
@@ -485,7 +493,7 @@ export async function addStorageProfile(
     // with nothing recorded cannot be given the upload plan that depends on the endpoint checking a
     // digest, and the operator would find that out as somebody else's failed upload.
     probe: await probeOneStorageProfile(root, pool, profile, readSecret),
-    cors: await reconcileStorageCors(root, pool, readSecret),
+    policies: await reconcileStoragePolicies(root, pool, readSecret),
   };
 }
 
@@ -534,7 +542,7 @@ export async function setStorageProfile(
     // describes somewhere else -- so it is replaced rather than left standing, even when the new
     // endpoint turns out to answer worse.
     probe: await probeOneStorageProfile(root, pool, profile, readSecret),
-    cors: await reconcileStorageCors(root, pool, readSecret),
+    policies: await reconcileStoragePolicies(root, pool, readSecret),
   };
 }
 

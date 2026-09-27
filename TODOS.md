@@ -37,20 +37,38 @@ tracked here because the server contract depends on them.
 - **Profile selection on the Site side.** `phis storage use` sets the Site Space only. Which profile a
   User or Group Space uses, the allowed list, and per-user User Space quota overrides need a Site
   administration surface over Core services, with no S3-specific UI or endpoint. A Site surface that
-  writes a profile reconciles bucket CORS through `reconcilePhiMediaStorageCorsWith`, as the CLI does.
+  writes a profile reconciles the bucket's CORS and lifecycle rules through
+  `reconcilePhiMediaStoragePoliciesWith`, as the CLI does.
 - **Presigned PUT versus proxied stream** has no setting; the S3 Provider always issues `presigned-put`.
 - **`max_object_bytes` does not know which path an object takes.** One Site number bounds a proxied
   body and a presigned PUT alike, although the two carry wildly different sizes. Making it
   Profile-aware means moving the size check in `uploads/init` after the Space resolution
   ([GROUPS_AND_STORAGE_PLANNED.md](./design/GROUPS_AND_STORAGE_PLANNED.md) section 6).
-- **Abandoned staging objects have no sweeper.** Expiry releases the reservation and leaves the object,
-  which `DB.md` now states correctly. The two owners the code names do not exist: the storage contract has
-  `applyCorsPolicy` and no lifecycle counterpart, so an S3 Profile cannot be given an expiry rule the way
-  it is given CORS through `reconcilePhiMediaStorageCorsWith`; and there is no operator command for the
-  Local Provider (`phis media check --fix` is about file ownership). Multipart is in use now, which makes
-  this urgent rather than untidy: an incomplete multipart upload is billed until it is aborted and does not appear in
-  `ListObjectsV2`, so the lifecycle rule it needs is `AbortIncompleteMultipartUpload`, reconciled the way
-  CORS already is.
+- **Abandoned staging objects and unfinished assemblies are cleaned up by the storage now, and what is left
+  is the Local Provider.** The storage contract has `applyLifecyclePolicy` beside `applyCorsPolicy`, and the
+  same occasion writes both: an abort rule for uploads nobody completed and an expiry rule for staged bodies,
+  reconciled whenever a Profile is written. Measured against Garage v2.3.0, and the rules are read back from
+  the bucket in the live suite. Expiry waits one day longer than an upload session may live, because a
+  lifecycle rule takes whole days and is evaluated asynchronously.
+
+  **The expiry sweep cleans up too, now that it can.** `releaseExpiredMediaUploadSessions` returns each
+  released session's Profile, staging key and the Provider's name for an unfinished assembly instead of only a
+  count -- the row being the only record of those, and deleting it being what frees the reservation. `init`
+  removes them after its response, over the Provider it already opened for that Space, and leaves sessions on
+  another Profile to that storage's rule. So the two layers divide the work: the sweep clears up while there
+  is traffic, the rule catches what no request ever comes back for.
+
+  Two things still open here:
+
+  - **The Local Provider needs no rule but still has a gap of its own.** It answers `applyLifecyclePolicy`
+    as a no-op, rightly: its files are Core's own and a lifecycle rule is for a storage Core cannot see into.
+    The expiry sweep now removes what it left, so the ordinary case is covered -- what is not is a staged file
+    whose session row was deleted before the sweep learned to return it, or one whose removal failed. Those
+    stay in `/var/phis/media`, and `phis media check --fix` is about ownership rather than about this.
+  - **A Provider that refuses the rule keeps its objects.** The reconciliation reports the two halves apart
+    and does not fail on the lifecycle one, which is right -- a storage without object lifecycle still has a
+    CORS rule worth writing -- but nothing then tells an operator that this particular storage will go on
+    accumulating. It is a line in `phis storage cors` output and nothing more.
 - **Digests for direct uploads, and what is left of it.** A body delivered straight to an S3 endpoint used
   to reach `finalize` with an `md5` read off the ETag, which duplicate detection never compares -- so no
   Asset stored through an S3 Profile was deduplicable, at any size. The Client now hashes before it asks
@@ -82,9 +100,16 @@ tracked here because the server contract depends on them.
     SHA-512 Profile cannot compare them, so the claim is dropped. Garage verifies a declared `SHA256` but
     accepts a wrong `SHA512`, so in practice no probed endpoint here chooses SHA-512 -- but a Profile could
     still be recorded that way, and then its large objects silently carry nothing.
-  - **The 2 GB transport ceiling is unchanged**: `nginx` caps a proxied body, and on this installation
-    `s3.phis.dev` sits behind `nginx` with the same limit, so the "single PUT up to 5 GB" figure does not
-    apply here. Multipart does not raise it, because the parts go to the same host.
+  - **The 2 GB ceiling is per request, so multipart clears it after all.** `nginx` caps a body at 2 GB on
+    `phis.dev` and on `s3.phis.dev` alike, so no single PUT passes it whatever S3 would allow -- but a part
+    is its own request of 16 MiB, so an assembled object is bounded by part size times
+    `PHIS_MEDIA_UPLOAD_MAX_PART_COUNT` (16 GiB before the part grows instead of the count) and not by nginx.
+    An earlier note here said the opposite.
+
+    What does bound it today is the Site's own `max_object_bytes`, and on this installation that is 128 MiB.
+    So multipart is in effect for bodies between 16 and 128 MiB until an operator raises the figure in the
+    Admin media settings -- which is where the entry above about that figure not knowing which transport
+    carries it becomes practical rather than theoretical.
 - **An S3 Profile whose endpoint is `http://` is unusable from an `https://` Site, and the error says
   nothing.** The browser blocks the presigned PUT as mixed content and the page sees `TypeError: Failed to
   fetch` -- not a CORS message, not a status, nothing naming the cause. `publicEndpoint` is what solves it

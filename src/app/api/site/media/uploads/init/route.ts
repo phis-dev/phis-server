@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+import { after, NextRequest, NextResponse } from "next/server";
 
 import {
   createMediaUploadSession,
@@ -31,11 +31,13 @@ import {
   requireMediaSpaceWriteContext,
 } from "@/lib/guards/site-media-api";
 import { phiMediaStorageProfileChecksumAlgorithm } from "@/lib/media-storage-profile-probe";
+import { PHI_MEDIA_UPLOAD_SESSION_TTL_MS } from "@/lib/media-storage-policies-core";
 import {
   buildPhiMediaUploadPlanChecksum,
   phiMediaUploadMayAssembleFromParts,
   readPhiMediaClientDigest,
 } from "@/lib/media-upload-digest";
+import { discardReleasedPhiMediaUploadStaging } from "@/lib/media-upload-staging";
 import { nextMediaError, readJsonBody } from "../_helpers";
 import { normalizeString } from "@/lib/helpers/request";
 import { PHIS_AREA_HEADER } from "@/lib/constants/http-headers";
@@ -290,9 +292,16 @@ export async function POST(request: NextRequest) {
       meta: { folderId, spaceId: space.id },
     });
   }
-  // Maintenance happens at the moment the resource is requested: whoever asks this Space for capacity
-  // first hands back the capacity its own expired sessions are still holding.
-  await releaseExpiredMediaUploadSessions(space.id);
+  /*
+   * Maintenance happens at the moment the resource is requested: whoever asks this Space for capacity
+   * first hands back the capacity its own expired sessions are still holding.
+   *
+   * What they left at the Provider comes back with them, because deleting the row is what frees the
+   * reservation and the row is also the only record of where the remains are. Removing them happens after
+   * the response -- this request is waiting for a plan, not for a storage to answer about objects that are
+   * no longer anybody's.
+   */
+  const released = await releaseExpiredMediaUploadSessions(space.id);
   if (!await reserveMediaSpaceQuota({ spaceId: space.id, bytes: size })) {
     return refuseUpload(request, actor, {
       reason: "media_quota_exceeded",
@@ -312,7 +321,7 @@ export async function POST(request: NextRequest) {
   const finalStorageKey = storageService.createStorageKey({
     siteKey: site.key,
   });
-  const expiresAt = new Date(Date.now() + 1000 * 60 * 60 * 24).toISOString();
+  const expiresAt = new Date(Date.now() + PHI_MEDIA_UPLOAD_SESSION_TTL_MS).toISOString();
   // How the body is to be delivered is the Provider's to state, not the Client's to assume. Core owns
   // its own route table, so the address it would receive a body at is handed over rather than guessed.
   /*
@@ -342,6 +351,39 @@ export async function POST(request: NextRequest) {
     ...planChecksum,
   });
   const uploadPlanKind = resolvePhiMediaUploadPlanKind(plan.kind);
+
+  /*
+   * The expired sessions' remains, cleaned up once this response is out.
+   *
+   * Here and not before it, because a storage call has no business delaying the plan this request came for.
+   * And here rather than nowhere, because the rows are already gone: what is not removed now is reachable
+   * only through the Provider's own lifecycle rule. Sessions naming another Profile are left to exactly
+   * that -- their objects are in another storage, and opening it would mean reading a secret on behalf of an
+   * upload that has nothing to do with it.
+   */
+  if (released.length > 0) {
+    after(async () => {
+      const outcome = await discardReleasedPhiMediaUploadStaging({
+        siteKey: site.key,
+        storageProfileId: profile.id,
+        profile,
+        sessions: released,
+      });
+      logRuntimeEvent(outcome.failed > 0 ? "warn" : "info", "media.upload.expired_staging_discarded", {
+        message:
+          `Removed ${outcome.discarded} of ${released.length} expired staging object(s) in Space ${space.id}.`,
+        siteKey: site.key,
+        meta: {
+          spaceId: space.id,
+          released: released.length,
+          discarded: outcome.discarded,
+          // On another Profile, so another storage's lifecycle rule is what reaches them.
+          skipped: outcome.skipped,
+          failed: outcome.failed,
+        },
+      });
+    });
+  }
   /*
    * Recorded on the session only where the plan actually carries it into the request.
    *

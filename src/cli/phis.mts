@@ -124,13 +124,14 @@ import { checkPhiMediaOwnership } from "./media-check.mts";
 import {
   addStorageProfile,
   listStorageProfiles,
-  reconcileStorageCors,
+  reconcileStoragePolicies,
   removeStorageProfile,
   probeStorageProfiles,
   resolvePhiStorageObjectAdapter,
   setStorageProfile,
   useStorageProfile,
 } from "./storage.mts";
+import { PHI_MEDIA_STORAGE_LIFECYCLE_DAYS } from "../lib/media-storage-policies-core.ts";
 import { restoreFirstPartyAuthPreset } from "../db/auth-preset.mts";
 import { importPhiAuthSecrets } from "../db/auth-secret-import.mts";
 import { buildPhiAuthSecretReference } from "../lib/secrets/reference.ts";
@@ -2695,7 +2696,7 @@ async function main() {
       cors: async () => ({
         ok: true,
         action: "storage.cors" as const,
-        storages: await reconcileStorageCors(configRoot, getPool(), readStorageSecret),
+        storages: await reconcileStoragePolicies(configRoot, getPool(), readStorageSecret),
       }),
       probe: () => probeStorageProfiles(configRoot, getPool(), flags, readStorageSecret),
     } as const;
@@ -2726,8 +2727,16 @@ async function main() {
       for (const storage of result.storages) {
         console.log(
           storage.applied
-            ? `${storage.identity}: ${storage.origins.join(" ") || "(no origin, rule removed)"}`
-            : `${storage.identity}: FAILED ${storage.error}`,
+            ? `${storage.identity}: CORS ${storage.origins.join(" ") || "(no origin, rule removed)"}`
+            : `${storage.identity}: CORS FAILED ${storage.error}`,
+        );
+        // Named apart, because a storage may take one rule and refuse the other -- and a missing lifecycle
+        // rule is what leaves an unfinished upload being paid for with nothing able to find it.
+        console.log(
+          storage.lifecycleApplied
+            ? `  lifecycle: abort unfinished uploads, expire staging under ` +
+              `${storage.stagingKeyPrefixes.join(" ") || "(nothing)"}`
+            : `  lifecycle: FAILED ${storage.lifecycleError}`,
         );
       }
     } else if (result.action === "storage.del") {
@@ -2751,11 +2760,18 @@ async function main() {
         `${result.action === "storage.add" ? "Added" : "Updated"} Storage Profile ` +
         `"${result.profile.key}" (#${result.profile.id}) on ${result.site}.`,
       );
-      for (const storage of result.cors) {
+      for (const storage of result.policies) {
         console.log(
           storage.applied
             ? `  CORS ${storage.identity}: ${storage.origins.join(" ") || "(no origin, rule removed)"}`
             : `  CORS ${storage.identity}: FAILED ${storage.error}`,
+        );
+        console.log(
+          storage.lifecycleApplied
+            ? `  lifecycle ${storage.identity}: unfinished uploads aborted after ` +
+              `${PHI_MEDIA_STORAGE_LIFECYCLE_DAYS} day(s), staging expired under ` +
+              `${storage.stagingKeyPrefixes.join(" ") || "(nothing)"}`
+            : `  lifecycle ${storage.identity}: FAILED ${storage.lifecycleError}`,
         );
       }
     }

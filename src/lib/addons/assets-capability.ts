@@ -39,6 +39,7 @@ import {
 } from "@/lib/media-upload-sessions";
 import { deleteStoredPhiMediaAsset } from "@/lib/media-asset-delete";
 import { createPhisMediaStorageServiceForProfile } from "@/lib/media-storage";
+import { PHI_MEDIA_UPLOAD_SESSION_TTL_MS } from "@/lib/media-storage-policies-core";
 import { phiMediaStorageProfileChecksumAlgorithm } from "@/lib/media-storage-profile-probe";
 import { sniffPhiMediaContentType } from "@/lib/media-content-sniffer";
 import { derivePhisAddonSchemaName } from "./schema-name.ts";
@@ -65,8 +66,12 @@ import { getPool } from "@/lib/db";
  * serves them, because they are Media Assets like any other.
  */
 
-/** How long a client has to deliver a body, matching what the Media upload session allows. */
-const RESERVATION_TTL_MS = 1000 * 60 * 60 * 24;
+/*
+ * How long a client has to deliver a body: the same figure the Media upload routes use, read from where the
+ * storage lifecycle rules are derived from it. Two copies of this number would mean a storage cleaning up
+ * after sessions that are still running, or long after they are gone.
+ */
+const RESERVATION_TTL_MS = PHI_MEDIA_UPLOAD_SESSION_TTL_MS;
 
 /** Enough to recognise a container. The Media finalize reads the same amount for the same reason. */
 const SNIFF_BYTES = 4096;

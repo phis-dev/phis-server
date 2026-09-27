@@ -787,24 +787,55 @@ export async function abortMediaUploadSessionByToken(token: string) {
  * The staging object each session left in storage is not chased here. That is what no request can
  * reach: for S3 it belongs to a bucket lifecycle rule, for Local to a deliberate operator command.
  */
-export async function releaseExpiredMediaUploadSessions(spaceId: number) {
-  if (!Number.isInteger(spaceId) || spaceId <= 0) return 0;
-  const { rows } = await getPool().query<{ released: number }>(
+/** What an expired session left at its Provider, which its row was the only record of. */
+export type PhiReleasedMediaUploadSession = {
+  storageProfileId: number;
+  stagingStorageKey: string;
+  /** Set only where the plan was an assembly, and then the remains are parts rather than an object. */
+  providerUploadId: string | null;
+};
+
+/**
+ * Releases what expired sessions of one Space were holding, and says what they left behind.
+ *
+ * The row is deleted here rather than after the storage was cleaned, because the reservation is what the
+ * caller is waiting for: an upload asking for capacity must not queue behind a Provider that may be slow or
+ * unreachable. But the row is also the only record of where the remains are -- the staging key, the Profile
+ * and the Provider's own name for an unfinished assembly -- so they are returned instead of being dropped.
+ * A caller that discards them leaves objects nothing can find afterwards; a storage lifecycle rule is then
+ * the only thing left, which is why one is written.
+ */
+export async function releaseExpiredMediaUploadSessions(
+  spaceId: number,
+): Promise<PhiReleasedMediaUploadSession[]> {
+  if (!Number.isInteger(spaceId) || spaceId <= 0) return [];
+  const { rows } = await getPool().query<{
+    storage_profile_id: number; staging_storage_key: string | null; provider_upload_id: string | null;
+  }>(
     `WITH expired AS (
        DELETE FROM phis.media_upload_sessions
        WHERE space_id = $1 AND expires_at < NOW()
-       RETURNING size_bytes
+       RETURNING size_bytes, storage_profile_id, staging_storage_key, provider_upload_id
      ), freed AS (
        SELECT COALESCE(SUM(size_bytes), 0)::bigint AS bytes, COUNT(*)::int AS sessions FROM expired
+     ), released AS (
+       UPDATE phis.media_spaces s
+       SET reserved_bytes = GREATEST(0, s.reserved_bytes - f.bytes), updated_at = NOW()
+       FROM freed f
+       WHERE s.id = $1 AND f.sessions > 0
+       RETURNING s.id
      )
-     UPDATE phis.media_spaces s
-     SET reserved_bytes = GREATEST(0, s.reserved_bytes - f.bytes), updated_at = NOW()
-     FROM freed f
-     WHERE s.id = $1 AND f.sessions > 0
-     RETURNING f.sessions AS released`,
+     -- The update has to be named in the statement or it never runs; the rows are the expired sessions.
+     SELECT e.storage_profile_id, e.staging_storage_key, e.provider_upload_id
+     FROM expired e
+     LEFT JOIN released r ON TRUE`,
     [spaceId],
   );
-  return rows[0]?.released ?? 0;
+  return rows.map((row) => ({
+    storageProfileId: row.storage_profile_id,
+    stagingStorageKey: row.staging_storage_key ?? "",
+    providerUploadId: row.provider_upload_id,
+  }));
 }
 
 /**

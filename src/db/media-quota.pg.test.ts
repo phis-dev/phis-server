@@ -119,7 +119,7 @@ describe("Media quota accounting against PostgreSQL", () => {
       await reserveMediaSpaceQuota({ spaceId, bytes: 400 });
       await createPhiTestUploadSession({ site, spaceId, actorUserId: userId, sizeBytes: 400, expiresInSeconds: -60 });
 
-      expect(await releaseExpiredMediaUploadSessions(spaceId)).toBe(1);
+      expect(await releaseExpiredMediaUploadSessions(spaceId)).toHaveLength(1);
       expect(await readPhiTestSpaceBytes(spaceId)).toEqual({ used: 0, reserved: 0 });
     });
 
@@ -128,7 +128,7 @@ describe("Media quota accounting against PostgreSQL", () => {
       await reserveMediaSpaceQuota({ spaceId, bytes: 400 });
       await createPhiTestUploadSession({ site, spaceId, actorUserId: userId, sizeBytes: 400, expiresInSeconds: 600 });
 
-      expect(await releaseExpiredMediaUploadSessions(spaceId)).toBe(0);
+      expect(await releaseExpiredMediaUploadSessions(spaceId)).toHaveLength(0);
       expect(await readPhiTestSpaceBytes(spaceId)).toEqual({ used: 0, reserved: 400 });
     });
 
@@ -138,7 +138,7 @@ describe("Media quota accounting against PostgreSQL", () => {
       await createPhiTestUploadSession({ site, spaceId, actorUserId: userId, sizeBytes: 400, expiresInSeconds: -60 });
 
       await releaseExpiredMediaUploadSessions(spaceId);
-      expect(await releaseExpiredMediaUploadSessions(spaceId)).toBe(0);
+      expect(await releaseExpiredMediaUploadSessions(spaceId)).toHaveLength(0);
       expect(await readPhiTestSpaceBytes(spaceId)).toEqual({ used: 0, reserved: 0 });
     });
 
@@ -168,7 +168,7 @@ describe("Media quota accounting against PostgreSQL", () => {
       await createPhiTestUploadSession({ site, spaceId: own, actorUserId: userId, sizeBytes: 100, expiresInSeconds: -60 });
       await createPhiTestUploadSession({ site, spaceId: other, actorUserId: userId, sizeBytes: 100, expiresInSeconds: -60 });
 
-      expect(await releaseExpiredMediaUploadSessions(own)).toBe(1);
+      expect(await releaseExpiredMediaUploadSessions(own)).toHaveLength(1);
       expect(await readPhiTestSpaceBytes(other)).toEqual({ used: 0, reserved: 100 });
     });
   });
@@ -197,7 +197,7 @@ describe("Media quota accounting against PostgreSQL", () => {
 
       await commitMediaUploadSessionByToken(token);
 
-      expect(await releaseExpiredMediaUploadSessions(spaceId)).toBe(0);
+      expect(await releaseExpiredMediaUploadSessions(spaceId)).toHaveLength(0);
       expect(await readPhiTestSpaceBytes(spaceId)).toEqual({ used: 300, reserved: 0 });
     });
 

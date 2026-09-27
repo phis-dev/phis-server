@@ -9,6 +9,7 @@ import { pipeline } from "node:stream/promises";
 
 import { resolvePhiAppPath } from "./app-paths";
 import { readMergedPhiConfigSync } from "./config-files";
+import { buildPhiMediaUploadStagingKeyPrefix } from "./media-storage-policies-core";
 import { resolvePhiSecret } from "./secrets/resolver";
 
 /**
@@ -37,6 +38,7 @@ export type {
 export { PHI_LOCAL_MEDIA_STORAGE_PROVIDER_ID } from "@phis/contracts/addon";
 
 import type {
+  PhisMediaLifecyclePolicy,
   PhiMediaUploadCompletionInput,
   PhiMediaUploadPlan,
   PhiMediaUploadPlanInput,
@@ -184,7 +186,12 @@ export function buildPhisMediaUploadTempStorageKey(input: {
     throw new Error("Missing upload token for upload temp storage key.");
   }
 
-  const storageKeyPrefix = normalizeStorageKeyPrefix(input.storageKeyPrefix ?? "sites");
+  // The prefix comes from the shared helper, which the storage lifecycle rule also uses: one shape, so a
+  // rule that expires staged objects points at the keys this actually writes.
+  const stagingPrefix = buildPhiMediaUploadStagingKeyPrefix({
+    storageKeyPrefix: input.storageKeyPrefix,
+    siteKey: input.siteKey,
+  });
   const ext = path.extname(input.originalName).trim().toLowerCase();
   const nameStem =
     path
@@ -194,9 +201,7 @@ export function buildPhisMediaUploadTempStorageKey(input: {
       .replace(/[^a-z0-9]+/g, "-")
       .replace(/^-+|-+$/g, "")
       .slice(0, 48) || "asset";
-  return normalizeStorageKey(
-    `${storageKeyPrefix}/uploads-temp/${siteKey}/${token}/${nameStem}${ext}`,
-  );
+  return normalizeStorageKey(`${stagingPrefix}${token}/${nameStem}${ext}`);
 }
 
 export class PhisLocalMediaStorageAdapter implements PhisMediaStorageAdapter {
@@ -565,6 +570,18 @@ export class PhisLocalMediaStorageAdapter implements PhisMediaStorageAdapter {
   }
 
   /**
+   * Nothing to hand over either: these files are Core's own.
+   *
+   * A lifecycle rule exists because a remote storage holds things Core cannot see -- parts of an upload
+   * nobody completed, billed and unlistable. Here every byte sits in a directory Core owns, an unfinished
+   * upload is a file it wrote itself, and what removes it is an operator command rather than a rule the
+   * storage enforces on its own.
+   */
+  async applyLifecyclePolicy(): Promise<void> {
+    return;
+  }
+
+  /**
    * Answers about the directory, and answers `verifiesSha256: false` without trying.
    *
    * Not a shortcoming. The question is whether a *remote* endpoint checks what a client claims, and
@@ -785,6 +802,11 @@ export class PhisMediaStorageService {
   /** States which browser origins may deliver a body straight to this Provider. */
   async applyCorsPolicy(origins: readonly string[]) {
     return this.adapter.applyCorsPolicy(origins);
+  }
+
+  /** States what the storage is to clean up by itself, because Core cannot see it. */
+  async applyLifecyclePolicy(policy: PhisMediaLifecyclePolicy) {
+    return this.adapter.applyLifecyclePolicy(policy);
   }
 }
 
