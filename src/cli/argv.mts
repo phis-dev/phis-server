@@ -50,6 +50,11 @@ export const PHIS_COMMAND_FLAGS: Record<string, FlagSpec> = {
   "schema apply": {},
   "schema drop": { force: B },
 
+  "db bootstrap": {
+    "admin-uri": S, name: S, database: S, role: S, "migration-role": S,
+    password: S, "migration-password": S, force: B,
+  },
+
   "site list": { key: S },
   "site add": {
     key: S, name: S, hostname: S, "public-base-url": S, "source-locale": S, "default-locale": S,

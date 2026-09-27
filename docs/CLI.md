@@ -13,6 +13,7 @@ For a first installation, read [INSTALL.md](./INSTALL.md) instead; it runs these
 - [The phis root and its files](#the-phis-root-and-its-files)
 - [What a command needs](#what-a-command-needs)
 - [config](#config)
+- [db](#db)
 - [schema](#schema)
 - [site](#site)
 - [init, reconcile, update (Site scaffold)](#init-reconcile-update-site-scaffold)
@@ -123,14 +124,15 @@ All paths are relative to the root.
 
 The CLI writes `phis-runtime.json` through a temporary file and a rename. A running server caches the
 merged configuration for up to four hours; restart it after a CLI command that changes
-`phis-runtime.json` (`operator add|passwd|enable|disable|del`, `site add|del` and `site config
-set|add|del` for `sites.overrides`, `secret init-key`, `auth import-secrets`), or the running server
-keeps the old values for up to four hours.
+`phis-runtime.json` (`db bootstrap`, `operator add|passwd|enable|disable|del`, `site add|del` and `site
+config set|add|del` for `sites.overrides`, `secret init-key`, `auth import-secrets`), or the running
+server keeps the old values for up to four hours.
 
 ## What a command needs
 
 | Needs | Commands |
 | --- | --- |
+| An administrative database connection, passed in | `db bootstrap` — it creates what every row below already expects to exist |
 | Configuration files only | `config`, `operator`, `secret init-key`, `module list`, `addon list|check|install|upgrade|enable|disable|remove|forget`, `site config set|add|del` (also read the Site row, so a database), `licenses check` |
 | `database.uri` (serving role) | `schema check|apply`, all `site` commands except `config set|add|del`, `init|reconcile|update`, `module add|del|sync|check`, `addon reconcile|site|config|role|owner|storage|job`, `storage`, `secret set|check|list|del`, `auth`, `media check`, `maintain`, `instance` |
 | `database.migrationUri` (migration role) | `schema drop --force`, `addon migrate`, `addon purge` |
@@ -162,6 +164,40 @@ retired `auth.secrets` field. Exits `1` on any issue. JSON: `{ok, staticError, r
 
 It does not check that required values are present; a missing `database.uri` is reported by the
 first command that needs it.
+
+## db
+
+### `phis db bootstrap --admin-uri <postgres uri>`
+
+Creates the database this installation is applied to, the two roles that own parts of it, and writes both
+connection strings into `phis-runtime.json`. The step before `schema apply`, and the only one that needs a
+connection of its own: `--admin-uri` is a connection allowed to create databases and roles, which is not
+either of the roles being created.
+
+Names are derived from `--name`, so one installation's three are recognisably related:
+`--name prod` gives the database `phis_prod`, the serving role `phis_prod_user` and the migration role
+`phis_prod_migrator`. Without `--name` they are `phis`, `phis_user` and `phis_migrator`. `--database`,
+`--role` and `--migration-role` name any of the three outright, and are taken as typed rather than folded.
+Passwords are generated unless `--password` or `--migration-password` gives one.
+
+Two roles because ownership is split: the serving role owns the Core schema `phis`, the migration role owns
+the schemas of server Add-ons, and neither can drop what the other made. `schema apply` grants the migration
+role what Add-on migrations need, reading its name out of `database.migrationUri`.
+
+Creating is idempotent and reports what it found rather than made. `--force` guards the configuration, not
+the database: a role that already exists has its password set — there is no reading one back — so a second
+run without `--force` is refused rather than handing a running server connection strings it is not using.
+
+`--admin-uri` must name a host. A local socket connection (`postgresql:///postgres?host=...`) carries none,
+and the connection strings written from it have to be ones the CLI can parse back.
+
+Where the administrative connection is not a superuser — a managed database, typically — the command first
+grants itself the right to assume the serving role, because `CREATE DATABASE ... OWNER` requires it and
+PostgreSQL 16 separated administering a role from assuming it. A superuser is left alone.
+
+The written file holds two passwords. The command does not change its mode or owner: run as root against a
+remote database, the file belongs to root, and the server runs as another account. Set mode `0600` and the
+owner the server runs as.
 
 ## schema
 

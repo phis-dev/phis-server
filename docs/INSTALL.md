@@ -48,6 +48,19 @@ examples below assume the variable is exported.
 Create the two database roles and the database. The serving role owns the Core schema `phis`; the
 migration role owns the schemas of server Add-ons. Both need `CREATE` on the database.
 
+`phis db bootstrap` does this, once the server is installed — step 2 below, after which:
+
+```sh
+phis db bootstrap --admin-uri postgres://<admin>@<host>:5432/postgres --name prod
+```
+
+It creates `phis_prod`, `phis_prod_user` and `phis_prod_migrator`, generates a password for each, and writes
+both connection strings into `config/phis-runtime.json`, so step 2's table does not ask for them again
+([CLI.md](./CLI.md#phis-db-bootstrap---admin-uri-postgres-uri)). `--admin-uri` is a connection allowed to
+create databases and roles, and it must name a host; it need not be a superuser.
+
+By hand, equivalently:
+
 ```sql
 CREATE ROLE phis_prod_user LOGIN PASSWORD '<serving password>';
 CREATE ROLE phis_prod_migrator LOGIN PASSWORD '<migration password>';

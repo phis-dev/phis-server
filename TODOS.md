@@ -240,6 +240,16 @@ tracked here because the server contract depends on them.
   loses its cache handler. The projection is the place it belongs -- a generated list of the installed
   package names that the scaffold's `next.config.ts` spreads into `transpilePackages`, so the list follows
   what is installed instead of the operator's memory.
+- **Nothing sets the mode or the owner of `phis-runtime.json`.** `docs/INSTALL.md` states that the file holds
+  secrets and wants mode `0600` owned by the service account, and `writePhiRuntimeConfigSync` writes it
+  through a temporary file and a rename without touching either -- so its permissions are whatever the
+  umask of whoever ran the command produced. `db bootstrap` made this visible by writing two generated
+  passwords into it, and says so in its output rather than acting, because the right answer is not obvious
+  from inside: a CLI run as root against a remote database would leave a file the server cannot read if it
+  set `0600` alone, and it does not know which account the server is. Either the runtime configuration
+  carries its own expectation -- an owner in `phis-config.json`, checked and set on every write -- or
+  `config validate` reports a file that is readable by more than the service account. Not both, and not a
+  `chmod` buried in a writer.
 - **One first-install flow.** A new Site needs `phis site add` before `phis init`. Provide one documented,
   transactional CLI flow that registers and validates the Site and then materializes its scaffold, leaving
   neither a partially registered Site nor a partial source tree on failure.

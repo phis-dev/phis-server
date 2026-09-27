@@ -82,6 +82,7 @@ import {
   checkPhiCoreSchema,
   readPhiMigrationRoleName,
 } from "./schema.mts";
+import { bootstrapPhiDatabase } from "./db-bootstrap.mts";
 import {
   inspectSiteModulePackage,
   type PhiSiteModulePackageReport,
@@ -223,6 +224,10 @@ Usage:
   phis config
   phis config paths
   phis config validate
+
+  phis db bootstrap --admin-uri <postgres uri> [--name <installation>] [--database <name>]
+                    [--role <name>] [--migration-role <name>]
+                    [--password <pw>] [--migration-password <pw>] [--force]
 
   phis schema check
   phis schema apply
@@ -1465,6 +1470,84 @@ async function runCoreSchemaCommand(
   }
 
   throw new Error(`Unknown schema command: ${command}. Use check, apply or drop.`);
+}
+
+/**
+ * Creating the database everything else here assumes, and recording how to reach it.
+ *
+ * The step before `schema apply`, and until now the only one an operator ran by hand: four statements out of
+ * `docs/INSTALL.md`, with the two roles and the grant that are easy to get subtly wrong. What arrives from
+ * the flags is an administrative connection; what is written back are two connection strings, and nothing
+ * about either is guessed.
+ *
+ * `--force` guards the configuration rather than the database. Creating is idempotent and says what it
+ * found, but a role that already exists has its password set -- there is no reading one back -- so a second
+ * run would hand a running server a connection string it is not using. Refusing unless asked is the
+ * difference between repeating a bootstrap and breaking an installation.
+ */
+async function runDatabaseBootstrapCommand(flags: FlagMap, json: boolean) {
+  const paths = getConfigPaths();
+  const runtime = readPhiRuntimeConfigSync(configRoot);
+  const force = flags.get("force") === true;
+  if (runtime.database?.uri?.trim() && !force) {
+    throw new Error(
+      `${paths.runtime} already names a database. Bootstrapping again would set the roles' passwords `
+        + "and write connection strings the running server is not using. Pass --force to replace them.",
+    );
+  }
+
+  const result = await bootstrapPhiDatabase({
+    adminUri: getRequiredFlag(flags, "admin-uri"),
+    name: getOptionalFlag(flags, "name"),
+    database: getOptionalFlag(flags, "database"),
+    servingRole: getOptionalFlag(flags, "role"),
+    migrationRole: getOptionalFlag(flags, "migration-role"),
+    password: getOptionalFlag(flags, "password"),
+    migrationPassword: getOptionalFlag(flags, "migration-password"),
+  });
+
+  writePhiRuntimeConfigSync({
+    ...runtime,
+    database: { ...runtime.database, uri: result.uri, migrationUri: result.migrationUri },
+  }, configRoot);
+
+  if (json) {
+    /*
+     * The two URIs carry the passwords this run set, so they are not in the result. What a caller
+     * automating this needs is where they went and what was found rather than made; the file is the one
+     * place they exist.
+     */
+    printJson({
+      ok: true,
+      action: "db.bootstrap",
+      database: result.databaseName,
+      servingRole: result.servingRole,
+      migrationRole: result.migrationRole,
+      existing: result.existing,
+      runtimeConfig: paths.runtime,
+    });
+    return;
+  }
+
+  const verb = (existed: boolean) => (existed ? "took over" : "created");
+  console.log(`${verb(result.existing.database)} database ${result.databaseName}`);
+  console.log(`${verb(result.existing.servingRole)} serving role ${result.servingRole}, which owns phis`);
+  console.log(
+    `${verb(result.existing.migrationRole)} migration role ${result.migrationRole}, `
+      + "which owns the Add-on schemas",
+  );
+  console.log(`Wrote database.uri and database.migrationUri to ${paths.runtime}.`);
+  /*
+   * Said rather than done, because doing it is the one thing this command must not get wrong. Run as root
+   * against a remote database -- the ordinary case, since the administrative connection is root's -- the
+   * file it just wrote belongs to root, and the server runs as somebody else and would stop reading its own
+   * configuration. `docs/INSTALL.md` states the mode and the owner it wants; the operator is the one who
+   * knows which account that is here.
+   */
+  console.log(
+    "It holds two passwords: check that it is mode 0600 and owned by the account the server runs as.",
+  );
+  console.log("Next: phis schema apply");
 }
 
 /**
@@ -2883,6 +2966,11 @@ async function main() {
 
   if (group === "schema") {
     await runCoreSchemaCommand(command, json, flags.get("force") === true);
+    return;
+  }
+
+  if (group === "db" && command === "bootstrap") {
+    await runDatabaseBootstrapCommand(flags, json);
     return;
   }
 
