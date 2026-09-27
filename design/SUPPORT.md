@@ -267,13 +267,20 @@ they have one left and then turned away.
    requestable flag in the contract.~~ Built, apart from a surface in `@phis/support` to drive it.
 2. ~~The types listing and the requester route, with the `External` notice.~~ Built.
 3. ~~The allowance, and the three calls on `support:v1` that let somebody else hand over more.~~ Built.
-4. Attachments on a submission, once [THREADS.md](./THREADS.md) section 5 is built.
+4. Attachments on a submission. [THREADS.md](./THREADS.md) section 5 is built, so nothing stands in
+   front of this any more: what it needs is the requester route taking a file and the User Space of
+   section 3 to take it into.
 5. Custody transfer on acceptance into a queue.
 
 Step 1 was first because both of the others fail without it, and its seeded half is what turns a Site
 with the Module switched on into a Site that can answer anybody at all. Step 3 could come before the
-attachments because it is about who may ask rather than about what they may bring. What remains is steps
-4 and 5, and both wait on [THREADS.md](./THREADS.md) section 5.
+attachments because it is about who may ask rather than about what they may bring.
+
+What remains is steps 4 and 5, and they no longer wait on the same thing. Step 4 waited on
+[THREADS.md](./THREADS.md) section 5 and that is built -- a message carries files, the delivery route
+exists, and the composer offers one -- so step 4 is work nobody is blocking. Step 5 waits on
+[GROUPS_AND_STORAGE_PLANNED.md](./GROUPS_AND_STORAGE_PLANNED.md) section 2, which is a mechanism Support
+is the first caller of rather than something Support can build for itself.
 
 Nothing in any of this has a surface. Setting a limit, handing somebody a stock and seeing what one has
 left are all HTTP, as the queue and type administration is: `@phis/support` still has no administration

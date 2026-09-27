@@ -1,12 +1,17 @@
 # Threads: Planned Design
 
-**Status: sections 1 to 3 of the order in section 15 are built, and section 4 is under way.** The
-schema, the visibility predicate, `/api/site/threads`, the recut `threads:v1`, `resource-links:v1`,
-verified hooks and the event outbox are in the server; [DB.md](../DB.md) holds the tables and
-[SERVER_ADDONS.md](../SERVER_ADDONS.md) sections 8, 10, 13 and 18 hold the contracts. What is described
-here and is **not** built is the rest of step 4 -- the inbox and the candidates picker of
-`@phis/ui/threads`, `@phis/support` on the new model, the group flags in the groups Module -- and step
-6, `@phis/github`. Step 5, attachments, is built.
+**Status: every step of the order in section 15 is built except step 6, `@phis/github`.** The schema,
+the visibility predicate, `/api/site/threads`, the recut `threads:v1`, `resource-links:v1`, verified
+hooks and the event outbox are in the server; [DB.md](../DB.md) holds the tables and
+[SERVER_ADDONS.md](../SERVER_ADDONS.md) sections 8, 10, 13 and 18 hold the contracts. Step 4 arrived
+differently from how it was planned, and section 15 says how: the listing is a generic Table over a data
+provider and the composer is two Forms, so the Module contributes one Widget where three were expected.
+Attachments carry, and a message can be read in the reader's own language.
+
+What is described here and is not built, besides step 6, is the custody transfer an accepted attachment
+would pass through. That is [GROUPS_AND_STORAGE_PLANNED.md](./GROUPS_AND_STORAGE_PLANNED.md) section 2,
+it is stated where it arises in section 5, and Support is its first caller
+([SUPPORT.md](./SUPPORT.md)).
 
 Decisions taken while writing this are stated where they apply. One question is deliberately left open
 and is named where it arises: whether an attachment on an `External` ticket is mirrored outward, which
@@ -833,20 +838,26 @@ nothing can say what a support agent actually read. That is accepted, not overlo
 
 ## 15. Order
 
-1. Contracts: `threads.ts`, `PhiBaseRole.Staff`, group flags, ticket type flags and close policies,
-   `resource-links:v1`, hook `verification`, `eventHandlers`.
-2. Schema sweep: threads, participants on groups, queues, ticket types, ticket messages into threads,
-   `resource_links`; the predicate of section 7.
-3. Core surfaces: `/api/site/threads`, `threads:v1` recut, `resource-links:v1`, verified hooks, the
-   event outbox, the snapshot fix.
-4. Modules: `@phis/ui/threads` -- the Module, its composer and its conversation exist, the inbox and the
-   candidates picker do not -- `@phis/support` on the new model, group flags in the groups Module.
+1. ~~Contracts: `threads.ts`, `PhiBaseRole.Staff`, group flags, ticket type flags and close policies,
+   `resource-links:v1`, hook `verification`, `eventHandlers`.~~ Built.
+2. ~~Schema sweep: threads, participants on groups, queues, ticket types, ticket messages into threads,
+   `resource_links`; the predicate of section 7.~~ Built.
+3. ~~Core surfaces: `/api/site/threads`, `threads:v1` recut, `resource-links:v1`, verified hooks, the
+   event outbox, the snapshot fix.~~ Built.
+4. ~~Modules: `@phis/ui/threads`, `@phis/support` on the new model, group flags in the groups Module.~~
+   Built, and not as drawn. The conversation is the Module's one Widget; the inbox is a generic Table
+   over a data provider on `/api/site/threads`, and the candidates picker an options provider on
+   `/api/site/threads/candidates`, so neither is a surface of this Module's own. The composer is two
+   Forms, "New conversation" and "Reply". What a Site can take apart and rearrange is the reason: a
+   bespoke inbox Widget would have been a listing only this Module could place. `@phis/support` reads
+   Core's threads, and `threads` and `crossGroupThreads` are editable group flags.
 5. ~~Attachments: `thread_message_assets`, the delivery route, the Asset delete path, and
    `@phis/support` declaring the User Space ([SUPPORT.md](./SUPPORT.md)).~~ Built, `threads:v1`
-   included. What is not is the composer that offers one: it lives in `@phis/ui/threads`, step 4.
+   included, and the composer offers one: the reply Form carries the upload field.
 6. `@phis/github`.
-7. The message language of section 14: the column, the capability that says whether this installation
-   can translate, and the route that translates one message and stores nothing.
+7. ~~The message language of section 14: the column, the capability that says whether this installation
+   can translate, and the route that translates one message and stores nothing.~~ Built, out of order:
+   it was cheap once the routes existed, and step 6 is the larger piece.
 
 Step 7 is last because it is the only one that is worth nothing on its own. A stored language is read
 by a surface offering a choice, and there is no reason to translate a message until people are writing
