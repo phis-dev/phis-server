@@ -8,6 +8,7 @@ import {
 import { getSiteRuntimeConfig } from "@/db/sites";
 import {
   PHI_AUTH_PROVIDER_CATALOG,
+  buildAuthInstallationConfig,
   deriveAuthInstallationIssuer,
   findAuthProviderCatalogEntry,
   listSerializedAuthInstallations,
@@ -78,11 +79,11 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "installationKey is already in use." }, { status: 409 });
   }
 
-  const config: Record<string, unknown> = {};
-  if (catalogEntry.tenantMode) {
-    const tenant = normalizeString(body.tenant).toLowerCase() || "common";
-    config.tenant = tenant;
+  const configResult = buildAuthInstallationConfig(catalogEntry, {}, body);
+  if ("error" in configResult) {
+    return NextResponse.json({ error: configResult.error }, { status: 400 });
   }
+  const { config } = configResult;
   const issuer = deriveAuthInstallationIssuer(catalogEntry.providerKey, config);
   if (!issuer) {
     return NextResponse.json({ error: "Invalid provider tenant." }, { status: 400 });

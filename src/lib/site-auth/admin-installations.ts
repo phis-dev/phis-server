@@ -11,6 +11,7 @@ import {
 } from "@/db/site-auth";
 import { getSiteRuntimeConfig } from "@/db/sites";
 import {
+  buildAuthInstallationConfig,
   deriveAuthInstallationIssuer,
   findAuthProviderCatalogEntry,
   listSerializedAuthInstallations,
@@ -59,10 +60,11 @@ export async function applyAuthInstallationPatch(
     return NextResponse.json({ error: "sortOrder must be an integer." }, { status: 400 });
   }
 
-  const config = { ...existing.config };
-  if (catalogEntry.tenantMode && body.tenant !== undefined) {
-    config.tenant = normalizeString(body.tenant).toLowerCase() || "common";
+  const configResult = buildAuthInstallationConfig(catalogEntry, existing.config, body);
+  if ("error" in configResult) {
+    return NextResponse.json({ error: configResult.error }, { status: 400 });
   }
+  const { config } = configResult;
   const issuer = deriveAuthInstallationIssuer(existing.providerKey, config);
   if (!issuer) {
     return NextResponse.json({ error: "Invalid provider tenant." }, { status: 400 });

@@ -11,6 +11,7 @@ import {
   PHI_GITHUB_IDENTITY_ISSUER,
   PHI_OIDC_PROVIDER_ISSUERS,
   buildMicrosoftIssuer,
+  readPhiAuthConfigList,
 } from "@/lib/site-auth/contracts";
 import { hasSiteAuthSecrets, readSiteAuthSecret } from "@/lib/site-auth/secret-store";
 import { normalizeString } from "@/lib/helpers/request";
@@ -19,18 +20,60 @@ import { normalizeString } from "@/lib/helpers/request";
  * Server-owned provider catalog (AUTHENTICATION.md section 8). The test capability is
  * per-provider metadata: Microsoft supports a real client-credentials round trip; Google and
  * Apple expose OIDC discovery; GitHub has no usable probe and reports not-testable.
+ *
+ * `restrictionKey` is the one thing a provider can be narrowed by, under the name the provider flow
+ * reads it as: Google answers with an `hd` claim and is narrowed by hosted domain, GitHub is asked
+ * whether the account is an active member of an organization. Apple emits no such claim and Microsoft
+ * narrows through its tenant instead, so neither takes one -- and a restriction stored under a name
+ * nobody reads is worse than none, because it reads like a closed door that is open.
+ *
+ * `promptMode` is whether the authorization request carries an OAuth `prompt`. The OIDC providers pass
+ * it through; GitHub's authorize endpoint has no such parameter.
  */
 export const PHI_AUTH_PROVIDER_CATALOG = [
-  { providerKey: "google", label: "Google", tenantMode: false, testCapability: "discovery" },
-  { providerKey: "apple", label: "Apple", tenantMode: false, testCapability: "discovery" },
-  { providerKey: "github", label: "GitHub", tenantMode: false, testCapability: "none" },
-  { providerKey: "microsoft", label: "Microsoft", tenantMode: true, testCapability: "roundtrip" },
+  {
+    providerKey: "google",
+    label: "Google",
+    tenantMode: false,
+    testCapability: "discovery",
+    restrictionKey: "hostedDomains",
+    promptMode: true,
+  },
+  {
+    providerKey: "apple",
+    label: "Apple",
+    tenantMode: false,
+    testCapability: "discovery",
+    restrictionKey: null,
+    promptMode: true,
+  },
+  {
+    providerKey: "github",
+    label: "GitHub",
+    tenantMode: false,
+    testCapability: "none",
+    restrictionKey: "allowedOrganizations",
+    promptMode: false,
+  },
+  {
+    providerKey: "microsoft",
+    label: "Microsoft",
+    tenantMode: true,
+    testCapability: "roundtrip",
+    restrictionKey: null,
+    promptMode: true,
+  },
 ] as const;
 
 export type PhiAuthProviderCatalogEntry = (typeof PHI_AUTH_PROVIDER_CATALOG)[number];
 
 export function findAuthProviderCatalogEntry(providerKey: string) {
   return PHI_AUTH_PROVIDER_CATALOG.find((entry) => entry.providerKey === providerKey) ?? null;
+}
+
+/** The config key this provider's login restriction is stored under, or `null` where it has none. */
+function catalogRestrictionKey(providerKey: string) {
+  return findAuthProviderCatalogEntry(providerKey)?.restrictionKey ?? null;
 }
 
 export function normalizeAuthInstallationKey(value: unknown) {
@@ -52,6 +95,92 @@ export function deriveAuthInstallationIssuer(providerKey: string, config: Record
     return buildMicrosoftIssuer(tenant.toLowerCase());
   }
   return null;
+}
+
+/**
+ * One writer for an installation's provider config, shared by the create and the update route.
+ *
+ * Everything the provider flow reads out of `config` is written here and nowhere else. It was written
+ * nowhere at all for a long time: the two routes each built a fresh `config` object and set `tenant` on
+ * it, so `scopes`, the per-provider restriction, `prompt` and `trustedEmailLink` were read at every
+ * login and settable only by editing the JSON document in the database by hand. A restriction that can
+ * only be written out of band is a restriction nobody sets.
+ *
+ * A stated key the provider has no use for is refused rather than stored: a `tenant` on GitHub or an
+ * organization on Apple would sit in the document looking like configuration and do nothing. Stated is
+ * the word that matters -- the Admin Form posts one body for every provider and leaves the fields that
+ * do not apply empty, and an empty field says nothing rather than saying the wrong thing. An empty
+ * field on a provider that does have the setting clears it, which is how a list is removed: absent and
+ * empty are one answer, and the provider flow then falls back to its own default scope.
+ */
+export function buildAuthInstallationConfig(
+  catalogEntry: PhiAuthProviderCatalogEntry,
+  base: Record<string, unknown>,
+  body: Record<string, unknown>,
+): { config: Record<string, unknown> } | { error: string } {
+  const config = { ...base };
+
+  if (!catalogEntry.tenantMode && normalizeString(body.tenant)) {
+    return { error: `${catalogEntry.label} installations take no tenant.` };
+  }
+  if (catalogEntry.tenantMode) {
+    /*
+     * A tenant-mode provider always carries one, because the issuer is derived from it. Absent on
+     * create means `common`; absent on update means the one already stored stands.
+     */
+    const stated = body.tenant === undefined ? normalizeString(config.tenant) : normalizeString(body.tenant);
+    config.tenant = (stated || "common").toLowerCase();
+  }
+
+  if (body.scopes !== undefined) {
+    const scopes = readPhiAuthConfigList(body.scopes);
+    if (!scopes) {
+      return { error: "scopes must be a list of words or a separated string." };
+    }
+    if (scopes.length > 0) {
+      config.scopes = scopes;
+    } else {
+      delete config.scopes;
+    }
+  }
+
+  if (body.restrictions !== undefined) {
+    const restrictions = readPhiAuthConfigList(body.restrictions);
+    if (!restrictions) {
+      return { error: "restrictions must be a list of words or a separated string." };
+    }
+    if (!catalogEntry.restrictionKey) {
+      if (restrictions.length > 0) {
+        return { error: `${catalogEntry.label} installations take no login restriction.` };
+      }
+    } else if (restrictions.length > 0) {
+      config[catalogEntry.restrictionKey] = restrictions;
+    } else {
+      delete config[catalogEntry.restrictionKey];
+    }
+  }
+
+  const prompt = normalizeString(body.prompt);
+  if (body.prompt !== undefined) {
+    if (!catalogEntry.promptMode) {
+      if (prompt) {
+        return { error: `${catalogEntry.label} installations take no prompt.` };
+      }
+    } else if (prompt) {
+      config.prompt = prompt;
+    } else {
+      delete config.prompt;
+    }
+  }
+
+  if (body.trustedEmailLink !== undefined) {
+    if (typeof body.trustedEmailLink !== "boolean") {
+      return { error: "trustedEmailLink must be a boolean." };
+    }
+    config.trustedEmailLink = body.trustedEmailLink;
+  }
+
+  return { config };
 }
 
 /**
@@ -82,6 +211,7 @@ export function serializeAuthInstallation(
   configuredSecrets: ReadonlySet<string>,
   linkedIdentities = 0,
 ) {
+  const restrictionKey = catalogRestrictionKey(installation.providerKey);
   return {
     installationKey: installation.installationKey,
     providerKey: installation.providerKey,
@@ -89,6 +219,18 @@ export function serializeAuthInstallation(
     clientId: installation.clientId,
     enabled: installation.enabled,
     tenant: typeof installation.config.tenant === "string" ? installation.config.tenant : null,
+    /*
+     * The config, in the shape the Admin Form edits it in: one field per setting, a list as the words
+     * an operator typed. Serialized for every provider, `null` where the provider has no such setting,
+     * so the row says "not applicable here" rather than "empty" -- the Form's own field is what decides
+     * whether it is offered.
+     */
+    scopes: readPhiAuthConfigList(installation.config.scopes)?.join(" ") ?? "",
+    restrictions: restrictionKey
+      ? readPhiAuthConfigList(installation.config[restrictionKey])?.join(" ") ?? ""
+      : null,
+    prompt: typeof installation.config.prompt === "string" ? installation.config.prompt : null,
+    trustedEmailLink: installation.config.trustedEmailLink === true,
     callbackOrigin: installation.callbackOrigin,
     callbackUri: buildAuthInstallationCallbackUrl(sitePublicUrl, installation),
     secretStatus:

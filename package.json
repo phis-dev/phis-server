@@ -22,6 +22,7 @@
     "build": "next build",
     "typecheck": "tsc --noEmit",
     "build:cli": "node scripts/build-cli.mjs",
+    "auth:config-keys": "node scripts/validate-auth-installation-config-keys.mjs",
     "db:boundary": "node scripts/validate-db-sql-boundary.mjs",
     "docs:api": "node scripts/generate-api-reference.mjs",
     "docs:api:check": "node scripts/generate-api-reference.mjs --check",

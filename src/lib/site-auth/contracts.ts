@@ -90,6 +90,31 @@ export function buildMicrosoftIssuer(tenant: string) {
   return `${PHI_MICROSOFT_IDENTITY_ORIGIN}/${encodeURIComponent(tenant)}/v2.0`;
 }
 
+/**
+ * A list in a provider installation's config, read in the one shape it is stored in.
+ *
+ * Scopes and the per-provider restriction are lists of words -- `read:user`, an organization login, a
+ * hosted domain -- and they arrive two ways. The Admin Form posts what an operator typed into one field,
+ * separated by spaces or commas; a scripted caller posts the array. Both become the same array in the
+ * config, which is the only shape the provider flow ever reads.
+ *
+ * `null` means the value was neither, which is a caller's mistake and has to be refused rather than read
+ * as "no list": silently dropping a restriction somebody wrote down opens the Site wider than they think
+ * it is open. An empty list and an absent key are the same thing and both say "no list".
+ */
+export function readPhiAuthConfigList(value: unknown): string[] | null {
+  if (typeof value === "string") {
+    return value.split(/[\s,]+/u).filter(Boolean);
+  }
+  if (!Array.isArray(value)) {
+    return null;
+  }
+  if (value.some((entry) => typeof entry !== "string")) {
+    return null;
+  }
+  return (value as string[]).map((entry) => entry.trim()).filter(Boolean);
+}
+
 export type PhiAuthMethodPresentation = {
   label?: string;
   icon?: string;

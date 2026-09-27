@@ -167,6 +167,20 @@ a provider kind is permitted. Core derives the fixed issuer/discovery rules for 
 arbitrary browser-supplied issuer URLs are not trusted configuration. Microsoft configuration uses the
 Microsoft name and an explicit `common`, `organizations`, `consumers`, or concrete-tenant policy.
 
+An installation's provider settings are written in one place, `buildAuthInstallationConfig`
+(`src/lib/site-auth/installation-catalog.ts`), which both the create and the update route go through
+and which the Admin Form reaches through those routes. The settings are the requested `scopes`, the
+login `restrictions`, the OAuth `prompt`, the Microsoft `tenant`, and `trustedEmailLink`, the
+per-installation half of verified-email auto-linking. A restriction is stored under the name its
+provider is narrowed by, declared as `restrictionKey` in the provider catalog: Google is narrowed by
+hosted domain against the `hd` claim, GitHub by active membership of an organization. Apple and
+Microsoft declare none, and a setting a provider has no use for is refused rather than stored. Empty
+clears a setting, and the provider flow then asks for its own default scope -- `read:user user:email`
+at GitHub, `openid email profile` at an OIDC provider. A GitHub organization restriction also needs
+`read:org` among the scopes, because the membership is read with the login's own token.
+`scripts/validate-auth-installation-config-keys.mjs` holds both halves of that: every setting the
+provider flow reads is written there, and nothing is written that nothing reads.
+
 The provider flow is:
 
 1. The browser starts a method through the Site's same-origin Auth endpoint.

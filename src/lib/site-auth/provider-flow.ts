@@ -19,6 +19,7 @@ import {
   PHI_OIDC_PROVIDER_ISSUERS,
   buildMicrosoftIssuer,
   normalizeAuthNextPath,
+  readPhiAuthConfigList,
 } from "@/lib/site-auth/contracts";
 import { readSiteAuthSecret } from "@/lib/site-auth/secret-store";
 import {
@@ -33,12 +34,6 @@ type ProviderTransactionPayload = {
   pkceVerifier: string;
   callbackUrl: string;
 };
-
-function readStringArray(value: unknown) {
-  return Array.isArray(value)
-    ? value.filter((entry): entry is string => typeof entry === "string" && Boolean(entry.trim()))
-    : [];
-}
 
 function isTrue(value: unknown) {
   return value === true || value === "true";
@@ -172,7 +167,7 @@ export async function startProviderAuthentication(input: {
     const url = new URL("https://github.com/login/oauth/authorize");
     url.searchParams.set("client_id", installation.clientId);
     url.searchParams.set("redirect_uri", callbackUrl);
-    url.searchParams.set("scope", readStringArray(installation.config.scopes).join(" ") || "read:user user:email");
+    url.searchParams.set("scope", (readPhiAuthConfigList(installation.config.scopes) ?? []).join(" ") || "read:user user:email");
     url.searchParams.set("state", state);
     url.searchParams.set("code_challenge", pkceChallenge);
     url.searchParams.set("code_challenge_method", "S256");
@@ -180,7 +175,7 @@ export async function startProviderAuthentication(input: {
   }
 
   const config = await buildOidcConfiguration(installation, clientSecret);
-  const scope = readStringArray(installation.config.scopes).join(" ") || "openid email profile";
+  const scope = (readPhiAuthConfigList(installation.config.scopes) ?? []).join(" ") || "openid email profile";
   const authorizationUrl = oidc.buildAuthorizationUrl(config, {
     redirect_uri: callbackUrl,
     scope,
@@ -245,7 +240,7 @@ async function completeGithubAuthentication(input: {
       emails.find((entry) => entry.verified === true && typeof entry.email === "string")
     : null;
 
-  const allowedOrganizations = readStringArray(input.installation.config.allowedOrganizations)
+  const allowedOrganizations = (readPhiAuthConfigList(input.installation.config.allowedOrganizations) ?? [])
     .map((value) => value.toLowerCase());
   if (allowedOrganizations.length > 0) {
     const memberships = await Promise.all(allowedOrganizations.map(async (organization) => {
@@ -349,7 +344,7 @@ export async function completeProviderAuthentication(input: {
     ) {
       throw new Error("AUTH_PROVIDER_IDENTITY_INVALID");
     }
-    const hostedDomains = readStringArray(installation.config.hostedDomains).map((value) => value.toLowerCase());
+    const hostedDomains = (readPhiAuthConfigList(installation.config.hostedDomains) ?? []).map((value) => value.toLowerCase());
     if (
       hostedDomains.length > 0 &&
       (typeof claims.hd !== "string" || !hostedDomains.includes(claims.hd.toLowerCase()))
