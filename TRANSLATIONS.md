@@ -70,6 +70,10 @@ session, cookies, and request headers.
   translations only when `translation.allowPublicWrites` is `true`. A public read that may not store
   answers a message the store does not hold with the source text and `"provisional": true`: it never
   asked a provider, so what it hands back states nothing about that message except that it is not here.
+- Public requests to `/api/v1/tr` are rate limited per address with an allowance of their own, because a
+  batch of up to 50 messages is not a page fetching its own data and a cold caller asks once per Label
+  Set. The internal token is not counted. A refused request answers `429` with `Retry-After`, which a
+  CDN step reads as "not held there": it falls through to its own provider rather than failing.
 - A target locale outside `translation.supportedLocales` answers with the source text.
 
 ### Dynamic values
