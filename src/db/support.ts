@@ -5,6 +5,10 @@ import type { PoolClient } from "pg";
 import {
   PhisSupportAllowancePeriod,
   PhisSupportQueueFlag,
+  PhisSupportTicketChannel,
+  PhisSupportTicketPriority,
+  PhisSupportTicketSeverity,
+  PhisSupportTicketStatus,
   PhisSupportTicketTypeFlag,
   type PhisSupportAllowance,
   type PhisSupportAllowancePeriodValue,
@@ -15,30 +19,38 @@ import { getPool } from "@/lib/db";
 import { createThreadWithDb } from "@/db/threads";
 import { consumeSupportAllowanceWithDb, readSupportAllowance } from "@/db/support-allowance";
 
-export const SUPPORT_TICKET_STATUS_NEW = 0;
-export const SUPPORT_TICKET_STATUS_TRIAGED = 1;
-export const SUPPORT_TICKET_STATUS_ASSIGNED = 2;
-export const SUPPORT_TICKET_STATUS_IN_PROGRESS = 3;
-export const SUPPORT_TICKET_STATUS_WAITING_CUSTOMER = 4;
-export const SUPPORT_TICKET_STATUS_WAITING_INTERNAL = 5;
-export const SUPPORT_TICKET_STATUS_ESCALATED = 6;
-export const SUPPORT_TICKET_STATUS_RESOLVED = 7;
-export const SUPPORT_TICKET_STATUS_CLOSED = 8;
+/*
+ * The ticket vocabulary, from the contract rather than spelled out again.
+ *
+ * These names are what this process reads; the numbers behind them are `@phis/contracts/support`, where
+ * a surface outside this process can reach them too. They were literals here, and the contract's own
+ * ticket type pointed at them in prose -- so a Site UI being sent `status: 4` had no way to learn that
+ * this means waiting on the customer.
+ */
+export const SUPPORT_TICKET_STATUS_NEW = PhisSupportTicketStatus.New;
+export const SUPPORT_TICKET_STATUS_TRIAGED = PhisSupportTicketStatus.Triaged;
+export const SUPPORT_TICKET_STATUS_ASSIGNED = PhisSupportTicketStatus.Assigned;
+export const SUPPORT_TICKET_STATUS_IN_PROGRESS = PhisSupportTicketStatus.InProgress;
+export const SUPPORT_TICKET_STATUS_WAITING_CUSTOMER = PhisSupportTicketStatus.WaitingCustomer;
+export const SUPPORT_TICKET_STATUS_WAITING_INTERNAL = PhisSupportTicketStatus.WaitingInternal;
+export const SUPPORT_TICKET_STATUS_ESCALATED = PhisSupportTicketStatus.Escalated;
+export const SUPPORT_TICKET_STATUS_RESOLVED = PhisSupportTicketStatus.Resolved;
+export const SUPPORT_TICKET_STATUS_CLOSED = PhisSupportTicketStatus.Closed;
 
-export const SUPPORT_TICKET_CHANNEL_PORTAL = 0;
-export const SUPPORT_TICKET_CHANNEL_EMAIL = 1;
-export const SUPPORT_TICKET_CHANNEL_GITHUB = 2;
-export const SUPPORT_TICKET_CHANNEL_API = 3;
-export const SUPPORT_TICKET_CHANNEL_INTERNAL = 4;
+export const SUPPORT_TICKET_CHANNEL_PORTAL = PhisSupportTicketChannel.Portal;
+export const SUPPORT_TICKET_CHANNEL_EMAIL = PhisSupportTicketChannel.Email;
+export const SUPPORT_TICKET_CHANNEL_GITHUB = PhisSupportTicketChannel.GitHub;
+export const SUPPORT_TICKET_CHANNEL_API = PhisSupportTicketChannel.Api;
+export const SUPPORT_TICKET_CHANNEL_INTERNAL = PhisSupportTicketChannel.Internal;
 
-export const SUPPORT_TICKET_PRIORITY_LOW = 0;
-export const SUPPORT_TICKET_PRIORITY_NORMAL = 1;
-export const SUPPORT_TICKET_PRIORITY_HIGH = 2;
-export const SUPPORT_TICKET_PRIORITY_URGENT = 3;
+export const SUPPORT_TICKET_PRIORITY_LOW = PhisSupportTicketPriority.Low;
+export const SUPPORT_TICKET_PRIORITY_NORMAL = PhisSupportTicketPriority.Normal;
+export const SUPPORT_TICKET_PRIORITY_HIGH = PhisSupportTicketPriority.High;
+export const SUPPORT_TICKET_PRIORITY_URGENT = PhisSupportTicketPriority.Urgent;
 
-export const SUPPORT_TICKET_SEVERITY_MINOR = 0;
-export const SUPPORT_TICKET_SEVERITY_MAJOR = 1;
-export const SUPPORT_TICKET_SEVERITY_CRITICAL = 2;
+export const SUPPORT_TICKET_SEVERITY_MINOR = PhisSupportTicketSeverity.Minor;
+export const SUPPORT_TICKET_SEVERITY_MAJOR = PhisSupportTicketSeverity.Major;
+export const SUPPORT_TICKET_SEVERITY_CRITICAL = PhisSupportTicketSeverity.Critical;
 
 export const SUPPORT_TICKET_TASK_TYPE_INTERNAL = 0;
 export const SUPPORT_TICKET_TASK_TYPE_CUSTOMER_FOLLOWUP = 1;
