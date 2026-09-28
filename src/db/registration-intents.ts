@@ -312,6 +312,34 @@ export async function markRegistrationIntentExpired(id: number) {
   );
 }
 
+/**
+ * Takes a pending intent for the one confirmation that may act on it.
+ *
+ * Two clicks on the same link ran side by side: both created a Medusa customer, and the second account
+ * insert failed on the address and answered 500. The first to move the intent to `verified` goes on; the
+ * other is answered as already confirmed. `releaseRegistrationIntentClaim` puts it back when that
+ * confirmation stopped before consuming it.
+ */
+export async function claimRegistrationIntent(id: number) {
+  const { rowCount } = await getPool().query(
+    `UPDATE phis.registration_intents
+     SET status = $2, verified_at = NOW(), updated_at = NOW()
+     WHERE id = $1 AND status = $3`,
+    [id, REGISTRATION_INTENT_STATUS_VERIFIED, REGISTRATION_INTENT_STATUS_PENDING],
+  );
+  return (rowCount ?? 0) > 0;
+}
+
+/** Undoes a claim that did not end in a consumed intent; a consumed one is left as it is. */
+export async function releaseRegistrationIntentClaim(id: number) {
+  await getPool().query(
+    `UPDATE phis.registration_intents
+     SET status = $2, verified_at = NULL, updated_at = NOW()
+     WHERE id = $1 AND status = $3`,
+    [id, REGISTRATION_INTENT_STATUS_PENDING, REGISTRATION_INTENT_STATUS_VERIFIED],
+  );
+}
+
 export async function consumeRegistrationIntent(id: number, userId: number) {
   const pool = getPool();
   await pool.query(
