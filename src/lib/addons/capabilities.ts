@@ -1,5 +1,7 @@
 import "server-only";
 
+import type { PoolClient } from "pg";
+
 import {
   PHIS_CORE_CAPABILITIES,
   PHIS_SITE_ACCESS,
@@ -85,6 +87,7 @@ type RowScope = {
  * looks like one of its tables.
  */
 async function readRowScope(
+  db: Pick<PoolClient, "query">,
   manifest: PhisAddonManifestV1,
   siteId: number,
   table: string,
@@ -113,8 +116,11 @@ async function readRowScope(
   const siteFilter = descriptor.siteScoped
     ? ` AND ${quotePhiIdentifier(PHIS_ADDON_SITE_COLUMN)} = $2`
     : "";
+  // On the caller's connection: inside `data.transaction` the row may have been written a statement
+  // ago, and a read from the pool would not see it -- the ladder then answered "no row for you" to the
+  // very row the same body had just inserted.
   // db-boundary-exempt: the schema and table are an Add-on's own, named at runtime from its manifest.
-  const { rows } = await getPool().query<{ owner_user_id: number | null; group_id: number | null }>(
+  const { rows } = await db.query<{ owner_user_id: number | null; group_id: number | null }>(
     `SELECT ${columns}
        FROM ${quotePhiIdentifier(schemaName)}.${quotePhiIdentifier(table)}
       WHERE ${quotePhiIdentifier(descriptor.primaryKey[0]!)} = $1${siteFilter}
@@ -125,6 +131,31 @@ async function readRowScope(
   return row
     ? { ownerUserId: row.owner_user_id, groupId: row.group_id, ownerScoped, groupScoped }
     : null;
+}
+
+/**
+ * The row question with the connection left to the caller.
+ *
+ * The public capability asks it on the pool. The data capability asks it on whatever it is writing
+ * with, which inside a transaction is the transaction's own client -- the only connection that can see
+ * a row the same body inserted a statement earlier.
+ */
+export function buildPhisAddonRowAuthority(input: {
+  manifest: PhisAddonManifestV1;
+  siteId: number;
+  actorUserId: number | null;
+}) {
+  const { manifest, siteId, actorUserId } = input;
+  return async (
+    db: Pick<PoolClient, "query">,
+    row: { table: string; id: number | string; intent: PhisRowIntent },
+  ) => {
+    if (actorUserId == null) {
+      return false;
+    }
+    const scope = await readRowScope(db, manifest, siteId, row.table, row.id);
+    return scope ? mayActOnScopedRow({ siteId, actorUserId, scope, intent: row.intent }) : false;
+  };
 }
 
 /**
@@ -197,14 +228,9 @@ function buildAuthorizationCapability(input: {
   actorUserId: number | null;
 }): PhisAuthorizationCapabilityV1 {
   const { manifest, siteId, actorUserId } = input;
+  const mayActOnRow = buildPhisAddonRowAuthority({ manifest, siteId, actorUserId });
   return Object.freeze({
-    async mayActOnRow({ table, id, intent }) {
-      if (actorUserId == null) {
-        return false;
-      }
-      const scope = await readRowScope(manifest, siteId, table, id);
-      return scope ? mayActOnScopedRow({ siteId, actorUserId, scope, intent }) : false;
-    },
+    mayActOnRow: ({ table, id, intent }) => mayActOnRow(getPool(), { table, id, intent }),
     async groupLevel(groupId) {
       if (actorUserId == null || !Number.isSafeInteger(groupId) || groupId <= 0) {
         return null;
@@ -304,6 +330,11 @@ export function buildPhisAddonCapabilities(input: {
      * Add-on declared `authorization:v1`. Declaring `data:v1` is not a way to write past the ladder --
      * it is the way to write under it.
      */
+    const rowAuthority = buildPhisAddonRowAuthority({
+      manifest: input.manifest,
+      siteId,
+      actorUserId: input.actorUserId,
+    });
     capabilities.data = buildPhisAddonDataCapability({
       manifest: input.manifest,
       manifestDigest: input.manifestDigest,
@@ -311,8 +342,7 @@ export function buildPhisAddonCapabilities(input: {
       actorUserId: input.actorUserId,
       mayActOnRow: input.systemAuthority
         ? () => Promise.resolve(true)
-        : ({ table, id, intent }) =>
-          authorization.mayActOnRow({ table, id: id as number | string, intent }),
+        : ({ table, id, intent, db }) => rowAuthority(db, { table, id: id as number | string, intent }),
       mayUseGroup: input.systemAuthority
         ? () => Promise.resolve(true)
         : (groupId) => actorStandsInGroup(siteId, groupId, input.actorUserId),

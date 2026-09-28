@@ -67,7 +67,16 @@ type Bound = {
   catalog: Map<string, PhisAddonCompiledQuery>;
   siteId: number;
   actorUserId: number | null;
-  mayActOnRow: (input: { table: string; id: unknown; intent: "update" | "delete" }) => Promise<boolean>;
+  /**
+   * Asked on the connection the write goes through, so a row this transaction inserted a statement
+   * ago is a row the ladder can see.
+   */
+  mayActOnRow: (input: {
+    table: string;
+    id: unknown;
+    intent: "update" | "delete";
+    db: Queryable;
+  }) => Promise<boolean>;
   /** Whether the actor stands in the group an insert names. Injected for the same reason as above. */
   mayUseGroup: (groupId: unknown) => Promise<boolean>;
   /** Whether the actor holds one of this Add-on's declared roles. Injected, like the two above. */
@@ -290,7 +299,7 @@ async function run(
      * is then the whole of the authority rather than half of it.
      */
     const id = readArgument(args, parameters.id!, name);
-    if (!await bound.mayActOnRow({ table: query.table, id, intent: kind })) {
+    if (!await bound.mayActOnRow({ table: query.table, id, intent: kind, db })) {
       /*
        * The declared bypass, and the only thing that is asked after the row rather than before it.
        *

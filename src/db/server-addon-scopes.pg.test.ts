@@ -318,6 +318,20 @@ describe("owner-scoped and group-scoped Add-on tables", () => {
         .toMatchObject({ title: "renamed" });
     });
 
+    it("lets a transaction act on the row it inserted a statement ago", async () => {
+      const author = await memberAt(PhiGroupMembershipFlags.Author);
+      const data = buildPhisAddonCapabilities({
+        manifest, manifestDigest: "pgtest-data", siteId: site.id, actorUserId: author,
+      }).data!;
+      // The row exists only on this connection until the commit. The ladder used to ask the pool,
+      // could not see it, and answered the author's own write with the silent zero of a refusal.
+      const renamed = await data.transaction(async (tx) => {
+        const added = await tx.insert("add", { title: "draft", group_id: groupId });
+        return tx.update("rename", { id: added!.id as number, title: "final" });
+      });
+      expect(renamed).toMatchObject({ title: "final" });
+    });
+
     it("undoes the whole unit of work when the body throws", async () => {
       const author = await memberAt(PhiGroupMembershipFlags.Author);
       const data = buildPhisAddonCapabilities({
