@@ -191,10 +191,13 @@ async function upsertSiteContentTextField(
     value: string;
   },
 ) {
+  // On the caller's transaction: through the pool, the message row outlived a rolled-back save, and ten
+  // saves at once each held a client while waiting for a second one the pool no longer had.
   const msgId = await ensureSiteMessageId(
     input.siteId,
     input.value,
     "",
+    db,
   );
 
   await db.query(
