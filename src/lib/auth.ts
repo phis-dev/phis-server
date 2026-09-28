@@ -264,10 +264,16 @@ export function resolveSignedInLocale(
   }).locale;
 }
 
+/**
+ * `secure` like every other cookie this file writes. It was the one left out, so in production it
+ * was the one cookie a browser would still send over plain http -- not a secret, but no reason to be
+ * the exception either, and the switch in phis-ui writes it with the same attribute on https.
+ */
 export function setLocaleCookie(response: NextResponse, locale: string, expiresAt?: Date) {
   response.cookies.set(LOCALE_COOKIE_NAME, locale, {
     httpOnly: false,
     sameSite: "lax",
+    secure: isProduction(),
     path: "/",
     ...(expiresAt ? { expires: expiresAt } : {}),
   });

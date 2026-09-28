@@ -1,12 +1,15 @@
-import { NextRequest } from "next/server";
-import { describe, expect, it } from "vitest";
+import { NextRequest, NextResponse } from "next/server";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   buildSessionCookieValue,
   createSessionId,
+  CSRF_COOKIE_NAME,
   LOCALE_COOKIE_NAME,
   parseSessionCookieValue,
   resolveSignedInLocale,
+  setCsrfCookie,
+  setLocaleCookie,
 } from "./auth";
 
 /**
@@ -96,5 +99,35 @@ describe("resolveSignedInLocale", () => {
 
   it("ignores an answer in a language this Site does not offer", () => {
     expect(signIn({ cookie: "de", preferredLocale: "es" })).toBe("de");
+  });
+});
+
+/**
+ * The locale cookie carries the same attributes as the other cookies a browser may read. It was the
+ * one written without `secure`, so in production it alone would still travel over plain http.
+ */
+describe("setLocaleCookie", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("is secure in production, exactly like the CSRF cookie", () => {
+    vi.stubEnv("NODE_ENV", "production");
+    const response = NextResponse.json({});
+
+    setLocaleCookie(response, "de");
+    setCsrfCookie(response, "token");
+
+    expect(response.cookies.get(LOCALE_COOKIE_NAME)).toMatchObject({ value: "de", secure: true, sameSite: "lax" });
+    expect(response.cookies.get(CSRF_COOKIE_NAME)).toMatchObject({ secure: true });
+  });
+
+  it("stays plain outside production, where the dev site has no https", () => {
+    vi.stubEnv("NODE_ENV", "test");
+    const response = NextResponse.json({});
+
+    setLocaleCookie(response, "de");
+
+    expect(response.cookies.get(LOCALE_COOKIE_NAME)?.secure).toBeFalsy();
   });
 });
