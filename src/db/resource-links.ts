@@ -182,7 +182,12 @@ export async function upsertResourceLink(input: {
      ON CONFLICT (site_id, provider_id, type, external_id) DO UPDATE
      SET url = COALESCE(EXCLUDED.url, phis.resource_links.url),
          state = COALESCE(EXCLUDED.state, phis.resource_links.state),
+         flags = phis.resource_links.flags | EXCLUDED.flags,
          updated_at = NOW()
+     -- The same external record on the same subject is the same link, said again. On another subject
+     -- it is a different statement, and the row must not be handed to whoever made it: the caller
+     -- was checked against the subject they named, not against the one the row already has.
+     WHERE phis.resource_links.${column} = EXCLUDED.${column}
      RETURNING ${LINK_COLUMNS.replaceAll("link.", "phis.resource_links.")}`,
     [
       input.siteId,
@@ -199,7 +204,10 @@ export async function upsertResourceLink(input: {
 
   const row = rows[0];
   if (!row) {
-    throw new PhisResourceLinkError("Failed to record the resource link.");
+    // The one way the statement answers with nothing: the external record is already linked elsewhere.
+    throw new PhisResourceLinkError(
+      "This external record is already linked to another subject on this Site.",
+    );
   }
   return projectLink(row);
 }
@@ -233,6 +241,32 @@ export async function setResourceLinkState(input: {
  *
  * Only a synced link produces one. An unsynced link conferred no reach, so its removal takes none away.
  */
+/**
+ * The thread a link is about, for the reach question a removal has to ask before it acts. `null` for a
+ * link this provider does not hold on this Site, which the caller treats as nothing to remove.
+ */
+export async function getResourceLinkThreadId(input: {
+  siteId: number;
+  providerId: string;
+  linkId: number;
+}): Promise<number | null> {
+  const { rows } = await getPool().query<{ thread_id: number | null }>(
+    `SELECT COALESCE(link.thread_id, ticket.thread_id, task_ticket.thread_id) AS thread_id
+     FROM phis.resource_links link
+     LEFT JOIN phis.support_tickets ticket
+       ON ticket.id = link.ticket_id
+     LEFT JOIN phis.support_ticket_tasks task
+       ON task.id = link.ticket_task_id
+     LEFT JOIN phis.support_tickets task_ticket
+       ON task_ticket.id = task.ticket_id
+     WHERE link.id = $3
+       AND link.site_id = $1
+       AND link.provider_id = $2`,
+    [input.siteId, input.providerId, input.linkId],
+  );
+  return rows[0]?.thread_id ?? null;
+}
+
 export async function deleteResourceLink(input: {
   siteId: number;
   providerId: string;

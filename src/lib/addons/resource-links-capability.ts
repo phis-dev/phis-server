@@ -4,6 +4,7 @@ import type { PhisResourceLinksCapabilityV1 } from "./contract.ts";
 import {
   deleteResourceLink,
   findResourceLinkByExternalId,
+  getResourceLinkThreadId,
   listResourceLinks,
   resolveSubjectThreadId,
   setResourceLinkState,
@@ -124,7 +125,22 @@ export function buildPhisAddonResourceLinksCapability(input: {
 
     async unlink(linkId) {
       requireBelievableCaller("unlink");
-      requireActor("unlink");
+      const userId = requireActor("unlink");
+      /*
+       * The same reach `link` asks for, asked of the link's own subject. Without it any signed-in
+       * person driving the Add-on could remove, by id, a link somebody else made to a conversation
+       * they cannot see -- withdrawing the Add-on's consent to it and emitting the removal event.
+       */
+      const threadId = await getResourceLinkThreadId({ siteId, providerId: addonId, linkId });
+      if (threadId == null) {
+        return false;
+      }
+      const detail = await getThreadDetail(siteId, { kind: "user", userId }, threadId);
+      if (!detail) {
+        throw new PhisAddonResourceLinksError(
+          `${addonId} called resourceLinks.unlink for a subject its actor cannot reach.`,
+        );
+      }
       return deleteResourceLink({ siteId, providerId: addonId, linkId });
     },
 
