@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   schema: vi.fn(),
   sites: vi.fn(),
   verify: vi.fn(),
+  sitesList: vi.fn(async () => [] as unknown[]),
 }));
 
 vi.mock("server-only", () => ({}));
@@ -28,6 +29,7 @@ vi.mock("@/db/bootstrap", () => ({
   createPhiBootstrapSites: mocks.sites,
   grantPhiAddonCoreReferences: vi.fn(),
   verifyPhiDatabaseWriteAccess: mocks.verify,
+  readPhiBootstrapSites: mocks.sitesList,
 }));
 
 import {
@@ -101,5 +103,43 @@ describe("the database step while setup is open", () => {
     }))).rejects.toThrow("redirect:/setup/next");
 
     expect(new URL(String(mocks.verify.mock.calls[0]?.[0])).password).toBe("typed");
+  });
+});
+
+describe("finishing the setup", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.surface.mockImplementation(() => undefined);
+  });
+
+  function finish() {
+    return completeBootstrapSetup("en", form({ acceptedTerms: "on" }));
+  }
+
+  it("refuses to close without an operator who can sign in", async () => {
+    mocks.read.mockReturnValue({ platformSuperUsers: [], database: { uri: "postgresql://db/phis" } });
+    mocks.sitesList.mockResolvedValue([{ key: "site" }]);
+    await expect(finish()).rejects.toThrow(/redirect:.*operator/i);
+    expect(mocks.write).not.toHaveBeenCalled();
+  });
+
+  it("refuses to close without a Site", async () => {
+    mocks.read.mockReturnValue({
+      platformSuperUsers: [{ email: "op@example.test", passwordHash: "h", enabled: true }],
+      database: { uri: "postgresql://db/phis" },
+    });
+    mocks.sitesList.mockResolvedValue([]);
+    await expect(finish()).rejects.toThrow(/redirect:.*Site/);
+    expect(mocks.write).not.toHaveBeenCalled();
+  });
+
+  it("closes once both are there", async () => {
+    mocks.read.mockReturnValue({
+      platformSuperUsers: [{ email: "op@example.test", passwordHash: "h", enabled: true }],
+      database: { uri: "postgresql://db/phis" },
+    });
+    mocks.sitesList.mockResolvedValue([{ key: "site" }]);
+    await expect(finish()).rejects.toThrow("redirect:/operator");
+    expect(mocks.write).toHaveBeenCalledWith(expect.objectContaining({ bootstrap: { enabled: false } }));
   });
 });

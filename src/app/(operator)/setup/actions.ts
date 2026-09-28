@@ -9,6 +9,7 @@ import {
   applyPhiBootstrapSchema,
   createPhiBootstrapSites,
   grantPhiAddonCoreReferences,
+  readPhiBootstrapSites,
   verifyPhiDatabaseWriteAccess,
   type PhiBootstrapSiteInput,
 } from "@/db/bootstrap";
@@ -490,6 +491,20 @@ export async function completeBootstrapSetup(
   }
 
   const runtimeConfig = readPhiRuntimeConfigSync();
+  /*
+   * Closing the setup is the one step that cannot be taken back from the browser, so it checks that the
+   * steps before it happened. Closed with no operator, `/operator/login` and `/recovery` had nobody to
+   * let in and only `phis operator add` on the host was left; closed with no Site, there was nothing to
+   * serve. A Site also says the database is reachable and the schema is in place.
+   */
+  if (!(runtimeConfig.platformSuperUsers ?? []).some((user) => user.enabled !== false)) {
+    redirect(buildFinishStepHref(locale, "Create an operator account before finishing the setup."));
+  }
+  const sites = await readPhiBootstrapSites(runtimeConfig.database?.uri).catch(() => []);
+  if (sites.length === 0) {
+    redirect(buildFinishStepHref(locale, "Create at least one Site before finishing the setup."));
+  }
+
   const internalToken = runtimeConfig.api?.internalToken?.trim() || randomBytes(32).toString("hex");
   // The operator surface signs with a key of its own, never with the token the Sites hold.
   const sessionSecret = runtimeConfig.operator?.sessionSecret?.trim() || randomBytes(32).toString("hex");
