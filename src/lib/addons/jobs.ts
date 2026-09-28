@@ -11,7 +11,7 @@ import {
   digestPhisAddonManifest,
   validatePhisAddonManifest,
 } from "./manifest.ts";
-import { isPhisAddonEnabledForSite } from "@/db/server-addons";
+import { verifyPhisAddonRegistryState } from "./registry-state.ts";
 
 /**
  * Running an Add-on's declared jobs.
@@ -83,8 +83,17 @@ export async function runPhisAddonJob(input: {
   if (!descriptor) {
     throw new PhisAddonJobError(`${addonId} declares no job named ${jobId}.`);
   }
-  if (!await isPhisAddonEnabledForSite(addonId, site.id)) {
+  // The same answer HTTP dispatch asks for: a build the registry does not describe -- above all one
+  // whose migrations have not run yet -- does not get to run its job against the old schema.
+  const registryState = await verifyPhisAddonRegistryState(entry, site.id);
+  if (registryState === "hidden") {
     throw new PhisAddonJobError(`${addonId} is not enabled for ${site.key}.`);
+  }
+  if (registryState !== "ready") {
+    throw new PhisAddonJobError(
+      `${addonId} is not ready: the registry does not describe this build. ` +
+      "Run `phis addon migrate` and `phis addon reconcile` first.",
+    );
   }
 
   /*

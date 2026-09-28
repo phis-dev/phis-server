@@ -9,14 +9,10 @@ import {
   getSessionFromRequest,
   touchSession,
 } from "@/db/user-sessions";
-import {
-  getPhisAddonRegistryRecord,
-  isPhisAddonEnabledForSite,
-} from "@/db/server-addons";
 import { getPhisAddonInstalledManifest } from "@/lib/addons/installed";
+import { verifyPhisAddonRegistryState } from "@/lib/addons/registry-state";
 import {
   type PhisAddonApiRouteDescriptor,
-  type PhisAddonBuildEntry,
   type PhisAddonHandler,
   type PhisAddonHookDescriptor,
   type PhisAddonHttpMethod,
@@ -125,35 +121,6 @@ async function readRequestBody(request: Request, limit: number) {
   }
 
   return { body, error: null };
-}
-
-async function verifyRegistryState(
-  entry: PhisAddonBuildEntry,
-  siteId: number | null,
-) {
-  const registry = await getPhisAddonRegistryRecord(entry.manifest.addonId);
-  if (!registry) {
-    return "unavailable" as const;
-  }
-  if (!registry.globallyEnabled) {
-    return "hidden" as const;
-  }
-  if (
-    registry.packageName !== entry.manifest.packageName ||
-    registry.packageVersion !== entry.manifest.packageVersion ||
-    registry.serverAbi !== entry.manifest.serverAbi ||
-    registry.manifestDigest !== entry.manifestDigest ||
-    registry.migrationVersion < entry.manifest.migrationVersion
-  ) {
-    return "unavailable" as const;
-  }
-  if (
-    siteId !== null &&
-    !(await isPhisAddonEnabledForSite(entry.manifest.addonId, siteId))
-  ) {
-    return "hidden" as const;
-  }
-  return "ready" as const;
 }
 
 async function resolveApiIdentity(
@@ -333,7 +300,7 @@ async function dispatchAddonAssetRequest(
     return notFound();
   }
 
-  const registryState = await verifyRegistryState(entry, identity.site.id);
+  const registryState = await verifyPhisAddonRegistryState(entry, identity.site.id);
   if (registryState === "hidden") {
     return notFound();
   }
@@ -578,7 +545,7 @@ export async function dispatchPhisAddonRequest(
   }
 
   try {
-    const registryState = await verifyRegistryState(
+    const registryState = await verifyPhisAddonRegistryState(
       entry,
       identity.site?.id ?? null,
     );

@@ -5,6 +5,7 @@ import { buildPhisAddonCapabilities } from "./capabilities.ts";
 import { isPhisAddonCapabilityDeliverable } from "./core-capabilities.ts";
 import { getPhisAddonInstalledManifest } from "./installed.ts";
 import { digestPhisAddonManifest, validatePhisAddonManifest } from "./manifest.ts";
+import { verifyPhisAddonRegistryState } from "./registry-state.ts";
 import {
   listPendingPhisAddonEvents,
   listPhisAddonEventAddonIds,
@@ -103,6 +104,11 @@ export async function deliverPhisAddonEvents(input: {
       (capability) => !isPhisAddonCapabilityDeliverable(capability),
     )
   ) {
+    return { delivered: 0, failed: pending.length };
+  }
+  // A build whose schema is not migrated yet, or that the registry does not describe, handles no event:
+  // the rows stay owed, as they do for an Add-on switched off.
+  if (await verifyPhisAddonRegistryState(entry, siteId) !== "ready") {
     return { delivered: 0, failed: pending.length };
   }
 
