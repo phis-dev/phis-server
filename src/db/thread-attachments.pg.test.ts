@@ -4,6 +4,8 @@ import { PhiBaseRole } from "@phis/contracts/access";
 import { PhiMediaDeliveryPolicy } from "@phis/contracts/media";
 import { PhisSiteThreadKindFlag, PhisThreadKind, PhisThreadMessageFlag } from "@phis/contracts/threads";
 
+import { PhiSiteGroupFlags } from "@/lib/constants/site-groups";
+
 import {
   addPhiTestGroupMember,
   closePhiTestPool,
@@ -79,6 +81,13 @@ describe.skipIf(!configured)("thread attachments", () => {
     supporter = await createPhiTestUser(site);
     groupId = await createPhiTestGroup(site, "pgtest-attach");
     await addPhiTestGroupMember({ site, groupId, userId: supporter });
+    // The threads here are the group's, so the one who opens them is its Author and the group holds
+    // threads; what is under test is whose file may hang on a message, not who may open one.
+    await addPhiTestGroupMember({ site, groupId, userId: requester, membershipFlags: 3 });
+    await pool.query(
+      `UPDATE phis.site_groups SET flags = $2 WHERE id = $1`,
+      [groupId, PhiSiteGroupFlags.Threads],
+    );
     // `Internal` is Staff's to write, and any Core role is what makes somebody Staff.
     await pool.query(
       `INSERT INTO phis.user_site_role_claims (site_id, user_id, provider_id, role_flags)

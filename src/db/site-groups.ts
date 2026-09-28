@@ -185,7 +185,7 @@ export async function createLocalSiteGroup(input: { siteId: number; key: string;
   return mapGroup(rows[0]!);
 }
 
-async function readEffectiveGroupFlagsWithDb(db: DbQueryable, siteId: number, userId: number) {
+export async function readEffectiveGroupFlagsWithDb(db: DbQueryable, siteId: number, userId: number) {
   const { rows } = await db.query<{
     group_id: number;
     group_provider_id: string;

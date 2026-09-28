@@ -31,7 +31,8 @@ import { schedulePhisAddonEventDelivery } from "@/lib/addons/event-trigger";
 
 import { PHI_CORE_ROLE_PROVIDER_ID } from "@/lib/authorization";
 import { resolvePhiLocaleCapability } from "@/lib/locale";
-import { PhiSiteGroupFlags } from "@/lib/constants/site-groups";
+import { PhiGroupMembershipFlags, PhiSiteGroupFlags } from "@/lib/constants/site-groups";
+import { readEffectiveGroupFlagsWithDb } from "@/db/site-groups";
 import {
   PHIS_THREAD_MESSAGE_MAX_ASSETS,
   PHIS_THREAD_MESSAGE_MAX_PAGE_SIZE,
@@ -277,21 +278,206 @@ function readerParamValue(reader: ThreadReader) {
  * reader that is not a person is not Staff either: an integration mirrors a conversation outwards, and
  * a note written past the customer is the one thing that must not go.
  */
-async function readerIsStaff(db: DbQueryable, siteId: number, reader: ThreadReader) {
-  if (reader.kind === "system") return true;
-  if (reader.kind !== "user") return false;
-
+async function readCoreRoleFlags(db: DbQueryable, siteId: number, userId: number) {
   const { rows } = await db.query<{ role_flags: number }>(
     `SELECT role_flags
      FROM phis.user_site_role_claims
      WHERE site_id = $1
        AND user_id = $2
        AND provider_id = $3`,
-    [siteId, reader.userId, PHI_CORE_ROLE_PROVIDER_ID],
+    [siteId, userId, PHI_CORE_ROLE_PROVIDER_ID],
   );
+  return rows[0]?.role_flags ?? 0;
+}
+
+async function readerIsStaff(db: DbQueryable, siteId: number, reader: ThreadReader) {
+  if (reader.kind === "system") return true;
+  if (reader.kind !== "user") return false;
   // Any Core role at all, which `Staff` is one of: the bit exists for somebody who holds none of the
   // others, not as a second question to ask after them.
-  return (rows[0]?.role_flags ?? 0) !== 0;
+  return (await readCoreRoleFlags(db, siteId, reader.userId)) !== 0;
+}
+
+/**
+ * Whether these people can be reached by this person, as design/THREADS.md settles it: every one of
+ * them is Staff, and each shares a live group with the actor -- unless the actor is Admin or
+ * Developer, whose reach is every Staff member. Nothing here opens a thread to anybody; it is the
+ * question the candidates route answers, asked again where the answer is acted on, because a list is
+ * a courtesy and the route that holds people to it is this one.
+ */
+async function assertUsersReachable(
+  db: DbQueryable,
+  siteId: number,
+  actorId: number,
+  userIds: number[],
+  reachesAllStaff: boolean,
+) {
+  if (userIds.length === 0) return;
+  const { rows: staff } = await db.query<{ user_id: number }>(
+    `SELECT user_id
+     FROM phis.user_site_role_claims
+     WHERE site_id = $1 AND provider_id = $2 AND role_flags <> 0 AND user_id = ANY($3::int[])`,
+    [siteId, PHI_CORE_ROLE_PROVIDER_ID, userIds],
+  );
+  if (staff.length !== userIds.length) {
+    throw new PhisThreadError("Only Staff can be brought into a thread.");
+  }
+  if (reachesAllStaff) return;
+  const { rows: shared } = await db.query<{ user_id: number }>(
+    `SELECT DISTINCT theirs.user_id
+     FROM phis.site_group_members mine
+     JOIN phis.site_group_members theirs
+       ON theirs.group_id = mine.group_id
+      AND theirs.site_id = mine.site_id
+     JOIN phis.site_groups grp
+       ON grp.id = mine.group_id
+      AND grp.retired_at IS NULL
+     WHERE mine.site_id = $1
+       AND mine.user_id = $2
+       AND theirs.user_id = ANY($3::int[])
+       AND (mine.valid_until IS NULL OR mine.valid_until > NOW())
+       AND (theirs.valid_until IS NULL OR theirs.valid_until > NOW())`,
+    [siteId, actorId, userIds],
+  );
+  if (shared.length !== userIds.length) {
+    throw new PhisThreadError("You share no group with one or more of these people.");
+  }
+}
+
+/** A group's own flags beside the actor's level in it, for every group named at once. */
+async function readGroupStanding(db: DbQueryable, siteId: number, actorId: number, groupIds: number[]) {
+  if (groupIds.length === 0) return new Map<number, { flags: number; level: number }>();
+  const { rows } = await db.query<{ id: number; provider_id: string; key: string; flags: number }>(
+    `SELECT id, provider_id, key, flags
+     FROM phis.site_groups
+     WHERE site_id = $1 AND id = ANY($2::int[]) AND retired_at IS NULL`,
+    [siteId, groupIds],
+  );
+  const claims = await readEffectiveGroupFlagsWithDb(db, siteId, actorId);
+  return new Map(rows.map((row) => [
+    row.id,
+    {
+      flags: row.flags,
+      level: claims.find((claim) => claim.providerId === row.provider_id && claim.key === row.key)?.flags ?? 0,
+    },
+  ]));
+}
+
+/**
+ * What a person may open, kind by kind, as design/THREADS.md §3 settles it.
+ *
+ * Nothing of this was ever asked before: any signed-in member could open a Support thread naming any
+ * group and any person, skipping the ticket, the allowance and the rule that a group holds threads only
+ * where its flag says so -- and every member of the group named then saw the conversation. The group
+ * flags were written by the administration route and read by nobody.
+ *
+ * Only a person's opening is judged here. A ticket opens its Support thread through the ticket path,
+ * where the queue's group is the participant and the requester is anybody; an Add-on acting as itself
+ * owns what it opens. An Add-on acting for a person is that person and is held to the same answer.
+ *
+ * The opener is left out of `userIds`: they are in the thread whatever else is true of them.
+ */
+async function assertPersonMayOpen(
+  db: DbQueryable,
+  siteId: number,
+  openerId: number,
+  kind: PhisThreadKindValue,
+  userIds: number[],
+  groupIds: number[],
+) {
+  const roleFlags = await readCoreRoleFlags(db, siteId, openerId);
+  const reachesAllStaff = (roleFlags & (PhiBaseRole.Admin | PhiBaseRole.Developer)) !== 0;
+
+  if (kind === PhisThreadKind.Support) {
+    throw new PhisThreadError("A Support thread opens with its ticket, not on its own.");
+  }
+  if (kind === PhisThreadKind.Direct) {
+    if (roleFlags === 0) {
+      throw new PhisThreadError("Only Staff may open a Direct thread.");
+    }
+    if (groupIds.length > 0) {
+      throw new PhisThreadError("A Direct thread is between people; a group holds a Group thread.");
+    }
+    await assertUsersReachable(db, siteId, openerId, userIds, reachesAllStaff);
+    return;
+  }
+  if (userIds.length > 0) {
+    throw new PhisThreadError("A thread of a group has the group's members as participants and nobody else.");
+  }
+  const standing = await readGroupStanding(db, siteId, openerId, groupIds);
+  if (kind === PhisThreadKind.Group) {
+    if (groupIds.length !== 1 || !standing.has(groupIds[0]!)) {
+      throw new PhisThreadError("A Group thread is inside exactly one group.");
+    }
+    const group = standing.get(groupIds[0]!)!;
+    if ((group.flags & PhiSiteGroupFlags.Threads) === 0) {
+      throw new PhisThreadError("This group does not hold threads.");
+    }
+    if (!reachesAllStaff && (group.level & PhiGroupMembershipFlags.Author) !== PhiGroupMembershipFlags.Author) {
+      throw new PhisThreadError("Opening a group's thread takes the Author level in it.");
+    }
+    return;
+  }
+  // CrossGroup: every group named may address and be addressed, and the opener speaks for one of them.
+  if (groupIds.length < 2 || groupIds.some((groupId) => !standing.has(groupId))) {
+    throw new PhisThreadError("A thread between groups names at least two of them.");
+  }
+  for (const group of standing.values()) {
+    if ((group.flags & PhiSiteGroupFlags.CrossGroupThreads) === 0) {
+      throw new PhisThreadError("One or more of these groups may not address other groups.");
+    }
+  }
+  const authorSomewhere = [...standing.values()]
+    .some((group) => (group.level & PhiGroupMembershipFlags.Author) === PhiGroupMembershipFlags.Author);
+  if (!reachesAllStaff && !authorSomewhere) {
+    throw new PhisThreadError("Opening a thread between groups takes the Author level in one of them.");
+  }
+}
+
+/**
+ * Whom a participant may bring in, by the kind of thread they are in.
+ *
+ * People join a Direct or Support thread, and only people this person could reach on their own. A
+ * Group thread's participants are its group, so nothing is added to it; a thread between groups takes
+ * another group that may be addressed. Moving a Support thread to another queue is the ticket's own
+ * write and not an addition here.
+ */
+async function assertPersonMayAdd(
+  db: DbQueryable,
+  siteId: number,
+  actorId: number,
+  kind: number,
+  userIds: number[],
+  groupIds: number[],
+) {
+  if (kind === PhisThreadKind.Group) {
+    throw new PhisThreadError("A Group thread's participants are its group; join the group instead.");
+  }
+  if (kind === PhisThreadKind.CrossGroup) {
+    if (userIds.length > 0) {
+      throw new PhisThreadError("A thread between groups takes groups, not people.");
+    }
+    const standing = await readGroupStanding(db, siteId, actorId, groupIds);
+    if (groupIds.some((groupId) => !standing.has(groupId))) {
+      throw new PhisThreadError("One or more thread participant groups are invalid for this Site.");
+    }
+    for (const group of standing.values()) {
+      if ((group.flags & PhiSiteGroupFlags.CrossGroupThreads) === 0) {
+        throw new PhisThreadError("One or more of these groups may not be addressed by other groups.");
+      }
+    }
+    return;
+  }
+  if (groupIds.length > 0) {
+    throw new PhisThreadError(
+      kind === PhisThreadKind.Support
+        ? "A Support thread changes its queue through the ticket, not by adding a group."
+        : "A Direct thread is between people; a group holds a Group thread.",
+    );
+  }
+  const roleFlags = await readCoreRoleFlags(db, siteId, actorId);
+  const reachesAllStaff = (roleFlags & (PhiBaseRole.Admin | PhiBaseRole.Developer)) !== 0;
+  await assertUsersReachable(db, siteId, actorId, userIds, reachesAllStaff);
 }
 
 function projectThread(row: ThreadRow): PhisThreadSummary {
@@ -1041,6 +1227,19 @@ export async function createThread(input: CreateThreadInput): Promise<PhisThread
 
   try {
     await client.query("BEGIN");
+    if (input.createdByUserId != null) {
+      // The Site's own answer first: a kind nobody offers is refused as such, whoever asks.
+      await assertKindAvailable(client, input.siteId, input.kind);
+      const openerId = input.createdByUserId;
+      await assertPersonMayOpen(
+        client,
+        input.siteId,
+        openerId,
+        input.kind,
+        normalizeUniqueIds(input.participantUserIds).filter((userId) => userId !== openerId),
+        normalizeUniqueIds(input.participantGroupIds),
+      );
+    }
     threadId = (await createThreadWithDb(client, input)).id;
     await client.query("COMMIT");
   } catch (error) {
@@ -1162,6 +1361,9 @@ export async function addThreadParticipants(
     }
 
     await assertParticipantsExist(client, input.siteId, userIds, groupIds);
+    if (input.reader.kind === "user") {
+      await assertPersonMayAdd(client, input.siteId, input.reader.userId, thread.kind, userIds, groupIds);
+    }
     await insertParticipants(client, { threadId: input.threadId, userIds, groupIds });
     await client.query(
       `UPDATE phis.threads SET updated_at = NOW() WHERE id = $1`,
@@ -1350,13 +1552,7 @@ export async function readSiteThreadKinds(siteId: number) {
 export async function listThreadCandidates(siteId: number, userId: number) {
   const pool = getPool();
 
-  const { rows: roleRows } = await pool.query<{ role_flags: number }>(
-    `SELECT role_flags
-     FROM phis.user_site_role_claims
-     WHERE site_id = $1 AND user_id = $2 AND provider_id = $3`,
-    [siteId, userId, PHI_CORE_ROLE_PROVIDER_ID],
-  );
-  const actorRoleFlags = roleRows[0]?.role_flags ?? 0;
+  const actorRoleFlags = await readCoreRoleFlags(pool, siteId, userId);
   const mayReachAllStaff = (actorRoleFlags & (PhiBaseRole.Admin | PhiBaseRole.Developer)) !== 0;
 
   const { rows: groups } = await pool.query<{

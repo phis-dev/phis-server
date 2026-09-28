@@ -16,18 +16,22 @@ import {
   createPhiTestUser,
   dropPhiTestSites,
   requirePhiTestDatabase,
+  withPhiTestClient,
   type PhiTestSite,
 } from "../../test/pg/harness";
+import { setSiteGroupFlags } from "./site-groups";
 import {
   addThreadMessage,
   addThreadParticipants,
   createThread,
+  createThreadWithDb,
   getThreadDetail,
   listThreadsForUser,
   markThreadRead,
   setThreadStatus,
 } from "./threads";
 import { buildPhisAddonThreadsCapability } from "@/lib/addons/threads-capability";
+import { PhiSiteGroupFlags } from "@/lib/constants/site-groups";
 
 /**
  * Threads as the three readers reach them: a person, an Add-on acting for one, and an Add-on acting for
@@ -62,6 +66,37 @@ async function grantCoreRole(site: PhiTestSite, userId: number, roleFlags: numbe
      ON CONFLICT (site_id, user_id, provider_id) DO UPDATE SET role_flags = EXCLUDED.role_flags`,
     [site.id, userId, roleFlags],
   );
+}
+
+/**
+ * Staff who share a group: what a Direct thread takes on both ends. A person is visible to another only
+ * through a group they share, and only Staff may be written to, so every fixture that opens one starts
+ * from here rather than from two accounts that happen to exist on the same Site.
+ */
+async function createStaffWhoShareAGroup(site: PhiTestSite, key: string, count: number) {
+  const group = await createPhiTestGroup(site, key);
+  const users: number[] = [];
+  for (let index = 0; index < count; index += 1) {
+    const userId = await createPhiTestUser(site);
+    await grantCoreRole(site, userId, PhiBaseRole.Staff);
+    await addPhiTestGroupMember({ site, groupId: group, userId });
+    users.push(userId);
+  }
+  return { group, users };
+}
+
+/** A Support thread the way a ticket opens one: on the ticket's own transaction, requester and all. */
+async function openSupportThread(site: PhiTestSite, input: { requester: number; supporter: number }) {
+  const { id } = await withPhiTestClient((client) => createThreadWithDb(client, {
+    siteId: site.id,
+    kind: PhisThreadKind.Support,
+    subject: "Something broke",
+    message: "It broke.",
+    participantUserIds: [input.requester, input.supporter],
+    requesterUserId: input.requester,
+    createdByUserId: input.requester,
+  }));
+  return id;
 }
 
 async function linkAddonToThread(site: PhiTestSite, threadId: number, userId: number) {
@@ -108,7 +143,9 @@ describe("threads", () => {
     const late = await createPhiTestUser(site);
     const stranger = await createPhiTestUser(site);
     const group = await createPhiTestGroup(site, "pgtest-threads-group");
-    await addPhiTestGroupMember({ site, groupId: group, userId: author });
+    await setSiteGroupFlags(site.id, group, PhiSiteGroupFlags.Threads);
+    // Flag 3 is Member and Author; opening the group's thread is the Author's.
+    await addPhiTestGroupMember({ site, groupId: group, userId: author, membershipFlags: 3 });
     await addPhiTestGroupMember({ site, groupId: group, userId: early });
 
     const opened = await createThread({
@@ -133,6 +170,141 @@ describe("threads", () => {
       .toBeNull();
   });
 
+  it("keeps a Direct thread to Staff who share a group, and lets an Admin reach any Staff", async () => {
+    await requirePhiTestDatabase();
+    const site = await createPhiTestSite("threads-reach");
+    await offerAllThreadKinds(site);
+    const { users: [opener, colleague] } = await createStaffWhoShareAGroup(site, "pgtest-reach", 2);
+    const elsewhere = await createPhiTestUser(site);
+    await grantCoreRole(site, elsewhere, PhiBaseRole.Staff);
+    const customer = await createPhiTestUser(site);
+    const admin = await createPhiTestUser(site);
+    await grantCoreRole(site, admin, PhiBaseRole.Admin);
+
+    const open = (createdByUserId: number, participantUserIds: number[]) => createThread({
+      siteId: site.id,
+      kind: PhisThreadKind.Direct,
+      subject: "Reach",
+      message: "Can you look at this?",
+      participantUserIds,
+      createdByUserId,
+    });
+
+    // A customer is not Staff and opens nothing; Staff reach Staff through a shared group only.
+    await expect(open(customer, [opener])).rejects.toThrow(/Only Staff may open/u);
+    await expect(open(opener, [customer])).rejects.toThrow(/Only Staff can be brought/u);
+    await expect(open(opener, [elsewhere])).rejects.toThrow(/share no group/u);
+    expect((await open(opener, [colleague])).participants).toHaveLength(2);
+
+    // Admin's reach is every Staff member, and no group is needed for it.
+    expect((await open(admin, [elsewhere])).participants).toHaveLength(2);
+
+    // Bringing somebody in afterwards is held to the same answer.
+    const between = await open(opener, [colleague]);
+    await expect(addThreadParticipants({
+      siteId: site.id,
+      threadId: between.thread.id,
+      reader: { kind: "user", userId: opener },
+      participantUserIds: [elsewhere],
+    })).rejects.toThrow(/share no group/u);
+    await expect(addThreadParticipants({
+      siteId: site.id,
+      threadId: between.thread.id,
+      reader: { kind: "user", userId: opener },
+      participantGroupIds: [(await createStaffWhoShareAGroup(site, "pgtest-reach-other", 0)).group],
+    })).rejects.toThrow(/between people/u);
+  });
+
+  it("opens a group's thread to its Author, where the group holds threads at all", async () => {
+    await requirePhiTestDatabase();
+    const site = await createPhiTestSite("threads-group-authority");
+    await offerAllThreadKinds(site);
+    const group = await createPhiTestGroup(site, "pgtest-authority");
+    const member = await createPhiTestUser(site);
+    const author = await createPhiTestUser(site);
+    const admin = await createPhiTestUser(site);
+    await addPhiTestGroupMember({ site, groupId: group, userId: member, membershipFlags: 1 });
+    await addPhiTestGroupMember({ site, groupId: group, userId: author, membershipFlags: 3 });
+    await grantCoreRole(site, admin, PhiBaseRole.Admin);
+
+    const open = (createdByUserId: number) => createThread({
+      siteId: site.id,
+      kind: PhisThreadKind.Group,
+      subject: "Group business",
+      message: "Anyone here?",
+      participantGroupIds: [group],
+      createdByUserId,
+    });
+
+    // The flag comes first: five thousand customers grouped for Page access are not a chat room.
+    await expect(open(author)).rejects.toThrow(/does not hold threads/u);
+    await setSiteGroupFlags(site.id, group, PhiSiteGroupFlags.Threads);
+    await expect(open(member)).rejects.toThrow(/Author level/u);
+    const opened = await open(author);
+    expect(opened.thread.kind).toBe(PhisThreadKind.Group);
+    // Admin needs no level in the group, but the group still has to hold threads.
+    expect((await open(admin)).thread.kind).toBe(PhisThreadKind.Group);
+
+    // A group's thread is the group's: nobody is added to it, and nobody but the group is named.
+    await expect(addThreadParticipants({
+      siteId: site.id,
+      threadId: opened.thread.id,
+      reader: { kind: "user", userId: author },
+      participantUserIds: [admin],
+    })).rejects.toThrow(/join the group/u);
+    await expect(createThread({
+      siteId: site.id,
+      kind: PhisThreadKind.Group,
+      subject: "Plus one",
+      message: "And you.",
+      participantGroupIds: [group],
+      participantUserIds: [admin],
+      createdByUserId: author,
+    })).rejects.toThrow(/nobody else/u);
+  });
+
+  it("lets groups talk to each other only where every one of them may be addressed", async () => {
+    await requirePhiTestDatabase();
+    const site = await createPhiTestSite("threads-cross");
+    await offerAllThreadKinds(site);
+    const ours = await createPhiTestGroup(site, "pgtest-ours");
+    const theirs = await createPhiTestGroup(site, "pgtest-theirs");
+    const author = await createPhiTestUser(site);
+    await addPhiTestGroupMember({ site, groupId: ours, userId: author, membershipFlags: 3 });
+    await setSiteGroupFlags(site.id, ours, PhiSiteGroupFlags.CrossGroupThreads | PhiSiteGroupFlags.Threads);
+
+    const open = () => createThread({
+      siteId: site.id,
+      kind: PhisThreadKind.CrossGroup,
+      subject: "Between us",
+      message: "Shall we?",
+      participantGroupIds: [ours, theirs],
+      createdByUserId: author,
+    });
+
+    await expect(open()).rejects.toThrow(/may not address other groups/u);
+    await setSiteGroupFlags(site.id, theirs, PhiSiteGroupFlags.CrossGroupThreads | PhiSiteGroupFlags.Threads);
+    expect((await open()).thread.kind).toBe(PhisThreadKind.CrossGroup);
+  });
+
+  it("opens a Support thread only with its ticket", async () => {
+    await requirePhiTestDatabase();
+    const site = await createPhiTestSite("threads-support-door");
+    await offerAllThreadKinds(site);
+    const customer = await createPhiTestUser(site);
+    const queueGroup = await createPhiTestGroup(site, "pgtest-queue");
+
+    // What any signed-in member could do before: name the queue's group and skip the ticket.
+    await expect(createThread({
+      siteId: site.id,
+      kind: PhisThreadKind.Support,
+      subject: "Help",
+      message: "Straight to the queue.",
+      participantGroupIds: [queueGroup],
+      createdByUserId: customer,
+    })).rejects.toThrow(/opens with its ticket/u);
+  });
+
   it("withholds an internal note from everyone but Staff", async () => {
     await requirePhiTestDatabase();
     const site = await createPhiTestSite("threads-internal");
@@ -141,33 +313,25 @@ describe("threads", () => {
     const customer = await createPhiTestUser(site);
     await grantCoreRole(site, supporter, PhiBaseRole.Supporter);
 
-    const opened = await createThread({
-      siteId: site.id,
-      kind: PhisThreadKind.Support,
-      subject: "Something broke",
-      message: "It broke.",
-      participantUserIds: [customer, supporter],
-      requesterUserId: customer,
-      createdByUserId: customer,
-    });
+    const threadId = await openSupportThread(site, { requester: customer, supporter });
 
     await addThreadMessage({
       siteId: site.id,
-      threadId: opened.thread.id,
+      threadId,
       reader: { kind: "user", userId: supporter },
       message: "Looks like the payment provider again.",
       messageFlags: PhisThreadMessageFlag.Internal,
     });
 
-    const asStaff = await getThreadDetail(site.id, { kind: "user", userId: supporter }, opened.thread.id);
-    const asCustomer = await getThreadDetail(site.id, { kind: "user", userId: customer }, opened.thread.id);
+    const asStaff = await getThreadDetail(site.id, { kind: "user", userId: supporter }, threadId);
+    const asCustomer = await getThreadDetail(site.id, { kind: "user", userId: customer }, threadId);
     expect(asStaff?.messages).toHaveLength(2);
     expect(asCustomer?.messages).toHaveLength(1);
 
     // A customer may not write one either, whatever they ask for.
     await addThreadMessage({
       siteId: site.id,
-      threadId: opened.thread.id,
+      threadId,
       reader: { kind: "user", userId: customer },
       message: "Any news?",
       messageFlags: PhisThreadMessageFlag.Internal,
@@ -175,7 +339,7 @@ describe("threads", () => {
     const afterCustomer = await getThreadDetail(
       site.id,
       { kind: "user", userId: customer },
-      opened.thread.id,
+      threadId,
     );
     expect(afterCustomer?.messages).toHaveLength(2);
   });
@@ -184,8 +348,7 @@ describe("threads", () => {
     await requirePhiTestDatabase();
     const site = await createPhiTestSite("threads-unread");
     await offerAllThreadKinds(site);
-    const author = await createPhiTestUser(site);
-    const reader = await createPhiTestUser(site);
+    const { users: [author, reader] } = await createStaffWhoShareAGroup(site, "pgtest-unread", 2);
 
     const opened = await createThread({
       siteId: site.id,
@@ -216,8 +379,7 @@ describe("threads", () => {
     await requirePhiTestDatabase();
     const site = await createPhiTestSite("threads-archive");
     await offerAllThreadKinds(site);
-    const author = await createPhiTestUser(site);
-    const other = await createPhiTestUser(site);
+    const { users: [author, other] } = await createStaffWhoShareAGroup(site, "pgtest-archive", 2);
 
     const opened = await createThread({
       siteId: site.id,
@@ -249,9 +411,7 @@ describe("threads", () => {
     await requirePhiTestDatabase();
     const site = await createPhiTestSite("threads-participants");
     await offerAllThreadKinds(site);
-    const author = await createPhiTestUser(site);
-    const first = await createPhiTestUser(site);
-    const second = await createPhiTestUser(site);
+    const { users: [author, first, second] } = await createStaffWhoShareAGroup(site, "pgtest-widen", 3);
 
     const opened = await createThread({
       siteId: site.id,
@@ -278,8 +438,9 @@ describe("threads", () => {
     await requirePhiTestDatabase();
     const site = await createPhiTestSite("threads-capability");
     await offerAllThreadKinds(site);
-    const actor = await createPhiTestUser(site);
-    const recipient = await createPhiTestUser(site);
+    // An Add-on acting for a person is that person: the two ends of its Direct thread are Staff who
+    // share a group, exactly as if the person had opened it.
+    const { users: [actor, recipient] } = await createStaffWhoShareAGroup(site, "pgtest-capability", 2);
     const outsider = await createPhiTestUser(site);
 
     const asActor = buildPhisAddonThreadsCapability({ addonId: ADDON_ID, siteId: site.id, actorUserId: actor });
@@ -308,8 +469,7 @@ describe("threads", () => {
     await requirePhiTestDatabase();
     const site = await createPhiTestSite("threads-actorless");
     await offerAllThreadKinds(site);
-    const person = await createPhiTestUser(site);
-    const recipient = await createPhiTestUser(site);
+    const { users: [person, recipient] } = await createStaffWhoShareAGroup(site, "pgtest-actorless", 2);
 
     const asJob = buildPhisAddonThreadsCapability({ addonId: ADDON_ID, siteId: site.id, actorUserId: null });
 
@@ -354,8 +514,7 @@ describe("threads", () => {
     await requirePhiTestDatabase();
     const site = await createPhiTestSite("threads-confidential");
     await offerAllThreadKinds(site);
-    const person = await createPhiTestUser(site);
-    const recipient = await createPhiTestUser(site);
+    const { users: [person, recipient] } = await createStaffWhoShareAGroup(site, "pgtest-confidential", 2);
 
     const opened = await createThread({
       siteId: site.id,

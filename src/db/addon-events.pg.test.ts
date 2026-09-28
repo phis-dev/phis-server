@@ -1,6 +1,7 @@
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
 
 import { PHIS_ADDON_EVENTS, PhisSiteThreadKindFlag, PhisThreadKind } from "@phis/contracts/addon";
+import { PhiBaseRole } from "@phis/contracts/access";
 
 import {
   enablePhiTestAddonForSite,
@@ -50,6 +51,14 @@ async function readOutbox(site: PhiTestSite) {
 }
 
 async function openThread(site: PhiTestSite, userId: number) {
+  // Only Staff open a Direct thread, and any Core role is what makes somebody Staff.
+  const pool = await requirePhiTestDatabase();
+  await pool.query(
+    `INSERT INTO phis.user_site_role_claims (site_id, user_id, provider_id, role_flags)
+     VALUES ($1, $2, '@phis/server/core', $3)
+     ON CONFLICT (site_id, user_id, provider_id) DO UPDATE SET role_flags = EXCLUDED.role_flags`,
+    [site.id, userId, PhiBaseRole.Staff],
+  );
   const detail = await createThread({
     siteId: site.id,
     kind: PhisThreadKind.Direct,
