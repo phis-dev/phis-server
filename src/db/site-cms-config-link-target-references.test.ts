@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { collectSiteCmsReferences } from "@/db/site-cms-references";
+import { resolvePhisCmsAreaMask } from "@/lib/constants/cms-areas";
 import { createPhiPageReference } from "@/lib/internal-references";
 
 const PAGE = createPhiPageReference({ kind: "site", pageScopeId: 41 });
@@ -64,6 +65,24 @@ describe("A link target in persisted config is a reference", () => {
   it("carries the Area a Page reference has to resolve in", () => {
     expect(pagesOf({ config: { linkTarget: { kind: "page", reference: PAGE } } }, { targetAreaId: 2 })[0])
       .toMatchObject({ targetAreaId: 2 });
+  });
+
+  /*
+   * A target that names its own Area is filed under that one. Using the Area of the tree it was written
+   * in would file a link into another Area against the Area that merely points at it.
+   */
+  it("files a target under the Area it named, not the one it was written in", () => {
+    expect(pagesOf(
+      { config: { linkTarget: { kind: "page", reference: PAGE, area: "admin" } } },
+      { targetAreaId: 1 },
+    )[0]).toMatchObject({ targetAreaId: resolvePhisCmsAreaMask("admin") });
+  });
+
+  it("falls back to the writing Area for a target that names none, and ignores one that is not an Area", () => {
+    expect(pagesOf(
+      { config: { linkTarget: { kind: "page", reference: PAGE, area: "nowhere" } } },
+      { targetAreaId: 1 },
+    )[0]).toMatchObject({ targetAreaId: 1 });
   });
 
   /*

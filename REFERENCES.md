@@ -164,6 +164,11 @@ is reversible -- it takes its routes with it and gives them back -- so there is 
 a guard to stand in front of, and no row for a foreign key to point at. The absence of an index row
 therefore does not mean nothing points at a Module Page.
 
+A target may name the Area to resolve its reference in, and is then indexed under that Area rather than
+the one whose tree carries it: that is where the Page it guards lives, and filing it against the Area
+that merely points at it would put the row beside Pages it has nothing to do with. Absent, the Area
+remains the one the tree was written in, which is what a link that names none means.
+
 Navigation receives an internal Page reference only from the active Area's Page source Tree during
 insert or drag/drop. The Navigation Table receives the resolved current path as read-only display data;
 there is no second Page SelectBox and no alternate internal-target editor. A path change therefore needs

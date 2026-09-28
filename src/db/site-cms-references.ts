@@ -3,6 +3,7 @@ import "server-only";
 import type { PoolClient } from "pg";
 
 import { getPool } from "@/lib/db";
+import { isPhisCmsAreaKey, resolvePhisCmsAreaMask } from "@/lib/constants/cms-areas";
 import {
   collectPhiInternalReferencesFromText,
   readPhiInternalReference,
@@ -65,7 +66,7 @@ function readPhiCmsAssetIdField(key: string, value: unknown): number | null {
 function readPhiCmsLinkTargetField(
   key: string,
   value: unknown,
-): { reference: PhiInternalReference | null } | null {
+): { reference: PhiInternalReference | null; areaId?: number } | null {
   if (key !== "linkTarget" && !(key.endsWith("LinkTarget") && key.length > "LinkTarget".length)) return null;
   if (!value || typeof value !== "object" || Array.isArray(value)) return { reference: null };
   const target = value as Record<string, unknown>;
@@ -73,6 +74,12 @@ function readPhiCmsLinkTargetField(
   const parsed = readPhiPageReference(target.reference);
   if (!parsed) return { reference: null };
   const fragment = typeof target.fragment === "string" ? target.fragment.replace(/^#/u, "").trim() : "";
+  /*
+   * A target may name the Area to resolve it in, and then that is the Area the row belongs to. Indexing
+   * it under the Area of the tree it was written in would file a link to another Area's Page against the
+   * Area that merely points at it.
+   */
+  const areaId = isPhisCmsAreaKey(target.area) ? resolvePhisCmsAreaMask(target.area) : undefined;
   return {
     reference: {
       kind: "page",
@@ -80,6 +87,7 @@ function readPhiCmsLinkTargetField(
       target: parsed.target,
       fragment: fragment || null,
     },
+    ...(areaId === undefined ? {} : { areaId }),
   };
 }
 
@@ -97,16 +105,15 @@ export function collectSiteCmsReferences(
    * takes its routes with it, and gives them back. A guard there would warn about an act that costs
    * nothing, and there is no row for a foreign key to point at in any case.
    */
-  const push = (location: string, reference: PhiInternalReference) => {
+  const push = (location: string, reference: PhiInternalReference, targetAreaId?: number) => {
     if (reference.kind === "page" && reference.target.kind === "module") {
       return;
     }
+    const areaId = targetAreaId ?? options?.targetAreaId;
     references.push({
       location,
       reference,
-      ...(reference.kind === "page" && options?.targetAreaId
-        ? { targetAreaId: options.targetAreaId }
-        : {}),
+      ...(reference.kind === "page" && areaId ? { targetAreaId: areaId } : {}),
     });
   };
   const visit = (node: unknown, location: string) => {
@@ -143,7 +150,7 @@ export function collectSiteCmsReferences(
       const linkTarget = readPhiCmsLinkTargetField(key, entry);
       if (linkTarget) {
         if (linkTarget.reference) {
-          push(`${location}/${encodedKey}`, linkTarget.reference);
+          push(`${location}/${encodedKey}`, linkTarget.reference, linkTarget.areaId);
         }
         continue;
       }

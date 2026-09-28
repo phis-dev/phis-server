@@ -1,15 +1,15 @@
-import { PhiCmsVisibilityContext } from "@phis/contracts/cms";
+import { PHI_CMS_AREA_KEYS, PhiCmsVisibilityContext, type PhiCmsAreaKey } from "@phis/contracts/cms";
 
-export const PHIS_CMS_AREA_KEYS = [
-  "public",
-  "app",
-  "admin",
-  "builder",
-  "editor",
-  "accounting",
-] as const;
+/**
+ * The Areas a Site has, from the same place their masks come from.
+ *
+ * The list stood here and in phis-ui, so a Site gaining an Area would have gained it twice -- and the
+ * masks beside it were already shared for exactly that reason. Kept under the local name so nothing
+ * that reads it has to care where it now comes from.
+ */
+export const PHIS_CMS_AREA_KEYS = PHI_CMS_AREA_KEYS;
 
-export type PhisCmsAreaKey = (typeof PHIS_CMS_AREA_KEYS)[number];
+export type PhisCmsAreaKey = PhiCmsAreaKey;
 
 export const PHIS_SPECIAL_AREA_KEYS = PHIS_CMS_AREA_KEYS.filter(
   (area): area is Exclude<PhisCmsAreaKey, "public"> => area !== "public",
