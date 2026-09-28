@@ -45,6 +45,44 @@ function readPhiCmsAssetIdField(key: string, value: unknown): number | null {
   return Number.isInteger(value) && (value as number) > 0 ? (value as number) : null;
 }
 
+/**
+ * Whether this field is how persisted config names a link target, and which Page it names.
+ *
+ * The Asset rule above and its reasoning, for the other thing config points at. A Widget that offers a
+ * link stores a target object rather than an href -- a Page by reference, or an explicitly external
+ * address -- and a walk that only reads strings would see neither, because the reference in config is
+ * the bare identity and not the `phis:page/` URI that belongs to Markdown and HTML bodies.
+ *
+ * Answering `null` means "not a link target field" and lets the walk carry on into the value. Answering
+ * a record means the field was one and the walk stops there, whether or not a Page came out of it. That
+ * distinction is the guard: an external target's `href` is a literal URL the Site does not own, and
+ * descending into it would let a `phis:page/` string typed into that box index itself as though somebody
+ * had chosen the Page from the tree. A target says which kind it is; nothing below it gets a second say.
+ *
+ * The Navigation overlay's `/target/reference` is the same idea written as a path match, from before
+ * there was a name to go by. It stays where it is; this rule is what a new Widget follows.
+ */
+function readPhiCmsLinkTargetField(
+  key: string,
+  value: unknown,
+): { reference: PhiInternalReference | null } | null {
+  if (key !== "linkTarget" && !(key.endsWith("LinkTarget") && key.length > "LinkTarget".length)) return null;
+  if (!value || typeof value !== "object" || Array.isArray(value)) return { reference: null };
+  const target = value as Record<string, unknown>;
+  if (target.kind !== "page") return { reference: null };
+  const parsed = readPhiPageReference(target.reference);
+  if (!parsed) return { reference: null };
+  const fragment = typeof target.fragment === "string" ? target.fragment.replace(/^#/u, "").trim() : "";
+  return {
+    reference: {
+      kind: "page",
+      reference: parsed.reference,
+      target: parsed.target,
+      fragment: fragment || null,
+    },
+  };
+}
+
 export function collectSiteCmsReferences(
   value: unknown,
   options?: { targetAreaId?: number },
@@ -88,6 +126,17 @@ export function collectSiteCmsReferences(
           location: `${location}/${encodedKey}`,
           reference: { kind: "asset", assetId },
         });
+        continue;
+      }
+      const linkTarget = readPhiCmsLinkTargetField(key, entry);
+      if (linkTarget) {
+        if (linkTarget.reference) {
+          references.push({
+            location: `${location}/${encodedKey}`,
+            reference: linkTarget.reference,
+            ...(options?.targetAreaId ? { targetAreaId: options.targetAreaId } : {}),
+          });
+        }
         continue;
       }
       visit(entry, `${location}/${encodedKey}`);

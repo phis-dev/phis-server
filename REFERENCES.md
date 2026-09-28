@@ -140,6 +140,15 @@ Navigation and other structured internal links persist the reference, not an hre
 resolve the current locale-/Area-correct path. Explicit external targets persist a validated literal URL
 in a separate target variant. Root-relative strings are not an internal-reference fallback.
 
+Persisted config names a link target in a field called `linkTarget` or in one whose name ends in
+`LinkTarget`, and by no other means. The field carries the target object itself: a Page by its bare
+reference, or an explicitly external address by its literal URL. The URI form stays with Markdown and
+HTML bodies, as it does for Assets, so config carries identity rather than a scheme. This is what the
+reference collector reads, and it reads the field whole: a target declares its kind, and nothing beneath
+it is walked for a second opinion, so a reserved-scheme string typed into an external address indexes
+nothing. Only the internal kind produces a row; an external target names nothing the Site owns, so there
+is no identity to guard, no path that can move beneath it, and no target variant for it in the index.
+
 Navigation receives an internal Page reference only from the active Area's Page source Tree during
 insert or drag/drop. The Navigation Table receives the resolved current path as read-only display data;
 there is no second Page SelectBox and no alternate internal-target editor. A path change therefore needs
