@@ -41,6 +41,22 @@ type QueryValue = string | null;
 
 type AdminSite = NonNullable<NonNullable<Awaited<ReturnType<typeof requireSiteAdminOnlyApiContext>>["context"]>["site"]>;
 
+/**
+ * An account is global: one address, one password, one profile, whichever Sites it belongs to. A Site
+ * Admin governs all of it only while it belongs to their Site alone -- the Admin role grants no
+ * cross-Site authority (AUTHORIZATION.md §3). Once other Sites share it, this Site keeps what is its
+ * own, the membership with its roles and enabled state, and the person keeps the rest.
+ */
+function isAccountOwnedBySite(account: { siteIds: readonly number[] }, siteId: number) {
+  return account.siteIds.length === 1 && account.siteIds[0] === siteId;
+}
+
+const ACCOUNT_SHARED_RESPONSE = {
+  code: "account_shared",
+  error:
+    "This account also belongs to other sites; only its roles and enabled state can be changed here.",
+} as const;
+
 function normalize(value: QueryValue) {
   return value?.trim() ?? "";
 }
@@ -300,27 +316,58 @@ export async function POST(request: NextRequest) {
   }
 
   const existingUser = await getUserAccountByEmail(email);
-  if (existingUser?.medusaCustomerId) {
-    return NextResponse.json({ error: "Medusa-managed accounts cannot be edited here." }, { status: 409 });
-  }
-
   if (existingUser && existingUser.siteIds.includes(site.id)) {
     return NextResponse.json({ error: "Account already exists." }, { status: 409 });
   }
 
+  if (existingUser) {
+    /*
+     * The address already has an account, on other Sites. This Site gains a member and nothing else:
+     * the password, the account flags and the profile stay as the person left them, since overwriting
+     * them here would reach every Site they use. No reset mail either -- they can sign in already.
+     * A profile is written only where none exists, which takes nothing from anybody.
+     */
+    await upsertUserSiteMembership({
+      userId: existingUser.id,
+      siteId: site.id,
+      coreRoleFlags: roleFlags,
+    });
+    if (!await getUserProfileByUserId(existingUser.id)) {
+      await upsertUserProfile({ userId: existingUser.id, firstName, lastName, companyName });
+    }
+
+    return NextResponse.json({
+      userId: existingUser.id,
+      email: existingUser.emailNormalized,
+      coreRoleFlags: roleFlags,
+      roleTags: buildRoleTags(roleFlags),
+      changePassword: false,
+      linkedExistingAccount: true,
+    });
+  }
+
   const passwordHash = await hashPassword(randomBytes(32).toString("hex"));
-  const account = await ensureUserAccount({
-    email,
-    siteId: site.id,
-    emailSource: PhiUserEmailSource.Admin,
-    medusaCustomerId: null,
-    passwordHash,
-    // Nobody has asked this person which language they want, so the column stays empty and their browser
-    // answers for them. Writing the Site default here said they had chosen it.
-    preferredLocale: null,
-    flags: PhiUserAccountFlag.MustChangePassword,
-    reuseExisting: Boolean(existingUser),
-  });
+  let account: Awaited<ReturnType<typeof ensureUserAccount>>;
+  try {
+    account = await ensureUserAccount({
+      email,
+      siteId: site.id,
+      emailSource: PhiUserEmailSource.Admin,
+      medusaCustomerId: null,
+      passwordHash,
+      // Nobody has asked this person which language they want, so the column stays empty and their
+      // browser answers for them. Writing the Site default here said they had chosen it.
+      preferredLocale: null,
+      flags: PhiUserAccountFlag.MustChangePassword,
+      reuseExisting: false,
+    });
+  } catch (ensureError) {
+    // Somebody registered the address between the lookup above and this write.
+    if (ensureError instanceof Error && ensureError.message === "ACCOUNT_EXISTS") {
+      return NextResponse.json({ error: "Account already exists." }, { status: 409 });
+    }
+    throw ensureError;
+  }
 
   await upsertUserProfile({
     userId: account.id,
@@ -449,20 +496,38 @@ export async function PUT(request: NextRequest) {
     return NextResponse.json({ error: "Email already exists." }, { status: 409 });
   }
 
-  await updateUserAccountProfileFields(target.id, {
-    email: requestedEmail !== target.emailNormalized ? requestedEmail : null,
-    emailSource: PhiUserEmailSource.Admin,
-    // Nothing about the language here. This save is a name and an address, and it used to turn an
-    // unanswered `preferred_locale` into the Site default on its way past -- a choice made for somebody
-    // by an edit that was not about it.
-  });
+  const ownsAccount = isAccountOwnedBySite(target, site.id);
+  if (!ownsAccount) {
+    // The edit form sends the whole record, so a role change arrives with the address and name as they
+    // are; only a value that actually differs reaches into the account the other Sites share.
+    const profile = await getUserProfileByUserId(target.id);
+    const touchesAccount =
+      changePassword ||
+      requestedEmail !== target.emailNormalized ||
+      requestedFirstName !== (profile?.firstName ?? "") ||
+      requestedLastName !== (profile?.lastName ?? "") ||
+      requestedCompanyName !== (profile?.companyName ?? null);
+    if (touchesAccount) {
+      return NextResponse.json(ACCOUNT_SHARED_RESPONSE, { status: 409 });
+    }
+  }
 
-  await upsertUserProfile({
-    userId: target.id,
-    firstName: requestedFirstName,
-    lastName: requestedLastName,
-    companyName: requestedCompanyName,
-  });
+  if (ownsAccount) {
+    await updateUserAccountProfileFields(target.id, {
+      email: requestedEmail !== target.emailNormalized ? requestedEmail : null,
+      emailSource: PhiUserEmailSource.Admin,
+      // Nothing about the language here. This save is a name and an address, and it used to turn an
+      // unanswered `preferred_locale` into the Site default on its way past -- a choice made for
+      // somebody by an edit that was not about it.
+    });
+
+    await upsertUserProfile({
+      userId: target.id,
+      firstName: requestedFirstName,
+      lastName: requestedLastName,
+      companyName: requestedCompanyName,
+    });
+  }
 
   if (!isSelf) {
     await upsertUserSiteMembership({
@@ -641,7 +706,7 @@ export async function DELETE(request: NextRequest) {
     return NextResponse.json({ error: "Medusa-managed accounts cannot be deleted here." }, { status: 409 });
   }
 
-  const hardDelete = target.siteIds.length <= 1;
+  const hardDelete = isAccountOwnedBySite(target, site.id);
 
   if (hardDelete) {
     await deleteUserAccount(target.id);

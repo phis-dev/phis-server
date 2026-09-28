@@ -180,6 +180,13 @@ Only Core Admin may assign or remove Core role flags on a Site (the write method
 `phis site admin` for the operator). Add-on roles are granted separately (section 5) and grant authority
 only inside that Add-on; they never grant Core user or role administration.
 
+An account is global: one address, one password, one profile across every Site it belongs to. A Site
+Admin changes those only while the account belongs to their Site alone. Once other Sites share it, the
+Admin changes what is the Site's own -- membership, Core roles, enabled state -- and the write methods
+refuse a new address, name or password reset with `409 account_shared`. Creating a user whose address
+already has an account on another Site adds a membership and leaves the account untouched; deleting a
+shared account removes only this Site's membership.
+
 ## 5. Add-on roles
 
 An Add-on declares named roles in its manifest, each with the policy that decides who may grant it
