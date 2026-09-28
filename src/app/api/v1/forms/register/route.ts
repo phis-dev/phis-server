@@ -9,6 +9,7 @@ import { guardApiV1 } from "@/lib/api-v1-guard";
 import { buildVerificationUrlForRequest } from "@/lib/email";
 import { sendTemplatedEmail } from "@/lib/email-templates";
 import { getSiteConfigBySiteId } from "@/db/site-config";
+import { normalizeLocale } from "@/lib/locale";
 import { logRuntimeEvent } from "@/lib/log";
 import { requireSiteFromRequest } from "@/lib/site-context";
 import { getFormGuardSecret, getFormTimingWindow, getSiteMailConfig } from "@/lib/form-config";
@@ -70,7 +71,7 @@ export async function POST(request: Request) {
   const email = normalize(payload.email);
   const password = normalize(payload.password);
   const confirmPassword = normalize(payload.confirmPassword);
-  const locale = normalize(payload.locale) || site.defaultLocale;
+  const locale = normalizeLocale(normalize(payload.locale) || site.defaultLocale);
   const website = normalize(payload.website);
   const issuedAt = normalize(payload.issuedAt);
   const formToken = normalize(payload.formToken);

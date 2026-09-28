@@ -11,13 +11,14 @@ import {
   clearAreaCookie,
   readRequestIp,
   readRequestUserAgent,
+  resolveSignedInLocale,
   setCsrfCookie,
+  setLocaleCookie,
   setSessionCookie,
   setThemeModeCookie,
   verifyCsrfRequest,
   createCsrfToken,
 } from "@/lib/auth";
-import { resolveSiteLocale } from "@/lib/locale";
 import { logRuntimeEvent, normalizeLogThrowable } from "@/lib/log";
 import { verifyPasswordHash } from "@/lib/password";
 import { requireSiteFromRequest } from "@/lib/site-context";
@@ -95,7 +96,13 @@ export async function POST(request: NextRequest) {
         reason: "invalid_credentials",
       },
     });
-    return NextResponse.json({ error: "Invalid credentials." }, { status: 401 });
+    return NextResponse.json(
+      {
+        code: "invalid_credentials",
+        error: "Invalid credentials.",
+      },
+      { status: 401 },
+    );
   }
   const siteRole = await getEffectiveUserSiteAuthorization(user.id, site.id);
 
@@ -113,7 +120,13 @@ export async function POST(request: NextRequest) {
           reason: "invalid_credentials",
         },
       });
-      return NextResponse.json({ error: "Invalid credentials." }, { status: 401 });
+      return NextResponse.json(
+        {
+          code: "invalid_credentials",
+          error: "Invalid credentials.",
+        },
+        { status: 401 },
+      );
     }
     if (!isUserAccountEnabled(user.flags) || !siteRole.enabled) {
       logRuntimeEvent("warn", "auth.login.account_disabled", {
@@ -183,11 +196,11 @@ export async function POST(request: NextRequest) {
 
     const csrfToken = createCsrfToken();
     const runtimeConfig = await getSiteRuntimeConfig(site.id);
-    const preferredLocale = resolveSiteLocale({
-      userPreferredLocale: user.preferredLocale,
+    const preferredLocale = resolveSignedInLocale(request, {
+      user,
       defaultLocale: runtimeConfig?.defaultLocale ?? site.defaultLocale,
       availableLocales: runtimeConfig?.availableLocales.map((option) => option.code) ?? [site.defaultLocale],
-    }).locale;
+    });
     const response = NextResponse.json({
       complete,
       ...(complete ? { area } : {}),
@@ -214,11 +227,7 @@ export async function POST(request: NextRequest) {
     } else {
       clearAreaCookie(response);
     }
-    response.cookies.set("phis_locale", preferredLocale, {
-      path: "/",
-      sameSite: "lax",
-      expires: session.expiresAt,
-    });
+    setLocaleCookie(response, preferredLocale, session.expiresAt);
     // Signing in on a browser this account has not used before is exactly when the mirror earns its
     // keep, and withdrawing the choice has to clear a cookie that browser may already carry.
     setThemeModeCookie(response, resolveUserThemeModeName(user.flags), session.expiresAt);
