@@ -4,6 +4,7 @@ import { accessSync, constants, readFileSync } from "node:fs";
 import os from "node:os";
 
 import { getPhiAppRoot } from "@/lib/app-paths";
+import { redactConfigText } from "@/lib/config-redaction";
 import {
   getPhiRuntimeConfigPath,
   getPhiStaticConfigPath,
@@ -41,9 +42,10 @@ function resolveUserName() {
   }
 }
 
+/** The file as the panel may show it: redacted, since the panel is a client component. */
 function readConfigContent(path: string, errorLabel: string) {
   try {
-    return readFileSync(path, "utf-8").trim() || "{}";
+    return redactConfigText(readFileSync(path, "utf-8").trim() || "{}");
   } catch (error) {
     const message =
       error instanceof Error ? error.message : `${errorLabel} could not be read.`;
