@@ -280,6 +280,9 @@ export async function setSiteGroupFlags(siteId: number, groupId: number, flags: 
  * It is compared as well as inserted, so a caller can only reach the groups it brought: passing an
  * Add-on's id here cannot touch a Core group, and passing Core's cannot touch an Add-on's.
  */
+/** A membership write the rows refuse, as opposed to one that failed: the routes answer it with a 409. */
+export class SiteGroupMembershipRefusedError extends Error {}
+
 export async function setLocalSiteGroupMembership(input: {
   siteId: number;
   groupId: number;
@@ -315,7 +318,9 @@ export async function setLocalSiteGroupMembership(input: {
       ],
     );
     if (result.rowCount !== 1) {
-      throw new Error("Local group not found, retired, or the person is not a member of this Site.");
+      throw new SiteGroupMembershipRefusedError(
+        "Local group not found, retired, or the person is not a member of this Site.",
+      );
     }
     const after = await readEffectiveGroupFlagsWithDb(client, input.siteId, input.userId);
     if (JSON.stringify(before) !== JSON.stringify(after)) {

@@ -12,12 +12,13 @@ import {
   setLocalSiteGroupMembership,
   setSiteGroupFlags,
   setSiteGroupRetirement,
+  SiteGroupMembershipRefusedError,
 } from "@/db/site-groups";
 import { getGroupMediaSpace } from "@/db/media-spaces";
 import {
   PhiGroupMembershipFlags,
   PhiSiteGroupFlags,
-  normalizePhiGroupMembershipFlags,
+  readPhiGroupMembershipFlags,
 } from "@/lib/constants/site-groups";
 import {
   canWriteSiteGroupMembership,
@@ -294,8 +295,10 @@ export async function PUT(request: NextRequest) {
   // Named in the query by a Table editing one cell, in the body by a Form relaying to a fixed path.
   const groupId = parseId(request.nextUrl.searchParams.get("groupId")) ?? parseId(readValue(body?.groupId));
   const userId = parseId(request.nextUrl.searchParams.get("userId")) ?? parseId(readValue(body?.userId));
-  const membershipFlags = Number(readValue(body?.membershipFlags));
-  if (!groupId || !userId || !Number.isInteger(membershipFlags)) {
+  // One of the four levels, or the request is refused here: an out-of-range value used to reach the
+  // normalizer and come back as a 500.
+  const next = readPhiGroupMembershipFlags(Number(readValue(body?.membershipFlags)));
+  if (!groupId || !userId || next === null) {
     return NextResponse.json({ error: "invalid_membership" }, { status: 400 });
   }
   const guarded = await requireSiteGroupManagerApiContext(request, groupId);
@@ -311,16 +314,22 @@ export async function PUT(request: NextRequest) {
     }, { status: 409 });
   }
   const current = await readEffectiveGroupMembershipFlags(siteId, groupId, userId);
-  const next = normalizePhiGroupMembershipFlags(membershipFlags);
   if (!canWriteSiteGroupMembership(guarded.context!.authority, { next, current })) {
     return NextResponse.json({
       error: "manager_level_forbidden",
       message: "Only a developer or admin may grant or revoke the Manager level.",
     }, { status: 403 });
   }
-  return NextResponse.json({
-    groupClaims: await setLocalSiteGroupMembership({ siteId, groupId, userId, membershipFlags: next }),
-  });
+  try {
+    return NextResponse.json({
+      groupClaims: await setLocalSiteGroupMembership({ siteId, groupId, userId, membershipFlags: next }),
+    });
+  } catch (error) {
+    if (error instanceof SiteGroupMembershipRefusedError) {
+      return NextResponse.json({ error: "membership_refused", message: error.message }, { status: 409 });
+    }
+    throw error;
+  }
 }
 
 export async function DELETE(request: NextRequest) {

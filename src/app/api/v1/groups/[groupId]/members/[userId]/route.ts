@@ -6,7 +6,7 @@ import {
   removeLocalSiteGroupMembership,
   setLocalSiteGroupMembership,
 } from "@/db/site-groups";
-import { normalizePhiGroupMembershipFlags } from "@/lib/constants/site-groups";
+import { readPhiGroupMembershipFlags } from "@/lib/constants/site-groups";
 import {
   canWriteSiteGroupMembership,
   requireSiteGroupManagerApiContext,
@@ -35,14 +35,14 @@ export async function PUT(
   const groupId = parseId(params.groupId);
   const userId = parseId(params.userId);
   const body = await request.json().catch(() => null) as { membershipFlags?: unknown } | null;
-  if (!groupId || !userId || typeof body?.membershipFlags !== "number") {
+  const next = readPhiGroupMembershipFlags(body?.membershipFlags);
+  if (!groupId || !userId || next === null) {
     return NextResponse.json({ error: "invalid_membership" }, { status: 400 });
   }
   const guarded = await requireSiteGroupManagerApiContext(request, groupId);
   if (guarded.error) return guarded.error;
   const siteId = guarded.context!.site!.id;
   const current = await readEffectiveGroupMembershipFlags(siteId, groupId, userId);
-  const next = normalizePhiGroupMembershipFlags(body.membershipFlags);
   if (!canWriteSiteGroupMembership(guarded.context!.authority, { next, current })) {
     return NextResponse.json(FORBIDDEN_MANAGER_WRITE, { status: 403 });
   }
@@ -51,7 +51,7 @@ export async function PUT(
       siteId,
       groupId,
       userId,
-      membershipFlags: body.membershipFlags,
+      membershipFlags: next,
     });
     return NextResponse.json({ groupClaims });
   } catch (error) {

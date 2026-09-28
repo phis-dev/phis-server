@@ -1689,7 +1689,8 @@ export async function materializeSiteThreadKindsWithDb(db: DbQueryable, siteId: 
  *
  * The audience is not asked at all. It is the message's, and it stays the message's.
  */
-export class PhisThreadAttachmentError extends Error {}
+/** A refused attachment is a refused thread write: the routes answer it as one, with a 400. */
+export class PhisThreadAttachmentError extends PhisThreadError {}
 
 async function attachAssetsWithDb(
   db: DbQueryable,

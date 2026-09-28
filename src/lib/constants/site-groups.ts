@@ -61,6 +61,14 @@ export function normalizePhiSiteGroupFlags(value: unknown) {
   return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value & known : 0;
 }
 
+/** The same reading for input from a request: `null` for a value that is none of the four levels. */
+export function readPhiGroupMembershipFlags(value: unknown) {
+  return typeof value === "number" && Number.isInteger(value) && value > 0
+    && value <= PhiGroupMembershipFlags.Manager
+    ? normalizePhiGroupMembershipFlags(value)
+    : null;
+}
+
 export function normalizePhiGroupMembershipFlags(value: number) {
   if (!Number.isInteger(value) || value <= 0 || value > PhiGroupMembershipFlags.Manager) {
     throw new Error(
