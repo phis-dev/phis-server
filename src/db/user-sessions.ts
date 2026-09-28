@@ -377,6 +377,12 @@ export async function touchSession(sessionId: string, request?: NextRequest) {
  * the account belonging to before.
  *
  * Account-wide rather than per Site, because a password is the account's and not one Site's.
+ *
+ * `$2` is cast to `uuid`, the column's own type. Cast to `text` it compared a uuid with a text and
+ * Postgres has no such operator -- `42883`, raised on every call, spared session or not. The callers
+ * had already stored the new password by then, so the change went through and the sessions it was
+ * meant to end stayed open: the one outcome the paragraph above says must not happen. The id that
+ * arrives here has passed `parseSessionCookieValue`, which admits nothing but a uuid.
  */
 export async function revokeUserSessions(
   userId: number,
@@ -389,7 +395,7 @@ export async function revokeUserSessions(
      SET revoked_at = NOW()
      WHERE user_id = $1
        AND revoked_at IS NULL
-       AND ($2::text IS NULL OR id <> $2::text)`,
+       AND ($2::uuid IS NULL OR id <> $2::uuid)`,
     [userId, exceptSessionId],
   );
 }
