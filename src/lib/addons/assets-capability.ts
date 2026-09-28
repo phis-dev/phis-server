@@ -23,7 +23,7 @@ import {
 import { resolvePhiMediaDeliveryUrl } from "@/lib/media-response";
 import {
   abortMediaUploadSessionByToken,
-  completeMediaUploadSessionWithDb,
+  deleteMediaUploadSessionWithDb,
   createMediaAsset,
   createMediaUploadSession,
   getMediaAssetBySiteAndChecksum,
@@ -330,24 +330,15 @@ export function buildPhisAddonAssetsCapability(input: {
       const { session, ref } = await requireSession(token, table);
       const declared = requireSlot(table, ref.slot);
 
-      if (session.status === PhiMediaUploadSessionStatus.Completed) {
-        /*
-         * Already done, so say so again rather than fail.
-         *
-         * A client whose answer was lost cannot tell a successful upload from a failed one, and the
-         * only safe thing it can do is repeat itself. Answering with an error there would report a
-         * finished file as a broken one.
-         */
-        const existing = await readPhisAddonAssets(getPool(), location, {
-          siteId, ownerId: ref.ownerId, slot: ref.slot,
-        });
-        // Matched on the object, because that is the one thing the session and the finished row share.
-        const done = existing.find((row) => row.originalName === session.filename);
-        if (done) {
-          return view(done);
-        }
-      }
-
+      /*
+       * No "already done" answer: the row goes with the commit below, so a repeated call finds no
+       * reservation and is refused like any other token that names none. It used to stay behind,
+       * marked complete, so that a client whose answer was lost could ask again -- and every expiry
+       * release read that row as a reservation still held and gave its bytes back a second time,
+       * while the sweep took its key for a staged remain and deleted the finished file. A client
+       * that lost the answer asks `list` whether the file is there, which is what the finished row
+       * is for.
+       */
       const { space, profile, service } = await resolveSpace();
       /*
        * What actually landed, asked of the storage rather than of the caller.
@@ -490,7 +481,8 @@ export function buildPhisAddonAssetsCapability(input: {
             }),
           });
         }
-        await completeMediaUploadSessionWithDb(client, token, PhiMediaUploadSessionStatus.Completed);
+        // While the row exists its bytes are reserved, and while it is gone they are used: never both.
+        await deleteMediaUploadSessionWithDb(client, token);
         await client.query("COMMIT");
       } catch (error) {
         await client.query("ROLLBACK").catch(() => {});
@@ -529,7 +521,6 @@ export function buildPhisAddonAssetsCapability(input: {
         || ref?.addonId !== addonId
         || ref?.table !== table
         || session.actorUserId !== input.actorUserId
-        || session.status === PhiMediaUploadSessionStatus.Completed
       ) {
         return false;
       }

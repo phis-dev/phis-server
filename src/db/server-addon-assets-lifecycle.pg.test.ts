@@ -7,7 +7,7 @@ import { buildPhisAddonAssetsCapability } from "@/lib/addons/assets-capability";
 import { getMediaStorageProfile } from "@/db/media-spaces";
 import { createPhisMediaStorageServiceForProfile } from "@/lib/media-storage";
 import { ensureAddonMediaSpace } from "@/db/media-spaces";
-import { getMediaUploadSessionByToken } from "@/db/media";
+import { getMediaUploadSessionByToken, releaseExpiredMediaUploadSessions } from "@/db/media";
 import {
   closePhiTestPool,
   createPhiTestSite,
@@ -265,6 +265,43 @@ describe("putting a file on a row", () => {
       [asset.mediaAssetId],
     );
     expect(stored.rows[0]!.space_id).toBe(space.id);
+  });
+
+  it("spends the reservation when the file is settled, so nothing can release it again", async () => {
+    const pool = await requirePhiTestDatabase();
+    const before = await usage();
+    const reservation = await assets().begin({
+      table: "offering", ownerId: offeringId, slot: "package",
+      contentType: "application/gzip", sizeBytes: GZIP.byteLength,
+    });
+    await deliver(reservation.token, GZIP);
+    const file = await assets().finalize({ table: "offering", token: reservation.token });
+    const key = await storageKeyOf(file.mediaAssetId);
+
+    // The row is gone with the commit: a reservation that is spent is not a reservation any more. The
+    // bytes are used now and held no longer -- `package` is single-valued, so the file this replaces
+    // gives its own bytes back, which is why the figure to hold on to is the one after settling.
+    expect(await getMediaUploadSessionByToken(reservation.token)).toBeNull();
+    const settled = await usage();
+    expect(settled.reserved).toBe(before.reserved);
+
+    /*
+     * What the row used to do after its day was over: it stayed behind marked complete, every expiry
+     * pass read it as a reservation still held and gave its bytes back a second time, and the sweep
+     * took its key for a staged remain. Now there is nothing for a pass to find.
+     */
+    const space = await ensureAddonMediaSpace(site.id, ADDON);
+    await pool.query(
+      `UPDATE phis.media_upload_sessions SET expires_at = NOW() - INTERVAL '1 day' WHERE token = $1`,
+      [reservation.token],
+    );
+    expect(await releaseExpiredMediaUploadSessions(space.id)).toHaveLength(0);
+    expect(await usage()).toEqual(settled);
+    expect(await objectExists(key!)).toBe(true);
+
+    // And asking again is refused, the same answer as for any token that names no reservation.
+    await expect(assets().finalize({ table: "offering", token: reservation.token }))
+      .rejects.toThrow(/not open/);
   });
 
   it("refuses to finish an upload that never arrived", async () => {

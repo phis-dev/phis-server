@@ -1085,8 +1085,10 @@ is why the ceiling is worth keeping there.
 
 `finalize` looks at the object rather than believing the report: nothing there is not a file, and a
 different size than was reserved is not one either. On a single-valued slot the file being replaced goes
-in the same transaction. Repeating it is safe -- a client whose answer was lost cannot tell a finished
-upload from a failed one, so a second call answers with the same file rather than an error.
+in the same transaction, and the reservation goes with it: while its row exists the bytes are held,
+once the file is settled they are used, never both. A second `finalize` with the same token therefore
+finds no reservation and is refused. A client whose answer was lost asks `list` whether the file is
+there -- the finished row is the record, not the reservation that produced it.
 
 #### The path on the row
 
