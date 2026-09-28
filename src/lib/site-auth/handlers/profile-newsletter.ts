@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { getUserAccountById } from "@/db/user-accounts";
-import { getEffectiveUserSiteAuthorization, setUserSiteFlags } from "@/db/user-site-memberships";
+import { changeUserSiteFlags, getEffectiveUserSiteAuthorization } from "@/db/user-site-memberships";
 import { getSessionFromRequest } from "@/db/user-sessions";
 import { verifyCsrfRequest } from "@/lib/auth";
 import { requireSiteFromRequest } from "@/lib/site-context";
@@ -44,11 +44,13 @@ export async function PATCH(request: NextRequest) {
   }
 
   const newsletterOptIn = payload.newsletterOptIn === true;
-  const nextFlags = newsletterOptIn
-    ? siteRole.siteFlags | USER_SITE_FLAG_NEWSLETTER_OPT_IN
-    : siteRole.siteFlags & ~USER_SITE_FLAG_NEWSLETTER_OPT_IN;
-
-  const updated = await setUserSiteFlags(user.id, site.id, nextFlags);
+  const updated = await changeUserSiteFlags(
+    user.id,
+    site.id,
+    newsletterOptIn
+      ? { set: USER_SITE_FLAG_NEWSLETTER_OPT_IN }
+      : { clear: USER_SITE_FLAG_NEWSLETTER_OPT_IN },
+  );
   if (!updated) {
     return NextResponse.json({ error: "Failed to update newsletter preference." }, { status: 500 });
   }

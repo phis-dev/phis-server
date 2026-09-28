@@ -206,19 +206,25 @@ export async function recordUserSiteLogin(userId: number, siteId: number) {
   );
 }
 
-export async function setUserSiteFlags(
+/**
+ * Sets and clears named flags in one statement, leaving every other bit as the row holds it.
+ *
+ * It used to take the whole number, computed from a read a moment earlier: a newsletter toggle landing
+ * after an administrator disabled the membership wrote the old number back and enabled it again.
+ */
+export async function changeUserSiteFlags(
   userId: number,
   siteId: number,
-  userSiteFlags: number,
+  change: { set?: number; clear?: number },
 ) {
   const pool = getPool();
   const { rows } = await pool.query<UserSiteMembershipRecord>(
     `UPDATE phis.user_site_memberships
-     SET user_site_flags = $3, updated_at = NOW()
+     SET user_site_flags = (user_site_flags & ~($4::integer)) | ($3::integer), updated_at = NOW()
      WHERE user_id = $1 AND site_id = $2
      RETURNING id, user_id, site_id, user_site_flags, authorization_revision,
                last_login_at, created_at, updated_at`,
-    [userId, siteId, userSiteFlags],
+    [userId, siteId, change.set ?? 0, change.clear ?? 0],
   );
   const row = rows[0];
   return row ? mapMembership(row, await readRoleClaims(pool, userId, siteId)) : null;
