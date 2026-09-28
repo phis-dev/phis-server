@@ -9,14 +9,15 @@ import {
   clearAreaCookie,
   readRequestIp,
   readRequestUserAgent,
+  resolveSignedInLocale,
   setAreaCookie,
   setCsrfCookie,
+  setLocaleCookie,
   setSessionCookie,
   setThemeModeCookie,
 } from "@/lib/auth";
 import { resolveUserThemeModeName } from "@/lib/user-flags";
 import { guardApiV1 } from "@/lib/api-v1-guard";
-import { resolveSiteLocale } from "@/lib/locale";
 import { logRuntimeEvent } from "@/lib/log";
 import { normalizeProviderKey } from "@/lib/site-auth/contracts";
 import { PHI_AUTH_SESSION_STATES } from "@/lib/site-auth/contracts";
@@ -114,11 +115,11 @@ export async function GET(request: NextRequest, context: Context) {
     const response = NextResponse.redirect(destination);
     const csrfToken = createCsrfToken();
     const user = await getUserAccountById(resolution.userId, siteContext.site.id);
-    const locale = resolveSiteLocale({
-      userPreferredLocale: user?.preferredLocale,
+    const locale = resolveSignedInLocale(request, {
+      user,
       defaultLocale: runtime.defaultLocale,
       availableLocales: runtime.availableLocales.map((option) => option.code),
-    }).locale;
+    });
     setSessionCookie(response, session.id, session.secret, session.expiresAt);
     setCsrfCookie(response, csrfToken);
     if (complete) {
@@ -126,11 +127,7 @@ export async function GET(request: NextRequest, context: Context) {
     } else {
       clearAreaCookie(response);
     }
-    response.cookies.set("phis_locale", locale, {
-      path: "/",
-      sameSite: "lax",
-      expires: session.expiresAt,
-    });
+    setLocaleCookie(response, locale, session.expiresAt);
     setThemeModeCookie(response, resolveUserThemeModeName(user?.flags), session.expiresAt);
     logRuntimeEvent("info", complete ? "auth.provider.success" : "auth.provider.factor_required", {
       message: complete ? "Provider login succeeded." : "Provider login requires another factor.",

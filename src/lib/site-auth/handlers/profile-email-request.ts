@@ -1,11 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { createRegistrationIntent } from "@/db/registration-intents";
+import { getSiteRuntimeConfig } from "@/db/sites";
 import { getUserAccountById, getUserAccountByEmail } from "@/db/user-accounts";
 import { getUserProfileByUserId } from "@/db/user-profiles";
 import { getEffectiveUserSiteAuthorization } from "@/db/user-site-memberships";
 import { getSessionFromRequest } from "@/db/user-sessions";
-import { verifyCsrfRequest } from "@/lib/auth";
+import { resolveSignedInLocale, verifyCsrfRequest } from "@/lib/auth";
 import { buildVerificationUrlForRequest } from "@/lib/email";
 import { sendTemplatedEmail } from "@/lib/email-templates";
 import { getSiteMailConfig } from "@/lib/form-config";
@@ -96,11 +97,23 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  const runtimeConfig = await getSiteRuntimeConfig(site.id);
   const intent = await createRegistrationIntent({
     siteId: site.id,
     userId: user.id,
     email,
-    locale: user.preferredLocale ?? site.defaultLocale,
+    /*
+     * The language this request was made in, which for somebody who has saved one is that, and otherwise
+     * the language their browser is reading. It used to be `preferred_locale` or the Site default, and
+     * now that the column is empty until somebody answers, that would have sent a German reader a
+     * confirmation mail in English while they sat on the German page that asked for it.
+     */
+    locale: resolveSignedInLocale(request, {
+      user,
+      defaultLocale: runtimeConfig?.defaultLocale ?? site.defaultLocale,
+      availableLocales: runtimeConfig?.availableLocales.map((option) => option.code)
+        ?? [site.defaultLocale],
+    }),
     newsletterOptIn: false,
   });
 

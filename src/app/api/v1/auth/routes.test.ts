@@ -60,6 +60,10 @@ vi.mock("@/lib/auth", () => ({
   setThemeModeCookie: vi.fn(),
   setAuthLinkCookie: vi.fn(),
   clearAuthLinkCookie: vi.fn(),
+  // The language a sign-in serves is decided in the real module and tested there; here it only has to
+  // answer, because a mock that leaves it out makes every provider route throw on its own success path.
+  resolveSignedInLocale: () => "en",
+  setLocaleCookie: vi.fn(),
 }));
 
 import { GET as getManifest } from "./manifest/route";

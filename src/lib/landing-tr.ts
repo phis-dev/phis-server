@@ -7,6 +7,7 @@ import {
   SUPPORTED_LOCALES,
   normalizeLocale,
 } from "@/lib/locale";
+import { LOCALE_COOKIE_NAME } from "@/lib/auth";
 import { getPhisConfigSync } from "@/lib/config";
 import { logRuntimeEvent } from "@/lib/log";
 import { resolveSiteFromHeaders } from "@/lib/site-context";
@@ -33,7 +34,7 @@ async function resolveLocale() {
   }
 
   const cookieStore = await cookies();
-  const operatorLocale = cookieStore.get("phis_locale")?.value?.trim();
+  const operatorLocale = cookieStore.get(LOCALE_COOKIE_NAME)?.value?.trim();
   if (operatorLocale) {
     return normalizeLocale(operatorLocale);
   }

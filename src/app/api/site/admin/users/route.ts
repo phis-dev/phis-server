@@ -315,7 +315,9 @@ export async function POST(request: NextRequest) {
     emailSource: PhiUserEmailSource.Admin,
     medusaCustomerId: null,
     passwordHash,
-    preferredLocale: site.defaultLocale,
+    // Nobody has asked this person which language they want, so the column stays empty and their browser
+    // answers for them. Writing the Site default here said they had chosen it.
+    preferredLocale: null,
     flags: PhiUserAccountFlag.MustChangePassword,
     reuseExisting: Boolean(existingUser),
   });
@@ -450,7 +452,9 @@ export async function PUT(request: NextRequest) {
   await updateUserAccountProfileFields(target.id, {
     email: requestedEmail !== target.emailNormalized ? requestedEmail : null,
     emailSource: PhiUserEmailSource.Admin,
-    preferredLocale: target.preferredLocale ?? site.defaultLocale,
+    // Nothing about the language here. This save is a name and an address, and it used to turn an
+    // unanswered `preferred_locale` into the Site default on its way past -- a choice made for somebody
+    // by an edit that was not about it.
   });
 
   await upsertUserProfile({

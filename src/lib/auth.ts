@@ -5,6 +5,7 @@ import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypt
 import type { NextRequest, NextResponse } from "next/server";
 
 import { readPhiClientIp } from "@/lib/helpers/request";
+import { resolveSiteLocale } from "@/lib/locale";
 import type { PhiUserThemeModeName } from "@/lib/user-flags";
 
 export const SESSION_COOKIE_NAME = "phis_session";
@@ -12,6 +13,11 @@ export const CSRF_COOKIE_NAME = "phis_csrf";
 export const AREA_COOKIE_NAME = "phis_area";
 /** Named here and read in phis-ui as `PHI_THEME_MODE_COOKIE`; the two have to agree. */
 export const THEME_MODE_COOKIE_NAME = "phis_theme_mode";
+/**
+ * The language this browser is being read in. Written by the locale switch in phis-ui as well, which is
+ * why the name is stated once here and read everywhere rather than spelled out at each cookie call.
+ */
+export const LOCALE_COOKIE_NAME = "phis_locale";
 export const AUTH_LINK_COOKIE_NAME = "phis_auth_link";
 
 const SESSION_TTL_SECONDS = 60 * 60 * 24 * 14;
@@ -222,6 +228,46 @@ export function setThemeModeCookie(
     httpOnly: false,
     sameSite: "lax",
     secure: isProduction(),
+    path: "/",
+    ...(expiresAt ? { expires: expiresAt } : {}),
+  });
+}
+
+/**
+ * The language a signed-in person is served, and the one rule every sign-in follows.
+ *
+ * A saved choice wins. Where there is none, what this browser is already being read in wins -- the
+ * locale cookie the visitor wrote by picking a language in the Public Area, then their browser's own
+ * preference, then the Site default. `preferred_locale` is `NULL` for an account that has never answered
+ * the question, and that absence is the whole switch: nothing else may write the column, so a value
+ * there is always somebody's answer.
+ *
+ * Sign-in used to resolve from `preferred_locale` alone and then overwrite the locale cookie with the
+ * result, so a visitor who read the Public pages in German and then signed in was handed the Site
+ * default by an account that had never been asked. The cookie is written from this answer afterwards, so
+ * carrying the choice through costs nothing further -- it is already there.
+ */
+export function resolveSignedInLocale(
+  request: NextRequest,
+  input: {
+    user: { preferredLocale?: string | null } | null | undefined;
+    defaultLocale: string;
+    availableLocales: readonly string[];
+  },
+) {
+  return resolveSiteLocale({
+    userPreferredLocale: input.user?.preferredLocale ?? null,
+    cookieLocale: request.cookies.get(LOCALE_COOKIE_NAME)?.value ?? null,
+    browserLocale: request.headers.get("accept-language"),
+    defaultLocale: input.defaultLocale,
+    availableLocales: input.availableLocales,
+  }).locale;
+}
+
+export function setLocaleCookie(response: NextResponse, locale: string, expiresAt?: Date) {
+  response.cookies.set(LOCALE_COOKIE_NAME, locale, {
+    httpOnly: false,
+    sameSite: "lax",
     path: "/",
     ...(expiresAt ? { expires: expiresAt } : {}),
   });

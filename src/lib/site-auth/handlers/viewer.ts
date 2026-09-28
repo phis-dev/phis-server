@@ -1,10 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { readPhiViewerAddonRoleClaims } from "@/lib/addons/viewer-roles";
+import { getSiteRuntimeConfig } from "@/db/sites";
 import { getUserAccountById } from "@/db/user-accounts";
 import { getUserProfileByUserId } from "@/db/user-profiles";
 import { getEffectiveUserSiteAuthorization } from "@/db/user-site-memberships";
 import { getSessionFromRequest, touchSession } from "@/db/user-sessions";
+import { resolveSignedInLocale } from "@/lib/auth";
 import { requireSiteFromRequest } from "@/lib/site-context";
 import { resolvePhiUserArea } from "@/lib/user-area";
 import { USER_SITE_FLAG_NEWSLETTER_OPT_IN } from "@/lib/user-site-flags";
@@ -41,6 +43,7 @@ export async function GET(request: NextRequest) {
   if (!siteRole.enabled) {
     return NextResponse.json({ authenticated: false }, { status: 401 });
   }
+  const runtimeConfig = await getSiteRuntimeConfig(site.id);
   await touchSession(session.id, request);
 
   let name = user.emailNormalized;
@@ -68,7 +71,19 @@ export async function GET(request: NextRequest) {
       addonRoleClaims: await readPhiViewerAddonRoleClaims(site.id, user.id),
       authorizationRevision: siteRole.authorizationRevision,
       newsletterOptIn: (siteRole.siteFlags & USER_SITE_FLAG_NEWSLETTER_OPT_IN) === USER_SITE_FLAG_NEWSLETTER_OPT_IN,
-      preferredLocale: user.preferredLocale ?? site.defaultLocale,
+      /*
+       * The language this person is being served, which is their saved choice where they made one and
+       * otherwise what this request resolves to. Not the raw column: that also holds the seed
+       * registration or an admin screen wrote, and handing that out made the Language panel show English
+       * under a page rendered in German -- an answer the person had never given, offered back to them as
+       * if they had.
+       */
+      preferredLocale: resolveSignedInLocale(request, {
+        user,
+        defaultLocale: runtimeConfig?.defaultLocale ?? site.defaultLocale,
+        availableLocales: runtimeConfig?.availableLocales.map((option) => option.code)
+          ?? [site.defaultLocale],
+      }),
       /*
        * Unlike the locale, this is not resolved here. A Site has a default language and can answer for
        * somebody who never said; nobody but the browser can answer "system", so the absence of a choice

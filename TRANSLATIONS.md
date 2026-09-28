@@ -50,14 +50,40 @@ Rules:
 ### Request locale resolution
 
 `GET /api/v1/site/locale` (internal token) resolves the locale of one request. The candidates, in order,
-are the explicit request locale (`locale` query parameter or `x-locale` header), the signed-in user's
-`preferred_locale`, the `phis_locale` cookie, and `Accept-Language`. The first candidate that matches an
-available Site locale, exactly or by language, wins; otherwise the Site default applies. The response
-carries the capability entry together with `requestedLocale` and `source`
+are the explicit request locale (`locale` query parameter or `x-locale` header), the language the
+signed-in person has chosen, the `phis_locale` cookie, and `Accept-Language`. The first candidate that
+matches an available Site locale, exactly or by language, wins; otherwise the Site default applies. The
+response carries the capability entry together with `requestedLocale` and `source`
 (`requested`, `user`, `cookie`, `browser`, or `default`).
+
+`user_accounts.preferred_locale` is empty until somebody answers the question, and its absence is what
+puts the cookie in charge. `PATCH /api/v1/auth/profile/locale` is the only endpoint that writes the
+column: registration leaves it empty although it knows the language the form was read in, the admin
+screens leave it empty for an account they create, and an edit that is about a name never touches it. A
+value there is therefore always somebody's own answer, which is why it may outrank the language their
+browser is being read in.
+
+A registration or an email change still needs a language for the mail it sends, and nobody is signed in
+to ask: those take it from the hidden `locale` field the form carries (the language of the page it was
+read on) and keep it on the registration intent. That is the mail's language, not the account's.
 
 Site configuration is cacheable per Site. A resolved request locale is not, because it depends on the
 session, cookies, and request headers.
+
+### The locale a sign-in serves
+
+Signing in answers the same question with the same candidates, minus the explicit one: the saved language,
+else the `phis_locale` cookie the browser already carries, else `Accept-Language`, else the Site default
+(`resolveSignedInLocale`). Password login, a provider callback, and a confirmed identity link all take
+that answer and write it back into the cookie for the length of the session. The viewer snapshot carries
+the same answer, so the Language panel under a German page offers German rather than the Site default.
+
+This is what carries a language across the door. Somebody who reads the Public pages in German and then
+signs in stays in German, because the cookie their language switch wrote is a candidate; and they keep it
+until they save something else under their profile, because that save is the only write there is.
+Sign-in used to read `preferred_locale` alone and overwrite the cookie with it, so an account that had
+been given the Site default at creation handed every such visitor English -- the one place that did
+exactly what the Site proxy refuses to do, which is to overwrite a choice nobody withdrew.
 
 ### Translation requests
 

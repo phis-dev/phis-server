@@ -248,7 +248,16 @@ export async function POST(request: Request) {
     emailSource: PhiUserEmailSource.Registration,
     medusaCustomerId,
     passwordHash,
-    preferredLocale: intent.locale,
+    /*
+     * Not `intent.locale`, although that is the language this person registered in.
+     *
+     * `preferred_locale` is the answer to "which language do you want", and its absence is how the rest
+     * of the system knows nobody has answered yet: then the cookie the language switch wrote, and the
+     * browser's own preference, decide -- which for this person is the very language they registered in,
+     * reached without writing anything down. The intent keeps its locale, because the confirmation mail
+     * has to be written in some language and nobody is signed in to ask.
+     */
+    preferredLocale: null,
     flags: 0,
   });
   await upsertUserSiteMembership({

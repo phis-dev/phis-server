@@ -5,7 +5,7 @@ import { getUserAccountById, updateUserAccountProfileFields } from "@/db/user-ac
 import { getEffectiveUserSiteAuthorization } from "@/db/user-site-memberships";
 import { getSessionFromRequest } from "@/db/user-sessions";
 import { requireSiteFromRequest } from "@/lib/site-context";
-import { verifyCsrfRequest } from "@/lib/auth";
+import { setLocaleCookie, verifyCsrfRequest } from "@/lib/auth";
 import { resolveSiteLocale } from "@/lib/locale";
 
 type ProfileLocalePayload = {
@@ -66,6 +66,8 @@ export async function PATCH(request: NextRequest) {
     return NextResponse.json({ error: "Unsupported locale." }, { status: 400 });
   }
 
+  // The only write of `preferred_locale` there is. That is what makes its absence mean something: an
+  // account whose column is `NULL` has never answered, and the language of the browser answers for it.
   const updated = await updateUserAccountProfileFields(user.id, {
     preferredLocale,
   });
@@ -76,11 +78,11 @@ export async function PATCH(request: NextRequest) {
   const response = NextResponse.json({
     preferredLocale,
   });
-  response.cookies.set("phis_locale", preferredLocale, {
-    path: "/",
-    sameSite: "lax",
-    ...(session.expiresAt ? { expires: new Date(session.expiresAt) } : {}),
-  });
+  setLocaleCookie(
+    response,
+    preferredLocale,
+    session.expiresAt ? new Date(session.expiresAt) : undefined,
+  );
 
   return response;
 }

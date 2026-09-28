@@ -177,7 +177,10 @@ export async function POST(request: Request) {
       emailSource: PhiUserEmailSource.Registration,
       medusaCustomerId: existingUser.medusaCustomerId,
       passwordHash: null,
-      preferredLocale: locale,
+      // Left unanswered here too, for the reason the confirm route states: `locale` is the language this
+      // form was read in, and that reaches this person through the cookie without being stored as a
+      // choice they never made.
+      preferredLocale: null,
       flags: 0,
       reuseExisting: true,
     });

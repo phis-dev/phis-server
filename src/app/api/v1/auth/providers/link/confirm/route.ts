@@ -9,13 +9,14 @@ import {
   createCsrfToken,
   readRequestIp,
   readRequestUserAgent,
+  resolveSignedInLocale,
   setAreaCookie,
   setCsrfCookie,
+  setLocaleCookie,
   setSessionCookie,
   verifyCsrfRequest,
 } from "@/lib/auth";
 import { guardApiV1 } from "@/lib/api-v1-guard";
-import { resolveSiteLocale } from "@/lib/locale";
 import { logRuntimeEvent, normalizeLogThrowable } from "@/lib/log";
 import { beginSiteAuthenticationSession } from "@/lib/site-auth/assurance";
 import { PHI_AUTH_SESSION_STATES } from "@/lib/site-auth/contracts";
@@ -74,11 +75,11 @@ export async function POST(request: NextRequest) {
       roleClaims: confirmed.authorization.roleClaims,
     });
     const runtime = await getSiteRuntimeConfig(siteContext.site.id);
-    const locale = resolveSiteLocale({
-      userPreferredLocale: confirmed.user.preferredLocale,
+    const locale = resolveSignedInLocale(request, {
+      user: confirmed.user,
       defaultLocale: runtime?.defaultLocale ?? siteContext.site.defaultLocale,
       availableLocales: runtime?.availableLocales.map((option) => option.code) ?? [siteContext.site.defaultLocale],
-    }).locale;
+    });
     const response = NextResponse.json({
       complete,
       next: confirmed.nextPath,
@@ -101,11 +102,7 @@ export async function POST(request: NextRequest) {
     } else {
       clearAreaCookie(response);
     }
-    response.cookies.set("phis_locale", locale, {
-      path: "/",
-      sameSite: "lax",
-      expires: session.expiresAt,
-    });
+    setLocaleCookie(response, locale, session.expiresAt);
     logRuntimeEvent("info", complete ? "auth.provider.linked" : "auth.provider.linked_factor_required", {
       message: complete
         ? "Provider identity linked and login succeeded."
