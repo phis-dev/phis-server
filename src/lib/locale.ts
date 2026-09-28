@@ -126,8 +126,30 @@ for (const input of PHI_LOCALE_CAPABILITY_INPUTS) {
 }
 
 function normalizeLocaleKey(input?: string | null) {
-  const raw = input?.split(",")[0]?.trim() ?? "";
+  const raw = input?.split(",")[0]?.split(";")[0]?.trim() ?? "";
   return raw.replace(/_/g, "-").toLowerCase();
+}
+
+/**
+ * An `Accept-Language` header as the languages it asks for, most wanted first.
+ *
+ * Only the first entry used to be read, with its `;q=` still attached -- `de;q=0.9` matched nothing --
+ * so a browser listing `fr-CH, de;q=0.9` on a German-only Site landed on the default, not on German.
+ * `*` names no language and is left out; an entry weighted `q=0` is refused by the header itself.
+ */
+export function parsePhiAcceptLanguage(header: string | null | undefined): string[] {
+  if (!header) return [];
+  return header
+    .split(",")
+    .map((part, index) => {
+      const [tag = "", ...params] = part.split(";").map((piece) => piece.trim());
+      const weight = params.find((param) => param.startsWith("q="));
+      const q = weight ? Number.parseFloat(weight.slice(2)) : 1;
+      return { tag, q: Number.isFinite(q) ? q : 0, index };
+    })
+    .filter((entry) => entry.tag && entry.tag !== "*" && entry.q > 0)
+    .sort((left, right) => right.q - left.q || left.index - right.index)
+    .map((entry) => entry.tag);
 }
 
 export function normalizeLocale(input?: string | null) {
@@ -206,7 +228,9 @@ export function resolveSiteLocale(input: {
     { source: "requested" as const, value: input.requestedLocale ?? null },
     { source: "user" as const, value: input.userPreferredLocale ?? null },
     { source: "cookie" as const, value: input.cookieLocale ?? null },
-    { source: "browser" as const, value: input.browserLocale ?? null },
+    // Every language the browser asks for, in its order: the first one the Site offers wins.
+    ...parsePhiAcceptLanguage(input.browserLocale)
+      .map((value) => ({ source: "browser" as const, value })),
   ];
 
   for (const candidate of candidates) {
@@ -245,5 +269,7 @@ export function resolveRequestLocale(headers: Headers) {
     return normalizeLocale(explicit);
   }
 
-  return normalizeLocale(headers.get("accept-language"));
+  const accepted = parsePhiAcceptLanguage(headers.get("accept-language"))
+    .find((tag) => resolvePhiLocaleCapability(tag));
+  return normalizeLocale(accepted);
 }
