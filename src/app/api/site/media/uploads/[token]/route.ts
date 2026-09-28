@@ -103,6 +103,12 @@ export async function PUT(
     );
   }
 
+  // A finalize has taken the session: a body written now would land under it, and a teardown would pull
+  // the reservation out from under the Asset it is creating.
+  if (session.status === PhiMediaUploadSessionStatus.Finalizing) {
+    return nextMediaError("upload_session_finalizing", "Upload session is being finalized.", 409);
+  }
+
   if (session.status === PhiMediaUploadSessionStatus.Completed) {
     // A completed session's reservation has already moved to used_bytes; do not release it again.
     await deleteMediaUploadSessionByToken(token);

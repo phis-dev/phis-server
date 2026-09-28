@@ -3,8 +3,8 @@ import sharp from "sharp";
 
 import {
   abortMediaUploadSessionByToken,
-  commitMediaUploadSessionByToken,
-  createMediaAsset,
+  claimMediaUploadSessionForFinalize,
+  createMediaAssetFromUploadSession,
   getMediaAssetBySiteAndChecksum,
   getMediaUploadSessionByToken,
 } from "@/db/media";
@@ -444,6 +444,21 @@ export async function POST(
   const fontMetrics = fontBody ? readPhiFontMetrics(fontBody) : null;
   const assetMeta = fontMetrics ? { ...(session.meta ?? {}), font: fontMetrics } : session.meta ?? null;
 
+  // From here on a failure deletes the objects, so only one request per session may get here. A second
+  // finalize for the same token is told so and touches nothing -- its cleanup is what used to delete the
+  // bytes the first one's Asset points at.
+  const claimed = await claimMediaUploadSessionForFinalize(
+    token,
+    isPhiMediaUploadBodyProxied(session.uploadPlanKind) ? PhiMediaUploadSessionStatus.Uploaded : null,
+  );
+  if (!claimed) {
+    return nextMediaError(
+      "upload_session_finalizing",
+      "Upload session is already being finalized.",
+      409,
+    );
+  }
+
   try {
     const targetStorageKey = session.finalStorageKey ?? session.stagingStorageKey;
     const finalObject = await storageService.copyObject({
@@ -466,8 +481,11 @@ export async function POST(
     // that is the digest something actually verified.
     const checksum = stagedChecksum ?? finalObject.checksum ?? null;
 
-    // The Space decides what the Asset is visible to until a Module widens it for a purpose.
-    const asset = await createMediaAsset({
+    // The Space decides what the Asset is visible to until a Module widens it for a purpose. The row
+    // and the committed reservation land in one transaction: exactly what was reserved moves to used
+    // and the session closes with it. The PUT step already enforces that the stored object matches the
+    // declared size, so declared and actual are equal today.
+    const asset = await createMediaAssetFromUploadSession(token, {
       siteId: site.id,
       spaceId: session.spaceId,
       spaceKind: targetSpace?.kind ?? null,
@@ -491,16 +509,6 @@ export async function POST(
       // No explicit policy: the Space decides, and only a Module widens it for a purpose.
       presentationFlags: session.presentationFlags,
     });
-
-    if (!asset) {
-      throw new Error("Failed to persist media asset.");
-    }
-
-    // Commit exactly what was reserved, and close the session in the same transaction. The PUT step
-    // already enforces that the stored object matches the declared size, so declared and actual are
-    // equal today; committing the declared amount keeps the accounting invariant explicit for
-    // transports that no longer re-buffer the body.
-    await commitMediaUploadSessionByToken(token);
     // Only when it is a different object: a plan that staged straight onto its final key has nothing
     // left over, and deleting the staging key there would delete the Asset.
     if (targetStorageKey !== session.stagingStorageKey) {

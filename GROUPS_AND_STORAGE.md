@@ -809,7 +809,10 @@ Finalizing is always Core's: only the Server turns a delivered body into an Asse
 object with the Provider first, carrying through whatever the plan asked the Client to report back,
 opaque to Core. Everything after delivery is therefore judged once, for every plan alike: what actually
 landed, whether it matches the declared size, whether that object is already an Asset in this Space, and
-what the Asset becomes.
+what the Asset becomes. One request finalizes a session: it sets `Finalizing` before it touches storage,
+and a second request for the same token is answered `409` without deleting anything. The Asset row and
+the committed reservation are written in one transaction, so a row exists exactly when its bytes count
+as used.
 
 Assets and active upload sessions remain the reconstructable source of truth. Counters are maintained
 transactionally, and every read of a Space discounts what expired sessions still hold, over the same

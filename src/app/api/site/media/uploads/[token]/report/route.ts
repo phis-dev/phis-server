@@ -108,6 +108,12 @@ export async function POST(
     return nextMediaError("upload_session_not_found", "Upload session not found.", 404);
   }
 
+  // A finalize has taken the session: a body written now would land under it, and a teardown would pull
+  // the reservation out from under the Asset it is creating.
+  if (session.status === PhiMediaUploadSessionStatus.Finalizing) {
+    return nextMediaError("upload_session_finalizing", "Upload session is being finalized.", 409);
+  }
+
   // A finished session is not a failed one, and its reservation has already moved to used_bytes.
   if (session.status === PhiMediaUploadSessionStatus.Completed) {
     return nextMediaError("upload_session_completed", "Upload session already completed.", 410);

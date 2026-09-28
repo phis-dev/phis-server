@@ -1049,18 +1049,7 @@ export async function commitMediaUploadSessionByToken(token: string) {
   const client = await getPool().connect();
   try {
     await client.query("BEGIN");
-    const { rows } = await client.query<{ id: number }>(
-      `UPDATE phis.media_spaces s
-       SET reserved_bytes = GREATEST(0, s.reserved_bytes - u.size_bytes),
-           used_bytes = s.used_bytes + u.size_bytes,
-           updated_at = NOW()
-       FROM phis.media_upload_sessions u
-       WHERE u.token = $1 AND s.id = u.space_id AND s.reserved_bytes >= u.size_bytes
-       RETURNING s.id`,
-      [token.trim()],
-    );
-    if (!rows[0]) throw new Error("Media Space quota reservation is no longer available.");
-    await client.query(`DELETE FROM phis.media_upload_sessions WHERE token = $1`, [token.trim()]);
+    await commitMediaUploadSessionWithDb(client, token);
     await client.query("COMMIT");
   } catch (error) {
     await client.query("ROLLBACK");
@@ -1068,6 +1057,72 @@ export async function commitMediaUploadSessionByToken(token: string) {
   } finally {
     client.release();
   }
+}
+
+/**
+ * The same commit on a caller's transaction, for a finalize that creates the Asset row in it too: the
+ * row and the usage it paid for land together or not at all.
+ */
+export async function commitMediaUploadSessionWithDb(db: DbQueryable, token: string) {
+  const { rows } = await db.query<{ id: number }>(
+    `UPDATE phis.media_spaces s
+     SET reserved_bytes = GREATEST(0, s.reserved_bytes - u.size_bytes),
+         used_bytes = s.used_bytes + u.size_bytes,
+         updated_at = NOW()
+     FROM phis.media_upload_sessions u
+     WHERE u.token = $1 AND s.id = u.space_id AND s.reserved_bytes >= u.size_bytes
+     RETURNING s.id`,
+    [token.trim()],
+  );
+  if (!rows[0]) throw new Error("Media Space quota reservation is no longer available.");
+  await db.query(`DELETE FROM phis.media_upload_sessions WHERE token = $1`, [token.trim()]);
+}
+
+/**
+ * Creates the Asset an upload session paid for and commits the session, in one transaction.
+ *
+ * Apart, a commit that failed after the insert left an Asset row whose bytes the caller's cleanup had
+ * just deleted and which `used_bytes` never counted. Together, the row exists exactly when the usage
+ * does.
+ */
+export async function createMediaAssetFromUploadSession(
+  token: string,
+  input: Parameters<typeof createMediaAsset>[0],
+) {
+  const client = await getPool().connect();
+  try {
+    await client.query("BEGIN");
+    const asset = await createMediaAsset(input, client);
+    if (!asset) throw new Error("Failed to persist media asset.");
+    await commitMediaUploadSessionWithDb(client, token);
+    await client.query("COMMIT");
+    return asset;
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+/**
+ * Takes an upload session for its one finalize.
+ *
+ * Two finalize requests for the same token used to run side by side; the second one's Asset insert
+ * failed on the storage key, and its cleanup then deleted the bytes the first one's Asset points at.
+ * Whoever sets `Finalizing` first goes on; the other is told so before it touches storage. A session
+ * whose body Core received itself must still be at `Uploaded` when it is taken.
+ */
+export async function claimMediaUploadSessionForFinalize(
+  token: string,
+  requiredStatus: number | null = null,
+) {
+  const result = await getPool().query(
+    `UPDATE phis.media_upload_sessions SET status = $2, updated_at = NOW()
+     WHERE token = $1 AND status <> $2 AND ($3::smallint IS NULL OR status = $3::smallint)`,
+    [token.trim(), PhiMediaUploadSessionStatus.Finalizing, requiredStatus],
+  );
+  return (result.rowCount ?? 0) > 0;
 }
 
 export type MediaProviderContext = { space: MediaSpaceRecord; storageProfile: MediaStorageProfileRecord };
