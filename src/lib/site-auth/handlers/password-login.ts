@@ -26,6 +26,7 @@ import { resolvePhiUserArea } from "@/lib/user-area";
 import { isUserAccountEnabled, resolveUserThemeModeName } from "@/lib/user-flags";
 import { beginSiteAuthenticationSession } from "@/lib/site-auth/assurance";
 import { normalizeAuthNextPath, PHI_AUTH_SESSION_STATES } from "@/lib/site-auth/contracts";
+import { checkAuthAttemptLimit, tooManyAttemptsResponse } from "@/lib/site-auth/attempt-limit";
 import {
   isSitePasswordMethodEnabled,
   PASSWORD_METHOD_DISABLED_RESPONSE,
@@ -83,6 +84,20 @@ export async function POST(request: NextRequest) {
 
   const email = normalize(payload.email).toLowerCase();
   const password = normalize(payload.password);
+
+  // Measured per account, because the internal token this route arrives with is exempt from the
+  // per-address limit and nothing else counted the guesses.
+  const retryAfter = email ? checkAuthAttemptLimit(request, [`login:${site.id}:${email}`]) : null;
+  if (retryAfter !== null) {
+    logRuntimeEvent("warn", "auth.login.throttled", {
+      message: "Login throttled after too many attempts.",
+      siteKey: site.key,
+      method: request.method,
+      path: request.nextUrl.pathname,
+      meta: { email },
+    });
+    return tooManyAttemptsResponse(retryAfter);
+  }
 
   if (!email || !password) {
     logRuntimeEvent("warn", "auth.login.failed", {

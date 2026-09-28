@@ -11,6 +11,7 @@ import { getSiteMailConfig } from "@/lib/form-config";
 import { normalizeLocale } from "@/lib/locale";
 import { logRuntimeEvent } from "@/lib/log";
 import { requireSiteFromRequest } from "@/lib/site-context";
+import { checkAuthAttemptLimit, tooManyAttemptsResponse } from "@/lib/site-auth/attempt-limit";
 import {
   isSitePasswordMethodEnabled,
   PASSWORD_METHOD_DISABLED_RESPONSE,
@@ -62,6 +63,12 @@ export async function POST(request: NextRequest) {
   // Always return success for unknown/invalid input to avoid account enumeration.
   if (!email || !isValidEmail(email)) {
     return NextResponse.json({});
+  }
+  // A reset mail per request is a mailbox somebody else can fill; ten a minute per address is enough
+  // for anybody who is really waiting for one.
+  const retryAfter = checkAuthAttemptLimit(request, [`reset:${site.id}:${email}`]);
+  if (retryAfter !== null) {
+    return tooManyAttemptsResponse(retryAfter);
   }
 
   const user = await getUserAccountByEmail(email, site.id);

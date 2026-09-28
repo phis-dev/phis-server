@@ -8,7 +8,7 @@ import {
   decryptAuthTransactionPayload,
   encryptAuthTransactionPayload,
 } from "@/lib/site-auth/transaction-crypto";
-import { createTotpSecret, verifyTotpCode } from "@/lib/site-auth/totp";
+import { createTotpSecret, resolveTotpCodeStep, verifyTotpCode } from "@/lib/site-auth/totp";
 
 export const PHI_AUTH_FACTOR_TYPES = {
   passkey: 1,
@@ -175,6 +175,8 @@ export async function verifyConfirmedTotpFactor(input: {
   userId: number;
   siteId: number;
   code: unknown;
+  /** The moment the code is judged at; a test stages a race at a time of its choosing. */
+  now?: number;
 }) {
   const { rows } = await getPool().query<FactorRow>(
     `SELECT id, factor_type, label, secret_ciphertext, secret_iv, secret_auth_tag,
@@ -183,13 +185,28 @@ export async function verifyConfirmedTotpFactor(input: {
      WHERE user_id = $1 AND site_id = $2 AND factor_type = $3 AND confirmed_at IS NOT NULL`,
     [input.userId, input.siteId, PHI_AUTH_FACTOR_TYPES.totp],
   );
-  const matched = rows.find((row) => verifyTotpCode(readSecret(row), input.code));
-  if (!matched) return false;
-  await getPool().query(
-    `UPDATE phis.user_auth_factors SET last_used_at = NOW(), updated_at = NOW() WHERE id = $1`,
-    [matched.id],
-  );
-  return true;
+  for (const row of rows) {
+    const step = resolveTotpCodeStep(readSecret(row), input.code, input.now);
+    if (step === null) continue;
+    /*
+     * A code is spent by the step it belongs to, and the spending is the statement: the update lands
+     * only where this step is later than the last one accepted, so the same code cannot be taken twice
+     * -- not within the ninety seconds the window keeps it valid, and not by two requests racing for it.
+     * The step sits in `factor_data`, which the row already carries for what a factor knows about
+     * itself; `last_used_at` alone could not say which of three valid steps was the one used.
+     */
+    const { rowCount } = await getPool().query(
+      `UPDATE phis.user_auth_factors
+          SET last_used_at = NOW(),
+              updated_at = NOW(),
+              factor_data = factor_data || jsonb_build_object('lastUsedStep', $2::bigint)
+        WHERE id = $1
+          AND COALESCE((factor_data->>'lastUsedStep')::bigint, -1) < $2::bigint`,
+      [row.id, step],
+    );
+    return (rowCount ?? 0) > 0;
+  }
+  return false;
 }
 
 export async function consumeRecoveryCode(input: {

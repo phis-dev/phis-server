@@ -16,6 +16,7 @@ import { getFormGuardSecret, getFormTimingWindow, getSiteMailConfig } from "@/li
 import { logFormAbuse } from "@/lib/form-abuse-log";
 import { verifyFormGuard } from "@/lib/form-guard";
 import { verifyPasswordHash } from "@/lib/password";
+import { checkAuthAttemptLimit, tooManyAttemptsResponse } from "@/lib/site-auth/attempt-limit";
 import {
   isSitePasswordMethodEnabled,
   PASSWORD_METHOD_DISABLED_RESPONSE,
@@ -172,6 +173,11 @@ export async function POST(request: Request) {
     // This branch signs somebody in by their password; a Site that switched the method off does not.
     if (!await isSitePasswordMethodEnabled(site.id)) {
       return NextResponse.json(PASSWORD_METHOD_DISABLED_RESPONSE, { status: 403 });
+    }
+    // And it verifies one, so it is a place to guess at one: measured like the login.
+    const retryAfter = checkAuthAttemptLimit(request, [`login:${site.id}:${email}`]);
+    if (retryAfter !== null) {
+      return tooManyAttemptsResponse(retryAfter);
     }
 
     const validPassword = await verifyPasswordHash(existingUser.passwordHash, password);

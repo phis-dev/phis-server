@@ -2,9 +2,28 @@ import { describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
 
-import { buildTotpUri, createTotpCode, createTotpSecret, verifyTotpCode } from "./totp";
+import {
+  buildTotpUri,
+  createTotpCode,
+  createTotpSecret,
+  resolveTotpCodeStep,
+  verifyTotpCode,
+} from "./totp";
 
 describe("TOTP", () => {
+  it("names the step a code belongs to, which is what lets a code be spent once", () => {
+    const { secret } = createTotpSecret();
+    const now = Date.UTC(2030, 0, 1, 0, 0, 0);
+    const step = Math.floor(now / 1000 / 30);
+
+    expect(resolveTotpCodeStep(secret, createTotpCode(secret, now), now)).toBe(step);
+    // The previous period's code is still accepted, and says which period it was.
+    expect(resolveTotpCodeStep(secret, createTotpCode(secret, now - 30_000), now)).toBe(step - 1);
+    expect(resolveTotpCodeStep(secret, createTotpCode(secret, now + 30_000), now)).toBe(step + 1);
+    expect(resolveTotpCodeStep(secret, createTotpCode(secret, now + 61_000), now)).toBeNull();
+    expect(resolveTotpCodeStep(secret, "12345", now)).toBeNull();
+  });
+
   it("creates and verifies a six-digit code within the allowed time window", () => {
     const { secret, manualKey } = createTotpSecret();
     const now = Date.UTC(2030, 0, 1, 0, 0, 0);

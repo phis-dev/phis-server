@@ -62,17 +62,31 @@ export function buildTotpUri(input: {
   return `otpauth://totp/${encodeURIComponent(label)}?${query.toString()}`;
 }
 
-export function verifyTotpCode(secret: Buffer, value: unknown, now = Date.now()) {
+/**
+ * The time step a code belongs to, or `null` for a code that fits none of the three the window allows.
+ *
+ * The step is what makes a code single-use: a code is valid for its step, and its step can be
+ * remembered. Whoever checks a code therefore asks for the step rather than for yes or no, and refuses
+ * one that is not later than the last step this factor was accepted at.
+ */
+export function resolveTotpCodeStep(secret: Buffer, value: unknown, now = Date.now()) {
   const code = typeof value === "string" ? value.replace(/\s+/g, "") : "";
   if (!/^\d{6}$/.test(code)) {
-    return false;
+    return null;
   }
   const counter = Math.floor(now / 1000 / TOTP_PERIOD_SECONDS);
-  return [-1, 0, 1].some((offset) => {
+  const supplied = Buffer.from(code, "utf8");
+  for (const offset of [-1, 0, 1]) {
     const expected = Buffer.from(hotp(secret, counter + offset), "utf8");
-    const supplied = Buffer.from(code, "utf8");
-    return expected.length === supplied.length && timingSafeEqual(expected, supplied);
-  });
+    if (expected.length === supplied.length && timingSafeEqual(expected, supplied)) {
+      return counter + offset;
+    }
+  }
+  return null;
+}
+
+export function verifyTotpCode(secret: Buffer, value: unknown, now = Date.now()) {
+  return resolveTotpCodeStep(secret, value, now) !== null;
 }
 
 export function createTotpCode(secret: Buffer, now = Date.now()) {

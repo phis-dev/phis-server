@@ -4,6 +4,7 @@ import { consumeRecoveryCode, verifyConfirmedTotpFactor } from "@/db/user-auth-f
 import { getSessionFromRequest } from "@/db/user-sessions";
 import { verifyCsrfRequest } from "@/lib/auth";
 import { guardApiV1 } from "@/lib/api-v1-guard";
+import { checkAuthAttemptLimit, tooManyAttemptsResponse } from "@/lib/site-auth/attempt-limit";
 import { PHI_AUTH_SESSION_STATES } from "@/lib/site-auth/contracts";
 import { createCompletedAuthWorkflowResponse } from "@/lib/site-auth/workflow";
 import { requireSiteFromExplicitKeyRequest } from "@/lib/site-context";
@@ -29,6 +30,11 @@ export async function POST(request: NextRequest) {
   });
   if (!session || session.authState !== PHI_AUTH_SESSION_STATES.factorChallengeRequired) {
     return NextResponse.json({ error: "Factor challenge required." }, { status: 409 });
+  }
+  // Six digits at the speed of the wire is an hour's work; ten a minute per challenge is not.
+  const retryAfter = checkAuthAttemptLimit(request, [`verify:${session.id}`]);
+  if (retryAfter !== null) {
+    return tooManyAttemptsResponse(retryAfter);
   }
   let body: Record<string, unknown>;
   try { body = toRecord(await request.json()); } catch { body = {}; }
