@@ -60,6 +60,7 @@ export const bootstrapDe = {
   databaseNameLabel: "Datenbank",
   databaseUserLabel: "User",
   databasePasswordLabel: "Passwort",
+  databasePasswordKeptHint: "Leer lassen, um das gespeicherte Passwort zu behalten.",
   databaseSslLabel: "SSL-Modus",
   databaseSslDisableLabel: "Deaktiviert",
   databaseSslRequireLabel: "Erforderlich",

@@ -18,7 +18,29 @@ import {
   writePhiRuntimeConfigSync,
 } from "@/lib/config-files";
 import { resetPhisConfigCache } from "@/lib/config";
+import { requirePhisOperatorSurface } from "@/lib/operator-surfaces";
 import { hashPassword } from "@/lib/password-core";
+
+/**
+ * Every action here writes the installation's configuration, and a Server Action is an endpoint of its
+ * own: its id sits in the static chunks, which are served after setup as before it, and a POST that
+ * names it runs the function without the layout that gates the page. So each one asks for itself.
+ */
+function requireSetupSurface() {
+  requirePhisOperatorSurface("setup");
+}
+
+function readStoredDatabasePassword() {
+  const uri = readPhiRuntimeConfigSync().database?.uri?.trim();
+  if (!uri) {
+    return "";
+  }
+  try {
+    return decodeURIComponent(new URL(uri).password);
+  } catch {
+    return "";
+  }
+}
 
 function isValidBootstrapPassword(password: string) {
   return password.length >= 8 && /[^A-Za-z0-9]/.test(password);
@@ -192,6 +214,7 @@ export async function createPlatformSuperUser(
   locale: BootstrapLocale,
   formData: FormData,
 ) {
+  requireSetupSurface();
   const displayName = String(formData.get("displayName") ?? "").trim();
   const email = String(formData.get("email") ?? "").trim().toLowerCase();
   const password = String(formData.get("password") ?? "");
@@ -232,11 +255,14 @@ export async function saveDatabaseConnection(
   nextStepHref: string,
   formData: FormData,
 ) {
+  requireSetupSurface();
   const host = String(formData.get("host") ?? "").trim();
   const port = String(formData.get("port") ?? "").trim();
   const database = String(formData.get("database") ?? "").trim();
   const user = String(formData.get("user") ?? "").trim();
-  const password = String(formData.get("password") ?? "");
+  // The form never carries the stored password back -- it would sit in the page's HTML -- so an empty
+  // field keeps the one the runtime config holds.
+  const password = String(formData.get("password") ?? "") || readStoredDatabasePassword();
   const sslMode = formData.get("sslMode") === "on" ? "require" : "disable";
 
   if (!host || !port || !database || !user || !password) {
@@ -279,6 +305,7 @@ export async function saveTranslationSettings(
   nextStepHref: string,
   formData: FormData,
 ) {
+  requireSetupSurface();
   const mode = String(formData.get("translationMode") ?? "").trim();
   const deeplKey = String(formData.get("deeplKey") ?? "").trim();
   const deeplEndpoint = String(formData.get("deeplEndpoint") ?? "").trim();
@@ -338,6 +365,7 @@ export async function applySchemaBootstrap(
   locale: BootstrapLocale,
   nextStepHref: string,
 ) {
+  requireSetupSurface();
   const runtimeConfig = readPhiRuntimeConfigSync();
   const connectionString = runtimeConfig.database?.uri?.trim();
 
@@ -369,6 +397,7 @@ export async function saveInitialSites(
   nextStepHref: string,
   formData: FormData,
 ) {
+  requireSetupSurface();
   const createDemoSite = formData.get("createDemoSite") === "on";
   const createCustomSite = formData.get("createCustomSite") === "on";
 
@@ -453,6 +482,7 @@ export async function completeBootstrapSetup(
   locale: BootstrapLocale,
   formData: FormData,
 ) {
+  requireSetupSurface();
   const acceptedTerms = formData.get("acceptedTerms") === "on";
 
   if (!acceptedTerms) {

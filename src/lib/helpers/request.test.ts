@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 
-import { readPhiClientIp } from "./request";
+import { isSameOriginRequest, readPhiClientIp } from "./request";
 
 /**
  * The address a rate limit is keyed on, against a caller who writes the header themselves.
@@ -89,5 +89,23 @@ describe("the setting itself", () => {
   it("returns nothing when no header carries an address", () => {
     process.env.TRUST_PROXY = "true";
     expect(readPhiClientIp(request({}))).toBeNull();
+  });
+});
+
+describe("isSameOriginRequest", () => {
+  it("trusts Sec-Fetch-Site where the browser sends it", () => {
+    expect(isSameOriginRequest(request({ "sec-fetch-site": "same-origin" }))).toBe(true);
+    const crossSite = { "sec-fetch-site": "cross-site", origin: "https://a.test", host: "a.test" };
+    expect(isSameOriginRequest(request(crossSite))).toBe(false);
+    expect(isSameOriginRequest(request({ "sec-fetch-site": "same-site" }))).toBe(false);
+  });
+
+  it("falls back to an Origin that names the addressed host, and refuses a request with neither", () => {
+    const own = { origin: "https://setup.test:52030", host: "setup.test:52030" };
+    expect(isSameOriginRequest(request(own))).toBe(true);
+    const foreign = { origin: "https://evil.test", host: "setup.test" };
+    expect(isSameOriginRequest(request(foreign))).toBe(false);
+    expect(isSameOriginRequest(request({ origin: "null", host: "setup.test" }))).toBe(false);
+    expect(isSameOriginRequest(request({ host: "setup.test" }))).toBe(false);
   });
 });

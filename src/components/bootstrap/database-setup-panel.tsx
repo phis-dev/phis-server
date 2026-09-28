@@ -16,7 +16,8 @@ function parseDatabaseUri(databaseUri: string | undefined) {
       port: url.port || "5432",
       database: decodeURIComponent(url.pathname.replace(/^\//, "")),
       user: decodeURIComponent(url.username),
-      password: decodeURIComponent(url.password),
+      // Whether one is stored, never the password itself: this page is rendered into HTML.
+      hasPassword: url.password.length > 0,
       sslMode: url.searchParams.get("sslmode") === "require" ? "require" : "disable",
     };
   } catch {
@@ -122,8 +123,9 @@ export function DatabaseSetupPanel({
               className="ui_input"
               type="password"
               name="password"
-              defaultValue={parsedDatabase?.password ?? ""}
-              required
+              autoComplete="new-password"
+              placeholder={parsedDatabase?.hasPassword ? messages.databasePasswordKeptHint : undefined}
+              required={!parsedDatabase?.hasPassword}
             />
           </label>
 

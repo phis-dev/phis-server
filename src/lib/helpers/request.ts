@@ -19,6 +19,32 @@ export async function readRequestBody(request: Request) {
   }
 }
 
+/**
+ * Whether a request was sent by a page of this origin.
+ *
+ * For the few routes that act without a session -- the setup surface runs before any operator exists --
+ * and would otherwise take a cross-site form POST, which a browser sends without a preflight.
+ * `Sec-Fetch-Site` answers it where the browser sends it, which every current one does; without it the
+ * `Origin` header has to name the host the request was addressed to. A request with neither is refused:
+ * a browser always sends one of them on a POST, and a script that sends none is not a page of ours.
+ */
+export function isSameOriginRequest(request: { headers: Headers }) {
+  const fetchSite = request.headers.get("sec-fetch-site")?.trim().toLowerCase();
+  if (fetchSite) {
+    return fetchSite === "same-origin";
+  }
+  const origin = request.headers.get("origin")?.trim();
+  const host = request.headers.get("host")?.trim().toLowerCase();
+  if (!origin || !host || origin === "null") {
+    return false;
+  }
+  try {
+    return new URL(origin).host.toLowerCase() === host;
+  } catch {
+    return false;
+  }
+}
+
 export function parsePositiveInt(value: string | null | undefined) {
   const parsed = Number.parseInt((value ?? "").trim(), 10);
   return Number.isInteger(parsed) && parsed > 0 ? parsed : null;

@@ -60,6 +60,7 @@ export const bootstrapEn = {
   databaseNameLabel: "Database",
   databaseUserLabel: "User",
   databasePasswordLabel: "Password",
+  databasePasswordKeptHint: "Leave empty to keep the stored password.",
   databaseSslLabel: "SSL mode",
   databaseSslDisableLabel: "Disable",
   databaseSslRequireLabel: "Require",

@@ -73,6 +73,7 @@ export type BootstrapMessages = {
   databaseNameLabel: string;
   databaseUserLabel: string;
   databasePasswordLabel: string;
+  databasePasswordKeptHint: string;
   databaseSslLabel: string;
   databaseSslDisableLabel: string;
   databaseSslRequireLabel: string;
