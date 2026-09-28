@@ -504,8 +504,9 @@ async function getAreaRevisionByIdWithDb(
     id: number;
     area_scope_id: number;
     tree_json: Record<string, unknown>;
+    meta_json: Record<string, unknown> | null;
   }>(
-    `SELECT id, area_scope_id, tree_json
+    `SELECT id, area_scope_id, tree_json, meta_json
      FROM phis.site_area_revisions
      WHERE id = $1
      LIMIT 1`,
@@ -524,8 +525,9 @@ async function getPageRevisionByIdWithDb(
     page_scope_id: number;
     flags: number;
     tree_json: Record<string, unknown>;
+    meta_json: Record<string, unknown> | null;
   }>(
-    `SELECT id, page_scope_id, flags, tree_json
+    `SELECT id, page_scope_id, flags, tree_json, meta_json
      FROM phis.site_page_revisions
      WHERE id = $1
      LIMIT 1`,
@@ -533,6 +535,44 @@ async function getPageRevisionByIdWithDb(
   );
 
   return rows[0] ?? null;
+}
+
+/**
+ * The Draft metadata a restored revision starts with.
+ *
+ * Without it the new Working Draft carried `meta_json = '{}'`, and the next save refused it for lacking
+ * canonical Draft metadata -- a restore that left the Draft unusable. The version and the node sequence
+ * are taken above everything the scope has used: the version so an editor still holding the old Draft
+ * is told it changed, the sequence so a node created now cannot take an instance id one of the scope's
+ * revisions already carries.
+ */
+async function readRestoredDraftMetaWithDb(
+  db: DbQueryable,
+  scope: { kind: "area" | "page"; scopeId: number },
+) {
+  const table = scope.kind === "area" ? "phis.site_area_revisions" : "phis.site_page_revisions";
+  const scopeColumn = scope.kind === "area" ? "area_scope_id" : "page_scope_id";
+  const { rows } = await db.query<{ version: string | null; next_node_sequence: string | null }>(
+    `SELECT MAX(CASE WHEN jsonb_typeof(meta_json->'draft'->'version') = 'number'
+                     THEN (meta_json->'draft'->>'version')::bigint END)::text AS version,
+            MAX(CASE WHEN jsonb_typeof(meta_json->'draft'->'nextNodeSequence') = 'number'
+                     THEN (meta_json->'draft'->>'nextNodeSequence')::bigint END)::text
+              AS next_node_sequence
+     FROM ${table}
+     WHERE ${scopeColumn} = $1`,
+    [scope.scopeId],
+  );
+  return {
+    version: Number(rows[0]?.version ?? 0) + 1,
+    nextNodeSequence: Math.max(1, Number(rows[0]?.next_node_sequence ?? 1)),
+  };
+}
+
+function withRestoredDraftMeta(
+  source: Record<string, unknown> | null,
+  draft: { version: number; nextNodeSequence: number },
+) {
+  return JSON.stringify({ ...(source ?? {}), draft });
 }
 
 async function cleanupEmptyPageScopeWithDb(db: DbQueryable, scopeId: number) {
@@ -700,9 +740,10 @@ export async function restoreSiteRevision(
            tree_json,
            message,
            source_revision_id,
-           created_by_user_id
+           created_by_user_id,
+           meta_json
          )
-         VALUES ($1, $2, $3::jsonb, $4, $5, $6)
+         VALUES ($1, $2, $3::jsonb, $4, $5, $6, $7::jsonb)
          RETURNING id`,
         [
           scope.scopeId,
@@ -711,6 +752,10 @@ export async function restoreSiteRevision(
           `Restored from revision #${input.revisionId}`,
           input.revisionId,
           input.createdByUserId ?? null,
+          withRestoredDraftMeta(
+            revision.meta_json,
+            await readRestoredDraftMetaWithDb(client, { kind: "area", scopeId: scope.scopeId }),
+          ),
         ],
       );
       newRevisionId = rows[0]!.id;
@@ -735,9 +780,10 @@ export async function restoreSiteRevision(
            message,
            source_revision_id,
            created_by_user_id,
-           created_at
+           created_at,
+           meta_json
          )
-         VALUES ($1, $2, $3::jsonb, $4, $5, $6, NOW())
+         VALUES ($1, $2, $3::jsonb, $4, $5, $6, NOW(), $7::jsonb)
          RETURNING id`,
         [
           scope.scopeId,
@@ -747,6 +793,10 @@ export async function restoreSiteRevision(
           `Restored from revision #${input.revisionId}`,
           input.revisionId,
           input.createdByUserId ?? null,
+          withRestoredDraftMeta(
+            revision.meta_json,
+            await readRestoredDraftMetaWithDb(client, { kind: "page", scopeId: scope.scopeId }),
+          ),
         ],
       );
       newRevisionId = rows[0]!.id;
