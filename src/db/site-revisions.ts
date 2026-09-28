@@ -407,7 +407,7 @@ async function getThemeScopeWithDb(
     : null;
 }
 
-type ResolvedRevisionScope =
+export type ResolvedRevisionScope =
   | {
       kind: "area";
       areaMask: number;
@@ -634,6 +634,18 @@ export async function listSiteRevisionHistory(
 }
 
 
+/**
+ * Whether a pointer of the scope still names this revision. An Area has a third one, its Module draft:
+ * deleting that revision from history left the pointer hanging, and every Module save after it threw.
+ */
+export function isLiveScopeRevision(scope: ResolvedRevisionScope, revisionId: number) {
+  return (
+    scope.publishedRevisionId === revisionId ||
+    scope.workingDraftRevisionId === revisionId ||
+    (scope.kind === "area" && scope.workingModuleDraftRevisionId === revisionId)
+  );
+}
+
 const REFERENCE_SOURCE_KIND_BY_SCOPE = {
   area: PhiCmsReferenceSourceKind.Area,
   page: PhiCmsReferenceSourceKind.Page,
@@ -855,7 +867,7 @@ export async function deleteSiteRevisionHistoryEntry(
     if (!scope.scopeId) {
       throw new SiteRevisionNotFoundError("Revision scope not found.");
     }
-    if (scope.publishedRevisionId === input.revisionId || scope.workingDraftRevisionId === input.revisionId) {
+    if (isLiveScopeRevision(scope, input.revisionId)) {
       throw new SiteRevisionConflictError("Active published or draft revisions cannot be deleted.");
     }
 
@@ -959,11 +971,7 @@ export async function deleteSiteRevisionHistoryEntries(
       throw new SiteRevisionNotFoundError("Revision scope not found.");
     }
 
-    if (
-      normalizedRevisionIds.some(
-        (revisionId) => scope.publishedRevisionId === revisionId || scope.workingDraftRevisionId === revisionId,
-      )
-    ) {
+    if (normalizedRevisionIds.some((revisionId) => isLiveScopeRevision(scope, revisionId))) {
       throw new SiteRevisionConflictError("Active published or draft revisions cannot be deleted.");
     }
 
