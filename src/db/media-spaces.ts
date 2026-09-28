@@ -883,16 +883,33 @@ export async function resolveAuthorizedMediaSpace(input: {
 
   // Targeted authorization instead of materializing the full authorized list: a User Space belongs
   // to exactly one user and a Group Space to one group's effective members.
-  const authorized = input.siteWide || space.kind === PhisMediaSpaceKind.Site ||
-    (space.kind === PhisMediaSpaceKind.User && space.userId === input.userId) ||
-    (space.kind === PhisMediaSpaceKind.Group && space.groupId != null &&
-      await isEffectiveMediaGroupMember(input.siteId, space.groupId, input.userId));
-  if (!authorized) return { ok: false, reason: "space_forbidden" };
-  // The same rule as the `group:<id>` branch above, reached by Space id instead of by group.
-  if (input.intent === "write" && space.kind === PhisMediaSpaceKind.Group && space.groupId != null) {
-    const group = await getSiteGroupById(input.siteId, space.groupId);
-    if (group?.retiredAt != null) return { ok: false, reason: "space_forbidden" };
+  if (space.kind === PhisMediaSpaceKind.Group && space.groupId != null) {
+    /*
+     * The same rule as the `group:<id>` branch above, reached by Space id instead of by group: a
+     * Member may read, writing takes an Author, and a retired group takes nothing new. It used to ask
+     * only for membership here, so a holder of the Media role who was a mere Member of the group could
+     * rename and delete its folders by naming the Space's number instead of the group -- the one door
+     * the other branch had closed. The flags come from the claim projection, as they do there, so a
+     * membership whose provider is unavailable counts for nothing in either branch.
+     */
+    const flags = input.siteWide
+      ? PhiGroupMembershipFlags.Manager
+      : await readEffectiveGroupMembershipFlags(input.siteId, space.groupId, input.userId);
+    if ((flags & PhiGroupMembershipFlags.Member) === 0) {
+      return { ok: false, reason: "space_forbidden" };
+    }
+    if (input.intent === "write") {
+      const group = await getSiteGroupById(input.siteId, space.groupId);
+      if (group?.retiredAt != null) return { ok: false, reason: "space_forbidden" };
+      if ((flags & PhiGroupMembershipFlags.Author) !== PhiGroupMembershipFlags.Author) {
+        return { ok: false, reason: "space_forbidden" };
+      }
+    }
+    return { ok: true, space, config };
   }
+  const authorized = input.siteWide || space.kind === PhisMediaSpaceKind.Site ||
+    (space.kind === PhisMediaSpaceKind.User && space.userId === input.userId);
+  if (!authorized) return { ok: false, reason: "space_forbidden" };
   return { ok: true, space, config };
 }
 

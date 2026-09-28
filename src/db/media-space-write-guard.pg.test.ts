@@ -108,6 +108,34 @@ describe("Media Space write authority against PostgreSQL", () => {
     expect(resolution.ok && resolution.space.id).toBe(groupSpaceId);
   });
 
+  it("asks the same of a Member who names the Space by its number", async () => {
+    await enableUserSpaces(true);
+    const pool = await requirePhiTestDatabase();
+    await pool.query(`UPDATE phis.site_media_config SET flags = 3 WHERE site_id = $1`, [site.id]);
+    const memberId = await createPhiTestUser(site);
+    const authorId = await createPhiTestUser(site);
+    const groupId = await createPhiTestGroup(site, "pgtest-by-number");
+    const groupSpaceId = await createPhiTestSpaceForGroup(site, groupId);
+    // Flag 1 is Member alone; 3 is Member and Author.
+    await addPhiTestGroupMember({ site, groupId, userId: memberId, membershipFlags: 1 });
+    await addPhiTestGroupMember({ site, groupId, userId: authorId, membershipFlags: 3 });
+
+    // Reading is a Member's; writing is not, whichever way the Space is named.
+    const read = await resolveAuthorizedMediaSpace({
+      siteId: site.id, userId: memberId, requestedSpaceId: groupSpaceId, intent: "read",
+    });
+    expect(read.ok).toBe(true);
+    const memberWrite = await resolveAuthorizedMediaSpace({
+      siteId: site.id, userId: memberId, requestedSpaceId: groupSpaceId, intent: "write",
+    });
+    expect(memberWrite.ok).toBe(false);
+    const authorWrite = await resolveAuthorizedMediaSpace({
+      siteId: site.id, userId: authorId, requestedSpaceId: groupSpaceId, intent: "write",
+    });
+    expect(authorWrite.ok).toBe(true);
+    expect(authorWrite.ok && authorWrite.space.id).toBe(groupSpaceId);
+  });
+
   it("does not answer a group's Space to someone who is not in it", async () => {
     await enableUserSpaces(true);
     const actorId = await createPhiTestUser(site);
