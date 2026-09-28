@@ -21,6 +21,7 @@ import {
   isSitePasswordMethodEnabled,
   PASSWORD_METHOD_DISABLED_RESPONSE,
 } from "@/lib/site-auth/password-method";
+import { isUserAccountEnabled } from "@/lib/user-flags";
 import { USER_SITE_FLAG_NEWSLETTER_OPT_IN } from "@/lib/user-site-flags";
 
 import { PhiUserEmailSource } from "@phis/contracts/access";
@@ -180,8 +181,9 @@ export async function POST(request: Request) {
       return tooManyAttemptsResponse(retryAfter);
     }
 
+    // A disabled account joins no further Site, and says so no differently than a wrong password does.
     const validPassword = await verifyPasswordHash(existingUser.passwordHash, password);
-    if (!validPassword) {
+    if (!validPassword || !isUserAccountEnabled(existingUser.flags)) {
       return NextResponse.json({ error: "Invalid credentials." }, { status: 401 });
     }
 
