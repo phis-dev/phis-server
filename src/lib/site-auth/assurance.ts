@@ -22,6 +22,20 @@ function enforcementIsActive(input: {
   return Boolean(input.graceUntil && new Date(input.graceUntil).getTime() <= Date.now());
 }
 
+/**
+ * A grace deadline that has not passed yet, for a session it will apply to once it has.
+ *
+ * Such a session is complete for now and not for good. The reevaluation must not record the policy
+ * revision it checked against, or the revisions are equal the moment the deadline passes and nothing
+ * looks at the session again until its owner signs in anew -- up to the session's full lifetime.
+ */
+function isDeferredByGrace(policy: { enforcement: string; graceUntil: string | null }) {
+  return (
+    policy.enforcement === "grace" &&
+    Boolean(policy.graceUntil && new Date(policy.graceUntil).getTime() > Date.now())
+  );
+}
+
 export async function resolveRequiredSessionState(input: {
   siteId: number;
   userId: number;
@@ -31,20 +45,30 @@ export async function resolveRequiredSessionState(input: {
 }) {
   const policy = await getSiteAuthPolicy(input.siteId);
   if (!policy) {
-    return { state: PHI_AUTH_SESSION_STATES.complete, policyRevision: 1 } as const;
+    return { state: PHI_AUTH_SESSION_STATES.complete, policyRevision: 1, deferred: false } as const;
   }
   const required = policy.factorPolicy.requiredMethod;
   if (
     required !== "totp" ||
     !appliesToRoleScope(input.coreRoleFlags, policy.factorPolicy.roleFlags) ||
-    !enforcementIsActive({
-      enforcement: policy.factorPolicy.enforcement,
-      graceUntil: policy.factorPolicy.graceUntil,
-      login: input.login,
-    }) ||
     input.authMethodKeys.includes("totp")
   ) {
-    return { state: PHI_AUTH_SESSION_STATES.complete, policyRevision: policy.revision } as const;
+    return {
+      state: PHI_AUTH_SESSION_STATES.complete,
+      policyRevision: policy.revision,
+      deferred: false,
+    } as const;
+  }
+  if (!enforcementIsActive({
+    enforcement: policy.factorPolicy.enforcement,
+    graceUntil: policy.factorPolicy.graceUntil,
+    login: input.login,
+  })) {
+    return {
+      state: PHI_AUTH_SESSION_STATES.complete,
+      policyRevision: policy.revision,
+      deferred: isDeferredByGrace(policy.factorPolicy),
+    } as const;
   }
   const method = await getSiteAuthMethod(input.siteId, "totp", "second-factor");
   if (!method?.enabled) {
@@ -56,6 +80,7 @@ export async function resolveRequiredSessionState(input: {
       ? PHI_AUTH_SESSION_STATES.factorChallengeRequired
       : PHI_AUTH_SESSION_STATES.factorEnrollmentRequired,
     policyRevision: policy.revision,
+    deferred: false,
   } as const;
 }
 
@@ -128,6 +153,10 @@ export async function reevaluateCompleteSession(input: {
     authMethodKeys: input.authMethodKeys,
     login: false,
   });
+  if (required.deferred) {
+    // Asked again on the next request, and on every one after it, until the deadline has passed.
+    return required.state;
+  }
   await updateUserSessionAuthState({
     sessionId: input.sessionId,
     authState: required.state,

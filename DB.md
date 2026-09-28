@@ -782,7 +782,8 @@ Contract:
   only carry the user through the factor workflow. Completing it sets `auth_state = 3` and assurance `2`.
 - `auth_policy_revision` is the `site_auth_config.policy_revision` the state was evaluated under. When the
   Site policy revision is newer, the session is re-evaluated on read and rejected unless it is still
-  complete.
+  complete. A session under a grace deadline that has not passed keeps its old revision, so it is asked
+  again on every read until the deadline has.
 - `next_path` is the normalized relative destination requested at sign-in, recorded with the session.
 - Provider access tokens are not session fields. Tokens retained for provider API access belong to a
   separate encrypted integration/Add-on store.

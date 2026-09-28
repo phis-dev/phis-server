@@ -22,7 +22,11 @@ vi.mock("@/db/user-sessions", () => ({
   updateUserSessionAuthState: mocks.updateSession,
 }));
 
-import { beginSiteAuthenticationSession, resolveRequiredSessionState } from "./assurance";
+import {
+  beginSiteAuthenticationSession,
+  reevaluateCompleteSession,
+  resolveRequiredSessionState,
+} from "./assurance";
 import { PHI_AUTH_SESSION_STATES } from "./contracts";
 
 const requiredPolicy = {
@@ -60,6 +64,7 @@ describe("Site authentication assurance", () => {
     expect(result).toEqual({
       state: PHI_AUTH_SESSION_STATES.factorEnrollmentRequired,
       policyRevision: 4,
+      deferred: false,
     });
   });
 
@@ -105,5 +110,40 @@ describe("Site authentication assurance", () => {
     });
 
     expect(result.state).toBe(PHI_AUTH_SESSION_STATES.complete);
+  });
+
+  it("keeps a session under a running grace deadline stale, to ask it again once passed", async () => {
+    const stale = {
+      sessionId: "session-id", siteId: 7, userId: 42, coreRoleFlags: 0,
+      authMethodKeys: ["password"], authPolicyRevision: 3,
+    };
+    mocks.policy.mockResolvedValue({
+      ...requiredPolicy,
+      factorPolicy: { ...requiredPolicy.factorPolicy, enforcement: "grace",
+        graceUntil: new Date(Date.now() + 86_400_000).toISOString() },
+    });
+    expect(await reevaluateCompleteSession(stale)).toBe(PHI_AUTH_SESSION_STATES.complete);
+    // The revision is not recorded: recording it is what made the deadline unreachable.
+    expect(mocks.updateSession).not.toHaveBeenCalled();
+
+    mocks.policy.mockResolvedValue({
+      ...requiredPolicy,
+      factorPolicy: { ...requiredPolicy.factorPolicy, enforcement: "grace",
+        graceUntil: new Date(Date.now() - 1_000).toISOString() },
+    });
+    expect(await reevaluateCompleteSession(stale))
+      .toBe(PHI_AUTH_SESSION_STATES.factorEnrollmentRequired);
+    expect(mocks.updateSession).toHaveBeenCalledWith(expect.objectContaining({
+      authState: PHI_AUTH_SESSION_STATES.factorEnrollmentRequired,
+      authPolicyRevision: 4,
+    }));
+  });
+
+  it("records the revision under next-login, which an existing session never meets", async () => {
+    await reevaluateCompleteSession({
+      sessionId: "session-id", siteId: 7, userId: 42, coreRoleFlags: 0,
+      authMethodKeys: ["password"], authPolicyRevision: 3,
+    });
+    expect(mocks.updateSession).toHaveBeenCalledWith(expect.objectContaining({ authPolicyRevision: 4 }));
   });
 });
