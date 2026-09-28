@@ -21,17 +21,19 @@ function isProduction() {
   return process.env.NODE_ENV === "production";
 }
 
+/**
+ * The dedicated key, or nothing. The internal API token stood in for it before, with the registration
+ * key as a second fallback, and both are held by parties that must not be able to sign an operator in:
+ * every Site runtime carries the internal token. There is no fallback now; an installation without the
+ * key has no operator sessions until `phis operator add` or the setup finish writes one.
+ */
 function getOperatorSessionSecret() {
-  const config = getPhisConfigSync();
-  const secret =
-    config.api?.internalToken?.trim() ||
-    config.registration?.intentEncryptionKey?.trim() ||
-    "";
-
+  const secret = getPhisConfigSync().operator?.sessionSecret?.trim() ?? "";
   if (!secret) {
-    throw new Error("Missing operator session signing secret in runtime config.");
+    throw new Error(
+      "Missing operator.sessionSecret in runtime config; `phis operator add` or the setup finish writes it.",
+    );
   }
-
   return secret;
 }
 

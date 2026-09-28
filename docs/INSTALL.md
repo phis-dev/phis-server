@@ -180,6 +180,8 @@ phis config validate
 
 `api.internalToken` is what Sites authenticate with. The `/setup` finish step generates one if it is
 missing; `phis init` (step 6) copies it into the Site and refuses to run while it is unset.
+`operator.sessionSecret` signs the operator session cookies and is written by the same finish step, or
+by `phis operator add`; it is deliberately not the internal token, which every Site holds.
 
 In production the server also needs the environment variable `NEXT_SERVER_ACTIONS_ENCRYPTION_KEY`
 (base64 of 32 bytes: `head -c 32 /dev/urandom | base64`) and refuses to start without it. Instances

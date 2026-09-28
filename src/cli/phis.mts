@@ -315,6 +315,7 @@ Usage:
   phis operator enable --email|-e <email>
   phis operator disable --email|-e <email>
   phis operator del --email|-e <email>
+  phis operator secret
 
   phis media check [--fix]
   phis maintain [--list] [--task <id>] [--dry-run]
@@ -563,10 +564,46 @@ function printSuperUsers(flags: FlagMap, json: boolean) {
   }
 }
 
+/**
+ * Makes sure the operator surface has a signing key of its own, and says whether one was written.
+ *
+ * Sessions are signed with `operator.sessionSecret` and nothing else -- not the internal API token,
+ * which every Site runtime holds. An installation from before the key existed has no operator sessions
+ * until this writes one, which every operator write and `phis operator secret` do.
+ */
+function ensureOperatorSessionSecret(runtimeConfig: ReturnType<typeof readCliRuntimeConfig>) {
+  if (runtimeConfig.operator?.sessionSecret?.trim()) {
+    return false;
+  }
+  runtimeConfig.operator = {
+    ...runtimeConfig.operator,
+    sessionSecret: randomBytes(32).toString("hex"),
+  };
+  return true;
+}
+
 function upsertRuntimeSuperUsers(nextUsers: PlatformSuperUser[]) {
   const runtimeConfig = readCliRuntimeConfig();
   runtimeConfig.platformSuperUsers = nextUsers;
+  ensureOperatorSessionSecret(runtimeConfig);
   writeCliRuntimeConfig(runtimeConfig);
+}
+
+function ensureOperatorSecretCommand(json: boolean) {
+  const runtimeConfig = readCliRuntimeConfig();
+  const written = ensureOperatorSessionSecret(runtimeConfig);
+  if (written) {
+    writeCliRuntimeConfig(runtimeConfig);
+  }
+  if (json) {
+    printJson({ ok: true, action: "operator.secret", written });
+    return;
+  }
+  console.log(
+    written
+      ? "Wrote operator.sessionSecret; restart the server so it signs with it."
+      : "operator.sessionSecret is already set.",
+  );
 }
 
 async function setSiteSourceOverride(flags: FlagMap, json: boolean) {
@@ -2391,6 +2428,11 @@ async function main() {
 
   if (group === "operator" && command === "passwd") {
     await updateSuperUserPassword(flags, json);
+    return;
+  }
+
+  if (group === "operator" && command === "secret") {
+    ensureOperatorSecretCommand(json);
     return;
   }
 

@@ -116,7 +116,7 @@ All paths are relative to the root.
 | File | Written by | Content |
 | --- | --- | --- |
 | `config/phis-config.json` | the operator | Static configuration: `sites.*` path roots and base port, `translation`, `media`, `email`, `forms`, `bootstrap.enabled`. |
-| `config/phis-runtime.json` | the operator, `/setup`, and the CLI | Deployment values and secrets: `database.uri`, `database.migrationUri`, `api.internalToken`, `secrets.encryptionKey`, `auth.transactionEncryptionKey`, `registration.intentEncryptionKey`, `platformSuperUsers`, `sites.overrides`. Values here override `phis-config.json`. |
+| `config/phis-runtime.json` | the operator, `/setup`, and the CLI | Deployment values and secrets: `database.uri`, `database.migrationUri`, `api.internalToken`, `secrets.encryptionKey`, `auth.transactionEncryptionKey`, `registration.intentEncryptionKey`, `operator.sessionSecret`, `platformSuperUsers`, `sites.overrides`. Values here override `phis-config.json`. |
 | `config/phis-instance.json` | the CLI | The version stamp above. |
 | `config/phis-addons.json` | `addon` commands | Desired state of server Add-ons. Absent means none. |
 | `config/phis-modules.json` | `module add|del` | Desired state of Site Modules per Site. Absent means none. |
@@ -787,6 +787,10 @@ expires.
 | `phis operator passwd --email <email> --password <pw>` | Replaces the password. |
 | `phis operator enable|disable --email <email>` | Sets `enabled`. |
 | `phis operator del --email <email>` | Removes the operator. The last one can be removed. |
+| `phis operator secret` | Writes `operator.sessionSecret` if it is missing. Every operator write above does the same; this is for an installation from before the key existed, which has no operator sessions until it is set. |
+
+Operator session cookies are signed with `operator.sessionSecret` and with nothing else -- not with
+`api.internalToken`, which every Site runtime holds.
 
 Passwords given on the command line are visible in the process list and shell history. A password
 that starts with `-` is passed as it is (`--password -x1` or `--password=-x1`).

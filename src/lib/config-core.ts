@@ -69,6 +69,16 @@ export type PhisConfig = {
     transactionEncryptionKey?: string;
   };
   /**
+   * What operator session cookies are signed with, and nothing else is.
+   *
+   * It used to be `api.internalToken`, which every Site runtime holds: anyone with a Site's copy could
+   * mint an operator session for any address. A key of its own, written by the setup finish and by
+   * `phis operator add`, keeps the operator surface out of reach of the Sites it administers.
+   */
+  operator?: {
+    sessionSecret?: string;
+  };
+  /**
    * The one secret that stays out of the database.
    *
    * Every other secret lives encrypted in `phis.server_secrets`, so a second instance reads what the

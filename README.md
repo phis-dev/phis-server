@@ -82,6 +82,7 @@ not a property of the repository, so they are untracked and an absent one reads 
 | `secrets.encryptionKey` | 64 hex characters. Key for the encrypted secret store `phis.server_secrets`; an instance without it does not report ready. `phis secret init-key` writes it. |
 | `secrets.encryptionKeyVersion` | Positive integer version of that key. |
 | `auth.transactionEncryptionKey` | 64 hex characters. Encrypts authentication transaction state. |
+| `operator.sessionSecret` | Signs operator session cookies, and nothing else does. The setup finish and `phis operator add` write one if it is missing; without it there are no operator sessions. |
 | `registration.intentEncryptionKey` | 64 hex characters. Encrypts the password held by a pending registration intent. |
 | `deepl.apiKey`, `deepl.apiUrl` | DeepL access, for the `deepl` and `cdn+deepl` modes. |
 | `translation.mode` | `deepl`, `cdn+deepl`, `add-on`, or `none`. See [TRANSLATIONS.md](./TRANSLATIONS.md). |

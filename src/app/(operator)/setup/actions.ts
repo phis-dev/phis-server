@@ -461,11 +461,17 @@ export async function completeBootstrapSetup(
 
   const runtimeConfig = readPhiRuntimeConfigSync();
   const internalToken = runtimeConfig.api?.internalToken?.trim() || randomBytes(32).toString("hex");
+  // The operator surface signs with a key of its own, never with the token the Sites hold.
+  const sessionSecret = runtimeConfig.operator?.sessionSecret?.trim() || randomBytes(32).toString("hex");
   writePhiRuntimeConfigSync({
     ...runtimeConfig,
     api: {
       ...runtimeConfig.api,
       internalToken,
+    },
+    operator: {
+      ...runtimeConfig.operator,
+      sessionSecret,
     },
     bootstrap: {
       ...runtimeConfig.bootstrap,
