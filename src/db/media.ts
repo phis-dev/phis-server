@@ -277,6 +277,31 @@ function mapUpload(row: UploadRow): MediaUploadSessionRecord {
   };
 }
 
+/**
+ * Refuses a move that would hang a Folder below itself.
+ *
+ * Checking the direct parent alone let a Folder move under its own child, and the branch became a loop
+ * with no way back to the root: gone from the tree, and a recursive walk over it without end. The walk
+ * here goes up from the new parent, and `UNION` rather than `UNION ALL` ends it at the first repeat, so
+ * it terminates even on a loop an earlier version left behind. Two moves racing each other -- A below
+ * B, B below A -- would each pass on their own; the lock on the Space makes them take turns.
+ */
+async function assertFolderMoveKeepsTree(
+  db: DbQueryable, spaceId: number, folderId: number, parentId: number | null,
+) {
+  if (parentId == null) return;
+  if (parentId === folderId) throw new Error("Media Folder cannot be its own parent.");
+  await db.query(`SELECT pg_advisory_xact_lock(hashtext('phis.media_folders'), $1::integer)`, [spaceId]);
+  const { rowCount } = await db.query(
+    `WITH RECURSIVE ancestors AS (
+       SELECT id, parent_id FROM phis.media_folders WHERE id = $1 AND space_id = $2
+       UNION SELECT f.id, f.parent_id FROM phis.media_folders f JOIN ancestors a ON f.id = a.parent_id
+     ) SELECT 1 FROM ancestors WHERE id = $3`,
+    [parentId, spaceId, folderId],
+  );
+  if ((rowCount ?? 0) > 0) throw new Error("Media Folder cannot move below one of its own Folders.");
+}
+
 async function assertFolderParent(db: DbQueryable, spaceId: number, parentId: number | null) {
   if (parentId == null) return;
   const result = await db.query(`SELECT id FROM phis.media_folders WHERE id = $1 AND space_id = $2`, [parentId, spaceId]);
@@ -306,8 +331,10 @@ export async function updateMediaFolder(input: {
   const pool = getPool(); const client = await pool.connect();
   try {
     await client.query("BEGIN");
-    if (input.parentId === input.folderId) throw new Error("Media Folder cannot be its own parent.");
-    if (input.parentId !== undefined) await assertFolderParent(client, input.spaceId, input.parentId);
+    if (input.parentId !== undefined) {
+      await assertFolderParent(client, input.spaceId, input.parentId);
+      await assertFolderMoveKeepsTree(client, input.spaceId, input.folderId, input.parentId);
+    }
     const sets = ["updated_at = NOW()"];
     const values: Array<number | string | null> = [input.siteId, input.spaceId, input.folderId];
     for (const [column, value] of [["parent_id", input.parentId], ["name", input.name], ["sort_order", input.sortOrder], ["flags", input.flags]] as const) {
@@ -378,7 +405,8 @@ export async function listMediaFolderDescendantIds(siteId: number, spaceId: numb
   const { rows } = await getPool().query<{ id: number }>(
     `WITH RECURSIVE branch AS (
        SELECT id FROM phis.media_folders WHERE site_id = $1 AND space_id = $2 AND id = $3
-       UNION ALL SELECT f.id FROM phis.media_folders f JOIN branch b ON f.parent_id = b.id WHERE f.space_id = $2
+       UNION SELECT f.id FROM phis.media_folders f JOIN branch b ON f.parent_id = b.id
+       WHERE f.space_id = $2
      ) SELECT id FROM branch`, [siteId, spaceId, folderId],
   ); return rows.map((row) => integer(row.id));
 }
