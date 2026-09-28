@@ -115,17 +115,25 @@ export async function sweepPhisAddonAssets(
   result.storageKeys.push(...expired.map((row) => row.staging_storage_key));
 
   const { schemaName, tables } = await readPhisAddonAssetTables(pool, addonId);
-  const linked = tables.length > 0
-    ? tables
-      .map((table) => `SELECT media_asset_id FROM "${schemaName}"."${table.replaceAll('"', '""')}"`)
-      .join(" UNION ALL ")
-    : null;
+  /*
+   * No catalog, no judgement. An orphan is an Asset no link row names, and that is only decidable
+   * against the link tables; where the schema holds none -- not applied yet, or a version that
+   * declares no slots -- the pass has nothing to compare against. It used to drop the filter in that
+   * case and delete every Asset in the Space: a sweep run between `addon upgrade` and `addon migrate`
+   * would have emptied a store whose files were all still referenced.
+   */
+  if (tables.length === 0) {
+    return result;
+  }
+  const linked = tables
+    .map((table) => `SELECT media_asset_id FROM "${schemaName}"."${table.replaceAll('"', '""')}"`)
+    .join(" UNION ALL ");
 
   const { rows: orphans } = await pool.query<{ bytes: string | null; storage_key: string }>(
     `WITH gone AS (
        DELETE FROM phis.media_assets a
         WHERE a.site_id = $1 AND a.space_id = $2
-          ${linked ? `AND a.id NOT IN (${linked})` : ""}
+          AND a.id NOT IN (${linked})
         RETURNING a.bytes, a.storage_key
      ), freed AS (
        SELECT COALESCE(SUM(bytes), 0)::bigint AS bytes FROM gone

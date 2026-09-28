@@ -10,6 +10,8 @@ import {
   removePhisAddonStorage,
   type PhisAddonStorageSite,
 } from "../cli/storage-purge.mts";
+import { sweepPhisAddonAssets } from "../cli/storage-sweep.mts";
+import { ensureAddonMediaSpace } from "./media-spaces";
 import { readPhisAddonStorageUsage } from "./server-addon-storage-usage.mts";
 import {
   closePhiTestPool,
@@ -141,6 +143,27 @@ describe("clearing an Add-on's store", () => {
 
     const after = await readPhisAddonStorageUsage(pool, { addonId: ADDON, siteId: site.id });
     expect(after).toMatchObject({ bytes: 25, objects: 2 });
+  });
+
+  it("sweeps nothing where the Add-on has no link tables to judge orphans by", async () => {
+    const pool = await requirePhiTestDatabase();
+    const space = await ensureAddonMediaSpace(site.id, ADDON);
+    const { rows } = await pool.query<{ id: number }>(
+      `INSERT INTO phis.media_assets
+         (site_id, space_id, storage_profile_id, storage_key, original_name, content_type,
+          bytes, lifecycle_status, delivery_policy)
+       VALUES ($1, $2, $3, 'addons/pgtest/keep.bin', 'keep.bin', 'application/octet-stream', 12, 2, 1)
+       RETURNING id`,
+      [site.id, space.id, site.storageProfileId],
+    );
+
+    // No schema is applied for this Add-on, so there is no link table. The pass used to read that as
+    // "nothing links anything" and delete every Asset in the Space; it declines to judge instead.
+    const swept = await sweepPhisAddonAssets(pool, { addonId: ADDON, siteId: site.id, siteKey: site.key });
+    expect(swept.orphaned).toBe(0);
+    expect(swept.storageKeys).toEqual([]);
+    const kept = await pool.query(`SELECT id FROM phis.media_assets WHERE id = $1`, [rows[0]!.id]);
+    expect(kept.rows).toHaveLength(1);
   });
 
   it("says so when there is no row to correct", async () => {
