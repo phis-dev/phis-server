@@ -73,3 +73,16 @@ export function composePhisAddonAssetTableName(table: string) {
 export function phisAddonStoragePrefix(addonId: string, siteKey: string) {
   return `addons/${derivePhisAddonSchemaName(addonId)}/${siteKey}`;
 }
+
+/**
+ * Whether a physical key lies under this prefix, rather than merely beginning with its letters.
+ *
+ * A Provider lists by string prefix, and the prefix above ends in the Site key with nothing after it.
+ * Site `acme` therefore listed `addons/x/acme-eu/...` as well, and handed those keys on: a listing that
+ * showed another Site's objects with the first letters cut off, a recount that charged one Site for
+ * another's bytes, and a purge that would have deleted them. The boundary is the separator, and every
+ * reader of a listing has to ask for it, because no Provider can be made to.
+ */
+export function isPhisAddonStorageKeyUnder(prefix: string, storageKey: string) {
+  return storageKey.startsWith(`${prefix}/`);
+}

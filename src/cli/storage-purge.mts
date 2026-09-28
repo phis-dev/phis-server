@@ -6,7 +6,7 @@ import type { Pool } from "pg";
 
 import { PHI_LOCAL_MEDIA_STORAGE_PROVIDER_ID } from "@phis/contracts/addon";
 
-import { phisAddonStoragePrefix } from "../lib/addons/schema-name.ts";
+import { isPhisAddonStorageKeyUnder, phisAddonStoragePrefix } from "../lib/addons/schema-name.ts";
 
 export { phisAddonStoragePrefix };
 
@@ -113,7 +113,10 @@ export async function removePhisAddonStorage(
         error: "No installed Add-on offers this Storage Provider any more, so its objects stay.",
       };
     }
-    const heads = await adapter.listPrefix(prefix);
+    // The Provider matches the prefix as a string, so `acme` lists `acme-eu` too; only what lies under
+    // this Site's own directory may go.
+    const heads = (await adapter.listPrefix(prefix))
+      .filter((head) => isPhisAddonStorageKeyUnder(prefix, head.storageKey));
     let removed = 0;
     for (const head of heads) {
       if (await adapter.deleteObject(head.storageKey)) {
@@ -152,7 +155,11 @@ export async function recountPhisAddonStorage(
     listPrefix: (prefix: string) => Promise<{ storageKey: string; byteSize: number }[]>;
   },
 ) {
-  const heads = await input.listPrefix(phisAddonStoragePrefix(input.addonId, input.site.siteKey));
+  const prefix = phisAddonStoragePrefix(input.addonId, input.site.siteKey);
+  // Same boundary as the purge: a string-prefix listing does not stop at the Site key, and a figure
+  // that counted the neighbouring Site's bytes would refuse this one's writes for room it has.
+  const heads = (await input.listPrefix(prefix))
+    .filter((head) => isPhisAddonStorageKeyUnder(prefix, head.storageKey));
   const bytes = heads.reduce((total, head) => total + head.byteSize, 0);
   const objects = heads.length;
   const { rows } = await pool.query<{ storage_used_bytes: string; storage_used_objects: number }>(

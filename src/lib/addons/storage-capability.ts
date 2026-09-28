@@ -3,7 +3,7 @@ import "server-only";
 import type { PhisStorageCapabilityV1 } from "./contract.ts";
 import { ensureSiteMediaSpace, getMediaStorageProfile } from "@/db/media-spaces";
 import { createPhisMediaStorageServiceForProfile } from "@/lib/media-storage";
-import { phisAddonStoragePrefix } from "./schema-name.ts";
+import { isPhisAddonStorageKeyUnder, phisAddonStoragePrefix } from "./schema-name.ts";
 import {
   bookPhisAddonStorage,
   readPhisAddonStorageUsage,
@@ -260,8 +260,10 @@ export function buildPhisAddonStorageCapability(input: {
       const relative = prefix == null || prefix === "" ? "" : requireKey(prefix);
       const { service, prefix: root } = await resolveStorage(siteId, siteKey, addonId);
       const heads = await service.listPrefix(relative ? `${root}/${relative}` : root);
-      // Handed back relative, so what an Add-on receives is what it may pass in again.
+      // Handed back relative, so what an Add-on receives is what it may pass in again. Only what lies
+      // under the root: a Provider's prefix match does not stop at the Site key.
       return heads
+        .filter((head) => isPhisAddonStorageKeyUnder(root, head.storageKey))
         .map((head) => head.storageKey.slice(root.length + 1))
         .filter((key) => key.length > 0);
     },

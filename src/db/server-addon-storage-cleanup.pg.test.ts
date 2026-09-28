@@ -124,12 +124,17 @@ describe("clearing an Add-on's store", () => {
     const before = await readPhisAddonStorageUsage(pool, { addonId: ADDON, siteId: site.id });
     expect(before.bytes).toBe(999999);
 
+    // What a Provider answers to a string-prefix listing: this Site's two objects, and one of a Site
+    // whose key merely begins the same way. The recount may count only the first two.
+    const own = phisAddonStoragePrefix(ADDON, site.key);
+    const neighbour = phisAddonStoragePrefix(ADDON, `${site.key}-eu`);
     const result = await recountPhisAddonStorage(pool, {
       addonId: ADDON,
       site: localSite(),
       listPrefix: async () => [
-        { storageKey: "a", byteSize: 10 },
-        { storageKey: "b", byteSize: 15 },
+        { storageKey: `${own}/a`, byteSize: 10 },
+        { storageKey: `${own}/b`, byteSize: 15 },
+        { storageKey: `${neighbour}/c`, byteSize: 1000 },
       ],
     });
     expect(result).toMatchObject({ bytes: 25, objects: 2, applied: true });
