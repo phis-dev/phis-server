@@ -18,8 +18,15 @@ export async function createUserPasswordResetToken(input: {
   const tokenHash = sha256Hex(token);
   const pool = getPool();
 
+  // The newest link is the only one that works. Earlier ones stayed valid for their two hours, so a
+  // mail sitting in an old inbox kept a way into the account open after a newer one was asked for.
   const { rows } = await pool.query<{ expires_at: string }>(
-    `INSERT INTO phis.user_password_reset_tokens (
+    `WITH retired AS (
+       UPDATE phis.user_password_reset_tokens
+       SET consumed_at = NOW()
+       WHERE user_id = $1 AND site_id = $2 AND consumed_at IS NULL
+     )
+     INSERT INTO phis.user_password_reset_tokens (
        user_id,
        site_id,
        token_hash,
@@ -68,12 +75,16 @@ export async function getUserPasswordResetTokenByRawToken(siteId: number, rawTok
   };
 }
 
-export async function consumeUserPasswordResetToken(id: number) {
-  const pool = getPool();
-  await pool.query(
+/**
+ * Takes a token for the one password it may set: unconsumed and unexpired, in the statement that marks it
+ * used. Reading it and marking it afterwards let two requests carrying the same link both set a password.
+ */
+export async function claimUserPasswordResetToken(id: number) {
+  const { rowCount } = await getPool().query(
     `UPDATE phis.user_password_reset_tokens
-     SET consumed_at = COALESCE(consumed_at, NOW())
-     WHERE id = $1`,
+     SET consumed_at = NOW()
+     WHERE id = $1 AND consumed_at IS NULL AND expires_at > NOW()`,
     [id],
   );
+  return (rowCount ?? 0) > 0;
 }

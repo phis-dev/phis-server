@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import {
-  consumeUserPasswordResetToken,
+  claimUserPasswordResetToken,
   getUserPasswordResetTokenByRawToken,
 } from "@/db/user-password-reset-tokens";
 import { revokeUserSessions } from "@/db/user-sessions";
@@ -82,11 +82,14 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Reset token expired." }, { status: 410 });
   }
 
+  // Hashed before the token is taken, so the slow part does not sit between the claim and the write.
   const passwordHash = await hashPassword(password);
+  if (!await claimUserPasswordResetToken(resetToken.id)) {
+    return NextResponse.json({ error: "Reset token already used." }, { status: 409 });
+  }
   await updateUserAccountPasswordHash(resetToken.userId, passwordHash, {
     clearFlags: PhiUserAccountFlag.MustChangePassword,
   });
-  await consumeUserPasswordResetToken(resetToken.id);
   await revokeUserSessions(resetToken.userId);
 
   return NextResponse.json({});
