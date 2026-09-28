@@ -169,6 +169,18 @@ describe("PUT /api/site/admin/users", () => {
     expect(mocks.upsertProfile).not.toHaveBeenCalled();
   });
 
+  it("keeps the roles of a save that does not mention them", async () => {
+    mocks.getById.mockResolvedValue(account([7]));
+    mocks.getByEmail.mockResolvedValue(null);
+    mocks.getMembership.mockResolvedValue({ coreRoleFlags: 8, enabled: true });
+    const { roles: _roles, ...withoutRoles } = RECORD;
+    void _roles;
+    const response = await PUT(request("PUT", withoutRoles));
+
+    expect(response.status).toBe(200);
+    expect(mocks.upsertMembership).toHaveBeenCalledWith(expect.objectContaining({ coreRoleFlags: 8 }));
+  });
+
   it("edits address and name of an account that belongs to this Site alone", async () => {
     mocks.getById.mockResolvedValue(account([7]));
     mocks.getByEmail.mockResolvedValue(null);

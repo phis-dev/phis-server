@@ -474,7 +474,11 @@ export async function PUT(request: NextRequest) {
   const requestedFirstName = normalizeString(body.firstName);
   const requestedLastName = normalizeString(body.lastName);
   const requestedCompanyName = normalizeNullableString(body.companyName);
-  const requestedRoleFlags = buildBaseRoleFlagsFromSelection(body.roles);
+  // A save that does not mention roles leaves them as they are; read as an empty selection, it took
+  // every role away from whoever was edited.
+  const requestedRoleFlags = body.roles === undefined
+    ? (currentMembership?.coreRoleFlags ?? 0)
+    : buildBaseRoleFlagsFromSelection(body.roles);
   const changePassword = normalizeBoolean(body.changePassword);
   const requestedEnabled = typeof body.enabled === "boolean" ? body.enabled : null;
   const effectiveRoleFlags = isSelf ? (currentMembership?.coreRoleFlags ?? 0) : requestedRoleFlags;
