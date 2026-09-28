@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 
-import { getSupportTicketDetail, updateSupportTicket } from "@/db/support";
+import { getSupportTicketDetail, SupportAdministrationError, updateSupportTicket } from "@/db/support";
 import { requireSiteSupportApiContext } from "@/lib/guards/site-admin-api";
 import { logRuntimeEvent } from "@/lib/log";
 import { normalizeString, readRequestBody } from "@/lib/helpers/request";
@@ -73,7 +73,9 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
   }
 
   const body = await readRequestBody(request);
-  const updated = await updateSupportTicket({
+  let updated;
+  try {
+    updated = await updateSupportTicket({
     siteId: site.id,
     ticketId,
     typeId: normalizeInteger(body.typeId) ?? undefined,
@@ -107,7 +109,14 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
       ? normalizeNullableString(body.closedAt)
       : undefined,
     updatedByUserId: context.session?.userId ?? null,
-  });
+    });
+  } catch (cause) {
+    // A queue, type or person this Site does not have: the body's fault, and said so.
+    if (cause instanceof SupportAdministrationError) {
+      return NextResponse.json({ error: cause.message }, { status: 400 });
+    }
+    throw cause;
+  }
 
   if (!updated) {
     return NextResponse.json({ error: "Ticket not found." }, { status: 404 });

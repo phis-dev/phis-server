@@ -4,6 +4,7 @@ import {
   addSupportTicketTask,
   SUPPORT_TICKET_TASK_STATUS_OPEN,
   SUPPORT_TICKET_TASK_TYPE_INTERNAL,
+  SupportAdministrationError,
 } from "@/db/support";
 import { requireSiteSupportApiContext } from "@/lib/guards/site-admin-api";
 import { logRuntimeEvent } from "@/lib/log";
@@ -58,21 +59,29 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     return NextResponse.json({ error: "Task title is required." }, { status: 400 });
   }
 
-  const ticket = await addSupportTicketTask({
-    siteId: site.id,
-    ticketId,
-    type: normalizeInteger(body.type) ?? SUPPORT_TICKET_TASK_TYPE_INTERNAL,
-    status: normalizeInteger(body.status) ?? SUPPORT_TICKET_TASK_STATUS_OPEN,
-    flags: normalizeInteger(body.flags) ?? 0,
-    sortOrder: normalizeInteger(body.sortOrder) ?? undefined,
-    assigneeUserId: normalizeInteger(body.assigneeUserId),
-    title,
-    description: normalizeNullableString(body.description),
-    meta: normalizeJsonRecord(body.meta),
-    dueAt: normalizeNullableString(body.dueAt),
-    completedAt: normalizeNullableString(body.completedAt),
-    createdByUserId: context.session?.userId ?? null,
-  });
+  let ticket;
+  try {
+    ticket = await addSupportTicketTask({
+      siteId: site.id,
+      ticketId,
+      type: normalizeInteger(body.type) ?? SUPPORT_TICKET_TASK_TYPE_INTERNAL,
+      status: normalizeInteger(body.status) ?? SUPPORT_TICKET_TASK_STATUS_OPEN,
+      flags: normalizeInteger(body.flags) ?? 0,
+      sortOrder: normalizeInteger(body.sortOrder) ?? undefined,
+      assigneeUserId: normalizeInteger(body.assigneeUserId),
+      title,
+      description: normalizeNullableString(body.description),
+      meta: normalizeJsonRecord(body.meta),
+      dueAt: normalizeNullableString(body.dueAt),
+      completedAt: normalizeNullableString(body.completedAt),
+      createdByUserId: context.session?.userId ?? null,
+    });
+  } catch (cause) {
+    if (cause instanceof SupportAdministrationError) {
+      return NextResponse.json({ error: cause.message }, { status: 400 });
+    }
+    throw cause;
+  }
 
   if (!ticket) {
     return NextResponse.json({ error: "Ticket not found." }, { status: 404 });

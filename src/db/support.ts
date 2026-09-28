@@ -821,10 +821,8 @@ export async function applySupportTicketAssignmentAction(input: SupportTicketAss
     }
 
     if (input.action === "move_to_queue") {
-      const targetQueue = await getSupportQueueBySiteAndId(input.siteId, input.queueId);
-      if (!targetQueue) {
-        throw new Error("Target queue not found.");
-      }
+      // Of this Site and still open for work; a retired queue takes nothing new.
+      await assertSupportTicketReferencesOfSite(client, input.siteId, { queueId: input.queueId });
 
       if (existing.queue_id !== input.queueId || existing.assignee_user_id !== null) {
         await client.query(
@@ -903,7 +901,8 @@ export async function createSupportTicket(input: CreateSupportTicketInput) {
      */
     const queueRows = await client.query<{ id: number; group_id: number }>(
       input.queueId != null
-        ? `SELECT id, group_id FROM phis.support_queues WHERE site_id = $1 AND id = $2`
+        ? `SELECT id, group_id FROM phis.support_queues
+           WHERE site_id = $1 AND id = $2 AND retired_at IS NULL`
         : `SELECT id, group_id
            FROM phis.support_queues
            WHERE site_id = $1
@@ -1034,6 +1033,52 @@ export async function createSupportTicket(input: CreateSupportTicketInput) {
   }
 }
 
+/**
+ * What a ticket write may point at: this Site's queues and types, and this Site's members.
+ *
+ * `support_queues.id` and `support_ticket_types.id` are keyed without a Site component, and a user id
+ * is global, so a `queueId` or `assigneeUserId` from the body reached the row unasked: a Supporter on
+ * one Site could file a ticket under another Site's queue, and the answer then showed that queue's
+ * name. A retired queue or type is not offered either -- retirement replaces deletion here, and nothing
+ * new is routed to what has ended.
+ */
+async function assertSupportTicketReferencesOfSite(
+  db: DbQueryable,
+  siteId: number,
+  refs: {
+    queueId?: number | null;
+    typeId?: number | null;
+    assigneeUserId?: number | null;
+    requesterUserId?: number | null;
+  },
+) {
+  if (refs.queueId != null) {
+    const { rows } = await db.query<{ id: number }>(
+      `SELECT id FROM phis.support_queues WHERE site_id = $1 AND id = $2 AND retired_at IS NULL`,
+      [siteId, refs.queueId],
+    );
+    if (rows.length === 0) throw new SupportAdministrationError("This Site has no such queue.");
+  }
+  if (refs.typeId != null) {
+    const { rows } = await db.query<{ id: number }>(
+      `SELECT id FROM phis.support_ticket_types WHERE site_id = $1 AND id = $2 AND retired_at IS NULL`,
+      [siteId, refs.typeId],
+    );
+    if (rows.length === 0) throw new SupportAdministrationError("This Site has no such ticket type.");
+  }
+  const people = [refs.assigneeUserId, refs.requesterUserId]
+    .filter((userId): userId is number => userId != null);
+  if (people.length > 0) {
+    const { rows } = await db.query<{ user_id: number }>(
+      `SELECT user_id FROM phis.user_site_memberships WHERE site_id = $1 AND user_id = ANY($2::int[])`,
+      [siteId, [...new Set(people)]],
+    );
+    if (rows.length !== new Set(people).size) {
+      throw new SupportAdministrationError("One or more of these people are not members of this Site.");
+    }
+  }
+}
+
 export async function updateSupportTicket(input: UpdateSupportTicketInput) {
   const pool = getPool();
   const client = await pool.connect();
@@ -1045,6 +1090,13 @@ export async function updateSupportTicket(input: UpdateSupportTicketInput) {
       await client.query("ROLLBACK");
       return null;
     }
+
+    await assertSupportTicketReferencesOfSite(client, input.siteId, {
+      queueId: input.queueId,
+      typeId: input.typeId,
+      assigneeUserId: input.assigneeUserId,
+      requesterUserId: input.requesterUserId,
+    });
 
     const sets: string[] = [];
     const params: unknown[] = [input.siteId, input.ticketId];
@@ -1148,6 +1200,8 @@ export async function addSupportTicketTask(input: AddSupportTicketTaskInput) {
       return null;
     }
 
+    await assertSupportTicketReferencesOfSite(client, input.siteId, { assigneeUserId: input.assigneeUserId });
+
     const nextSortOrder =
       typeof input.sortOrder === "number"
         ? input.sortOrder
@@ -1231,6 +1285,7 @@ export async function updateSupportTicketTask(input: UpdateSupportTicketTaskInpu
       await client.query("ROLLBACK");
       return null;
     }
+    await assertSupportTicketReferencesOfSite(client, input.siteId, { assigneeUserId: input.assigneeUserId });
 
     const sets: string[] = [];
     const params: unknown[] = [input.taskId];

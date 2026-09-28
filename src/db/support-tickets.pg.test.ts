@@ -16,7 +16,14 @@ import {
   requirePhiTestDatabase,
   type PhiTestSite,
 } from "../../test/pg/harness";
-import { createSupportTicket, getSupportTicketDetail } from "./support";
+import {
+  addSupportTicketTask,
+  createSupportTicket,
+  getSupportTicketDetail,
+  SupportAdministrationError,
+  updateSupportTicket,
+  type UpdateSupportTicketInput,
+} from "./support";
 import { getThreadDetail } from "./threads";
 
 /**
@@ -103,6 +110,48 @@ describe("support tickets", () => {
     const detail = await getSupportTicketDetail(site.id, created!.ticket.id);
     expect(detail?.ticket.threadId).toBe(threadId);
     expect(detail?.tasks).toEqual([]);
+  });
+
+  it("keeps a ticket's queue, type and people within its own Site", async () => {
+    const pool = await requirePhiTestDatabase();
+    const site = await createPhiTestSite("tickets-references");
+    const { queueId, typeId } = await seedSupport(site);
+    const elsewhere = await createPhiTestSite("tickets-elsewhere");
+    const foreign = await seedSupport(elsewhere);
+    const requester = await createPhiTestUser(site);
+    const outsider = await createPhiTestUser(elsewhere);
+
+    const created = await createSupportTicket({
+      siteId: site.id,
+      typeId,
+      channel: 0,
+      subject: "Where does this go?",
+      message: "Nowhere else, please.",
+      requesterUserId: requester,
+      createdByUserId: requester,
+    });
+    const ticketId = created!.ticket.id;
+    const patch = (fields: Omit<UpdateSupportTicketInput, "siteId" | "ticketId">) =>
+      updateSupportTicket({ siteId: site.id, ticketId, ...fields });
+
+    // Queue and type ids carry no Site of their own; the write has to ask for it.
+    await expect(patch({ queueId: foreign.queueId })).rejects.toThrow(SupportAdministrationError);
+    await expect(patch({ typeId: foreign.typeId })).rejects.toThrow(SupportAdministrationError);
+    // A person is global; assigning or naming one who is not a member here is refused.
+    await expect(patch({ assigneeUserId: outsider })).rejects.toThrow(SupportAdministrationError);
+    await expect(addSupportTicketTask({
+      siteId: site.id, ticketId, type: 0, status: 0, flags: 0, title: "Look", assigneeUserId: outsider,
+    })).rejects.toThrow(SupportAdministrationError);
+    // Nothing above changed the row.
+    expect((await getSupportTicketDetail(site.id, ticketId))?.ticket).toMatchObject({
+      queueId, typeId, assigneeUserId: null,
+    });
+
+    // A retired queue takes nothing new, however it is named.
+    await pool.query(`UPDATE phis.support_queues SET retired_at = NOW() WHERE id = $1`, [queueId]);
+    await expect(patch({ queueId })).rejects.toThrow(/no such queue/u);
+    await pool.query(`UPDATE phis.support_queues SET retired_at = NULL WHERE id = $1`, [queueId]);
+    expect((await patch({ queueId, assigneeUserId: requester }))?.ticket.assigneeUserId).toBe(requester);
   });
 
   it("refuses a ticket when nothing would route it", async () => {

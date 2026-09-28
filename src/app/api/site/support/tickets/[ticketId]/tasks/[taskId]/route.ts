@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 
-import { deleteSupportTicketTask, updateSupportTicketTask } from "@/db/support";
+import { deleteSupportTicketTask, SupportAdministrationError, updateSupportTicketTask } from "@/db/support";
 import { requireSiteSupportApiContext } from "@/lib/guards/site-admin-api";
 import { logRuntimeEvent } from "@/lib/log";
 import { normalizeString, readRequestBody } from "@/lib/helpers/request";
@@ -54,22 +54,30 @@ export async function PATCH(
   }
 
   const body = await readRequestBody(request);
-  const ticket = await updateSupportTicketTask({
-    siteId: site.id,
-    ticketId,
-    taskId,
-    type: Object.hasOwn(body, "type") ? (normalizeInteger(body.type) ?? undefined) : undefined,
-    status: Object.hasOwn(body, "status") ? (normalizeInteger(body.status) ?? undefined) : undefined,
-    flags: Object.hasOwn(body, "flags") ? (normalizeInteger(body.flags) ?? undefined) : undefined,
-    sortOrder: Object.hasOwn(body, "sortOrder") ? (normalizeInteger(body.sortOrder) ?? undefined) : undefined,
-    assigneeUserId: Object.hasOwn(body, "assigneeUserId") ? normalizeInteger(body.assigneeUserId) : undefined,
-    title: Object.hasOwn(body, "title") ? normalizeString(body.title) : undefined,
-    description: Object.hasOwn(body, "description") ? normalizeNullableString(body.description) : undefined,
-    meta: Object.hasOwn(body, "meta") ? normalizeJsonRecord(body.meta) : undefined,
-    dueAt: Object.hasOwn(body, "dueAt") ? normalizeNullableString(body.dueAt) : undefined,
-    completedAt: Object.hasOwn(body, "completedAt") ? normalizeNullableString(body.completedAt) : undefined,
-    updatedByUserId: context.session?.userId ?? null,
-  });
+  let ticket;
+  try {
+    ticket = await updateSupportTicketTask({
+      siteId: site.id,
+      ticketId,
+      taskId,
+      type: Object.hasOwn(body, "type") ? (normalizeInteger(body.type) ?? undefined) : undefined,
+      status: Object.hasOwn(body, "status") ? (normalizeInteger(body.status) ?? undefined) : undefined,
+      flags: Object.hasOwn(body, "flags") ? (normalizeInteger(body.flags) ?? undefined) : undefined,
+      sortOrder: Object.hasOwn(body, "sortOrder") ? (normalizeInteger(body.sortOrder) ?? undefined) : undefined,
+      assigneeUserId: Object.hasOwn(body, "assigneeUserId") ? normalizeInteger(body.assigneeUserId) : undefined,
+      title: Object.hasOwn(body, "title") ? normalizeString(body.title) : undefined,
+      description: Object.hasOwn(body, "description") ? normalizeNullableString(body.description) : undefined,
+      meta: Object.hasOwn(body, "meta") ? normalizeJsonRecord(body.meta) : undefined,
+      dueAt: Object.hasOwn(body, "dueAt") ? normalizeNullableString(body.dueAt) : undefined,
+      completedAt: Object.hasOwn(body, "completedAt") ? normalizeNullableString(body.completedAt) : undefined,
+      updatedByUserId: context.session?.userId ?? null,
+    });
+  } catch (cause) {
+    if (cause instanceof SupportAdministrationError) {
+      return NextResponse.json({ error: cause.message }, { status: 400 });
+    }
+    throw cause;
+  }
 
   if (!ticket) {
     return NextResponse.json({ error: "Task not found." }, { status: 404 });
