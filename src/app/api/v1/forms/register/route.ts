@@ -16,6 +16,10 @@ import { getFormGuardSecret, getFormTimingWindow, getSiteMailConfig } from "@/li
 import { logFormAbuse } from "@/lib/form-abuse-log";
 import { verifyFormGuard } from "@/lib/form-guard";
 import { verifyPasswordHash } from "@/lib/password";
+import {
+  isSitePasswordMethodEnabled,
+  PASSWORD_METHOD_DISABLED_RESPONSE,
+} from "@/lib/site-auth/password-method";
 import { USER_SITE_FLAG_NEWSLETTER_OPT_IN } from "@/lib/user-site-flags";
 
 import { PhiUserEmailSource } from "@phis/contracts/access";
@@ -164,6 +168,10 @@ export async function POST(request: Request) {
         { error: "Account already exists.", code: "account_exists" },
         { status: 409 },
       );
+    }
+    // This branch signs somebody in by their password; a Site that switched the method off does not.
+    if (!await isSitePasswordMethodEnabled(site.id)) {
+      return NextResponse.json(PASSWORD_METHOD_DISABLED_RESPONSE, { status: 403 });
     }
 
     const validPassword = await verifyPasswordHash(existingUser.passwordHash, password);

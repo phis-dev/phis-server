@@ -6,10 +6,15 @@ import { getUserProfileByUserId } from "@/db/user-profiles";
 import { getEffectiveUserSiteAuthorization } from "@/db/user-site-memberships";
 import { buildPasswordResetUrlForRequest } from "@/lib/email";
 import { sendTemplatedEmail } from "@/lib/email-templates";
+import { verifyCsrfRequest } from "@/lib/auth";
 import { getSiteMailConfig } from "@/lib/form-config";
 import { normalizeLocale } from "@/lib/locale";
 import { logRuntimeEvent } from "@/lib/log";
 import { requireSiteFromRequest } from "@/lib/site-context";
+import {
+  isSitePasswordMethodEnabled,
+  PASSWORD_METHOD_DISABLED_RESPONSE,
+} from "@/lib/site-auth/password-method";
 import { isUserAccountEnabled } from "@/lib/user-flags";
 
 type RequestPayload = {
@@ -33,6 +38,15 @@ export async function POST(request: NextRequest) {
   const site = await requireSiteFromRequest(request);
   if (!site) {
     return NextResponse.json({ error: "Missing site context." }, { status: 400 });
+  }
+  // The same token every other `/api/v1/auth` write asks for. Without it a cross-site `text/plain`
+  // POST -- no preflight -- could have reset mail sent in a visitor's name; the relay in phis-ui
+  // fetches the token first, as it does for the link confirmation.
+  if (!verifyCsrfRequest(request)) {
+    return NextResponse.json({ error: "Invalid CSRF token." }, { status: 403 });
+  }
+  if (!await isSitePasswordMethodEnabled(site.id)) {
+    return NextResponse.json(PASSWORD_METHOD_DISABLED_RESPONSE, { status: 403 });
   }
 
   let payload: RequestPayload = {};

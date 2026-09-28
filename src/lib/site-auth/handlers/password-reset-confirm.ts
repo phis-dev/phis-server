@@ -6,9 +6,14 @@ import {
 } from "@/db/user-password-reset-tokens";
 import { revokeUserSessions } from "@/db/user-sessions";
 import { updateUserAccountPasswordHash } from "@/db/user-accounts";
+import { verifyCsrfRequest } from "@/lib/auth";
 import { PhiUserAccountFlag } from "@/lib/constants/user-account-flags";
 import { hashPassword } from "@/lib/password";
 import { requireSiteFromRequest } from "@/lib/site-context";
+import {
+  isSitePasswordMethodEnabled,
+  PASSWORD_METHOD_DISABLED_RESPONSE,
+} from "@/lib/site-auth/password-method";
 
 type ConfirmPayload = {
   token?: unknown;
@@ -29,6 +34,12 @@ export async function POST(request: NextRequest) {
   const site = await requireSiteFromRequest(request);
   if (!site) {
     return NextResponse.json({ error: "Missing site context." }, { status: 400 });
+  }
+  if (!verifyCsrfRequest(request)) {
+    return NextResponse.json({ error: "Invalid CSRF token." }, { status: 403 });
+  }
+  if (!await isSitePasswordMethodEnabled(site.id)) {
+    return NextResponse.json(PASSWORD_METHOD_DISABLED_RESPONSE, { status: 403 });
   }
 
   let payload: ConfirmPayload = {};

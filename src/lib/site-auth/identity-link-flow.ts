@@ -129,6 +129,12 @@ export async function confirmExternalIdentityLink(input: {
   ) {
     throw new Error("AUTH_LINK_METHOD_DISABLED");
   }
+  // The confirmation is a password check, and a Site that switched the password off has nothing to
+  // check it with -- the same answer the login handler gives, under the code the route already maps.
+  const passwordMethod = await getSiteAuthMethod(input.siteId, "password", "primary", null);
+  if (passwordMethod?.enabled !== true) {
+    throw new Error("AUTH_LINK_PASSWORD_UNAVAILABLE");
+  }
 
   const [user, emailUser, linkedUserId] = await Promise.all([
     getUserAccountById(transaction.userId, input.siteId),

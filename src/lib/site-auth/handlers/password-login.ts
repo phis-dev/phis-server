@@ -26,6 +26,10 @@ import { resolvePhiUserArea } from "@/lib/user-area";
 import { isUserAccountEnabled, resolveUserThemeModeName } from "@/lib/user-flags";
 import { beginSiteAuthenticationSession } from "@/lib/site-auth/assurance";
 import { normalizeAuthNextPath, PHI_AUTH_SESSION_STATES } from "@/lib/site-auth/contracts";
+import {
+  isSitePasswordMethodEnabled,
+  PASSWORD_METHOD_DISABLED_RESPONSE,
+} from "@/lib/site-auth/password-method";
 
 type LoginPayload = {
   email?: unknown;
@@ -64,6 +68,17 @@ export async function POST(request: NextRequest) {
       path: request.nextUrl.pathname,
     });
     return NextResponse.json({ error: "Invalid JSON payload." }, { status: 400 });
+  }
+
+  // Before the credentials are even looked at: a method that is switched off answers nobody.
+  if (!await isSitePasswordMethodEnabled(site.id)) {
+    logRuntimeEvent("warn", "auth.login.method_disabled", {
+      message: "Login rejected because the password method is disabled.",
+      siteKey: site.key,
+      method: request.method,
+      path: request.nextUrl.pathname,
+    });
+    return NextResponse.json(PASSWORD_METHOD_DISABLED_RESPONSE, { status: 403 });
   }
 
   const email = normalize(payload.email).toLowerCase();
