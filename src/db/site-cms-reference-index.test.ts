@@ -42,9 +42,9 @@ function referenceIndex(seed: IndexRow[] = [], options: { siteSpaceAssetIds?: nu
       }
       if (text.includes("INSERT INTO phis.site_cms_references")) {
         const [siteId, sourceKind, sourceScopeId, sourceRevisionId, locations, targetKinds, targetAreaIds,
-          pageScopeIds, , , assetIds] = values as [
+          pageScopeIds, assetIds] = values as [
             number, number, number, number | null, string[], number[], (number | null)[],
-            (number | null)[], unknown, unknown, (number | null)[],
+            (number | null)[], (number | null)[],
           ];
         locations.forEach((location, index) => {
           rows.push({

@@ -4,6 +4,7 @@ import { collectSiteCmsReferences } from "@/db/site-cms-references";
 import { createPhiPageReference } from "@/lib/internal-references";
 
 const PAGE = createPhiPageReference({ kind: "site", pageScopeId: 41 });
+const OTHER_PAGE = createPhiPageReference({ kind: "site", pageScopeId: 42 });
 const MODULE_PAGE = createPhiPageReference({
   kind: "module",
   ownerModuleId: "@acme/shop/modules/site",
@@ -33,17 +34,24 @@ describe("A link target in persisted config is a reference", () => {
     expect(pagesOf({
       config: {
         linkTarget: { kind: "page", reference: PAGE },
-        actionLinkTarget: { kind: "page", reference: MODULE_PAGE },
+        actionLinkTarget: { kind: "page", reference: OTHER_PAGE },
       },
     }).map((entry) => entry.location).sort()).toEqual(["/config/actionLinkTarget", "/config/linkTarget"]);
   });
 
-  it("keeps a Module target as a Module target", () => {
-    const [entry] = pagesOf({ config: { linkTarget: { kind: "page", reference: MODULE_PAGE } } });
-    expect(entry?.reference).toMatchObject({
-      kind: "page",
-      target: { kind: "module", ownerModuleId: "@acme/shop/modules/site", presetKey: "pricing-page" },
-    });
+  /*
+   * A Module Page is read as a target and then deliberately left out of the index. The Site owns neither
+   * the Page nor its path; switching the Module off is reversible and hands its routes back, so there is
+   * no irreversible act for a guard to stand in front of and no row a foreign key could point at.
+   */
+  it("writes no row for a Module Page, which the Site neither owns nor can destroy", () => {
+    expect(collectSiteCmsReferences({ config: { linkTarget: { kind: "page", reference: MODULE_PAGE } } }))
+      .toEqual([]);
+  });
+
+  it("leaves out a Module Page embedded in a body, by the same rule", () => {
+    expect(collectSiteCmsReferences({ markdown: `See [Pricing](phis:page/${MODULE_PAGE}).` }))
+      .toEqual([]);
   });
 
   it("carries a fragment without its hash, and none where there was none", () => {
@@ -100,7 +108,7 @@ describe("A link target in persisted config is a reference", () => {
   it("leaves the string walk alone", () => {
     expect(pagesOf({
       config: { linkTarget: { kind: "page", reference: PAGE } },
-      markdown: `See [Pricing](phis:page/${MODULE_PAGE}).`,
+      markdown: `See [Pricing](phis:page/${OTHER_PAGE}).`,
     }).map((entry) => entry.location).sort()).toEqual(["/config/linkTarget", "/markdown@14"]);
   });
 });

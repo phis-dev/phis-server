@@ -1038,8 +1038,8 @@ Contract:
 ### Internal Page and Asset references
 
 Stable Page references and `phis:page/...` / `phis:asset/...` document references follow
-[REFERENCES.md](./REFERENCES.md). Structured internal targets persist Page Scope or Module preset identity,
-never a copied path. Asset targets reuse `media_assets.id` and remain Site/access constrained.
+[REFERENCES.md](./REFERENCES.md). Structured internal targets persist a Page Scope id or a derived Module
+Page id, never a copied path. Asset targets reuse `media_assets.id` and remain Site/access constrained.
 
 `phis.site_cms_references` is the maintained projection, updated transactionally by the same writes that
 persist the referencing data. Revision JSON is never scanned to answer a reference lookup.
@@ -1055,8 +1055,6 @@ persist the referencing data. Revision JSON is never scanned to answer a referen
 - `target_kind SMALLINT NOT NULL`
 - `target_area_id SMALLINT NULL`
 - `target_page_scope_id INT NULL REFERENCES phis.site_page_scopes(id) ON DELETE RESTRICT`
-- `target_owner_module_id VARCHAR(255) NULL`
-- `target_preset_key VARCHAR(255) NULL`
 - `target_asset_id INT NULL REFERENCES phis.media_assets(id) ON DELETE RESTRICT`
 - `fragment VARCHAR(512) NULL`
 - `created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
@@ -1067,7 +1065,7 @@ Contract:
 - `source_scope_id` is the owning Page Scope, Navigation Scope, Area Scope, Theme Scope, or `site_content.id` for the matching source kind. Writers replace the complete reference set for one `(site_id, source_kind, source_scope_id)` in the same transaction that persists the source.
 - An Asset reference in persisted config is a positive id in a field named `assetId` or in one whose name ends in `AssetId`; `phis:asset/<id>` is the form for trusted Markdown and HTML bodies. The collector reads exactly these two, so an Asset stored under any other shape has no index row and is deletable while the Site renders it. Normative in [REFERENCES.md](./REFERENCES.md).
 - `source_location` is a JSON-Pointer-style path into the source value, with `~0`/`~1` escaping and an appended `@<offset>` when several references are embedded in one string. Content sources use the persisted field name as the root, for example `/html@42`.
-- `target_kind` is closed: `1 = Site Page Scope`, `2 = Module preset Page`, `3 = Asset`. A CHECK constraint enforces that exactly the matching target columns are set.
+- `target_kind` is closed: `1 = Site Page Scope`, `3 = Asset`. A CHECK constraint enforces that exactly the matching target columns are set. `2` was the Module preset Page and is retired: a Module Page target is not indexed at all, because the Site owns neither the Page nor its path, switching the Module off is reversible and gives its routes back, and there is no row a foreign key could point at. The absence of a row therefore does not mean nothing points at a Module Page. The numbers of the two remaining kinds are unchanged, so a stored value keeps its meaning.
 - Asset targets are validated against the Site Media Space on write; a reference to an Asset outside it aborts the transaction.
 - `ON DELETE RESTRICT` on both target columns makes the index the enforcement point for Page and Asset deletion, not just a reporting aid.
 - The projection is read for path-change affected-reference counts, Page and Asset deletion diagnostics, and delete guards. It never rewrites reference owners: a stable identity already resolves to the new path.

@@ -88,6 +88,27 @@ export function collectSiteCmsReferences(
   options?: { targetAreaId?: number },
 ): SiteCmsReferenceWrite[] {
   const references: SiteCmsReferenceWrite[] = [];
+  /*
+   * A Module Page target is not indexed, and the absence is the contract rather than an oversight.
+   *
+   * The index exists for what the Site owns and can destroy: a foreign key refuses to delete a Page or
+   * an Asset something still points at, and a path change counts what it affects. A Module Page is
+   * neither -- the Site owns neither the Page nor its path, and switching the Module off is reversible,
+   * takes its routes with it, and gives them back. A guard there would warn about an act that costs
+   * nothing, and there is no row for a foreign key to point at in any case.
+   */
+  const push = (location: string, reference: PhiInternalReference) => {
+    if (reference.kind === "page" && reference.target.kind === "module") {
+      return;
+    }
+    references.push({
+      location,
+      reference,
+      ...(reference.kind === "page" && options?.targetAreaId
+        ? { targetAreaId: options.targetAreaId }
+        : {}),
+    });
+  };
   const visit = (node: unknown, location: string) => {
     if (typeof node === "string") {
       const structuredNavigationReference = location.endsWith("/target/reference")
@@ -103,13 +124,7 @@ export function collectSiteCmsReferences(
         ? [{ reference, offset: null }]
         : collectPhiInternalReferencesFromText(node);
       for (const match of embedded) {
-        references.push({
-          location: match.offset == null ? location : `${location}@${match.offset}`,
-          reference: match.reference,
-          ...(match.reference.kind === "page" && options?.targetAreaId
-            ? { targetAreaId: options.targetAreaId }
-            : {}),
-        });
+        push(match.offset == null ? location : `${location}@${match.offset}`, match.reference);
       }
       return;
     }
@@ -122,20 +137,13 @@ export function collectSiteCmsReferences(
       const encodedKey = key.replaceAll("~", "~0").replaceAll("/", "~1");
       const assetId = readPhiCmsAssetIdField(key, entry);
       if (assetId != null) {
-        references.push({
-          location: `${location}/${encodedKey}`,
-          reference: { kind: "asset", assetId },
-        });
+        push(`${location}/${encodedKey}`, { kind: "asset", assetId });
         continue;
       }
       const linkTarget = readPhiCmsLinkTargetField(key, entry);
       if (linkTarget) {
         if (linkTarget.reference) {
-          references.push({
-            location: `${location}/${encodedKey}`,
-            reference: linkTarget.reference,
-            ...(options?.targetAreaId ? { targetAreaId: options.targetAreaId } : {}),
-          });
+          push(`${location}/${encodedKey}`, linkTarget.reference);
         }
         continue;
       }
@@ -212,17 +220,13 @@ export async function replaceSiteCmsReferencesWithDb(
     }
     return {
       location: entry.location,
-      targetKind: reference.kind === "asset" ? 3 : reference.target.kind === "site" ? 1 : 2,
+      targetKind: reference.kind === "asset" ? 3 : 1,
       targetAreaId:
         reference.kind === "page" && Number.isInteger(entry.targetAreaId) && (entry.targetAreaId ?? 0) > 0
           ? entry.targetAreaId!
           : null,
       pageScopeId:
         reference.kind === "page" && reference.target.kind === "site" ? reference.target.pageScopeId : null,
-      ownerModuleId:
-        reference.kind === "page" && reference.target.kind === "module" ? reference.target.ownerModuleId : null,
-      presetKey:
-        reference.kind === "page" && reference.target.kind === "module" ? reference.target.presetKey : null,
       assetId: reference.kind === "asset" ? reference.assetId : null,
       fragment: reference.kind === "page" ? reference.fragment : null,
     };
@@ -230,15 +234,14 @@ export async function replaceSiteCmsReferencesWithDb(
   await db.query(
     `INSERT INTO phis.site_cms_references (
        site_id, source_kind, source_scope_id, source_revision_id, source_location,
-       target_kind, target_area_id, target_page_scope_id, target_owner_module_id,
-       target_preset_key, target_asset_id, fragment
+       target_kind, target_area_id, target_page_scope_id, target_asset_id, fragment
      )
      SELECT $1, $2, $3, $4, location, target_kind, target_area_id, target_page_scope_id,
-            target_owner_module_id, target_preset_key, target_asset_id, fragment
+            target_asset_id, fragment
      FROM unnest(
-       $5::text[], $6::smallint[], $7::smallint[], $8::int[], $9::text[], $10::text[], $11::int[], $12::text[]
+       $5::text[], $6::smallint[], $7::smallint[], $8::int[], $9::int[], $10::text[]
      ) AS r(location, target_kind, target_area_id, target_page_scope_id,
-            target_owner_module_id, target_preset_key, target_asset_id, fragment)`,
+            target_asset_id, fragment)`,
     [
       input.siteId,
       input.sourceKind,
@@ -248,8 +251,6 @@ export async function replaceSiteCmsReferencesWithDb(
       rows.map((row) => row.targetKind),
       rows.map((row) => row.targetAreaId),
       rows.map((row) => row.pageScopeId),
-      rows.map((row) => row.ownerModuleId),
-      rows.map((row) => row.presetKey),
       rows.map((row) => row.assetId),
       rows.map((row) => row.fragment),
     ],

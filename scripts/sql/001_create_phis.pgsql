@@ -1830,19 +1830,19 @@ CREATE TABLE IF NOT EXISTS phis.site_cms_references (
   -- The Area's visibility mask, as in site_area_scopes.
   target_area_id SMALLINT NULL,
   target_page_scope_id INT NULL REFERENCES phis.site_page_scopes(id) ON DELETE RESTRICT,
-  target_owner_module_id VARCHAR(255) NULL,
-  target_preset_key VARCHAR(255) NULL,
   target_asset_id INT NULL REFERENCES phis.media_assets(id) ON DELETE RESTRICT,
   fragment VARCHAR(512) NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   CONSTRAINT site_cms_references_source_kind_check CHECK (source_kind IN (1, 2, 3, 4, 5)),
+  -- Two kinds and a gap where a third was. A Module Page target is not indexed: the Site owns neither
+  -- the Page nor its path, switching the Module off is reversible and gives the routes back, and there
+  -- is no row for a foreign key to point at. The kinds keep their numbers so the two that remain mean
+  -- what they always did.
   CONSTRAINT site_cms_references_target_check CHECK (
     (target_kind = 1 AND target_page_scope_id IS NOT NULL AND target_area_id IS NOT NULL
-      AND target_owner_module_id IS NULL AND target_preset_key IS NULL AND target_asset_id IS NULL) OR
-    (target_kind = 2 AND target_page_scope_id IS NULL AND target_area_id IS NOT NULL
-      AND target_owner_module_id IS NOT NULL AND target_preset_key IS NOT NULL AND target_asset_id IS NULL) OR
+      AND target_asset_id IS NULL) OR
     (target_kind = 3 AND target_page_scope_id IS NULL AND target_area_id IS NULL
-      AND target_owner_module_id IS NULL AND target_preset_key IS NULL AND target_asset_id IS NOT NULL)
+      AND target_asset_id IS NOT NULL)
   ),
   CONSTRAINT site_cms_references_source_unique
     UNIQUE (site_id, source_kind, source_scope_id, source_revision_id, source_location)
@@ -1851,9 +1851,6 @@ CREATE TABLE IF NOT EXISTS phis.site_cms_references (
 CREATE INDEX IF NOT EXISTS site_cms_references_page_target_idx
   ON phis.site_cms_references (site_id, target_page_scope_id)
   WHERE target_page_scope_id IS NOT NULL;
-CREATE INDEX IF NOT EXISTS site_cms_references_module_target_idx
-  ON phis.site_cms_references (site_id, target_owner_module_id, target_preset_key)
-  WHERE target_owner_module_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS site_cms_references_asset_target_idx
   ON phis.site_cms_references (site_id, target_asset_id)
   WHERE target_asset_id IS NOT NULL;

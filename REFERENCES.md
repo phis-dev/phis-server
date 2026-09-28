@@ -118,10 +118,21 @@ published Navigation rather than from a store of its own.
 
 Structured internal Page targets contain one stable target variant:
 
-- a Site Page Scope id, resolved only inside the current Site and declared Area; or
-- a Module Page `(ownerModuleId, presetKey)`, resolved only through an active eligible Module descriptor.
+- a Site Page Scope id, carried as the number itself, resolved only inside the current Site and declared
+  Area; or
+- a Module Page, carried as the CMS Page id derived from `(ownerModuleId, presetKey)`, resolved only
+  through an active eligible Module descriptor.
 
-The serialized Page-reference payload is opaque outside the central reference codec. The server issues,
+The two are shaped differently because the server does different things with them. A Site Page Scope id
+is written into a foreign key with `ON DELETE RESTRICT`, so it must stay a number the server can read. A
+Module Page id is derived and one-way: the server never unpacks it, indexes nothing by it, and hands it
+to the Site, which alone knows Module routes and holds the other side of the derivation. Deriving rather
+than allocating is what lets a Module Page be addressed before any row for it exists.
+
+The serialized Page-reference payload is issued and parsed by the central reference codec and is opaque
+to everything else. It is short by construction: the identity of a Module Page is a name both sides
+recompute, not a payload one side unpacks, and an envelope carrying that payload is not protection --
+encoding is not signing, and Site and Area are revalidated on every resolution regardless. The server issues,
 parses, and validates it; browser values do not authorize Site, Area, Module, or Page access. Asset
 references use the positive id of an Asset owned by the current Site's Site Media Space and repeat the
 normal delivery-policy authorization on every resolution. User- and Group-Space Assets are invalid CMS
@@ -146,8 +157,12 @@ reference, or an explicitly external address by its literal URL. The URI form st
 HTML bodies, as it does for Assets, so config carries identity rather than a scheme. This is what the
 reference collector reads, and it reads the field whole: a target declares its kind, and nothing beneath
 it is walked for a second opinion, so a reserved-scheme string typed into an external address indexes
-nothing. Only the internal kind produces a row; an external target names nothing the Site owns, so there
-is no identity to guard, no path that can move beneath it, and no target variant for it in the index.
+nothing. Only a Site Page target produces a row. An external target names nothing the Site owns, so there is no
+identity to guard and no path that can move beneath it. A Module Page target is not indexed either, and
+for the same kind of reason: the Site owns neither the Page nor its path, and switching the Module off
+is reversible -- it takes its routes with it and gives them back -- so there is no irreversible act for
+a guard to stand in front of, and no row for a foreign key to point at. The absence of an index row
+therefore does not mean nothing points at a Module Page.
 
 Navigation receives an internal Page reference only from the active Area's Page source Tree during
 insert or drag/drop. The Navigation Table receives the resolved current path as read-only display data;
@@ -173,8 +188,8 @@ Scope and retains its id instead of allocating another identity. Existing struct
 resolve again automatically. This is create/restore-time identity reuse, not a runtime path fallback;
 normal reference resolution remains strictly Scope-id based.
 
-The server maintains an indexed projection of current structured Page and Asset references with their
-owning scope and source location. Page, Area, navigation, Theme, and trusted-content saves and imports
+The server maintains an indexed projection of current Site Page and Asset references with their owning
+scope and source location. Page, Area, navigation, Theme, and trusted-content saves and imports
 update it transactionally, each replacing its own scope's complete set. The Area source carries what no
 content binding reaches: a reference sitting in Region or widget config. The Theme source carries what
 no CMS tree reaches at all: it is Site wide, one Scope per Site with a key that has no Area prefix, and
