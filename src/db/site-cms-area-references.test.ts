@@ -53,7 +53,10 @@ describe("An Area's own tree is a reference source", () => {
 
   it("carries the Area as the target Area, the way the Page source does", async () => {
     const source = await read("src/db/site-pages.ts");
-    const areaWrite = /sourceKind: PhiCmsReferenceSourceKind\.Area[\s\S]*?\}\);/u.exec(source);
+    // The write, not the prune after a pointer change: only the write names the revision it indexes.
+    const areaWrite =
+      /sourceKind: PhiCmsReferenceSourceKind\.Area,\s*sourceScopeId: [^,]+,\s*sourceRevisionId[\s\S]*?\}\);/u
+        .exec(source);
     expect(areaWrite).not.toBeNull();
     expect(areaWrite![0]).toMatch(/collectSiteCmsReferences\(nextRevisionInput, \{ targetAreaId: areaMask \}\)/u);
   });
@@ -64,7 +67,7 @@ describe("An Area's own tree is a reference source", () => {
     expect(ddl).toMatch(/source_kind_check CHECK \(source_kind IN \(1, 2, 3, 4, 5\)\)/u);
   });
 
-  it("replaces one Area Scope's whole set rather than appending to it", async () => {
+  it("replaces its own revision's set rather than appending to it", async () => {
     const statements: { text: string; values: readonly unknown[] }[] = [];
     const db = {
       query: async (text: string, values?: readonly unknown[]) => {
@@ -83,9 +86,10 @@ describe("An Area's own tree is a reference source", () => {
         { targetAreaId: 2 },
       ),
     });
-    const deletion = statements.find((entry) => entry.text.includes("DELETE FROM phis.site_cms_references"));
-    expect(deletion, "the previous set goes first").toBeDefined();
-    expect(deletion!.values).toEqual([31, 4, 11]);
+    const deletion = statements.find((entry) => entry.text.includes("source_revision_id = $4"));
+    expect(deletion, "the previous set of this revision goes first").toBeDefined();
+    // Only revision 189's rows: the published revision and the Module draft keep theirs.
+    expect(deletion!.values).toEqual([31, 4, 11, 189]);
     const insertion = statements.find((entry) => entry.text.includes("INSERT INTO phis.site_cms_references"));
     expect(insertion!.values.slice(0, 4)).toEqual([31, 4, 11, 189]);
   });

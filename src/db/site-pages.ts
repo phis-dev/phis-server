@@ -22,6 +22,7 @@ import {
   collectSiteCmsReferences,
   countSiteCmsReferencesToPageWithDb,
   PhiCmsReferenceSourceKind,
+  pruneSiteCmsReferencesToLiveRevisionsWithDb,
   replaceSiteCmsReferencesWithDb,
 } from "@/db/site-cms-references";
 import { getResolvedSiteMessageFields, type ResolvedSiteMessageField } from "@/db/translations";
@@ -1594,6 +1595,10 @@ async function setSiteAreaScopePointersWithDb(
       ? [scopeId, input.publishedRevisionId, input.workingDraftRevisionId, input.workingModuleDraftRevisionId]
       : [scopeId, input.publishedRevisionId, input.workingDraftRevisionId],
   );
+  await pruneSiteCmsReferencesToLiveRevisionsWithDb(db, {
+    sourceKind: PhiCmsReferenceSourceKind.Area,
+    sourceScopeId: scopeId,
+  });
 }
 
 async function setSitePageScopePointersWithDb(
@@ -1612,6 +1617,10 @@ async function setSitePageScopePointersWithDb(
      WHERE id = $1`,
     [scopeId, input.publishedRevisionId, input.workingDraftRevisionId],
   );
+  await pruneSiteCmsReferencesToLiveRevisionsWithDb(db, {
+    sourceKind: PhiCmsReferenceSourceKind.Page,
+    sourceScopeId: scopeId,
+  });
 }
 
 function readValidatedPageRevisionTree(

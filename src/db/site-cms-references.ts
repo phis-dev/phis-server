@@ -188,6 +188,68 @@ export async function deleteSiteCmsReferencesForSourceWithDb(
   );
 }
 
+/**
+ * The pointers that keep a revision live, per source that has revisions.
+ *
+ * A scope's references are kept per revision because more than one revision is live at a time: the
+ * published one, the working draft, and for an Area the Module draft beside it. The readers count rows
+ * whose revision is one of these; so a write replaces its own revision's rows and leaves the others
+ * standing, and a row falls when no pointer names its revision any more -- it would still hold its
+ * target under the `RESTRICT` foreign keys while no reader counted it. Content has versions rather than
+ * revisions, and only its latest version is live, so its set is still replaced whole.
+ */
+const LIVE_REVISION_POINTERS: Partial<Record<PhiCmsReferenceSourceKind, {
+  table: string;
+  columns: readonly string[];
+}>> = {
+  [PhiCmsReferenceSourceKind.Page]: {
+    table: "phis.site_page_scopes",
+    columns: ["published_revision_id", "working_draft_revision_id"],
+  },
+  [PhiCmsReferenceSourceKind.Navigation]: {
+    table: "phis.site_nav_scopes",
+    columns: ["published_revision_id", "working_draft_revision_id"],
+  },
+  [PhiCmsReferenceSourceKind.Area]: {
+    table: "phis.site_area_scopes",
+    columns: ["published_revision_id", "working_draft_revision_id", "working_module_draft_revision_id"],
+  },
+  [PhiCmsReferenceSourceKind.Theme]: {
+    table: "phis.site_theme_scopes",
+    columns: ["published_revision_id", "working_draft_revision_id"],
+  },
+};
+
+/**
+ * Drops the rows of revisions no pointer of the scope names any more. Called after every pointer change
+ * and before every write; `keepRevisionId` spares the revision a write is about to point at, which a
+ * draft save indexes before it moves the pointer.
+ */
+export async function pruneSiteCmsReferencesToLiveRevisionsWithDb(
+  db: DbQueryable,
+  input: {
+    sourceKind: PhiCmsReferenceSourceKind;
+    sourceScopeId: number;
+    keepRevisionId?: number | null;
+  },
+) {
+  const live = LIVE_REVISION_POINTERS[input.sourceKind];
+  if (!live) return;
+  const pointers = live.columns.map((column) => `scope.${column}`).join(", ");
+  await db.query(
+    `DELETE FROM phis.site_cms_references ref
+     WHERE ref.source_kind = $1 AND ref.source_scope_id = $2
+       AND ref.source_revision_id IS NOT NULL
+       AND ref.source_revision_id IS DISTINCT FROM $3::integer
+       AND NOT EXISTS (
+         SELECT 1 FROM ${live.table} scope
+         WHERE scope.id = ref.source_scope_id AND scope.site_id = ref.site_id
+           AND ref.source_revision_id IN (${pointers})
+       )`,
+    [input.sourceKind, input.sourceScopeId, input.keepRevisionId ?? null],
+  );
+}
+
 export async function replaceSiteCmsReferencesWithDb(
   db: DbQueryable,
   input: {
@@ -215,7 +277,22 @@ export async function replaceSiteCmsReferencesWithDb(
       throw new Error(`CMS Asset reference #${invalidId} is not owned by this Site Media Space.`);
     }
   }
-  await deleteSiteCmsReferencesForSourceWithDb(db, input);
+  if (LIVE_REVISION_POINTERS[input.sourceKind] && input.sourceRevisionId != null) {
+    // Only this revision's set: the published revision's rows stay while a draft is saved, and an
+    // Area's structure draft and Module draft stop erasing each other.
+    await pruneSiteCmsReferencesToLiveRevisionsWithDb(db, {
+      sourceKind: input.sourceKind,
+      sourceScopeId: input.sourceScopeId,
+      keepRevisionId: input.sourceRevisionId,
+    });
+    await db.query(
+      `DELETE FROM phis.site_cms_references
+       WHERE site_id = $1 AND source_kind = $2 AND source_scope_id = $3 AND source_revision_id = $4`,
+      [input.siteId, input.sourceKind, input.sourceScopeId, input.sourceRevisionId],
+    );
+  } else {
+    await deleteSiteCmsReferencesForSourceWithDb(db, input);
+  }
   if (input.references.length === 0) return;
 
   // One multi-row insert instead of one round trip per reference: a Page save carries every reference

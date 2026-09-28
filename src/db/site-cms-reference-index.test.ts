@@ -34,9 +34,16 @@ function referenceIndex(seed: IndexRow[] = [], options: { siteSpaceAssetIds?: nu
         const owned = options.siteSpaceAssetIds;
         return { rows: asked.filter((id) => !owned || owned.includes(id)).map((id) => ({ id })) };
       }
+      if (text.includes("DELETE FROM phis.site_cms_references ref")) {
+        // The prune asks the scope tables which revisions are live; this index has none, so it is
+        // exercised against PostgreSQL (site-cms-references.pg.test.ts) and a no-op here.
+        return { rows: [] };
+      }
       if (text.includes("DELETE FROM phis.site_cms_references")) {
+        const byRevision = text.includes("source_revision_id = $4");
         rows = rows.filter((row) => !(
           row.site_id === values[0] && row.source_kind === values[1] && row.source_scope_id === values[2]
+          && (!byRevision || row.source_revision_id === values[3])
         ));
         return { rows: [] };
       }

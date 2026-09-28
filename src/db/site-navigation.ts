@@ -8,6 +8,7 @@ import { isPhisCmsAreaKey, resolvePhisCmsAreaMask } from "@/lib/constants/cms-ar
 import {
   collectSiteCmsReferences,
   PhiCmsReferenceSourceKind,
+  pruneSiteCmsReferencesToLiveRevisionsWithDb,
   replaceSiteCmsReferencesWithDb,
 } from "@/db/site-cms-references";
 import {
@@ -734,6 +735,10 @@ async function updateSiteNavigationScopePointersWithDb(
      WHERE id = $1`,
     [scopeId, input.publishedRevisionId, input.workingDraftRevisionId],
   );
+  await pruneSiteCmsReferencesToLiveRevisionsWithDb(db, {
+    sourceKind: PhiCmsReferenceSourceKind.Navigation,
+    sourceScopeId: scopeId,
+  });
 }
 
 export async function getPublishedSiteNavigationRevision(siteId: number, key: string) {

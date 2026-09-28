@@ -11,6 +11,10 @@ import { isPhisCmsAreaKey, resolvePhisCmsAreaKey } from "@/lib/constants/cms-are
 import { PhiCmsRevisionFlags } from "@phis/contracts/cms";
 import { normalizeSiteCmsPath } from "@/lib/helpers/cms-path";
 import { getSiteThemeRevisionByIdWithDb, normalizeSiteThemeScopeKey } from "@/db/site-theme";
+import {
+  PhiCmsReferenceSourceKind,
+  pruneSiteCmsReferencesToLiveRevisionsWithDb,
+} from "@/db/site-cms-references";
 
 type DbQueryable = Pick<PoolClient, "query">;
 
@@ -629,6 +633,25 @@ export async function listSiteRevisionHistory(
   };
 }
 
+
+const REFERENCE_SOURCE_KIND_BY_SCOPE = {
+  area: PhiCmsReferenceSourceKind.Area,
+  page: PhiCmsReferenceSourceKind.Page,
+  navigation: PhiCmsReferenceSourceKind.Navigation,
+  theme: PhiCmsReferenceSourceKind.Theme,
+} as const;
+
+/** After a revision stopped being live or was deleted: its reference rows go with it. */
+async function pruneScopeReferencesWithDb(
+  db: PoolClient,
+  scope: { kind: keyof typeof REFERENCE_SOURCE_KIND_BY_SCOPE; scopeId: number | null },
+) {
+  if (!scope.scopeId) return;
+  await pruneSiteCmsReferencesToLiveRevisionsWithDb(db, {
+    sourceKind: REFERENCE_SOURCE_KIND_BY_SCOPE[scope.kind],
+    sourceScopeId: scope.scopeId,
+  });
+}
 export async function restoreSiteRevision(
   siteId: number,
   input: SiteRevisionScopeInput & {
@@ -794,6 +817,7 @@ export async function restoreSiteRevision(
       );
     }
 
+    await pruneScopeReferencesWithDb(client, scope);
     await client.query("COMMIT");
     return {
       scope: buildScopeSummary(input, {
@@ -889,6 +913,7 @@ export async function deleteSiteRevisionHistoryEntry(
       throw new SiteRevisionNotFoundError("Revision not found for the requested scope.");
     }
 
+    await pruneScopeReferencesWithDb(client, scope);
     await client.query("COMMIT");
     return {
       scope: buildScopeSummary(input, {
@@ -996,6 +1021,7 @@ export async function deleteSiteRevisionHistoryEntries(
       throw new SiteRevisionNotFoundError("One or more revisions were not found for the requested scope.");
     }
 
+    await pruneScopeReferencesWithDb(client, scope);
     await client.query("COMMIT");
     return {
       scope: buildScopeSummary(input, {

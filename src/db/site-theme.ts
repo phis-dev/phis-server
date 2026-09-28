@@ -5,6 +5,7 @@ import type { PoolClient } from "pg";
 import {
   PhiCmsReferenceSourceKind,
   collectSiteCmsReferences,
+  pruneSiteCmsReferencesToLiveRevisionsWithDb,
   replaceSiteCmsReferencesWithDb,
 } from "@/db/site-cms-references";
 import { clearSiteConfigCache } from "@/db/site-config";
@@ -378,6 +379,10 @@ async function updateSiteThemeScopePointersWithDb(
      WHERE id = $1`,
     [scopeId, input.publishedRevisionId, input.workingDraftRevisionId],
   );
+  await pruneSiteCmsReferencesToLiveRevisionsWithDb(db, {
+    sourceKind: PhiCmsReferenceSourceKind.Theme,
+    sourceScopeId: scopeId,
+  });
 }
 
 export async function getSiteCurrentThemeDraft(
