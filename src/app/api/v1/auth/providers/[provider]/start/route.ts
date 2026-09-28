@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { getSiteRuntimeConfig } from "@/db/sites";
-import { verifyCsrfRequest } from "@/lib/auth";
+import { setAuthFlowCookie, verifyCsrfRequest } from "@/lib/auth";
 import { guardApiV1 } from "@/lib/api-v1-guard";
 import { normalizeProviderKey } from "@/lib/site-auth/contracts";
 import { startProviderAuthentication } from "@/lib/site-auth/provider-flow";
@@ -48,7 +48,10 @@ export async function POST(request: NextRequest, context: Context) {
       installationKey: requestedInstallation || null,
       nextPath: payload.next,
     });
-    return NextResponse.json({ redirectUrl: result.redirectUrl });
+    // The state goes to the browser that asked, so the callback can refuse a flow somebody else began.
+    const response = NextResponse.json({ redirectUrl: result.redirectUrl });
+    setAuthFlowCookie(response, result.state, result.expiresAt);
+    return response;
   } catch (error) {
     const code = error instanceof Error ? error.message : "AUTH_PROVIDER_START_FAILED";
     const unavailable = code === "AUTH_METHOD_DISABLED" ||

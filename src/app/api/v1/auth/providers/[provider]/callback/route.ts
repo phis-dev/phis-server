@@ -4,6 +4,8 @@ import { getUserAccountById } from "@/db/user-accounts";
 import { getSiteRuntimeConfig } from "@/db/sites";
 import { getEffectiveUserSiteAuthorization, recordUserSiteLogin } from "@/db/user-site-memberships";
 import {
+  AUTH_FLOW_COOKIE_NAME,
+  clearAuthFlowCookie,
   createCsrfToken,
   setAuthLinkCookie,
   clearAreaCookie,
@@ -35,7 +37,9 @@ type Context = { params: Promise<{ provider: string }> };
 function failureRedirect(publicUrl: string, code: string) {
   const url = new URL("/login", publicUrl);
   url.searchParams.set("auth", code.toLowerCase());
-  return NextResponse.redirect(url);
+  const response = NextResponse.redirect(url);
+  clearAuthFlowCookie(response);
+  return response;
 }
 
 export async function GET(request: NextRequest, context: Context) {
@@ -54,6 +58,24 @@ export async function GET(request: NextRequest, context: Context) {
   const methodKey = normalizeProviderKey((await context.params).provider);
   if (!methodKey) {
     return failureRedirect(runtime.publicUrl, "provider_unknown");
+  }
+  /*
+   * The browser has to be the one that started this flow. The transaction row proves the state was
+   * issued; the cookie proves it was issued to whoever is standing here. Without the second half a
+   * callback URL could be handed to somebody else, and their browser would sign in as the account the
+   * flow's starter authenticated at the provider.
+   */
+  const startedState = request.cookies.get(AUTH_FLOW_COOKIE_NAME)?.value?.trim() ?? "";
+  const callbackState = request.nextUrl.searchParams.get("state")?.trim() ?? "";
+  if (!startedState || !callbackState || startedState !== callbackState) {
+    logRuntimeEvent("warn", "auth.provider.state_unbound", {
+      message: "Provider callback refused because this browser did not start the flow.",
+      siteKey: siteContext.site.key,
+      method: request.method,
+      path: request.nextUrl.pathname,
+      meta: { provider: methodKey },
+    });
+    return failureRedirect(runtime.publicUrl, "provider_state_mismatch");
   }
 
   try {
@@ -83,6 +105,7 @@ export async function GET(request: NextRequest, context: Context) {
         destination.searchParams.set("next", completed.nextPath);
         const response = NextResponse.redirect(destination);
         setAuthLinkCookie(response, challenge.token, challenge.expiresAt);
+        clearAuthFlowCookie(response);
         return response;
       }
       return failureRedirect(runtime.publicUrl, resolution.code);
@@ -108,11 +131,14 @@ export async function GET(request: NextRequest, context: Context) {
     const destination = complete
       ? new URL(completed.nextPath, runtime.publicUrl)
       : new URL("/login", runtime.publicUrl);
+    // Redeemed: the flow this browser started is over, whichever way it ended.
     if (!complete) {
       destination.searchParams.set("auth", "continue");
       destination.searchParams.set("next", completed.nextPath);
     }
     const response = NextResponse.redirect(destination);
+    // Redeemed: the flow this browser started is over, whichever way it ended.
+    clearAuthFlowCookie(response);
     const csrfToken = createCsrfToken();
     const user = await getUserAccountById(resolution.userId, siteContext.site.id);
     const locale = resolveSignedInLocale(request, {

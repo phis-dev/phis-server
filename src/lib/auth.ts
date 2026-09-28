@@ -19,6 +19,15 @@ export const THEME_MODE_COOKIE_NAME = "phis_theme_mode";
  */
 export const LOCALE_COOKIE_NAME = "phis_locale";
 export const AUTH_LINK_COOKIE_NAME = "phis_auth_link";
+/**
+ * The provider flow this browser started, so the callback can tell it from one somebody else began.
+ *
+ * `state` was verified against the transaction row alone, which tied the callback to a flow but not to
+ * a browser: an attacker could start a flow, sign in at the provider as themselves, and hand the
+ * callback URL to a victim, whose browser then received a session for the attacker's account. The
+ * state travels in this cookie as well, and the callback is answered only where the two agree.
+ */
+export const AUTH_FLOW_COOKIE_NAME = "phis_auth_flow";
 
 const SESSION_TTL_SECONDS = 60 * 60 * 24 * 14;
 
@@ -151,6 +160,26 @@ export function setAuthLinkCookie(
 
 export function clearAuthLinkCookie(response: NextResponse) {
   response.cookies.set(AUTH_LINK_COOKIE_NAME, "", {
+    httpOnly: true,
+    sameSite: "lax",
+    secure: isProduction(),
+    path: "/",
+    expires: new Date(0),
+  });
+}
+
+export function setAuthFlowCookie(response: NextResponse, state: string, expiresAt: Date) {
+  response.cookies.set(AUTH_FLOW_COOKIE_NAME, state, {
+    httpOnly: true,
+    sameSite: "lax",
+    secure: isProduction(),
+    path: "/",
+    expires: expiresAt,
+  });
+}
+
+export function clearAuthFlowCookie(response: NextResponse) {
+  response.cookies.set(AUTH_FLOW_COOKIE_NAME, "", {
     httpOnly: true,
     sameSite: "lax",
     secure: isProduction(),

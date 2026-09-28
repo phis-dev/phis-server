@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   csrf: vi.fn(),
   runtime: vi.fn(),
   start: vi.fn(),
+  setAuthFlowCookie: vi.fn(),
   legacyPasswordLogin: vi.fn(),
   complete: vi.fn(),
   createLink: vi.fn(),
@@ -49,6 +50,9 @@ vi.mock("@/lib/log", () => ({
 }));
 vi.mock("@/lib/auth", () => ({
   AUTH_LINK_COOKIE_NAME: "phis_auth_link",
+  AUTH_FLOW_COOKIE_NAME: "phis_auth_flow",
+  setAuthFlowCookie: mocks.setAuthFlowCookie,
+  clearAuthFlowCookie: vi.fn(),
   verifyCsrfRequest: mocks.csrf,
   createCsrfToken: () => "csrf-test",
   readRequestIp: () => "127.0.0.1",
@@ -138,10 +142,13 @@ describe("canonical Auth endpoints", () => {
     expect(mocks.start).not.toHaveBeenCalled();
   });
 
-  it("returns only the provider redirect URL from a successful start", async () => {
+  it("returns only the provider redirect URL from a successful start, and binds the state to the browser", async () => {
+    const expiresAt = new Date("2030-01-01T00:10:00.000Z");
     mocks.start.mockResolvedValue({
       redirectUrl: "https://accounts.google.test/authorize?state=opaque",
       nextPath: "/account",
+      state: "opaque",
+      expiresAt,
     });
     const request = new NextRequest("https://server.test/api/v1/auth/providers/google/start?site=example", {
       method: "POST",
@@ -153,6 +160,22 @@ describe("canonical Auth endpoints", () => {
     expect(await response.json()).toEqual({
       redirectUrl: "https://accounts.google.test/authorize?state=opaque",
     });
+    // The state travels in a cookie as well: the callback answers only the browser that started here.
+    expect(mocks.setAuthFlowCookie).toHaveBeenCalledWith(expect.anything(), "opaque", expiresAt);
+  });
+
+  it("refuses a provider callback from a browser that did not start the flow", async () => {
+    // The state is valid, the URL was handed over: the cookie that would say "I started this" is missing.
+    const request = new NextRequest(
+      "https://server.test/api/v1/auth/providers/google/callback?site=example&code=code&state=state",
+    );
+    const response = await providerCallback(request, {
+      params: Promise.resolve({ provider: "google" }),
+    });
+
+    expect(response.status).toBe(307);
+    expect(response.headers.get("location")).toBe("https://example.test/login?auth=provider_state_mismatch");
+    expect(mocks.complete).not.toHaveBeenCalled();
   });
 
   it("creates a local session after a successful provider callback", async () => {
@@ -173,6 +196,7 @@ describe("canonical Auth endpoints", () => {
     mocks.getUser.mockResolvedValue({ preferredLocale: "en" });
     const request = new NextRequest(
       "https://server.test/api/v1/auth/providers/google/callback?site=example&code=code&state=state",
+      { headers: { cookie: "phis_auth_flow=state" } },
     );
     const response = await providerCallback(request, {
       params: Promise.resolve({ provider: "google" }),
@@ -211,6 +235,7 @@ describe("canonical Auth endpoints", () => {
     mocks.getUser.mockResolvedValue({ preferredLocale: "en" });
     const request = new NextRequest(
       "https://server.test/api/v1/auth/providers/google/callback?site=example&code=code&state=state",
+      { headers: { cookie: "phis_auth_flow=state" } },
     );
     const response = await providerCallback(request, {
       params: Promise.resolve({ provider: "google" }),
@@ -243,6 +268,7 @@ describe("canonical Auth endpoints", () => {
     });
     const request = new NextRequest(
       "https://server.test/api/v1/auth/providers/google/callback?site=example&code=code&state=state",
+      { headers: { cookie: "phis_auth_flow=state" } },
     );
     const response = await providerCallback(request, {
       params: Promise.resolve({ provider: "google" }),

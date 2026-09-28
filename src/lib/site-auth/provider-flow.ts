@@ -144,6 +144,7 @@ export async function startProviderAuthentication(input: {
   const callbackUrl = buildCallbackUrl(input.sitePublicUrl, input.methodKey, installation.callbackOrigin);
   const nextPath = normalizeAuthNextPath(input.nextPath);
   const encrypted = encryptAuthTransactionPayload({ state, nonce, pkceVerifier, callbackUrl });
+  const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
 
   await createAuthTransaction({
     id: randomUUID(),
@@ -158,7 +159,7 @@ export async function startProviderAuthentication(input: {
     payloadIv: encrypted.ivHex,
     payloadAuthTag: encrypted.authTagHex,
     nextPath,
-    expiresAt: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
+    expiresAt: expiresAt.toISOString(),
     consumedAt: null,
   });
   void deleteExpiredAuthTransactions().catch(() => undefined);
@@ -171,7 +172,7 @@ export async function startProviderAuthentication(input: {
     url.searchParams.set("state", state);
     url.searchParams.set("code_challenge", pkceChallenge);
     url.searchParams.set("code_challenge_method", "S256");
-    return { redirectUrl: url.toString(), nextPath };
+    return { redirectUrl: url.toString(), nextPath, state, expiresAt };
   }
 
   const config = await buildOidcConfiguration(installation, clientSecret);
@@ -187,7 +188,7 @@ export async function startProviderAuthentication(input: {
       ? { prompt: installation.config.prompt }
       : {}),
   });
-  return { redirectUrl: authorizationUrl.toString(), nextPath };
+  return { redirectUrl: authorizationUrl.toString(), nextPath, state, expiresAt };
 }
 
 async function completeGithubAuthentication(input: {

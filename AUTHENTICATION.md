@@ -186,11 +186,14 @@ The provider flow is:
 1. The browser starts a method through the Site's same-origin Auth endpoint.
 2. Core resolves the trusted Site, enabled method, and active provider installation.
 3. Core creates an opaque, expiring, one-use transaction containing the Site id, installation id, hashed
-   state and nonce, PKCE verifier where applicable, and a validated relative `next` destination.
+   state and nonce, PKCE verifier where applicable, and a validated relative `next` destination. The
+   state also goes to the starting browser in an `httpOnly` cookie, so the callback can tell the
+   browser that began the flow from one that was merely handed its URL.
 4. The browser is redirected to the provider, where the user authenticates and grants any requested
    consent.
 5. The provider redirects to the registered callback with an authorization code and state.
-6. Core consumes the transaction, exchanges the code server-side, validates issuer, audience/client,
+6. Core refuses the callback unless the state in the URL is the one in that browser's cookie, then
+   consumes the transaction, exchanges the code server-side, validates issuer, audience/client,
    signature, expiry, nonce, PKCE, and provider-specific requirements, then resolves `(issuer, subject)`.
 7. Core resolves or links the global user, applies the current Site membership policy, completes any
    required challenge, and only then issues a Site session.
