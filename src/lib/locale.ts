@@ -188,6 +188,21 @@ export function resolvePhiLocaleCapability(locale: string | null | undefined): P
   return PHI_LOCALE_CAPABILITY_BY_KEY.get(normalized.split("-")[0] ?? "") ?? null;
 }
 
+/**
+ * The catalog's own spelling of a locale a translation is stored under.
+ *
+ * `tr_*_lang.locale` is compared as written, so `DE`, `de` and `de_de` used to become separate rows and
+ * separate paid provider calls, and a delete that lowercased its argument never met `pt-BR` again. A
+ * language the catalog does not know is refused rather than stored under a spelling nothing reads.
+ */
+export function requirePhiTranslationLocale(input: string): string {
+  const capability = resolvePhiLocaleCapability(input);
+  if (!capability) {
+    throw new Error(`Locale "${input.trim()}" is not a supported translation locale.`);
+  }
+  return capability.locale;
+}
+
 export function getPhiLocaleCapability(locale: string | null | undefined): PhiLocaleCapability {
   return resolvePhiLocaleCapability(locale) ?? resolvePhiLocaleCapability(PHI_CANONICAL_SOURCE_LOCALE) as PhiLocaleCapability;
 }

@@ -104,6 +104,38 @@ describe("translateSiteBatchWithCache", () => {
 });
 
 /*
+ * `tr_site_lang.locale` is compared as written: `DE` and `de` were two rows, two paid provider calls, and
+ * a locale longer than the column failed the write.
+ */
+describe("the locale a Site translation is stored under", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.ensureSiteMessageId.mockResolvedValue(2);
+    mocks.getSiteTranslations.mockResolvedValue(new Map([[2, "zwei"]]));
+  });
+
+  it("is the catalog's spelling, however the caller wrote it", async () => {
+    for (const locale of ["DE", "de", " de "]) {
+      await translateSiteBatchWithCache({
+        siteId: 1, locale, sourceLocale: "en", msgs: ["two"], ctx: "", format: "text",
+      });
+    }
+    await translateSiteBatchWithCache({
+      siteId: 1, locale: "pt_br", sourceLocale: "EN", msgs: ["two"], ctx: "", format: "text",
+    });
+
+    expect(mocks.getSiteTranslations.mock.calls.map((call) => call[1])).toEqual(["de", "de", "de", "pt-BR"]);
+  });
+
+  it("refuses a language the catalog does not know", async () => {
+    await expect(translateSiteBatchWithCache({
+      siteId: 1, locale: "klingon-ext", sourceLocale: "en", msgs: ["two"], ctx: "", format: "text",
+    })).rejects.toThrow(/not a supported translation locale/u);
+    expect(mocks.getSiteTranslations).not.toHaveBeenCalled();
+  });
+});
+
+/*
  * A Site keeps translations without expiry. Source text that stands in for a failure must reach it
  * marked, or the Site would keep it until somebody edited a translation.
  */

@@ -2,6 +2,7 @@ import { createHash } from "crypto";
 import type { Pool, PoolClient } from "pg";
 
 import { getPool, withTransaction } from "@/lib/db";
+import { requirePhiTranslationLocale } from "@/lib/locale";
 
 type TranslationQueryClient = Pick<Pool | PoolClient, "query">;
 
@@ -970,14 +971,15 @@ export async function deleteSiteTranslatedVariantsForLocale(
   localeInput: string,
 ) {
   const siteId = siteIdInput;
-  const locale = localeInput.trim().toLowerCase();
   if (!Number.isInteger(siteId) || siteId <= 0) {
     throw new Error("A valid site id is required.");
   }
 
-  if (!locale) {
+  if (!localeInput.trim()) {
     throw new Error("A valid locale is required.");
   }
+  // The spelling the rows were written under; lowercasing never met `pt-BR` or `zh-Hans`.
+  const locale = requirePhiTranslationLocale(localeInput);
 
   const pool = getPool();
   const existing = await pool.query<{ id: number }>(

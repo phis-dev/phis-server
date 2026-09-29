@@ -27,6 +27,7 @@ import { getConfiguredTranslationSupportedLocalesSync } from "@/lib/translation-
 import type { PhisTranslationWriteMode } from "@/lib/translation-write-mode";
 import {
   PHI_CANONICAL_SOURCE_LOCALE,
+  requirePhiTranslationLocale,
   resolvePhiLocaleCapability,
 } from "@/lib/locale";
 import { logRuntimeEvent, normalizeLogThrowable } from "@/lib/log";
@@ -496,14 +497,16 @@ export async function translateBatchWithCache({
   write,
   format,
 }: BatchTranslationInput) {
-  const normalizedLocale = locale.trim();
-  const normalizedSourceLocale = sourceLocale?.trim() || PHI_CANONICAL_SOURCE_LOCALE;
+  if (!locale.trim()) {
+    throw new Error("locale is required.");
+  }
+  const normalizedLocale = requirePhiTranslationLocale(locale);
+  const normalizedSourceLocale = sourceLocale?.trim()
+    ? requirePhiTranslationLocale(sourceLocale)
+    : PHI_CANONICAL_SOURCE_LOCALE;
   const normalizedMsgs = normalizeBatchMessages(msgs);
   const rawCtx = ctx?.trim() ?? "";
   const translationFormat = normalizeTranslationFormat(format);
-  if (!normalizedLocale) {
-    throw new Error("locale is required.");
-  }
   if (normalizedMsgs.length === 0 || sameLocale(normalizedLocale, normalizedSourceLocale)) {
     return normalizedMsgs;
   }
@@ -694,14 +697,14 @@ export async function translateSiteBatchWithCache({
   ctx,
   format,
 }: SiteBatchTranslationInput) {
-  const normalizedLocale = locale.trim();
-  const canonicalLocale = sourceLocale.trim();
+  if (!siteId || !locale.trim() || !sourceLocale.trim()) {
+    throw new Error("siteId, locale, and sourceLocale are required.");
+  }
+  const normalizedLocale = requirePhiTranslationLocale(locale);
+  const canonicalLocale = requirePhiTranslationLocale(sourceLocale);
   const normalizedMsgs = normalizeBatchMessages(msgs);
   const rawCtx = ctx?.trim() ?? "";
   const translationFormat = normalizeTranslationFormat(format);
-  if (!siteId || !normalizedLocale || !canonicalLocale) {
-    throw new Error("siteId, locale, and sourceLocale are required.");
-  }
   if (normalizedMsgs.length === 0 || sameLocale(normalizedLocale, canonicalLocale)) {
     return normalizedMsgs;
   }
@@ -724,9 +727,9 @@ export async function translateExternalSiteBatchWithCache(input: SiteBatchTransl
   }
   return translateExternalSiteBatch({
     siteId: input.siteId,
-    locale: input.locale.trim(),
-    sourceLocale: input.sourceLocale.trim(),
-    canonicalLocale: input.canonicalLocale.trim(),
+    locale: requirePhiTranslationLocale(input.locale),
+    sourceLocale: requirePhiTranslationLocale(input.sourceLocale),
+    canonicalLocale: requirePhiTranslationLocale(input.canonicalLocale),
     msgs: normalizedMsgs,
     ctx: input.ctx?.trim() ?? "",
     format: normalizeTranslationFormat(input.format),
