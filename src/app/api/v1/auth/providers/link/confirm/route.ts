@@ -73,6 +73,7 @@ export async function POST(request: NextRequest) {
     const area = resolvePhiUserArea({
       authenticated: true,
       roleClaims: confirmed.authorization.roleClaims,
+      accountFlags: confirmed.user.flags,
     });
     const runtime = await getSiteRuntimeConfig(siteContext.site.id);
     const locale = resolveSignedInLocale(request, {

@@ -56,11 +56,13 @@ export async function GET(request: NextRequest) {
     });
   }
 
+  const mustChangePassword = (user.flags & USER_ACCOUNT_FLAG_MUST_CHANGE_PASSWORD) !== 0;
   return NextResponse.json({
     authenticated: true,
     area: resolvePhiUserArea({
       authenticated: true,
       roleClaims: siteRole.roleClaims,
+      accountFlags: user.flags,
     }),
     user: {
       id: user.id,
@@ -94,7 +96,7 @@ export async function GET(request: NextRequest) {
        * The one thing this session may still do. Every other API refuses it (`getSessionFromRequest`),
        * and the Site shows the password change in front of whatever page was asked for.
        */
-      mustChangePassword: (user.flags & USER_ACCOUNT_FLAG_MUST_CHANGE_PASSWORD) !== 0,
+      mustChangePassword,
       authentication: {
         authenticatedAt: session.authenticatedAt,
         assuranceLevel: session.assuranceLevel,

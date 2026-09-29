@@ -45,7 +45,11 @@ export async function createCompletedAuthWorkflowResponse(input: {
     completedMethodKey: input.methodKey,
   });
   await recordUserSiteLogin(input.session.userId, input.session.siteId);
-  const area = resolvePhiUserArea({ authenticated: true, roleClaims: authorization.roleClaims });
+  const area = resolvePhiUserArea({
+    authenticated: true,
+    roleClaims: authorization.roleClaims,
+    accountFlags: input.session.accountFlags,
+  });
   const response = NextResponse.json({
     complete: true,
     area,

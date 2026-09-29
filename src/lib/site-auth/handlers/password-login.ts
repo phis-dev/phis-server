@@ -206,6 +206,7 @@ export async function POST(request: NextRequest) {
     const area = resolvePhiUserArea({
       authenticated: true,
       roleClaims: siteRole.roleClaims,
+      accountFlags: user.flags,
     });
 
     logRuntimeEvent("info", complete ? "auth.login.success" : "auth.login.factor_required", {
