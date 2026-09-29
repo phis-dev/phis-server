@@ -2,17 +2,15 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { createRegistrationIntent } from "@/db/registration-intents";
 import { getSiteRuntimeConfig } from "@/db/sites";
-import { getUserAccountById, getUserAccountByEmail } from "@/db/user-accounts";
+import { getUserAccountByEmail } from "@/db/user-accounts";
 import { getUserProfileByUserId } from "@/db/user-profiles";
-import { getEffectiveUserSiteAuthorization } from "@/db/user-site-memberships";
-import { getSessionFromRequest } from "@/db/user-sessions";
-import { resolveSignedInLocale, verifyCsrfRequest } from "@/lib/auth";
+import { resolveSignedInLocale } from "@/lib/auth";
 import { buildVerificationUrlForRequest } from "@/lib/email";
 import { sendTemplatedEmail } from "@/lib/email-templates";
 import { getSiteMailConfig } from "@/lib/form-config";
 import { logRuntimeEvent } from "@/lib/log";
 import { verifyPasswordHash } from "@/lib/password";
-import { requireSiteFromRequest } from "@/lib/site-context";
+import { requireAuthenticatedSiteUser } from "@/lib/site-auth/authenticated-site-user";
 
 type ProfileEmailRequestPayload = {
   email?: unknown;
@@ -32,29 +30,9 @@ function buildRecipientName(firstName: string, lastName: string) {
 }
 
 export async function POST(request: NextRequest) {
-  const site = await requireSiteFromRequest(request);
-  if (!site) {
-    return NextResponse.json({ error: "Missing site context." }, { status: 400 });
-  }
-
-  if (!verifyCsrfRequest(request)) {
-    return NextResponse.json({ error: "Invalid CSRF token." }, { status: 403 });
-  }
-
-  const session = await getSessionFromRequest(request, site.id);
-  if (!session) {
-    return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
-  }
-
-  const user = await getUserAccountById(session.userId);
-  if (!user || !user.siteIds.includes(site.id)) {
-    return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
-  }
-
-  const siteRole = await getEffectiveUserSiteAuthorization(user.id, site.id);
-  if (!siteRole.enabled) {
-    return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
-  }
+  const guarded = await requireAuthenticatedSiteUser(request);
+  if (!guarded.ok) return guarded.response;
+  const { site, user } = guarded;
 
   let payload: ProfileEmailRequestPayload = {};
   try {

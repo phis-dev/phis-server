@@ -1,13 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 
-import { getUserAccountById, updateUserAccountPasswordHash } from "@/db/user-accounts";
-import { getEffectiveUserSiteAuthorization } from "@/db/user-site-memberships";
-import { getSessionFromRequest } from "@/db/user-sessions";
-import { verifyCsrfRequest } from "@/lib/auth";
+import { updateUserAccountPasswordHash } from "@/db/user-accounts";
 import { PhiUserAccountFlag } from "@/lib/constants/user-account-flags";
 import { hashPassword, verifyPasswordHash } from "@/lib/password";
-import { requireSiteFromRequest } from "@/lib/site-context";
 import { revokeUserSessions } from "@/db/user-sessions";
+import { requireAuthenticatedSiteUser } from "@/lib/site-auth/authenticated-site-user";
 
 type ProfilePasswordPayload = {
   currentPassword?: unknown;
@@ -20,29 +17,9 @@ function normalize(value: unknown) {
 }
 
 export async function PATCH(request: NextRequest) {
-  const site = await requireSiteFromRequest(request);
-  if (!site) {
-    return NextResponse.json({ error: "Missing site context." }, { status: 400 });
-  }
-
-  if (!verifyCsrfRequest(request)) {
-    return NextResponse.json({ error: "Invalid CSRF token." }, { status: 403 });
-  }
-
-  const session = await getSessionFromRequest(request, site.id);
-  if (!session) {
-    return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
-  }
-
-  const user = await getUserAccountById(session.userId);
-  if (!user || !user.siteIds.includes(site.id)) {
-    return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
-  }
-
-  const siteRole = await getEffectiveUserSiteAuthorization(user.id, site.id);
-  if (!siteRole.enabled) {
-    return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
-  }
+  const guarded = await requireAuthenticatedSiteUser(request);
+  if (!guarded.ok) return guarded.response;
+  const { session, user } = guarded;
 
   let payload: ProfilePasswordPayload = {};
   try {

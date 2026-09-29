@@ -1,43 +1,21 @@
 import { NextRequest, NextResponse } from "next/server";
 
-import { getUserAccountById, updateUserAccountProfileFields } from "@/db/user-accounts";
-import { getEffectiveUserSiteAuthorization } from "@/db/user-site-memberships";
-import { getSessionFromRequest } from "@/db/user-sessions";
-import { requireSiteFromRequest } from "@/lib/site-context";
-import { setThemeModeCookie, verifyCsrfRequest } from "@/lib/auth";
+import { updateUserAccountProfileFields } from "@/db/user-accounts";
+import { setThemeModeCookie } from "@/lib/auth";
 import {
   resolveUserThemeModeFlagUpdate,
   resolveUserThemeModeName,
 } from "@/lib/user-flags";
+import { requireAuthenticatedSiteUser } from "@/lib/site-auth/authenticated-site-user";
 
 type ProfileThemePayload = {
   themeMode?: unknown;
 };
 
 export async function PATCH(request: NextRequest) {
-  const site = await requireSiteFromRequest(request);
-  if (!site) {
-    return NextResponse.json({ error: "Missing site context." }, { status: 400 });
-  }
-
-  if (!verifyCsrfRequest(request)) {
-    return NextResponse.json({ error: "Invalid CSRF token." }, { status: 403 });
-  }
-
-  const session = await getSessionFromRequest(request, site.id);
-  if (!session) {
-    return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
-  }
-
-  const user = await getUserAccountById(session.userId);
-  if (!user || !user.siteIds.includes(site.id)) {
-    return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
-  }
-
-  const siteRole = await getEffectiveUserSiteAuthorization(user.id, site.id);
-  if (!siteRole.enabled) {
-    return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
-  }
+  const guarded = await requireAuthenticatedSiteUser(request);
+  if (!guarded.ok) return guarded.response;
+  const { session, user } = guarded;
 
   let payload: ProfileThemePayload = {};
   try {
