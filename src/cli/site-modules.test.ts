@@ -13,6 +13,13 @@ import { buildSiteModuleProjection, writeSiteModuleProjection } from "./modules.
  * imported, from each Module's own `eligibleAreas`.
  */
 describe("the generated Site Module projection", () => {
+  it("refuses two packages whose names fold into one import alias", () => {
+    expect(() => buildSiteModuleProjection([
+      { packageName: "@acme/foo-bar", origin: "resolved" },
+      { packageName: "@acme/foo_bar", origin: "resolved" },
+    ], [])).toThrow(/share the import alias m_acme_foo_bar/u);
+  });
+
   it("composes to nothing when no Module is installed", () => {
     const { server, client, authoringClient } = buildSiteModuleProjection([], []);
     expect(server).toContain("collectPhiSiteModuleServerAreaContributions([\n]);");

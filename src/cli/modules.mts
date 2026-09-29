@@ -91,6 +91,28 @@ function importAlias(packageName: string) {
 }
 
 /**
+ * Refuses two packages that would share an import alias.
+ *
+ * The alias folds every run of other characters into `_`, so `@acme/foo-bar` and `@acme/foo_bar` are
+ * both `m_acme_foo_bar`, and the generated file would declare one binding twice -- a build error in the
+ * Site, far from the install that caused it.
+ */
+function assertDistinctImportAliases(packageNames: readonly string[]) {
+  const byAlias = new Map<string, string>();
+  for (const packageName of packageNames) {
+    const alias = importAlias(packageName);
+    const other = byAlias.get(alias);
+    if (other !== undefined && other !== packageName) {
+      throw new Error(
+        `Modules ${other} and ${packageName} would share the import alias ${alias}; ` +
+        "install only one of them.",
+      );
+    }
+    byAlias.set(alias, packageName);
+  }
+}
+
+/**
  * The four generated files, from the installed Modules and the subset of them that ships typefaces.
  *
  * `fontPackages` is passed in rather than read here, because it is the one part of the projection that
@@ -102,6 +124,7 @@ export function buildSiteModuleProjection(
   fontPackages: readonly string[],
 ) {
   const sorted = [...modules].sort((left, right) => left.packageName.localeCompare(right.packageName));
+  assertDistinctImportAliases(sorted.map((entry) => entry.packageName));
   const withFonts = sorted.filter((entry) => fontPackages.includes(entry.packageName));
 
   const serverImports = sorted.map((entry) =>
