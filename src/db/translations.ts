@@ -258,13 +258,13 @@ export async function upsertTranslation(
   msgHash: string,
 ) {
   const msgId = await ensureMessageId(msg, ctx, normalizeMessageHash(msgHash));
+  // A fill adds what was missing and nothing else. It runs past the change marker, so replacing a row
+  // here -- one an editor wrote while the provider was being asked -- would change a translation every
+  // Site keeps without telling any of them.
   await inTranslationFill((client) => client.query(
     `INSERT INTO phis.tr_lang (msg_id, locale, translation)
        VALUES ($1, $2, $3)
-     ON CONFLICT (msg_id, locale)
-     DO UPDATE SET translation = EXCLUDED.translation,
-                   updated_at = NOW()
-     WHERE phis.tr_lang.source_hash IS NULL`,
+     ON CONFLICT (msg_id, locale) DO NOTHING`,
     [msgId, locale, translation],
   ));
 }
@@ -532,13 +532,12 @@ export async function upsertSiteTranslations(
     return;
   }
 
+  // As for the global store: a fill adds the misses and leaves every existing row, an editor's included.
   await inTranslationFill((client) => client.query(
     `INSERT INTO phis.tr_site_lang (msg_id, locale, translation)
      SELECT *
      FROM UNNEST($1::int[], $2::varchar(8)[], $3::text[])
-     ON CONFLICT (msg_id, locale)
-     DO UPDATE SET translation = EXCLUDED.translation
-     WHERE phis.tr_site_lang.source_hash IS NULL`,
+     ON CONFLICT (msg_id, locale) DO NOTHING`,
     [
       normalizedEntries.map((entry) => entry.msgId),
       normalizedEntries.map((entry) => entry.locale),

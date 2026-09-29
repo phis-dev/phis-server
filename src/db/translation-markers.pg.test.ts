@@ -58,6 +58,22 @@ describe("translation change markers against PostgreSQL", () => {
     expect(await markers(siteA)).toEqual(before);
   });
 
+  it("leaves an editor's translation standing when a fill for the same message arrives after it", async () => {
+    const pool = await requirePhiTestDatabase();
+    const msgId = await ensureSiteMessageId(siteA.id, "Keep my edit", "pgtest");
+    await upsertSiteTranslationForSite({ siteId: siteA.id, msgId, locale: "de", translation: "Von Hand" });
+    const before = await markers(siteA);
+
+    await upsertSiteTranslations([{ msgId, locale: "de", translation: "Vom Anbieter" }]);
+
+    const { rows } = await pool.query<{ translation: string }>(
+      `SELECT translation FROM phis.tr_site_lang WHERE msg_id = $1 AND locale = 'de'`,
+      [msgId],
+    );
+    expect(rows[0]?.translation).toBe("Von Hand");
+    expect(await markers(siteA)).toEqual(before);
+  });
+
   it("moves only the edited Site's marker on an editor write", async () => {
     const msgId = await ensureSiteMessageId(siteA.id, "Edit me", "pgtest");
     const beforeA = await markers(siteA);
