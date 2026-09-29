@@ -853,7 +853,7 @@ export async function handleSiteCmsAreaModulesPublish(request: NextRequest) {
         error: message,
         details: detail ? [detail] : [],
       },
-      { status: 500 },
+      { status: error instanceof SiteCmsDraftConflictError ? 409 : 500 },
     );
   }
 }
@@ -1297,7 +1297,11 @@ export async function handleSiteCmsPagePublish(request: NextRequest) {
       },
       // A pending path another Page took, or settled beneath, since it was proposed is a conflict the
       // Builder can resolve, not a fault of the server.
-      { status: error instanceof SitePagePathChangeError ? 409 : 500 },
+      {
+        status: error instanceof SitePagePathChangeError || error instanceof SiteCmsDraftConflictError
+          ? 409
+          : 500,
+      },
     );
   }
 }
@@ -1390,7 +1394,7 @@ export async function handleSiteCmsAreaPublish(request: NextRequest) {
         error: message,
         details: detail ? [detail] : [],
       },
-      { status: 500 },
+      { status: error instanceof SiteCmsDraftConflictError ? 409 : 500 },
     );
   }
 }

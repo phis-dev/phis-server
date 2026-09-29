@@ -19,7 +19,7 @@ import {
 } from "@/lib/cms/instance-id";
 import { normalizeSiteCmsPath } from "@/lib/helpers/cms-path";
 import { readPhiPageReference } from "@/lib/internal-references";
-import { listSitePageScopes } from "@/db/site-pages";
+import { listSitePageScopes, SiteCmsDraftConflictError } from "@/db/site-pages";
 import { isPhiRecord } from "@/lib/helpers/record";
 
 type DbQueryable = Pick<PoolClient, "query">;
@@ -584,6 +584,7 @@ async function getSiteNavigationScopeByKeyWithDb(
   db: DbQueryable,
   siteId: number,
   key: string,
+  options?: { forUpdate?: boolean },
 ) {
   const { rows } = await db.query<{
     id: number;
@@ -597,7 +598,7 @@ async function getSiteNavigationScopeByKeyWithDb(
     `SELECT id, site_id, key, label, flags, published_revision_id, working_draft_revision_id
      FROM phis.site_nav_scopes
      WHERE site_id = $1 AND key = $2
-     LIMIT 1`,
+     LIMIT 1${options?.forUpdate ? "\n     FOR UPDATE" : ""}`,
     [siteId, key],
   );
   return rows[0] ? mapSiteNavigationScopeRow(rows[0]) : null;
@@ -1048,9 +1049,20 @@ export async function publishSiteNavigationRevision(
   }
   const normalizedKey = requireSiteNavigationScopeKey(input.key);
   return withTransaction(async (client) => {
-    const scope = await getSiteNavigationScopeByKeyWithDb(client, siteId, normalizedKey);
+    const scope = await getSiteNavigationScopeByKeyWithDb(client, siteId, normalizedKey, {
+      forUpdate: true,
+    });
     if (!scope) {
       throw new Error("Navigation scope not found.");
+    }
+    // As with Pages and Areas: publishing clears the Working Draft, so it publishes that Draft only, or
+    // the published revision again while no Draft is open.
+    const republish =
+      scope.workingDraftRevisionId == null && input.revisionId === scope.publishedRevisionId;
+    if (input.revisionId != null && input.revisionId !== scope.workingDraftRevisionId && !republish) {
+      throw new SiteCmsDraftConflictError(
+        `Revision #${input.revisionId} is not the Navigation Working Draft; restore it to publish it.`,
+      );
     }
     const revisionId = input.revisionId ?? scope.workingDraftRevisionId;
     if (typeof revisionId !== "number" || !Number.isInteger(revisionId) || revisionId <= 0) {

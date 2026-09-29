@@ -367,6 +367,29 @@ function toJsonRecord(value: unknown) {
     : {};
 }
 
+/**
+ * Refuses a publish that names a revision other than the scope's Working Draft.
+ *
+ * Every publish clears the Draft pointer it publishes from. Naming an older revision therefore threw the
+ * Draft away without a word, and naming the Area's Module Draft on a structure publish made one revision
+ * both Draft and live. The published revision itself may be named again while no Draft is open: that
+ * is a retry of the publish that already happened, and it drops nothing.
+ */
+function assertPublishesWorkingDraft(
+  requestedRevisionId: number | null | undefined,
+  scope: { workingDraftRevisionId: number | null; publishedRevisionId: number | null },
+  scopeLabel: string,
+) {
+  const republish =
+    scope.workingDraftRevisionId == null && requestedRevisionId === scope.publishedRevisionId;
+  if (requestedRevisionId == null || requestedRevisionId === scope.workingDraftRevisionId || republish) {
+    return;
+  }
+  throw new SiteCmsDraftConflictError(
+    `Revision #${requestedRevisionId} is not the ${scopeLabel} Working Draft; restore it to publish it.`,
+  );
+}
+
 function readSiteCmsDraftState(revision: Pick<SiteAreaRevisionRecord | SitePageRevisionRecord, "id" | "metaJson">) {
   const draft = revision.metaJson.draft;
   if (!draft || typeof draft !== "object" || Array.isArray(draft)) {
@@ -2331,6 +2354,10 @@ export async function publishSitePageRevision(
       throw new Error("No page draft scope found.");
     }
 
+    // Publishing makes a revision live and clears the Working Draft, so it takes that Draft and nothing
+    // else: an older revision named here would drop the Draft unsaid. An old revision goes live by being
+    // restored into a Draft first.
+    assertPublishesWorkingDraft(input.revisionId, scope, "Page");
     const revisionId = input.revisionId ?? scope.workingDraftRevisionId;
     if (!Number.isInteger(revisionId) || (revisionId as number) <= 0) {
       /*
@@ -2604,6 +2631,7 @@ export async function publishSiteAreaRevision(
       throw new Error("No area draft scope found.");
     }
 
+    assertPublishesWorkingDraft(input.revisionId, scope, "Area");
     const revisionId = input.revisionId ?? scope.workingDraftRevisionId;
     if (!Number.isInteger(revisionId) || (revisionId as number) <= 0) {
       throw new Error("No area draft revision available to publish.");
@@ -2708,6 +2736,14 @@ export async function publishSiteAreaModulesRevision(
       throw new Error("No area draft scope found.");
     }
 
+    assertPublishesWorkingDraft(
+      input.revisionId,
+      {
+        workingDraftRevisionId: scope.workingModuleDraftRevisionId,
+        publishedRevisionId: scope.publishedRevisionId,
+      },
+      "Area Module",
+    );
     const revisionId = input.revisionId ?? scope.workingModuleDraftRevisionId;
     if (!Number.isInteger(revisionId) || (revisionId as number) <= 0) {
       throw new Error("No Area Module draft revision available to publish.");

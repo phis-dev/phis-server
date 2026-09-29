@@ -11,6 +11,7 @@ import {
   publishSiteNavigationRevision,
   saveSiteNavigationDraftRevision,
 } from "@/db/site-navigation";
+import { SiteCmsDraftConflictError } from "@/db/site-pages";
 import {
   requireSiteBuilderApiContext,
   requireSitePublisherApiContext,
@@ -293,7 +294,7 @@ export async function handleSiteCmsNavigationPublish(request: NextRequest) {
       {
         error: readSiteCmsErrorMessage(routeError, "CMS navigation publish failed."),
       },
-      { status: 500 },
+      { status: routeError instanceof SiteCmsDraftConflictError ? 409 : 500 },
     );
   }
 }
