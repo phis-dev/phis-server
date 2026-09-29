@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { NextRequest } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 
 vi.mock("server-only", () => ({}));
 
@@ -23,7 +23,6 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("@/lib/guards/site-admin-api", () => ({
   requireSiteAdminOnlyApiContext: mocks.guard,
-  requireSiteDeveloperApiContext: mocks.guard,
 }));
 vi.mock("@/db/user-accounts", () => ({
   deleteUserAccount: mocks.deleteAccount,
@@ -60,7 +59,7 @@ vi.mock("@/lib/log", () => ({
 }));
 vi.mock("@/lib/password", () => ({ hashPassword: async () => "hash" }));
 
-import { DELETE, POST, PUT } from "./route";
+import { DELETE, GET, POST, PUT } from "./route";
 
 const SITE = { id: 7, key: "example", defaultLocale: "en" };
 
@@ -203,5 +202,19 @@ describe("DELETE /api/site/admin/users", () => {
     expect(response.status).toBe(200);
     expect(mocks.removeMembership).toHaveBeenCalledWith(41, 7);
     expect(mocks.deleteAccount).not.toHaveBeenCalled();
+  });
+});
+
+describe("GET /api/site/admin/users", () => {
+  // Addresses, sign-in history and IPs are user administration, which AUTHORIZATION.md keeps to the Core
+  // Admin; a Developer resolves to the admin Area but is not one.
+  it("answers with the Admin-only guard's refusal", async () => {
+    mocks.guard.mockResolvedValue({
+      context: null,
+      error: NextResponse.json({ error: "Forbidden." }, { status: 403 }),
+    });
+    const response = await GET(request("GET"));
+
+    expect(response.status).toBe(403);
   });
 });

@@ -16,10 +16,7 @@ import { listAdminUsersForSite, setAdminUserEnabled } from "@/db/user-admin";
 import { createUserPasswordResetToken } from "@/db/user-password-reset-tokens";
 import { getUserProfileByUserId, upsertUserProfile } from "@/db/user-profiles";
 import { getUserSiteMembership, upsertUserSiteMembership } from "@/db/user-site-memberships";
-import {
-  requireSiteAdminOnlyApiContext,
-  requireSiteDeveloperApiContext,
-} from "@/lib/guards/site-admin-api";
+import { requireSiteAdminOnlyApiContext } from "@/lib/guards/site-admin-api";
 import { PHI_BASE_ROLE_OPTIONS } from "@/lib/constants/phi-base-role-metadata";
 import { PhiUserAccountFlag } from "@/lib/constants/user-account-flags";
 import { buildPasswordResetUrlForRequest } from "@/lib/email";
@@ -185,7 +182,7 @@ async function sendPasswordResetMail(input: {
 }
 
 export async function GET(request: NextRequest) {
-  const { context, error } = await requireSiteDeveloperApiContext(request);
+  const { context, error } = await requireSiteAdminOnlyApiContext(request);
   if (error) {
     return error;
   }
