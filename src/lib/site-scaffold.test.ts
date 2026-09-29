@@ -137,6 +137,32 @@ describe("site scaffold", () => {
     expect(routes.length).toBeGreaterThan(0);
   });
 
+  it("gives every Page-owned slot the file Next asks for, and the static tree none", () => {
+    /*
+     * Next holds one active segment per parallel slot, and a client navigation that leaves the slot's
+     * branch has nothing to move it to: without this file the leaving branch's segment stays and is asked
+     * to serve an address it was never resolved for. The static tree must not have one -- its slots sit
+     * inside the catch-all, where `default.tsx` resolves to a route with `[...path]` in the middle, which
+     * Next refuses at startup and with it the whole route manifest.
+     */
+    const files = buildPhiSiteScaffoldFiles(context);
+    const slotPages = Object.keys(files).filter((file) => /\/@[^/]+\//.test(file) && file.endsWith("/page.tsx"));
+
+    expect(slotPages.length).toBeGreaterThan(0);
+    for (const page of slotPages) {
+      const slotDirectory = page.slice(0, page.lastIndexOf("/@") + 1) + page.slice(page.lastIndexOf("/@") + 1).split("/")[0];
+      const expected = `${slotDirectory}/default.tsx`;
+      if (page.startsWith("src/app/(static)/")) {
+        expect(files[expected], expected).toBeUndefined();
+      } else {
+        expect(files[expected], expected).toContain("createPhiNextAreaSlotDefault()");
+      }
+    }
+    expect(files["src/app/(site)/[root]/(pages)/@hero/default.tsx"]).toBeDefined();
+    expect(files["src/app/(site)/builder/(root)/@drawer/default.tsx"]).toBeDefined();
+    expect(Object.keys(files).filter((file) => file.endsWith("/default.tsx"))).toHaveLength(60);
+  });
+
   it("ignores the runtime config, so a first commit cannot publish the internal token", async () => {
     const files = buildPhiSiteScaffoldFiles(context);
     const ignored = files[".gitignore"]!.split("\n");

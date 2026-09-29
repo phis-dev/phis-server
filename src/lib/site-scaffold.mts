@@ -46,6 +46,22 @@ const ROOT_SLOTS = [
   ["hero", "Hero"],
   ["siderRight", "SiderRight"],
 ] as const;
+/**
+ * What a Page-owned slot stands at while the address belongs to another branch.
+ *
+ * Next holds one active segment per parallel slot beside the children segment, and this is what it puts
+ * there when a client navigation leaves the branch the slot belongs to -- the Area root to a Page below
+ * it, or one Area to the next. Without it the leaving branch's segment stays and is asked to serve an
+ * address it was never resolved for. The file draws nothing, which is the answer rather than a
+ * placeholder: a slot draws one Region of one Page, and the Layout beside it has already answered with a
+ * status line.
+ *
+ * Only the two branch trees get one. The static tree's slots sit inside its catch-all, where a
+ * `default.tsx` resolves to a route with `[...path]` in the middle -- refused at startup with
+ * "Catch-all must be the last part of the URL", which takes the whole route manifest with it. Nothing
+ * client-navigates there in any case; the proxy reaches that tree with a document request.
+ */
+const SLOT_DEFAULT = `import { createPhiNextAreaSlotDefault } from "@phis/ui/next/area-route";\n\nexport default createPhiNextAreaSlotDefault();\n`;
 const AREA_NAMES = {
   accounting: "Accounting",
   admin: "Admin",
@@ -350,6 +366,8 @@ function staticAreaFiles(area: typeof AREAS[number]) {
     const slotPage = `import { PhiCmsRegionType } from "@phis/ui/cms/root-slot-page";\n\nimport { ${bridge} } from "@/runtime-modules/${area}";\nimport { createPhiNextStaticAreaSlotPage } from "@phis/ui/next/area-route";\n\nexport const dynamic = "force-dynamic";\n\nexport default createPhiNextStaticAreaSlotPage(\n  "${area}",\n  ${bridge},\n  PhiCmsRegionType.${regionType},\n);\n`;
     files[`${SITE_APP}/${area}/(root)/@${slot}/page.tsx`] = slotPage;
     files[`${SITE_APP}/${area}/(pages)/@${slot}/[...path]/page.tsx`] = slotPage;
+    files[`${SITE_APP}/${area}/(root)/@${slot}/default.tsx`] = SLOT_DEFAULT;
+    files[`${SITE_APP}/${area}/(pages)/@${slot}/default.tsx`] = SLOT_DEFAULT;
   }
   return files;
 }
@@ -372,6 +390,8 @@ function dynamicRootFiles() {
     const slotPage = `import { PhiCmsRegionType } from "@phis/ui/cms/root-slot-page";\nimport { createPhiNextDynamicRootSlotPage } from "@phis/ui/next/area-route";\nimport { PHI_PUBLIC_CMS_SITE_BRIDGE } from "@/runtime-modules/public";\n\nexport const dynamic = "force-dynamic";\n\nexport default createPhiNextDynamicRootSlotPage(\n  PHI_PUBLIC_CMS_SITE_BRIDGE,\n  PhiCmsRegionType.${regionType},\n);\n`;
     files[`${SITE_APP}/[root]/(root)/@${slot}/page.tsx`] = slotPage;
     files[`${SITE_APP}/[root]/(pages)/@${slot}/[...path]/page.tsx`] = slotPage;
+    files[`${SITE_APP}/[root]/(root)/@${slot}/default.tsx`] = SLOT_DEFAULT;
+    files[`${SITE_APP}/[root]/(pages)/@${slot}/default.tsx`] = SLOT_DEFAULT;
   }
   return files;
 }
