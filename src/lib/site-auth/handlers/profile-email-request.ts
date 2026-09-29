@@ -11,15 +11,12 @@ import { getSiteMailConfig } from "@/lib/form-config";
 import { logRuntimeEvent } from "@/lib/log";
 import { verifyPasswordHash } from "@/lib/password";
 import { requireAuthenticatedSiteUser } from "@/lib/site-auth/authenticated-site-user";
+import { normalizeString } from "@/lib/helpers/request";
 
 type ProfileEmailRequestPayload = {
   email?: unknown;
   currentPassword?: unknown;
 };
-
-function normalize(value: unknown) {
-  return typeof value === "string" ? value.trim() : "";
-}
 
 function isValidEmail(value: string) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
@@ -41,8 +38,8 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Invalid JSON payload." }, { status: 400 });
   }
 
-  const email = normalize(payload.email).toLowerCase();
-  const currentPassword = normalize(payload.currentPassword);
+  const email = normalizeString(payload.email).toLowerCase();
+  const currentPassword = normalizeString(payload.currentPassword);
   if (!email || !isValidEmail(email)) {
     return NextResponse.json({ error: "Invalid email address." }, { status: 400 });
   }

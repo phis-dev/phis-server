@@ -6,6 +6,7 @@ import { sendEmail } from "@/lib/email";
 import { getFormGuardSecret, getFormTimingWindow, getSiteMailConfig } from "@/lib/form-config";
 import { logFormAbuse } from "@/lib/form-abuse-log";
 import { verifyFormGuard } from "@/lib/form-guard";
+import { normalizeString } from "@/lib/helpers/request";
 
 type ContactPayload = {
   name?: unknown;
@@ -16,10 +17,6 @@ type ContactPayload = {
   issuedAt?: unknown;
   formToken?: unknown;
 };
-
-function normalize(value: unknown): string {
-  return typeof value === "string" ? value.trim() : "";
-}
 
 function isValidEmail(value: string) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
@@ -47,13 +44,13 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Invalid JSON payload." }, { status: 400 });
   }
 
-  const name = normalize(payload.name);
-  const email = normalize(payload.email);
-  const subject = normalize(payload.subject);
-  const message = normalize(payload.message);
-  const website = normalize(payload.website);
-  const issuedAt = normalize(payload.issuedAt);
-  const formToken = normalize(payload.formToken);
+  const name = normalizeString(payload.name);
+  const email = normalizeString(payload.email);
+  const subject = normalizeString(payload.subject);
+  const message = normalizeString(payload.message);
+  const website = normalizeString(payload.website);
+  const issuedAt = normalizeString(payload.issuedAt);
+  const formToken = normalizeString(payload.formToken);
 
   const guardResult = verifyFormGuard({
     form: "@phis/ui/modules/public/forms/contact",

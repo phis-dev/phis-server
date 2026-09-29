@@ -5,16 +5,13 @@ import { PhiUserAccountFlag } from "@/lib/constants/user-account-flags";
 import { hashPassword, verifyPasswordHash } from "@/lib/password";
 import { revokeUserSessions } from "@/db/user-sessions";
 import { requireAuthenticatedSiteUser } from "@/lib/site-auth/authenticated-site-user";
+import { normalizeString } from "@/lib/helpers/request";
 
 type ProfilePasswordPayload = {
   currentPassword?: unknown;
   newPassword?: unknown;
   confirmPassword?: unknown;
 };
-
-function normalize(value: unknown) {
-  return typeof value === "string" ? value.trim() : "";
-}
 
 export async function PATCH(request: NextRequest) {
   const guarded = await requireAuthenticatedSiteUser(request);
@@ -28,9 +25,9 @@ export async function PATCH(request: NextRequest) {
     return NextResponse.json({ error: "Invalid JSON payload." }, { status: 400 });
   }
 
-  const currentPassword = normalize(payload.currentPassword);
-  const newPassword = normalize(payload.newPassword);
-  const confirmPassword = normalize(payload.confirmPassword);
+  const currentPassword = normalizeString(payload.currentPassword);
+  const newPassword = normalizeString(payload.newPassword);
+  const confirmPassword = normalizeString(payload.confirmPassword);
 
   if (!currentPassword) {
     return NextResponse.json({ error: "Missing current password." }, { status: 400 });

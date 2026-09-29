@@ -31,16 +31,13 @@ import {
   isSitePasswordMethodEnabled,
   PASSWORD_METHOD_DISABLED_RESPONSE,
 } from "@/lib/site-auth/password-method";
+import { normalizeString } from "@/lib/helpers/request";
 
 type LoginPayload = {
   email?: unknown;
   password?: unknown;
   next?: unknown;
 };
-
-function normalize(value: unknown) {
-  return typeof value === "string" ? value.trim() : "";
-}
 
 export async function POST(request: NextRequest) {
   const site = await requireSiteFromRequest(request);
@@ -82,8 +79,8 @@ export async function POST(request: NextRequest) {
     return NextResponse.json(PASSWORD_METHOD_DISABLED_RESPONSE, { status: 403 });
   }
 
-  const email = normalize(payload.email).toLowerCase();
-  const password = normalize(payload.password);
+  const email = normalizeString(payload.email).toLowerCase();
+  const password = normalizeString(payload.password);
 
   // Measured per account, because the internal token this route arrives with is exempt from the
   // per-address limit and nothing else counted the guesses.

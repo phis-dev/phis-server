@@ -24,14 +24,11 @@ import { requireSiteFromRequest } from "@/lib/site-context";
 import { USER_SITE_FLAG_NEWSLETTER_OPT_IN } from "@/lib/user-site-flags";
 
 import { PhiUserEmailSource } from "@phis/contracts/access";
+import { normalizeString } from "@/lib/helpers/request";
 
 type ConfirmPayload = {
   token?: unknown;
 };
-
-function normalize(value: unknown) {
-  return typeof value === "string" ? value.trim() : "";
-}
 
 function isIsoDateInPast(value: string) {
   const timestamp = Date.parse(value);
@@ -64,7 +61,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Invalid JSON payload." }, { status: 400 });
   }
 
-  const token = normalize(payload.token);
+  const token = normalizeString(payload.token);
   if (!/^[a-f0-9]{64}$/i.test(token)) {
     return NextResponse.json({ error: "Invalid verification token." }, { status: 400 });
   }

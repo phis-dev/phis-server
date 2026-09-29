@@ -15,6 +15,7 @@ import {
 import { verifyPasswordHash } from "@/lib/password";
 import { logRuntimeEvent, normalizeLogThrowable } from "@/lib/log";
 import { warmTranslationLocaleSourceOptions } from "@/lib/translation-locale-options";
+import { normalizeString } from "@/lib/helpers/request";
 
 export const dynamic = "force-dynamic";
 
@@ -22,10 +23,6 @@ type OperatorLoginPayload = {
   email?: unknown;
   password?: unknown;
 };
-
-function normalize(value: unknown) {
-  return typeof value === "string" ? value.trim() : "";
-}
 
 export async function POST(request: NextRequest) {
   if (isBootstrapEnabled()) {
@@ -67,8 +64,8 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Invalid JSON payload." }, { status: 400 });
   }
 
-  const email = normalize(payload.email).toLowerCase();
-  const password = normalize(payload.password);
+  const email = normalizeString(payload.email).toLowerCase();
+  const password = normalizeString(payload.password);
 
   if (!email || !password) {
     logRuntimeEvent("warn", "operator.login.failed", {

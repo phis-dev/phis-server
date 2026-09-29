@@ -17,15 +17,12 @@ import {
   PASSWORD_METHOD_DISABLED_RESPONSE,
 } from "@/lib/site-auth/password-method";
 import { isUserAccountEnabled } from "@/lib/user-flags";
+import { normalizeString } from "@/lib/helpers/request";
 
 type RequestPayload = {
   email?: unknown;
   locale?: unknown;
 };
-
-function normalize(value: unknown) {
-  return typeof value === "string" ? value.trim() : "";
-}
 
 function isValidEmail(value: string) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
@@ -57,8 +54,8 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Invalid JSON payload." }, { status: 400 });
   }
 
-  const email = normalize(payload.email).toLowerCase();
-  const locale = normalizeLocale(normalize(payload.locale) || site.defaultLocale);
+  const email = normalizeString(payload.email).toLowerCase();
+  const locale = normalizeLocale(normalizeString(payload.locale) || site.defaultLocale);
 
   // Always return success for unknown/invalid input to avoid account enumeration.
   if (!email || !isValidEmail(email)) {

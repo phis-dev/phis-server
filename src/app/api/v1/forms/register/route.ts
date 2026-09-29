@@ -25,6 +25,7 @@ import { isUserAccountEnabled } from "@/lib/user-flags";
 import { USER_SITE_FLAG_NEWSLETTER_OPT_IN } from "@/lib/user-site-flags";
 
 import { PhiUserEmailSource } from "@phis/contracts/access";
+import { normalizeString } from "@/lib/helpers/request";
 
 type RegistrationPayload = {
   firstName?: unknown;
@@ -40,10 +41,6 @@ type RegistrationPayload = {
   issuedAt?: unknown;
   formToken?: unknown;
 };
-
-function normalize(value: unknown): string {
-  return typeof value === "string" ? value.trim() : "";
-}
 
 function isValidEmail(value: string) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
@@ -71,16 +68,16 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Invalid JSON payload." }, { status: 400 });
   }
 
-  const firstName = normalize(payload.firstName);
-  const lastName = normalize(payload.lastName);
-  const company = normalize(payload.company);
-  const email = normalize(payload.email);
-  const password = normalize(payload.password);
-  const confirmPassword = normalize(payload.confirmPassword);
-  const locale = normalizeLocale(normalize(payload.locale) || site.defaultLocale);
-  const website = normalize(payload.website);
-  const issuedAt = normalize(payload.issuedAt);
-  const formToken = normalize(payload.formToken);
+  const firstName = normalizeString(payload.firstName);
+  const lastName = normalizeString(payload.lastName);
+  const company = normalizeString(payload.company);
+  const email = normalizeString(payload.email);
+  const password = normalizeString(payload.password);
+  const confirmPassword = normalizeString(payload.confirmPassword);
+  const locale = normalizeLocale(normalizeString(payload.locale) || site.defaultLocale);
+  const website = normalizeString(payload.website);
+  const issuedAt = normalizeString(payload.issuedAt);
+  const formToken = normalizeString(payload.formToken);
   const termsAccepted = payload.termsAccepted === true;
   const newsletter = payload.newsletter === true;
   const registrationSiteConfig = await getSiteConfigBySiteId(site.id);

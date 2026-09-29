@@ -14,16 +14,13 @@ import {
   isSitePasswordMethodEnabled,
   PASSWORD_METHOD_DISABLED_RESPONSE,
 } from "@/lib/site-auth/password-method";
+import { normalizeString } from "@/lib/helpers/request";
 
 type ConfirmPayload = {
   token?: unknown;
   password?: unknown;
   confirmPassword?: unknown;
 };
-
-function normalize(value: unknown) {
-  return typeof value === "string" ? value.trim() : "";
-}
 
 function isIsoDateInPast(value: string) {
   const timestamp = Date.parse(value);
@@ -49,9 +46,9 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Invalid JSON payload." }, { status: 400 });
   }
 
-  const token = normalize(payload.token);
-  const password = normalize(payload.password);
-  const confirmPassword = normalize(payload.confirmPassword);
+  const token = normalizeString(payload.token);
+  const password = normalizeString(payload.password);
+  const confirmPassword = normalizeString(payload.confirmPassword);
 
   if (!/^[a-f0-9]{64}$/i.test(token)) {
     return NextResponse.json({ error: "Invalid reset token." }, { status: 400 });
