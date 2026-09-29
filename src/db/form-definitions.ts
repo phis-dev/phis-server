@@ -4,7 +4,7 @@ import { getPool } from "@/lib/db";
 import {
   parsePhiFormDescriptor,
   type PhiFormDescriptor,
-} from "@/lib/form-descriptor";
+} from "@phis/contracts/forms";
 
 export const FORM_DEFINITION_FLAG_REQUIRES_GUARD = 1 << 0;
 export const FORM_DEFINITION_STATUS_WORKING_DRAFT = 0;
