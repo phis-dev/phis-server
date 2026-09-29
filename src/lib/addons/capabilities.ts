@@ -4,11 +4,9 @@ import type { PoolClient } from "pg";
 
 import {
   PHIS_CORE_CAPABILITIES,
-  PHIS_SITE_ACCESS,
   type PhisAddonCapabilities,
   type PhisAuthorizationCapabilityV1,
   type PhisRowIntent,
-  type PhisSiteAccess,
 } from "./contract.ts";
 import {
   PHIS_ADDON_GROUP_COLUMN,
@@ -19,18 +17,7 @@ import { derivePhisAddonSchemaName } from "./schema-name.ts";
 import { quotePhiIdentifier } from "./schema-ddl.ts";
 import { readEffectiveGroupMembershipFlags } from "@/db/site-groups";
 import { PhiGroupMembershipFlags, phiGroupLevelOf } from "@/lib/constants/site-groups";
-import {
-  canPhiViewerAccess,
-  PHI_ACCESS_ACCOUNTING,
-  PHI_ACCESS_CONTENT_EDITING,
-  PHI_ACCESS_DEVELOPER_TOOLS,
-  PHI_ACCESS_PUBLISHING,
-  PHI_ACCESS_SITE_ADMIN,
-  PHI_ACCESS_SITE_MEDIA,
-  PHI_ACCESS_STRUCTURE_AUTHORING,
-  PHI_ACCESS_SUPPORT,
-  type PhiViewerAccessPolicy,
-} from "@/lib/authorization";
+import { holdsPhisSiteAccess } from "./site-access.ts";
 import { getPool } from "@/lib/db";
 import { buildPhisAddonDataCapability } from "./data-capability.ts";
 import { buildPhisAddonRolesCapability } from "./roles-capability.ts";
@@ -44,7 +31,6 @@ import { buildPhisAddonStorageCapability } from "./storage-capability.ts";
 import { buildPhisAddonAssetsCapability } from "./assets-capability.ts";
 import { buildPhisAddonRowAssets } from "./row-assets.ts";
 import { ensureSiteMediaConfig } from "@/db/media-spaces";
-import { getEffectiveUserSiteAuthorization } from "@/db/user-site-memberships";
 import type { PhisAddonManifestV1 } from "./contract.ts";
 
 /**
@@ -59,17 +45,6 @@ import type { PhisAddonManifestV1 } from "./contract.ts";
  * capability this release does not offer, so what is missing here is missing because it was never
  * asked for.
  */
-
-const SITE_ACCESS_POLICIES: Readonly<Record<PhisSiteAccess, PhiViewerAccessPolicy>> = {
-  [PHIS_SITE_ACCESS.siteAdmin]: PHI_ACCESS_SITE_ADMIN,
-  [PHIS_SITE_ACCESS.developerTools]: PHI_ACCESS_DEVELOPER_TOOLS,
-  [PHIS_SITE_ACCESS.structureAuthoring]: PHI_ACCESS_STRUCTURE_AUTHORING,
-  [PHIS_SITE_ACCESS.contentEditing]: PHI_ACCESS_CONTENT_EDITING,
-  [PHIS_SITE_ACCESS.publishing]: PHI_ACCESS_PUBLISHING,
-  [PHIS_SITE_ACCESS.siteMedia]: PHI_ACCESS_SITE_MEDIA,
-  [PHIS_SITE_ACCESS.support]: PHI_ACCESS_SUPPORT,
-  [PHIS_SITE_ACCESS.accounting]: PHI_ACCESS_ACCOUNTING,
-};
 
 type RowScope = {
   ownerUserId: number | null;
@@ -238,20 +213,7 @@ function buildAuthorizationCapability(input: {
       return phiGroupLevelOf(await readEffectiveGroupMembershipFlags(siteId, groupId, actorUserId));
     },
     async hasSiteAccess(access) {
-      const policy = SITE_ACCESS_POLICIES[access];
-      if (actorUserId == null || !policy) {
-        return false;
-      }
-      const role = await getEffectiveUserSiteAuthorization(actorUserId, siteId);
-      // A disabled Site membership answers no to everything, exactly as the Site guards treat it.
-      if (!role.enabled) {
-        return false;
-      }
-      return canPhiViewerAccess({
-        authenticated: true,
-        roleClaims: role.roleClaims,
-        groupClaims: role.groupClaims,
-      }, policy);
+      return actorUserId != null && holdsPhisSiteAccess(siteId, actorUserId, access);
     },
   } satisfies PhisAuthorizationCapabilityV1);
 }

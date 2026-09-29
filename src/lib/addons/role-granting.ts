@@ -5,20 +5,8 @@ import { PHIS_SITE_ACCESS } from "./contract.ts";
 import { getPhisAddonInstalledManifest } from "./installed.ts";
 import { readPhisAddonUserRoles } from "@/db/server-addon-roles.mts";
 import { getPool } from "@/lib/db";
-import { getEffectiveUserSiteAuthorization } from "@/db/user-site-memberships";
 import { isPhisAddonEnabledForSite } from "@/db/server-addons";
-import {
-  canPhiViewerAccess,
-  PHI_ACCESS_ACCOUNTING,
-  PHI_ACCESS_CONTENT_EDITING,
-  PHI_ACCESS_DEVELOPER_TOOLS,
-  PHI_ACCESS_PUBLISHING,
-  PHI_ACCESS_SITE_ADMIN,
-  PHI_ACCESS_SITE_MEDIA,
-  PHI_ACCESS_STRUCTURE_AUTHORING,
-  PHI_ACCESS_SUPPORT,
-  type PhiViewerAccessPolicy,
-} from "@/lib/authorization";
+import { holdsPhisSiteAccess } from "./site-access.ts";
 
 /**
  * Whether one person may hand one of an Add-on's roles to another.
@@ -30,17 +18,6 @@ import {
  * A Site Admin may always grant. Without that floor, a badly declared graph locks everyone out with no
  * way back in, and the recovery would be a database edit.
  */
-
-const SITE_ACCESS_POLICIES: Readonly<Record<string, PhiViewerAccessPolicy>> = {
-  [PHIS_SITE_ACCESS.siteAdmin]: PHI_ACCESS_SITE_ADMIN,
-  [PHIS_SITE_ACCESS.developerTools]: PHI_ACCESS_DEVELOPER_TOOLS,
-  [PHIS_SITE_ACCESS.structureAuthoring]: PHI_ACCESS_STRUCTURE_AUTHORING,
-  [PHIS_SITE_ACCESS.contentEditing]: PHI_ACCESS_CONTENT_EDITING,
-  [PHIS_SITE_ACCESS.publishing]: PHI_ACCESS_PUBLISHING,
-  [PHIS_SITE_ACCESS.siteMedia]: PHI_ACCESS_SITE_MEDIA,
-  [PHIS_SITE_ACCESS.support]: PHI_ACCESS_SUPPORT,
-  [PHIS_SITE_ACCESS.accounting]: PHI_ACCESS_ACCOUNTING,
-};
 
 export type PhisAddonRoleGrantVerdict =
   | { allowed: true; descriptor: PhisAddonRoleDescriptor }
@@ -60,22 +37,6 @@ export async function readPhisAddonDeclaredRoles(addonId: string, siteId: number
   return entry.manifest.roles ?? [];
 }
 
-async function holdsSiteAccess(siteId: number, userId: number, access: string) {
-  const policy = SITE_ACCESS_POLICIES[access];
-  if (!policy) {
-    return false;
-  }
-  const role = await getEffectiveUserSiteAuthorization(userId, siteId);
-  if (!role.enabled) {
-    return false;
-  }
-  return canPhiViewerAccess({
-    authenticated: true,
-    roleClaims: role.roleClaims,
-    groupClaims: role.groupClaims,
-  }, policy);
-}
-
 /**
  * Whether one person meets a policy an Add-on's manifest states.
  *
@@ -90,11 +51,11 @@ export async function satisfiesPhisAddonGrantPolicy(input: {
   actorUserId: number;
   policy: PhisAddonRoleGrantPolicy;
 }) {
-  if (await holdsSiteAccess(input.siteId, input.actorUserId, PHIS_SITE_ACCESS.siteAdmin)) {
+  if (await holdsPhisSiteAccess(input.siteId, input.actorUserId, PHIS_SITE_ACCESS.siteAdmin)) {
     return true;
   }
   if ("siteAccess" in input.policy) {
-    return await holdsSiteAccess(input.siteId, input.actorUserId, input.policy.siteAccess);
+    return await holdsPhisSiteAccess(input.siteId, input.actorUserId, input.policy.siteAccess);
   }
   const held = await readPhisAddonUserRoles(getPool(), {
     addonId: input.addonId,
