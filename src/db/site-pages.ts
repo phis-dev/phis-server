@@ -26,7 +26,7 @@ import {
   replaceSiteCmsReferencesWithDb,
 } from "@/db/site-cms-references";
 import { getResolvedSiteMessageFields, type ResolvedSiteMessageField } from "@/db/translations";
-import { getPool } from "@/lib/db";
+import { getPool, withTransaction } from "@/lib/db";
 import {
   PhiCmsFlags,
   PhiCmsRegionType,
@@ -2027,12 +2027,9 @@ export async function saveSitePageDraftRevision(
   draft: SiteCmsDraftState;
   sourcePreset: CmsPageWriteInput["sourcePreset"];
 }> {
-  const pool = getPool();
-  const client = await pool.connect();
   const { areaMask, draft: requestedDraft, ...revisionInput } = input;
 
-  try {
-    await client.query("BEGIN");
+  return withTransaction(async (client) => {
     const requestedScopeId = input.sourcePreset == null && Number.isInteger(input.page?.id) && (input.page?.id ?? 0) > 0
       ? input.page!.id
       : null;
@@ -2134,7 +2131,6 @@ export async function saveSitePageDraftRevision(
       siteId,
       collectRevisionContentIds(sourceTree).filter((id) => !nextContentIds.has(id)),
     );
-    await client.query("COMMIT");
 
     return {
       revisionId: revision.id,
@@ -2143,12 +2139,7 @@ export async function saveSitePageDraftRevision(
       draft: readSiteCmsDraftState(revision),
       sourcePreset: nextRevisionInput.sourcePreset,
     };
-  } catch (error) {
-    await client.query("ROLLBACK");
-    throw error;
-  } finally {
-    client.release();
-  }
+  });
 }
 
 export async function saveSiteAreaDraftRevision(
@@ -2164,12 +2155,9 @@ export async function saveSiteAreaDraftRevision(
   draft: SiteCmsDraftState;
   sourcePreset: CmsAreaPresetWriteInput["sourcePreset"];
 }> {
-  const pool = getPool();
-  const client = await pool.connect();
   const { areaMask, draft: requestedDraft, ...revisionInput } = input;
 
-  try {
-    await client.query("BEGIN");
+  return withTransaction(async (client) => {
     const scope = await ensureSiteAreaScopeWithDb(client, siteId, areaMask);
     const sourceRevisionId = scope.workingDraftRevisionId ?? scope.publishedRevisionId ?? null;
     const sourceRevision = sourceRevisionId == null ? null : await getSiteAreaRevisionByIdWithDb(client, sourceRevisionId);
@@ -2244,7 +2232,6 @@ export async function saveSiteAreaDraftRevision(
       siteId,
       collectRevisionContentIds(sourceTree).filter((id) => !nextAreaContentIds.has(id)),
     );
-    await client.query("COMMIT");
 
     return {
       revisionId: revision.id,
@@ -2252,12 +2239,7 @@ export async function saveSiteAreaDraftRevision(
       draft: readSiteCmsDraftState(revision),
       sourcePreset: nextRevisionInput.sourcePreset,
     };
-  } catch (error) {
-    await client.query("ROLLBACK");
-    throw error;
-  } finally {
-    client.release();
-  }
+  });
 }
 
 /**
@@ -2509,12 +2491,9 @@ export async function saveSiteAreaModulesDraftRevision(
   draft: SiteCmsDraftState;
   sourcePreset: CmsAreaModulesWriteInput["sourcePreset"];
 }> {
-  const pool = getPool();
-  const client = await pool.connect();
   const { areaMask, draft: requestedDraft } = input;
 
-  try {
-    await client.query("BEGIN");
+  return withTransaction(async (client) => {
     const scope = await ensureSiteAreaScopeWithDb(client, siteId, areaMask);
     const sourceRevisionId = scope.workingModuleDraftRevisionId ?? scope.publishedRevisionId ?? null;
     const sourceRevision = sourceRevisionId == null
@@ -2591,7 +2570,6 @@ export async function saveSiteAreaModulesDraftRevision(
     });
     // No orphan sweep: a Module save creates no Content, it carries the source revision's widgets
     // unchanged. What it would collect are rows the published revision still uses.
-    await client.query("COMMIT");
 
     return {
       revisionId: revision.id,
@@ -2599,12 +2577,7 @@ export async function saveSiteAreaModulesDraftRevision(
       draft: readSiteCmsDraftState(revision),
       sourcePreset: nextRevisionInput.sourcePreset,
     };
-  } catch (error) {
-    await client.query("ROLLBACK");
-    throw error;
-  } finally {
-    client.release();
-  }
+  });
 }
 
 export async function publishSiteAreaRevision(
@@ -2619,11 +2592,8 @@ export async function publishSiteAreaRevision(
     locale?: string | null;
   },
 ): Promise<{ revisionId: number; preset: SiteResolvedAreaPresetTree }> {
-  const pool = getPool();
-  const client = await pool.connect();
 
-  try {
-    await client.query("BEGIN");
+  return withTransaction(async (client) => {
     const scope = await getSiteAreaScopeWithDb(client, siteId, input.areaMask, {
       forUpdate: true,
     });
@@ -2701,18 +2671,12 @@ export async function publishSiteAreaRevision(
     await materializeSiteMediaAvailabilityWithDb(client, siteId);
     await materializeSiteThreadKindsWithDb(client, siteId);
     await materializeSiteModuleSeedsWithDb(client, siteId);
-    await client.query("COMMIT");
 
     return {
       revisionId: revision.id,
       preset,
     };
-  } catch (error) {
-    await client.query("ROLLBACK");
-    throw error;
-  } finally {
-    client.release();
-  }
+  });
 }
 
 /**
@@ -2734,11 +2698,8 @@ export async function publishSiteAreaModulesRevision(
     locale?: string | null;
   },
 ): Promise<{ revisionId: number; preset: SiteResolvedAreaPresetTree }> {
-  const pool = getPool();
-  const client = await pool.connect();
 
-  try {
-    await client.query("BEGIN");
+  return withTransaction(async (client) => {
     const scope = await getSiteAreaScopeWithDb(client, siteId, input.areaMask, { forUpdate: true });
     if (!scope) {
       throw new Error("No area draft scope found.");
@@ -2811,18 +2772,12 @@ export async function publishSiteAreaModulesRevision(
     await materializeSiteMediaAvailabilityWithDb(client, siteId);
     await materializeSiteThreadKindsWithDb(client, siteId);
     await materializeSiteModuleSeedsWithDb(client, siteId);
-    await client.query("COMMIT");
 
     return {
       revisionId: revision.id,
       preset,
     };
-  } catch (error) {
-    await client.query("ROLLBACK");
-    throw error;
-  } finally {
-    client.release();
-  }
+  });
 }
 
 export async function getSitePageDraftRevisionPreview(
@@ -3404,10 +3359,7 @@ export async function changeSitePagePath(
     throw new SitePagePathChangeError("page_not_found", "The requested Site or Area is invalid.");
   }
   const nextPath = normalizeMutableSitePagePath(requestedPath);
-  const pool = getPool();
-  const client = await pool.connect();
-  try {
-    await client.query("BEGIN");
+  return withTransaction(async (client) => {
     const scope = await getSitePageScopeByIdWithDb(client, siteId, areaMask, pageScopeId, { forUpdate: true });
     if (!scope) {
       throw new SitePagePathChangeError("page_not_found", "The requested Page Scope was not found.");
@@ -3431,7 +3383,6 @@ export async function changeSitePagePath(
     } catch (error) {
       throw toSitePagePathCollisionError(error);
     }
-    await client.query("COMMIT");
     return {
       pageScopeId,
       areaMask,
@@ -3441,10 +3392,5 @@ export async function changeSitePagePath(
       workingDraftRevisionId: scope.workingDraftRevisionId,
       references,
     };
-  } catch (error) {
-    await client.query("ROLLBACK");
-    throw error;
-  } finally {
-    client.release();
-  }
+  });
 }

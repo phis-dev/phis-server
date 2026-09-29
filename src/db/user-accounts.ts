@@ -4,7 +4,7 @@ import type { PoolClient } from "pg";
 
 import { PhiUserEmailFlag, type PhiUserEmailSourceValue } from "@phis/contracts/access";
 
-import { getPool } from "@/lib/db";
+import { getPool, withTransaction } from "@/lib/db";
 
 export type EnsureUserAccountInput = {
   email: string;
@@ -140,10 +140,7 @@ export async function ensureUserAccount(input: EnsureUserAccountInput) {
     throw new Error("INVALID_EMAIL");
   }
 
-  const pool = getPool();
-  const client = await pool.connect();
-  try {
-    await client.query("BEGIN");
+  return withTransaction(async (client) => {
     const existing = await client.query<{ user_id: number }>(
       `SELECT user_id
        FROM phis.user_emails
@@ -191,14 +188,8 @@ export async function ensureUserAccount(input: EnsureUserAccountInput) {
     );
     await upsertPasswordCredential(client, userId, input.passwordHash);
     await upsertMedusaAccount(client, userId, input.siteId, input.medusaCustomerId);
-    await client.query("COMMIT");
     return { id: userId, emailNormalized: normalizedEmail };
-  } catch (error) {
-    await client.query("ROLLBACK");
-    throw error;
-  } finally {
-    client.release();
-  }
+  });
 }
 
 export async function getUserAccountById(userId: number, siteId = 0) {
@@ -243,10 +234,7 @@ export async function updateUserAccountPasswordHash(
   passwordHash: string,
   options?: { clearFlags?: number; setFlags?: number },
 ) {
-  const pool = getPool();
-  const client = await pool.connect();
-  try {
-    await client.query("BEGIN");
+  await withTransaction(async (client) => {
     await upsertPasswordCredential(client, userId, passwordHash);
     await client.query(
       `UPDATE phis.user_accounts
@@ -255,13 +243,7 @@ export async function updateUserAccountPasswordHash(
        WHERE id = $1`,
       [userId, options?.clearFlags ?? 0, options?.setFlags ?? 0],
     );
-    await client.query("COMMIT");
-  } catch (error) {
-    await client.query("ROLLBACK");
-    throw error;
-  } finally {
-    client.release();
-  }
+  });
 }
 
 export async function updateUserAccountFlags(
@@ -291,10 +273,7 @@ export async function updateUserAccountProfileFields(
     clearFlags?: number;
   } = {},
 ) {
-  const pool = getPool();
-  const client = await pool.connect();
-  try {
-    await client.query("BEGIN");
+  return withTransaction(async (client) => {
     if (input.email) {
       if (!input.emailSource) {
         throw new Error("EMAIL_SOURCE_REQUIRED");
@@ -359,7 +338,6 @@ export async function updateUserAccountProfileFields(
        LIMIT 1`,
       [userId],
     );
-    await client.query("COMMIT");
     return rows[0] && email.rows[0]
       ? {
           id: rows[0].id,
@@ -368,12 +346,7 @@ export async function updateUserAccountProfileFields(
           flags: rows[0].flags,
         }
       : null;
-  } catch (error) {
-    await client.query("ROLLBACK");
-    throw error;
-  } finally {
-    client.release();
-  }
+  });
 }
 
 export async function removeUserAccountSiteMembership(userId: number, siteId: number) {

@@ -1,6 +1,6 @@
 import "server-only";
 
-import { getPool } from "@/lib/db";
+import { getPool, withTransaction } from "@/lib/db";
 import {
   isPhiAuthLinkingMode,
   isPhiAuthFactorEnforcementMode,
@@ -266,10 +266,7 @@ async function updateSiteAuthConfiguration(
   siteId: number,
   update: (current: SiteAuthConfiguration) => SiteAuthConfiguration,
 ) {
-  const pool = getPool();
-  const client = await pool.connect();
-  try {
-    await client.query("BEGIN");
+  return withTransaction(async (client) => {
     await client.query(
       `INSERT INTO phis.site_auth_config (site_id)
        VALUES ($1)
@@ -311,17 +308,11 @@ async function updateSiteAuthConfiguration(
         providers: validated.providers,
       })],
     );
-    await client.query("COMMIT");
     return {
       ...validated,
       revision: rows[0].policy_revision + 1,
     };
-  } catch (error) {
-    await client.query("ROLLBACK");
-    throw error;
-  } finally {
-    client.release();
-  }
+  });
 }
 
 export async function ensureDefaultSiteAuthConfiguration(siteId: number) {

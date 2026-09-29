@@ -4,7 +4,7 @@ import type { PoolClient } from "pg";
 
 import { buildPhisCapabilitySnapshot } from "@/lib/addons/capability-snapshot";
 import type { PhiGroupProviderId, PhiViewerGroupClaim } from "@/lib/authorization";
-import { getPool } from "@/lib/db";
+import { getPool, withTransaction } from "@/lib/db";
 import {
   PHI_CORE_GROUP_PROVIDER_ID,
   PhiSiteGroupFlags,
@@ -292,10 +292,7 @@ export async function setLocalSiteGroupMembership(input: {
   providerId?: string;
 }) {
   const flags = normalizePhiGroupMembershipFlags(input.membershipFlags);
-  const pool = getPool();
-  const client = await pool.connect();
-  try {
-    await client.query("BEGIN");
+  return withTransaction(async (client) => {
     const before = await readEffectiveGroupFlagsWithDb(client, input.siteId, input.userId);
     const bindingKey = `local:${input.groupId}:${input.userId}`;
     const result = await client.query(
@@ -330,14 +327,8 @@ export async function setLocalSiteGroupMembership(input: {
         [input.siteId, input.userId],
       );
     }
-    await client.query("COMMIT");
     return after;
-  } catch (error) {
-    await client.query("ROLLBACK");
-    throw error;
-  } finally {
-    client.release();
-  }
+  });
 }
 
 export async function removeLocalSiteGroupMembership(input: {
@@ -346,10 +337,7 @@ export async function removeLocalSiteGroupMembership(input: {
   userId: number;
   providerId?: string;
 }) {
-  const pool = getPool();
-  const client = await pool.connect();
-  try {
-    await client.query("BEGIN");
+  return withTransaction(async (client) => {
     const before = await readEffectiveGroupFlagsWithDb(client, input.siteId, input.userId);
     await client.query(
       `DELETE FROM phis.site_group_members m USING phis.site_groups g
@@ -368,14 +356,8 @@ export async function removeLocalSiteGroupMembership(input: {
         [input.siteId, input.userId],
       );
     }
-    await client.query("COMMIT");
     return after;
-  } catch (error) {
-    await client.query("ROLLBACK");
-    throw error;
-  } finally {
-    client.release();
-  }
+  });
 }
 
 /**

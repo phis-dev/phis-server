@@ -15,7 +15,7 @@ import {
 } from "@phis/contracts/support";
 import { PhisThreadKind } from "@phis/contracts/threads";
 
-import { getPool } from "@/lib/db";
+import { getPool, withTransaction } from "@/lib/db";
 import { createThreadWithDb } from "@/db/threads";
 import { consumeSupportAllowanceWithDb, readSupportAllowance } from "@/db/support-allowance";
 
@@ -1603,9 +1603,7 @@ export async function createSupportQueue(input: {
   flags?: number;
   sortOrder?: number;
 }) {
-  const client = await getPool().connect();
-  try {
-    await client.query("BEGIN");
+  return withTransaction(async (client) => {
     // The group is the Site's, and a retired one routes nowhere -- so a queue may not be pointed at it.
     const { rows: groups } = await client.query<{ id: number }>(
       `SELECT id FROM phis.site_groups
@@ -1635,14 +1633,8 @@ export async function createSupportQueue(input: {
     if (((input.flags ?? 0) & PhisSupportQueueFlag.Entry) !== 0) {
       await moveEntryFlagWithDb(client, input.siteId, rows[0].id);
     }
-    await client.query("COMMIT");
     return rows[0].id;
-  } catch (error) {
-    await client.query("ROLLBACK");
-    throw error;
-  } finally {
-    client.release();
-  }
+  });
 }
 
 export async function updateSupportQueue(input: {
@@ -1654,9 +1646,7 @@ export async function updateSupportQueue(input: {
   sortOrder?: number;
   retired?: boolean;
 }) {
-  const client = await getPool().connect();
-  try {
-    await client.query("BEGIN");
+  await withTransaction(async (client) => {
     const { rows: existing } = await client.query<{ flags: number; retired_at: string | null }>(
       `SELECT flags, retired_at FROM phis.support_queues
        WHERE site_id = $1 AND id = $2 FOR UPDATE`,
@@ -1718,13 +1708,7 @@ export async function updateSupportQueue(input: {
     if ((flags & PhisSupportQueueFlag.Entry) !== 0) {
       await moveEntryFlagWithDb(client, input.siteId, input.queueId);
     }
-    await client.query("COMMIT");
-  } catch (error) {
-    await client.query("ROLLBACK");
-    throw error;
-  } finally {
-    client.release();
-  }
+  });
 }
 
 export async function createSupportTicketType(input: {

@@ -8,7 +8,7 @@ import {
 } from "@phis/contracts/addon";
 
 import { enqueuePhisAddonThreadEventForProviderWithDb } from "@/db/addon-events";
-import { getPool } from "@/lib/db";
+import { getPool, withTransaction } from "@/lib/db";
 import { schedulePhisAddonEventDelivery } from "@/lib/addons/event-trigger";
 
 export class PhisResourceLinkError extends Error {}
@@ -272,13 +272,10 @@ export async function deleteResourceLink(input: {
   providerId: string;
   linkId: number;
 }) {
-  const pool = getPool();
-  const client = await pool.connect();
   let removed = false;
   let siteId: number | null = null;
 
-  try {
-    await client.query("BEGIN");
+  await withTransaction(async (client) => {
     const { rows } = await client.query<{
       thread_id: number | null;
       ticket_thread_id: number | null;
@@ -325,13 +322,7 @@ export async function deleteResourceLink(input: {
       removed = (rowCount ?? 0) > 0;
       siteId = input.siteId;
     }
-    await client.query("COMMIT");
-  } catch (error) {
-    await client.query("ROLLBACK");
-    throw error;
-  } finally {
-    client.release();
-  }
+  });
 
   if (removed && siteId != null) {
     schedulePhisAddonEventDelivery(siteId);

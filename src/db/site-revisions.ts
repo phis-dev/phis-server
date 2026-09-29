@@ -6,7 +6,7 @@ import {
   collectRevisionContentIds,
   deleteOrphanedSiteContentByIdsWithDb,
 } from "@/db/site-content";
-import { getPool } from "@/lib/db";
+import { getPool, withTransaction } from "@/lib/db";
 import { isPhisCmsAreaKey, resolvePhisCmsAreaKey } from "@/lib/constants/cms-areas";
 import { PhiCmsRevisionFlags } from "@phis/contracts/cms";
 import { normalizeSiteCmsPath } from "@/lib/helpers/cms-path";
@@ -718,9 +718,7 @@ export async function restoreSiteRevision(
     throw new Error("revisionId must be a positive integer.");
   }
 
-  const client = await getPool().connect();
-  try {
-    await client.query("BEGIN");
+  return withTransaction(async (client) => {
     const scope = await resolveRevisionScopeWithDb(client, siteId, input);
     if (!scope.scopeId) {
       throw new SiteRevisionNotFoundError("Revision scope not found.");
@@ -880,7 +878,6 @@ export async function restoreSiteRevision(
     }
 
     await pruneScopeReferencesWithDb(client, scope);
-    await client.query("COMMIT");
     return {
       scope: buildScopeSummary(input, {
         publishedRevisionId: scope.publishedRevisionId,
@@ -889,12 +886,7 @@ export async function restoreSiteRevision(
       restoredFromRevisionId: input.revisionId,
       revisionId: newRevisionId,
     };
-  } catch (error) {
-    await client.query("ROLLBACK");
-    throw error;
-  } finally {
-    client.release();
-  }
+  });
 }
 
 export async function deleteSiteRevisionHistoryEntry(
@@ -910,9 +902,7 @@ export async function deleteSiteRevisionHistoryEntry(
     throw new Error("revisionId must be a positive integer.");
   }
 
-  const client = await getPool().connect();
-  try {
-    await client.query("BEGIN");
+  return withTransaction(async (client) => {
     const scope = await resolveRevisionScopeWithDb(client, siteId, input);
     if (!scope.scopeId) {
       throw new SiteRevisionNotFoundError("Revision scope not found.");
@@ -976,7 +966,6 @@ export async function deleteSiteRevisionHistoryEntry(
     }
 
     await pruneScopeReferencesWithDb(client, scope);
-    await client.query("COMMIT");
     return {
       scope: buildScopeSummary(input, {
         publishedRevisionId: scope.publishedRevisionId,
@@ -985,12 +974,7 @@ export async function deleteSiteRevisionHistoryEntry(
       revisionId: input.revisionId,
       deleted: true,
     };
-  } catch (error) {
-    await client.query("ROLLBACK");
-    throw error;
-  } finally {
-    client.release();
-  }
+  });
 }
 
 export async function deleteSiteRevisionHistoryEntries(
@@ -1013,9 +997,7 @@ export async function deleteSiteRevisionHistoryEntries(
     throw new Error("revisionIds must be a non-empty array.");
   }
 
-  const client = await getPool().connect();
-  try {
-    await client.query("BEGIN");
+  return withTransaction(async (client) => {
     const scope = await resolveRevisionScopeWithDb(client, siteId, input);
     if (!scope.scopeId) {
       throw new SiteRevisionNotFoundError("Revision scope not found.");
@@ -1080,7 +1062,6 @@ export async function deleteSiteRevisionHistoryEntries(
     }
 
     await pruneScopeReferencesWithDb(client, scope);
-    await client.query("COMMIT");
     return {
       scope: buildScopeSummary(input, {
         publishedRevisionId: scope.publishedRevisionId,
@@ -1089,12 +1070,7 @@ export async function deleteSiteRevisionHistoryEntries(
       revisionIds: normalizedRevisionIds,
       deletedCount,
     };
-  } catch (error) {
-    await client.query("ROLLBACK");
-    throw error;
-  } finally {
-    client.release();
-  }
+  });
 }
 
 export function isSiteRevisionConflictError(error: unknown) {

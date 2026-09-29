@@ -1,7 +1,7 @@
 import { createHash } from "crypto";
 import type { Pool, PoolClient } from "pg";
 
-import { getPool } from "@/lib/db";
+import { getPool, withTransaction } from "@/lib/db";
 
 type TranslationQueryClient = Pick<Pool | PoolClient, "query">;
 
@@ -18,19 +18,11 @@ async function markTranslationFill(client: TranslationQueryClient) {
 }
 
 async function inTranslationFill<T>(work: (client: PoolClient) => Promise<T>): Promise<T> {
-  const client = await getPool().connect();
-  try {
-    await client.query("BEGIN");
+  return withTransaction(async (client) => {
     await markTranslationFill(client);
     const result = await work(client);
-    await client.query("COMMIT");
     return result;
-  } catch (error) {
-    await client.query("ROLLBACK");
-    throw error;
-  } finally {
-    client.release();
-  }
+  });
 }
 
 function formatCollisionDetails(details: Record<string, unknown>) {

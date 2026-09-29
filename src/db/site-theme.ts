@@ -9,7 +9,7 @@ import {
   replaceSiteCmsReferencesWithDb,
 } from "@/db/site-cms-references";
 import { clearSiteConfigCache } from "@/db/site-config";
-import { getPool } from "@/lib/db";
+import { getPool, withTransaction } from "@/lib/db";
 import { PhiCmsRevisionFlags } from "@phis/contracts/cms";
 
 type DbQueryable = Pick<PoolClient, "query">;
@@ -460,9 +460,7 @@ export async function saveSiteThemeDraftRevision(
     theme,
   };
 
-  const client = await getPool().connect();
-  try {
-    await client.query("BEGIN");
+  return withTransaction(async (client) => {
 
     const scope = await upsertSiteThemeScopeWithDb(client, siteId, {
       key: normalizedKey,
@@ -501,17 +499,11 @@ export async function saveSiteThemeDraftRevision(
       references: collectSiteCmsReferences(tree),
     });
 
-    await client.query("COMMIT");
     return {
       revisionId: revision.id,
       theme: tree,
     };
-  } catch (error) {
-    await client.query("ROLLBACK");
-    throw error;
-  } finally {
-    client.release();
-  }
+  });
 }
 
 export async function publishSiteThemeRevision(

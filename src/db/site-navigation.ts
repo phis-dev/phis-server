@@ -2,7 +2,7 @@ import "server-only";
 
 import type { PoolClient } from "pg";
 
-import { getPool } from "@/lib/db";
+import { getPool, withTransaction } from "@/lib/db";
 import { PhiCmsRevisionFlags } from "@phis/contracts/cms";
 import { isPhisCmsAreaKey, resolvePhisCmsAreaMask } from "@/lib/constants/cms-areas";
 import {
@@ -977,9 +977,7 @@ export async function saveSiteNavigationDraftRevision(
   const normalizedKey = requireSiteNavigationScopeKey(input.key);
   const overlay = normalizeSiteNavigationOverlay(input.overlay, normalizedKey);
   const nextNodeSequence = readNextNodeSequence(input.nextNodeSequence);
-  const client = await getPool().connect();
-  try {
-    await client.query("BEGIN");
+  return withTransaction(async (client) => {
     /*
      * A save may carry folder targets into the other Navigations of its Area, so two saves in one Area
      * would each hold their own scope and wait for the other's. Saves of one Area take turns instead.
@@ -1040,14 +1038,8 @@ export async function saveSiteNavigationDraftRevision(
       previousTreeJson: baseRevision?.navScopeId === scope.id ? baseRevision.treeJson : sourceRevision?.treeJson ?? null,
       createdByUserId: options?.createdByUserId ?? null,
     });
-    await client.query("COMMIT");
     return { revisionId: revision.id, nextNodeSequence: revision.nextNodeSequence, overlay, carriedOver };
-  } catch (error) {
-    await client.query("ROLLBACK");
-    throw error;
-  } finally {
-    client.release();
-  }
+  });
 }
 
 export async function publishSiteNavigationRevision(
@@ -1058,9 +1050,7 @@ export async function publishSiteNavigationRevision(
     throw new Error("siteId must be a positive integer.");
   }
   const normalizedKey = requireSiteNavigationScopeKey(input.key);
-  const client = await getPool().connect();
-  try {
-    await client.query("BEGIN");
+  return withTransaction(async (client) => {
     const scope = await getSiteNavigationScopeByKeyWithDb(client, siteId, normalizedKey);
     if (!scope) {
       throw new Error("Navigation scope not found.");
@@ -1084,14 +1074,8 @@ export async function publishSiteNavigationRevision(
       publishedRevisionId: revision.id,
       workingDraftRevisionId: null,
     });
-    await client.query("COMMIT");
     return { revisionId: revision.id, nextNodeSequence: revision.nextNodeSequence, overlay };
-  } catch (error) {
-    await client.query("ROLLBACK");
-    throw error;
-  } finally {
-    client.release();
-  }
+  });
 }
 
 export async function deleteSiteNavigationDraftRevision(

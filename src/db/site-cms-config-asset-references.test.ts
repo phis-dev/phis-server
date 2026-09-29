@@ -132,7 +132,10 @@ describe("The Theme is a reference source of its own", () => {
     expect(body).toMatch(/sourceKind: PhiCmsReferenceSourceKind\.Theme/u);
     expect(body).toMatch(/sourceScopeId: scope\.id/u);
     expect(body).toMatch(/references: collectSiteCmsReferences\(tree\)/u);
-    expect(body.indexOf("PhiCmsReferenceSourceKind.Theme")).toBeLessThan(body.indexOf('COMMIT"'));
+    // Inside the transaction body, which commits only after it returns.
+    const transaction = body.indexOf("withTransaction(async (client) => {");
+    expect(transaction).toBeGreaterThan(-1);
+    expect(transaction).toBeLessThan(body.indexOf("PhiCmsReferenceSourceKind.Theme"));
   });
 
   it("is rewritten by the Theme publish, which may promote a revision that is not the draft", async () => {
@@ -185,6 +188,9 @@ describe("An Area's Module draft is a live source", () => {
     expect(body).toMatch(/references: collectSiteCmsReferences\(materializedTree, \{ targetAreaId: input\.areaMask \}\)/u);
     // After the merge, so the rows describe the tree that was published rather than the draft's copy.
     expect(body.indexOf("mergePhiAreaTreeForPublish")).toBeLessThan(body.indexOf("replaceSiteCmsReferencesWithDb"));
-    expect(body.indexOf("replaceSiteCmsReferencesWithDb")).toBeLessThan(body.indexOf('COMMIT"'));
+    // Inside the transaction body, which commits only after it returns.
+    const transaction = body.indexOf("withTransaction(async (client) => {");
+    expect(transaction).toBeGreaterThan(-1);
+    expect(transaction).toBeLessThan(body.indexOf("replaceSiteCmsReferencesWithDb"));
   });
 });

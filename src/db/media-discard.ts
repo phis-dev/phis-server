@@ -2,7 +2,7 @@ import "server-only";
 
 import type { PoolClient } from "pg";
 
-import { getPool } from "@/lib/db";
+import { getPool, withTransaction } from "@/lib/db";
 
 /**
  * Taking Media Assets out of the database and writing down the objects they stood for.
@@ -134,18 +134,10 @@ export async function discardPhiMediaAssets(
 export async function discardPhiMediaAssetsInTransaction(
   input: { siteId: number; assetIds: readonly number[] },
 ): Promise<PhiMediaDiscardResult> {
-  const client = await getPool().connect();
-  try {
-    await client.query("BEGIN");
+  return withTransaction(async (client) => {
     const discarded = await discardPhiMediaAssets(client, input);
-    await client.query("COMMIT");
     return discarded;
-  } catch (error) {
-    await client.query("ROLLBACK").catch(() => {});
-    throw error;
-  } finally {
-    client.release();
-  }
+  });
 }
 
 /**

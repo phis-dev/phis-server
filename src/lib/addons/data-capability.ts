@@ -23,7 +23,7 @@ import {
 import { derivePhisAddonSchemaName } from "./schema-name.ts";
 import type { PhisAddonRowAssets } from "./row-assets.ts";
 import type { PhiDiscardedMediaObject } from "@/db/media-discard";
-import { getPool } from "@/lib/db";
+import { getPool, withTransaction } from "@/lib/db";
 
 /**
  * Running an Add-on's declared queries.
@@ -424,18 +424,10 @@ async function withRowDeleteTransaction<T>(
   if (pending) {
     return await body(db as PoolClient);
   }
-  const client = await getPool().connect();
-  try {
-    await client.query("BEGIN");
+  return withTransaction(async (client) => {
     const result = await body(client);
-    await client.query("COMMIT");
     return result;
-  } catch (error) {
-    await client.query("ROLLBACK").catch(() => {});
-    throw error;
-  } finally {
-    client.release();
-  }
+  });
 }
 
 function buildOperations(

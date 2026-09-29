@@ -7,7 +7,7 @@ import { PhiSiteMediaFlags, resolvePhiMediaKindFromContentType } from "@/lib/con
 import { PhiGroupMembershipFlags } from "@/lib/constants/site-groups";
 import { getSiteGroupById, readEffectiveGroupMembershipFlags } from "@/db/site-groups";
 import type { RequestedMediaSpace } from "@/lib/guards/site-media-api";
-import { getPool } from "@/lib/db";
+import { getPool, withTransaction } from "@/lib/db";
 import type { PhisMediaStorageProbe } from "@phis/contracts/addon";
 import {
   PHI_LOCAL_MEDIA_STORAGE_PROVIDER_ID,
@@ -202,10 +202,7 @@ export async function ensureSiteMediaSpace(siteId: number) {
     };
   }
 
-  const pool = getPool();
-  const client = await pool.connect();
-  try {
-    await client.query("BEGIN");
+  return withTransaction(async (client) => {
     const profile = await ensureLocalStorageProfileWithDb(client, siteId);
     const { rows } = await client.query<{
       id: number; site_id: number; kind: number; user_id: number | null; group_id: number | null;
@@ -220,14 +217,8 @@ export async function ensureSiteMediaSpace(siteId: number) {
                  quota_bytes, used_bytes, reserved_bytes, flags`,
       [siteId, PhisMediaSpaceKind.Site, profile.id],
     );
-    await client.query("COMMIT");
     return { space: mapSpace(rows[0]!), profile };
-  } catch (error) {
-    await client.query("ROLLBACK");
-    throw error;
-  } finally {
-    client.release();
-  }
+  });
 }
 
 /**
@@ -700,10 +691,7 @@ export async function ensureGroupMediaSpace(siteId: number, groupId: number) {
   const existing = await getGroupMediaSpace(siteId, groupId);
   if (existing) return existing;
 
-  const pool = getPool();
-  const client = await pool.connect();
-  try {
-    await client.query("BEGIN");
+  return withTransaction(async (client) => {
     const profile = await ensureLocalStorageProfileWithDb(client, siteId);
     const { rows } = await client.query<{
       id: number; site_id: number; kind: number; user_id: number | null; group_id: number | null;
@@ -720,15 +708,9 @@ export async function ensureGroupMediaSpace(siteId: number, groupId: number) {
                  quota_bytes, used_bytes, reserved_bytes, flags`,
       [siteId, PhisMediaSpaceKind.Group, groupId, profile.id],
     );
-    await client.query("COMMIT");
     // No row means the group does not exist on this Site or is retired; the caller reports that.
     return rows[0] ? mapSpace(rows[0]) : null;
-  } catch (error) {
-    await client.query("ROLLBACK");
-    throw error;
-  } finally {
-    client.release();
-  }
+  });
 }
 
 export async function getGroupMediaSpace(siteId: number, groupId: number) {
@@ -1058,10 +1040,7 @@ export async function ensureUserMediaSpace(siteId: number, userId: number) {
   );
   if (existing.rows[0]) return mapSpace(existing.rows[0]);
 
-  const pool = getPool();
-  const client = await pool.connect();
-  try {
-    await client.query("BEGIN");
+  return withTransaction(async (client) => {
     const profile = await ensureLocalStorageProfileWithDb(client, siteId);
     const { rows } = await client.query<{
       id: number; site_id: number; kind: number; user_id: number | null; group_id: number | null;
@@ -1076,14 +1055,8 @@ export async function ensureUserMediaSpace(siteId: number, userId: number) {
                  quota_bytes, used_bytes, reserved_bytes, flags`,
       [siteId, PhisMediaSpaceKind.User, userId, profile.id],
     );
-    await client.query("COMMIT");
     return mapSpace(rows[0]!);
-  } catch (error) {
-    await client.query("ROLLBACK");
-    throw error;
-  } finally {
-    client.release();
-  }
+  });
 }
 
 /**

@@ -1,10 +1,29 @@
 import { readFile } from "node:fs/promises";
 
+import type { PoolClient } from "pg";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({ getPool: vi.fn() }));
 
-vi.mock("@/lib/db", () => ({ getPool: mocks.getPool }));
+// The transaction frame runs against the mocked pool, the way the real one runs against the pool it
+// builds, so the statements the tests read still show its BEGIN, COMMIT or ROLLBACK and the release.
+vi.mock("@/lib/db", () => ({
+  getPool: mocks.getPool,
+  withTransaction: async <T>(body: (client: PoolClient) => Promise<T>): Promise<T> => {
+    const client = await mocks.getPool().connect();
+    try {
+      await client.query("BEGIN");
+      const result = await body(client);
+      await client.query("COMMIT");
+      return result;
+    } catch (error) {
+      await client.query("ROLLBACK").catch(() => {});
+      throw error;
+    } finally {
+      client.release();
+    }
+  },
+}));
 
 import { commitMediaUploadSessionByToken, releaseExpiredMediaUploadSessions } from "./media";
 import { getMediaSpaceById, reserveMediaSpaceQuota } from "./media-spaces";

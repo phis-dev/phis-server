@@ -21,7 +21,7 @@ import {
   type PhisThreadSummary,
 } from "@phis/contracts/addon";
 
-import { getPool } from "@/lib/db";
+import { getPool, withTransaction } from "@/lib/db";
 import { PhisMediaSpaceKind } from "@/db/media-spaces";
 import { PhiMediaDeliveryPolicy } from "@phis/contracts/media";
 import { PhiBaseRole } from "@phis/contracts/access";
@@ -1396,13 +1396,10 @@ export async function setThreadStatus(input: {
   reader: ThreadReader;
   status: PhisThreadStatusValue;
 }) {
-  const pool = getPool();
-  const client = await pool.connect();
   let changed = false;
   let seen = false;
 
-  try {
-    await client.query("BEGIN");
+  await withTransaction(async (client) => {
     const thread = await readThreadRow(client, input.siteId, input.reader, input.threadId);
     if (thread) {
       seen = true;
@@ -1425,13 +1422,7 @@ export async function setThreadStatus(input: {
         });
       }
     }
-    await client.query("COMMIT");
-  } catch (error) {
-    await client.query("ROLLBACK");
-    throw error;
-  } finally {
-    client.release();
-  }
+  });
 
   if (changed) {
     schedulePhisAddonEventDelivery(input.siteId);

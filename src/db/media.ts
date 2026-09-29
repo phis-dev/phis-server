@@ -2,7 +2,7 @@ import "server-only";
 
 import type { PoolClient } from "pg";
 
-import { getPool } from "@/lib/db";
+import { getPool, withTransaction } from "@/lib/db";
 import { isPhisMediaIdentityChecksum } from "@phis/contracts/addon";
 import {
   PhiMediaUploadPlanKind,
@@ -311,9 +311,8 @@ async function assertFolderParent(db: DbQueryable, spaceId: number, parentId: nu
 export async function createMediaFolder(input: {
   siteId: number; spaceId: number; parentId?: number | null; name: string; sortOrder?: number; flags?: number;
 }) {
-  const pool = getPool(); const client = await pool.connect();
-  try {
-    await client.query("BEGIN"); await assertFolderParent(client, input.spaceId, input.parentId ?? null);
+  return withTransaction(async (client) => {
+    await assertFolderParent(client, input.spaceId, input.parentId ?? null);
     const { rows } = await client.query<FolderRow>(
       `INSERT INTO phis.media_folders (site_id, space_id, parent_id, name, sort_order, flags)
        SELECT $1, s.id, $3, $4, $5, $6 FROM phis.media_spaces s WHERE s.id = $2 AND s.site_id = $1
@@ -321,16 +320,14 @@ export async function createMediaFolder(input: {
       [input.siteId, input.spaceId, input.parentId ?? null, normalizeFolderPathSegment(input.name), input.sortOrder ?? 0, input.flags ?? 0],
     );
     if (!rows[0]) throw new Error("Active Media Space was not found.");
-    await client.query("COMMIT"); return mapFolder(rows[0]);
-  } catch (error) { await client.query("ROLLBACK"); throw error; } finally { client.release(); }
+    return mapFolder(rows[0]);
+  });
 }
 
 export async function updateMediaFolder(input: {
   siteId: number; spaceId: number; folderId: number; parentId?: number | null; name?: string; sortOrder?: number; flags?: number;
 }) {
-  const pool = getPool(); const client = await pool.connect();
-  try {
-    await client.query("BEGIN");
+  return withTransaction(async (client) => {
     if (input.parentId !== undefined) {
       await assertFolderParent(client, input.spaceId, input.parentId);
       await assertFolderMoveKeepsTree(client, input.spaceId, input.folderId, input.parentId);
@@ -344,15 +341,14 @@ export async function updateMediaFolder(input: {
       `UPDATE phis.media_folders SET ${sets.join(", ")} WHERE site_id = $1 AND space_id = $2 AND id = $3
        RETURNING id, site_id, space_id, parent_id, name, sort_order, flags, created_at, updated_at`, values,
     );
-    await client.query("COMMIT"); return rows[0] ? mapFolder(rows[0]) : null;
-  } catch (error) { await client.query("ROLLBACK"); throw error; } finally { client.release(); }
+    return rows[0] ? mapFolder(rows[0]) : null;
+  });
 }
 
 export async function resolveOrCreateMediaFolderPath(siteId: number, spaceId: number, folderPath: string[]): Promise<number | null> {
   const path = normalizeMediaFolderPath(folderPath); if (!path) throw new Error("Invalid Media Folder path.");
-  const pool = getPool(); const client = await pool.connect(); let parentId: number | null = null;
-  try {
-    await client.query("BEGIN");
+  let parentId: number | null = null;
+  return withTransaction(async (client) => {
     for (const name of path) {
       const found: { rows: FolderRow[] } = await client.query<FolderRow>(
         `SELECT id, site_id, space_id, parent_id, name, sort_order, flags, created_at, updated_at
@@ -363,8 +359,8 @@ export async function resolveOrCreateMediaFolderPath(siteId: number, spaceId: nu
       const folder: MediaFolderRecord = found.rows[0] ? mapFolder(found.rows[0]) : await createMediaFolderWithDb(client, { siteId, spaceId, parentId, name });
       parentId = folder.id;
     }
-    await client.query("COMMIT"); return parentId;
-  } catch (error) { await client.query("ROLLBACK"); throw error; } finally { client.release(); }
+    return parentId;
+  });
 }
 
 async function createMediaFolderWithDb(db: DbQueryable, input: { siteId: number; spaceId: number; parentId: number | null; name: string }) {
@@ -1046,17 +1042,9 @@ export async function releaseExpiredMediaUploadSessions(
  * whichever session reserved next.
  */
 export async function commitMediaUploadSessionByToken(token: string) {
-  const client = await getPool().connect();
-  try {
-    await client.query("BEGIN");
+  await withTransaction(async (client) => {
     await commitMediaUploadSessionWithDb(client, token);
-    await client.query("COMMIT");
-  } catch (error) {
-    await client.query("ROLLBACK");
-    throw error;
-  } finally {
-    client.release();
-  }
+  });
 }
 
 /**
@@ -1089,20 +1077,12 @@ export async function createMediaAssetFromUploadSession(
   token: string,
   input: Parameters<typeof createMediaAsset>[0],
 ) {
-  const client = await getPool().connect();
-  try {
-    await client.query("BEGIN");
+  return withTransaction(async (client) => {
     const asset = await createMediaAsset(input, client);
     if (!asset) throw new Error("Failed to persist media asset.");
     await commitMediaUploadSessionWithDb(client, token);
-    await client.query("COMMIT");
     return asset;
-  } catch (error) {
-    await client.query("ROLLBACK").catch(() => {});
-    throw error;
-  } finally {
-    client.release();
-  }
+  });
 }
 
 /**

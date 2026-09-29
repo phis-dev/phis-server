@@ -47,8 +47,11 @@ describe("An Area's own tree is a reference source", () => {
     const body = fn![0];
     expect(body).toMatch(/sourceKind: PhiCmsReferenceSourceKind\.Area/u);
     expect(body).toMatch(/sourceScopeId: scope\.id/u);
-    // The index write sits before the commit, so a rolled-back save leaves no reference behind.
-    expect(body.indexOf("PhiCmsReferenceSourceKind.Area")).toBeLessThan(body.indexOf('COMMIT"'));
+    // The index write sits inside the transaction body, which commits only after it returns, so a
+    // rolled-back save leaves no reference behind.
+    const transaction = body.indexOf("withTransaction(async (client) => {");
+    expect(transaction).toBeGreaterThan(-1);
+    expect(transaction).toBeLessThan(body.indexOf("PhiCmsReferenceSourceKind.Area"));
   });
 
   it("carries the Area as the target Area, the way the Page source does", async () => {
