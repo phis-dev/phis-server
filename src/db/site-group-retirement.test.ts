@@ -29,11 +29,11 @@ describe("A retired group grants nothing", () => {
     const fn = /export async function setSiteGroupRetirement[\s\S]*?\n\}\n/u.exec(source);
     expect(fn).not.toBeNull();
     const body = fn![0];
-    expect(body).toMatch(/BEGIN/u);
     expect(body).toMatch(/authorization_revision = authorization_revision \+ 1/u);
-    expect(body).toMatch(/COMMIT/u);
-    // The revision update sits between them, not after the commit.
-    expect(body.indexOf("authorization_revision")).toBeLessThan(body.indexOf("COMMIT"));
+    // The revision update sits inside the transaction body, which commits only after it returns.
+    const transaction = body.indexOf("withTransaction(async (client) => {");
+    expect(transaction).toBeGreaterThan(-1);
+    expect(transaction).toBeLessThan(body.indexOf("authorization_revision"));
   });
 
   it("only writes the state of a group this Site owns", async () => {

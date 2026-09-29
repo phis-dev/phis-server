@@ -2,7 +2,7 @@ import "server-only";
 
 import { createHash, randomBytes } from "node:crypto";
 
-import { getPool } from "@/lib/db";
+import { getPool, withTransaction } from "@/lib/db";
 import { encryptRegistrationPassword } from "@/lib/registration-secret";
 
 const REGISTRATION_INTENT_FLAG_NEWSLETTER_OPT_IN = 1 << 0;
@@ -144,9 +144,6 @@ function mapVerificationRow(
 export async function createRegistrationIntent(
   input: CreateRegistrationIntentInput,
 ): Promise<RegistrationIntentRecord> {
-  const pool = getPool();
-  const client = await pool.connect();
-
   const verificationToken = randomBytes(32).toString("hex");
   const verificationTokenHash = sha256Hex(verificationToken);
   const encryptedPassword = input.password?.trim()
@@ -155,9 +152,7 @@ export async function createRegistrationIntent(
   const normalizedEmail = normalizeEmail(input.email);
   const flags = buildIntentFlags(input.newsletterOptIn);
 
-  try {
-    await client.query("BEGIN");
-
+  const rows = await withTransaction(async (client) => {
     // Somebody else's address, not the asking account's own: returning to an address this account held
     // before is an email change like any other, and it used to end here as a 500.
     const existingUser = await client.query<{ id: number }>(
@@ -246,27 +241,21 @@ export async function createRegistrationIntent(
         verificationTokenHash,
       ],
     );
+    return rows;
+  });
 
-    await client.query("COMMIT");
-
-    const row = rows[0];
-    return {
-      id: row.id,
-      siteId: row.site_id,
-      email: row.email,
-      firstName: row.first_name,
-      lastName: row.last_name,
-      fullName: buildFullName(row.first_name, row.last_name),
-      locale: row.locale,
-      verificationToken,
-      verificationTokenExpiresAt: row.verification_token_expires_at,
-    };
-  } catch (error) {
-    await client.query("ROLLBACK");
-    throw error;
-  } finally {
-    client.release();
-  }
+  const row = rows[0];
+  return {
+    id: row.id,
+    siteId: row.site_id,
+    email: row.email,
+    firstName: row.first_name,
+    lastName: row.last_name,
+    fullName: buildFullName(row.first_name, row.last_name),
+    locale: row.locale,
+    verificationToken,
+    verificationTokenExpiresAt: row.verification_token_expires_at,
+  };
 }
 
 export async function getRegistrationIntentByVerificationToken(siteId: number, token: string) {

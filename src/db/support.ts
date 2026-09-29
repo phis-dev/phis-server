@@ -683,15 +683,10 @@ export async function isSupportSiteUser(siteId: number, userId: number) {
 }
 
 export async function applySupportTicketAssignmentAction(input: SupportTicketAssignmentActionInput) {
-  const pool = getPool();
-  const client = await pool.connect();
-
-  try {
-    await client.query("BEGIN");
+  const found = await withTransaction(async (client) => {
     const existing = await getSupportTicketRowById(client, input.siteId, input.ticketId);
     if (!existing) {
-      await client.query("ROLLBACK");
-      return null;
+      return false;
     }
 
     if (input.action === "assign_to_me") {
@@ -869,14 +864,12 @@ export async function applySupportTicketAssignmentAction(input: SupportTicketAss
       }
     }
 
-    await client.query("COMMIT");
-    return getSupportTicketDetail(input.siteId, input.ticketId);
-  } catch (error) {
-    await client.query("ROLLBACK");
-    throw error;
-  } finally {
-    client.release();
+    return true;
+  });
+  if (!found) {
+    return null;
   }
+  return getSupportTicketDetail(input.siteId, input.ticketId);
 }
 
 export async function getSupportTicketDetail(siteId: number, ticketId: number) {
@@ -895,11 +888,7 @@ export async function getSupportTicketDetail(siteId: number, ticketId: number) {
 }
 
 export async function createSupportTicket(input: CreateSupportTicketInput) {
-  const pool = getPool();
-  const client = await pool.connect();
-
-  try {
-    await client.query("BEGIN");
+  const createdTicketId = await withTransaction(async (client) => {
     /*
      * Where this ticket lands, and the group that therefore sees it.
      *
@@ -1031,14 +1020,9 @@ export async function createSupportTicket(input: CreateSupportTicketInput) {
       },
     });
 
-    await client.query("COMMIT");
-    return getSupportTicketDetail(input.siteId, ticketId);
-  } catch (error) {
-    await client.query("ROLLBACK");
-    throw error;
-  } finally {
-    client.release();
-  }
+    return ticketId;
+  });
+  return getSupportTicketDetail(input.siteId, createdTicketId);
 }
 
 /**
@@ -1120,15 +1104,10 @@ async function assertSupportTicketReferencesOfSite(
 }
 
 export async function updateSupportTicket(input: UpdateSupportTicketInput) {
-  const pool = getPool();
-  const client = await pool.connect();
-
-  try {
-    await client.query("BEGIN");
+  const found = await withTransaction(async (client) => {
     const existing = await getSupportTicketRowById(client, input.siteId, input.ticketId);
     if (!existing) {
-      await client.query("ROLLBACK");
-      return null;
+      return false;
     }
 
     await assertSupportTicketReferencesOfSite(client, input.siteId, {
@@ -1225,26 +1204,19 @@ export async function updateSupportTicket(input: UpdateSupportTicketInput) {
       });
     }
 
-    await client.query("COMMIT");
-    return getSupportTicketDetail(input.siteId, input.ticketId);
-  } catch (error) {
-    await client.query("ROLLBACK");
-    throw error;
-  } finally {
-    client.release();
+    return true;
+  });
+  if (!found) {
+    return null;
   }
+  return getSupportTicketDetail(input.siteId, input.ticketId);
 }
 
 export async function addSupportTicketTask(input: AddSupportTicketTaskInput) {
-  const pool = getPool();
-  const client = await pool.connect();
-
-  try {
-    await client.query("BEGIN");
+  const found = await withTransaction(async (client) => {
     const existing = await getSupportTicketRowById(client, input.siteId, input.ticketId);
     if (!existing) {
-      await client.query("ROLLBACK");
-      return null;
+      return false;
     }
 
     await assertSupportTicketReferencesOfSite(client, input.siteId, { assigneeUserId: input.assigneeUserId });
@@ -1311,26 +1283,19 @@ export async function addSupportTicketTask(input: AddSupportTicketTaskInput) {
       payload: { taskId: rows[0]?.id ?? null },
     });
 
-    await client.query("COMMIT");
-    return getSupportTicketDetail(input.siteId, input.ticketId);
-  } catch (error) {
-    await client.query("ROLLBACK");
-    throw error;
-  } finally {
-    client.release();
+    return true;
+  });
+  if (!found) {
+    return null;
   }
+  return getSupportTicketDetail(input.siteId, input.ticketId);
 }
 
 export async function updateSupportTicketTask(input: UpdateSupportTicketTaskInput) {
-  const pool = getPool();
-  const client = await pool.connect();
-
-  try {
-    await client.query("BEGIN");
+  const found = await withTransaction(async (client) => {
     const existing = await getSupportTicketTaskRowById(client, input.siteId, input.ticketId, input.taskId);
     if (!existing) {
-      await client.query("ROLLBACK");
-      return null;
+      return false;
     }
     await assertSupportTicketReferencesOfSite(client, input.siteId, { assigneeUserId: input.assigneeUserId });
 
@@ -1389,26 +1354,19 @@ export async function updateSupportTicketTask(input: UpdateSupportTicketTaskInpu
       });
     }
 
-    await client.query("COMMIT");
-    return getSupportTicketDetail(input.siteId, input.ticketId);
-  } catch (error) {
-    await client.query("ROLLBACK");
-    throw error;
-  } finally {
-    client.release();
+    return true;
+  });
+  if (!found) {
+    return null;
   }
+  return getSupportTicketDetail(input.siteId, input.ticketId);
 }
 
 export async function deleteSupportTicketTask(siteId: number, ticketId: number, taskId: number, userId?: number | null) {
-  const pool = getPool();
-  const client = await pool.connect();
-
-  try {
-    await client.query("BEGIN");
+  const found = await withTransaction(async (client) => {
     const existing = await getSupportTicketTaskRowById(client, siteId, ticketId, taskId);
     if (!existing) {
-      await client.query("ROLLBACK");
-      return null;
+      return false;
     }
 
     await client.query(
@@ -1426,14 +1384,12 @@ export async function deleteSupportTicketTask(siteId: number, ticketId: number, 
       [siteId, ticketId, userId ?? null],
     );
 
-    await client.query("COMMIT");
-    return getSupportTicketDetail(siteId, ticketId);
-  } catch (error) {
-    await client.query("ROLLBACK");
-    throw error;
-  } finally {
-    client.release();
+    return true;
+  });
+  if (!found) {
+    return null;
   }
+  return getSupportTicketDetail(siteId, ticketId);
 }
 
 /**

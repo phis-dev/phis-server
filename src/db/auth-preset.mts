@@ -1,6 +1,7 @@
 import type { Pool, PoolClient } from "pg";
 import { PhiCmsVisibilityContext } from "@phis/contracts/cms";
 import { PHI_AREA_CONFIG_MODULES_NAMESPACE } from "../lib/cms/area-config.ts";
+import { withPoolTransaction } from "../lib/db-transaction.ts";
 
 export const PHI_FIRST_PARTY_AUTH_UI_MODULE_ID = "@phis/ui/modules/auth";
 
@@ -192,9 +193,7 @@ async function observeAuthUiProviders(client: PoolClient, siteId: number) {
 export async function restoreFirstPartyAuthPreset(pool: Pool, siteKeyInput: string) {
   const siteKey = siteKeyInput.trim().toLowerCase();
   if (!siteKey) throw new Error("Missing --site.");
-  const client = await pool.connect();
-  try {
-    await client.query("BEGIN");
+  return withPoolTransaction(pool, async (client) => {
     const { rows: sites } = await client.query<{ id: number; key: string }>(
       `SELECT id, key FROM phis.sites WHERE key = $1 LIMIT 1 FOR UPDATE`,
       [siteKey],
@@ -335,7 +334,6 @@ export async function restoreFirstPartyAuthPreset(pool: Pool, siteKeyInput: stri
         : []),
     ];
 
-    await client.query("COMMIT");
     return {
       ok: true,
       action: "auth.restore-preset",
@@ -348,10 +346,5 @@ export async function restoreFirstPartyAuthPreset(pool: Pool, siteKeyInput: stri
       pagePresets,
       warnings,
     };
-  } catch (error) {
-    await client.query("ROLLBACK");
-    throw error;
-  } finally {
-    client.release();
-  }
+  });
 }

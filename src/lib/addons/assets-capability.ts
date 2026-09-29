@@ -51,7 +51,7 @@ import {
   unlinkPhisAddonAsset,
   type PhisAddonAssetRow,
 } from "@/db/server-addon-assets.mts";
-import { getPool } from "@/lib/db";
+import { getPool, withTransaction } from "@/lib/db";
 
 /**
  * Filling the slots a table declared.
@@ -433,10 +433,7 @@ export function buildPhisAddonAssetsCapability(input: {
         }
       }
 
-      const client = await getPool().connect();
-      let linked: { id: string; supersededMediaAssetId: number | null };
-      try {
-        await client.query("BEGIN");
+      const linked = await withTransaction(async (client) => {
         // Reservation becomes usage in the same act that creates the row it paid for.
         const committed = await commitMediaSpaceReservationWithDb(client, {
           spaceId: space.id,
@@ -463,7 +460,7 @@ export function buildPhisAddonAssetsCapability(input: {
         if (!asset) {
           throw new PhisAddonAssetError("The Media Asset could not be created.");
         }
-        linked = await linkPhisAddonAsset(client, {
+        const link = await linkPhisAddonAsset(client, {
           location, siteId, ownerId: ref.ownerId, slot: ref.slot,
           mediaAssetId: asset.id,
           single: declared.cardinality === "one",
@@ -483,13 +480,8 @@ export function buildPhisAddonAssetsCapability(input: {
         }
         // While the row exists its bytes are reserved, and while it is gone they are used: never both.
         await deleteMediaUploadSessionWithDb(client, token);
-        await client.query("COMMIT");
-      } catch (error) {
-        await client.query("ROLLBACK").catch(() => {});
-        throw error;
-      } finally {
-        client.release();
-      }
+        return link;
+      });
 
       // The displaced file, removed after the row that pointed at it is gone. Media's own delete takes
       // the object and the Space's figures with it.

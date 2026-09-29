@@ -7,6 +7,8 @@ import {
   PhiUserEmailSource,
 } from "@phis/contracts/access";
 
+import { withPoolTransaction } from "../lib/db-transaction.ts";
+
 /**
  * Site administrators, from the operator's side.
  *
@@ -64,10 +66,7 @@ export async function grantPhiCliSiteAdmin(
     lastName?: string | null;
   },
 ): Promise<PhiCliSiteAdminGrant> {
-  const client = await pool.connect();
-  try {
-    await client.query("BEGIN");
-
+  return withPoolTransaction(pool, async (client) => {
     let userId = await findUserIdByEmail(client, input.email);
     const accountCreated = userId === null;
 
@@ -140,7 +139,6 @@ export async function grantPhiCliSiteAdmin(
       );
     }
 
-    await client.query("COMMIT");
     return {
       userId,
       email: input.email,
@@ -148,14 +146,7 @@ export async function grantPhiCliSiteAdmin(
       passwordSet: accountCreated,
       alreadyAdmin,
     };
-  } catch (error) {
-    try {
-      await client.query("ROLLBACK");
-    } catch {}
-    throw error;
-  } finally {
-    client.release();
-  }
+  });
 }
 
 /**
@@ -170,14 +161,9 @@ export async function revokePhiCliSiteAdmin(
   pool: Pool,
   input: { siteId: number; email: string },
 ): Promise<{ userId: number; wasAdmin: boolean } | null> {
-  const client = await pool.connect();
-  try {
-    await client.query("BEGIN");
+  return withPoolTransaction(pool, async (client) => {
     const userId = await findUserIdByEmail(client, input.email);
-    if (userId === null) {
-      await client.query("ROLLBACK");
-      return null;
-    }
+    if (userId === null) return null;
     const { rows } = await client.query<{ role_flags: number }>(
       `SELECT role_flags
        FROM phis.user_site_role_claims
@@ -187,7 +173,6 @@ export async function revokePhiCliSiteAdmin(
     );
     const current = rows[0]?.role_flags ?? 0;
     if ((current & PhiBaseRole.Admin) === 0) {
-      await client.query("COMMIT");
       return { userId, wasAdmin: false };
     }
 
@@ -206,16 +191,8 @@ export async function revokePhiCliSiteAdmin(
         [userId, input.siteId, PHI_CORE_ROLE_PROVIDER_ID, remaining],
       );
     }
-    await client.query("COMMIT");
     return { userId, wasAdmin: true };
-  } catch (error) {
-    try {
-      await client.query("ROLLBACK");
-    } catch {}
-    throw error;
-  } finally {
-    client.release();
-  }
+  });
 }
 
 /** Who holds the Admin role on one Site. */

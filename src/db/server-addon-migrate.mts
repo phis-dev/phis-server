@@ -6,6 +6,7 @@ import type {
   PhisAddonManifestV1,
   PhisAddonSchemaDescriptor,
 } from "../lib/addons/contract.ts";
+import { withPoolTransaction } from "../lib/db-transaction.ts";
 import { stablePhiJson } from "../lib/addons/manifest.ts";
 import { derivePhisAddonSchemaName } from "../lib/addons/schema-name.ts";
 import {
@@ -93,9 +94,7 @@ export async function migratePhisAddon(
   manifestDigest: string,
 ): Promise<PhisAddonMigrationOutcome> {
   const { manifest, releaseBuildId, servingRole } = input;
-  const client = await pool.connect();
-  try {
-    await client.query("BEGIN");
+  return withPoolTransaction(pool, async (client) => {
     await ensureCatalogRow(client, manifest, releaseBuildId, manifestDigest);
 
     const { rows: catalogRows } = await client.query<{ schema_name: string | null }>(
@@ -115,7 +114,6 @@ export async function migratePhisAddon(
         `UPDATE phis.server_addons SET migration_version = 0, updated_at = NOW() WHERE addon_id = $1`,
         [manifest.addonId],
       );
-      await client.query("COMMIT");
       return {
         addonId: manifest.addonId,
         schemaName: null,
@@ -144,7 +142,6 @@ export async function migratePhisAddon(
     if (appliedRows.length > 0) {
       const current = appliedRows.at(-1)!;
       if (current.migration_version === manifest.schema.version && current.checksum === checksum) {
-        await client.query("COMMIT");
         return {
           addonId: manifest.addonId,
           schemaName,
@@ -204,7 +201,6 @@ export async function migratePhisAddon(
       [manifest.addonId, manifest.schema.version],
     );
 
-    await client.query("COMMIT");
     return {
       addonId: manifest.addonId,
       schemaName,
@@ -212,12 +208,7 @@ export async function migratePhisAddon(
       action: "applied",
       statements: statements.map((statement) => statement.summary),
     };
-  } catch (error) {
-    await client.query("ROLLBACK");
-    throw error;
-  } finally {
-    client.release();
-  }
+  });
 }
 
 /**
@@ -229,9 +220,7 @@ export async function migratePhisAddon(
  * to stay readable.
  */
 export async function purgePhisAddon(pool: Pool, addonId: string) {
-  const client = await pool.connect();
-  try {
-    await client.query("BEGIN");
+  return withPoolTransaction(pool, async (client) => {
     const { rows } = await client.query<{ schema_name: string | null }>(
       `SELECT schema_name FROM phis.server_addons WHERE addon_id = $1 FOR UPDATE`,
       [addonId],
@@ -318,7 +307,6 @@ export async function purgePhisAddon(pool: Pool, addonId: string) {
       [addonId],
     );
     await client.query(`DELETE FROM phis.server_addons WHERE addon_id = $1`, [addonId]);
-    await client.query("COMMIT");
     return {
       addonId,
       schemaName,
@@ -327,10 +315,5 @@ export async function purgePhisAddon(pool: Pool, addonId: string) {
       /** Objects now on the removal list. They are removed by a drain, not by this transaction. */
       discardedObjects: discarded.length,
     };
-  } catch (error) {
-    await client.query("ROLLBACK");
-    throw error;
-  } finally {
-    client.release();
-  }
+  });
 }

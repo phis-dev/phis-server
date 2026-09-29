@@ -1,6 +1,7 @@
 import "server-only";
 import { Pool, type PoolClient } from "pg";
 import { getPhisConfigSync } from "@/lib/config";
+import { withPoolTransaction } from "@/lib/db-transaction";
 
 function buildPostgresPool(): Pool {
   const connectionString = getPhisConfigSync().database?.uri?.trim() ?? null;
@@ -31,16 +32,5 @@ export function getPool() {
  * one place, the body only ever sees the client it has to use.
  */
 export async function withTransaction<T>(body: (client: PoolClient) => Promise<T>): Promise<T> {
-  const client = await getPool().connect();
-  try {
-    await client.query("BEGIN");
-    const result = await body(client);
-    await client.query("COMMIT");
-    return result;
-  } catch (error) {
-    await client.query("ROLLBACK").catch(() => {});
-    throw error;
-  } finally {
-    client.release();
-  }
+  return withPoolTransaction(getPool(), body);
 }

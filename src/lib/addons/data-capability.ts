@@ -524,26 +524,16 @@ export function buildPhisAddonDataCapability(input: {
   return Object.freeze({
     ...pooled,
     async transaction(body) {
-      const client = await getPool().connect();
       const pending: PhiDiscardedMediaObject[] = [];
-      try {
-        await client.query("BEGIN");
-        // The handle offers the four operations and nothing else, so an Add-on has no way to commit,
-        // roll back, or leave the transaction open. Returning ends it; throwing undoes it.
-        const result = await body(buildOperations(client, bound, pending));
-        await client.query("COMMIT");
-        // Only now: a rollback would have put the rows back, and the objects have to still be there
-        // when it does. Notes written inside the transaction leave with it.
-        if (pending.length > 0) {
-          await input.rowAssets?.drain(pending);
-        }
-        return result;
-      } catch (error) {
-        await client.query("ROLLBACK").catch(() => {});
-        throw error;
-      } finally {
-        client.release();
+      // The handle offers the four operations and nothing else, so an Add-on has no way to commit,
+      // roll back, or leave the transaction open. Returning ends it; throwing undoes it.
+      const result = await withTransaction((client) => body(buildOperations(client, bound, pending)));
+      // Only now: a rollback would have put the rows back, and the objects have to still be there
+      // when it does. Notes written inside the transaction leave with it.
+      if (pending.length > 0) {
+        await input.rowAssets?.drain(pending);
       }
+      return result;
     },
   } satisfies PhisDataCapabilityV1);
 }

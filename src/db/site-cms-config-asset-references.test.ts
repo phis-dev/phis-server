@@ -144,7 +144,10 @@ describe("The Theme is a reference source of its own", () => {
     expect(fn, "the Theme publish stays findable").not.toBeNull();
     const body = fn![0];
     expect(body).toMatch(/sourceKind: PhiCmsReferenceSourceKind\.Theme/u);
-    expect(body.indexOf("PhiCmsReferenceSourceKind.Theme")).toBeLessThan(body.indexOf('COMMIT"'));
+    // Inside the transaction body, which commits only after it returns.
+    const transaction = body.indexOf("withTransaction(async (client) => {");
+    expect(transaction).toBeGreaterThan(-1);
+    expect(transaction).toBeLessThan(body.indexOf("PhiCmsReferenceSourceKind.Theme"));
   });
 
   it("carries no Area, because a Site-wide Scope has none to resolve a Page in", async () => {

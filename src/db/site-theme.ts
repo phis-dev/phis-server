@@ -516,10 +516,7 @@ export async function publishSiteThemeRevision(
 
   const normalizedKey = normalizeSiteThemeScopeKey(input?.key);
 
-  const client = await getPool().connect();
-  try {
-    await client.query("BEGIN");
-
+  const published = await withTransaction(async (client) => {
     const scope = await getSiteThemeScopeByKeyWithDb(client, siteId, normalizedKey);
     if (!scope) {
       throw new Error("Theme scope not found.");
@@ -570,18 +567,13 @@ export async function publishSiteThemeRevision(
       [siteId, JSON.stringify(tree.theme)],
     );
 
-    await client.query("COMMIT");
-    clearSiteConfigCache(siteId);
     return {
       revisionId: revision.id,
       theme: tree,
     };
-  } catch (error) {
-    await client.query("ROLLBACK");
-    throw error;
-  } finally {
-    client.release();
-  }
+  });
+  clearSiteConfigCache(siteId);
+  return published;
 }
 
 export async function deleteSiteThemeDraftRevision(
@@ -594,13 +586,9 @@ export async function deleteSiteThemeDraftRevision(
 
   const normalizedKey = normalizeSiteThemeScopeKey(input?.key);
 
-  const client = await getPool().connect();
-  try {
-    await client.query("BEGIN");
-
+  return withTransaction(async (client) => {
     const scope = await getSiteThemeScopeByKeyWithDb(client, siteId, normalizedKey);
     if (!scope?.workingDraftRevisionId) {
-      await client.query("COMMIT");
       return { deleted: false };
     }
 
@@ -615,12 +603,6 @@ export async function deleteSiteThemeDraftRevision(
       workingDraftRevisionId: null,
     });
 
-    await client.query("COMMIT");
     return { deleted: true };
-  } catch (error) {
-    await client.query("ROLLBACK");
-    throw error;
-  } finally {
-    client.release();
-  }
+  });
 }

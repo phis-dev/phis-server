@@ -4,7 +4,14 @@ import type { PhisAddonManifestV1 } from "./contract.ts";
 
 const mocks = vi.hoisted(() => ({ getPool: vi.fn() }));
 
-vi.mock("@/lib/db", () => ({ getPool: mocks.getPool }));
+vi.mock("@/lib/db", async () => {
+  const { withPoolTransaction } = await import("@/lib/db-transaction");
+  return {
+    getPool: mocks.getPool,
+    withTransaction: (body: Parameters<typeof withPoolTransaction>[1]) =>
+      withPoolTransaction(mocks.getPool(), body),
+  };
+});
 
 import { buildPhisAddonDataCapability } from "./data-capability";
 

@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 
 import type { Pool } from "pg";
 
+import { withPoolTransaction } from "../lib/db-transaction.ts";
 import { SITE_FLAG_ACTIVE } from "../lib/site-flags.ts";
 
 export type PhiCliSiteRecord = {
@@ -63,9 +64,7 @@ export async function createPhiCliSite(pool: Pool, input: {
   supportEmail: string;
   mailHost: string;
 }) {
-  const client = await pool.connect();
-  try {
-    await client.query("BEGIN");
+  return withPoolTransaction(pool, async (client) => {
     const { rows } = await client.query<SiteRow>(
       `INSERT INTO phis.sites (
          key,
@@ -109,14 +108,8 @@ export async function createPhiCliSite(pool: Pool, input: {
        ON CONFLICT (site_id) DO NOTHING`,
       [created.id],
     );
-    await client.query("COMMIT");
     return mapSiteRow(created);
-  } catch (error) {
-    await client.query("ROLLBACK");
-    throw error;
-  } finally {
-    client.release();
-  }
+  });
 }
 
 export async function deletePhiCliSiteByKey(pool: Pool, siteKey: string) {
@@ -205,9 +198,7 @@ export async function setPhiCliSiteEnabled(pool: Pool, siteKey: string, enabled:
 }
 
 export async function addPhiCliSiteLocale(pool: Pool, siteKey: string, locale: string) {
-  const client = await pool.connect();
-  try {
-    await client.query("BEGIN");
+  return withPoolTransaction(pool, async (client) => {
     const { rows } = await client.query<{
       key: string;
       default_locale: string;
@@ -221,10 +212,7 @@ export async function addPhiCliSiteLocale(pool: Pool, siteKey: string, locale: s
       [siteKey],
     );
     const site = rows[0];
-    if (!site) {
-      await client.query("ROLLBACK");
-      return null;
-    }
+    if (!site) return null;
     const availableLocales = Array.from(
       new Set([site.default_locale, ...(site.available_locales ?? []), locale]),
     );
@@ -239,15 +227,9 @@ export async function addPhiCliSiteLocale(pool: Pool, siteKey: string, locale: s
        RETURNING key, available_locales`,
       [siteKey, availableLocales],
     );
-    await client.query("COMMIT");
     const updated = updatedRows[0];
     return updated
       ? { key: updated.key, availableLocales: updated.available_locales ?? availableLocales }
       : null;
-  } catch (error) {
-    await client.query("ROLLBACK");
-    throw error;
-  } finally {
-    client.release();
-  }
+  });
 }

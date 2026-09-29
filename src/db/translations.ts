@@ -278,10 +278,7 @@ export async function ensureGlobalExternalTranslationUnit(input: {
   ctx: string;
 }) {
   const sourceHash = normalizeMessageHash(input.sourceHash);
-  const pool = getPool();
-  const client = await pool.connect();
-  try {
-    await client.query("BEGIN");
+  return withTransaction(async (client) => {
     await markTranslationFill(client);
     await client.query(
       "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
@@ -295,7 +292,6 @@ export async function ensureGlobalExternalTranslationUnit(input: {
       database: client,
     });
     if (existingUnit) {
-      await client.query("COMMIT");
       return existingUnit.msgId;
     }
     const msgId = await ensureMessageId(
@@ -321,14 +317,8 @@ export async function ensureGlobalExternalTranslationUnit(input: {
        DO UPDATE SET source_hash = EXCLUDED.source_hash, updated_at = NOW()`,
       [msgId, input.sourceLocale, input.source, sourceHash],
     );
-    await client.query("COMMIT");
     return msgId;
-  } catch (error) {
-    await client.query("ROLLBACK");
-    throw error;
-  } finally {
-    client.release();
-  }
+  });
 }
 
 async function ensureMessageId(
@@ -411,10 +401,7 @@ export async function ensureSiteExternalTranslationUnit(input: {
   ctx: string;
 }) {
   const sourceHash = normalizeMessageHash(input.sourceHash);
-  const pool = getPool();
-  const client = await pool.connect();
-  try {
-    await client.query("BEGIN");
+  return withTransaction(async (client) => {
     await markTranslationFill(client);
     await client.query(
       "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
@@ -429,7 +416,6 @@ export async function ensureSiteExternalTranslationUnit(input: {
       database: client,
     });
     if (existingUnit) {
-      await client.query("COMMIT");
       return existingUnit.msgId;
     }
     const msgId = await ensureSiteMessageId(
@@ -455,14 +441,8 @@ export async function ensureSiteExternalTranslationUnit(input: {
        DO UPDATE SET source_hash = EXCLUDED.source_hash, updated_at = NOW()`,
       [msgId, input.sourceLocale, input.source, sourceHash],
     );
-    await client.query("COMMIT");
     return msgId;
-  } catch (error) {
-    await client.query("ROLLBACK");
-    throw error;
-  } finally {
-    client.release();
-  }
+  });
 }
 
 export async function getSiteTranslations(msgIds: number[], locale: string) {

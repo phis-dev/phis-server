@@ -379,10 +379,7 @@ export async function setSiteGroupRetirement(input: {
   groupId: number;
   retired: boolean;
 }) {
-  const pool = getPool();
-  const client = await pool.connect();
-  try {
-    await client.query("BEGIN");
+  return withTransaction(async (client) => {
     const { rows } = await client.query<SiteGroupRow>(
       `UPDATE phis.site_groups
        SET retired_at = CASE WHEN $3 THEN NOW() ELSE NULL END, updated_at = NOW()
@@ -392,7 +389,6 @@ export async function setSiteGroupRetirement(input: {
       [input.siteId, input.groupId, input.retired, PHI_CORE_GROUP_PROVIDER_ID],
     );
     if (rows.length === 0) {
-      await client.query("ROLLBACK");
       return null;
     }
     await client.query(
@@ -405,12 +401,6 @@ export async function setSiteGroupRetirement(input: {
        )`,
       [input.siteId, input.groupId],
     );
-    await client.query("COMMIT");
     return mapGroup(rows[0]!);
-  } catch (error) {
-    await client.query("ROLLBACK");
-    throw error;
-  } finally {
-    client.release();
-  }
+  });
 }

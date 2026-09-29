@@ -6,6 +6,7 @@ import type {
 } from "../lib/addons/contract.ts";
 import { PHIS_CORE_CAPABILITIES } from "../lib/addons/core-capabilities.ts";
 import { PHIS_ADDON_FLAG_GLOBALLY_ENABLED } from "../lib/constants/server-addons.ts";
+import { withPoolTransaction } from "../lib/db-transaction.ts";
 
 export type PhisAddonReconcileEntry = {
   desired: PhisAddonDesiredStateEntry;
@@ -37,9 +38,7 @@ export async function reconcilePhisAddons(
   releaseBuildId: string,
   loaded: PhisAddonReconcileEntry[],
 ) {
-  const client = await pool.connect();
-  try {
-    await client.query("BEGIN");
+  await withPoolTransaction(pool, async (client) => {
     await reconcileCoreCapabilities(client, releaseBuildId);
 
     const desiredIds = loaded.map(({ desired }) => desired.addonId);
@@ -144,12 +143,5 @@ export async function reconcilePhisAddons(
         );
       }
     }
-
-    await client.query("COMMIT");
-  } catch (error) {
-    await client.query("ROLLBACK");
-    throw error;
-  } finally {
-    client.release();
-  }
+  });
 }

@@ -2342,11 +2342,7 @@ export async function publishSitePageRevision(
   /** The address this publish actually moved, so the audit trail names it where it happened. */
   moved: { movedFrom: string; movedTo: string } | null;
 }> {
-  const pool = getPool();
-  const client = await pool.connect();
-
-  try {
-    await client.query("BEGIN");
+  return withTransaction(async (client) => {
     const scope = await getSitePageScopeWithDb(client, siteId, input.areaMask, input.address, {
       forUpdate: true,
     });
@@ -2377,7 +2373,6 @@ export async function publishSitePageRevision(
           readValidatedPageRevisionTree(publishedRevision.treeJson),
           options?.locale ?? null,
         );
-        await client.query("COMMIT");
         return { revisionId: publishedRevision.id, page: movedPage, moved: movedOnly };
       }
       throw new Error("No page draft revision available to publish.");
@@ -2424,19 +2419,12 @@ export async function publishSitePageRevision(
     });
     await setSitePageScopeTombstoneWithDb(client, scope.id, deleted);
     const moved = await promoteSitePageDraftPathWithDb(client, scope);
-    await client.query("COMMIT");
-
     return {
       revisionId: revision.id,
       page,
       moved,
     };
-  } catch (error) {
-    await client.query("ROLLBACK");
-    throw error;
-  } finally {
-    client.release();
-  }
+  });
 }
 
 /** The Module ids a stored Area preset config carries, in the shape a diff can compare. */
@@ -3060,14 +3048,9 @@ export async function deleteSiteAreaModulesDraftRevision(
     sourcePreset: SitePresetIdentity;
   },
 ): Promise<{ deleted: boolean }> {
-  const pool = getPool();
-  const client = await pool.connect();
-
-  try {
-    await client.query("BEGIN");
+  return withTransaction(async (client) => {
     const scope = await getSiteAreaScopeWithDb(client, siteId, input.areaMask);
     if (!scope || scope.workingModuleDraftRevisionId == null) {
-      await client.query("COMMIT");
       return { deleted: false };
     }
 
@@ -3087,14 +3070,8 @@ export async function deleteSiteAreaModulesDraftRevision(
       workingDraftRevisionId: scope.workingDraftRevisionId,
       workingModuleDraftRevisionId: null,
     });
-    await client.query("COMMIT");
     return { deleted: true };
-  } catch (error) {
-    await client.query("ROLLBACK");
-    throw error;
-  } finally {
-    client.release();
-  }
+  });
 }
 
 export async function deleteSitePageDraftRevision(
@@ -3104,14 +3081,9 @@ export async function deleteSitePageDraftRevision(
     address: SitePageScopeAddress;
   },
 ): Promise<{ deleted: boolean }> {
-  const pool = getPool();
-  const client = await pool.connect();
-
-  try {
-    await client.query("BEGIN");
+  return withTransaction(async (client) => {
     const scope = await getSitePageScopeWithDb(client, siteId, input.areaMask, input.address);
     if (!scope) {
-      await client.query("COMMIT");
       return { deleted: false };
     }
     /*
@@ -3123,7 +3095,6 @@ export async function deleteSitePageDraftRevision(
       await client.query(`UPDATE phis.site_page_scopes SET draft_path = NULL WHERE id = $1`, [scope.id]);
     }
     if (scope.workingDraftRevisionId == null) {
-      await client.query("COMMIT");
       return { deleted: discardedPendingPath };
     }
 
@@ -3145,14 +3116,8 @@ export async function deleteSitePageDraftRevision(
       publishedRevisionId: scope.publishedRevisionId,
       workingDraftRevisionId: null,
     });
-    await client.query("COMMIT");
     return { deleted: true };
-  } catch (error) {
-    await client.query("ROLLBACK");
-    throw error;
-  } finally {
-    client.release();
-  }
+  });
 }
 
 export async function deleteSiteAreaDraftRevision(
@@ -3162,14 +3127,9 @@ export async function deleteSiteAreaDraftRevision(
     sourcePreset: SitePresetIdentity;
   },
 ): Promise<{ deleted: boolean }> {
-  const pool = getPool();
-  const client = await pool.connect();
-
-  try {
-    await client.query("BEGIN");
+  return withTransaction(async (client) => {
     const scope = await getSiteAreaScopeWithDb(client, siteId, input.areaMask);
     if (!scope || scope.workingDraftRevisionId == null) {
-      await client.query("COMMIT");
       return { deleted: false };
     }
 
@@ -3193,14 +3153,8 @@ export async function deleteSiteAreaDraftRevision(
       publishedRevisionId: scope.publishedRevisionId,
       workingDraftRevisionId: null,
     });
-    await client.query("COMMIT");
     return { deleted: true };
-  } catch (error) {
-    await client.query("ROLLBACK");
-    throw error;
-  } finally {
-    client.release();
-  }
+  });
 }
 
 /**
@@ -3223,14 +3177,9 @@ export async function deleteSiteAreaOverride(
     sourcePreset: SitePresetIdentity;
   },
 ): Promise<{ deleted: boolean }> {
-  const pool = getPool();
-  const client = await pool.connect();
-
-  try {
-    await client.query("BEGIN");
+  return withTransaction(async (client) => {
     const scope = await getSiteAreaScopeWithDb(client, siteId, input.areaMask, { forUpdate: true });
     if (!scope) {
-      await client.query("COMMIT");
       return { deleted: false };
     }
 
@@ -3274,14 +3223,8 @@ export async function deleteSiteAreaOverride(
          AND working_module_draft_revision_id IS NULL`,
       [scope.id],
     );
-    await client.query("COMMIT");
     return { deleted: removed.rowCount != null && removed.rowCount > 0 };
-  } catch (error) {
-    await client.query("ROLLBACK");
-    throw error;
-  } finally {
-    client.release();
-  }
+  });
 }
 
 export async function getExactSiteAreaPresetTree(

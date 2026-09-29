@@ -1110,12 +1110,9 @@ export async function deleteSiteNavigationDraftRevision(
     throw new Error("siteId must be a positive integer.");
   }
   const normalizedKey = requireSiteNavigationScopeKey(input.key);
-  const client = await getPool().connect();
-  try {
-    await client.query("BEGIN");
+  return withTransaction(async (client) => {
     const scope = await getSiteNavigationScopeByKeyWithDb(client, siteId, normalizedKey);
     if (!scope?.workingDraftRevisionId) {
-      await client.query("COMMIT");
       return { deleted: false };
     }
     await client.query(`DELETE FROM phis.site_nav_revisions WHERE id = $1`, [scope.workingDraftRevisionId]);
@@ -1127,12 +1124,6 @@ export async function deleteSiteNavigationDraftRevision(
         workingDraftRevisionId: null,
       });
     }
-    await client.query("COMMIT");
     return { deleted: true };
-  } catch (error) {
-    await client.query("ROLLBACK");
-    throw error;
-  } finally {
-    client.release();
-  }
+  });
 }

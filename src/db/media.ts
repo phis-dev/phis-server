@@ -651,15 +651,12 @@ export async function setMediaAssetChecksum(input: {
   algorithm: string;
   value: string;
 }): Promise<{ duplicateOfAssetId: number | null } | null> {
-  const client = await getPool().connect();
-  try {
-    await client.query("BEGIN");
+  return withTransaction(async (client) => {
     const { rows: own } = await client.query<{ space_id: number }>(
       `SELECT space_id FROM phis.media_assets WHERE id = $1 AND site_id = $2 FOR UPDATE`,
       [input.id, input.siteId],
     );
     if (!own[0]) {
-      await client.query("ROLLBACK");
       return null;
     }
     const { rows: existing } = await client.query<{ id: number }>(
@@ -676,14 +673,8 @@ export async function setMediaAssetChecksum(input: {
         WHERE id = $1 AND site_id = $2`,
       [input.id, input.siteId, input.algorithm, input.value],
     );
-    await client.query("COMMIT");
     return { duplicateOfAssetId: existing[0]?.id ?? null };
-  } catch (error) {
-    await client.query("ROLLBACK").catch(() => {});
-    throw error;
-  } finally {
-    client.release();
-  }
+  });
 }
 
 export async function getMediaAssetById(id: number) {

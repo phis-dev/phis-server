@@ -1224,12 +1224,7 @@ export async function createThreadWithDb(
 }
 
 export async function createThread(input: CreateThreadInput): Promise<PhisThreadDetail> {
-  const pool = getPool();
-  const client = await pool.connect();
-  let threadId: number;
-
-  try {
-    await client.query("BEGIN");
+  const threadId = await withTransaction(async (client) => {
     if (input.createdByUserId != null) {
       // The Site's own answer first: a kind nobody offers is refused as such, whoever asks.
       await assertKindAvailable(client, input.siteId, input.kind);
@@ -1243,14 +1238,8 @@ export async function createThread(input: CreateThreadInput): Promise<PhisThread
         normalizeUniqueIds(input.participantGroupIds),
       );
     }
-    threadId = (await createThreadWithDb(client, input)).id;
-    await client.query("COMMIT");
-  } catch (error) {
-    await client.query("ROLLBACK");
-    throw error;
-  } finally {
-    client.release();
-  }
+    return (await createThreadWithDb(client, input)).id;
+  });
 
   schedulePhisAddonEventDelivery(input.siteId);
 
@@ -1290,13 +1279,10 @@ export async function addThreadMessage(input: AddThreadMessageInput): Promise<Ph
     }
   }
 
-  const client = await pool.connect();
-  try {
-    await client.query("BEGIN");
+  const found = await withTransaction(async (client) => {
     const thread = await readThreadRow(client, input.siteId, input.reader, input.threadId);
     if (!thread) {
-      await client.query("ROLLBACK");
-      return null;
+      return false;
     }
     if (thread.status !== PhisThreadStatus.Open) {
       throw new PhisThreadError("This thread is archived.");
@@ -1328,13 +1314,10 @@ export async function addThreadMessage(input: AddThreadMessageInput): Promise<Ph
       attacherUserId: authorUserId,
       attacherProviderId: providerId,
     });
-
-    await client.query("COMMIT");
-  } catch (error) {
-    await client.query("ROLLBACK");
-    throw error;
-  } finally {
-    client.release();
+    return true;
+  });
+  if (!found) {
+    return null;
   }
 
   schedulePhisAddonEventDelivery(input.siteId);
@@ -1345,22 +1328,16 @@ export async function addThreadMessage(input: AddThreadMessageInput): Promise<Ph
 export async function addThreadParticipants(
   input: AddThreadParticipantsInput,
 ): Promise<PhisThreadDetail | null> {
-  const pool = getPool();
-  const client = await pool.connect();
-
-  try {
-    await client.query("BEGIN");
+  const found = await withTransaction(async (client) => {
     const thread = await readThreadRow(client, input.siteId, input.reader, input.threadId);
     if (!thread) {
-      await client.query("ROLLBACK");
-      return null;
+      return false;
     }
 
     const userIds = normalizeUniqueIds(input.participantUserIds);
     const groupIds = normalizeUniqueIds(input.participantGroupIds);
     if (userIds.length === 0 && groupIds.length === 0) {
-      await client.query("ROLLBACK");
-      return getThreadDetail(input.siteId, input.reader, input.threadId);
+      return true;
     }
 
     await assertParticipantsExist(client, input.siteId, userIds, groupIds);
@@ -1372,12 +1349,10 @@ export async function addThreadParticipants(
       `UPDATE phis.threads SET updated_at = NOW() WHERE id = $1`,
       [input.threadId],
     );
-    await client.query("COMMIT");
-  } catch (error) {
-    await client.query("ROLLBACK");
-    throw error;
-  } finally {
-    client.release();
+    return true;
+  });
+  if (!found) {
+    return null;
   }
 
   return getThreadDetail(input.siteId, input.reader, input.threadId);

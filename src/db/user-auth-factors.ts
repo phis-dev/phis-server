@@ -2,7 +2,7 @@ import "server-only";
 
 import { randomBytes, randomUUID } from "node:crypto";
 
-import { getPool } from "@/lib/db";
+import { getPool, withTransaction } from "@/lib/db";
 import { sha256Hex } from "@/lib/auth";
 import {
   decryptAuthTransactionPayload,
@@ -115,10 +115,7 @@ export async function confirmPendingTotpFactor(input: {
   siteId: number;
   code: unknown;
 }) {
-  const pool = getPool();
-  const client = await pool.connect();
-  try {
-    await client.query("BEGIN");
+  return withTransaction(async (client) => {
     const { rows } = await client.query<FactorRow>(
       `SELECT id, factor_type, label, secret_ciphertext, secret_iv, secret_auth_tag,
               confirmed_at, created_at, last_used_at
@@ -129,7 +126,6 @@ export async function confirmPendingTotpFactor(input: {
     );
     const factor = rows[0];
     if (!factor || factor.confirmed_at || !verifyTotpCode(readSecret(factor), input.code)) {
-      await client.query("ROLLBACK");
       return null;
     }
     await client.query(
@@ -161,14 +157,8 @@ export async function confirmPendingTotpFactor(input: {
         ],
       );
     }
-    await client.query("COMMIT");
     return { factorId: factor.id, recoveryCodes };
-  } catch (error) {
-    await client.query("ROLLBACK");
-    throw error;
-  } finally {
-    client.release();
-  }
+  });
 }
 
 export async function verifyConfirmedTotpFactor(input: {

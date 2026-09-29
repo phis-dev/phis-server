@@ -6,6 +6,7 @@ import {
   PHIS_ADDON_SITE_COLUMN,
 } from "../lib/addons/schema-descriptor.ts";
 import { quotePhiIdentifier } from "../lib/addons/schema-ddl.ts";
+import { withPoolTransaction } from "../lib/db-transaction.ts";
 
 /**
  * Handing an Add-on's rows from one account to another.
@@ -81,9 +82,7 @@ export async function transferPhisAddonOwnership(
 ): Promise<PhisAddonOwnerTransfer> {
   const { schemaName, tables, withoutSite } = await readPhisAddonOwnedTables(pool, input.addonId);
   const moved: { table: string; rows: number }[] = [];
-  const client = await pool.connect();
-  try {
-    await client.query("BEGIN");
+  await withPoolTransaction(pool, async (client) => {
     for (const table of tables) {
       const { rowCount } = await client.query(
         `UPDATE ${quotePhiIdentifier(schemaName)}.${quotePhiIdentifier(table)}
@@ -94,13 +93,7 @@ export async function transferPhisAddonOwnership(
       );
       moved.push({ table, rows: rowCount ?? 0 });
     }
-    await client.query("COMMIT");
-  } catch (error) {
-    await client.query("ROLLBACK").catch(() => {});
-    throw error;
-  } finally {
-    client.release();
-  }
+  });
 
   return {
     addonId: input.addonId,
