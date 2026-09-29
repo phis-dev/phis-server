@@ -2725,7 +2725,17 @@ async function main() {
       return;
     }
 
-    const reports = await runPhiMaintenance(getPool(), { only, dryRun });
+    const readMaintenanceSecret = (reference: string) =>
+      readPhisSecretWithDb(getPool(), reference, requireSecretEncryptionKey());
+    const reports = await runPhiMaintenance(getPool(), {
+      only,
+      dryRun,
+      // The same way `addon storage --recount` reaches a store; a Provider this process cannot list is
+      // reported by the task rather than failing the run.
+      openStore: (site) => resolvePhiStorageObjectAdapter(
+        configRoot, site.providerId, site.config, site.secretReference, readMaintenanceSecret,
+      ),
+    });
     const failed = reports.filter((report) => report.error);
     if (json) {
       printJson({ ok: failed.length === 0, action: "maintain", dryRun, tasks: reports });

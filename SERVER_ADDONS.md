@@ -1017,6 +1017,13 @@ accepted after Core had given the booking back. A ceiling reached by drift refus
 that is free, and the error mentions the ceiling rather than the reason. It is a command rather than a
 background pass because it costs a full listing of the prefix.
 
+`phis maintain` (task `addon-storage`) runs the same recount for every Add-on store the operator's
+process can reach, and names the ones it cannot. It is the answer to the one drift `put` itself causes:
+two writes of one new key at the same moment -- a retried request, an event delivered twice, a job on two
+instances -- both find the key absent and both book an object. Preventing that would cost every write a
+lock or a row per object; counting again repairs it together with every other drift. A write in flight
+while a store is listed is left out of that figure, which errs towards room and is counted next time.
+
 Objects an Add-on no longer refers to are its own business here. This capability hands out a key space
 the Add-on manages, and no row of Core's describes what is in it, so which objects still matter is a
 question only the Add-on can answer -- a declared job is where that answer belongs.

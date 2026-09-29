@@ -1,6 +1,12 @@
 import type { Pool } from "pg";
 
 import { sweepPhisAddonAssets } from "./storage-sweep.mts";
+import {
+  readPhisAddonStorageSites,
+  recountPhisAddonStorage,
+  type PhisAddonStorageSite,
+} from "./storage-purge.mts";
+import { readPhisAddonStorageUsage } from "../db/server-addon-storage-usage.mts";
 
 /**
  * The one place cleanup lives, and the reason there is only one.
@@ -33,6 +39,21 @@ export type PhiMaintenanceReport = {
   error: string | null;
 };
 
+/**
+ * A listing of one Site's store, or `null` where this process cannot reach the Provider.
+ *
+ * Handed in by the CLI rather than built here: opening a store needs the configuration root and the
+ * secret key, which are the command's to hold, and a test hands in a listing of its own.
+ */
+export type PhiMaintenanceStoreOpener = (
+  site: PhisAddonStorageSite,
+) => Promise<{ listPrefix(prefix: string): Promise<{ storageKey: string; byteSize: number }[]> } | null>;
+
+export type PhiMaintenanceContext = {
+  dryRun: boolean;
+  openStore?: PhiMaintenanceStoreOpener;
+};
+
 export type PhiMaintenanceTask = {
   id: string;
   summary: string;
@@ -42,7 +63,7 @@ export type PhiMaintenanceTask = {
    * A task that cannot answer the dry-run question cheaply says so in its detail rather than doing the
    * work anyway. An operator running `--dry-run` has said they do not want anything changed.
    */
-  run(pool: Pool, options: { dryRun: boolean }): Promise<{ cleared: number; detail: string }>;
+  run(pool: Pool, options: PhiMaintenanceContext): Promise<{ cleared: number; detail: string }>;
 };
 
 /**
@@ -196,11 +217,67 @@ const settledHookDeliveries: PhiMaintenanceTask = {
   },
 };
 
+/**
+ * The storage counters of every Add-on store, set to what the stores actually hold.
+ *
+ * `put` books before it writes and reads "is the key already there" first, so two writes of one new key
+ * at the same moment -- a retried request, an event delivered twice, a job on two instances -- both
+ * book an object and one object lands. Other drift has the same shape: an object removed with a bucket
+ * client, a Provider migration. Preventing the first would cost every write a lock or a row per object
+ * for a rare case; counting again repairs all of them, which is why it is here.
+ *
+ * It lists each store once, so it costs what the stores hold, and says so. A write in flight while a
+ * store is listed is booked but not yet there and is left out of the figure; that errs towards room, and
+ * the next run counts it.
+ */
+const addonStorageCounters: PhiMaintenanceTask = {
+  id: "addon-storage",
+  summary: "Recount what every Add-on store holds and correct its storage counters.",
+  async run(pool, { dryRun, openStore }) {
+    const { rows } = await pool.query<{ addon_id: string }>(
+      `SELECT DISTINCT addon_id FROM phis.site_server_addons ORDER BY addon_id`,
+    );
+    const stores = (await Promise.all(rows.map(async ({ addon_id: addonId }) =>
+      (await readPhisAddonStorageSites(pool, addonId)).map((site) => ({ addonId, site }))
+    ))).flat();
+    if (dryRun || !openStore) {
+      return {
+        cleared: 0,
+        detail: `Would list ${stores.length} Add-on store(s)` +
+          (openStore ? "." : "; this run has no access to the stores."),
+      };
+    }
+    let corrected = 0;
+    const unreachable: string[] = [];
+    for (const { addonId, site } of stores) {
+      const store = await openStore(site);
+      if (!store) {
+        unreachable.push(`${addonId}@${site.siteKey}`);
+        continue;
+      }
+      const before = await readPhisAddonStorageUsage(pool, { addonId, siteId: site.siteId });
+      const after = await recountPhisAddonStorage(pool, {
+        addonId, site, listPrefix: (prefix) => store.listPrefix(prefix),
+      });
+      if (after.bytes !== before.bytes || after.objects !== before.objects) {
+        corrected += 1;
+      }
+    }
+    return {
+      cleared: corrected,
+      detail: `Listed ${stores.length - unreachable.length} of ${stores.length} store(s); ` +
+        `${corrected} counter(s) corrected.` +
+        (unreachable.length > 0 ? ` Not reachable from here: ${unreachable.join(", ")}.` : ""),
+    };
+  },
+};
+
 /** Ordered as they run. A task must not depend on an earlier one having run first. */
 export const PHI_MAINTENANCE_TASKS: readonly PhiMaintenanceTask[] = Object.freeze([
   expiredUploadSessions,
   orphanedAddonAssets,
   settledHookDeliveries,
+  addonStorageCounters,
 ]);
 
 /**
@@ -211,7 +288,7 @@ export const PHI_MAINTENANCE_TASKS: readonly PhiMaintenanceTask[] = Object.freez
  */
 export async function runPhiMaintenance(
   pool: Pool,
-  options: { only?: string | null; dryRun?: boolean } = {},
+  options: { only?: string | null; dryRun?: boolean; openStore?: PhiMaintenanceStoreOpener } = {},
 ): Promise<PhiMaintenanceReport[]> {
   const dryRun = options.dryRun === true;
   const only = options.only?.trim() || null;
@@ -228,7 +305,7 @@ export async function runPhiMaintenance(
       continue;
     }
     try {
-      const result = await task.run(pool, { dryRun });
+      const result = await task.run(pool, { dryRun, openStore: options.openStore });
       reports.push({ id: task.id, cleared: result.cleared, detail: result.detail, error: null });
     } catch (error) {
       reports.push({

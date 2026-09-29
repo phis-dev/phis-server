@@ -139,6 +139,35 @@ describe("maintenance", () => {
     expect(second.every((report) => report.error === null && report.cleared === 0)).toBe(true);
   });
 
+  it("sets an Add-on store's counters to what the store holds", async () => {
+    const pool = await requirePhiTestDatabase();
+    await ensureSiteMediaSpace(site.id);
+    // Two writes of one new key at once both booked an object; one landed.
+    await pool.query(
+      `INSERT INTO phis.site_server_addons (site_id, addon_id, storage_used_bytes, storage_used_objects)
+       VALUES ($1, $2, 20, 2)
+       ON CONFLICT (site_id, addon_id)
+       DO UPDATE SET storage_used_bytes = 20, storage_used_objects = 2`,
+      [site.id, ADDON],
+    );
+    const openStore = async () => ({
+      listPrefix: async (prefix: string) => [{ storageKey: `${prefix}/report.pdf`, byteSize: 10 }],
+    });
+
+    const dry = await runPhiMaintenance(pool, { only: "addon-storage", dryRun: true, openStore });
+    expect(dry[0]!.error).toBeNull();
+    const reports = await runPhiMaintenance(pool, { only: "addon-storage", openStore });
+    expect(reports[0]!.error).toBeNull();
+    expect(reports[0]!.cleared).toBeGreaterThanOrEqual(1);
+
+    const { rows } = await pool.query<{ storage_used_bytes: string; storage_used_objects: number }>(
+      `SELECT storage_used_bytes, storage_used_objects FROM phis.site_server_addons
+        WHERE site_id = $1 AND addon_id = $2`,
+      [site.id, ADDON],
+    );
+    expect(rows[0]).toEqual({ storage_used_bytes: "10", storage_used_objects: 1 });
+  });
+
   it("refuses a task it does not have rather than doing nothing quietly", async () => {
     const pool = await requirePhiTestDatabase();
     await expect(runPhiMaintenance(pool, { only: "tidy-everything" }))
