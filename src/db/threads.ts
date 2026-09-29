@@ -750,15 +750,10 @@ async function readParticipants(db: DbQueryable, threadId: number) {
             participant.user_id,
             participant.group_id,
             participant.flags,
-            COALESCE(
-              NULLIF(TRIM(CONCAT_WS(' ', profile.first_name, profile.last_name)), ''),
-              account.email_normalized
-            ) AS user_display_name,
+            NULLIF(TRIM(CONCAT_WS(' ', profile.first_name, profile.last_name)), '') AS user_display_name,
             profile.company_name AS user_company_name,
             grp.name AS group_name
      FROM phis.thread_participants participant
-     LEFT JOIN phis.user_account_directory account
-       ON account.id = participant.user_id
      LEFT JOIN phis.user_profiles profile
        ON profile.user_id = participant.user_id
      LEFT JOIN phis.site_groups grp
@@ -790,10 +785,7 @@ async function readMessageWindow(
             message.author_kind,
             message.author_user_id,
             message.author_provider_id,
-            COALESCE(
-              NULLIF(TRIM(CONCAT_WS(' ', profile.first_name, profile.last_name)), ''),
-              account.email_normalized
-            ) AS author_display_name,
+            NULLIF(TRIM(CONCAT_WS(' ', profile.first_name, profile.last_name)), '') AS author_display_name,
             profile.company_name AS author_company_name,
             message.body_text,
             message.body_markdown,
@@ -803,8 +795,6 @@ async function readMessageWindow(
             message.created_at,
             message.updated_at
      FROM phis.thread_messages message
-     LEFT JOIN phis.user_account_directory account
-       ON account.id = message.author_user_id
      LEFT JOIN phis.user_profiles profile
        ON profile.user_id = message.author_user_id
      WHERE ${conditions.join(" AND ")}
@@ -1549,10 +1539,7 @@ export async function listThreadCandidates(siteId: number, userId: number) {
   }>(
     `SELECT DISTINCT ON (account.id)
             account.id,
-            COALESCE(
-              NULLIF(TRIM(CONCAT_WS(' ', profile.first_name, profile.last_name)), ''),
-              account.email_normalized
-            ) AS display_name,
+            NULLIF(TRIM(CONCAT_WS(' ', profile.first_name, profile.last_name)), '') AS display_name,
             profile.company_name,
             BOOL_OR((COALESCE(grp.flags, 0) & $4) <> 0) OVER (PARTITION BY account.id) AS show_company
      FROM phis.user_site_role_claims claim

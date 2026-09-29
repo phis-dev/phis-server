@@ -138,8 +138,7 @@ export async function listSiteGroupMembers(siteId: number, groupId: number) {
     valid_until: Date | string | null; created_at: Date | string;
   }>(
     `SELECT m.user_id,
-            COALESCE(NULLIF(TRIM(CONCAT_WS(' ', up.first_name, up.last_name)), ''), email.email_normalized)
-              AS display_name,
+            NULLIF(TRIM(CONCAT_WS(' ', up.first_name, up.last_name)), '') AS display_name,
             email.email_normalized,
             up.company_name,
             m.membership_flags, m.source_provider_id, m.source_connection_key,
@@ -155,7 +154,7 @@ export async function listSiteGroupMembers(siteId: number, groupId: number) {
      ) email ON TRUE
      WHERE m.site_id = $1 AND m.group_id = $2
      ORDER BY m.membership_flags DESC,
-              LOWER(COALESCE(NULLIF(TRIM(CONCAT_WS(' ', up.first_name, up.last_name)), ''), email.email_normalized, '')),
+              LOWER(COALESCE(TRIM(CONCAT_WS(' ', up.first_name, up.last_name)), '')),
               m.user_id`,
     [siteId, groupId],
   );

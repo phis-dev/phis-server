@@ -170,6 +170,32 @@ describe("threads", () => {
       .toBeNull();
   });
 
+  it("names a person without a profile name by nothing, never by their address", async () => {
+    await requirePhiTestDatabase();
+    const site = await createPhiTestSite("threads-names");
+    await offerAllThreadKinds(site);
+    const { users: [opener, colleague] } = await createStaffWhoShareAGroup(site, "pgtest-names", 2);
+    const pool = await requirePhiTestDatabase();
+    await pool.query(`DELETE FROM phis.user_profiles WHERE user_id = ANY($1::int[])`, [[opener, colleague]]);
+
+    const opened = await createThread({
+      siteId: site.id,
+      kind: PhisThreadKind.Direct,
+      subject: "Names",
+      message: "Hello.",
+      participantUserIds: [colleague],
+      createdByUserId: opener,
+    });
+    const detail = await getThreadDetail(site.id, { kind: "user", userId: colleague }, opened.thread.id);
+
+    const participantNames = (detail?.participants ?? []).flatMap((participant) =>
+      participant.kind === "user" ? [participant.user.displayName] : []);
+    const authorNames = (detail?.messages ?? []).flatMap((message) =>
+      message.author.kind === "user" ? [message.author.user.displayName] : []);
+    expect(participantNames).toEqual([null, null]);
+    expect(authorNames).toEqual([null]);
+  });
+
   it("keeps a Direct thread to Staff who share a group, and lets an Admin reach any Staff", async () => {
     await requirePhiTestDatabase();
     const site = await createPhiTestSite("threads-reach");
