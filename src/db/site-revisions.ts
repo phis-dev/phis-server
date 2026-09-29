@@ -268,6 +268,7 @@ async function getAreaScopeWithDb(
   db: DbQueryable,
   siteId: number,
   areaMask: number,
+  forUpdate = false,
 ): Promise<{
   id: number;
   publishedRevisionId: number | null;
@@ -284,7 +285,7 @@ async function getAreaScopeWithDb(
      FROM phis.site_area_scopes
      WHERE site_id = $1
        AND area_id = $2
-     LIMIT 1`,
+     LIMIT 1${forUpdate ? " FOR UPDATE" : ""}`,
     [siteId, areaMask],
   );
 
@@ -304,6 +305,7 @@ async function getPageScopeWithDb(
   siteId: number,
   areaMask: number,
   address: SiteRevisionPageAddress,
+  forUpdate = false,
 ): Promise<{
   id: number;
   publishedRevisionId: number | null;
@@ -322,7 +324,7 @@ async function getPageScopeWithDb(
        AND ${address.kind === "path"
          ? "path = $3 AND owner_module_id IS NULL AND preset_key IS NULL"
          : "path IS NULL AND owner_module_id = $3 AND preset_key = $4"}
-     LIMIT 1`,
+     LIMIT 1${forUpdate ? " FOR UPDATE" : ""}`,
     address.kind === "path"
       ? [siteId, areaMask, normalizedPath]
       : [siteId, areaMask, address.ownerModuleId, address.presetKey],
@@ -342,6 +344,7 @@ async function getNavigationScopeWithDb(
   db: DbQueryable,
   siteId: number,
   key: string,
+  forUpdate = false,
 ): Promise<{
   id: number;
   publishedRevisionId: number | null;
@@ -357,7 +360,7 @@ async function getNavigationScopeWithDb(
      FROM phis.site_nav_scopes
      WHERE site_id = $1
        AND key = $2
-     LIMIT 1`,
+     LIMIT 1${forUpdate ? " FOR UPDATE" : ""}`,
     [siteId, normalizedKey],
   );
 
@@ -375,6 +378,7 @@ async function getThemeScopeWithDb(
   db: DbQueryable,
   siteId: number,
   key: string | null | undefined,
+  forUpdate = false,
 ): Promise<{
   id: number;
   key: string;
@@ -392,7 +396,7 @@ async function getThemeScopeWithDb(
      FROM phis.site_theme_scopes
      WHERE site_id = $1
        AND key = $2
-     LIMIT 1`,
+     LIMIT 1${forUpdate ? " FOR UPDATE" : ""}`,
     [siteId, normalizedKey],
   );
 
@@ -440,13 +444,20 @@ export type ResolvedRevisionScope =
       workingDraftRevisionId: number | null;
     };
 
+/**
+ * `forUpdate` holds the scope row for the rest of the transaction. Restore and history delete decide on
+ * its pointers -- which revisions are live, which one the new Draft replaces -- and a publish or save
+ * moving them in between would leave a pointer on a revision this transaction deletes.
+ */
 async function resolveRevisionScopeWithDb(
   db: DbQueryable,
   siteId: number,
   input: SiteRevisionScopeInput,
+  options?: { forUpdate?: boolean },
 ): Promise<ResolvedRevisionScope> {
+  const forUpdate = options?.forUpdate ?? false;
   if (input.kind === "area") {
-    const scope = await getAreaScopeWithDb(db, siteId, input.areaMask);
+    const scope = await getAreaScopeWithDb(db, siteId, input.areaMask, forUpdate);
     return {
       kind: "area",
       areaMask: input.areaMask,
@@ -462,7 +473,7 @@ async function resolveRevisionScopeWithDb(
     const address = input.address.kind === "path"
       ? { kind: "path" as const, path: normalizeSiteCmsPath(input.address.path) }
       : input.address;
-    const scope = await getPageScopeWithDb(db, siteId, input.areaMask, address);
+    const scope = await getPageScopeWithDb(db, siteId, input.areaMask, address, forUpdate);
     return {
       kind: "page",
       areaMask: input.areaMask,
@@ -475,7 +486,7 @@ async function resolveRevisionScopeWithDb(
 
   if (input.kind === "theme") {
     const normalizedKey = normalizeSiteThemeScopeKey(input.key);
-    const scope = await getThemeScopeWithDb(db, siteId, normalizedKey);
+    const scope = await getThemeScopeWithDb(db, siteId, normalizedKey, forUpdate);
     return {
       kind: "theme",
       key: normalizedKey,
@@ -486,7 +497,7 @@ async function resolveRevisionScopeWithDb(
   }
 
   const normalizedKey = requireSiteNavigationScopeKey(input.key);
-  const scope = await getNavigationScopeWithDb(db, siteId, normalizedKey);
+  const scope = await getNavigationScopeWithDb(db, siteId, normalizedKey, forUpdate);
   return {
     kind: "navigation",
     key: normalizedKey,
@@ -719,7 +730,7 @@ export async function restoreSiteRevision(
   }
 
   return withTransaction(async (client) => {
-    const scope = await resolveRevisionScopeWithDb(client, siteId, input);
+    const scope = await resolveRevisionScopeWithDb(client, siteId, input, { forUpdate: true });
     if (!scope.scopeId) {
       throw new SiteRevisionNotFoundError("Revision scope not found.");
     }
@@ -903,7 +914,7 @@ export async function deleteSiteRevisionHistoryEntry(
   }
 
   return withTransaction(async (client) => {
-    const scope = await resolveRevisionScopeWithDb(client, siteId, input);
+    const scope = await resolveRevisionScopeWithDb(client, siteId, input, { forUpdate: true });
     if (!scope.scopeId) {
       throw new SiteRevisionNotFoundError("Revision scope not found.");
     }
@@ -998,7 +1009,7 @@ export async function deleteSiteRevisionHistoryEntries(
   }
 
   return withTransaction(async (client) => {
-    const scope = await resolveRevisionScopeWithDb(client, siteId, input);
+    const scope = await resolveRevisionScopeWithDb(client, siteId, input, { forUpdate: true });
     if (!scope.scopeId) {
       throw new SiteRevisionNotFoundError("Revision scope not found.");
     }
