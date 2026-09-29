@@ -15,6 +15,7 @@ import {
   type PhisAddonManifestV1,
   type PhisAddonSchemaDescriptor,
 } from "./contract.ts";
+import { isPhiRecord } from "../helpers/record.ts";
 
 /**
  * An Add-on id is an npm package name in which neither `_` nor `.` occurs. Both would have to map to `_` in the derived schema name, and three characters collapsing
@@ -63,7 +64,7 @@ const ADDON_EVENT_IDS = new Set<string>(Object.values(PHIS_ADDON_EVENTS));
  */
 function hasReachableRoleRoot(roles: { name: string; grantableBy: unknown }[]) {
   return roles.some((role) =>
-    isRecord(role.grantableBy) && typeof role.grantableBy.siteAccess === "string"
+    isPhiRecord(role.grantableBy) && typeof role.grantableBy.siteAccess === "string"
   );
 }
 const SETTING_TYPES = new Set(["text", "integer", "boolean"]);
@@ -73,10 +74,6 @@ const COMPATIBLE_SERVER_ABI_PATTERNS = [
   /^\^1(?:\.0(?:\.0)?)?$/,
   /^>=1(?:\.0(?:\.0)?)? <2(?:\.0(?:\.0)?)?$/,
 ];
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
-}
 
 function readString(value: unknown, field: string, issues: string[]) {
   if (typeof value !== "string" || !value.trim()) {
@@ -135,7 +132,7 @@ function validateApiRoute(
   issues: string[],
 ): value is PhisAddonApiRouteDescriptor {
   const field = `apiRoutes[${index}]`;
-  if (!isRecord(value)) {
+  if (!isPhiRecord(value)) {
     issues.push(`${field} must be an object.`);
     return false;
   }
@@ -188,7 +185,7 @@ function validateHook(
   issues: string[],
 ): value is PhisAddonHookDescriptor {
   const field = `hooks[${index}]`;
-  if (!isRecord(value)) {
+  if (!isPhiRecord(value)) {
     issues.push(`${field} must be an object.`);
     return false;
   }
@@ -247,7 +244,7 @@ function validateHookVerification(
     return;
   }
   const field = `${hookField}.verification`;
-  if (!isRecord(value)) {
+  if (!isPhiRecord(value)) {
     issues.push(`${field} must be an object when it is stated at all.`);
     return;
   }
@@ -296,7 +293,7 @@ export function stablePhiJson(value: unknown): string {
   if (Array.isArray(value)) {
     return `[${value.map(stablePhiJson).join(",")}]`;
   }
-  if (isRecord(value)) {
+  if (isPhiRecord(value)) {
     const entries = Object.entries(value)
       .filter(([, entry]) => entry !== undefined)
       .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0));
@@ -311,7 +308,7 @@ export function validatePhisAddonManifest(
   value: unknown,
 ): { manifest: PhisAddonManifestV1 | null; issues: string[] } {
   const issues: string[] = [];
-  if (!isRecord(value)) {
+  if (!isPhiRecord(value)) {
     return {
       manifest: null,
       issues: ["Add-on manifest must be an object."],
@@ -350,7 +347,7 @@ export function validatePhisAddonManifest(
   }
   const capabilityIds: string[] = [];
   for (const [index, capability] of capabilities.entries()) {
-    if (!isRecord(capability)) {
+    if (!isPhiRecord(capability)) {
       issues.push(`capabilities[${index}] must be an object.`);
       continue;
     }
@@ -376,7 +373,7 @@ export function validatePhisAddonManifest(
   }
   const serviceProviderKeys: string[] = [];
   for (const [index, provider] of serviceProviders.entries()) {
-    if (!isRecord(provider)) {
+    if (!isPhiRecord(provider)) {
       issues.push(`serviceProviders[${index}] must be an object.`);
       continue;
     }
@@ -466,7 +463,7 @@ export function validatePhisAddonManifest(
   hooks.forEach((hook, index) => validateHook(hook, index, issues));
   assertUnique(
     [...apiRoutes, ...hooks]
-      .filter(isRecord)
+      .filter(isPhiRecord)
       .map((route) => String(route.id ?? "")),
     "route descriptor ids",
     issues,
@@ -478,7 +475,7 @@ export function validatePhisAddonManifest(
   }
   const jobIds: string[] = [];
   for (const [index, job] of jobs.entries()) {
-    if (!isRecord(job)) {
+    if (!isPhiRecord(job)) {
       issues.push(`jobs[${index}] must be an object.`);
       continue;
     }
@@ -509,7 +506,7 @@ export function validatePhisAddonManifest(
   const eventHandlerIds: string[] = [];
   const eventNames: string[] = [];
   for (const [index, entry] of eventHandlers.entries()) {
-    if (!isRecord(entry)) {
+    if (!isPhiRecord(entry)) {
       issues.push(`eventHandlers[${index}] must be an object.`);
       continue;
     }
@@ -553,7 +550,7 @@ export function validatePhisAddonManifest(
   }
   const settingNames: string[] = [];
   for (const [index, setting] of settings.entries()) {
-    if (!isRecord(setting)) {
+    if (!isPhiRecord(setting)) {
       issues.push(`settings[${index}] must be an object.`);
       continue;
     }
@@ -584,7 +581,7 @@ export function validatePhisAddonManifest(
   }
   const roleNames: string[] = [];
   for (const [index, role] of roles.entries()) {
-    if (!isRecord(role)) {
+    if (!isPhiRecord(role)) {
       issues.push(`roles[${index}] must be an object.`);
       continue;
     }
@@ -597,7 +594,7 @@ export function validatePhisAddonManifest(
       issues.push(`roles[${index}].description must be a string when it is stated at all.`);
     }
     const grantableBy = role.grantableBy;
-    if (!isRecord(grantableBy)) {
+    if (!isPhiRecord(grantableBy)) {
       issues.push(`roles[${index}].grantableBy must be an object.`);
       continue;
     }
@@ -617,7 +614,7 @@ export function validatePhisAddonManifest(
   for (const [index, role] of roles.entries()) {
     // A role granted by another role has to name one this same Add-on declares. Pointing at a stranger
     // would be a policy nobody here can evaluate.
-    const grantedBy = isRecord(role) && isRecord(role.grantableBy) ? role.grantableBy.role : undefined;
+    const grantedBy = isPhiRecord(role) && isPhiRecord(role.grantableBy) ? role.grantableBy.role : undefined;
     if (typeof grantedBy === "string" && !roleNames.includes(grantedBy)) {
       issues.push(`roles[${index}].grantableBy.role does not name a role this Add-on declares.`);
     }
@@ -636,7 +633,7 @@ export function validatePhisAddonManifest(
      * moment: when somebody is trying to enter a group nobody can enter.
      */
     const writer = value.groupWriter;
-    if (!isRecord(writer) || !isRecord(writer.allowedBy)) {
+    if (!isPhiRecord(writer) || !isPhiRecord(writer.allowedBy)) {
       issues.push("groupWriter states an allowedBy object when it is stated at all.");
     } else {
       const bySiteAccess = writer.allowedBy.siteAccess !== undefined;
@@ -683,7 +680,7 @@ export function validatePhisAddonManifest(
   }
   const groupKeys: string[] = [];
   for (const [index, group] of groups.entries()) {
-    if (!isRecord(group)) {
+    if (!isPhiRecord(group)) {
       issues.push(`groups[${index}] must be an object.`);
       continue;
     }
@@ -734,10 +731,10 @@ export function validatePhisAddonManifest(
 
   const routeKeys = [
     ...apiRoutes
-      .filter(isRecord)
+      .filter(isPhiRecord)
       .map((route) => `api:${String(route.method)}:${String(route.path)}`),
     ...hooks
-      .filter(isRecord)
+      .filter(isPhiRecord)
       .map((route) => `hook:${String(route.method)}:${String(route.path)}`),
   ];
   assertUnique(routeKeys, "route descriptors", issues);
@@ -768,7 +765,7 @@ export function validatePhisAddonDesiredState(
   value: unknown,
 ): { state: PhisAddonDesiredState | null; issues: string[] } {
   const issues: string[] = [];
-  if (!isRecord(value)) {
+  if (!isPhiRecord(value)) {
     return { state: null, issues: ["Desired state must be an object."] };
   }
   if (value.formatVersion !== 1) {
@@ -782,7 +779,7 @@ export function validatePhisAddonDesiredState(
   const addonIds: string[] = [];
   const packageNames: string[] = [];
   for (const [index, addon] of value.addons.entries()) {
-    if (!isRecord(addon)) {
+    if (!isPhiRecord(addon)) {
       issues.push(`addons[${index}] must be an object.`);
       continue;
     }

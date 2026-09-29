@@ -10,6 +10,7 @@ import {
   PHIS_ADDON_OWNER_COLUMN,
   PHIS_ADDON_SITE_COLUMN,
 } from "./schema-descriptor.ts";
+import { isPhiRecord } from "../helpers/record.ts";
 
 /**
  * What Core checks before a declared query becomes a statement.
@@ -42,10 +43,6 @@ const CORE_WRITTEN_COLUMNS = new Set([
   PHIS_ADDON_GROUP_COLUMN,
   PHIS_ADDON_OWNER_COLUMN,
 ]);
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
-}
 
 type ParameterDeclarations = {
   names: Set<string>;
@@ -116,7 +113,7 @@ function checkValue(
   where: string,
   position: "filter" | "assignment" = "filter",
 ) {
-  if (!isRecord(value)) {
+  if (!isPhiRecord(value)) {
     context.issues.push(`${context.field}.${where} must be an object.`);
     return;
   }
@@ -155,7 +152,7 @@ function checkCondition(
     context.issues.push(`${context.field}.${where} nests deeper than ${MAX_CONDITION_DEPTH}.`);
     return;
   }
-  if (!isRecord(condition)) {
+  if (!isPhiRecord(condition)) {
     context.issues.push(`${context.field}.${where} must be an object.`);
     return;
   }
@@ -183,7 +180,7 @@ function checkCondition(
           );
         }
       }
-      if (isRecord(condition.value) && (condition.value.kind === "actor" || condition.value.kind === "now")) {
+      if (isPhiRecord(condition.value) && (condition.value.kind === "actor" || condition.value.kind === "now")) {
         context.issues.push(
           `${context.field}.${where}.value must be a parameter or a literal: an actor id and the ` +
           "current instant are not things to search a text column for.",
@@ -272,7 +269,7 @@ function checkJsonAssignment(
     return;
   }
   const wantsJson = columnType === "json";
-  const isJsonParameter = isRecord(value)
+  const isJsonParameter = isPhiRecord(value)
     && value.kind === "parameter"
     && typeof value.name === "string"
     && context.jsonParameters.has(value.name);
@@ -300,7 +297,7 @@ function checkAssignments(context: QueryContext, raw: unknown, where: string) {
   const seen: string[] = [];
   assignments.forEach((assignment, index) => {
     const at = `${where}[${index}]`;
-    if (!isRecord(assignment)) {
+    if (!isPhiRecord(assignment)) {
       context.issues.push(`${context.field}.${at} must be an object.`);
       return;
     }
@@ -337,7 +334,7 @@ function validateQuery(
   field: string,
   issues: string[],
 ) {
-  if (!isRecord(raw)) {
+  if (!isPhiRecord(raw)) {
     issues.push(`${field} must be an object.`);
     return null;
   }
@@ -415,7 +412,7 @@ function validateQuery(
       }
       if (Array.isArray(raw.orderBy)) {
         raw.orderBy.forEach((entry, index) => {
-          if (!isRecord(entry)) {
+          if (!isPhiRecord(entry)) {
             issues.push(`${field}.orderBy[${index}] must be an object.`);
             return;
           }
@@ -469,7 +466,7 @@ function validateQuery(
       ));
       aggregates.forEach((entry, index) => {
         const at = `aggregates[${index}]`;
-        if (!isRecord(entry)) {
+        if (!isPhiRecord(entry)) {
           issues.push(`${field}.${at} must be an object.`);
           return;
         }
@@ -596,7 +593,7 @@ export function validatePhisAddonQueryCatalog(
   declaredRoles: Set<string> = new Set(),
 ): PhisAddonQueryCatalog | null {
   const before = issues.length;
-  if (!isRecord(value)) {
+  if (!isPhiRecord(value)) {
     issues.push(`${field} must be an object.`);
     return null;
   }
@@ -605,7 +602,7 @@ export function validatePhisAddonQueryCatalog(
     return null;
   }
 
-  const rawParameters = isRecord(value.parameters) ? value.parameters : null;
+  const rawParameters = isPhiRecord(value.parameters) ? value.parameters : null;
   if (!rawParameters) {
     issues.push(`${field}.parameters must be an object keyed by query name.`);
     return null;
@@ -622,7 +619,7 @@ export function validatePhisAddonQueryCatalog(
     }
     list.forEach((parameter, index) => {
       const at = `${field}.parameters.${queryName}[${index}]`;
-      if (!isRecord(parameter)) {
+      if (!isPhiRecord(parameter)) {
         issues.push(`${at} must be an object.`);
         return;
       }
@@ -665,7 +662,7 @@ export function validatePhisAddonQueryCatalog(
   }
   const names: string[] = [];
   rawQueries.forEach((query, index) => {
-    const queryName = isRecord(query) && typeof query.name === "string" ? query.name : `[${index}]`;
+    const queryName = isPhiRecord(query) && typeof query.name === "string" ? query.name : `[${index}]`;
     names.push(queryName);
     validateQuery(
       query,
@@ -700,7 +697,7 @@ export function phisAddonUnindexedSearches(
 ): { query: string; table: string; column: string }[] {
   const found: { query: string; table: string; column: string }[] = [];
   const searched = (condition: unknown, into: Set<string>) => {
-    if (!isRecord(condition)) {
+    if (!isPhiRecord(condition)) {
       return;
     }
     if (condition.kind === "contains" && typeof condition.column === "string") {

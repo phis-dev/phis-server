@@ -1,3 +1,5 @@
+import { isPhiRecord } from "@/lib/helpers/record";
+
 export const PHI_FORM_DESCRIPTOR_SCHEMA_VERSION = 1 as const;
 
 export type PhiFormDescriptor = {
@@ -8,10 +10,6 @@ export type PhiFormDescriptor = {
   actions: readonly Record<string, unknown>[];
   layout?: Record<string, unknown>;
 };
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
-}
 
 function readRequiredString(value: unknown, path: string) {
   const normalized = typeof value === "string" ? value.trim() : "";
@@ -30,7 +28,7 @@ function readProviderKey(value: unknown, path: string) {
 }
 
 function validateTextDescriptor(value: unknown, path: string) {
-  if (!isRecord(value)) {
+  if (!isPhiRecord(value)) {
     throw new Error(`${path} must be a Form text descriptor.`);
   }
   if (value.kind === "literal" && typeof value.value === "string") {
@@ -48,14 +46,14 @@ function validateTextDescriptor(value: unknown, path: string) {
 }
 
 function validateOptionalRecord(value: unknown, path: string) {
-  if (value != null && !isRecord(value)) {
+  if (value != null && !isPhiRecord(value)) {
     throw new Error(`${path} must be an object.`);
   }
 }
 
 function validateGridPlacement(value: unknown, path: string) {
   if (value == null) return;
-  if (!isRecord(value)) throw new Error(`${path} must be an object.`);
+  if (!isPhiRecord(value)) throw new Error(`${path} must be an object.`);
   const span = value.span;
   const offset = value.offset;
   const order = value.order;
@@ -75,7 +73,7 @@ function validateGridPlacement(value: unknown, path: string) {
 
 function validateResponsiveGridPlacement(value: unknown, path: string) {
   if (value == null) return;
-  if (!isRecord(value)) throw new Error(`${path} must be an object.`);
+  if (!isPhiRecord(value)) throw new Error(`${path} must be an object.`);
   for (const breakpoint of ["compact", "medium", "wide"] as const) {
     validateGridPlacement(value[breakpoint], `${path}.${breakpoint}`);
   }
@@ -83,9 +81,9 @@ function validateResponsiveGridPlacement(value: unknown, path: string) {
 
 function validateLayout(value: unknown) {
   if (value == null) return;
-  if (!isRecord(value)) throw new Error("Form descriptor layout must be an object.");
+  if (!isPhiRecord(value)) throw new Error("Form descriptor layout must be an object.");
   if (value.columns != null) {
-    if (!isRecord(value.columns)) throw new Error("descriptor.layout.columns must be an object.");
+    if (!isPhiRecord(value.columns)) throw new Error("descriptor.layout.columns must be an object.");
     for (const breakpoint of ["compact", "medium", "wide"] as const) {
       const column = value.columns[breakpoint];
       if (column != null && column !== 1 && column !== 2 && column !== 3 && column !== 4) {
@@ -119,17 +117,17 @@ function assertUniqueKeys(items: readonly Record<string, unknown>[], path: strin
 }
 
 export function parsePhiFormDescriptor(value: unknown): PhiFormDescriptor {
-  if (!isRecord(value)) {
+  if (!isPhiRecord(value)) {
     throw new Error("Form descriptor must be an object.");
   }
   if (value.schemaVersion !== PHI_FORM_DESCRIPTOR_SCHEMA_VERSION) {
     throw new Error(`Form descriptor schemaVersion must be ${PHI_FORM_DESCRIPTOR_SCHEMA_VERSION}.`);
   }
   const key = readRequiredString(value.key, "descriptor.key");
-  if (!Array.isArray(value.fields) || !value.fields.every(isRecord)) {
+  if (!Array.isArray(value.fields) || !value.fields.every(isPhiRecord)) {
     throw new Error("Form descriptor fields must be an array of objects.");
   }
-  if (!Array.isArray(value.actions) || !value.actions.every(isRecord)) {
+  if (!Array.isArray(value.actions) || !value.actions.every(isPhiRecord)) {
     throw new Error("Form descriptor actions must be an array of objects.");
   }
   assertUniqueKeys(value.fields, "descriptor.fields");
@@ -148,7 +146,7 @@ export function parsePhiFormDescriptor(value: unknown): PhiFormDescriptor {
     validateOptionalRecord(field.config, `descriptor.fields[${index}].config`);
     validateOptionalRecord(field.optionsProvider, `descriptor.fields[${index}].optionsProvider`);
     if (field.options != null) {
-      if (!Array.isArray(field.options) || !field.options.every(isRecord)) {
+      if (!Array.isArray(field.options) || !field.options.every(isPhiRecord)) {
         throw new Error(`descriptor.fields[${index}].options must be an array of objects.`);
       }
       const optionValues = new Set<string>();
@@ -171,7 +169,7 @@ export function parsePhiFormDescriptor(value: unknown): PhiFormDescriptor {
       }
     }
     if (field.placement != null) {
-      if (!isRecord(field.placement)) {
+      if (!isPhiRecord(field.placement)) {
         throw new Error(`descriptor.fields[${index}].placement must be an object.`);
       }
       validateResponsiveGridPlacement(field.placement.cell, `descriptor.fields[${index}].placement.cell`);
@@ -179,7 +177,7 @@ export function parsePhiFormDescriptor(value: unknown): PhiFormDescriptor {
       validateResponsiveGridPlacement(field.placement.control, `descriptor.fields[${index}].placement.control`);
     }
     if (field.validation != null) {
-      if (!Array.isArray(field.validation) || !field.validation.every(isRecord)) {
+      if (!Array.isArray(field.validation) || !field.validation.every(isPhiRecord)) {
         throw new Error(`descriptor.fields[${index}].validation must be an array of objects.`);
       }
       for (const [ruleIndex, rule] of field.validation.entries()) {
@@ -231,6 +229,6 @@ export function parsePhiFormDescriptor(value: unknown): PhiFormDescriptor {
     labelSetKey: typeof value.labelSetKey === "string" ? value.labelSetKey : undefined,
     fields: value.fields,
     actions: value.actions,
-    layout: isRecord(value.layout) ? value.layout : undefined,
+    layout: isPhiRecord(value.layout) ? value.layout : undefined,
   };
 }

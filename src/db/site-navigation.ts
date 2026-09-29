@@ -20,6 +20,7 @@ import {
 import { normalizeSiteCmsPath } from "@/lib/helpers/cms-path";
 import { readPhiPageReference } from "@/lib/internal-references";
 import { listSitePageScopes } from "@/db/site-pages";
+import { isPhiRecord } from "@/lib/helpers/record";
 
 type DbQueryable = Pick<PoolClient, "query">;
 
@@ -163,10 +164,6 @@ function requireSiteNavigationScopeKey(value: string) {
   return normalized;
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
-}
-
 function readRequiredString(value: unknown, label: string) {
   if (typeof value !== "string" || !value.trim()) {
     throw new Error(`${label} is required.`);
@@ -219,7 +216,7 @@ function readNavigationHref(value: unknown, label: string) {
 }
 
 function normalizeSiteNavigationTarget(value: unknown, label: string) {
-  if (!isRecord(value)) throw new Error(`${label} must be an object.`);
+  if (!isPhiRecord(value)) throw new Error(`${label} must be an object.`);
   if (value.kind === "page") {
     const parsed = readPhiPageReference(value.reference);
     if (!parsed) throw new Error(`${label} requires a valid opaque Page reference.`);
@@ -236,14 +233,14 @@ function normalizeSiteNavigationTarget(value: unknown, label: string) {
 }
 
 function toJsonRecord(value: unknown) {
-  return isRecord(value) ? value : {};
+  return isPhiRecord(value) ? value : {};
 }
 
 function stableJsonStringify(value: unknown): string {
   if (Array.isArray(value)) {
     return `[${value.map((entry) => stableJsonStringify(entry)).join(",")}]`;
   }
-  if (isRecord(value)) {
+  if (isPhiRecord(value)) {
     return `{${Object.keys(value)
       .sort()
       .map((key) => `${JSON.stringify(key)}:${stableJsonStringify(value[key])}`)
@@ -253,7 +250,7 @@ function stableJsonStringify(value: unknown): string {
 }
 
 function normalizeSiteNavigationPlacement(value: unknown): SiteNavigationItemPlacement {
-  if (!isRecord(value)) {
+  if (!isPhiRecord(value)) {
     throw new Error("Navigation item placement must be an object.");
   }
   const parentId = value.parentId === null
@@ -276,7 +273,7 @@ function readSiteNavigationFolderAddress(value: unknown, label: string) {
 }
 
 function normalizeSiteNavigationFolderTarget(value: unknown, label: string): SiteNavigationFolderTarget {
-  if (!isRecord(value)) {
+  if (!isPhiRecord(value)) {
     throw new Error(`${label} must be an object.`);
   }
   if (value.kind === "page") {
@@ -293,7 +290,7 @@ function normalizeSiteNavigationFolderTarget(value: unknown, label: string): Sit
 }
 
 function normalizeSiteNavigationFolder(value: unknown, label: string): SiteNavigationFolder {
-  if (!isRecord(value)) {
+  if (!isPhiRecord(value)) {
     throw new Error(`${label} must be an object.`);
   }
   const target = value.target === null ? null : normalizeSiteNavigationFolderTarget(value.target, `${label} target`);
@@ -354,7 +351,7 @@ function applySiteNavigationFolderTargets(
 }
 
 function normalizeSiteNavigationItemOverride(value: unknown): SiteNavigationItemOverride {
-  if (!isRecord(value)) {
+  if (!isPhiRecord(value)) {
     throw new Error("Navigation item override must be an object.");
   }
   const id = readNavigationInstanceId(value.id, "Navigation item id", "preset");
@@ -383,7 +380,7 @@ function normalizeSiteNavigationItemOverride(value: unknown): SiteNavigationItem
 }
 
 function normalizeSiteNavigationCustomItem(value: unknown): SiteNavigationCustomItem {
-  if (!isRecord(value)) {
+  if (!isPhiRecord(value)) {
     throw new Error("Navigation custom item must be an object.");
   }
   const id = readNavigationInstanceId(value.id, "Navigation custom item id", "draft");
@@ -432,7 +429,7 @@ function normalizeSiteNavigationCustomItem(value: unknown): SiteNavigationCustom
 }
 
 function normalizeSiteNavigationOverlay(value: unknown, expectedNavKey: string): SiteNavigationOverlay {
-  if (!isRecord(value)) {
+  if (!isPhiRecord(value)) {
     throw new Error("Navigation overlay must be an object.");
   }
   const navKey = requireSiteNavigationScopeKey(readRequiredString(value.navKey, "Navigation navKey"));

@@ -24,6 +24,7 @@ import {
   composePhisAddonAssetTableName,
   composePhisAddonObjectName,
 } from "./schema-name.ts";
+import { isPhiRecord } from "../helpers/record.ts";
 
 const OBJECT_NAME_PATTERN = /^[a-z][a-z0-9_]*$/;
 const COLUMN_TYPES = new Set([
@@ -69,10 +70,6 @@ const CORE_WRITTEN_COLUMNS: Readonly<Record<string, string>> = {
   [PHIS_ADDON_CREATED_BY_COLUMN]: "ownerScoped",
   [PHIS_ADDON_GROUP_COLUMN]: "groupScoped",
 };
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
-}
 
 function isReferenceColumn(
   column: PhisAddonColumnDescriptor,
@@ -124,7 +121,7 @@ function validateColumn(
   issues: string[],
 ): PhisAddonColumnDescriptor | null {
   const before = issues.length;
-  if (!isRecord(value)) {
+  if (!isPhiRecord(value)) {
     issues.push(`${field} must be an object.`);
     return null;
   }
@@ -145,7 +142,7 @@ function validateColumn(
   if ("references" in value) {
     const reference = value.references;
     const isCore = typeof reference === "string" && CORE_REFERENCES.has(reference);
-    const isOwn = isRecord(reference) && typeof reference.table === "string";
+    const isOwn = isPhiRecord(reference) && typeof reference.table === "string";
     if (!isCore && !isOwn) {
       issues.push(
         `${field}.references must be a Core reference (${[...CORE_REFERENCES].join(", ")}) ` +
@@ -186,7 +183,7 @@ function validateColumn(
   }
   if (value.default !== undefined) {
     const fallback = value.default;
-    if (!isRecord(fallback)) {
+    if (!isPhiRecord(fallback)) {
       issues.push(`${field}.default must be an object.`);
     } else if (fallback.kind === "now") {
       if (type !== "instant") {
@@ -211,7 +208,7 @@ function validateConstraint(
   field: string,
   issues: string[],
 ) {
-  if (!isRecord(value)) {
+  if (!isPhiRecord(value)) {
     issues.push(`${field} must be an object.`);
     return "";
   }
@@ -315,7 +312,7 @@ function validateAssetSlot(
   columnNames: ReadonlySet<string>,
 ): PhisAddonAssetSlotDescriptor | null {
   const before = issues.length;
-  if (!isRecord(value)) {
+  if (!isPhiRecord(value)) {
     issues.push(`${field} must be an object.`);
     return null;
   }
@@ -377,7 +374,7 @@ function validateTable(
   issues: string[],
 ): PhisAddonTableDescriptor | null {
   const before = issues.length;
-  if (!isRecord(value)) {
+  if (!isPhiRecord(value)) {
     issues.push(`${field} must be an object.`);
     return null;
   }
@@ -482,7 +479,7 @@ function validateTable(
   const indexNames: string[] = [];
   for (const [index, descriptor] of indexes.entries()) {
     const indexField = `${field}.indexes[${index}]`;
-    if (!isRecord(descriptor)) {
+    if (!isPhiRecord(descriptor)) {
       issues.push(`${indexField} must be an object.`);
       continue;
     }
@@ -573,7 +570,7 @@ function validateTable(
   // Two slots mirroring into one column would be two files claiming one path.
   assertUnique(
     assets
-      .map((slot) => (isRecord(slot) && typeof slot.mirrorColumn === "string" ? slot.mirrorColumn : ""))
+      .map((slot) => (isPhiRecord(slot) && typeof slot.mirrorColumn === "string" ? slot.mirrorColumn : ""))
       .filter((name) => name !== ""),
     `${field}.assets.mirrorColumn`,
     issues,
@@ -594,7 +591,7 @@ export function validatePhisAddonSchemaDescriptor(
   issues: string[],
 ): PhisAddonSchemaDescriptor | null {
   const before = issues.length;
-  if (!isRecord(value)) {
+  if (!isPhiRecord(value)) {
     issues.push(`${field} must be an object.`);
     return null;
   }

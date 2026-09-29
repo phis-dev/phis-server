@@ -14,12 +14,8 @@ import {
 } from "@phis/contracts/signals";
 
 import type { PhiCmsInstanceId } from "@/lib/cms/instance-id";
+import { isPhiRecord } from "@/lib/helpers/record";
 
-type JsonRecord = Record<string, unknown>;
-
-function isRecord(value: unknown): value is JsonRecord {
-  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
-}
 
 /**
  * Every error a stored signal wiring can carry, collected rather than thrown one at a time.
@@ -37,7 +33,7 @@ export function collectCmsSignalRouteErrors(
   if (value == null) {
     return errors;
   }
-  if (!isRecord(value)) {
+  if (!isPhiRecord(value)) {
     return [`${label} must be an object or null.`];
   }
 
@@ -53,7 +49,7 @@ export function collectCmsSignalRouteErrors(
     }
     collection.forEach((route, index) => {
       const routeLabel = `${label}.${collectionKey}[${index}]`;
-      if (!isRecord(route)) {
+      if (!isPhiRecord(route)) {
         errors.push(`${routeLabel} must be an object.`);
         return;
       }

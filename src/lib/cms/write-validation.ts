@@ -20,6 +20,7 @@ import {
 import { collectCmsSignalRouteErrors } from "@/lib/cms/signal-validation";
 import { readPhiPageReference } from "@/lib/internal-references";
 import { readPhiViewerAccessPolicy, type PhiViewerAccessPolicy } from "@/lib/authorization";
+import { isPhiRecord } from "@/lib/helpers/record";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -176,10 +177,6 @@ export type CmsValidationResult<T> = {
   details?: string[];
 };
 
-function isRecord(value: unknown): value is JsonRecord {
-  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
-}
-
 function readInteger(value: unknown, label: string, errors: string[], options?: {
   min?: number;
   allowZero?: boolean;
@@ -236,7 +233,7 @@ function readViewerAccessPolicy(
   if (value === undefined) {
     return undefined;
   }
-  if (!isRecord(value)) {
+  if (!isPhiRecord(value)) {
     errors.push(`${label} must be an access policy object.`);
     return undefined;
   }
@@ -267,7 +264,7 @@ function readDraftWriteState(value: unknown, errors: string[]) {
   if (value === undefined) {
     return undefined;
   }
-  if (!isRecord(value)) {
+  if (!isPhiRecord(value)) {
     errors.push("draft must be an object.");
     return undefined;
   }
@@ -363,7 +360,7 @@ function readCmsPresetSource(
   if (value === null && options?.nullable) {
     return null;
   }
-  if (!isRecord(value)) {
+  if (!isPhiRecord(value)) {
     errors.push(`${label} must be an object${options?.nullable ? " or null" : ""}.`);
     return undefined;
   }
@@ -391,7 +388,7 @@ function readOptionalRecord(value: unknown, label: string, errors: string[]) {
     return undefined;
   }
 
-  if (!isRecord(value)) {
+  if (!isPhiRecord(value)) {
     errors.push(`${label} must be an object.`);
     return undefined;
   }
@@ -410,7 +407,7 @@ function validateRenderableConfigAssetSources(
     });
     return;
   }
-  if (!isRecord(value)) {
+  if (!isPhiRecord(value)) {
     return;
   }
 
@@ -434,7 +431,7 @@ function readRenderableConfig(value: unknown, label: string, errors: string[]) {
   if (Array.isArray(config.buttons)) {
     for (const [index, button] of config.buttons.entries()) {
       if (
-        isRecord(button) &&
+        isPhiRecord(button) &&
         Object.prototype.hasOwnProperty.call(button, "accessPolicy")
       ) {
         readViewerAccessPolicy(
@@ -495,7 +492,7 @@ function parseContentBinding(value: unknown, label: string, errors: string[]) {
     return null;
   }
 
-  if (!isRecord(value)) {
+  if (!isPhiRecord(value)) {
     errors.push(`${label} must be an object.`);
     return undefined;
   }
@@ -536,7 +533,7 @@ function parseLayoutNodes(value: unknown, errors: string[], domain: PhiCmsInstan
   const parsed: CmsDraftLayoutNodeInput[] = [];
 
   for (const [index, entry] of value.entries()) {
-    if (!isRecord(entry)) {
+    if (!isPhiRecord(entry)) {
       errors.push(`layoutNodes[${index}] must be an object.`);
       continue;
     }
@@ -605,7 +602,7 @@ function parseContentWidgets(value: unknown, errors: string[], domain: PhiCmsIns
   const parsed: CmsDraftContentWidgetInput[] = [];
 
   for (const [index, entry] of value.entries()) {
-    if (!isRecord(entry)) {
+    if (!isPhiRecord(entry)) {
       errors.push(`contentWidgets[${index}] must be an object.`);
       continue;
     }
@@ -687,7 +684,7 @@ function parseRegions(value: unknown, errors: string[], domain: PhiCmsInstanceDo
   const parsed: CmsDraftRegionInput[] = [];
 
   for (const [index, entry] of value.entries()) {
-    if (!isRecord(entry)) {
+    if (!isPhiRecord(entry)) {
       errors.push(`regions[${index}] must be an object.`);
       continue;
     }
@@ -742,7 +739,7 @@ function parseOverlays(value: unknown, errors: string[], domain: PhiCmsInstanceD
   const parsed: CmsDraftOverlayInput[] = [];
 
   for (const [index, entry] of value.entries()) {
-    if (!isRecord(entry)) {
+    if (!isPhiRecord(entry)) {
       errors.push(`overlays[${index}] must be an object.`);
       continue;
     }
@@ -1012,7 +1009,7 @@ export function validateCmsAreaPresetWriteInput(
   payload: unknown,
   options?: { config?: "structure" | "stored" },
 ): CmsValidationResult<CmsAreaPresetWriteInput> {
-  if (!isRecord(payload)) {
+  if (!isPhiRecord(payload)) {
     return buildFailure("Invalid request body.", ["Body must be an object."]);
   }
 
@@ -1021,7 +1018,7 @@ export function validateCmsAreaPresetWriteInput(
   const areaMask = area ? resolveCmsAreaMaskFromArea(area, errors) : undefined;
   const sourcePreset = readCmsPresetSource(payload.sourcePreset, "sourcePreset", errors);
   const draft = readDraftWriteState(payload.draft, errors);
-  const preset = isRecord(payload.preset)
+  const preset = isPhiRecord(payload.preset)
     ? {
         id: readOptionalInteger(payload.preset.id, "preset.id", errors),
         status: readOptionalInteger(payload.preset.status, "preset.status", errors, {
@@ -1107,7 +1104,7 @@ function readAreaPublicRoutePaths(value: unknown, errors: string[], label: strin
   const seen = new Set<string>();
   value.forEach((entry, index) => {
     const entryLabel = `${label}[${index}]`;
-    if (!isRecord(entry)) {
+    if (!isPhiRecord(entry)) {
       errors.push(`${entryLabel} must be an object.`);
       return;
     }
@@ -1277,7 +1274,7 @@ function readAreaMetaConfig(value: unknown, errors: string[], label: string) {
 export function validateCmsAreaModulesWriteInput(
   payload: unknown,
 ): CmsValidationResult<CmsAreaModulesWriteInput> {
-  if (!isRecord(payload)) {
+  if (!isPhiRecord(payload)) {
     return buildFailure("Invalid request body.", ["Body must be an object."]);
   }
 
@@ -1344,7 +1341,7 @@ export function validateCmsAreaModulesWriteInput(
 }
 
 export function validateCmsPageWriteInput(payload: unknown): CmsValidationResult<CmsPageWriteInput> {
-  if (!isRecord(payload)) {
+  if (!isPhiRecord(payload)) {
     return buildFailure("Invalid request body.", ["Body must be an object."]);
   }
 
@@ -1358,7 +1355,7 @@ export function validateCmsPageWriteInput(payload: unknown): CmsValidationResult
   const draft = readDraftWriteState(payload.draft, errors);
   let pageMeta: CmsPageWriteInput["pageMeta"] = undefined;
   if (payload.pageMeta !== undefined) {
-    if (!isRecord(payload.pageMeta)) {
+    if (!isPhiRecord(payload.pageMeta)) {
       errors.push("pageMeta must be an object.");
     } else {
       pageMeta = {
@@ -1373,7 +1370,7 @@ export function validateCmsPageWriteInput(payload: unknown): CmsValidationResult
       };
     }
   }
-  const page = isRecord(payload.page)
+  const page = isPhiRecord(payload.page)
     ? {
         id: readOptionalInteger(payload.page.id, "page.id", errors),
         pageType: readOptionalInteger(payload.page.pageType, "page.pageType", errors, {

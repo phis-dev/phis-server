@@ -11,6 +11,7 @@ import {
 import { clearSiteConfigCache } from "@/db/site-config";
 import { getPool, withTransaction } from "@/lib/db";
 import { PhiCmsRevisionFlags } from "@phis/contracts/cms";
+import { isPhiRecord } from "@/lib/helpers/record";
 
 type DbQueryable = Pick<PoolClient, "query">;
 
@@ -44,16 +45,12 @@ export type SiteThemeRevisionRecord = {
   createdAt: string;
 };
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
-}
-
 function readString(value: unknown) {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
 }
 
 function toJsonRecord(value: unknown) {
-  return isRecord(value) ? value : {};
+  return isPhiRecord(value) ? value : {};
 }
 
 function stableJsonStringify(value: unknown): string {
@@ -61,7 +58,7 @@ function stableJsonStringify(value: unknown): string {
     return `[${value.map((entry) => stableJsonStringify(entry)).join(",")}]`;
   }
 
-  if (isRecord(value)) {
+  if (isPhiRecord(value)) {
     return `{${Object.keys(value)
       .sort()
       .map((key) => `${JSON.stringify(key)}:${stableJsonStringify(value[key])}`)
@@ -72,12 +69,12 @@ function stableJsonStringify(value: unknown): string {
 }
 
 function countRecordLeaves(value: unknown): number {
-  if (!isRecord(value)) {
+  if (!isPhiRecord(value)) {
     return 0;
   }
 
   return Object.values(value).reduce<number>(
-    (count, entry) => count + (isRecord(entry) ? countRecordLeaves(entry) : 1),
+    (count, entry) => count + (isPhiRecord(entry) ? countRecordLeaves(entry) : 1),
     0,
   );
 }
@@ -126,7 +123,7 @@ export function normalizeSiteThemeScopeKey(value?: string | null) {
 }
 
 function normalizeSiteThemeWriteValue(value: unknown) {
-  if (!isRecord(value)) {
+  if (!isPhiRecord(value)) {
     throw new Error("theme must be an object.");
   }
 
