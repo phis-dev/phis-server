@@ -413,6 +413,45 @@ async function readArtifact(flags: FlagMap) {
   };
 }
 
+/**
+ * The capability ids an artifact declares that something else already supplies.
+ *
+ * A capability has one supplier (`server_capabilities.capability_id` is unique), and nothing enforced
+ * that before reconcile wrote the rows: the second supplier's insert broke on the constraint and took the
+ * reconcile of every Add-on down with it. Asked here, the install or upgrade that would introduce the
+ * clash is refused, and it names the supplier.
+ */
+export function findPhisAddonCapabilityClashes(
+  capabilities: readonly { id: string }[],
+  others: readonly { addonId: string; manifest: { capabilities: readonly { id: string }[] } }[],
+) {
+  const suppliers = new Map<string, string>(
+    PHIS_CORE_CAPABILITIES.map((capability) => [capability.id, "@phis/server/core"]),
+  );
+  for (const other of others) {
+    for (const capability of other.manifest.capabilities) {
+      suppliers.set(capability.id, other.addonId);
+    }
+  }
+  return capabilities.flatMap((capability) => {
+    const supplier = suppliers.get(capability.id);
+    return supplier ? [{ capabilityId: capability.id, supplier }] : [];
+  });
+}
+
+function assertPhisAddonCapabilitiesUnclaimed(
+  manifest: { addonId: string; capabilities: readonly { id: string }[] },
+  others: readonly { addonId: string; manifest: { capabilities: readonly { id: string }[] } }[],
+) {
+  const clashes = findPhisAddonCapabilityClashes(manifest.capabilities, others);
+  if (clashes.length > 0) {
+    throw new Error(
+      `${manifest.addonId} declares capabilities another supplier already provides: ` +
+      clashes.map((clash) => `${clash.capabilityId} (${clash.supplier})`).join(", ") + ".",
+    );
+  }
+}
+
 export async function installAddon(root: string, flags: FlagMap) {
   const { bytes, artifactDigest, manifest, manifestDigest } = await readArtifact(flags);
 
@@ -423,6 +462,7 @@ export async function installAddon(root: string, flags: FlagMap) {
   if (state.addons.some((addon) => addon.packageName === manifest.packageName)) {
     throw new Error(`Add-on package ${manifest.packageName} is already installed.`);
   }
+  assertPhisAddonCapabilitiesUnclaimed(manifest, state.addons);
 
   const { installRoot } = getAddonPaths(root);
   const versionDirectory = resolvePhisAddonVersionDirectory(
@@ -521,6 +561,10 @@ export async function upgradeAddon(root: string, flags: FlagMap) {
       `${existing.manifest.migrationVersion}. A schema cannot be walked back by an upgrade.`,
     );
   }
+  assertPhisAddonCapabilitiesUnclaimed(
+    manifest,
+    state.addons.filter((addon) => addon.addonId !== addonId),
+  );
   const entryIsBroken = invalid.some((entry) => entry.addonId === addonId);
   if (
     manifest.packageVersion === existing.packageVersion &&
