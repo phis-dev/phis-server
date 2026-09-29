@@ -52,7 +52,11 @@ export function decideExternalAccountResolution(input: {
         ? "link-existing-user"
         : "membership-required";
     }
-    return "link-required";
+    // Confirming the link adds the membership a person without one needs, which is the registration
+    // policy's to allow; where it does not, asking for the password would lead nowhere.
+    return input.hasMembership || input.registrationMode === "automatic"
+      ? "link-required"
+      : "membership-required";
   }
 
   return input.registrationMode === "automatic"

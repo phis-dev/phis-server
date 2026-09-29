@@ -37,6 +37,20 @@ describe("external account resolution", () => {
     })).toBe("link-required");
   });
 
+  it("offers the link to a person without a membership only where registration would add one", () => {
+    expect(decideExternalAccountResolution({
+      ...baseline,
+      emailUserId: 15,
+      registrationMode: "invite-only",
+    })).toBe("membership-required");
+    expect(decideExternalAccountResolution({
+      ...baseline,
+      emailUserId: 15,
+      hasMembership: true,
+      registrationMode: "invite-only",
+    })).toBe("link-required");
+  });
+
   it("permits only explicitly trusted automatic email linking", () => {
     expect(decideExternalAccountResolution({
       ...baseline,

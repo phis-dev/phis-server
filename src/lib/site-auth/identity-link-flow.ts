@@ -7,10 +7,11 @@ import {
   consumeAuthTransaction,
   createAuthTransaction,
   getSiteAuthMethod,
+  getSiteAuthPolicy,
   getUserIdByExternalIdentity,
   linkExternalIdentity,
 } from "@/db/site-auth";
-import { getEffectiveUserSiteAuthorization } from "@/db/user-site-memberships";
+import { getEffectiveUserSiteAuthorization, upsertUserSiteMembership } from "@/db/user-site-memberships";
 import { randomToken, sha256Hex } from "@/lib/auth";
 import { verifyPasswordHash } from "@/lib/password";
 import { normalizeAuthNextPath } from "@/lib/site-auth/contracts";
@@ -121,7 +122,14 @@ export async function confirmExternalIdentityLink(input: {
   ) {
     throw new Error("AUTH_LINK_IDENTITY_INVALID");
   }
-  const method = await getSiteAuthMethod(input.siteId, transaction.methodKey, "primary");
+  // The installation the flow started with: without it the first enabled one of the method was asked,
+  // and a Site's second installation of a provider could never confirm.
+  const method = await getSiteAuthMethod(
+    input.siteId,
+    transaction.methodKey,
+    "primary",
+    transaction.providerInstallationKey,
+  );
   if (
     !method?.enabled ||
     !method.provider?.enabled ||
@@ -143,10 +151,15 @@ export async function confirmExternalIdentityLink(input: {
   ]);
   if (
     !user ||
-    !user.siteIds.includes(input.siteId) ||
     emailUser?.id !== transaction.userId ||
     (linkedUserId !== null && linkedUserId !== transaction.userId)
   ) {
+    throw new Error("AUTH_LINK_ACCOUNT_MISMATCH");
+  }
+  // A person without a membership here reaches this flow only where registration is automatic
+  // (AUTHENTICATION.md §7 step 3); the policy is asked again because it may have changed since.
+  const isMember = user.siteIds.includes(input.siteId);
+  if (!isMember && (await getSiteAuthPolicy(input.siteId))?.registrationMode !== "automatic") {
     throw new Error("AUTH_LINK_ACCOUNT_MISMATCH");
   }
   if (!user.passwordHash) {
@@ -154,6 +167,12 @@ export async function confirmExternalIdentityLink(input: {
   }
   if (!await verifyPasswordHash(user.passwordHash, input.password)) {
     throw new Error("AUTH_LINK_INVALID_CREDENTIALS");
+  }
+  if (!isMember) {
+    if (!isUserAccountEnabled(user.flags)) {
+      throw new Error("AUTH_LINK_ACCOUNT_DISABLED");
+    }
+    await upsertUserSiteMembership({ userId: user.id, siteId: input.siteId });
   }
   const authorization = await getEffectiveUserSiteAuthorization(user.id, input.siteId);
   if (!isUserAccountEnabled(user.flags) || !authorization.enabled) {

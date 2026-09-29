@@ -9,6 +9,8 @@ const mocks = vi.hoisted(() => ({
   getUserByEmail: vi.fn(),
   getUserById: vi.fn(),
   getAuthorization: vi.fn(),
+  getPolicy: vi.fn(),
+  upsertMembership: vi.fn(),
   verifyPassword: vi.fn(),
   encrypt: vi.fn(),
   decrypt: vi.fn(),
@@ -22,11 +24,13 @@ vi.mock("@/db/site-auth", () => ({
   consumeAuthTransaction: mocks.consumeTransaction,
   createAuthTransaction: mocks.createTransaction,
   getSiteAuthMethod: mocks.getMethod,
+  getSiteAuthPolicy: mocks.getPolicy,
   getUserIdByExternalIdentity: mocks.getIdentityUserId,
   linkExternalIdentity: mocks.linkIdentity,
 }));
 vi.mock("@/db/user-site-memberships", () => ({
   getEffectiveUserSiteAuthorization: mocks.getAuthorization,
+  upsertUserSiteMembership: mocks.upsertMembership,
 }));
 vi.mock("@/lib/auth", () => ({
   randomToken: () => "link-token",
@@ -160,5 +164,59 @@ describe("external identity link confirmation", () => {
       password: "wrong-password",
     })).rejects.toThrow("AUTH_LINK_INVALID_CREDENTIALS");
     expect(mocks.linkIdentity).not.toHaveBeenCalled();
+  });
+
+  function linkTransaction(installationKey: string) {
+    mocks.consumeTransaction.mockResolvedValue({
+      userId: 42,
+      methodKey: "google",
+      providerInstallationKey: installationKey,
+      stage: "step-up",
+      payloadCiphertext: "ciphertext",
+      payloadIv: "iv",
+      payloadAuthTag: "tag",
+      nextPath: "/",
+    });
+    mocks.decrypt.mockReturnValue({ version: 1, identity });
+    mocks.getMethod.mockResolvedValue({
+      enabled: true,
+      provider: { enabled: true, installationKey },
+    });
+    mocks.getUserByEmail.mockResolvedValue({ id: 42 });
+    mocks.getIdentityUserId.mockResolvedValue(null);
+    mocks.verifyPassword.mockResolvedValue(true);
+    mocks.getAuthorization.mockResolvedValue({ enabled: true, coreRoleFlags: 0, roleClaims: [] });
+  }
+
+  it("asks for the installation the flow started with", async () => {
+    linkTransaction("google-workspace");
+    mocks.getUserById.mockResolvedValue({ id: 42, siteIds: [7], passwordHash: "hash", flags: 0 });
+
+    await confirmExternalIdentityLink({ siteId: 7, token: "link-token", password: "valid-password" });
+
+    expect(mocks.getMethod).toHaveBeenCalledWith(7, "google", "primary", "google-workspace");
+  });
+
+  it("adds the membership of a person without one where registration is automatic", async () => {
+    linkTransaction("google");
+    mocks.getUserById.mockResolvedValue({ id: 42, siteIds: [3], passwordHash: "hash", flags: 0 });
+    mocks.getPolicy.mockResolvedValue({ registrationMode: "automatic" });
+
+    await confirmExternalIdentityLink({ siteId: 7, token: "link-token", password: "valid-password" });
+
+    expect(mocks.upsertMembership).toHaveBeenCalledWith({ userId: 42, siteId: 7 });
+    expect(mocks.linkIdentity).toHaveBeenCalled();
+  });
+
+  it("refuses a person without a membership where registration would not add one", async () => {
+    linkTransaction("google");
+    mocks.getUserById.mockResolvedValue({ id: 42, siteIds: [3], passwordHash: "hash", flags: 0 });
+    mocks.getPolicy.mockResolvedValue({ registrationMode: "invite-only" });
+
+    await expect(confirmExternalIdentityLink({
+      siteId: 7, token: "link-token", password: "valid-password",
+    })).rejects.toThrow("AUTH_LINK_ACCOUNT_MISMATCH");
+    expect(mocks.verifyPassword).not.toHaveBeenCalled();
+    expect(mocks.upsertMembership).not.toHaveBeenCalled();
   });
 });
