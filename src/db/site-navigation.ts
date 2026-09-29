@@ -477,11 +477,20 @@ export function parseSiteNavigationOverlay(value: unknown, expectedNavKey: strin
   return normalizeSiteNavigationOverlay(value, expectedNavKey);
 }
 
+/**
+ * Checks the Draft identities of a Navigation's custom items.
+ *
+ * A new item's id names the Draft revision it was made in, and that revision has to be one of this
+ * scope's: that is what keeps an id from another Navigation out. An item the source revision already
+ * holds was checked when it arrived, and the revision its id names may since have been deleted from
+ * the history; asking again would refuse every later save of the Navigation.
+ */
 async function validateNavigationDraftIdsWithDb(
   db: DbQueryable,
   navScopeId: number,
   overlay: SiteNavigationOverlay,
   nextNodeSequence: number,
+  carriedItemIds: ReadonlySet<string>,
 ) {
   const revisionIds = new Set<number>();
   for (const item of overlay.customItems) {
@@ -494,7 +503,9 @@ async function validateNavigationDraftIdsWithDb(
         `Navigation custom item "${item.id}" sequence must be below nextNodeSequence ${nextNodeSequence}.`,
       );
     }
-    revisionIds.add(descriptor.draftRevisionId);
+    if (!carriedItemIds.has(item.id)) {
+      revisionIds.add(descriptor.draftRevisionId);
+    }
   }
   if (revisionIds.size === 0) return;
   const ids = [...revisionIds];
@@ -997,7 +1008,11 @@ export async function saveSiteNavigationDraftRevision(
         `to ${nextNodeSequence}.`,
       );
     }
-    await validateNavigationDraftIdsWithDb(client, scope.id, overlay, nextNodeSequence);
+    const carriedItems = sourceRevision
+      ? parseSiteNavigationOverlay(sourceRevision.treeJson, normalizedKey).customItems
+      : [];
+    const carriedItemIds = new Set(carriedItems.map((item) => item.id));
+    await validateNavigationDraftIdsWithDb(client, scope.id, overlay, nextNodeSequence, carriedItemIds);
     const summary = buildNavigationRevisionSummary(
       overlay,
       sourceRevision?.treeJson ?? null,
