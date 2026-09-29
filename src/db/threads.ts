@@ -1392,6 +1392,18 @@ export async function setThreadStatus(input: {
     const thread = await readThreadRow(client, input.siteId, input.reader, input.threadId);
     if (thread) {
       seen = true;
+      if (thread.kind === PhisThreadKind.Support && input.reader.kind === "user") {
+        // An archived thread takes no more messages, so the requester closing it would leave the queue
+        // unable to answer the ticket it is still working. Its status follows the ticket's workflow.
+        const { rowCount: requester } = await client.query(
+          `SELECT 1 FROM phis.thread_participants
+           WHERE thread_id = $1 AND user_id = $2 AND (flags & $3) <> 0`,
+          [input.threadId, input.reader.userId, PhisThreadParticipantFlag.Requester],
+        );
+        if ((requester ?? 0) > 0) {
+          throw new PhisThreadError("The requester of a Support thread cannot change its status.");
+        }
+      }
       const { rowCount } = await client.query(
         `UPDATE phis.threads
          SET status = $2,
@@ -1429,6 +1441,17 @@ export async function markThreadRead(
   const thread = await readThreadRow(pool, siteId, { kind: "user", userId }, threadId);
   if (!thread) {
     return false;
+  }
+  if (messageId != null) {
+    // A read mark is an id compared against this thread's messages; one from another thread would move
+    // the mark by whatever that id happens to be.
+    const { rowCount } = await pool.query(
+      `SELECT 1 FROM phis.thread_messages WHERE id = $1 AND thread_id = $2`,
+      [messageId, threadId],
+    );
+    if ((rowCount ?? 0) === 0) {
+      throw new PhisThreadError("The message is not part of this thread.");
+    }
   }
 
   await pool.query(

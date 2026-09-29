@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { PhisThreadStatus, type PhisThreadStatusValue } from "@phis/contracts/threads";
 
-import { getThreadDetail, setThreadStatus } from "@/db/threads";
+import { getThreadDetail, PhisThreadError, setThreadStatus } from "@/db/threads";
 import { requireSiteAuthenticatedApiContext } from "@/lib/guards/site-admin-api";
 import { readRequestBody } from "@/lib/helpers/request";
 
@@ -71,12 +71,20 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     return NextResponse.json({ error: "status must be open or archived." }, { status: 400 });
   }
 
-  const changed = await setThreadStatus({
-    siteId: site.id,
-    threadId,
-    reader: { kind: "user", userId },
-    status: status as PhisThreadStatusValue,
-  });
+  let changed: boolean;
+  try {
+    changed = await setThreadStatus({
+      siteId: site.id,
+      threadId,
+      reader: { kind: "user", userId },
+      status: status as PhisThreadStatusValue,
+    });
+  } catch (cause) {
+    if (cause instanceof PhisThreadError) {
+      return NextResponse.json({ error: cause.message }, { status: 403 });
+    }
+    throw cause;
+  }
   if (!changed) {
     return NextResponse.json({ error: "Thread not found." }, { status: 404 });
   }

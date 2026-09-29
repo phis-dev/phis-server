@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 
-import { markThreadRead } from "@/db/threads";
+import { markThreadRead, PhisThreadError } from "@/db/threads";
 import { requireSiteAuthenticatedApiContext } from "@/lib/guards/site-admin-api";
 import { readRequestBody } from "@/lib/helpers/request";
 
@@ -29,8 +29,19 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   }
 
   const body = await readRequestBody(request);
-  const messageId = typeof body.messageId === "number" ? body.messageId : null;
-  const marked = await markThreadRead(site.id, userId, threadId, messageId);
+  const messageId = body.messageId ?? null;
+  if (messageId !== null && !(Number.isSafeInteger(messageId) && (messageId as number) > 0)) {
+    return NextResponse.json({ error: "messageId must be a positive integer." }, { status: 400 });
+  }
+  let marked: boolean;
+  try {
+    marked = await markThreadRead(site.id, userId, threadId, messageId as number | null);
+  } catch (cause) {
+    if (cause instanceof PhisThreadError) {
+      return NextResponse.json({ error: cause.message }, { status: 400 });
+    }
+    throw cause;
+  }
   if (!marked) {
     return NextResponse.json({ error: "Thread not found." }, { status: 404 });
   }

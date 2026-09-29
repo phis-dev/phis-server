@@ -399,6 +399,41 @@ describe("threads", () => {
     });
     const afterReply = await listThreadsForUser(site.id, reader, { unreadOnly: true });
     expect(afterReply.rows.map((thread) => thread.id)).toContain(opened.thread.id);
+
+    // A read mark is a message of this thread: one of another thread's would move it by its id.
+    const elsewhere = await createThread({
+      siteId: site.id,
+      kind: PhisThreadKind.Direct,
+      message: "Elsewhere.",
+      participantUserIds: [reader],
+      createdByUserId: author,
+    });
+    const foreignMessageId = elsewhere.messages.at(-1)?.id ?? 0;
+    await expect(markThreadRead(site.id, reader, opened.thread.id, foreignMessageId))
+      .rejects.toThrow(/not part of this thread/u);
+  });
+
+  it("leaves a Support thread's status to the queue, not to its requester", async () => {
+    await requirePhiTestDatabase();
+    const site = await createPhiTestSite("threads-support-status");
+    await offerAllThreadKinds(site);
+    const requester = await createPhiTestUser(site);
+    const supporter = await createPhiTestUser(site);
+    await grantCoreRole(site, supporter, PhiBaseRole.Staff);
+    const threadId = await openSupportThread(site, { requester, supporter });
+
+    await expect(setThreadStatus({
+      siteId: site.id,
+      threadId,
+      reader: { kind: "user", userId: requester },
+      status: PhisThreadStatus.Archived,
+    })).rejects.toThrow(/requester of a Support thread/u);
+    expect(await setThreadStatus({
+      siteId: site.id,
+      threadId,
+      reader: { kind: "user", userId: supporter },
+      status: PhisThreadStatus.Archived,
+    })).toBe(true);
   });
 
   it("archives for everyone and refuses new messages", async () => {
