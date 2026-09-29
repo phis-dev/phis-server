@@ -8,28 +8,6 @@ export type AdminUserAccountType = "customer" | "roles" | "auth";
 export type AdminUserSortKey = "name" | "email" | "accountType" | "enabled" | "createdAt" | "lastLoginAt";
 export type AdminUserSortOrder = "ascend" | "descend";
 
-export type AdminUserListRecord = {
-  id: number;
-  emailNormalized: string;
-  medusaCustomerId: string | null;
-  passwordHash: string | null;
-  preferredLocale: string | null;
-  siteIds: number[];
-  flags: number;
-  customerNumber: string | null;
-  createdAt: string;
-  updatedAt: string;
-  firstName: string | null;
-  lastName: string | null;
-  companyName: string | null;
-  coreRoleFlags: number;
-  siteFlags: number;
-  lastLoginAt: string | null;
-  displayName: string;
-  accountType: AdminUserAccountType;
-  enabled: boolean;
-};
-
 export type ListAdminUsersOptions = {
   search?: string;
   accountType?: AdminUserAccountType | "all";

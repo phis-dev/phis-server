@@ -37,7 +37,6 @@ import {
   PHIS_THREAD_MESSAGE_MAX_ASSETS,
   PHIS_THREAD_MESSAGE_MAX_PAGE_SIZE,
   PHIS_THREAD_MESSAGE_PAGE_SIZE,
-  PHIS_THREAD_MESSAGE_REF_EXPORTED,
   PHIS_THREAD_MESSAGE_REF_IMPORTED,
   PHIS_THREAD_PARTICIPANT_KIND_GROUP,
   PHIS_THREAD_PARTICIPANT_KIND_USER,
@@ -1488,28 +1487,6 @@ export async function findThreadByExternalRef(input: {
     input.siteId,
     { kind: "provider", providerId: input.providerId },
     threadId,
-  );
-}
-
-/** Records that a message left for an integration, so it is never exported twice. */
-export async function recordThreadMessageExport(input: {
-  siteId: number;
-  providerId: string;
-  externalId: string;
-  messageId: number;
-}) {
-  const pool = getPool();
-  await pool.query(
-    `INSERT INTO phis.thread_message_refs (site_id, provider_id, external_id, message_id, flags)
-     VALUES ($1, $2, $3, $4, $5)
-     ON CONFLICT (site_id, provider_id, external_id) DO NOTHING`,
-    [
-      input.siteId,
-      input.providerId,
-      input.externalId,
-      input.messageId,
-      PHIS_THREAD_MESSAGE_REF_EXPORTED,
-    ],
   );
 }
 

@@ -13,9 +13,6 @@ import type { PhiMediaUploadPlanKindKey } from "./media-storage";
  */
 export const PhiMediaUploadPurpose = { Media: 1, AddonAsset: 2 } as const;
 
-export type PhiMediaUploadPurposeValue =
-  (typeof PhiMediaUploadPurpose)[keyof typeof PhiMediaUploadPurpose];
-
 export const PhiMediaUploadSessionStatus = {
   Pending: 0,
   Uploading: 1,
@@ -39,9 +36,6 @@ export const PhiMediaUploadSessionStatus = {
    */
   Interrupted: 8,
 } as const;
-
-export type PhiMediaUploadSessionStatusValue =
-  (typeof PhiMediaUploadSessionStatus)[keyof typeof PhiMediaUploadSessionStatus];
 
 /**
  * Which plan a session was issued, persisted so the rest of the flow can read it.
@@ -112,4 +106,3 @@ export function createPhiMediaUploadSessionToken() {
 export function resolvePhiMediaUploadSessionKind(contentType: string) {
   return resolvePhiMediaKindFromContentType(contentType);
 }
-

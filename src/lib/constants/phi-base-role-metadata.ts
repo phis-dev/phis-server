@@ -9,5 +9,3 @@ export const PHI_BASE_ROLE_OPTIONS = [
   { label: "Supporter", value: "supporter", flag: PhiBaseRole.Supporter },
   { label: "Accountant", value: "accountant", flag: PhiBaseRole.Accountant },
 ] as const;
-
-export type PhiBaseRoleOptionValue = (typeof PHI_BASE_ROLE_OPTIONS)[number]["value"];

@@ -14,17 +14,6 @@ type CreateCustomerInput = {
   companyName: string | null;
 };
 
-export type MedusaCustomerAuthResult = {
-  token: string;
-  customer: {
-    id: string | null;
-    email: string | null;
-    firstName: string | null;
-    lastName: string | null;
-    companyName: string | null;
-  };
-};
-
 export type MedusaCustomerRecord = {
   id: string | null;
   email: string | null;

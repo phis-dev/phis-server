@@ -280,24 +280,6 @@ export async function listAddonMediaSpaces(siteId: number) {
 }
 
 /**
- * Whether this endpoint was found to check a digest a client asserts.
- *
- * Read from what the probe recorded rather than inferred from the Provider, because one adapter speaks
- * to several backends: `@phis/storage-s3` reaches AWS, MinIO and Garage, and they do not agree. No field
- * of the configuration says which one is behind it.
- *
- * Absent means no. A Profile nobody has probed has not been found to verify anything, and treating
- * silence as a yes is how an unverified digest ends up recorded as a checked one.
- */
-export async function mediaStorageProfileChecksumAlgorithm(siteId: number, profileId: number) {
-  const { rows } = await getPool().query<{ checksum_algorithm: string | null }>(
-    `SELECT checksum_algorithm FROM phis.media_storage_profiles WHERE site_id = $1 AND id = $2`,
-    [siteId, profileId],
-  );
-  return rows[0]?.checksum_algorithm ?? null;
-}
-
-/**
  * What was recorded about this endpoint, and whether anything was.
  *
  * The two are separate answers. A Profile that answered "no" and a Profile nobody ever asked both read

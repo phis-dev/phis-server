@@ -79,10 +79,6 @@ export function writeSiteModuleDesiredState(root: string, state: PhiSiteModuleDe
   writeAtomic(desiredStatePath(root), `${JSON.stringify(state, null, 2)}\n`);
 }
 
-export function readSiteModules(root: string, siteKey: string): PhiSiteModuleEntry[] {
-  return readSiteModuleDesiredState(root).sites[siteKey]?.modules ?? [];
-}
-
 /**
  * A stable, collision-free local name for a package inside the generated file.
  *

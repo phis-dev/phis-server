@@ -4,8 +4,6 @@ import {
 } from "@/lib/cms/area-config";
 import type { CmsAreaPresetWriteInput } from "@/lib/cms/write-validation";
 
-export type { PhiAreaPublishOwnership };
-
 /**
  * Merges a draft onto what is currently published.
  *

@@ -43,16 +43,6 @@ export type UserSessionRecord = {
   current_policy_revision?: number;
 };
 
-export type UserSessionHistoryRecord = {
-  id: string;
-  createdAt: string | null;
-  lastSeenAt: string | null;
-  expiresAt: string | null;
-  revokedAt: string | null;
-  ipAddress: string | null;
-  userAgent: string | null;
-};
-
 function toIsoString(value: string | Date | null) {
   if (!value) {
     return null;

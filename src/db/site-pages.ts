@@ -206,12 +206,6 @@ export type SiteResolvedPageMeta = {
   description: ResolvedSiteMessageField | null;
 };
 
-export type SiteResolvedPageLookup = {
-  areaMask: number;
-  path: string;
-  tree: SiteResolvedWidgetTree;
-};
-
 export type SiteResolvedAreaPresetTree = {
   sourcePreset: CmsAreaPresetWriteInput["sourcePreset"];
   preset: SiteAreaPresetRecord;
@@ -219,11 +213,6 @@ export type SiteResolvedAreaPresetTree = {
   overlays: SiteOverlayRecord[];
   layoutNodes: SiteLayoutNodeRecord[];
   contentWidgets: SiteContentWidgetRecord[];
-};
-
-export type SiteResolvedAreaPresetLookup = {
-  areaMask: number;
-  preset: SiteResolvedAreaPresetTree;
 };
 
 export type SiteAreaRevisionRecord = {
@@ -973,8 +962,6 @@ async function getSitePageScopeByIdWithDb(
     workingDraftRevisionId: row.working_draft_revision_id,
   } : null;
 }
-
-export type { SiteModuleBlockUsageRecord } from "@/db/site-module-usage";
 
 /** The Builder's half of the question; the CLI asks the same one against its own pool. */
 export function listSiteModuleBlockUsage(siteId: number, areaMask: number, moduleId: string) {

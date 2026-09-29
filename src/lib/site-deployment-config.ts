@@ -52,18 +52,6 @@ export type SiteRuntimeSummary = {
   };
 };
 
-export type SiteSourceDefaults = {
-  host?: string;
-  port?: number;
-  pathRoot?: string;
-};
-
-export type SiteInstanceDefaults = {
-  host?: string;
-  portBase?: number;
-  pathRoot?: string;
-};
-
 export type SiteLocationOverride = {
   host?: string;
   port?: number;

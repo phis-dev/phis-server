@@ -11,10 +11,6 @@ import {
 
 export {
   loadConfigFileSync,
-  PHIS_DEFAULT_STAGE_ROOT,
-  PHIS_ROOT_ENV,
-  type PhiConfigPaths,
-  type PhisConfig,
   type PlatformSuperUser,
   resolvePhiSiteSourceLocale,
   validatePhiConfig,

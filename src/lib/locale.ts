@@ -15,8 +15,6 @@ export const SUPPORTED_LOCALES = Array.from(
   new Set([PHI_CANONICAL_SOURCE_LOCALE, ...configuredLocales]),
 ) as ReadonlyArray<string>;
 
-export type SupportedLocale = (typeof SUPPORTED_LOCALES)[number];
-
 export type PhiTextDirection = "ltr" | "rtl";
 
 export type PhiLocaleCapability = {
@@ -110,8 +108,6 @@ function toCapability(input: CapabilityInput): PhiLocaleCapability {
     labelFallbacks: [...(input.labelFallbacks ?? buildLabelFallbacks(input))],
   };
 }
-
-export const PHI_LOCALE_CAPABILITIES: readonly PhiLocaleCapability[] = PHI_LOCALE_CAPABILITY_INPUTS.map(toCapability);
 
 const PHI_LOCALE_CAPABILITY_BY_KEY = new Map<string, PhiLocaleCapability>();
 

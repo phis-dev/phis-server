@@ -35,27 +35,3 @@ export {
   resolvePhiMediaKindFromContentType,
 } from "@phis/contracts/media";
 export type { PhiImageAssetVariantSpec } from "@phis/contracts/media";
-
-export function buildPhiImageAssetVariantPublicUrl(
-  publicUrl: string,
-  variantKey: number | null | undefined,
-  variantVersion: number | null | undefined = 0,
-) {
-  const normalizedUrl = (publicUrl ?? "").trim();
-  if (!normalizedUrl || typeof variantKey !== "number" || !Number.isInteger(variantKey)) {
-    return null;
-  }
-
-  const normalizedVersion =
-    typeof variantVersion === "number" && Number.isInteger(variantVersion) && variantVersion >= 0
-      ? variantVersion
-      : 0;
-
-  if (/^https?:\/\//i.test(normalizedUrl)) {
-    const url = new URL(normalizedUrl);
-    url.pathname = `${url.pathname.replace(/\/+$/, "")}/variant/${variantKey}/v/${normalizedVersion}`;
-    return url.toString();
-  }
-
-  return `${normalizedUrl.replace(/\/+$/, "")}/variant/${variantKey}/v/${normalizedVersion}`;
-}

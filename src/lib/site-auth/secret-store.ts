@@ -2,15 +2,10 @@ import "server-only";
 
 import {
   deletePhisSecret,
-  hasPhisSecret,
   hasPhisSecrets,
   writePhisSecret,
 } from "@/db/server-secrets";
-import {
-  buildPhiAuthSecretReference,
-  PHI_AUTH_INSTALLATION_KEY_MAX_LENGTH,
-  PHI_AUTH_SECRET_NAME_PREFIX,
-} from "@/lib/secrets/reference";
+import { buildPhiAuthSecretReference } from "@/lib/secrets/reference";
 import { readPhiSecretEncryptionKey, resolvePhiSecret } from "@/lib/secrets/resolver";
 
 /**
@@ -26,8 +21,6 @@ import { readPhiSecretEncryptionKey, resolvePhiSecret } from "@/lib/secrets/reso
  */
 
 const OWNER = { kind: "core" } as const;
-
-export { PHI_AUTH_INSTALLATION_KEY_MAX_LENGTH, PHI_AUTH_SECRET_NAME_PREFIX };
 
 /** The reference builder lives with the reference grammar, because `phis-cli` needs it too. */
 export const buildSiteAuthSecretReference = buildPhiAuthSecretReference;
@@ -54,10 +47,6 @@ export function deleteSiteAuthSecret(reference: string) {
  *
  * The public Auth manifest asks only this, so it never decrypts anything.
  */
-export function hasSiteAuthSecret(reference: string | null) {
-  return reference ? hasPhisSecret(reference) : Promise.resolve(false);
-}
-
 export function hasSiteAuthSecrets(references: (string | null)[]) {
   return hasPhisSecrets(references.filter((reference): reference is string => Boolean(reference)));
 }

@@ -35,18 +35,6 @@ export const SITE_CONTENT_TYPE_HTML = 6;
 export const SITE_CONTENT_TYPE_MARKDOWN = 7;
 export const SITE_CONTENT_STATUS_PUBLISHED = 1;
 
-export type SiteNewsItem = {
-  id: string;
-  slug: string;
-  created: string;
-  outdated: string | null;
-  title: string;
-  subtitle: string;
-  content: string;
-  link: string | null;
-  tags: string[];
-};
-
 export type SiteContentAssetInput = {
   siteId: number;
   contentId?: number | null;
@@ -98,14 +86,6 @@ export type SiteContentWriteResult = {
   contentId: number;
   versionId: number;
   slug: string;
-};
-
-export type SiteContentAssetReference = {
-  id: number;
-  type: number;
-  slug: string;
-  currentVersionId: number | null;
-  publishedVersionId: number | null;
 };
 
 export type SiteResolvedContentTextField = {

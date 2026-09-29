@@ -58,21 +58,6 @@ export async function readPhiSiteUserAddonRoles(
   }));
 }
 
-/** Who holds one role of one Add-on here. */
-export async function readPhisAddonRoleHolders(
-  db: Queryable,
-  input: { addonId: string; siteId: number; role: string },
-): Promise<number[]> {
-  const { rows } = await db.query<{ user_id: number }>(
-    `SELECT user_id
-       FROM phis.site_addon_user_roles
-      WHERE site_id = $1 AND addon_id = $2 AND role = $3
-      ORDER BY user_id`,
-    [input.siteId, input.addonId, input.role],
-  );
-  return rows.map((row) => row.user_id);
-}
-
 /**
  * Grants one role, idempotently.
  *

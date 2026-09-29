@@ -1,14 +1,4 @@
 import { PHIS_SPECIAL_AREA_KEYS, resolvePhisCmsAreaMask } from "@/lib/constants/cms-areas";
-import {
-  type PhiAuthorizationViewer,
-  type PhiViewerAccessPolicy,
-} from "@/lib/authorization";
-
-export type PageAccessInput = {
-  visibilityMask?: number | null;
-  accessPolicy?: PhiViewerAccessPolicy | null;
-  viewer: PhiAuthorizationViewer;
-};
 
 export type ResolvedCmsPath = {
   areaMask: number;

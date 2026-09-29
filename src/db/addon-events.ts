@@ -178,19 +178,6 @@ export async function listPhisAddonEventAddonIds(siteId: number) {
   return rows.map((row) => row.addon_id);
 }
 
-/** Which Sites still owe this Add-on something, so a run can drain them all. */
-export async function listPhisAddonEventSiteIds(addonId: string) {
-  const { rows } = await getPool().query<{ site_id: number }>(
-    `SELECT DISTINCT site_id
-     FROM phis.addon_event_outbox
-     WHERE addon_id = $1
-       AND delivered_at IS NULL
-     ORDER BY site_id ASC`,
-    [addonId],
-  );
-  return rows.map((row) => row.site_id);
-}
-
 export async function markPhisAddonEventDelivered(id: string) {
   await getPool().query(
     `UPDATE phis.addon_event_outbox

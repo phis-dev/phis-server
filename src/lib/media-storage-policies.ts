@@ -6,8 +6,6 @@ import type { PhisMediaStorageProviderId } from "@/lib/media-storage";
 import { reconcilePhiMediaStoragePoliciesWith } from "@/lib/media-storage-policies-core";
 import type { PhiMediaStoragePolicyGroup } from "@/lib/media-storage-policies-core";
 
-export type { PhiMediaStoragePolicyGroup };
-
 /**
  * The Server's way of reaching a Provider, handed to the shared reconciliation.
  *

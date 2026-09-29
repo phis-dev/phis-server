@@ -8,20 +8,12 @@ import {
   type PhisConfig,
   readMergedPhiConfigSync as readMergedPhiConfigFromPathsSync,
   readPhiRuntimeConfigSync as readPhiRuntimeConfigFromPathsSync,
-  readPhiStaticConfigSync as readPhiStaticConfigFromPathsSync,
   writePhiRuntimeConfigSync as writePhiRuntimeConfigToPathsSync,
 } from "./config-core";
 
 export {
-  DEFAULT_CONFIG,
-  loadConfigFileSync,
-  PHIS_DEFAULT_STAGE_ROOT,
-  PHIS_ROOT_ENV,
-  type PhiConfigPaths,
   type PhisConfig,
-  type PlatformSuperUser,
   resolvePhiSiteSourceLocale,
-  validatePhiConfig,
 } from "./config-core";
 
 export function getDefaultServerPhiRoot() {
@@ -53,10 +45,6 @@ export function getPhiStaticConfigPath(root?: string) {
 
 export function getPhiRuntimeConfigPath(root?: string) {
   return resolvePhiConfigPaths(root).runtime;
-}
-
-export function readPhiStaticConfigSync(root?: string) {
-  return readPhiStaticConfigFromPathsSync(resolvePhiConfigPaths(root));
 }
 
 export function readPhiRuntimeConfigSync(root?: string) {
