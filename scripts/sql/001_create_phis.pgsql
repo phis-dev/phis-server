@@ -847,7 +847,9 @@ CREATE TABLE IF NOT EXISTS phis.user_sessions (
     ON DELETE CASCADE,
   CONSTRAINT user_sessions_assurance_level_check CHECK (assurance_level >= 0),
   CONSTRAINT user_sessions_auth_state_check CHECK (auth_state IN (1, 2, 3)),
-  CONSTRAINT user_sessions_auth_policy_revision_check CHECK (auth_policy_revision > 0)
+  -- `0` is "evaluated under nothing": a Core role change sets it, so the next read reevaluates the
+  -- session whatever revision the Site policy is at.
+  CONSTRAINT user_sessions_auth_policy_revision_check CHECK (auth_policy_revision >= 0)
 );
 
 CREATE INDEX IF NOT EXISTS user_sessions_user_id_idx

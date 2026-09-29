@@ -177,6 +177,13 @@ export async function upsertUserSiteMembership(input: {
           [input.userId, input.siteId],
         );
         rows[0] = revision.rows[0];
+        // A factor policy scoped to roles may reach these sessions now, and nothing else would make
+        // them look: the Site policy revision has not moved. `0` is older than every revision.
+        await client.query(
+          `UPDATE phis.user_sessions SET auth_policy_revision = 0
+           WHERE user_id = $1 AND site_id = $2 AND revoked_at IS NULL AND auth_policy_revision <> 0`,
+          [input.userId, input.siteId],
+        );
       }
     }
     const roleClaims = await readRoleClaims(client, input.userId, input.siteId);

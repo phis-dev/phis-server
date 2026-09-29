@@ -130,6 +130,15 @@ export async function grantPhiCliSiteAdmin(
            updated_at = NOW()`,
       [userId, input.siteId, PHI_CORE_ROLE_PROVIDER_ID, PhiBaseRole.Admin],
     );
+    if (!alreadyAdmin) {
+      // As every Core role change does: a factor policy scoped to Admin reaches this person's live
+      // sessions on their next read, not at their next sign-in.
+      await client.query(
+        `UPDATE phis.user_sessions SET auth_policy_revision = 0
+         WHERE user_id = $1 AND site_id = $2 AND revoked_at IS NULL AND auth_policy_revision <> 0`,
+        [userId, input.siteId],
+      );
+    }
 
     await client.query("COMMIT");
     return {

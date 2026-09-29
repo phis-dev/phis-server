@@ -11,6 +11,13 @@ import {
 import type { Pool } from "pg";
 
 import { createUserSession, revokeUserSessions } from "./user-sessions";
+import { upsertUserSiteMembership } from "./user-site-memberships";
+import { PhiBaseRole } from "@/lib/constants/phi-base-roles";
+
+// One pool for the file: the harness does not reopen one it has closed.
+afterAll(async () => {
+  await closePhiTestPool();
+});
 
 /**
  * Whether a session falls with the password is something only PostgreSQL can answer: the statement
@@ -32,7 +39,6 @@ describe("revokeUserSessions against PostgreSQL", () => {
 
   afterAll(async () => {
     await dropPhiTestSites();
-    await closePhiTestPool();
   });
 
   async function openSession() {
@@ -84,5 +90,56 @@ describe("revokeUserSessions against PostgreSQL", () => {
     await revokeUserSessions(userId);
 
     expect(await isRevoked(other.id)).toBe(false);
+  });
+});
+
+/**
+ * A factor policy may be scoped to roles, and a role granted after sign-in changes whom it reaches
+ * without moving the Site policy revision. The grant is what has to make the sessions look again.
+ */
+describe("a Core role change against the sessions it concerns", () => {
+  let pool: Pool;
+  let site: PhiTestSite;
+
+  beforeAll(async () => {
+    pool = await requirePhiTestDatabase();
+    await dropPhiTestSites();
+    site = await createPhiTestSite("roles-stale");
+  });
+
+  afterAll(async () => {
+    await dropPhiTestSites();
+  });
+
+  async function revisionOf(sessionId: string) {
+    const { rows } = await pool.query<{ auth_policy_revision: number }>(
+      `SELECT auth_policy_revision FROM phis.user_sessions WHERE id = $1`,
+      [sessionId],
+    );
+    return rows[0]!.auth_policy_revision;
+  }
+
+  it("sets the live sessions of that membership to be reevaluated, and nobody else's", async () => {
+    const userId = await createPhiTestUser(site);
+    const otherUserId = await createPhiTestUser(site);
+    const session = await createUserSession({ userId, siteId: site.id, authMethodKeys: ["password"] });
+    const other = await createUserSession({
+      userId: otherUserId, siteId: site.id, authMethodKeys: ["password"],
+    });
+
+    await upsertUserSiteMembership({ userId, siteId: site.id, coreRoleFlags: PhiBaseRole.Author });
+
+    expect(await revisionOf(session.id)).toBe(0);
+    expect(await revisionOf(other.id)).toBe(1);
+  });
+
+  it("leaves the sessions alone when the roles stay what they were", async () => {
+    const userId = await createPhiTestUser(site);
+    await upsertUserSiteMembership({ userId, siteId: site.id, coreRoleFlags: PhiBaseRole.Author });
+    const session = await createUserSession({ userId, siteId: site.id, authMethodKeys: ["password"] });
+
+    await upsertUserSiteMembership({ userId, siteId: site.id, coreRoleFlags: PhiBaseRole.Author });
+
+    expect(await revisionOf(session.id)).toBe(1);
   });
 });

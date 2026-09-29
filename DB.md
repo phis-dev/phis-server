@@ -764,7 +764,7 @@ Contract:
 - `authenticated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
 - `assurance_level SMALLINT NOT NULL DEFAULT 1` (CHECK `>= 0`)
 - `auth_state SMALLINT NOT NULL DEFAULT 3` (CHECK `IN (1, 2, 3)`)
-- `auth_policy_revision INT NOT NULL DEFAULT 1` (CHECK `> 0`)
+- `auth_policy_revision INT NOT NULL DEFAULT 1` (CHECK `>= 0`)
 - `auth_method_keys VARCHAR(64)[] NOT NULL DEFAULT ARRAY[]::VARCHAR(64)[]`
 - `next_path VARCHAR(1024) NOT NULL DEFAULT '/'`
 - `expires_at TIMESTAMPTZ NOT NULL`
@@ -786,8 +786,9 @@ Contract:
   only carry the user through the factor workflow. Completing it sets `auth_state = 3` and assurance `2`.
 - `auth_policy_revision` is the `site_auth_config.policy_revision` the state was evaluated under. When the
   Site policy revision is newer, the session is re-evaluated on read and rejected unless it is still
-  complete. A session under a grace deadline that has not passed keeps its old revision, so it is asked
-  again on every read until the deadline has.
+  complete. A Core role change sets the live sessions of that membership to `0`, because the policy's
+  role scope may reach them now. A session under a grace deadline that has not passed keeps its old
+  revision, so it is asked again on every read until the deadline has.
 - `next_path` is the normalized relative destination requested at sign-in, recorded with the session.
 - Provider access tokens are not session fields. Tokens retained for provider API access belong to a
   separate encrypted integration/Add-on store.
