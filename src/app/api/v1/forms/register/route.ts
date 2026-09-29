@@ -16,11 +16,8 @@ import { getFormGuardSecret, getFormTimingWindow, getSiteMailConfig } from "@/li
 import { logFormAbuse } from "@/lib/form-abuse-log";
 import { verifyFormGuard } from "@/lib/form-guard";
 import { verifyPasswordHash } from "@/lib/password";
-import { checkAuthAttemptLimit, tooManyAttemptsResponse } from "@/lib/site-auth/attempt-limit";
-import {
-  isSitePasswordMethodEnabled,
-  PASSWORD_METHOD_DISABLED_RESPONSE,
-} from "@/lib/site-auth/password-method";
+import { checkAuthAttemptLimit } from "@/lib/site-auth/attempt-limit";
+import { isSitePasswordMethodEnabled } from "@/lib/site-auth/password-method";
 import { isUserAccountEnabled } from "@/lib/user-flags";
 import { USER_SITE_FLAG_NEWSLETTER_OPT_IN } from "@/lib/user-site-flags";
 
@@ -48,6 +45,42 @@ function isValidEmail(value: string) {
 
 function countLetters(value: string) {
   return value.match(/\p{L}/gu)?.length ?? 0;
+}
+
+/** What every registration that is not an immediate link answers: look in your inbox. */
+function REGISTRATION_ACCEPTED() {
+  return NextResponse.json({ ok: true, status: "pending_verification" });
+}
+
+/**
+ * Tells the owner of an address that somebody tried to register it. Held to a few a minute, so the
+ * form cannot be turned into a way of filling somebody's inbox; the form answers the same either way.
+ */
+async function notifyExistingAccountOwner(
+  request: Request,
+  site: NonNullable<Awaited<ReturnType<typeof requireSiteFromRequest>>>,
+  email: string,
+  locale: string,
+) {
+  if (checkAuthAttemptLimit(request, [`register-notice:${site.id}:${email}`], 3) !== null) {
+    return;
+  }
+  try {
+    await sendTemplatedEmail({
+      to: email,
+      site,
+      siteConfig: await getSiteMailConfig(site.id),
+      locale,
+      template: "registration_account_exists",
+      recipientName: email,
+    });
+  } catch (error) {
+    logRuntimeEvent("error", "registration.account_exists_notice_failed", {
+      message: "Account-exists notice could not be sent.",
+      siteKey: site.key,
+      error,
+    });
+  }
 }
 
 export async function POST(request: Request) {
@@ -155,33 +188,28 @@ export async function POST(request: Request) {
   }
   const existingUser = await getUserAccountByEmail(email);
 
-  if (existingUser && !existingUser.siteIds.includes(site.id)) {
-    if (authPolicy.existingAccountLinking === "disabled") {
-      return NextResponse.json(
-        { error: "Account linking is not available.", code: "linking_disabled" },
-        { status: 409 },
-      );
-    }
-    if (!existingUser.passwordHash) {
-      return NextResponse.json(
-        { error: "Account already exists.", code: "account_exists" },
-        { status: 409 },
-      );
-    }
-    // This branch signs somebody in by their password; a Site that switched the method off does not.
-    if (!await isSitePasswordMethodEnabled(site.id)) {
-      return NextResponse.json(PASSWORD_METHOD_DISABLED_RESPONSE, { status: 403 });
-    }
-    // And it verifies one, so it is a place to guess at one: measured like the login.
-    const retryAfter = checkAuthAttemptLimit(request, [`login:${site.id}:${email}`]);
-    if (retryAfter !== null) {
-      return tooManyAttemptsResponse(retryAfter);
-    }
-
-    // A disabled account joins no further Site, and says so no differently than a wrong password does.
-    const validPassword = await verifyPasswordHash(existingUser.passwordHash, password);
-    if (!validPassword || !isUserAccountEnabled(existingUser.flags)) {
-      return NextResponse.json({ error: "Invalid credentials." }, { status: 401 });
+  /*
+   * One answer for every address. It used to say which addresses have an account -- ok, 409 or 401 --
+   * so the form was a lookup anyone could run. An address with an account now gets the answer a new
+   * registration gets, and its owner a mail saying somebody tried; only the one case that proves the
+   * account is theirs, its password, answers differently.
+   */
+  if (existingUser) {
+    const mayLink =
+      !existingUser.siteIds.includes(site.id) &&
+      authPolicy.existingAccountLinking !== "disabled" &&
+      Boolean(existingUser.passwordHash) &&
+      await isSitePasswordMethodEnabled(site.id);
+    // Linking verifies a password, so it is a place to guess at one: measured like the login, and a
+    // guess past the limit is simply not believed.
+    const withinLimit = mayLink &&
+      checkAuthAttemptLimit(request, [`login:${site.id}:${email}`]) === null;
+    const linked = withinLimit &&
+      isUserAccountEnabled(existingUser.flags) &&
+      await verifyPasswordHash(existingUser.passwordHash!, password);
+    if (!linked) {
+      await notifyExistingAccountOwner(request, site, existingUser.emailNormalized, locale);
+      return REGISTRATION_ACCEPTED();
     }
 
     const user = await ensureUserAccount({
@@ -246,11 +274,10 @@ export async function POST(request: Request) {
       newsletterOptIn: newsletter,
     });
   } catch (error) {
+    // Registered between the lookup above and this write: the same answer as everywhere else.
     if (error instanceof Error && error.message === "ACCOUNT_EXISTS") {
-      return NextResponse.json(
-        { error: "Account already exists.", code: "account_exists" },
-        { status: 409 },
-      );
+      await notifyExistingAccountOwner(request, site, email, locale);
+      return REGISTRATION_ACCEPTED();
     }
     throw error;
   }
@@ -298,5 +325,5 @@ export async function POST(request: Request) {
     },
   });
 
-  return NextResponse.json({ ok: true, intentId: intent.id });
+  return REGISTRATION_ACCEPTED();
 }

@@ -7,6 +7,7 @@ import { translateWithCache } from "@/lib/translations";
 export type SupportedEmailTemplate =
   | "registration_verify"
   | "registration_welcome"
+  | "registration_account_exists"
   | "password_reset";
 
 type TemplateContext = {
@@ -52,6 +53,18 @@ const TEMPLATE_DEFAULTS: Record<
       { text: "Welcome to %1.", params: ["siteName"] },
       { text: "You can now continue once your account is fully set up by using your access portal." },
       { text: "Need help? Contact %1.", params: ["supportEmail"] },
+    ],
+  },
+  registration_account_exists: {
+    subject: { text: "You already have an account at %1", params: ["siteName"] },
+    lines: [
+      { text: "Hello," },
+      { text: "Somebody tried to register at %1 with this email address, which already has an account.",
+        params: ["siteName"] },
+      {
+        text: "If that was you, sign in with your password, or use \"Forgot password\" on the sign-in page.",
+      },
+      { text: "If it was not you, you can ignore this email. Your account has not been changed." },
     ],
   },
   password_reset: {

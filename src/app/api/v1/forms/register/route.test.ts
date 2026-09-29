@@ -6,6 +6,8 @@ const mocks = vi.hoisted(() => ({
   getByEmail: vi.fn(),
   ensureAccount: vi.fn(),
   verifyPassword: vi.fn(),
+  sendMail: vi.fn(),
+  createIntent: vi.fn(),
 }));
 
 vi.mock("@/lib/api-v1-guard", () => ({ guardApiV1: () => null }));
@@ -36,11 +38,11 @@ vi.mock("@/lib/site-auth/attempt-limit", () => ({
   checkAuthAttemptLimit: () => null,
   tooManyAttemptsResponse: vi.fn(),
 }));
-vi.mock("@/db/registration-intents", () => ({ createRegistrationIntent: vi.fn() }));
+vi.mock("@/db/registration-intents", () => ({ createRegistrationIntent: mocks.createIntent }));
 vi.mock("@/db/user-profiles", () => ({ getUserProfileByUserId: vi.fn(), upsertUserProfile: vi.fn() }));
 vi.mock("@/db/user-site-memberships", () => ({ upsertUserSiteMembership: vi.fn() }));
-vi.mock("@/lib/email", () => ({ buildVerificationUrlForRequest: vi.fn() }));
-vi.mock("@/lib/email-templates", () => ({ sendTemplatedEmail: vi.fn() }));
+vi.mock("@/lib/email", () => ({ buildVerificationUrlForRequest: () => "https://site.test/verify" }));
+vi.mock("@/lib/email-templates", () => ({ sendTemplatedEmail: mocks.sendMail }));
 vi.mock("@/lib/log", () => ({ logRuntimeEvent: vi.fn() }));
 
 import { POST } from "./route";
@@ -57,35 +59,69 @@ function request() {
   });
 }
 
-describe("registering with the address of an account on another Site", () => {
+const ACCEPTED = { ok: true, status: "pending_verification" };
+
+function account(overrides: Record<string, unknown> = {}) {
+  return {
+    id: 41, emailNormalized: "paula@example.test", passwordHash: "hash", siteIds: [2],
+    flags: 0, medusaCustomerId: null, ...overrides,
+  };
+}
+
+function noticeSent() {
+  return mocks.sendMail.mock.calls.some(([input]) => input.template === "registration_account_exists");
+}
+
+/**
+ * Whether an address has an account is not something the form tells anybody. Every outcome but a
+ * proven link answers like a new registration; the owner of the address hears about it by mail.
+ */
+describe("registration and existing addresses", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.verifyPassword.mockResolvedValue(true);
+    mocks.sendMail.mockResolvedValue("message-id");
+    mocks.createIntent.mockResolvedValue({
+      id: 1, email: "new@example.test", firstName: "Paula", lastName: "Person", locale: "en",
+      verificationToken: "token", fullName: "Paula Person",
+    });
   });
 
-  it("does not let a disabled account join, and answers as for a wrong password", async () => {
-    mocks.getByEmail.mockResolvedValue({
-      id: 41, emailNormalized: "paula@example.test", passwordHash: "hash", siteIds: [2],
-      flags: USER_ACCOUNT_FLAG_DISABLED, medusaCustomerId: null,
-    });
-
+  it("answers a new address with the pending answer and a verification mail", async () => {
+    mocks.getByEmail.mockResolvedValue(null);
     const response = await POST(request());
+    expect(await response.json()).toEqual(ACCEPTED);
+    expect(noticeSent()).toBe(false);
+  });
 
-    expect(response.status).toBe(401);
-    expect(await response.json()).toEqual({ error: "Invalid credentials." });
+  it("answers a disabled account the same way, and links nothing", async () => {
+    mocks.getByEmail.mockResolvedValue(account({ flags: USER_ACCOUNT_FLAG_DISABLED }));
+    const response = await POST(request());
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual(ACCEPTED);
+    expect(mocks.ensureAccount).not.toHaveBeenCalled();
+    expect(noticeSent()).toBe(true);
+  });
+
+  it("answers a wrong password the same way", async () => {
+    mocks.getByEmail.mockResolvedValue(account());
+    mocks.verifyPassword.mockResolvedValue(false);
+    expect(await (await POST(request())).json()).toEqual(ACCEPTED);
     expect(mocks.ensureAccount).not.toHaveBeenCalled();
   });
 
-  it("lets an enabled account with the right password join", async () => {
-    mocks.getByEmail.mockResolvedValue({
-      id: 41, emailNormalized: "paula@example.test", passwordHash: "hash", siteIds: [2],
-      flags: 0, medusaCustomerId: null,
-    });
+  it("answers an account that already belongs to this Site the same way", async () => {
+    mocks.getByEmail.mockResolvedValue(account({ siteIds: [7] }));
+    expect(await (await POST(request())).json()).toEqual(ACCEPTED);
+    expect(mocks.verifyPassword).not.toHaveBeenCalled();
+    expect(noticeSent()).toBe(true);
+  });
+
+  it("links an enabled account whose password is proven", async () => {
+    mocks.getByEmail.mockResolvedValue(account());
     mocks.ensureAccount.mockResolvedValue({ id: 41, emailNormalized: "paula@example.test" });
-
     const response = await POST(request());
-
-    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ ok: true, linkedExistingAccount: true });
     expect(mocks.ensureAccount).toHaveBeenCalledTimes(1);
   });
 });
