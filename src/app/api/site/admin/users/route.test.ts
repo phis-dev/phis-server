@@ -19,6 +19,7 @@ const mocks = vi.hoisted(() => ({
   upsertMembership: vi.fn(),
   createResetToken: vi.fn(),
   sendMail: vi.fn(),
+  revokeSessions: vi.fn(),
 }));
 
 vi.mock("@/lib/guards/site-admin-api", () => ({
@@ -48,7 +49,7 @@ vi.mock("@/db/user-site-memberships", () => ({
 }));
 vi.mock("@/db/user-sessions", () => ({
   listUserSessionsForSite: vi.fn(),
-  revokeUserSessionsForSite: vi.fn(),
+  revokeUserSessionsForSite: mocks.revokeSessions,
 }));
 vi.mock("@/lib/email", () => ({ buildPasswordResetUrlForRequest: () => "https://site.test/reset" }));
 vi.mock("@/lib/form-config", () => ({ getSiteMailConfig: async () => ({ publicBaseUrl: null }) }));
@@ -155,6 +156,16 @@ describe("PUT /api/site/admin/users", () => {
     expect((await PUT(request("PUT", { ...RECORD, lastName: "Renamed" }))).status).toBe(409);
     expect(mocks.updateFlags).not.toHaveBeenCalled();
     expect(mocks.upsertProfile).not.toHaveBeenCalled();
+  });
+
+  it("signs out the person it tells to change their password", async () => {
+    mocks.getById.mockResolvedValue(account([7]));
+    mocks.getByEmail.mockResolvedValue(account([7]));
+    const response = await PUT(request("PUT", { ...RECORD, changePassword: true }));
+
+    expect(response.status).toBe(200);
+    expect(mocks.updateFlags).toHaveBeenCalledWith(41, expect.objectContaining({ setFlags: 2 }));
+    expect(mocks.revokeSessions).toHaveBeenCalledWith(41, 7);
   });
 
   it("still changes the roles of a shared account, which belong to this Site", async () => {

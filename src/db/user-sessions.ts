@@ -3,7 +3,7 @@ import "server-only";
 import type { NextRequest } from "next/server";
 
 import { getPool } from "@/lib/db";
-import { USER_ACCOUNT_FLAG_DISABLED } from "@/lib/user-flags";
+import { USER_ACCOUNT_FLAG_DISABLED, USER_ACCOUNT_FLAG_MUST_CHANGE_PASSWORD } from "@/lib/user-flags";
 import { USER_SITE_FLAG_DISABLED } from "@/lib/user-site-flags";
 import {
   PHI_AUTH_SESSION_STATES,
@@ -230,7 +230,11 @@ export async function listUserSessionsForSite(userId: number, siteId: number, li
 export async function getSessionFromRequest(
   request: NextRequest,
   expectedSiteId?: number,
-  options: { allowDisabled?: boolean; allowIncomplete?: boolean } = {},
+  options: {
+    allowDisabled?: boolean;
+    allowIncomplete?: boolean;
+    allowPasswordChangeRequired?: boolean;
+  } = {},
 ) {
   const rawCookie = request.cookies.get(SESSION_COOKIE_NAME)?.value ?? null;
   const parsed = parseSessionCookieValue(rawCookie);
@@ -259,6 +263,18 @@ export async function getSessionFromRequest(
     !options.allowDisabled &&
     ((session.accountFlags & USER_ACCOUNT_FLAG_DISABLED) !== 0 ||
       (session.siteFlags & USER_SITE_FLAG_DISABLED) !== 0)
+  ) {
+    return null;
+  }
+
+  /*
+   * An account an administrator told to change its password is signed in for that and nothing else:
+   * the viewer read that shows the change, the change itself, the sign-in workflow and logout ask for
+   * it by name, and every other reader sees no session.
+   */
+  if (
+    !options.allowPasswordChangeRequired &&
+    (session.accountFlags & USER_ACCOUNT_FLAG_MUST_CHANGE_PASSWORD) !== 0
   ) {
     return null;
   }

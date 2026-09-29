@@ -1,6 +1,7 @@
 import { PhiUserAccountFlag } from "@/lib/constants/user-account-flags";
 
 export const USER_ACCOUNT_FLAG_DISABLED = PhiUserAccountFlag.Disabled;
+export const USER_ACCOUNT_FLAG_MUST_CHANGE_PASSWORD = PhiUserAccountFlag.MustChangePassword;
 
 export function hasUserAccountFlag(flags: number | null | undefined, flag: number) {
   return ((flags ?? 0) & flag) === flag;

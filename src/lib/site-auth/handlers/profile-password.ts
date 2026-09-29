@@ -14,7 +14,7 @@ type ProfilePasswordPayload = {
 };
 
 export async function PATCH(request: NextRequest) {
-  const guarded = await requireAuthenticatedSiteUser(request);
+  const guarded = await requireAuthenticatedSiteUser(request, { allowPasswordChangeRequired: true });
   if (!guarded.ok) return guarded.response;
   const { session, user } = guarded;
 

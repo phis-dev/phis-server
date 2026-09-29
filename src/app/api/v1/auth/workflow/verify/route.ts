@@ -27,6 +27,7 @@ export async function POST(request: NextRequest) {
   }
   const session = await getSessionFromRequest(request, siteContext.site.id, {
     allowIncomplete: true,
+    allowPasswordChangeRequired: true,
   });
   if (!session || session.authState !== PHI_AUTH_SESSION_STATES.factorChallengeRequired) {
     return NextResponse.json({ error: "Factor challenge required." }, { status: 409 });

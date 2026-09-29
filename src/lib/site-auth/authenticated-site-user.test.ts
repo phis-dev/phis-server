@@ -47,4 +47,15 @@ describe("the signed-in chain of the auth handlers", () => {
     expect(guarded.ok).toBe(false);
     expect(!guarded.ok && guarded.response.status).toBe(status);
   });
+
+  it("admits an account told to change its password only where the caller says so", async () => {
+    await requireAuthenticatedSiteUser(request());
+    expect(mocks.session).toHaveBeenLastCalledWith(expect.anything(), 7, {
+      allowPasswordChangeRequired: undefined,
+    });
+    await requireAuthenticatedSiteUser(request(), { allowPasswordChangeRequired: true });
+    expect(mocks.session).toHaveBeenLastCalledWith(expect.anything(), 7, {
+      allowPasswordChangeRequired: true,
+    });
+  });
 });

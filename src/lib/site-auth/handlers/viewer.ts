@@ -10,7 +10,7 @@ import { resolveSignedInLocale } from "@/lib/auth";
 import { requireSiteFromRequest } from "@/lib/site-context";
 import { resolvePhiUserArea } from "@/lib/user-area";
 import { USER_SITE_FLAG_NEWSLETTER_OPT_IN } from "@/lib/user-site-flags";
-import { resolveUserThemeModeName } from "@/lib/user-flags";
+import { resolveUserThemeModeName, USER_ACCOUNT_FLAG_MUST_CHANGE_PASSWORD } from "@/lib/user-flags";
 
 function buildDisplayName(input: {
   email: string;
@@ -30,7 +30,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "Missing site context." }, { status: 400 });
   }
 
-  const session = await getSessionFromRequest(request, site.id);
+  const session = await getSessionFromRequest(request, site.id, { allowPasswordChangeRequired: true });
   if (!session) {
     return NextResponse.json({ authenticated: false }, { status: 401 });
   }
@@ -90,6 +90,11 @@ export async function GET(request: NextRequest) {
        * travels as `system` and is resolved where `prefers-color-scheme` is known.
        */
       themeMode: resolveUserThemeModeName(user.flags),
+      /*
+       * The one thing this session may still do. Every other API refuses it (`getSessionFromRequest`),
+       * and the Site shows the password change in front of whatever page was asked for.
+       */
+      mustChangePassword: (user.flags & USER_ACCOUNT_FLAG_MUST_CHANGE_PASSWORD) !== 0,
       authentication: {
         authenticatedAt: session.authenticatedAt,
         assuranceLevel: session.assuranceLevel,

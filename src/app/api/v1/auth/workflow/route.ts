@@ -15,6 +15,7 @@ export async function GET(request: NextRequest) {
   if (siteContext.error || !siteContext.site) return siteContext.error;
   const session = await getSessionFromRequest(request, siteContext.site.id, {
     allowIncomplete: true,
+    allowPasswordChangeRequired: true,
   });
   if (!session) {
     return NextResponse.json({ authenticated: false }, { status: 401 });

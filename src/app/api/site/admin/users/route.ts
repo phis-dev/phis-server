@@ -555,6 +555,8 @@ export async function PUT(request: NextRequest) {
         setFlags: PhiUserAccountFlag.MustChangePassword,
       });
     }
+    // Whoever is signed in as this person now is asked for the change at the next sign-in, not later.
+    await revokeUserSessionsForSite(target.id, site.id);
 
     try {
       const messageId = await sendPasswordResetMail({

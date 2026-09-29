@@ -26,6 +26,7 @@ export async function POST(request: NextRequest) {
   }
   const session = await getSessionFromRequest(request, siteContext.site.id, {
     allowIncomplete: true,
+    allowPasswordChangeRequired: true,
   });
   if (!session) {
     return NextResponse.json({ error: "Authentication required." }, { status: 401 });

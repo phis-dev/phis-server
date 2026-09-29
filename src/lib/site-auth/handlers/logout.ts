@@ -17,6 +17,7 @@ export async function POST(request: NextRequest) {
   const session = await getSessionFromRequest(request, site.id, {
     allowDisabled: true,
     allowIncomplete: true,
+    allowPasswordChangeRequired: true,
   });
   const response = NextResponse.json({});
 

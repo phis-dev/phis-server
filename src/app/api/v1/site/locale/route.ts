@@ -27,7 +27,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "Site not found." }, { status: 404 });
   }
 
-  const session = await getSessionFromRequest(request, site.id);
+  const session = await getSessionFromRequest(request, site.id, { allowPasswordChangeRequired: true });
   const user = session ? await getUserAccountById(session.userId) : null;
   const searchParams = new URL(request.url).searchParams;
   const explicitLocale = searchParams.get("locale") ?? request.headers.get("x-locale");

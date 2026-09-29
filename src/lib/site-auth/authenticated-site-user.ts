@@ -15,7 +15,11 @@ import { requireSiteFromRequest } from "@/lib/site-context";
  * method and the reset CSRF check were both absent from exactly such copies. One chain, one place to
  * add the next link.
  */
-export async function requireAuthenticatedSiteUser(request: NextRequest) {
+export async function requireAuthenticatedSiteUser(
+  request: NextRequest,
+  /** Only the password change itself: an account told to change its password may do that and no more. */
+  options: { allowPasswordChangeRequired?: boolean } = {},
+) {
   const site = await requireSiteFromRequest(request);
   if (!site) {
     return refuse(NextResponse.json({ error: "Missing site context." }, { status: 400 }));
@@ -23,7 +27,9 @@ export async function requireAuthenticatedSiteUser(request: NextRequest) {
   if (!verifyCsrfRequest(request)) {
     return refuse(NextResponse.json({ error: "Invalid CSRF token." }, { status: 403 }));
   }
-  const session = await getSessionFromRequest(request, site.id);
+  const session = await getSessionFromRequest(request, site.id, {
+    allowPasswordChangeRequired: options.allowPasswordChangeRequired,
+  });
   if (!session) {
     return refuse(unauthorized());
   }

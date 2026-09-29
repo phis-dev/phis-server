@@ -262,6 +262,13 @@ TOTP enrollment is Site-scoped. Core creates the secret and `otpauth` payload; t
 QR code and manual setup key. Enrollment becomes active only after the user confirms a valid six-digit
 code. Recovery codes are generated once, displayed once, stored only as hashes, and consumed atomically.
 
+An administrator who asks for a password change sets `PhiUserAccountFlag.MustChangePassword` and ends
+the person's sessions on that Site. A session of an account carrying the flag authorizes nothing but the
+change: `GET /api/v1/auth/me` answers it with `mustChangePassword: true`, and the password change, the
+sign-in workflow and logout accept it; every other reader of the session sees none. The Site shows the
+password change in front of whatever page was asked for. Changing the password, in the Profile or by a
+reset link, clears the flag.
+
 Passkeys (WebAuthn) and email or SMS one-time codes are not implemented; see
 [AUTHENTICATION_PLANNED.md](./design/AUTHENTICATION_PLANNED.md).
 
