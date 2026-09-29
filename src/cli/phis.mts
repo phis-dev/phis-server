@@ -2624,8 +2624,24 @@ async function main() {
     if (command === "list") {
       const staleAfter = readSecondsFlag(flags, "stale-after", 90);
       const instances = await listPhisServerInstances(getPool(), staleAfter);
+      // A rollout that has not converged is the one thing a caller runs this for, so it is the exit code
+      // and the JSON answer too -- not only a line of text after the table.
+      const releaseCount = new Set(instances.map((instance) => instance.releaseBuildId)).size;
+      const addonSetCount = new Set(instances.map((instance) => instance.addonManifestDigest)).size;
+      const converged = releaseCount <= 1 && addonSetCount <= 1;
+      if (!converged) {
+        process.exitCode = 1;
+      }
       if (json) {
-        printJson({ ok: true, action: "instance.list", staleAfterSeconds: staleAfter, instances });
+        printJson({
+          ok: converged,
+          action: "instance.list",
+          staleAfterSeconds: staleAfter,
+          converged,
+          releaseCount,
+          addonSetCount,
+          instances,
+        });
         return;
       }
       if (instances.length === 0) {
@@ -2642,14 +2658,12 @@ async function main() {
         );
         console.log(`    addons=${addons || "none"}  digest=${instance.addonManifestDigest}`);
       }
-      const releases = new Set(instances.map((instance) => instance.releaseBuildId));
-      if (releases.size > 1) {
-        console.log(`${releases.size} releases are serving at once; a rollout has not finished.`);
+      if (releaseCount > 1) {
+        console.log(`${releaseCount} releases are serving at once; a rollout has not finished.`);
       }
-      const digests = new Set(instances.map((instance) => instance.addonManifestDigest));
-      if (digests.size > 1) {
+      if (addonSetCount > 1) {
         console.log(
-          `${digests.size} Add-on sets are serving at once; an artifact has not reached every instance.`,
+          `${addonSetCount} Add-on sets are serving at once; an artifact has not reached every instance.`,
         );
       }
       return;

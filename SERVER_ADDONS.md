@@ -1928,7 +1928,8 @@ Every instance reports:
 - readiness and last-seen timestamp
 
 Instances write this to `phis.server_instances` at startup and on an interval. `phis instance list`
-shows where they disagree, `phis instance drain` clears an instance's ready bit, and `phis instance prune`
+shows where they disagree and exits `1` while they do (`converged: false` with `--json`), so a rollout
+script can wait on it; `phis instance drain` clears an instance's ready bit, and `phis instance prune`
 removes instances that stopped reporting. Global activation is to complete only after the expected
 release is ready on all serving instances or old instances have left the load balancer; `phis addon
 enable` does not wait for that yet (see Status).
