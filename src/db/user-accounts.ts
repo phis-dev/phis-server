@@ -203,6 +203,14 @@ export async function getUserAccountById(userId: number, siteId = 0) {
   return rows[0] ? mapUserAccountRow(rows[0]) : null;
 }
 
+/**
+ * The account an address belongs to, whichever of its addresses it is.
+ *
+ * Every row of `user_emails` is its account's and nobody else's -- the address is unique across all of
+ * them -- so asking only the primary one answered "nobody" for an address that was taken: registering
+ * it ended in the unique index as a 500, and its owner could not sign in with it. The account comes
+ * back with its primary address, which is where mail goes.
+ */
 export async function getUserAccountByEmail(email: string, siteId = 0) {
   const normalizedEmail = normalizeEmail(email);
   if (!normalizedEmail) {
@@ -211,7 +219,9 @@ export async function getUserAccountByEmail(email: string, siteId = 0) {
   const pool = getPool();
   const { rows } = await pool.query<UserAccountRow>(
     `${userAccountProjection(2)}
-     WHERE email.email_normalized = $1
+     WHERE account.id = (
+       SELECT owner.user_id FROM phis.user_emails AS owner WHERE owner.email_normalized = $1
+     )
      LIMIT 1`,
     [normalizedEmail, siteId],
   );

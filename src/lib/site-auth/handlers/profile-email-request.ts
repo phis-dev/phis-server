@@ -73,24 +73,33 @@ export async function POST(request: NextRequest) {
   }
 
   const runtimeConfig = await getSiteRuntimeConfig(site.id);
-  const intent = await createRegistrationIntent({
-    siteId: site.id,
-    userId: user.id,
-    email,
-    /*
-     * The language this request was made in, which for somebody who has saved one is that, and otherwise
-     * the language their browser is reading. It used to be `preferred_locale` or the Site default, and
-     * now that the column is empty until somebody answers, that would have sent a German reader a
-     * confirmation mail in English while they sat on the German page that asked for it.
-     */
-    locale: resolveSignedInLocale(request, {
-      user,
-      defaultLocale: runtimeConfig?.defaultLocale ?? site.defaultLocale,
-      availableLocales: runtimeConfig?.availableLocales.map((option) => option.code)
-        ?? [site.defaultLocale],
-    }),
-    newsletterOptIn: false,
-  });
+  let intent: Awaited<ReturnType<typeof createRegistrationIntent>>;
+  try {
+    intent = await createRegistrationIntent({
+      siteId: site.id,
+      userId: user.id,
+      email,
+      /*
+       * The language this request was made in, which for somebody who has saved one is that, and
+       * otherwise the language their browser is reading. It used to be `preferred_locale` or the Site
+       * default, and now that the column is empty until somebody answers, that would have sent a German
+       * reader a confirmation mail in English while they sat on the German page that asked for it.
+       */
+      locale: resolveSignedInLocale(request, {
+        user,
+        defaultLocale: runtimeConfig?.defaultLocale ?? site.defaultLocale,
+        availableLocales: runtimeConfig?.availableLocales.map((option) => option.code)
+          ?? [site.defaultLocale],
+      }),
+      newsletterOptIn: false,
+    });
+  } catch (error) {
+    // Taken between the check above and this write, by an account that is not this one.
+    if (error instanceof Error && error.message === "ACCOUNT_EXISTS") {
+      return NextResponse.json({ error: "This email address is already in use." }, { status: 409 });
+    }
+    throw error;
+  }
 
   const siteMailConfig = await getSiteMailConfig(site.id);
   const verificationUrl = buildVerificationUrlForRequest(

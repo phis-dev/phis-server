@@ -158,6 +158,8 @@ export async function createRegistrationIntent(
   try {
     await client.query("BEGIN");
 
+    // Somebody else's address, not the asking account's own: returning to an address this account held
+    // before is an email change like any other, and it used to end here as a 500.
     const existingUser = await client.query<{ id: number }>(
       `SELECT email.user_id AS id
        FROM phis.user_emails AS email
@@ -165,8 +167,9 @@ export async function createRegistrationIntent(
          ON membership.user_id = email.user_id
         AND membership.site_id = $2
        WHERE email.email_normalized = $1
+         AND email.user_id IS DISTINCT FROM $3::int
        LIMIT 1`,
-      [normalizedEmail, input.siteId],
+      [normalizedEmail, input.siteId, input.userId ?? null],
     );
 
     if (existingUser.rows[0]) {

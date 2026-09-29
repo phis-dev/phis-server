@@ -248,24 +248,37 @@ export async function POST(request: Request) {
       }
     }
 
-    const user = await ensureUserAccount({
-      email: normalizedEmail,
-      siteId: site.id,
-      emailSource: PhiUserEmailSource.Registration,
-      medusaCustomerId,
-      passwordHash,
-      /*
-       * Not `intent.locale`, although that is the language this person registered in.
-       *
-       * `preferred_locale` is the answer to "which language do you want", and its absence is how the
-       * rest of the system knows nobody has answered yet: then the cookie the language switch wrote, and
-       * the browser's own preference, decide -- which for this person is the very language they
-       * registered in, reached without writing anything down. The intent keeps its locale, because the
-       * confirmation mail has to be written in some language and nobody is signed in to ask.
-       */
-      preferredLocale: null,
-      flags: 0,
-    });
+    let user: Awaited<ReturnType<typeof ensureUserAccount>>;
+    try {
+      user = await ensureUserAccount({
+        email: normalizedEmail,
+        siteId: site.id,
+        emailSource: PhiUserEmailSource.Registration,
+        medusaCustomerId,
+        passwordHash,
+        /*
+         * Not `intent.locale`, although that is the language this person registered in.
+         *
+         * `preferred_locale` is the answer to "which language do you want", and its absence is how the
+         * rest of the system knows nobody has answered yet: then the cookie the language switch wrote,
+         * and the browser's own preference, decide -- which for this person is the very language they
+         * registered in, reached without writing anything down. The intent keeps its locale, because the
+         * confirmation mail has to be written in some language and nobody is signed in to ask.
+         */
+        preferredLocale: null,
+        flags: 0,
+      });
+    } catch (error) {
+      // The address became somebody's -- any of their addresses, not only a primary one -- between the
+      // registration and this link. It used to end here as a 500 with the intent left pending.
+      if (error instanceof Error && error.message === "ACCOUNT_EXISTS") {
+        return NextResponse.json(
+          { ok: false, code: "invalid_state", error: "This email address is already in use." },
+          { status: 409 },
+        );
+      }
+      throw error;
+    }
     await upsertUserSiteMembership({
       userId: user.id,
       siteId: site.id,
