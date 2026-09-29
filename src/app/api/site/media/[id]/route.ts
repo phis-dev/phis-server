@@ -82,7 +82,7 @@ function buildMediaAssetInUseMessage(references: Awaited<ReturnType<typeof colle
 
 function resolveMediaAssetDeleteErrorMessage(error: unknown) {
   const typedError = error as { constraint?: unknown; code?: unknown } | null;
-  if (typedError?.constraint === "site_content_asset_id_fkey" || typedError?.code === "23503") {
+  if (typedError?.constraint === "site_content_versions_asset_id_fkey" || typedError?.code === "23503") {
     return "Media asset is still referenced and cannot be deleted.";
   }
 

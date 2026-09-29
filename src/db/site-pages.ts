@@ -5,7 +5,7 @@ import type { PoolClient } from "pg";
 import {
   collectRevisionContentIds,
   deleteOrphanedSiteContentByIdsWithDb,
-  getResolvedSiteContentByIds,
+  getResolvedSiteContentByVersionIds,
   upsertSiteContentAssetWithClient,
   upsertSiteContentHtmlWithClient,
   upsertSiteContentMarkdownWithClient,
@@ -188,6 +188,7 @@ export type SiteContentWidgetRecord = {
   label: string | null;
   config: Record<string, unknown>;
   contentId: number | null;
+  contentVersionId: number | null;
   resolvedContent?: SiteResolvedContentRecord | null;
 };
 
@@ -627,6 +628,7 @@ function buildDraftPreviewPageTree(siteId: number, input: CmsPageWriteInput): Si
       label: widget.label ?? null,
       config: toJsonRecord(widget.config),
       contentId: widget.contentId ?? null,
+      contentVersionId: widget.contentVersionId ?? null,
       resolvedContent: null,
     })),
   };
@@ -695,6 +697,7 @@ function buildDraftPreviewAreaTree(siteId: number, input: CmsAreaPresetWriteInpu
       label: widget.label ?? null,
       config: toJsonRecord(widget.config),
       contentId: widget.contentId ?? null,
+      contentVersionId: widget.contentVersionId ?? null,
       resolvedContent: null,
     })),
   };
@@ -706,26 +709,27 @@ async function resolveTreeContentWidgetsWithDb(
   widgets: SiteContentWidgetRecord[],
   locale?: string | null,
 ) {
-  const translatedContentIds = widgets
-    .filter((widget) => widget.contentId != null && !hasPhiFlag(widget.flags, PhiCmsFlags.NoTranslate))
-    .map((widget) => widget.contentId ?? 0);
-  const sourceOnlyContentIds = widgets
-    .filter((widget) => widget.contentId != null && hasPhiFlag(widget.flags, PhiCmsFlags.NoTranslate))
-    .map((widget) => widget.contentId ?? 0);
+  const pinned = widgets.filter((widget) => widget.contentVersionId != null);
+  const translatedVersionIds = pinned
+    .filter((widget) => !hasPhiFlag(widget.flags, PhiCmsFlags.NoTranslate))
+    .map((widget) => widget.contentVersionId ?? 0);
+  const sourceOnlyVersionIds = pinned
+    .filter((widget) => hasPhiFlag(widget.flags, PhiCmsFlags.NoTranslate))
+    .map((widget) => widget.contentVersionId ?? 0);
 
   const [translatedResolvedById, sourceOnlyResolvedById] = await Promise.all([
-    getResolvedSiteContentByIds(siteId, translatedContentIds, locale ?? null),
-    getResolvedSiteContentByIds(siteId, sourceOnlyContentIds, null),
+    getResolvedSiteContentByVersionIds(siteId, translatedVersionIds, locale ?? null),
+    getResolvedSiteContentByVersionIds(siteId, sourceOnlyVersionIds, null),
   ]);
 
   return widgets.map((widget) => ({
     ...widget,
     resolvedContent:
-      widget.contentId == null
+      widget.contentVersionId == null
         ? null
         : hasPhiFlag(widget.flags, PhiCmsFlags.NoTranslate)
-          ? sourceOnlyResolvedById.get(widget.contentId) ?? null
-          : translatedResolvedById.get(widget.contentId) ?? null,
+          ? sourceOnlyResolvedById.get(widget.contentVersionId) ?? null
+          : translatedResolvedById.get(widget.contentVersionId) ?? null,
   }));
 }
 
@@ -1783,23 +1787,21 @@ async function getResolvedSitePageTreeWithDb(
   );
 }
 
-async function validateSiteContentOwnership(
+async function siteContentVersionBelongsTo(
   db: DbQueryable,
-  siteId: number,
   contentId: number,
+  versionId: number,
 ) {
   const { rows } = await db.query<{ id: number }>(
     `SELECT id
-     FROM phis.site_content
-     WHERE site_id = $1
-       AND id = $2
+     FROM phis.site_content_versions
+     WHERE id = $2
+       AND content_id = $1
      LIMIT 1`,
-    [siteId, contentId],
+    [contentId, versionId],
   );
 
-  if (!rows[0]) {
-    throw new Error(`Site content ${contentId} does not belong to site ${siteId}.`);
-  }
+  return Boolean(rows[0]);
 }
 
 async function siteContentExistsOnSite(
@@ -1836,6 +1838,9 @@ async function normalizeRevisionContentWidgetsWithDb(
     const { contentBinding, ...inputWidget } = widget;
     let stableWidget = inputWidget;
     let contentId = stableWidget.contentId ?? null;
+    // Every write below pins the version it appends; a widget that writes nothing keeps the pin it came
+    // with, which is what makes discard and restore return the content of the revision they keep.
+    let contentVersionId = stableWidget.contentVersionId ?? null;
 
     if (contentId != null && !(await siteContentExistsOnSite(db, siteId, contentId))) {
       contentId = null;
@@ -1869,6 +1874,7 @@ async function normalizeRevisionContentWidgetsWithDb(
         createdByUserId: scope.createdByUserId ?? null,
       });
       contentId = contentWrite.contentId;
+      contentVersionId = contentWrite.versionId;
     } else if (contentBinding?.storage === "html") {
       const rawHtml = readWidgetContentBindingSourceValue(stableWidget.config, contentBinding, stableWidget.id);
       const { typeKey } = parseWidgetNamespacedTypeKey(stableWidget.widgetType);
@@ -1897,6 +1903,7 @@ async function normalizeRevisionContentWidgetsWithDb(
         createdByUserId: scope.createdByUserId ?? null,
       });
       contentId = contentWrite.contentId;
+      contentVersionId = contentWrite.versionId;
       await replaceSiteCmsReferencesWithDb(db, {
         siteId,
         sourceKind: PhiCmsReferenceSourceKind.Content,
@@ -1941,6 +1948,7 @@ async function normalizeRevisionContentWidgetsWithDb(
         createdByUserId: scope.createdByUserId ?? null,
       });
       contentId = contentWrite.contentId;
+      contentVersionId = contentWrite.versionId;
       await replaceSiteCmsReferencesWithDb(db, {
         siteId,
         sourceKind: PhiCmsReferenceSourceKind.Content,
@@ -1984,13 +1992,21 @@ async function normalizeRevisionContentWidgetsWithDb(
         createdByUserId: scope.createdByUserId ?? null,
       });
       contentId = contentWrite.contentId;
-    } else if (contentId != null) {
-      await validateSiteContentOwnership(db, siteId, contentId);
+      contentVersionId = contentWrite.versionId;
+    } else if (
+      contentId == null ||
+      contentVersionId == null ||
+      !(await siteContentVersionBelongsTo(db, contentId, contentVersionId))
+    ) {
+      // A pin that is not a version of this content is dropped with the id, as a stale id is above.
+      contentId = null;
+      contentVersionId = null;
     }
 
     normalizedWidgets.push({
       ...stableWidget,
       contentId,
+      contentVersionId,
       ...(contentBinding ? { contentBinding } : {}),
     });
   }

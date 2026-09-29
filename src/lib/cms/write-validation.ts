@@ -92,6 +92,8 @@ export type CmsDraftContentWidgetInput = {
   label?: string | null;
   config?: JsonRecord;
   contentId?: number | null;
+  /** The content version this revision shows; the save that writes the content sets it. */
+  contentVersionId?: number | null;
   contentBinding?: CmsDraftContentBindingInput | null;
 };
 
@@ -660,6 +662,12 @@ function parseContentWidgets(value: unknown, errors: string[], domain: PhiCmsIns
       contentId: readNullableOptionalInteger(
         entry.contentId,
         `contentWidgets[${index}].contentId`,
+        errors,
+        { min: 1 },
+      ),
+      contentVersionId: readNullableOptionalInteger(
+        entry.contentVersionId,
+        `contentWidgets[${index}].contentVersionId`,
         errors,
         { min: 1 },
       ),

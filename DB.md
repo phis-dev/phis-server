@@ -49,9 +49,9 @@ The target PostgreSQL schema for `phis` is:
   - `5 = text`
   - `6 = html`
   - `7 = markdown`
-- `phis.site_content.asset_id INT`
-  - site-owned asset content rows reference the canonical `media_assets.id`
-  - type `asset` rows must set this column
+- `phis.site_content_versions.asset_id INT`
+  - each version of a site-owned asset content row references the canonical `media_assets.id`
+  - versions of type `asset` rows must set this column
 - `phis.site_content.status SMALLINT`
   - `0 = draft`
   - `1 = published`
@@ -91,6 +91,10 @@ The target PostgreSQL schema for `phis` is:
 - `phis` CMS revision payload `contentWidgets[].contentId`
   - direct reference to the canonical `site_content` row consumed by the widget
   - widget ownership remains site-local and must be validated against the referenced content site
+- `phis` CMS revision payload `contentWidgets[].contentVersionId`
+  - the `site_content_versions` row this revision shows; set by the save that wrote it
+  - readers resolve content through this pin only, so a draft save never changes what a published
+    revision renders, and discard and restore return exactly the content of the revision they keep
 - `phis.sites.flags INT`
   - `1 << 0 = active`
 - `phis` CMS revision payload `flags` (`PhiCmsFlags` in `@phis/contracts/cms`; not every flag applies to every row kind)
@@ -911,7 +915,6 @@ Contract:
 - `type SMALLINT NOT NULL`
 - `slug VARCHAR(255) NOT NULL`
 - `status SMALLINT NOT NULL DEFAULT 0`
-- `asset_id INT NULL REFERENCES phis.media_assets(id) ON DELETE RESTRICT`; media delete code removes owned `type=asset` wrapper rows before deleting the asset
 - `current_version_id INT NULL`
 - `published_version_id INT NULL`
 - `published_at TIMESTAMPTZ NULL`
@@ -925,7 +928,11 @@ Contract:
 Contract:
 - `site_content*` remains the canonical redaction/publishing store for site-owned content.
 - Content widgets should reference `site_content` by numeric `content_id` instead of embedding large copy payloads directly in widget config.
-- `asset` is the content type for a reusable image/media wrapper and must point at `media_assets.id` through `site_content.asset_id`.
+- `asset` is the content type for a reusable image/media wrapper and must point at `media_assets.id` through `site_content_versions.asset_id`.
+- Widget-owned content (`asset`, `text`, `html`, `markdown`) is versioned per save: the save appends a
+  version, moves `current_version_id` to it and pins it in the revision tree. It never touches
+  `published_version_id` or `published_at`; those belong to `news`, whose readers use them. What a page
+  shows is decided by the revision that is published and the versions it pins.
 - `site_content(type=asset)` is created on demand when a widget binds to a media asset, not eagerly on media upload.
 - `text` is the canonical content type for database-backed `simple-text` widget copy.
 - A `simple-text` widget should normally persist its source text through `site_content(type=text)` so search and later publisher/editor flows can resolve that copy centrally.
@@ -1142,10 +1149,17 @@ Contract:
 - `id SERIAL PRIMARY KEY`
 - `content_id INT NOT NULL REFERENCES phis.site_content(id) ON DELETE CASCADE`
 - `version_no INT NOT NULL`
+- `asset_id INT NULL REFERENCES phis.media_assets(id) ON DELETE RESTRICT`
 - `meta JSONB NOT NULL DEFAULT '{}'::jsonb`
 - `created_by_user_id INT NULL REFERENCES phis.user_accounts(id) ON DELETE SET NULL`
 - `created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
 - `UNIQUE (content_id, version_no)`
+
+Contract:
+- `asset_id` lives on the version because a revision pins the version it shows: an image swapped in a
+  draft must not reach the published page before the draft is published.
+- A media asset stays referenced while any version still names it, which is as long as any revision of
+  the Site could be restored to that version.
 
 ### `phis.site_content_version_text`
 
@@ -2010,7 +2024,7 @@ Example usage:
 - each of those rows points to one `tr_site_msg` row containing the canonical Site-source text
 - translated output is resolved through `tr_site_lang`
 - an `asset` entry lives in `site_content`
-- its `asset_id` points to `media_assets`
+- the `asset_id` of each of its versions points to `media_assets`
 - its `title`, `alt`, and `caption` live as separate rows in `site_content_version_text`
 
 Design decision:

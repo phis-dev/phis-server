@@ -98,9 +98,9 @@ export type SiteResolvedContentRecord = {
   id: number;
   type: number;
   slug: string;
+  /** The version the revision pins; `assetId`, `meta` and `textFields` are that version's. */
+  versionId: number;
   assetId: number | null;
-  currentVersionId: number | null;
-  publishedVersionId: number | null;
   status: number;
   meta: Record<string, unknown>;
   textFields: Record<string, SiteResolvedContentTextField>;
@@ -193,6 +193,7 @@ async function insertSiteContentVersion(
   db: DbQueryable,
   input: {
     contentId: number;
+    assetId?: number | null;
     meta: Record<string, unknown>;
     createdByUserId?: number | null;
   },
@@ -201,17 +202,24 @@ async function insertSiteContentVersion(
     `INSERT INTO phis.site_content_versions (
        content_id,
        version_no,
+       asset_id,
        meta,
        created_by_user_id
      )
      VALUES (
        $1,
        COALESCE((SELECT MAX(version_no) + 1 FROM phis.site_content_versions WHERE content_id = $1), 1),
-       $2::jsonb,
-       $3
+       $2,
+       $3::jsonb,
+       $4
      )
      RETURNING id`,
-    [input.contentId, JSON.stringify(input.meta ?? {}), input.createdByUserId ?? null],
+    [
+      input.contentId,
+      input.assetId ?? null,
+      JSON.stringify(input.meta ?? {}),
+      input.createdByUserId ?? null,
+    ],
   );
 
   const versionId = versionRow.rows[0]?.id;
@@ -222,7 +230,13 @@ async function insertSiteContentVersion(
   return versionId;
 }
 
-async function publishSiteContentVersion(
+/**
+ * Moves the content row's `current_version_id` to the version a save just wrote.
+ *
+ * Nothing else: what a page shows is the version its revision pins, so a draft save leaves the
+ * published revision's content alone. `published_version_id` and `published_at` belong to `news`.
+ */
+async function setSiteContentCurrentVersion(
   db: DbQueryable,
   input: {
     contentId: number;
@@ -232,84 +246,10 @@ async function publishSiteContentVersion(
   await db.query(
     `UPDATE phis.site_content
      SET current_version_id = $2,
-         published_version_id = $2,
-         published_at = NOW(),
          updated_at = NOW()
      WHERE id = $1`,
     [input.contentId, input.versionId],
   );
-}
-
-async function createOrUpdateSiteContentAsset(
-  db: DbQueryable,
-  input: SiteContentAssetInput,
-) {
-  if (input.contentId) {
-    const existing = await resolveExistingSiteContentByType(db, {
-      siteId: input.siteId,
-      contentId: input.contentId,
-      type: SITE_CONTENT_TYPE_ASSET,
-      typeLabel: "asset",
-    });
-
-    await db.query(
-      `UPDATE phis.site_content
-       SET asset_id = $3,
-           status = $4,
-           sort_order = $5,
-           meta = $6::jsonb,
-           updated_at = NOW()
-       WHERE site_id = $1
-         AND id = $2`,
-      [
-        input.siteId,
-        input.contentId,
-        input.assetId,
-        input.status ?? SITE_CONTENT_STATUS_PUBLISHED,
-        input.sortOrder ?? 0,
-        JSON.stringify(input.meta ?? {}),
-      ],
-    );
-
-    return existing.id;
-  }
-
-  const contentRow = await db.query<{ id: number }>(
-    `INSERT INTO phis.site_content (
-       site_id,
-       type,
-       slug,
-       asset_id,
-       status,
-       sort_order,
-       meta
-     )
-     VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
-     ON CONFLICT (site_id, type, slug)
-     DO UPDATE SET
-       asset_id = EXCLUDED.asset_id,
-       status = EXCLUDED.status,
-       sort_order = EXCLUDED.sort_order,
-       meta = EXCLUDED.meta,
-       updated_at = NOW()
-     RETURNING id`,
-    [
-      input.siteId,
-      SITE_CONTENT_TYPE_ASSET,
-      input.slug.trim(),
-      input.assetId,
-      input.status ?? SITE_CONTENT_STATUS_PUBLISHED,
-      input.sortOrder ?? 0,
-      JSON.stringify(input.meta ?? {}),
-    ],
-  );
-
-  const contentId = contentRow.rows[0]?.id;
-  if (!contentId) {
-    throw new Error("Failed to persist site content asset.");
-  }
-
-  return contentId;
 }
 
 async function resolveExistingSiteContentByType(
@@ -341,7 +281,7 @@ async function resolveExistingSiteContentByType(
   return row;
 }
 
-async function createOrUpdateTextualSiteContent(
+async function createOrUpdateSiteContentRow(
   db: DbQueryable,
   input: {
     siteId: number;
@@ -395,12 +335,11 @@ async function createOrUpdateTextualSiteContent(
        site_id,
        type,
        slug,
-       asset_id,
        status,
        sort_order,
        meta
      )
-     VALUES ($1, $2, $3, NULL, $4, $5, $6::jsonb)
+     VALUES ($1, $2, $3, $4, $5, $6::jsonb)
      ON CONFLICT (site_id, type, slug)
      DO UPDATE SET
        status = EXCLUDED.status,
@@ -442,12 +381,15 @@ export async function upsertSiteContentAssetWithClient(
     throw new Error("slug must not be empty.");
   }
 
-  const contentId = await createOrUpdateSiteContentAsset(client, {
+  const { contentId, slug: storedSlug } = await createOrUpdateSiteContentRow(client, {
     ...input,
     slug,
+    contentType: SITE_CONTENT_TYPE_ASSET,
+    typeLabel: "asset",
   });
   const versionId = await insertSiteContentVersion(client, {
     contentId,
+    assetId: input.assetId,
     meta: input.meta ?? {},
     createdByUserId: input.createdByUserId ?? null,
   });
@@ -484,9 +426,9 @@ export async function upsertSiteContentAssetWithClient(
     });
   }
 
-  await publishSiteContentVersion(client, { contentId, versionId });
+  await setSiteContentCurrentVersion(client, { contentId, versionId });
 
-  return { contentId, versionId, slug };
+  return { contentId, versionId, slug: storedSlug };
 }
 
 export async function upsertSiteContentTextWithClient(
@@ -498,7 +440,7 @@ export async function upsertSiteContentTextWithClient(
   }
 
   const text = normalizeRequiredText(input.text, "text");
-  const { contentId, slug } = await createOrUpdateTextualSiteContent(client, {
+  const { contentId, slug } = await createOrUpdateSiteContentRow(client, {
     ...input,
     contentType: SITE_CONTENT_TYPE_TEXT,
     typeLabel: "text",
@@ -518,7 +460,7 @@ export async function upsertSiteContentTextWithClient(
     value: text,
   });
 
-  await publishSiteContentVersion(client, { contentId, versionId });
+  await setSiteContentCurrentVersion(client, { contentId, versionId });
 
   return { contentId, versionId, slug };
 }
@@ -532,7 +474,7 @@ export async function upsertSiteContentHtmlWithClient(
   }
 
   const html = normalizeHtmlContent(input.html);
-  const { contentId, slug } = await createOrUpdateTextualSiteContent(client, {
+  const { contentId, slug } = await createOrUpdateSiteContentRow(client, {
     ...input,
     contentType: SITE_CONTENT_TYPE_HTML,
     typeLabel: "html",
@@ -560,7 +502,7 @@ export async function upsertSiteContentHtmlWithClient(
     value: html,
   });
 
-  await publishSiteContentVersion(client, { contentId, versionId });
+  await setSiteContentCurrentVersion(client, { contentId, versionId });
 
   return { contentId, versionId, slug, html };
 }
@@ -578,7 +520,7 @@ export async function upsertSiteContentMarkdownWithClient(
     format: "markdown",
     ...(input.meta ?? {}),
   };
-  const { contentId, slug } = await createOrUpdateTextualSiteContent(client, {
+  const { contentId, slug } = await createOrUpdateSiteContentRow(client, {
     ...input,
     contentType: SITE_CONTENT_TYPE_MARKDOWN,
     typeLabel: "markdown",
@@ -599,62 +541,49 @@ export async function upsertSiteContentMarkdownWithClient(
     value: markdown,
   });
 
-  await publishSiteContentVersion(client, { contentId, versionId });
+  await setSiteContentCurrentVersion(client, { contentId, versionId });
 
   return { contentId, versionId, slug, markdown };
 }
 
-export async function getResolvedSiteContentByIds(
+/**
+ * Resolves the content versions a revision tree pins, keyed by version id.
+ *
+ * The version is the unit a revision shows: its asset, meta and text fields. The content row only
+ * contributes identity (type, slug, status), so two revisions pinning different versions of one row
+ * each see their own.
+ */
+export async function getResolvedSiteContentByVersionIds(
   siteId: number,
-  contentIds: number[],
+  versionIds: number[],
   locale?: string | null,
 ) {
-  const uniqueContentIds = Array.from(
-    new Set(contentIds.filter((contentId) => Number.isInteger(contentId) && contentId > 0)),
+  const uniqueVersionIds = Array.from(
+    new Set(versionIds.filter((versionId) => Number.isInteger(versionId) && versionId > 0)),
   );
 
-  if (!Number.isInteger(siteId) || siteId <= 0 || uniqueContentIds.length === 0) {
+  if (!Number.isInteger(siteId) || siteId <= 0 || uniqueVersionIds.length === 0) {
     return new Map<number, SiteResolvedContentRecord>();
   }
 
   const normalizedLocale = typeof locale === "string" && locale.trim() ? locale.trim() : null;
-  const pool = getPool();
-  const baseSelect = `SELECT c.id AS content_id,
-            c.type,
-            c.slug,
-            c.asset_id,
-            c.current_version_id,
-            c.published_version_id,
-            c.status,
-            c.meta,
-            xt.field_name,
-            xt.msg_id,
-            msg.msg AS source_msg`;
-
   const translationSelect =
-    normalizedLocale == null
-      ? `${baseSelect},
-            NULL::text AS translated_msg`
-      : `${baseSelect},
-            lang.translation AS translated_msg`;
-
+    normalizedLocale == null ? "NULL::text AS translated_msg" : "lang.translation AS translated_msg";
   const translationJoin =
     normalizedLocale == null
       ? ""
       : "\n     LEFT JOIN phis.tr_site_lang lang ON lang.msg_id = xt.msg_id AND lang.locale = $3";
-
   const params =
     normalizedLocale == null
-      ? [siteId, uniqueContentIds]
-      : [siteId, uniqueContentIds, normalizedLocale];
+      ? [siteId, uniqueVersionIds]
+      : [siteId, uniqueVersionIds, normalizedLocale];
 
-  const { rows } = await pool.query<{
+  const { rows } = await getPool().query<{
     content_id: number;
+    version_id: number;
     type: number;
     slug: string;
     asset_id: number | null;
-    current_version_id: number | null;
-    published_version_id: number | null;
     status: number;
     meta: Record<string, unknown> | null;
     field_name: string | null;
@@ -662,29 +591,38 @@ export async function getResolvedSiteContentByIds(
     source_msg: string | null;
     translated_msg: string | null;
   }>(
-    `${translationSelect}
-     FROM phis.site_content c
-     LEFT JOIN phis.site_content_versions v ON v.id = COALESCE(c.published_version_id, c.current_version_id)
+    `SELECT c.id AS content_id,
+            v.id AS version_id,
+            c.type,
+            c.slug,
+            v.asset_id,
+            c.status,
+            v.meta,
+            xt.field_name,
+            xt.msg_id,
+            msg.msg AS source_msg,
+            ${translationSelect}
+     FROM phis.site_content_versions v
+     JOIN phis.site_content c ON c.id = v.content_id
      LEFT JOIN phis.site_content_version_text xt ON xt.version_id = v.id
      LEFT JOIN phis.tr_site_msg msg ON msg.id = xt.msg_id${translationJoin}
      WHERE c.site_id = $1
-       AND c.id = ANY($2::int[])
-     ORDER BY c.id ASC, xt.field_name ASC`,
+       AND v.id = ANY($2::int[])
+     ORDER BY v.id ASC, xt.field_name ASC`,
     params,
   );
 
-  const resolvedById = new Map<number, SiteResolvedContentRecord>();
+  const resolvedByVersionId = new Map<number, SiteResolvedContentRecord>();
 
   for (const row of rows) {
     const existing =
-      resolvedById.get(row.content_id) ??
+      resolvedByVersionId.get(row.version_id) ??
       ({
         id: row.content_id,
         type: row.type,
         slug: row.slug,
+        versionId: row.version_id,
         assetId: row.asset_id,
-        currentVersionId: row.current_version_id,
-        publishedVersionId: row.published_version_id,
         status: row.status,
         meta: toJsonRecord(row.meta),
         textFields: {},
@@ -698,10 +636,10 @@ export async function getResolvedSiteContentByIds(
       };
     }
 
-    resolvedById.set(row.content_id, existing);
+    resolvedByVersionId.set(row.version_id, existing);
   }
 
-  return resolvedById;
+  return resolvedByVersionId;
 }
 
 export async function listPublishedNews(siteId: number, locale: string) {

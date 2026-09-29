@@ -1641,7 +1641,6 @@ CREATE TABLE IF NOT EXISTS phis.site_content (
   site_id SMALLINT NOT NULL REFERENCES phis.sites(id) ON DELETE CASCADE,
   type SMALLINT NOT NULL,
   slug VARCHAR(255) NOT NULL,
-  asset_id INT NULL REFERENCES phis.media_assets(id) ON DELETE RESTRICT,
   status SMALLINT NOT NULL DEFAULT 0,
   current_version_id INT NULL,
   published_version_id INT NULL,
@@ -1656,10 +1655,6 @@ CREATE TABLE IF NOT EXISTS phis.site_content (
 
 CREATE INDEX IF NOT EXISTS site_content_site_type_status_idx
   ON phis.site_content (site_id, type, status);
-
-CREATE INDEX IF NOT EXISTS site_content_site_asset_idx
-  ON phis.site_content (site_id, asset_id)
-  WHERE asset_id IS NOT NULL;
 
 CREATE INDEX IF NOT EXISTS site_content_published_at_idx
   ON phis.site_content (published_at);
@@ -1771,11 +1766,18 @@ CREATE TABLE IF NOT EXISTS phis.site_content_versions (
   id SERIAL PRIMARY KEY,
   content_id INT NOT NULL REFERENCES phis.site_content(id) ON DELETE CASCADE,
   version_no INT NOT NULL,
+  -- On the version, not the content row: a revision pins the version it shows, and an image swapped
+  -- in a draft would otherwise be live the moment the draft is saved.
+  asset_id INT NULL REFERENCES phis.media_assets(id) ON DELETE RESTRICT,
   meta JSONB NOT NULL DEFAULT '{}'::jsonb,
   created_by_user_id INT NULL REFERENCES phis.user_accounts(id) ON DELETE SET NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   CONSTRAINT site_content_versions_content_version_unique UNIQUE (content_id, version_no)
 );
+
+CREATE INDEX IF NOT EXISTS site_content_versions_asset_idx
+  ON phis.site_content_versions (asset_id)
+  WHERE asset_id IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS phis.site_content_version_text (
   id SERIAL PRIMARY KEY,
