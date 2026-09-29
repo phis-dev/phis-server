@@ -17,6 +17,7 @@ import { PhisThreadKind } from "@phis/contracts/threads";
 
 import { getPool, withTransaction } from "@/lib/db";
 import { createThreadWithDb } from "@/db/threads";
+import { PHIS_THREAD_PARTICIPANT_KIND_GROUP } from "@/lib/constants/threads";
 import { consumeSupportAllowanceWithDb, readSupportAllowance } from "@/db/support-allowance";
 
 /*
@@ -835,6 +836,13 @@ export async function applySupportTicketAssignmentAction(input: SupportTicketAss
              AND id = $2`,
           [input.siteId, input.ticketId, input.queueId, input.userId],
         );
+        if (existing.queue_id !== input.queueId) {
+          await moveSupportThreadToQueueGroupWithDb(client, {
+            threadId: existing.thread_id,
+            fromQueueId: existing.queue_id,
+            toQueueId: input.queueId,
+          });
+        }
 
         await insertSupportTicketAssignment(client, {
           ticketId: input.ticketId,
@@ -1034,6 +1042,38 @@ export async function createSupportTicket(input: CreateSupportTicketInput) {
 }
 
 /**
+ * Hands a ticket's thread from one queue's group to the other's.
+ *
+ * The queue's group is the thread participant through which its Supporters read and answer. A move that
+ * only changed `queue_id` left the old group in the conversation and kept the new one out of it.
+ */
+async function moveSupportThreadToQueueGroupWithDb(
+  db: DbQueryable,
+  input: { threadId: number; fromQueueId: number | null; toQueueId: number | null },
+) {
+  const { rows } = await db.query<{ id: number; group_id: number }>(
+    `SELECT id, group_id FROM phis.support_queues WHERE id = ANY($1::int[])`,
+    [[input.fromQueueId, input.toQueueId].filter((id): id is number => id != null)],
+  );
+  const fromGroupId = rows.find((row) => row.id === input.fromQueueId)?.group_id ?? null;
+  const toGroupId = rows.find((row) => row.id === input.toQueueId)?.group_id ?? null;
+  if (fromGroupId === toGroupId) return;
+  if (fromGroupId != null) {
+    await db.query(
+      `DELETE FROM phis.thread_participants WHERE thread_id = $1 AND group_id = $2`,
+      [input.threadId, fromGroupId],
+    );
+  }
+  if (toGroupId == null) return;
+  await db.query(
+    `INSERT INTO phis.thread_participants (thread_id, participant_kind, group_id, flags)
+     VALUES ($1, $2, $3, 0)
+     ON CONFLICT DO NOTHING`,
+    [input.threadId, PHIS_THREAD_PARTICIPANT_KIND_GROUP, toGroupId],
+  );
+}
+
+/**
  * What a ticket write may point at: this Site's queues and types, and this Site's members.
  *
  * `support_queues.id` and `support_ticket_types.id` are keyed without a Site component, and a user id
@@ -1134,6 +1174,13 @@ export async function updateSupportTicket(input: UpdateSupportTicketInput) {
          AND id = $2`,
       params,
     );
+    if (input.queueId !== undefined && (input.queueId ?? null) !== existing.queue_id) {
+      await moveSupportThreadToQueueGroupWithDb(client, {
+        threadId: existing.thread_id,
+        fromQueueId: existing.queue_id,
+        toQueueId: input.queueId ?? null,
+      });
+    }
 
     const assigneeChanged =
       (input.assigneeUserId !== undefined && (input.assigneeUserId ?? null) !== existing.assignee_user_id) ||

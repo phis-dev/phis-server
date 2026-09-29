@@ -154,6 +154,41 @@ describe("support tickets", () => {
     expect((await patch({ queueId, assigneeUserId: requester }))?.ticket.assigneeUserId).toBe(requester);
   });
 
+  it("hands the ticket's thread to the group of the queue it moves to", async () => {
+    const pool = await requirePhiTestDatabase();
+    const site = await createPhiTestSite("tickets-queue-move");
+    const { groupId, typeId } = await seedSupport(site);
+    const secondGroupId = await createPhiTestGroup(site, "pgtest-support-queue-l2");
+    const { rows } = await pool.query<{ id: number }>(
+      `INSERT INTO phis.support_queues (site_id, group_id, key, name, flags)
+       VALUES ($1, $2, 'support_l2', 'Support L2', 0)
+       RETURNING id`,
+      [site.id, secondGroupId],
+    );
+    const secondQueueId = rows[0]!.id;
+    const requester = await createPhiTestUser(site);
+    const first = await createPhiTestUser(site);
+    const second = await createPhiTestUser(site);
+    await addPhiTestGroupMember({ site, groupId, userId: first });
+    await addPhiTestGroupMember({ site, groupId: secondGroupId, userId: second });
+    const created = await createSupportTicket({
+      siteId: site.id,
+      typeId,
+      channel: 0,
+      subject: "Needs L2",
+      message: "Please escalate.",
+      requesterUserId: requester,
+      createdByUserId: requester,
+    });
+    const threadId = created!.ticket.threadId;
+
+    await updateSupportTicket({ siteId: site.id, ticketId: created!.ticket.id, queueId: secondQueueId });
+
+    expect(await getThreadDetail(site.id, { kind: "user", userId: second }, threadId)).not.toBeNull();
+    expect(await getThreadDetail(site.id, { kind: "user", userId: first }, threadId)).toBeNull();
+    expect(await getThreadDetail(site.id, { kind: "user", userId: requester }, threadId)).not.toBeNull();
+  });
+
   it("refuses a ticket when nothing would route it", async () => {
     await requirePhiTestDatabase();
     const site = await createPhiTestSite("tickets-unrouted");
