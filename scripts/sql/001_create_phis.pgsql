@@ -1131,6 +1131,9 @@ CREATE TABLE IF NOT EXISTS phis.threads (
   -- The newest message, kept here so an inbox orders and previews without a lateral join per row. The
   -- constraint is added after `thread_messages` exists, because the two reference each other.
   last_message_id INT NULL,
+  -- The newest message that is not `Internal`: what a reader who is not Staff orders, previews and
+  -- counts unread by, so a note written past a customer does not show them a thread as changed.
+  last_public_message_id INT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   CONSTRAINT threads_owner_provider_id_check
@@ -1249,6 +1252,13 @@ ALTER TABLE phis.threads
 ALTER TABLE phis.threads
   ADD CONSTRAINT threads_last_message_id_fkey
   FOREIGN KEY (last_message_id) REFERENCES phis.thread_messages(id) ON DELETE SET NULL;
+
+ALTER TABLE phis.threads
+  DROP CONSTRAINT IF EXISTS threads_last_public_message_id_fkey;
+
+ALTER TABLE phis.threads
+  ADD CONSTRAINT threads_last_public_message_id_fkey
+  FOREIGN KEY (last_public_message_id) REFERENCES phis.thread_messages(id) ON DELETE SET NULL;
 
 -- What an integration calls a message it relayed, so the same delivery arriving twice writes one
 -- message. The Site is part of the key because one repository may be linked from two Sites, and the

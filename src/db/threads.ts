@@ -627,7 +627,16 @@ function projectParticipant(row: ThreadParticipantRow): PhisThreadParticipant {
   };
 }
 
-const THREAD_COLUMNS = `
+/**
+ * The newest message a reader is shown a thread by: every message for Staff, and the newest one without
+ * `Internal` for everyone else, who would otherwise see a thread change by a note they cannot open.
+ */
+function latestMessagePointer(isStaff: boolean) {
+  return isStaff ? "t.last_message_id" : "t.last_public_message_id";
+}
+
+function threadColumns(isStaff: boolean) {
+  return `
   t.id,
   t.site_id,
   t.kind,
@@ -636,10 +645,11 @@ const THREAD_COLUMNS = `
   t.flags,
   t.owner_provider_id,
   t.created_by_user_id,
-  t.last_message_id,
+  ${latestMessagePointer(isStaff)} AS last_message_id,
   latest.created_at AS last_message_created_at,
   t.created_at,
   t.updated_at`;
+}
 
 function normalizeUniqueIds(values: readonly number[] | undefined) {
   return [...new Set((values ?? []).filter((value) => Number.isSafeInteger(value) && value > 0))];
@@ -678,18 +688,20 @@ export async function listThreadsForUser(
   const page = Math.max(1, Math.trunc(options.page ?? 1) || 1);
   params.push(pageSize, (page - 1) * pageSize);
 
+  const isStaff = await readerIsStaff(pool, siteId, { kind: "user", userId });
+  const pointer = latestMessagePointer(isStaff);
   const unreadCondition = options.unreadOnly
-    ? `AND t.last_message_id IS NOT NULL
-       AND t.last_message_id > COALESCE(reads.last_read_message_id, 0)`
+    ? `AND ${pointer} IS NOT NULL
+       AND ${pointer} > COALESCE(reads.last_read_message_id, 0)`
     : "";
 
   const { rows } = await pool.query<ThreadRow>(
-    `SELECT ${THREAD_COLUMNS},
+    `SELECT ${threadColumns(isStaff)},
             reads.last_read_message_id,
             COUNT(*) OVER () AS total_count
      FROM phis.threads t
      LEFT JOIN phis.thread_messages latest
-       ON latest.id = t.last_message_id
+       ON latest.id = ${pointer}
      LEFT JOIN phis.thread_reads reads
        ON reads.thread_id = t.id
       AND reads.user_id = $2
@@ -724,13 +736,14 @@ async function readThreadRow(
   const viewerUserId = reader.kind === "user" ? reader.userId : null;
   params.push(viewerUserId);
   const readsParam = `$${params.length}`;
+  const isStaff = await readerIsStaff(db, siteId, reader);
 
   const { rows } = await db.query<ThreadRow>(
-    `SELECT ${THREAD_COLUMNS},
+    `SELECT ${threadColumns(isStaff)},
             reads.last_read_message_id
      FROM phis.threads t
      LEFT JOIN phis.thread_messages latest
-       ON latest.id = t.last_message_id
+       ON latest.id = ${latestMessagePointer(isStaff)}
      LEFT JOIN phis.thread_reads reads
        ON reads.thread_id = t.id
       AND reads.user_id = ${readsParam}
@@ -1063,9 +1076,10 @@ async function insertMessage(
   await db.query(
     `UPDATE phis.threads
      SET last_message_id = $2,
+         last_public_message_id = CASE WHEN $3 THEN last_public_message_id ELSE $2 END,
          updated_at = NOW()
      WHERE id = $1`,
-    [input.threadId, messageId],
+    [input.threadId, messageId, (input.flags & PhisThreadMessageFlag.Internal) !== 0],
   );
 
   if (input.authorUserId != null) {

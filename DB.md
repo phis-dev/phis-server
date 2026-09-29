@@ -1448,6 +1448,7 @@ Contract:
 - `owner_provider_id VARCHAR(255) NULL`
 - `created_by_user_id INT NULL REFERENCES phis.user_accounts(id) ON DELETE SET NULL`
 - `last_message_id INT NULL REFERENCES phis.thread_messages(id) ON DELETE SET NULL`
+- `last_public_message_id INT NULL REFERENCES phis.thread_messages(id) ON DELETE SET NULL`
 - `created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
 - `updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
 - `UNIQUE (id, site_id)`
@@ -1465,6 +1466,7 @@ Contract:
 - `owner_provider_id` is the Add-on that opened the thread with no actor behind it, and is what lets it reach the thread again without one. `NULL` is Core's own, which is every thread a person opened.
 - A ticket's conversation is an ordinary thread; the reference lives on `support_tickets.thread_id`.
 - `last_message_id` is denormalized so an inbox orders and previews without a lateral join per row. The two tables reference each other, so the constraint is added after `thread_messages` exists.
+- `last_public_message_id` is the same for messages without `Internal`. A reader who is not Staff is shown, previewed and counted unread against it, so a note written past a customer does not surface as a change they cannot open.
 - `(id, site_id)` is unique so a ticket and its thread cannot end up on different Sites.
 
 ### `phis.thread_participants`
@@ -1565,7 +1567,7 @@ Contract:
 
 Contract:
 - Read state is per user and per thread.
-- Unread counts are derived by comparing `threads.last_message_id` against `last_read_message_id`.
+- Unread counts are derived by comparing `threads.last_message_id` (Staff) or `threads.last_public_message_id` (everyone else) against `last_read_message_id`. A read mark names a message of the same thread or none.
 - This is sufficient for dashboard badges without a separate notification system in v1.
 
 ### `phis.site_thread_config`

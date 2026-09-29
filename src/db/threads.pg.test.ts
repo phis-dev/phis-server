@@ -370,6 +370,33 @@ describe("threads", () => {
     expect(afterCustomer?.messages).toHaveLength(2);
   });
 
+  it("does not show a customer their thread as changed by a note they cannot read", async () => {
+    await requirePhiTestDatabase();
+    const site = await createPhiTestSite("threads-internal-unread");
+    await offerAllThreadKinds(site);
+    const supporter = await createPhiTestUser(site);
+    const customer = await createPhiTestUser(site);
+    await grantCoreRole(site, supporter, PhiBaseRole.Supporter);
+    const threadId = await openSupportThread(site, { requester: customer, supporter });
+    expect(await markThreadRead(site.id, customer, threadId)).toBe(true);
+    const before = (await listThreadsForUser(site.id, customer)).rows.find((row) => row.id === threadId);
+
+    await addThreadMessage({
+      siteId: site.id,
+      threadId,
+      reader: { kind: "user", userId: supporter },
+      message: "Internal only.",
+      messageFlags: PhisThreadMessageFlag.Internal,
+    });
+
+    const customerUnread = await listThreadsForUser(site.id, customer, { unreadOnly: true });
+    expect(customerUnread.rows.map((row) => row.id)).not.toContain(threadId);
+    const after = (await listThreadsForUser(site.id, customer)).rows.find((row) => row.id === threadId);
+    expect(after?.latestMessageAt).toEqual(before?.latestMessageAt);
+    const staffUnread = await listThreadsForUser(site.id, supporter, { unreadOnly: true });
+    expect(staffUnread.rows.map((row) => row.id)).not.toContain(threadId);
+  });
+
   it("tracks unread against the newest message", async () => {
     await requirePhiTestDatabase();
     const site = await createPhiTestSite("threads-unread");
