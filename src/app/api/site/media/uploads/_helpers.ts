@@ -1,11 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
 
-
-export function parsePositiveInt(value: string | null | undefined) {
-  const parsed = Number.parseInt((value ?? "").trim(), 10);
-  return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
-}
-
 export async function readJsonBody(request: NextRequest) {
   try {
     const body = (await request.json()) as unknown;
