@@ -8,9 +8,10 @@ import {
 } from "@/db/site-content";
 import { getPool, withTransaction } from "@/lib/db";
 import { hasPhiFlag } from "@/lib/helpers/flags";
-import { isPhisCmsAreaKey, resolvePhisCmsAreaKey } from "@/lib/constants/cms-areas";
+import { resolvePhisCmsAreaKey } from "@/lib/constants/cms-areas";
 import { PhiCmsRevisionFlags } from "@phis/contracts/cms";
 import { normalizeSiteCmsPath } from "@/lib/helpers/cms-path";
+import { requireSiteNavigationScopeKey } from "@/db/site-navigation";
 import { normalizeSiteThemeScopeKey } from "@/db/site-theme";
 import {
   deleteSiteRevisionsWithDb,
@@ -99,21 +100,6 @@ function normalizeNavigationKeyPart(input: string) {
   const normalized = input.trim().toLowerCase();
   if (!normalized || normalized.includes(":")) {
     throw new Error("navKey must be provided without area prefix.");
-  }
-
-  return normalized;
-}
-
-function requireSiteNavigationScopeKey(value: string) {
-  const normalized = value.trim().toLowerCase();
-  const separatorIndex = normalized.indexOf(":");
-  if (
-    separatorIndex <= 0 ||
-    separatorIndex >= normalized.length - 1 ||
-    normalized.indexOf(":", separatorIndex + 1) !== -1 ||
-    !isPhisCmsAreaKey(normalized.slice(0, separatorIndex))
-  ) {
-    throw new Error("Navigation key must be formatted as area:key.");
   }
 
   return normalized;

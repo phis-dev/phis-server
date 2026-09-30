@@ -155,16 +155,14 @@ describe("The Theme is a reference source of its own", () => {
     expect(transaction).toBeLessThan(body.indexOf("saveSiteKeyedDraftRevisionWithDb"));
   });
 
-  it("is rewritten by the Theme publish, which may promote a revision that is not the draft", async () => {
+  it("is kept by the Theme publish, which only makes the Draft live whose save indexed it", async () => {
     const source = await read("src/db/site-theme.ts");
     const fn = /export async function publishSiteThemeRevision[\s\S]*?\n\}\n/u.exec(source);
     expect(fn, "the Theme publish stays findable").not.toBeNull();
     const body = fn![0];
-    expect(body).toMatch(/replaceSiteRevisionReferencesWithDb\(client, THEME,/u);
-    // Inside the transaction body, which commits only after it returns.
-    const transaction = body.indexOf("withTransaction(async (client) => {");
-    expect(transaction).toBeGreaterThan(-1);
-    expect(transaction).toBeLessThan(body.indexOf("replaceSiteRevisionReferencesWithDb"));
+    // The Working Draft guard lives in the shared selection, so no other revision reaches this point.
+    expect(body).toMatch(/selectSiteKeyedRevisionForPublishWithDb\(client, THEME,/u);
+    expect(body).not.toMatch(/replaceSiteRevisionReferencesWithDb/u);
   });
 
   it("carries no Area, because a Site-wide Scope has none to resolve a Page in", async () => {

@@ -571,26 +571,21 @@ export async function saveSiteKeyedDraftRevisionWithDb<TTable extends SiteKeyedR
 
 /**
  * Finds the revision a publish of a keyed scope makes live: the one named, or else the open Working
- * Draft. `guardWorkingDraft` holds the scope row and refuses any revision but the Draft (see
- * `assertPublishesWorkingDraft`); a Navigation publishes that way, a Theme still takes any of its
- * revisions.
+ * Draft. The scope row is held for the rest of the transaction and any revision but the Draft is
+ * refused (see `assertPublishesWorkingDraft`), as for Pages and Areas.
  */
 export async function selectSiteKeyedRevisionForPublishWithDb<TTable extends SiteKeyedRevisionTable>(
   db: DbQueryable,
   table: TTable,
   siteId: number,
-  input: { key: string; revisionId?: number | null; guardWorkingDraft: boolean },
+  input: { key: string; revisionId?: number | null },
 ) {
   const noun = table.label.toLowerCase();
-  const scope = await getSiteKeyedScopeWithDb(db, table, siteId, input.key, {
-    forUpdate: input.guardWorkingDraft,
-  });
+  const scope = await getSiteKeyedScopeWithDb(db, table, siteId, input.key, { forUpdate: true });
   if (!scope) {
     throw new Error(`${table.label} scope not found.`);
   }
-  if (input.guardWorkingDraft) {
-    assertPublishesWorkingDraft(input.revisionId, scope, table.label);
-  }
+  assertPublishesWorkingDraft(input.revisionId, scope, table.label);
   const revisionId = input.revisionId ?? scope.workingDraftRevisionId;
   if (typeof revisionId !== "number" || !Number.isInteger(revisionId) || revisionId <= 0) {
     throw new Error(`No ${noun} draft revision selected for publish.`);
@@ -617,22 +612,24 @@ export async function publishSiteKeyedRevisionWithDb(
 }
 
 /**
- * Discards a keyed scope's Working Draft. With `dropUnpublishedScope` a scope that was never published
- * goes with its only Draft, as a Navigation does; a Theme keeps its scope row either way.
+ * Discards a keyed scope's Working Draft. A scope that was never published goes with its only Draft,
+ * so discarding leaves the Site as it was before the first save. The reference rows that Draft's save
+ * indexed are pruned with it: no scope row is left whose pointers could still name them.
  */
 export async function discardSiteKeyedDraftRevisionWithDb(
   db: DbQueryable,
   table: SiteKeyedRevisionTable,
   siteId: number,
-  input: { key: string; dropUnpublishedScope: boolean },
+  input: { key: string },
 ): Promise<{ deleted: boolean }> {
   const scope = await getSiteKeyedScopeWithDb(db, table, siteId, input.key);
   if (!scope?.workingDraftRevisionId) {
     return { deleted: false };
   }
   await deleteSiteRevisionsWithDb(db, table, scope.id, [scope.workingDraftRevisionId]);
-  if (input.dropUnpublishedScope && scope.publishedRevisionId == null) {
+  if (scope.publishedRevisionId == null) {
     await db.query(`DELETE FROM phis.${table.scopeTable} WHERE id = $1`, [scope.id]);
+    await pruneSiteRevisionScopeReferencesWithDb(db, table, scope.id);
   } else {
     await setSiteRevisionScopePointersWithDb(db, table, scope.id, {
       publishedRevisionId: scope.publishedRevisionId,

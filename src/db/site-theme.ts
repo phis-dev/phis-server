@@ -7,7 +7,6 @@ import {
   getSiteKeyedScopeWithDb,
   getSiteRevisionByIdWithDb,
   publishSiteKeyedRevisionWithDb,
-  replaceSiteRevisionReferencesWithDb,
   saveSiteKeyedDraftRevisionWithDb,
   selectSiteKeyedRevisionForPublishWithDb,
   SITE_REVISION_TABLES,
@@ -234,24 +233,17 @@ export async function publishSiteThemeRevision(
   const normalizedKey = normalizeSiteThemeScopeKey(input?.key);
 
   const published = await withTransaction(async (client) => {
+    /*
+     * As with Pages, Areas and Navigations: publishing clears the Working Draft, so it publishes that
+     * Draft only, or the published revision again while no Draft is open. The Draft's references were
+     * indexed when it was saved and stay the scope's set once it is the published revision.
+     */
     const { scope, revision } = await selectSiteKeyedRevisionForPublishWithDb(client, THEME, siteId, {
       key: normalizedKey,
       revisionId: input?.revisionId,
-      guardWorkingDraft: false,
     });
     const tree = parseSiteThemeRevisionTree(revision.treeJson, normalizedKey);
     await publishSiteKeyedRevisionWithDb(client, THEME, scope, revision);
-    /*
-     * Rewritten rather than left standing, because this publish does not have to be the draft's own.
-     * A caller may name an older revision, and the draft pointer is cleared either way: whichever
-     * revision becomes the published one, its references are the Scope's whole set afterwards.
-     */
-    await replaceSiteRevisionReferencesWithDb(client, THEME, {
-      siteId,
-      scopeId: scope.id,
-      revisionId: revision.id,
-      references: collectSiteCmsReferences(tree),
-    });
 
     await client.query(
       `UPDATE phis.sites
@@ -281,9 +273,6 @@ export async function deleteSiteThemeDraftRevision(
   const normalizedKey = normalizeSiteThemeScopeKey(input?.key);
 
   return withTransaction((client) =>
-    discardSiteKeyedDraftRevisionWithDb(client, THEME, siteId, {
-      key: normalizedKey,
-      dropUnpublishedScope: false,
-    }),
+    discardSiteKeyedDraftRevisionWithDb(client, THEME, siteId, { key: normalizedKey }),
   );
 }

@@ -142,7 +142,13 @@ function normalizeSiteNavigationKey(value: string) {
   return value.trim().toLowerCase();
 }
 
-function requireSiteNavigationScopeKey(value: string) {
+/**
+ * The one rule for a Navigation scope key, `area:key`: a known Area, a local key of lowercase letters,
+ * digits and `/_-` that starts and ends on a letter or digit, and 64 characters at most, as the scope
+ * column holds. The revision history reads Navigation scopes by it too, so a key it refuses here is
+ * never looked up there.
+ */
+export function requireSiteNavigationScopeKey(value: string) {
   const normalized = normalizeSiteNavigationKey(value);
   const separatorIndex = normalized.indexOf(":");
   const localKey = normalized.slice(separatorIndex + 1);
@@ -850,7 +856,7 @@ export async function publishSiteNavigationRevision(
       client,
       NAVIGATION,
       siteId,
-      { key: normalizedKey, revisionId: input.revisionId, guardWorkingDraft: true },
+      { key: normalizedKey, revisionId: input.revisionId },
     );
     const overlay = parseSiteNavigationOverlay(revision.treeJson, normalizedKey);
     await publishSiteKeyedRevisionWithDb(client, NAVIGATION, scope, revision);
@@ -867,9 +873,6 @@ export async function deleteSiteNavigationDraftRevision(
   }
   const normalizedKey = requireSiteNavigationScopeKey(input.key);
   return withTransaction((client) =>
-    discardSiteKeyedDraftRevisionWithDb(client, NAVIGATION, siteId, {
-      key: normalizedKey,
-      dropUnpublishedScope: true,
-    }),
+    discardSiteKeyedDraftRevisionWithDb(client, NAVIGATION, siteId, { key: normalizedKey }),
   );
 }
