@@ -36,6 +36,8 @@ import { requireMediaSpaceWriteContext } from "@/lib/guards/site-media-api";
 import { nextMediaError } from "../../_helpers";
 import { PHIS_AREA_HEADER } from "@/lib/constants/http-headers";
 
+/** The largest edge an Asset can record: `media_assets.width`/`height` are SMALLINT. */
+const PHI_IMAGE_MAX_EDGE_PX = 32_767;
 export const dynamic = "force-dynamic";
 
 function normalizeAreaKey(value: string | null | undefined) {
@@ -425,6 +427,20 @@ export async function POST(
   const imageMeta = decodableBody
     ? await readImageMetadata(decodableBody, contentType)
     : { width: null, height: null, blurDataUrl: null };
+  /*
+   * The Asset stores its edges as SMALLINT, which is more than any image a Site serves needs. One past
+   * it is refused here, with a reason, instead of failing the insert below -- that failure was a 500,
+   * and its cleanup deleted the upload the person had just sent.
+   */
+  if ((imageMeta.width ?? 0) > PHI_IMAGE_MAX_EDGE_PX || (imageMeta.height ?? 0) > PHI_IMAGE_MAX_EDGE_PX) {
+    await storageService.deleteObject(session.stagingStorageKey).catch(() => {});
+    await abortMediaUploadSessionByToken(token);
+    return nextMediaError(
+      "image_too_large",
+      `An image may be at most ${PHI_IMAGE_MAX_EDGE_PX} pixels on either edge.`,
+      422,
+    );
+  }
 
   /*
    * A typeface states its own proportions, and this is the only moment anyone will read them.
