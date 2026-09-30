@@ -2043,11 +2043,11 @@ Contract:
 - `attempts` and `next_attempt_at` are the retry; `parseSmtpTargets` failover inside one attempt is not
   one and must not grow into one.
 
-### `phis.notification_unsubscribe_tokens`
+### `phis.notification_link_salts`
 
 - `user_id INT NOT NULL`
 - `site_id SMALLINT NOT NULL`
-- `token_hash CHAR(64) NOT NULL UNIQUE`
+- `link_salt CHAR(32) NOT NULL`
 - `created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
 - `last_used_at TIMESTAMPTZ NULL`
 - PRIMARY KEY `(user_id, site_id)`
@@ -2055,18 +2055,22 @@ Contract:
   `ON DELETE CASCADE`
 
 Contract:
-- One durable secret per membership, carried in the footer of every circular. Only the `sha256` is
-  stored, as with every other token here; the plain value exists in the mail and nowhere else.
-- **It does not expire and is not consumed**, unlike `user_password_reset_tokens`. The act it authorises
-  is idempotent and the link lives in an archived mail, where a one-time token would be a dead link
-  against an obligation (Art. 21 GDPR, § 7 UWG). One row per person rather than per message is the
-  difference between growing with the audience and growing with every send.
-- Acting on it clears `USER_SITE_FLAG_NEWSLETTER_OPT_IN` for that membership and does nothing else: no
-  session, no other Site, no profile. `GET` on the link must not act -- mail clients and scanners fetch
-  links before a person sees them -- so `GET` offers the button and `POST` performs it, which is also
-  what RFC 8058 one-click requires.
-- Rotation is deleting the row. A token whose membership is gone finds nothing to clear and says so
-  rather than reporting success.
+- The public half of the unsubscribe link carried in every circular. The link is a signature over the
+  recipient and this salt; the key that signs it is `notifications.linkSecret` in the runtime config and
+  stays out of the database. **Nothing here is secret** -- the salt alone proves nothing.
+- **The link does not expire and is not consumed**, unlike `user_password_reset_tokens`. It sits in an
+  archived mail, where a dead link is a dead link against an obligation (Art. 21 GDPR, § 7 UWG), and the
+  act it authorises is idempotent. This is also why the other tokens' shape does not fit: a stored hash
+  cannot be read back, so a durable link could never be rendered a second time.
+- One row per membership rather than one per message -- the difference between growing with the audience
+  and growing with every send. `last_used_at` moves on every use, because a second click is not an error.
+- Acting on a link clears `USER_SITE_FLAG_NEWSLETTER_OPT_IN` for that membership and does nothing else: no
+  session, no other Site, no profile. `GET` must not act -- mail clients and scanners fetch links before a
+  person sees them -- so `GET` offers the button and `POST` performs it, which is what RFC 8058 one-click
+  requires as well.
+- Rotation for one person replaces the salt; rotation for everybody rotates the key and invalidates every
+  link still in a mailbox. A link whose membership is gone finds no row and says so rather than reporting
+  success.
 
 ## Content and Translation Model
 

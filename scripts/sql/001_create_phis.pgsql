@@ -2360,28 +2360,31 @@ CREATE UNIQUE INDEX IF NOT EXISTS notification_outbox_dedupe_idx
   WHERE dedupe_key IS NOT NULL;
 
 /*
- * The secret in the footer of every circular, one per person and Site.
+ * The public half of every unsubscribe link, one row per membership.
  *
- * It is not shaped like the other tokens in this schema, and the difference is the point. A reset token
- * is one-time and short-lived because using it changes a credential. This one turns a preference off,
- * which is idempotent and harmless to repeat -- and it sits in a mail in somebody's archive, where a
- * one-time token is a dead link that owes a legal answer. So it does not expire and it is not consumed.
+ * The link has to keep working for as long as the mail carrying it exists -- it sits in somebody's
+ * archive, and a dead link there is a dead link against an obligation (Art. 21 GDPR, § 7 UWG). That rules
+ * out the shape the other tokens in this schema have: a stored hash cannot be read back, so a durable
+ * link could never be rendered a second time. Instead the link carries a signature over the recipient and
+ * this salt, and the key that signs it is installation-wide and stays out of the database
+ * (`notifications.linkSecret`).
  *
- * One row per membership rather than one per message: the difference between a table that grows with the
- * audience and one that grows with every send. The plain token is never stored; the mail carries it and
- * only its `sha256` is here, as everywhere else.
+ * Nothing secret is therefore here. The salt alone proves nothing, and one row per membership rather than
+ * one per message is the difference between a table that grows with the audience and one that grows with
+ * every send. Rotating one person's links replaces their salt; rotating everybody's rotates the key, and
+ * invalidates every link still sitting in a mailbox.
  *
- * Losing it costs a newsletter subscription and nothing more -- it opens no session, names no other
- * Site, and reveals no profile. Rotation is deleting the row, and the next circular mints another.
+ * Acting on such a link clears the newsletter flag and does nothing else -- no session, no other Site, no
+ * profile -- which is what makes a link that never expires the safe answer rather than the lazy one.
  */
-CREATE TABLE IF NOT EXISTS phis.notification_unsubscribe_tokens (
+CREATE TABLE IF NOT EXISTS phis.notification_link_salts (
   user_id INT NOT NULL,
   site_id SMALLINT NOT NULL,
-  token_hash CHAR(64) NOT NULL UNIQUE,
+  link_salt CHAR(32) NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   last_used_at TIMESTAMPTZ NULL,
-  CONSTRAINT notification_unsubscribe_tokens_pkey PRIMARY KEY (user_id, site_id),
-  CONSTRAINT notification_unsubscribe_tokens_membership_fk
+  CONSTRAINT notification_link_salts_pkey PRIMARY KEY (user_id, site_id),
+  CONSTRAINT notification_link_salts_membership_fk
     FOREIGN KEY (user_id, site_id)
     REFERENCES phis.user_site_memberships (user_id, site_id)
     ON DELETE CASCADE

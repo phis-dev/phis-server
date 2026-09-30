@@ -106,6 +106,18 @@ export type PhisConfig = {
     };
   };
   /**
+   * What the links inside outgoing messages are signed with.
+   *
+   * An unsubscribe link has to work for as long as the mail carrying it exists, which rules out a stored
+   * one-time token, and it must not be guessable, which rules out an unsigned id. So the link carries a
+   * signature over the recipient and a salt kept beside the membership, and this is the key -- the salt
+   * alone is public and proves nothing. Installation-wide and therefore here: two instances must sign the
+   * same link, and rotating this invalidates every link still sitting in a mailbox.
+   */
+  notifications?: {
+    linkSecret?: string;
+  };
+  /**
    * Local Storage defaults only. The global `local | s3` switch, the persisted public URL base, and
    * inline S3 credentials are retired: a Storage Provider and its configuration are bound per Site
    * through `media_storage_profiles`. See `GROUPS_AND_STORAGE.md` section 8.
