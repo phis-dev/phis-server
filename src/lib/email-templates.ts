@@ -194,6 +194,32 @@ export async function resolveEmailTemplate(
   };
 }
 
+/**
+ * The footer a sent message owes, and an asked-for one must not carry.
+ *
+ * Core writes it rather than the caller, which is what keeps a message that needed consent from ever going
+ * out without the way back. It says why the mail arrived before it offers the way out, because a link
+ * without a reason reads like a trick.
+ */
+async function renderUnsubscribeFooter(locale: string, siteName: string, unsubscribeUrl: string) {
+  const normalizedLocale = normalizeLocale(locale);
+  const translate = (msg: string, ctx: string) =>
+    normalizedLocale === PHI_CANONICAL_SOURCE_LOCALE
+      ? Promise.resolve(msg)
+      : translateWithCache({ locale: normalizedLocale, msg, ctx });
+
+  const [note, label] = await Promise.all([
+    translate(
+      "You are receiving this because you asked %1 for updates.",
+      "unsubscribe footer reason",
+    ),
+    translate("Unsubscribe", "unsubscribe footer link"),
+  ]);
+
+  const reason = note.replaceAll("%1", escapeHtml(siteName));
+  return `<hr><p>${reason} <a href="${escapeHtml(unsubscribeUrl)}">${escapeHtml(label)}</a></p>`;
+}
+
 export async function sendTemplatedEmail({
   to,
   site,
@@ -202,6 +228,8 @@ export async function sendTemplatedEmail({
   template,
   recipientName,
   verificationUrl = "",
+  replyTo,
+  unsubscribeUrl,
 }: {
   to: string;
   site: { id: number; key: string; name: string; sourceLocale: string };
@@ -210,6 +238,16 @@ export async function sendTemplatedEmail({
   template: SupportedEmailTemplate;
   recipientName: string;
   verificationUrl?: string;
+  /** Where an answer should go. A circular answers to Support; a system mail answers nowhere. */
+  replyTo?: string;
+  /**
+   * Set only for a message somebody decided to send.
+   *
+   * Presence is what adds the footer and the two list headers together, so a circular cannot acquire one
+   * without the other: `List-Unsubscribe` without `List-Unsubscribe-Post` is not one-click, and neither
+   * of them without a visible link is a mail that only a machine can escape.
+   */
+  unsubscribeUrl?: string;
 }) {
   const content = await resolveEmailTemplate(site.id, site.sourceLocale, locale, template, {
     recipientName,
@@ -218,11 +256,22 @@ export async function sendTemplatedEmail({
     supportEmail: siteConfig.supportEmail,
   });
 
+  const bodyHtml = unsubscribeUrl
+    ? content.bodyHtml + await renderUnsubscribeFooter(locale, site.name, unsubscribeUrl)
+    : content.bodyHtml;
+
   return sendEmail({
     to,
     from: `${siteConfig.mailFromName} <${siteConfig.mailFrom}>`,
+    replyTo,
     subject: content.subject,
-    text: stripHtml(content.bodyHtml),
-    html: content.bodyHtml,
+    text: stripHtml(bodyHtml),
+    html: bodyHtml,
+    headers: unsubscribeUrl
+      ? {
+          "List-Unsubscribe": `<${unsubscribeUrl}>`,
+          "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
+        }
+      : undefined,
   });
 }

@@ -2016,7 +2016,7 @@ Contract:
 - CHECK `locale` only where `recipient_user_id IS NULL`
 - composite foreign key `(recipient_user_id, site_id)` to `user_site_memberships (user_id, site_id)`
   `ON DELETE CASCADE`
-- partial index `(site_id, next_attempt_at, id) WHERE sent_at IS NULL`
+- partial index `(site_id, next_attempt_at, id) WHERE sent_at IS NULL AND (flags & 2) = 0`
 - partial unique index `(site_id, dedupe_key) WHERE dedupe_key IS NOT NULL`
 
 Contract:
@@ -2034,6 +2034,11 @@ Contract:
   written at all, and the rendered mail owes an unsubscribe footer. A message the person's own action
   asked for carries no such footer, because offering to withdraw what cannot be withdrawn is the
   misrepresentation `design/CONSENT.md` documents for banners.
+- `flags & 2` means the row was **settled without being sent**: by the time it was due, the consent it
+  needed had been withdrawn. That is the expected outcome of somebody unsubscribing between the enqueue and
+  the drain, not a delivery failure, and conflating the two would make an operator chase a broken address
+  that never existed. A dropped row is never claimed again, which is why the flag is in the index
+  predicate as well as in the claim.
 - `provider_id` is who declared the occasion and therefore whose words render it -- `@phis/server/core`
   today, an Add-on id once a notification capability exists. Same convention as
   `server_capabilities.provider_id`.

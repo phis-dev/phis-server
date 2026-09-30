@@ -2321,7 +2321,9 @@ CREATE TABLE IF NOT EXISTS phis.notification_outbox (
   provider_id VARCHAR(255) NOT NULL DEFAULT '@phis/server/core',
   occasion VARCHAR(120) NOT NULL,
   -- Bit 0: sent rather than asked for, so consent decided it and the footer owes an unsubscribe link.
-  -- A flag rather than a boolean column, because the next distinction of this kind has the same shape.
+  -- Bit 1: settled without being sent, because by the time it was due nobody wanted it -- the consent it
+  -- needed was withdrawn between the enqueue and the drain. Not a failure, so it must not be counted as
+  -- one, and not a send either. A flag rather than a boolean column, per the house rule.
   flags SMALLINT NOT NULL DEFAULT 0,
   recipient_user_id INT NULL,
   recipient_address VARCHAR(320) NULL,
@@ -2350,9 +2352,10 @@ CREATE TABLE IF NOT EXISTS phis.notification_outbox (
 );
 
 -- The drain's read: what is still owed on one Site, due first, and oldest first among equally due rows.
+-- A dropped row is settled and never claimed again, which is why the flag is in the predicate.
 CREATE INDEX IF NOT EXISTS notification_outbox_pending_idx
   ON phis.notification_outbox (site_id, next_attempt_at, id)
-  WHERE sent_at IS NULL;
+  WHERE sent_at IS NULL AND (flags & 2) = 0;
 
 -- What makes a repeated run write nothing the first one already wrote.
 CREATE UNIQUE INDEX IF NOT EXISTS notification_outbox_dedupe_idx

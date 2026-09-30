@@ -16,6 +16,15 @@ type DbQueryable = Pick<PoolClient, "query">;
  */
 export const PHI_NOTIFICATION_FLAG_SENT = 1 << 0;
 
+/**
+ * Bit 1: the row was settled without being sent, because by the time it was due nobody wanted it.
+ *
+ * Somebody unsubscribing between the enqueue and the drain is the expected case, not a delivery failure.
+ * Counting it as one would have an operator chasing a broken address that never existed, and counting it
+ * as a send would record a mail nobody received.
+ */
+export const PHI_NOTIFICATION_FLAG_DROPPED = 1 << 1;
+
 /** How often one row is tried before it is left alone. A bad address must not be retried forever. */
 const MAX_ATTEMPTS = 8;
 
@@ -60,8 +69,12 @@ type OutboxRow = {
   attempts: number;
 };
 
-const OUTBOX_COLUMNS = `id, site_id, provider_id, occasion, flags, recipient_user_id,
-   recipient_address, locale, params, attempts`;
+/**
+ * Qualified, because both claims return them out of an `UPDATE ... FROM due` where the CTE carries an `id`
+ * of its own. Unqualified, `id` is ambiguous and Postgres refuses the statement.
+ */
+const OUTBOX_COLUMNS = `outbox.id, outbox.site_id, outbox.provider_id, outbox.occasion, outbox.flags,
+   outbox.recipient_user_id, outbox.recipient_address, outbox.locale, outbox.params, outbox.attempts`;
 
 function toNotificationRow(row: OutboxRow): PhiNotificationRow {
   return {
@@ -164,6 +177,7 @@ export async function claimDuePhiNotifications(limit: number) {
        SELECT id
        FROM phis.notification_outbox
        WHERE sent_at IS NULL
+         AND (flags & ${PHI_NOTIFICATION_FLAG_DROPPED}) = 0
          AND attempts < ${MAX_ATTEMPTS}
          AND next_attempt_at <= NOW()
        ORDER BY next_attempt_at, id
@@ -185,8 +199,9 @@ export async function claimDuePhiNotifications(limit: number) {
 /**
  * Claims one named row, for the attempt the writing request makes itself.
  *
- * Answers `null` when somebody else holds it or it is already sent, so a best-effort attempt beside the
- * drain cannot send twice.
+ * Due-time is part of the predicate here as it is in the drain, and it has to be: each query is its own
+ * transaction, so `SKIP LOCKED` stops a concurrent claim but nothing about a finished one. Without the due
+ * time, a second call after the first had committed would take the same row again and send it twice.
  */
 export async function claimPhiNotificationById(id: string) {
   const { rows } = await getPool().query<OutboxRow>(
@@ -195,7 +210,9 @@ export async function claimPhiNotificationById(id: string) {
        FROM phis.notification_outbox
        WHERE id = $1
          AND sent_at IS NULL
+         AND (flags & ${PHI_NOTIFICATION_FLAG_DROPPED}) = 0
          AND attempts < ${MAX_ATTEMPTS}
+         AND next_attempt_at <= NOW()
        FOR UPDATE SKIP LOCKED
      )
      UPDATE phis.notification_outbox outbox
@@ -249,10 +266,15 @@ export async function markPhiNotificationFailed(id: string, error: string) {
 
 /** What is still owed on a Site, for the operator asking whether anything is stuck. */
 export async function countOwedPhiNotifications(siteId: number) {
-  const { rows } = await getPool().query<{ owed: string; exhausted: string }>(
+  const { rows } = await getPool().query<{ owed: string; exhausted: string; dropped: string }>(
     `SELECT
-       count(*) FILTER (WHERE attempts < ${MAX_ATTEMPTS}) AS owed,
-       count(*) FILTER (WHERE attempts >= ${MAX_ATTEMPTS}) AS exhausted
+       count(*) FILTER (
+         WHERE attempts < ${MAX_ATTEMPTS} AND (flags & ${PHI_NOTIFICATION_FLAG_DROPPED}) = 0
+       ) AS owed,
+       count(*) FILTER (
+         WHERE attempts >= ${MAX_ATTEMPTS} AND (flags & ${PHI_NOTIFICATION_FLAG_DROPPED}) = 0
+       ) AS exhausted,
+       count(*) FILTER (WHERE (flags & ${PHI_NOTIFICATION_FLAG_DROPPED}) <> 0) AS dropped
      FROM phis.notification_outbox
      WHERE site_id = $1 AND sent_at IS NULL`,
     [siteId],
@@ -261,6 +283,7 @@ export async function countOwedPhiNotifications(siteId: number) {
   return {
     owed: Number(rows[0]?.owed ?? 0),
     exhausted: Number(rows[0]?.exhausted ?? 0),
+    dropped: Number(rows[0]?.dropped ?? 0),
   };
 }
 
@@ -301,4 +324,21 @@ export async function claimPhiNotificationLinkSalt(userId: number, siteId: numbe
   );
 
   return rows[0]?.link_salt.trim() ?? null;
+}
+
+/**
+ * Settles a row that must not go out after all, with the reason in place of a delivery.
+ *
+ * `params` goes with it: nothing will render this message, so nothing needs its parameters, and some of
+ * them are secrets.
+ */
+export async function markPhiNotificationDropped(id: string, reason: string) {
+  await getPool().query(
+    `UPDATE phis.notification_outbox
+     SET flags = flags | ${PHI_NOTIFICATION_FLAG_DROPPED},
+         last_error = $2,
+         params = '{}'::jsonb
+     WHERE id = $1 AND sent_at IS NULL`,
+    [id, reason.slice(0, 2000)],
+  );
 }

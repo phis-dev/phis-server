@@ -319,6 +319,7 @@ Usage:
 
   phis media check [--fix]
   phis maintain [--list] [--task <id>] [--dry-run]
+  phis mail drain [--limit <rows>] [--api-base-url <url>]
   phis licenses check [--package <directory>]
 
   phis instance list [--stale-after <seconds>]
@@ -3196,6 +3197,44 @@ async function main() {
       console.log(`Ran ${addonId} job ${jobId} for ${site.key} (run ${outcome.runId}).`);
     } else {
       console.error(`Job ${jobId} did not run for ${site.key}: ${outcome.error ?? response.status}`);
+    }
+    if (!response.ok) {
+      process.exitCode = 1;
+    }
+    return;
+  }
+
+  if (group === "mail" && command === "drain") {
+    /*
+     * Posted at the serving instance, for the reason `addon job` is: the mail configuration, the
+     * translation cache and the transport are there, and a drain here would need a second copy of the
+     * renderer built against the CLI's own modules. Not a `phis maintain` task for the same reason.
+     */
+    const rawLimit = flags.get("limit");
+    const limitFlag = typeof rawLimit === "string" ? Number(rawLimit) : undefined;
+    if (limitFlag !== undefined && (!Number.isInteger(limitFlag) || limitFlag <= 0)) {
+      throw new Error("--limit must be a positive whole number of rows.");
+    }
+    const mergedConfig = readCliMergedConfig();
+    const apiBaseUrl = readApiBaseUrlFlag(flags, "mail drain");
+    const internalToken = mergedConfig.api?.internalToken?.trim() ?? "";
+    if (!internalToken) {
+      throw new Error("Missing api.internalToken; the outbox is drained through the serving instance.");
+    }
+    const response = await fetch(`${apiBaseUrl}/api/v1/notifications/drain`, {
+      method: "POST",
+      headers: { "content-type": "application/json", [PHIS_TOKEN_HEADER]: internalToken },
+      body: JSON.stringify(limitFlag === undefined ? {} : { limit: limitFlag }),
+    });
+    const outcome = await response.json().catch(() => ({ error: "The server answered unreadably." }));
+    if (json) {
+      printJson(outcome);
+    } else if (response.ok) {
+      console.log(
+        `Drained ${outcome.claimed} row(s): ${outcome.sent} sent, ${outcome.dropped} dropped, ${outcome.failed} failed.`,
+      );
+    } else {
+      console.error(`The outbox was not drained: ${outcome.error ?? response.status}`);
     }
     if (!response.ok) {
       process.exitCode = 1;

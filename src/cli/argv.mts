@@ -109,6 +109,8 @@ export const PHIS_COMMAND_FLAGS: Record<string, FlagSpec> = {
   },
   "addon job": { addon: S, job: S, site: S, "api-base-url": S },
 
+  "mail drain": { limit: S, "api-base-url": S },
+
   "storage list": { site: S },
   "storage add": { site: S, key: S, provider: S, config: S, "secret-name": S, "secret-reference": S },
   "storage set": { site: S, key: S, config: S, replace: B, "secret-name": S, "secret-reference": S },
