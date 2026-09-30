@@ -81,7 +81,10 @@ describe("the unsubscribe route", () => {
     mocks.verify.mockReturnValue(false);
     const response = await POST(new Request(url(), { method: "POST" }) as never);
 
-    expect(await response.json()).toEqual({ outcome: "invalid" });
+    // A failing status, because the page is a Form and a Form reads the status: a 200 here would report
+    // success and tell somebody they were unsubscribed when nothing happened.
+    expect(response.status).toBe(422);
+    expect(await response.json()).toMatchObject({ outcome: "invalid" });
     expect(mocks.membership).not.toHaveBeenCalled();
     expect(mocks.changeFlags).not.toHaveBeenCalled();
     expect(mocks.touchSalt).not.toHaveBeenCalled();
@@ -89,8 +92,9 @@ describe("the unsubscribe route", () => {
 
   it("answers a link for a membership that is gone the same way as a forged one", async () => {
     mocks.readSalt.mockResolvedValue(null);
-    expect(await (await POST(new Request(url(), { method: "POST" }) as never)).json())
-      .toEqual({ outcome: "invalid" });
+    const response = await POST(new Request(url(), { method: "POST" }) as never);
+    expect(response.status).toBe(422);
+    expect(await response.json()).toMatchObject({ outcome: "invalid" });
     // The salt is missing, so nothing can be verified and nothing should be.
     expect(mocks.verify).not.toHaveBeenCalled();
   });
@@ -108,7 +112,8 @@ describe("the unsubscribe route", () => {
   it("refuses a token that is not one at all", async () => {
     for (const bad of ["", "42", "nonsense"]) {
       const response = await POST(new Request(url(bad), { method: "POST" }) as never);
-      expect(await response.json(), bad).toEqual({ outcome: "invalid" });
+      expect(response.status, bad).toBe(422);
+      expect(await response.json(), bad).toMatchObject({ outcome: "invalid" });
     }
     expect(mocks.readSalt).not.toHaveBeenCalled();
   });

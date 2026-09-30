@@ -29,6 +29,17 @@ export const dynamic = "force-dynamic";
 
 type Outcome = "unsubscribed" | "already" | "invalid";
 
+/*
+ * A link that does not hold is answered as a failure, not as a quiet outcome with a 200.
+ *
+ * The page that shows this is a Form, and a Form reads the status: answering "invalid" with 200 would have
+ * it report success and tell somebody they had been unsubscribed when nothing happened.
+ */
+const INVALID = {
+  error: "This unsubscribe link is not valid. It may have been replaced by a newer one.",
+  outcome: "invalid" satisfies Outcome,
+} as const;
+
 async function resolveOutcome(request: NextRequest, token: string, act: boolean) {
   const site = await requireSiteFromRequest(request);
   if (!site) {
@@ -37,7 +48,7 @@ async function resolveOutcome(request: NextRequest, token: string, act: boolean)
 
   const subject = token ? readPhiUnsubscribeTokenSubject(token) : null;
   if (!subject) {
-    return { status: 200 as const, body: { outcome: "invalid" satisfies Outcome } };
+    return { status: 422 as const, body: INVALID };
   }
 
   const salt = await readPhiNotificationLinkSalt(subject.userId, site.id);
@@ -52,12 +63,12 @@ async function resolveOutcome(request: NextRequest, token: string, act: boolean)
   ) {
     // A link whose membership is gone and a link that does not hold get the same answer: there is nothing
     // to tell apart, and neither is something the holder can act on.
-    return { status: 200 as const, body: { outcome: "invalid" satisfies Outcome } };
+    return { status: 422 as const, body: INVALID };
   }
 
   const membership = await getUserSiteMembership(subject.userId, site.id);
   if (!membership) {
-    return { status: 200 as const, body: { outcome: "invalid" satisfies Outcome } };
+    return { status: 422 as const, body: INVALID };
   }
 
   if (!hasUserSiteFlag(membership.siteFlags, USER_SITE_FLAG_NEWSLETTER_OPT_IN)) {
