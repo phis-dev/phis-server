@@ -8,10 +8,11 @@ vi.mock("@/lib/translations", () => ({ translateWithCache: mocks.translate }));
 import { sendTemplatedEmail } from "./email-templates";
 
 /**
- * A circular owes a way out, and the two list headers only count together: `List-Unsubscribe` without
- * `List-Unsubscribe-Post` is not one-click, and either of them without a visible link is a mail only a
- * machine can escape. These pin that the three arrive together and that an asked-for message gets none of
- * them.
+ * A circular owes a way out, and the footer and the header only count together: a header without a link is
+ * a mail only a machine can escape, a link without the header is one the reader has to hunt for. These pin
+ * that both arrive together, that an asked-for message gets neither, and that `List-Unsubscribe-Post` is
+ * not claimed -- one-click needs the header's own URL to accept a bare POST, and a phis Site has no such
+ * address.
  */
 describe("the unsubscribe footer", () => {
   const site = { id: 1, key: "site", name: "Example Site", sourceLocale: "en" };
@@ -47,7 +48,6 @@ describe("the unsubscribe footer", () => {
     expect(message.html).toContain("Unsubscribe");
     expect(message.headers).toEqual({
       "List-Unsubscribe": "<https://site.test/en/unsubscribe?token=42.sig>",
-      "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
     });
     // The plain-text alternative must carry it too, or a text-only reader has no way out.
     expect(message.text).toContain("https://site.test/en/unsubscribe?token=42.sig");

@@ -251,9 +251,14 @@ export async function sendTemplatedEmail({
   /**
    * Set only for a message somebody decided to send.
    *
-   * Presence is what adds the footer and the two list headers together, so a circular cannot acquire one
-   * without the other: `List-Unsubscribe` without `List-Unsubscribe-Post` is not one-click, and neither
-   * of them without a visible link is a mail that only a machine can escape.
+   * Presence is what adds the visible footer and the `List-Unsubscribe` header together, so a circular
+   * cannot acquire one without the other -- a header without a link is a mail only a machine can escape,
+   * and a link without the header is one the reader has to hunt for.
+   *
+   * `List-Unsubscribe-Post` is deliberately absent. RFC 8058 one-click requires the very URL in the header
+   * to accept a bare `POST`, and on a phis Site there is no such address: a Module reaches the browser
+   * through rendered pages and the form gateway, and the Skeleton gains no route per feature. Claiming
+   * one-click without honouring it is worse than not claiming it, so the header says only what is true.
    */
   unsubscribeUrl?: string;
 }) {
@@ -279,11 +284,6 @@ export async function sendTemplatedEmail({
     subject: content.subject,
     text: bodyText,
     html: bodyHtml,
-    headers: unsubscribeUrl
-      ? {
-          "List-Unsubscribe": `<${unsubscribeUrl}>`,
-          "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
-        }
-      : undefined,
+    headers: unsubscribeUrl ? { "List-Unsubscribe": `<${unsubscribeUrl}>` } : undefined,
   });
 }

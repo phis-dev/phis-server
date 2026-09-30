@@ -175,9 +175,18 @@ Three places where an unsubscribe token is not a reset token:
 - **`GET` must not act.** Mail clients and security scanners fetch links before a human sees them, and an
   unsubscribing `GET` unsubscribes people who never clicked. `GET` shows a page with one button; `POST`
   acts. This is the failure mode to design against, not an edge case.
-- **One-click needs both headers.** RFC 8058 is `List-Unsubscribe` plus `List-Unsubscribe-Post:
-  List-Unsubscribe=One-Click`, and a `POST` endpoint that acts without further confirmation. Doing one
-  without the other is worse than neither.
+- **One-click is not available, and the header says so by omission.** RFC 8058 is `List-Unsubscribe` plus
+  `List-Unsubscribe-Post: List-Unsubscribe=One-Click`, and it requires **the very URL in the header** to
+  accept a bare `POST`. A phis Site has no such address: a Module reaches the browser through rendered
+  pages and through the form gateway at `/api/site/forms`, which wants `{formId, phase, values}` as JSON,
+  and the Skeleton does not gain a route per feature. So the mail carries `List-Unsubscribe` with the page
+  address and nothing more -- claiming one-click without honouring it is worse than not claiming it. The
+  obligation is met either way: the footer link works and the header points at it.
+
+  What this costs is worth writing down. The large providers' bulk-sender rules ask for one-click above a
+  few thousand messages a day, so a Site that grows into that will need an address that takes a bare
+  `POST`. That is a door in `@phis/ui`, decided against the Skeleton contract rather than around it, and it
+  is not this design's to open.
 
 The bit lives on `user_site_memberships`, so a token that outlives the membership finds nothing to clear
 and should say so plainly rather than reporting success. None of this is a consent question:
@@ -190,7 +199,8 @@ is Art. 21 GDPR and § 7 UWG -- an obligation, not a choice to be offered.
   ([THREADS.md](./THREADS.md)), and a notification about it is not a copy of it.
 - **Not bounce handling.** Nothing here reads anything back from SMTP beyond the result of the attempt.
   A bounce needs an inbound path, and there is none; a hard-bouncing address will keep being tried until
-  someone looks at the journal.
+  the attempt ceiling stops it and someone looks at the journal.
+- **Not one-click unsubscribe.** See section 6: the header is honest about what the Site can answer.
 - **Not a marketing tool.** No segments, no click tracking, no open tracking. Named here because the
   first request after the first digest will be open rates, and a tracking pixel is access to a device
   that [design/CONSENT.md](../../phis-ui/design/CONSENT.md) would have to gate -- which would turn a
