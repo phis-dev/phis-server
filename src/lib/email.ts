@@ -9,13 +9,22 @@ const DEFAULT_SMTP_HOST = "127.0.0.1";
 const DEFAULT_SMTP_HOSTS = `${DEFAULT_SMTP_HOST}:25`;
 const DEFAULT_SMTP_PORT = 25;
 
-type EmailMessage = {
+export type EmailMessage = {
   to: string;
   subject: string;
   text: string;
   html?: string;
   from?: string;
   replyTo?: string;
+  /**
+   * Headers beyond the six above, for the ones a message is required to carry rather than chooses to.
+   *
+   * `List-Unsubscribe` and `List-Unsubscribe-Post` are why this exists: a circular without them is filed
+   * as spam by the large providers whatever it says, and RFC 8058 one-click needs both. Nothing here
+   * decides how a Site speaks -- a caller wanting a different sender or reply address has fields for
+   * those.
+   */
+  headers?: Record<string, string>;
 };
 
 type SmtpTarget = {
@@ -164,6 +173,7 @@ async function sendEmailOnce(message: EmailMessage, target: SmtpTarget) {
     subject: message.subject,
     text: message.text,
     html: message.html,
+    headers: message.headers,
   });
 
   return typeof info === "string" ? info : info.messageId;
