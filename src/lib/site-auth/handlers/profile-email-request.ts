@@ -12,15 +12,12 @@ import { logRuntimeEvent } from "@/lib/log";
 import { verifyPasswordHash } from "@/lib/password";
 import { requireAuthenticatedSiteUser } from "@/lib/site-auth/authenticated-site-user";
 import { normalizeString } from "@/lib/helpers/request";
+import { isPhiEmailAddress } from "@/lib/helpers/normalize";
 
 type ProfileEmailRequestPayload = {
   email?: unknown;
   currentPassword?: unknown;
 };
-
-function isValidEmail(value: string) {
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
-}
 
 function buildRecipientName(firstName: string, lastName: string) {
   return [firstName.trim(), lastName.trim()].filter(Boolean).join(" ").trim();
@@ -40,7 +37,7 @@ export async function POST(request: NextRequest) {
 
   const email = normalizeString(payload.email).toLowerCase();
   const currentPassword = normalizeString(payload.currentPassword);
-  if (!email || !isValidEmail(email)) {
+  if (!email || !isPhiEmailAddress(email)) {
     return NextResponse.json({ error: "Invalid email address." }, { status: 400 });
   }
 

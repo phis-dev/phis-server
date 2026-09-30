@@ -21,6 +21,7 @@ import { collectCmsSignalRouteErrors } from "@/lib/cms/signal-validation";
 import { readPhiPageReference } from "@/lib/internal-references";
 import { readPhiViewerAccessPolicy, type PhiViewerAccessPolicy } from "@/lib/authorization";
 import { isPhiRecord } from "@/lib/helpers/record";
+import { isPhiNonBlankString } from "@/lib/helpers/string";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -344,8 +345,8 @@ function readOptionalString(value: unknown, label: string, errors: string[], opt
   return value;
 }
 
-function readRequiredString(value: unknown, label: string, errors: string[]) {
-  if (typeof value !== "string" || !value.trim()) {
+function collectRequiredString(value: unknown, label: string, errors: string[]) {
+  if (!isPhiNonBlankString(value)) {
     errors.push(`${label} must be a non-empty string.`);
     return undefined;
   }
@@ -367,8 +368,12 @@ function readCmsPresetSource(
     return undefined;
   }
 
-  const ownerModuleId = readRequiredString(value.ownerModuleId, `${label}.ownerModuleId`, errors)?.trim();
-  const presetKey = readRequiredString(value.presetKey, `${label}.presetKey`, errors)?.trim();
+  const ownerModuleId = collectRequiredString(
+    value.ownerModuleId,
+    `${label}.ownerModuleId`,
+    errors,
+  )?.trim();
+  const presetKey = collectRequiredString(value.presetKey, `${label}.presetKey`, errors)?.trim();
   const sourcePresetVersion = readInteger(
     value.sourcePresetVersion,
     `${label}.sourcePresetVersion`,
@@ -499,8 +504,8 @@ function parseContentBinding(value: unknown, label: string, errors: string[]) {
     return undefined;
   }
 
-  const storage = readRequiredString(value.storage, `${label}.storage`, errors);
-  const sourceField = readRequiredString(value.sourceField, `${label}.sourceField`, errors);
+  const storage = collectRequiredString(value.storage, `${label}.storage`, errors);
+  const sourceField = collectRequiredString(value.sourceField, `${label}.sourceField`, errors);
 
   if (storage !== undefined && storage !== "text" && storage !== "html" && storage !== "markdown" && storage !== "asset") {
     errors.push(`${label}.storage must be "text", "html", "markdown", or "asset".`);
@@ -551,7 +556,11 @@ function parseLayoutNodes(value: unknown, errors: string[], domain: PhiCmsInstan
             domain,
           ) ?? null;
 
-    const widgetType = readRequiredString(entry.widgetType, `layoutNodes[${index}].widgetType`, errors);
+    const widgetType = collectRequiredString(
+      entry.widgetType,
+      `layoutNodes[${index}].widgetType`,
+      errors,
+    );
     const slotIndex = readInteger(entry.slotIndex, `layoutNodes[${index}].slotIndex`, errors, {
       min: 0,
       allowZero: true,
@@ -616,7 +625,11 @@ function parseContentWidgets(value: unknown, errors: string[], domain: PhiCmsIns
       errors,
       domain,
     );
-    const widgetType = readRequiredString(entry.widgetType, `contentWidgets[${index}].widgetType`, errors);
+    const widgetType = collectRequiredString(
+      entry.widgetType,
+      `contentWidgets[${index}].widgetType`,
+      errors,
+    );
     const slotIndex = readInteger(entry.slotIndex, `contentWidgets[${index}].slotIndex`, errors, {
       min: 0,
       allowZero: true,
@@ -753,7 +766,11 @@ function parseOverlays(value: unknown, errors: string[], domain: PhiCmsInstanceD
     }
 
     const id = readRequiredCmsInstanceId(entry.id, `overlays[${index}].id`, errors, domain);
-    const overlayType = readRequiredString(entry.overlayType, `overlays[${index}].overlayType`, errors);
+    const overlayType = collectRequiredString(
+      entry.overlayType,
+      `overlays[${index}].overlayType`,
+      errors,
+    );
     const headerLayoutNodeId = readNullableOptionalCmsInstanceId(
       entry.headerLayoutNodeId,
       `overlays[${index}].headerLayoutNodeId`,

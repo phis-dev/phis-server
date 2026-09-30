@@ -3,7 +3,7 @@ import path from "node:path";
 
 import { Client } from "pg";
 
-import { phisAddonCoreReferenceTables } from "../lib/addons/schema-ddl.ts";
+import { phisAddonCoreReferenceTables, quotePhiIdentifier } from "../lib/addons/schema-ddl.ts";
 
 /**
  * Bringing an existing installation's Core schema up to the release it is running.
@@ -299,7 +299,7 @@ export async function dropPhiCoreSchema(input: {
         if (!/^[a-z_][a-z0-9_]*$/u.test(entry.schemaName)) {
           throw new Error(`"${entry.schemaName}" is not a usable schema name.`);
         }
-        await migration.query(`DROP SCHEMA IF EXISTS "${entry.schemaName}" CASCADE`);
+        await migration.query(`DROP SCHEMA IF EXISTS ${quotePhiIdentifier(entry.schemaName)} CASCADE`);
       }
     } finally {
       await migration.end();

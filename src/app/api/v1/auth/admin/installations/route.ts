@@ -18,10 +18,11 @@ import { applyAuthInstallationPatch } from "@/lib/site-auth/admin-installations"
 import {
   requireAuthAdminSectionContext,
   requireAuthAdminSectionReadContext,
+  requireAuthAdminSectionWrite,
 } from "@/lib/site-auth/admin-sections";
 import { buildSiteAuthSecretReference, writeSiteAuthSecret } from "@/lib/site-auth/secret-store";
 import { logRuntimeEvent } from "@/lib/log";
-import { normalizeString } from "@/lib/helpers/request";
+import { normalizeString, requireJsonObjectBody } from "@/lib/helpers/request";
 import { getSiteAuthPolicy } from "@/db/site-auth";
 
 export const dynamic = "force-dynamic";
@@ -55,10 +56,11 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Site not found." }, { status: 404 });
   }
 
-  const body = (await request.json().catch(() => null)) as Record<string, unknown> | null;
-  if (!body || typeof body !== "object" || Array.isArray(body)) {
-    return NextResponse.json({ error: "Invalid installation payload." }, { status: 400 });
+  const parsedBody = await requireJsonObjectBody(request, "Invalid installation payload.");
+  if (!parsedBody.ok) {
+    return parsedBody.response;
   }
+  const { body } = parsedBody;
   const installationKey = normalizeAuthInstallationKey(body.installationKey);
   if (!installationKey) {
     return NextResponse.json({ error: "installationKey must be a lowercase slug." }, { status: 400 });
@@ -150,14 +152,11 @@ export async function POST(request: NextRequest) {
  * PATCH route.
  */
 export async function PATCH(request: NextRequest) {
-  const { context, error } = await requireAuthAdminSectionContext(request);
-  if (error || !context) {
-    return error ?? NextResponse.json({ error: "Authentication required." }, { status: 401 });
+  const guarded = await requireAuthAdminSectionWrite(request, "Invalid installation payload.");
+  if (!guarded.ok) {
+    return guarded.response;
   }
-  const body = (await request.json().catch(() => null)) as Record<string, unknown> | null;
-  if (!body || typeof body !== "object" || Array.isArray(body)) {
-    return NextResponse.json({ error: "Invalid installation payload." }, { status: 400 });
-  }
+  const { context, body } = guarded;
   const installationKey = normalizeAuthInstallationKey(body.installationKey);
   if (!installationKey) {
     return NextResponse.json({ error: "Unknown installation." }, { status: 404 });

@@ -2,7 +2,7 @@ import "server-only";
 
 import { getSupportedDeepLTargetLanguages } from "@/lib/deepl-languages";
 import { getPhisConfigSync } from "@/lib/config";
-import { PHI_CANONICAL_SOURCE_LOCALE, SUPPORTED_LOCALES } from "@/lib/locale";
+import { PHI_CANONICAL_SOURCE_LOCALE, resolvePhiLocaleBase, SUPPORTED_LOCALES } from "@/lib/locale";
 import { PHIS_TOKEN_HEADER } from "@/lib/constants/http-headers";
 
 export type TranslationLocaleOption = {
@@ -39,10 +39,6 @@ export function normalizeTranslationMode(input?: string | null): TranslationMode
     : "none";
 }
 
-function normalizeLocaleCode(input?: string | null) {
-  return input?.trim().toLowerCase().split(/[-_]/)[0] ?? "";
-}
-
 function buildLocaleLabel(code: string, fallbackLabel?: string | null) {
   if (fallbackLabel?.trim()) {
     return fallbackLabel.trim();
@@ -63,7 +59,7 @@ function buildLocaleOptions(
 
   for (const entry of entries) {
     const code =
-      typeof entry === "string" ? normalizeLocaleCode(entry) : normalizeLocaleCode(entry.code);
+      typeof entry === "string" ? resolvePhiLocaleBase(entry) : resolvePhiLocaleBase(entry.code);
     if (!code) {
       continue;
     }
@@ -101,7 +97,10 @@ export function getConfiguredTranslationSupportedLocalesSync() {
     [PHI_CANONICAL_SOURCE_LOCALE];
 
   return Array.from(
-    new Set([PHI_CANONICAL_SOURCE_LOCALE, ...configured.map((value) => normalizeLocaleCode(value)).filter(Boolean)]),
+    new Set([
+      PHI_CANONICAL_SOURCE_LOCALE,
+      ...configured.map((value) => resolvePhiLocaleBase(value)).filter(Boolean),
+    ]),
   );
 }
 
@@ -118,7 +117,7 @@ function coerceConfiguredLocales(
   return Array.from(
     new Set(
       [PHI_CANONICAL_SOURCE_LOCALE, ...configuredLocales]
-        .map((value) => normalizeLocaleCode(value))
+        .map((value) => resolvePhiLocaleBase(value))
         .filter((value) => value && allowedCodes.has(value)),
     ),
   );

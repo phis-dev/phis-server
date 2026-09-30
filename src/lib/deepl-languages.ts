@@ -1,7 +1,7 @@
 import "server-only";
 
 import { getPhisConfigSync } from "@/lib/config";
-import { PHI_CANONICAL_SOURCE_LOCALE } from "@/lib/locale";
+import { PHI_CANONICAL_SOURCE_LOCALE, resolvePhiLocaleBase } from "@/lib/locale";
 
 const DEFAULT_DEEPL_TRANSLATE_URL = "https://api-free.deepl.com/v2/translate";
 const DEEPL_LANGUAGE_CACHE_TTL_MS = 60 * 60 * 1000;
@@ -25,10 +25,6 @@ type DeepLLanguageCacheEntry = {
 };
 
 const DEEPL_LANGUAGE_CACHE = new Map<DeepLLanguageType, DeepLLanguageCacheEntry>();
-
-function normalizeLocaleKey(locale?: string | null) {
-  return locale?.trim().toLowerCase().split(/[-_]/)[0] ?? "";
-}
 
 function getDeepLLanguagesUrl(type: DeepLLanguageType) {
   const configuredUrl =
@@ -89,13 +85,13 @@ async function requestDeepLLanguages(type: DeepLLanguageType) {
 export async function getSupportedDeepLTargetLanguages(options?: {
   sourceLocale?: string | null;
 }): Promise<DeepLSupportedTargetLanguagesResult> {
-  const sourceLocale = normalizeLocaleKey(options?.sourceLocale) || PHI_CANONICAL_SOURCE_LOCALE;
+  const sourceLocale = resolvePhiLocaleBase(options?.sourceLocale) || PHI_CANONICAL_SOURCE_LOCALE;
   const languages = await requestDeepLLanguages("target");
 
   return {
     sourceLocale,
     languages: languages.filter(
-      (language) => normalizeLocaleKey(language.language) !== sourceLocale,
+      (language) => resolvePhiLocaleBase(language.language) !== sourceLocale,
     ),
   };
 }

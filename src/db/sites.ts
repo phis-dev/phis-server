@@ -1,8 +1,6 @@
 import "server-only";
 
-import { randomBytes } from "node:crypto";
-
-import { getPool } from "@/lib/db";
+import { getPool, withTransaction } from "@/lib/db";
 import { getPhisConfigSync } from "@/lib/config";
 import { resolvePhiSiteSourceLocale } from "@/lib/config-files";
 import { PHI_CANONICAL_SOURCE_LOCALE, resolvePhiLocaleCapability } from "@/lib/locale";
@@ -10,7 +8,8 @@ import { SITE_FLAG_ACTIVE } from "@/lib/site-flags";
 import { clearSiteConfigCache } from "@/db/site-config";
 import { getMediaAssetById } from "@/db/media";
 import { getConfiguredTranslationSupportedLocalesSync } from "@/lib/translation-locale-options";
-import { ensureDefaultSiteAuthConfiguration } from "@/db/site-auth";
+import { insertPhiSite } from "@/db/cli-sites.mts";
+import { normalizePhiEmail, normalizePhiSiteKey } from "@/lib/helpers/normalize";
 
 export type SiteRecord = {
   id: number;
@@ -66,15 +65,7 @@ export type SiteRuntimeConfig = {
 
 const siteByKeyCache = new Map<string, SiteRecord | null>();
 
-function normalizeSiteKey(input: string) {
-  return input.trim().toLowerCase();
-}
-
 function normalizeHostname(input: string) {
-  return input.trim().toLowerCase();
-}
-
-function normalizeEmail(input: string) {
   return input.trim().toLowerCase();
 }
 
@@ -183,7 +174,7 @@ function normalizeSiteLocaleCodes(defaultLocale: string, availableLocales: strin
 }
 
 export async function getSiteByKey(input: string) {
-  const key = normalizeSiteKey(input);
+  const key = normalizePhiSiteKey(input);
   if (!key) {
     return null;
   }
@@ -257,11 +248,6 @@ export async function listSites() {
   return rows.map(mapSiteListRow);
 }
 
-function buildCustomerNumberPrefix(siteKey: string) {
-  const prefix = siteKey.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 3);
-  return prefix || "PHS";
-}
-
 function buildMailHost(hostname: string, publicBaseUrl: string) {
   const normalizedHostname = normalizeHostname(hostname);
   if (normalizedHostname) {
@@ -284,7 +270,7 @@ export async function createSite(input: {
   availableLocales: string[];
   supportEmail: string;
 }) {
-  const key = normalizeSiteKey(input.key);
+  const key = normalizePhiSiteKey(input.key);
   const name = input.name.trim();
   const hostname = normalizeHostname(input.hostname);
   const publicBaseUrl = input.publicBaseUrl.trim();
@@ -292,7 +278,7 @@ export async function createSite(input: {
     input.defaultLocale,
     input.availableLocales,
   );
-  const supportEmail = normalizeEmail(input.supportEmail);
+  const supportEmail = normalizePhiEmail(input.supportEmail);
 
   if (!key || !name || !hostname || !publicBaseUrl || !defaultLocale || !supportEmail) {
     throw new Error("Please complete all site fields.");
@@ -309,42 +295,16 @@ export async function createSite(input: {
     throw new Error("A valid hostname or public base URL is required.");
   }
 
-  const pool = getPool();
-  const { rows } = await pool.query<{ id: number }>(
-    `INSERT INTO phis.sites (
-       key,
-       name,
-       hostname,
-       default_locale,
-       available_locales,
-       flags,
-       theme,
-       public_base_url,
-       mail_from,
-       mail_from_name,
-       support_email,
-       contact_recipient,
-       customer_number_prefix,
-       form_guard_secret
-     )
-     VALUES ($1, $2, $3, $4, $5::varchar(8)[], $6, '{}'::jsonb, $7, $8, $9, $10, $10, $11, $12)
-     RETURNING id`,
-    [
-      key,
-      name,
-      hostname,
-      defaultLocale,
-      availableLocales,
-      SITE_FLAG_ACTIVE,
-      publicBaseUrl,
-      `no-reply@${mailHost}`,
-      name,
-      supportEmail,
-      buildCustomerNumberPrefix(key),
-      randomBytes(32).toString("hex"),
-    ],
-  );
-  await ensureDefaultSiteAuthConfiguration(rows[0].id);
+  await withTransaction((client) => insertPhiSite(client, {
+    key,
+    name,
+    hostname,
+    publicBaseUrl,
+    defaultLocale,
+    availableLocales,
+    supportEmail,
+    mailHost,
+  }));
 
   siteByKeyCache.delete(key);
   clearSiteConfigCache();
@@ -367,7 +327,7 @@ export async function updateSiteSettings(input: {
     input.defaultLocale,
     input.availableLocales,
   );
-  const supportEmail = normalizeEmail(input.supportEmail);
+  const supportEmail = normalizePhiEmail(input.supportEmail);
 
   if (!Number.isInteger(siteId) || siteId <= 0) {
     throw new Error("A valid site id is required.");

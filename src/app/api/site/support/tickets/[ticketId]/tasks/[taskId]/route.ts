@@ -10,6 +10,7 @@ import {
   parseStrictPositiveInt,
   readRequestBody,
 } from "@/lib/helpers/request";
+import { toPhiRecord } from "@/lib/helpers/record";
 
 export const dynamic = "force-dynamic";
 
@@ -42,10 +43,18 @@ export async function PATCH(
       ticketId,
       taskId,
       type: Object.hasOwn(body, "type") ? (normalizeNullableInteger(body.type) ?? undefined) : undefined,
-      status: Object.hasOwn(body, "status") ? (normalizeNullableInteger(body.status) ?? undefined) : undefined,
-      flags: Object.hasOwn(body, "flags") ? (normalizeNullableInteger(body.flags) ?? undefined) : undefined,
-      sortOrder: Object.hasOwn(body, "sortOrder") ? (normalizeNullableInteger(body.sortOrder) ?? undefined) : undefined,
-      assigneeUserId: Object.hasOwn(body, "assigneeUserId") ? normalizeNullableInteger(body.assigneeUserId) : undefined,
+      status: Object.hasOwn(body, "status")
+        ? (normalizeNullableInteger(body.status) ?? undefined)
+        : undefined,
+      flags: Object.hasOwn(body, "flags")
+        ? (normalizeNullableInteger(body.flags) ?? undefined)
+        : undefined,
+      sortOrder: Object.hasOwn(body, "sortOrder")
+        ? (normalizeNullableInteger(body.sortOrder) ?? undefined)
+        : undefined,
+      assigneeUserId: Object.hasOwn(body, "assigneeUserId")
+        ? normalizeNullableInteger(body.assigneeUserId)
+        : undefined,
       title: Object.hasOwn(body, "title") ? normalizeString(body.title) : undefined,
       description: Object.hasOwn(body, "description") ? normalizeNullableString(body.description) : undefined,
       meta: Object.hasOwn(body, "meta") ? toPhiRecord(body.meta) : undefined,

@@ -8,14 +8,9 @@ import { checkAuthAttemptLimit, tooManyAttemptsResponse } from "@/lib/site-auth/
 import { PHI_AUTH_SESSION_STATES } from "@/lib/site-auth/contracts";
 import { createCompletedAuthWorkflowResponse } from "@/lib/site-auth/workflow";
 import { requireSiteFromExplicitKeyRequest } from "@/lib/site-context";
+import { toPhiRecord } from "@/lib/helpers/record";
 
 export const dynamic = "force-dynamic";
-
-function toRecord(value: unknown) {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? value as Record<string, unknown>
-    : {};
-}
 
 export async function POST(request: NextRequest) {
   const guardError = guardApiV1(request, { requireInternalToken: true });
@@ -38,7 +33,7 @@ export async function POST(request: NextRequest) {
     return tooManyAttemptsResponse(retryAfter);
   }
   let body: Record<string, unknown>;
-  try { body = toRecord(await request.json()); } catch { body = {}; }
+  try { body = toPhiRecord(await request.json()); } catch { body = {}; }
   const methodKey = body.methodKey === "recovery-code" ? "recovery-code" : "totp";
   const valid = methodKey === "recovery-code"
     ? await consumeRecoveryCode({ userId: session.userId, siteId: session.siteId, code: body.code })

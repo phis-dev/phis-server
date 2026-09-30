@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { getApiV1TokenMode, guardApiV1 } from "@/lib/api-v1-guard";
 import { getPhisConfig } from "@/lib/config";
 import { logRuntimeEvent, normalizeLogThrowable } from "@/lib/log";
-import { PHI_CANONICAL_SOURCE_LOCALE } from "@/lib/locale";
+import { PHI_CANONICAL_SOURCE_LOCALE, resolvePhiLocaleBase } from "@/lib/locale";
 import { resolveSiteFromHeaders } from "@/lib/site-context";
 import { getConfiguredTranslationSupportedLocalesSync } from "@/lib/translation-locale-options";
 import { parseTranslationContext } from "@/lib/translation-context";
@@ -20,10 +20,6 @@ import {
   translateSiteWithCache,
   translateWithCache,
 } from "@/lib/translations";
-
-function normalizeLocale(value: string) {
-  return value.toLowerCase().split(/[-_]/)[0] ?? "";
-}
 
 type TranslationPayload = {
   locale?: string;
@@ -179,7 +175,7 @@ async function handleTranslation(request: Request, payload: TranslationPayload) 
     return namespace.error;
   }
   const ctx = namespace.ctx ?? validated.ctx;
-  const normalizedLocale = normalizeLocale(locale);
+  const normalizedLocale = resolvePhiLocaleBase(locale);
   const config = await getPhisConfig();
   const allowedLocales = new Set(getConfiguredTranslationSupportedLocalesSync());
   const allowPublicReads = config.translation?.allowPublicReads === true;
@@ -206,7 +202,7 @@ async function handleTranslation(request: Request, payload: TranslationPayload) 
         : null;
     const effectiveSourceLocale = sourceLocale?.trim() || site?.sourceLocale || PHI_CANONICAL_SOURCE_LOCALE;
     const { value: translation, standIn } = await trackTranslationStandIns(async () => site
-      ? normalizeLocale(effectiveSourceLocale) === normalizeLocale(site.sourceLocale)
+      ? resolvePhiLocaleBase(effectiveSourceLocale) === resolvePhiLocaleBase(site.sourceLocale)
         ? await translateSiteWithCache({
           siteId: site.id,
           locale,
@@ -278,7 +274,7 @@ async function handleBatchTranslation(request: Request, payload: TranslationPayl
     return namespace.error;
   }
   const ctx = namespace.ctx ?? validated.ctx;
-  const normalizedLocale = normalizeLocale(locale);
+  const normalizedLocale = resolvePhiLocaleBase(locale);
   const config = await getPhisConfig();
   const allowedLocales = new Set(getConfiguredTranslationSupportedLocalesSync());
   const allowPublicReads = config.translation?.allowPublicReads === true;
@@ -307,7 +303,7 @@ async function handleBatchTranslation(request: Request, payload: TranslationPayl
         : null;
     const effectiveSourceLocale = sourceLocale?.trim() || site?.sourceLocale || PHI_CANONICAL_SOURCE_LOCALE;
     const { value: translations, standIn } = await trackTranslationStandIns(async () => site
-      ? normalizeLocale(effectiveSourceLocale) === normalizeLocale(site.sourceLocale)
+      ? resolvePhiLocaleBase(effectiveSourceLocale) === resolvePhiLocaleBase(site.sourceLocale)
         ? await translateSiteBatchWithCache({
           siteId: site.id,
           locale,

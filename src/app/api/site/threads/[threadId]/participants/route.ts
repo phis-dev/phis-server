@@ -2,15 +2,13 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { addThreadParticipants, PhisThreadError } from "@/db/threads";
 import { requireSiteAuthenticatedApiContext } from "@/lib/guards/site-admin-api";
-import { parseStrictPositiveInt, readRequestBody } from "@/lib/helpers/request";
+import {
+  normalizePositiveIdArray,
+  parseStrictPositiveInt,
+  readRequestBody,
+} from "@/lib/helpers/request";
 
 export const dynamic = "force-dynamic";
-
-function normalizeIdArray(value: unknown) {
-  return Array.isArray(value)
-    ? value.filter((entry): entry is number => Number.isInteger(entry) && entry > 0)
-    : [];
-}
 
 /** Adds people or groups. It never removes: leaving is the participant's own flag, not somebody's edit. */
 export async function POST(request: NextRequest, { params }: { params: Promise<{ threadId: string }> }) {
@@ -37,8 +35,8 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       siteId: site.id,
       threadId,
       reader: { kind: "user", userId },
-      participantUserIds: normalizeIdArray(body.participantUserIds),
-      participantGroupIds: normalizeIdArray(body.participantGroupIds),
+      participantUserIds: normalizePositiveIdArray(body.participantUserIds),
+      participantGroupIds: normalizePositiveIdArray(body.participantGroupIds),
     });
   } catch (cause) {
     if (cause instanceof PhisThreadError) {

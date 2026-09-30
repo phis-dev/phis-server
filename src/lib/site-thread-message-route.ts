@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { addThreadMessage, PhisThreadError } from "@/db/threads";
 import { requireSiteAuthenticatedApiContext } from "@/lib/guards/site-admin-api";
 import { logRuntimeEvent } from "@/lib/log";
-import { normalizeString, readRequestBody } from "@/lib/helpers/request";
+import { normalizePositiveIdArray, normalizeString, readRequestBody } from "@/lib/helpers/request";
 
 /**
  * Writing one message into one conversation, for the two addresses that offer it.
@@ -52,7 +52,9 @@ export async function writePhisSiteThreadMessage(
       messageMarkdown: normalizeString(body.messageMarkdown) || null,
       // Normalized against who is writing: `Internal` needs Staff, and the flags Core owns are ignored.
       messageFlags: typeof body.messageFlags === "number" ? body.messageFlags : 0,
-      assetIds: normalizePhisThreadAssetIds(body.assetIds),
+      // Dropped rather than refused where an entry is no id: one that does not exist is caught where
+      // every other one is -- in the write itself.
+      assetIds: normalizePositiveIdArray(body.assetIds),
     });
   } catch (cause) {
     if (cause instanceof PhisThreadError) {
@@ -74,21 +76,6 @@ export async function writePhisSiteThreadMessage(
   });
 
   return NextResponse.json({ thread }, { status: 201 });
-}
-
-/**
- * The attachments, as ids and nothing else.
- *
- * A Form submits what its fields hold, so this list arrives from the same place a REST caller's does and
- * is read the same way: anything that is not a positive whole number is dropped rather than refused,
- * because an id that does not exist is caught where every other one is -- in the write itself.
- */
-export function normalizePhisThreadAssetIds(value: unknown) {
-  return Array.isArray(value)
-    ? value
-        .map((entry) => (typeof entry === "number" && Number.isInteger(entry) ? entry : null))
-        .filter((entry): entry is number => entry != null && entry > 0)
-    : [];
 }
 
 export async function readPhisSiteThreadMessageBody(request: NextRequest) {

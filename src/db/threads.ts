@@ -45,6 +45,7 @@ import {
   PHIS_THREAD_AUTHOR_KIND_USER,
   siteThreadKindFlagOf,
 } from "@/lib/constants/threads";
+import { PHIS_RESOURCE_LINK_THREAD_JOINS_SQL } from "@/db/resource-link-sql";
 
 type DbQueryable = Pick<PoolClient, "query">;
 
@@ -240,12 +241,7 @@ const PROVIDER_MAY_SEE_SQL = (providerParam: string) => `
     OR EXISTS (
       SELECT 1
       FROM phis.resource_links link
-      LEFT JOIN phis.support_tickets ticket
-        ON ticket.id = link.ticket_id
-      LEFT JOIN phis.support_ticket_tasks task
-        ON task.id = link.ticket_task_id
-      LEFT JOIN phis.support_tickets task_ticket
-        ON task_ticket.id = task.ticket_id
+      ${PHIS_RESOURCE_LINK_THREAD_JOINS_SQL}
       WHERE link.provider_id = ${providerParam}
         AND link.site_id = t.site_id
         AND (link.flags & ${PhisResourceLinkFlag.Synced}) <> 0

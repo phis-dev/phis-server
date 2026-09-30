@@ -1,5 +1,6 @@
 import "server-only";
 
+import { mapUserAccountRow, type UserAccountRow } from "@/db/user-accounts";
 import { getPool } from "@/lib/db";
 import { USER_SITE_FLAG_DISABLED, isUserSiteEnabled } from "@/lib/user-site-flags";
 import { PHI_CORE_ROLE_PROVIDER_ID } from "@/lib/authorization";
@@ -18,15 +19,8 @@ export type ListAdminUsersOptions = {
   pageSize?: number;
 };
 
-type ListAdminUsersQueryResult = {
-  id: number;
-  email_normalized: string;
-  medusa_customer_id: string | null;
-  password_hash: string | null;
-  preferred_locale: string | null;
-  site_ids: number[];
-  flags: number;
-  customer_number: string | null;
+/** The account columns are the ones every account read selects, so they are its row type, not a copy. */
+type ListAdminUsersQueryResult = UserAccountRow & {
   created_at: string;
   updated_at: string;
   first_name: string | null;
@@ -204,14 +198,7 @@ export async function listAdminUsersForSite(siteId: number, options: ListAdminUs
 
   return {
     rows: rows.map((row) => ({
-      id: row.id,
-      emailNormalized: row.email_normalized,
-      medusaCustomerId: row.medusa_customer_id,
-      passwordHash: row.password_hash,
-      preferredLocale: row.preferred_locale,
-      siteIds: row.site_ids,
-      flags: row.flags,
-      customerNumber: row.customer_number,
+      ...mapUserAccountRow(row),
       createdAt: row.created_at,
       updatedAt: row.updated_at,
       firstName: row.first_name,

@@ -38,8 +38,8 @@ import {
 } from "@/lib/media-upload-digest";
 import { discardReleasedPhiMediaUploadStaging } from "@/lib/media-upload-staging";
 import { findPhiMediaUploadToResume } from "@/lib/media-upload-resume";
-import { nextMediaError, readJsonBody } from "../_helpers";
-import { normalizeString } from "@/lib/helpers/request";
+import { nextMediaError } from "../_helpers";
+import { normalizeString, readJsonObjectBody } from "@/lib/helpers/request";
 import { readPhisMediaRequestArea } from "@/lib/media-request-area";
 
 export const dynamic = "force-dynamic";
@@ -150,7 +150,7 @@ export async function POST(request: NextRequest) {
   }
   const actor = { siteKey: site.key, userId: authSession.userId };
 
-  const payload = await readJsonBody(request);
+  const payload = await readJsonObjectBody(request);
   if (!payload) {
     return nextMediaError("invalid_json_body", "Invalid JSON body.", 400);
   }

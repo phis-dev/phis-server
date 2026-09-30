@@ -2,6 +2,7 @@ import type { Pool, PoolClient } from "pg";
 import { PhiCmsVisibilityContext } from "@phis/contracts/cms";
 import { PHI_AREA_CONFIG_MODULES_NAMESPACE } from "../lib/cms/area-config.ts";
 import { withPoolTransaction } from "../lib/db-transaction.ts";
+import { toPhiRecord } from "../lib/helpers/record.ts";
 
 export const PHI_FIRST_PARTY_AUTH_UI_MODULE_ID = "@phis/ui/modules/auth";
 
@@ -23,16 +24,10 @@ const AUTH_PRESET_AREAS = [
   { area: "admin", areaMask: PhiCmsVisibilityContext.AdminArea },
 ] as const;
 
-function toRecord(value: unknown): Record<string, unknown> {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? value as Record<string, unknown>
-    : {};
-}
-
 export function restoreFirstPartyAuthInAreaTree(tree: Record<string, unknown>) {
-  const preset = toRecord(tree.preset);
-  const config = toRecord(preset.config);
-  const modules = toRecord(config[PHI_AREA_CONFIG_MODULES_NAMESPACE]);
+  const preset = toPhiRecord(tree.preset);
+  const config = toPhiRecord(preset.config);
+  const modules = toPhiRecord(config[PHI_AREA_CONFIG_MODULES_NAMESPACE]);
   const currentModuleIds = Array.isArray(modules.runtimeModules)
     ? modules.runtimeModules.filter((value): value is string => typeof value === "string" && value.trim().length > 0)
     : [];
@@ -111,7 +106,7 @@ async function clonePatchedRevision(
       JSON.stringify(patched.tree),
       "Restored first-party Auth UI preset with phis-cli",
       JSON.stringify({
-        ...toRecord(revision.meta_json),
+        ...toPhiRecord(revision.meta_json),
         authPresetRestore: {
           moduleId: PHI_FIRST_PARTY_AUTH_UI_MODULE_ID,
           restoredAt: new Date().toISOString(),

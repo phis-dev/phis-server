@@ -9,6 +9,7 @@ import { verifyFormGuard } from "@/lib/form-guard";
 import { normalizeString, readPhiClientIp } from "@/lib/helpers/request";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { tooManyAttemptsResponse } from "@/lib/site-auth/attempt-limit";
+import { isPhiEmailAddress } from "@/lib/helpers/normalize";
 
 type ContactPayload = {
   name?: unknown;
@@ -43,10 +44,6 @@ function checkContactLimit(request: Request, siteId: number, email: string) {
     }
   }
   return retryAfter;
-}
-
-function isValidEmail(value: string) {
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
 }
 
 function sanitizeHeaderValue(value: string) {
@@ -102,7 +99,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Missing required fields." }, { status: 400 });
   }
 
-  if (!isValidEmail(email)) {
+  if (!isPhiEmailAddress(email)) {
     return NextResponse.json({ error: "Invalid email address." }, { status: 400 });
   }
 

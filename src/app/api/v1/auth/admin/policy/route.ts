@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 import {
   buildAuthAdminSectionSettings,
-  requireAuthAdminSectionContext,
+  requireAuthAdminSectionWrite,
   updateSiteAuthPolicySections,
 } from "@/lib/site-auth/admin-sections";
 import {
@@ -18,15 +18,11 @@ export const dynamic = "force-dynamic";
  * Settings Form values; every other policy field carries over unchanged.
  */
 export async function PATCH(request: NextRequest) {
-  const { context, error } = await requireAuthAdminSectionContext(request);
-  if (error || !context) {
-    return error ?? NextResponse.json({ error: "Authentication required." }, { status: 401 });
+  const guarded = await requireAuthAdminSectionWrite(request, "Invalid Auth policy payload.");
+  if (!guarded.ok) {
+    return guarded.response;
   }
-
-  const body = (await request.json().catch(() => null)) as Record<string, unknown> | null;
-  if (!body || typeof body !== "object" || Array.isArray(body)) {
-    return NextResponse.json({ error: "Invalid Auth policy payload." }, { status: 400 });
-  }
+  const { context, body } = guarded;
   if (!isPhiAuthRegistrationMode(body.registrationMode) || !isPhiAuthLinkingMode(body.existingAccountLinking)) {
     return NextResponse.json({ error: "Invalid authentication policy mode." }, { status: 400 });
   }

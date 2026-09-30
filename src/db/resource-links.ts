@@ -10,6 +10,7 @@ import {
 import { enqueuePhisAddonThreadEventForProviderWithDb } from "@/db/addon-events";
 import { getPool, withTransaction } from "@/lib/db";
 import { schedulePhisAddonEventDelivery } from "@/lib/addons/event-trigger";
+import { PHIS_RESOURCE_LINK_THREAD_JOINS_SQL } from "@/db/resource-link-sql";
 
 export class PhisResourceLinkError extends Error {}
 
@@ -253,12 +254,7 @@ export async function getResourceLinkThreadId(input: {
   const { rows } = await getPool().query<{ thread_id: number | null }>(
     `SELECT COALESCE(link.thread_id, ticket.thread_id, task_ticket.thread_id) AS thread_id
      FROM phis.resource_links link
-     LEFT JOIN phis.support_tickets ticket
-       ON ticket.id = link.ticket_id
-     LEFT JOIN phis.support_ticket_tasks task
-       ON task.id = link.ticket_task_id
-     LEFT JOIN phis.support_tickets task_ticket
-       ON task_ticket.id = task.ticket_id
+     ${PHIS_RESOURCE_LINK_THREAD_JOINS_SQL}
      WHERE link.id = $3
        AND link.site_id = $1
        AND link.provider_id = $2`,
@@ -287,12 +283,7 @@ export async function deleteResourceLink(input: {
               task_ticket.thread_id AS task_thread_id,
               link.flags
        FROM phis.resource_links link
-       LEFT JOIN phis.support_tickets ticket
-         ON ticket.id = link.ticket_id
-       LEFT JOIN phis.support_ticket_tasks task
-         ON task.id = link.ticket_task_id
-       LEFT JOIN phis.support_tickets task_ticket
-         ON task_ticket.id = task.ticket_id
+       ${PHIS_RESOURCE_LINK_THREAD_JOINS_SQL}
        WHERE link.id = $3
          AND link.site_id = $1
          AND link.provider_id = $2

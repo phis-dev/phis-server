@@ -12,6 +12,8 @@ import {
   type PhiAuthRegistrationMode,
   type PhiAuthStage,
 } from "@/lib/site-auth/contracts";
+import { toPhiRecord } from "@/lib/helpers/record";
+import { requirePhiString } from "@/lib/helpers/string";
 
 export type SiteAuthPolicy = {
   siteId: number;
@@ -71,12 +73,6 @@ type ConfigRow = {
   config: unknown;
 };
 
-function toRecord(value: unknown) {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? value as Record<string, unknown>
-    : {};
-}
-
 function createDefaultSiteAuthConfiguration(): SiteAuthConfiguration {
   return {
     policy: {
@@ -108,7 +104,7 @@ function createDefaultSiteAuthConfiguration(): SiteAuthConfiguration {
 }
 
 export function parseSiteAuthFactorPolicy(value: unknown): PhiAuthFactorPolicy {
-  const policy = toRecord(value);
+  const policy = toPhiRecord(value);
   const requiredMethod = policy.requiredMethod == null ? null : policy.requiredMethod;
   const enforcement = policy.enforcement ?? "next-login";
   const graceUntil = policy.graceUntil == null ? null : policy.graceUntil;
@@ -136,16 +132,9 @@ export function parseSiteAuthFactorPolicy(value: unknown): PhiAuthFactorPolicy {
   };
 }
 
-function readRequiredString(value: unknown, label: string) {
-  if (typeof value !== "string" || !value.trim()) {
-    throw new Error(`${label} is required.`);
-  }
-  return value.trim();
-}
-
 export function parseSiteAuthConfiguration(siteId: number, value: unknown): SiteAuthConfiguration {
-  const root = toRecord(value);
-  const policyValue = toRecord(root.policy);
+  const root = toPhiRecord(value);
+  const policyValue = toPhiRecord(root.policy);
   const registrationMode = policyValue.registrationMode;
   const existingAccountLinking = policyValue.existingAccountLinking;
   if (!isPhiAuthRegistrationMode(registrationMode) || !isPhiAuthLinkingMode(existingAccountLinking)) {
@@ -159,17 +148,17 @@ export function parseSiteAuthConfiguration(siteId: number, value: unknown): Site
     throw new Error(`Invalid Site Auth configuration for site ${siteId}.`);
   }
   const providers = root.providers.map((raw, index) => {
-    const provider = toRecord(raw);
+    const provider = toPhiRecord(raw);
     const secretReference = provider.secretReference == null
       ? null
-      : readRequiredString(provider.secretReference, `Auth provider ${index} secretReference`);
+      : requirePhiString(provider.secretReference, `Auth provider ${index} secretReference`);
     if (typeof provider.enabled !== "boolean") {
       throw new Error(`Invalid Auth provider ${index} enabled state.`);
     }
     const callbackOrigin = provider.callbackOrigin == null
       ? null
-      : readRequiredString(provider.callbackOrigin, `Auth provider ${index} callbackOrigin`);
-    const validationValue = provider.validation == null ? null : toRecord(provider.validation);
+      : requirePhiString(provider.callbackOrigin, `Auth provider ${index} callbackOrigin`);
+    const validationValue = provider.validation == null ? null : toPhiRecord(provider.validation);
     const validationStatus = validationValue?.status;
     const validation: AuthProviderInstallationValidation | null = validationValue &&
       (validationStatus === "ok" || validationStatus === "failed" || validationStatus === "not-testable") &&
@@ -181,12 +170,15 @@ export function parseSiteAuthConfiguration(siteId: number, value: unknown): Site
           }
         : null;
     return {
-      installationKey: readRequiredString(provider.installationKey, `Auth provider ${index} installationKey`),
-      providerKey: readRequiredString(provider.providerKey, `Auth provider ${index} providerKey`),
-      issuer: readRequiredString(provider.issuer, `Auth provider ${index} issuer`),
-      clientId: readRequiredString(provider.clientId, `Auth provider ${index} clientId`),
+      installationKey: requirePhiString(
+        provider.installationKey,
+        `Auth provider ${index} installationKey`,
+      ),
+      providerKey: requirePhiString(provider.providerKey, `Auth provider ${index} providerKey`),
+      issuer: requirePhiString(provider.issuer, `Auth provider ${index} issuer`),
+      clientId: requirePhiString(provider.clientId, `Auth provider ${index} clientId`),
       secretReference,
-      config: toRecord(provider.config),
+      config: toPhiRecord(provider.config),
       enabled: provider.enabled,
       callbackOrigin,
       validation,
@@ -197,24 +189,24 @@ export function parseSiteAuthConfiguration(siteId: number, value: unknown): Site
   }
   const providerKeys = new Set(providers.map((provider) => provider.installationKey));
   const methods = root.methods.map((raw, index) => {
-    const method = toRecord(raw);
+    const method = toPhiRecord(raw);
     const stage = method.stage;
     if (!isPhiAuthStage(stage) || typeof method.enabled !== "boolean" || !Number.isInteger(method.sortOrder)) {
       throw new Error(`Invalid Auth method ${index} for site ${siteId}.`);
     }
     const providerInstallationKey = method.installationKey == null
       ? null
-      : readRequiredString(method.installationKey, `Auth method ${index} installationKey`);
+      : requirePhiString(method.installationKey, `Auth method ${index} installationKey`);
     if (providerInstallationKey && !providerKeys.has(providerInstallationKey)) {
       throw new Error(`Unknown Auth provider installation ${providerInstallationKey}.`);
     }
     return {
-      methodKey: readRequiredString(method.methodKey, `Auth method ${index} methodKey`),
+      methodKey: requirePhiString(method.methodKey, `Auth method ${index} methodKey`),
       stage,
       providerInstallationKey,
       enabled: method.enabled,
       sortOrder: method.sortOrder as number,
-      presentation: toRecord(method.presentation) as PhiAuthMethodPresentation,
+      presentation: toPhiRecord(method.presentation) as PhiAuthMethodPresentation,
     };
   });
   if (
@@ -229,11 +221,11 @@ export function parseSiteAuthConfiguration(siteId: number, value: unknown): Site
       registrationMode,
       existingAccountLinking,
       allowPrivilegedAutoLink: policyValue.allowPrivilegedAutoLink === true,
-      passwordPolicy: toRecord(policyValue.passwordPolicy),
-      passkeyPolicy: toRecord(policyValue.passkeyPolicy),
+      passwordPolicy: toPhiRecord(policyValue.passwordPolicy),
+      passkeyPolicy: toPhiRecord(policyValue.passkeyPolicy),
       factorPolicy: parseSiteAuthFactorPolicy(policyValue.factorPolicy),
-      recoveryPolicy: toRecord(policyValue.recoveryPolicy),
-      sessionPolicy: toRecord(policyValue.sessionPolicy),
+      recoveryPolicy: toPhiRecord(policyValue.recoveryPolicy),
+      sessionPolicy: toPhiRecord(policyValue.sessionPolicy),
       allowedCallbackOrigins: policyValue.allowedCallbackOrigins as string[],
     },
     methods,
@@ -313,15 +305,6 @@ async function updateSiteAuthConfiguration(
       revision: rows[0].policy_revision + 1,
     };
   });
-}
-
-export async function ensureDefaultSiteAuthConfiguration(siteId: number) {
-  await getPool().query(
-    `INSERT INTO phis.site_auth_config (site_id)
-     VALUES ($1)
-     ON CONFLICT (site_id) DO NOTHING`,
-    [siteId],
-  );
 }
 
 export async function getSiteAuthPolicy(siteId: number) {

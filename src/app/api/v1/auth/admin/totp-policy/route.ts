@@ -7,7 +7,7 @@ import {
 } from "@/db/site-auth";
 import {
   buildAuthAdminSectionSettings,
-  requireAuthAdminSectionContext,
+  requireAuthAdminSectionWrite,
   updateSiteAuthPolicySections,
 } from "@/lib/site-auth/admin-sections";
 import { buildPhiBaseRoleFlags } from "@/lib/constants/phi-base-roles";
@@ -21,15 +21,11 @@ export const dynamic = "force-dynamic";
  * derived server-side.
  */
 export async function PATCH(request: NextRequest) {
-  const { context, error } = await requireAuthAdminSectionContext(request);
-  if (error || !context) {
-    return error ?? NextResponse.json({ error: "Authentication required." }, { status: 401 });
+  const guarded = await requireAuthAdminSectionWrite(request, "Invalid TOTP policy payload.");
+  if (!guarded.ok) {
+    return guarded.response;
   }
-
-  const body = (await request.json().catch(() => null)) as Record<string, unknown> | null;
-  if (!body || typeof body !== "object" || Array.isArray(body)) {
-    return NextResponse.json({ error: "Invalid TOTP policy payload." }, { status: 400 });
-  }
+  const { context, body } = guarded;
   if (typeof body.required !== "boolean") {
     return NextResponse.json({ error: "required must be a boolean." }, { status: 400 });
   }

@@ -6,6 +6,7 @@ import { resolveSiteFromHeaders } from "@/lib/site-context";
 import { normalizeLocale } from "@/lib/locale";
 import { getSiteByKey } from "@/db/sites";
 import { stripHtml, type SupportedEmailTemplate } from "@/lib/email-templates";
+import { isPhiEmailAddress } from "@/lib/helpers/normalize";
 
 type GenericEmailMessage = {
   subject?: unknown;
@@ -59,10 +60,6 @@ function normalizeGenericBody(value: unknown): GenericEmailMessage | null {
   return value as GenericEmailMessage;
 }
 
-function isValidEmail(email: string) {
-  return /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email);
-}
-
 function normalizeTemplateBody(body: GenericEmailMessage | null, fallbackTo: string): NormalizedGenericMessage | null {
   if (!body) {
     return null;
@@ -74,7 +71,7 @@ function normalizeTemplateBody(body: GenericEmailMessage | null, fallbackTo: str
   const text = normalizeText(body.text);
   const from = normalizeText(body.from) || undefined;
 
-  if (!to || !isValidEmail(to)) {
+  if (!to || !isPhiEmailAddress(to)) {
     return null;
   }
 
@@ -137,7 +134,7 @@ export async function POST(request: Request) {
   }
 
   const recipient = genericBody?.to || fallbackTo;
-  if (!recipient || !isValidEmail(recipient)) {
+  if (!recipient || !isPhiEmailAddress(recipient)) {
     return formatError("Invalid recipient email.");
   }
 

@@ -8,6 +8,7 @@ import {
 } from "@/db/site-cms-references";
 import { ensureSiteMessageId } from "@/db/translations";
 import { sanitizePhiPersistedHtml } from "@/lib/html";
+import { toPhiRecord } from "@/lib/helpers/record";
 
 type SiteNewsRow = {
   id: number;
@@ -117,12 +118,6 @@ function toIsoDate(value: string | null) {
   }
 
   return date.toISOString();
-}
-
-function toJsonRecord(value: unknown) {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : {};
 }
 
 function normalizeOptionalText(value: string | null | undefined) {
@@ -624,7 +619,7 @@ export async function getResolvedSiteContentByVersionIds(
         versionId: row.version_id,
         assetId: row.asset_id,
         status: row.status,
-        meta: toJsonRecord(row.meta),
+        meta: toPhiRecord(row.meta),
         textFields: {},
       } satisfies SiteResolvedContentRecord);
 

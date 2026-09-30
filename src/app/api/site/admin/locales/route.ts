@@ -16,7 +16,12 @@ import {
 } from "@/lib/locale";
 import { logRuntimeEvent } from "@/lib/log";
 import { getConfiguredTranslationSupportedLocalesSync } from "@/lib/translation-locale-options";
-import { normalizeString, parsePositiveIntWithFallback, readRequestBody } from "@/lib/helpers/request";
+import {
+  normalizeString,
+  parsePhiPagination,
+  parsePositiveIntWithFallback,
+  readRequestBody,
+} from "@/lib/helpers/request";
 
 export const dynamic = "force-dynamic";
 
@@ -84,8 +89,7 @@ export async function GET(request: NextRequest) {
 
   const { searchParams } = new URL(request.url);
   const requestedLocale = searchParams.get("locale");
-  const page = parsePositiveIntWithFallback(searchParams.get("page"), 1);
-  const pageSize = Math.min(parsePositiveIntWithFallback(searchParams.get("pageSize"), 25), 100);
+  const { page, pageSize } = parsePhiPagination(searchParams);
   const search = searchParams.get("search")?.trim() ?? "";
   const targetLocales = resolveTranslationTargetLocales(site.sourceLocale, config.availableLocales);
   const resolvedLocale = targetLocales.length > 0

@@ -7,6 +7,7 @@ import type { Pool } from "pg";
 import { PHI_LOCAL_MEDIA_STORAGE_PROVIDER_ID } from "@phis/contracts/addon";
 
 import { isPhisAddonStorageKeyUnder, phisAddonStoragePrefix } from "../lib/addons/schema-name.ts";
+import { PhisMediaSpaceKind } from "../lib/constants/media-space-kinds.ts";
 
 export { phisAddonStoragePrefix };
 
@@ -45,16 +46,20 @@ export async function readPhisAddonStorageSites(
     site_id: number; site_key: string; provider_id: string;
     config: Record<string, unknown>; secret_reference: string | null;
   }>(
+    /*
+     * The Site Space's Profile, because that is where the storage capability writes: an Add-on does not
+     * choose a Profile. Named by its kind -- "no user and no group" also describes every Add-on Space,
+     * so a Site whose Add-ons kept assets was listed once per such Space.
+     */
     `SELECT s.id AS site_id, s.key AS site_key,
             p.provider_id, p.config, p.secret_reference
        FROM phis.site_server_addons a
        JOIN phis.sites s ON s.id = a.site_id
-       JOIN phis.media_spaces sp ON sp.site_id = s.id
-        AND sp.user_id IS NULL AND sp.group_id IS NULL
+       JOIN phis.media_spaces sp ON sp.site_id = s.id AND sp.kind = $2
        JOIN phis.media_storage_profiles p ON p.id = sp.default_storage_profile_id
       WHERE a.addon_id = $1
       ORDER BY s.key`,
-    [addonId],
+    [addonId, PhisMediaSpaceKind.Site],
   );
   return rows.map((row) => ({
     siteId: row.site_id,

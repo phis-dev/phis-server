@@ -13,6 +13,7 @@ import { applyAuthInstallationPatch } from "@/lib/site-auth/admin-installations"
 import { requireAuthAdminSectionContext } from "@/lib/site-auth/admin-sections";
 import { deleteSiteAuthSecret } from "@/lib/site-auth/secret-store";
 import { logRuntimeEvent } from "@/lib/log";
+import { requireJsonObjectBody } from "@/lib/helpers/request";
 
 export const dynamic = "force-dynamic";
 
@@ -27,10 +28,11 @@ export async function PATCH(request: NextRequest, routeContext: Context) {
   if (!installationKey) {
     return NextResponse.json({ error: "Unknown installation." }, { status: 404 });
   }
-  const body = (await request.json().catch(() => null)) as Record<string, unknown> | null;
-  if (!body || typeof body !== "object" || Array.isArray(body)) {
-    return NextResponse.json({ error: "Invalid installation payload." }, { status: 400 });
+  const parsedBody = await requireJsonObjectBody(request, "Invalid installation payload.");
+  if (!parsedBody.ok) {
+    return parsedBody.response;
   }
+  const { body } = parsedBody;
   const response = await applyAuthInstallationPatch(context, installationKey, body);
   if (response.ok) {
     logRuntimeEvent("info", "auth.admin.installation.updated", {

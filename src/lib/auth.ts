@@ -4,6 +4,7 @@ import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypt
 
 import type { NextRequest, NextResponse } from "next/server";
 
+import { buildPhiClearedCookieOptions, buildPhiCookieOptions } from "@/lib/cookie-options";
 import { readPhiClientIp } from "@/lib/helpers/request";
 import { resolveSiteLocale } from "@/lib/locale";
 import type { PhiUserThemeModeName } from "@/lib/user-flags";
@@ -30,10 +31,6 @@ export const AUTH_LINK_COOKIE_NAME = "phis_auth_link";
 export const AUTH_FLOW_COOKIE_NAME = "phis_auth_flow";
 
 const SESSION_TTL_SECONDS = 60 * 60 * 24 * 14;
-
-function isProduction() {
-  return process.env.NODE_ENV === "production";
-}
 
 export function sha256Hex(value: string) {
   return createHash("sha256").update(value).digest("hex");
@@ -134,23 +131,15 @@ export function buildSessionExpiresAt() {
  * Do that first, not afterwards.
  */
 export function setSessionCookie(response: NextResponse, sessionId: string, sessionSecret: string, expiresAt: Date) {
-  response.cookies.set(SESSION_COOKIE_NAME, buildSessionCookieValue(sessionId, sessionSecret), {
-    httpOnly: true,
-    sameSite: "lax",
-    secure: isProduction(),
-    path: "/",
-    expires: expiresAt,
-  });
+  response.cookies.set(
+    SESSION_COOKIE_NAME,
+    buildSessionCookieValue(sessionId, sessionSecret),
+    buildPhiCookieOptions({ httpOnly: true, expires: expiresAt }),
+  );
 }
 
 export function clearSessionCookie(response: NextResponse) {
-  response.cookies.set(SESSION_COOKIE_NAME, "", {
-    httpOnly: true,
-    sameSite: "lax",
-    secure: isProduction(),
-    path: "/",
-    expires: new Date(0),
-  });
+  response.cookies.set(SESSION_COOKIE_NAME, "", buildPhiClearedCookieOptions({ httpOnly: true }));
 }
 
 export function setAuthLinkCookie(
@@ -158,82 +147,47 @@ export function setAuthLinkCookie(
   token: string,
   expiresAt: Date,
 ) {
-  response.cookies.set(AUTH_LINK_COOKIE_NAME, token, {
-    httpOnly: true,
-    sameSite: "lax",
-    secure: isProduction(),
-    path: "/",
-    expires: expiresAt,
-  });
+  response.cookies.set(
+    AUTH_LINK_COOKIE_NAME,
+    token,
+    buildPhiCookieOptions({ httpOnly: true, expires: expiresAt }),
+  );
 }
 
 export function clearAuthLinkCookie(response: NextResponse) {
-  response.cookies.set(AUTH_LINK_COOKIE_NAME, "", {
-    httpOnly: true,
-    sameSite: "lax",
-    secure: isProduction(),
-    path: "/",
-    expires: new Date(0),
-  });
+  response.cookies.set(AUTH_LINK_COOKIE_NAME, "", buildPhiClearedCookieOptions({ httpOnly: true }));
 }
 
 export function setAuthFlowCookie(response: NextResponse, state: string, expiresAt: Date) {
-  response.cookies.set(AUTH_FLOW_COOKIE_NAME, state, {
-    httpOnly: true,
-    sameSite: "lax",
-    secure: isProduction(),
-    path: "/",
-    expires: expiresAt,
-  });
+  response.cookies.set(
+    AUTH_FLOW_COOKIE_NAME,
+    state,
+    buildPhiCookieOptions({ httpOnly: true, expires: expiresAt }),
+  );
 }
 
 export function clearAuthFlowCookie(response: NextResponse) {
-  response.cookies.set(AUTH_FLOW_COOKIE_NAME, "", {
-    httpOnly: true,
-    sameSite: "lax",
-    secure: isProduction(),
-    path: "/",
-    expires: new Date(0),
-  });
+  response.cookies.set(AUTH_FLOW_COOKIE_NAME, "", buildPhiClearedCookieOptions({ httpOnly: true }));
 }
 
 export function setCsrfCookie(response: NextResponse, csrfToken: string) {
-  response.cookies.set(CSRF_COOKIE_NAME, csrfToken, {
-    httpOnly: false,
-    sameSite: "lax",
-    secure: isProduction(),
-    path: "/",
-  });
+  response.cookies.set(CSRF_COOKIE_NAME, csrfToken, buildPhiCookieOptions({ httpOnly: false }));
 }
 
 export function clearCsrfCookie(response: NextResponse) {
-  response.cookies.set(CSRF_COOKIE_NAME, "", {
-    httpOnly: false,
-    sameSite: "lax",
-    secure: isProduction(),
-    path: "/",
-    expires: new Date(0),
-  });
+  response.cookies.set(CSRF_COOKIE_NAME, "", buildPhiClearedCookieOptions({ httpOnly: false }));
 }
 
 export function setAreaCookie(response: NextResponse, area: string, expiresAt?: Date) {
-  response.cookies.set(AREA_COOKIE_NAME, area.trim().toLowerCase(), {
-    httpOnly: false,
-    sameSite: "lax",
-    secure: isProduction(),
-    path: "/",
-    ...(expiresAt ? { expires: expiresAt } : {}),
-  });
+  response.cookies.set(
+    AREA_COOKIE_NAME,
+    area.trim().toLowerCase(),
+    buildPhiCookieOptions({ httpOnly: false, expires: expiresAt }),
+  );
 }
 
 export function clearAreaCookie(response: NextResponse) {
-  response.cookies.set(AREA_COOKIE_NAME, "", {
-    httpOnly: false,
-    sameSite: "lax",
-    secure: isProduction(),
-    path: "/",
-    expires: new Date(0),
-  });
+  response.cookies.set(AREA_COOKIE_NAME, "", buildPhiClearedCookieOptions({ httpOnly: false }));
 }
 
 /**
@@ -253,22 +207,14 @@ export function setThemeModeCookie(
   expiresAt?: Date,
 ) {
   if (themeMode === "system") {
-    response.cookies.set(THEME_MODE_COOKIE_NAME, "", {
-      httpOnly: false,
-      sameSite: "lax",
-      secure: isProduction(),
-      path: "/",
-      expires: new Date(0),
-    });
+    response.cookies.set(THEME_MODE_COOKIE_NAME, "", buildPhiClearedCookieOptions({ httpOnly: false }));
     return;
   }
-  response.cookies.set(THEME_MODE_COOKIE_NAME, themeMode, {
-    httpOnly: false,
-    sameSite: "lax",
-    secure: isProduction(),
-    path: "/",
-    ...(expiresAt ? { expires: expiresAt } : {}),
-  });
+  response.cookies.set(
+    THEME_MODE_COOKIE_NAME,
+    themeMode,
+    buildPhiCookieOptions({ httpOnly: false, expires: expiresAt }),
+  );
 }
 
 /**
@@ -308,13 +254,11 @@ export function resolveSignedInLocale(
  * the exception either, and the switch in phis-ui writes it with the same attribute on https.
  */
 export function setLocaleCookie(response: NextResponse, locale: string, expiresAt?: Date) {
-  response.cookies.set(LOCALE_COOKIE_NAME, locale, {
-    httpOnly: false,
-    sameSite: "lax",
-    secure: isProduction(),
-    path: "/",
-    ...(expiresAt ? { expires: expiresAt } : {}),
-  });
+  response.cookies.set(
+    LOCALE_COOKIE_NAME,
+    locale,
+    buildPhiCookieOptions({ httpOnly: false, expires: expiresAt }),
+  );
 }
 
 export function readRequestIp(request: NextRequest) {

@@ -5,6 +5,8 @@ import type { PoolClient } from "pg";
 import { PhiUserEmailFlag, type PhiUserEmailSourceValue } from "@phis/contracts/access";
 
 import { getPool, withTransaction } from "@/lib/db";
+import { normalizePhiEmail } from "@/lib/helpers/normalize";
+import { ensurePhiDefaultSiteMembership } from "@/db/user-site-membership-default.mts";
 
 export type EnsureUserAccountInput = {
   email: string;
@@ -32,7 +34,7 @@ export type UserAccountRecord = {
   customerNumber: string | null;
 };
 
-type UserAccountRow = {
+export type UserAccountRow = {
   id: number;
   email_normalized: string;
   medusa_customer_id: string | null;
@@ -43,11 +45,7 @@ type UserAccountRow = {
   customer_number: string | null;
 };
 
-function normalizeEmail(value: string) {
-  return value.trim().toLowerCase();
-}
-
-function mapUserAccountRow(row: UserAccountRow): UserAccountRecord {
+export function mapUserAccountRow(row: UserAccountRow): UserAccountRecord {
   return {
     id: row.id,
     emailNormalized: row.email_normalized,
@@ -135,7 +133,7 @@ async function upsertMedusaAccount(
 }
 
 export async function ensureUserAccount(input: EnsureUserAccountInput) {
-  const normalizedEmail = normalizeEmail(input.email);
+  const normalizedEmail = normalizePhiEmail(input.email);
   if (!normalizedEmail) {
     throw new Error("INVALID_EMAIL");
   }
@@ -180,12 +178,7 @@ export async function ensureUserAccount(input: EnsureUserAccountInput) {
       );
     }
 
-    await client.query(
-      `INSERT INTO phis.user_site_memberships (user_id, site_id, user_site_flags)
-       VALUES ($1, $2, 0)
-       ON CONFLICT (user_id, site_id) DO NOTHING`,
-      [userId, input.siteId],
-    );
+    await ensurePhiDefaultSiteMembership(client, userId, input.siteId);
     await upsertPasswordCredential(client, userId, input.passwordHash);
     await upsertMedusaAccount(client, userId, input.siteId, input.medusaCustomerId);
     return { id: userId, emailNormalized: normalizedEmail };
@@ -212,7 +205,7 @@ export async function getUserAccountById(userId: number, siteId = 0) {
  * back with its primary address, which is where mail goes.
  */
 export async function getUserAccountByEmail(email: string, siteId = 0) {
-  const normalizedEmail = normalizeEmail(email);
+  const normalizedEmail = normalizePhiEmail(email);
   if (!normalizedEmail) {
     return null;
   }
@@ -239,6 +232,34 @@ export async function countUserAccountsForSite(siteId: number) {
   return Number(rows[0]?.count ?? "0");
 }
 
+type UserAccountFlagDelta = {
+  setFlags?: number;
+  clearFlags?: number;
+  /** Written where given; an absent or null locale keeps the stored one. */
+  preferredLocale?: string | null;
+};
+
+/**
+ * The one statement that moves an account's flags: the cleared bits first, then the set ones, so a bit
+ * named in both ends up set. Three writers carried it, one of them with the locale beside it.
+ */
+async function applyUserAccountFlagDelta(
+  db: Pick<PoolClient, "query">,
+  userId: number,
+  delta: UserAccountFlagDelta,
+) {
+  const { rows } = await db.query<{ id: number; preferred_locale: string | null; flags: number }>(
+    `UPDATE phis.user_accounts
+     SET preferred_locale = COALESCE($4, preferred_locale),
+         flags = ((flags & ~($2::integer)) | ($3::integer)),
+         updated_at = NOW()
+     WHERE id = $1
+     RETURNING id, preferred_locale, flags`,
+    [userId, delta.clearFlags ?? 0, delta.setFlags ?? 0, delta.preferredLocale ?? null],
+  );
+  return rows[0] ?? null;
+}
+
 export async function updateUserAccountPasswordHash(
   userId: number,
   passwordHash: string,
@@ -246,13 +267,7 @@ export async function updateUserAccountPasswordHash(
 ) {
   await withTransaction(async (client) => {
     await upsertPasswordCredential(client, userId, passwordHash);
-    await client.query(
-      `UPDATE phis.user_accounts
-       SET flags = ((flags & ~($2::integer)) | ($3::integer)),
-           updated_at = NOW()
-       WHERE id = $1`,
-      [userId, options?.clearFlags ?? 0, options?.setFlags ?? 0],
-    );
+    await applyUserAccountFlagDelta(client, userId, options ?? {});
   });
 }
 
@@ -260,16 +275,8 @@ export async function updateUserAccountFlags(
   userId: number,
   options: { setFlags?: number; clearFlags?: number } = {},
 ) {
-  const pool = getPool();
-  const { rows } = await pool.query<{ id: number; flags: number }>(
-    `UPDATE phis.user_accounts
-     SET flags = ((flags & ~($2::integer)) | ($3::integer)),
-         updated_at = NOW()
-     WHERE id = $1
-     RETURNING id, flags`,
-    [userId, options.clearFlags ?? 0, options.setFlags ?? 0],
-  );
-  return rows[0] ?? null;
+  const updated = await applyUserAccountFlagDelta(getPool(), userId, options);
+  return updated ? { id: updated.id, flags: updated.flags } : null;
 }
 
 export async function updateUserAccountProfileFields(
@@ -288,7 +295,7 @@ export async function updateUserAccountProfileFields(
       if (!input.emailSource) {
         throw new Error("EMAIL_SOURCE_REQUIRED");
       }
-      const normalizedEmail = normalizeEmail(input.email);
+      const normalizedEmail = normalizePhiEmail(input.email);
       // A new address is a new row, and the old one stays with the origin it was written under. The
       // table was built for this -- the unique index covers only the primary row -- and overwriting in
       // place was throwing away the one fact nobody can reconstruct afterwards: where an address came
@@ -322,24 +329,7 @@ export async function updateUserAccountProfileFields(
         throw new Error("EMAIL_TAKEN");
       }
     }
-    const { rows } = await client.query<{
-      id: number;
-      preferred_locale: string | null;
-      flags: number;
-    }>(
-      `UPDATE phis.user_accounts
-       SET preferred_locale = COALESCE($2, preferred_locale),
-           flags = ((flags & ~($3::integer)) | ($4::integer)),
-           updated_at = NOW()
-       WHERE id = $1
-       RETURNING id, preferred_locale, flags`,
-      [
-        userId,
-        input.preferredLocale ?? null,
-        input.clearFlags ?? 0,
-        input.setFlags ?? 0,
-      ],
-    );
+    const updated = await applyUserAccountFlagDelta(client, userId, input);
     const email = await client.query<{ email_normalized: string }>(
       `SELECT email_normalized
        FROM phis.user_emails
@@ -348,12 +338,12 @@ export async function updateUserAccountProfileFields(
        LIMIT 1`,
       [userId],
     );
-    return rows[0] && email.rows[0]
+    return updated && email.rows[0]
       ? {
-          id: rows[0].id,
+          id: updated.id,
           emailNormalized: email.rows[0].email_normalized,
-          preferredLocale: rows[0].preferred_locale,
-          flags: rows[0].flags,
+          preferredLocale: updated.preferred_locale,
+          flags: updated.flags,
         }
       : null;
   });

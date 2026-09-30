@@ -148,6 +148,16 @@ export function parsePhiAcceptLanguage(header: string | null | undefined): strin
     .map((entry) => entry.tag);
 }
 
+/**
+ * The language of a locale without its region: `pt-BR`, `pt_br` and ` PT ` are all `pt`.
+ *
+ * What the DeepL language list and the offered translation targets are keyed by; they kept a copy
+ * each. Empty for no locale at all.
+ */
+export function resolvePhiLocaleBase(input?: string | null) {
+  return input?.trim().toLowerCase().split(/[-_]/)[0] ?? "";
+}
+
 export function normalizeLocale(input?: string | null) {
   return resolvePhiLocaleCapability(input)?.locale ?? getPhiLocaleCapability(PHI_CANONICAL_SOURCE_LOCALE).locale;
 }

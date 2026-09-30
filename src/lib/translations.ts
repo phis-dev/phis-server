@@ -28,6 +28,7 @@ import type { PhisTranslationWriteMode } from "@/lib/translation-write-mode";
 import {
   PHI_CANONICAL_SOURCE_LOCALE,
   requirePhiTranslationLocale,
+  resolvePhiLocaleBase,
   resolvePhiLocaleCapability,
 } from "@/lib/locale";
 import { logRuntimeEvent, normalizeLogThrowable } from "@/lib/log";
@@ -78,10 +79,6 @@ type BatchTranslationInput = {
 };
 
 const SHA256_HEX_LENGTH = 64;
-
-function normalizeLocaleKey(locale: string) {
-  return locale.trim().toLowerCase().split(/[-_]/)[0] ?? "";
-}
 
 function computeTranslationHash(msg: string) {
   return createHash("sha256")
@@ -262,7 +259,7 @@ async function requestConfiguredTranslationsOrFallback(input: {
 }
 
 function sameLocale(left: string, right: string) {
-  return normalizeLocaleKey(left) === normalizeLocaleKey(right);
+  return resolvePhiLocaleBase(left) === resolvePhiLocaleBase(right);
 }
 
 export async function translateWithCache(input: TranslationInput) {

@@ -6,6 +6,7 @@ import { cookies } from "next/headers";
 import type { NextRequest, NextResponse } from "next/server";
 
 import { getPhisConfigSync } from "@/lib/config";
+import { buildPhiClearedCookieOptions, buildPhiCookieOptions } from "@/lib/cookie-options";
 
 export const OPERATOR_SESSION_COOKIE_NAME = "phis_operator_session";
 
@@ -16,10 +17,6 @@ type OperatorSessionPayload = {
   displayName: string;
   expiresAt: number;
 };
-
-function isProduction() {
-  return process.env.NODE_ENV === "production";
-}
 
 /**
  * The dedicated key, or nothing. The internal API token stood in for it before, with the registration
@@ -105,24 +102,16 @@ export function setOperatorSessionCookie(
       displayName: input.displayName.trim(),
       expiresAt: input.expiresAt.getTime(),
     }),
-    {
-      httpOnly: true,
-      sameSite: "lax",
-      secure: isProduction(),
-      path: "/",
-      expires: input.expiresAt,
-    },
+    buildPhiCookieOptions({ httpOnly: true, expires: input.expiresAt }),
   );
 }
 
 export function clearOperatorSessionCookie(response: NextResponse) {
-  response.cookies.set(OPERATOR_SESSION_COOKIE_NAME, "", {
-    httpOnly: true,
-    sameSite: "lax",
-    secure: isProduction(),
-    path: "/",
-    expires: new Date(0),
-  });
+  response.cookies.set(
+    OPERATOR_SESSION_COOKIE_NAME,
+    "",
+    buildPhiClearedCookieOptions({ httpOnly: true }),
+  );
 }
 
 export function getOperatorSessionFromRequest(request: NextRequest) {

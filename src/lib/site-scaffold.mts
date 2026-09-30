@@ -4,6 +4,7 @@ import { access, cp, mkdir, readFile, readdir, rename, rmdir, stat, symlink, unl
 import path from "node:path";
 
 import { buildSiteModuleProjection } from "../cli/modules.mts";
+import { toPhiRecord } from "./helpers/record.ts";
 
 export const PHI_SITE_SCAFFOLD_VERSION = 3;
 
@@ -544,10 +545,6 @@ async function readJsonRecord(target: string) {
   } catch { return {}; }
 }
 
-function asRecord(value: unknown): Record<string, unknown> {
-  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
-}
-
 /**
  * The Site's `package.json` with what the scaffold needs added to it.
  *
@@ -570,19 +567,22 @@ function mergePackageJson(
   for (const [key, value] of Object.entries(canonical)) {
     if (!(key in merged)) merged[key] = value;
   }
-  merged.scripts = { ...asRecord(current.scripts) };
-  for (const [name, command] of Object.entries(asRecord(canonical.scripts))) {
+  merged.scripts = { ...toPhiRecord(current.scripts) };
+  for (const [name, command] of Object.entries(toPhiRecord(canonical.scripts))) {
     if (!(name in (merged.scripts as Record<string, unknown>))) (merged.scripts as Record<string, unknown>)[name] = command;
   }
-  const installed = new Set([...Object.keys(asRecord(current.dependencies)), ...Object.keys(asRecord(current.devDependencies))]);
+  const installed = new Set([
+    ...Object.keys(toPhiRecord(current.dependencies)),
+    ...Object.keys(toPhiRecord(current.devDependencies)),
+  ]);
   for (const section of ["dependencies", "devDependencies"] as const) {
-    const next = { ...asRecord(current[section]) };
-    for (const [name, range] of Object.entries(asRecord(canonical[section]))) {
+    const next = { ...toPhiRecord(current[section]) };
+    for (const [name, range] of Object.entries(toPhiRecord(canonical[section]))) {
       if (!installed.has(name)) next[name] = range;
     }
     merged[section] = next;
   }
-  merged.engines = { ...asRecord(current.engines), node: asRecord(canonical.engines).node };
+  merged.engines = { ...toPhiRecord(current.engines), node: toPhiRecord(canonical.engines).node };
   if (explicitManager && readDeclaredManagerName(current.packageManager) !== explicitManager) {
     merged.packageManager = canonical.packageManager;
   }

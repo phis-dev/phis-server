@@ -24,6 +24,7 @@ import {
   normalizeTranslationMode,
   resolveTranslationLocaleSourceState,
 } from "@/lib/translation-locale-options";
+import { slugifyPhiSiteKey } from "@/lib/helpers/normalize";
 
 const DEFAULT_DEEPL_TRANSLATE_URL = "https://api-free.deepl.com/v2/translate";
 
@@ -170,14 +171,6 @@ function buildTranslationsHref(input?: {
   return `/operator?${searchParams.toString()}`;
 }
 
-function normalizeSiteKey(value: string) {
-  return value
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9-]+/g, "-")
-    .replace(/^-+|-+$/g, "");
-}
-
 function normalizeLocaleList(values: string[]) {
   return Array.from(
     new Set(values.map((value) => value.trim().toLowerCase()).filter(Boolean)),
@@ -193,17 +186,26 @@ function resolveSiteAvailableLocales(formData: FormData, defaultLocale: string) 
   return Array.from(new Set([defaultLocale, ...selectedLocales]));
 }
 
-export async function createOperatorSite(formData: FormData) {
+/**
+ * What every action here checks first: an installation still in setup belongs to the setup screens,
+ * and anything else needs a signed-in operator. Not exported -- a "use server" module exports only the
+ * actions themselves.
+ */
+async function requireOperatorActionSession() {
   if (isBootstrapEnabled()) {
     redirect("/setup");
   }
-
   const session = await getOperatorSession();
   if (!session) {
     redirect("/operator/login");
   }
+  return session;
+}
 
-  const key = normalizeSiteKey(String(formData.get("siteKey") ?? ""));
+export async function createOperatorSite(formData: FormData) {
+  await requireOperatorActionSession();
+
+  const key = slugifyPhiSiteKey(String(formData.get("siteKey") ?? ""));
   const name = String(formData.get("siteName") ?? "").trim();
   const hostname = String(formData.get("siteHostname") ?? "").trim().toLowerCase();
   const publicBaseUrl = String(formData.get("siteBaseUrl") ?? "").trim();
@@ -235,14 +237,7 @@ export async function createOperatorSite(formData: FormData) {
 }
 
 export async function updateOperatorSite(formData: FormData) {
-  if (isBootstrapEnabled()) {
-    redirect("/setup");
-  }
-
-  const session = await getOperatorSession();
-  if (!session) {
-    redirect("/operator/login");
-  }
+  await requireOperatorActionSession();
 
   const siteId = Number(formData.get("siteId") ?? 0);
   const name = String(formData.get("siteName") ?? "").trim();
@@ -282,14 +277,7 @@ export async function updateOperatorSite(formData: FormData) {
 }
 
 export async function deleteOperatorSite(formData: FormData) {
-  if (isBootstrapEnabled()) {
-    redirect("/setup");
-  }
-
-  const session = await getOperatorSession();
-  if (!session) {
-    redirect("/operator/login");
-  }
+  await requireOperatorActionSession();
 
   const siteId = Number(formData.get("siteId") ?? 0);
 
@@ -305,14 +293,7 @@ export async function deleteOperatorSite(formData: FormData) {
 }
 
 export async function deleteOperatorSiteTranslations(formData: FormData) {
-  if (isBootstrapEnabled()) {
-    redirect("/setup");
-  }
-
-  const session = await getOperatorSession();
-  if (!session) {
-    redirect("/operator/login");
-  }
+  await requireOperatorActionSession();
 
   const siteId = Number(formData.get("siteId") ?? 0);
   const locale = String(formData.get("locale") ?? "").trim().toLowerCase();
@@ -352,14 +333,7 @@ export async function deleteOperatorSiteTranslations(formData: FormData) {
  * and a process that was down while it expired comes back with it closed.
  */
 export async function openOperatorTranslationWriteWindow() {
-  if (isBootstrapEnabled()) {
-    redirect("/setup");
-  }
-
-  const session = await getOperatorSession();
-  if (!session) {
-    redirect("/operator/login");
-  }
+  await requireOperatorActionSession();
 
   const runtimeConfig = readMergedPhiConfigSync();
   if (runtimeConfig.translation?.allowPublicWrites !== true) {
@@ -386,14 +360,7 @@ export async function openOperatorTranslationWriteWindow() {
 }
 
 export async function closeOperatorTranslationWriteWindow() {
-  if (isBootstrapEnabled()) {
-    redirect("/setup");
-  }
-
-  const session = await getOperatorSession();
-  if (!session) {
-    redirect("/operator/login");
-  }
+  await requireOperatorActionSession();
 
   const runtimeConfig = readMergedPhiConfigSync();
   writePhiRuntimeConfigSync({
@@ -410,14 +377,7 @@ export async function closeOperatorTranslationWriteWindow() {
 }
 
 export async function updateOperatorSupportedLocales(formData: FormData) {
-  if (isBootstrapEnabled()) {
-    redirect("/setup");
-  }
-
-  const session = await getOperatorSession();
-  if (!session) {
-    redirect("/operator/login");
-  }
+  await requireOperatorActionSession();
 
   const requestedLocales = normalizeLocaleList(
     formData.getAll("translationSupportedLocales").map((value) => String(value ?? "")),

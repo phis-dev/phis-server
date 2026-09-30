@@ -4,6 +4,7 @@ import type { PoolClient } from "pg";
 
 import { getPhisConfigSync } from "@/lib/config";
 import { PhiSiteMediaFlags, resolvePhiMediaKindFromContentType } from "@/lib/constants/media";
+import { PhisMediaSpaceKind, type PhisMediaSpaceKindValue } from "@/lib/constants/media-space-kinds";
 import { PhiGroupMembershipFlags } from "@/lib/constants/site-groups";
 import { getSiteGroupById, readEffectiveGroupMembershipFlags } from "@/db/site-groups";
 import type { RequestedMediaSpace } from "@/lib/guards/site-media-api";
@@ -24,15 +25,8 @@ type MediaSpaceDbQueryable = Pick<PoolClient, "query">;
  * between somebody's photographs. It exists so that the Space's quota **is** the Add-on's quota --
  * one account over one set of bytes, rather than two that drift apart.
  */
-/**
- * How this server stores the kind of a Space.
- *
- * The numbers are the stored contract and never change. They are deliberately not in
- * `@phis/contracts`: a Site never sees them, it is handed the wire name instead.
- */
-export const PhisMediaSpaceKind = { Site: 1, User: 2, Group: 3, Addon: 4 } as const;
-
-export type PhisMediaSpaceKindValue = (typeof PhisMediaSpaceKind)[keyof typeof PhisMediaSpaceKind];
+// The Space kinds live with the constants so the CLI can read them; Media callers import them here.
+export { PhisMediaSpaceKind, type PhisMediaSpaceKindValue } from "@/lib/constants/media-space-kinds";
 
 const MEDIA_SPACE_KIND_VALUES = new Set<number>(Object.values(PhisMediaSpaceKind));
 // Both numbers reach the site UI in an Asset payload, so they are the contract's and not this file's.

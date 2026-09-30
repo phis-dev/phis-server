@@ -1,6 +1,15 @@
 import { afterEach, describe, expect, it } from "vitest";
 
-import { isSameOriginRequest, readPhiClientIp } from "./request";
+import { toPhiRecord } from "./record";
+import {
+  isSameOriginRequest,
+  normalizeNullableInteger,
+  normalizePositiveIdArray,
+  parsePhiPagination,
+  PHI_MAX_PAGE_SIZE,
+  readPhiClientIp,
+  requireJsonObjectBody,
+} from "./request";
 
 /**
  * The address a rate limit is keyed on, against a caller who writes the header themselves.
@@ -107,5 +116,57 @@ describe("isSameOriginRequest", () => {
     expect(isSameOriginRequest(request(foreign))).toBe(false);
     expect(isSameOriginRequest(request({ origin: "null", host: "setup.test" }))).toBe(false);
     expect(isSameOriginRequest(request({ host: "setup.test" }))).toBe(false);
+  });
+});
+
+describe("submitted numbers and lists", () => {
+  it("reads a whole number from a number or from nothing but its digits", () => {
+    expect(normalizeNullableInteger(7)).toBe(7);
+    expect(normalizeNullableInteger(" -3 ")).toBe(-3);
+    expect(normalizeNullableInteger("12abc")).toBeNull();
+    expect(normalizeNullableInteger(1.5)).toBeNull();
+    expect(normalizeNullableInteger("")).toBeNull();
+    expect(normalizeNullableInteger(null)).toBeNull();
+  });
+
+  it("keeps the positive ids of a list, whether sent as numbers or as a Select's strings", () => {
+    expect(normalizePositiveIdArray([3, "4", " 5 ", 0, -1, "6x", 1.5, null])).toEqual([3, 4, 5]);
+    expect(normalizePositiveIdArray("3")).toEqual([]);
+  });
+
+  it("reads a record and nothing that only looks like one", () => {
+    expect(toPhiRecord({ a: 1 })).toEqual({ a: 1 });
+    expect(toPhiRecord([1])).toEqual({});
+    expect(toPhiRecord("x")).toEqual({});
+    expect(toPhiRecord(null)).toEqual({});
+  });
+});
+
+describe("a JSON object body", () => {
+  const post = (body: string) => new Request("https://server.test/", { method: "POST", body });
+
+  it("hands over an object", async () => {
+    const parsed = await requireJsonObjectBody(post('{"a":1}'));
+    expect(parsed.ok && parsed.body).toEqual({ a: 1 });
+  });
+
+  it.each(["[1]", "3", "null", "{"])("refuses %s with a 400 in the route's own words", async (body) => {
+    const parsed = await requireJsonObjectBody(post(body), "Invalid thing.");
+    expect(parsed.ok).toBe(false);
+    if (!parsed.ok) {
+      expect(parsed.response.status).toBe(400);
+      expect(await parsed.response.json()).toEqual({ error: "Invalid thing." });
+    }
+  });
+});
+
+describe("a list's page", () => {
+  it("starts at the first page of the default size", () => {
+    expect(parsePhiPagination(new URLSearchParams())).toEqual({ page: 1, pageSize: 25 });
+  });
+
+  it("caps what a caller asks for", () => {
+    const params = new URLSearchParams({ page: "3", pageSize: "5000" });
+    expect(parsePhiPagination(params)).toEqual({ page: 3, pageSize: PHI_MAX_PAGE_SIZE });
   });
 });

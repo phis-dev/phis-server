@@ -9,7 +9,7 @@ import {
   normalizeNullableInteger,
   normalizePositiveIdArray,
   normalizeString,
-  parsePositiveIntWithFallback,
+  parsePhiPagination,
   readRequestBody,
 } from "@/lib/helpers/request";
 
@@ -44,8 +44,7 @@ export async function GET(request: NextRequest) {
 
   const { searchParams } = new URL(request.url);
   const result = await listThreadsForUser(site.id, userId, {
-    page: parsePositiveIntWithFallback(searchParams.get("page"), 1),
-    pageSize: Math.min(parsePositiveIntWithFallback(searchParams.get("pageSize"), 25), 100),
+    ...parsePhiPagination(searchParams),
     unreadOnly: parseBoolean(searchParams.get("unreadOnly")),
     kind: normalizeNullableInteger(searchParams.get("kind")) as PhisThreadKindValue | null,
     status: normalizeNullableInteger(searchParams.get("status")) as PhisThreadStatusValue | null,

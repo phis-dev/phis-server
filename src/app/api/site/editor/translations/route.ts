@@ -19,7 +19,12 @@ import {
   resolveSiteLocale,
 } from "@/lib/locale";
 import { logRuntimeEvent } from "@/lib/log";
-import { normalizeString, parsePositiveIntWithFallback, readRequestBody } from "@/lib/helpers/request";
+import {
+  normalizeString,
+  parsePhiPagination,
+  parsePositiveIntWithFallback,
+  readRequestBody,
+} from "@/lib/helpers/request";
 
 export const dynamic = "force-dynamic";
 
@@ -76,8 +81,7 @@ export async function GET(request: NextRequest) {
         availableLocales: targetLocales.map((option) => option.code),
       })
     : null;
-  const page = parsePositiveIntWithFallback(searchParams.get("page"), 1);
-  const pageSize = Math.min(parsePositiveIntWithFallback(searchParams.get("pageSize"), 25), 100);
+  const { page, pageSize } = parsePhiPagination(searchParams);
   const contextFilter = searchParams.get("ctx")?.trim() ?? searchParams.get("context")?.trim() ?? "";
   const search = searchParams.get("search")?.trim() ?? "";
   const status = normalizeStatus(searchParams.get("status"));

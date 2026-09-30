@@ -13,9 +13,10 @@ import {
   normalizeNullableInteger,
   normalizeNullableString,
   normalizeString,
-  parsePositiveIntWithFallback,
+  parsePhiPagination,
   readRequestBody,
 } from "@/lib/helpers/request";
+import { toPhiRecord } from "@/lib/helpers/record";
 
 export const dynamic = "force-dynamic";
 
@@ -31,8 +32,7 @@ export async function GET(request: NextRequest) {
   }
 
   const { searchParams } = new URL(request.url);
-  const page = parsePositiveIntWithFallback(searchParams.get("page"), 1);
-  const pageSize = Math.min(parsePositiveIntWithFallback(searchParams.get("pageSize"), 25), 100);
+  const { page, pageSize } = parsePhiPagination(searchParams);
   const result = await listSupportTicketsForSite(site.id, {
     search: searchParams.get("search")?.trim() ?? searchParams.get("q")?.trim() ?? "",
     status: normalizeNullableInteger(searchParams.get("status")),

@@ -4,14 +4,11 @@ import { NextResponse } from "next/server";
 
 import { getSiteByKey, type SiteRecord } from "@/db/sites";
 import { PHIS_SITE_KEY_HEADER } from "@/lib/constants/http-headers";
+import { normalizePhiSiteKey } from "@/lib/helpers/normalize";
 
 type HeaderReader = {
   get(name: string): string | null;
 };
-
-function normalizeSiteKey(input?: string | null) {
-  return input?.trim().toLowerCase() ?? "";
-}
 
 /**
  * Resolves the Site exclusively from the explicit `x-phis-site-key` header.
@@ -22,7 +19,7 @@ function normalizeSiteKey(input?: string | null) {
  * calls — already sends the key; a request without it is simply not Site-scoped.
  */
 export async function resolveSiteFromHeaders(headers: HeaderReader): Promise<SiteRecord | null> {
-  const explicitKey = normalizeSiteKey(headers.get(PHIS_SITE_KEY_HEADER));
+  const explicitKey = normalizePhiSiteKey(headers.get(PHIS_SITE_KEY_HEADER));
   if (!explicitKey) {
     return null;
   }
@@ -34,7 +31,7 @@ export async function requireSiteFromRequest(request: Request) {
 }
 
 export async function requireSiteFromExplicitKeyRequest(request: Request) {
-  const explicitKey = normalizeSiteKey(request.headers.get(PHIS_SITE_KEY_HEADER));
+  const explicitKey = normalizePhiSiteKey(request.headers.get(PHIS_SITE_KEY_HEADER));
   if (!explicitKey) {
     return {
       site: null,

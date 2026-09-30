@@ -9,7 +9,12 @@ import {
 import { logRuntimeEvent, normalizeLogThrowable } from "@/lib/log";
 import { resolveAuthorizedMediaSpace } from "@/db/media-spaces";
 import { nextMediaSpaceError } from "@/lib/media-response";
-import { normalizeString, parsePositiveInt, parseStrictPositiveInt } from "@/lib/helpers/request";
+import {
+  normalizeString,
+  parsePositiveInt,
+  parseStrictPositiveInt,
+  requireJsonObjectBody,
+} from "@/lib/helpers/request";
 
 export const dynamic = "force-dynamic";
 
@@ -41,15 +46,6 @@ function normalizeFlags(value: unknown) {
   }
 
   return null;
-}
-
-async function readJsonBody(request: NextRequest) {
-  try {
-    const body = (await request.json()) as unknown;
-    return body && typeof body === "object" && !Array.isArray(body) ? (body as Record<string, unknown>) : null;
-  } catch {
-    return null;
-  }
 }
 
 export async function GET(
@@ -119,10 +115,11 @@ export async function PATCH(
       return NextResponse.json({ error: "Missing Folder id." }, { status: 400 });
     }
 
-    const payload = await readJsonBody(request);
-    if (!payload) {
-      return NextResponse.json({ error: "Invalid JSON body." }, { status: 400 });
+    const parsedBody = await requireJsonObjectBody(request);
+    if (!parsedBody.ok) {
+      return parsedBody.response;
     }
+    const payload = parsedBody.body;
 
     if (Object.hasOwn(payload, "name") && !normalizeString(payload.name)) {
       return NextResponse.json({ error: "Folder name cannot be empty." }, { status: 400 });

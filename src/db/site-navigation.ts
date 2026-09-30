@@ -21,7 +21,8 @@ import {
 import { normalizeSiteCmsPath } from "@/lib/helpers/cms-path";
 import { readPhiPageReference } from "@/lib/internal-references";
 import { listSitePageScopes, SiteCmsDraftConflictError } from "@/db/site-pages";
-import { isPhiRecord } from "@/lib/helpers/record";
+import { isPhiRecord, toPhiRecord } from "@/lib/helpers/record";
+import { requirePhiString } from "@/lib/helpers/string";
 
 type DbQueryable = Pick<PoolClient, "query">;
 
@@ -165,13 +166,6 @@ function requireSiteNavigationScopeKey(value: string) {
   return normalized;
 }
 
-function readRequiredString(value: unknown, label: string) {
-  if (typeof value !== "string" || !value.trim()) {
-    throw new Error(`${label} is required.`);
-  }
-  return value.trim();
-}
-
 function readNavigationInstanceId(
   value: unknown,
   label: string,
@@ -202,7 +196,7 @@ function readNextNodeSequence(value: unknown) {
 }
 
 function readNavigationHref(value: unknown, label: string) {
-  const href = readRequiredString(value, label);
+  const href = requirePhiString(value, label);
   if (
     !href.startsWith("/") &&
     !href.startsWith("#") &&
@@ -233,10 +227,6 @@ function normalizeSiteNavigationTarget(value: unknown, label: string) {
   throw new Error(`${label} has an invalid kind.`);
 }
 
-function toJsonRecord(value: unknown) {
-  return isPhiRecord(value) ? value : {};
-}
-
 function stableJsonStringify(value: unknown): string {
   if (Array.isArray(value)) {
     return `[${value.map((entry) => stableJsonStringify(entry)).join(",")}]`;
@@ -265,7 +255,7 @@ function normalizeSiteNavigationPlacement(value: unknown): SiteNavigationItemPla
 }
 
 function readSiteNavigationFolderAddress(value: unknown, label: string) {
-  const address = readRequiredString(value, label);
+  const address = requirePhiString(value, label);
   // The Area root is a slot with its own route setting, never a folder address.
   if (!address.startsWith("/") || address === "/" || normalizeSiteCmsPath(address) !== address) {
     throw new Error(`${label} must be a canonical path below the Area root.`);
@@ -363,11 +353,11 @@ function normalizeSiteNavigationItemOverride(value: unknown): SiteNavigationItem
   if (!hasLabel && !hasIcon && !hasPlacement && !hasFolder) {
     throw new Error(`Navigation item override "${id}" is empty.`);
   }
-  const label = hasLabel ? readRequiredString(value.label, `Navigation item "${id}" label`) : undefined;
+  const label = hasLabel ? requirePhiString(value.label, `Navigation item "${id}" label`) : undefined;
   const icon = hasIcon
     ? value.icon === null
       ? null
-      : readRequiredString(value.icon, `Navigation item "${id}" icon`)
+      : requirePhiString(value.icon, `Navigation item "${id}" icon`)
     : undefined;
   const placement = hasPlacement ? normalizeSiteNavigationPlacement(value.placement) : undefined;
   const folder = hasFolder ? normalizeSiteNavigationFolder(value.folder, `Navigation item "${id}" folder`) : undefined;
@@ -393,7 +383,7 @@ function normalizeSiteNavigationCustomItem(value: unknown): SiteNavigationCustom
   }
   const label = kind === "separator"
     ? typeof value.label === "string" ? value.label.trim() : ""
-    : readRequiredString(value.label, `Navigation custom item "${id}" label`);
+    : requirePhiString(value.label, `Navigation custom item "${id}" label`);
   const target = kind === "link"
     ? normalizeSiteNavigationTarget(value.target, `Navigation custom item "${id}" target`)
     : undefined;
@@ -403,7 +393,7 @@ function normalizeSiteNavigationCustomItem(value: unknown): SiteNavigationCustom
   const icon = Object.hasOwn(value, "icon")
     ? value.icon === null
       ? null
-      : readRequiredString(value.icon, `Navigation custom item "${id}" icon`)
+      : requirePhiString(value.icon, `Navigation custom item "${id}" icon`)
     : undefined;
   const newTab = Object.hasOwn(value, "newTab")
     ? readBoolean(value.newTab, `Navigation custom item "${id}" newTab`)
@@ -433,13 +423,13 @@ function normalizeSiteNavigationOverlay(value: unknown, expectedNavKey: string):
   if (!isPhiRecord(value)) {
     throw new Error("Navigation overlay must be an object.");
   }
-  const navKey = requireSiteNavigationScopeKey(readRequiredString(value.navKey, "Navigation navKey"));
+  const navKey = requireSiteNavigationScopeKey(requirePhiString(value.navKey, "Navigation navKey"));
   if (navKey !== expectedNavKey) {
     throw new Error("Navigation overlay navKey does not match its scope.");
   }
   const label = value.label == null
     ? undefined
-    : readRequiredString(value.label, "Navigation label");
+    : requirePhiString(value.label, "Navigation label");
   if (!Array.isArray(value.itemOverrides) || !Array.isArray(value.customItems) || !Array.isArray(value.tombstones)) {
     throw new Error("Navigation overlay requires itemOverrides, customItems, and tombstones arrays.");
   }
@@ -585,7 +575,7 @@ function mapSiteNavigationRevisionRow(row: {
     nextNodeSequence: Number(row.next_node_sequence),
     treeJson: row.tree_json,
     message: row.message,
-    metaJson: toJsonRecord(row.meta_json),
+    metaJson: toPhiRecord(row.meta_json),
     sourceRevisionId: row.source_revision_id,
     createdByUserId: row.created_by_user_id,
     createdAt: row.created_at,

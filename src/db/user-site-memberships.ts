@@ -11,6 +11,7 @@ import {
 import { isUserSiteEnabled } from "@/lib/user-site-flags";
 import { resolveEffectivePhiViewerRoleClaims } from "@/lib/effective-authorization";
 import { resolveEffectivePhiViewerGroupClaims } from "@/db/site-groups";
+import { toPhiIsoString } from "@/lib/helpers/timestamp";
 
 export type UserSiteMembershipRecord = {
   id: number;
@@ -27,13 +28,6 @@ type UserSiteRoleClaimRecord = {
   provider_id: string;
   role_flags: number;
 };
-
-function toIsoString(value: string | Date | null) {
-  if (!value) {
-    return null;
-  }
-  return value instanceof Date ? value.toISOString() : value;
-}
 
 async function readRoleClaims(
   queryable: Pick<PoolClient, "query">,
@@ -64,10 +58,10 @@ function mapMembership(row: UserSiteMembershipRecord, roleClaims: PhiViewerRoleC
     roleClaims,
     siteFlags: row.user_site_flags,
     authorizationRevision: row.authorization_revision,
-    lastLoginAt: toIsoString(row.last_login_at),
+    lastLoginAt: toPhiIsoString(row.last_login_at),
     enabled: isUserSiteEnabled(row.user_site_flags),
-    createdAt: toIsoString(row.created_at),
-    updatedAt: toIsoString(row.updated_at),
+    createdAt: toPhiIsoString(row.created_at),
+    updatedAt: toPhiIsoString(row.updated_at),
   };
 }
 

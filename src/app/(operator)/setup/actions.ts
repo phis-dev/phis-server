@@ -11,7 +11,6 @@ import {
   grantPhiAddonCoreReferences,
   readPhiBootstrapSites,
   verifyPhiDatabaseWriteAccess,
-  type PhiBootstrapSiteInput,
 } from "@/db/bootstrap";
 import {
   readMergedPhiConfigSync,
@@ -21,6 +20,8 @@ import {
 import { resetPhisConfigCache } from "@/lib/config";
 import { requirePhisOperatorSurface } from "@/lib/operator-surfaces";
 import { hashPassword } from "@/lib/password-core";
+import { slugifyPhiSiteKey } from "@/lib/helpers/normalize";
+import type { PhiSiteInsertInput } from "@/db/cli-sites.mts";
 
 /**
  * Every action here writes the installation's configuration, and a Server Action is an endpoint of its
@@ -175,14 +176,6 @@ function buildDatabaseUri({
 
 function normalizeHostname(value: string) {
   return value.trim().toLowerCase();
-}
-
-function normalizeSiteKey(value: string) {
-  return value
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9-]+/g, "-")
-    .replace(/^-+|-+$/g, "");
 }
 
 function buildMailHost(hostname: string, publicBaseUrl: string) {
@@ -413,7 +406,7 @@ export async function saveInitialSites(
     redirect(buildSiteStepHref(locale, "No database connection configured."));
   }
 
-  const siteKey = normalizeSiteKey(String(formData.get("siteKey") ?? ""));
+  const siteKey = slugifyPhiSiteKey(String(formData.get("siteKey") ?? ""));
   const siteName = String(formData.get("siteName") ?? "").trim();
   const siteHostname = normalizeHostname(String(formData.get("siteHostname") ?? ""));
   const siteBaseUrl = String(formData.get("siteBaseUrl") ?? "").trim();
@@ -436,7 +429,7 @@ export async function saveInitialSites(
     }
   }
 
-  const sites: PhiBootstrapSiteInput[] = [];
+  const sites: PhiSiteInsertInput[] = [];
   if (createDemoSite) {
     sites.push({
       key: "demo",

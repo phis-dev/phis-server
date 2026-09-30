@@ -16,19 +16,10 @@ import { logRuntimeEvent } from "@/lib/log";
 import { serializeMediaAssetForDetail } from "@/lib/media-response";
 import { resolvePhisCmsAreaKey } from "@/lib/constants/cms-areas";
 import { MediaAssetUpdateError, updateSiteMediaAsset } from "@/lib/media-asset-update";
-import { parsePositiveInt } from "@/lib/helpers/request";
+import { parsePositiveInt, requireJsonObjectBody } from "@/lib/helpers/request";
 import { readPhisMediaRequestArea } from "@/lib/media-request-area";
 
 export const dynamic = "force-dynamic";
-
-async function readJsonBody(request: NextRequest) {
-  try {
-    const body = (await request.json()) as unknown;
-    return body && typeof body === "object" && !Array.isArray(body) ? (body as Record<string, unknown>) : {};
-  } catch {
-    return null;
-  }
-}
 
 function describeMediaAssetReference(reference: Awaited<ReturnType<typeof collectMediaAssetDeleteReferences>>[number]) {
   const parts: string[] = [];
@@ -137,10 +128,11 @@ export async function PATCH(
     }
     siteKey = site.key;
 
-    const payload = await readJsonBody(request);
-    if (!payload) {
-      return NextResponse.json({ error: "Invalid JSON body." }, { status: 400 });
+    const parsedBody = await requireJsonObjectBody(request);
+    if (!parsedBody.ok) {
+      return parsedBody.response;
     }
+    const payload = parsedBody.body;
 
     const updated = await updateSiteMediaAsset({ siteId: site.id, assetId, payload });
 

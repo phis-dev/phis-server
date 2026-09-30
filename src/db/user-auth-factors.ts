@@ -9,6 +9,7 @@ import {
   encryptAuthTransactionPayload,
 } from "@/lib/site-auth/transaction-crypto";
 import { createTotpSecret, resolveTotpCodeStep, verifyTotpCode } from "@/lib/site-auth/totp";
+import { toPhiIsoString } from "@/lib/helpers/timestamp";
 
 export const PHI_AUTH_FACTOR_TYPES = {
   passkey: 1,
@@ -27,10 +28,6 @@ type FactorRow = {
   created_at: string | Date;
   last_used_at: string | Date | null;
 };
-
-function toIso(value: string | Date | null) {
-  return value ? new Date(value).toISOString() : null;
-}
 
 function readSecret(row: FactorRow) {
   if (!row.secret_ciphertext || !row.secret_iv || !row.secret_auth_tag) {
@@ -60,9 +57,9 @@ export async function listUserAuthFactors(userId: number, siteId: number) {
     id: row.id,
     type: row.factor_type,
     label: row.label,
-    confirmedAt: toIso(row.confirmed_at),
-    createdAt: toIso(row.created_at),
-    lastUsedAt: toIso(row.last_used_at),
+    confirmedAt: toPhiIsoString(row.confirmed_at),
+    createdAt: toPhiIsoString(row.created_at),
+    lastUsedAt: toPhiIsoString(row.last_used_at),
   }));
 }
 

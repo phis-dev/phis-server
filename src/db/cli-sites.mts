@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 
-import type { Pool } from "pg";
+import type { Pool, PoolClient } from "pg";
 
 import { withPoolTransaction } from "../lib/db-transaction.ts";
 import { SITE_FLAG_ACTIVE } from "../lib/site-flags.ts";
@@ -54,7 +54,7 @@ function buildCustomerNumberPrefix(siteKey: string) {
   return prefix || "PHS";
 }
 
-export async function createPhiCliSite(pool: Pool, input: {
+export type PhiSiteInsertInput = {
   key: string;
   name: string;
   hostname: string;
@@ -63,53 +63,64 @@ export async function createPhiCliSite(pool: Pool, input: {
   availableLocales: string[];
   supportEmail: string;
   mailHost: string;
-}) {
-  return withPoolTransaction(pool, async (client) => {
-    const { rows } = await client.query<SiteRow>(
-      `INSERT INTO phis.sites (
-         key,
-         name,
-         hostname,
-         default_locale,
-         available_locales,
-         flags,
-         theme,
-         public_base_url,
-         mail_from,
-         mail_from_name,
-         support_email,
-         contact_recipient,
-         customer_number_prefix,
-         form_guard_secret
-       )
-       VALUES ($1, $2, $3, $4, $5::varchar(8)[], $6, '{}'::jsonb, $7, $8, $9, $10, $10, $11, $12)
-       RETURNING id, key, name, hostname, flags, public_base_url, support_email, default_locale,
-                 available_locales, mail_from, contact_recipient`,
-      [
-        input.key,
-        input.name,
-        input.hostname,
-        input.defaultLocale,
-        input.availableLocales,
-        SITE_FLAG_ACTIVE,
-        input.publicBaseUrl,
-        `no-reply@${input.mailHost}`,
-        input.name,
-        input.supportEmail,
-        buildCustomerNumberPrefix(input.key),
-        randomBytes(32).toString("hex"),
-      ],
-    );
-    const created = rows[0];
-    if (!created) throw new Error(`Site ${input.key} could not be created.`);
-    await client.query(
-      `INSERT INTO phis.site_auth_config (site_id)
-       VALUES ($1)
-       ON CONFLICT (site_id) DO NOTHING`,
-      [created.id],
-    );
-    return mapSiteRow(created);
-  });
+};
+
+/**
+ * Writes a new Site and the Auth configuration row every Site has, on whatever connection it is given.
+ *
+ * The operator console, the CLI and the setup flow each wrote this statement -- the setup flow over a
+ * bare `pg.Client` before any pool exists -- so the values a new Site starts with were stated three
+ * times. The caller normalizes and validates its input and owns the transaction; this owns the row.
+ */
+export async function insertPhiSite(db: Pick<PoolClient, "query">, input: PhiSiteInsertInput) {
+  const { rows } = await db.query<SiteRow>(
+    `INSERT INTO phis.sites (
+       key,
+       name,
+       hostname,
+       default_locale,
+       available_locales,
+       flags,
+       theme,
+       public_base_url,
+       mail_from,
+       mail_from_name,
+       support_email,
+       contact_recipient,
+       customer_number_prefix,
+       form_guard_secret
+     )
+     VALUES ($1, $2, $3, $4, $5::varchar(8)[], $6, '{}'::jsonb, $7, $8, $9, $10, $10, $11, $12)
+     RETURNING id, key, name, hostname, flags, public_base_url, support_email, default_locale,
+               available_locales, mail_from, contact_recipient`,
+    [
+      input.key,
+      input.name,
+      input.hostname,
+      input.defaultLocale,
+      input.availableLocales,
+      SITE_FLAG_ACTIVE,
+      input.publicBaseUrl,
+      `no-reply@${input.mailHost}`,
+      input.name,
+      input.supportEmail,
+      buildCustomerNumberPrefix(input.key),
+      randomBytes(32).toString("hex"),
+    ],
+  );
+  const created = rows[0];
+  if (!created) throw new Error(`Site ${input.key} could not be created.`);
+  await db.query(
+    `INSERT INTO phis.site_auth_config (site_id)
+     VALUES ($1)
+     ON CONFLICT (site_id) DO NOTHING`,
+    [created.id],
+  );
+  return mapSiteRow(created);
+}
+
+export async function createPhiCliSite(pool: Pool, input: PhiSiteInsertInput) {
+  return withPoolTransaction(pool, (client) => insertPhiSite(client, input));
 }
 
 export async function deletePhiCliSiteByKey(pool: Pool, siteKey: string) {

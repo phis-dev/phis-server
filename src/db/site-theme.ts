@@ -12,7 +12,7 @@ import { clearSiteConfigCache } from "@/db/site-config";
 import { getPool, withTransaction } from "@/lib/db";
 import { hasPhiFlag } from "@/lib/helpers/flags";
 import { PhiCmsRevisionFlags } from "@phis/contracts/cms";
-import { isPhiRecord } from "@/lib/helpers/record";
+import { isPhiRecord, toPhiRecord } from "@/lib/helpers/record";
 
 type DbQueryable = Pick<PoolClient, "query">;
 
@@ -50,10 +50,6 @@ function readString(value: unknown) {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
 }
 
-function toJsonRecord(value: unknown) {
-  return isPhiRecord(value) ? value : {};
-}
-
 function stableJsonStringify(value: unknown): string {
   if (Array.isArray(value)) {
     return `[${value.map((entry) => stableJsonStringify(entry)).join(",")}]`;
@@ -88,9 +84,9 @@ function buildThemeRevisionSummary(
   const preset = readString(input.theme.preset) ?? "custom";
   const presetVersion = typeof input.theme.presetVersion === "number" ? input.theme.presetVersion : null;
   // What the Site owns beyond the blocks it follows: its palette, its style tokens, its component overrides.
-  const customOverrideCount = countRecordLeaves(toJsonRecord(input.theme.palette))
-    + countRecordLeaves(toJsonRecord(input.theme.style))
-    + countRecordLeaves(toJsonRecord(input.theme.components));
+  const customOverrideCount = countRecordLeaves(toPhiRecord(input.theme.palette))
+    + countRecordLeaves(toPhiRecord(input.theme.style))
+    + countRecordLeaves(toPhiRecord(input.theme.components));
   const changed = stableJsonStringify(source?.theme ?? {}) !== stableJsonStringify(input.theme);
   const suffix = sourceRevisionId != null ? ` from revision #${sourceRevisionId}` : "";
   const versionLabel = presetVersion != null ? ` v${presetVersion}` : "";
@@ -132,12 +128,12 @@ function normalizeSiteThemeWriteValue(value: unknown) {
 }
 
 function parseSiteThemeRevisionTree(value: unknown, fallbackKey: string): SiteThemeRevisionTree {
-  const record = toJsonRecord(value);
+  const record = toPhiRecord(value);
   const key = normalizeSiteThemeScopeKey(readString(record.key) ?? fallbackKey);
   return {
     key,
     label: readString(record.label),
-    theme: toJsonRecord(record.theme),
+    theme: toPhiRecord(record.theme),
   };
 }
 
@@ -182,7 +178,7 @@ function mapSiteThemeRevisionRow(
     flags: row.flags,
     treeJson: row.tree_json,
     message: row.message,
-    metaJson: toJsonRecord(row.meta_json),
+    metaJson: toPhiRecord(row.meta_json),
     sourceRevisionId: row.source_revision_id,
     createdByUserId: row.created_by_user_id,
     createdAt: row.created_at,

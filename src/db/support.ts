@@ -19,6 +19,7 @@ import { getPool, withTransaction } from "@/lib/db";
 import { createThreadWithDb } from "@/db/threads";
 import { PHIS_THREAD_PARTICIPANT_KIND_GROUP } from "@/lib/constants/threads";
 import { consumeSupportAllowanceWithDb, readSupportAllowance } from "@/db/support-allowance";
+import { toPhiRecord } from "@/lib/helpers/record";
 
 /*
  * The ticket vocabulary, from the contract rather than spelled out again.
@@ -336,10 +337,6 @@ export type SupportTicketAssignmentActionInput =
       queueId: number;
     };
 
-function toJsonRecord(value: Record<string, unknown> | null | undefined) {
-  return value ?? {};
-}
-
 function escapeLike(value: string) {
   return value.replace(/[\\%_]/g, "\\$&");
 }
@@ -366,7 +363,7 @@ function mapSupportTicket(row: SupportTicketListRow): SupportTicketRecord {
     queueName: row.queue_name,
     subject: row.subject,
     summary: row.summary,
-    meta: toJsonRecord(row.meta),
+    meta: toPhiRecord(row.meta),
     firstResponseDueAt: row.first_response_due_at,
     resolutionDueAt: row.resolution_due_at,
     lastPublicMessageAt: row.last_public_message_at,
@@ -392,7 +389,7 @@ function mapSupportTicketTask(row: SupportTicketTaskRow): SupportTicketTaskRecor
     assigneeEmail: row.assignee_email,
     title: row.title,
     description: row.description,
-    meta: toJsonRecord(row.meta),
+    meta: toPhiRecord(row.meta),
     dueAt: row.due_at,
     completedAt: row.completed_at,
     createdByUserId: row.created_by_user_id,

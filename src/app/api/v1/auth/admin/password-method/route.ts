@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { listSiteAuthMethods, upsertSiteAuthMethod } from "@/db/site-auth";
 import {
   buildAuthAdminSectionSettings,
-  requireAuthAdminSectionContext,
+  requireAuthAdminSectionWrite,
 } from "@/lib/site-auth/admin-sections";
 import { siteWouldRetainPrimaryLogin } from "@/lib/site-auth/installation-catalog";
 import { logRuntimeEvent } from "@/lib/log";
@@ -15,15 +15,11 @@ export const dynamic = "force-dynamic";
  * Form values; the method's presentation carries over unchanged.
  */
 export async function PATCH(request: NextRequest) {
-  const { context, error } = await requireAuthAdminSectionContext(request);
-  if (error || !context) {
-    return error ?? NextResponse.json({ error: "Authentication required." }, { status: 401 });
+  const guarded = await requireAuthAdminSectionWrite(request, "Invalid password method payload.");
+  if (!guarded.ok) {
+    return guarded.response;
   }
-
-  const body = (await request.json().catch(() => null)) as Record<string, unknown> | null;
-  if (!body || typeof body !== "object" || Array.isArray(body)) {
-    return NextResponse.json({ error: "Invalid password method payload." }, { status: 400 });
-  }
+  const { context, body } = guarded;
   if (typeof body.enabled !== "boolean") {
     return NextResponse.json({ error: "enabled must be a boolean." }, { status: 400 });
   }

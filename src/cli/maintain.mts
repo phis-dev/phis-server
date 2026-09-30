@@ -7,6 +7,7 @@ import {
   type PhisAddonStorageSite,
 } from "./storage-purge.mts";
 import { readPhisAddonStorageUsage } from "../db/server-addon-storage-usage.mts";
+import { PhisMediaSpaceKind } from "../lib/constants/media-space-kinds.ts";
 
 /**
  * The one place cleanup lives, and the reason there is only one.
@@ -143,8 +144,9 @@ const orphanedAddonAssets: PhiMaintenanceTask = {
       `SELECT sp.site_id, s.key AS site_key, sp.addon_id
          FROM phis.media_spaces sp
          JOIN phis.sites s ON s.id = sp.site_id
-        WHERE sp.kind = 4 AND sp.addon_id IS NOT NULL
+        WHERE sp.kind = $1 AND sp.addon_id IS NOT NULL
         ORDER BY s.key, sp.addon_id`,
+      [PhisMediaSpaceKind.Addon],
     );
     if (dryRun) {
       // Counting would mean running the same join for its answer, which is the work itself. What is

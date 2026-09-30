@@ -2,6 +2,8 @@ import { randomBytes } from "node:crypto";
 
 import { Client } from "pg";
 
+import { quotePhiIdentifier } from "../lib/addons/schema-ddl.ts";
+
 /**
  * Creating the database an installation is applied to, and the two roles that own parts of it.
  *
@@ -90,10 +92,6 @@ function assertUsableIdentifier(kind: string, value: string) {
   }
 }
 
-function quoteIdentifier(value: string) {
-  return `"${value.replaceAll('"', '""')}"`;
-}
-
 function quoteLiteral(value: string) {
   return `'${value.replaceAll("'", "''")}'`;
 }
@@ -167,8 +165,8 @@ export async function bootstrapPhiDatabase(input: {
     if (!existing.database) {
       await allowCurrentUserToAssume(client, names.servingRole);
       await client.query(
-        `CREATE DATABASE ${quoteIdentifier(names.databaseName)} `
-          + `OWNER ${quoteIdentifier(names.servingRole)}`,
+        `CREATE DATABASE ${quotePhiIdentifier(names.databaseName)} `
+          + `OWNER ${quotePhiIdentifier(names.servingRole)}`,
       );
     }
 
@@ -181,8 +179,8 @@ export async function bootstrapPhiDatabase(input: {
      * here.
      */
     await client.query(
-      `GRANT CREATE ON DATABASE ${quoteIdentifier(names.databaseName)} `
-        + `TO ${quoteIdentifier(names.migrationRole)}`,
+      `GRANT CREATE ON DATABASE ${quotePhiIdentifier(names.databaseName)} `
+        + `TO ${quotePhiIdentifier(names.migrationRole)}`,
     );
 
     return {
@@ -224,7 +222,7 @@ async function allowCurrentUserToAssume(client: Client, role: string) {
   }
   // Before 16 the membership carried the right to assume the role, and the option did not exist to be named.
   const withSet = Number(rows[0]?.version ?? 0) >= 160000 ? " WITH SET TRUE" : "";
-  await client.query(`GRANT ${quoteIdentifier(role)} TO CURRENT_USER${withSet}`);
+  await client.query(`GRANT ${quotePhiIdentifier(role)} TO CURRENT_USER${withSet}`);
 }
 
 async function roleExists(client: Client, role: string) {
@@ -256,9 +254,9 @@ async function ensureRole(client: Client, role: string, password: string) {
     `DO $$
 BEGIN
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = ${quoteLiteral(role)}) THEN
-    ALTER ROLE ${quoteIdentifier(role)} WITH LOGIN PASSWORD ${quoteLiteral(password)};
+    ALTER ROLE ${quotePhiIdentifier(role)} WITH LOGIN PASSWORD ${quoteLiteral(password)};
   ELSE
-    CREATE ROLE ${quoteIdentifier(role)} WITH LOGIN PASSWORD ${quoteLiteral(password)};
+    CREATE ROLE ${quotePhiIdentifier(role)} WITH LOGIN PASSWORD ${quoteLiteral(password)};
   END IF;
 END $$;`,
   );

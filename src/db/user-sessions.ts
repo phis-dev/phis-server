@@ -19,6 +19,7 @@ import {
   sha256Hex,
   verifySecretHash,
 } from "@/lib/auth";
+import { toPhiIsoString } from "@/lib/helpers/timestamp";
 
 export type UserSessionRecord = {
   id: string;
@@ -43,14 +44,6 @@ export type UserSessionRecord = {
   current_policy_revision?: number;
 };
 
-function toIsoString(value: string | Date | null) {
-  if (!value) {
-    return null;
-  }
-
-  return value instanceof Date ? value.toISOString() : new Date(value).toISOString();
-}
-
 // Only this file writes the column, from the same list; a state it cannot read is a broken row. Reading
 // it as `complete` would hand a half-finished login a full session.
 function readSessionAuthState(value: unknown) {
@@ -66,16 +59,16 @@ function mapSessionRow(row: UserSessionRecord) {
     userId: row.user_id,
     siteId: row.site_id,
     sessionSecretHash: row.session_secret_hash,
-    authenticatedAt: toIsoString(row.authenticated_at),
+    authenticatedAt: toPhiIsoString(row.authenticated_at),
     assuranceLevel: row.assurance_level,
     authState: readSessionAuthState(row.auth_state),
     authPolicyRevision: row.auth_policy_revision,
     authMethodKeys: row.auth_method_keys,
     nextPath: row.next_path,
-    expiresAt: toIsoString(row.expires_at),
-    lastSeenAt: toIsoString(row.last_seen_at),
-    createdAt: toIsoString(row.created_at),
-    revokedAt: toIsoString(row.revoked_at),
+    expiresAt: toPhiIsoString(row.expires_at),
+    lastSeenAt: toPhiIsoString(row.last_seen_at),
+    createdAt: toPhiIsoString(row.created_at),
+    revokedAt: toPhiIsoString(row.revoked_at),
     ipAddress: row.ip_address,
     userAgent: row.user_agent,
     accountFlags: row.account_flags ?? 0,
@@ -225,10 +218,10 @@ export async function listUserSessionsForSite(userId: number, siteId: number, li
 
   return rows.map((row) => ({
     id: row.id,
-    createdAt: toIsoString(row.created_at),
-    lastSeenAt: toIsoString(row.last_seen_at),
-    expiresAt: toIsoString(row.expires_at),
-    revokedAt: toIsoString(row.revoked_at),
+    createdAt: toPhiIsoString(row.created_at),
+    lastSeenAt: toPhiIsoString(row.last_seen_at),
+    expiresAt: toPhiIsoString(row.expires_at),
+    revokedAt: toPhiIsoString(row.revoked_at),
     ipAddress: row.ip_address,
     userAgent: row.user_agent,
   }));

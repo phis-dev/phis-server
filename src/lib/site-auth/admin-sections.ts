@@ -8,6 +8,7 @@ import {
 } from "@/db/site-auth";
 import { verifyCsrfRequest } from "@/lib/auth";
 import { requireSiteAdminOnlyApiContext } from "@/lib/guards/site-admin-api";
+import { requireJsonObjectBody } from "@/lib/helpers/request";
 import { readPhiBaseRoleKeys } from "@/lib/constants/phi-base-roles";
 
 export type AuthAdminSectionContext = {
@@ -63,6 +64,27 @@ export async function requireAuthAdminSectionContext(
     return { context: null, error: NextResponse.json({ error: "Invalid CSRF token." }, { status: 403 }) };
   }
   return { context, error: null };
+}
+
+/**
+ * The write guard and the section's JSON object body, in the order every section PATCH checked them.
+ *
+ * The flat section endpoints each opened with the same eight lines around their own payload wording;
+ * the wording is still the endpoint's to give.
+ */
+export async function requireAuthAdminSectionWrite(request: NextRequest, invalidPayloadError: string) {
+  const { context, error } = await requireAuthAdminSectionContext(request);
+  if (error || !context) {
+    return {
+      ok: false as const,
+      response: error ?? NextResponse.json({ error: "Authentication required." }, { status: 401 }),
+    };
+  }
+  const parsedBody = await requireJsonObjectBody(request, invalidPayloadError);
+  if (!parsedBody.ok) {
+    return parsedBody;
+  }
+  return { ok: true as const, context, body: parsedBody.body };
 }
 
 /**

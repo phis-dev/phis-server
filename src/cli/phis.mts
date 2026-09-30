@@ -164,6 +164,7 @@ import {
   type PhiSiteScaffoldRuntime,
 } from "../lib/site-scaffold.mts";
 import { parsePhisArgv, type FlagMap } from "./argv.mts";
+import { normalizePhiEmail, normalizePhiSiteKey } from "../lib/helpers/normalize.ts";
 
 let configRoot = getDefaultPhiRoot();
 
@@ -404,15 +405,7 @@ function getSiteSupportEmailFlag(flags: FlagMap, required = false) {
   return value;
 }
 
-function normalizeSiteKey(value: string) {
-  return value.trim().toLowerCase();
-}
-
 function normalizeHostname(value: string) {
-  return value.trim().toLowerCase();
-}
-
-function normalizeEmail(value: string) {
   return value.trim().toLowerCase();
 }
 
@@ -790,13 +783,13 @@ async function deleteSiteInstancesByHost(flags: FlagMap, json: boolean) {
 }
 
 async function createSite(flags: FlagMap, json: boolean) {
-  const key = normalizeSiteKey(getRequiredFlag(flags, "key"));
+  const key = normalizePhiSiteKey(getRequiredFlag(flags, "key"));
   const name = getRequiredFlag(flags, "name");
   const hostname = normalizeHostname(getRequiredFlag(flags, "hostname"));
   const publicBaseUrl = getRequiredFlag(flags, "public-base-url");
   const sourceLocale = getRequiredFlag(flags, "source-locale").toLowerCase();
   const defaultLocale = getRequiredFlag(flags, "default-locale").toLowerCase();
-  const supportEmail = normalizeEmail(getSiteSupportEmailFlag(flags, true) ?? "");
+  const supportEmail = normalizePhiEmail(getSiteSupportEmailFlag(flags, true) ?? "");
   const availableLocales = Array.from(
     new Set(
       [
@@ -897,7 +890,7 @@ async function createSite(flags: FlagMap, json: boolean) {
 }
 
 async function deleteSiteByKey(flags: FlagMap, json: boolean) {
-  const siteKey = normalizeSiteKey(getRequiredFlag(flags, "key"));
+  const siteKey = normalizePhiSiteKey(getRequiredFlag(flags, "key"));
   const site = await deletePhiCliSiteByKey(getPool(), siteKey);
   if (!site) {
     throw new Error(`Site ${siteKey} does not exist.`);
@@ -1850,7 +1843,7 @@ async function updateSiteFields(flags: FlagMap, json: boolean) {
 
   let supportEmail: string | undefined;
   if (flags.has("support-email") || flags.has("email")) {
-    supportEmail = normalizeEmail(getSiteSupportEmailFlag(flags, true) ?? "");
+    supportEmail = normalizePhiEmail(getSiteSupportEmailFlag(flags, true) ?? "");
     if (!supportEmail.includes("@")) {
       throw new Error("Expected --support-email to be a valid email address.");
     }
@@ -2046,7 +2039,7 @@ async function grantSiteAdmin(flags: FlagMap, json: boolean) {
     return;
   }
 
-  const email = normalizeEmail(getRequiredFlag(flags, "email"));
+  const email = normalizePhiEmail(getRequiredFlag(flags, "email"));
   if (!email.includes("@")) {
     throw new Error("A valid --email is required.");
   }
@@ -2114,7 +2107,7 @@ async function grantSiteAdmin(flags: FlagMap, json: boolean) {
  */
 async function siteUserPassword(flags: FlagMap, json: boolean) {
   const site = await getSiteByKey(getRequiredFlag(flags, "site"));
-  const email = normalizeEmail(getRequiredFlag(flags, "email"));
+  const email = normalizePhiEmail(getRequiredFlag(flags, "email"));
   const password = getRequiredFlag(flags, "password");
   const overwrite = flags.get("overwrite") === true;
 

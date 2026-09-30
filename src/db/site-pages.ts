@@ -59,6 +59,7 @@ import {
   validateCmsPageRevisionForPublish,
 } from "@/lib/cms/publish-validation";
 import type { PhiViewerAccessPolicy } from "@/lib/authorization";
+import { toPhiRecord } from "@/lib/helpers/record";
 
 type DbQueryable = Pick<PoolClient, "query">;
 
@@ -363,12 +364,6 @@ function normalizeMutableSitePagePath(value: string) {
   return path;
 }
 
-function toJsonRecord(value: unknown) {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : {};
-}
-
 /**
  * Refuses a publish that names a revision other than the scope's Working Draft.
  *
@@ -562,8 +557,8 @@ function fitSiteContentSlug(slug: string) {
 }
 
 function readPageRegionConfig(layoutConfig: Record<string, unknown>, regionKey: string) {
-  const pageRegionConfigs = toJsonRecord(layoutConfig.pageRegionConfigs);
-  return toJsonRecord(pageRegionConfigs[regionKey]);
+  const pageRegionConfigs = toPhiRecord(layoutConfig.pageRegionConfigs);
+  return toPhiRecord(pageRegionConfigs[regionKey]);
 }
 
 function buildDraftPreviewPageTree(siteId: number, input: CmsPageWriteInput): SiteResolvedWidgetTree {
@@ -587,7 +582,7 @@ function buildDraftPreviewPageTree(siteId: number, input: CmsPageWriteInput): Si
     footerTopRootLayoutNodeId: input.page?.footerTopRootLayoutNodeId ?? null,
     drawerRightRootLayoutNodeId: input.page?.drawerRightRootLayoutNodeId ?? null,
     contentRootLayoutNodeId: input.page?.contentRootLayoutNodeId ?? null,
-    layoutConfig: toJsonRecord(input.page?.layoutConfig),
+    layoutConfig: toPhiRecord(input.page?.layoutConfig),
   };
   const regions: SiteResolvedRegionRecord[] = [];
   const regionPairs: Array<[number, PhiCmsInstanceId | null | undefined]> = [
@@ -645,7 +640,7 @@ function buildDraftPreviewPageTree(siteId: number, input: CmsPageWriteInput): Si
       visibilityMask: overlay.visibilityMask ?? input.areaMask,
       sortOrder: overlay.sortOrder ?? 0,
       label: overlay.label ?? null,
-      config: toJsonRecord(overlay.config),
+      config: toPhiRecord(overlay.config),
     })),
     layoutNodes: input.layoutNodes.map((node) => ({
       id: node.id,
@@ -658,7 +653,7 @@ function buildDraftPreviewPageTree(siteId: number, input: CmsPageWriteInput): Si
       flags: node.flags ?? 0,
       visibilityMask: node.visibilityMask ?? 0,
       label: node.label ?? null,
-      config: toJsonRecord(node.config),
+      config: toPhiRecord(node.config),
     })),
     contentWidgets: input.contentWidgets.map((widget) => ({
       id: widget.id,
@@ -671,7 +666,7 @@ function buildDraftPreviewPageTree(siteId: number, input: CmsPageWriteInput): Si
       flags: widget.flags ?? 0,
       visibilityMask: widget.visibilityMask ?? 0,
       label: widget.label ?? null,
-      config: toJsonRecord(widget.config),
+      config: toPhiRecord(widget.config),
       contentId: widget.contentId ?? null,
       contentVersionId: widget.contentVersionId ?? null,
       resolvedContent: null,
@@ -689,7 +684,7 @@ function buildDraftPreviewAreaTree(siteId: number, input: CmsAreaPresetWriteInpu
       status: input.preset?.status ?? 0,
       flags: input.preset?.flags ?? 0,
       visibilityMask: input.preset?.visibilityMask ?? input.areaMask,
-      config: toJsonRecord(input.preset?.config),
+      config: toPhiRecord(input.preset?.config),
     },
     regions: input.regions.map((region, index) => ({
       id: region.id ?? -(index + 1),
@@ -701,7 +696,7 @@ function buildDraftPreviewAreaTree(siteId: number, input: CmsAreaPresetWriteInpu
       flags: region.flags ?? 0,
       visibilityMask: region.visibilityMask ?? input.areaMask,
       sortOrder: region.sortOrder ?? index,
-      config: toJsonRecord(region.config),
+      config: toPhiRecord(region.config),
     })),
     overlays: input.overlays.map((overlay) => ({
       id: overlay.id,
@@ -714,7 +709,7 @@ function buildDraftPreviewAreaTree(siteId: number, input: CmsAreaPresetWriteInpu
       visibilityMask: overlay.visibilityMask ?? input.areaMask,
       sortOrder: overlay.sortOrder ?? 0,
       label: overlay.label ?? null,
-      config: toJsonRecord(overlay.config),
+      config: toPhiRecord(overlay.config),
     })),
     layoutNodes: input.layoutNodes.map((node) => ({
       id: node.id,
@@ -727,7 +722,7 @@ function buildDraftPreviewAreaTree(siteId: number, input: CmsAreaPresetWriteInpu
       flags: node.flags ?? 0,
       visibilityMask: node.visibilityMask ?? 0,
       label: node.label ?? null,
-      config: toJsonRecord(node.config),
+      config: toPhiRecord(node.config),
     })),
     contentWidgets: input.contentWidgets.map((widget) => ({
       id: widget.id,
@@ -740,7 +735,7 @@ function buildDraftPreviewAreaTree(siteId: number, input: CmsAreaPresetWriteInpu
       flags: widget.flags ?? 0,
       visibilityMask: widget.visibilityMask ?? 0,
       label: widget.label ?? null,
-      config: toJsonRecord(widget.config),
+      config: toPhiRecord(widget.config),
       contentId: widget.contentId ?? null,
       contentVersionId: widget.contentVersionId ?? null,
       resolvedContent: null,
@@ -1303,9 +1298,9 @@ async function insertSiteAreaRevisionWithDb(
     id: rows[0]!.id,
     areaScopeId: rows[0]!.area_scope_id,
     flags: rows[0]!.flags,
-    treeJson: toJsonRecord(rows[0]!.tree_json),
+    treeJson: toPhiRecord(rows[0]!.tree_json),
     message: rows[0]!.message,
-    metaJson: toJsonRecord(rows[0]!.meta_json),
+    metaJson: toPhiRecord(rows[0]!.meta_json),
     sourceRevisionId: rows[0]!.source_revision_id,
     createdByUserId: rows[0]!.created_by_user_id,
     createdAt: rows[0]!.created_at,
@@ -1370,9 +1365,9 @@ async function insertSitePageRevisionWithDb(
     id: rows[0]!.id,
     pageScopeId: rows[0]!.page_scope_id,
     flags: rows[0]!.flags,
-    treeJson: toJsonRecord(rows[0]!.tree_json),
+    treeJson: toPhiRecord(rows[0]!.tree_json),
     message: rows[0]!.message,
-    metaJson: toJsonRecord(rows[0]!.meta_json),
+    metaJson: toPhiRecord(rows[0]!.meta_json),
     sourceRevisionId: rows[0]!.source_revision_id,
     createdByUserId: rows[0]!.created_by_user_id,
     createdAt: rows[0]!.created_at,
@@ -1434,9 +1429,9 @@ async function updateSiteAreaDraftRevisionWithDb(
     id: row.id,
     areaScopeId: row.area_scope_id,
     flags: row.flags,
-    treeJson: toJsonRecord(row.tree_json),
+    treeJson: toPhiRecord(row.tree_json),
     message: row.message,
-    metaJson: toJsonRecord(row.meta_json),
+    metaJson: toPhiRecord(row.meta_json),
     sourceRevisionId: row.source_revision_id,
     createdByUserId: row.created_by_user_id,
     createdAt: row.created_at,
@@ -1498,9 +1493,9 @@ async function updateSitePageDraftRevisionWithDb(
     id: row.id,
     pageScopeId: row.page_scope_id,
     flags: row.flags,
-    treeJson: toJsonRecord(row.tree_json),
+    treeJson: toPhiRecord(row.tree_json),
     message: row.message,
-    metaJson: toJsonRecord(row.meta_json),
+    metaJson: toPhiRecord(row.meta_json),
     sourceRevisionId: row.source_revision_id,
     createdByUserId: row.created_by_user_id,
     createdAt: row.created_at,
@@ -1546,9 +1541,9 @@ async function getSiteAreaRevisionByIdWithDb(
     id: row.id,
     areaScopeId: row.area_scope_id,
     flags: row.flags,
-    treeJson: toJsonRecord(row.tree_json),
+    treeJson: toPhiRecord(row.tree_json),
     message: row.message,
-    metaJson: toJsonRecord(row.meta_json),
+    metaJson: toPhiRecord(row.meta_json),
     sourceRevisionId: row.source_revision_id,
     createdByUserId: row.created_by_user_id,
     createdAt: row.created_at,
@@ -1594,9 +1589,9 @@ async function getSitePageRevisionByIdWithDb(
     id: row.id,
     pageScopeId: row.page_scope_id,
     flags: row.flags,
-    treeJson: toJsonRecord(row.tree_json),
+    treeJson: toPhiRecord(row.tree_json),
     message: row.message,
-    metaJson: toJsonRecord(row.meta_json),
+    metaJson: toPhiRecord(row.meta_json),
     sourceRevisionId: row.source_revision_id,
     createdByUserId: row.created_by_user_id,
     createdAt: row.created_at,

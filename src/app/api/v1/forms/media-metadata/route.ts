@@ -8,6 +8,7 @@ import {
   updateSiteMediaAssetMetadataFromForm,
 } from "@/lib/media-asset-update";
 import { requireSiteMediaApiContext } from "@/lib/guards/site-admin-api";
+import { normalizeNullableString, readJsonObjectBody } from "@/lib/helpers/request";
 
 const MEDIA_ASSET_FLAG_VALUES = new Set<number>(Object.values(PhiMediaAssetFlags));
 
@@ -45,7 +46,7 @@ export async function POST(request: NextRequest) {
   }
   const site = context.site;
 
-  const body = await request.json().catch(() => null) as Record<string, unknown> | null;
+  const body = await readJsonObjectBody(request);
   const assetId = Number(body?.assetId);
   if (!body || !Number.isInteger(assetId) || assetId <= 0) {
     return NextResponse.json(

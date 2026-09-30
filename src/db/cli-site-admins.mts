@@ -8,6 +8,7 @@ import {
 } from "@phis/contracts/access";
 
 import { withPoolTransaction } from "../lib/db-transaction.ts";
+import { ensurePhiDefaultSiteMembership } from "./user-site-membership-default.mts";
 
 /**
  * Site administrators, from the operator's side.
@@ -103,12 +104,7 @@ export async function grantPhiCliSiteAdmin(
       }
     }
 
-    await client.query(
-      `INSERT INTO phis.user_site_memberships (user_id, site_id, user_site_flags)
-       VALUES ($1, $2, 0)
-       ON CONFLICT (user_id, site_id) DO NOTHING`,
-      [userId, input.siteId],
-    );
+    await ensurePhiDefaultSiteMembership(client, userId, input.siteId);
 
     const before = await client.query<{ role_flags: number }>(
       `SELECT role_flags

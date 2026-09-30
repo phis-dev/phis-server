@@ -3,6 +3,7 @@ import type { Pool, PoolClient } from "pg";
 
 import { getPool, withTransaction } from "@/lib/db";
 import { requirePhiTranslationLocale } from "@/lib/locale";
+import { toPhiIsoString } from "@/lib/helpers/timestamp";
 
 type TranslationQueryClient = Pick<Pool | PoolClient, "query">;
 
@@ -550,14 +551,6 @@ export type SiteTranslationContextRow = {
   count: number;
 };
 
-function toIsoString(value: string | Date | null) {
-  if (!value) {
-    return null;
-  }
-
-  return value instanceof Date ? value.toISOString() : new Date(value).toISOString();
-}
-
 export async function listSiteTranslationRows(input: {
   siteId: number;
   locale: string;
@@ -653,8 +646,8 @@ export async function listSiteTranslationRows(input: {
       source: row.source,
       sourceContext: row.source_context,
       translation: row.translation,
-      createdAt: toIsoString(row.created_at),
-      updatedAt: toIsoString(row.updated_at),
+      createdAt: toPhiIsoString(row.created_at),
+      updatedAt: toPhiIsoString(row.updated_at),
       protected: row.protected,
     })),
     total: Number(totals?.filtered_total ?? 0),
@@ -784,8 +777,8 @@ export async function listSiteTranslationEditorRows(input: {
       sourceContext: row.source_context,
       translation: row.translation,
       hasTranslation: row.has_translation,
-      createdAt: toIsoString(row.created_at),
-      updatedAt: toIsoString(row.updated_at),
+      createdAt: toPhiIsoString(row.created_at),
+      updatedAt: toPhiIsoString(row.updated_at),
       protected: row.protected,
     })),
     total: Number(rows[0]?.total_count ?? 0),
@@ -873,7 +866,7 @@ export async function updateSiteTranslation(input: {
 
   const updated = rows[0];
   return updated
-    ? { translation: updated.translation, updatedAt: toIsoString(updated.updated_at) }
+    ? { translation: updated.translation, updatedAt: toPhiIsoString(updated.updated_at) }
     : null;
 }
 

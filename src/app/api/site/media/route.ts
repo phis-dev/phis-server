@@ -24,7 +24,7 @@ import {
   serializeMediaSpace,
   serializeUnmaterializedGroupMediaSpace,
 } from "@/lib/media-response";
-import { parsePositiveInt } from "@/lib/helpers/request";
+import { parsePositiveInt, PHI_MAX_PAGE_SIZE } from "@/lib/helpers/request";
 
 export const dynamic = "force-dynamic";
 
@@ -83,8 +83,7 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const maxPageSize = 100;
-    const normalizedPageSize = Math.min(pageSize, maxPageSize);
+    const normalizedPageSize = Math.min(pageSize, PHI_MAX_PAGE_SIZE);
     const offset = (page - 1) * normalizedPageSize;
     const requestedSpaceId = readRequestedMediaSpaceId(request);
     const resolution = await resolveAuthorizedMediaSpace({

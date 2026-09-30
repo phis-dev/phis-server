@@ -12,6 +12,7 @@ import { PhiSiteMediaFlags } from "@/lib/constants/media";
 import { serializeMediaSpace } from "@/lib/media-response";
 import { requireSiteDeveloperApiContext } from "@/lib/guards/site-admin-api";
 import { logRuntimeEvent } from "@/lib/log";
+import { requireJsonObjectBody } from "@/lib/helpers/request";
 
 /**
  * Administrative surface for the effective per-Site Media policy.
@@ -87,10 +88,11 @@ export async function PATCH(request: NextRequest) {
   if (error) return error;
   const site = context!.site!;
 
-  const body = (await request.json().catch(() => null)) as Record<string, unknown> | null;
-  if (!body || typeof body !== "object" || Array.isArray(body)) {
-    return NextResponse.json({ error: "Invalid Media settings payload." }, { status: 400 });
+  const parsedBody = await requireJsonObjectBody(request, "Invalid Media settings payload.");
+  if (!parsedBody.ok) {
+    return parsedBody.response;
   }
+  const { body } = parsedBody;
 
   const issues: string[] = [];
   // Availability is derived from what the Site's Modules declare, so it is reported here but never

@@ -6,6 +6,7 @@ import { PhisResourceLinkFlag, type PhisAddonEventId } from "@phis/contracts/add
 
 import { getPool } from "@/lib/db";
 import { PHI_SITE_SERVER_ADDON_FLAG_REQUESTED_ENABLED } from "@/lib/constants/server-addons";
+import { PHIS_RESOURCE_LINK_THREAD_JOINS_SQL } from "@/db/resource-link-sql";
 
 type DbQueryable = Pick<PoolClient, "query">;
 
@@ -70,12 +71,7 @@ export async function enqueuePhisAddonThreadEventWithDb(
      JOIN phis.site_server_addons installed
        ON installed.addon_id = link.provider_id
       AND installed.site_id = link.site_id
-     LEFT JOIN phis.support_tickets ticket
-       ON ticket.id = link.ticket_id
-     LEFT JOIN phis.support_ticket_tasks task
-       ON task.id = link.ticket_task_id
-     LEFT JOIN phis.support_tickets task_ticket
-       ON task_ticket.id = task.ticket_id
+     ${PHIS_RESOURCE_LINK_THREAD_JOINS_SQL}
      WHERE link.site_id = $1
        AND (link.flags & ${PhisResourceLinkFlag.Synced}) <> 0
        AND (

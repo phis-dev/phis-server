@@ -5,6 +5,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { getPool, withTransaction } from "@/lib/db";
 import { hasPhiFlag } from "@/lib/helpers/flags";
 import { encryptRegistrationPassword } from "@/lib/registration-secret";
+import { normalizePhiEmail } from "@/lib/helpers/normalize";
 
 const REGISTRATION_INTENT_FLAG_NEWSLETTER_OPT_IN = 1 << 0;
 export const REGISTRATION_INTENT_STATUS_PENDING = 0;
@@ -85,10 +86,6 @@ function sha256Hex(value: string) {
   return createHash("sha256").update(value).digest("hex");
 }
 
-function normalizeEmail(value: string) {
-  return value.trim().toLowerCase();
-}
-
 function buildFullName(firstName: string | null, lastName: string | null) {
   return [firstName?.trim() ?? "", lastName?.trim() ?? ""].filter(Boolean).join(" ").trim();
 }
@@ -146,7 +143,7 @@ export async function createRegistrationIntent(
   const encryptedPassword = input.password?.trim()
     ? encryptRegistrationPassword(input.password)
     : null;
-  const normalizedEmail = normalizeEmail(input.email);
+  const normalizedEmail = normalizePhiEmail(input.email);
   const flags = buildIntentFlags(input.newsletterOptIn);
 
   const rows = await withTransaction(async (client) => {
@@ -375,7 +372,7 @@ export async function getLatestRegistrationIntentProfileByEmail(siteId: number, 
        AND email = $2
      ORDER BY created_at DESC
      LIMIT 1`,
-    [siteId, normalizeEmail(email)],
+    [siteId, normalizePhiEmail(email)],
   );
 
   const row = rows[0];

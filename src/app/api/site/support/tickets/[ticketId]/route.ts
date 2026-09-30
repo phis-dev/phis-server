@@ -10,6 +10,7 @@ import {
   parseStrictPositiveInt,
   readRequestBody,
 } from "@/lib/helpers/request";
+import { toPhiRecord } from "@/lib/helpers/record";
 
 export const dynamic = "force-dynamic";
 
@@ -63,7 +64,9 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     status: normalizeNullableInteger(body.status) ?? undefined,
     channel: normalizeNullableInteger(body.channel) ?? undefined,
     priority: normalizeNullableInteger(body.priority) ?? undefined,
-    severity: Object.prototype.hasOwnProperty.call(body, "severity") ? normalizeNullableInteger(body.severity) : undefined,
+    severity: Object.prototype.hasOwnProperty.call(body, "severity")
+      ? normalizeNullableInteger(body.severity)
+      : undefined,
     requesterUserId: Object.prototype.hasOwnProperty.call(body, "requesterUserId")
       ? normalizeNullableInteger(body.requesterUserId)
       : undefined,
@@ -73,7 +76,9 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     assigneeUserId: Object.prototype.hasOwnProperty.call(body, "assigneeUserId")
       ? normalizeNullableInteger(body.assigneeUserId)
       : undefined,
-    queueId: Object.prototype.hasOwnProperty.call(body, "queueId") ? normalizeNullableInteger(body.queueId) : undefined,
+    queueId: Object.prototype.hasOwnProperty.call(body, "queueId")
+      ? normalizeNullableInteger(body.queueId)
+      : undefined,
     subject: Object.prototype.hasOwnProperty.call(body, "subject") ? normalizeString(body.subject) : undefined,
     summary: Object.prototype.hasOwnProperty.call(body, "summary") ? normalizeNullableString(body.summary) : undefined,
     meta: Object.prototype.hasOwnProperty.call(body, "meta") ? toPhiRecord(body.meta) : undefined,

@@ -1,6 +1,8 @@
 import type { Pool } from "pg";
 
+import { quotePhiIdentifier } from "../lib/addons/schema-ddl.ts";
 import { derivePhisAddonSchemaName } from "../lib/addons/schema-name.ts";
+import { PhisMediaSpaceKind } from "../lib/constants/media-space-kinds.ts";
 
 /**
  * Collecting the files of an Add-on that nothing points at any more.
@@ -80,8 +82,8 @@ export async function sweepPhisAddonAssets(
   };
 
   const { rows: spaces } = await pool.query<{ id: number }>(
-    `SELECT id FROM phis.media_spaces WHERE site_id = $1 AND kind = 4 AND addon_id = $2`,
-    [siteId, addonId],
+    `SELECT id FROM phis.media_spaces WHERE site_id = $1 AND kind = $3 AND addon_id = $2`,
+    [siteId, addonId, PhisMediaSpaceKind.Addon],
   );
   const spaceId = spaces[0]?.id;
   if (spaceId == null) {
@@ -126,7 +128,9 @@ export async function sweepPhisAddonAssets(
     return result;
   }
   const linked = tables
-    .map((table) => `SELECT media_asset_id FROM "${schemaName}"."${table.replaceAll('"', '""')}"`)
+    .map((table) => (
+      `SELECT media_asset_id FROM ${quotePhiIdentifier(schemaName)}.${quotePhiIdentifier(table)}`
+    ))
     .join(" UNION ALL ");
 
   const { rows: orphans } = await pool.query<{ bytes: string | null; storage_key: string }>(
