@@ -318,8 +318,8 @@ Contract:
 - `variant_version SMALLINT NULL`
 - `bytes BIGINT NULL`
 - `checksum_algorithm VARCHAR(16) NULL`, `checksum_value VARCHAR(128) NULL`, both set or both null
-- `width INTEGER NULL`
-- `height INTEGER NULL`
+- `width SMALLINT NULL`
+- `height SMALLINT NULL`
 - `blur_data_url TEXT NULL`
 - `meta JSONB NULL`
 - `title VARCHAR(255) NULL`
@@ -438,8 +438,8 @@ Contract:
 - `content_type VARCHAR(128) NOT NULL`
 - `bytes BIGINT NULL`
 - `checksum_algorithm VARCHAR(16) NULL`, `checksum_value VARCHAR(128) NULL`, both set or both null
-- `width INTEGER NOT NULL`
-- `height INTEGER NOT NULL`
+- `width SMALLINT NOT NULL`
+- `height SMALLINT NOT NULL`
 - `blur_data_url TEXT NULL`
 - `flags INT NOT NULL DEFAULT 0`
 - `created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
