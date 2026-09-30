@@ -1,13 +1,14 @@
 # News: Planned Design
 
-**Status: Core reads and writes; there is no Module and no mail.** `phis.site_content` carries News as
+**Status: Core reads and writes, the Module renders, and the entries translate themselves. No mail.** `phis.site_content` carries News as
 content type `0` ([DB.md](../DB.md)), versioned through `site_content_versions` and translated through
 `site_content_version_text` and `tr_site_msg`; `listPublishedNews`
 ([src/db/site-content.ts](../src/db/site-content.ts)) filters `status`, `published_at <= NOW()` and
 `expires_at > NOW()` in the query; `GET /api/v1/news`
 ([src/app/api/v1/news/route.ts](../src/app/api/v1/news/route.ts)) serves it per Site and locale behind the
-internal token, and two Sites in the workspace already read it. Since 30.09. the write path of §3 and the
-Module of §4 exist as well. What does not exist: an editor surface in the shared UI, and any mail. `scripts/seed-site-news.mjs` is gone -- it hard-coded two Site keys and had stopped working
+internal token, and two Sites in the workspace already read it. Since 30.09. the write path of §3, the
+Module of §4 and the translation path of §6 exist as well. What does not exist: an editor surface in the
+shared UI, and any mail. `scripts/seed-site-news.mjs` is gone -- it hard-coded two Site keys and had stopped working
 when the content enums became `SMALLINT`, which nothing noticed because nothing ran it.
 
 The mail half is [NOTIFICATIONS.md](./NOTIFICATIONS.md) and this document does not repeat it.
@@ -151,7 +152,39 @@ Four things are this document's, though:
 
 The **page** depends on none of this and can be built first.
 
-## 6. What this is not
+## 6. Languages: written in one, read in any
+
+A **Markdown body is the standard**, and the reason is not that DeepL treats its control characters
+gently -- it is that they never reach a provider. The Markdown Widget parses first and hands over only the
+inline content of headings, paragraphs and table cells, as HTML with tag handling; structure, code fences
+and raw HTML are skipped by construction (`collectMarkdownTranslationUnits`). A body translated as plain
+text would have its code fences translated as prose.
+
+**An author writes in their own language and says so.** A save states two things about its words, which
+live in the version's `meta` because a later version may be written in another language: `sourceLocale`
+and `translate`. A save translates nothing.
+
+**Translation is pulled, never pushed.** The first read in a language that has nothing yet asks for one and
+caches it; every reader after that reads the cache. A draft is never read publicly and so costs nothing,
+which is also what makes checking possible: **checking is reading.** An entry previewed in a language is an
+entry translated into it.
+
+**An entry in another language than the Site's own takes the external route**, the one external Markdown has
+always taken: translated into the Site's language once and kept as its own message, the original kept as
+the answer for its own language, every further language derived from the canonical one. Title and subtitle
+go field by field through `GET /api/v1/news`; the body goes paragraph by paragraph where it is rendered, so
+correcting one paragraph costs one paragraph.
+
+**Nothing is ever invalidated.** A corrected text is a different message row, because a message's identity
+is its hash, so the old translations are simply never consulted again. The price is orphaned rows, which
+`phis maintain` is the place to sweep.
+
+Two things follow that are worth stating before they surprise somebody. A **stand-in** -- source text handed
+back because a provider failed -- is marked `provisional` and must not be kept, which is why that answer
+carries `no-store`. And **tags are not translated**: they are `meta` on the content row, not messages, so a
+German entry's tags stay German for every reader. Making them messages is a decision, not an oversight.
+
+## 7. What this is not
 
 - **Not a blog.** One list, one entry shape, no categories, no authors as a public fact, no comments.
 - **Not a Page per article.** Entries are content rows, not `site_page_scopes` rows, and nothing seeds
@@ -161,12 +194,16 @@ The **page** depends on none of this and can be built first.
   `site_server_addons`) and has no counterpart for content. A vendor channel into every Site is a
   different store and a different document, and folding it in here would make both wrong.
 
-## 7. Order
+## 8. Order
 
 1. ~~The Core write path of §3, draft and publish.~~ Built on 30.09., with the editor surface still to
    come in the shared UI.
 2. ~~The Module of §4: descriptor, page, widgets.~~ Built on 30.09.
-3. The digest of §5, after [NOTIFICATIONS.md](./NOTIFICATIONS.md) steps 1 and 2.
+3. ~~The languages of §6.~~ Built on 30.09.
+4. The editor surface: a page in the editor Area, the list of entries, and a preview per language -- which
+   is where the canonical wording of a foreign-language entry is read and, if it is wrong, adopted as the
+   source text by saving it again.
+5. The digest of §5, after [NOTIFICATIONS.md](./NOTIFICATIONS.md) steps 1 and 2.
 
 Only step 1 touches a contract surface in this repository; §4 is ordinary Module work in `@phis/ui`, and
 §5 is a consumer of something that does not exist yet.
