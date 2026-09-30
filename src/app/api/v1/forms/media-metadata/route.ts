@@ -11,11 +11,6 @@ import { requireSiteMediaApiContext } from "@/lib/guards/site-admin-api";
 
 const MEDIA_ASSET_FLAG_VALUES = new Set<number>(Object.values(PhiMediaAssetFlags));
 
-function normalizeNullableString(value: unknown) {
-  const normalized = typeof value === "string" ? value.trim() : "";
-  return normalized || null;
-}
-
 function normalizeFlags(value: unknown) {
   if (!Array.isArray(value)) {
     return null;

@@ -9,34 +9,15 @@ import {
 } from "@/db/support";
 import { requireSiteSupportApiContext } from "@/lib/guards/site-admin-api";
 import { logRuntimeEvent } from "@/lib/log";
-import { normalizeString, parsePositiveIntWithFallback, readRequestBody } from "@/lib/helpers/request";
+import {
+  normalizeNullableInteger,
+  normalizeNullableString,
+  normalizeString,
+  parsePositiveIntWithFallback,
+  readRequestBody,
+} from "@/lib/helpers/request";
 
 export const dynamic = "force-dynamic";
-
-function normalizeNullableString(value: unknown) {
-  const normalized = normalizeString(value);
-  return normalized ? normalized : null;
-}
-
-function normalizeInteger(value: unknown) {
-  if (typeof value === "number" && Number.isInteger(value)) {
-    return value;
-  }
-
-  const parsed = Number.parseInt(normalizeString(value), 10);
-  return Number.isInteger(parsed) ? parsed : null;
-}
-
-function parseOptionalInt(value: string | null) {
-  const parsed = Number.parseInt(value?.trim() ?? "", 10);
-  return Number.isInteger(parsed) ? parsed : null;
-}
-
-function normalizeJsonRecord(value: unknown) {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : {};
-}
 
 export async function GET(request: NextRequest) {
   const { context, error } = await requireSiteSupportApiContext(request);
@@ -54,10 +35,10 @@ export async function GET(request: NextRequest) {
   const pageSize = Math.min(parsePositiveIntWithFallback(searchParams.get("pageSize"), 25), 100);
   const result = await listSupportTicketsForSite(site.id, {
     search: searchParams.get("search")?.trim() ?? searchParams.get("q")?.trim() ?? "",
-    status: parseOptionalInt(searchParams.get("status")),
-    channel: parseOptionalInt(searchParams.get("channel")),
-    assigneeUserId: parseOptionalInt(searchParams.get("assigneeUserId")),
-    queueId: parseOptionalInt(searchParams.get("queueId")),
+    status: normalizeNullableInteger(searchParams.get("status")),
+    channel: normalizeNullableInteger(searchParams.get("channel")),
+    assigneeUserId: normalizeNullableInteger(searchParams.get("assigneeUserId")),
+    queueId: normalizeNullableInteger(searchParams.get("queueId")),
     page,
     pageSize,
   });
@@ -87,7 +68,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Subject is required." }, { status: 400 });
   }
 
-  const typeId = normalizeInteger(body.typeId);
+  const typeId = normalizeNullableInteger(body.typeId);
   if (!typeId) {
     return NextResponse.json({ error: "typeId is required." }, { status: 400 });
   }
@@ -103,17 +84,17 @@ export async function POST(request: NextRequest) {
     typeId,
     message,
     messageMarkdown: normalizeNullableString(body.messageMarkdown),
-    status: normalizeInteger(body.status) ?? SUPPORT_TICKET_STATUS_NEW,
-    channel: normalizeInteger(body.channel) ?? SUPPORT_TICKET_CHANNEL_INTERNAL,
-    priority: normalizeInteger(body.priority) ?? SUPPORT_TICKET_PRIORITY_NORMAL,
-    severity: normalizeInteger(body.severity),
-    requesterUserId: normalizeInteger(body.requesterUserId),
+    status: normalizeNullableInteger(body.status) ?? SUPPORT_TICKET_STATUS_NEW,
+    channel: normalizeNullableInteger(body.channel) ?? SUPPORT_TICKET_CHANNEL_INTERNAL,
+    priority: normalizeNullableInteger(body.priority) ?? SUPPORT_TICKET_PRIORITY_NORMAL,
+    severity: normalizeNullableInteger(body.severity),
+    requesterUserId: normalizeNullableInteger(body.requesterUserId),
     requesterEmail: normalizeNullableString(body.requesterEmail),
-    assigneeUserId: normalizeInteger(body.assigneeUserId),
-    queueId: normalizeInteger(body.queueId),
+    assigneeUserId: normalizeNullableInteger(body.assigneeUserId),
+    queueId: normalizeNullableInteger(body.queueId),
     subject,
     summary: normalizeNullableString(body.summary),
-    meta: normalizeJsonRecord(body.meta),
+    meta: toPhiRecord(body.meta),
     firstResponseDueAt: normalizeNullableString(body.firstResponseDueAt),
     resolutionDueAt: normalizeNullableString(body.resolutionDueAt),
     createdByUserId: context.session?.userId ?? null,

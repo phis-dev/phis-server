@@ -2,10 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { createUserPasswordResetToken } from "@/db/user-password-reset-tokens";
 import { getUserAccountByEmail } from "@/db/user-accounts";
-import { getUserProfileByUserId } from "@/db/user-profiles";
 import { getEffectiveUserSiteAuthorization } from "@/db/user-site-memberships";
 import { buildPasswordResetUrlForRequest } from "@/lib/email";
-import { sendTemplatedEmail } from "@/lib/email-templates";
+import { notifyPhiPerson } from "@/lib/notifications/enqueue";
 import { verifyCsrfRequest } from "@/lib/auth";
 import { getSiteMailConfig } from "@/lib/form-config";
 import { normalizeLocale } from "@/lib/locale";
@@ -26,10 +25,6 @@ type RequestPayload = {
 
 function isValidEmail(value: string) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
-}
-
-function buildRecipientName(firstName: string, lastName: string) {
-  return [firstName.trim(), lastName.trim()].filter(Boolean).join(" ").trim();
 }
 
 export async function POST(request: NextRequest) {
@@ -89,38 +84,28 @@ export async function POST(request: NextRequest) {
     resetToken.token,
     locale,
   );
-  const profile = await getUserProfileByUserId(user.id);
-  const recipientName =
-    profile ? buildRecipientName(profile.firstName, profile.lastName) || user.emailNormalized : user.emailNormalized;
-
   try {
-    const messageId = await sendTemplatedEmail({
-      to: user.emailNormalized,
-      site,
-      siteConfig,
-      locale,
-      template: "password_reset",
-      recipientName,
-      verificationUrl: resetUrl,
+    // The address and the name are not passed: the outbox resolves both when it sends, so a corrected
+    // address is used and the greeting comes from one place. The locale is, because it is the one this
+    // request was made in, and the link above was built with it.
+    const notificationId = await notifyPhiPerson({
+      siteId: site.id,
+      occasion: "password_reset",
+      recipient: { userId: user.id, locale },
+      params: { verificationUrl: resetUrl },
     });
 
     logRuntimeEvent("info", "auth.password.reset.requested", {
-      message: "Password reset email sent.",
+      message: "Password reset email queued.",
       siteKey: site.key,
       userId: user.id,
-      meta: {
-        email: user.emailNormalized,
-        messageId,
-      },
+      meta: { notificationId },
     });
   } catch (error) {
     logRuntimeEvent("error", "auth.password.reset.request_failed", {
-      message: "Password reset email failed.",
+      message: "Password reset email could not be queued.",
       siteKey: site.key,
       userId: user.id,
-      meta: {
-        email: user.emailNormalized,
-      },
       error,
     });
   }

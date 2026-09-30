@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 
 import { guardApiV1 } from "@/lib/api-v1-guard";
 import { requireSiteFromRequest } from "@/lib/site-context";
-import { sendEmail } from "@/lib/email";
+import { notifyPhiPerson } from "@/lib/notifications/enqueue";
 import { getFormGuardSecret, getFormTimingWindow, getSiteMailConfig } from "@/lib/form-config";
 import { logFormAbuse } from "@/lib/form-abuse-log";
 import { verifyFormGuard } from "@/lib/form-guard";
@@ -116,13 +116,23 @@ export async function POST(request: Request) {
   const safeEmail = sanitizeHeaderValue(email);
   const safeSubject = sanitizeHeaderValue(subject);
 
-  const messageId = await sendEmail({
-    to: siteMailConfig.contactRecipient,
-    from: `${sanitizeHeaderValue(siteMailConfig.mailFromName)} <${siteMailConfig.mailFrom}>`,
-    replyTo: `${safeName} <${safeEmail}>`,
-    subject: safeSubject,
-    text: `Name: ${safeName}\nEmail: ${safeEmail}\n\n${message}`,
+  /*
+   * Through the outbox like everything else, as a verbatim message: a visitor's own sentence is not
+   * Core's to translate or reframe, and the recipient is the Site's own mailbox rather than a person whose
+   * address has to be resolved. What it gains is the retry -- a submission lost to one refused SMTP
+   * connection used to be gone, and the visitor had already been told it arrived.
+   */
+  const notificationId = await notifyPhiPerson({
+    siteId: site.id,
+    occasion: "verbatim",
+    recipient: { address: siteMailConfig.contactRecipient, locale: site.defaultLocale },
+    params: {
+      from: `${sanitizeHeaderValue(siteMailConfig.mailFromName)} <${siteMailConfig.mailFrom}>`,
+      replyTo: `${safeName} <${safeEmail}>`,
+      subject: safeSubject,
+      text: `Name: ${safeName}\nEmail: ${safeEmail}\n\n${message}`,
+    },
   });
 
-  return NextResponse.json({ ok: true, messageId });
+  return NextResponse.json({ ok: true, notificationId });
 }

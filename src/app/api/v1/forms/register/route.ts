@@ -7,7 +7,7 @@ import { getUserProfileByUserId, upsertUserProfile } from "@/db/user-profiles";
 import { upsertUserSiteMembership } from "@/db/user-site-memberships";
 import { guardApiV1 } from "@/lib/api-v1-guard";
 import { buildVerificationUrlForRequest } from "@/lib/email";
-import { sendTemplatedEmail } from "@/lib/email-templates";
+import { notifyPhiPerson } from "@/lib/notifications/enqueue";
 import { getSiteConfigBySiteId } from "@/db/site-config";
 import { normalizeLocale } from "@/lib/locale";
 import { logRuntimeEvent } from "@/lib/log";
@@ -66,13 +66,12 @@ async function notifyExistingAccountOwner(
     return;
   }
   try {
-    await sendTemplatedEmail({
-      to: email,
-      site,
-      siteConfig: await getSiteMailConfig(site.id),
-      locale,
-      template: "registration_account_exists",
-      recipientName: email,
+    // Addressed rather than resolved on purpose: looking the account up here to get its id would make this
+    // notice depend on the account existing in a way the form's own answer deliberately does not.
+    await notifyPhiPerson({
+      siteId: site.id,
+      occasion: "registration_account_exists",
+      recipient: { address: email, locale },
     });
   } catch (error) {
     logRuntimeEvent("error", "registration.account_exists_notice_failed", {
@@ -304,25 +303,19 @@ export async function POST(request: Request) {
     intent.locale,
   );
 
-  const messageId = await sendTemplatedEmail({
-    to: intent.email,
-    site,
-    siteConfig: siteMailConfig,
-    locale: intent.locale,
-    template: "registration_verify",
-    recipientName: intent.fullName || intent.email,
-    verificationUrl,
+  // No account exists yet, so the address and the name travel with the row; the name is what was typed
+  // into this form, which is the only place it is known.
+  const notificationId = await notifyPhiPerson({
+    siteId: site.id,
+    occasion: "registration_verify",
+    recipient: { address: intent.email, locale: intent.locale },
+    params: { verificationUrl, recipientName: intent.fullName || intent.email },
   });
 
-  logRuntimeEvent("info", "mail.sent", {
-    message: "Registration verification email sent.",
+  logRuntimeEvent("info", "registration.verification_queued", {
+    message: "Registration verification email queued.",
     siteKey: site.key,
-    meta: {
-      intentId: intent.id,
-      email: intent.email,
-      messageId,
-      template: "registration_verify",
-    },
+    meta: { intentId: intent.id, notificationId },
   });
 
   return REGISTRATION_ACCEPTED();

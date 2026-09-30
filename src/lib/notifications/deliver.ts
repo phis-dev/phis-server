@@ -15,6 +15,7 @@ import { getSiteByKey, getSiteIdentityById } from "@/db/sites";
 import { getUserAccountById } from "@/db/user-accounts";
 import { getUserProfileByUserId } from "@/db/user-profiles";
 import { getUserSiteMembership } from "@/db/user-site-memberships";
+import { sendEmail } from "@/lib/email";
 import { sendTemplatedEmail, type SupportedEmailTemplate } from "@/lib/email-templates";
 import { logRuntimeEvent } from "@/lib/log";
 import { isUserAccountEnabled } from "@/lib/user-flags";
@@ -39,7 +40,24 @@ const CORE_OCCASION_TEMPLATES: Record<string, SupportedEmailTemplate> = {
   password_reset: "password_reset",
 };
 
-export type PhiNotificationOccasion = keyof typeof CORE_OCCASION_TEMPLATES;
+/**
+ * The occasion for a message Core composed itself, word for word.
+ *
+ * A contact form forwards what a visitor typed to the Site's own mailbox. There is no template to render
+ * it through -- Core must not rewrite or translate somebody else's sentence -- no consent to weigh, and no
+ * address to resolve, because the recipient is a configured mailbox rather than a person Core knows. What
+ * it does need is the retry and the record, which is the whole reason it comes through here rather than
+ * calling the transport directly.
+ *
+ * Only Core may name it. An Add-on's occasion is looked up under its own `provider_id`, so this is not a
+ * way around Core owning the words of anything sent on a Site's behalf -- and a sent-class message is
+ * refused, because a circular without a frame would have no way out in it.
+ */
+export const PHI_NOTIFICATION_OCCASION_VERBATIM = "verbatim";
+
+export type PhiNotificationOccasion =
+  | keyof typeof CORE_OCCASION_TEMPLATES
+  | typeof PHI_NOTIFICATION_OCCASION_VERBATIM;
 
 /** What the drain did with one row, as the three outcomes the table can hold. */
 type DeliveryOutcome = "sent" | "dropped" | "failed";
@@ -78,7 +96,9 @@ async function resolveRecipient(
     return {
       address: row.recipientAddress,
       locale: row.locale || site.defaultLocale,
-      name: row.recipientAddress,
+      // There is no profile to greet from, so the caller may name the person -- a registration knows what
+      // was typed into its own form. Without one the address stands in, which is what it did before.
+      name: readStringParam(row.params, "recipientName") || row.recipientAddress,
       userId: null,
     };
   }
@@ -102,12 +122,15 @@ async function resolveRecipient(
   }
 
   const profile = await getUserProfileByUserId(account.id);
-  const name = profile ? buildRecipientName(profile.firstName, profile.lastName) : "";
+  const profileName = profile ? buildRecipientName(profile.firstName, profile.lastName) : "";
 
   return {
     address: account.emailNormalized,
-    locale: account.preferredLocale || site.defaultLocale,
-    name: name || account.emailNormalized,
+    // What the caller knew first, then what this person chose, then what the Site speaks.
+    locale: row.locale || account.preferredLocale || site.defaultLocale,
+    // A caller may know a better name than the profile carries -- a confirmation that has just read one
+    // out of a customer record, for instance. Core still writes the greeting; this only names who it is to.
+    name: readStringParam(row.params, "recipientName") || profileName || account.emailNormalized,
     userId: account.id,
   };
 }
@@ -129,6 +152,39 @@ export async function deliverPhiNotification(row: PhiNotificationRow): Promise<D
     const siteConfig = await getSiteConfigBySiteId(row.siteId);
     if (!siteConfig) {
       throw new Error(`Site ${site.key} has no mail configuration.`);
+    }
+
+    if (row.occasion === PHI_NOTIFICATION_OCCASION_VERBATIM) {
+      if ((row.flags & PHI_NOTIFICATION_FLAG_SENT) !== 0) {
+        throw new DropError("A verbatim message cannot be a sent-class one: it carries no footer.");
+      }
+      if (!row.recipientAddress) {
+        throw new DropError("A verbatim message names an address, not an account.");
+      }
+
+      const subject = readStringParam(row.params, "subject");
+      const text = readStringParam(row.params, "text");
+      if (!subject || !text) {
+        throw new DropError("A verbatim message needs a subject and a body.");
+      }
+
+      const verbatimMessageId = await sendEmail({
+        to: row.recipientAddress,
+        from: readStringParam(row.params, "from")
+          || `${siteConfig.mailFromName} <${siteConfig.mailFrom}>`,
+        replyTo: readStringParam(row.params, "replyTo") || undefined,
+        subject,
+        text,
+        html: readStringParam(row.params, "html") || undefined,
+      });
+
+      await markPhiNotificationSent(row.id, verbatimMessageId);
+      logRuntimeEvent("info", "mail.sent", {
+        message: "Verbatim message sent.",
+        siteKey: site.key,
+        meta: { occasion: row.occasion, notificationId: row.id, messageId: verbatimMessageId },
+      });
+      return "sent";
     }
 
     const template = CORE_OCCASION_TEMPLATES[row.occasion];

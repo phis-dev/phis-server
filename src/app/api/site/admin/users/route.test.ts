@@ -18,7 +18,7 @@ const mocks = vi.hoisted(() => ({
   getMembership: vi.fn(),
   upsertMembership: vi.fn(),
   createResetToken: vi.fn(),
-  sendMail: vi.fn(),
+  notify: vi.fn(),
   revokeSessions: vi.fn(),
 }));
 
@@ -53,7 +53,7 @@ vi.mock("@/db/user-sessions", () => ({
 }));
 vi.mock("@/lib/email", () => ({ buildPasswordResetUrlForRequest: () => "https://site.test/reset" }));
 vi.mock("@/lib/form-config", () => ({ getSiteMailConfig: async () => ({ publicBaseUrl: null }) }));
-vi.mock("@/lib/email-templates", () => ({ sendTemplatedEmail: mocks.sendMail }));
+vi.mock("@/lib/notifications/enqueue", () => ({ notifyPhiPerson: mocks.notify }));
 vi.mock("@/lib/log", () => ({
   logRuntimeEvent: vi.fn(),
   normalizeLogThrowable: (error: unknown) => error,
@@ -102,7 +102,7 @@ beforeEach(() => {
   });
   mocks.getMembership.mockResolvedValue({ coreRoleFlags: 0, enabled: true });
   mocks.createResetToken.mockResolvedValue({ token: "token" });
-  mocks.sendMail.mockResolvedValue("message-id");
+  mocks.notify.mockResolvedValue("1");
 });
 
 describe("POST /api/site/admin/users", () => {
@@ -116,7 +116,7 @@ describe("POST /api/site/admin/users", () => {
     // Neither the password, the flags, nor the profile the other Site's person keeps.
     expect(mocks.ensureAccount).not.toHaveBeenCalled();
     expect(mocks.upsertProfile).not.toHaveBeenCalled();
-    expect(mocks.sendMail).not.toHaveBeenCalled();
+    expect(mocks.notify).not.toHaveBeenCalled();
   });
 
   it("creates an account nobody has and sends the first reset link", async () => {
@@ -126,7 +126,7 @@ describe("POST /api/site/admin/users", () => {
 
     expect(response.status).toBe(200);
     expect(mocks.ensureAccount).toHaveBeenCalledWith(expect.objectContaining({ reuseExisting: false }));
-    expect(mocks.sendMail).toHaveBeenCalledTimes(1);
+    expect(mocks.notify).toHaveBeenCalledTimes(1);
   });
 
   it("answers 409 when the address was registered between the lookup and the write", async () => {
@@ -146,7 +146,7 @@ describe("PUT /api/site/admin/users", () => {
     expect(response.status).toBe(409);
     expect(await response.json()).toMatchObject({ code: "account_shared" });
     expect(mocks.updateProfileFields).not.toHaveBeenCalled();
-    expect(mocks.sendMail).not.toHaveBeenCalled();
+    expect(mocks.notify).not.toHaveBeenCalled();
   });
 
   it("refuses a password reset and a new name for a shared account", async () => {

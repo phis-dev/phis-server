@@ -16,15 +16,14 @@ import {
   setLocaleCookie,
   setSessionCookie,
   setThemeModeCookie,
-  verifyCsrfRequest,
   createCsrfToken,
 } from "@/lib/auth";
 import { logRuntimeEvent, normalizeLogThrowable } from "@/lib/log";
 import { verifyPasswordHash } from "@/lib/password";
-import { requireSiteFromRequest } from "@/lib/site-context";
 import { resolvePhiUserArea } from "@/lib/user-area";
 import { isUserAccountEnabled, resolveUserThemeModeName } from "@/lib/user-flags";
 import { beginSiteAuthenticationSession } from "@/lib/site-auth/assurance";
+import { requireCsrfCheckedSite } from "@/lib/site-auth/authenticated-site-user";
 import { normalizeAuthNextPath, PHI_AUTH_SESSION_STATES } from "@/lib/site-auth/contracts";
 import { checkAuthAttemptLimit, tooManyAttemptsResponse } from "@/lib/site-auth/attempt-limit";
 import {
@@ -40,20 +39,19 @@ type LoginPayload = {
 };
 
 export async function POST(request: NextRequest) {
-  const site = await requireSiteFromRequest(request);
-  if (!site) {
-    return NextResponse.json({ error: "Missing site context." }, { status: 400 });
+  const checked = await requireCsrfCheckedSite(request);
+  if (!checked.ok) {
+    if ("site" in checked) {
+      logRuntimeEvent("warn", "auth.login.csrf_failed", {
+        message: "Login rejected because CSRF validation failed.",
+        siteKey: checked.site.key,
+        method: request.method,
+        path: request.nextUrl.pathname,
+      });
+    }
+    return checked.response;
   }
-
-  if (!verifyCsrfRequest(request)) {
-    logRuntimeEvent("warn", "auth.login.csrf_failed", {
-      message: "Login rejected because CSRF validation failed.",
-      siteKey: site.key,
-      method: request.method,
-      path: request.nextUrl.pathname,
-    });
-    return NextResponse.json({ error: "Invalid CSRF token." }, { status: 403 });
-  }
+  const { site } = checked;
 
   let payload: LoginPayload = {};
   try {

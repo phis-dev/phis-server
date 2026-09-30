@@ -37,11 +37,15 @@ export const PHI_NOTIFICATION_CORE_PROVIDER_ID = "@phis/server/core";
  * An id wherever one exists, because the address is then resolved when the row is drained: a person who
  * corrected theirs in between is written to correctly, and a membership that is gone is not written to at
  * all. The address form is for the messages that precede an account -- an unconfirmed registration has no
- * membership to point at -- and carries its locale, because there is no profile yet to ask.
+ * membership to point at.
+ *
+ * `locale` is required for an address, which has no profile to ask, and optional beside an account, where
+ * it says the caller knows better than the stored preference: somebody half-way through a flow on the
+ * German Site reads a German mail whatever they chose once.
  */
 export type PhiNotificationRecipient =
-  | { userId: number }
-  | { address: string; locale: string | null };
+  | { userId: number; locale?: string | null }
+  | { address: string; locale: string };
 
 export type PhiNotificationRow = {
   id: string;
@@ -116,7 +120,7 @@ export async function enqueuePhiNotificationWithDb(
 ) {
   const recipientUserId = "userId" in input.recipient ? input.recipient.userId : null;
   const recipientAddress = "userId" in input.recipient ? null : input.recipient.address;
-  const locale = "userId" in input.recipient ? null : input.recipient.locale;
+  const locale = input.recipient.locale ?? null;
 
   const { rows } = await db.query<{ id: string }>(
     `INSERT INTO phis.notification_outbox (

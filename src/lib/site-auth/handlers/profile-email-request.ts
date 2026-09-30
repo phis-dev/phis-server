@@ -6,7 +6,7 @@ import { getUserAccountByEmail } from "@/db/user-accounts";
 import { getUserProfileByUserId } from "@/db/user-profiles";
 import { resolveSignedInLocale } from "@/lib/auth";
 import { buildVerificationUrlForRequest } from "@/lib/email";
-import { sendTemplatedEmail } from "@/lib/email-templates";
+import { notifyPhiPerson } from "@/lib/notifications/enqueue";
 import { getSiteMailConfig } from "@/lib/form-config";
 import { logRuntimeEvent } from "@/lib/log";
 import { verifyPasswordHash } from "@/lib/password";
@@ -113,25 +113,23 @@ export async function POST(request: NextRequest) {
   const recipientName =
     (profile ? buildRecipientName(profile.firstName, profile.lastName) : "") || user.emailNormalized;
 
-  const messageId = await sendTemplatedEmail({
-    to: intent.email,
-    site,
-    siteConfig: siteMailConfig,
-    locale: intent.locale,
-    template: "registration_verify",
-    recipientName,
-    verificationUrl,
+  /*
+   * Addressed, not resolved -- and this is the one place where that matters most. The mail goes to the
+   * address being claimed, which the account does not have yet; naming the account here would send the
+   * confirmation to the address the person is trying to leave.
+   */
+  const notificationId = await notifyPhiPerson({
+    siteId: site.id,
+    occasion: "registration_verify",
+    recipient: { address: intent.email, locale: intent.locale },
+    params: { verificationUrl, recipientName },
   });
 
   logRuntimeEvent("info", "auth.profile.email.change_requested", {
-    message: "Profile email verification sent.",
+    message: "Profile email verification queued.",
     siteKey: site.key,
     userId: user.id,
-    meta: {
-      intentId: intent.id,
-      email: intent.email,
-      messageId,
-    },
+    meta: { intentId: intent.id, notificationId },
   });
 
   return NextResponse.json({

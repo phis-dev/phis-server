@@ -7,6 +7,7 @@ import {
   deleteOrphanedSiteContentByIdsWithDb,
 } from "@/db/site-content";
 import { getPool, withTransaction } from "@/lib/db";
+import { hasPhiFlag } from "@/lib/helpers/flags";
 import { isPhisCmsAreaKey, resolvePhisCmsAreaKey } from "@/lib/constants/cms-areas";
 import { PhiCmsRevisionFlags } from "@phis/contracts/cms";
 import { normalizeSiteCmsPath } from "@/lib/helpers/cms-path";
@@ -211,7 +212,7 @@ function mapRevisionRows(
       // Working Draft if it is either one, not only the first.
       isWorkingDraft:
         scope.workingDraftRevisionId === row.id || scope.workingModuleDraftRevisionId === row.id,
-      isDeleted: (row.flags & PhiCmsRevisionFlags.Deleted) !== 0,
+      isDeleted: hasPhiFlag(row.flags, PhiCmsRevisionFlags.Deleted),
       sourcePreset,
     };
   });
@@ -797,7 +798,7 @@ export async function restoreSiteRevision(
         [
           scope.scopeId,
           PhiCmsRevisionFlags.Draft |
-            ((revision.flags & PhiCmsRevisionFlags.Deleted) !== 0 ? PhiCmsRevisionFlags.Deleted : 0),
+            (hasPhiFlag(revision.flags, PhiCmsRevisionFlags.Deleted) ? PhiCmsRevisionFlags.Deleted : 0),
           JSON.stringify(revision.tree_json ?? {}),
           `Restored from revision #${input.revisionId}`,
           input.revisionId,

@@ -3,34 +3,15 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSupportTicketDetail, SupportAdministrationError, updateSupportTicket } from "@/db/support";
 import { requireSiteSupportApiContext } from "@/lib/guards/site-admin-api";
 import { logRuntimeEvent } from "@/lib/log";
-import { normalizeString, readRequestBody } from "@/lib/helpers/request";
+import {
+  normalizeNullableInteger,
+  normalizeNullableString,
+  normalizeString,
+  parseStrictPositiveInt,
+  readRequestBody,
+} from "@/lib/helpers/request";
 
 export const dynamic = "force-dynamic";
-
-function normalizeNullableString(value: unknown) {
-  const normalized = normalizeString(value);
-  return normalized ? normalized : null;
-}
-
-function normalizeInteger(value: unknown) {
-  if (typeof value === "number" && Number.isInteger(value)) {
-    return value;
-  }
-
-  const parsed = Number.parseInt(normalizeString(value), 10);
-  return Number.isInteger(parsed) ? parsed : null;
-}
-
-function normalizeJsonRecord(value: unknown) {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : {};
-}
-
-function parseTicketId(value: string) {
-  const parsed = Number.parseInt(value.trim(), 10);
-  return Number.isInteger(parsed) && parsed > 0 ? parsed : 0;
-}
 
 export async function GET(request: NextRequest, { params }: { params: Promise<{ ticketId: string }> }) {
   const { context, error } = await requireSiteSupportApiContext(request);
@@ -43,7 +24,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
     return NextResponse.json({ error: "Authentication required." }, { status: 401 });
   }
 
-  const ticketId = parseTicketId((await params).ticketId);
+  const ticketId = parseStrictPositiveInt((await params).ticketId);
   if (!ticketId) {
     return NextResponse.json({ error: "Invalid ticket id." }, { status: 400 });
   }
@@ -67,7 +48,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     return NextResponse.json({ error: "Authentication required." }, { status: 401 });
   }
 
-  const ticketId = parseTicketId((await params).ticketId);
+  const ticketId = parseStrictPositiveInt((await params).ticketId);
   if (!ticketId) {
     return NextResponse.json({ error: "Invalid ticket id." }, { status: 400 });
   }
@@ -78,24 +59,24 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     updated = await updateSupportTicket({
     siteId: site.id,
     ticketId,
-    typeId: normalizeInteger(body.typeId) ?? undefined,
-    status: normalizeInteger(body.status) ?? undefined,
-    channel: normalizeInteger(body.channel) ?? undefined,
-    priority: normalizeInteger(body.priority) ?? undefined,
-    severity: Object.prototype.hasOwnProperty.call(body, "severity") ? normalizeInteger(body.severity) : undefined,
+    typeId: normalizeNullableInteger(body.typeId) ?? undefined,
+    status: normalizeNullableInteger(body.status) ?? undefined,
+    channel: normalizeNullableInteger(body.channel) ?? undefined,
+    priority: normalizeNullableInteger(body.priority) ?? undefined,
+    severity: Object.prototype.hasOwnProperty.call(body, "severity") ? normalizeNullableInteger(body.severity) : undefined,
     requesterUserId: Object.prototype.hasOwnProperty.call(body, "requesterUserId")
-      ? normalizeInteger(body.requesterUserId)
+      ? normalizeNullableInteger(body.requesterUserId)
       : undefined,
     requesterEmail: Object.prototype.hasOwnProperty.call(body, "requesterEmail")
       ? normalizeNullableString(body.requesterEmail)
       : undefined,
     assigneeUserId: Object.prototype.hasOwnProperty.call(body, "assigneeUserId")
-      ? normalizeInteger(body.assigneeUserId)
+      ? normalizeNullableInteger(body.assigneeUserId)
       : undefined,
-    queueId: Object.prototype.hasOwnProperty.call(body, "queueId") ? normalizeInteger(body.queueId) : undefined,
+    queueId: Object.prototype.hasOwnProperty.call(body, "queueId") ? normalizeNullableInteger(body.queueId) : undefined,
     subject: Object.prototype.hasOwnProperty.call(body, "subject") ? normalizeString(body.subject) : undefined,
     summary: Object.prototype.hasOwnProperty.call(body, "summary") ? normalizeNullableString(body.summary) : undefined,
-    meta: Object.prototype.hasOwnProperty.call(body, "meta") ? normalizeJsonRecord(body.meta) : undefined,
+    meta: Object.prototype.hasOwnProperty.call(body, "meta") ? toPhiRecord(body.meta) : undefined,
     firstResponseDueAt: Object.prototype.hasOwnProperty.call(body, "firstResponseDueAt")
       ? normalizeNullableString(body.firstResponseDueAt)
       : undefined,

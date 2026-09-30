@@ -10,7 +10,6 @@ import { getSessionFromRequest } from "@/db/user-sessions";
 import { getMediaStorageProfile } from "@/db/media-spaces";
 import { createPhisMediaStorageServiceForProfile } from "@/lib/media-storage";
 import { logRuntimeEvent, normalizeLogThrowable } from "@/lib/log";
-import { PHIS_CMS_AREA_KEYS } from "@/lib/constants/cms-areas";
 import {
   isPhiMediaUploadBodyProxied,
   PhiMediaUploadSessionStatus,
@@ -23,22 +22,9 @@ import { requireMediaSpaceWriteContext } from "@/lib/guards/site-media-api";
 import { requireSiteFromRequest } from "@/lib/site-context";
 import { PhiMediaUploadPurpose } from "@/lib/media-upload-sessions";
 import { nextMediaError } from "../_helpers";
-import { PHIS_AREA_HEADER } from "@/lib/constants/http-headers";
+import { readPhisMediaRequestArea } from "@/lib/media-request-area";
 
 export const dynamic = "force-dynamic";
-
-function normalizeAreaKey(value: string | null | undefined) {
-  const normalized = value?.trim().toLowerCase() ?? "";
-  return PHIS_CMS_AREA_KEYS.includes(normalized as (typeof PHIS_CMS_AREA_KEYS)[number])
-    ? normalized
-    : null;
-}
-
-/** The shell the call came from, which only the Client can say. */
-function resolveRequestArea(request: NextRequest) {
-  return normalizeAreaKey(request.headers.get(PHIS_AREA_HEADER));
-}
-
 
 export async function PUT(
   request: NextRequest,
@@ -210,7 +196,7 @@ export async function PUT(
     if (abortedBy) {
       const stalled = abortedBy === PhiMediaUploadAbort.Stalled;
       logRuntimeEvent(stalled ? "warn" : "info", stalled ? "media.upload.stalled" : "media.upload.abandoned", {
-        area: resolveRequestArea(request),
+        area: readPhisMediaRequestArea(request),
         userId: authSession.userId,
         message: stalled
           ? "Upload stalled: no bytes arrived before the transfer timed out."
@@ -228,7 +214,7 @@ export async function PUT(
     }
 
     logRuntimeEvent("error", "media.upload.failed", {
-      area: resolveRequestArea(request),
+      area: readPhisMediaRequestArea(request),
       userId: authSession.userId,
       message: uploadError instanceof Error ? uploadError.message : "Upload failed.",
       siteKey: site.key,

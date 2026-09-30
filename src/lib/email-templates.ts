@@ -216,8 +216,16 @@ async function renderUnsubscribeFooter(locale: string, siteName: string, unsubsc
     translate("Unsubscribe", "unsubscribe footer link"),
   ]);
 
-  const reason = note.replaceAll("%1", escapeHtml(siteName));
-  return `<hr><p>${reason} <a href="${escapeHtml(unsubscribeUrl)}">${escapeHtml(label)}</a></p>`;
+  return {
+    html: `<hr><p>${note.replaceAll("%1", escapeHtml(siteName))} `
+      + `<a href="${escapeHtml(unsubscribeUrl)}">${escapeHtml(label)}</a></p>`,
+    /*
+     * The plain-text alternative carries the address itself, because `stripHtml` keeps the words of a link
+     * and throws away where it points. A text-only reader was left with the word "Unsubscribe" and no way
+     * to act on it, which is the one thing this footer exists to prevent.
+     */
+    text: `${note.replaceAll("%1", siteName)} ${label}: ${unsubscribeUrl}`,
+  };
 }
 
 export async function sendTemplatedEmail({
@@ -256,16 +264,20 @@ export async function sendTemplatedEmail({
     supportEmail: siteConfig.supportEmail,
   });
 
-  const bodyHtml = unsubscribeUrl
-    ? content.bodyHtml + await renderUnsubscribeFooter(locale, site.name, unsubscribeUrl)
-    : content.bodyHtml;
+  const footer = unsubscribeUrl
+    ? await renderUnsubscribeFooter(locale, site.name, unsubscribeUrl)
+    : null;
+  const bodyHtml = footer ? content.bodyHtml + footer.html : content.bodyHtml;
+  const bodyText = footer
+    ? `${stripHtml(content.bodyHtml)}\n\n${footer.text}`
+    : stripHtml(content.bodyHtml);
 
   return sendEmail({
     to,
     from: `${siteConfig.mailFromName} <${siteConfig.mailFrom}>`,
     replyTo,
     subject: content.subject,
-    text: stripHtml(bodyHtml),
+    text: bodyText,
     html: bodyHtml,
     headers: unsubscribeUrl
       ? {

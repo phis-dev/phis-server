@@ -2,14 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { markThreadRead, PhisThreadError } from "@/db/threads";
 import { requireSiteAuthenticatedApiContext } from "@/lib/guards/site-admin-api";
-import { readRequestBody } from "@/lib/helpers/request";
+import { parseStrictPositiveInt, readRequestBody } from "@/lib/helpers/request";
 
 export const dynamic = "force-dynamic";
-
-function parsePositiveId(value: string) {
-  const parsed = Number.parseInt(value.trim(), 10);
-  return Number.isInteger(parsed) && parsed > 0 ? parsed : 0;
-}
 
 export async function POST(request: NextRequest, { params }: { params: Promise<{ threadId: string }> }) {
   const { context, error } = await requireSiteAuthenticatedApiContext(request);
@@ -23,7 +18,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     return NextResponse.json({ error: "Authentication required." }, { status: 401 });
   }
 
-  const threadId = parsePositiveId((await params).threadId);
+  const threadId = parseStrictPositiveInt((await params).threadId);
   if (!threadId) {
     return NextResponse.json({ error: "Invalid thread id." }, { status: 400 });
   }

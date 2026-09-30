@@ -2327,7 +2327,12 @@ CREATE TABLE IF NOT EXISTS phis.notification_outbox (
   flags SMALLINT NOT NULL DEFAULT 0,
   recipient_user_id INT NULL,
   recipient_address VARCHAR(320) NULL,
-  -- Only where there is no membership; otherwise the profile answers and this would be a second truth.
+  -- The language this message is written in, where the caller knows better than the profile does.
+  --
+  -- It is required for an address that has no profile to ask, and allowed beside an account because there
+  -- genuinely are two answers: what somebody chose once, and what language they are reading right now. A
+  -- person half-way through a reset on the German site gets a German mail whether or not their profile
+  -- says so. Empty means the profile decides, then the Site's default.
   locale VARCHAR(35) NULL,
   params JSONB NOT NULL DEFAULT '{}'::jsonb,
   dedupe_key VARCHAR(200) NULL,
@@ -2344,7 +2349,8 @@ CREATE TABLE IF NOT EXISTS phis.notification_outbox (
     (recipient_user_id IS NOT NULL AND recipient_address IS NULL)
     OR (recipient_user_id IS NULL AND recipient_address IS NOT NULL)
   ),
-  CONSTRAINT notification_outbox_locale_check CHECK (recipient_user_id IS NULL OR locale IS NULL),
+  -- An address has no profile behind it, so it has to say which language it reads.
+  CONSTRAINT notification_outbox_locale_check CHECK (recipient_address IS NULL OR locale IS NOT NULL),
   CONSTRAINT notification_outbox_membership_fk
     FOREIGN KEY (recipient_user_id, site_id)
     REFERENCES phis.user_site_memberships (user_id, site_id)

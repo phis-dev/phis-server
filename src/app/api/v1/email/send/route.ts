@@ -1,12 +1,11 @@
 import { NextResponse } from "next/server";
 
 import { guardApiV1 } from "@/lib/api-v1-guard";
+import { notifyPhiPerson } from "@/lib/notifications/enqueue";
 import { resolveSiteFromHeaders } from "@/lib/site-context";
 import { normalizeLocale } from "@/lib/locale";
 import { getSiteByKey } from "@/db/sites";
-import { sendEmail } from "@/lib/email";
-import { getSiteConfigBySiteId } from "@/db/site-config";
-import { sendTemplatedEmail, stripHtml, type SupportedEmailTemplate } from "@/lib/email-templates";
+import { stripHtml, type SupportedEmailTemplate } from "@/lib/email-templates";
 
 type GenericEmailMessage = {
   subject?: unknown;
@@ -26,7 +25,6 @@ type EmailPayload = {
   body?: GenericEmailMessage;
 };
 
-
 type NormalizedGenericMessage = {
   to: string;
   subject: string;
@@ -34,19 +32,6 @@ type NormalizedGenericMessage = {
   html?: string;
   from?: string;
 };
-
-function resolveMessageId(result: unknown) {
-  if (typeof result === "string") {
-    return result;
-  }
-
-  if (result && typeof result === "object" && "messageId" in result) {
-    const messageId = (result as { messageId?: unknown }).messageId;
-    return typeof messageId === "string" ? messageId : undefined;
-  }
-
-  return undefined;
-}
 
 function formatError(message: string, status = 400) {
   return NextResponse.json({ error: message }, { status });
@@ -161,43 +146,24 @@ export async function POST(request: Request) {
     if (!verificationUrl) {
       return formatError("Missing verificationUrl.");
     }
-    const siteConfig = await getSiteConfigBySiteId(site!.id);
-    if (!siteConfig) {
-      return formatError("Missing site config.");
-    }
-    const result = await sendTemplatedEmail({
-      to: recipient,
-      site: site!,
-      siteConfig,
-      locale,
-      template,
-      recipientName,
-      verificationUrl,
+    const notificationId = await notifyPhiPerson({
+      siteId: site!.id,
+      occasion: template,
+      recipient: { address: recipient, locale },
+      params: { verificationUrl, recipientName },
     });
 
     return NextResponse.json(
-      {
-        sent: true,
-        template,
-        siteKey: site?.key,
-        to: recipient,
-        messageId: resolveMessageId(result),
-      },
+      { sent: true, template, siteKey: site?.key, to: recipient, notificationId },
     );
   }
 
   if (template === "registration_welcome") {
-    const siteConfig = await getSiteConfigBySiteId(site!.id);
-    if (!siteConfig) {
-      return formatError("Missing site config.");
-    }
-    const result = await sendTemplatedEmail({
-      to: genericBody?.to ?? normalizeEmail(payload.to),
-      site: site!,
-      siteConfig,
-      locale,
-      template,
-      recipientName,
+    const notificationId = await notifyPhiPerson({
+      siteId: site!.id,
+      occasion: template,
+      recipient: { address: genericBody?.to ?? normalizeEmail(payload.to), locale },
+      params: { recipientName },
     });
 
     return NextResponse.json(
@@ -206,7 +172,7 @@ export async function POST(request: Request) {
         template,
         siteKey: site?.key,
         to: genericBody?.to ?? normalizeEmail(payload.to),
-        messageId: resolveMessageId(result),
+        notificationId,
       },
     );
   }
@@ -215,21 +181,33 @@ export async function POST(request: Request) {
     return formatError("Missing payload body for generic send.");
   }
 
-  const result = await sendEmail({
-        to: genericBody.to,
-    from: genericBody.from,
-    subject: genericBody.subject,
-    text: genericBody.text,
-    html: genericBody.html,
+  /*
+   * A free body goes through as a verbatim message, and that is why it now needs a Site: every row in the
+   * outbox belongs to one, and a message nobody can attribute is a message nobody can account for.
+   */
+  if (!site) {
+    return formatError("A generic send needs siteKey, so the message has a Site to belong to.");
+  }
+
+  const notificationId = await notifyPhiPerson({
+    siteId: site.id,
+    occasion: "verbatim",
+    recipient: { address: genericBody.to, locale },
+    params: {
+      from: genericBody.from ?? "",
+      subject: genericBody.subject,
+      text: genericBody.text,
+      html: genericBody.html ?? "",
+    },
   });
 
   return NextResponse.json(
     {
       sent: true,
       template: null,
-      siteKey: site?.key ?? null,
+      siteKey: site.key,
       to: genericBody.to,
-      messageId: resolveMessageId(result),
+      notificationId,
     },
   );
 }

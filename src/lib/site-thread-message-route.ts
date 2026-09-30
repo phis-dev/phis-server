@@ -20,7 +20,7 @@ import { normalizeString, readRequestBody } from "@/lib/helpers/request";
  */
 export async function writePhisSiteThreadMessage(
   request: NextRequest,
-  { threadId, body }: { threadId: number; body: Record<string, unknown> },
+  { threadId, body }: { threadId: number | null; body: Record<string, unknown> },
 ) {
   const { context, error } = await requireSiteAuthenticatedApiContext(request);
   if (error) {
@@ -89,12 +89,6 @@ export function normalizePhisThreadAssetIds(value: unknown) {
         .map((entry) => (typeof entry === "number" && Number.isInteger(entry) ? entry : null))
         .filter((entry): entry is number => entry != null && entry > 0)
     : [];
-}
-
-/** A positive whole number, or 0 for anything else -- a path segment or a submitted value alike. */
-export function readPhisSiteThreadId(value: unknown) {
-  const parsed = typeof value === "number" ? value : Number.parseInt(String(value ?? "").trim(), 10);
-  return Number.isInteger(parsed) && parsed > 0 ? parsed : 0;
 }
 
 export async function readPhisSiteThreadMessageBody(request: NextRequest) {

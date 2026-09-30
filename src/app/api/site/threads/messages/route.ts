@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 
+import { parseStrictPositiveInt } from "@/lib/helpers/request";
 import {
-  readPhisSiteThreadId,
   readPhisSiteThreadMessageBody,
   writePhisSiteThreadMessage,
 } from "@/lib/site-thread-message-route";
@@ -22,7 +22,7 @@ export const dynamic = "force-dynamic";
 export async function POST(request: NextRequest) {
   const body = await readPhisSiteThreadMessageBody(request);
   return writePhisSiteThreadMessage(request, {
-    threadId: readPhisSiteThreadId(body.threadId),
+    threadId: parseStrictPositiveInt(body.threadId),
     body,
   });
 }

@@ -16,7 +16,7 @@ vi.mock("@/db/user-sessions", () => ({ getSessionFromRequest: mocks.session }));
 vi.mock("@/db/user-accounts", () => ({ getUserAccountById: mocks.user }));
 vi.mock("@/db/user-site-memberships", () => ({ getEffectiveUserSiteAuthorization: mocks.role }));
 
-import { requireAuthenticatedSiteUser } from "./authenticated-site-user";
+import { requireAuthenticatedSiteUser, requireCsrfCheckedSite } from "./authenticated-site-user";
 
 const request = () => new NextRequest("https://server.test/api/v1/auth/profile/name", { method: "PATCH" });
 
@@ -57,5 +57,32 @@ describe("the signed-in chain of the auth handlers", () => {
     expect(mocks.session).toHaveBeenLastCalledWith(expect.anything(), 7, {
       allowPasswordChangeRequired: true,
     });
+  });
+});
+
+/** The pre-session pair on its own, as sign-in and the password reset use it. */
+describe("the Site and CSRF pair before any session", () => {
+  beforeEach(() => {
+    mocks.site.mockReset().mockResolvedValue({ id: 7, key: "main" });
+    mocks.csrf.mockReset().mockReturnValue(true);
+  });
+
+  it("hands over the Site when both hold", async () => {
+    const checked = await requireCsrfCheckedSite(request());
+    expect(checked.ok && checked.site.id).toBe(7);
+  });
+
+  it("refuses a missing Site with 400 and nothing to name", async () => {
+    mocks.site.mockResolvedValue(null);
+    const checked = await requireCsrfCheckedSite(request());
+    expect(!checked.ok && checked.response.status).toBe(400);
+    expect("site" in checked).toBe(false);
+  });
+
+  it("refuses a missing CSRF token with 403 and keeps the Site for the log", async () => {
+    mocks.csrf.mockReturnValue(false);
+    const checked = await requireCsrfCheckedSite(request());
+    expect(!checked.ok && checked.response.status).toBe(403);
+    expect("site" in checked && checked.site.key).toBe("main");
   });
 });

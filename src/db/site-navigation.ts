@@ -3,6 +3,7 @@ import "server-only";
 import type { PoolClient } from "pg";
 
 import { getPool, withTransaction } from "@/lib/db";
+import { hasPhiFlag } from "@/lib/helpers/flags";
 import { PhiCmsRevisionFlags } from "@phis/contracts/cms";
 import { isPhisCmsAreaKey, resolvePhisCmsAreaMask } from "@/lib/constants/cms-areas";
 import {
@@ -760,7 +761,7 @@ export async function getPublishedSiteNavigationRevision(siteId: number, key: st
     return null;
   }
   const revision = await getSiteNavigationRevisionByIdWithDb(getPool(), scope.publishedRevisionId);
-  if (!revision || (revision.flags & PhiCmsRevisionFlags.Published) === 0) {
+  if (!revision || !hasPhiFlag(revision.flags, PhiCmsRevisionFlags.Published)) {
     return null;
   }
   return {
@@ -1088,7 +1089,7 @@ export async function publishSiteNavigationRevision(
       throw new Error("Navigation draft revision not found.");
     }
     const overlay = parseSiteNavigationOverlay(revision.treeJson, normalizedKey);
-    if ((revision.flags & PhiCmsRevisionFlags.Published) === 0) {
+    if (!hasPhiFlag(revision.flags, PhiCmsRevisionFlags.Published)) {
       await client.query(
         `UPDATE phis.site_nav_revisions SET flags = flags | $2 WHERE id = $1`,
         [revision.id, PhiCmsRevisionFlags.Published],

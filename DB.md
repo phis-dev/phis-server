@@ -2013,7 +2013,7 @@ Contract:
 - `sent_at TIMESTAMPTZ NULL`
 - `message_id VARCHAR(255) NULL`
 - CHECK exactly one of `recipient_user_id` / `recipient_address`
-- CHECK `locale` only where `recipient_user_id IS NULL`
+- CHECK `locale` is present whenever `recipient_address` is
 - composite foreign key `(recipient_user_id, site_id)` to `user_site_memberships (user_id, site_id)`
   `ON DELETE CASCADE`
 - partial index `(site_id, next_attempt_at, id) WHERE sent_at IS NULL AND (flags & 2) = 0`
@@ -2028,8 +2028,7 @@ Contract:
 - **The recipient is an id wherever one exists**, and the address is resolved at drain time. A corrected
   address is therefore used, and a membership that is gone sends nothing instead of writing to a stale
   copy. `recipient_address` is only for messages that precede an account, where there is no membership
-  to point at; those carry `locale`, because there is no profile to ask. Carrying both forms at once is
-  refused by CHECK, and so is a `locale` beside a known member.
+  to point at. Carrying both recipient forms at once is refused by CHECK.
 - `flags & 1` means the message was **sent** rather than asked for: consent decided whether the row was
   written at all, and the rendered mail owes an unsubscribe footer. A message the person's own action
   asked for carries no such footer, because offering to withdraw what cannot be withdrawn is the
@@ -2039,6 +2038,11 @@ Contract:
   the drain, not a delivery failure, and conflating the two would make an operator chase a broken address
   that never existed. A dropped row is never claimed again, which is why the flag is in the index
   predicate as well as in the claim.
+- `locale` is the language the message is written in, and it outranks the profile. An address has no
+  profile to ask and therefore must carry one, which CHECK enforces; beside an account it is optional,
+  because there really are two answers -- what somebody chose once, and what language they are reading
+  now. Somebody half-way through a reset on the German Site gets a German mail whatever their profile
+  says. Empty falls to the profile, then to the Site's default.
 - `provider_id` is who declared the occasion and therefore whose words render it -- `@phis/server/core`
   today, an Add-on id once a notification capability exists. Same convention as
   `server_capabilities.provider_id`.

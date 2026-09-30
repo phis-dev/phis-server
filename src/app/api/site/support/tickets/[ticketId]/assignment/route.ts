@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { applySupportTicketAssignmentAction } from "@/db/support";
 import { requireSiteSupportApiContext } from "@/lib/guards/site-admin-api";
 import { logRuntimeEvent } from "@/lib/log";
-import { normalizeString, readRequestBody } from "@/lib/helpers/request";
+import { normalizeString, parseStrictPositiveInt, readRequestBody } from "@/lib/helpers/request";
 
 export const dynamic = "force-dynamic";
 
@@ -16,11 +16,6 @@ function normalizeInteger(value: unknown) {
 
   const parsed = Number.parseInt(normalizeString(value), 10);
   return Number.isInteger(parsed) ? parsed : null;
-}
-
-function parseTicketId(value: string) {
-  const parsed = Number.parseInt(value.trim(), 10);
-  return Number.isInteger(parsed) && parsed > 0 ? parsed : 0;
 }
 
 function normalizeAction(value: unknown): AssignmentAction | null {
@@ -48,7 +43,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     return NextResponse.json({ error: "Authentication required." }, { status: 401 });
   }
 
-  const ticketId = parseTicketId((await params).ticketId);
+  const ticketId = parseStrictPositiveInt((await params).ticketId);
   if (!ticketId) {
     return NextResponse.json({ error: "Invalid ticket id." }, { status: 400 });
   }

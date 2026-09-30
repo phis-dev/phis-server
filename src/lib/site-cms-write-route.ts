@@ -46,6 +46,7 @@ import {
   readSiteCmsRequestSearchParam,
 } from "@/lib/helpers/site-cms-route";
 import { normalizeSiteCmsPath } from "@/lib/helpers/cms-path";
+import { normalizeString } from "@/lib/helpers/request";
 import { createPhiPageReference } from "@/lib/internal-references";
 import { normalizeLocale } from "@/lib/locale";
 import { logRuntimeEvent, normalizeLogThrowable } from "@/lib/log";
@@ -75,10 +76,6 @@ function normalizeCmsPath(value: unknown) {
   }
 
   return value.trim() ? normalizeSiteCmsPath(value) : "";
-}
-
-function normalizeString(value: unknown) {
-  return typeof value === "string" ? value.trim() : "";
 }
 
 function hasOwnProperty(value: object, key: string) {

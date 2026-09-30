@@ -3,34 +3,15 @@ import { NextRequest, NextResponse } from "next/server";
 import { deleteSupportTicketTask, SupportAdministrationError, updateSupportTicketTask } from "@/db/support";
 import { requireSiteSupportApiContext } from "@/lib/guards/site-admin-api";
 import { logRuntimeEvent } from "@/lib/log";
-import { normalizeString, readRequestBody } from "@/lib/helpers/request";
+import {
+  normalizeNullableInteger,
+  normalizeNullableString,
+  normalizeString,
+  parseStrictPositiveInt,
+  readRequestBody,
+} from "@/lib/helpers/request";
 
 export const dynamic = "force-dynamic";
-
-function normalizeNullableString(value: unknown) {
-  const normalized = normalizeString(value);
-  return normalized ? normalized : null;
-}
-
-function normalizeInteger(value: unknown) {
-  if (typeof value === "number" && Number.isInteger(value)) {
-    return value;
-  }
-
-  const parsed = Number.parseInt(normalizeString(value), 10);
-  return Number.isInteger(parsed) ? parsed : null;
-}
-
-function normalizeJsonRecord(value: unknown) {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : {};
-}
-
-function parsePositiveId(value: string) {
-  const parsed = Number.parseInt(value.trim(), 10);
-  return Number.isInteger(parsed) && parsed > 0 ? parsed : 0;
-}
 
 export async function PATCH(
   request: NextRequest,
@@ -47,8 +28,8 @@ export async function PATCH(
   }
 
   const resolved = await params;
-  const ticketId = parsePositiveId(resolved.ticketId);
-  const taskId = parsePositiveId(resolved.taskId);
+  const ticketId = parseStrictPositiveInt(resolved.ticketId);
+  const taskId = parseStrictPositiveInt(resolved.taskId);
   if (!ticketId || !taskId) {
     return NextResponse.json({ error: "Invalid task id." }, { status: 400 });
   }
@@ -60,14 +41,14 @@ export async function PATCH(
       siteId: site.id,
       ticketId,
       taskId,
-      type: Object.hasOwn(body, "type") ? (normalizeInteger(body.type) ?? undefined) : undefined,
-      status: Object.hasOwn(body, "status") ? (normalizeInteger(body.status) ?? undefined) : undefined,
-      flags: Object.hasOwn(body, "flags") ? (normalizeInteger(body.flags) ?? undefined) : undefined,
-      sortOrder: Object.hasOwn(body, "sortOrder") ? (normalizeInteger(body.sortOrder) ?? undefined) : undefined,
-      assigneeUserId: Object.hasOwn(body, "assigneeUserId") ? normalizeInteger(body.assigneeUserId) : undefined,
+      type: Object.hasOwn(body, "type") ? (normalizeNullableInteger(body.type) ?? undefined) : undefined,
+      status: Object.hasOwn(body, "status") ? (normalizeNullableInteger(body.status) ?? undefined) : undefined,
+      flags: Object.hasOwn(body, "flags") ? (normalizeNullableInteger(body.flags) ?? undefined) : undefined,
+      sortOrder: Object.hasOwn(body, "sortOrder") ? (normalizeNullableInteger(body.sortOrder) ?? undefined) : undefined,
+      assigneeUserId: Object.hasOwn(body, "assigneeUserId") ? normalizeNullableInteger(body.assigneeUserId) : undefined,
       title: Object.hasOwn(body, "title") ? normalizeString(body.title) : undefined,
       description: Object.hasOwn(body, "description") ? normalizeNullableString(body.description) : undefined,
-      meta: Object.hasOwn(body, "meta") ? normalizeJsonRecord(body.meta) : undefined,
+      meta: Object.hasOwn(body, "meta") ? toPhiRecord(body.meta) : undefined,
       dueAt: Object.hasOwn(body, "dueAt") ? normalizeNullableString(body.dueAt) : undefined,
       completedAt: Object.hasOwn(body, "completedAt") ? normalizeNullableString(body.completedAt) : undefined,
       updatedByUserId: context.session?.userId ?? null,
@@ -109,8 +90,8 @@ export async function DELETE(
   }
 
   const resolved = await params;
-  const ticketId = parsePositiveId(resolved.ticketId);
-  const taskId = parsePositiveId(resolved.taskId);
+  const ticketId = parseStrictPositiveInt(resolved.ticketId);
+  const taskId = parseStrictPositiveInt(resolved.taskId);
   if (!ticketId || !taskId) {
     return NextResponse.json({ error: "Invalid task id." }, { status: 400 });
   }

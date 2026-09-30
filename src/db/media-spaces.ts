@@ -8,6 +8,7 @@ import { PhiGroupMembershipFlags } from "@/lib/constants/site-groups";
 import { getSiteGroupById, readEffectiveGroupMembershipFlags } from "@/db/site-groups";
 import type { RequestedMediaSpace } from "@/lib/guards/site-media-api";
 import { getPool, withTransaction } from "@/lib/db";
+import { hasPhiFlag } from "@/lib/helpers/flags";
 import type { PhisMediaStorageProbe } from "@phis/contracts/addon";
 import {
   PHI_LOCAL_MEDIA_STORAGE_PROVIDER_ID,
@@ -712,10 +713,10 @@ export async function getGroupMediaSpace(siteId: number, groupId: number) {
 export function isPhiMediaSpaceKindEnabled(config: SiteMediaConfigRecord, kind: number) {
   if (kind === PhisMediaSpaceKind.Site) return true;
   if (kind === PhisMediaSpaceKind.User) {
-    return (config.flags & PhiSiteMediaFlags.UserSpacesEnabled) !== 0;
+    return hasPhiFlag(config.flags, PhiSiteMediaFlags.UserSpacesEnabled);
   }
   if (kind === PhisMediaSpaceKind.Group) {
-    return (config.flags & PhiSiteMediaFlags.GroupSpacesEnabled) !== 0;
+    return hasPhiFlag(config.flags, PhiSiteMediaFlags.GroupSpacesEnabled);
   }
   return false;
 }
@@ -812,7 +813,7 @@ export async function resolveAuthorizedMediaSpace(input: {
     const flags = input.siteWide
       ? PhiGroupMembershipFlags.Manager
       : await readEffectiveGroupMembershipFlags(input.siteId, groupId, input.userId);
-    if ((flags & PhiGroupMembershipFlags.Member) === 0) {
+    if (!hasPhiFlag(flags, PhiGroupMembershipFlags.Member)) {
       return { ok: false, reason: "space_forbidden" };
     }
     // Writing is an Author operation -- putting something of one's own into the group -- and it is what
@@ -823,7 +824,7 @@ export async function resolveAuthorizedMediaSpace(input: {
       if (group.retiredAt != null) {
         return { ok: false, reason: "space_forbidden" };
       }
-      if ((flags & PhiGroupMembershipFlags.Author) !== PhiGroupMembershipFlags.Author) {
+      if (!hasPhiFlag(flags, PhiGroupMembershipFlags.Author)) {
         return { ok: false, reason: "space_forbidden" };
       }
       const space = await ensureGroupMediaSpace(input.siteId, groupId);
@@ -859,13 +860,13 @@ export async function resolveAuthorizedMediaSpace(input: {
     const flags = input.siteWide
       ? PhiGroupMembershipFlags.Manager
       : await readEffectiveGroupMembershipFlags(input.siteId, space.groupId, input.userId);
-    if ((flags & PhiGroupMembershipFlags.Member) === 0) {
+    if (!hasPhiFlag(flags, PhiGroupMembershipFlags.Member)) {
       return { ok: false, reason: "space_forbidden" };
     }
     if (input.intent === "write") {
       const group = await getSiteGroupById(input.siteId, space.groupId);
       if (group?.retiredAt != null) return { ok: false, reason: "space_forbidden" };
-      if ((flags & PhiGroupMembershipFlags.Author) !== PhiGroupMembershipFlags.Author) {
+      if (!hasPhiFlag(flags, PhiGroupMembershipFlags.Author)) {
         return { ok: false, reason: "space_forbidden" };
       }
     }

@@ -8,34 +8,15 @@ import {
 } from "@/db/support";
 import { requireSiteSupportApiContext } from "@/lib/guards/site-admin-api";
 import { logRuntimeEvent } from "@/lib/log";
-import { normalizeString, readRequestBody } from "@/lib/helpers/request";
+import {
+  normalizeNullableInteger,
+  normalizeNullableString,
+  normalizeString,
+  parseStrictPositiveInt,
+  readRequestBody,
+} from "@/lib/helpers/request";
 
 export const dynamic = "force-dynamic";
-
-function normalizeNullableString(value: unknown) {
-  const normalized = normalizeString(value);
-  return normalized ? normalized : null;
-}
-
-function normalizeInteger(value: unknown) {
-  if (typeof value === "number" && Number.isInteger(value)) {
-    return value;
-  }
-
-  const parsed = Number.parseInt(normalizeString(value), 10);
-  return Number.isInteger(parsed) ? parsed : null;
-}
-
-function normalizeJsonRecord(value: unknown) {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : {};
-}
-
-function parseTicketId(value: string) {
-  const parsed = Number.parseInt(value.trim(), 10);
-  return Number.isInteger(parsed) && parsed > 0 ? parsed : 0;
-}
 
 export async function POST(request: NextRequest, { params }: { params: Promise<{ ticketId: string }> }) {
   const { context, error } = await requireSiteSupportApiContext(request);
@@ -48,7 +29,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     return NextResponse.json({ error: "Authentication required." }, { status: 401 });
   }
 
-  const ticketId = parseTicketId((await params).ticketId);
+  const ticketId = parseStrictPositiveInt((await params).ticketId);
   if (!ticketId) {
     return NextResponse.json({ error: "Invalid ticket id." }, { status: 400 });
   }
@@ -64,14 +45,14 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     ticket = await addSupportTicketTask({
       siteId: site.id,
       ticketId,
-      type: normalizeInteger(body.type) ?? SUPPORT_TICKET_TASK_TYPE_INTERNAL,
-      status: normalizeInteger(body.status) ?? SUPPORT_TICKET_TASK_STATUS_OPEN,
-      flags: normalizeInteger(body.flags) ?? 0,
-      sortOrder: normalizeInteger(body.sortOrder) ?? undefined,
-      assigneeUserId: normalizeInteger(body.assigneeUserId),
+      type: normalizeNullableInteger(body.type) ?? SUPPORT_TICKET_TASK_TYPE_INTERNAL,
+      status: normalizeNullableInteger(body.status) ?? SUPPORT_TICKET_TASK_STATUS_OPEN,
+      flags: normalizeNullableInteger(body.flags) ?? 0,
+      sortOrder: normalizeNullableInteger(body.sortOrder) ?? undefined,
+      assigneeUserId: normalizeNullableInteger(body.assigneeUserId),
       title,
       description: normalizeNullableString(body.description),
-      meta: normalizeJsonRecord(body.meta),
+      meta: toPhiRecord(body.meta),
       dueAt: normalizeNullableString(body.dueAt),
       completedAt: normalizeNullableString(body.completedAt),
       createdByUserId: context.session?.userId ?? null,

@@ -3,6 +3,8 @@ import "server-only";
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 
+import { normalizeString } from "@/lib/helpers/request";
+
 export type PhiAdminLogLevel = "debug" | "info" | "warn" | "error";
 
 export type PhiAdminLogRecord = {
@@ -78,10 +80,6 @@ function resolveJournalUnits() {
   }
 
   return ["phi-server-dev.service", "phis-site-skeleton-dev.service"];
-}
-
-function normalizeString(value: unknown) {
-  return typeof value === "string" ? value.trim() : "";
 }
 
 function normalizeNumber(value: unknown): number | string | null {

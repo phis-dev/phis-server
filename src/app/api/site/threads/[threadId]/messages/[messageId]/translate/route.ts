@@ -8,18 +8,13 @@ import {
   recordDetectedThreadMessageSourceLang,
 } from "@/db/threads";
 import { requireSiteAuthenticatedApiContext } from "@/lib/guards/site-admin-api";
-import { normalizeString, readRequestBody } from "@/lib/helpers/request";
+import { normalizeString, parseStrictPositiveInt, readRequestBody } from "@/lib/helpers/request";
 import { resolvePhiLocaleCapability } from "@/lib/locale";
 import { logRuntimeEvent, normalizeLogThrowable } from "@/lib/log";
 import { resolvePhisTranslationOffer } from "@/lib/translation-offer";
 import { requestPhisTranslationUnit } from "@/lib/translation-unit";
 
 export const dynamic = "force-dynamic";
-
-function parsePositiveId(value: string) {
-  const parsed = Number.parseInt(value.trim(), 10);
-  return Number.isInteger(parsed) && parsed > 0 ? parsed : 0;
-}
 
 /**
  * One message, read in another language, and nothing kept.
@@ -52,8 +47,8 @@ export async function POST(
   }
 
   const { threadId: rawThreadId, messageId: rawMessageId } = await params;
-  const threadId = parsePositiveId(rawThreadId);
-  const messageId = parsePositiveId(rawMessageId);
+  const threadId = parseStrictPositiveInt(rawThreadId);
+  const messageId = parseStrictPositiveInt(rawMessageId);
   if (!threadId || !messageId) {
     return NextResponse.json({ error: "Invalid message id." }, { status: 400 });
   }

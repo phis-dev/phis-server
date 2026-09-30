@@ -19,7 +19,6 @@ import { nextMediaSpaceError } from "@/lib/media-response";
 import { getSessionFromRequest } from "@/db/user-sessions";
 import { createPhisMediaStorageServiceForProfile } from "@/lib/media-storage";
 import { logRuntimeEvent, normalizeLogThrowable } from "@/lib/log";
-import { PHIS_CMS_AREA_KEYS } from "@/lib/constants/cms-areas";
 import {
   createPhiMediaUploadSessionToken,
   PhiMediaUploadSessionStatus,
@@ -41,7 +40,7 @@ import { discardReleasedPhiMediaUploadStaging } from "@/lib/media-upload-staging
 import { findPhiMediaUploadToResume } from "@/lib/media-upload-resume";
 import { nextMediaError, readJsonBody } from "../_helpers";
 import { normalizeString } from "@/lib/helpers/request";
-import { PHIS_AREA_HEADER } from "@/lib/constants/http-headers";
+import { readPhisMediaRequestArea } from "@/lib/media-request-area";
 
 export const dynamic = "force-dynamic";
 
@@ -107,25 +106,13 @@ function normalizeUploadMeta(value: unknown) {
  * what the Space is for. What is worth knowing is which rule spoke, so `reason` carries the same key
  * the caller was given, and the two can be matched.
  */
-function normalizeAreaKey(value: string | null | undefined) {
-  const normalized = value?.trim().toLowerCase() ?? "";
-  return PHIS_CMS_AREA_KEYS.includes(normalized as (typeof PHIS_CMS_AREA_KEYS)[number])
-    ? normalized
-    : null;
-}
-
-/** The shell the call came from, which only the Client can say. */
-function resolveRequestArea(request: NextRequest) {
-  return normalizeAreaKey(request.headers.get(PHIS_AREA_HEADER));
-}
-
 function refuseUpload(
   request: NextRequest,
   context: { siteKey: string; userId: number | null },
   refusal: { reason: string; message: string; status: number; meta?: Record<string, unknown> },
 ) {
   logRuntimeEvent("warn", "media.upload.refused", {
-    area: resolveRequestArea(request),
+    area: readPhisMediaRequestArea(request),
     message: refusal.message,
     siteKey: context.siteKey,
     userId: context.userId,
@@ -239,7 +226,7 @@ export async function POST(request: NextRequest) {
     // Its own response shape, so the reason is logged here rather than inside `refuseUpload`.
     const response = nextMediaSpaceError(resolution.reason);
     logRuntimeEvent("warn", "media.upload.refused", {
-      area: resolveRequestArea(request),
+      area: readPhisMediaRequestArea(request),
       message: "Upload refused: the Media Space could not be resolved for this actor.",
       siteKey: site.key,
       userId: authSession.userId,
@@ -389,7 +376,7 @@ export async function POST(request: NextRequest) {
     : null;
   if (resumed) {
     logRuntimeEvent("info", "media.upload.resumed", {
-      area: resolveRequestArea(request),
+      area: readPhisMediaRequestArea(request),
       message:
         `Upload session ${resumed.token} was taken over with ${resumed.uploaded.length} part(s) already stored.`,
       siteKey: site.key,
@@ -513,7 +500,7 @@ export async function POST(request: NextRequest) {
       // The reservation was taken before the session row; without the row nothing can release it later.
       await releaseMediaSpaceReservation({ spaceId: space.id, bytes: size });
       logRuntimeEvent("error", "media.upload_session.create_failed", {
-        area: resolveRequestArea(request),
+        area: readPhisMediaRequestArea(request),
         message: "Failed to create upload session: the insert returned no row.",
         siteKey: site.key,
         userId: authSession.userId,
@@ -566,7 +553,7 @@ export async function POST(request: NextRequest) {
      * them. `normalizeLogThrowable` because a raw throwable is not reliably serializable.
      */
     logRuntimeEvent("error", "media.upload_session.create_failed", {
-      area: resolveRequestArea(request),
+      area: readPhisMediaRequestArea(request),
       message: "Failed to create upload session: the database refused the row.",
       siteKey: site.key,
       userId: authSession.userId,

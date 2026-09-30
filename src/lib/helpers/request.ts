@@ -5,18 +5,83 @@
  * instead of re-declaring them per route, so parsing behavior cannot drift between endpoints.
  */
 
+import { NextResponse } from "next/server";
+
+import { isPhiRecord } from "./record";
+
 export function normalizeString(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
 }
 
-/** Reads a JSON object body; anything else — invalid JSON, arrays, primitives — yields `{}`. */
-export async function readRequestBody(request: Request) {
+/** A trimmed string, or null where nothing but whitespace -- or no string at all -- was sent. */
+export function normalizeNullableString(value: unknown) {
+  return normalizeString(value) || null;
+}
+
+/**
+ * A whole number as a JSON body or a query string carries it, or null for anything else.
+ *
+ * Signed, because status and kind codes are not ids; a string has to be the number and nothing more,
+ * so `"12abc"` is refused instead of being read as 12.
+ */
+export function normalizeNullableInteger(value: unknown) {
+  if (typeof value === "number") {
+    return Number.isSafeInteger(value) ? value : null;
+  }
+  if (typeof value !== "string" || !/^-?\d+$/u.test(value.trim())) {
+    return null;
+  }
+  const parsed = Number(value.trim());
+  return Number.isSafeInteger(parsed) ? parsed : null;
+}
+
+/**
+ * The positive ids of a submitted list, each read as `parseStrictPositiveInt` reads one.
+ *
+ * Numbers and digit strings alike: a declared Form's Select holds strings, a client holding ids sends
+ * numbers, and both reach the same routes. Entries that are neither are dropped, as the lists were
+ * always filtered rather than refused.
+ */
+export function normalizePositiveIdArray(value: unknown) {
+  return Array.isArray(value)
+    ? value
+        .map((entry) => parseStrictPositiveInt(entry))
+        .filter((entry): entry is number => entry !== null)
+    : [];
+}
+
+/**
+ * Reads a JSON object body, or null for anything else: invalid JSON, an array, a primitive.
+ *
+ * For the routes that refuse such a body rather than reading it as empty; `readRequestBody` below is
+ * the lenient twin for the routes whose every field is optional.
+ */
+export async function readJsonObjectBody(request: Request) {
   try {
     const body = (await request.json()) as unknown;
-    return body && typeof body === "object" && !Array.isArray(body) ? (body as Record<string, unknown>) : {};
+    return isPhiRecord(body) ? body : null;
   } catch {
-    return {};
+    return null;
   }
+}
+
+/**
+ * A JSON object body, or the 400 that refuses anything else.
+ *
+ * Nine routes wrote this guard by hand, with the same condition and their own wording; the wording is
+ * still theirs to give.
+ */
+export async function requireJsonObjectBody(request: Request, error = "Invalid JSON body.") {
+  const body = await readJsonObjectBody(request);
+  if (!body) {
+    return { ok: false as const, response: NextResponse.json({ error }, { status: 400 }) };
+  }
+  return { ok: true as const, body };
+}
+
+/** Reads a JSON object body; anything else — invalid JSON, arrays, primitives — yields `{}`. */
+export async function readRequestBody(request: Request) {
+  return (await readJsonObjectBody(request)) ?? {};
 }
 
 /**
@@ -67,6 +132,29 @@ export function parseStrictPositiveInt(value: unknown) {
 
 export function parsePositiveIntWithFallback(value: string | null | undefined, fallback: number) {
   return parsePositiveInt(value) ?? fallback;
+}
+
+/** The page size a list answers with when the caller names none. */
+export const PHI_DEFAULT_PAGE_SIZE = 25;
+
+/** The most rows one page of a list may ask for, whatever the caller names. */
+export const PHI_MAX_PAGE_SIZE = 100;
+
+/**
+ * `page` and `pageSize` from a list's query string: one-based, positive, and capped at
+ * `PHI_MAX_PAGE_SIZE`. Five list routes carried the same two lines with the same two numbers in them.
+ */
+export function parsePhiPagination(
+  searchParams: URLSearchParams,
+  defaultPageSize: number = PHI_DEFAULT_PAGE_SIZE,
+) {
+  return {
+    page: parsePositiveIntWithFallback(searchParams.get("page"), 1),
+    pageSize: Math.min(
+      parsePositiveIntWithFallback(searchParams.get("pageSize"), defaultPageSize),
+      PHI_MAX_PAGE_SIZE,
+    ),
+  };
 }
 
 /**

@@ -4,19 +4,13 @@ import { PhisThreadStatus, type PhisThreadStatusValue } from "@phis/contracts/th
 
 import { getThreadDetail, PhisThreadError, setThreadStatus } from "@/db/threads";
 import { requireSiteAuthenticatedApiContext } from "@/lib/guards/site-admin-api";
-import { readRequestBody } from "@/lib/helpers/request";
+import {
+  normalizeNullableInteger,
+  parseStrictPositiveInt,
+  readRequestBody,
+} from "@/lib/helpers/request";
 
 export const dynamic = "force-dynamic";
-
-function parsePositiveId(value: string) {
-  const parsed = Number.parseInt(value.trim(), 10);
-  return Number.isInteger(parsed) && parsed > 0 ? parsed : 0;
-}
-
-function parseOptionalInt(value: string | null) {
-  const parsed = Number.parseInt(value?.trim() ?? "", 10);
-  return Number.isInteger(parsed) ? parsed : null;
-}
 
 export async function GET(request: NextRequest, { params }: { params: Promise<{ threadId: string }> }) {
   const { context, error } = await requireSiteAuthenticatedApiContext(request);
@@ -30,15 +24,15 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
     return NextResponse.json({ error: "Authentication required." }, { status: 401 });
   }
 
-  const threadId = parsePositiveId((await params).threadId);
+  const threadId = parseStrictPositiveInt((await params).threadId);
   if (!threadId) {
     return NextResponse.json({ error: "Invalid thread id." }, { status: 400 });
   }
 
   const { searchParams } = new URL(request.url);
   const thread = await getThreadDetail(site.id, { kind: "user", userId }, threadId, {
-    messageLimit: parseOptionalInt(searchParams.get("messageLimit")) ?? undefined,
-    beforeMessageId: parseOptionalInt(searchParams.get("beforeMessageId")),
+    messageLimit: normalizeNullableInteger(searchParams.get("messageLimit")) ?? undefined,
+    beforeMessageId: normalizeNullableInteger(searchParams.get("beforeMessageId")),
   });
   if (!thread) {
     return NextResponse.json({ error: "Thread not found." }, { status: 404 });
@@ -60,7 +54,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     return NextResponse.json({ error: "Authentication required." }, { status: 401 });
   }
 
-  const threadId = parsePositiveId((await params).threadId);
+  const threadId = parseStrictPositiveInt((await params).threadId);
   if (!threadId) {
     return NextResponse.json({ error: "Invalid thread id." }, { status: 400 });
   }

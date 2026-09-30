@@ -10,6 +10,7 @@ import {
 } from "@/db/site-cms-references";
 import { clearSiteConfigCache } from "@/db/site-config";
 import { getPool, withTransaction } from "@/lib/db";
+import { hasPhiFlag } from "@/lib/helpers/flags";
 import { PhiCmsRevisionFlags } from "@phis/contracts/cms";
 import { isPhiRecord } from "@/lib/helpers/record";
 
@@ -533,7 +534,7 @@ export async function publishSiteThemeRevision(
     }
 
     const tree = parseSiteThemeRevisionTree(revision.treeJson, normalizedKey);
-    if ((revision.flags & PhiCmsRevisionFlags.Published) === 0) {
+    if (!hasPhiFlag(revision.flags, PhiCmsRevisionFlags.Published)) {
       await client.query(
         `UPDATE phis.site_theme_revisions
          SET flags = flags | $2

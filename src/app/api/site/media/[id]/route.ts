@@ -14,23 +14,12 @@ import {
 } from "@/lib/media-asset-delete";
 import { logRuntimeEvent } from "@/lib/log";
 import { serializeMediaAssetForDetail } from "@/lib/media-response";
-import { PHIS_CMS_AREA_KEYS, resolvePhisCmsAreaKey } from "@/lib/constants/cms-areas";
+import { resolvePhisCmsAreaKey } from "@/lib/constants/cms-areas";
 import { MediaAssetUpdateError, updateSiteMediaAsset } from "@/lib/media-asset-update";
 import { parsePositiveInt } from "@/lib/helpers/request";
-import { PHIS_AREA_HEADER } from "@/lib/constants/http-headers";
+import { readPhisMediaRequestArea } from "@/lib/media-request-area";
 
 export const dynamic = "force-dynamic";
-
-function normalizeAreaKey(value: string | null | undefined) {
-  const normalized = value?.trim().toLowerCase() ?? "";
-  return PHIS_CMS_AREA_KEYS.includes(normalized as (typeof PHIS_CMS_AREA_KEYS)[number])
-    ? normalized
-    : null;
-}
-
-function resolveRequestArea(request: NextRequest) {
-  return normalizeAreaKey(request.headers.get(PHIS_AREA_HEADER));
-}
 
 async function readJsonBody(request: NextRequest) {
   try {
@@ -182,7 +171,7 @@ export async function DELETE(
 ) {
   let siteKey: string | null = null;
   let userId: number | null = null;
-  const area = resolveRequestArea(request);
+  const area = readPhisMediaRequestArea(request);
   try {
     const resolvedParams = await Promise.resolve(params);
     const assetId = parsePositiveInt(resolvedParams.id);

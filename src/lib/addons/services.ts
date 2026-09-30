@@ -1,12 +1,9 @@
 import "server-only";
 
 import { getPhisAddonInstalledManifest } from "@/lib/addons/installed";
-import {
-  getPhisAddonRegistryRecord,
-  isPhisAddonEnabledForSite,
-} from "@/db/server-addons";
 import { isPhisAddonCapabilityDeliverable } from "@/lib/addons/core-capabilities";
 import { isPhisServiceInterfaceCurrent } from "@/lib/addons/core-services";
+import { verifyPhisAddonRegistryState } from "@/lib/addons/registry-state";
 import {
   digestPhisAddonManifest,
   validatePhisAddonManifest,
@@ -147,40 +144,21 @@ export async function resolvePhisServiceProvider(
     }
   }
 
-  const registry = await getPhisAddonRegistryRecord(addonId);
-  if (!registry) {
-    throw new PhiServiceProviderUnavailableError(serviceKind, providerKey, `${addonId} is not reconciled`);
-  }
-  if (!registry.globallyEnabled) {
-    throw new PhiServiceProviderUnavailableError(serviceKind, providerKey, `${addonId} is not globally enabled`);
-  }
-  if (
-    registry.packageName !== entry.manifest.packageName ||
-    registry.packageVersion !== entry.manifest.packageVersion ||
-    registry.serverAbi !== entry.manifest.serverAbi ||
-    registry.manifestDigest !== entry.manifestDigest
-  ) {
+  // The same registry verdict HTTP dispatch, jobs and event delivery ask for, so a provider cannot run
+  // against a registry row those three would refuse.
+  const registryState = await verifyPhisAddonRegistryState(entry, options?.siteId ?? null);
+  if (registryState === "hidden") {
     throw new PhiServiceProviderUnavailableError(
       serviceKind,
       providerKey,
-      `${addonId} in the registry does not match this build`,
+      `${addonId} is disabled globally or not enabled for this Site`,
     );
   }
-  if (registry.migrationVersion < entry.manifest.migrationVersion) {
+  if (registryState !== "ready") {
     throw new PhiServiceProviderUnavailableError(
       serviceKind,
       providerKey,
-      `${addonId} has migration ${registry.migrationVersion} applied and needs ${entry.manifest.migrationVersion}`,
-    );
-  }
-  if (
-    options?.siteId != null &&
-    !(await isPhisAddonEnabledForSite(addonId, options.siteId))
-  ) {
-    throw new PhiServiceProviderUnavailableError(
-      serviceKind,
-      providerKey,
-      `${addonId} is not enabled for this Site`,
+      `${addonId} is not ready: the registry does not describe this build`,
     );
   }
 

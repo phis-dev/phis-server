@@ -14,7 +14,7 @@ import { ensureUserAccount, getUserAccountById, getUserAccountByEmail, updateUse
 import { upsertUserSiteMembership } from "@/db/user-site-memberships";
 import { getUserProfileByUserId, upsertUserProfile } from "@/db/user-profiles";
 import { guardApiV1 } from "@/lib/api-v1-guard";
-import { sendTemplatedEmail } from "@/lib/email-templates";
+import { notifyPhiPerson } from "@/lib/notifications/enqueue";
 import { getSiteMailConfig } from "@/lib/form-config";
 import { createMedusaCustomer } from "@/lib/medusa";
 import { logRuntimeEvent } from "@/lib/log";
@@ -340,36 +340,28 @@ export async function POST(request: Request) {
     });
 
     try {
-      const messageId = await sendTemplatedEmail({
-        to: normalizedEmail,
-        site,
-        siteConfig,
-        locale: intent.locale,
-        template: "registration_welcome",
-        recipientName,
+      // The account exists by now, so the row names it and the address is resolved when it is sent. The
+      // name travels anyway: this request has just read one out of a customer record, which the profile
+      // does not necessarily carry.
+      const notificationId = await notifyPhiPerson({
+        siteId: site.id,
+        occasion: "registration_welcome",
+        recipient: { userId: user.id, locale: intent.locale },
+        params: { recipientName },
       });
 
-      logRuntimeEvent("info", "mail.sent", {
-        message: "Registration welcome email sent.",
+      logRuntimeEvent("info", "registration.welcome_queued", {
+        message: "Registration welcome email queued.",
         siteKey: site.key,
         userId: user.id,
-        meta: {
-          intentId: intent.id,
-          email: intent.email,
-          messageId,
-          template: "registration_welcome",
-        },
+        meta: { intentId: intent.id, notificationId },
       });
     } catch (error) {
       logRuntimeEvent("error", "mail.failed", {
-        message: "Registration welcome email failed.",
+        message: "Registration welcome email could not be queued.",
         siteKey: site.key,
         userId: user.id,
-        meta: {
-          intentId: intent.id,
-          email: intent.email,
-          template: "registration_welcome",
-        },
+        meta: { intentId: intent.id },
         error,
       });
     }

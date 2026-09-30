@@ -5,7 +5,13 @@ import type { PhisThreadKindValue, PhisThreadStatusValue } from "@phis/contracts
 import { createThread, listThreadsForUser, PhisThreadError } from "@/db/threads";
 import { requireSiteAuthenticatedApiContext } from "@/lib/guards/site-admin-api";
 import { logRuntimeEvent } from "@/lib/log";
-import { normalizeString, parsePositiveIntWithFallback, readRequestBody } from "@/lib/helpers/request";
+import {
+  normalizeNullableInteger,
+  normalizePositiveIdArray,
+  normalizeString,
+  parsePositiveIntWithFallback,
+  readRequestBody,
+} from "@/lib/helpers/request";
 
 export const dynamic = "force-dynamic";
 
@@ -18,27 +24,6 @@ export const dynamic = "force-dynamic";
  * not reproduced here -- a guard that tried to decide it would be the second answer that eventually
  * disagrees with the first.
  */
-
-function normalizeInteger(value: unknown) {
-  if (typeof value === "number" && Number.isInteger(value)) {
-    return value;
-  }
-  const parsed = Number.parseInt(normalizeString(value), 10);
-  return Number.isInteger(parsed) ? parsed : null;
-}
-
-function normalizeIdArray(value: unknown) {
-  return Array.isArray(value)
-    ? value
-        .map((entry) => normalizeInteger(entry))
-        .filter((entry): entry is number => entry != null && entry > 0)
-    : [];
-}
-
-function parseOptionalInt(value: string | null) {
-  const parsed = Number.parseInt(value?.trim() ?? "", 10);
-  return Number.isInteger(parsed) ? parsed : null;
-}
 
 function parseBoolean(value: string | null) {
   const normalized = value?.trim().toLowerCase() ?? "";
@@ -62,8 +47,8 @@ export async function GET(request: NextRequest) {
     page: parsePositiveIntWithFallback(searchParams.get("page"), 1),
     pageSize: Math.min(parsePositiveIntWithFallback(searchParams.get("pageSize"), 25), 100),
     unreadOnly: parseBoolean(searchParams.get("unreadOnly")),
-    kind: parseOptionalInt(searchParams.get("kind")) as PhisThreadKindValue | null,
-    status: parseOptionalInt(searchParams.get("status")) as PhisThreadStatusValue | null,
+    kind: normalizeNullableInteger(searchParams.get("kind")) as PhisThreadKindValue | null,
+    status: normalizeNullableInteger(searchParams.get("status")) as PhisThreadStatusValue | null,
   });
 
   return NextResponse.json(result);
@@ -84,7 +69,7 @@ export async function POST(request: NextRequest) {
   const body = await readRequestBody(request);
   const message = normalizeString(body.message);
   const subject = normalizeString(body.subject);
-  const kind = normalizeInteger(body.kind);
+  const kind = normalizeNullableInteger(body.kind);
   if (!message) {
     return NextResponse.json({ error: "message is required." }, { status: 400 });
   }
@@ -115,11 +100,11 @@ export async function POST(request: NextRequest) {
       subject,
       message,
       messageMarkdown: normalizeString(body.messageMarkdown) || null,
-      messageFlags: normalizeInteger(body.messageFlags) ?? 0,
-      participantUserIds: normalizeIdArray(body.participantUserIds),
-      participantGroupIds: normalizeIdArray(body.participantGroupIds),
+      messageFlags: normalizeNullableInteger(body.messageFlags) ?? 0,
+      participantUserIds: normalizePositiveIdArray(body.participantUserIds),
+      participantGroupIds: normalizePositiveIdArray(body.participantGroupIds),
       // The writer's own files, hung on the opening message. Who may read them is this message's answer.
-      assetIds: normalizeIdArray(body.assetIds),
+      assetIds: normalizePositiveIdArray(body.assetIds),
       createdByUserId: userId,
     });
   } catch (cause) {

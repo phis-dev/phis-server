@@ -21,7 +21,7 @@ import { PHI_BASE_ROLE_OPTIONS } from "@/lib/constants/phi-base-role-metadata";
 import { PhiUserAccountFlag } from "@/lib/constants/user-account-flags";
 import { buildPasswordResetUrlForRequest } from "@/lib/email";
 import { getSiteMailConfig } from "@/lib/form-config";
-import { sendTemplatedEmail } from "@/lib/email-templates";
+import { notifyPhiPerson } from "@/lib/notifications/enqueue";
 import { logRuntimeEvent, normalizeLogThrowable } from "@/lib/log";
 import { hashPassword } from "@/lib/password";
 import { hasPhiFlag } from "@/lib/helpers/flags";
@@ -165,19 +165,13 @@ async function sendPasswordResetMail(input: {
     resetToken.token,
     input.locale,
   );
-  const profile = await getUserProfileByUserId(input.userId);
-  const recipientName = profile
-    ? buildRecipientName(profile.firstName, profile.lastName) || input.email
-    : input.email;
-
-  return sendTemplatedEmail({
-    to: input.email,
-    site: input.site,
-    siteConfig,
-    locale: input.locale,
-    template: "password_reset",
-    recipientName,
-    verificationUrl: resetUrl,
+  // Neither the address nor the name goes in: the outbox resolves both when it sends, which is also what
+  // keeps an administrator from mailing an address the account no longer has.
+  return notifyPhiPerson({
+    siteId: input.site.id,
+    occasion: "password_reset",
+    recipient: { userId: input.userId, locale: input.locale },
+    params: { verificationUrl: resetUrl },
   });
 }
 

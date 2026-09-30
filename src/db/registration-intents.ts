@@ -3,6 +3,7 @@ import "server-only";
 import { createHash, randomBytes } from "node:crypto";
 
 import { getPool, withTransaction } from "@/lib/db";
+import { hasPhiFlag } from "@/lib/helpers/flags";
 import { encryptRegistrationPassword } from "@/lib/registration-secret";
 
 const REGISTRATION_INTENT_FLAG_NEWSLETTER_OPT_IN = 1 << 0;
@@ -92,10 +93,6 @@ function buildFullName(firstName: string | null, lastName: string | null) {
   return [firstName?.trim() ?? "", lastName?.trim() ?? ""].filter(Boolean).join(" ").trim();
 }
 
-function hasFlag(value: number, flag: number) {
-  return (value & flag) !== 0;
-}
-
 function buildIntentFlags(newsletterOptIn: boolean) {
   return newsletterOptIn ? REGISTRATION_INTENT_FLAG_NEWSLETTER_OPT_IN : 0;
 }
@@ -130,7 +127,7 @@ function mapVerificationRow(
     fullName: buildFullName(row.first_name, row.last_name),
     companyName: row.company_name,
     locale: row.locale,
-    newsletterOptIn: hasFlag(row.flags, REGISTRATION_INTENT_FLAG_NEWSLETTER_OPT_IN),
+    newsletterOptIn: hasPhiFlag(row.flags, REGISTRATION_INTENT_FLAG_NEWSLETTER_OPT_IN),
     status: row.status,
     verificationTokenExpiresAt: row.verification_token_expires_at,
     verifiedAt: row.verified_at,
@@ -394,7 +391,7 @@ export async function getLatestRegistrationIntentProfileByEmail(siteId: number, 
     fullName: buildFullName(row.first_name, row.last_name),
     companyName: row.company_name,
     locale: row.locale,
-    newsletterOptIn: hasFlag(row.flags, REGISTRATION_INTENT_FLAG_NEWSLETTER_OPT_IN),
+    newsletterOptIn: hasPhiFlag(row.flags, REGISTRATION_INTENT_FLAG_NEWSLETTER_OPT_IN),
     status: row.status,
     createdAt: row.created_at,
     verifiedAt: row.verified_at,
@@ -448,7 +445,7 @@ export async function searchLatestRegistrationIntentProfiles(siteId: number, que
         fullName: buildFullName(row.first_name, row.last_name),
         companyName: row.company_name,
         locale: row.locale,
-        newsletterOptIn: hasFlag(row.flags, REGISTRATION_INTENT_FLAG_NEWSLETTER_OPT_IN),
+        newsletterOptIn: hasPhiFlag(row.flags, REGISTRATION_INTENT_FLAG_NEWSLETTER_OPT_IN),
         status: row.status,
         createdAt: row.created_at,
         verifiedAt: row.verified_at,

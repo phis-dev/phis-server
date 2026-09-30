@@ -6,7 +6,7 @@ const mocks = vi.hoisted(() => ({
   getByEmail: vi.fn(),
   ensureAccount: vi.fn(),
   verifyPassword: vi.fn(),
-  sendMail: vi.fn(),
+  notify: vi.fn(),
   createIntent: vi.fn(),
 }));
 
@@ -42,7 +42,7 @@ vi.mock("@/db/registration-intents", () => ({ createRegistrationIntent: mocks.cr
 vi.mock("@/db/user-profiles", () => ({ getUserProfileByUserId: vi.fn(), upsertUserProfile: vi.fn() }));
 vi.mock("@/db/user-site-memberships", () => ({ upsertUserSiteMembership: vi.fn() }));
 vi.mock("@/lib/email", () => ({ buildVerificationUrlForRequest: () => "https://site.test/verify" }));
-vi.mock("@/lib/email-templates", () => ({ sendTemplatedEmail: mocks.sendMail }));
+vi.mock("@/lib/notifications/enqueue", () => ({ notifyPhiPerson: mocks.notify }));
 vi.mock("@/lib/log", () => ({ logRuntimeEvent: vi.fn() }));
 
 import { POST } from "./route";
@@ -69,7 +69,7 @@ function account(overrides: Record<string, unknown> = {}) {
 }
 
 function noticeSent() {
-  return mocks.sendMail.mock.calls.some(([input]) => input.template === "registration_account_exists");
+  return mocks.notify.mock.calls.some(([input]) => input.occasion === "registration_account_exists");
 }
 
 /**
@@ -80,7 +80,7 @@ describe("registration and existing addresses", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.verifyPassword.mockResolvedValue(true);
-    mocks.sendMail.mockResolvedValue("message-id");
+    mocks.notify.mockResolvedValue("1");
     mocks.createIntent.mockResolvedValue({
       id: 1, email: "new@example.test", firstName: "Paula", lastName: "Person", locale: "en",
       verificationToken: "token", fullName: "Paula Person",
