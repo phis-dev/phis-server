@@ -50,6 +50,21 @@ export function parsePositiveInt(value: string | null | undefined) {
   return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
 }
 
+/**
+ * A positive integer id and nothing near it: `"12abc"`, `"1.5"`, `-3` and `0` are refused rather than
+ * cut down to something that names another row.
+ */
+export function parseStrictPositiveInt(value: unknown) {
+  if (typeof value === "number") {
+    return Number.isSafeInteger(value) && value > 0 ? value : null;
+  }
+  if (typeof value !== "string" || !/^\d+$/u.test(value.trim())) {
+    return null;
+  }
+  const parsed = Number(value.trim());
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
 export function parsePositiveIntWithFallback(value: string | null | undefined, fallback: number) {
   return parsePositiveInt(value) ?? fallback;
 }

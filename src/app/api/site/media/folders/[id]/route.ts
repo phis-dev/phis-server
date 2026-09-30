@@ -9,7 +9,7 @@ import {
 import { logRuntimeEvent, normalizeLogThrowable } from "@/lib/log";
 import { resolveAuthorizedMediaSpace } from "@/db/media-spaces";
 import { nextMediaSpaceError } from "@/lib/media-response";
-import { normalizeString, parsePositiveInt } from "@/lib/helpers/request";
+import { normalizeString, parsePositiveInt, parseStrictPositiveInt } from "@/lib/helpers/request";
 
 export const dynamic = "force-dynamic";
 
@@ -130,8 +130,13 @@ export async function PATCH(
 
     const sortOrder = Object.hasOwn(payload, "sortOrder") ? normalizeNullableInt(payload.sortOrder) : undefined;
     const flags = Object.hasOwn(payload, "flags") ? normalizeFlags(payload.flags) : undefined;
-    const parentId = Object.hasOwn(payload, "parentId") ? normalizeNullableInt(payload.parentId) : undefined;
-    if (Object.hasOwn(payload, "parentId") && parentId === 0) {
+    // `null` moves the Folder to the root; anything else has to name a Folder, not fall back to the root.
+    const parentId = !Object.hasOwn(payload, "parentId")
+      ? undefined
+      : payload.parentId === null
+        ? null
+        : parseStrictPositiveInt(payload.parentId);
+    if (Object.hasOwn(payload, "parentId") && payload.parentId !== null && parentId === null) {
       return NextResponse.json({ error: "Invalid parentId value." }, { status: 400 });
     }
     if (Object.hasOwn(payload, "sortOrder") && sortOrder === null) {

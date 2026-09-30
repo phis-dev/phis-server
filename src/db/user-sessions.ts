@@ -51,6 +51,15 @@ function toIsoString(value: string | Date | null) {
   return value instanceof Date ? value.toISOString() : new Date(value).toISOString();
 }
 
+// Only this file writes the column, from the same list; a state it cannot read is a broken row. Reading
+// it as `complete` would hand a half-finished login a full session.
+function readSessionAuthState(value: unknown) {
+  if (!isPhiAuthSessionState(value)) {
+    throw new Error(`Unknown session auth_state ${String(value)}.`);
+  }
+  return value;
+}
+
 function mapSessionRow(row: UserSessionRecord) {
   return {
     id: row.id,
@@ -59,9 +68,7 @@ function mapSessionRow(row: UserSessionRecord) {
     sessionSecretHash: row.session_secret_hash,
     authenticatedAt: toIsoString(row.authenticated_at),
     assuranceLevel: row.assurance_level,
-    authState: isPhiAuthSessionState(row.auth_state)
-      ? row.auth_state
-      : PHI_AUTH_SESSION_STATES.complete,
+    authState: readSessionAuthState(row.auth_state),
     authPolicyRevision: row.auth_policy_revision,
     authMethodKeys: row.auth_method_keys,
     nextPath: row.next_path,

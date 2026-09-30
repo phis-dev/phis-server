@@ -9,7 +9,7 @@ import {
 import { logRuntimeEvent, normalizeLogThrowable } from "@/lib/log";
 import { resolveAuthorizedMediaSpace } from "@/db/media-spaces";
 import { nextMediaSpaceError, serializeMediaSpace } from "@/lib/media-response";
-import { normalizeString, parsePositiveInt } from "@/lib/helpers/request";
+import { normalizeString, parsePositiveInt, parseStrictPositiveInt } from "@/lib/helpers/request";
 
 export const dynamic = "force-dynamic";
 
@@ -79,6 +79,12 @@ export async function POST(request: NextRequest) {
   if (!name) {
     return NextResponse.json({ error: "Missing Folder name." }, { status: 400 });
   }
+  // Absent or empty creates the Folder at the root; a value that names no Folder is refused.
+  const statedParentId = normalizeString(formData.get("parentId"));
+  const parentId = statedParentId ? parseStrictPositiveInt(statedParentId) : null;
+  if (statedParentId && parentId === null) {
+    return NextResponse.json({ error: "Invalid parentId value." }, { status: 400 });
+  }
 
   try {
     const resolution = await resolveAuthorizedMediaSpace({
@@ -94,7 +100,7 @@ export async function POST(request: NextRequest) {
     const folder = await createMediaFolder({
       siteId: site.id,
       spaceId: space.id,
-      parentId: parsePositiveInt(formData.get("parentId")?.toString()),
+      parentId,
       name,
       sortOrder: parsePositiveInt(formData.get("sortOrder")?.toString()) ?? 0,
       flags: normalizeFlags(formData.get("flags")) ?? 0,

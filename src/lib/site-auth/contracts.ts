@@ -115,6 +115,22 @@ export function readPhiAuthConfigList(value: unknown): string[] | null {
   return (value as string[]).map((entry) => entry.trim()).filter(Boolean);
 }
 
+/**
+ * Reads a list the Installation already stored. Only `readPhiAuthConfigList` writes it, so an absent key
+ * is "no list" and anything else that is not a list is a broken row: refused, because reading it as no
+ * list would drop a restriction somebody wrote down.
+ */
+export function readStoredPhiAuthConfigList(config: Record<string, unknown>, key: string): string[] {
+  if (config[key] === undefined) {
+    return [];
+  }
+  const list = readPhiAuthConfigList(config[key]);
+  if (!list) {
+    throw new Error("AUTH_PROVIDER_CONFIG_INVALID");
+  }
+  return list;
+}
+
 export type PhiAuthMethodPresentation = {
   label?: string;
   icon?: string;

@@ -12,6 +12,7 @@ import {
   PHI_OIDC_PROVIDER_ISSUERS,
   buildMicrosoftIssuer,
   readPhiAuthConfigList,
+  readStoredPhiAuthConfigList,
 } from "@/lib/site-auth/contracts";
 import { hasSiteAuthSecrets, readSiteAuthSecret } from "@/lib/site-auth/secret-store";
 import { normalizeString } from "@/lib/helpers/request";
@@ -225,9 +226,9 @@ export function serializeAuthInstallation(
      * so the row says "not applicable here" rather than "empty" -- the Form's own field is what decides
      * whether it is offered.
      */
-    scopes: readPhiAuthConfigList(installation.config.scopes)?.join(" ") ?? "",
+    scopes: readStoredPhiAuthConfigList(installation.config, "scopes").join(" "),
     restrictions: restrictionKey
-      ? readPhiAuthConfigList(installation.config[restrictionKey])?.join(" ") ?? ""
+      ? readStoredPhiAuthConfigList(installation.config, restrictionKey).join(" ")
       : null,
     prompt: typeof installation.config.prompt === "string" ? installation.config.prompt : null,
     trustedEmailLink: installation.config.trustedEmailLink === true,

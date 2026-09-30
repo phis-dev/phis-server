@@ -1865,8 +1865,10 @@ async function normalizeRevisionContentWidgetsWithDb(
     // with, which is what makes discard and restore return the content of the revision they keep.
     let contentVersionId = stableWidget.contentVersionId ?? null;
 
+    // Content is only swept once no revision names it, so an id that is not this Site's is a foreign or
+    // forged one: refused, not swapped for a fresh row that silently cuts the widget from its content.
     if (contentId != null && !(await siteContentExistsOnSite(db, siteId, contentId))) {
-      contentId = null;
+      throw new Error(`Widget ${stableWidget.id} references unknown content ${contentId}.`);
     }
 
     if (contentBinding?.storage === "text") {
@@ -2017,13 +2019,13 @@ async function normalizeRevisionContentWidgetsWithDb(
       contentId = contentWrite.contentId;
       contentVersionId = contentWrite.versionId;
     } else if (
-      contentId == null ||
-      contentVersionId == null ||
-      !(await siteContentVersionBelongsTo(db, contentId, contentVersionId))
+      contentId == null
+        ? contentVersionId != null
+        : contentVersionId == null || !(await siteContentVersionBelongsTo(db, contentId, contentVersionId))
     ) {
-      // A pin that is not a version of this content is dropped with the id, as a stale id is above.
-      contentId = null;
-      contentVersionId = null;
+      throw new Error(
+        `Widget ${stableWidget.id} pins content version ${contentVersionId} that is not one of content ${contentId}.`,
+      );
     }
 
     normalizedWidgets.push({

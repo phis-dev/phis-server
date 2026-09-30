@@ -154,7 +154,7 @@ describe("content versions pinned by revisions against PostgreSQL", () => {
     expect(republished.resolvedContent?.textFields.text?.source).toBe("Zwei");
   });
 
-  it("drops a pin that is not a version of the widget's content", async () => {
+  it("refuses a pin that is not a version of the widget's content", async () => {
     const path = `/pgtest-pinning-${Math.random().toString(36).slice(2)}`;
     const first = `/pgtest-pinning-${Math.random().toString(36).slice(2)}`;
     const other = await saveSitePageDraftRevision(
@@ -175,13 +175,19 @@ describe("content versions pinned by revisions against PostgreSQL", () => {
         contentVersionId: required(foreign.contentVersionId) + 1_000_000,
       })),
     };
-    const created = await saveSitePageDraftRevision(site.id, unbound, { createOnly: true });
-    await publish(path, created.revisionId);
+    await expect(saveSitePageDraftRevision(site.id, unbound, { createOnly: true }))
+      .rejects.toThrow(/pins content version/);
+  });
 
-    const widget = await publishedWidget(path);
-    expect(widget.contentId).toBeNull();
-    expect(widget.contentVersionId).toBeNull();
-    expect(widget.resolvedContent).toBeNull();
+  it("refuses a content id this Site does not own", async () => {
+    const path = `/pgtest-pinning-${Math.random().toString(36).slice(2)}`;
+    const input = pageInput(path, "Eins", { contentId: null, contentVersionId: null });
+    const forged = {
+      ...input,
+      contentWidgets: input.contentWidgets.map((widget) => ({ ...widget, contentId: 2_000_000_000 })),
+    };
+    await expect(saveSitePageDraftRevision(site.id, forged, { createOnly: true }))
+      .rejects.toThrow(/references unknown content/);
   });
 });
 
