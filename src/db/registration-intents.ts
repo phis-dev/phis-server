@@ -171,6 +171,12 @@ export async function createRegistrationIntent(
       throw new Error("ACCOUNT_EXISTS");
     }
 
+    /*
+     * The newest request for an address wins, whoever sent the older one. That is deliberate: an intent
+     * proves nothing until its link is opened from the mailbox, so the only person who can finish any of
+     * them is the one who reads that mail -- and for them the latest link is the one that should work.
+     * Somebody else entering the same address can only restart the wait, never take the account.
+     */
     await client.query(
       `UPDATE phis.registration_intents
        SET status = $3,
