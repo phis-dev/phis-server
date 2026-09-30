@@ -63,6 +63,38 @@ function readFormRelayVisitor(request: Request) {
   return address ? `address:${address}` : null;
 }
 
+const WRITE_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
+
+/*
+ * Whether a browser sent this write from somewhere other than the Site's own pages.
+ *
+ * `/api/site/*` authenticates by the session cookie alone, and SameSite=Lax still sends it from a
+ * sibling subdomain; `request.json()` ignores the Content-Type, so a `text/plain` POST -- a simple
+ * request, no preflight -- was read and acted on. The Site's proxy forwards what the browser said about
+ * the request, so it is decided here: `Sec-Fetch-Site` where the browser sends it, which only
+ * `same-origin` passes; else `Origin` against the host the Site forwarded for. Neither header is no
+ * browser context -- the Site's own server-side calls, a CLI -- and nothing a CSRF page can make a
+ * browser send.
+ */
+function isCrossOriginBrowserWrite(request: Request) {
+  const fetchSite = request.headers.get("sec-fetch-site")?.trim().toLowerCase();
+  if (fetchSite) {
+    return fetchSite !== "same-origin";
+  }
+  const origin = request.headers.get("origin")?.trim();
+  if (!origin) {
+    return false;
+  }
+  const host = (request.headers.get("x-forwarded-host") ?? request.headers.get("host"))
+    ?.trim()
+    .toLowerCase();
+  try {
+    return origin === "null" || !host || new URL(origin).host.toLowerCase() !== host;
+  } catch {
+    return true;
+  }
+}
+
 type GuardOptions = {
   requireInternalToken?: boolean;
   allowMissingToken?: boolean;
@@ -126,6 +158,14 @@ export function guardApiV1(request: Request, options: GuardOptions = {}) {
   }
 
   const path = new URL(request.url).pathname;
+  if (
+    path.startsWith("/api/site/") &&
+    WRITE_METHODS.has(request.method) &&
+    isCrossOriginBrowserWrite(request)
+  ) {
+    return NextResponse.json({ error: "Cross-origin write refused." }, { status: 403 });
+  }
+
   const config = getPhisConfigSync();
   const shouldRateLimit = tokenMode !== "internal" && config.api?.disableRateLimit !== true;
 

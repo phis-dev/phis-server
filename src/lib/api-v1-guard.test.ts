@@ -114,3 +114,45 @@ describe("the limit on relayed form submissions", () => {
     expect(answers.every((answer) => answer === null)).toBe(true);
   });
 });
+
+/*
+ * `/api/site/*` authenticates by the session cookie, so a write is only taken from the Site's own pages:
+ * what the browser says about where it came from, forwarded by the Site's proxy, decides.
+ */
+describe("cross-origin writes to /api/site", () => {
+  const CONFIG = { api: { internalToken: "internal-token", publicToken: "public-token" } };
+
+  const write = (headers: Record<string, string>, method = "POST", path = "/api/site/groups") => guardApiV1(
+    new Request(`https://core.test${path}`, {
+      method,
+      headers: { "x-phis-token": "internal-token", "user-agent": "phis-ui/test", ...headers },
+    }),
+  );
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.getPhisConfigSync.mockReturnValue(CONFIG as PhisConfig);
+  });
+
+  it("takes a write the browser marks as same-origin", () => {
+    expect(write({ "sec-fetch-site": "same-origin" })).toBeNull();
+  });
+
+  it("refuses one from a sibling subdomain or another site", () => {
+    expect(write({ "sec-fetch-site": "same-site" })?.status).toBe(403);
+    expect(write({ "sec-fetch-site": "cross-site" }, "DELETE")?.status).toBe(403);
+  });
+
+  it("falls back to the Origin against the host the Site forwarded for", () => {
+    const forwarded = { "x-forwarded-host": "site.test" };
+    expect(write({ ...forwarded, origin: "https://site.test" })).toBeNull();
+    expect(write({ ...forwarded, origin: "https://evil.site.test" })?.status).toBe(403);
+    expect(write({ ...forwarded, origin: "null" })?.status).toBe(403);
+  });
+
+  it("leaves requests without a browser context, reads and other paths alone", () => {
+    expect(write({})).toBeNull();
+    expect(write({ "sec-fetch-site": "cross-site" }, "GET")).toBeNull();
+    expect(write({ "sec-fetch-site": "cross-site" }, "POST", "/api/v1/tr")).toBeNull();
+  });
+});
