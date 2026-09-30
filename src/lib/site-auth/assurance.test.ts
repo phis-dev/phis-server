@@ -8,6 +8,8 @@ const mocks = vi.hoisted(() => ({
   hasTotp: vi.fn(),
   createSession: vi.fn(),
   updateSession: vi.fn(),
+  sessionFromRequest: vi.fn(),
+  revokeSession: vi.fn(),
 }));
 
 vi.mock("@/db/site-auth", () => ({
@@ -19,13 +21,18 @@ vi.mock("@/db/user-auth-factors", () => ({
 }));
 vi.mock("@/db/user-sessions", () => ({
   createUserSession: mocks.createSession,
+  getSessionFromRequest: mocks.sessionFromRequest,
+  revokeUserSessionForSite: mocks.revokeSession,
   updateUserSessionAuthState: mocks.updateSession,
 }));
+
+import { NextRequest } from "next/server";
 
 import {
   beginSiteAuthenticationSession,
   reevaluateCompleteSession,
   resolveRequiredSessionState,
+  siteFactorPolicyRequiresTotp,
 } from "./assurance";
 import { PHI_AUTH_SESSION_STATES } from "./contracts";
 
@@ -49,7 +56,11 @@ beforeEach(() => {
     expiresAt: new Date("2030-01-01T00:00:00Z"),
   });
   mocks.updateSession.mockReset();
+  mocks.sessionFromRequest.mockReset().mockResolvedValue(null);
+  mocks.revokeSession.mockReset().mockResolvedValue(true);
 });
+
+const loginRequest = () => new NextRequest("https://server.test/api/v1/auth/login", { method: "POST" });
 
 describe("Site authentication assurance", () => {
   it("requires enrollment on login when the required TOTP factor is missing", async () => {
@@ -84,6 +95,7 @@ describe("Site authentication assurance", () => {
 
   it("creates a restricted session without Area assurance before enrollment", async () => {
     const session = await beginSiteAuthenticationSession({
+      request: loginRequest(),
       userId: 42,
       siteId: 7,
       coreRoleFlags: 0,
@@ -98,6 +110,54 @@ describe("Site authentication assurance", () => {
       authPolicyRevision: 4,
       nextPath: "/admin",
     }));
+  });
+
+  it("revokes the session the browser arrived with, once the new one exists", async () => {
+    const request = loginRequest();
+    mocks.sessionFromRequest.mockResolvedValue({ id: "previous-session", userId: 9 });
+
+    await beginSiteAuthenticationSession({
+      request,
+      userId: 42,
+      siteId: 7,
+      coreRoleFlags: 0,
+      authMethodKeys: ["password"],
+      nextPath: "/",
+    });
+
+    // Only a cookie for this Site whose secret verifies names a session, whichever state it is in.
+    expect(mocks.sessionFromRequest).toHaveBeenCalledWith(request, 7, {
+      allowDisabled: true,
+      allowIncomplete: true,
+      allowPasswordChangeRequired: true,
+    });
+    expect(mocks.revokeSession).toHaveBeenCalledWith({
+      sessionId: "previous-session",
+      userId: 9,
+      siteId: 7,
+    });
+    expect(mocks.createSession.mock.invocationCallOrder[0])
+      .toBeLessThan(mocks.revokeSession.mock.invocationCallOrder[0]!);
+  });
+
+  it("revokes nothing when the browser carries no session for this Site", async () => {
+    await beginSiteAuthenticationSession({
+      request: loginRequest(),
+      userId: 42,
+      siteId: 7,
+      coreRoleFlags: 0,
+      authMethodKeys: ["password"],
+      nextPath: "/",
+    });
+    expect(mocks.revokeSession).not.toHaveBeenCalled();
+  });
+
+  it("scopes the required factor to the roles the policy names", () => {
+    const scoped = { requiredMethod: "totp" as const, roleFlags: 0b0100 };
+    expect(siteFactorPolicyRequiresTotp(scoped, 0b0100)).toBe(true);
+    expect(siteFactorPolicyRequiresTotp(scoped, 0b0001)).toBe(false);
+    expect(siteFactorPolicyRequiresTotp({ requiredMethod: "totp", roleFlags: 0 }, 0)).toBe(true);
+    expect(siteFactorPolicyRequiresTotp({ requiredMethod: null, roleFlags: 0 }, 0b0100)).toBe(false);
   });
 
   it("does not interrupt an existing session for next-login enforcement", async () => {

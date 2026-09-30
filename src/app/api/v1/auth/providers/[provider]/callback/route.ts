@@ -115,6 +115,7 @@ export async function GET(request: NextRequest, context: Context) {
       return failureRedirect(runtime.publicUrl, "account_disabled");
     }
     const session = await beginSiteAuthenticationSession({
+      request,
       userId: resolution.userId,
       siteId: siteContext.site.id,
       coreRoleFlags: authorization.coreRoleFlags,

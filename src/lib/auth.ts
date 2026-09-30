@@ -111,18 +111,27 @@ export function buildSessionExpiresAt() {
 }
 
 /**
- * `sameSite: "lax"` is load-bearing for `/api/site`, and it is the only thing bearing it.
+ * `sameSite: "lax"` is load-bearing for `/api/site`, and it bears less than it may seem to.
  *
- * Those routes verify no CSRF token -- `verifyCsrfRequest` guards `/api/v1/auth/*` and nothing else --
- * so what keeps a foreign page from writing in a signed-in visitor's name is this attribute plus the
- * absence of CORS headers. Together they hold: `Lax` withholds the cookie from a cross-site POST, and a
- * `PATCH` or a JSON body needs a preflight that no route answers. Nothing in the application takes part.
+ * Those routes verify no CSRF token -- `verifyCsrfRequest` guards `/api/v1/auth/*` and nothing else,
+ * and that token is the only check in the application that ties a state-changing request to our page.
+ * What `Lax` does: a browser withholds the cookie from every cross-site subrequest (fetch, form POST,
+ * iframe, image) and from a cross-site top-level POST. What it does not do: it still sends the cookie on
+ * a cross-site top-level GET navigation, and on every same-site request -- "site" is the registrable
+ * domain, so a sibling subdomain is a different origin but the same site and gets the cookie on a POST.
  *
- * So the day this becomes `none` -- an embedding, an iframe, a third-party surface asking for it -- the
- * 32 POST routes under `/api/site` lose their protection at once, and the request that reaches them may
+ * The absence of CORS headers does not close that. It stops a foreign page from reading an answer and
+ * forces a preflight only on a non-simple request (`PATCH`, `PUT`, `DELETE`, a JSON content type). A
+ * `POST` sent as `text/plain`, form-encoded or multipart is a simple request: it goes out unasked, and
+ * a route that parses the body as JSON whatever its declared type acts on it; that the sender cannot
+ * read the reply changes nothing about the write. Against a cross-site page, then, `Lax` withholding
+ * the cookie is the whole protection of `/api/site`; against a page on a same-site origin there is none.
+ *
+ * So the day this becomes `none` -- an embedding, an iframe, a third-party surface asking for it --
+ * the POST routes under `/api/site` lose even that at once, and the request that reaches them may
  * change Site configuration. The check belongs in `requireSiteRoleApiContext`, which every one of them
- * already passes through; the work is on the calling side, where each writer has to send the header. Do
- * that first, not afterwards.
+ * already passes through; the work is on the calling side, where each writer has to send the header.
+ * Do that first, not afterwards.
  */
 export function setSessionCookie(response: NextResponse, sessionId: string, sessionSecret: string, expiresAt: Date) {
   response.cookies.set(SESSION_COOKIE_NAME, buildSessionCookieValue(sessionId, sessionSecret), {

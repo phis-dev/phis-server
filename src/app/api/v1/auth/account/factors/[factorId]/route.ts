@@ -5,6 +5,7 @@ import { deleteUserAuthFactor, listUserAuthFactors, PHI_AUTH_FACTOR_TYPES } from
 import { getSessionFromRequest } from "@/db/user-sessions";
 import { verifyCsrfRequest } from "@/lib/auth";
 import { guardApiV1 } from "@/lib/api-v1-guard";
+import { siteFactorPolicyRequiresTotp } from "@/lib/site-auth/assurance";
 import { requireSiteFromExplicitKeyRequest } from "@/lib/site-context";
 
 export const dynamic = "force-dynamic";
@@ -34,7 +35,8 @@ export async function DELETE(request: NextRequest, context: Context) {
   }
   if (
     factor.type === PHI_AUTH_FACTOR_TYPES.totp &&
-    policy?.factorPolicy.requiredMethod === "totp" &&
+    policy != null &&
+    siteFactorPolicyRequiresTotp(policy.factorPolicy, session.coreRoleFlags) &&
     factors.filter((entry) => entry.type === PHI_AUTH_FACTOR_TYPES.totp && entry.confirmedAt).length <= 1
   ) {
     return NextResponse.json(

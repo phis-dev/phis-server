@@ -1,5 +1,7 @@
 import "server-only";
 
+import { createHash } from "node:crypto";
+
 import type { PoolClient } from "pg";
 
 import {
@@ -536,7 +538,27 @@ function buildWidgetContentSlug(
       ? `${scope.scopeKind}-${slugifySegment(scope.path, "root")}`
       : `${scope.scopeKind}-${scope.areaMask}`;
   const widgetSegment = slugifySegment(widget.label, `widget-${widget.id}`);
-  return `cms-${scopeSegment}-${contentTypeKey}-${widgetSegment}-${buildRandomSlugSuffix()}`;
+  return fitSiteContentSlug(
+    `cms-${scopeSegment}-${contentTypeKey}-${widgetSegment}-${buildRandomSlugSuffix()}`,
+  );
+}
+
+/** The width of `phis.site_content.slug`. */
+const SITE_CONTENT_SLUG_MAX_LENGTH = 255;
+
+/**
+ * Brings a built slug within the column, the same way every time.
+ *
+ * A deep page path or a long widget label easily builds a slug past the column, and the insert would
+ * then fail outright. Cutting it alone would let two slugs that differ only past the cut collide, so a
+ * short hash of the whole slug replaces the tail: the result stays readable at the front and distinct
+ * for distinct inputs.
+ */
+function fitSiteContentSlug(slug: string) {
+  if (slug.length <= SITE_CONTENT_SLUG_MAX_LENGTH) return slug;
+  const hash = createHash("sha256").update(slug).digest("hex").slice(0, 12);
+  const head = slug.slice(0, SITE_CONTENT_SLUG_MAX_LENGTH - hash.length - 1).replace(/-+$/u, "");
+  return `${head}-${hash}`;
 }
 
 function readPageRegionConfig(layoutConfig: Record<string, unknown>, regionKey: string) {

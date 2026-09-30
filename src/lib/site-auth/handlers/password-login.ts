@@ -177,6 +177,7 @@ export async function POST(request: NextRequest) {
     }
 
     const session = await beginSiteAuthenticationSession({
+      request,
       userId: user.id,
       siteId: site.id,
       coreRoleFlags: siteRole.coreRoleFlags,
@@ -273,6 +274,8 @@ export async function POST(request: NextRequest) {
       },
       error: normalizeLogThrowable(error),
     });
-    return NextResponse.json({ error: message }, { status: 500 });
+    // The real cause stays in the log. Its message can name a table, a constraint or a host, and none
+    // of that belongs in an answer to whoever is trying to sign in.
+    return NextResponse.json({ error: "Login failed." }, { status: 500 });
   }
 }

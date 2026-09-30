@@ -47,13 +47,13 @@ export async function PUT(
     return NextResponse.json(FORBIDDEN_MANAGER_WRITE, { status: 403 });
   }
   try {
-    const groupClaims = await setLocalSiteGroupMembership({
+    const membership = await setLocalSiteGroupMembership({
       siteId,
       groupId,
       userId,
       membershipFlags: next,
     });
-    return NextResponse.json({ groupClaims });
+    return NextResponse.json({ membership });
   } catch (error) {
     return NextResponse.json({
       error: "membership_update_failed",
@@ -80,6 +80,6 @@ export async function DELETE(
   if (!canWriteSiteGroupMembership(guarded.context!.authority, { current })) {
     return NextResponse.json(FORBIDDEN_MANAGER_WRITE, { status: 403 });
   }
-  const groupClaims = await removeLocalSiteGroupMembership({ siteId, groupId, userId });
-  return NextResponse.json({ groupClaims });
+  const membership = await removeLocalSiteGroupMembership({ siteId, groupId, userId });
+  return NextResponse.json({ membership });
 }

@@ -2,7 +2,7 @@ import "server-only";
 
 import type { PhiViewerAddonRoleClaim } from "@/lib/authorization";
 import { getPhisAddonInstalledManifest } from "./installed.ts";
-import { isPhisAddonEnabledForSite } from "@/db/server-addons";
+import { verifyPhisAddonRegistryState } from "./registry-state.ts";
 import { readPhiSiteUserAddonRoles } from "@/db/server-addon-roles.mts";
 import { getPool } from "@/lib/db";
 
@@ -43,7 +43,10 @@ export async function readPhiViewerAddonRoleClaims(
 
   const claims: PhiViewerAddonRoleClaim[] = [];
   for (const [addonId, roles] of byAddon) {
-    if (!await isPhisAddonEnabledForSite(addonId, siteId)) {
+    // The same answer dispatch, jobs and event delivery ask for. The local `enabled` flag only says the
+    // build ships the Add-on; switched off in the registry, off for this Site, or a build the registry
+    // does not describe, its roles open nothing here either.
+    if (await verifyPhisAddonRegistryState(installed[addonId]!, siteId) !== "ready") {
       continue;
     }
     claims.push({ providerId: addonId as PhiViewerAddonRoleClaim["providerId"], roles });

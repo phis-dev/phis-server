@@ -84,7 +84,7 @@ export async function DELETE(request: NextRequest, routeContext: Context) {
 
   await deleteAuthProviderInstallation(context.siteId, installationKey);
   if (existing.secretReference) {
-    deleteSiteAuthSecret(existing.secretReference);
+    await deleteSiteAuthSecret(existing.secretReference);
   }
   logRuntimeEvent("info", "auth.admin.installation.deleted", {
     siteKey: context.siteKey,

@@ -17,6 +17,7 @@ import {
   verifyCsrfRequest,
 } from "@/lib/auth";
 import { guardApiV1 } from "@/lib/api-v1-guard";
+import { normalizeString } from "@/lib/helpers/request";
 import { logRuntimeEvent, normalizeLogThrowable } from "@/lib/log";
 import { beginSiteAuthenticationSession } from "@/lib/site-auth/assurance";
 import { PHI_AUTH_SESSION_STATES } from "@/lib/site-auth/contracts";
@@ -42,7 +43,9 @@ export async function POST(request: NextRequest) {
   }
   const token = request.cookies.get(AUTH_LINK_COOKIE_NAME)?.value?.trim() ?? "";
   const payload = await request.json().catch(() => null) as { password?: unknown } | null;
-  const password = typeof payload?.password === "string" ? payload.password : "";
+  // Trimmed like every other place a password is entered, so the one typed here is the one the login
+  // accepts: a stray space pasted along does not fail the link while it would pass the login.
+  const password = normalizeString(payload?.password);
   if (!token || !password) {
     return errorResponse(
       "Provider link confirmation expired. Sign in normally or start the provider login again.",
@@ -58,6 +61,7 @@ export async function POST(request: NextRequest) {
       password,
     });
     const session = await beginSiteAuthenticationSession({
+      request,
       userId: confirmed.user.id,
       siteId: siteContext.site.id,
       coreRoleFlags: confirmed.authorization.coreRoleFlags,

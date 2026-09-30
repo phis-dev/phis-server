@@ -14,6 +14,7 @@ import {
   isSitePasswordMethodEnabled,
   PASSWORD_METHOD_DISABLED_RESPONSE,
 } from "@/lib/site-auth/password-method";
+import { hasExpiryPassed } from "@/lib/helpers/expiry";
 import { normalizeString } from "@/lib/helpers/request";
 
 type ConfirmPayload = {
@@ -21,11 +22,6 @@ type ConfirmPayload = {
   password?: unknown;
   confirmPassword?: unknown;
 };
-
-function isIsoDateInPast(value: string) {
-  const timestamp = Date.parse(value);
-  return Number.isFinite(timestamp) && timestamp <= Date.now();
-}
 
 export async function POST(request: NextRequest) {
   const site = await requireSiteFromRequest(request);
@@ -75,7 +71,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Reset token already used." }, { status: 409 });
   }
 
-  if (isIsoDateInPast(resetToken.expiresAt)) {
+  if (hasExpiryPassed(resetToken.expiresAt)) {
     return NextResponse.json({ error: "Reset token expired." }, { status: 410 });
   }
 

@@ -24,16 +24,12 @@ import { requireSiteFromRequest } from "@/lib/site-context";
 import { USER_SITE_FLAG_NEWSLETTER_OPT_IN } from "@/lib/user-site-flags";
 
 import { PhiUserEmailSource } from "@phis/contracts/access";
+import { hasExpiryPassed } from "@/lib/helpers/expiry";
 import { normalizeString } from "@/lib/helpers/request";
 
 type ConfirmPayload = {
   token?: unknown;
 };
-
-function isIsoDateInPast(value: string) {
-  const timestamp = Date.parse(value);
-  return Number.isFinite(timestamp) && timestamp <= Date.now();
-}
 
 function formatCustomerNumber(prefix: string, id: number) {
   return `${prefix}-${String(id).padStart(7, "0")}`;
@@ -114,7 +110,7 @@ export async function POST(request: Request) {
     );
   }
 
-  if (isIsoDateInPast(intent.verificationTokenExpiresAt)) {
+  if (hasExpiryPassed(intent.verificationTokenExpiresAt)) {
     await markRegistrationIntentExpired(intent.id);
     logRuntimeEvent("warn", "registration.confirm_failed", {
       message: "Registration confirm failed.",

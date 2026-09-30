@@ -271,6 +271,37 @@ export async function setSiteGroupFlags(siteId: number, groupId: number, flags: 
   return rows[0] ? mapGroup(rows[0]) : null;
 }
 
+/** A membership write the rows refuse, as opposed to one that failed: the routes answer it with a 409. */
+export class SiteGroupMembershipRefusedError extends Error {}
+
+/**
+ * What a membership write answers with: the person's effective level in the one group that was written.
+ *
+ * Deliberately not the person's whole claim list. The caller may be that group's Manager, and a Manager
+ * of one group has no business learning which other groups, at which levels, the person belongs to.
+ */
+export type SiteGroupMembershipWriteResult = {
+  groupId: number;
+  userId: number;
+  membershipFlags: number;
+};
+
+async function readWrittenGroupMembership(
+  client: DbQueryable,
+  claims: readonly PhiViewerGroupClaim[],
+  input: { siteId: number; groupId: number; userId: number },
+): Promise<SiteGroupMembershipWriteResult> {
+  const { rows } = await client.query<{ provider_id: string; key: string }>(
+    "SELECT provider_id, key FROM phis.site_groups WHERE site_id = $1 AND id = $2",
+    [input.siteId, input.groupId],
+  );
+  const group = rows[0];
+  const claim = group
+    ? claims.find((entry) => entry.providerId === group.provider_id && entry.key === group.key)
+    : undefined;
+  return { groupId: input.groupId, userId: input.userId, membershipFlags: claim?.flags ?? 0 };
+}
+
 /**
  * Writes a membership into a group whose provider is the caller's.
  *
@@ -279,9 +310,6 @@ export async function setSiteGroupFlags(siteId: number, groupId: number, flags: 
  * It is compared as well as inserted, so a caller can only reach the groups it brought: passing an
  * Add-on's id here cannot touch a Core group, and passing Core's cannot touch an Add-on's.
  */
-/** A membership write the rows refuse, as opposed to one that failed: the routes answer it with a 409. */
-export class SiteGroupMembershipRefusedError extends Error {}
-
 export async function setLocalSiteGroupMembership(input: {
   siteId: number;
   groupId: number;
@@ -289,7 +317,7 @@ export async function setLocalSiteGroupMembership(input: {
   membershipFlags: number;
   /** Defaults to Core's own groups, which is every caller but the Add-on capability. */
   providerId?: string;
-}) {
+}): Promise<SiteGroupMembershipWriteResult> {
   const flags = normalizePhiGroupMembershipFlags(input.membershipFlags);
   return withTransaction(async (client) => {
     const before = await readEffectiveGroupFlagsWithDb(client, input.siteId, input.userId);
@@ -326,7 +354,7 @@ export async function setLocalSiteGroupMembership(input: {
         [input.siteId, input.userId],
       );
     }
-    return after;
+    return readWrittenGroupMembership(client, after, input);
   });
 }
 
@@ -335,7 +363,7 @@ export async function removeLocalSiteGroupMembership(input: {
   groupId: number;
   userId: number;
   providerId?: string;
-}) {
+}): Promise<SiteGroupMembershipWriteResult> {
   return withTransaction(async (client) => {
     const before = await readEffectiveGroupFlagsWithDb(client, input.siteId, input.userId);
     await client.query(
@@ -355,7 +383,7 @@ export async function removeLocalSiteGroupMembership(input: {
         [input.siteId, input.userId],
       );
     }
-    return after;
+    return readWrittenGroupMembership(client, after, input);
   });
 }
 

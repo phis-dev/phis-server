@@ -458,7 +458,21 @@ async function insertSupportTicketAssignment(
   );
 }
 
-async function getSupportTicketRowById(queryable: DbQueryable, siteId: number, ticketId: number) {
+/**
+ * Reads one ticket, optionally locking its row.
+ *
+ * A transaction that decides its writes from what it read here -- the assignment history records the
+ * previous assignee and queue -- has to pass `forUpdate`, or two concurrent changes both read the same
+ * "before" and one history entry names a state the ticket was never in. The lock names `t` alone
+ * because PostgreSQL refuses to lock the nullable side of an outer join, and the joined rows are only
+ * labels. A read outside a transaction must not lock: the lock would end with the statement anyway.
+ */
+async function getSupportTicketRowById(
+  queryable: DbQueryable,
+  siteId: number,
+  ticketId: number,
+  options: { forUpdate?: boolean } = {},
+) {
   const { rows } = await queryable.query<SupportTicketListRow>(
     `SELECT
        t.*,
@@ -471,7 +485,8 @@ async function getSupportTicketRowById(queryable: DbQueryable, siteId: number, t
        ON queue.id = t.queue_id
      WHERE t.site_id = $1
        AND t.id = $2
-     LIMIT 1`,
+     LIMIT 1
+     ${options.forUpdate ? "FOR UPDATE OF t" : ""}`,
     [siteId, ticketId],
   );
 
@@ -684,7 +699,9 @@ export async function isSupportSiteUser(siteId: number, userId: number) {
 
 export async function applySupportTicketAssignmentAction(input: SupportTicketAssignmentActionInput) {
   const found = await withTransaction(async (client) => {
-    const existing = await getSupportTicketRowById(client, input.siteId, input.ticketId);
+    const existing = await getSupportTicketRowById(client, input.siteId, input.ticketId, {
+      forUpdate: true,
+    });
     if (!existing) {
       return false;
     }
@@ -1105,7 +1122,9 @@ async function assertSupportTicketReferencesOfSite(
 
 export async function updateSupportTicket(input: UpdateSupportTicketInput) {
   const found = await withTransaction(async (client) => {
-    const existing = await getSupportTicketRowById(client, input.siteId, input.ticketId);
+    const existing = await getSupportTicketRowById(client, input.siteId, input.ticketId, {
+      forUpdate: true,
+    });
     if (!existing) {
       return false;
     }

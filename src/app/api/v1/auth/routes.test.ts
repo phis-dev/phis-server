@@ -311,7 +311,8 @@ describe("canonical Auth endpoints", () => {
           "content-type": "application/json",
           "x-csrf-token": "csrf-test",
         },
-        body: JSON.stringify({ password: "valid-password" }),
+        // Padded on purpose: the password is trimmed here as at every other entry point.
+        body: JSON.stringify({ password: "  valid-password " }),
       },
     );
     const response = await confirmProviderLink(request);
@@ -328,6 +329,7 @@ describe("canonical Auth endpoints", () => {
       password: "valid-password",
     });
     expect(mocks.beginSession).toHaveBeenCalledWith(expect.objectContaining({
+      request,
       userId: 42,
       siteId: 7,
       authMethodKeys: ["google", "password"],

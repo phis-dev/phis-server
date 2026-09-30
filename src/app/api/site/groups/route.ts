@@ -322,7 +322,7 @@ export async function PUT(request: NextRequest) {
   }
   try {
     return NextResponse.json({
-      groupClaims: await setLocalSiteGroupMembership({ siteId, groupId, userId, membershipFlags: next }),
+      membership: await setLocalSiteGroupMembership({ siteId, groupId, userId, membershipFlags: next }),
     });
   } catch (error) {
     if (error instanceof SiteGroupMembershipRefusedError) {
@@ -349,6 +349,6 @@ export async function DELETE(request: NextRequest) {
     }, { status: 403 });
   }
   return NextResponse.json({
-    groupClaims: await removeLocalSiteGroupMembership({ siteId, groupId, userId }),
+    membership: await removeLocalSiteGroupMembership({ siteId, groupId, userId }),
   });
 }

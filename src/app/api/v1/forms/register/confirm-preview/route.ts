@@ -8,6 +8,7 @@ import {
   REGISTRATION_INTENT_STATUS_VERIFIED,
 } from "@/db/registration-intents";
 import { guardApiV1 } from "@/lib/api-v1-guard";
+import { hasExpiryPassed } from "@/lib/helpers/expiry";
 import { requireSiteFromRequest } from "@/lib/site-context";
 
 function normalize(value: string | null) {
@@ -16,11 +17,6 @@ function normalize(value: string | null) {
 
 function buildFullName(firstName: string | null | undefined, lastName: string | null | undefined) {
   return [firstName?.trim() ?? "", lastName?.trim() ?? ""].filter(Boolean).join(" ").trim();
-}
-
-function isIsoDateInPast(value: string) {
-  const timestamp = Date.parse(value);
-  return Number.isFinite(timestamp) && timestamp <= Date.now();
 }
 
 export async function GET(request: Request) {
@@ -76,7 +72,7 @@ export async function GET(request: Request) {
     );
   }
 
-  if (isIsoDateInPast(intent.verificationTokenExpiresAt)) {
+  if (hasExpiryPassed(intent.verificationTokenExpiresAt)) {
     await markRegistrationIntentExpired(intent.id);
     return NextResponse.json(
       { ok: false, code: "expired", error: "This verification link has expired." },

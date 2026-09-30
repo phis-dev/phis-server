@@ -1,15 +1,39 @@
 import "server-only";
 
+import type { NextRequest } from "next/server";
+
 import { getSiteAuthMethod, getSiteAuthPolicy } from "@/db/site-auth";
 import { hasConfirmedTotpFactor } from "@/db/user-auth-factors";
-import { createUserSession, updateUserSessionAuthState } from "@/db/user-sessions";
+import {
+  createUserSession,
+  getSessionFromRequest,
+  revokeUserSessionForSite,
+  updateUserSessionAuthState,
+} from "@/db/user-sessions";
 import {
   PHI_AUTH_SESSION_STATES,
+  type PhiAuthFactorPolicy,
   type PhiAuthSessionState,
 } from "@/lib/site-auth/contracts";
 
 function appliesToRoleScope(roleFlags: number, requiredRoleFlags: number) {
   return requiredRoleFlags === 0 || (roleFlags & requiredRoleFlags) !== 0;
+}
+
+/**
+ * Whether the Site's factor policy asks this person for an authenticator at all.
+ *
+ * The policy names roles; no roles means everyone. Every place that enforces or protects the required
+ * factor asks this one question, so a policy scoped to administrators cannot bind a Member in one
+ * place and leave them free in another.
+ */
+export function siteFactorPolicyRequiresTotp(
+  factorPolicy: Pick<PhiAuthFactorPolicy, "requiredMethod" | "roleFlags">,
+  coreRoleFlags: number,
+) {
+  return (
+    factorPolicy.requiredMethod === "totp" && appliesToRoleScope(coreRoleFlags, factorPolicy.roleFlags)
+  );
 }
 
 function enforcementIsActive(input: {
@@ -47,10 +71,8 @@ export async function resolveRequiredSessionState(input: {
   if (!policy) {
     return { state: PHI_AUTH_SESSION_STATES.complete, policyRevision: 1, deferred: false } as const;
   }
-  const required = policy.factorPolicy.requiredMethod;
   if (
-    required !== "totp" ||
-    !appliesToRoleScope(input.coreRoleFlags, policy.factorPolicy.roleFlags) ||
+    !siteFactorPolicyRequiresTotp(policy.factorPolicy, input.coreRoleFlags) ||
     input.authMethodKeys.includes("totp")
   ) {
     return {
@@ -84,7 +106,17 @@ export async function resolveRequiredSessionState(input: {
   } as const;
 }
 
+/**
+ * Starts the session a sign-in ends in, and ends the one the browser arrived with.
+ *
+ * The response overwrites the session cookie, but overwriting a cookie does not end the session it
+ * named: a copy taken earlier would go on working until it expired. So a session the request carries
+ * for this Site is revoked, whoever it belonged to, once the new one exists -- revoking first would
+ * leave the browser signed out if creating the new one failed. Only a cookie whose secret verifies
+ * counts; a forged or foreign one names nothing this browser may end.
+ */
 export async function beginSiteAuthenticationSession(input: {
+  request: NextRequest;
   userId: number;
   siteId: number;
   coreRoleFlags: number;
@@ -111,6 +143,18 @@ export async function beginSiteAuthenticationSession(input: {
     ipAddress: input.ipAddress,
     userAgent: input.userAgent,
   });
+  const previous = await getSessionFromRequest(input.request, input.siteId, {
+    allowDisabled: true,
+    allowIncomplete: true,
+    allowPasswordChangeRequired: true,
+  });
+  if (previous) {
+    await revokeUserSessionForSite({
+      sessionId: previous.id,
+      userId: previous.userId,
+      siteId: input.siteId,
+    });
+  }
   return { ...session, authState: required.state, policyRevision: required.policyRevision };
 }
 
