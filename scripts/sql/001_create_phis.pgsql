@@ -461,8 +461,8 @@ CREATE TABLE IF NOT EXISTS phis.media_assets (
   CONSTRAINT media_assets_checksum_check CHECK (
     (checksum_algorithm IS NULL) = (checksum_value IS NULL)
   ),
-  width SMALLINT NULL,
-  height SMALLINT NULL,
+  width INTEGER NULL,
+  height INTEGER NULL,
   blur_data_url TEXT NULL,
   meta JSONB NULL,
   title VARCHAR(255) NULL,
@@ -622,8 +622,8 @@ CREATE TABLE IF NOT EXISTS phis.image_asset_variants (
   CONSTRAINT image_asset_variants_checksum_check CHECK (
     (checksum_algorithm IS NULL) = (checksum_value IS NULL)
   ),
-  width SMALLINT NOT NULL,
-  height SMALLINT NOT NULL,
+  width INTEGER NOT NULL,
+  height INTEGER NOT NULL,
   blur_data_url TEXT NULL,
   flags INT NOT NULL DEFAULT 0,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
