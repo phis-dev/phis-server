@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   guard: vi.fn(),
   save: vi.fn(),
   list: vi.fn(),
+  tags: vi.fn(),
   remove: vi.fn(),
 }));
 
@@ -22,6 +23,7 @@ vi.mock("@/db/site-content", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/db/site-content")>()),
   deleteSiteContentNews: mocks.remove,
   listSiteContentNewsForEditor: mocks.list,
+  listSiteContentNewsTagsInUse: mocks.tags,
   saveSiteContentNewsDraft: mocks.save,
 }));
 vi.mock("@/lib/log", () => ({ logRuntimeEvent: vi.fn() }));
@@ -44,7 +46,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.guard.mockResolvedValue({ context: { site: SITE, session: { userId: 9 } }, error: null });
   mocks.save.mockResolvedValue({ ok: true, contentId: 12, versionId: 34, slug: "a-slug" });
-  mocks.list.mockResolvedValue([]);
+  mocks.list.mockResolvedValue({ rows: [], total: 0, page: 1, pageSize: 25 });
+  mocks.tags.mockResolvedValue(["release"]);
 });
 
 describe("POST /api/site/editor/news", () => {
@@ -198,7 +201,33 @@ describe("GET /api/site/editor/news", () => {
 
     expect(response.status).toBe(200);
     expect(await response.json()).toMatchObject({ sourceLocale: "en" });
-    expect(mocks.list).toHaveBeenCalledWith(4, "en");
+    expect(mocks.list).toHaveBeenCalledWith(expect.objectContaining({ siteId: 4, locale: "en" }));
+  });
+
+  it("pages, searches and filters as the Table asks", async () => {
+    await GET(request("GET", undefined, "?page=3&pageSize=10&search=probe&status=draft"));
+
+    expect(mocks.list).toHaveBeenCalledWith(expect.objectContaining({
+      page: 3, pageSize: 10, search: "probe", status: 0,
+    }));
+  });
+
+  it("reads an unknown status as no filter at all", async () => {
+    await GET(request("GET", undefined, "?status=whatever"));
+    expect(mocks.list).toHaveBeenCalledWith(expect.objectContaining({ status: null }));
+
+    await GET(request("GET", undefined, "?status=published"));
+    expect(mocks.list).toHaveBeenLastCalledWith(expect.objectContaining({ status: 1 }));
+  });
+
+  it("answers the total and the tags in use beside the page", async () => {
+    mocks.list.mockResolvedValue({
+      rows: [{ contentId: 12, slug: "a-slug" }], total: 41, page: 2, pageSize: 20,
+    });
+    const body = await (await GET(request("GET"))).json();
+
+    expect(body).toMatchObject({ total: 41, page: 2, pageSize: 20, tags: ["release"] });
+    expect(body.entries).toHaveLength(1);
   });
 
   it("answers with the guard's refusal", async () => {
@@ -208,5 +237,6 @@ describe("GET /api/site/editor/news", () => {
     });
     expect((await GET(request("GET"))).status).toBe(403);
     expect(mocks.list).not.toHaveBeenCalled();
+    expect(mocks.tags).not.toHaveBeenCalled();
   });
 });

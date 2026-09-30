@@ -1109,13 +1109,23 @@ export async function deleteSiteContentNews(input: {
  * `published_version_id`, because what an editor edits is the draft; and it filters neither by status nor
  * by date, because a schedule that cannot be seen before it arrives cannot be corrected.
  */
-export async function listSiteContentNewsForEditor(
-  siteId: number,
-  locale: string,
-): Promise<SiteNewsEditorRecord[]> {
+export async function listSiteContentNewsForEditor(input: {
+  siteId: number;
+  locale: string;
+  page: number;
+  pageSize: number;
+  search?: string | null;
+  /** One status, or null for every one of them -- a schedule that cannot be seen cannot be corrected. */
+  status?: number | null;
+}): Promise<{ rows: SiteNewsEditorRecord[]; total: number; page: number; pageSize: number }> {
   const pool = getPool();
-  const { rows } = await pool.query<SiteNewsEditorRow>(
+  const page = Math.max(1, Math.trunc(input.page) || 1);
+  const pageSize = Math.max(1, Math.min(100, Math.trunc(input.pageSize) || 25));
+  const search = input.search?.trim() ?? "";
+  const status = Number.isInteger(input.status) ? input.status : null;
+  const { rows } = await pool.query<SiteNewsEditorRow & { total_count: string }>(
     `SELECT
+       COUNT(*) OVER () AS total_count,
        c.id,
        c.slug,
        c.status,
@@ -1142,11 +1152,25 @@ export async function listSiteContentNewsForEditor(
      LEFT JOIN phis.tr_site_lang tc ON tc.msg_id = mc.id AND tc.locale = $2
      WHERE c.site_id = $1
        AND c.type = $3
-     ORDER BY COALESCE(c.published_at, c.created_at) DESC, c.sort_order ASC, c.id DESC`,
-    [siteId, locale, SITE_CONTENT_TYPE_NEWS],
+       AND ($4::smallint IS NULL OR c.status = $4)
+       -- The slug and the words as they were written: an editor searches for what they typed, and the
+       -- translation of a title is not that.
+       AND ($5::text = '' OR c.slug ILIKE '%' || $5 || '%' OR mt.msg ILIKE '%' || $5 || '%')
+     ORDER BY COALESCE(c.published_at, c.created_at) DESC, c.sort_order ASC, c.id DESC
+     LIMIT $6
+     OFFSET $7`,
+    [
+      input.siteId,
+      input.locale,
+      SITE_CONTENT_TYPE_NEWS,
+      status,
+      search,
+      pageSize,
+      (page - 1) * pageSize,
+    ],
   );
 
-  return rows.map((row) => ({
+  const records = rows.map((row) => ({
     contentId: row.id,
     slug: row.slug,
     status: row.status,
@@ -1164,6 +1188,29 @@ export async function listSiteContentNewsForEditor(
     hasUnpublishedChanges: row.has_unpublished_changes,
     ...readSiteNewsVersionTerms(row.version_meta),
   }));
+
+  return { rows: records, total: Number(rows[0]?.total_count ?? 0), page, pageSize };
+}
+
+/**
+ * The tags this Site has already used, which is the offer an author picks from.
+ *
+ * There is no vocabulary to keep: a tag is a string on an entry, so the set of them is a question and not
+ * a store. A tag nobody carries any more leaves the offer by itself, which for tags is right rather than
+ * lossy.
+ */
+export async function listSiteContentNewsTagsInUse(siteId: number): Promise<string[]> {
+  const pool = getPool();
+  const { rows } = await pool.query<{ tag: string }>(
+    `SELECT DISTINCT tag
+     FROM phis.site_content c,
+          jsonb_array_elements_text(COALESCE(c.meta -> 'tags', '[]'::jsonb)) AS tag
+     WHERE c.site_id = $1
+       AND c.type = $2
+     ORDER BY tag`,
+    [siteId, SITE_CONTENT_TYPE_NEWS],
+  );
+  return rows.map((row) => row.tag);
 }
 
 /**

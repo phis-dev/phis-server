@@ -55,6 +55,13 @@ describe("the News write path against PostgreSQL", () => {
     return rows[0];
   }
 
+  async function editorEntries() {
+    const { rows } = await listSiteContentNewsForEditor({
+      siteId: site.id, locale: "en", page: 1, pageSize: 100,
+    });
+    return rows;
+  }
+
   function draft(slug: string, overrides: Record<string, unknown> = {}) {
     return saveSiteContentNewsDraft({
       siteId: site.id,
@@ -77,7 +84,7 @@ describe("the News write path against PostgreSQL", () => {
 
     expect((await listPublishedNews(site.id, "en")).map((item) => item.slug)).not.toContain("first-draft");
 
-    const editorEntry = (await listSiteContentNewsForEditor(site.id, "en"))
+    const editorEntry = (await editorEntries())
       .find((entry) => entry.slug === "first-draft");
     expect(editorEntry).toMatchObject({
       title: "Title first-draft",
@@ -96,10 +103,9 @@ describe("the News write path against PostgreSQL", () => {
     });
 
     expect(second).toEqual({ ok: false, reason: "slug_taken" });
-    const editorEntries = (await listSiteContentNewsForEditor(site.id, "en"))
-      .filter((entry) => entry.slug === "taken-address");
-    expect(editorEntries).toHaveLength(1);
-    expect(editorEntries[0]?.title).toBe("Title taken-address");
+    const claimants = (await editorEntries()).filter((entry) => entry.slug === "taken-address");
+    expect(claimants).toHaveLength(1);
+    expect(claimants[0]?.title).toBe("Title taken-address");
   });
 
   it("answers a save against an id no entry has with `missing`", async () => {
@@ -160,7 +166,7 @@ describe("the News write path against PostgreSQL", () => {
       .find((entry) => entry.slug === "edited-after-publish");
     expect(publicItem?.title.text).toBe("Title edited-after-publish");
 
-    const editorEntry = (await listSiteContentNewsForEditor(site.id, "en"))
+    const editorEntry = (await editorEntries())
       .find((entry) => entry.slug === "edited-after-publish");
     expect(editorEntry?.title).toBe("The corrected title");
     expect(editorEntry?.hasUnpublishedChanges).toBe(true);
@@ -214,7 +220,7 @@ describe("the News write path against PostgreSQL", () => {
     // Still published, and still the editor's to see -- expiry is a filter, not a state change.
     const row = await readRow(saved.contentId);
     expect(row?.status).toBe(SITE_CONTENT_STATUS_PUBLISHED);
-    expect((await listSiteContentNewsForEditor(site.id, "en")).map((entry) => entry.slug))
+    expect((await editorEntries()).map((entry) => entry.slug))
       .toContain("expired-entry");
   });
 
@@ -240,7 +246,7 @@ describe("the News write path against PostgreSQL", () => {
       expires_at: null,
     });
     // The words stayed: what was withdrawn is the publication.
-    expect((await listSiteContentNewsForEditor(site.id, "en"))
+    expect((await editorEntries())
       .find((entry) => entry.slug === "deleted-entry")?.title).toBe("Title deleted-entry");
 
     expect(await deleteSiteContentNews({ siteId: site.id, contentId: saved.contentId }))
@@ -273,7 +279,7 @@ describe("the News write path against PostgreSQL", () => {
     expect(item).toMatchObject({ sourceLocale: "de", translate: false });
 
     // And the editor sees the same, because it is what a form has to show back.
-    expect((await listSiteContentNewsForEditor(site.id, "en"))
+    expect((await editorEntries())
       .find((entry) => entry.slug === "declared-german"))
       .toMatchObject({ sourceLocale: "de", translate: false });
   });

@@ -3,14 +3,18 @@ import { NextRequest, NextResponse } from "next/server";
 import {
   deleteSiteContentNews,
   listSiteContentNewsForEditor,
+  listSiteContentNewsTagsInUse,
   normalizePhiNewsTag,
   saveSiteContentNewsDraft,
+  SITE_CONTENT_STATUS_DRAFT,
+  SITE_CONTENT_STATUS_PUBLISHED,
 } from "@/db/site-content";
 import { requireSiteAuthorApiContext } from "@/lib/guards/site-admin-api";
 import { resolvePhiLocaleBase, resolvePhiLocaleCapability } from "@/lib/locale";
 import {
   normalizeNullableInteger,
   normalizeString,
+  parsePhiPagination,
   parsePositiveIntWithFallback,
   readRequestBody,
 } from "@/lib/helpers/request";
@@ -214,6 +218,19 @@ function readNewsDraftBody(
   };
 }
 
+/**
+ * One status, or every one of them.
+ *
+ * Spelled rather than numbered at the door: a Table's filter carries what a person chose, and `draft` says
+ * what `0` means. Anything else is read as no filter, because a listing is not the place to refuse.
+ */
+function readStatusFilter(value: string | null) {
+  const status = normalizeString(value).toLowerCase();
+  if (status === "draft") return SITE_CONTENT_STATUS_DRAFT;
+  if (status === "published") return SITE_CONTENT_STATUS_PUBLISHED;
+  return null;
+}
+
 export async function GET(request: NextRequest) {
   const { context, error } = await requireSiteAuthorApiContext(request);
   if (error) {
@@ -225,14 +242,35 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "Authentication required." }, { status: 401 });
   }
 
+  const { searchParams } = new URL(request.url);
+  const { page, pageSize } = parsePhiPagination(searchParams);
+
   /*
    * The Site's source locale, never a requested one. What this surface edits is source text, and showing a
    * translated title in a form that writes the source would overwrite the original with its translation
    * on the next save. Translating a News entry is the translations editor's work on the same messages.
    */
-  const entries = await listSiteContentNewsForEditor(site.id, site.sourceLocale);
+  const [listing, tags] = await Promise.all([
+    listSiteContentNewsForEditor({
+      siteId: site.id,
+      locale: site.sourceLocale,
+      page,
+      pageSize,
+      search: searchParams.get("search"),
+      status: readStatusFilter(searchParams.get("status")),
+    }),
+    // The offer a tag field picks from, answered beside the page so a picker needs no second endpoint.
+    listSiteContentNewsTagsInUse(site.id),
+  ]);
 
-  return NextResponse.json({ sourceLocale: site.sourceLocale, entries });
+  return NextResponse.json({
+    sourceLocale: site.sourceLocale,
+    entries: listing.rows,
+    total: listing.total,
+    page: listing.page,
+    pageSize: listing.pageSize,
+    tags,
+  });
 }
 
 async function writeNewsDraft(request: NextRequest, mode: "create" | "update") {
