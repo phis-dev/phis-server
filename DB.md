@@ -2042,6 +2042,11 @@ Contract:
   protection, which is right for a message a person just triggered.
 - `attempts` and `next_attempt_at` are the retry; `parseSmtpTargets` failover inside one attempt is not
   one and must not grow into one.
+- **`params` is emptied once the row is settled** -- on send, and on the attempt that reaches the ceiling.
+  Some parameters are secrets: a reset link carries a token whose whole point is that only its `sha256` is
+  kept, and leaving the plain value here would undo that for as long as the row lives. It is here while the
+  message is owed, which is minutes, and gone afterwards; `registration_intents` blanks its personal
+  fields on consume for the same reason. What stays is who, when, which occasion, and `message_id`.
 
 ### `phis.notification_link_salts`
 

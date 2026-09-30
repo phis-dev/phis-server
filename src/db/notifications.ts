@@ -211,19 +211,37 @@ export async function claimPhiNotificationById(id: string) {
   return row ? toNotificationRow(row) : null;
 }
 
+/**
+ * Marks the row sent and empties `params` in the same statement.
+ *
+ * The parameters are cleared because some of them are secrets. A reset link carries a token whose whole
+ * point is that only its `sha256` is kept, and enqueueing the message would otherwise leave the plain
+ * value in this table for as long as the row lives -- undoing the hashing it was written with. So it is
+ * here while the message is owed, which is minutes, and gone once it is not. `registration_intents` blanks
+ * its personal fields on consume for the same reason.
+ *
+ * What stays is the record: who, when, which occasion, and what the transport called it.
+ */
 export async function markPhiNotificationSent(id: string, messageId: string | null) {
   await getPool().query(
     `UPDATE phis.notification_outbox
-     SET sent_at = NOW(), message_id = $2, last_error = NULL
+     SET sent_at = NOW(), message_id = $2, last_error = NULL, params = '{}'::jsonb
      WHERE id = $1 AND sent_at IS NULL`,
     [id, messageId],
   );
 }
 
+/**
+ * Records why an attempt failed, and empties `params` once no further attempt will be made.
+ *
+ * A row nobody will try again must not keep a secret alive either, and the attempt that reached the
+ * ceiling is the last moment anything knows that.
+ */
 export async function markPhiNotificationFailed(id: string, error: string) {
   await getPool().query(
     `UPDATE phis.notification_outbox
-     SET last_error = $2
+     SET last_error = $2,
+         params = CASE WHEN attempts >= ${MAX_ATTEMPTS} THEN '{}'::jsonb ELSE params END
      WHERE id = $1 AND sent_at IS NULL`,
     [id, error.slice(0, 2000)],
   );
@@ -244,4 +262,43 @@ export async function countOwedPhiNotifications(siteId: number) {
     owed: Number(rows[0]?.owed ?? 0),
     exhausted: Number(rows[0]?.exhausted ?? 0),
   };
+}
+
+/**
+ * The salt beside one membership, minted on first need and handed back every time after.
+ *
+ * Unlike a token, a salt may be read again, which is the whole reason the unsubscribe link is built this
+ * way: the link has to be renderable for every circular, not only the first. The conflict branch updates
+ * nothing -- it exists so the statement answers with the row that is already there instead of needing a
+ * second read.
+ */
+export async function ensurePhiNotificationLinkSalt(userId: number, siteId: number, salt: string) {
+  const { rows } = await getPool().query<{ link_salt: string }>(
+    `INSERT INTO phis.notification_link_salts (user_id, site_id, link_salt)
+     VALUES ($1, $2, $3)
+     ON CONFLICT (user_id, site_id) DO UPDATE SET user_id = EXCLUDED.user_id
+     RETURNING link_salt`,
+    [userId, siteId, salt],
+  );
+
+  return rows[0]?.link_salt.trim() ?? null;
+}
+
+/**
+ * The salt a link has to be checked against, and the note that it was used.
+ *
+ * `last_used_at` moves on every use rather than on the first, because clearing a flag twice is not an
+ * error and a second click deserves the same answer as the first. A membership that is gone answers
+ * `null`, which the caller reports rather than dressing up as success.
+ */
+export async function claimPhiNotificationLinkSalt(userId: number, siteId: number) {
+  const { rows } = await getPool().query<{ link_salt: string }>(
+    `UPDATE phis.notification_link_salts
+     SET last_used_at = NOW()
+     WHERE user_id = $1 AND site_id = $2
+     RETURNING link_salt`,
+    [userId, siteId],
+  );
+
+  return rows[0]?.link_salt.trim() ?? null;
 }
