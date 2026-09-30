@@ -312,22 +312,38 @@ export async function ensurePhiNotificationLinkSalt(userId: number, siteId: numb
 }
 
 /**
- * The salt a link has to be checked against, and the note that it was used.
+ * The salt a link has to be checked against, and nothing else.
  *
- * `last_used_at` moves on every use rather than on the first, because clearing a flag twice is not an
- * error and a second click deserves the same answer as the first. A membership that is gone answers
- * `null`, which the caller reports rather than dressing up as success.
+ * Reading is separate from noting the use on purpose: the salt is needed *in order to* verify a signature,
+ * so a request carrying a guessed account id reaches this. If it also moved `last_used_at`, anyone could
+ * stir the timestamps of accounts they cannot unsubscribe. A membership that is gone answers `null`, which
+ * the caller reports rather than dressing up as success.
  */
-export async function claimPhiNotificationLinkSalt(userId: number, siteId: number) {
+export async function readPhiNotificationLinkSalt(userId: number, siteId: number) {
   const { rows } = await getPool().query<{ link_salt: string }>(
-    `UPDATE phis.notification_link_salts
-     SET last_used_at = NOW()
+    `SELECT link_salt
+     FROM phis.notification_link_salts
      WHERE user_id = $1 AND site_id = $2
-     RETURNING link_salt`,
+     LIMIT 1`,
     [userId, siteId],
   );
 
   return rows[0]?.link_salt.trim() ?? null;
+}
+
+/**
+ * Notes that a verified link was acted on.
+ *
+ * `last_used_at` moves on every use rather than on the first, because clearing a flag twice is not an error
+ * and a second click deserves the same answer as the first.
+ */
+export async function touchPhiNotificationLinkSalt(userId: number, siteId: number) {
+  await getPool().query(
+    `UPDATE phis.notification_link_salts
+     SET last_used_at = NOW()
+     WHERE user_id = $1 AND site_id = $2`,
+    [userId, siteId],
+  );
 }
 
 /**

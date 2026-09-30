@@ -12,7 +12,7 @@ import {
 import {
   claimDuePhiNotifications,
   claimPhiNotificationById,
-  claimPhiNotificationLinkSalt,
+  readPhiNotificationLinkSalt,
   countOwedPhiNotifications,
   ensurePhiNotificationLinkSalt,
   enqueuePhiNotification,
@@ -174,8 +174,8 @@ describe("the notification outbox against PostgreSQL", () => {
     expect(first).toBe("a".repeat(32));
     expect(second).toBe("a".repeat(32));
 
-    expect(await claimPhiNotificationLinkSalt(userId, site.id)).toBe("a".repeat(32));
+    expect(await readPhiNotificationLinkSalt(userId, site.id)).toBe("a".repeat(32));
     // A membership nobody has is not an error to be dressed up as success.
-    expect(await claimPhiNotificationLinkSalt(userId + 99_000, site.id)).toBeNull();
+    expect(await readPhiNotificationLinkSalt(userId + 99_000, site.id)).toBeNull();
   });
 });
