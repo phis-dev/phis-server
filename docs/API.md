@@ -105,7 +105,6 @@ Site administration, CMS, media and support API. A Site's `/api/site` proxy forw
 | GET | [`/api/site/cms/theme/draft`](../src/app/api/site/cms/theme/draft/route.ts) | session, `roles` (requireSiteReviewApiContext) |  |
 | POST | [`/api/site/cms/theme/publish`](../src/app/api/site/cms/theme/publish/route.ts) | session, `publishing` (requireSitePublisherApiContext) |  |
 | GET | [`/api/site/editor/news`](../src/app/api/site/editor/news/route.ts) | session, `content-editing` (requireSiteAuthorApiContext) |  |
-| POST | [`/api/site/editor/news`](../src/app/api/site/editor/news/route.ts) | session, `content-editing` (requireSiteAuthorApiContext) |  |
 | PUT | [`/api/site/editor/news`](../src/app/api/site/editor/news/route.ts) | session, `content-editing` (requireSiteAuthorApiContext) |  |
 | DELETE | [`/api/site/editor/news`](../src/app/api/site/editor/news/route.ts) | session, `content-editing` (requireSiteAuthorApiContext) |  |
 | POST | [`/api/site/editor/news/publish`](../src/app/api/site/editor/news/publish/route.ts) | session, `publishing` (requireSitePublisherApiContext) |  |

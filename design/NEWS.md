@@ -53,7 +53,7 @@ minute. A minute is acceptable; discovering it later, while debugging, is not.
 
 ## 3. The write path
 
-**Built.** `POST`, `PATCH`, `DELETE` and `GET` on
+**Built.** `GET`, `PUT` and `DELETE` on
 [/api/site/editor/news](../src/app/api/site/editor/news/route.ts) are the words; `POST` and `DELETE` on
 [/api/site/editor/news/publish](../src/app/api/site/editor/news/publish/route.ts) are the publication.
 Underneath, `saveSiteContentNewsDraft`, `publishSiteContentNews`, `withdrawSiteContentNews`,
@@ -69,7 +69,10 @@ below had left open:
 - **The editor reads the Site's source locale, never a requested one.** The form writes source text; a
   translated title in it would be written back over the original on the next save. Translating a News
   entry stays the translations editor's work on the same messages.
-- **A save states the whole entry**, which is why the update is a `PUT`. A version is a complete set of
+- **One `PUT` is the save**, whether the entry exists yet or not: with a `contentId` it is that entry,
+  without one it is a new entry at the slug it names. There is no second method for creating, because a Form
+  binds one handler and one path -- two would mean two Forms and two dialogs for one act.
+- **A save states the whole entry**, which is why it is a `PUT` and not a `PATCH`. A version is a complete set of
   words rather than a patch on the last one, and `link`, `tags` and `sortOrder` follow the same rule -- one
   call with two meanings is how a save that corrected a title dropped the entry's link, which is what the
   measurement against the dev stand showed. The address is the exception: an entry must have a slug, so a

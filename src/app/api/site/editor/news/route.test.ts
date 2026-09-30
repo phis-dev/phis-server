@@ -28,7 +28,7 @@ vi.mock("@/db/site-content", async (importOriginal) => ({
 }));
 vi.mock("@/lib/log", () => ({ logRuntimeEvent: vi.fn() }));
 
-import { DELETE, GET, POST, PUT } from "./route";
+import { DELETE, GET, PUT } from "./route";
 
 const SITE = { id: 4, key: "example", sourceLocale: "en" };
 
@@ -50,9 +50,9 @@ beforeEach(() => {
   mocks.tags.mockResolvedValue(["release"]);
 });
 
-describe("POST /api/site/editor/news", () => {
+describe("PUT /api/site/editor/news, as a save", () => {
   it("saves a draft and never states when it is seen", async () => {
-    const response = await POST(request("POST", ENTRY));
+    const response = await PUT(request("PUT", ENTRY));
 
     expect(response.status).toBe(200);
     expect(await response.json()).toMatchObject({ contentId: 12, versionId: 34 });
@@ -65,7 +65,7 @@ describe("POST /api/site/editor/news", () => {
 
   it("refuses an address that is not one", async () => {
     for (const slug of ["Not A Slug", "-leading-hyphen", "trailing space ", "slash/es", ""]) {
-      const response = await POST(request("POST", { ...ENTRY, slug }));
+      const response = await PUT(request("PUT", { ...ENTRY, slug }));
       expect(response.status, slug).toBe(400);
     }
     expect(mocks.save).not.toHaveBeenCalled();
@@ -73,7 +73,7 @@ describe("POST /api/site/editor/news", () => {
 
   it("refuses a link whose scheme nobody chose", async () => {
     for (const link of ["javascript:alert(1)", "//evil.test/path", "data:text/html,x", "mailto:a@b.test"]) {
-      const response = await POST(request("POST", { ...ENTRY, link }));
+      const response = await PUT(request("PUT", { ...ENTRY, link }));
       expect(response.status, link).toBe(400);
     }
     expect(mocks.save).not.toHaveBeenCalled();
@@ -81,14 +81,14 @@ describe("POST /api/site/editor/news", () => {
 
   it("takes a site-relative path and an http(s) address", async () => {
     for (const link of ["/news/one", "https://example.test/a", "http://example.test/b"]) {
-      const response = await POST(request("POST", { ...ENTRY, link }));
+      const response = await PUT(request("PUT", { ...ENTRY, link }));
       expect(response.status, link).toBe(200);
     }
   });
 
   it("answers a taken address with 409 and an unknown entry with 404", async () => {
     mocks.save.mockResolvedValueOnce({ ok: false, reason: "slug_taken" });
-    expect((await POST(request("POST", ENTRY))).status).toBe(409);
+    expect((await PUT(request("PUT", ENTRY))).status).toBe(409);
 
     mocks.save.mockResolvedValueOnce({ ok: false, reason: "missing" });
     expect((await PUT(request("PUT", { ...ENTRY, contentId: 12 }))).status).toBe(404);
@@ -97,40 +97,40 @@ describe("POST /api/site/editor/news", () => {
   it("normalises tags, drops duplicates and refuses more than the limit", async () => {
     // Trimmed and lower-cased, because the string is the tag's identity: two spellings would be two tags
     // with two translations to pay for.
-    await POST(request("POST", { ...ENTRY, tags: ["One", " one ", "TWO", "two"] }));
+    await PUT(request("PUT", { ...ENTRY, tags: ["One", " one ", "TWO", "two"] }));
     expect(mocks.save.mock.calls[0]![0]).toMatchObject({ tags: ["one", "two"] });
 
     const tooMany = Array.from({ length: 13 }, (_, index) => `tag-${index}`);
-    expect((await POST(request("POST", { ...ENTRY, tags: tooMany }))).status).toBe(400);
+    expect((await PUT(request("PUT", { ...ENTRY, tags: tooMany }))).status).toBe(400);
   });
 });
 
 describe("the language a save declares", () => {
   it("passes a stated language through, normalised", async () => {
-    const response = await POST(request("POST", { ...ENTRY, sourceLocale: "DE" }));
+    const response = await PUT(request("PUT", { ...ENTRY, sourceLocale: "DE" }));
 
     expect(response.status).toBe(200);
     expect(mocks.save.mock.calls[0]![0]).toMatchObject({ sourceLocale: "de", translate: true });
   });
 
   it("reads no language as the Site's own", async () => {
-    await POST(request("POST", ENTRY));
+    await PUT(request("PUT", ENTRY));
     expect(mocks.save.mock.calls[0]![0]).toMatchObject({ sourceLocale: null, translate: true });
   });
 
   it("refuses a language this installation cannot translate", async () => {
-    const response = await POST(request("POST", { ...ENTRY, sourceLocale: "kli" }));
+    const response = await PUT(request("PUT", { ...ENTRY, sourceLocale: "kli" }));
 
     expect(response.status).toBe(400);
     expect(mocks.save).not.toHaveBeenCalled();
   });
 
   it("takes a stated no to translating", async () => {
-    await POST(request("POST", { ...ENTRY, translate: false }));
+    await PUT(request("PUT", { ...ENTRY, translate: false }));
     expect(mocks.save.mock.calls[0]![0]).toMatchObject({ translate: false });
 
     // A string is the other spelling a stored value arrives in.
-    await POST(request("POST", { ...ENTRY, translate: "false" }));
+    await PUT(request("PUT", { ...ENTRY, translate: "false" }));
     expect(mocks.save.mock.calls[1]![0]).toMatchObject({ translate: false });
   });
 
@@ -139,7 +139,7 @@ describe("the language a save declares", () => {
    * to every reader, including the ones who cannot read it.
    */
   it("refuses a foreign language that may not be translated", async () => {
-    const response = await POST(request("POST", { ...ENTRY, sourceLocale: "de", translate: false }));
+    const response = await PUT(request("PUT", { ...ENTRY, sourceLocale: "de", translate: false }));
 
     expect(response.status).toBe(400);
     expect(await response.json()).toMatchObject({ code: "untranslatable_foreign_source" });
@@ -147,18 +147,29 @@ describe("the language a save declares", () => {
   });
 
   it("allows the Site's own language to be stated and not translated", async () => {
-    const response = await POST(request("POST", { ...ENTRY, sourceLocale: "en", translate: false }));
+    const response = await PUT(request("PUT", { ...ENTRY, sourceLocale: "en", translate: false }));
 
     expect(response.status).toBe(200);
     expect(mocks.save.mock.calls[0]![0]).toMatchObject({ sourceLocale: "en", translate: false });
   });
 });
 
-describe("PUT /api/site/editor/news", () => {
-  it("needs the id of the entry it edits", async () => {
+describe("PUT /api/site/editor/news, on an entry that exists", () => {
+  it("needs an id or an address: without either there is no entry to state", async () => {
     const response = await PUT(request("PUT", { title: "A title", content: "A sentence." }));
     expect(response.status).toBe(400);
     expect(mocks.save).not.toHaveBeenCalled();
+  });
+
+  /*
+   * One method for both, because a Form binds one handler: with an id it is that entry, without one it is
+   * a new entry at the slug it names.
+   */
+  it("creates at the named address when no id comes with it", async () => {
+    const response = await PUT(request("PUT", ENTRY));
+
+    expect(response.status).toBe(200);
+    expect(mocks.save.mock.calls[0]![0]).toMatchObject({ contentId: null, slug: "a-slug" });
   });
 
   it("leaves the address alone when the save does not mention it", async () => {

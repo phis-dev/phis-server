@@ -34,11 +34,16 @@ export const dynamic = "force-dynamic";
  * written in, and whether a reader in another one may be served a translation. Both land in the version's
  * own `meta`, and both are stated again by every save.
  *
- * **A save states the whole entry**, which is why the update is a `PUT` and not a `PATCH`. A save writes a
- * version, and a version is a complete set of words rather than a patch on the last one -- so a subtitle
- * left out is a subtitle this version does not have. `link`, `tags` and `sortOrder` follow the same rule,
- * because one call with two meanings is how a save that only corrected a typo silently dropped an entry's
- * link. The one exception is the address: an entry must have a slug, so a save that names none keeps it.
+ * **A save states the whole entry**, which is why it is a `PUT` and not a `PATCH`. A save writes a version,
+ * and a version is a complete set of words rather than a patch on the last one -- so a subtitle left out is
+ * a subtitle this version does not have. `link`, `tags` and `sortOrder` follow the same rule, because one
+ * call with two meanings is how a save that only corrected a typo silently dropped an entry's link. The one
+ * exception is the address: an entry must have a slug, so a save that names none keeps it.
+ *
+ * **One `PUT`, whether the entry exists yet or not.** With a `contentId` it is that entry; without one it is
+ * a new entry at the slug it names, and a slug somebody else holds is refused with `409`. There is no second
+ * method for creating, because a Form binds one handler and one path -- two would mean two Forms and two
+ * dialogs for one act, and a surface where "save" means different things depending on how you got there.
  */
 
 const NEWS_SLUG_PATTERN = /^[a-z0-9][a-z0-9-]{0,119}$/;
@@ -154,7 +159,7 @@ function readNewsDraftBody(
     }
   }
   if (!options.requireSlug && (contentId === null || contentId <= 0)) {
-    return { error: "A valid contentId is required." };
+    return { error: "A valid contentId, or a slug for a new entry, is required." };
   }
   if (!title || title.length > MAX_NEWS_TITLE_LENGTH) {
     return { error: `title is required and must be at most ${MAX_NEWS_TITLE_LENGTH} characters.` };
@@ -273,7 +278,7 @@ export async function GET(request: NextRequest) {
   });
 }
 
-async function writeNewsDraft(request: NextRequest, mode: "create" | "update") {
+async function writeNewsDraft(request: NextRequest) {
   const { context, error } = await requireSiteAuthorApiContext(request);
   if (error) {
     return error;
@@ -286,7 +291,8 @@ async function writeNewsDraft(request: NextRequest, mode: "create" | "update") {
 
   const body = await readRequestBody(request);
   const parsed = readNewsDraftBody(body, {
-    requireSlug: mode === "create",
+    // No id means a new entry, and a new entry needs the address it is to live at.
+    requireSlug: normalizeNullableInteger(body.contentId) === null,
     canonicalLocale: site.sourceLocale,
   });
   if ("error" in parsed) {
@@ -298,7 +304,7 @@ async function writeNewsDraft(request: NextRequest, mode: "create" | "update") {
 
   const outcome = await saveSiteContentNewsDraft({
     siteId: site.id,
-    contentId: mode === "create" ? null : parsed.input.contentId,
+    contentId: parsed.input.contentId,
     slug: parsed.input.slug,
     title: parsed.input.title,
     subtitle: parsed.input.subtitle,
@@ -322,7 +328,12 @@ async function writeNewsDraft(request: NextRequest, mode: "create" | "update") {
     message: "News draft saved.",
     siteKey: site.key,
     userId: context.session?.userId ?? null,
-    meta: { contentId: outcome.contentId, versionId: outcome.versionId, slug: outcome.slug, mode },
+    meta: {
+      contentId: outcome.contentId,
+      versionId: outcome.versionId,
+      slug: outcome.slug,
+      created: parsed.input.contentId === null,
+    },
   });
 
   return NextResponse.json({
@@ -332,12 +343,8 @@ async function writeNewsDraft(request: NextRequest, mode: "create" | "update") {
   });
 }
 
-export async function POST(request: NextRequest) {
-  return writeNewsDraft(request, "create");
-}
-
 export async function PUT(request: NextRequest) {
-  return writeNewsDraft(request, "update");
+  return writeNewsDraft(request);
 }
 
 export async function DELETE(request: NextRequest) {
