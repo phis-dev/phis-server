@@ -6,12 +6,24 @@ import { getPool, withTransaction } from "@/lib/db";
 import { hasPhiFlag } from "@/lib/helpers/flags";
 import { PhiCmsRevisionFlags } from "@phis/contracts/cms";
 import { isPhisCmsAreaKey, resolvePhisCmsAreaMask } from "@/lib/constants/cms-areas";
+import { collectSiteCmsReferences } from "@/db/site-cms-references";
 import {
-  collectSiteCmsReferences,
-  PhiCmsReferenceSourceKind,
-  pruneSiteCmsReferencesToLiveRevisionsWithDb,
-  replaceSiteCmsReferencesWithDb,
-} from "@/db/site-cms-references";
+  discardSiteKeyedDraftRevisionWithDb,
+  getSiteKeyedScopeWithDb,
+  getSiteRevisionByIdWithDb,
+  insertSiteRevisionWithDb,
+  mapSiteKeyedScopeRow,
+  publishSiteKeyedRevisionWithDb,
+  replaceSiteRevisionReferencesWithDb,
+  saveSiteKeyedDraftRevisionWithDb,
+  selectSiteKeyedRevisionForPublishWithDb,
+  setSiteRevisionScopePointersWithDb,
+  SITE_KEYED_SCOPE_COLUMNS,
+  SITE_REVISION_TABLES,
+  stableJsonStringify,
+  type SiteKeyedScopeRecord,
+  type SiteKeyedScopeRow,
+} from "@/db/site-revision-scopes";
 import {
   readPhiCmsInstanceId,
   readPhiCmsInstanceIdDescriptor,
@@ -20,11 +32,13 @@ import {
 } from "@/lib/cms/instance-id";
 import { normalizeSiteCmsPath } from "@/lib/helpers/cms-path";
 import { readPhiPageReference } from "@/lib/internal-references";
-import { listSitePageScopes, SiteCmsDraftConflictError } from "@/db/site-pages";
-import { isPhiRecord, toPhiRecord } from "@/lib/helpers/record";
+import { listSitePageScopes } from "@/db/site-pages";
+import { isPhiRecord } from "@/lib/helpers/record";
 import { requirePhiString } from "@/lib/helpers/string";
 
 type DbQueryable = Pick<PoolClient, "query">;
+
+const NAVIGATION = SITE_REVISION_TABLES.navigation;
 
 export type SiteNavigationItemPlacement = {
   parentId: PhiCmsInstanceId | null;
@@ -122,28 +136,7 @@ export async function projectSiteNavigationOverlayTargets(
   };
 }
 
-export type SiteNavigationScopeRecord = {
-  id: number;
-  siteId: number;
-  key: string;
-  label: string | null;
-  flags: number;
-  publishedRevisionId: number | null;
-  workingDraftRevisionId: number | null;
-};
-
-export type SiteNavigationRevisionRecord = {
-  id: number;
-  navScopeId: number;
-  flags: number;
-  nextNodeSequence: number;
-  treeJson: Record<string, unknown>;
-  message: string | null;
-  metaJson: Record<string, unknown>;
-  sourceRevisionId: number | null;
-  createdByUserId: number | null;
-  createdAt: string;
-};
+export type SiteNavigationScopeRecord = SiteKeyedScopeRecord;
 
 function normalizeSiteNavigationKey(value: string) {
   return value.trim().toLowerCase();
@@ -225,19 +218,6 @@ function normalizeSiteNavigationTarget(value: unknown, label: string) {
     return { kind: "external" as const, href };
   }
   throw new Error(`${label} has an invalid kind.`);
-}
-
-function stableJsonStringify(value: unknown): string {
-  if (Array.isArray(value)) {
-    return `[${value.map((entry) => stableJsonStringify(entry)).join(",")}]`;
-  }
-  if (isPhiRecord(value)) {
-    return `{${Object.keys(value)
-      .sort()
-      .map((key) => `${JSON.stringify(key)}:${stableJsonStringify(value[key])}`)
-      .join(",")}}`;
-  }
-  return JSON.stringify(value);
 }
 
 function normalizeSiteNavigationPlacement(value: unknown): SiteNavigationItemPlacement {
@@ -536,76 +516,6 @@ function buildNavigationRevisionSummary(
   };
 }
 
-function mapSiteNavigationScopeRow(row: {
-  id: number;
-  site_id: number;
-  key: string;
-  label: string | null;
-  flags: number;
-  published_revision_id: number | null;
-  working_draft_revision_id: number | null;
-}): SiteNavigationScopeRecord {
-  return {
-    id: row.id,
-    siteId: row.site_id,
-    key: row.key,
-    label: row.label,
-    flags: row.flags,
-    publishedRevisionId: row.published_revision_id,
-    workingDraftRevisionId: row.working_draft_revision_id,
-  };
-}
-
-function mapSiteNavigationRevisionRow(row: {
-  id: number;
-  nav_scope_id: number;
-  flags: number;
-  next_node_sequence: string | number;
-  tree_json: Record<string, unknown>;
-  message: string | null;
-  meta_json: Record<string, unknown> | null;
-  source_revision_id: number | null;
-  created_by_user_id: number | null;
-  created_at: string;
-}): SiteNavigationRevisionRecord {
-  return {
-    id: row.id,
-    navScopeId: row.nav_scope_id,
-    flags: row.flags,
-    nextNodeSequence: Number(row.next_node_sequence),
-    treeJson: row.tree_json,
-    message: row.message,
-    metaJson: toPhiRecord(row.meta_json),
-    sourceRevisionId: row.source_revision_id,
-    createdByUserId: row.created_by_user_id,
-    createdAt: row.created_at,
-  };
-}
-
-async function getSiteNavigationScopeByKeyWithDb(
-  db: DbQueryable,
-  siteId: number,
-  key: string,
-  options?: { forUpdate?: boolean },
-) {
-  const { rows } = await db.query<{
-    id: number;
-    site_id: number;
-    key: string;
-    label: string | null;
-    flags: number;
-    published_revision_id: number | null;
-    working_draft_revision_id: number | null;
-  }>(
-    `SELECT id, site_id, key, label, flags, published_revision_id, working_draft_revision_id
-     FROM phis.site_nav_scopes
-     WHERE site_id = $1 AND key = $2
-     LIMIT 1${options?.forUpdate ? "\n     FOR UPDATE" : ""}`,
-    [siteId, key],
-  );
-  return rows[0] ? mapSiteNavigationScopeRow(rows[0]) : null;
-}
-
 export async function listSiteNavigationScopes(siteId: number, area?: string | null) {
   if (!Number.isInteger(siteId) || siteId <= 0) {
     return [];
@@ -614,131 +524,15 @@ export async function listSiteNavigationScopes(siteId: number, area?: string | n
   if (normalizedArea && !isPhisCmsAreaKey(normalizedArea)) {
     throw new Error("Invalid navigation Area.");
   }
-  const { rows } = await getPool().query<{
-    id: number;
-    site_id: number;
-    key: string;
-    label: string | null;
-    flags: number;
-    published_revision_id: number | null;
-    working_draft_revision_id: number | null;
-  }>(
-    `SELECT id, site_id, key, label, flags, published_revision_id, working_draft_revision_id
+  const { rows } = await getPool().query<SiteKeyedScopeRow>(
+    `SELECT ${SITE_KEYED_SCOPE_COLUMNS}
      FROM phis.site_nav_scopes
      WHERE site_id = $1
        AND ($2::text = '' OR key LIKE $2::text || ':%')
      ORDER BY key`,
     [siteId, normalizedArea],
   );
-  return rows.map(mapSiteNavigationScopeRow);
-}
-
-async function upsertSiteNavigationScopeWithDb(
-  db: DbQueryable,
-  siteId: number,
-  input: { key: string; label?: string | null },
-) {
-  const { rows } = await db.query<{
-    id: number;
-    site_id: number;
-    key: string;
-    label: string | null;
-    flags: number;
-    published_revision_id: number | null;
-    working_draft_revision_id: number | null;
-  }>(
-    `INSERT INTO phis.site_nav_scopes (site_id, key, label)
-     VALUES ($1, $2, $3)
-     ON CONFLICT (site_id, key)
-     DO UPDATE SET label = COALESCE(EXCLUDED.label, phis.site_nav_scopes.label)
-     RETURNING id, site_id, key, label, flags, published_revision_id, working_draft_revision_id`,
-    [siteId, input.key, input.label ?? null],
-  );
-  return mapSiteNavigationScopeRow(rows[0]!);
-}
-
-async function insertSiteNavigationRevisionWithDb(
-  db: DbQueryable,
-  input: {
-    navScopeId: number;
-    flags: number;
-    nextNodeSequence: number;
-    treeJson: Record<string, unknown>;
-    message?: string | null;
-    metaJson?: Record<string, unknown> | null;
-    sourceRevisionId?: number | null;
-    createdByUserId?: number | null;
-  },
-) {
-  const { rows } = await db.query<{
-    id: number;
-    nav_scope_id: number;
-    flags: number;
-    next_node_sequence: string | number;
-    tree_json: Record<string, unknown>;
-    message: string | null;
-    meta_json: Record<string, unknown> | null;
-    source_revision_id: number | null;
-    created_by_user_id: number | null;
-    created_at: string;
-  }>(
-    `INSERT INTO phis.site_nav_revisions
-       (nav_scope_id, flags, next_node_sequence, tree_json, message, meta_json, source_revision_id, created_by_user_id)
-     VALUES ($1, $2, $3, $4::jsonb, $5, $6::jsonb, $7, $8)
-     RETURNING id, nav_scope_id, flags, next_node_sequence, tree_json, message, meta_json,
-               source_revision_id, created_by_user_id, created_at`,
-    [
-      input.navScopeId,
-      input.flags,
-      input.nextNodeSequence,
-      JSON.stringify(input.treeJson),
-      input.message ?? null,
-      JSON.stringify(input.metaJson ?? {}),
-      input.sourceRevisionId ?? null,
-      input.createdByUserId ?? null,
-    ],
-  );
-  return mapSiteNavigationRevisionRow(rows[0]!);
-}
-
-async function getSiteNavigationRevisionByIdWithDb(db: DbQueryable, revisionId: number) {
-  const { rows } = await db.query<{
-    id: number;
-    nav_scope_id: number;
-    flags: number;
-    next_node_sequence: string | number;
-    tree_json: Record<string, unknown>;
-    message: string | null;
-    meta_json: Record<string, unknown> | null;
-    source_revision_id: number | null;
-    created_by_user_id: number | null;
-    created_at: string;
-  }>(
-    `SELECT id, nav_scope_id, flags, next_node_sequence, tree_json, message, meta_json,
-            source_revision_id, created_by_user_id, created_at
-     FROM phis.site_nav_revisions
-     WHERE id = $1
-     LIMIT 1`,
-    [revisionId],
-  );
-  return rows[0] ? mapSiteNavigationRevisionRow(rows[0]) : null;
-}
-
-async function updateSiteNavigationScopePointersWithDb(
-  db: DbQueryable,
-  scopeId: number,
-  input: { publishedRevisionId: number | null; workingDraftRevisionId: number | null },
-) {
-  await db.query(
-    `UPDATE phis.site_nav_scopes
-     SET published_revision_id = $2, working_draft_revision_id = $3, updated_at = now()
-     WHERE id = $1`,
-    [scopeId, input.publishedRevisionId, input.workingDraftRevisionId],
-  );
-  await pruneSiteCmsReferencesToLiveRevisionsWithDb(db, {
-    sourceKind: PhiCmsReferenceSourceKind.Navigation,
-    sourceScopeId: scopeId,
-  });
+  return rows.map(mapSiteKeyedScopeRow);
 }
 
 export async function getPublishedSiteNavigationRevision(siteId: number, key: string) {
@@ -746,11 +540,11 @@ export async function getPublishedSiteNavigationRevision(siteId: number, key: st
     return null;
   }
   const normalizedKey = requireSiteNavigationScopeKey(key);
-  const scope = await getSiteNavigationScopeByKeyWithDb(getPool(), siteId, normalizedKey);
+  const scope = await getSiteKeyedScopeWithDb(getPool(), NAVIGATION, siteId, normalizedKey);
   if (!scope?.publishedRevisionId) {
     return null;
   }
-  const revision = await getSiteNavigationRevisionByIdWithDb(getPool(), scope.publishedRevisionId);
+  const revision = await getSiteRevisionByIdWithDb(getPool(), NAVIGATION, scope.publishedRevisionId);
   if (!revision || !hasPhiFlag(revision.flags, PhiCmsRevisionFlags.Published)) {
     return null;
   }
@@ -774,12 +568,12 @@ export async function getSiteNavigationOverlayRevisionById(
     return null;
   }
   const normalizedKey = requireSiteNavigationScopeKey(key);
-  const scope = await getSiteNavigationScopeByKeyWithDb(getPool(), siteId, normalizedKey);
+  const scope = await getSiteKeyedScopeWithDb(getPool(), NAVIGATION, siteId, normalizedKey);
   if (!scope) {
     return null;
   }
-  const revision = await getSiteNavigationRevisionByIdWithDb(getPool(), revisionId);
-  if (!revision || revision.navScopeId !== scope.id) {
+  const revision = await getSiteRevisionByIdWithDb(getPool(), NAVIGATION, revisionId);
+  if (!revision || revision.scopeId !== scope.id) {
     return null;
   }
   return parseSiteNavigationOverlay(revision.treeJson, normalizedKey);
@@ -790,11 +584,11 @@ export async function getSiteCurrentNavigationDraft(siteId: number, input: { key
     return null;
   }
   const normalizedKey = requireSiteNavigationScopeKey(input.key);
-  const scope = await getSiteNavigationScopeByKeyWithDb(getPool(), siteId, normalizedKey);
+  const scope = await getSiteKeyedScopeWithDb(getPool(), NAVIGATION, siteId, normalizedKey);
   if (!scope?.workingDraftRevisionId) {
     return null;
   }
-  const revision = await getSiteNavigationRevisionByIdWithDb(getPool(), scope.workingDraftRevisionId);
+  const revision = await getSiteRevisionByIdWithDb(getPool(), NAVIGATION, scope.workingDraftRevisionId);
   if (!revision) {
     return null;
   }
@@ -845,9 +639,11 @@ async function carrySiteNavigationFolderTargetsWithDb(
   );
   const carried: SiteNavigationFolderCarry[] = [];
   for (const { key } of siblings) {
-    const scope = await getSiteNavigationScopeByKeyWithDb(db, siteId, key);
+    const scope = await getSiteKeyedScopeWithDb(db, NAVIGATION, siteId, key);
     const sourceRevisionId = scope?.workingDraftRevisionId ?? scope?.publishedRevisionId ?? null;
-    const source = sourceRevisionId == null ? null : await getSiteNavigationRevisionByIdWithDb(db, sourceRevisionId);
+    const source = sourceRevisionId == null
+      ? null
+      : await getSiteRevisionByIdWithDb(db, NAVIGATION, sourceRevisionId);
     if (!scope || !source) continue;
     let sourceOverlay: SiteNavigationOverlay;
     try {
@@ -857,8 +653,8 @@ async function carrySiteNavigationFolderTargetsWithDb(
     }
     const next = applySiteNavigationFolderTargets(sourceOverlay, changed);
     if (next.changed.size === 0) continue;
-    const revision = await insertSiteNavigationRevisionWithDb(db, {
-      navScopeId: scope.id,
+    const revision = await insertSiteRevisionWithDb(db, NAVIGATION, {
+      scopeId: scope.id,
       flags: PhiCmsRevisionFlags.Draft,
       nextNodeSequence: source.nextNodeSequence,
       treeJson: next.overlay,
@@ -867,15 +663,14 @@ async function carrySiteNavigationFolderTargetsWithDb(
       sourceRevisionId: source.id,
       createdByUserId: input.createdByUserId,
     });
-    await updateSiteNavigationScopePointersWithDb(db, scope.id, {
+    await setSiteRevisionScopePointersWithDb(db, NAVIGATION, scope.id, {
       publishedRevisionId: scope.publishedRevisionId,
       workingDraftRevisionId: revision.id,
     });
-    await replaceSiteCmsReferencesWithDb(db, {
+    await replaceSiteRevisionReferencesWithDb(db, NAVIGATION, {
       siteId,
-      sourceKind: PhiCmsReferenceSourceKind.Navigation,
-      sourceScopeId: scope.id,
-      sourceRevisionId: revision.id,
+      scopeId: scope.id,
+      revisionId: revision.id,
       references: collectSiteCmsReferences(next.overlay, { targetAreaId: resolvePhisCmsAreaMask(areaKey) }),
     });
     carried.push({
@@ -977,69 +772,63 @@ export async function saveSiteNavigationDraftRevision(
   const normalizedKey = requireSiteNavigationScopeKey(input.key);
   const overlay = normalizeSiteNavigationOverlay(input.overlay, normalizedKey);
   const nextNodeSequence = readNextNodeSequence(input.nextNodeSequence);
+  const areaKey = normalizedKey.slice(0, normalizedKey.indexOf(":"));
   return withTransaction(async (client) => {
     /*
      * A save may carry folder targets into the other Navigations of its Area, so two saves in one Area
      * would each hold their own scope and wait for the other's. Saves of one Area take turns instead.
      */
     await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [
-      `phis.site_navigation:${siteId}:${normalizedKey.slice(0, normalizedKey.indexOf(":"))}`,
+      `phis.site_navigation:${siteId}:${areaKey}`,
     ]);
-    const scope = await upsertSiteNavigationScopeWithDb(client, siteId, {
-      key: normalizedKey,
-      label: overlay.label ?? normalizedKey.slice(normalizedKey.indexOf(":") + 1),
-    });
-    const sourceRevisionId = scope.workingDraftRevisionId ?? scope.publishedRevisionId ?? null;
-    const sourceRevision = sourceRevisionId == null
-      ? null
-      : await getSiteNavigationRevisionByIdWithDb(client, sourceRevisionId);
-    if (sourceRevision && nextNodeSequence < sourceRevision.nextNodeSequence) {
-      throw new Error(
-        `Navigation nextNodeSequence must not move backwards from ${sourceRevision.nextNodeSequence} ` +
-        `to ${nextNodeSequence}.`,
-      );
-    }
-    const carriedItems = sourceRevision
-      ? parseSiteNavigationOverlay(sourceRevision.treeJson, normalizedKey).customItems
-      : [];
-    const carriedItemIds = new Set(carriedItems.map((item) => item.id));
-    await validateNavigationDraftIdsWithDb(client, scope.id, overlay, nextNodeSequence, carriedItemIds);
-    const summary = buildNavigationRevisionSummary(
-      overlay,
-      sourceRevision?.treeJson ?? null,
-      sourceRevisionId,
-    );
-    const revision = await insertSiteNavigationRevisionWithDb(client, {
-      navScopeId: scope.id,
-      flags: PhiCmsRevisionFlags.Draft,
-      nextNodeSequence,
-      treeJson: overlay,
-      message: summary.message,
-      metaJson: summary.metaJson,
-      sourceRevisionId,
-      createdByUserId: options?.createdByUserId ?? null,
-    });
-    await updateSiteNavigationScopePointersWithDb(client, scope.id, {
-      publishedRevisionId: scope.publishedRevisionId,
-      workingDraftRevisionId: revision.id,
-    });
-    const areaKey = normalizedKey.slice(0, normalizedKey.indexOf(":"));
-    await replaceSiteCmsReferencesWithDb(client, {
+    const { scope, sourceRevision, revision } = await saveSiteKeyedDraftRevisionWithDb(
+      client,
+      NAVIGATION,
       siteId,
-      sourceKind: PhiCmsReferenceSourceKind.Navigation,
-      sourceScopeId: scope.id,
-      sourceRevisionId: revision.id,
-      references: collectSiteCmsReferences(overlay, {
-        targetAreaId: resolvePhisCmsAreaMask(areaKey),
-      }),
-    });
+      {
+        key: normalizedKey,
+        label: overlay.label ?? normalizedKey.slice(normalizedKey.indexOf(":") + 1),
+        treeJson: overlay,
+        nextNodeSequence,
+        references: collectSiteCmsReferences(overlay, {
+          targetAreaId: resolvePhisCmsAreaMask(areaKey),
+        }),
+        createdByUserId: options?.createdByUserId ?? null,
+        prepare: async (source) => {
+          if (source.revision && nextNodeSequence < source.revision.nextNodeSequence) {
+            throw new Error(
+              "Navigation nextNodeSequence must not move backwards from " +
+              `${source.revision.nextNodeSequence} to ${nextNodeSequence}.`,
+            );
+          }
+          const carriedItems = source.revision
+            ? parseSiteNavigationOverlay(source.revision.treeJson, normalizedKey).customItems
+            : [];
+          const carriedItemIds = new Set(carriedItems.map((item) => item.id));
+          await validateNavigationDraftIdsWithDb(
+            client,
+            source.scope.id,
+            overlay,
+            nextNodeSequence,
+            carriedItemIds,
+          );
+          return buildNavigationRevisionSummary(
+            overlay,
+            source.revision?.treeJson ?? null,
+            source.revisionId,
+          );
+        },
+      },
+    );
     const baseRevision = Number.isInteger(input.baseRevisionId) && (input.baseRevisionId as number) > 0
-      ? await getSiteNavigationRevisionByIdWithDb(client, input.baseRevisionId as number)
+      ? await getSiteRevisionByIdWithDb(client, NAVIGATION, input.baseRevisionId as number)
       : null;
     const carriedOver = await carrySiteNavigationFolderTargetsWithDb(client, siteId, {
       key: normalizedKey,
       overlay,
-      previousTreeJson: baseRevision?.navScopeId === scope.id ? baseRevision.treeJson : sourceRevision?.treeJson ?? null,
+      previousTreeJson: baseRevision?.scopeId === scope.id
+        ? baseRevision.treeJson
+        : sourceRevision?.treeJson ?? null,
       createdByUserId: options?.createdByUserId ?? null,
     });
     return { revisionId: revision.id, nextNodeSequence: revision.nextNodeSequence, overlay, carriedOver };
@@ -1055,40 +844,16 @@ export async function publishSiteNavigationRevision(
   }
   const normalizedKey = requireSiteNavigationScopeKey(input.key);
   return withTransaction(async (client) => {
-    const scope = await getSiteNavigationScopeByKeyWithDb(client, siteId, normalizedKey, {
-      forUpdate: true,
-    });
-    if (!scope) {
-      throw new Error("Navigation scope not found.");
-    }
     // As with Pages and Areas: publishing clears the Working Draft, so it publishes that Draft only, or
     // the published revision again while no Draft is open.
-    const republish =
-      scope.workingDraftRevisionId == null && input.revisionId === scope.publishedRevisionId;
-    if (input.revisionId != null && input.revisionId !== scope.workingDraftRevisionId && !republish) {
-      throw new SiteCmsDraftConflictError(
-        `Revision #${input.revisionId} is not the Navigation Working Draft; restore it to publish it.`,
-      );
-    }
-    const revisionId = input.revisionId ?? scope.workingDraftRevisionId;
-    if (typeof revisionId !== "number" || !Number.isInteger(revisionId) || revisionId <= 0) {
-      throw new Error("No navigation draft revision selected for publish.");
-    }
-    const revision = await getSiteNavigationRevisionByIdWithDb(client, revisionId);
-    if (!revision || revision.navScopeId !== scope.id) {
-      throw new Error("Navigation draft revision not found.");
-    }
+    const { scope, revision } = await selectSiteKeyedRevisionForPublishWithDb(
+      client,
+      NAVIGATION,
+      siteId,
+      { key: normalizedKey, revisionId: input.revisionId, guardWorkingDraft: true },
+    );
     const overlay = parseSiteNavigationOverlay(revision.treeJson, normalizedKey);
-    if (!hasPhiFlag(revision.flags, PhiCmsRevisionFlags.Published)) {
-      await client.query(
-        `UPDATE phis.site_nav_revisions SET flags = flags | $2 WHERE id = $1`,
-        [revision.id, PhiCmsRevisionFlags.Published],
-      );
-    }
-    await updateSiteNavigationScopePointersWithDb(client, scope.id, {
-      publishedRevisionId: revision.id,
-      workingDraftRevisionId: null,
-    });
+    await publishSiteKeyedRevisionWithDb(client, NAVIGATION, scope, revision);
     return { revisionId: revision.id, nextNodeSequence: revision.nextNodeSequence, overlay };
   });
 }
@@ -1101,20 +866,10 @@ export async function deleteSiteNavigationDraftRevision(
     throw new Error("siteId must be a positive integer.");
   }
   const normalizedKey = requireSiteNavigationScopeKey(input.key);
-  return withTransaction(async (client) => {
-    const scope = await getSiteNavigationScopeByKeyWithDb(client, siteId, normalizedKey);
-    if (!scope?.workingDraftRevisionId) {
-      return { deleted: false };
-    }
-    await client.query(`DELETE FROM phis.site_nav_revisions WHERE id = $1`, [scope.workingDraftRevisionId]);
-    if (scope.publishedRevisionId == null) {
-      await client.query(`DELETE FROM phis.site_nav_scopes WHERE id = $1`, [scope.id]);
-    } else {
-      await updateSiteNavigationScopePointersWithDb(client, scope.id, {
-        publishedRevisionId: scope.publishedRevisionId,
-        workingDraftRevisionId: null,
-      });
-    }
-    return { deleted: true };
-  });
+  return withTransaction((client) =>
+    discardSiteKeyedDraftRevisionWithDb(client, NAVIGATION, siteId, {
+      key: normalizedKey,
+      dropUnpublishedScope: true,
+    }),
+  );
 }

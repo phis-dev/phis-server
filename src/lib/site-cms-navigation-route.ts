@@ -11,20 +11,19 @@ import {
   publishSiteNavigationRevision,
   saveSiteNavigationDraftRevision,
 } from "@/db/site-navigation";
-import { SiteCmsDraftConflictError } from "@/db/site-pages";
 import {
   requireSiteBuilderApiContext,
   requireSitePublisherApiContext,
   requireSiteReviewApiContext,
 } from "@/lib/guards/site-admin-api";
+import { readSiteCmsRequestJson, readSiteCmsRequestSearchParam } from "@/lib/helpers/site-cms-route";
 import {
-  readSiteCmsErrorMessage,
-  readSiteCmsRequestJson,
-  readSiteCmsRequestSearchParam,
-} from "@/lib/helpers/site-cms-route";
-import { PhiCmsAuditEvent } from "@/lib/constants/phi-cms";
-import { logRuntimeEvent, normalizeLogThrowable } from "@/lib/log";
-import { logSiteCmsAuditEvent } from "@/lib/site-cms-audit";
+  logSiteCmsKeyedAuditEvent,
+  runSiteCmsKeyedRouteAction,
+  SITE_CMS_KEYED_ROUTES,
+} from "@/lib/site-cms-revision-route";
+
+const ROUTE = SITE_CMS_KEYED_ROUTES.navigation;
 
 export async function handleSiteCmsNavigationRead(request: NextRequest) {
   const { context, error } = await requireSiteReviewApiContext(request);
@@ -37,7 +36,7 @@ export async function handleSiteCmsNavigationRead(request: NextRequest) {
     return NextResponse.json({ error: "key must be provided." }, { status: 400 });
   }
 
-  try {
+  return runSiteCmsKeyedRouteAction(request, context!, ROUTE, "read", { key }, async () => {
     const navigation = await getPublishedSiteNavigationRevision(context!.site!.id, key);
     if (!navigation) {
       return NextResponse.json({ error: "CMS navigation not found." }, { status: 404 });
@@ -49,24 +48,7 @@ export async function handleSiteCmsNavigationRead(request: NextRequest) {
       nextNodeSequence: navigation.nextNodeSequence,
       overlay: await projectSiteNavigationOverlayTargets(context!.site!.id, navigation.overlay),
     });
-  } catch (routeError) {
-    logRuntimeEvent("error", "cms.navigation_read.failed", {
-      message: "CMS navigation read failed.",
-      siteKey: context!.site!.key,
-      userId: context!.session?.userId ?? null,
-      method: request.method,
-      path: request.nextUrl.pathname,
-      targetType: "cms-navigation-read",
-      error: normalizeLogThrowable(routeError),
-      meta: { navKey: key },
-    });
-    return NextResponse.json(
-      {
-        error: readSiteCmsErrorMessage(routeError, "CMS navigation read failed."),
-      },
-      { status: 500 },
-    );
-  }
+  });
 }
 
 export async function handleSiteCmsNavigationDraftRead(request: NextRequest) {
@@ -80,7 +62,7 @@ export async function handleSiteCmsNavigationDraftRead(request: NextRequest) {
     return NextResponse.json({ error: "key must be provided." }, { status: 400 });
   }
 
-  try {
+  return runSiteCmsKeyedRouteAction(request, context!, ROUTE, "draft_read", { key }, async () => {
     const draft = await getSiteCurrentNavigationDraft(context!.site!.id, { key });
     if (!draft) {
       return NextResponse.json({ error: "CMS navigation draft not found." }, { status: 404 });
@@ -92,24 +74,7 @@ export async function handleSiteCmsNavigationDraftRead(request: NextRequest) {
       nextNodeSequence: draft.nextNodeSequence,
       overlay: await projectSiteNavigationOverlayTargets(context!.site!.id, draft.overlay),
     });
-  } catch (routeError) {
-    logRuntimeEvent("error", "cms.navigation_draft_read.failed", {
-      message: "CMS navigation draft read failed.",
-      siteKey: context!.site!.key,
-      userId: context!.session?.userId ?? null,
-      method: request.method,
-      path: request.nextUrl.pathname,
-      targetType: "cms-navigation-draft-read",
-      error: normalizeLogThrowable(routeError),
-      meta: { navKey: key },
-    });
-    return NextResponse.json(
-      {
-        error: readSiteCmsErrorMessage(routeError, "CMS navigation draft read failed."),
-      },
-      { status: 500 },
-    );
-  }
+  });
 }
 
 export async function handleSiteCmsNavigationWrite(request: NextRequest) {
@@ -130,7 +95,7 @@ export async function handleSiteCmsNavigationWrite(request: NextRequest) {
     );
   }
 
-  try {
+  return runSiteCmsKeyedRouteAction(request, context!, ROUTE, "write", { key }, async () => {
     const draft = await saveSiteNavigationDraftRevision(
       context!.site!.id,
       {
@@ -144,16 +109,9 @@ export async function handleSiteCmsNavigationWrite(request: NextRequest) {
       },
     );
 
-    logSiteCmsAuditEvent(PhiCmsAuditEvent.NavigationDraftSaved, {
-      request,
-      siteKey: context!.site!.key,
-      userId: context!.session?.userId ?? null,
-      targetType: "cms-navigation-draft",
-      targetId: draft.overlay.navKey,
-      meta: {
-        navKey: draft.overlay.navKey,
-        revisionId: draft.revisionId,
-      },
+    logSiteCmsKeyedAuditEvent(request, context!, ROUTE, "draftSaved", {
+      key: draft.overlay.navKey,
+      revisionId: draft.revisionId,
     });
 
     return NextResponse.json({
@@ -164,24 +122,7 @@ export async function handleSiteCmsNavigationWrite(request: NextRequest) {
       // The other Navigations of the Area this save carried a folder target into, with their new Drafts.
       carriedOver: draft.carriedOver,
     });
-  } catch (routeError) {
-    logRuntimeEvent("error", "cms.navigation_write.failed", {
-      message: "CMS navigation write failed.",
-      siteKey: context!.site!.key,
-      userId: context!.session?.userId ?? null,
-      method: request.method,
-      path: request.nextUrl.pathname,
-      targetType: "cms-navigation-draft",
-      error: normalizeLogThrowable(routeError),
-      meta: { navKey: key },
-    });
-    return NextResponse.json(
-      {
-        error: readSiteCmsErrorMessage(routeError, "CMS navigation save failed."),
-      },
-      { status: 500 },
-    );
-  }
+  });
 }
 
 export async function handleSiteCmsNavigationDelete(request: NextRequest) {
@@ -191,45 +132,22 @@ export async function handleSiteCmsNavigationDelete(request: NextRequest) {
   }
 
   const payload = (await readSiteCmsRequestJson(request)) as { key?: unknown } | null;
-  const key = readSiteCmsRequestSearchParam(request, "key") ?? (typeof payload?.key === "string" ? payload.key : null);
+  const key = readSiteCmsRequestSearchParam(request, "key") ??
+    (typeof payload?.key === "string" ? payload.key : null);
   if (!key) {
     return NextResponse.json({ error: "key must be provided." }, { status: 400 });
   }
 
-  try {
+  return runSiteCmsKeyedRouteAction(request, context!, ROUTE, "delete", { key }, async () => {
     const result = await deleteSiteNavigationDraftRevision(context!.site!.id, { key });
     if (result.deleted) {
-      logSiteCmsAuditEvent(PhiCmsAuditEvent.NavigationDraftDeleted, {
-        request,
-        siteKey: context!.site!.key,
-        userId: context!.session?.userId ?? null,
-        targetType: "cms-navigation-draft",
-        targetId: key,
-        meta: { navKey: key },
-      });
+      logSiteCmsKeyedAuditEvent(request, context!, ROUTE, "draftDeleted", { key });
     }
     return NextResponse.json({
       key,
       deleted: result.deleted,
     });
-  } catch (routeError) {
-    logRuntimeEvent("error", "cms.navigation_delete.failed", {
-      message: "CMS navigation delete failed.",
-      siteKey: context!.site!.key,
-      userId: context!.session?.userId ?? null,
-      method: request.method,
-      path: request.nextUrl.pathname,
-      targetType: "cms-navigation",
-      error: normalizeLogThrowable(routeError),
-      meta: { navKey: key },
-    });
-    return NextResponse.json(
-      {
-        error: readSiteCmsErrorMessage(routeError, "CMS navigation delete failed."),
-      },
-      { status: 500 },
-    );
-  }
+  });
 }
 
 export async function handleSiteCmsNavigationPublish(request: NextRequest) {
@@ -239,7 +157,8 @@ export async function handleSiteCmsNavigationPublish(request: NextRequest) {
   }
 
   const payload = (await readSiteCmsRequestJson(request)) as { key?: unknown; revisionId?: unknown } | null;
-  const key = readSiteCmsRequestSearchParam(request, "key") ?? (typeof payload?.key === "string" ? payload.key : null);
+  const key = readSiteCmsRequestSearchParam(request, "key") ??
+    (typeof payload?.key === "string" ? payload.key : null);
   const revisionIdValue =
     readSiteCmsRequestSearchParam(request, "revisionId") ??
     (typeof payload?.revisionId === "number" || typeof payload?.revisionId === "string"
@@ -252,22 +171,16 @@ export async function handleSiteCmsNavigationPublish(request: NextRequest) {
   const revisionId =
     revisionIdValue && Number.isInteger(Number(revisionIdValue)) ? Number(revisionIdValue) : null;
 
-  try {
+  const log = { key, meta: { revisionId } };
+  return runSiteCmsKeyedRouteAction(request, context!, ROUTE, "publish", log, async () => {
     const result = await publishSiteNavigationRevision(context!.site!.id, {
       key,
       revisionId,
     });
 
-    logSiteCmsAuditEvent(PhiCmsAuditEvent.NavigationPublished, {
-      request,
-      siteKey: context!.site!.key,
-      userId: context!.session?.userId ?? null,
-      targetType: "cms-navigation",
-      targetId: result.overlay.navKey,
-      meta: {
-        navKey: result.overlay.navKey,
-        revisionId: result.revisionId,
-      },
+    logSiteCmsKeyedAuditEvent(request, context!, ROUTE, "published", {
+      key: result.overlay.navKey,
+      revisionId: result.revisionId,
     });
 
     return NextResponse.json({
@@ -276,25 +189,5 @@ export async function handleSiteCmsNavigationPublish(request: NextRequest) {
       nextNodeSequence: result.nextNodeSequence,
       overlay: result.overlay,
     });
-  } catch (routeError) {
-    logRuntimeEvent("error", "cms.navigation_publish.failed", {
-      message: "CMS navigation publish failed.",
-      siteKey: context!.site!.key,
-      userId: context!.session?.userId ?? null,
-      method: request.method,
-      path: request.nextUrl.pathname,
-      targetType: "cms-navigation-publish",
-      error: normalizeLogThrowable(routeError),
-      meta: {
-        navKey: key,
-        revisionId,
-      },
-    });
-    return NextResponse.json(
-      {
-        error: readSiteCmsErrorMessage(routeError, "CMS navigation publish failed."),
-      },
-      { status: routeError instanceof SiteCmsDraftConflictError ? 409 : 500 },
-    );
-  }
+  });
 }

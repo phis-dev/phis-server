@@ -1,20 +1,23 @@
 import "server-only";
 
-import type { PoolClient } from "pg";
-
-import {
-  PhiCmsReferenceSourceKind,
-  collectSiteCmsReferences,
-  pruneSiteCmsReferencesToLiveRevisionsWithDb,
-  replaceSiteCmsReferencesWithDb,
-} from "@/db/site-cms-references";
+import { collectSiteCmsReferences } from "@/db/site-cms-references";
 import { clearSiteConfigCache } from "@/db/site-config";
+import {
+  discardSiteKeyedDraftRevisionWithDb,
+  getSiteKeyedScopeWithDb,
+  getSiteRevisionByIdWithDb,
+  publishSiteKeyedRevisionWithDb,
+  replaceSiteRevisionReferencesWithDb,
+  saveSiteKeyedDraftRevisionWithDb,
+  selectSiteKeyedRevisionForPublishWithDb,
+  SITE_REVISION_TABLES,
+  stableJsonStringify,
+  type SiteKeyedScopeRecord,
+} from "@/db/site-revision-scopes";
 import { getPool, withTransaction } from "@/lib/db";
-import { hasPhiFlag } from "@/lib/helpers/flags";
-import { PhiCmsRevisionFlags } from "@phis/contracts/cms";
 import { isPhiRecord, toPhiRecord } from "@/lib/helpers/record";
 
-type DbQueryable = Pick<PoolClient, "query">;
+const THEME = SITE_REVISION_TABLES.theme;
 
 export const SITE_THEME_DEFAULT_SCOPE_KEY = "default";
 
@@ -24,45 +27,10 @@ export type SiteThemeRevisionTree = {
   theme: Record<string, unknown>;
 };
 
-export type SiteThemeScopeRecord = {
-  id: number;
-  siteId: number;
-  key: string;
-  label: string | null;
-  flags: number;
-  publishedRevisionId: number | null;
-  workingDraftRevisionId: number | null;
-};
-
-export type SiteThemeRevisionRecord = {
-  id: number;
-  themeScopeId: number;
-  flags: number;
-  treeJson: Record<string, unknown>;
-  message: string | null;
-  metaJson: Record<string, unknown>;
-  sourceRevisionId: number | null;
-  createdByUserId: number | null;
-  createdAt: string;
-};
+export type SiteThemeScopeRecord = SiteKeyedScopeRecord;
 
 function readString(value: unknown) {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
-}
-
-function stableJsonStringify(value: unknown): string {
-  if (Array.isArray(value)) {
-    return `[${value.map((entry) => stableJsonStringify(entry)).join(",")}]`;
-  }
-
-  if (isPhiRecord(value)) {
-    return `{${Object.keys(value)
-      .sort()
-      .map((key) => `${JSON.stringify(key)}:${stableJsonStringify(value[key])}`)
-      .join(",")}}`;
-  }
-
-  return JSON.stringify(value);
 }
 
 function countRecordLeaves(value: unknown): number {
@@ -137,86 +105,6 @@ function parseSiteThemeRevisionTree(value: unknown, fallbackKey: string): SiteTh
   };
 }
 
-function mapSiteThemeScopeRow(
-  row: {
-    id: number;
-    site_id: number;
-    key: string;
-    label: string | null;
-    flags: number;
-    published_revision_id: number | null;
-    working_draft_revision_id: number | null;
-  },
-): SiteThemeScopeRecord {
-  return {
-    id: row.id,
-    siteId: row.site_id,
-    key: row.key,
-    label: row.label,
-    flags: row.flags,
-    publishedRevisionId: row.published_revision_id,
-    workingDraftRevisionId: row.working_draft_revision_id,
-  };
-}
-
-function mapSiteThemeRevisionRow(
-  row: {
-    id: number;
-    theme_scope_id: number;
-    flags: number;
-    tree_json: Record<string, unknown>;
-    message: string | null;
-    meta_json: Record<string, unknown> | null;
-    source_revision_id: number | null;
-    created_by_user_id: number | null;
-    created_at: string;
-  },
-): SiteThemeRevisionRecord {
-  return {
-    id: row.id,
-    themeScopeId: row.theme_scope_id,
-    flags: row.flags,
-    treeJson: row.tree_json,
-    message: row.message,
-    metaJson: toPhiRecord(row.meta_json),
-    sourceRevisionId: row.source_revision_id,
-    createdByUserId: row.created_by_user_id,
-    createdAt: row.created_at,
-  };
-}
-
-async function getSiteThemeScopeByKeyWithDb(
-  db: DbQueryable,
-  siteId: number,
-  key: string,
-): Promise<SiteThemeScopeRecord | null> {
-  const normalizedKey = normalizeSiteThemeScopeKey(key);
-  const { rows } = await db.query<{
-    id: number;
-    site_id: number;
-    key: string;
-    label: string | null;
-    flags: number;
-    published_revision_id: number | null;
-    working_draft_revision_id: number | null;
-  }>(
-    `SELECT id,
-            site_id,
-            key,
-            label,
-            flags,
-            published_revision_id,
-            working_draft_revision_id
-     FROM phis.site_theme_scopes
-     WHERE site_id = $1
-       AND key = $2
-     LIMIT 1`,
-    [siteId, normalizedKey],
-  );
-
-  return rows[0] ? mapSiteThemeScopeRow(rows[0]) : null;
-}
-
 export async function getSiteThemeScope(
   siteId: number,
   input?: { key?: string | null },
@@ -225,158 +113,7 @@ export async function getSiteThemeScope(
     return null;
   }
 
-  const normalizedKey = normalizeSiteThemeScopeKey(input?.key);
-  return getSiteThemeScopeByKeyWithDb(getPool(), siteId, normalizedKey);
-}
-
-async function upsertSiteThemeScopeWithDb(
-  db: DbQueryable,
-  siteId: number,
-  input: {
-    key: string;
-    label?: string | null;
-  },
-): Promise<SiteThemeScopeRecord> {
-  const normalizedKey = normalizeSiteThemeScopeKey(input.key);
-  const { rows } = await db.query<{
-    id: number;
-    site_id: number;
-    key: string;
-    label: string | null;
-    flags: number;
-    published_revision_id: number | null;
-    working_draft_revision_id: number | null;
-  }>(
-    `INSERT INTO phis.site_theme_scopes (
-       site_id,
-       key,
-       label
-     )
-     VALUES ($1, $2, $3)
-     ON CONFLICT (site_id, key)
-     DO UPDATE SET label = COALESCE(EXCLUDED.label, phis.site_theme_scopes.label)
-     RETURNING id,
-               site_id,
-               key,
-               label,
-               flags,
-               published_revision_id,
-               working_draft_revision_id`,
-    [siteId, normalizedKey, input.label ?? null],
-  );
-
-  return mapSiteThemeScopeRow(rows[0]!);
-}
-
-async function insertSiteThemeRevisionWithDb(
-  db: DbQueryable,
-  input: {
-    themeScopeId: number;
-    flags: number;
-    treeJson: Record<string, unknown>;
-    message?: string | null;
-    metaJson?: Record<string, unknown> | null;
-    sourceRevisionId?: number | null;
-    createdByUserId?: number | null;
-  },
-): Promise<SiteThemeRevisionRecord> {
-  const { rows } = await db.query<{
-    id: number;
-    theme_scope_id: number;
-    flags: number;
-    tree_json: Record<string, unknown>;
-    message: string | null;
-    meta_json: Record<string, unknown> | null;
-    source_revision_id: number | null;
-    created_by_user_id: number | null;
-    created_at: string;
-  }>(
-    `INSERT INTO phis.site_theme_revisions (
-       theme_scope_id,
-       flags,
-       tree_json,
-       message,
-       meta_json,
-       source_revision_id,
-       created_by_user_id
-     )
-     VALUES ($1, $2, $3::jsonb, $4, $5::jsonb, $6, $7)
-     RETURNING id,
-               theme_scope_id,
-               flags,
-               tree_json,
-               message,
-               meta_json,
-               source_revision_id,
-               created_by_user_id,
-               created_at`,
-    [
-      input.themeScopeId,
-      input.flags,
-      JSON.stringify(input.treeJson),
-      input.message ?? null,
-      JSON.stringify(input.metaJson ?? {}),
-      input.sourceRevisionId ?? null,
-      input.createdByUserId ?? null,
-    ],
-  );
-
-  return mapSiteThemeRevisionRow(rows[0]!);
-}
-
-export async function getSiteThemeRevisionByIdWithDb(
-  db: DbQueryable,
-  revisionId: number,
-): Promise<SiteThemeRevisionRecord | null> {
-  const { rows } = await db.query<{
-    id: number;
-    theme_scope_id: number;
-    flags: number;
-    tree_json: Record<string, unknown>;
-    message: string | null;
-    meta_json: Record<string, unknown> | null;
-    source_revision_id: number | null;
-    created_by_user_id: number | null;
-    created_at: string;
-  }>(
-    `SELECT id,
-            theme_scope_id,
-            flags,
-            tree_json,
-            message,
-            meta_json,
-            source_revision_id,
-            created_by_user_id,
-            created_at
-     FROM phis.site_theme_revisions
-     WHERE id = $1
-     LIMIT 1`,
-    [revisionId],
-  );
-
-  return rows[0] ? mapSiteThemeRevisionRow(rows[0]) : null;
-}
-
-async function updateSiteThemeScopePointersWithDb(
-  db: DbQueryable,
-  scopeId: number,
-  input: {
-    publishedRevisionId: number | null;
-    workingDraftRevisionId: number | null;
-  },
-) {
-  await db.query(
-    `UPDATE phis.site_theme_scopes
-     SET published_revision_id = $2,
-         working_draft_revision_id = $3,
-         updated_at = NOW()
-     WHERE id = $1`,
-    [scopeId, input.publishedRevisionId, input.workingDraftRevisionId],
-  );
-  await pruneSiteCmsReferencesToLiveRevisionsWithDb(db, {
-    sourceKind: PhiCmsReferenceSourceKind.Theme,
-    sourceScopeId: scopeId,
-  });
+  return getSiteKeyedScopeWithDb(getPool(), THEME, siteId, normalizeSiteThemeScopeKey(input?.key));
 }
 
 export async function getSiteCurrentThemeDraft(
@@ -388,12 +125,12 @@ export async function getSiteCurrentThemeDraft(
   }
 
   const normalizedKey = normalizeSiteThemeScopeKey(input?.key);
-  const scope = await getSiteThemeScopeByKeyWithDb(getPool(), siteId, normalizedKey);
+  const scope = await getSiteKeyedScopeWithDb(getPool(), THEME, siteId, normalizedKey);
   if (!scope?.workingDraftRevisionId) {
     return null;
   }
 
-  const revision = await getSiteThemeRevisionByIdWithDb(getPool(), scope.workingDraftRevisionId);
+  const revision = await getSiteRevisionByIdWithDb(getPool(), THEME, scope.workingDraftRevisionId);
   if (!revision) {
     return null;
   }
@@ -414,13 +151,13 @@ export async function getSiteThemeRevisionReview(
   }
 
   const normalizedKey = normalizeSiteThemeScopeKey(input?.key);
-  const scope = await getSiteThemeScopeByKeyWithDb(getPool(), siteId, normalizedKey);
+  const scope = await getSiteKeyedScopeWithDb(getPool(), THEME, siteId, normalizedKey);
   if (!scope) {
     return null;
   }
 
-  const revision = await getSiteThemeRevisionByIdWithDb(getPool(), revisionId);
-  if (!revision || revision.themeScopeId !== scope.id) {
+  const revision = await getSiteRevisionByIdWithDb(getPool(), THEME, revisionId);
+  if (!revision || revision.scopeId !== scope.id) {
     return null;
   }
 
@@ -455,42 +192,25 @@ export async function saveSiteThemeDraftRevision(
   };
 
   return withTransaction(async (client) => {
-
-    const scope = await upsertSiteThemeScopeWithDb(client, siteId, {
+    const { revision } = await saveSiteKeyedDraftRevisionWithDb(client, THEME, siteId, {
       key: normalizedKey,
       label: tree.label ?? normalizedKey,
-    });
-    const sourceRevisionId = scope.workingDraftRevisionId ?? scope.publishedRevisionId ?? null;
-    const sourceRevision = sourceRevisionId == null ? null : await getSiteThemeRevisionByIdWithDb(client, sourceRevisionId);
-    const sourceTree = sourceRevision ? parseSiteThemeRevisionTree(sourceRevision.treeJson, normalizedKey) : null;
-    const summary = buildThemeRevisionSummary(tree, sourceTree, sourceRevisionId);
-    const revision = await insertSiteThemeRevisionWithDb(client, {
-      themeScopeId: scope.id,
-      flags: PhiCmsRevisionFlags.Draft,
       treeJson: tree,
-      message: readString(input.message) ?? summary.message,
-      metaJson: summary.metaJson,
-      sourceRevisionId,
-      createdByUserId: options?.createdByUserId ?? null,
-    });
-
-    await updateSiteThemeScopePointersWithDb(client, scope.id, {
-      publishedRevisionId: scope.publishedRevisionId,
-      workingDraftRevisionId: revision.id,
-    });
-    /*
-     * A Theme carries pictures like any other authored tree: a ground somebody edited was uploaded on
-     * the way here and is an Asset of this Site from that moment, and the brand logo names one too.
-     * Without this the delete guard read the Theme as referencing nothing, and the picture the Site is
-     * built around was the one picture nothing protected. Inside the same transaction as the revision,
-     * so a rolled-back save leaves no reference behind.
-     */
-    await replaceSiteCmsReferencesWithDb(client, {
-      siteId,
-      sourceKind: PhiCmsReferenceSourceKind.Theme,
-      sourceScopeId: scope.id,
-      sourceRevisionId: revision.id,
+      /*
+       * A Theme carries pictures like any other authored tree: a ground somebody edited was uploaded on
+       * the way here and is an Asset of this Site from that moment, and the brand logo names one too.
+       * Without this the delete guard read the Theme as referencing nothing, and the picture the Site is
+       * built around was the one picture nothing protected.
+       */
       references: collectSiteCmsReferences(tree),
+      createdByUserId: options?.createdByUserId ?? null,
+      prepare: (source) => {
+        const sourceTree = source.revision
+          ? parseSiteThemeRevisionTree(source.revision.treeJson, normalizedKey)
+          : null;
+        const summary = buildThemeRevisionSummary(tree, sourceTree, source.revisionId);
+        return { message: readString(input.message) ?? summary.message, metaJson: summary.metaJson };
+      },
     });
 
     return {
@@ -514,45 +234,22 @@ export async function publishSiteThemeRevision(
   const normalizedKey = normalizeSiteThemeScopeKey(input?.key);
 
   const published = await withTransaction(async (client) => {
-    const scope = await getSiteThemeScopeByKeyWithDb(client, siteId, normalizedKey);
-    if (!scope) {
-      throw new Error("Theme scope not found.");
-    }
-
-    const revisionId = input?.revisionId ?? scope.workingDraftRevisionId;
-    if (typeof revisionId !== "number" || !Number.isInteger(revisionId) || revisionId <= 0) {
-      throw new Error("No theme draft revision selected for publish.");
-    }
-
-    const revision = await getSiteThemeRevisionByIdWithDb(client, revisionId);
-    if (!revision || revision.themeScopeId !== scope.id) {
-      throw new Error("Theme draft revision not found.");
-    }
-
-    const tree = parseSiteThemeRevisionTree(revision.treeJson, normalizedKey);
-    if (!hasPhiFlag(revision.flags, PhiCmsRevisionFlags.Published)) {
-      await client.query(
-        `UPDATE phis.site_theme_revisions
-         SET flags = flags | $2
-         WHERE id = $1`,
-        [revision.id, PhiCmsRevisionFlags.Published],
-      );
-    }
-
-    await updateSiteThemeScopePointersWithDb(client, scope.id, {
-      publishedRevisionId: revision.id,
-      workingDraftRevisionId: null,
+    const { scope, revision } = await selectSiteKeyedRevisionForPublishWithDb(client, THEME, siteId, {
+      key: normalizedKey,
+      revisionId: input?.revisionId,
+      guardWorkingDraft: false,
     });
+    const tree = parseSiteThemeRevisionTree(revision.treeJson, normalizedKey);
+    await publishSiteKeyedRevisionWithDb(client, THEME, scope, revision);
     /*
      * Rewritten rather than left standing, because this publish does not have to be the draft's own.
      * A caller may name an older revision, and the draft pointer is cleared either way: whichever
      * revision becomes the published one, its references are the Scope's whole set afterwards.
      */
-    await replaceSiteCmsReferencesWithDb(client, {
+    await replaceSiteRevisionReferencesWithDb(client, THEME, {
       siteId,
-      sourceKind: PhiCmsReferenceSourceKind.Theme,
-      sourceScopeId: scope.id,
-      sourceRevisionId: revision.id,
+      scopeId: scope.id,
+      revisionId: revision.id,
       references: collectSiteCmsReferences(tree),
     });
 
@@ -583,23 +280,10 @@ export async function deleteSiteThemeDraftRevision(
 
   const normalizedKey = normalizeSiteThemeScopeKey(input?.key);
 
-  return withTransaction(async (client) => {
-    const scope = await getSiteThemeScopeByKeyWithDb(client, siteId, normalizedKey);
-    if (!scope?.workingDraftRevisionId) {
-      return { deleted: false };
-    }
-
-    await client.query(
-      `DELETE FROM phis.site_theme_revisions
-       WHERE id = $1
-         AND theme_scope_id = $2`,
-      [scope.workingDraftRevisionId, scope.id],
-    );
-    await updateSiteThemeScopePointersWithDb(client, scope.id, {
-      publishedRevisionId: scope.publishedRevisionId,
-      workingDraftRevisionId: null,
-    });
-
-    return { deleted: true };
-  });
+  return withTransaction((client) =>
+    discardSiteKeyedDraftRevisionWithDb(client, THEME, siteId, {
+      key: normalizedKey,
+      dropUnpublishedScope: false,
+    }),
+  );
 }

@@ -18,11 +18,11 @@ import {
   saveSiteAreaDraftRevision,
   saveSiteAreaModulesDraftRevision,
   saveSitePageDraftRevision,
-  SiteCmsDraftConflictError,
   SitePageExistsError,
   SitePagePathChangeError,
   type SitePageScopeAddress,
 } from "@/db/site-pages";
+import { SiteCmsDraftConflictError } from "@/db/site-revision-scopes";
 import { resolvePhisCmsAreaMask } from "@/lib/constants/cms-areas";
 import { PhiCmsAuditEvent } from "@/lib/constants/phi-cms";
 import {

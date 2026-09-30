@@ -18,14 +18,17 @@ import {
   requireSiteReviewApiContext,
 } from "@/lib/guards/site-admin-api";
 import {
-  readSiteCmsErrorMessage,
   readSiteCmsRequestJson,
   readSiteCmsRequestSearchParam,
   readSiteCmsRevisionId,
 } from "@/lib/helpers/site-cms-route";
-import { PhiCmsAuditEvent } from "@/lib/constants/phi-cms";
-import { logRuntimeEvent, normalizeLogThrowable } from "@/lib/log";
-import { logSiteCmsAuditEvent } from "@/lib/site-cms-audit";
+import {
+  logSiteCmsKeyedAuditEvent,
+  runSiteCmsKeyedRouteAction,
+  SITE_CMS_KEYED_ROUTES,
+} from "@/lib/site-cms-revision-route";
+
+const ROUTE = SITE_CMS_KEYED_ROUTES.theme;
 
 export async function handleSiteCmsThemeRead(request: NextRequest) {
   const { context, error } = await requireSiteReviewApiContext(request);
@@ -35,7 +38,7 @@ export async function handleSiteCmsThemeRead(request: NextRequest) {
 
   const key = normalizeSiteThemeScopeKey(readSiteCmsRequestSearchParam(request, "key"));
 
-  try {
+  return runSiteCmsKeyedRouteAction(request, context!, ROUTE, "read", { key }, async () => {
     const [runtime, draft, scope] = await Promise.all([
       getSiteRuntimeConfig(context!.site!.id),
       getSiteCurrentThemeDraft(context!.site!.id, { key }),
@@ -49,24 +52,7 @@ export async function handleSiteCmsThemeRead(request: NextRequest) {
       publishedRevisionId: scope?.publishedRevisionId ?? null,
       workingDraftRevisionId: scope?.workingDraftRevisionId ?? null,
     });
-  } catch (routeError) {
-    logRuntimeEvent("error", "cms.theme_read.failed", {
-      message: "CMS theme read failed.",
-      siteKey: context!.site!.key,
-      userId: context!.session?.userId ?? null,
-      method: request.method,
-      path: request.nextUrl.pathname,
-      targetType: "cms-theme-read",
-      error: normalizeLogThrowable(routeError),
-      meta: { themeKey: key },
-    });
-    return NextResponse.json(
-      {
-        error: readSiteCmsErrorMessage(routeError, "CMS theme read failed."),
-      },
-      { status: 500 },
-    );
-  }
+  });
 }
 
 export async function handleSiteCmsThemeDraftRead(request: NextRequest) {
@@ -77,7 +63,7 @@ export async function handleSiteCmsThemeDraftRead(request: NextRequest) {
 
   const key = normalizeSiteThemeScopeKey(readSiteCmsRequestSearchParam(request, "key"));
 
-  try {
+  return runSiteCmsKeyedRouteAction(request, context!, ROUTE, "draft_read", { key }, async () => {
     const draft = await getSiteCurrentThemeDraft(context!.site!.id, { key });
     if (!draft) {
       return NextResponse.json({ error: "CMS theme draft not found." }, { status: 404 });
@@ -88,24 +74,7 @@ export async function handleSiteCmsThemeDraftRead(request: NextRequest) {
       revisionId: draft.revisionId,
       theme: draft.theme,
     });
-  } catch (routeError) {
-    logRuntimeEvent("error", "cms.theme_draft_read.failed", {
-      message: "CMS theme draft read failed.",
-      siteKey: context!.site!.key,
-      userId: context!.session?.userId ?? null,
-      method: request.method,
-      path: request.nextUrl.pathname,
-      targetType: "cms-theme-draft-read",
-      error: normalizeLogThrowable(routeError),
-      meta: { themeKey: key },
-    });
-    return NextResponse.json(
-      {
-        error: readSiteCmsErrorMessage(routeError, "CMS theme draft read failed."),
-      },
-      { status: 500 },
-    );
-  }
+  });
 }
 
 export async function handleSiteCmsThemeWrite(request: NextRequest) {
@@ -124,7 +93,7 @@ export async function handleSiteCmsThemeWrite(request: NextRequest) {
     return NextResponse.json({ error: "theme must be provided as an object." }, { status: 400 });
   }
 
-  try {
+  return runSiteCmsKeyedRouteAction(request, context!, ROUTE, "write", { key }, async () => {
     const draft = await saveSiteThemeDraftRevision(
       context!.site!.id,
       {
@@ -138,16 +107,9 @@ export async function handleSiteCmsThemeWrite(request: NextRequest) {
       },
     );
 
-    logSiteCmsAuditEvent(PhiCmsAuditEvent.ThemeDraftSaved, {
-      request,
-      siteKey: context!.site!.key,
-      userId: context!.session?.userId ?? null,
-      targetType: "cms-theme-draft",
-      targetId: draft.theme.key,
-      meta: {
-        themeKey: draft.theme.key,
-        revisionId: draft.revisionId,
-      },
+    logSiteCmsKeyedAuditEvent(request, context!, ROUTE, "draftSaved", {
+      key: draft.theme.key,
+      revisionId: draft.revisionId,
     });
 
     return NextResponse.json({
@@ -155,24 +117,7 @@ export async function handleSiteCmsThemeWrite(request: NextRequest) {
       revisionId: draft.revisionId,
       theme: draft.theme,
     });
-  } catch (routeError) {
-    logRuntimeEvent("error", "cms.theme_write.failed", {
-      message: "CMS theme write failed.",
-      siteKey: context!.site!.key,
-      userId: context!.session?.userId ?? null,
-      method: request.method,
-      path: request.nextUrl.pathname,
-      targetType: "cms-theme-draft",
-      error: normalizeLogThrowable(routeError),
-      meta: { themeKey: key },
-    });
-    return NextResponse.json(
-      {
-        error: readSiteCmsErrorMessage(routeError, "CMS theme save failed."),
-      },
-      { status: 500 },
-    );
-  }
+  });
 }
 
 export async function handleSiteCmsThemeDelete(request: NextRequest) {
@@ -182,43 +127,20 @@ export async function handleSiteCmsThemeDelete(request: NextRequest) {
   }
 
   const payload = (await readSiteCmsRequestJson(request)) as { key?: unknown } | null;
-  const key = readSiteCmsRequestSearchParam(request, "key") ?? (typeof payload?.key === "string" ? payload.key : null);
+  const key = readSiteCmsRequestSearchParam(request, "key") ??
+    (typeof payload?.key === "string" ? payload.key : null);
 
-  try {
+  return runSiteCmsKeyedRouteAction(request, context!, ROUTE, "delete", { key }, async () => {
     const result = await deleteSiteThemeDraftRevision(context!.site!.id, { key });
     const themeKey = normalizeSiteThemeScopeKey(key);
     if (result.deleted) {
-      logSiteCmsAuditEvent(PhiCmsAuditEvent.ThemeDraftDeleted, {
-        request,
-        siteKey: context!.site!.key,
-        userId: context!.session?.userId ?? null,
-        targetType: "cms-theme-draft",
-        targetId: themeKey,
-        meta: { themeKey },
-      });
+      logSiteCmsKeyedAuditEvent(request, context!, ROUTE, "draftDeleted", { key: themeKey });
     }
     return NextResponse.json({
       key: themeKey,
       deleted: result.deleted,
     });
-  } catch (routeError) {
-    logRuntimeEvent("error", "cms.theme_delete.failed", {
-      message: "CMS theme delete failed.",
-      siteKey: context!.site!.key,
-      userId: context!.session?.userId ?? null,
-      method: request.method,
-      path: request.nextUrl.pathname,
-      targetType: "cms-theme",
-      error: normalizeLogThrowable(routeError),
-      meta: { themeKey: key },
-    });
-    return NextResponse.json(
-      {
-        error: readSiteCmsErrorMessage(routeError, "CMS theme delete failed."),
-      },
-      { status: 500 },
-    );
-  }
+  });
 }
 
 export async function handleSiteCmsThemePublish(request: NextRequest) {
@@ -228,26 +150,22 @@ export async function handleSiteCmsThemePublish(request: NextRequest) {
   }
 
   const payload = (await readSiteCmsRequestJson(request)) as { key?: unknown; revisionId?: unknown } | null;
-  const key = readSiteCmsRequestSearchParam(request, "key") ?? (typeof payload?.key === "string" ? payload.key : null);
+  const key = readSiteCmsRequestSearchParam(request, "key") ??
+    (typeof payload?.key === "string" ? payload.key : null);
   const revisionId =
-    readSiteCmsRevisionId(readSiteCmsRequestSearchParam(request, "revisionId")) ?? readSiteCmsRevisionId(payload?.revisionId);
+    readSiteCmsRevisionId(readSiteCmsRequestSearchParam(request, "revisionId")) ??
+    readSiteCmsRevisionId(payload?.revisionId);
 
-  try {
+  const log = { key, meta: { revisionId } };
+  return runSiteCmsKeyedRouteAction(request, context!, ROUTE, "publish", log, async () => {
     const result = await publishSiteThemeRevision(context!.site!.id, {
       key,
       revisionId,
     });
 
-    logSiteCmsAuditEvent(PhiCmsAuditEvent.ThemePublished, {
-      request,
-      siteKey: context!.site!.key,
-      userId: context!.session?.userId ?? null,
-      targetType: "cms-theme",
-      targetId: result.theme.key,
-      meta: {
-        themeKey: result.theme.key,
-        revisionId: result.revisionId,
-      },
+    logSiteCmsKeyedAuditEvent(request, context!, ROUTE, "published", {
+      key: result.theme.key,
+      revisionId: result.revisionId,
     });
 
     return NextResponse.json({
@@ -255,25 +173,5 @@ export async function handleSiteCmsThemePublish(request: NextRequest) {
       revisionId: result.revisionId,
       theme: result.theme,
     });
-  } catch (routeError) {
-    logRuntimeEvent("error", "cms.theme_publish.failed", {
-      message: "CMS theme publish failed.",
-      siteKey: context!.site!.key,
-      userId: context!.session?.userId ?? null,
-      method: request.method,
-      path: request.nextUrl.pathname,
-      targetType: "cms-theme-publish",
-      error: normalizeLogThrowable(routeError),
-      meta: {
-        themeKey: key,
-        revisionId,
-      },
-    });
-    return NextResponse.json(
-      {
-        error: readSiteCmsErrorMessage(routeError, "CMS theme publish failed."),
-      },
-      { status: 500 },
-    );
-  }
+  });
 }

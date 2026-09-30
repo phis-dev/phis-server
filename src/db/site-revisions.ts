@@ -11,15 +11,20 @@ import { hasPhiFlag } from "@/lib/helpers/flags";
 import { isPhisCmsAreaKey, resolvePhisCmsAreaKey } from "@/lib/constants/cms-areas";
 import { PhiCmsRevisionFlags } from "@phis/contracts/cms";
 import { normalizeSiteCmsPath } from "@/lib/helpers/cms-path";
-import { getSiteThemeRevisionByIdWithDb, normalizeSiteThemeScopeKey } from "@/db/site-theme";
+import { normalizeSiteThemeScopeKey } from "@/db/site-theme";
 import {
-  PhiCmsReferenceSourceKind,
-  pruneSiteCmsReferencesToLiveRevisionsWithDb,
-} from "@/db/site-cms-references";
+  deleteSiteRevisionsWithDb,
+  getSiteKeyedScopeWithDb,
+  getSiteRevisionByIdWithDb,
+  insertSiteRevisionWithDb,
+  pruneSiteRevisionScopeReferencesWithDb,
+  setSiteRevisionScopePointersWithDb,
+  SITE_REVISION_TABLES,
+  type SiteRevisionKind,
+  type SiteRevisionTable,
+} from "@/db/site-revision-scopes";
 
 type DbQueryable = Pick<PoolClient, "query">;
-
-export type SiteRevisionKind = "area" | "page" | "navigation" | "theme";
 
 export type SiteRevisionPresetIdentity = {
   ownerModuleId: string;
@@ -220,8 +225,7 @@ function mapRevisionRows(
 
 async function listRevisionRowsWithDb(
   db: DbQueryable,
-  scopeColumn: "area_scope_id" | "page_scope_id" | "nav_scope_id" | "theme_scope_id",
-  tableName: "site_area_revisions" | "site_page_revisions" | "site_nav_revisions" | "site_theme_revisions",
+  table: SiteRevisionTable,
   scopeId: number,
 ) {
   const { rows } = await db.query<{
@@ -252,12 +256,12 @@ async function listRevisionRowsWithDb(
             ) AS created_by_label,
             revision.created_at,
             revision.tree_json
-     FROM phis.${tableName} revision
+     FROM phis.${table.revisionTable} revision
      LEFT JOIN phis.user_account_directory account
        ON account.id = revision.created_by_user_id
      LEFT JOIN phis.user_profiles profile
        ON profile.user_id = revision.created_by_user_id
-     WHERE revision.${scopeColumn} = $1
+     WHERE revision.${table.scopeColumn} = $1
      ORDER BY revision.created_at DESC, revision.id DESC`,
     [scopeId],
   );
@@ -341,77 +345,6 @@ async function getPageScopeWithDb(
     : null;
 }
 
-async function getNavigationScopeWithDb(
-  db: DbQueryable,
-  siteId: number,
-  key: string,
-  forUpdate = false,
-): Promise<{
-  id: number;
-  publishedRevisionId: number | null;
-  workingDraftRevisionId: number | null;
-} | null> {
-  const normalizedKey = requireSiteNavigationScopeKey(key);
-  const { rows } = await db.query<{
-    id: number;
-    published_revision_id: number | null;
-    working_draft_revision_id: number | null;
-  }>(
-    `SELECT id, published_revision_id, working_draft_revision_id
-     FROM phis.site_nav_scopes
-     WHERE site_id = $1
-       AND key = $2
-     LIMIT 1${forUpdate ? " FOR UPDATE" : ""}`,
-    [siteId, normalizedKey],
-  );
-
-  const row = rows[0];
-  return row
-    ? {
-        id: row.id,
-        publishedRevisionId: row.published_revision_id,
-        workingDraftRevisionId: row.working_draft_revision_id,
-      }
-    : null;
-}
-
-async function getThemeScopeWithDb(
-  db: DbQueryable,
-  siteId: number,
-  key: string | null | undefined,
-  forUpdate = false,
-): Promise<{
-  id: number;
-  key: string;
-  publishedRevisionId: number | null;
-  workingDraftRevisionId: number | null;
-} | null> {
-  const normalizedKey = normalizeSiteThemeScopeKey(key);
-  const { rows } = await db.query<{
-    id: number;
-    key: string;
-    published_revision_id: number | null;
-    working_draft_revision_id: number | null;
-  }>(
-    `SELECT id, key, published_revision_id, working_draft_revision_id
-     FROM phis.site_theme_scopes
-     WHERE site_id = $1
-       AND key = $2
-     LIMIT 1${forUpdate ? " FOR UPDATE" : ""}`,
-    [siteId, normalizedKey],
-  );
-
-  const row = rows[0];
-  return row
-    ? {
-        id: row.id,
-        key: row.key,
-        publishedRevisionId: row.published_revision_id,
-        workingDraftRevisionId: row.working_draft_revision_id,
-      }
-    : null;
-}
-
 export type ResolvedRevisionScope =
   | {
       kind: "area";
@@ -487,7 +420,9 @@ async function resolveRevisionScopeWithDb(
 
   if (input.kind === "theme") {
     const normalizedKey = normalizeSiteThemeScopeKey(input.key);
-    const scope = await getThemeScopeWithDb(db, siteId, normalizedKey, forUpdate);
+    const scope = await getSiteKeyedScopeWithDb(db, SITE_REVISION_TABLES.theme, siteId, normalizedKey, {
+      forUpdate,
+    });
     return {
       kind: "theme",
       key: normalizedKey,
@@ -498,7 +433,13 @@ async function resolveRevisionScopeWithDb(
   }
 
   const normalizedKey = requireSiteNavigationScopeKey(input.key);
-  const scope = await getNavigationScopeWithDb(db, siteId, normalizedKey, forUpdate);
+  const scope = await getSiteKeyedScopeWithDb(
+    db,
+    SITE_REVISION_TABLES.navigation,
+    siteId,
+    normalizedKey,
+    { forUpdate },
+  );
   return {
     kind: "navigation",
     key: normalizedKey,
@@ -506,47 +447,6 @@ async function resolveRevisionScopeWithDb(
     publishedRevisionId: scope?.publishedRevisionId ?? null,
     workingDraftRevisionId: scope?.workingDraftRevisionId ?? null,
   };
-}
-
-async function getAreaRevisionByIdWithDb(
-  db: DbQueryable,
-  revisionId: number,
-) {
-  const { rows } = await db.query<{
-    id: number;
-    area_scope_id: number;
-    tree_json: Record<string, unknown>;
-    meta_json: Record<string, unknown> | null;
-  }>(
-    `SELECT id, area_scope_id, tree_json, meta_json
-     FROM phis.site_area_revisions
-     WHERE id = $1
-     LIMIT 1`,
-    [revisionId],
-  );
-
-  return rows[0] ?? null;
-}
-
-async function getPageRevisionByIdWithDb(
-  db: DbQueryable,
-  revisionId: number,
-) {
-  const { rows } = await db.query<{
-    id: number;
-    page_scope_id: number;
-    flags: number;
-    tree_json: Record<string, unknown>;
-    meta_json: Record<string, unknown> | null;
-  }>(
-    `SELECT id, page_scope_id, flags, tree_json, meta_json
-     FROM phis.site_page_revisions
-     WHERE id = $1
-     LIMIT 1`,
-    [revisionId],
-  );
-
-  return rows[0] ?? null;
 }
 
 /**
@@ -560,31 +460,23 @@ async function getPageRevisionByIdWithDb(
  */
 async function readRestoredDraftMetaWithDb(
   db: DbQueryable,
-  scope: { kind: "area" | "page"; scopeId: number },
+  table: SiteRevisionTable,
+  scopeId: number,
 ) {
-  const table = scope.kind === "area" ? "phis.site_area_revisions" : "phis.site_page_revisions";
-  const scopeColumn = scope.kind === "area" ? "area_scope_id" : "page_scope_id";
   const { rows } = await db.query<{ version: string | null; next_node_sequence: string | null }>(
     `SELECT MAX(CASE WHEN jsonb_typeof(meta_json->'draft'->'version') = 'number'
                      THEN (meta_json->'draft'->>'version')::bigint END)::text AS version,
             MAX(CASE WHEN jsonb_typeof(meta_json->'draft'->'nextNodeSequence') = 'number'
                      THEN (meta_json->'draft'->>'nextNodeSequence')::bigint END)::text
               AS next_node_sequence
-     FROM ${table}
-     WHERE ${scopeColumn} = $1`,
-    [scope.scopeId],
+     FROM phis.${table.revisionTable}
+     WHERE ${table.scopeColumn} = $1`,
+    [scopeId],
   );
   return {
     version: Number(rows[0]?.version ?? 0) + 1,
     nextNodeSequence: Math.max(1, Number(rows[0]?.next_node_sequence ?? 1)),
   };
-}
-
-function withRestoredDraftMeta(
-  source: Record<string, unknown> | null,
-  draft: { version: number; nextNodeSequence: number },
-) {
-  return JSON.stringify({ ...(source ?? {}), draft });
 }
 
 async function cleanupEmptyPageScopeWithDb(db: DbQueryable, scopeId: number) {
@@ -608,28 +500,34 @@ async function cleanupEmptyPageScopeWithDb(db: DbQueryable, scopeId: number) {
   );
 }
 
-async function getNavigationRevisionByIdWithDb(
-  db: DbQueryable,
-  revisionId: number,
-) {
-  const { rows } = await db.query<{
-    id: number;
-    nav_scope_id: number;
-    next_node_sequence: string | number;
-    tree_json: Record<string, unknown>;
-  }>(
-    `SELECT id, nav_scope_id, next_node_sequence, tree_json
-     FROM phis.site_nav_revisions
-     WHERE id = $1
-     LIMIT 1`,
-    [revisionId],
-  );
-
-  return rows[0] ?? null;
-}
-
 class SiteRevisionConflictError extends Error {}
 class SiteRevisionNotFoundError extends Error {}
+
+/**
+ * Deletes history entries of a scope and answers how many went. A removed Area or Page revision may
+ * have been the last to use some Content, which is swept with it; a Page scope left with no revision
+ * at all goes too.
+ */
+async function deleteScopeRevisionsWithDb(
+  db: DbQueryable,
+  siteId: number,
+  scope: { kind: SiteRevisionKind; scopeId: number },
+  revisionIds: readonly number[],
+) {
+  const table = SITE_REVISION_TABLES[scope.kind];
+  const removed = await deleteSiteRevisionsWithDb(db, table, scope.scopeId, revisionIds);
+  if (table.carriesContent) {
+    await deleteOrphanedSiteContentByIdsWithDb(
+      db,
+      siteId,
+      removed.trees.flatMap((tree) => collectRevisionContentIds(tree)),
+    );
+  }
+  if (scope.kind === "page" && removed.deletedCount > 0) {
+    await cleanupEmptyPageScopeWithDb(db, scope.scopeId);
+  }
+  return removed.deletedCount;
+}
 
 export async function listSiteRevisionHistory(
   siteId: number,
@@ -654,31 +552,7 @@ export async function listSiteRevisionHistory(
     };
   }
 
-  if (scope.kind === "area") {
-    const rows = await listRevisionRowsWithDb(db, "area_scope_id", "site_area_revisions", scope.scopeId);
-    return {
-      scope: scopeSummary,
-      rows: mapRevisionRows(rows, scope),
-    };
-  }
-
-  if (scope.kind === "page") {
-    const rows = await listRevisionRowsWithDb(db, "page_scope_id", "site_page_revisions", scope.scopeId);
-    return {
-      scope: scopeSummary,
-      rows: mapRevisionRows(rows, scope),
-    };
-  }
-
-  if (scope.kind === "theme") {
-    const rows = await listRevisionRowsWithDb(db, "theme_scope_id", "site_theme_revisions", scope.scopeId);
-    return {
-      scope: scopeSummary,
-      rows: mapRevisionRows(rows, scope),
-    };
-  }
-
-  const rows = await listRevisionRowsWithDb(db, "nav_scope_id", "site_nav_revisions", scope.scopeId);
+  const rows = await listRevisionRowsWithDb(db, SITE_REVISION_TABLES[scope.kind], scope.scopeId);
   return {
     scope: scopeSummary,
     rows: mapRevisionRows(rows, scope),
@@ -698,24 +572,6 @@ export function isLiveScopeRevision(scope: ResolvedRevisionScope, revisionId: nu
   );
 }
 
-const REFERENCE_SOURCE_KIND_BY_SCOPE = {
-  area: PhiCmsReferenceSourceKind.Area,
-  page: PhiCmsReferenceSourceKind.Page,
-  navigation: PhiCmsReferenceSourceKind.Navigation,
-  theme: PhiCmsReferenceSourceKind.Theme,
-} as const;
-
-/** After a revision stopped being live or was deleted: its reference rows go with it. */
-async function pruneScopeReferencesWithDb(
-  db: PoolClient,
-  scope: { kind: keyof typeof REFERENCE_SOURCE_KIND_BY_SCOPE; scopeId: number | null },
-) {
-  if (!scope.scopeId) return;
-  await pruneSiteCmsReferencesToLiveRevisionsWithDb(db, {
-    sourceKind: REFERENCE_SOURCE_KIND_BY_SCOPE[scope.kind],
-    sourceScopeId: scope.scopeId,
-  });
-}
 export async function restoreSiteRevision(
   siteId: number,
   input: SiteRevisionScopeInput & {
@@ -736,160 +592,39 @@ export async function restoreSiteRevision(
       throw new SiteRevisionNotFoundError("Revision scope not found.");
     }
 
-    let newRevisionId: number;
-    if (scope.kind === "area") {
-      const revision = await getAreaRevisionByIdWithDb(client, input.revisionId);
-      if (!revision || revision.area_scope_id !== scope.scopeId) {
-        throw new SiteRevisionNotFoundError("Area revision not found for the requested scope.");
-      }
-
-      const { rows } = await client.query<{ id: number }>(
-        `INSERT INTO phis.site_area_revisions (
-           area_scope_id,
-           flags,
-           tree_json,
-           message,
-           source_revision_id,
-           created_by_user_id,
-           meta_json
-         )
-         VALUES ($1, $2, $3::jsonb, $4, $5, $6, $7::jsonb)
-         RETURNING id`,
-        [
-          scope.scopeId,
-          PhiCmsRevisionFlags.Draft,
-          JSON.stringify(revision.tree_json ?? {}),
-          `Restored from revision #${input.revisionId}`,
-          input.revisionId,
-          input.createdByUserId ?? null,
-          withRestoredDraftMeta(
-            revision.meta_json,
-            await readRestoredDraftMetaWithDb(client, { kind: "area", scopeId: scope.scopeId }),
-          ),
-        ],
-      );
-      newRevisionId = rows[0]!.id;
-      await client.query(
-        `UPDATE phis.site_area_scopes
-         SET working_draft_revision_id = $2,
-             updated_at = NOW()
-         WHERE id = $1`,
-        [scope.scopeId, newRevisionId],
-      );
-    } else if (scope.kind === "page") {
-      const revision = await getPageRevisionByIdWithDb(client, input.revisionId);
-      if (!revision || revision.page_scope_id !== scope.scopeId) {
-        throw new SiteRevisionNotFoundError("Page revision not found for the requested scope.");
-      }
-
-      const { rows } = await client.query<{ id: number }>(
-        `INSERT INTO phis.site_page_revisions (
-           page_scope_id,
-           flags,
-           tree_json,
-           message,
-           source_revision_id,
-           created_by_user_id,
-           created_at,
-           meta_json
-         )
-         VALUES ($1, $2, $3::jsonb, $4, $5, $6, NOW(), $7::jsonb)
-         RETURNING id`,
-        [
-          scope.scopeId,
-          PhiCmsRevisionFlags.Draft |
-            (hasPhiFlag(revision.flags, PhiCmsRevisionFlags.Deleted) ? PhiCmsRevisionFlags.Deleted : 0),
-          JSON.stringify(revision.tree_json ?? {}),
-          `Restored from revision #${input.revisionId}`,
-          input.revisionId,
-          input.createdByUserId ?? null,
-          withRestoredDraftMeta(
-            revision.meta_json,
-            await readRestoredDraftMetaWithDb(client, { kind: "page", scopeId: scope.scopeId }),
-          ),
-        ],
-      );
-      newRevisionId = rows[0]!.id;
-      await client.query(
-        `UPDATE phis.site_page_scopes
-         SET working_draft_revision_id = $2,
-             updated_at = NOW()
-         WHERE id = $1`,
-        [scope.scopeId, newRevisionId],
-      );
-    } else if (scope.kind === "navigation") {
-      const revision = await getNavigationRevisionByIdWithDb(client, input.revisionId);
-      if (!revision || revision.nav_scope_id !== scope.scopeId) {
-        throw new SiteRevisionNotFoundError("Navigation revision not found for the requested scope.");
-      }
-
-      const { rows } = await client.query<{ id: number }>(
-        `INSERT INTO phis.site_nav_revisions (
-           nav_scope_id,
-           flags,
-           next_node_sequence,
-           tree_json,
-           message,
-           source_revision_id,
-           created_by_user_id
-         )
-         VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7)
-         RETURNING id`,
-        [
-          scope.scopeId,
-          PhiCmsRevisionFlags.Draft,
-          Number(revision.next_node_sequence),
-          JSON.stringify(revision.tree_json ?? {}),
-          `Restored from revision #${input.revisionId}`,
-          input.revisionId,
-          input.createdByUserId ?? null,
-        ],
-      );
-      newRevisionId = rows[0]!.id;
-      await client.query(
-        `UPDATE phis.site_nav_scopes
-         SET working_draft_revision_id = $2,
-             updated_at = NOW()
-         WHERE id = $1`,
-        [scope.scopeId, newRevisionId],
-      );
-    } else {
-      const revision = await getSiteThemeRevisionByIdWithDb(client, input.revisionId);
-      if (!revision || revision.themeScopeId !== scope.scopeId) {
-        throw new SiteRevisionNotFoundError("Theme revision not found for the requested scope.");
-      }
-
-      const { rows } = await client.query<{ id: number }>(
-        `INSERT INTO phis.site_theme_revisions (
-           theme_scope_id,
-           flags,
-           tree_json,
-           message,
-           source_revision_id,
-           created_by_user_id
-         )
-         VALUES ($1, $2, $3::jsonb, $4, $5, $6)
-         RETURNING id`,
-        [
-          scope.scopeId,
-          PhiCmsRevisionFlags.Draft,
-          JSON.stringify(revision.treeJson ?? {}),
-          `Restored from revision #${input.revisionId}`,
-          input.revisionId,
-          input.createdByUserId ?? null,
-        ],
-      );
-      newRevisionId = rows[0]!.id;
-      await client.query(
-        `UPDATE phis.site_theme_scopes
-         SET working_draft_revision_id = $2,
-             updated_at = NOW()
-         WHERE id = $1`,
-        [scope.scopeId, newRevisionId],
-      );
+    const table = SITE_REVISION_TABLES[scope.kind];
+    const revision = await getSiteRevisionByIdWithDb(client, table, input.revisionId);
+    if (!revision || revision.scopeId !== scope.scopeId) {
+      throw new SiteRevisionNotFoundError(`${table.label} revision not found for the requested scope.`);
     }
 
-    await pruneScopeReferencesWithDb(client, scope);
+    // Pages and Areas keep their Draft metadata in the revision; Navigations and Themes start empty.
+    const keepsDraftMeta = scope.kind === "area" || scope.kind === "page";
+    const restored = await insertSiteRevisionWithDb(client, table, {
+      scopeId: scope.scopeId,
+      // A restored Page deletion stays a deletion: the Draft says what publishing it will do.
+      flags: PhiCmsRevisionFlags.Draft |
+        (scope.kind === "page" && hasPhiFlag(revision.flags, PhiCmsRevisionFlags.Deleted)
+          ? PhiCmsRevisionFlags.Deleted
+          : 0),
+      nextNodeSequence: revision.nextNodeSequence,
+      treeJson: revision.treeJson,
+      message: `Restored from revision #${input.revisionId}`,
+      metaJson: keepsDraftMeta
+        ? {
+            ...revision.metaJson,
+            draft: await readRestoredDraftMetaWithDb(client, table, scope.scopeId),
+          }
+        : null,
+      sourceRevisionId: input.revisionId,
+      createdByUserId: input.createdByUserId ?? null,
+    });
+    const newRevisionId = restored.id;
+    // The scope row is held, so the published pointer written back is the one read above.
+    await setSiteRevisionScopePointersWithDb(client, table, scope.scopeId, {
+      publishedRevisionId: scope.publishedRevisionId,
+      workingDraftRevisionId: newRevisionId,
+    });
     return {
       scope: buildScopeSummary(input, {
         publishedRevisionId: scope.publishedRevisionId,
@@ -923,61 +658,21 @@ export async function deleteSiteRevisionHistoryEntry(
       throw new SiteRevisionConflictError("Active published or draft revisions cannot be deleted.");
     }
 
-    let deleted = false;
-    if (scope.kind === "area") {
-      const result = await client.query<{ tree_json: Record<string, unknown> }>(
-        `DELETE FROM phis.site_area_revisions
-         WHERE id = $1
-           AND area_scope_id = $2
-         RETURNING tree_json`,
-        [input.revisionId, scope.scopeId],
-      );
-      deleted = (result.rowCount ?? 0) > 0;
-      await deleteOrphanedSiteContentByIdsWithDb(
-        client,
-        siteId,
-        collectRevisionContentIds(result.rows[0]?.tree_json ?? null),
-      );
-    } else if (scope.kind === "page") {
-      const result = await client.query<{ tree_json: Record<string, unknown> }>(
-        `DELETE FROM phis.site_page_revisions
-         WHERE id = $1
-           AND page_scope_id = $2
-         RETURNING tree_json`,
-        [input.revisionId, scope.scopeId],
-      );
-      deleted = (result.rowCount ?? 0) > 0;
-      await deleteOrphanedSiteContentByIdsWithDb(
-        client,
-        siteId,
-        collectRevisionContentIds(result.rows[0]?.tree_json ?? null),
-      );
-      if (deleted) {
-        await cleanupEmptyPageScopeWithDb(client, scope.scopeId);
-      }
-    } else if (scope.kind === "navigation") {
-      const result = await client.query(
-        `DELETE FROM phis.site_nav_revisions
-         WHERE id = $1
-           AND nav_scope_id = $2`,
-        [input.revisionId, scope.scopeId],
-      );
-      deleted = (result.rowCount ?? 0) > 0;
-    } else {
-      const result = await client.query(
-        `DELETE FROM phis.site_theme_revisions
-         WHERE id = $1
-           AND theme_scope_id = $2`,
-        [input.revisionId, scope.scopeId],
-      );
-      deleted = (result.rowCount ?? 0) > 0;
-    }
-
+    const deleted = (await deleteScopeRevisionsWithDb(
+      client,
+      siteId,
+      { kind: scope.kind, scopeId: scope.scopeId },
+      [input.revisionId],
+    )) > 0;
     if (!deleted) {
       throw new SiteRevisionNotFoundError("Revision not found for the requested scope.");
     }
 
-    await pruneScopeReferencesWithDb(client, scope);
+    await pruneSiteRevisionScopeReferencesWithDb(
+      client,
+      SITE_REVISION_TABLES[scope.kind],
+      scope.scopeId,
+    );
     return {
       scope: buildScopeSummary(input, {
         publishedRevisionId: scope.publishedRevisionId,
@@ -1019,61 +714,21 @@ export async function deleteSiteRevisionHistoryEntries(
       throw new SiteRevisionConflictError("Active published or draft revisions cannot be deleted.");
     }
 
-    let deletedCount = 0;
-    if (scope.kind === "area") {
-      const result = await client.query<{ tree_json: Record<string, unknown> }>(
-        `DELETE FROM phis.site_area_revisions
-         WHERE id = ANY($1::int[])
-           AND area_scope_id = $2
-         RETURNING tree_json`,
-        [normalizedRevisionIds, scope.scopeId],
-      );
-      deletedCount = result.rowCount ?? 0;
-      await deleteOrphanedSiteContentByIdsWithDb(
-        client,
-        siteId,
-        result.rows.flatMap((row) => collectRevisionContentIds(row.tree_json)),
-      );
-    } else if (scope.kind === "page") {
-      const result = await client.query<{ tree_json: Record<string, unknown> }>(
-        `DELETE FROM phis.site_page_revisions
-         WHERE id = ANY($1::int[])
-           AND page_scope_id = $2
-         RETURNING tree_json`,
-        [normalizedRevisionIds, scope.scopeId],
-      );
-      deletedCount = result.rowCount ?? 0;
-      await deleteOrphanedSiteContentByIdsWithDb(
-        client,
-        siteId,
-        result.rows.flatMap((row) => collectRevisionContentIds(row.tree_json)),
-      );
-      if (deletedCount > 0) {
-        await cleanupEmptyPageScopeWithDb(client, scope.scopeId);
-      }
-    } else if (scope.kind === "navigation") {
-      const result = await client.query(
-        `DELETE FROM phis.site_nav_revisions
-         WHERE id = ANY($1::int[])
-           AND nav_scope_id = $2`,
-        [normalizedRevisionIds, scope.scopeId],
-      );
-      deletedCount = result.rowCount ?? 0;
-    } else {
-      const result = await client.query(
-        `DELETE FROM phis.site_theme_revisions
-         WHERE id = ANY($1::int[])
-           AND theme_scope_id = $2`,
-        [normalizedRevisionIds, scope.scopeId],
-      );
-      deletedCount = result.rowCount ?? 0;
-    }
-
+    const deletedCount = await deleteScopeRevisionsWithDb(
+      client,
+      siteId,
+      { kind: scope.kind, scopeId: scope.scopeId },
+      normalizedRevisionIds,
+    );
     if (deletedCount !== normalizedRevisionIds.length) {
       throw new SiteRevisionNotFoundError("One or more revisions were not found for the requested scope.");
     }
 
-    await pruneScopeReferencesWithDb(client, scope);
+    await pruneSiteRevisionScopeReferencesWithDb(
+      client,
+      SITE_REVISION_TABLES[scope.kind],
+      scope.scopeId,
+    );
     return {
       scope: buildScopeSummary(input, {
         publishedRevisionId: scope.publishedRevisionId,

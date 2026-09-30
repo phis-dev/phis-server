@@ -11,9 +11,9 @@ import {
   isSiteRevisionNotFoundError,
   listSiteRevisionHistory,
   restoreSiteRevision,
-  type SiteRevisionKind,
   type SiteRevisionScopeInput,
 } from "@/db/site-revisions";
+import type { SiteRevisionKind } from "@/db/site-revision-scopes";
 import { resolvePhisCmsAreaMask } from "@/lib/constants/cms-areas";
 import { PhiCmsAuditEvent } from "@/lib/constants/phi-cms";
 import {

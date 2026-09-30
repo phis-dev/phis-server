@@ -124,18 +124,35 @@ describe("An Asset id in persisted config is a reference", () => {
  * also where the reference has to be registered, in the transaction that persists the revision.
  */
 describe("The Theme is a reference source of its own", () => {
+  /*
+   * The Theme writes through the revision machine it shares with the Navigation, so the source kind is
+   * the one its descriptor names and the shared save is what indexes the Draft it inserts.
+   */
+  it("is indexed under the Theme's own source kind", async () => {
+    const scopes = await read("src/db/site-revision-scopes.ts");
+    const theme = /theme: \{[\s\S]*?\n {2}\},\n/u.exec(scopes);
+    expect(theme, "the Theme descriptor stays findable").not.toBeNull();
+    expect(theme![0]).toMatch(/referenceSourceKind: PhiCmsReferenceSourceKind\.Theme/u);
+    const save = /export async function saveSiteKeyedDraftRevisionWithDb[\s\S]*?\n\}\n/u.exec(scopes);
+    expect(save, "the shared Draft save stays findable").not.toBeNull();
+    // After the insert, under the revision it inserted.
+    expect(save![0].indexOf("insertSiteRevisionWithDb")).toBeLessThan(
+      save![0].indexOf("replaceSiteRevisionReferencesWithDb"),
+    );
+    expect(save![0]).toMatch(/revisionId: revision\.id,\s*references: input\.references/u);
+  });
+
   it("is written by the Theme draft save, before the commit", async () => {
     const source = await read("src/db/site-theme.ts");
     const fn = /export async function saveSiteThemeDraftRevision[\s\S]*?\n\}\n/u.exec(source);
     expect(fn, "the Theme write stays findable").not.toBeNull();
     const body = fn![0];
-    expect(body).toMatch(/sourceKind: PhiCmsReferenceSourceKind\.Theme/u);
-    expect(body).toMatch(/sourceScopeId: scope\.id/u);
+    expect(body).toMatch(/saveSiteKeyedDraftRevisionWithDb\(client, THEME,/u);
     expect(body).toMatch(/references: collectSiteCmsReferences\(tree\)/u);
     // Inside the transaction body, which commits only after it returns.
     const transaction = body.indexOf("withTransaction(async (client) => {");
     expect(transaction).toBeGreaterThan(-1);
-    expect(transaction).toBeLessThan(body.indexOf("PhiCmsReferenceSourceKind.Theme"));
+    expect(transaction).toBeLessThan(body.indexOf("saveSiteKeyedDraftRevisionWithDb"));
   });
 
   it("is rewritten by the Theme publish, which may promote a revision that is not the draft", async () => {
@@ -143,11 +160,11 @@ describe("The Theme is a reference source of its own", () => {
     const fn = /export async function publishSiteThemeRevision[\s\S]*?\n\}\n/u.exec(source);
     expect(fn, "the Theme publish stays findable").not.toBeNull();
     const body = fn![0];
-    expect(body).toMatch(/sourceKind: PhiCmsReferenceSourceKind\.Theme/u);
+    expect(body).toMatch(/replaceSiteRevisionReferencesWithDb\(client, THEME,/u);
     // Inside the transaction body, which commits only after it returns.
     const transaction = body.indexOf("withTransaction(async (client) => {");
     expect(transaction).toBeGreaterThan(-1);
-    expect(transaction).toBeLessThan(body.indexOf("PhiCmsReferenceSourceKind.Theme"));
+    expect(transaction).toBeLessThan(body.indexOf("replaceSiteRevisionReferencesWithDb"));
   });
 
   it("carries no Area, because a Site-wide Scope has none to resolve a Page in", async () => {

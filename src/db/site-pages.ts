@@ -24,9 +24,22 @@ import {
   collectSiteCmsReferences,
   countSiteCmsReferencesToPageWithDb,
   PhiCmsReferenceSourceKind,
-  pruneSiteCmsReferencesToLiveRevisionsWithDb,
   replaceSiteCmsReferencesWithDb,
 } from "@/db/site-cms-references";
+import {
+  assertPublishesWorkingDraft,
+  deleteSiteRevisionsWithDb,
+  getSiteRevisionByIdWithDb,
+  insertSiteRevisionWithDb,
+  pruneSiteRevisionScopeReferencesWithDb,
+  setSiteRevisionScopePointersWithDb,
+  SITE_REVISION_TABLES,
+  SiteCmsDraftConflictError,
+  stableJsonStringify,
+  updateSiteDraftRevisionWithDb,
+  writePublishedSiteRevisionWithDb,
+  type SiteRevisionRecord,
+} from "@/db/site-revision-scopes";
 import { getResolvedSiteMessageFields, type ResolvedSiteMessageField } from "@/db/translations";
 import { getPool, withTransaction } from "@/lib/db";
 import {
@@ -62,6 +75,9 @@ import type { PhiViewerAccessPolicy } from "@/lib/authorization";
 import { toPhiRecord } from "@/lib/helpers/record";
 
 type DbQueryable = Pick<PoolClient, "query">;
+
+const AREA = SITE_REVISION_TABLES.area;
+const PAGE = SITE_REVISION_TABLES.page;
 
 function readWidgetContentBindingSourceValue(
   config: Record<string, unknown> | null | undefined,
@@ -219,29 +235,9 @@ export type SiteResolvedAreaPresetTree = {
   contentWidgets: SiteContentWidgetRecord[];
 };
 
-export type SiteAreaRevisionRecord = {
-  id: number;
-  areaScopeId: number;
-  flags: number;
-  treeJson: Record<string, unknown>;
-  message: string | null;
-  metaJson: Record<string, unknown>;
-  sourceRevisionId: number | null;
-  createdByUserId: number | null;
-  createdAt: string;
-};
+export type SiteAreaRevisionRecord = SiteRevisionRecord;
 
-export type SitePageRevisionRecord = {
-  id: number;
-  pageScopeId: number;
-  flags: number;
-  treeJson: Record<string, unknown>;
-  message: string | null;
-  metaJson: Record<string, unknown>;
-  sourceRevisionId: number | null;
-  createdByUserId: number | null;
-  createdAt: string;
-};
+export type SitePageRevisionRecord = SiteRevisionRecord;
 
 type SiteAreaScopeRecord = {
   id: number;
@@ -315,15 +311,6 @@ export type SitePageScopeCatalogRecord = SitePageScopeRecord & {
 
 export type SiteCmsDraftState = CmsDraftWriteState;
 
-export class SiteCmsDraftConflictError extends Error {
-  readonly code = "cms_draft_conflict";
-
-  constructor(message: string) {
-    super(message);
-    this.name = "SiteCmsDraftConflictError";
-  }
-}
-
 export class SitePagePathChangeError extends Error {
   constructor(
     readonly code: "invalid_path" | "page_not_found" | "module_owned" | "path_collision" | "path_nested",
@@ -362,29 +349,6 @@ function normalizeMutableSitePagePath(value: string) {
     throw new SitePagePathChangeError("invalid_path", "The requested Page path is invalid or reserved.");
   }
   return path;
-}
-
-/**
- * Refuses a publish that names a revision other than the scope's Working Draft.
- *
- * Every publish clears the Draft pointer it publishes from. Naming an older revision therefore threw the
- * Draft away without a word, and naming the Area's Module Draft on a structure publish made one revision
- * both Draft and live. The published revision itself may be named again while no Draft is open: that
- * is a retry of the publish that already happened, and it drops nothing.
- */
-function assertPublishesWorkingDraft(
-  requestedRevisionId: number | null | undefined,
-  scope: { workingDraftRevisionId: number | null; publishedRevisionId: number | null },
-  scopeLabel: string,
-) {
-  const republish =
-    scope.workingDraftRevisionId == null && requestedRevisionId === scope.publishedRevisionId;
-  if (requestedRevisionId == null || requestedRevisionId === scope.workingDraftRevisionId || republish) {
-    return;
-  }
-  throw new SiteCmsDraftConflictError(
-    `Revision #${requestedRevisionId} is not the ${scopeLabel} Working Draft; restore it to publish it.`,
-  );
 }
 
 function readSiteCmsDraftState(revision: Pick<SiteAreaRevisionRecord | SitePageRevisionRecord, "id" | "metaJson">) {
@@ -449,22 +413,6 @@ function withSiteCmsDraftMeta(
       nextNodeSequence: draft.nextNodeSequence,
     },
   };
-}
-
-function stableJsonStringify(value: unknown): string {
-  if (Array.isArray(value)) {
-    return `[${value.map((entry) => stableJsonStringify(entry)).join(",")}]`;
-  }
-
-  if (value && typeof value === "object") {
-    const record = value as Record<string, unknown>;
-    return `{${Object.keys(record)
-      .sort()
-      .map((key) => `${JSON.stringify(key)}:${stableJsonStringify(record[key])}`)
-      .join(",")}}`;
-  }
-
-  return JSON.stringify(value);
 }
 
 function readRevisionNodeKey(node: { id?: string | number | null; widgetType?: string | null }) {
@@ -1241,363 +1189,6 @@ async function ensureSitePageScopeWithDb(
   };
 }
 
-async function insertSiteAreaRevisionWithDb(
-  db: DbQueryable,
-  input: {
-    areaScopeId: number;
-    flags: number;
-    treeJson: Record<string, unknown>;
-    message?: string | null;
-    metaJson?: Record<string, unknown> | null;
-    sourceRevisionId?: number | null;
-    createdByUserId?: number | null;
-  },
-): Promise<SiteAreaRevisionRecord> {
-  const { rows } = await db.query<{
-    id: number;
-    area_scope_id: number;
-    flags: number;
-    tree_json: Record<string, unknown> | null;
-    message: string | null;
-    meta_json: Record<string, unknown> | null;
-    source_revision_id: number | null;
-    created_by_user_id: number | null;
-    created_at: string;
-  }>(
-    `INSERT INTO phis.site_area_revisions (
-       area_scope_id,
-       flags,
-       tree_json,
-       message,
-       meta_json,
-       source_revision_id,
-       created_by_user_id
-     )
-     VALUES ($1, $2, $3::jsonb, $4, $5::jsonb, $6, $7)
-     RETURNING id,
-               area_scope_id,
-               flags,
-               tree_json,
-               message,
-               meta_json,
-               source_revision_id,
-               created_by_user_id,
-               created_at`,
-    [
-      input.areaScopeId,
-      input.flags,
-      JSON.stringify(input.treeJson ?? {}),
-      input.message ?? null,
-      JSON.stringify(input.metaJson ?? {}),
-      input.sourceRevisionId ?? null,
-      input.createdByUserId ?? null,
-    ],
-  );
-
-  return {
-    id: rows[0]!.id,
-    areaScopeId: rows[0]!.area_scope_id,
-    flags: rows[0]!.flags,
-    treeJson: toPhiRecord(rows[0]!.tree_json),
-    message: rows[0]!.message,
-    metaJson: toPhiRecord(rows[0]!.meta_json),
-    sourceRevisionId: rows[0]!.source_revision_id,
-    createdByUserId: rows[0]!.created_by_user_id,
-    createdAt: rows[0]!.created_at,
-  };
-}
-
-async function insertSitePageRevisionWithDb(
-  db: DbQueryable,
-  input: {
-    pageScopeId: number;
-    flags: number;
-    treeJson: Record<string, unknown>;
-    message?: string | null;
-    metaJson?: Record<string, unknown> | null;
-    sourceRevisionId?: number | null;
-    createdByUserId?: number | null;
-  },
-): Promise<SitePageRevisionRecord> {
-  const { rows } = await db.query<{
-    id: number;
-    page_scope_id: number;
-    flags: number;
-    tree_json: Record<string, unknown> | null;
-    message: string | null;
-    meta_json: Record<string, unknown> | null;
-    source_revision_id: number | null;
-    created_by_user_id: number | null;
-    created_at: string;
-  }>(
-    `INSERT INTO phis.site_page_revisions (
-            page_scope_id,
-            flags,
-            tree_json,
-            message,
-            meta_json,
-            source_revision_id,
-            created_by_user_id,
-            created_at
-     )
-     VALUES ($1, $2, $3::jsonb, $4, $5::jsonb, $6, $7, NOW())
-     RETURNING id,
-               page_scope_id,
-               flags,
-               tree_json,
-               message,
-               meta_json,
-               source_revision_id,
-               created_by_user_id,
-               created_at`,
-    [
-      input.pageScopeId,
-      input.flags,
-      JSON.stringify(input.treeJson ?? {}),
-      input.message ?? null,
-      JSON.stringify(input.metaJson ?? {}),
-      input.sourceRevisionId ?? null,
-      input.createdByUserId ?? null,
-    ],
-  );
-
-  return {
-    id: rows[0]!.id,
-    pageScopeId: rows[0]!.page_scope_id,
-    flags: rows[0]!.flags,
-    treeJson: toPhiRecord(rows[0]!.tree_json),
-    message: rows[0]!.message,
-    metaJson: toPhiRecord(rows[0]!.meta_json),
-    sourceRevisionId: rows[0]!.source_revision_id,
-    createdByUserId: rows[0]!.created_by_user_id,
-    createdAt: rows[0]!.created_at,
-  };
-}
-
-async function updateSiteAreaDraftRevisionWithDb(
-  db: DbQueryable,
-  revisionId: number,
-  areaScopeId: number,
-  input: {
-    flags: number;
-    treeJson: Record<string, unknown>;
-    message?: string | null;
-    metaJson: Record<string, unknown>;
-  },
-): Promise<SiteAreaRevisionRecord> {
-  const { rows } = await db.query<{
-    id: number;
-    area_scope_id: number;
-    flags: number;
-    tree_json: Record<string, unknown> | null;
-    message: string | null;
-    meta_json: Record<string, unknown> | null;
-    source_revision_id: number | null;
-    created_by_user_id: number | null;
-    created_at: string;
-  }>(
-    `UPDATE phis.site_area_revisions
-     SET flags = $3,
-         tree_json = $4::jsonb,
-         message = $5,
-         meta_json = $6::jsonb
-     WHERE id = $1
-       AND area_scope_id = $2
-     RETURNING id,
-               area_scope_id,
-               flags,
-               tree_json,
-               message,
-               meta_json,
-               source_revision_id,
-               created_by_user_id,
-               created_at`,
-    [
-      revisionId,
-      areaScopeId,
-      input.flags,
-      JSON.stringify(input.treeJson),
-      input.message ?? null,
-      JSON.stringify(input.metaJson),
-    ],
-  );
-  const row = rows[0];
-  if (!row) {
-    throw new SiteCmsDraftConflictError(`Working Draft revision #${revisionId} no longer exists.`);
-  }
-  return {
-    id: row.id,
-    areaScopeId: row.area_scope_id,
-    flags: row.flags,
-    treeJson: toPhiRecord(row.tree_json),
-    message: row.message,
-    metaJson: toPhiRecord(row.meta_json),
-    sourceRevisionId: row.source_revision_id,
-    createdByUserId: row.created_by_user_id,
-    createdAt: row.created_at,
-  };
-}
-
-async function updateSitePageDraftRevisionWithDb(
-  db: DbQueryable,
-  revisionId: number,
-  pageScopeId: number,
-  input: {
-    flags: number;
-    treeJson: Record<string, unknown>;
-    message?: string | null;
-    metaJson: Record<string, unknown>;
-  },
-): Promise<SitePageRevisionRecord> {
-  const { rows } = await db.query<{
-    id: number;
-    page_scope_id: number;
-    flags: number;
-    tree_json: Record<string, unknown> | null;
-    message: string | null;
-    meta_json: Record<string, unknown> | null;
-    source_revision_id: number | null;
-    created_by_user_id: number | null;
-    created_at: string;
-  }>(
-    `UPDATE phis.site_page_revisions
-     SET flags = $3,
-         tree_json = $4::jsonb,
-         message = $5,
-         meta_json = $6::jsonb
-     WHERE id = $1
-       AND page_scope_id = $2
-     RETURNING id,
-               page_scope_id,
-               flags,
-               tree_json,
-               message,
-               meta_json,
-               source_revision_id,
-               created_by_user_id,
-               created_at`,
-    [
-      revisionId,
-      pageScopeId,
-      input.flags,
-      JSON.stringify(input.treeJson),
-      input.message ?? null,
-      JSON.stringify(input.metaJson),
-    ],
-  );
-  const row = rows[0];
-  if (!row) {
-    throw new SiteCmsDraftConflictError(`Working Draft revision #${revisionId} no longer exists.`);
-  }
-  return {
-    id: row.id,
-    pageScopeId: row.page_scope_id,
-    flags: row.flags,
-    treeJson: toPhiRecord(row.tree_json),
-    message: row.message,
-    metaJson: toPhiRecord(row.meta_json),
-    sourceRevisionId: row.source_revision_id,
-    createdByUserId: row.created_by_user_id,
-    createdAt: row.created_at,
-  };
-}
-
-async function getSiteAreaRevisionByIdWithDb(
-  db: DbQueryable,
-  revisionId: number,
-): Promise<SiteAreaRevisionRecord | null> {
-  const { rows } = await db.query<{
-    id: number;
-    area_scope_id: number;
-    flags: number;
-    tree_json: Record<string, unknown> | null;
-    message: string | null;
-    meta_json: Record<string, unknown> | null;
-    source_revision_id: number | null;
-    created_by_user_id: number | null;
-    created_at: string;
-  }>(
-    `SELECT id,
-            area_scope_id,
-            flags,
-            tree_json,
-            message,
-            meta_json,
-            source_revision_id,
-            created_by_user_id,
-            created_at
-     FROM phis.site_area_revisions
-     WHERE id = $1
-     LIMIT 1`,
-    [revisionId],
-  );
-
-  const row = rows[0];
-  if (!row) {
-    return null;
-  }
-
-  return {
-    id: row.id,
-    areaScopeId: row.area_scope_id,
-    flags: row.flags,
-    treeJson: toPhiRecord(row.tree_json),
-    message: row.message,
-    metaJson: toPhiRecord(row.meta_json),
-    sourceRevisionId: row.source_revision_id,
-    createdByUserId: row.created_by_user_id,
-    createdAt: row.created_at,
-  };
-}
-
-async function getSitePageRevisionByIdWithDb(
-  db: DbQueryable,
-  revisionId: number,
-): Promise<SitePageRevisionRecord | null> {
-  const { rows } = await db.query<{
-    id: number;
-    page_scope_id: number;
-    flags: number;
-    tree_json: Record<string, unknown> | null;
-    message: string | null;
-    meta_json: Record<string, unknown> | null;
-    source_revision_id: number | null;
-    created_by_user_id: number | null;
-    created_at: string;
-  }>(
-    `SELECT id,
-            page_scope_id,
-            flags,
-            tree_json,
-            message,
-            meta_json,
-            source_revision_id,
-            created_by_user_id,
-            created_at
-     FROM phis.site_page_revisions
-     WHERE id = $1
-     LIMIT 1`,
-    [revisionId],
-  );
-
-  const row = rows[0];
-  if (!row) {
-    return null;
-  }
-
-  return {
-    id: row.id,
-    pageScopeId: row.page_scope_id,
-    flags: row.flags,
-    treeJson: toPhiRecord(row.tree_json),
-    message: row.message,
-    metaJson: toPhiRecord(row.meta_json),
-    sourceRevisionId: row.source_revision_id,
-    createdByUserId: row.created_by_user_id,
-    createdAt: row.created_at,
-  };
-}
-
 /**
  * Moves an Area scope's pointers.
  *
@@ -1626,32 +1217,7 @@ async function setSiteAreaScopePointersWithDb(
       ? [scopeId, input.publishedRevisionId, input.workingDraftRevisionId, input.workingModuleDraftRevisionId]
       : [scopeId, input.publishedRevisionId, input.workingDraftRevisionId],
   );
-  await pruneSiteCmsReferencesToLiveRevisionsWithDb(db, {
-    sourceKind: PhiCmsReferenceSourceKind.Area,
-    sourceScopeId: scopeId,
-  });
-}
-
-async function setSitePageScopePointersWithDb(
-  db: DbQueryable,
-  scopeId: number,
-  input: {
-    publishedRevisionId: number | null;
-    workingDraftRevisionId: number | null;
-  },
-) {
-  await db.query(
-    `UPDATE phis.site_page_scopes
-     SET published_revision_id = $2,
-         working_draft_revision_id = $3,
-         updated_at = NOW()
-     WHERE id = $1`,
-    [scopeId, input.publishedRevisionId, input.workingDraftRevisionId],
-  );
-  await pruneSiteCmsReferencesToLiveRevisionsWithDb(db, {
-    sourceKind: PhiCmsReferenceSourceKind.Page,
-    sourceScopeId: scopeId,
-  });
+  await pruneSiteRevisionScopeReferencesWithDb(db, AREA, scopeId);
 }
 
 function readValidatedPageRevisionTree(
@@ -1777,8 +1343,8 @@ async function getExactSiteAreaPresetTreeWithDb(
     return null;
   }
 
-  const revision = await getSiteAreaRevisionByIdWithDb(db, scope.publishedRevisionId);
-  if (!revision || revision.areaScopeId !== scope.id) {
+  const revision = await getSiteRevisionByIdWithDb(db, AREA, scope.publishedRevisionId);
+  if (!revision || revision.scopeId !== scope.id) {
     return null;
   }
 
@@ -1808,8 +1374,8 @@ async function getResolvedSitePageTreeWithDb(
     return null;
   }
 
-  const revision = await getSitePageRevisionByIdWithDb(db, scope.publishedRevisionId);
-  if (!revision || revision.pageScopeId !== scope.id) {
+  const revision = await getSiteRevisionByIdWithDb(db, PAGE, scope.publishedRevisionId);
+  if (!revision || revision.scopeId !== scope.id) {
     return null;
   }
 
@@ -2095,7 +1661,9 @@ export async function saveSitePageDraftRevision(
       throw new SiteCmsDraftConflictError("The requested Site Page Scope does not exist in this Site and Area.");
     }
     const sourceRevisionId = scope.workingDraftRevisionId ?? scope.publishedRevisionId ?? null;
-    const sourceRevision = sourceRevisionId == null ? null : await getSitePageRevisionByIdWithDb(client, sourceRevisionId);
+    const sourceRevision = sourceRevisionId == null
+      ? null
+      : await getSiteRevisionByIdWithDb(client, PAGE, sourceRevisionId);
     if (sourceRevisionId != null && !sourceRevision) {
       throw new SiteCmsDraftConflictError(`CMS page revision #${sourceRevisionId} no longer exists.`);
     }
@@ -2138,14 +1706,14 @@ export async function saveSitePageDraftRevision(
       nextNodeSequence: requestedDraft?.nextNodeSequence ?? 1,
     };
     const revision = persistedDraft
-      ? await updateSitePageDraftRevisionWithDb(client, persistedDraft.revisionId, scope.id, {
+      ? await updateSiteDraftRevisionWithDb(client, PAGE, persistedDraft.revisionId, scope.id, {
           flags,
           treeJson: nextRevisionInput as unknown as Record<string, unknown>,
           message: options?.message ?? summary.message,
           metaJson: withSiteCmsDraftMeta(summary.metaJson, nextDraftMeta),
         })
-      : await insertSitePageRevisionWithDb(client, {
-          pageScopeId: scope.id,
+      : await insertSiteRevisionWithDb(client, PAGE, {
+          scopeId: scope.id,
           flags,
           treeJson: nextRevisionInput as unknown as Record<string, unknown>,
           message: options?.message ?? summary.message,
@@ -2156,7 +1724,7 @@ export async function saveSitePageDraftRevision(
     // No tombstone here. A draft that marks the Page deleted says what the next publish will do, and the
     // tombstone is what the live Site reads; writing it on the save took the Page off the Site before
     // anybody published the deletion, and moved the Site read marker while doing it.
-    await setSitePageScopePointersWithDb(client, scope.id, {
+    await setSiteRevisionScopePointersWithDb(client, PAGE, scope.id, {
       publishedRevisionId: scope.publishedRevisionId,
       workingDraftRevisionId: revision.id,
     });
@@ -2205,7 +1773,9 @@ export async function saveSiteAreaDraftRevision(
   return withTransaction(async (client) => {
     const scope = await ensureSiteAreaScopeWithDb(client, siteId, areaMask);
     const sourceRevisionId = scope.workingDraftRevisionId ?? scope.publishedRevisionId ?? null;
-    const sourceRevision = sourceRevisionId == null ? null : await getSiteAreaRevisionByIdWithDb(client, sourceRevisionId);
+    const sourceRevision = sourceRevisionId == null
+      ? null
+      : await getSiteRevisionByIdWithDb(client, AREA, sourceRevisionId);
     if (sourceRevisionId != null && !sourceRevision) {
       throw new SiteCmsDraftConflictError(`CMS area revision #${sourceRevisionId} no longer exists.`);
     }
@@ -2243,14 +1813,14 @@ export async function saveSiteAreaDraftRevision(
       nextNodeSequence: requestedDraft?.nextNodeSequence ?? 1,
     };
     const revision = persistedDraft
-      ? await updateSiteAreaDraftRevisionWithDb(client, persistedDraft.revisionId, scope.id, {
+      ? await updateSiteDraftRevisionWithDb(client, AREA, persistedDraft.revisionId, scope.id, {
           flags: PhiCmsRevisionFlags.Draft,
           treeJson: nextRevisionInput as unknown as Record<string, unknown>,
           message: options?.message ?? summary.message,
           metaJson: withSiteCmsDraftMeta(summary.metaJson, nextDraftMeta),
         })
-      : await insertSiteAreaRevisionWithDb(client, {
-          areaScopeId: scope.id,
+      : await insertSiteRevisionWithDb(client, AREA, {
+          scopeId: scope.id,
           flags: PhiCmsRevisionFlags.Draft,
           treeJson: nextRevisionInput as unknown as Record<string, unknown>,
           message: options?.message ?? summary.message,
@@ -2381,8 +1951,12 @@ export async function publishSitePageRevision(
        */
       const movedOnly = await promoteSitePageDraftPathWithDb(client, scope);
       if (movedOnly && scope.publishedRevisionId != null) {
-        const publishedRevision = await getSitePageRevisionByIdWithDb(client, scope.publishedRevisionId);
-        if (!publishedRevision || publishedRevision.pageScopeId !== scope.id) {
+        const publishedRevision = await getSiteRevisionByIdWithDb(
+          client,
+          PAGE,
+          scope.publishedRevisionId,
+        );
+        if (!publishedRevision || publishedRevision.scopeId !== scope.id) {
           throw new Error("Published page revision pointer belongs to a different scope.");
         }
         const movedPage = await buildResolvedPageTreeFromRevisionWithDb(
@@ -2397,8 +1971,8 @@ export async function publishSitePageRevision(
       throw new Error("No page draft revision available to publish.");
     }
 
-    const revision = await getSitePageRevisionByIdWithDb(client, revisionId as number);
-    if (!revision || revision.pageScopeId !== scope.id) {
+    const revision = await getSiteRevisionByIdWithDb(client, PAGE, revisionId as number);
+    if (!revision || revision.scopeId !== scope.id) {
       throw new Error("Page draft revision not found for the requested scope.");
     }
 
@@ -2406,8 +1980,8 @@ export async function publishSitePageRevision(
     const previousPublishedRevision =
       scope.publishedRevisionId == null
         ? null
-        : await getSitePageRevisionByIdWithDb(client, scope.publishedRevisionId);
-    if (previousPublishedRevision && previousPublishedRevision.pageScopeId !== scope.id) {
+        : await getSiteRevisionByIdWithDb(client, PAGE, scope.publishedRevisionId);
+    if (previousPublishedRevision && previousPublishedRevision.scopeId !== scope.id) {
       throw new Error("Published page revision pointer belongs to a different scope.");
     }
     const materializedTree = validateCmsPageRevisionForPublish(revisionTree);
@@ -2425,14 +1999,11 @@ export async function publishSitePageRevision(
     const nextFlags =
       PhiCmsRevisionFlags.Published |
       (deleted ? PhiCmsRevisionFlags.Deleted : 0);
-    await client.query(
-      `UPDATE phis.site_page_revisions
-       SET flags = $2,
-           tree_json = $3::jsonb
-       WHERE id = $1`,
-      [revision.id, nextFlags, materializedTreeJson],
-    );
-    await setSitePageScopePointersWithDb(client, scope.id, {
+    await writePublishedSiteRevisionWithDb(client, PAGE, revision.id, {
+      flags: nextFlags,
+      treeJson: materializedTreeJson,
+    });
+    await setSiteRevisionScopePointersWithDb(client, PAGE, scope.id, {
       publishedRevisionId: revision.id,
       workingDraftRevisionId: null,
     });
@@ -2535,7 +2106,7 @@ export async function saveSiteAreaModulesDraftRevision(
     const sourceRevisionId = scope.workingModuleDraftRevisionId ?? scope.publishedRevisionId ?? null;
     const sourceRevision = sourceRevisionId == null
       ? null
-      : await getSiteAreaRevisionByIdWithDb(client, sourceRevisionId);
+      : await getSiteRevisionByIdWithDb(client, AREA, sourceRevisionId);
     if (sourceRevisionId != null && !sourceRevision) {
       throw new SiteCmsDraftConflictError(`CMS area revision #${sourceRevisionId} no longer exists.`);
     }
@@ -2575,14 +2146,14 @@ export async function saveSiteAreaModulesDraftRevision(
       nextNodeSequence: requestedDraft?.nextNodeSequence ?? persistedDraft?.nextNodeSequence ?? 1,
     };
     const revision = persistedDraft
-      ? await updateSiteAreaDraftRevisionWithDb(client, persistedDraft.revisionId, scope.id, {
+      ? await updateSiteDraftRevisionWithDb(client, AREA, persistedDraft.revisionId, scope.id, {
           flags: PhiCmsRevisionFlags.Draft,
           treeJson: nextRevisionInput as unknown as Record<string, unknown>,
           message: options?.message ?? summary.message,
           metaJson: withSiteCmsDraftMeta(summary.metaJson, nextDraftMeta),
         })
-      : await insertSiteAreaRevisionWithDb(client, {
-          areaScopeId: scope.id,
+      : await insertSiteRevisionWithDb(client, AREA, {
+          scopeId: scope.id,
           flags: PhiCmsRevisionFlags.Draft,
           treeJson: nextRevisionInput as unknown as Record<string, unknown>,
           message: options?.message ?? summary.message,
@@ -2644,8 +2215,8 @@ export async function publishSiteAreaRevision(
       throw new Error("No area draft revision available to publish.");
     }
 
-    const revision = await getSiteAreaRevisionByIdWithDb(client, revisionId as number);
-    if (!revision || revision.areaScopeId !== scope.id) {
+    const revision = await getSiteRevisionByIdWithDb(client, AREA, revisionId as number);
+    if (!revision || revision.scopeId !== scope.id) {
       throw new Error("Area draft revision not found for the requested scope.");
     }
 
@@ -2656,8 +2227,8 @@ export async function publishSiteAreaRevision(
     const previousPublishedRevision =
       scope.publishedRevisionId == null
         ? null
-        : await getSiteAreaRevisionByIdWithDb(client, scope.publishedRevisionId);
-    if (previousPublishedRevision && previousPublishedRevision.areaScopeId !== scope.id) {
+        : await getSiteRevisionByIdWithDb(client, AREA, scope.publishedRevisionId);
+    if (previousPublishedRevision && previousPublishedRevision.scopeId !== scope.id) {
       throw new Error("Published area revision pointer belongs to a different scope.");
     }
     const mergedTree = mergePhiAreaTreeForPublish(
@@ -2678,13 +2249,10 @@ export async function publishSiteAreaRevision(
       options?.locale ?? null,
     );
 
-    await client.query(
-      `UPDATE phis.site_area_revisions
-       SET flags = $2,
-           tree_json = $3::jsonb
-       WHERE id = $1`,
-      [revision.id, PhiCmsRevisionFlags.Published, materializedTreeJson],
-    );
+    await writePublishedSiteRevisionWithDb(client, AREA, revision.id, {
+      flags: PhiCmsRevisionFlags.Published,
+      treeJson: materializedTreeJson,
+    });
     // The same reason the Module publish rewrites them: the merge replaced this revision's tree, so
     // what it references changed with it. A structure draft is cloned from what was published and
     // then keeps its own copy of `config.modules` while a Module publish moves that config on; the
@@ -2756,8 +2324,8 @@ export async function publishSiteAreaModulesRevision(
       throw new Error("No Area Module draft revision available to publish.");
     }
 
-    const revision = await getSiteAreaRevisionByIdWithDb(client, revisionId as number);
-    if (!revision || revision.areaScopeId !== scope.id) {
+    const revision = await getSiteRevisionByIdWithDb(client, AREA, revisionId as number);
+    if (!revision || revision.scopeId !== scope.id) {
       throw new Error("Area Module draft revision not found for the requested scope.");
     }
 
@@ -2768,8 +2336,8 @@ export async function publishSiteAreaModulesRevision(
     const previousPublishedRevision =
       scope.publishedRevisionId == null
         ? null
-        : await getSiteAreaRevisionByIdWithDb(client, scope.publishedRevisionId);
-    if (previousPublishedRevision && previousPublishedRevision.areaScopeId !== scope.id) {
+        : await getSiteRevisionByIdWithDb(client, AREA, scope.publishedRevisionId);
+    if (previousPublishedRevision && previousPublishedRevision.scopeId !== scope.id) {
       throw new Error("Published area revision pointer belongs to a different scope.");
     }
 
@@ -2791,13 +2359,10 @@ export async function publishSiteAreaModulesRevision(
       options?.locale ?? null,
     );
 
-    await client.query(
-      `UPDATE phis.site_area_revisions
-       SET flags = $2,
-           tree_json = $3::jsonb
-       WHERE id = $1`,
-      [revision.id, PhiCmsRevisionFlags.Published, materializedTreeJson],
-    );
+    await writePublishedSiteRevisionWithDb(client, AREA, revision.id, {
+      flags: PhiCmsRevisionFlags.Published,
+      treeJson: materializedTreeJson,
+    });
     // The merge replaced this revision's tree with the published one, so what it references changed
     // with it. The structure draft keeps its pointer: publishing Modules must not discard it.
     await replaceSiteCmsReferencesWithDb(client, {
@@ -2835,13 +2400,13 @@ export async function getSitePageDraftRevisionPreview(
     locale?: string | null;
   },
 ): Promise<{ revisionId: number; tree: SiteResolvedWidgetTree } | null> {
-  const revision = await getSitePageRevisionByIdWithDb(getPool(), revisionId);
+  const revision = await getSiteRevisionByIdWithDb(getPool(), PAGE, revisionId);
   if (!revision || !hasPhiFlag(revision.flags, PhiCmsRevisionFlags.Draft)) {
     return null;
   }
 
   const scope = await getSitePageScopeWithDb(getPool(), siteId, input.areaMask, input.address);
-  if (!scope || scope.id !== revision.pageScopeId) {
+  if (!scope || scope.id !== revision.scopeId) {
     return null;
   }
 
@@ -2866,13 +2431,13 @@ export async function getSitePageRevisionReview(
     locale?: string | null;
   },
 ): Promise<{ revisionId: number; tree: SiteResolvedWidgetTree } | null> {
-  const revision = await getSitePageRevisionByIdWithDb(getPool(), revisionId);
+  const revision = await getSiteRevisionByIdWithDb(getPool(), PAGE, revisionId);
   if (!revision) {
     return null;
   }
 
   const scope = await getSitePageScopeWithDb(getPool(), siteId, input.areaMask, input.address);
-  if (!scope || scope.id !== revision.pageScopeId) {
+  if (!scope || scope.id !== revision.scopeId) {
     return null;
   }
 
@@ -2901,8 +2466,12 @@ export async function getSiteCurrentPageDraft(
     return null;
   }
 
-  const revision = await getSitePageRevisionByIdWithDb(getPool(), scope.workingDraftRevisionId);
-  if (!revision || !hasPhiFlag(revision.flags, PhiCmsRevisionFlags.Draft) || revision.pageScopeId !== scope.id) {
+  const revision = await getSiteRevisionByIdWithDb(getPool(), PAGE, scope.workingDraftRevisionId);
+  if (
+    !revision ||
+    !hasPhiFlag(revision.flags, PhiCmsRevisionFlags.Draft) ||
+    revision.scopeId !== scope.id
+  ) {
     return null;
   }
 
@@ -2927,13 +2496,13 @@ export async function getSiteAreaDraftRevisionPreview(
     sourcePreset?: SitePresetIdentity | null;
   },
 ): Promise<{ revisionId: number; preset: SiteResolvedAreaPresetTree } | null> {
-  const revision = await getSiteAreaRevisionByIdWithDb(getPool(), revisionId);
+  const revision = await getSiteRevisionByIdWithDb(getPool(), AREA, revisionId);
   if (!revision || !hasPhiFlag(revision.flags, PhiCmsRevisionFlags.Draft)) {
     return null;
   }
 
   const scope = await getSiteAreaScopeWithDb(getPool(), siteId, input.areaMask);
-  if (!scope || scope.id !== revision.areaScopeId) {
+  if (!scope || scope.id !== revision.scopeId) {
     return null;
   }
 
@@ -2962,13 +2531,13 @@ export async function getSiteAreaRevisionReview(
     sourcePreset?: SitePresetIdentity | null;
   },
 ): Promise<{ revisionId: number; preset: SiteResolvedAreaPresetTree } | null> {
-  const revision = await getSiteAreaRevisionByIdWithDb(getPool(), revisionId);
+  const revision = await getSiteRevisionByIdWithDb(getPool(), AREA, revisionId);
   if (!revision) {
     return null;
   }
 
   const scope = await getSiteAreaScopeWithDb(getPool(), siteId, input.areaMask);
-  if (!scope || scope.id !== revision.areaScopeId) {
+  if (!scope || scope.id !== revision.scopeId) {
     return null;
   }
 
@@ -3001,8 +2570,12 @@ export async function getSiteCurrentAreaDraft(
     return null;
   }
 
-  const revision = await getSiteAreaRevisionByIdWithDb(getPool(), scope.workingDraftRevisionId);
-  if (!revision || !hasPhiFlag(revision.flags, PhiCmsRevisionFlags.Draft) || revision.areaScopeId !== scope.id) {
+  const revision = await getSiteRevisionByIdWithDb(getPool(), AREA, scope.workingDraftRevisionId);
+  if (
+    !revision ||
+    !hasPhiFlag(revision.flags, PhiCmsRevisionFlags.Draft) ||
+    revision.scopeId !== scope.id
+  ) {
     return null;
   }
 
@@ -3037,8 +2610,12 @@ export async function getSiteCurrentAreaModulesDraft(
     return null;
   }
 
-  const revision = await getSiteAreaRevisionByIdWithDb(getPool(), scope.workingModuleDraftRevisionId);
-  if (!revision || !hasPhiFlag(revision.flags, PhiCmsRevisionFlags.Draft) || revision.areaScopeId !== scope.id) {
+  const revision = await getSiteRevisionByIdWithDb(getPool(), AREA, scope.workingModuleDraftRevisionId);
+  if (
+    !revision ||
+    !hasPhiFlag(revision.flags, PhiCmsRevisionFlags.Draft) ||
+    revision.scopeId !== scope.id
+  ) {
     return null;
   }
 
@@ -3073,17 +2650,14 @@ export async function deleteSiteAreaModulesDraftRevision(
       return { deleted: false };
     }
 
-    const revision = await getSiteAreaRevisionByIdWithDb(client, scope.workingModuleDraftRevisionId);
+    const revision = await getSiteRevisionByIdWithDb(client, AREA, scope.workingModuleDraftRevisionId);
     if (!revision || !hasSamePresetIdentity(
       readValidatedAreaRevisionTree(revision.treeJson).sourcePreset,
       input.sourcePreset,
     )) {
       throw new Error("Area draft preset identity does not match the requested scope.");
     }
-    await client.query(
-      `DELETE FROM phis.site_area_revisions WHERE id = $1`,
-      [scope.workingModuleDraftRevisionId],
-    );
+    await deleteSiteRevisionsWithDb(client, AREA, scope.id, [scope.workingModuleDraftRevisionId]);
     await setSiteAreaScopePointersWithDb(client, scope.id, {
       publishedRevisionId: scope.publishedRevisionId,
       workingDraftRevisionId: scope.workingDraftRevisionId,
@@ -3122,16 +2696,15 @@ export async function deleteSitePageDraftRevision(
      * never published, and a discarded restore does not undo the deletion that was. Nothing is cleared
      * here -- `setSitePageScopeTombstoneWithDb` runs on publish and nowhere else.
      */
-    const removedDraft = await client.query<{ tree_json: Record<string, unknown> }>(
-      `DELETE FROM phis.site_page_revisions WHERE id = $1 RETURNING tree_json`,
-      [scope.workingDraftRevisionId],
-    );
+    const removedDraft = await deleteSiteRevisionsWithDb(client, PAGE, scope.id, [
+      scope.workingDraftRevisionId,
+    ]);
     await deleteOrphanedSiteContentByIdsWithDb(
       client,
       siteId,
-      collectRevisionContentIds(removedDraft.rows[0]?.tree_json ?? null),
+      collectRevisionContentIds(removedDraft.trees[0] ?? null),
     );
-    await setSitePageScopePointersWithDb(client, scope.id, {
+    await setSiteRevisionScopePointersWithDb(client, PAGE, scope.id, {
       publishedRevisionId: scope.publishedRevisionId,
       workingDraftRevisionId: null,
     });
@@ -3152,21 +2725,20 @@ export async function deleteSiteAreaDraftRevision(
       return { deleted: false };
     }
 
-    const revision = await getSiteAreaRevisionByIdWithDb(client, scope.workingDraftRevisionId);
+    const revision = await getSiteRevisionByIdWithDb(client, AREA, scope.workingDraftRevisionId);
     if (!revision || !hasSamePresetIdentity(
       readValidatedAreaRevisionTree(revision.treeJson).sourcePreset,
       input.sourcePreset,
     )) {
       throw new Error("Area draft preset identity does not match the requested scope.");
     }
-    const removedAreaDraft = await client.query<{ tree_json: Record<string, unknown> }>(
-      `DELETE FROM phis.site_area_revisions WHERE id = $1 RETURNING tree_json`,
-      [scope.workingDraftRevisionId],
-    );
+    const removedAreaDraft = await deleteSiteRevisionsWithDb(client, AREA, scope.id, [
+      scope.workingDraftRevisionId,
+    ]);
     await deleteOrphanedSiteContentByIdsWithDb(
       client,
       siteId,
-      collectRevisionContentIds(removedAreaDraft.rows[0]?.tree_json ?? null),
+      collectRevisionContentIds(removedAreaDraft.trees[0] ?? null),
     );
     await setSiteAreaScopePointersWithDb(client, scope.id, {
       publishedRevisionId: scope.publishedRevisionId,
@@ -3209,7 +2781,7 @@ export async function deleteSiteAreaOverride(
      */
     const identityRevisionId = scope.publishedRevisionId ?? scope.workingDraftRevisionId;
     if (identityRevisionId != null) {
-      const revision = await getSiteAreaRevisionByIdWithDb(client, identityRevisionId);
+      const revision = await getSiteRevisionByIdWithDb(client, AREA, identityRevisionId);
       if (!revision || !hasSamePresetIdentity(
         readValidatedAreaRevisionTree(revision.treeJson).sourcePreset,
         input.sourcePreset,

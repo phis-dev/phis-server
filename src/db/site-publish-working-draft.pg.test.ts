@@ -9,11 +9,8 @@ import {
 } from "../../test/pg/harness";
 import { PhiCmsStatus } from "@phis/contracts/cms";
 import { validateCmsPageWriteInput } from "@/lib/cms/write-validation";
-import {
-  publishSitePageRevision,
-  saveSitePageDraftRevision,
-  SiteCmsDraftConflictError,
-} from "./site-pages";
+import { SiteCmsDraftConflictError } from "./site-revision-scopes";
+import { publishSitePageRevision, saveSitePageDraftRevision } from "./site-pages";
 
 /**
  * A publish clears the Working Draft it publishes from. Naming another revision of the scope used to go
