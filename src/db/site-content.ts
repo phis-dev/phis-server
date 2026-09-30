@@ -2,7 +2,7 @@ import "server-only";
 
 import type { PoolClient } from "pg";
 
-import { getPool } from "@/lib/db";
+import { getPool, withTransaction } from "@/lib/db";
 import {
   PhiCmsReferenceSourceKind,
 } from "@/db/site-cms-references";
@@ -34,6 +34,7 @@ export const SITE_CONTENT_TYPE_ASSET = 4;
 export const SITE_CONTENT_TYPE_TEXT = 5;
 export const SITE_CONTENT_TYPE_HTML = 6;
 export const SITE_CONTENT_TYPE_MARKDOWN = 7;
+export const SITE_CONTENT_STATUS_DRAFT = 0;
 export const SITE_CONTENT_STATUS_PUBLISHED = 1;
 
 export type SiteContentAssetInput = {
@@ -684,6 +685,371 @@ export async function listPublishedNews(siteId: number, locale: string) {
     tags: Array.isArray(row.meta?.tags)
       ? row.meta.tags.filter((item: unknown): item is string => typeof item === "string")
       : [],
+  }));
+}
+
+/*
+ * The News write path, which is two authorities over two sets of columns.
+ *
+ * A save writes words: one new version, its text fields, and `current_version_id` pointing at it. A
+ * publish writes when the entry is seen: `status`, `published_version_id`, `published_at` and
+ * `expires_at`. They are separate functions because AUTHORIZATION.md gives them to separate roles --
+ * `PHI_ACCESS_CONTENT_EDITING` drafts, `PHI_ACCESS_PUBLISHING` publishes -- and one statement covering
+ * both sets of columns would be reachable by whoever may do the lesser of the two.
+ *
+ * What the public reads is `published_version_id`. An edit made after a publish is therefore written,
+ * kept, and not seen until it is published in turn, which is the whole reason that column exists.
+ */
+
+export type SiteContentNewsInput = {
+  siteId: number;
+  contentId?: number | null;
+  slug?: string | null;
+  title: string;
+  subtitle?: string | null;
+  content: string;
+  link?: string | null;
+  tags?: readonly string[];
+  sortOrder?: number;
+  createdByUserId?: number | null;
+};
+
+export type SiteNewsWriteOutcome =
+  | { ok: true; contentId: number; versionId: number; slug: string }
+  | { ok: false; reason: "missing" | "slug_taken" };
+
+export type SiteNewsPublication = {
+  contentId: number;
+  status: number;
+  publishedAt: string | null;
+  expiresAt: string | null;
+};
+
+export type SiteNewsEditorRecord = {
+  contentId: number;
+  slug: string;
+  status: number;
+  sortOrder: number;
+  title: string;
+  subtitle: string;
+  content: string;
+  link: string | null;
+  tags: string[];
+  publishedAt: string | null;
+  expiresAt: string | null;
+  updatedAt: string | null;
+  hasUnpublishedChanges: boolean;
+};
+
+type SiteNewsEditorRow = {
+  id: number;
+  slug: string;
+  status: number;
+  sort_order: number;
+  published_at: string | null;
+  expires_at: string | null;
+  updated_at: string | null;
+  has_unpublished_changes: boolean;
+  meta: { link?: string | null; tags?: string[] | null } | null;
+  title: string | null;
+  subtitle: string | null;
+  content: string | null;
+};
+
+function buildSiteNewsMeta(input: Pick<SiteContentNewsInput, "link" | "tags">) {
+  const tags = [...new Set((input.tags ?? []).map((tag) => tag.trim()).filter(Boolean))];
+  return { link: normalizeOptionalText(input.link), tags };
+}
+
+async function createOrUpdateSiteNewsRow(
+  db: DbQueryable,
+  input: SiteContentNewsInput,
+): Promise<{ ok: true; contentId: number; slug: string } | { ok: false; reason: "missing" | "slug_taken" }> {
+  const meta = JSON.stringify(buildSiteNewsMeta(input));
+  const slug = normalizeOptionalText(input.slug);
+
+  if (input.contentId) {
+    // `status` and the three publication columns are absent on purpose: a save is not a publish.
+    const { rows } = await db.query<{ id: number; slug: string }>(
+      `UPDATE phis.site_content
+       SET slug = COALESCE($3, slug),
+           sort_order = $4,
+           meta = $5::jsonb,
+           updated_at = NOW()
+       WHERE site_id = $1
+         AND id = $2
+         AND type = $6
+       RETURNING id, slug`,
+      [input.siteId, input.contentId, slug, input.sortOrder ?? 0, meta, SITE_CONTENT_TYPE_NEWS],
+    );
+
+    const row = rows[0];
+    return row ? { ok: true, contentId: row.id, slug: row.slug } : { ok: false, reason: "missing" };
+  }
+
+  if (!slug) {
+    throw new Error("slug must not be empty for new news content.");
+  }
+
+  /*
+   * `DO NOTHING` rather than the `DO UPDATE` the widget-owned content types use. Their slug is generated
+   * and a collision means the same row; a News slug is authored and is the entry's public address, so a
+   * second entry claiming it is a mistake to report, not an edit to perform silently.
+   */
+  const { rows } = await db.query<{ id: number }>(
+    `INSERT INTO phis.site_content (site_id, type, slug, status, sort_order, meta)
+     VALUES ($1, $2, $3, $4, $5, $6::jsonb)
+     ON CONFLICT (site_id, type, slug) DO NOTHING
+     RETURNING id`,
+    [input.siteId, SITE_CONTENT_TYPE_NEWS, slug, SITE_CONTENT_STATUS_DRAFT, input.sortOrder ?? 0, meta],
+  );
+
+  const contentId = rows[0]?.id;
+  return contentId ? { ok: true, contentId, slug } : { ok: false, reason: "slug_taken" };
+}
+
+/**
+ * Writes one News entry's words as a new version and points the draft at it.
+ *
+ * Every save is a version, as it is for every other content type: the row keeps its history and a
+ * publish is then a choice of which version the public sees.
+ */
+export async function saveSiteContentNewsDraft(
+  input: SiteContentNewsInput,
+): Promise<SiteNewsWriteOutcome> {
+  if (!Number.isInteger(input.siteId) || input.siteId <= 0) {
+    throw new Error("siteId must be a positive integer.");
+  }
+
+  const title = normalizeRequiredText(input.title, "title");
+  const content = normalizeRequiredText(input.content, "content");
+  const subtitle = normalizeOptionalText(input.subtitle);
+
+  return withTransaction(async (client) => {
+    const row = await createOrUpdateSiteNewsRow(client, input);
+    if (!row.ok) {
+      return row;
+    }
+
+    // The version's own `meta` stays empty: `link` and `tags` are read from the content row, and a second
+    // copy on the version would be a second answer to the same question.
+    const versionId = await insertSiteContentVersion(client, {
+      contentId: row.contentId,
+      meta: {},
+      createdByUserId: input.createdByUserId ?? null,
+    });
+
+    await upsertSiteContentTextField(client, {
+      siteId: input.siteId,
+      contentTypeKey: "news",
+      versionId,
+      fieldName: "title",
+      value: title,
+    });
+    // A new version starts without text rows, so a subtitle that was cleared is simply absent from it.
+    if (subtitle) {
+      await upsertSiteContentTextField(client, {
+        siteId: input.siteId,
+        contentTypeKey: "news",
+        versionId,
+        fieldName: "subtitle",
+        value: subtitle,
+      });
+    }
+    await upsertSiteContentTextField(client, {
+      siteId: input.siteId,
+      contentTypeKey: "news",
+      versionId,
+      fieldName: "content",
+      value: content,
+    });
+
+    await setSiteContentCurrentVersion(client, { contentId: row.contentId, versionId });
+
+    return { ok: true, contentId: row.contentId, versionId, slug: row.slug };
+  });
+}
+
+/**
+ * Publishes the draft version and states the terms: from when the entry is answered, and until when.
+ *
+ * `published_at` keeps an existing date when the caller names none, so a correction to a published entry
+ * does not move it back to the top of the list. `expires_at` is taken as given, including `null`, because
+ * a publish states the whole term rather than patching part of it.
+ */
+export async function publishSiteContentNews(input: {
+  siteId: number;
+  contentId: number;
+  publishedAt: string | null;
+  expiresAt: string | null;
+}): Promise<SiteNewsPublication | null> {
+  const pool = getPool();
+  const { rows } = await pool.query<{
+    id: number;
+    status: number;
+    published_at: string | null;
+    expires_at: string | null;
+  }>(
+    `UPDATE phis.site_content
+     SET status = $3,
+         published_version_id = current_version_id,
+         published_at = COALESCE($4::timestamptz, published_at, NOW()),
+         expires_at = $5::timestamptz,
+         updated_at = NOW()
+     WHERE site_id = $1
+       AND id = $2
+       AND type = $6
+       AND current_version_id IS NOT NULL
+     RETURNING id, status, published_at, expires_at`,
+    [
+      input.siteId,
+      input.contentId,
+      SITE_CONTENT_STATUS_PUBLISHED,
+      input.publishedAt,
+      input.expiresAt,
+      SITE_CONTENT_TYPE_NEWS,
+    ],
+  );
+
+  const row = rows[0];
+  if (!row) {
+    return null;
+  }
+
+  return {
+    contentId: row.id,
+    status: row.status,
+    publishedAt: toIsoDate(row.published_at),
+    expiresAt: toIsoDate(row.expires_at),
+  };
+}
+
+/**
+ * Takes a published entry back out of the answer, and clears the terms it was published under.
+ *
+ * Idempotent: withdrawing a draft succeeds and changes nothing. The words are untouched -- what is
+ * withdrawn is the publication, and the draft is still there to be published again.
+ */
+export async function withdrawSiteContentNews(input: {
+  siteId: number;
+  contentId: number;
+}): Promise<boolean> {
+  const pool = getPool();
+  const { rowCount } = await pool.query(
+    `UPDATE phis.site_content
+     SET status = $3,
+         published_version_id = NULL,
+         published_at = NULL,
+         expires_at = NULL,
+         updated_at = NOW()
+     WHERE site_id = $1
+       AND id = $2
+       AND type = $4`,
+    [input.siteId, input.contentId, SITE_CONTENT_STATUS_DRAFT, SITE_CONTENT_TYPE_NEWS],
+  );
+
+  return (rowCount ?? 0) > 0;
+}
+
+/**
+ * Removes a News entry, its versions and its text rows through the cascade.
+ *
+ * A published entry is refused: taking something off a Site is the publishing authority's act, and a
+ * delete that did it too would be that act reachable by whoever may only draft. The `status` predicate
+ * sits in the `DELETE` itself, so a publish between the read and the write loses nothing.
+ */
+export async function deleteSiteContentNews(input: {
+  siteId: number;
+  contentId: number;
+}): Promise<"deleted" | "published" | "missing"> {
+  const pool = getPool();
+  const { rows } = await pool.query<{ status: number }>(
+    `SELECT status
+     FROM phis.site_content
+     WHERE site_id = $1 AND id = $2 AND type = $3
+     LIMIT 1`,
+    [input.siteId, input.contentId, SITE_CONTENT_TYPE_NEWS],
+  );
+
+  const status = rows[0]?.status;
+  if (status === undefined) {
+    return "missing";
+  }
+  if (status === SITE_CONTENT_STATUS_PUBLISHED) {
+    return "published";
+  }
+
+  const { rowCount } = await pool.query(
+    `DELETE FROM phis.site_content
+     WHERE site_id = $1
+       AND id = $2
+       AND type = $3
+       AND status <> $4`,
+    [input.siteId, input.contentId, SITE_CONTENT_TYPE_NEWS, SITE_CONTENT_STATUS_PUBLISHED],
+  );
+
+  return (rowCount ?? 0) > 0 ? "deleted" : "published";
+}
+
+/**
+ * The editor's list: every entry of the Site, in the words of its draft.
+ *
+ * Two things separate it from `listPublishedNews`. It joins `current_version_id` rather than
+ * `published_version_id`, because what an editor edits is the draft; and it filters neither by status nor
+ * by date, because a schedule that cannot be seen before it arrives cannot be corrected.
+ */
+export async function listSiteContentNewsForEditor(
+  siteId: number,
+  locale: string,
+): Promise<SiteNewsEditorRecord[]> {
+  const pool = getPool();
+  const { rows } = await pool.query<SiteNewsEditorRow>(
+    `SELECT
+       c.id,
+       c.slug,
+       c.status,
+       c.sort_order,
+       c.published_at,
+       c.expires_at,
+       c.updated_at,
+       (c.published_version_id IS DISTINCT FROM c.current_version_id) AS has_unpublished_changes,
+       c.meta,
+       COALESCE(tt.translation, mt.msg) AS title,
+       COALESCE(ts.translation, ms.msg) AS subtitle,
+       COALESCE(tc.translation, mc.msg) AS content
+     FROM phis.site_content c
+     LEFT JOIN phis.site_content_versions v ON v.id = c.current_version_id
+     LEFT JOIN phis.site_content_version_text xt ON xt.version_id = v.id AND xt.field_name = 'title'
+     LEFT JOIN phis.tr_site_msg mt ON mt.id = xt.msg_id
+     LEFT JOIN phis.tr_site_lang tt ON tt.msg_id = mt.id AND tt.locale = $2
+     LEFT JOIN phis.site_content_version_text xs ON xs.version_id = v.id AND xs.field_name = 'subtitle'
+     LEFT JOIN phis.tr_site_msg ms ON ms.id = xs.msg_id
+     LEFT JOIN phis.tr_site_lang ts ON ts.msg_id = ms.id AND ts.locale = $2
+     LEFT JOIN phis.site_content_version_text xc ON xc.version_id = v.id AND xc.field_name = 'content'
+     LEFT JOIN phis.tr_site_msg mc ON mc.id = xc.msg_id
+     LEFT JOIN phis.tr_site_lang tc ON tc.msg_id = mc.id AND tc.locale = $2
+     WHERE c.site_id = $1
+       AND c.type = $3
+     ORDER BY COALESCE(c.published_at, c.created_at) DESC, c.sort_order ASC, c.id DESC`,
+    [siteId, locale, SITE_CONTENT_TYPE_NEWS],
+  );
+
+  return rows.map((row) => ({
+    contentId: row.id,
+    slug: row.slug,
+    status: row.status,
+    sortOrder: row.sort_order,
+    title: row.title ?? "",
+    subtitle: row.subtitle ?? "",
+    content: row.content ?? "",
+    link: row.meta?.link ?? null,
+    tags: Array.isArray(row.meta?.tags)
+      ? row.meta.tags.filter((item: unknown): item is string => typeof item === "string")
+      : [],
+    publishedAt: toIsoDate(row.published_at),
+    expiresAt: toIsoDate(row.expires_at),
+    updatedAt: toIsoDate(row.updated_at),
+    hasUnpublishedChanges: row.has_unpublished_changes,
   }));
 }
 

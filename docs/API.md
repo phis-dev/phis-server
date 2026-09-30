@@ -8,13 +8,13 @@ public or internal token, and `session` is the visitor's Site session with the a
 passes (see [AUTHORIZATION.md](../AUTHORIZATION.md)). A route with no access entry performs its own checks
 or none; read its source. Request and response shapes are not listed; the source is linked per route.
 
-142 routes.
+146 routes.
 
 ## Contents
 
 - [`/api/operator`](#apioperator) (5)
 - [`/api/setup`](#apisetup) (2)
-- [`/api/site`](#apisite) (70)
+- [`/api/site`](#apisite) (72)
 - [`/api/v1/addons`](#apiv1addons) (2)
 - [`/api/v1/admin`](#apiv1admin) (1)
 - [`/api/v1/auth`](#apiv1auth) (29)
@@ -25,6 +25,7 @@ or none; read its source. Request and response shapes are not listed; the source
 - [`/api/v1/locales`](#apiv1locales) (1)
 - [`/api/v1/media`](#apiv1media) (2)
 - [`/api/v1/news`](#apiv1news) (1)
+- [`/api/v1/notifications`](#apiv1notifications) (2)
 - [`/api/v1/site`](#apiv1site) (15)
 - [`/api/v1/tr`](#apiv1tr) (1)
 
@@ -68,7 +69,7 @@ Site administration, CMS, media and support API. A Site's `/api/site` proxy forw
 | PATCH | [`/api/site/admin/media`](../src/app/api/site/admin/media/route.ts) | session, `developer-tools` (requireSiteDeveloperApiContext) |  |
 | GET | [`/api/site/admin/settings`](../src/app/api/site/admin/settings/route.ts) | session, `site-admin` (requireSiteAdminOnlyApiContext) |  |
 | PATCH | [`/api/site/admin/settings`](../src/app/api/site/admin/settings/route.ts) | session, `site-admin` (requireSiteAdminOnlyApiContext) |  |
-| GET | [`/api/site/admin/users`](../src/app/api/site/admin/users/route.ts) | session, `developer-tools` (requireSiteDeveloperApiContext) |  |
+| GET | [`/api/site/admin/users`](../src/app/api/site/admin/users/route.ts) | session, `site-admin` (requireSiteAdminOnlyApiContext) |  |
 | POST | [`/api/site/admin/users`](../src/app/api/site/admin/users/route.ts) | session, `site-admin` (requireSiteAdminOnlyApiContext) |  |
 | PUT | [`/api/site/admin/users`](../src/app/api/site/admin/users/route.ts) | session, `site-admin` (requireSiteAdminOnlyApiContext) |  |
 | PATCH | [`/api/site/admin/users`](../src/app/api/site/admin/users/route.ts) | session, `site-admin` (requireSiteAdminOnlyApiContext) |  |
@@ -103,6 +104,12 @@ Site administration, CMS, media and support API. A Site's `/api/site` proxy forw
 | DELETE | [`/api/site/cms/theme`](../src/app/api/site/cms/theme/route.ts) | session, `structure-authoring` (requireSiteBuilderApiContext) |  |
 | GET | [`/api/site/cms/theme/draft`](../src/app/api/site/cms/theme/draft/route.ts) | session, `roles` (requireSiteReviewApiContext) |  |
 | POST | [`/api/site/cms/theme/publish`](../src/app/api/site/cms/theme/publish/route.ts) | session, `publishing` (requireSitePublisherApiContext) |  |
+| GET | [`/api/site/editor/news`](../src/app/api/site/editor/news/route.ts) | session, `content-editing` (requireSiteAuthorApiContext) |  |
+| POST | [`/api/site/editor/news`](../src/app/api/site/editor/news/route.ts) | session, `content-editing` (requireSiteAuthorApiContext) |  |
+| PATCH | [`/api/site/editor/news`](../src/app/api/site/editor/news/route.ts) | session, `content-editing` (requireSiteAuthorApiContext) |  |
+| DELETE | [`/api/site/editor/news`](../src/app/api/site/editor/news/route.ts) | session, `content-editing` (requireSiteAuthorApiContext) |  |
+| POST | [`/api/site/editor/news/publish`](../src/app/api/site/editor/news/publish/route.ts) | session, `publishing` (requireSitePublisherApiContext) |  |
+| DELETE | [`/api/site/editor/news/publish`](../src/app/api/site/editor/news/publish/route.ts) | session, `publishing` (requireSitePublisherApiContext) |  |
 | POST | [`/api/site/editor/page-meta`](../src/app/api/site/editor/page-meta/route.ts) | session, `content-editing` (requireSiteAuthorApiContext) |  |
 | GET | [`/api/site/editor/translations`](../src/app/api/site/editor/translations/route.ts) | session, `content-editing` (requireSiteAuthorApiContext) |  |
 | PATCH | [`/api/site/editor/translations`](../src/app/api/site/editor/translations/route.ts) | session, `content-editing` (requireSiteAuthorApiContext) |  |
@@ -199,13 +206,13 @@ Versioned API a Site calls server-to-server with its token (`x-phis-token`), and
 | DELETE | [`/api/v1/auth/account/sessions/{sessionId}`](../src/app/api/v1/auth/account/sessions/[sessionId]/route.ts) | CSRF token; Site session, checked in the handler; internal token |  |
 | GET | [`/api/v1/auth/admin/installations`](../src/app/api/v1/auth/admin/installations/route.ts) | session (requireAuthAdminSectionReadContext) |  |
 | POST | [`/api/v1/auth/admin/installations`](../src/app/api/v1/auth/admin/installations/route.ts) | session (requireAuthAdminSectionContext) |  |
-| PATCH | [`/api/v1/auth/admin/installations`](../src/app/api/v1/auth/admin/installations/route.ts) | session (requireAuthAdminSectionContext) | Collection-level update used by the descriptor Form relay (its upstream path is static): the installation key travels in the body; the applied logic is identical to the URL-addressed PATCH route. |
+| PATCH | [`/api/v1/auth/admin/installations`](../src/app/api/v1/auth/admin/installations/route.ts) | CSRF token; session (requireAuthAdminSectionContext); session (requireAuthAdminSectionReadContext) | Collection-level update used by the descriptor Form relay (its upstream path is static): the installation key travels in the body; the applied logic is identical to the URL-addressed PATCH route. |
 | PATCH | [`/api/v1/auth/admin/installations/{installationKey}`](../src/app/api/v1/auth/admin/installations/[installationKey]/route.ts) | session (requireAuthAdminSectionContext) |  |
 | DELETE | [`/api/v1/auth/admin/installations/{installationKey}`](../src/app/api/v1/auth/admin/installations/[installationKey]/route.ts) | session (requireAuthAdminSectionContext) |  |
 | POST | [`/api/v1/auth/admin/installations/{installationKey}/test`](../src/app/api/v1/auth/admin/installations/[installationKey]/test/route.ts) | session (requireAuthAdminSectionContext) |  |
-| PATCH | [`/api/v1/auth/admin/password-method`](../src/app/api/v1/auth/admin/password-method/route.ts) | session (requireAuthAdminSectionContext) | Flat section endpoint for the primary password login method. Accepts exactly the Settings Form values; the method's presentation carries over unchanged. |
-| PATCH | [`/api/v1/auth/admin/policy`](../src/app/api/v1/auth/admin/policy/route.ts) | session (requireAuthAdminSectionContext) | Flat section endpoint for the Auth Admin registration/linking policy. Accepts exactly the Settings Form values; every other policy field carries over unchanged. |
-| PATCH | [`/api/v1/auth/admin/totp-policy`](../src/app/api/v1/auth/admin/totp-policy/route.ts) | session (requireAuthAdminSectionContext) | Flat section endpoint for the two-factor (TOTP) policy. Accepts exactly the Settings Form values; the role bitmask, the grace clearing, and the required-policy/method coupling are derived server-side. |
+| PATCH | [`/api/v1/auth/admin/password-method`](../src/app/api/v1/auth/admin/password-method/route.ts) | CSRF token; session (requireAuthAdminSectionContext); session (requireAuthAdminSectionReadContext) | Flat section endpoint for the primary password login method. Accepts exactly the Settings Form values; the method's presentation carries over unchanged. |
+| PATCH | [`/api/v1/auth/admin/policy`](../src/app/api/v1/auth/admin/policy/route.ts) | CSRF token; session (requireAuthAdminSectionContext); session (requireAuthAdminSectionReadContext) | Flat section endpoint for the Auth Admin registration/linking policy. Accepts exactly the Settings Form values; every other policy field carries over unchanged. |
+| PATCH | [`/api/v1/auth/admin/totp-policy`](../src/app/api/v1/auth/admin/totp-policy/route.ts) | CSRF token; session (requireAuthAdminSectionContext); session (requireAuthAdminSectionReadContext) | Flat section endpoint for the two-factor (TOTP) policy. Accepts exactly the Settings Form values; the role bitmask, the grace clearing, and the required-policy/method coupling are derived server-side. |
 | GET | [`/api/v1/auth/csrf`](../src/app/api/v1/auth/csrf/route.ts) | internal token |  |
 | POST | [`/api/v1/auth/logout`](../src/app/api/v1/auth/logout/route.ts) | internal token |  |
 | GET | [`/api/v1/auth/manifest`](../src/app/api/v1/auth/manifest/route.ts) | internal token |  |
@@ -298,6 +305,16 @@ Versioned API a Site calls server-to-server with its token (`x-phis-token`), and
 | Method | Address | Access | Description |
 |---|---|---|---|
 | GET | [`/api/v1/news`](../src/app/api/v1/news/route.ts) | API token (public or internal) |  |
+
+## `/api/v1/notifications`
+
+Versioned API a Site calls server-to-server with its token (`x-phis-token`), and the public endpoints under it.
+
+| Method | Address | Access | Description |
+|---|---|---|---|
+| POST | [`/api/v1/notifications/drain`](../src/app/api/v1/notifications/drain/route.ts) | internal token | Sending what is still owed, for the operator's scheduler. |
+| GET | [`/api/v1/notifications/unsubscribe`](../src/app/api/v1/notifications/unsubscribe/route.ts) | internal token | What the link is, without doing anything about it, so a page can be drawn from it. |
+| POST | [`/api/v1/notifications/unsubscribe`](../src/app/api/v1/notifications/unsubscribe/route.ts) | internal token |  |
 
 ## `/api/v1/site`
 

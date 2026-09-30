@@ -1,14 +1,15 @@
 # News: Planned Design
 
-**Status: the read path is built and nothing writes it.** `phis.site_content` carries News as content
-type `0` ([DB.md](../DB.md)), versioned through `site_content_versions` and translated through
+**Status: Core reads and writes; there is no Module and no mail.** `phis.site_content` carries News as
+content type `0` ([DB.md](../DB.md)), versioned through `site_content_versions` and translated through
 `site_content_version_text` and `tr_site_msg`; `listPublishedNews`
 ([src/db/site-content.ts](../src/db/site-content.ts)) filters `status`, `published_at <= NOW()` and
 `expires_at > NOW()` in the query; `GET /api/v1/news`
 ([src/app/api/v1/news/route.ts](../src/app/api/v1/news/route.ts)) serves it per Site and locale behind the
-internal token, and two Sites in the workspace already read it. What does not exist: any write path other
-than `scripts/seed-site-news.mjs`, which hard-codes two Site keys; an editor surface; a Module; a Page; a
-navigation entry; and any mail.
+internal token, and two Sites in the workspace already read it. Since 30.09. the write path of §3 exists
+as well. What does not exist: an editor surface in the shared UI; a Module; a Page; a navigation entry;
+and any mail. `scripts/seed-site-news.mjs` is gone -- it hard-coded two Site keys and had stopped working
+when the content enums became `SMALLINT`, which nothing noticed because nothing ran it.
 
 The mail half is [NOTIFICATIONS.md](./NOTIFICATIONS.md) and this document does not repeat it.
 
@@ -50,7 +51,24 @@ within the config refresh. **An expiry moves no marker**, because nothing was wr
 therefore leaves a cached Public page with the next render, which `revalidate = 60` guarantees within a
 minute. A minute is acceptable; discovering it later, while debugging, is not.
 
-## 3. The missing write path
+## 3. The write path
+
+**Built.** `POST`, `PATCH`, `DELETE` and `GET` on
+[/api/site/editor/news](../src/app/api/site/editor/news/route.ts) are the words; `POST` and `DELETE` on
+[/api/site/editor/news/publish](../src/app/api/site/editor/news/publish/route.ts) are the publication.
+Underneath, `saveSiteContentNewsDraft`, `publishSiteContentNews`, `withdrawSiteContentNews`,
+`deleteSiteContentNews` and `listSiteContentNewsForEditor` in
+[src/db/site-content.ts](../src/db/site-content.ts). Three things the writing settled, which the plan
+below had left open:
+
+- **A delete needs a withdrawal first.** Taking something off a Site is the publishing authority's act,
+  and a delete that did it too would be that act reachable by whoever may only draft.
+- **An authored address is not a generated one.** The widget-owned types resolve a slug collision with
+  `DO UPDATE`, because their slug is generated and a collision means the same row. A News slug is the
+  entry's public address, so a collision is reported (`409`) rather than silently editing somebody's entry.
+- **The editor reads the Site's source locale, never a requested one.** The form writes source text; a
+  translated title in it would be written back over the original on the next save. Translating a News
+  entry stays the translations editor's work on the same messages.
 
 Mirror the Page pattern rather than inventing one. [src/lib/site-cms-write-route.ts](../src/lib/site-cms-write-route.ts)
 already draws the line that fits:
@@ -128,7 +146,8 @@ The **page** depends on none of this and can be built first.
 
 ## 7. Order
 
-1. The Core write path of §3, draft and publish, with the editor surface.
+1. ~~The Core write path of §3, draft and publish.~~ Built on 30.09., with the editor surface still to
+   come in the shared UI.
 2. The Module of §4: descriptor, page, widgets.
 3. The digest of §5, after [NOTIFICATIONS.md](./NOTIFICATIONS.md) steps 1 and 2.
 

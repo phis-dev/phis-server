@@ -934,6 +934,17 @@ Contract:
   version, moves `current_version_id` to it and pins it in the revision tree. It never touches
   `published_version_id` or `published_at`; those belong to `news`, whose readers use them. What a page
   shows is decided by the revision that is published and the versions it pins.
+- `news` is the one content type whose own columns decide what is answered, and two authorities write
+  them. A save is `PHI_ACCESS_CONTENT_EDITING`: it appends a version, writes `title`, `subtitle` and
+  `content` as `site_content_version_text` rows and moves `current_version_id`. A publish is
+  `PHI_ACCESS_PUBLISHING`: it sets `status`, points `published_version_id` at `current_version_id` and
+  states `published_at` and `expires_at`. An edit after a publish is therefore kept back until it is
+  published in turn.
+- A `news` entry is answered publicly while `status = published`, `published_at <= NOW()` and
+  `expires_at` is null or in the future. A schedule and an expiry are read filters, not states: nothing
+  runs at the appointed minute, and an expired entry keeps its row and its publication.
+- A published `news` entry must be withdrawn before it can be deleted. Withdrawal clears
+  `published_version_id`, `published_at` and `expires_at` and leaves every version in place.
 - `site_content(type=asset)` is created on demand when a widget binds to a media asset, not eagerly on media upload.
 - `text` is the canonical content type for database-backed `simple-text` widget copy.
 - A `simple-text` widget should normally persist its source text through `site_content(type=text)` so search and later publisher/editor flows can resolve that copy centrally.
@@ -2115,7 +2126,7 @@ Example usage:
 
 - a `news` entry lives in `site_content`
 - its concrete editorial state lives in `site_content_versions`
-- its `title`, `summary`, and `body` live as separate rows in `site_content_version_text`
+- its `title`, `subtitle`, and `content` live as separate rows in `site_content_version_text`
 - each of those rows points to one `tr_site_msg` row containing the canonical Site-source text
 - translated output is resolved through `tr_site_lang`
 - an `asset` entry lives in `site_content`
@@ -2127,7 +2138,7 @@ Design decision:
 - keep `tr_site_msg` small and focused on source text plus translation identity
 - keep business fields such as `type`, `slug`, publish state, and ordering in dedicated content tables
 - use `ctx` consistently per entity field
-- for content entities, stable structural keys are acceptable, for example `news:42:title`, `news:42:summary`, `blog:17:body`
+- for content entities, stable structural keys are acceptable, for example `news:42:title`, `news:42:subtitle`, `blog:17:body`
 - for human-facing translated copy that benefits from better translation context, prefer short natural-language context phrases over machine-style keys
 - examples for email/template translation context:
   - `registration verification email subject`
