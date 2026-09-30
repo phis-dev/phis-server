@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import {
   deleteSiteContentNews,
   listSiteContentNewsForEditor,
+  normalizePhiNewsTag,
   saveSiteContentNewsDraft,
 } from "@/db/site-content";
 import { requireSiteAuthorApiContext } from "@/lib/guards/site-admin-api";
@@ -112,7 +113,8 @@ function readNewsTags(value: unknown): { tags: string[] } | { error: string } {
 
   const tags: string[] = [];
   for (const entry of value) {
-    const tag = normalizeString(entry);
+    // The same normalisation the store applies, so what is refused here is refused for its real length.
+    const tag = normalizePhiNewsTag(entry);
     if (!tag) {
       continue;
     }

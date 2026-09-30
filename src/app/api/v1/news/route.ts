@@ -28,9 +28,12 @@ type PublishedNewsEntry = PublishedNews[number];
  */
 type PendingField = {
   entryIndex: number;
-  field: "title" | "subtitle";
   text: string;
-};
+} & (
+  | { field: "title" | "subtitle" }
+  /** A tag is answered in place, so the slot it goes back into is its position in the entry's list. */
+  | { field: "tag"; tagIndex: number }
+);
 
 function readEntrySourceLocale(entry: PublishedNewsEntry, canonicalLocale: string) {
   return entry.sourceLocale?.trim() || canonicalLocale;
@@ -54,21 +57,39 @@ function collectPendingFields(entries: PublishedNews, locale: string, canonicalL
       return;
     }
     const sourceLocale = readEntrySourceLocale(entry, canonicalLocale);
-    const candidates: ReadonlyArray<[PendingField["field"], SiteNewsFieldValue, string]> = [
+    const candidates: ReadonlyArray<["title" | "subtitle", SiteNewsFieldValue, string]> = [
       ["title", entry.title, PHI_NEWS_TRANSLATION_CONTEXTS.title],
       ["subtitle", entry.subtitle, PHI_NEWS_TRANSLATION_CONTEXTS.subtitle],
     ];
+    const add = (ctx: string, field: PendingField) => {
+      const key = `${sourceLocale}\u0000${ctx}`;
+      const group = pending.get(key) ?? { sourceLocale, ctx, fields: [] };
+      group.fields.push(field);
+      pending.set(key, group);
+    };
+
     for (const [field, value, ctx] of candidates) {
       // Already translated, or nothing to translate. A human correction through the translations editor
       // lands on the same row, so it wins here without the provider being asked again.
       if (value.translated || !value.source.trim()) {
         continue;
       }
-      const key = `${sourceLocale}\u0000${ctx}`;
-      const group = pending.get(key) ?? { sourceLocale, ctx, fields: [] };
-      group.fields.push({ entryIndex, field, text: value.source });
-      pending.set(key, group);
+      add(ctx, { entryIndex, field, text: value.source });
     }
+
+    /*
+     * Tags travel with the fields, under their own context.
+     *
+     * They are plain strings in the content row's `meta` rather than message rows of a version, and they
+     * need no preparation for that: the translator ensures a message for whatever it is handed, so a tag
+     * becomes one the first time it is read in another language. Two entries carrying the same tag share
+     * that one message, which is why the context must stay a phrase and not name an entry.
+     */
+    entry.tags.forEach((tag, tagIndex) => {
+      if (tag.trim()) {
+        add(PHI_NEWS_TRANSLATION_CONTEXTS.tag, { entryIndex, field: "tag", tagIndex, text: tag });
+      }
+    });
   });
   return [...pending.values()];
 }
@@ -127,13 +148,15 @@ async function translatePendingFields(input: {
 
     group.fields.forEach((field, index) => {
       const translation = translations[index]?.trim();
-      if (!translation) {
+      const entry = input.entries[field.entryIndex];
+      if (!translation || !entry) {
         return;
       }
-      const entry = input.entries[field.entryIndex];
-      if (entry) {
-        entry[field.field] = { ...entry[field.field], text: translation, translated: true };
+      if (field.field === "tag") {
+        entry.tags[field.tagIndex] = translation;
+        return;
       }
+      entry[field.field] = { ...entry[field.field], text: translation, translated: true };
     });
   }
 }
@@ -197,6 +220,11 @@ export async function GET(request: Request) {
     // The source, so the renderer translates the Markdown paragraph by paragraph from the language below.
     content: entry.content.source,
     link: entry.link,
+    /*
+     * The words a reader can read. What a filter address would need is the tag as it was written, which is
+     * its identity and stays in the entry's `meta`; there is no such address yet, and inventing the field
+     * before it exists would be a second answer nobody asked for.
+     */
     tags: entry.tags,
     sourceLocale: entry.sourceLocale,
     translate: entry.translate,

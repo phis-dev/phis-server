@@ -113,7 +113,7 @@ describe("the News write path against PostgreSQL", () => {
   });
 
   it("publishes the draft version and answers the entry", async () => {
-    const saved = await draft("published-entry", { link: "/somewhere", tags: ["one", "two", "one"] });
+    const saved = await draft("published-entry", { link: "/somewhere", tags: ["One", "two", " one "] });
     if (!saved.ok) throw new Error("the draft did not save");
 
     const publication = await publishSiteContentNews({
@@ -132,6 +132,7 @@ describe("the News write path against PostgreSQL", () => {
     expect(item).toMatchObject({
       title: { text: "Title published-entry", source: "Title published-entry", translated: false },
       link: "/somewhere",
+      // Trimmed, lower-cased and deduplicated: the string is the tag's identity.
       tags: ["one", "two"],
       // Nothing was declared, so the words are the Site's own language and may be translated.
       sourceLocale: null,

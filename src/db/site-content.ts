@@ -733,6 +733,13 @@ export const PHI_NEWS_TRANSLATION_CONTEXTS = {
   title: "news entry title",
   subtitle: "news entry subtitle",
   content: "news entry body",
+  /*
+   * A tag is a word the entry carries, not a field of its version: it lives in the content row's `meta` as
+   * a plain string and becomes a message the first time somebody reads it in another language. The
+   * translator is content-addressed, so nothing has to register it beforehand -- and the same tag in two
+   * entries is one message, paid for once.
+   */
+  tag: "news tag",
 } as const;
 
 export type SiteContentNewsInput = {
@@ -841,8 +848,20 @@ function readSiteNewsVersionTerms(meta: unknown): SiteNewsVersionTerms {
   };
 }
 
+/**
+ * What a tag is, in one place: trimmed and lower-cased.
+ *
+ * The string is the tag's identity -- there is no row and no id behind it -- so two spellings would be two
+ * tags, each with its own translation to pay for. Normalising on the way in is what keeps "Release" and
+ * "release" one thing. Lower case rather than title case because a tag is a key here as much as a label,
+ * and the label a reader sees is its translation anyway.
+ */
+export function normalizePhiNewsTag(value: unknown) {
+  return typeof value === "string" ? value.trim().toLowerCase() : "";
+}
+
 function buildSiteNewsMeta(input: Pick<SiteContentNewsInput, "link" | "tags">) {
-  const tags = [...new Set((input.tags ?? []).map((tag) => tag.trim()).filter(Boolean))];
+  const tags = [...new Set((input.tags ?? []).map(normalizePhiNewsTag).filter(Boolean))];
   return { link: normalizeOptionalText(input.link), tags };
 }
 

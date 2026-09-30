@@ -956,6 +956,10 @@ Contract:
   Site's own takes the external route: translated into the Site's language as its own message, the
   original kept as the answer for its own language, every further language derived from the canonical one.
   A corrected text is a new message row, so nothing is invalidated.
+- A `news` entry's tags are plain strings in the content row's `meta`, trimmed and lower-cased: the string
+  is the tag's identity, so two spellings would be two tags. They are translated on read like the other
+  fields, under the context `news tag`, and become messages the first time they are read in another
+  language -- the translator ensures a message for whatever it is handed, so nothing registers them first.
 - A `news` body is Markdown and is translated where it is rendered, paragraph by paragraph, so its
   structure never reaches a provider. `GET /api/v1/news` therefore answers `content` as it was written,
   with `sourceLocale` beside it.

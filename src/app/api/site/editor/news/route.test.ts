@@ -13,7 +13,13 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@/lib/guards/site-admin-api", () => ({
   requireSiteAuthorApiContext: mocks.guard,
 }));
-vi.mock("@/db/site-content", () => ({
+/*
+ * The store's own module, with only the three writes replaced. `normalizePhiNewsTag` stays the real one:
+ * what a tag is has one definition, and a copy of it here would let this test pass while the route and the
+ * store disagreed about the very thing it pins.
+ */
+vi.mock("@/db/site-content", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/db/site-content")>()),
   deleteSiteContentNews: mocks.remove,
   listSiteContentNewsForEditor: mocks.list,
   saveSiteContentNewsDraft: mocks.save,
@@ -85,8 +91,10 @@ describe("POST /api/site/editor/news", () => {
     expect((await PUT(request("PUT", { ...ENTRY, contentId: 12 }))).status).toBe(404);
   });
 
-  it("drops duplicate tags and refuses more than the limit", async () => {
-    await POST(request("POST", { ...ENTRY, tags: ["one", "one", " two "] }));
+  it("normalises tags, drops duplicates and refuses more than the limit", async () => {
+    // Trimmed and lower-cased, because the string is the tag's identity: two spellings would be two tags
+    // with two translations to pay for.
+    await POST(request("POST", { ...ENTRY, tags: ["One", " one ", "TWO", "two"] }));
     expect(mocks.save.mock.calls[0]![0]).toMatchObject({ tags: ["one", "two"] });
 
     const tooMany = Array.from({ length: 13 }, (_, index) => `tag-${index}`);

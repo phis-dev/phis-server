@@ -179,10 +179,23 @@ correcting one paragraph costs one paragraph.
 is its hash, so the old translations are simply never consulted again. The price is orphaned rows, which
 `phis maintain` is the place to sweep.
 
-Two things follow that are worth stating before they surprise somebody. A **stand-in** -- source text handed
-back because a provider failed -- is marked `provisional` and must not be kept, which is why that answer
-carries `no-store`. And **tags are not translated**: they are `meta` on the content row, not messages, so a
-German entry's tags stay German for every reader. Making them messages is a decision, not an oversight.
+**Tags translate like everything else, and need nothing of their own.** A tag is a plain string in the
+content row's `meta`, not a field of a version -- and it does not have to be: the translator ensures a
+message for whatever it is handed, so a tag becomes one the first time somebody reads it in another
+language. It travels with the fields under its own context, `news tag`, which is also the only hint a
+provider gets for a single word. Two entries carrying the same tag share that one message, which is why
+that context must stay a phrase and never name an entry.
+
+Because the string is the tag's identity -- there is no row and no id behind it -- it is **trimmed and
+lower-cased on the way in** (`normalizePhiNewsTag`). Otherwise "Release" and "release" would be two tags
+with two translations to pay for. What follows from the same choice: renaming a tag means rewriting the
+entries that carry it, and the offer an author picks from is the set of tags the Site already uses, which a
+single `DISTINCT` over `meta` answers. A curated vocabulary with its own rows would buy identity under
+renaming and nothing else; it is not needed for translating.
+
+One thing is worth stating before it surprises somebody: a **stand-in** -- source text handed back because a
+provider failed -- is marked `provisional` and must not be kept, which is why that answer carries
+`no-store`.
 
 ## 7. What this is not
 

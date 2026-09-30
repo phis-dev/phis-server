@@ -18,6 +18,7 @@ vi.mock("@/db/site-content", () => ({
     title: "news entry title",
     subtitle: "news entry subtitle",
     content: "news entry body",
+    tag: "news tag",
   },
 }));
 vi.mock("@/lib/translations", () => ({
@@ -158,6 +159,40 @@ describe("GET /api/v1/news", () => {
 
     expect(mocks.translateSite).toHaveBeenCalledTimes(1);
     expect(mocks.translateSite.mock.calls[0]![0].msgs).toHaveLength(2);
+  });
+
+  it("translates the tags too, under their own context", async () => {
+    mocks.list.mockResolvedValue([entry({ tags: ["release", "modules"] })]);
+    const { body } = await read("de");
+
+    const tagCall = mocks.translateSite.mock.calls
+      .find(([input]) => input.ctx === "news tag");
+    expect(tagCall?.[0]).toMatchObject({ msgs: ["release", "modules"], format: "text" });
+    expect(body.news[0].tags).toEqual(["de:release", "de:modules"]);
+  });
+
+  /*
+   * One message for the same word, however many entries carry it: the tag's identity is its text, so a
+   * context naming the entry would make a Site pay for "release" once per entry.
+   */
+  it("asks once for a tag two entries share", async () => {
+    mocks.list.mockResolvedValue([
+      entry({ slug: "one", subtitle: field(""), tags: ["release"] }),
+      entry({ slug: "two", subtitle: field(""), tags: ["release"] }),
+    ]);
+    await read("de");
+
+    const tagCalls = mocks.translateSite.mock.calls.filter(([input]) => input.ctx === "news tag");
+    expect(tagCalls).toHaveLength(1);
+    expect(tagCalls[0]![0].msgs).toEqual(["release", "release"]);
+  });
+
+  it("leaves the tags as written when the entry may not be translated", async () => {
+    mocks.list.mockResolvedValue([entry({ translate: false, tags: ["mehrsprachig"] })]);
+    const { body } = await read("de");
+
+    expect(mocks.translateSite).not.toHaveBeenCalled();
+    expect(body.news[0].tags).toEqual(["mehrsprachig"]);
   });
 
   it("marks a stand-in as provisional and refuses to have it kept", async () => {
