@@ -16,6 +16,12 @@ design is built, its settled parts move into the owning contract and leave this 
 - [GROUPS_AND_STORAGE_PLANNED.md](./GROUPS_AND_STORAGE_PLANNED.md) -- custody and audience, Asset transfer
   between Spaces, audience validation at publish, signed delivery URLs, the Storage migration job, and
   a ceiling that knows which path an object takes.
+- [NEWS.md](./NEWS.md) -- News as a Core content type whose read path is built and whose write path is
+  not: who may draft and publish one, the first-party Module that contributes only the address and the
+  page, and why scheduling and expiry need no scheduler.
+- [NOTIFICATIONS.md](./NOTIFICATIONS.md) -- a Core notification service an Add-on may ask for without
+  holding an address, who owns the words of an occasion, the outbox that replaces sending inside a
+  request, and the unsubscribe link Core owes every circular.
 - [PUBLIC_ADDRESSES.md](./PUBLIC_ADDRESSES.md) -- Site Page against Module address collisions, a standing
   list of Public addresses, and durable redirects.
 - [SUPPORT.md](./SUPPORT.md) -- the requester route and the types it offers, how a Module declares rows
