@@ -20,7 +20,7 @@ vi.mock("@/db/site-content", () => ({
 }));
 vi.mock("@/lib/log", () => ({ logRuntimeEvent: vi.fn() }));
 
-import { DELETE, GET, PATCH, POST } from "./route";
+import { DELETE, GET, POST, PUT } from "./route";
 
 const SITE = { id: 4, key: "example", sourceLocale: "en" };
 
@@ -82,7 +82,7 @@ describe("POST /api/site/editor/news", () => {
     expect((await POST(request("POST", ENTRY))).status).toBe(409);
 
     mocks.save.mockResolvedValueOnce({ ok: false, reason: "missing" });
-    expect((await PATCH(request("PATCH", { ...ENTRY, contentId: 12 }))).status).toBe(404);
+    expect((await PUT(request("PUT", { ...ENTRY, contentId: 12 }))).status).toBe(404);
   });
 
   it("drops duplicate tags and refuses more than the limit", async () => {
@@ -94,17 +94,29 @@ describe("POST /api/site/editor/news", () => {
   });
 });
 
-describe("PATCH /api/site/editor/news", () => {
+describe("PUT /api/site/editor/news", () => {
   it("needs the id of the entry it edits", async () => {
-    const response = await PATCH(request("PATCH", { title: "A title", content: "A sentence." }));
+    const response = await PUT(request("PUT", { title: "A title", content: "A sentence." }));
     expect(response.status).toBe(400);
     expect(mocks.save).not.toHaveBeenCalled();
   });
 
-  it("leaves the address alone when the edit does not mention it", async () => {
-    const response = await PATCH(request("PATCH", { contentId: 12, title: "T", content: "C" }));
+  it("leaves the address alone when the save does not mention it", async () => {
+    const response = await PUT(request("PUT", { contentId: 12, title: "T", content: "C" }));
     expect(response.status).toBe(200);
     expect(mocks.save.mock.calls[0]![0]).toMatchObject({ contentId: 12, slug: null });
+  });
+
+  /*
+   * A save states the whole entry, and this is the test that says so out loud. It was written after a
+   * measurement against the dev stand: a save that corrected a title and named neither `link` nor `tags`
+   * left the published entry without either, and nothing in the surface admitted that was the rule.
+   */
+  it("clears what it does not state, because a version is not a patch", async () => {
+    await PUT(request("PUT", { contentId: 12, title: "T", content: "C" }));
+    expect(mocks.save.mock.calls[0]![0]).toMatchObject({
+      subtitle: null, link: null, tags: [], sortOrder: 0,
+    });
   });
 });
 

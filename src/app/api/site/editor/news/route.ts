@@ -23,6 +23,12 @@ export const dynamic = "force-dynamic";
  * `published_at` or `expires_at`: when an entry is seen is stated at `news/publish`, behind the
  * publishing policy. A delete is refused while an entry is published, because removing something from a
  * Site is that same authority's act wearing a different verb.
+ *
+ * **A save states the whole entry**, which is why the update is a `PUT` and not a `PATCH`. A save writes a
+ * version, and a version is a complete set of words rather than a patch on the last one -- so a subtitle
+ * left out is a subtitle this version does not have. `link`, `tags` and `sortOrder` follow the same rule,
+ * because one call with two meanings is how a save that only corrected a typo silently dropped an entry's
+ * link. The one exception is the address: an entry must have a slug, so a save that names none keeps it.
  */
 
 const NEWS_SLUG_PATTERN = /^[a-z0-9][a-z0-9-]{0,119}$/;
@@ -229,7 +235,7 @@ export async function POST(request: NextRequest) {
   return writeNewsDraft(request, "create");
 }
 
-export async function PATCH(request: NextRequest) {
+export async function PUT(request: NextRequest) {
   return writeNewsDraft(request, "update");
 }
 

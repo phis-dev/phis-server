@@ -69,6 +69,11 @@ below had left open:
 - **The editor reads the Site's source locale, never a requested one.** The form writes source text; a
   translated title in it would be written back over the original on the next save. Translating a News
   entry stays the translations editor's work on the same messages.
+- **A save states the whole entry**, which is why the update is a `PUT`. A version is a complete set of
+  words rather than a patch on the last one, and `link`, `tags` and `sortOrder` follow the same rule -- one
+  call with two meanings is how a save that corrected a title dropped the entry's link, which is what the
+  measurement against the dev stand showed. The address is the exception: an entry must have a slug, so a
+  save that names none keeps the one it has.
 
 Mirror the Page pattern rather than inventing one. [src/lib/site-cms-write-route.ts](../src/lib/site-cms-write-route.ts)
 already draws the line that fits:

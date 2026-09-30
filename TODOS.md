@@ -351,6 +351,12 @@ front of is infrastructure work, and belongs with
 - **Exports used only by tests:** `createPhiAssetUri` and `createPhiPageUri` (server side),
   `createPhiPresetCmsInstanceId`, `createTotpCode`, `encryptAuthTransactionPayloadWithKey`, and
   `hasTranslationContextFlag`. Remove them or give them a production caller.
+- **Orphaned content messages.** Deleting a `site_content` row cascades its versions and its
+  `site_content_version_text` rows, but the `tr_site_msg` rows they pointed at stay: the foreign key
+  cascades from the message to the text row, not the other way. The dev database held 88 such rows on
+  30.09., from every content path that ever deleted a row, and the News delete adds to them. A sweep
+  belongs to `phis maintain` as a bounded operator-invoked step (`AGENTS.md`), not to the delete -- a
+  message may be shared by more than one version, so removing it with one of them is not a local decision.
 - **Test placement.** Most tests are co-located as `src/**/*.test.ts`, while `test/` still holds
   `config-core.test.ts`, `html.test.ts`, `locale.test.ts`, `translation-context.test.ts`, and fixtures.
   Pick one convention.

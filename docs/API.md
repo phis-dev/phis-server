@@ -106,7 +106,7 @@ Site administration, CMS, media and support API. A Site's `/api/site` proxy forw
 | POST | [`/api/site/cms/theme/publish`](../src/app/api/site/cms/theme/publish/route.ts) | session, `publishing` (requireSitePublisherApiContext) |  |
 | GET | [`/api/site/editor/news`](../src/app/api/site/editor/news/route.ts) | session, `content-editing` (requireSiteAuthorApiContext) |  |
 | POST | [`/api/site/editor/news`](../src/app/api/site/editor/news/route.ts) | session, `content-editing` (requireSiteAuthorApiContext) |  |
-| PATCH | [`/api/site/editor/news`](../src/app/api/site/editor/news/route.ts) | session, `content-editing` (requireSiteAuthorApiContext) |  |
+| PUT | [`/api/site/editor/news`](../src/app/api/site/editor/news/route.ts) | session, `content-editing` (requireSiteAuthorApiContext) |  |
 | DELETE | [`/api/site/editor/news`](../src/app/api/site/editor/news/route.ts) | session, `content-editing` (requireSiteAuthorApiContext) |  |
 | POST | [`/api/site/editor/news/publish`](../src/app/api/site/editor/news/publish/route.ts) | session, `publishing` (requireSitePublisherApiContext) |  |
 | DELETE | [`/api/site/editor/news/publish`](../src/app/api/site/editor/news/publish/route.ts) | session, `publishing` (requireSitePublisherApiContext) |  |
