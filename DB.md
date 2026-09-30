@@ -1994,6 +1994,80 @@ Contract:
   as ready only when the bit is set and `last_seen_at` is recent, because a killed instance keeps the bit.
 - A report under an existing id refreshes the row and keeps `started_at`. `phis instance list` reads the table.
 
+### `phis.notification_outbox`
+
+- `id BIGSERIAL PRIMARY KEY`
+- `site_id SMALLINT NOT NULL REFERENCES phis.sites(id) ON DELETE CASCADE`
+- `provider_id VARCHAR(255) NOT NULL DEFAULT '@phis/server/core'`
+- `occasion VARCHAR(120) NOT NULL` (CHECK `<> ''`)
+- `flags SMALLINT NOT NULL DEFAULT 0`
+- `recipient_user_id INT NULL`
+- `recipient_address VARCHAR(320) NULL`
+- `locale VARCHAR(35) NULL`
+- `params JSONB NOT NULL DEFAULT '{}'::jsonb`
+- `dedupe_key VARCHAR(200) NULL`
+- `attempts SMALLINT NOT NULL DEFAULT 0`
+- `next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
+- `last_error TEXT NULL`
+- `created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
+- `sent_at TIMESTAMPTZ NULL`
+- `message_id VARCHAR(255) NULL`
+- CHECK exactly one of `recipient_user_id` / `recipient_address`
+- CHECK `locale` only where `recipient_user_id IS NULL`
+- composite foreign key `(recipient_user_id, site_id)` to `user_site_memberships (user_id, site_id)`
+  `ON DELETE CASCADE`
+- partial index `(site_id, next_attempt_at, id) WHERE sent_at IS NULL`
+- partial unique index `(site_id, dedupe_key) WHERE dedupe_key IS NOT NULL`
+
+Contract:
+- Every message Core sends is written here first, and nothing sends without a row. There is one path:
+  a password reset goes through it exactly as a circular does, which is what gives the reset the retry
+  it never had. The request that wrote the row attempts it once itself; `phis maintain` drains what that
+  attempt left. The division is `addon_event_outbox`'s and so is the reason -- telling somebody from
+  inside the request ties the answer to a transport being reachable.
+- **The recipient is an id wherever one exists**, and the address is resolved at drain time. A corrected
+  address is therefore used, and a membership that is gone sends nothing instead of writing to a stale
+  copy. `recipient_address` is only for messages that precede an account, where there is no membership
+  to point at; those carry `locale`, because there is no profile to ask. Carrying both forms at once is
+  refused by CHECK, and so is a `locale` beside a known member.
+- `flags & 1` means the message was **sent** rather than asked for: consent decided whether the row was
+  written at all, and the rendered mail owes an unsubscribe footer. A message the person's own action
+  asked for carries no such footer, because offering to withdraw what cannot be withdrawn is the
+  misrepresentation `design/CONSENT.md` documents for banners.
+- `provider_id` is who declared the occasion and therefore whose words render it -- `@phis/server/core`
+  today, an Add-on id once a notification capability exists. Same convention as
+  `server_capabilities.provider_id`.
+- `dedupe_key` is what makes a repeated run safe: the second run's inserts are refused per row by the
+  partial unique index rather than by a count somebody keeps. A caller that names no key gets no
+  protection, which is right for a message a person just triggered.
+- `attempts` and `next_attempt_at` are the retry; `parseSmtpTargets` failover inside one attempt is not
+  one and must not grow into one.
+
+### `phis.notification_unsubscribe_tokens`
+
+- `user_id INT NOT NULL`
+- `site_id SMALLINT NOT NULL`
+- `token_hash CHAR(64) NOT NULL UNIQUE`
+- `created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
+- `last_used_at TIMESTAMPTZ NULL`
+- PRIMARY KEY `(user_id, site_id)`
+- composite foreign key `(user_id, site_id)` to `user_site_memberships (user_id, site_id)`
+  `ON DELETE CASCADE`
+
+Contract:
+- One durable secret per membership, carried in the footer of every circular. Only the `sha256` is
+  stored, as with every other token here; the plain value exists in the mail and nowhere else.
+- **It does not expire and is not consumed**, unlike `user_password_reset_tokens`. The act it authorises
+  is idempotent and the link lives in an archived mail, where a one-time token would be a dead link
+  against an obligation (Art. 21 GDPR, § 7 UWG). One row per person rather than per message is the
+  difference between growing with the audience and growing with every send.
+- Acting on it clears `USER_SITE_FLAG_NEWSLETTER_OPT_IN` for that membership and does nothing else: no
+  session, no other Site, no profile. `GET` on the link must not act -- mail clients and scanners fetch
+  links before a person sees them -- so `GET` offers the button and `POST` performs it, which is also
+  what RFC 8058 one-click requires.
+- Rotation is deleting the row. A token whose membership is gone finds nothing to clear and says so
+  rather than reporting success.
+
 ## Content and Translation Model
 
 - The global `tr_*` tables hold Core text, package and preset text, and global label sets that are not tied to any Site.

@@ -2289,3 +2289,100 @@ CREATE TABLE IF NOT EXISTS phis.media_discarded_objects (
 
 CREATE INDEX IF NOT EXISTS media_discarded_objects_site_idx
   ON phis.media_discarded_objects (site_id, discarded_at, id);
+
+/*
+ * Every message Core owes a person, written down before anything is sent.
+ *
+ * Sending inside the request that decided to send is what this replaces. That works for one confirmation
+ * and for nothing else: a refused SMTP target is a message lost without a trace while the person was
+ * told it was on its way, five hundred recipients in one publish request is a timeout, and the process
+ * is shared by every Site on the instance. The row is the record, the request that wrote it tries once
+ * itself, and `phis maintain` picks up whatever that attempt did not finish -- the same division
+ * `addon_event_outbox` already makes, for the same reason.
+ *
+ * There is one path and not two. A transactional message goes through here exactly as a circular does,
+ * which is what finally gives a password reset the retry it never had.
+ *
+ * The recipient is an id wherever one exists, and the address is resolved when the row is drained: a
+ * person who corrected theirs in between is written to correctly, and a membership that is gone is not
+ * written to at all. `recipient_address` is for the messages that precede an account -- an unconfirmed
+ * registration has no membership to point at -- and those carry `locale` with them for the same reason,
+ * because there is no profile yet to ask.
+ *
+ * `dedupe_key` is what lets a run be repeated. A circular enumerates its recipients and stops; started
+ * again, the keys it would write are already here and the insert is refused one row at a time, rather
+ * than by a count somebody has to keep.
+ */
+CREATE TABLE IF NOT EXISTS phis.notification_outbox (
+  id BIGSERIAL PRIMARY KEY,
+  site_id SMALLINT NOT NULL REFERENCES phis.sites(id) ON DELETE CASCADE,
+  -- Who declared the occasion, and therefore whose words render it: `@phis/server/core` or an Add-on id,
+  -- the convention `server_capabilities.provider_id` already uses.
+  provider_id VARCHAR(255) NOT NULL DEFAULT '@phis/server/core',
+  occasion VARCHAR(120) NOT NULL,
+  -- Bit 0: sent rather than asked for, so consent decided it and the footer owes an unsubscribe link.
+  -- A flag rather than a boolean column, because the next distinction of this kind has the same shape.
+  flags SMALLINT NOT NULL DEFAULT 0,
+  recipient_user_id INT NULL,
+  recipient_address VARCHAR(320) NULL,
+  -- Only where there is no membership; otherwise the profile answers and this would be a second truth.
+  locale VARCHAR(35) NULL,
+  params JSONB NOT NULL DEFAULT '{}'::jsonb,
+  dedupe_key VARCHAR(200) NULL,
+  attempts SMALLINT NOT NULL DEFAULT 0,
+  next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  last_error TEXT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  sent_at TIMESTAMPTZ NULL,
+  -- What the transport called it, so a complaint about one mail can be traced back to this row.
+  message_id VARCHAR(255) NULL,
+  CONSTRAINT notification_outbox_occasion_check CHECK (occasion <> ''),
+  -- Exactly one recipient form. Both at once would let the resolved address disagree with the stored one.
+  CONSTRAINT notification_outbox_recipient_check CHECK (
+    (recipient_user_id IS NOT NULL AND recipient_address IS NULL)
+    OR (recipient_user_id IS NULL AND recipient_address IS NOT NULL)
+  ),
+  CONSTRAINT notification_outbox_locale_check CHECK (recipient_user_id IS NULL OR locale IS NULL),
+  CONSTRAINT notification_outbox_membership_fk
+    FOREIGN KEY (recipient_user_id, site_id)
+    REFERENCES phis.user_site_memberships (user_id, site_id)
+    ON DELETE CASCADE
+);
+
+-- The drain's read: what is still owed on one Site, due first, and oldest first among equally due rows.
+CREATE INDEX IF NOT EXISTS notification_outbox_pending_idx
+  ON phis.notification_outbox (site_id, next_attempt_at, id)
+  WHERE sent_at IS NULL;
+
+-- What makes a repeated run write nothing the first one already wrote.
+CREATE UNIQUE INDEX IF NOT EXISTS notification_outbox_dedupe_idx
+  ON phis.notification_outbox (site_id, dedupe_key)
+  WHERE dedupe_key IS NOT NULL;
+
+/*
+ * The secret in the footer of every circular, one per person and Site.
+ *
+ * It is not shaped like the other tokens in this schema, and the difference is the point. A reset token
+ * is one-time and short-lived because using it changes a credential. This one turns a preference off,
+ * which is idempotent and harmless to repeat -- and it sits in a mail in somebody's archive, where a
+ * one-time token is a dead link that owes a legal answer. So it does not expire and it is not consumed.
+ *
+ * One row per membership rather than one per message: the difference between a table that grows with the
+ * audience and one that grows with every send. The plain token is never stored; the mail carries it and
+ * only its `sha256` is here, as everywhere else.
+ *
+ * Losing it costs a newsletter subscription and nothing more -- it opens no session, names no other
+ * Site, and reveals no profile. Rotation is deleting the row, and the next circular mints another.
+ */
+CREATE TABLE IF NOT EXISTS phis.notification_unsubscribe_tokens (
+  user_id INT NOT NULL,
+  site_id SMALLINT NOT NULL,
+  token_hash CHAR(64) NOT NULL UNIQUE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  last_used_at TIMESTAMPTZ NULL,
+  CONSTRAINT notification_unsubscribe_tokens_pkey PRIMARY KEY (user_id, site_id),
+  CONSTRAINT notification_unsubscribe_tokens_membership_fk
+    FOREIGN KEY (user_id, site_id)
+    REFERENCES phis.user_site_memberships (user_id, site_id)
+    ON DELETE CASCADE
+);
