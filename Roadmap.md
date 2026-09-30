@@ -88,3 +88,13 @@ live in [design/](./design/README.md). Nothing here describes current behaviour.
   bodies the direction is a same-origin upload front door outside Next, such as `nginx` or a dedicated
   upload service, with the upload-session contract of `@phis/server` staying the coordination point.
   Providers that store remotely already avoid the proxy through presigned uploads.
+
+## Form submit transports
+
+- A form handler declares `transport: "relay" | "api" | "serverAction"`, but only `relay` is carried
+  out: the Site's form route forwards the values to the handler's upstream path on `@phis/server`, and
+  it refuses a handler that declares another transport rather than relaying it anyway. `api` (the
+  browser calls the upstream directly, with the Site's session and CSRF pair) and `serverAction` (a
+  Next Server Action owned by the Module) are reserved in the vocabulary. Either needs its own
+  dispatcher, a statement of what the relay's checks become there -- active Module, Area, credential
+  policy, CSRF -- and a first handler that actually needs it before it is built.
