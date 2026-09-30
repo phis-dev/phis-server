@@ -66,6 +66,11 @@ live in [design/](./design/README.md). Nothing here describes current behaviour.
 - **`phis-host`** as the host integration package -- `nginx`, `systemd`, and Docker templates, privileged
   helpers, stage-aware roots, and a clear request to rerun with `sudo` -- is not part of this repository
   yet; the Debian package only recommends it.
+- **Rate limits need a shared store.** Every limit -- per address, per credential subject, per relayed
+  visitor, per contact sender -- counts in the memory of one `phis` process (`src/lib/rate-limit.ts`). A
+  second process or host multiplies each allowance by the number of processes, and a restart forgets it.
+  More than one instance needs the buckets somewhere all of them see, such as the database or a shared
+  cache, with the same keys the in-memory limiter uses today.
 
 ## Logging
 

@@ -70,3 +70,47 @@ describe("the rate limit of a public caller", () => {
     expect(answers.every((answer) => answer === null)).toBe(true);
   });
 });
+
+/*
+ * The form relay holds the internal token for every visitor of a Site, so what it marks as a visitor's
+ * submission is counted per visitor -- and nothing else it sends is.
+ */
+describe("the limit on relayed form submissions", () => {
+  const CONFIG = { api: { internalToken: "internal-token", publicToken: "public-token" } };
+
+  const relay = (headers: Record<string, string>) => guardApiV1(
+    new Request("https://core.test/api/site/threads/messages", {
+      method: "POST",
+      headers: { "x-phis-token": "internal-token", "user-agent": "phis-ui/test", ...headers },
+    }),
+  );
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.stubEnv("TRUST_PROXY", "1");
+    mocks.getPhisConfigSync.mockReturnValue(CONFIG as PhisConfig);
+  });
+
+  it("counts one session's submissions and refuses the thirty-first in a minute", () => {
+    const visitor = { "x-phis-form-relay": "1", cookie: "phis_session=session-a; other=1" };
+    const answers = Array.from({ length: 30 }, () => relay(visitor));
+    expect(answers.every((answer) => answer === null)).toBe(true);
+
+    const refused = relay(visitor);
+    expect(refused?.status).toBe(429);
+    expect(refused?.headers.get("Retry-After")).toBeTruthy();
+    // Another visitor of the same Site is not affected.
+    expect(relay({ "x-phis-form-relay": "1", cookie: "phis_session=session-b" })).toBeNull();
+  });
+
+  it("counts an anonymous visitor by the address a trusted proxy names", () => {
+    const visitor = { "x-phis-form-relay": "1", "x-forwarded-for": "198.51.100.7" };
+    Array.from({ length: 30 }, () => relay(visitor));
+    expect(relay(visitor)?.status).toBe(429);
+  });
+
+  it("leaves the Site runtime's own internal requests alone", () => {
+    const answers = Array.from({ length: 100 }, () => relay({ cookie: "phis_session=session-c" }));
+    expect(answers.every((answer) => answer === null)).toBe(true);
+  });
+});

@@ -6,7 +6,9 @@ import { sendEmail } from "@/lib/email";
 import { getFormGuardSecret, getFormTimingWindow, getSiteMailConfig } from "@/lib/form-config";
 import { logFormAbuse } from "@/lib/form-abuse-log";
 import { verifyFormGuard } from "@/lib/form-guard";
-import { normalizeString } from "@/lib/helpers/request";
+import { normalizeString, readPhiClientIp } from "@/lib/helpers/request";
+import { checkRateLimit } from "@/lib/rate-limit";
+import { tooManyAttemptsResponse } from "@/lib/site-auth/attempt-limit";
 
 type ContactPayload = {
   name?: unknown;
@@ -17,6 +19,31 @@ type ContactPayload = {
   issuedAt?: unknown;
   formToken?: unknown;
 };
+
+/*
+ * Every accepted submission is a mail to the Site's contact recipient, so it is counted twice: per sender
+ * address and per client address where a trusted proxy names one. Either alone is easy to vary; a script
+ * that passes the honeypot and the timing window still sends at most this many an hour from one place
+ * or under one name.
+ */
+const CONTACT_SUBMISSIONS_PER_HOUR = 5;
+const CONTACT_WINDOW_MS = 3_600_000;
+
+function checkContactLimit(request: Request, siteId: number, email: string) {
+  const address = readPhiClientIp(request);
+  const keys = [
+    `contact:${siteId}:email:${email.toLowerCase()}`,
+    ...(address ? [`contact:${siteId}:address:${address}`] : []),
+  ];
+  let retryAfter: number | null = null;
+  for (const key of keys) {
+    const answer = checkRateLimit(key, CONTACT_SUBMISSIONS_PER_HOUR, CONTACT_WINDOW_MS);
+    if (answer !== null && (retryAfter === null || answer > retryAfter)) {
+      retryAfter = answer;
+    }
+  }
+  return retryAfter;
+}
 
 function isValidEmail(value: string) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
@@ -77,6 +104,11 @@ export async function POST(request: Request) {
 
   if (!isValidEmail(email)) {
     return NextResponse.json({ error: "Invalid email address." }, { status: 400 });
+  }
+
+  const retryAfter = checkContactLimit(request, site.id, email);
+  if (retryAfter !== null) {
+    return tooManyAttemptsResponse(retryAfter);
   }
 
   const siteMailConfig = await getSiteMailConfig(site.id);

@@ -3,8 +3,10 @@ import "server-only";
 import { NextResponse } from "next/server";
 
 import { getPhisConfigSync } from "@/lib/config";
+import { SESSION_COOKIE_NAME, sha256Hex } from "@/lib/auth";
+import { readPhiClientIp } from "@/lib/helpers/request";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
-import { PHIS_TOKEN_HEADER } from "@/lib/constants/http-headers";
+import { PHIS_FORM_RELAY_HEADER, PHIS_TOKEN_HEADER } from "@/lib/constants/http-headers";
 
 const AUTH_HEADER = "authorization";
 
@@ -32,6 +34,34 @@ const AUTH_HEADER = "authorization";
 const RATE_LIMIT_PER_MINUTE_BY_PATH: Record<string, number> = {
   "/api/v1/tr": 120,
 };
+
+/** How many submissions a minute one visitor gets through the Site's form relay. */
+export const FORM_RELAY_SUBMISSIONS_PER_MINUTE = 30;
+
+function readCookieValue(request: Request, name: string) {
+  for (const pair of (request.headers.get("cookie") ?? "").split(";")) {
+    const separator = pair.indexOf("=");
+    if (separator > 0 && pair.slice(0, separator).trim() === name) {
+      return pair.slice(separator + 1).trim() || null;
+    }
+  }
+  return null;
+}
+
+/*
+ * The visitor behind a relayed submission: their session where the relay forwarded one, else the
+ * address a trusted proxy vouched for. Neither is there for an anonymous form behind no trusted hop, and
+ * then nothing is counted here -- one shared bucket would lock every anonymous visitor out at once. The
+ * credential routes (login, reset, register, contact) keep their own per-subject limits for that case.
+ */
+function readFormRelayVisitor(request: Request) {
+  const session = readCookieValue(request, SESSION_COOKIE_NAME);
+  if (session) {
+    return `session:${sha256Hex(session).slice(0, 32)}`;
+  }
+  const address = readPhiClientIp(request);
+  return address ? `address:${address}` : null;
+}
 
 type GuardOptions = {
   requireInternalToken?: boolean;
@@ -98,6 +128,27 @@ export function guardApiV1(request: Request, options: GuardOptions = {}) {
   const path = new URL(request.url).pathname;
   const config = getPhisConfigSync();
   const shouldRateLimit = tokenMode !== "internal" && config.api?.disableRateLimit !== true;
+
+  /*
+   * The internal token passes the per-address limit below, and the form relay holds it for every
+   * visitor at once. What it marks as a visitor's submission is counted per visitor instead.
+   */
+  if (
+    tokenMode === "internal" &&
+    request.headers.get(PHIS_FORM_RELAY_HEADER) === "1" &&
+    getPhisConfigSync().api?.disableRateLimit !== true
+  ) {
+    const visitor = readFormRelayVisitor(request);
+    const retryAfter = visitor
+      ? checkRateLimit(`form-relay:${visitor}`, FORM_RELAY_SUBMISSIONS_PER_MINUTE)
+      : null;
+    if (retryAfter !== null) {
+      return NextResponse.json(
+        { error: "Too many requests." },
+        { status: 429, headers: { "Retry-After": String(retryAfter) } },
+      );
+    }
+  }
 
   if (shouldRateLimit) {
     /*
