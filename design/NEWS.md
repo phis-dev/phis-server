@@ -6,9 +6,8 @@ content type `0` ([DB.md](../DB.md)), versioned through `site_content_versions` 
 ([src/db/site-content.ts](../src/db/site-content.ts)) filters `status`, `published_at <= NOW()` and
 `expires_at > NOW()` in the query; `GET /api/v1/news`
 ([src/app/api/v1/news/route.ts](../src/app/api/v1/news/route.ts)) serves it per Site and locale behind the
-internal token, and two Sites in the workspace already read it. Since 30.09. the write path of §3 exists
-as well. What does not exist: an editor surface in the shared UI; a Module; a Page; a navigation entry;
-and any mail. `scripts/seed-site-news.mjs` is gone -- it hard-coded two Site keys and had stopped working
+internal token, and two Sites in the workspace already read it. Since 30.09. the write path of §3 and the
+Module of §4 exist as well. What does not exist: an editor surface in the shared UI, and any mail. `scripts/seed-site-news.mjs` is gone -- it hard-coded two Site keys and had stopped working
 when the content enums became `SMALLINT`, which nothing noticed because nothing ran it.
 
 The mail half is [NOTIFICATIONS.md](./NOTIFICATIONS.md) and this document does not repeat it.
@@ -94,6 +93,19 @@ everything else rather than by a second one.
 
 ## 4. The Module: one address, one page
 
+**Built** on 30.09., in `phis-ui/plugins/runtime-modules/news`: the descriptor of §4, the page preset
+`phi-default-pub-news-page-tree.ts`, one Widget (`news-list`) and the gateway read `gateway/news.ts`. Three
+things the building settled:
+
+- **A new Module is not on.** `/news` answered `404` until the Site activated `@phis/ui/modules/news` for
+  its Public Area and published that selection. That is the intended behaviour and worth stating here,
+  because the first reading of that `404` was that something was broken.
+- **The list is a Client half, like every other visual Widget.** The Controls are where antd lives and a
+  server component cannot use them, so the Widget reads in its server half and hands the entries to a
+  Client one. Nothing there depends on the viewer, so the first paint carries every entry.
+- **The date is formatted on the server.** In the browser `Intl` would use the visitor's locale, and in a
+  static render the server's; neither is the page's language.
+
 **First-party, in `phis-ui/plugins/runtime-modules/news`,** not a separate package. Only `@phis/ui` is in
 the Site's `transpilePackages`, so a first-party Module is picked up through the workspace symlink with no
 build step, while a package would need `pnpm build` after every edit. Moving it out later is a packaging
@@ -153,7 +165,7 @@ The **page** depends on none of this and can be built first.
 
 1. ~~The Core write path of §3, draft and publish.~~ Built on 30.09., with the editor surface still to
    come in the shared UI.
-2. The Module of §4: descriptor, page, widgets.
+2. ~~The Module of §4: descriptor, page, widgets.~~ Built on 30.09.
 3. The digest of §5, after [NOTIFICATIONS.md](./NOTIFICATIONS.md) steps 1 and 2.
 
 Only step 1 touches a contract surface in this repository; §4 is ordinary Module work in `@phis/ui`, and
