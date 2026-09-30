@@ -943,6 +943,22 @@ Contract:
 - A `news` entry is answered publicly while `status = published`, `published_at <= NOW()` and
   `expires_at` is null or in the future. A schedule and an expiry are read filters, not states: nothing
   runs at the appointed minute, and an expired entry keeps its row and its publication.
+- A `news` version's `meta` states how its words are to be read, and nothing else: `sourceLocale` is the
+  language they are written in (`null` for the Site's own), `translate` whether a reader in another
+  language may be served a translation. They sit on the version rather than the entry because a later
+  version may be written in another language, and a save states both every time.
+- `news` text is kept under a spoken translation context -- `news entry title`, `news entry subtitle`,
+  `news entry body` -- which is part of a message's identity and is handed to the provider as a hint. The
+  context is deliberately not per entry: one phrase for all titles keeps identical sentences on one row.
+  The read path states the same values, so a cached translation lands on the row the entry points at.
+- `news` translations are pulled, never pushed. A save translates nothing; the first read in a language
+  that has no translation yet asks for one and caches it. An entry written in another language than the
+  Site's own takes the external route: translated into the Site's language as its own message, the
+  original kept as the answer for its own language, every further language derived from the canonical one.
+  A corrected text is a new message row, so nothing is invalidated.
+- A `news` body is Markdown and is translated where it is rendered, paragraph by paragraph, so its
+  structure never reaches a provider. `GET /api/v1/news` therefore answers `content` as it was written,
+  with `sourceLocale` beside it.
 - A published `news` entry must be withdrawn before it can be deleted. Withdrawal clears
   `published_version_id`, `published_at` and `expires_at` and leaves every version in place.
 - `site_content(type=asset)` is created on demand when a widget binds to a media asset, not eagerly on media upload.

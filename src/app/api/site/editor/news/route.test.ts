@@ -94,6 +94,55 @@ describe("POST /api/site/editor/news", () => {
   });
 });
 
+describe("the language a save declares", () => {
+  it("passes a stated language through, normalised", async () => {
+    const response = await POST(request("POST", { ...ENTRY, sourceLocale: "DE" }));
+
+    expect(response.status).toBe(200);
+    expect(mocks.save.mock.calls[0]![0]).toMatchObject({ sourceLocale: "de", translate: true });
+  });
+
+  it("reads no language as the Site's own", async () => {
+    await POST(request("POST", ENTRY));
+    expect(mocks.save.mock.calls[0]![0]).toMatchObject({ sourceLocale: null, translate: true });
+  });
+
+  it("refuses a language this installation cannot translate", async () => {
+    const response = await POST(request("POST", { ...ENTRY, sourceLocale: "kli" }));
+
+    expect(response.status).toBe(400);
+    expect(mocks.save).not.toHaveBeenCalled();
+  });
+
+  it("takes a stated no to translating", async () => {
+    await POST(request("POST", { ...ENTRY, translate: false }));
+    expect(mocks.save.mock.calls[0]![0]).toMatchObject({ translate: false });
+
+    // A string is the other spelling a stored value arrives in.
+    await POST(request("POST", { ...ENTRY, translate: "false" }));
+    expect(mocks.save.mock.calls[1]![0]).toMatchObject({ translate: false });
+  });
+
+  /*
+   * The contradiction: not translatable and not in the Site's language would be answered in that language
+   * to every reader, including the ones who cannot read it.
+   */
+  it("refuses a foreign language that may not be translated", async () => {
+    const response = await POST(request("POST", { ...ENTRY, sourceLocale: "de", translate: false }));
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({ code: "untranslatable_foreign_source" });
+    expect(mocks.save).not.toHaveBeenCalled();
+  });
+
+  it("allows the Site's own language to be stated and not translated", async () => {
+    const response = await POST(request("POST", { ...ENTRY, sourceLocale: "en", translate: false }));
+
+    expect(response.status).toBe(200);
+    expect(mocks.save.mock.calls[0]![0]).toMatchObject({ sourceLocale: "en", translate: false });
+  });
+});
+
 describe("PUT /api/site/editor/news", () => {
   it("needs the id of the entry it edits", async () => {
     const response = await PUT(request("PUT", { title: "A title", content: "A sentence." }));

@@ -19,9 +19,13 @@ type SiteNewsRow = {
   created_at: string;
   updated_at: string;
   meta: { link?: string | null; tags?: string[] | null } | null;
-  title: string | null;
-  subtitle: string | null;
-  content: string | null;
+  version_meta: unknown;
+  title_source: string | null;
+  title_translation: string | null;
+  subtitle_source: string | null;
+  subtitle_translation: string | null;
+  content_source: string | null;
+  content_translation: string | null;
 };
 
 type DbQueryable = Pick<PoolClient, "query">;
@@ -161,7 +165,15 @@ async function upsertSiteContentTextField(
   db: DbQueryable,
   input: {
     siteId: number;
-    contentTypeKey: string;
+    /**
+     * The translation context the message is kept under, which is part of its identity
+     * (`UNIQUE (site_id, msg_hash, ctx)`) and is handed to the provider as a hint.
+     *
+     * Empty for the widget-owned types: their text is whatever a Widget was given, and a context would
+     * split one message into one row per Widget kind without telling a translator anything. News states
+     * one, because "news entry title" is a real hint and because it is how those rows are found again.
+     */
+    ctx: string;
     versionId: number;
     fieldName: string;
     value: string;
@@ -172,7 +184,7 @@ async function upsertSiteContentTextField(
   const msgId = await ensureSiteMessageId(
     input.siteId,
     input.value,
-    "",
+    input.ctx,
     db,
   );
 
@@ -397,7 +409,7 @@ export async function upsertSiteContentAssetWithClient(
   if (title) {
     await upsertSiteContentTextField(client, {
       siteId: input.siteId,
-      contentTypeKey: "asset",
+      ctx: "",
       versionId,
       fieldName: "title",
       value: title,
@@ -406,7 +418,7 @@ export async function upsertSiteContentAssetWithClient(
   if (altText) {
     await upsertSiteContentTextField(client, {
       siteId: input.siteId,
-      contentTypeKey: "asset",
+      ctx: "",
       versionId,
       fieldName: "alt",
       value: altText,
@@ -415,7 +427,7 @@ export async function upsertSiteContentAssetWithClient(
   if (caption) {
     await upsertSiteContentTextField(client, {
       siteId: input.siteId,
-      contentTypeKey: "asset",
+      ctx: "",
       versionId,
       fieldName: "caption",
       value: caption,
@@ -450,7 +462,7 @@ export async function upsertSiteContentTextWithClient(
 
   await upsertSiteContentTextField(client, {
     siteId: input.siteId,
-    contentTypeKey: "content",
+    ctx: "",
     versionId,
     fieldName: "text",
     value: text,
@@ -492,7 +504,7 @@ export async function upsertSiteContentHtmlWithClient(
 
   await upsertSiteContentTextField(client, {
     siteId: input.siteId,
-    contentTypeKey: "html",
+    ctx: "",
     versionId,
     fieldName: "html",
     value: html,
@@ -531,7 +543,7 @@ export async function upsertSiteContentMarkdownWithClient(
 
   await upsertSiteContentTextField(client, {
     siteId: input.siteId,
-    contentTypeKey: "markdown",
+    ctx: "",
     versionId,
     fieldName: "markdown",
     value: markdown,
@@ -650,9 +662,13 @@ export async function listPublishedNews(siteId: number, locale: string) {
        c.created_at,
        c.updated_at,
        c.meta,
-       COALESCE(tt.translation, mt.msg) AS title,
-       COALESCE(ts.translation, ms.msg) AS subtitle,
-       COALESCE(tc.translation, mc.msg) AS content
+       v.meta AS version_meta,
+       mt.msg AS title_source,
+       tt.translation AS title_translation,
+       ms.msg AS subtitle_source,
+       ts.translation AS subtitle_translation,
+       mc.msg AS content_source,
+       tc.translation AS content_translation
      FROM phis.site_content c
      LEFT JOIN phis.site_content_versions v ON v.id = c.published_version_id
      LEFT JOIN phis.site_content_version_text xt ON xt.version_id = v.id AND xt.field_name = 'title'
@@ -678,13 +694,14 @@ export async function listPublishedNews(siteId: number, locale: string) {
     slug: row.slug,
     created: toIsoDate(row.published_at) ?? toIsoDate(row.created_at) ?? new Date().toISOString(),
     outdated: toIsoDate(row.expires_at),
-    title: row.title ?? "",
-    subtitle: row.subtitle ?? "",
-    content: row.content ?? "",
+    title: readSiteNewsField(row.title_source, row.title_translation),
+    subtitle: readSiteNewsField(row.subtitle_source, row.subtitle_translation),
+    content: readSiteNewsField(row.content_source, row.content_translation),
     link: row.meta?.link ?? null,
     tags: Array.isArray(row.meta?.tags)
       ? row.meta.tags.filter((item: unknown): item is string => typeof item === "string")
       : [],
+    ...readSiteNewsVersionTerms(row.version_meta),
   }));
 }
 
@@ -701,6 +718,23 @@ export async function listPublishedNews(siteId: number, locale: string) {
  * kept, and not seen until it is published in turn, which is the whole reason that column exists.
  */
 
+/**
+ * The translation context each News field is kept under.
+ *
+ * Natural language rather than a structural key, and deliberately **not per entry**. The context is part
+ * of a message's identity, so `news:81:title` would give every entry its own row and pay for the same
+ * sentence twice; a phrase shared by all titles keeps the dedupe and is, per `DB.md`, the better hint for
+ * the provider. It is also what makes these rows findable in the translations editor, which lists contexts.
+ *
+ * The read path states the same values when it asks for a translation, so the cached answer lands on the
+ * row the entry already points at rather than on a second one.
+ */
+export const PHI_NEWS_TRANSLATION_CONTEXTS = {
+  title: "news entry title",
+  subtitle: "news entry subtitle",
+  content: "news entry body",
+} as const;
+
 export type SiteContentNewsInput = {
   siteId: number;
   contentId?: number | null;
@@ -711,7 +745,39 @@ export type SiteContentNewsInput = {
   link?: string | null;
   tags?: readonly string[];
   sortOrder?: number;
+  /**
+   * The language these words are written in, or null for the Site's canonical one.
+   *
+   * Declared, never guessed. It is what lets an author write in their own language: a read in another
+   * one then goes the external route -- translated into the canonical language first, the original kept
+   * as the answer for its own language -- which is the path external Markdown has always taken
+   * (`src/lib/translations.ts`, `translateExternalSiteBatch`).
+   */
+  sourceLocale?: string | null;
+  /** Whether a reader in another language may be served a translation at all. Absent means yes. */
+  translate?: boolean;
   createdByUserId?: number | null;
+};
+
+/** What a version records about its own words, beside the words themselves. */
+export type SiteNewsVersionTerms = {
+  sourceLocale: string | null;
+  translate: boolean;
+};
+
+/**
+ * One field of a News entry as the store answers it.
+ *
+ * `translated` is the part the read path needs and the old `COALESCE` hid: a field that fell back to its
+ * source is a field nobody has translated yet, and only the reader knows whether that is worth a
+ * provider call.
+ */
+export type SiteNewsFieldValue = {
+  /** What a reader in the asked-for language gets: a translation where one exists, the source otherwise. */
+  text: string;
+  /** The words as they were written, whatever language that is. */
+  source: string;
+  translated: boolean;
 };
 
 export type SiteNewsWriteOutcome =
@@ -725,7 +791,7 @@ export type SiteNewsPublication = {
   expiresAt: string | null;
 };
 
-export type SiteNewsEditorRecord = {
+export type SiteNewsEditorRecord = SiteNewsVersionTerms & {
   contentId: number;
   slug: string;
   status: number;
@@ -751,10 +817,29 @@ type SiteNewsEditorRow = {
   updated_at: string | null;
   has_unpublished_changes: boolean;
   meta: { link?: string | null; tags?: string[] | null } | null;
+  version_meta: unknown;
   title: string | null;
   subtitle: string | null;
   content: string | null;
 };
+
+function readSiteNewsField(source: string | null, translation: string | null): SiteNewsFieldValue {
+  const text = source ?? "";
+  const translated = translation?.trim() ? translation : null;
+  return translated !== null
+    ? { text: translated, source: text, translated: true }
+    : { text, source: text, translated: false };
+}
+
+function readSiteNewsVersionTerms(meta: unknown): SiteNewsVersionTerms {
+  const record = toPhiRecord(meta) ?? {};
+  const sourceLocale = typeof record.sourceLocale === "string" ? record.sourceLocale.trim() : "";
+  return {
+    sourceLocale: sourceLocale || null,
+    // Absent means yes, which is the default the Markdown Widget already states for its own switch.
+    translate: record.translate !== false,
+  };
+}
 
 function buildSiteNewsMeta(input: Pick<SiteContentNewsInput, "link" | "tags">) {
   const tags = [...new Set((input.tags ?? []).map((tag) => tag.trim()).filter(Boolean))];
@@ -831,17 +916,24 @@ export async function saveSiteContentNewsDraft(
       return row;
     }
 
-    // The version's own `meta` stays empty: `link` and `tags` are read from the content row, and a second
-    // copy on the version would be a second answer to the same question.
+    /*
+     * The version's `meta` carries how its words are to be read, and nothing else: `link` and `tags` stay
+     * on the content row, where a second copy would be a second answer to the same question. These two
+     * belong to the words rather than to the entry -- a later version may be written in another language
+     * -- and a save states the whole entry, so both are written every time.
+     */
     const versionId = await insertSiteContentVersion(client, {
       contentId: row.contentId,
-      meta: {},
+      meta: {
+        sourceLocale: normalizeOptionalText(input.sourceLocale),
+        translate: input.translate !== false,
+      },
       createdByUserId: input.createdByUserId ?? null,
     });
 
     await upsertSiteContentTextField(client, {
       siteId: input.siteId,
-      contentTypeKey: "news",
+      ctx: PHI_NEWS_TRANSLATION_CONTEXTS.title,
       versionId,
       fieldName: "title",
       value: title,
@@ -850,7 +942,7 @@ export async function saveSiteContentNewsDraft(
     if (subtitle) {
       await upsertSiteContentTextField(client, {
         siteId: input.siteId,
-        contentTypeKey: "news",
+        ctx: PHI_NEWS_TRANSLATION_CONTEXTS.subtitle,
         versionId,
         fieldName: "subtitle",
         value: subtitle,
@@ -858,7 +950,7 @@ export async function saveSiteContentNewsDraft(
     }
     await upsertSiteContentTextField(client, {
       siteId: input.siteId,
-      contentTypeKey: "news",
+      ctx: PHI_NEWS_TRANSLATION_CONTEXTS.content,
       versionId,
       fieldName: "content",
       value: content,
@@ -1014,6 +1106,7 @@ export async function listSiteContentNewsForEditor(
        c.updated_at,
        (c.published_version_id IS DISTINCT FROM c.current_version_id) AS has_unpublished_changes,
        c.meta,
+       v.meta AS version_meta,
        COALESCE(tt.translation, mt.msg) AS title,
        COALESCE(ts.translation, ms.msg) AS subtitle,
        COALESCE(tc.translation, mc.msg) AS content
@@ -1050,6 +1143,7 @@ export async function listSiteContentNewsForEditor(
     expiresAt: toIsoDate(row.expires_at),
     updatedAt: toIsoDate(row.updated_at),
     hasUnpublishedChanges: row.has_unpublished_changes,
+    ...readSiteNewsVersionTerms(row.version_meta),
   }));
 }
 

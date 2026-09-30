@@ -9,6 +9,7 @@ import {
 } from "../../test/pg/harness";
 import {
   deleteSiteContentNews,
+  PHI_NEWS_TRANSLATION_CONTEXTS,
   listPublishedNews,
   listSiteContentNewsForEditor,
   publishSiteContentNews,
@@ -129,9 +130,12 @@ describe("the News write path against PostgreSQL", () => {
 
     const item = (await listPublishedNews(site.id, "en")).find((entry) => entry.slug === "published-entry");
     expect(item).toMatchObject({
-      title: "Title published-entry",
+      title: { text: "Title published-entry", source: "Title published-entry", translated: false },
       link: "/somewhere",
       tags: ["one", "two"],
+      // Nothing was declared, so the words are the Site's own language and may be translated.
+      sourceLocale: null,
+      translate: true,
     });
   });
 
@@ -153,7 +157,7 @@ describe("the News write path against PostgreSQL", () => {
 
     const publicItem = (await listPublishedNews(site.id, "en"))
       .find((entry) => entry.slug === "edited-after-publish");
-    expect(publicItem?.title).toBe("Title edited-after-publish");
+    expect(publicItem?.title.text).toBe("Title edited-after-publish");
 
     const editorEntry = (await listSiteContentNewsForEditor(site.id, "en"))
       .find((entry) => entry.slug === "edited-after-publish");
@@ -165,7 +169,7 @@ describe("the News write path against PostgreSQL", () => {
     });
     const afterSecondPublish = (await listPublishedNews(site.id, "en"))
       .find((entry) => entry.slug === "edited-after-publish");
-    expect(afterSecondPublish?.title).toBe("The corrected title");
+    expect(afterSecondPublish?.title.text).toBe("The corrected title");
   });
 
   it("does not answer an entry whose date has not come, and needs nothing to run when it does", async () => {
@@ -242,6 +246,61 @@ describe("the News write path against PostgreSQL", () => {
       .toBe("deleted");
     expect(await deleteSiteContentNews({ siteId: site.id, contentId: saved.contentId }))
       .toBe("missing");
+  });
+
+  /*
+   * The two values a save states about its own words. They live on the version rather than the entry
+   * because a later version may be written in another language, and the read path needs both: one to know
+   * which way to translate, one to know whether it may.
+   */
+  it("keeps the declared language and the switch with the version that was written", async () => {
+    const saved = await draft("declared-german", { sourceLocale: "de", translate: false });
+    if (!saved.ok) throw new Error("the draft did not save");
+
+    const pool = await requirePhiTestDatabase();
+    const { rows } = await pool.query<{ meta: { sourceLocale?: string; translate?: boolean } }>(
+      "SELECT meta FROM phis.site_content_versions WHERE id = $1",
+      [saved.versionId],
+    );
+    expect(rows[0]?.meta).toEqual({ sourceLocale: "de", translate: false });
+
+    await publishSiteContentNews({
+      siteId: site.id, contentId: saved.contentId, publishedAt: null, expiresAt: null,
+    });
+    const item = (await listPublishedNews(site.id, "en"))
+      .find((entry) => entry.slug === "declared-german");
+    expect(item).toMatchObject({ sourceLocale: "de", translate: false });
+
+    // And the editor sees the same, because it is what a form has to show back.
+    expect((await listSiteContentNewsForEditor(site.id, "en"))
+      .find((entry) => entry.slug === "declared-german"))
+      .toMatchObject({ sourceLocale: "de", translate: false });
+  });
+
+  /*
+   * The context is part of a message's identity, and the read path states the same values when it asks for
+   * a translation. If these drift apart, every read creates a second row for the same sentence and the
+   * cache never hits -- which is invisible until somebody counts provider calls.
+   */
+  it("keeps each field's words under the context the read path asks with", async () => {
+    const saved = await draft("spoken-context", { subtitle: "A subtitle" });
+    if (!saved.ok) throw new Error("the draft did not save");
+
+    const pool = await requirePhiTestDatabase();
+    const { rows } = await pool.query<{ field_name: string; ctx: string }>(
+      `SELECT t.field_name, m.ctx
+       FROM phis.site_content_version_text t
+       JOIN phis.tr_site_msg m ON m.id = t.msg_id
+       WHERE t.version_id = $1
+       ORDER BY t.field_name`,
+      [saved.versionId],
+    );
+
+    expect(rows).toEqual([
+      { field_name: "content", ctx: PHI_NEWS_TRANSLATION_CONTEXTS.content },
+      { field_name: "subtitle", ctx: PHI_NEWS_TRANSLATION_CONTEXTS.subtitle },
+      { field_name: "title", ctx: PHI_NEWS_TRANSLATION_CONTEXTS.title },
+    ]);
   });
 
   it("withdraws a draft without complaining, and finds nothing at an id no entry has", async () => {

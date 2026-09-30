@@ -6,6 +6,7 @@ import {
   saveSiteContentNewsDraft,
 } from "@/db/site-content";
 import { requireSiteAuthorApiContext } from "@/lib/guards/site-admin-api";
+import { resolvePhiLocaleBase, resolvePhiLocaleCapability } from "@/lib/locale";
 import {
   normalizeNullableInteger,
   normalizeString,
@@ -23,6 +24,10 @@ export const dynamic = "force-dynamic";
  * `published_at` or `expires_at`: when an entry is seen is stated at `news/publish`, behind the
  * publishing policy. A delete is refused while an entry is published, because removing something from a
  * Site is that same authority's act wearing a different verb.
+ *
+ * Two of the values a save carries are about the words rather than the entry: the language they are
+ * written in, and whether a reader in another one may be served a translation. Both land in the version's
+ * own `meta`, and both are stated again by every save.
  *
  * **A save states the whole entry**, which is why the update is a `PUT` and not a `PATCH`. A save writes a
  * version, and a version is a complete set of words rather than a patch on the last one -- so a subtitle
@@ -47,7 +52,26 @@ type NewsDraftBody = {
   link: string | null;
   tags: string[];
   sortOrder: number;
+  sourceLocale: string | null;
+  translate: boolean;
 };
+
+/**
+ * A stated yes or no, or nothing at all.
+ *
+ * Both spellings arrive: a declared Form sends JSON booleans, a client holding a stored value may send
+ * the string it read. Anything else is read as unstated, which means the default -- and the default for
+ * translating is yes, as it is for the Markdown Widget's own switch.
+ */
+function readOptionalBoolean(value: unknown) {
+  if (typeof value === "boolean") {
+    return value;
+  }
+  const text = normalizeString(value).toLowerCase();
+  if (text === "true") return true;
+  if (text === "false") return false;
+  return undefined;
+}
 
 /**
  * A link is either the Site's own path or an absolute `http(s)` address, and nothing else.
@@ -107,8 +131,8 @@ function readNewsTags(value: unknown): { tags: string[] } | { error: string } {
 
 function readNewsDraftBody(
   body: Record<string, unknown>,
-  options: { requireSlug: boolean },
-): { input: NewsDraftBody } | { error: string } {
+  options: { requireSlug: boolean; canonicalLocale: string },
+): { input: NewsDraftBody } | { error: string; code?: string } {
   // A Form's hidden field sends the id as a string, a client holding it sends a number; both arrive here.
   const contentId = normalizeNullableInteger(body.contentId);
   const slug = normalizeString(body.slug).toLowerCase();
@@ -140,6 +164,33 @@ function readNewsDraftBody(
   if ("error" in link) {
     return link;
   }
+
+  /*
+   * The language the words are written in, which an author states rather than Core guessing. Empty means
+   * the Site's canonical one. A language the platform cannot translate is refused here rather than stored:
+   * the read path would silently answer every reader in it, which looks like a translation failure and is
+   * a typo.
+   */
+  const declaredLocale = normalizeString(body.sourceLocale);
+  const sourceLocale = declaredLocale
+    ? resolvePhiLocaleCapability(declaredLocale)?.locale ?? null
+    : null;
+  if (declaredLocale && !sourceLocale) {
+    return { error: "sourceLocale must be a language this installation can translate." };
+  }
+
+  const translate = readOptionalBoolean(body.translate) ?? true;
+  if (!translate && sourceLocale && resolvePhiLocaleBase(sourceLocale) !== resolvePhiLocaleBase(options.canonicalLocale)) {
+    /*
+     * A stated no to translating, together with a language that is not the Site's own, contradicts itself:
+     * the entry would be answered in that language to every reader, including the ones who cannot read it.
+     * Refused rather than stored, because the alternative is a row that claims one thing and means another.
+     */
+    return {
+      error: "An entry that may not be translated must be written in the Site's own language.",
+      code: "untranslatable_foreign_source",
+    };
+  }
   const tags = readNewsTags(body.tags);
   if ("error" in tags) {
     return tags;
@@ -155,6 +206,8 @@ function readNewsDraftBody(
       link: link.link,
       tags: tags.tags,
       sortOrder: normalizeNullableInteger(body.sortOrder) ?? 0,
+      sourceLocale,
+      translate,
     },
   };
 }
@@ -192,9 +245,15 @@ async function writeNewsDraft(request: NextRequest, mode: "create" | "update") {
   }
 
   const body = await readRequestBody(request);
-  const parsed = readNewsDraftBody(body, { requireSlug: mode === "create" });
+  const parsed = readNewsDraftBody(body, {
+    requireSlug: mode === "create",
+    canonicalLocale: site.sourceLocale,
+  });
   if ("error" in parsed) {
-    return NextResponse.json({ error: parsed.error }, { status: 400 });
+    return NextResponse.json(
+      { error: parsed.error, ...(parsed.code ? { code: parsed.code } : {}) },
+      { status: 400 },
+    );
   }
 
   const outcome = await saveSiteContentNewsDraft({
@@ -207,6 +266,8 @@ async function writeNewsDraft(request: NextRequest, mode: "create" | "update") {
     link: parsed.input.link,
     tags: parsed.input.tags,
     sortOrder: parsed.input.sortOrder,
+    sourceLocale: parsed.input.sourceLocale,
+    translate: parsed.input.translate,
     createdByUserId: context.session?.userId ?? null,
   });
 
