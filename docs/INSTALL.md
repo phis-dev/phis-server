@@ -301,11 +301,15 @@ What `init` writes (scaffold version 3):
 | `src/app/sitemap.xml/route.ts`, `src/app/robots.txt/route.ts` | The crawler files. Asset bytes travel through the `/api/site` proxy. |
 | `src/app/globals.css` | Empty Site stylesheet. |
 | `src/runtime-modules/` | Area hosts that receive the Module projection. |
-| `src/generated/site-modules.ts`, `site-modules-client-<area>.ts`, `site-modules-authoring-client.ts`, `site-modules-fonts.ts` | The Module projection, empty until `phis module add`. |
+| `src/generated/site-modules.ts`, `site-modules-client-<area>.ts`, `site-modules-authoring-client.ts`, `site-modules-fonts.ts` | The Module projection, empty until `phis module add`. Build state, ignored by git. |
 | `.phis/scaffold-manifest.json` | Scaffold version, Site key, and the SHA-256 of every file written. `reconcile` uses it. |
 
-`config/site-runtime.json`, `.gitignore` and the four `src/generated/` files belong to the Site after
-`init`: `reconcile` leaves them as they are. Every other file is canonical and is overwritten by
+`config/site-runtime.json`, `.gitignore` and the `src/generated/` files belong to the Site after
+`init`: `reconcile` leaves them as they are.
+
+`src/generated/` is ignored by git as well. The projection is what the operator installed, and its
+source is the desired state in the phis root (`config/phis-modules.json`), not the Site's history: a
+fresh clone gets the empty files from `reconcile` and the installed Modules from `phis module sync`. Every other file is canonical and is overwritten by
 `reconcile`. Put Site-specific code in new files, not in canonical ones.
 
 `config/site-runtime.json` is ignored by git, so a fresh clone of the Site has none: create it from

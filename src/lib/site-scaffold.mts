@@ -276,6 +276,12 @@ const PHI_SITE_GITIGNORE = [
   "config/site-runtime.json",
   // Build output of `phis update`, one directory per release; nothing in it belongs in the history.
   ".phis/releases/",
+  /*
+   * The Module projection. It is what an operator installed, rewritten by `phis module` from the desired
+   * state in the phis root, so it is build state: committed, it would make every installation a commit
+   * of the Site's source and put Module names into a tree that is meant to know none.
+   */
+  "src/generated/",
   "*.log",
   "",
 ].join("\n");
