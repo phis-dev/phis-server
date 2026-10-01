@@ -1125,6 +1125,19 @@ async function runSiteCheckCommand(flags: FlagMap, json: boolean) {
  * A package that is not installed yet is reported as such rather than as sound: `phis module add` runs
  * before the package manager does, and silence there would read as a pass.
  */
+/**
+ * Installed packages the projection could place in no Area, because their package.json#phis declares no
+ * Module. The Site refuses to build on them; this says why before the build does.
+ */
+function reportUnplacedSiteModulePackages(siteKey: string, packageNames: readonly string[]) {
+  for (const packageName of packageNames) {
+    console.log(
+      `  ${packageName} declares no Module in package.json#phis, so no Area holds it. Install it, or ` +
+      `fix its declaration, then run phis module sync --site ${siteKey}.`,
+    );
+  }
+}
+
 function reportSiteModulePackages(
   siteKey: string,
   reports: readonly PhiSiteModulePackageReport[],
@@ -1271,6 +1284,7 @@ async function runSiteModuleCommand(command: string, flags: FlagMap, json: boole
         `Wrote the projection for ${site.key} (${result.moduleCount} Module(s), ` +
         `${result.fontPackages.length} with typefaces); rebuild the Site.`,
       );
+      reportUnplacedSiteModulePackages(site.key, result.unplacedPackages);
     }
     return;
   }
@@ -1303,13 +1317,17 @@ async function runSiteModuleCommand(command: string, flags: FlagMap, json: boole
       );
       if (report.root === null) {
         /*
-         * Whether a package ships typefaces is read from the package itself, which is not there yet.
-         * Recorded now and projected without its `./fonts` boundary, the Site would build without the
-         * Module's lettering and nothing would say so.
+         * Which Areas the package serves, and whether it ships typefaces, is read from the package
+         * itself, which is not there yet. Projected without either, the Site would refuse to build --
+         * the Server half names a Module no Area is placed for -- and that is the intended answer, but
+         * the remedy belongs here.
          */
         console.log(
-          `  Then run phis module sync --site ${site.key}, so a ./fonts boundary of the package reaches the projection.`,
+          `  Then run phis module sync --site ${site.key}, so the package's Areas and a ./fonts ` +
+          "boundary reach the projection.",
         );
+      } else {
+        reportUnplacedSiteModulePackages(site.key, result.unplacedPackages);
       }
       reportSiteModulePackages(site.key, [report]);
     }

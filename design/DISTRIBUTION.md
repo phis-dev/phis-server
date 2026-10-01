@@ -35,8 +35,9 @@ What exists:
 - `phis.server_addons` holding identity, version, ABI, migration version, and both digests
 - the Module half's build state: `phis module add|del|sync` keeps the per-Site Module desired state in
   `config/phis-modules.json` and writes the projection a Site build imports --
-  `src/generated/site-modules.ts`, `site-modules-client.ts`, and `site-modules-authoring-client.ts` in
-  the Site source (`src/cli/modules.mts`). Each entry records the package name, its door as `origin`
+  `src/generated/site-modules.ts`, one `site-modules-client-<area>.ts` per Area, and
+  `site-modules-authoring-client.ts` in the Site source (`src/cli/modules.mts`), placing each Module by
+  the `eligibleAreas` its `package.json#phis` declares. Each entry records the package name, its door as `origin`
   (`local`, `resolved`, or `source`), and the requested spec. Scaffold reconcile preserves the projection.
 
 What does not exist:

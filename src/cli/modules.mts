@@ -1,15 +1,22 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
-import { siteModulePackageDeclaresFonts } from "./module-package.mts";
+import type { PhisModulePackageEntry } from "@phis/contracts/catalog";
+import { PHI_CMS_AREA_KEYS, type PhiCmsAreaKey } from "@phis/contracts/cms";
+
+import {
+  readSiteModulePackageDeclaredModules,
+  siteModulePackageDeclaresFonts,
+} from "./module-package.mts";
 
 /**
  * What Site Modules an operator installed, and the projection generated from it.
  *
- * A Module reaches a Site through a generated file the Area hosts are handed. `phis module` owns that
- * file: it writes a list of imports and one call, and never loads a Module to do it. A Module's
- * boundaries include TSX and Client code that has no business running inside a command-line tool, and
- * the placement into Areas happens where the projection is imported instead.
+ * A Module reaches a Site through generated files the Area hosts are handed. `phis module` owns them: it
+ * writes lists of imports and one call each, and never loads a Module to do it -- a Module's boundaries
+ * include TSX and Client code that has no business running inside a command-line tool. Which Areas a
+ * Module serves it reads from the package's `package.json#phis`, the one thing about a package it may
+ * read, and that is what lets it write one Client file per Area.
  *
  * The desired state is per Site because a Module is a property of one Site's build, unlike a server
  * Add-on which is installed once for the machine.
@@ -27,9 +34,13 @@ export type PhiSiteModuleDesiredState = {
 };
 
 const PROJECTION_SERVER = "src/generated/site-modules.ts";
-const PROJECTION_CLIENT = "src/generated/site-modules-client.ts";
 const PROJECTION_AUTHORING_CLIENT = "src/generated/site-modules-authoring-client.ts";
 const PROJECTION_FONTS = "src/generated/site-modules-fonts.ts";
+
+/** One Client projection per Area, so an Area's bundle holds only its own Modules' Client doors. */
+export function siteModuleClientProjectionFile(area: PhiCmsAreaKey) {
+  return `src/generated/site-modules-client-${area}.ts`;
+}
 
 function desiredStatePath(root: string) {
   return path.join(root, "config", "phis-modules.json");
@@ -112,77 +123,101 @@ function assertDistinctImportAliases(packageNames: readonly string[]) {
   }
 }
 
+/** A placement literal for a generated file: the Module and the Areas its package declared. */
+function placementLines(entries: readonly PhisModulePackageEntry[], indent: string) {
+  return entries.map((entry) =>
+    `${indent}{ moduleId: ${JSON.stringify(entry.moduleId)}, ` +
+    `eligibleAreas: [${entry.eligibleAreas.map((area) => JSON.stringify(area)).join(", ")}] },`
+  );
+}
+
 /**
- * The four generated files, from the installed Modules and the subset of them that ships typefaces.
+ * The generated files, from the installed Modules, what their packages declare, and the subset of them
+ * that ships typefaces.
  *
- * `fontPackages` is passed in rather than read here, because it is the one part of the projection that
- * is not in the desired state: a `./fonts` boundary is a property of the package on disk, and this
- * function stays a pure rendering of a list so a test can state both halves.
+ * `declarations` and `fontPackages` are passed in rather than read here, because they are the parts of
+ * the projection that are not in the desired state: both are properties of the package on disk, and this
+ * function stays a pure rendering of lists so a test can state every half.
+ *
+ * A package without a declaration -- not installed yet, or declaring nothing -- keeps its Server import,
+ * so the Site's build refuses it by name instead of quietly dropping it, and appears in no Client file.
  */
 export function buildSiteModuleProjection(
   modules: readonly PhiSiteModuleEntry[],
   fontPackages: readonly string[],
+  declarations: ReadonlyMap<string, readonly PhisModulePackageEntry[]>,
 ) {
   const sorted = [...modules].sort((left, right) => left.packageName.localeCompare(right.packageName));
   assertDistinctImportAliases(sorted.map((entry) => entry.packageName));
   const withFonts = sorted.filter((entry) => fontPackages.includes(entry.packageName));
+  const declared = sorted.flatMap((entry) => {
+    const entries = declarations.get(entry.packageName);
+    return entries ? [{ packageName: entry.packageName, entries }] : [];
+  });
 
-  const serverImports = sorted.map((entry) =>
-    `import { phiModuleServerContributions as ${importAlias(entry.packageName)} } from "${entry.packageName}/server";`
-  );
   const server = [
-    ...serverImports,
+    ...sorted.map((entry) =>
+      `import { phiModuleServerContributions as ${importAlias(entry.packageName)} } from "${entry.packageName}/server";`
+    ),
     `import { collectPhiSiteModuleServerAreaContributions } from "@phis/ui/module/projection";`,
     "",
     "/**",
     " * Generated by `phis module`. Do not edit.",
     " *",
-    " * Placement into Areas happens inside the call, from each Module's own `eligibleAreas`.",
+    " * The placements are what each package declares in its package.json#phis; the call completes",
+    " * every Module's definition with them and places it into those Areas.",
     " */",
-    "export const PHI_SITE_MODULES = collectPhiSiteModuleServerAreaContributions([",
-    ...sorted.map((entry) => `  ...${importAlias(entry.packageName)},`),
-    "]);",
-    "",
-  ].join("\n");
-
-  const clientImports = sorted.flatMap((entry) => {
-    const alias = importAlias(entry.packageName);
-    return [
-      `import { phiModuleDefinitions as ${alias}_definitions } from "${entry.packageName}";`,
-      `import { phiModuleClientContributions as ${alias}_client } from "${entry.packageName}/client";`,
-    ];
-  });
-  const client = [
-    '"use client";',
-    "",
-    ...clientImports,
-    `import { collectPhiSiteModuleClientContributions } from "@phis/ui/module/projection/client";`,
-    "",
-    "/**",
-    " * Generated by `phis module`. Do not edit. The Client counterpart of `site-modules.ts`.",
-    " *",
-    " * Carries no Authoring import. Every Area host imports this file, and a bundler packs whatever a",
-    " * value here can reach -- which is how the Builder's table controls once ended up on the Public",
-    " * landing page. The Authoring half lives in `site-modules-authoring-client.ts`.",
-    " */",
-    "export const PHI_SITE_MODULES_CLIENT = collectPhiSiteModuleClientContributions({",
-    `  definitions: [${sorted.map((entry) => `...${importAlias(entry.packageName)}_definitions`).join(", ")}],`,
-    `  clients: [${sorted.map((entry) => `${importAlias(entry.packageName)}_client`).join(", ")}],`,
+    "export const PHI_SITE_MODULES = collectPhiSiteModuleServerAreaContributions({",
+    "  placements: [",
+    ...placementLines(declared.flatMap((entry) => entry.entries), "    "),
+    "  ],",
+    "  contributions: [",
+    ...sorted.map((entry) => `    ...${importAlias(entry.packageName)},`),
+    "  ],",
     "});",
     "",
   ].join("\n");
 
-  const authoringImports = sorted.flatMap((entry) => {
-    const alias = importAlias(entry.packageName);
-    return [
-      `import { phiModuleDefinitions as ${alias}_definitions } from "${entry.packageName}";`,
-      `import { phiModuleAuthoringContributions as ${alias}_authoring } from "${entry.packageName}/authoring-client";`,
-    ];
-  });
+  const clients = Object.fromEntries(PHI_CMS_AREA_KEYS.map((area) => {
+    const inArea = declared.flatMap((entry) => {
+      const entries = entry.entries.filter((module) => module.eligibleAreas.includes(area));
+      return entries.length > 0 ? [{ packageName: entry.packageName, entries }] : [];
+    });
+    const client = [
+      '"use client";',
+      "",
+      ...inArea.map((entry) =>
+        `import { phiModuleClientContributions as ${importAlias(entry.packageName)}_client } from "${entry.packageName}/client";`
+      ),
+      `import { collectPhiSiteModuleClientContributions } from "@phis/ui/module/projection/client";`,
+      "",
+      "/**",
+      " * Generated by `phis module`. Do not edit.",
+      ` * The ${area} Area's Client counterpart of \`site-modules.ts\`.`,
+      " *",
+      " * Only the packages with a Module for this Area are imported, and only through their Client",
+      " * door: a bundler packs whatever a value here can reach, so a Module another Area serves -- or",
+      " * a package's whole definition -- would otherwise ride along on every page of this one.",
+      " * Carries no Authoring import either; that half lives in `site-modules-authoring-client.ts`.",
+      " */",
+      "export const PHI_SITE_MODULES_CLIENT = collectPhiSiteModuleClientContributions({",
+      "  placements: [",
+      ...placementLines(inArea.flatMap((entry) =>
+        entry.entries.map((module) => ({ ...module, eligibleAreas: [area] }))), "    "),
+      "  ],",
+      `  clients: [${inArea.map((entry) => `${importAlias(entry.packageName)}_client`).join(", ")}],`,
+      "});",
+      "",
+    ].join("\n");
+    return [area, client];
+  })) as Record<PhiCmsAreaKey, string>;
+
   const authoringClient = [
     '"use client";',
     "",
-    ...authoringImports,
+    ...declared.map((entry) =>
+      `import { phiModuleAuthoringContributions as ${importAlias(entry.packageName)}_authoring } from "${entry.packageName}/authoring-client";`
+    ),
     `import { collectPhiSiteModuleAuthoringContributions } from "@phis/ui/module/projection/authoring-client";`,
     "",
     "/**",
@@ -190,10 +225,13 @@ export function buildSiteModuleProjection(
     " *",
     " * Imported by the Builder Area host and by nothing else. Authoring implementations must not reach a",
     " * live Area graph, and separating the file is what keeps that true -- separating the type is not.",
+    " * Every installed Module is here whatever its Areas: the Builder authors pages for all of them.",
     " */",
     "export const PHI_SITE_MODULES_AUTHORING_CLIENT = collectPhiSiteModuleAuthoringContributions({",
-    `  definitions: [${sorted.map((entry) => `...${importAlias(entry.packageName)}_definitions`).join(", ")}],`,
-    `  authoring: [${sorted.map((entry) => `...${importAlias(entry.packageName)}_authoring`).join(", ")}],`,
+    "  placements: [",
+    ...placementLines(declared.flatMap((entry) => entry.entries), "    "),
+    "  ],",
+    `  authoring: [${declared.map((entry) => `...${importAlias(entry.packageName)}_authoring`).join(", ")}],`,
     "});",
     "",
   ].join("\n");
@@ -223,33 +261,53 @@ export function buildSiteModuleProjection(
     "",
   ].join("\n");
 
-  return { server, client, authoringClient, fonts };
+  return { server, clients, authoringClient, fonts };
 }
 
 /**
  * Writes the projection into a Site's build state.
  *
- * All four files are replaced together. A half-written projection would compile -- the Server half
- * without its Client half is a Module whose Widgets resolve to nothing -- so none is written in place.
+ * All files are replaced together. A half-written projection would compile -- the Server half without
+ * its Client half is a Module whose Widgets resolve to nothing -- so none is written in place.
  *
- * Which packages ship typefaces is read from the Site's `node_modules` here, and not recorded in the
- * desired state: a package answers for its own boundaries, and an installed version that gains or loses
- * a `./fonts` export would leave a recorded answer stale. A package that is not installed yet reads as
- * one without typefaces, which is why `add` points at `sync` for the run after the install.
+ * Which packages ship typefaces, and which Areas their Modules serve, is read from the Site's
+ * `node_modules` here and not recorded in the desired state: a package answers for itself, and an
+ * installed version that changes either would leave a recorded answer stale. A package that is not
+ * installed yet has neither answer, which is why `add` points at `sync` for the run after the install.
  */
 export function writeSiteModuleProjection(siteRoot: string, modules: readonly PhiSiteModuleEntry[]) {
   const fontPackages = modules
     .map((entry) => entry.packageName)
     .filter((packageName) => siteModulePackageDeclaresFonts(siteRoot, packageName));
-  const { server, client, authoringClient, fonts } = buildSiteModuleProjection(modules, fontPackages);
+  const declarations = new Map<string, readonly PhisModulePackageEntry[]>();
+  for (const entry of modules) {
+    const declared = readSiteModulePackageDeclaredModules(siteRoot, entry.packageName);
+    if (declared) {
+      declarations.set(entry.packageName, declared);
+    }
+  }
+  const { server, clients, authoringClient, fonts } =
+    buildSiteModuleProjection(modules, fontPackages, declarations);
+  const clientFiles = PHI_CMS_AREA_KEYS.map((area) =>
+    [siteModuleClientProjectionFile(area), clients[area]] as const);
   writeAtomic(path.join(siteRoot, PROJECTION_SERVER), server);
-  writeAtomic(path.join(siteRoot, PROJECTION_CLIENT), client);
+  for (const [file, content] of clientFiles) {
+    writeAtomic(path.join(siteRoot, file), content);
+  }
   writeAtomic(path.join(siteRoot, PROJECTION_AUTHORING_CLIENT), authoringClient);
   writeAtomic(path.join(siteRoot, PROJECTION_FONTS), fonts);
   return {
-    files: [PROJECTION_SERVER, PROJECTION_CLIENT, PROJECTION_AUTHORING_CLIENT, PROJECTION_FONTS],
+    files: [
+      PROJECTION_SERVER,
+      ...clientFiles.map(([file]) => file),
+      PROJECTION_AUTHORING_CLIENT,
+      PROJECTION_FONTS,
+    ],
     moduleCount: modules.length,
     fontPackages,
+    unplacedPackages: modules
+      .map((entry) => entry.packageName)
+      .filter((packageName) => !declarations.has(packageName)),
   };
 }
 

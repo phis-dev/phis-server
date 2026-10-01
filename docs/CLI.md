@@ -440,7 +440,7 @@ Brings an existing Site repository to the current scaffold:
   (other `engines` keys stay), and `packageManager` changes only with an explicit
   `--package-manager` (see above).
 - Site-owned files (`PHI_SITE_OWNED_AFTER_INIT`) are left alone when they exist: `.gitignore`, the
-  Module projection `src/generated/site-modules.ts`, `site-modules-client.ts`,
+  Module projection `src/generated/site-modules.ts`, `site-modules-client-<area>.ts` (one per Area),
   `site-modules-authoring-client.ts`, `site-modules-fonts.ts`, and `config/site-runtime.json`. A
   missing `.gitignore` or projection file is recreated with its initial content. A missing
   `config/site-runtime.json` is not: `reconcile` knows neither the server address nor the token.
@@ -492,11 +492,14 @@ A Site Module is a package the Site build imports through the generated projecti
 `src/generated/site-modules*.ts`. The desired state is `config/phis-modules.json` in the phis root.
 `module` commands never fetch packages and never build.
 
-The projection is four files, written together: `site-modules.ts` (Server), `site-modules-client.ts`,
-`site-modules-authoring-client.ts`, and `site-modules-fonts.ts`. The fourth lists only the packages
-that export `./fonts`, read from each package's `exports` in the Site's `node_modules` — the boundary
-itself calls `next/font/local` and throws outside a Next build, so the manifest is what decides it. A
-package that is not installed yet reads as one without typefaces; `sync` picks it up once it is.
+The projection is written together: `site-modules.ts` (Server), one `site-modules-client-<area>.ts` per
+Area, `site-modules-authoring-client.ts`, and `site-modules-fonts.ts`. Everything that is not in the
+desired state is read from each package's manifest in the Site's `node_modules`, because no command runs
+a Module: the Areas in its `package.json#phis` (`modules[].eligibleAreas`) are written into the Server
+file as placements and decide which Area files import the package's Client door; its `exports` decide
+whether the fonts file imports `./fonts` — that boundary calls `next/font/local` and throws outside a
+Next build. A package that is not installed yet has neither answer: it stays in the Server file, where
+the Site's build refuses it by name, and `add` and `sync` say to run `sync` once it is installed.
 
 `--path` (default: the Site source path as for `init`) selects the Site repository for every command
 except `list`. Those commands refuse to run when the directory holds no `package.json`

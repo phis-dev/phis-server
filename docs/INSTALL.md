@@ -301,7 +301,7 @@ What `init` writes (scaffold version 3):
 | `src/app/sitemap.xml/route.ts`, `src/app/robots.txt/route.ts` | The crawler files. Asset bytes travel through the `/api/site` proxy. |
 | `src/app/globals.css` | Empty Site stylesheet. |
 | `src/runtime-modules/` | Area hosts that receive the Module projection. |
-| `src/generated/site-modules.ts`, `site-modules-client.ts`, `site-modules-authoring-client.ts`, `site-modules-fonts.ts` | The Module projection, empty until `phis module add`. |
+| `src/generated/site-modules.ts`, `site-modules-client-<area>.ts`, `site-modules-authoring-client.ts`, `site-modules-fonts.ts` | The Module projection, empty until `phis module add`. |
 | `.phis/scaffold-manifest.json` | Scaffold version, Site key, and the SHA-256 of every file written. `reconcile` uses it. |
 
 `config/site-runtime.json`, `.gitignore` and the four `src/generated/` files belong to the Site after

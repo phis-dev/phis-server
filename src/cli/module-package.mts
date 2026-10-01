@@ -5,6 +5,7 @@ import {
   isPhiRuntimeModuleCategory,
   readPhisModulePackageDeclaration,
   type PhisModulePackageDeclaration,
+  type PhisModulePackageEntry,
 } from "@phis/contracts/catalog";
 
 /**
@@ -162,6 +163,27 @@ export function siteModulePackageDeclaresFonts(siteRoot: string, packageName: st
   }
   const manifest = JSON.parse(readFileSync(manifestFile, "utf8")) as PackageManifest;
   return resolveExportTarget(manifest, "./fonts") !== null;
+}
+
+/**
+ * The Modules an installed package declares, with the Areas each may serve.
+ *
+ * Read from the same file as the typefaces and for the same reason: the projection is written per Area,
+ * so `phis module` has to know which package belongs in which Area before any of its code runs, and the
+ * package's manifest is the one place it may look. Null when the package is not installed yet or
+ * declares nothing -- the projection then places none of its Modules, and the Site's build says so by
+ * name. A declaration that is there but malformed throws: writing a projection from it would be a guess.
+ */
+export function readSiteModulePackageDeclaredModules(
+  siteRoot: string,
+  packageName: string,
+): readonly PhisModulePackageEntry[] | null {
+  const manifestFile = path.join(siteRoot, "node_modules", ...packageName.split("/"), "package.json");
+  if (!existsSync(manifestFile)) {
+    return null;
+  }
+  const declaration = readPhisModulePackageDeclaration(JSON.parse(readFileSync(manifestFile, "utf8")));
+  return declaration && declaration.modules.length > 0 ? declaration.modules : null;
 }
 
 /*

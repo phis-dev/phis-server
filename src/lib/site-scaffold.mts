@@ -3,7 +3,9 @@ import { spawn } from "node:child_process";
 import { access, cp, mkdir, readFile, readdir, rename, rmdir, stat, symlink, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 
-import { buildSiteModuleProjection } from "../cli/modules.mts";
+import { PHI_CMS_AREA_KEYS } from "@phis/contracts/cms";
+
+import { buildSiteModuleProjection, siteModuleClientProjectionFile } from "../cli/modules.mts";
 import { toPhiRecord } from "./helpers/record.ts";
 
 export const PHI_SITE_SCAFFOLD_VERSION = 3;
@@ -229,7 +231,7 @@ function runtimeModuleFiles() {
         `src/runtime-modules/${area}-client.tsx`,
         `"use client";\n\n`
         + `import { createPhi${name}RuntimeModuleClientBoundary } from "@phis/ui/next/areas/${area}-client";\n\n`
-        + `import { PHI_SITE_MODULES_CLIENT } from "@/generated/site-modules-client";\n`
+        + `import { PHI_SITE_MODULES_CLIENT } from "@/generated/site-modules-client-${area}";\n`
         // Only the Builder hosts authoring; every other Area must not reach that half of the projection.
         + (area === "builder"
           ? `import { PHI_SITE_MODULES_AUTHORING_CLIENT } from "@/generated/site-modules-authoring-client";\n\n`
@@ -250,7 +252,7 @@ function runtimeModuleFiles() {
  */
 export const PHI_SITE_MODULE_PROJECTION_FILES = [
   "src/generated/site-modules.ts",
-  "src/generated/site-modules-client.ts",
+  ...PHI_CMS_AREA_KEYS.map(siteModuleClientProjectionFile),
   "src/generated/site-modules-authoring-client.ts",
   "src/generated/site-modules-fonts.ts",
 ] as const;
@@ -327,10 +329,11 @@ function rootErrorAreaFile() {
 
 function siteModuleProjectionFiles() {
   // Exactly what `phis module` writes for no Modules, so the first `module add` changes only the lists.
-  const { server, client, authoringClient, fonts } = buildSiteModuleProjection([], []);
+  const { server, clients, authoringClient, fonts } = buildSiteModuleProjection([], [], new Map());
   return {
     "src/generated/site-modules.ts": server,
-    "src/generated/site-modules-client.ts": client,
+    ...Object.fromEntries(PHI_CMS_AREA_KEYS.map((area) =>
+      [siteModuleClientProjectionFile(area), clients[area]])),
     "src/generated/site-modules-authoring-client.ts": authoringClient,
     "src/generated/site-modules-fonts.ts": fonts,
   };

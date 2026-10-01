@@ -51,7 +51,11 @@ function writePackage(input: {
       peerDependencies: { react: "^19", "@phis/ui": "^1" },
       phis: {
         sourceLocale: "en",
-        modules: [{ moduleId: `${PACKAGE}/modules/widgets`, category: "content" }],
+        modules: [{
+          moduleId: `${PACKAGE}/modules/widgets`,
+          category: "content",
+          eligibleAreas: ["public"],
+        }],
       },
       ...input.manifest,
     }),
@@ -147,10 +151,34 @@ describe("inspecting a built Module package", () => {
       .toEqual(["declaration_invalid"]);
   });
 
+  /*
+   * The Areas decide which generated Client files import the package, so a declaration without them,
+   * or naming a place the Site does not have, cannot be projected at all.
+   */
+  it("reports Areas that are missing, unknown, or doubled as an unreadable declaration", () => {
+    for (const eligibleAreas of [undefined, [], ["storefront"], ["app", "app"]]) {
+      expect(codesFor(writePackage({
+        manifest: {
+          phis: {
+            sourceLocale: "en",
+            modules: [{ moduleId: `${PACKAGE}/modules/w`, category: "content", eligibleAreas }],
+          },
+        },
+      }))).toEqual(["declaration_invalid"]);
+    }
+  });
+
   it("catches a Module declared under somebody else's package name", () => {
     expect(codesFor(writePackage({
       manifest: {
-        phis: { sourceLocale: "en", modules: [{ moduleId: "@other/pkg/modules/x", category: "content" }] },
+        phis: {
+          sourceLocale: "en",
+          modules: [{
+            moduleId: "@other/pkg/modules/x",
+            category: "content",
+            eligibleAreas: ["public"],
+          }],
+        },
       },
     }))).toEqual(["declaration_foreign_module"]);
   });
@@ -158,7 +186,14 @@ describe("inspecting a built Module package", () => {
   it("warns about a category this release does not offer, without failing the rest", () => {
     expect(codesFor(writePackage({
       manifest: {
-        phis: { sourceLocale: "en", modules: [{ moduleId: `${PACKAGE}/modules/w`, category: "logistics" }] },
+        phis: {
+          sourceLocale: "en",
+          modules: [{
+            moduleId: `${PACKAGE}/modules/w`,
+            category: "logistics",
+            eligibleAreas: ["public"],
+          }],
+        },
       },
     }))).toEqual(["declaration_unknown_category"]);
   });
