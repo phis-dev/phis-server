@@ -190,9 +190,25 @@ describe("site scaffold", () => {
     const files = buildPhiSiteScaffoldFiles(context);
 
     expect(files["src/runtime-modules/root.ts"]).toContain(
-      "createPhiNextRootLayout(PHI_SITE_MODULES, PHI_SITE_MODULE_FONTS)",
+      "createPhiNextRootLayout(\n  PHI_SITE_MODULES,\n  PHI_SITE_MODULE_FONTS,\n  loadPhiSiteOverlayZones,\n)",
     );
     expect(files["src/app/(site)/layout.tsx"]).toContain("@/runtime-modules/root");
+  });
+
+  /*
+   * A closed Overlay asks for its zones when it first opens. Only the Site holds its Area bridges, so the
+   * Server Action is the Site's, and both document shells hand it on.
+   */
+  it("gives both document shells the Site's Server Action for Overlay zones", () => {
+    const files = buildPhiSiteScaffoldFiles(context);
+
+    expect(files["src/runtime-modules/overlay-zones.ts"]?.startsWith('"use server";')).toBe(true);
+    expect(files["src/runtime-modules/overlay-zones.ts"]).toContain(
+      "loadPhiCmsOverlayZones(loadPhiSiteAreaBridge, request)",
+    );
+    for (const file of ["src/runtime-modules/root.ts", "src/runtime-modules/root-static.ts"]) {
+      expect(files[file]).toContain('import { loadPhiSiteOverlayZones } from "@/runtime-modules/overlay-zones";');
+    }
   });
 
   it("repairs managed wrappers without overwriting runtime secrets or unknown files", async () => {
