@@ -190,24 +190,33 @@ describe("site scaffold", () => {
     const files = buildPhiSiteScaffoldFiles(context);
 
     expect(files["src/runtime-modules/root.ts"]).toContain(
-      "createPhiNextRootLayout(\n  PHI_SITE_MODULES,\n  PHI_SITE_MODULE_FONTS,\n  loadPhiSiteOverlayZones,\n)",
+      "createPhiNextRootLayout(\n  PHI_SITE_MODULES,\n  PHI_SITE_MODULE_FONTS,\n  PhiSiteOverlayZonesProvider,\n)",
     );
     expect(files["src/app/(site)/layout.tsx"]).toContain("@/runtime-modules/root");
   });
 
   /*
    * A closed Overlay asks for its zones when it first opens. Only the Site holds its Area bridges, so the
-   * Server Action is the Site's, and both document shells hand it on.
+   * Server Action is the Site's -- and only a Client file may import it: imported by a root layout, the
+   * Action brought every Area's bridge into that layout's server graph and every Area's Widget clients,
+   * the Builder's among them, onto every page.
    */
-  it("gives both document shells the Site's Server Action for Overlay zones", () => {
+  it("imports the Site's Overlay zones Action from a Client file only", () => {
     const files = buildPhiSiteScaffoldFiles(context);
 
     expect(files["src/runtime-modules/overlay-zones.ts"]?.startsWith('"use server";')).toBe(true);
     expect(files["src/runtime-modules/overlay-zones.ts"]).toContain(
       "loadPhiCmsOverlayZones(loadPhiSiteAreaBridge, request)",
     );
+    expect(files["src/runtime-modules/overlay-zones-client.tsx"]?.startsWith('"use client";')).toBe(true);
+    const importers = Object.entries(files)
+      .filter(([, content]) => content.includes('from "@/runtime-modules/overlay-zones";'))
+      .map(([file]) => file);
+    expect(importers).toEqual(["src/runtime-modules/overlay-zones-client.tsx"]);
     for (const file of ["src/runtime-modules/root.ts", "src/runtime-modules/root-static.ts"]) {
-      expect(files[file]).toContain('import { loadPhiSiteOverlayZones } from "@/runtime-modules/overlay-zones";');
+      expect(files[file]).toContain(
+        'import { PhiSiteOverlayZonesProvider } from "@/runtime-modules/overlay-zones-client";',
+      );
     }
   });
 

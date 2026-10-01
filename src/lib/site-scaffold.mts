@@ -175,7 +175,7 @@ function runtimeModuleFiles() {
       `import { createPhiNextRootLayout } from "@phis/ui/next/root-route";\n\n`
       + `import { PHI_SITE_MODULES } from "@/generated/site-modules";\n`
       + `import { PHI_SITE_MODULE_FONTS } from "@/generated/site-modules-fonts";\n`
-      + `import { loadPhiSiteOverlayZones } from "@/runtime-modules/overlay-zones";\n\n`
+      + `import { PhiSiteOverlayZonesProvider } from "@/runtime-modules/overlay-zones-client";\n\n`
       + `/**\n`
       + ` * The document shell, given what this Site installed.\n`
       + ` *\n`
@@ -185,13 +185,13 @@ function runtimeModuleFiles() {
       + `export const PhiSiteRootLayout = createPhiNextRootLayout(\n`
       + `  PHI_SITE_MODULES,\n`
       + `  PHI_SITE_MODULE_FONTS,\n`
-      + `  loadPhiSiteOverlayZones,\n`
+      + `  PhiSiteOverlayZonesProvider,\n`
       + `);\n`,
     "src/runtime-modules/root-static.ts":
       `import { createPhiNextStaticRootLayout } from "@phis/ui/next/root-route";\n\n`
       + `import { PHI_SITE_MODULES } from "@/generated/site-modules";\n`
       + `import { PHI_SITE_MODULE_FONTS } from "@/generated/site-modules-fonts";\n`
-      + `import { loadPhiSiteOverlayZones } from "@/runtime-modules/overlay-zones";\n`
+      + `import { PhiSiteOverlayZonesProvider } from "@/runtime-modules/overlay-zones-client";\n`
       + `import { PhiPublicRuntimeModuleClientBoundary } from "@/runtime-modules/public-client";\n\n`
       + `/**\n`
       + ` * The document shell of the static tree. Only the Public Area renders there, so its Client boundary\n`
@@ -200,7 +200,7 @@ function runtimeModuleFiles() {
       + `export const PhiSiteStaticRootLayout = createPhiNextStaticRootLayout(\n`
       + `  PHI_SITE_MODULES,\n`
       + `  PHI_SITE_MODULE_FONTS,\n`
-      + `  loadPhiSiteOverlayZones,\n`
+      + `  PhiSiteOverlayZonesProvider,\n`
       + `  PhiPublicRuntimeModuleClientBoundary,\n`
       + `);\n`,
     "src/runtime-modules/overlay-zones.ts":
@@ -210,12 +210,23 @@ function runtimeModuleFiles() {
       + `/**\n`
       + ` * A closed Overlay's zones, rendered when it first opens.\n`
       + ` *\n`
-      + ` * A Server Action, because the Site alone holds its Area bridges. The root layouts hand it to every\n`
-      + ` * Overlay; what it renders, and for whom, is decided in \`@phis/ui\`.\n`
+      + ` * A Server Action, because the Site alone holds its Area bridges. Only \`overlay-zones-client.tsx\`\n`
+      + ` * imports it; what it renders, and for whom, is decided in \`@phis/ui\`.\n`
       + ` */\n`
       + `export async function loadPhiSiteOverlayZones(request: unknown) {\n`
       + `  return loadPhiCmsOverlayZones(loadPhiSiteAreaBridge, request);\n`
       + `}\n`,
+    "src/runtime-modules/overlay-zones-client.tsx":
+      `"use client";\n\n`
+      + `import { createPhiOverlayZonesLoaderProvider } from "@phis/ui/next/overlay-zones-client";\n\n`
+      + `import { loadPhiSiteOverlayZones } from "@/runtime-modules/overlay-zones";\n\n`
+      + `/**\n`
+      + ` * The Overlay zones Action, imported here and nowhere on the server side.\n`
+      + ` *\n`
+      + ` * Imported by a root layout, the Action would bring every Area's bridge into that layout's graph and\n`
+      + ` * every Area's Widget clients onto every page. From this Client file the page holds a reference only.\n`
+      + ` */\n`
+      + `export const PhiSiteOverlayZonesProvider = createPhiOverlayZonesLoaderProvider(loadPhiSiteOverlayZones);\n`,
   };
   const bridges = {
     "src/runtime-modules/area-bridges.ts":
