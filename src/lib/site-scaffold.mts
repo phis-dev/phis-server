@@ -125,7 +125,7 @@ export type PhiSiteReleaseArtifact = {
 const DEFAULT_VERSIONS: Record<string, string> = {
   "@ant-design/icons": "6.3.4",
   "@ant-design/nextjs-registry": "1.3.0",
-  "@phis/ui": "0.1.0",
+  "@phis/ui": "0.2.0",
   antd: "6.6.4",
   next: "16.3.5",
   react: "19.3.0",
