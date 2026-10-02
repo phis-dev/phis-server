@@ -88,7 +88,7 @@ Run the CLI as `pnpm phis ...` or `./phis ...` from the `phis-server` directory
 
 The package installs the server to `/usr/lib/phis/server`, the CLI to `/usr/bin/phis`, creates the
 `phis` user and the stage `/srv/phis/stages/prod` with an empty `config/phis-runtime.json`, a link to
-the packaged `phis-config.json`, and `.env` holding `PORT=5301`, `HOSTNAME=127.0.0.1` and a generated
+the packaged `phis-config.json` (`/usr/share/phis/phis-config.json`), and `.env` holding `PORT=5301`, `HOSTNAME=127.0.0.1` and a generated
 `NEXT_SERVER_ACTIONS_ENCRYPTION_KEY`. The service is `phis@prod.service`. The server address is then
 `http://127.0.0.1:5301`. `/usr/bin/phis` operates on `/srv/phis/stages/prod` unless `--root` or
 `PHIS_ROOT` names another stage ([CLI.md](./CLI.md#running-the-cli)). Continue with the configuration

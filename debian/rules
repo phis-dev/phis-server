@@ -44,6 +44,9 @@ override_dh_auto_install:
 	install -D -m 0644 debian/phis-stage.env debian/phis/usr/share/phis/templates/env/stage.env
 	install -D -m 0644 debian/phis.nginx.conf debian/phis/usr/share/phis/templates/nginx/phis.conf
 	install -D -m 0644 debian/phis.apache2.conf debian/phis/usr/share/phis/templates/apache2/phis.conf
+# The checked-in static configuration, which holds no secret, as what a stage links to until it needs its
+# own. Outside the server directory, where the check below refuses any `config/`.
+	install -D -m 0644 config/phis-config.json debian/phis/usr/share/phis/phis-config.json
 # `/usr/bin/phis` is its own script rather than a link to the wrapper: it names the stage the wrapper would
 # otherwise take to be the application directory.
 	install -D -m 0755 debian/phis-cli debian/phis/usr/bin/phis

@@ -1,7 +1,6 @@
 #!/bin/sh
 set -e
 
-APP_ROOT="/usr/lib/phis/server"
 STAGE_ROOT="/srv/phis/stages/prod"
 CONFIG_DIR="${STAGE_ROOT}/config"
 STAGE_ENV_PATH="${STAGE_ROOT}/.env"
@@ -59,8 +58,12 @@ case "$1" in
     ensure_stage_dir "${STAGE_ROOT}"
     ensure_stage_dir "${CONFIG_DIR}"
 
+    # A link left dangling by an earlier version is replaced; a stage's own file or link stays.
+    if [ -L "${STATIC_CONFIG_LINK}" ] && [ ! -e "${STATIC_CONFIG_LINK}" ]; then
+      rm -f "${STATIC_CONFIG_LINK}"
+    fi
     if [ ! -e "${STATIC_CONFIG_LINK}" ]; then
-      ln -s "${APP_ROOT}/config/phis-config.json" "${STATIC_CONFIG_LINK}"
+      ln -s /usr/share/phis/phis-config.json "${STATIC_CONFIG_LINK}"
     fi
 
     if [ ! -e "${RUNTIME_CONFIG_PATH}" ]; then
