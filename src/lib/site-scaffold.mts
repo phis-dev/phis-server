@@ -286,6 +286,7 @@ export const PHI_SITE_MODULE_PROJECTION_FILES = [
   ...PHI_CMS_AREA_KEYS.map(siteModuleClientProjectionFile),
   "src/generated/site-modules-authoring-client.ts",
   "src/generated/site-modules-fonts.ts",
+  "src/generated/site-module-packages.json",
 ] as const;
 
 /**
@@ -366,13 +367,14 @@ function rootErrorAreaFile() {
 
 function siteModuleProjectionFiles() {
   // Exactly what `phis module` writes for no Modules, so the first `module add` changes only the lists.
-  const { server, clients, authoringClient, fonts } = buildSiteModuleProjection([], [], new Map());
+  const { server, clients, authoringClient, fonts, packages } = buildSiteModuleProjection([], [], new Map());
   return {
     "src/generated/site-modules.ts": server,
     ...Object.fromEntries(PHI_CMS_AREA_KEYS.map((area) =>
       [siteModuleClientProjectionFile(area), clients[area]])),
     "src/generated/site-modules-authoring-client.ts": authoringClient,
     "src/generated/site-modules-fonts.ts": fonts,
+    "src/generated/site-module-packages.json": packages,
   };
 }
 
@@ -554,7 +556,7 @@ export function buildPhiSiteScaffoldFiles(
     [`${SITE_APP}/builder/api/[[...path]]/route.ts`]: `export { POST } from "@phis/ui/builder-api-route";\n\nexport const dynamic = "force-dynamic";\nexport const runtime = "nodejs";\n`,
     "src/app/sitemap.xml/route.ts": `import { buildPhiSitemapRouteHandler } from "@phis/ui/next/seo-routes";\nimport { PHI_PUBLIC_CMS_SITE_BRIDGE } from "@/runtime-modules/public";\n\nexport const dynamic = "force-dynamic";\nexport const runtime = "nodejs";\nexport const GET = buildPhiSitemapRouteHandler({ bridge: PHI_PUBLIC_CMS_SITE_BRIDGE });\n`,
     "src/app/robots.txt/route.ts": `import { buildPhiRobotsRouteHandler } from "@phis/ui/next/seo-routes";\nimport { PHI_PUBLIC_CMS_SITE_BRIDGE } from "@/runtime-modules/public";\n\nexport const dynamic = "force-dynamic";\nexport const runtime = "nodejs";\nexport const GET = buildPhiRobotsRouteHandler({ bridge: PHI_PUBLIC_CMS_SITE_BRIDGE });\n`,
-    "next.config.ts": `import type { NextConfig } from "next";\n\nconst nextConfig: NextConfig = {\n  output: "standalone",\n  reactStrictMode: true,\n  images: { localPatterns: [{ pathname: "/api/site/media/**" }] },\n  // Rendered Public pages live in this process's memory, addressed by the Site's change marker.\n  cacheHandler: require.resolve("@phis/ui/next/cache-handler"),\n  cacheMaxMemorySize: 0,\n  experimental: {\n    authInterrupts: true,\n    // A cached page the browser already holds is asked for again after this long, so a publish reaches an open tab.\n    staleTimes: { static: 30 },\n  },\n  transpilePackages: ["@phis/ui"],\n};\nexport default nextConfig;\n`,
+    "next.config.ts": `import type { NextConfig } from "next";\n\nconst siteModulePackages = require("./src/generated/site-module-packages.json") as string[];\n\nconst nextConfig: NextConfig = {\n  output: "standalone",\n  reactStrictMode: true,\n  images: { localPatterns: [{ pathname: "/api/site/media/**" }] },\n  // Rendered Public pages live in this process's memory, addressed by the Site's change marker.\n  cacheHandler: require.resolve("@phis/ui/next/cache-handler"),\n  cacheMaxMemorySize: 0,\n  experimental: {\n    authInterrupts: true,\n    // A cached page the browser already holds is asked for again after this long, so a publish reaches an open tab.\n    staleTimes: { static: 30 },\n  },\n  // The installed Module packages, written by \`phis module\`; one from a tarball is compiled only when named.\n  transpilePackages: ["@phis/ui", ...siteModulePackages],\n};\nexport default nextConfig;\n`,
     "tsconfig.json": `${JSON.stringify({ compilerOptions: { target: "ES2022", lib: ["dom", "dom.iterable", "esnext"], allowJs: false, skipLibCheck: true, strict: true, noEmit: true, esModuleInterop: true, module: "esnext", moduleResolution: "bundler", resolveJsonModule: true, isolatedModules: true, jsx: "react-jsx", incremental: true, plugins: [{ name: "next" }], paths: { "@/*": ["./src/*"] } }, include: ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts", ".next/dev/types/**/*.ts"], exclude: ["node_modules"] }, null, 2)}\n`,
     "package.json": packageJson(context, manager),
     // Canonical, so it holds nothing that differs per instance: the address and the token are filled in

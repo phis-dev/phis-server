@@ -36,6 +36,7 @@ export type PhiSiteModuleDesiredState = {
 const PROJECTION_SERVER = "src/generated/site-modules.ts";
 const PROJECTION_AUTHORING_CLIENT = "src/generated/site-modules-authoring-client.ts";
 const PROJECTION_FONTS = "src/generated/site-modules-fonts.ts";
+const PROJECTION_PACKAGES = "src/generated/site-module-packages.json";
 
 /** One Client projection per Area, so an Area's bundle holds only its own Modules' Client doors. */
 export function siteModuleClientProjectionFile(area: PhiCmsAreaKey) {
@@ -261,7 +262,21 @@ export function buildSiteModuleProjection(
     "",
   ].join("\n");
 
-  return { server, clients, authoringClient, fonts };
+  /*
+   * The installed packages by name, which the scaffold's `next.config.ts` spreads into
+   * `transpilePackages`.
+   *
+   * A package linked from a workspace resolves outside `node_modules` and Next compiles it either way; one
+   * installed from a tarball or a registry is not compiled, and its `./fonts` boundary -- a
+   * `next/font/local` call Next evaluates only in a module it compiles -- then contributes no typefaces
+   * and says nothing. Every installed package is listed, not only those with typefaces: which subpaths a
+   * Module's build needs compiled is the Module's business, and compiling a built package again costs
+   * time, never correctness. JSON rather than a module, because `next.config.ts` reads it before anything
+   * is compiled.
+   */
+  const packages = `${JSON.stringify(sorted.map((entry) => entry.packageName), null, 2)}\n`;
+
+  return { server, clients, authoringClient, fonts, packages };
 }
 
 /**
@@ -286,7 +301,7 @@ export function writeSiteModuleProjection(siteRoot: string, modules: readonly Ph
       declarations.set(entry.packageName, declared);
     }
   }
-  const { server, clients, authoringClient, fonts } =
+  const { server, clients, authoringClient, fonts, packages } =
     buildSiteModuleProjection(modules, fontPackages, declarations);
   const clientFiles = PHI_CMS_AREA_KEYS.map((area) =>
     [siteModuleClientProjectionFile(area), clients[area]] as const);
@@ -296,12 +311,14 @@ export function writeSiteModuleProjection(siteRoot: string, modules: readonly Ph
   }
   writeAtomic(path.join(siteRoot, PROJECTION_AUTHORING_CLIENT), authoringClient);
   writeAtomic(path.join(siteRoot, PROJECTION_FONTS), fonts);
+  writeAtomic(path.join(siteRoot, PROJECTION_PACKAGES), packages);
   return {
     files: [
       PROJECTION_SERVER,
       ...clientFiles.map(([file]) => file),
       PROJECTION_AUTHORING_CLIENT,
       PROJECTION_FONTS,
+      PROJECTION_PACKAGES,
     ],
     moduleCount: modules.length,
     fontPackages,

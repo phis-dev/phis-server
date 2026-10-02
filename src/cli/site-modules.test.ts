@@ -255,6 +255,7 @@ describe("writing the projection into a Site", () => {
       "src/generated/site-modules-client-accounting.ts",
       "src/generated/site-modules-authoring-client.ts",
       "src/generated/site-modules-fonts.ts",
+      "src/generated/site-module-packages.json",
     ]);
     expect(result.unplacedPackages).toEqual([]);
     const publicClient =
@@ -284,5 +285,28 @@ describe("writing the projection into a Site", () => {
     expect(result.unplacedPackages).toEqual(["@acme/status"]);
     const fonts = await readFile(path.join(root, "src/generated/site-modules-fonts.ts"), "utf8");
     expect(fonts).toContain("export const PHI_SITE_MODULE_FONTS = [\n];");
+  });
+});
+
+/*
+ * The package list is what lets Next compile a Module installed from a tarball: the scaffold's
+ * `next.config.ts` spreads it into `transpilePackages`, and a package missing from it loses its `./fonts`
+ * boundary without a word.
+ */
+describe("the generated package list", () => {
+  it("names every installed package, sorted, whether it ships typefaces or not", () => {
+    const { packages } = buildSiteModuleProjection(
+      [
+        { packageName: "@zeta/late", origin: "resolved" },
+        { packageName: "@alpha/early", origin: "local" },
+      ],
+      ["@zeta/late"],
+      new Map(),
+    );
+    expect(JSON.parse(packages)).toEqual(["@alpha/early", "@zeta/late"]);
+  });
+
+  it("is an empty list for a Site without Modules", () => {
+    expect(JSON.parse(buildSiteModuleProjection([], [], new Map()).packages)).toEqual([]);
   });
 });

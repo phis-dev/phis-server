@@ -289,7 +289,7 @@ What `init` writes (scaffold version 3):
 | Path | Content |
 | --- | --- |
 | `package.json` | Scripts `dev`, `build`, `start`, `typecheck`; `next`, `react`, `antd`, `@phis/ui` and types; `engines.node >=24.21.0`; `packageManager`. |
-| `tsconfig.json`, `next.config.ts` | `output: "standalone"`, the in-memory render cache handler from `@phis/ui/next/cache-handler`, `transpilePackages: ["@phis/ui"]`. |
+| `tsconfig.json`, `next.config.ts` | `output: "standalone"`, the in-memory render cache handler from `@phis/ui/next/cache-handler`, `transpilePackages` with `@phis/ui` and the installed Module packages from `src/generated/site-module-packages.json`. |
 | `.gitignore` | Ignores `node_modules/`, `.next/`, build output, `.phis/releases/` and `config/site-runtime.json`. |
 | `config/site-runtime.json` | `site.key`, `site.publicUrl`, `phis.apiBaseUrl`, `phis.internalToken` (from `api.internalToken`), `network.internalApiTimeoutMs` (`8000`). |
 | `config/site-runtime.example.json` | The same keys with `site.publicUrl`, `phis.apiBaseUrl` and `phis.internalToken` empty. |
@@ -301,7 +301,7 @@ What `init` writes (scaffold version 3):
 | `src/app/sitemap.xml/route.ts`, `src/app/robots.txt/route.ts` | The crawler files. Asset bytes travel through the `/api/site` proxy. |
 | `src/app/globals.css` | Empty Site stylesheet. |
 | `src/runtime-modules/` | Area hosts that receive the Module projection. |
-| `src/generated/site-modules.ts`, `site-modules-client-<area>.ts`, `site-modules-authoring-client.ts`, `site-modules-fonts.ts` | The Module projection, empty until `phis module add`. Build state, ignored by git. |
+| `src/generated/site-modules.ts`, `site-modules-client-<area>.ts`, `site-modules-authoring-client.ts`, `site-modules-fonts.ts`, `site-module-packages.json` | The Module projection, empty until `phis module add`. Build state, ignored by git. |
 | `.phis/scaffold-manifest.json` | Scaffold version, Site key, and the SHA-256 of every file written. `reconcile` uses it. |
 
 `config/site-runtime.json`, `.gitignore` and the `src/generated/` files belong to the Site after
@@ -464,7 +464,8 @@ phis update acme --path /opt/phis/sources/acme
 
 `module add` records the Module in `config/phis-modules.json`, adds the dependency when `--spec` is
 given, and rewrites `src/generated/site-modules*.ts` — including `site-modules-fonts.ts`, which lists
-the installed packages that export `./fonts`. A package added before it is installed is not yet
+the installed packages that export `./fonts`, and `site-module-packages.json`, which `next.config.ts`
+reads so Next compiles every installed Module package. A package added before it is installed is not yet
 readable, so run `phis module sync --site acme --path /opt/phis/sources/acme` after the install to
 pick up the typefaces it ships. `update` installs and builds a new release;
 deploy it (step 7) and restart the Site service. Then activate the Module for an Area in the Builder.

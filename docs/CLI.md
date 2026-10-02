@@ -441,7 +441,8 @@ Brings an existing Site repository to the current scaffold:
   `--package-manager` (see above).
 - Site-owned files (`PHI_SITE_OWNED_AFTER_INIT`) are left alone when they exist: `.gitignore`, the
   Module projection `src/generated/site-modules.ts`, `site-modules-client-<area>.ts` (one per Area),
-  `site-modules-authoring-client.ts`, `site-modules-fonts.ts`, and `config/site-runtime.json`. A
+  `site-modules-authoring-client.ts`, `site-modules-fonts.ts`, `site-module-packages.json`, and
+  `config/site-runtime.json`. A
   missing `.gitignore` or projection file is recreated with its initial content. A missing
   `config/site-runtime.json` is not: `reconcile` knows neither the server address nor the token.
   Create it from `config/site-runtime.example.json`.
@@ -493,7 +494,10 @@ A Site Module is a package the Site build imports through the generated projecti
 `module` commands never fetch packages and never build.
 
 The projection is written together: `site-modules.ts` (Server), one `site-modules-client-<area>.ts` per
-Area, `site-modules-authoring-client.ts`, and `site-modules-fonts.ts`. Everything that is not in the
+Area, `site-modules-authoring-client.ts`, `site-modules-fonts.ts`, and `site-module-packages.json`, the
+installed package names the scaffold's `next.config.ts` spreads into `transpilePackages` -- a package from
+a tarball or a registry is compiled only when named there, and its `./fonts` boundary loads nothing
+otherwise. Everything that is not in the
 desired state is read from each package's manifest in the Site's `node_modules`, because no command runs
 a Module: the Areas in its `package.json#phis` (`modules[].eligibleAreas`) are written into the Server
 file as placements and decide which Area files import the package's Client door; its `exports` decide

@@ -65,6 +65,15 @@ describe("site scaffold", () => {
     expect(JSON.parse(files["package.json"]!).dependencies["@phis/ui"]).toBe("0.2.0");
   });
 
+  it("compiles the installed Module packages the projection lists", () => {
+    const files = buildPhiSiteScaffoldFiles(context);
+
+    // A Module from a tarball is compiled only when named, and only then are its typefaces loaded.
+    expect(files["src/generated/site-module-packages.json"]).toBe("[]\n");
+    expect(files["next.config.ts"]).toContain('require("./src/generated/site-module-packages.json")');
+    expect(files["next.config.ts"]).toContain('transpilePackages: ["@phis/ui", ...siteModulePackages]');
+  });
+
   it("draws the Shell below an Area root and nothing around the root itself", () => {
     const files = buildPhiSiteScaffoldFiles(context);
 

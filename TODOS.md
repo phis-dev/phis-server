@@ -229,17 +229,6 @@ tracked here because the server contract depends on them.
   against, but that tag has to be pushed and its own release has to succeed before a tag here can get
   through its typecheck. Nothing changes locally in the meantime: `linkWorkspacePackages` keeps linking the
   local sibling for as long as its version satisfies the range.
-- **A Module from a tarball and `transpilePackages`.** `phis module add` records the package, writes the
-  dependency and rewrites the projection, and nothing names the package in the Site's `next.config.ts`. A
-  Module linked from a workspace resolves to a path outside `node_modules` and Next compiles it either
-  way; one installed from a tarball is not compiled, and its `./fonts` boundary -- a `next/font/local`
-  call Next evaluates only in a module it compiles -- then contributes no typefaces and says nothing
-  ([phis-ui NEXT_INTEGRATION.md](../phis-ui/NEXT_INTEGRATION.md#fonts)). It is not written from the CLI
-  today because `next.config.ts` is a Site-owned source file that `reconcile` leaves alone: editing it
-  would mean parsing whatever the Site has made of it, and a regex over somebody's config is how a Site
-  loses its cache handler. The projection is the place it belongs -- a generated list of the installed
-  package names that the scaffold's `next.config.ts` spreads into `transpilePackages`, so the list follows
-  what is installed instead of the operator's memory.
 - **Nothing sets the mode or the owner of `phis-runtime.json`.** `docs/INSTALL.md` states that the file holds
   secrets and wants mode `0600` owned by the service account, and `writePhiRuntimeConfigSync` writes it
   through a temporary file and a rename without touching either -- so its permissions are whatever the
