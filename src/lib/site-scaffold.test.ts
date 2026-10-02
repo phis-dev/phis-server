@@ -62,7 +62,7 @@ describe("site scaffold", () => {
     expect(hooks).toContain("buildPhiHookProxyHandlers");
     // What arrives from the open internet must not pick up a claim to have come from inside.
     expect(hooks).toContain("{ internalToken: false }");
-    expect(JSON.parse(files["package.json"]!).dependencies["@phis/ui"]).toBe("0.2.0");
+    expect(JSON.parse(files["package.json"]!).dependencies["@phis/ui"]).toBe("0.2.1");
   });
 
   it("compiles the installed Module packages the projection lists", () => {
