@@ -172,7 +172,7 @@ function runtimeModuleFiles() {
   const areas: readonly ("public" | typeof AREAS[number])[] = ["public", ...AREAS];
   const root = {
     "src/runtime-modules/root.ts":
-      `import { createPhiNextRootLayout } from "@phis/ui/next/root-route";\n\n`
+      `import { createPhiNextRootLayout, createPhiNextRootMetadata } from "@phis/ui/next/root-route";\n\n`
       + `import { PHI_SITE_MODULES } from "@/generated/site-modules";\n`
       + `import { PHI_SITE_MODULE_FONTS } from "@/generated/site-modules-fonts";\n`
       + `import { PhiSiteOverlayZonesProvider } from "@/runtime-modules/overlay-zones-client";\n\n`
@@ -186,9 +186,11 @@ function runtimeModuleFiles() {
       + `  PHI_SITE_MODULES,\n`
       + `  PHI_SITE_MODULE_FONTS,\n`
       + `  PhiSiteOverlayZonesProvider,\n`
-      + `);\n`,
+      + `);\n\n`
+      + `/** The head, from the same union: the Signet the followed Theme Set carries is a block like any other. */\n`
+      + `export const generatePhiSiteRootMetadata = createPhiNextRootMetadata(PHI_SITE_MODULES);\n`,
     "src/runtime-modules/root-static.ts":
-      `import { createPhiNextStaticRootLayout } from "@phis/ui/next/root-route";\n\n`
+      `import { createPhiNextStaticRootLayout, createPhiNextStaticRootMetadata } from "@phis/ui/next/root-route";\n\n`
       + `import { PHI_SITE_MODULES } from "@/generated/site-modules";\n`
       + `import { PHI_SITE_MODULE_FONTS } from "@/generated/site-modules-fonts";\n`
       + `import { PhiSiteOverlayZonesProvider } from "@/runtime-modules/overlay-zones-client";\n`
@@ -202,7 +204,9 @@ function runtimeModuleFiles() {
       + `  PHI_SITE_MODULE_FONTS,\n`
       + `  PhiSiteOverlayZonesProvider,\n`
       + `  PhiPublicRuntimeModuleClientBoundary,\n`
-      + `);\n`,
+      + `);\n\n`
+      + `/** The head of the static tree, read from the published Site. */\n`
+      + `export const generatePhiSiteStaticRootMetadata = createPhiNextStaticRootMetadata(PHI_SITE_MODULES);\n`,
     "src/runtime-modules/overlay-zones.ts":
       `"use server";\n\n`
       + `import { loadPhiCmsOverlayZones } from "@phis/ui/next/overlay-zones";\n\n`
@@ -452,7 +456,7 @@ function staticPublicFiles() {
   const noParams = `export async function generateStaticParams() {\n  return [];\n}\n`;
   const page = `import { createPhiNextStaticPublicPage } from "@phis/ui/next/area-route";\n${bridgeImport}\n${STATIC_SEGMENT_CONFIG}${noParams}\nconst route = createPhiNextStaticPublicPage(PHI_PUBLIC_CMS_SITE_BRIDGE);\n\nexport const generateMetadata = route.generateMetadata;\nexport default route.Page;\n`;
   const files: Record<string, string> = {
-    [`${STATIC_APP}/layout.tsx`]: `import { generatePhiNextStaticRootMetadata } from "@phis/ui/next/root-route";\n\nimport { PhiSiteStaticRootLayout } from "@/runtime-modules/root-static";\n\nimport "@/app/globals.css";\n\n${STATIC_SEGMENT_CONFIG}${noParams}\nexport const generateMetadata = generatePhiNextStaticRootMetadata;\nexport default PhiSiteStaticRootLayout;\n`,
+    [`${STATIC_APP}/layout.tsx`]: `import { generatePhiSiteStaticRootMetadata, PhiSiteStaticRootLayout } from "@/runtime-modules/root-static";\n\nimport "@/app/globals.css";\n\n${STATIC_SEGMENT_CONFIG}${noParams}\nexport const generateMetadata = generatePhiSiteStaticRootMetadata;\nexport default PhiSiteStaticRootLayout;\n`,
     [`${STATIC_APP}/not-found.tsx`]: `import { root } from "next/root-params";\nimport { createPhiNextStaticPublicNotFound } from "@phis/ui/next/area-route";\n${bridgeImport}\nconst PhiStaticPublicNotFound = createPhiNextStaticPublicNotFound(PHI_PUBLIC_CMS_SITE_BRIDGE);\n\nexport default async function StaticPublicNotFound() {\n  return <PhiStaticPublicNotFound locale={await root()} />;\n}\n`,
     [`${STATIC_APP}/(root)/page.tsx`]: page,
     [`${STATIC_APP}/(pages)/[...path]/page.tsx`]: page,
@@ -532,7 +536,7 @@ export function buildPhiSiteScaffoldFiles(
     ...dynamicRootFiles(),
     ...staticPublicFiles(),
     ...Object.assign({}, ...AREAS.map(staticAreaFiles)),
-    [`${SITE_APP}/layout.tsx`]: `import { generatePhiNextRootMetadata } from "@phis/ui/next/root-route";\n\nimport { PhiSiteRootLayout } from "@/runtime-modules/root";\n\nimport "@/app/globals.css";\n\nexport const dynamic = "force-dynamic";\n\nexport const generateMetadata = generatePhiNextRootMetadata;\nexport default PhiSiteRootLayout;\n`,
+    [`${SITE_APP}/layout.tsx`]: `import { generatePhiSiteRootMetadata, PhiSiteRootLayout } from "@/runtime-modules/root";\n\nimport "@/app/globals.css";\n\nexport const dynamic = "force-dynamic";\n\nexport const generateMetadata = generatePhiSiteRootMetadata;\nexport default PhiSiteRootLayout;\n`,
     [`${SITE_APP}/page.tsx`]: `import { PhiNextSiteIndexPage } from "@phis/ui/next/root-route";\n\nexport const dynamic = "force-dynamic";\nexport default PhiNextSiteIndexPage;\n`,
     "src/app/globals.css": "/* Site-specific global overrides may be added here. */\n",
     ".gitignore": PHI_SITE_GITIGNORE,
