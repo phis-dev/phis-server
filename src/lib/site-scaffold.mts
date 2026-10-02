@@ -527,7 +527,7 @@ function packageJson(context: PhiSiteScaffoldContext, manager: PhiSiteScaffoldPa
  */
 export function buildPhiSiteScaffoldFiles(
   context: PhiSiteScaffoldContext,
-  manager: PhiSiteScaffoldPackageManager = context.packageManager ?? "pnpm",
+  manager: PhiSiteScaffoldPackageManager = context.packageManager ?? "npm",
 ) {
   const files: Record<string, string> = {
     ...runtimeModuleFiles(),
@@ -643,8 +643,8 @@ function readDeclaredManagerName(value: unknown) {
  * Which package manager a Site uses.
  *
  * The one an operator named, else the one the Site declares in `package.json`, else the one whose
- * lockfile it has. A new Site starts on pnpm. An existing Site that says nothing is refused rather than
- * assumed to be pnpm: the guess used to decide which lockfiles were deleted.
+ * lockfile it has. A new Site starts on npm, which every Node brings along. An existing Site that says
+ * nothing is refused rather than assumed to be one: the guess used to decide which lockfiles were deleted.
  */
 export async function resolvePhiSitePackageManager(
   root: string,
@@ -652,7 +652,7 @@ export async function resolvePhiSitePackageManager(
   mode: "init" | "reconcile",
 ): Promise<PhiSiteScaffoldPackageManager> {
   if (explicit) return explicit;
-  if (mode === "init") return "pnpm";
+  if (mode === "init") return "npm";
   const declared = readDeclaredManagerName((await readJsonRecord(path.join(root, "package.json"))).packageManager);
   if (declared) {
     if ((PHI_SITE_SCAFFOLD_PACKAGE_MANAGERS as readonly string[]).includes(declared)) {

@@ -261,7 +261,7 @@ Usage:
   phis reconcile <site key> [--path <site source path>] [--package-manager pnpm|npm|yarn|bun] [--install]
   phis update <site key> [--path <site source path>] [--package-manager pnpm|npm|yarn|bun]
                          --path defaults to <sites.sourcePathRoot>/<site key>. Without --package-manager the
-                         Site's own is used (packageManager field, else its lockfile; pnpm for a new Site).
+                         Site's own is used (packageManager field, else its lockfile; npm for a new Site).
 
   phis module list [--site <site key>]
   phis module add   --site <site key> --package <@scope/name> [--spec <version or workspace:*>] [--path <site source path>]

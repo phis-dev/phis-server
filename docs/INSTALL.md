@@ -282,7 +282,7 @@ phis init acme --path /opt/phis/sources/acme --api-base-url http://127.0.0.1:530
 - `--api-base-url` is required: the address the Site's server-side code uses to reach
   `@phis/server`, as seen from the host the Site runs on. The Debian package serves on
   `http://127.0.0.1:5301`. Only `init` writes it into `config/site-runtime.json`.
-- `--package-manager` defaults to `pnpm` for a new Site.
+- `--package-manager` defaults to `npm` for a new Site.
 
 What `init` writes (scaffold version 3):
 
@@ -334,7 +334,7 @@ and copies the standalone build with `.next/static` and `public/` into
 `/opt/phis/sources/acme/.phis/releases/<release id>/`. The printed release id is the directory name.
 Next nests the app inside `.next/standalone` when the Site is built inside a workspace; `update` finds
 it there and writes a `server.js` at the top of the release that starts it, so every release starts
-the same way. Equivalent by hand: `pnpm install && pnpm typecheck && pnpm build` in the Site
+the same way. Equivalent by hand: `npm install && npm run typecheck && npm run build` in the Site
 directory, without the release copy.
 
 The release holds no copy of `config/site-runtime.json` and so no internal token. Its
@@ -360,10 +360,10 @@ NODE_ENV=production HOSTNAME=127.0.0.1 PORT=52001 node server.js
 - Rendered Public Area pages are kept in the process's memory, 128 MB per process by default. Set
   `PHIS_RENDER_CACHE_MB` to change it and size the host's memory for all Site processes (see
   `STATIC_RENDERING.md` in `@phis/ui`). Instances do not share the cache.
-- `pnpm start` (`next start`) in the source directory also serves the build, but warns that it does
+- `npm start` (`next start`) in the source directory also serves the build, but warns that it does
   not work with the scaffold's `output: "standalone"`; use `server.js` in production.
 
-For development, `pnpm dev` in the Site directory runs `next dev`.
+For development, `npm run dev` in the Site directory runs `next dev`.
 
 ## 8. Web server and service units
 
@@ -524,7 +524,7 @@ phis update acme --path /opt/phis/sources/acme
 - rewrites the canonical scaffold files to the current scaffold (Site edits to them are lost);
 - adds to `package.json` what the scaffold needs and the Site lacks, keeping every version, script
   and field the Site already has; only `engines.node` is set to `>=24.21.0`. To move to a newer
-  `@phis/ui` or Next, raise the version in the Site (`pnpm up @phis/ui`) and then run `update`;
+  `@phis/ui` or Next, raise the version in the Site (`npm install @phis/ui@<version>`) and then run `update`;
 - keeps the Site-owned files (`PHI_SITE_OWNED_AFTER_INIT`: `config/site-runtime.json`, `.gitignore`,
   `src/generated/site-modules*.ts`) as they are;
 - removes files an earlier scaffold wrote and the current one no longer does, if their content is

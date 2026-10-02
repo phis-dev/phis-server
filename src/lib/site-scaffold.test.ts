@@ -364,6 +364,15 @@ describe("site scaffold", () => {
     expect(await readFile(path.join(root, "config/site-runtime.json"), "utf8")).toBe(before);
   });
 
+  it("starts a new Site on npm when no manager is named", async () => {
+    const root = await scaffoldRoot();
+    const { packageManager: _named, ...unnamed } = context;
+    const result = await reconcilePhiSiteScaffold(root, unnamed, "init");
+
+    expect(result.packageManager).toBe("npm");
+    expect(JSON.parse(await readFile(path.join(root, "package.json"), "utf8")).packageManager).toMatch(/^npm@/);
+  });
+
   it("uses the Site's own package manager and leaves its lockfile alone", async () => {
     const root = await scaffoldRoot();
     await reconcilePhiSiteScaffold(root, { ...context, packageManager: "npm" }, "init");
