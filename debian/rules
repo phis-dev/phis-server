@@ -29,7 +29,11 @@ override_dh_auto_install:
 	app_dir=$$(dirname "$$(find .next/standalone -maxdepth 2 -name server.js -print -quit)"); \
 		test -n "$$app_dir" || { echo "no server.js in .next/standalone" >&2; exit 1; }; \
 		cp -a "$$app_dir/server.js" "$$app_dir/package.json" "$$app_dir/.next" "$$app_dir/public" \
-			debian/phis/usr/lib/phis/server/
+			debian/phis/usr/lib/phis/server/; \
+		if [ -d "$$app_dir/node_modules" ]; then cp -a "$$app_dir/node_modules" debian/phis/usr/lib/phis/server/; fi
+# The app's own `node_modules` holds what pnpm links next to the importer rather than at the top --
+# `next` among it, which `server.js` requires first. Its links point at `../../node_modules/.pnpm`, so
+# they resolve once it sits beside the top-level copy above.
 	cp -a .next/static debian/phis/usr/lib/phis/server/.next/
 	rm -rf debian/phis/usr/lib/phis/server/.next/cache
 # Read at run time through the app root: the Core schema by setup and `phis schema apply`.
