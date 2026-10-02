@@ -38,6 +38,12 @@ override_dh_auto_install:
 # The operator CLI, bundled by `build:cli`, and the wrapper `/usr/bin/phis` runs.
 	install -D -m 0755 dist/phis.mjs debian/phis/usr/lib/phis/server/dist/phis.mjs
 	install -m 0755 phis debian/phis/usr/lib/phis/server/phis
+# The templates are installed under a name of their own: a `.install` line names a directory, so
+# `templates/nginx/phis.conf` there became a directory holding `phis.nginx.conf`, and the postinst's copy
+# of it failed the whole configure step.
+	install -D -m 0644 debian/phis-stage.env debian/phis/usr/share/phis/templates/env/stage.env
+	install -D -m 0644 debian/phis.nginx.conf debian/phis/usr/share/phis/templates/nginx/phis.conf
+	install -D -m 0644 debian/phis.apache2.conf debian/phis/usr/share/phis/templates/apache2/phis.conf
 # `/usr/bin/phis` is its own script rather than a link to the wrapper: it names the stage the wrapper would
 # otherwise take to be the application directory.
 	install -D -m 0755 debian/phis-cli debian/phis/usr/bin/phis
