@@ -49,7 +49,7 @@ override_dh_auto_install:
 		   -o -path '*/server/addons' -o -path '*/server/debian' -o -path '*/server/docs' \) -print); \
 		test -z "$$forbidden" || { echo "must not ship:" >&2; echo "$$forbidden" >&2; exit 1; }
 	find debian/phis/usr/lib/phis/node_modules -type d \( -name '*linuxmusl*' -o -name '*musl*' \) -prune -exec rm -rf {} +
-	find debian/phis/usr/lib/phis/node_modules/argon2/prebuilds -type f -name '*.musl.node' -delete
+	find debian/phis/usr/lib/phis/node_modules/.pnpm -path '*/node_modules/argon2/prebuilds/*' -type f -name '*.musl.node' -delete
 	cd debian/phis/usr/lib/phis/node_modules && \
 		argon2_target=$$(printf '%s\n' .pnpm/argon2@*/node_modules/argon2) && \
 		ln -s "$$argon2_target" argon2 && \
