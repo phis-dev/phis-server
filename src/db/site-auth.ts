@@ -321,9 +321,11 @@ export async function upsertSiteAuthPolicy(
   return { siteId, revision: config.revision, ...config.policy };
 }
 
-export async function listSiteAuthMethods(siteId: number, stage?: PhiAuthStage) {
-  const config = await getSiteAuthConfiguration(siteId);
-  if (!config) return [];
+function projectSiteAuthMethods(
+  siteId: number,
+  config: NonNullable<Awaited<ReturnType<typeof getSiteAuthConfiguration>>>,
+  stage?: PhiAuthStage,
+) {
   const providers = new Map(config.providers.map((provider) => [provider.installationKey, provider]));
   return config.methods
     .filter((method) => !stage || method.stage === stage)
@@ -337,6 +339,24 @@ export async function listSiteAuthMethods(siteId: number, stage?: PhiAuthStage) 
     }));
 }
 
+export async function listSiteAuthMethods(siteId: number, stage?: PhiAuthStage) {
+  const config = await getSiteAuthConfiguration(siteId);
+  return config ? projectSiteAuthMethods(siteId, config, stage) : [];
+}
+
+/**
+ * The Site's auth policy and its methods from one read of the one row both live in.
+ *
+ * Asked for separately -- `getSiteAuthPolicy` beside `listSiteAuthMethods` -- the same row was read
+ * twice, in the public auth manifest, the admin sections and every session reevaluation.
+ */
+export async function readSiteAuthSettings(siteId: number) {
+  const config = await getSiteAuthConfiguration(siteId);
+  return config
+    ? { policy: { siteId, revision: config.revision, ...config.policy }, methods: projectSiteAuthMethods(siteId, config) }
+    : { policy: null, methods: [] as SiteAuthMethod[] };
+}
+
 /**
  * Resolves one method row. With `providerInstallationKey` given (string or null) the match is
  * exact; without it, the first enabled row for the method key wins (sortOrder-first), falling back
@@ -348,12 +368,21 @@ export async function getSiteAuthMethod(
   stage: PhiAuthStage,
   providerInstallationKey?: string | null,
 ) {
-  const methods = (await listSiteAuthMethods(siteId, stage))
-    .filter((method) => method.methodKey === methodKey);
+  return pickSiteAuthMethod(await listSiteAuthMethods(siteId, stage), methodKey, stage, providerInstallationKey);
+}
+
+/** `getSiteAuthMethod`'s choice, made from methods the caller already holds. */
+export function pickSiteAuthMethod(
+  methods: readonly SiteAuthMethod[],
+  methodKey: string,
+  stage: PhiAuthStage,
+  providerInstallationKey?: string | null,
+) {
+  const candidates = methods.filter((method) => method.stage === stage && method.methodKey === methodKey);
   if (providerInstallationKey !== undefined) {
-    return methods.find((method) => method.providerInstallationKey === providerInstallationKey) ?? null;
+    return candidates.find((method) => method.providerInstallationKey === providerInstallationKey) ?? null;
   }
-  return methods.find((method) => method.enabled) ?? methods[0] ?? null;
+  return candidates.find((method) => method.enabled) ?? candidates[0] ?? null;
 }
 
 export async function upsertSiteAuthMethod(input: Omit<SiteAuthMethod, "provider">) {

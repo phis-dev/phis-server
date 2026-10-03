@@ -1,6 +1,6 @@
 import "server-only";
 
-import { getSiteAuthPolicy, listSiteAuthMethods } from "@/db/site-auth";
+import { readSiteAuthSettings } from "@/db/site-auth";
 import {
   PHI_CORE_AUTH_METHODS,
   isPhiCoreAuthMethodStage,
@@ -11,10 +11,7 @@ import { hasSiteAuthSecrets } from "@/lib/site-auth/secret-store";
 const IMPLEMENTED_METHODS = new Set(["password", "google", "apple", "github", "microsoft"]);
 
 export async function buildPublicAuthManifest(siteId: number): Promise<PhiPublicAuthManifest> {
-  const [policy, methods] = await Promise.all([
-    getSiteAuthPolicy(siteId),
-    listSiteAuthMethods(siteId),
-  ]);
+  const { policy, methods } = await readSiteAuthSettings(siteId);
   // Whether a provider is configured, asked once for all of them. This is a public endpoint, and the
   // answer is a row count rather than a plaintext -- decrypting per provider to learn it would be work
   // nobody asked for.

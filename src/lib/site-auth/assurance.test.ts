@@ -12,9 +12,11 @@ const mocks = vi.hoisted(() => ({
   revokeSession: vi.fn(),
 }));
 
+// Policy and methods come from one read; the fixtures keep stating them apart.
 vi.mock("@/db/site-auth", () => ({
   getSiteAuthPolicy: mocks.policy,
-  getSiteAuthMethod: mocks.method,
+  readSiteAuthSettings: async () => ({ policy: await mocks.policy(), methods: [] }),
+  pickSiteAuthMethod: () => mocks.method(),
 }));
 vi.mock("@/db/user-auth-factors", () => ({
   hasConfirmedTotpFactor: mocks.hasTotp,
@@ -48,7 +50,7 @@ const requiredPolicy = {
 
 beforeEach(() => {
   mocks.policy.mockReset().mockResolvedValue(requiredPolicy);
-  mocks.method.mockReset().mockResolvedValue({ enabled: true });
+  mocks.method.mockReset().mockReturnValue({ enabled: true });
   mocks.hasTotp.mockReset().mockResolvedValue(false);
   mocks.createSession.mockReset().mockResolvedValue({
     id: "session-id",
@@ -205,5 +207,19 @@ describe("Site authentication assurance", () => {
       authMethodKeys: ["password"], authPolicyRevision: 3,
     });
     expect(mocks.updateSession).toHaveBeenCalledWith(expect.objectContaining({ authPolicyRevision: 4 }));
+  });
+
+  it("reads the Site's auth settings once for a reevaluation", async () => {
+    mocks.policy.mockResolvedValue({
+      ...requiredPolicy,
+      factorPolicy: { ...requiredPolicy.factorPolicy, enforcement: "immediate" },
+    });
+    await reevaluateCompleteSession({
+      sessionId: "session-id", siteId: 7, userId: 42, coreRoleFlags: 0,
+      authMethodKeys: ["password"], authPolicyRevision: 3,
+    });
+    // Policy and the factor method live in one row; the reevaluation and the state it resolves share
+    // the read instead of each asking for it.
+    expect(mocks.policy).toHaveBeenCalledTimes(1);
   });
 });

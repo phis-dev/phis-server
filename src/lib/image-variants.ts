@@ -10,6 +10,7 @@ import {
   resolvePhiMediaKindFromContentType,
 } from "@/lib/constants/media";
 import { normalizeMediaFocalRect } from "@/db/media";
+import type { PhisMediaObjectHead } from "@phis/contracts/addon";
 import { createPhisMediaStorageServiceForProfile } from "@/lib/media-storage";
 import { getMediaStorageProfile } from "@/db/media-spaces";
 
@@ -22,6 +23,12 @@ export type EnsureImageAssetVariantResult = {
   height: number;
   variantKey: number;
   variantName: string | null;
+  /**
+   * The object as its storage answers for it, and that storage. The delivery route streams from here;
+   * reading the variant row, the Profile and the head again after this cost it twice the work.
+   */
+  head: PhisMediaObjectHead;
+  storage: Awaited<ReturnType<typeof createPhisMediaStorageServiceForProfile>>;
 };
 
 function buildVariantStorageKey(assetStorageKey: string, variantKey: number) {
@@ -142,6 +149,8 @@ export async function ensureImageAssetVariant(
         height: existing.height,
         variantKey: existing.variantKey,
         variantName: resolvePhiImageAssetVariantKeyName(existing.variantKey),
+        head: existingHead,
+        storage: existingStorageService,
       };
     }
   }
@@ -239,5 +248,7 @@ export async function ensureImageAssetVariant(
     height: rendered.info.height ?? spec.height,
     variantKey: normalizedVariantKey,
     variantName: resolvePhiImageAssetVariantKeyName(normalizedVariantKey),
+    head: storedObject,
+    storage: storageService,
   };
 }

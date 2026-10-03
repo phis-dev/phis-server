@@ -2,7 +2,7 @@ import "server-only";
 
 import type { NextRequest } from "next/server";
 
-import { getSiteAuthMethod, getSiteAuthPolicy } from "@/db/site-auth";
+import { getSiteAuthPolicy, pickSiteAuthMethod, readSiteAuthSettings } from "@/db/site-auth";
 import { hasConfirmedTotpFactor } from "@/db/user-auth-factors";
 import {
   createUserSession,
@@ -66,8 +66,12 @@ export async function resolveRequiredSessionState(input: {
   coreRoleFlags: number;
   authMethodKeys: readonly string[];
   login: boolean;
+  /** The Site's auth settings where the caller has just read them, so the row is not read again. */
+  settings?: Awaited<ReturnType<typeof readSiteAuthSettings>>;
 }) {
-  const policy = await getSiteAuthPolicy(input.siteId);
+  // Policy and methods from one read of the row both live in.
+  const settings = input.settings ?? await readSiteAuthSettings(input.siteId);
+  const policy = settings.policy;
   if (!policy) {
     return { state: PHI_AUTH_SESSION_STATES.complete, policyRevision: 1, deferred: false } as const;
   }
@@ -92,7 +96,7 @@ export async function resolveRequiredSessionState(input: {
       deferred: isDeferredByGrace(policy.factorPolicy),
     } as const;
   }
-  const method = await getSiteAuthMethod(input.siteId, "totp", "second-factor");
+  const method = pickSiteAuthMethod(settings.methods, "totp", "second-factor");
   if (!method?.enabled) {
     throw new Error("AUTH_REQUIRED_FACTOR_UNAVAILABLE");
   }
@@ -186,11 +190,13 @@ export async function reevaluateCompleteSession(input: {
   authMethodKeys: readonly string[];
   authPolicyRevision: number;
 }) {
-  const policy = await getSiteAuthPolicy(input.siteId);
+  const settings = await readSiteAuthSettings(input.siteId);
+  const policy = settings.policy;
   if (!policy || policy.revision <= input.authPolicyRevision) {
     return PHI_AUTH_SESSION_STATES.complete;
   }
   const required = await resolveRequiredSessionState({
+    settings,
     siteId: input.siteId,
     userId: input.userId,
     coreRoleFlags: input.coreRoleFlags,

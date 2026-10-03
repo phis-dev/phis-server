@@ -682,6 +682,17 @@ export async function getMediaAssetById(id: number) {
   return rows[0] ? mapAsset(rows[0]) : null;
 }
 
+/** `getMediaAssetById` for several ids in one statement; an id with no row is absent from the map. */
+export async function getMediaAssetsByIds(ids: readonly number[]) {
+  const unique = Array.from(new Set(ids.filter((id) => Number.isSafeInteger(id) && id > 0)));
+  if (unique.length === 0) return new Map<number, ReturnType<typeof mapAsset>>();
+  const { rows } = await getPool().query<AssetRow>(
+    `SELECT ${ASSET_COLUMNS} FROM phis.media_assets WHERE id = ANY($1::int[])`,
+    [unique],
+  );
+  return new Map(rows.map((row) => { const asset = mapAsset(row); return [asset.id, asset] as const; }));
+}
+
 export async function listMediaAssetsBySiteWithFilters(siteId: number, filters: ListMediaAssetsFilters) {
   const parts = [`SELECT ${ASSET_COLUMNS} FROM phis.media_assets WHERE site_id = $1`];
   const values: Array<number | string | number[]> = [siteId]; appendAssetFilters(parts, values, filters);

@@ -6,7 +6,7 @@ import { resolvePhiSiteSourceLocale } from "@/lib/config-files";
 import { PHI_CANONICAL_SOURCE_LOCALE, resolvePhiLocaleCapability } from "@/lib/locale";
 import { SITE_FLAG_ACTIVE } from "@/lib/site-flags";
 import { clearSiteConfigCache } from "@/db/site-config";
-import { getMediaAssetById } from "@/db/media";
+import { getMediaAssetsByIds } from "@/db/media";
 import { getConfiguredTranslationSupportedLocalesSync } from "@/lib/translation-locale-options";
 import { insertPhiSite } from "@/db/cli-sites.mts";
 import { normalizePhiEmail, normalizePhiSiteKey } from "@/lib/helpers/normalize";
@@ -634,12 +634,20 @@ export async function getSiteRuntimeConfig(siteId: number) {
     ? { ...(brand.logo as Record<string, unknown>) }
     : null;
   if (brand && logos) {
+    const assetIdOf = (logo: unknown) => {
+      if (!logo || typeof logo !== "object") return null;
+      const { sourceKind, assetId } = logo as { sourceKind?: unknown; assetId?: unknown };
+      return sourceKind === "asset" && typeof assetId === "number" && Number.isInteger(assetId) ? assetId : null;
+    };
+    // Both modes in one statement -- and often one row, since light and dark tend to share a picture.
+    const assets = await getMediaAssetsByIds(
+      (["light", "dark"] as const).flatMap((mode) => assetIdOf(logos[mode]) ?? []),
+    );
     for (const mode of ["light", "dark"] as const) {
       const logo = logos[mode];
-      if (!logo || typeof logo !== "object") continue;
-      const { sourceKind, assetId } = logo as { sourceKind?: unknown; assetId?: unknown };
-      if (sourceKind !== "asset" || typeof assetId !== "number" || !Number.isInteger(assetId)) continue;
-      const asset = await getMediaAssetById(assetId);
+      const assetId = assetIdOf(logo);
+      if (assetId == null) continue;
+      const asset = assets.get(assetId);
       if (!asset) continue;
       logos[mode] = {
         ...(logo as Record<string, unknown>),

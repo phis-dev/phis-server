@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import {
-  getSiteAuthPolicy,
-  listSiteAuthMethods,
-  upsertSiteAuthPolicy,
   type SiteAuthPolicy,
+  getSiteAuthPolicy,
+  readSiteAuthSettings,
+  upsertSiteAuthPolicy,
 } from "@/db/site-auth";
 import { verifyCsrfRequest } from "@/lib/auth";
 import { requireSiteAdminOnlyApiContext } from "@/lib/guards/site-admin-api";
@@ -118,10 +118,7 @@ export async function updateSiteAuthPolicySections(
 }
 
 export async function buildAuthAdminSectionSettings(siteId: number) {
-  const [policy, methods] = await Promise.all([
-    getSiteAuthPolicy(siteId),
-    listSiteAuthMethods(siteId),
-  ]);
+  const { policy, methods } = await readSiteAuthSettings(siteId);
   const passwordMethod = methods.find(
     (method) => method.methodKey === "password" && method.stage === "primary",
   );

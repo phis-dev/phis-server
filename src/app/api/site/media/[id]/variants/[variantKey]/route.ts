@@ -1,11 +1,9 @@
 import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 
-import { getImageAssetVariantByAssetIdAndKey, getMediaAssetBySiteAndId } from "@/db/media";
-import { getMediaStorageProfile } from "@/db/media-spaces";
+import { getMediaAssetBySiteAndId } from "@/db/media";
 import { ensureImageAssetVariant } from "@/lib/image-variants";
 import { canDeliverMediaAsset, mediaDeliveryCacheControl, mediaDeliverySafetyHeaders } from "@/lib/media-delivery";
-import { createPhisMediaStorageServiceForProfile } from "@/lib/media-storage";
 import { requireSiteFromRequest } from "@/lib/site-context";
 
 async function deliver(
@@ -23,14 +21,10 @@ async function deliver(
   if (!asset || !await canDeliverMediaAsset(request, asset)) {
     return new NextResponse(null, { status: 404 });
   }
-  await ensureImageAssetVariant(asset, variantKey);
-  const variant = await getImageAssetVariantByAssetIdAndKey(asset.id, variantKey);
+  // The variant as ensured: its head and its storage come with it, so nothing here reads them again.
+  const variant = await ensureImageAssetVariant(asset, variantKey);
   if (!variant) return new NextResponse(null, { status: 404 });
-  const profile = await getMediaStorageProfile(site.id, variant.storageProfileId);
-  if (!profile) return NextResponse.json({ error: "Storage Profile unavailable." }, { status: 503 });
-  const storage = await createPhisMediaStorageServiceForProfile(profile);
-  const head = await storage.headObject(variant.storageKey);
-  if (!head) return new NextResponse(null, { status: 404 });
+  const { head, storage } = variant;
   const contentType = head.contentType || variant.contentType;
   const headers = new Headers({
     "content-type": contentType,
