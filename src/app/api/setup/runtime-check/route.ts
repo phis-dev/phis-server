@@ -13,6 +13,7 @@ import { getPhiAppRoot, resolvePhiAppPath } from "@/lib/app-paths";
 import {
   isBootstrapEnabled,
 } from "@/lib/config";
+import { isSameOriginRequest } from "@/lib/helpers/request";
 import {
   getPhiRuntimeConfigPath,
   getPhiStaticConfigPath,
@@ -166,6 +167,15 @@ function runRuntimeCheck(checkId: RuntimeCheckKey) {
 export async function POST(request: Request) {
   if (!isBootstrapEnabled()) {
     return NextResponse.json({ error: "Not found." }, { status: 404 });
+  }
+  /*
+   * Only the setup page itself may run a check. Two of them act -- one writes a probe file beside the
+   * runtime configuration, one runs the CLI -- and a cross-site form could otherwise set them off on an
+   * installation that is being set up. What the answers say is not the boundary: the same page shows
+   * them to whoever has it open, and the setup window is what decides who that can be.
+   */
+  if (!isSameOriginRequest(request)) {
+    return NextResponse.json({ error: "Cross-origin request refused." }, { status: 403 });
   }
 
   let checkId: unknown;
