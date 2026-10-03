@@ -176,6 +176,28 @@ export function buildPhisAddonAssetsCapability(input: {
   }
 
   /**
+   * The store a session's bytes went to, which is the one named when it was reserved.
+   *
+   * Not the Space's default of today: a Profile switched between `begin` and `finalize` would otherwise
+   * have the object looked for, recorded and abandoned in a store it was never written to.
+   */
+  async function resolveSessionStore(session: { spaceId: number; storageProfileId: number }) {
+    const space = await ensureAddonMediaSpace(siteId, addonId);
+    if (session.spaceId !== space.id) {
+      throw new PhisAddonAssetError("The reservation does not belong to this Add-on's Space.");
+    }
+    const profile = await getMediaStorageProfile(siteId, session.storageProfileId);
+    if (!profile) {
+      throw new PhisAddonAssetError("The Storage Profile this reservation was made in is unavailable.");
+    }
+    return {
+      space,
+      profile,
+      service: await createPhisMediaStorageServiceForProfile(profile, siteKey),
+    };
+  }
+
+  /**
    * Gives a file up entirely: the object, the variants derived from it, the row and the Space's figures.
    *
    * Best effort by construction. Both callers have already removed what pointed at the file, and the
@@ -351,7 +373,7 @@ export function buildPhisAddonAssetsCapability(input: {
         await abortMediaUploadSessionByToken(token);
         throw new PhisAddonAssetError(`Reservation ${token} has expired.`);
       }
-      const { space, profile, service } = await resolveSpace();
+      const { space, profile, service } = await resolveSessionStore(session);
       /*
        * What actually landed, asked of the storage rather than of the caller.
        *
@@ -540,7 +562,7 @@ export function buildPhisAddonAssetsCapability(input: {
       ) {
         return false;
       }
-      const { service } = await resolveSpace();
+      const { service } = await resolveSessionStore(session);
       await service.deleteObject(session.stagingStorageKey).catch(() => {});
       // Removes the row and gives its reservation back in one statement.
       return abortMediaUploadSessionByToken(token);

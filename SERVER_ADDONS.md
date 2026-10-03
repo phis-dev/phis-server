@@ -1099,7 +1099,8 @@ there -- the finished row is the record, not the reservation that produced it.
 
 As on the Media route, a reservation past its expiry is refused and released rather than redeemed (its
 bytes are already discounted from the Space), a proxied body must have been recorded as arrived, and only
-one `finalize` per token gets past the claim.
+one `finalize` per token gets past the claim. The object is looked for in the Storage Profile the
+reservation was made in, not in whatever the Space's default has since become.
 
 #### The path on the row
 
