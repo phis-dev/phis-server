@@ -907,16 +907,6 @@ export async function deleteMediaUploadSessionByToken(token: string) {
 }
 
 /**
- * The success-path delete on a caller's connection, for a finalize that commits the reservation and
- * creates the Asset row in one transaction and has to take the session row with them. While the row
- * exists its bytes are reserved; a row left behind marked complete is read as a reservation by every
- * expiry release and subtracted a second time.
- */
-export async function deleteMediaUploadSessionWithDb(db: DbQueryable, token: string) {
-  await db.query(`DELETE FROM phis.media_upload_sessions WHERE token = $1`, [token.trim()]);
-}
-
-/**
  * Aborts an upload session: removes the row and releases its quota reservation in one statement.
  *
  * This is the required teardown for every non-success path — expiry, validation failure, duplicate,

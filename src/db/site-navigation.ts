@@ -21,7 +21,6 @@ import {
   SITE_KEYED_SCOPE_COLUMNS,
   SITE_REVISION_TABLES,
   stableJsonStringify,
-  type SiteKeyedScopeRecord,
   type SiteKeyedScopeRow,
 } from "@/db/site-revision-scopes";
 import {
@@ -135,8 +134,6 @@ export async function projectSiteNavigationOverlayTargets(
     }),
   };
 }
-
-export type SiteNavigationScopeRecord = SiteKeyedScopeRecord;
 
 function normalizeSiteNavigationKey(value: string) {
   return value.trim().toLowerCase();
