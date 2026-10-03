@@ -1,6 +1,7 @@
 import "server-only";
 
 import { getPool } from "@/lib/db";
+import { hasPhiFlag } from "@/lib/helpers/flags";
 import {
   PHIS_ADDON_FLAG_GLOBALLY_ENABLED,
   PHI_SITE_SERVER_ADDON_FLAG_REQUESTED_ENABLED,
@@ -56,7 +57,7 @@ export async function getPhisAddonRegistryRecord(addonId: string) {
     manifestDigest: row.manifest_digest,
     releaseBuildId: row.release_build_id,
     globallyEnabled:
-      (row.flags & PHIS_ADDON_FLAG_GLOBALLY_ENABLED) !== 0,
+      hasPhiFlag(row.flags, PHIS_ADDON_FLAG_GLOBALLY_ENABLED),
   } satisfies PhisAddonRegistryRecord;
 }
 
@@ -76,7 +77,7 @@ export async function isPhisAddonEnabledForSite(addonId: string, siteId: number)
   const row = rows[0];
   return Boolean(
     row &&
-      (row.flags & PHI_SITE_SERVER_ADDON_FLAG_REQUESTED_ENABLED) !== 0 &&
+      hasPhiFlag(row.flags, PHI_SITE_SERVER_ADDON_FLAG_REQUESTED_ENABLED) &&
       row.configuration_status === "ready",
   );
 }
@@ -103,7 +104,7 @@ export async function getPhisAddonSiteState(addonId: string, siteId: number) {
   return row
     ? {
         requestedEnabled:
-          (row.flags & PHI_SITE_SERVER_ADDON_FLAG_REQUESTED_ENABLED) !== 0,
+          hasPhiFlag(row.flags, PHI_SITE_SERVER_ADDON_FLAG_REQUESTED_ENABLED),
         configurationStatus: row.configuration_status,
         effectiveStatus: row.effective_status,
         diagnosticCode: row.diagnostic_code,
