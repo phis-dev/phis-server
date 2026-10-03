@@ -9,15 +9,6 @@ export const dynamic = "force-dynamic";
 
 type AssignmentAction = "assign_to_me" | "assign_to_user" | "unassign" | "move_to_queue";
 
-function normalizeInteger(value: unknown) {
-  if (typeof value === "number" && Number.isInteger(value)) {
-    return value;
-  }
-
-  const parsed = Number.parseInt(normalizeString(value), 10);
-  return Number.isInteger(parsed) ? parsed : null;
-}
-
 function normalizeAction(value: unknown): AssignmentAction | null {
   const normalized = normalizeString(value).toLowerCase();
   if (
@@ -53,6 +44,15 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   if (!action) {
     return NextResponse.json({ error: "Unsupported assignment action." }, { status: 400 });
   }
+  // Read strictly, like the ticket id: "12abc" names no queue and no person, and must not become 12.
+  const queueId = action === "move_to_queue" ? parseStrictPositiveInt(body.queueId) : null;
+  if (action === "move_to_queue" && !queueId) {
+    return NextResponse.json({ error: "Invalid queue id." }, { status: 400 });
+  }
+  const targetUserId = action === "assign_to_user" ? parseStrictPositiveInt(body.targetUserId) : null;
+  if (action === "assign_to_user" && !targetUserId) {
+    return NextResponse.json({ error: "Invalid target user id." }, { status: 400 });
+  }
 
   try {
     const ticket =
@@ -62,7 +62,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
             ticketId,
             action,
             userId,
-            queueId: normalizeInteger(body.queueId) ?? 0,
+            queueId: queueId!,
           })
         : action === "assign_to_user"
           ? await applySupportTicketAssignmentAction({
@@ -70,7 +70,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
               ticketId,
               action,
               userId,
-              targetUserId: normalizeInteger(body.targetUserId) ?? 0,
+              targetUserId: targetUserId!,
             })
         : await applySupportTicketAssignmentAction({
             siteId: site.id,
