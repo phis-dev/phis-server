@@ -49,12 +49,15 @@ export async function PUT(
    * What still holds for both is the session's own actor, checked below. The reservation names who it
    * was made for, and only they may redeem it.
    */
-  const site = staged?.purpose === PhiMediaUploadPurpose.AddonAsset
-    ? await requireSiteFromRequest(request)
+  // The Media branch's guard already read the session; only the Add-on branch, which has no guard
+  // of that kind, reads it below.
+  const actor = staged?.purpose === PhiMediaUploadPurpose.AddonAsset
+    ? { site: await requireSiteFromRequest(request), session: undefined }
     : await (async () => {
         const context = await requireMediaSpaceWriteContext(request, async () => staged?.spaceId ?? null);
-        return context.error ? null : context.site;
+        return context.error ? { site: null, session: null } : { site: context.site, session: context.session };
       })();
+  const site = actor.site;
   if (!site) {
     // The same answer whichever branch declined, because the two together are what a caller would
     // otherwise use this route to tell apart.
@@ -66,7 +69,7 @@ export async function PUT(
     return nextMediaError("upload_session_not_found", "Upload session not found.", 404);
   }
 
-  const authSession = await getSessionFromRequest(request, site.id);
+  const authSession = actor.session === undefined ? await getSessionFromRequest(request, site.id) : actor.session;
   if (!authSession) {
     return nextMediaError("authentication_required", "Authentication required.", 401);
   }

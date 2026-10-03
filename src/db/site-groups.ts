@@ -254,10 +254,15 @@ export async function readEffectiveGroupMembershipFlags(
   siteId: number,
   groupId: number,
   userId: number,
+  /**
+   * This user's group claims where the caller already holds them -- a guard read them for its actor as
+   * part of the authorization -- so the same projection is not read a second time in the request.
+   */
+  knownClaims?: readonly PhiViewerGroupClaim[],
 ) {
   const group = await getSiteGroupById(siteId, groupId);
   if (!group) return 0;
-  const claims = await resolveEffectivePhiViewerGroupClaims(siteId, userId);
+  const claims = knownClaims ?? await resolveEffectivePhiViewerGroupClaims(siteId, userId);
   return claims.find((claim) => claim.providerId === group.providerId && claim.key === group.key)?.flags ?? 0;
 }
 

@@ -10,16 +10,15 @@ import { NextResponse, type NextRequest } from "next/server";
  */
 
 const mocks = vi.hoisted(() => ({
-  mediaAuthority: vi.fn(),
-  authenticated: vi.fn(),
+  resolution: vi.fn(),
   asset: vi.fn(),
   space: vi.fn(),
   flags: vi.fn(),
 }));
 
 vi.mock("@/lib/guards/site-admin-api", () => ({
-  requireSiteMediaApiContext: mocks.mediaAuthority,
-  requireSiteAuthenticatedApiContext: mocks.authenticated,
+  resolveSiteRoleApiContext: mocks.resolution,
+  PHI_SITE_MEDIA_API_POLICY: {},
 }));
 vi.mock("@/db/media", () => ({ getMediaAssetBySiteAndId: mocks.asset }));
 vi.mock("@/db/media-spaces", () => ({
@@ -44,17 +43,18 @@ const OTHER = 99;
 const GROUP_SPACE = { id: 5, kind: 3, userId: null, groupId: 7 };
 const request = {} as NextRequest;
 
+/** Signed in and enabled, refused Media authority: the guard keeps the actor for the follow-up. */
 function noMediaAuthority() {
-  return { context: null, error: NextResponse.json({ error: "forbidden" }, { status: 403 }) };
+  return {
+    context: { site: { id: 1, key: "s" }, session: { userId: ACTOR } },
+    error: NextResponse.json({ error: "forbidden" }, { status: 403 }),
+    refusedByPolicy: true,
+  };
 }
 
 beforeEach(() => {
   vi.resetAllMocks();
-  mocks.mediaAuthority.mockResolvedValue(noMediaAuthority());
-  mocks.authenticated.mockResolvedValue({
-    context: { site: { id: 1, key: "s" }, session: { userId: ACTOR } },
-    error: null,
-  });
+  mocks.resolution.mockResolvedValue(noMediaAuthority());
   mocks.space.mockResolvedValue(GROUP_SPACE);
 });
 
@@ -161,5 +161,27 @@ describe("handing an Asset over", () => {
     expect(await mayTransfer({
       level: Editor, ownerUserId: ACTOR, nextOwnerUserId: OTHER, recipientLevel: 0,
     })).toBe(false);
+  });
+});
+
+/**
+ * Refused Media authority, the follow-up question is asked of the actor the guard already read. Asking
+ * it through a second guard ran the whole chain -- session, membership, roles, groups -- twice.
+ */
+describe("the guard chain behind a Media refusal", () => {
+  it("runs once for an actor who reaches the Asset through their group", async () => {
+    expect(await mayAct({ level: PhiGroupMembershipFlags.Member, ownerUserId: ACTOR, intent: "read" })).toBe(true);
+    expect(mocks.resolution).toHaveBeenCalledTimes(1);
+  });
+
+  it("asks nothing further when the refusal was not the policy's", async () => {
+    mocks.resolution.mockResolvedValue({
+      context: null,
+      error: NextResponse.json({ error: "Authentication required." }, { status: 401 }),
+      refusedByPolicy: false,
+    });
+    const result = await requireMediaAssetContext(request, 3, "read");
+    expect(result.error?.status).toBe(401);
+    expect(mocks.asset).not.toHaveBeenCalled();
   });
 });

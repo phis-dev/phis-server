@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { getMediaAssetBySiteAndId, setMediaAssetOwner } from "@/db/media";
 import { getMediaSpaceById, PhisMediaSpaceKind } from "@/db/media-spaces";
-import { getSessionFromRequest } from "@/db/user-sessions";
 import {
   canTransferMediaAssetOwnership,
   requireMediaAssetContext,
@@ -73,9 +72,8 @@ export async function PUT(
       return NextResponse.json({ error: "media_asset_owner_fixed" }, { status: 409 });
     }
 
-    const actorUserId = session?.userId
-      ?? (await getSessionFromRequest(request, site.id))?.userId
-      ?? null;
+    // The guard's session; it is present on every pass, so there is nothing to read again.
+    const actorUserId = session?.userId ?? null;
     if (actorUserId == null) {
       return NextResponse.json({ error: "media_asset_owner_forbidden" }, { status: 403 });
     }

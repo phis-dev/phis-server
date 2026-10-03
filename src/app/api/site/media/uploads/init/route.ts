@@ -16,7 +16,6 @@ import {
 } from "@/db/media-spaces";
 import { getMediaStorageProfile } from "@/db/media-spaces";
 import { nextMediaSpaceError } from "@/lib/media-response";
-import { getSessionFromRequest } from "@/db/user-sessions";
 import { createPhisMediaStorageServiceForProfile } from "@/lib/media-storage";
 import { logRuntimeEvent, normalizeLogThrowable } from "@/lib/log";
 import {
@@ -125,7 +124,7 @@ function refuseUpload(
 }
 
 export async function POST(request: NextRequest) {
-  const { site, siteWide, error } = await requireMediaSpaceWriteContext(request, async ({ site: ownSite, session }) => {
+  const { site, session: authSession, siteWide, error } = await requireMediaSpaceWriteContext(request, async ({ site: ownSite, session }) => {
     // The Space this upload is for, resolved through the same reader the body below uses, so the
     // authority and the destination can never be answered from two different values.
     const requested = await resolveAuthorizedMediaSpace({
@@ -140,7 +139,7 @@ export async function POST(request: NextRequest) {
     return error;
   }
 
-  const authSession = await getSessionFromRequest(request, site.id);
+  // The guard's own session: reading it again here was a second statement for the same row.
   if (!authSession) {
     return refuseUpload(request, { siteKey: site.key, userId: null }, {
       reason: "authentication_required",

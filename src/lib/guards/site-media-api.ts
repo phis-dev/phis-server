@@ -2,11 +2,12 @@ import "server-only";
 
 import { NextResponse, type NextRequest } from "next/server";
 
-import { canPhiViewerAccess, PHI_ACCESS_DEVELOPER_TOOLS } from "@/lib/authorization";
+import { canPhiViewerAccess, PHI_ACCESS_DEVELOPER_TOOLS, type PhiViewerGroupClaim } from "@/lib/authorization";
 import {
-  requireSiteAuthenticatedApiContext,
-  requireSiteMediaApiContext,
+  PHI_SITE_MEDIA_API_POLICY,
+  resolveSiteRoleApiContext,
   type SiteAdminApiContext,
+  type SiteRoleApiResolution,
 } from "@/lib/guards/site-admin-api";
 import {
   getMediaSpaceById,
@@ -34,7 +35,11 @@ export type MediaManagementSiteContext =
 export async function requireMediaManagementSiteContext(
   request: NextRequest,
 ): Promise<MediaManagementSiteContext> {
-  const { context, error } = await requireSiteMediaApiContext(request);
+  return toMediaManagementSiteContext(await resolveSiteRoleApiContext(request, PHI_SITE_MEDIA_API_POLICY));
+}
+
+function toMediaManagementSiteContext(resolution: SiteRoleApiResolution): MediaManagementSiteContext {
+  const { context, error } = resolution;
   if (error) {
     return { site: null, session: null, siteWide: false, error };
   }
@@ -57,6 +62,19 @@ export async function requireMediaManagementSiteContext(
     groupClaims: context.siteRole?.groupClaims ?? [],
   }, PHI_ACCESS_DEVELOPER_TOOLS);
   return { site: context.site, session: context.session, siteWide, error: null };
+}
+
+/**
+ * The actor a Media refusal still knows, for the routes that go on to ask about one Space or Asset.
+ *
+ * Null where the refusal was not the Media policy's -- no session, a disabled membership -- because
+ * then there is nobody to ask about.
+ */
+function readRefusedMediaActor(resolution: SiteRoleApiResolution) {
+  const { context, refusedByPolicy } = resolution;
+  return refusedByPolicy && context?.site && context.session
+    ? { site: context.site, session: context.session, groupClaims: context.siteRole?.groupClaims }
+    : null;
 }
 
 /**
@@ -90,14 +108,15 @@ export async function requireMediaSpaceWriteContext(
     session: NonNullable<ResolvedSession>;
   }) => Promise<number | null> | number | null,
 ): Promise<MediaManagementSiteContext> {
-  const media = await requireMediaManagementSiteContext(request);
+  const resolution = await resolveSiteRoleApiContext(request, PHI_SITE_MEDIA_API_POLICY);
+  const media = toMediaManagementSiteContext(resolution);
   if (!media.error) {
     return media;
   }
 
-  // No Media authority. The write may still be the actor's own Space, so ask who they are.
-  const { context, error } = await requireSiteAuthenticatedApiContext(request);
-  if (error || !context?.site || !context.session) {
+  // No Media authority. The write may still be the actor's own Space, asked of the actor already read.
+  const context = readRefusedMediaActor(resolution);
+  if (!context) {
     // The Media refusal is the more specific of the two and stays the one reported.
     return media;
   }
@@ -187,13 +206,14 @@ export async function requireMediaAssetContext(
   assetId: number,
   intent: MediaAssetIntent,
 ): Promise<MediaManagementSiteContext> {
-  const media = await requireMediaManagementSiteContext(request);
+  const resolution = await resolveSiteRoleApiContext(request, PHI_SITE_MEDIA_API_POLICY);
+  const media = toMediaManagementSiteContext(resolution);
   if (!media.error) {
     return media;
   }
 
-  const { context, error } = await requireSiteAuthenticatedApiContext(request);
-  if (error || !context?.site || !context.session) {
+  const context = readRefusedMediaActor(resolution);
+  if (!context) {
     return media;
   }
 
@@ -217,6 +237,7 @@ export async function requireMediaAssetContext(
       actorId,
       ownerUserId: asset.ownerUserId,
       intent,
+      actorClaims: context.groupClaims,
     });
 
   return granted
@@ -230,11 +251,12 @@ async function isGroupAssetActionAllowed(input: {
   actorId: number;
   ownerUserId: number | null;
   intent: MediaAssetIntent;
+  actorClaims?: readonly PhiViewerGroupClaim[];
 }) {
   if (input.groupId == null) {
     return false;
   }
-  const flags = await readEffectiveGroupMembershipFlags(input.siteId, input.groupId, input.actorId);
+  const flags = await readEffectiveGroupMembershipFlags(input.siteId, input.groupId, input.actorId, input.actorClaims);
   const holds = (level: number) => (flags & level) === level;
   if (!holds(PhiGroupMembershipFlags.Member)) {
     return false;

@@ -5,7 +5,6 @@ import {
   pruneEmptyMediaFolderBranch,
 } from "@/db/media";
 import { clearSiteConfigCache } from "@/db/site-config";
-import { getSessionFromRequest } from "@/db/user-sessions";
 import { requireMediaAssetContext } from "@/lib/guards/site-media-api";
 import { collectMediaAssetDeleteReferences } from "@/lib/media-delete-guard";
 import {
@@ -171,12 +170,11 @@ export async function DELETE(
       return NextResponse.json({ error: "Missing asset id." }, { status: 400 });
     }
 
-    const { site, error } = await requireMediaAssetContext(request, assetId, "delete");
+    const { site, session, error } = await requireMediaAssetContext(request, assetId, "delete");
     if (error) {
       return error;
     }
     siteKey = site.key;
-    const session = await getSessionFromRequest(request, site.id);
     userId = session?.userId ?? null;
 
     const asset = await getMediaAssetBySiteAndId(site.id, assetId);

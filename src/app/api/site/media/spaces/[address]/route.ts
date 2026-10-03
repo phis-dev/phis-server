@@ -88,7 +88,7 @@ export async function PATCH(
     if (!siteWide) {
       // A Manager reaches their own group's Space by any address; nothing else is theirs to size.
       const flags = space.kind === PhisMediaSpaceKind.Group && space.groupId != null
-        ? await readEffectiveGroupMembershipFlags(siteId, space.groupId, userId)
+        ? await readEffectiveGroupMembershipFlags(siteId, space.groupId, userId, guarded.context!.siteRole?.groupClaims)
         : 0;
       if ((flags & PhiGroupMembershipFlags.Manager) !== PhiGroupMembershipFlags.Manager) {
         return NextResponse.json({ error: "space_forbidden" }, { status: 403 });
@@ -99,7 +99,12 @@ export async function PATCH(
       return NextResponse.json({ error: "space_kind_unavailable" }, { status: 409 });
     }
     if (!siteWide) {
-      const flags = await readEffectiveGroupMembershipFlags(siteId, requested.groupId, userId);
+      const flags = await readEffectiveGroupMembershipFlags(
+        siteId,
+        requested.groupId,
+        userId,
+        guarded.context!.siteRole?.groupClaims,
+      );
       if ((flags & PhiGroupMembershipFlags.Manager) !== PhiGroupMembershipFlags.Manager) {
         return NextResponse.json({ error: "space_forbidden" }, { status: 403 });
       }

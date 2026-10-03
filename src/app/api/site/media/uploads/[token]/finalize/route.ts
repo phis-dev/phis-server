@@ -15,7 +15,6 @@ import {
   isPhiMediaContentAllowedInSpace,
   PhiMediaLifecycleStatus,
 } from "@/db/media-spaces";
-import { getSessionFromRequest } from "@/db/user-sessions";
 import { clearSiteConfigCache } from "@/db/site-config";
 import {
   PHI_MEDIA_SNIFF_HEAD_BYTES,
@@ -179,11 +178,12 @@ export async function POST(
     return nextMediaError("missing_upload_token", "Missing upload token.", 400);
   }
 
-  const { site, error } = await requireMediaSpaceWriteContext(request, async () => {
+  let uploadSession: Awaited<ReturnType<typeof getMediaUploadSessionByToken>> | undefined;
+  const { site, session: authSession, error } = await requireMediaSpaceWriteContext(request, async () => {
     // The staged session is the destination. Reading it here rather than trusting a query parameter
     // means the authority is decided by where the bytes will actually land.
-    const staged = await getMediaUploadSessionByToken(token);
-    return staged?.spaceId ?? null;
+    uploadSession = await getMediaUploadSessionByToken(token);
+    return uploadSession?.spaceId ?? null;
   });
   if (error) {
     return error;
@@ -191,12 +191,12 @@ export async function POST(
 
   const body = await request.json().catch(() => null);
 
-  const session = await getMediaUploadSessionByToken(token);
+  // Read once: by the guard's resolver where it ran, here where Media authority made it unnecessary.
+  const session = uploadSession === undefined ? await getMediaUploadSessionByToken(token) : uploadSession;
   if (!session || session.siteId !== site.id) {
     return nextMediaError("upload_session_not_found", "Upload session not found.", 404);
   }
 
-  const authSession = await getSessionFromRequest(request, site.id);
   if (!authSession) {
     return nextMediaError("authentication_required", "Authentication required.", 401);
   }

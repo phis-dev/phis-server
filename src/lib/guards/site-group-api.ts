@@ -102,7 +102,13 @@ async function authorizeSiteGroupRequest(
 
   const membershipFlags = siteWide
     ? PhiGroupMembershipFlags.Manager
-    : await readEffectiveGroupMembershipFlags(context.site!.id, groupId, context.session!.userId);
+    : await readEffectiveGroupMembershipFlags(
+      context.site!.id,
+      groupId,
+      context.session!.userId,
+      // The actor's own claims, which the guard above has just read.
+      context.siteRole?.groupClaims,
+    );
 
   if (!siteWide && (membershipFlags & requiredLevel) !== requiredLevel) {
     return {
