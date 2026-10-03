@@ -31,6 +31,7 @@ import {
 } from "@/lib/addons/capability-snapshot";
 import { getPhisAddonInstalledManifest } from "@/lib/addons/installed";
 import type { PhiRoleProviderId } from "@/lib/authorization";
+import { phiPrepared } from "@/lib/db-prepared";
 
 type SiteRequestActorRow = UserSessionRecord & {
   authorization_revision: number;
@@ -84,7 +85,7 @@ export async function getSiteRequestActorFromRequest(
          LIMIT 1
        ) AS account_row)`
     : "NULL";
-  const { rows } = await getPool().query<SiteRequestActorRow>(
+  const { rows } = await getPool().query<SiteRequestActorRow>(phiPrepared(
     `SELECT ${PHI_SESSION_ROW_COLUMNS},
             membership.authorization_revision,
             COALESCE((
@@ -109,7 +110,7 @@ export async function getSiteRequestActorFromRequest(
     options.account
       ? [parsed.sessionId, addonIds, options.account.externalSiteId]
       : [parsed.sessionId, addonIds],
-  );
+  ));
   const row = rows[0];
   if (!row) {
     return null;

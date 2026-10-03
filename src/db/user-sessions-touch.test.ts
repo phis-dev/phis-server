@@ -26,6 +26,6 @@ describe("touching a session", () => {
   it("writes once the last write is five minutes old, or there is none", async () => {
     await touchSession({ id: "s", lastSeenAt: new Date(now - 5 * 60_000).toISOString() }, now);
     await touchSession({ id: "t", lastSeenAt: null }, now);
-    expect(query.mock.calls.map(([, params]) => params)).toEqual([["s"], ["t"]]);
+    expect(query.mock.calls.map(([config]) => config.values)).toEqual([["s"], ["t"]]);
   });
 });

@@ -21,6 +21,7 @@ import {
   verifySecretHash,
 } from "@/lib/auth";
 import { toPhiIsoString } from "@/lib/helpers/timestamp";
+import { phiPrepared } from "@/lib/db-prepared";
 
 export type UserSessionRecord = {
   id: string;
@@ -186,13 +187,13 @@ export const PHI_SESSION_ROW_FROM = `phis.user_sessions AS session
 
 export async function getSessionById(sessionId: string) {
   const pool = getPool();
-  const { rows } = await pool.query<UserSessionRecord>(
+  const { rows } = await pool.query<UserSessionRecord>(phiPrepared(
     `SELECT ${PHI_SESSION_ROW_COLUMNS}
      FROM ${PHI_SESSION_ROW_FROM}
      WHERE session.id = $1
      LIMIT 1`,
     [sessionId],
-  );
+  ));
 
   const row = rows[0];
   return row ? mapSessionRow(row) : null;
@@ -427,12 +428,12 @@ export async function touchSession(session: { id: string; lastSeenAt: string | n
   if (session.lastSeenAt && now - new Date(session.lastSeenAt).getTime() < SESSION_TOUCH_INTERVAL_MS) {
     return;
   }
-  await getPool().query(
+  await getPool().query(phiPrepared(
     `UPDATE phis.user_sessions
      SET last_seen_at = NOW()
      WHERE id = $1`,
     [session.id],
-  );
+  ));
 }
 
 /**

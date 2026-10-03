@@ -1,6 +1,7 @@
 import "server-only";
 
 import { getPool } from "@/lib/db";
+import { phiPrepared } from "@/lib/db-prepared";
 
 export type UserProfileRecord = {
   userId: number;
@@ -16,13 +17,13 @@ export async function getUserProfileByUserId(userId: number) {
     first_name: string;
     last_name: string;
     company_name: string | null;
-  }>(
+  }>(phiPrepared(
     `SELECT user_id, first_name, last_name, company_name
      FROM phis.user_profiles
      WHERE user_id = $1
      LIMIT 1`,
     [userId],
-  );
+  ));
 
   const row = rows[0];
   if (!row) {

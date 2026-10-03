@@ -7,6 +7,7 @@ import { PhiUserEmailFlag, type PhiUserEmailSourceValue } from "@phis/contracts/
 import { getPool, withTransaction } from "@/lib/db";
 import { normalizePhiEmail } from "@/lib/helpers/normalize";
 import { ensurePhiDefaultSiteMembership } from "@/db/user-site-membership-default.mts";
+import { phiPrepared } from "@/lib/db-prepared";
 
 export type EnsureUserAccountInput = {
   email: string;
@@ -187,12 +188,12 @@ export async function ensureUserAccount(input: EnsureUserAccountInput) {
 
 export async function getUserAccountById(userId: number, siteId = 0) {
   const pool = getPool();
-  const { rows } = await pool.query<UserAccountRow>(
+  const { rows } = await pool.query<UserAccountRow>(phiPrepared(
     `${userAccountProjection(2)}
      WHERE account.id = $1
      LIMIT 1`,
     [userId, siteId],
-  );
+  ));
   return rows[0] ? mapUserAccountRow(rows[0]) : null;
 }
 

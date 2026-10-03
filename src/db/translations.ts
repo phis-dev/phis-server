@@ -4,6 +4,7 @@ import type { Pool, PoolClient } from "pg";
 import { getPool, withTransaction } from "@/lib/db";
 import { requirePhiTranslationLocale } from "@/lib/locale";
 import { toPhiIsoString } from "@/lib/helpers/timestamp";
+import { phiPrepared } from "@/lib/db-prepared";
 
 type TranslationQueryClient = Pick<Pool | PoolClient, "query">;
 
@@ -279,11 +280,11 @@ export async function findGlobalMessageHashes(
 }
 
 export async function readTranslationChangeMarkers(siteId: number) {
-  const { rows } = await getPool().query<{ global_marker: string | null; site_marker: string | null }>(
+  const { rows } = await getPool().query<{ global_marker: string | null; site_marker: string | null }>(phiPrepared(
     `SELECT (SELECT marker::text FROM phis.tr_marker WHERE scope = 'global') AS global_marker,
             (SELECT marker::text FROM phis.tr_site_marker WHERE site_id = $1) AS site_marker`,
     [siteId],
-  );
+  ));
   return {
     global: rows[0]?.global_marker ?? null,
     site: rows[0]?.site_marker ?? null,

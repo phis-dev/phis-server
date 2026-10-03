@@ -10,6 +10,7 @@ import { getMediaAssetsByIds } from "@/db/media";
 import { getConfiguredTranslationSupportedLocalesSync } from "@/lib/translation-locale-options";
 import { insertPhiSite } from "@/db/cli-sites.mts";
 import { normalizePhiEmail, normalizePhiSiteKey } from "@/lib/helpers/normalize";
+import { phiPrepared } from "@/lib/db-prepared";
 
 export type SiteRecord = {
   id: number;
@@ -558,14 +559,14 @@ export async function readSiteLocaleCodes(siteId: number) {
   if (!Number.isInteger(siteId) || siteId <= 0) {
     return null;
   }
-  const { rows } = await getPool().query<{ default_locale: string; available_locales: string[] | null }>(
+  const { rows } = await getPool().query<{ default_locale: string; available_locales: string[] | null }>(phiPrepared(
     `SELECT default_locale, available_locales
      FROM phis.sites
      WHERE id = $1
        AND (flags & $2) <> 0
      LIMIT 1`,
     [siteId, SITE_FLAG_ACTIVE],
-  );
+  ));
   const row = rows[0];
   if (!row) {
     return null;
@@ -593,7 +594,7 @@ export async function getSiteRuntimeConfig(siteId: number) {
     theme: Record<string, unknown> | null;
     theme_published_revision_id: number | null;
     theme_working_draft_revision_id: number | null;
-  }>(
+  }>(phiPrepared(
     `SELECT sites.key,
             sites.name,
             sites.hostname,
@@ -613,7 +614,7 @@ export async function getSiteRuntimeConfig(siteId: number) {
        AND (sites.flags & $2) <> 0
      LIMIT 1`,
     [siteId, SITE_FLAG_ACTIVE],
-  );
+  ));
 
   const config = rows[0] ? mapSiteRuntimeConfigRow(rows[0]) : null;
   if (!config) {

@@ -24,6 +24,7 @@ import {
   type SiteRevisionKind,
   type SiteRevisionTable,
 } from "@/db/site-revision-scopes";
+import { phiPrepared } from "@/lib/db-prepared";
 
 type DbQueryable = Pick<PoolClient, "query">;
 
@@ -271,14 +272,14 @@ async function getAreaScopeWithDb(
     published_revision_id: number | null;
     working_draft_revision_id: number | null;
     working_module_draft_revision_id: number | null;
-  }>(
+  }>(phiPrepared(
     `SELECT id, published_revision_id, working_draft_revision_id, working_module_draft_revision_id
      FROM phis.site_area_scopes
      WHERE site_id = $1
        AND area_id = $2
      LIMIT 1${forUpdate ? " FOR UPDATE" : ""}`,
     [siteId, areaMask],
-  );
+  ));
 
   const row = rows[0];
   return row
@@ -307,7 +308,7 @@ async function getPageScopeWithDb(
     id: number;
     published_revision_id: number | null;
     working_draft_revision_id: number | null;
-  }>(
+  }>(phiPrepared(
     `SELECT id, published_revision_id, working_draft_revision_id
      FROM phis.site_page_scopes
      WHERE site_id = $1
@@ -319,7 +320,7 @@ async function getPageScopeWithDb(
     address.kind === "path"
       ? [siteId, areaMask, normalizedPath]
       : [siteId, areaMask, address.ownerModuleId, address.presetKey],
-  );
+  ));
 
   const row = rows[0];
   return row

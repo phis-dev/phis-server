@@ -74,6 +74,7 @@ import {
 } from "@/lib/cms/publish-validation";
 import type { PhiViewerAccessPolicy } from "@/lib/authorization";
 import { toPhiRecord } from "@/lib/helpers/record";
+import { phiPrepared } from "@/lib/db-prepared";
 
 type DbQueryable = Pick<PoolClient, "query">;
 
@@ -871,7 +872,7 @@ async function getSitePageScopeWithDb(
     tombstoned_at: Date | string | null;
     published_revision_id: number | null;
     working_draft_revision_id: number | null;
-  }>(
+  }>(phiPrepared(
     `SELECT id, site_id, area_id, path, draft_path, owner_module_id, preset_key, tombstoned_at,
             published_revision_id, working_draft_revision_id
      FROM phis.site_page_scopes
@@ -885,7 +886,7 @@ async function getSitePageScopeWithDb(
     address.kind === "path"
       ? [siteId, areaMask, normalizedPath]
       : [siteId, areaMask, address.ownerModuleId, address.presetKey],
-  );
+  ));
 
   const row = rows[0];
   if (!row) {
@@ -977,14 +978,14 @@ export async function readSitePageScopeTargets(
   if (!Number.isInteger(siteId) || siteId <= 0 || !Number.isInteger(areaMask) || areaMask <= 0 || ids.length === 0) {
     return new Map();
   }
-  const { rows } = await getPool().query<{ id: number; path: string | null; tombstoned_at: Date | string | null }>(
+  const { rows } = await getPool().query<{ id: number; path: string | null; tombstoned_at: Date | string | null }>(phiPrepared(
     `SELECT id, path, tombstoned_at
      FROM phis.site_page_scopes
      WHERE site_id = $1
        AND area_id = $2
        AND id = ANY($3::int[])`,
     [siteId, areaMask, ids],
-  );
+  ));
   return new Map(rows.map((row) => [row.id, { path: row.path, tombstoned: row.tombstoned_at != null }]));
 }
 

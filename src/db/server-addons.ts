@@ -6,6 +6,7 @@ import {
   PHIS_ADDON_FLAG_GLOBALLY_ENABLED,
   PHI_SITE_SERVER_ADDON_FLAG_REQUESTED_ENABLED,
 } from "@/lib/constants/server-addons";
+import { phiPrepared } from "@/lib/db-prepared";
 
 export type PhisAddonRegistryRecord = {
   addonId: string;
@@ -143,9 +144,9 @@ export async function readPhisAddonCapabilityStates(addonIds: readonly string[],
   if (addonIds.length === 0) {
     return new Map<string, PhisAddonCapabilityState>();
   }
-  const { rows } = await getPool().query<PhisAddonCapabilityStateRow>(
+  const { rows } = await getPool().query<PhisAddonCapabilityStateRow>(phiPrepared(
     phisAddonCapabilityStatesSql("$1::text[]", "$2"),
     [addonIds, siteId],
-  );
+  ));
   return mapPhisAddonCapabilityStateRows(rows);
 }

@@ -2,6 +2,7 @@ import type { Pool, PoolClient } from "pg";
 
 import { PhiUserAccountFlag } from "../lib/constants/user-account-flags.ts";
 import { USER_SITE_FLAG_DISABLED } from "../lib/user-site-flags.ts";
+import { phiPrepared } from "../lib/db-prepared.ts";
 
 /**
  * Which roles of one Add-on a user holds on one Site.
@@ -57,13 +58,13 @@ export async function readPhiSiteUserAddonRoles(
     role: string;
     granted_at: Date;
     granted_by_user_id: number | null;
-  }>(
+  }>(phiPrepared(
     `SELECT addon_id, role, granted_at, granted_by_user_id
        FROM phis.site_addon_user_roles
       WHERE site_id = $1 AND user_id = $2
       ORDER BY addon_id, role`,
     [input.siteId, input.userId],
-  );
+  ));
   return rows.map((row) => ({
     addonId: row.addon_id,
     role: row.role,

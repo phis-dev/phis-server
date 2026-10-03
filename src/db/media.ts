@@ -14,6 +14,7 @@ import {
   PhiMediaLifecycleStatus,
   PhisMediaSpaceKind,
 } from "@/db/media-spaces";
+import { phiPrepared } from "@/lib/db-prepared";
 
 type DbQueryable = Pick<PoolClient, "query">;
 
@@ -538,7 +539,7 @@ export async function getMediaAssetBySiteAndId(siteId: number, id: number, space
 export async function listPublicSiteSpaceMediaAssetsByIds(siteId: number, ids: readonly number[]) {
   const uniqueIds = [...new Set(ids.filter((id) => Number.isSafeInteger(id) && id > 0))];
   if (uniqueIds.length === 0) return [];
-  const { rows } = await getPool().query<AssetRow>(
+  const { rows } = await getPool().query<AssetRow>(phiPrepared(
     `SELECT ${ASSET_COLUMNS} FROM phis.media_assets
      WHERE site_id = $1 AND id = ANY($2::int[])
        AND lifecycle_status = $4 AND delivery_policy = $5
@@ -552,7 +553,7 @@ export async function listPublicSiteSpaceMediaAssetsByIds(siteId: number, ids: r
       PhiMediaLifecycleStatus.Ready,
       PhiMediaDeliveryPolicy.Public,
     ],
-  );
+  ));
   return rows.map(mapAsset);
 }
 

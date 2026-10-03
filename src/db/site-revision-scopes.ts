@@ -11,6 +11,7 @@ import {
 import { hasPhiFlag } from "@/lib/helpers/flags";
 import { isPhiRecord, toPhiRecord } from "@/lib/helpers/record";
 import { PhiCmsRevisionFlags } from "@phis/contracts/cms";
+import { phiPrepared } from "@/lib/db-prepared";
 
 /*
  * The draft/publish revision machine every authored scope kind shares: a scope row holding a published
@@ -226,13 +227,13 @@ export async function getSiteRevisionByIdWithDb<TTable extends SiteRevisionTable
   table: TTable,
   revisionId: number,
 ): Promise<SiteRevisionRecordOf<TTable> | null> {
-  const { rows } = await db.query<SiteRevisionRow>(
+  const { rows } = await db.query<SiteRevisionRow>(phiPrepared(
     `SELECT ${selectSiteRevisionColumns(table)}
      FROM phis.${table.revisionTable}
      WHERE id = $1
      LIMIT 1`,
     [revisionId],
-  );
+  ));
   return rows[0] ? mapSiteRevisionRow(table, rows[0]) : null;
 }
 

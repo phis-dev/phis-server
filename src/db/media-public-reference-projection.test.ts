@@ -23,7 +23,8 @@ describe("The public Asset projection behind reference resolution", () => {
   it("asks only for Ready, publicly deliverable Assets of this Site's Site Space", async () => {
     const query = pool();
     await listPublicSiteSpaceMediaAssetsByIds(31, [9]);
-    const [text, values] = query.mock.calls[0];
+    // A prepared statement: text and values travel together in one config.
+    const { text, values } = query.mock.calls[0][0];
     expect(text).toMatch(/lifecycle_status = \$4 AND delivery_policy = \$5/u);
     expect(text).toMatch(/space_id IN \(\s*SELECT id FROM phis\.media_spaces WHERE site_id = \$1 AND kind = \$3/u);
     expect(values).toEqual([
@@ -38,13 +39,13 @@ describe("The public Asset projection behind reference resolution", () => {
   it("asks once per distinct id", async () => {
     const query = pool();
     await listPublicSiteSpaceMediaAssetsByIds(31, [9, 9, 10, 9]);
-    expect(query.mock.calls[0][1][1]).toEqual([9, 10]);
+    expect(query.mock.calls[0][0].values[1]).toEqual([9, 10]);
   });
 
   it("drops what cannot be an Asset id instead of putting it into the statement", async () => {
     const query = pool();
     await listPublicSiteSpaceMediaAssetsByIds(31, [9, 0, -3, 1.5, Number.NaN]);
-    expect(query.mock.calls[0][1][1]).toEqual([9]);
+    expect(query.mock.calls[0][0].values[1]).toEqual([9]);
   });
 
   it("asks nothing when nothing was asked for", async () => {
