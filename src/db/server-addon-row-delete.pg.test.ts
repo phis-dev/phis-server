@@ -5,7 +5,8 @@ import { applyPhisAddonSchema, dropPhisAddonSchema } from "./server-addon-schema
 import { getPhisConfigSync } from "@/lib/config";
 import { buildPhisAddonCapabilities } from "@/lib/addons/capabilities";
 import { ensureAddonMediaSpace, getMediaStorageProfile } from "@/db/media-spaces";
-import { getMediaUploadSessionByToken } from "@/db/media";
+import { getMediaUploadSessionByToken, updateMediaUploadSessionByToken } from "@/db/media";
+import { PhiMediaUploadSessionStatus, isPhiMediaUploadBodyProxied } from "@/lib/media-upload-sessions";
 import { createPhisMediaStorageServiceForProfile } from "@/lib/media-storage";
 import {
   closePhiTestPool,
@@ -121,6 +122,11 @@ describe("deleting a row that holds files", () => {
     await service.putObject({
       storageKey: session!.stagingStorageKey, body: GZIP, contentType: "application/gzip",
     });
+    // What the proxy route records once the body went through Core; finalize refuses a proxied plan
+    // without it.
+    if (isPhiMediaUploadBodyProxied(session!.uploadPlanKind)) {
+      await updateMediaUploadSessionByToken(reservation.token, { status: PhiMediaUploadSessionStatus.Uploaded });
+    }
     return await assets.finalize({ table: "offering", token: reservation.token });
   }
 
