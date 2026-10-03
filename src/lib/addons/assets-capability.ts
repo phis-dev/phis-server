@@ -12,7 +12,6 @@ import type {
 import {
   PhiMediaDeliveryPolicy,
   PhisMediaSpaceKind,
-  commitMediaSpaceReservationWithDb,
   ensureAddonMediaSpace,
   ensureSiteMediaConfig,
   getMediaStorageProfile,
@@ -23,7 +22,8 @@ import {
 import { resolvePhiMediaDeliveryUrl } from "@/lib/media-response";
 import {
   abortMediaUploadSessionByToken,
-  deleteMediaUploadSessionWithDb,
+  claimMediaUploadSessionForFinalize,
+  commitMediaUploadSessionWithDb,
   createMediaAsset,
   createMediaUploadSession,
   getMediaAssetBySiteAndChecksum,
@@ -34,6 +34,7 @@ import {
   PhiMediaUploadPurpose,
   PhiMediaUploadSessionStatus,
   createPhiMediaUploadSessionToken,
+  isPhiMediaUploadBodyProxied,
   resolvePhiMediaUploadPlanKind,
   resolvePhiMediaUploadSessionKind,
 } from "@/lib/media-upload-sessions";
@@ -344,6 +345,12 @@ export function buildPhisAddonAssetsCapability(input: {
        * that lost the answer asks `list` whether the file is there, which is what the finished row
        * is for.
        */
+      if (new Date(session.expiresAt).getTime() <= Date.now()) {
+        // Lapsed reservations are already discounted from the Space, and may since have been given to
+        // somebody else; redeeming one now would charge bytes the quota no longer holds room for.
+        await abortMediaUploadSessionByToken(token);
+        throw new PhisAddonAssetError(`Reservation ${token} has expired.`);
+      }
       const { space, profile, service } = await resolveSpace();
       /*
        * What actually landed, asked of the storage rather than of the caller.
@@ -438,15 +445,19 @@ export function buildPhisAddonAssetsCapability(input: {
         }
       }
 
+      /*
+       * One finalize per session, as on the Media route. A second call for the same token is refused
+       * before it can write anything; a proxied body must have been recorded as arrived.
+       */
+      const claimed = await claimMediaUploadSessionForFinalize(
+        token,
+        isPhiMediaUploadBodyProxied(session.uploadPlanKind) ? PhiMediaUploadSessionStatus.Uploaded : null,
+      );
+      if (!claimed) {
+        throw new PhisAddonAssetError(`Reservation ${token} is already being finished or has no body yet.`);
+      }
+
       const linked = await withTransaction(async (client) => {
-        // Reservation becomes usage in the same act that creates the row it paid for.
-        const committed = await commitMediaSpaceReservationWithDb(client, {
-          spaceId: space.id,
-          bytes: session.sizeBytes,
-        });
-        if (!committed) {
-          throw new PhisAddonAssetError("The Space reservation is no longer available.");
-        }
         const asset = await createMediaAsset({
           siteId,
           spaceId: space.id,
@@ -484,9 +495,16 @@ export function buildPhisAddonAssetsCapability(input: {
             }),
           });
         }
-        // While the row exists its bytes are reserved, and while it is gone they are used: never both.
-        await deleteMediaUploadSessionWithDb(client, token);
+        // Reservation becomes usage in the same act that creates the row it paid for, and the session
+        // row goes with it: while it exists its bytes are reserved, once gone they are used. A session an
+        // expiry release took in the meantime is no longer there to commit, and the whole act is refused.
+        await commitMediaUploadSessionWithDb(client, token);
         return link;
+      }).catch(async (error: unknown) => {
+        // Nothing points at the staged object now; give it and whatever reservation is left back.
+        await service.deleteObject(session.stagingStorageKey).catch(() => {});
+        await abortMediaUploadSessionByToken(token).catch(() => {});
+        throw error;
       });
 
       // The displaced file, removed after the row that pointed at it is gone. Media's own delete takes

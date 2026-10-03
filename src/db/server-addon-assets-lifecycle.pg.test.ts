@@ -7,7 +7,12 @@ import { buildPhisAddonAssetsCapability } from "@/lib/addons/assets-capability";
 import { getMediaStorageProfile } from "@/db/media-spaces";
 import { createPhisMediaStorageServiceForProfile } from "@/lib/media-storage";
 import { ensureAddonMediaSpace } from "@/db/media-spaces";
-import { getMediaUploadSessionByToken, releaseExpiredMediaUploadSessions } from "@/db/media";
+import {
+  getMediaUploadSessionByToken,
+  releaseExpiredMediaUploadSessions,
+  updateMediaUploadSessionByToken,
+} from "@/db/media";
+import { PhiMediaUploadSessionStatus, isPhiMediaUploadBodyProxied } from "@/lib/media-upload-sessions";
 import {
   closePhiTestPool,
   createPhiTestSite,
@@ -147,6 +152,11 @@ describe("putting a file on a row", () => {
       body,
       contentType,
     });
+    // What the proxy route records once the body went through Core; finalize refuses a proxied plan
+    // without it.
+    if (isPhiMediaUploadBodyProxied(session!.uploadPlanKind)) {
+      await updateMediaUploadSessionByToken(token, { status: PhiMediaUploadSessionStatus.Uploaded });
+    }
   }
 
   beforeAll(async () => {
@@ -336,6 +346,46 @@ describe("putting a file on a row", () => {
     await expect(assets().finalize({ table: "offering", token: reservation.token }))
       .rejects.toThrow(/Nothing has been delivered/);
     await assets().abandon({ table: "offering", token: reservation.token });
+  });
+
+  it("refuses a reservation that has lapsed, and gives its room back", async () => {
+    /*
+     * A lapsed reservation is already discounted from the Space and may have been handed to somebody
+     * else; redeeming it would charge bytes the quota no longer keeps room for.
+     */
+    const pool = await requirePhiTestDatabase();
+    const before = await usage();
+    const reservation = await assets().begin({
+      table: "offering", ownerId: offeringId, slot: "shots",
+      contentType: "image/png", sizeBytes: PNG.byteLength,
+    });
+    await deliver(reservation.token, PNG, "image/png");
+    await pool.query(
+      `UPDATE phis.media_upload_sessions SET expires_at = NOW() - INTERVAL '1 second' WHERE token = $1`,
+      [reservation.token],
+    );
+    await expect(assets().finalize({ table: "offering", token: reservation.token }))
+      .rejects.toThrow(/has expired/);
+    expect(await getMediaUploadSessionByToken(reservation.token)).toBeNull();
+    expect(await usage()).toEqual(before);
+  });
+
+  it("finishes a reservation once, and a proxied one only after its body went through Core", async () => {
+    const pool = await requirePhiTestDatabase();
+    const reservation = await assets().begin({
+      table: "offering", ownerId: offeringId, slot: "shots",
+      contentType: "image/png", sizeBytes: PNG.byteLength,
+    });
+    await deliver(reservation.token, PNG, "image/png");
+    // Another finalize already holds it.
+    await pool.query(
+      `UPDATE phis.media_upload_sessions SET status = $2 WHERE token = $1`,
+      [reservation.token, PhiMediaUploadSessionStatus.Finalizing],
+    );
+    await expect(assets().finalize({ table: "offering", token: reservation.token }))
+      .rejects.toThrow(/already being finished/);
+    expect(await getMediaUploadSessionByToken(reservation.token)).not.toBeNull();
+    expect(await assets().abandon({ table: "offering", token: reservation.token })).toBe(true);
   });
 
   it("holds the object to the size that was agreed", async () => {

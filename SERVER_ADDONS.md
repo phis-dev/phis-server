@@ -1097,6 +1097,10 @@ once the file is settled they are used, never both. A second `finalize` with the
 finds no reservation and is refused. A client whose answer was lost asks `list` whether the file is
 there -- the finished row is the record, not the reservation that produced it.
 
+As on the Media route, a reservation past its expiry is refused and released rather than redeemed (its
+bytes are already discounted from the Space), a proxied body must have been recorded as arrived, and only
+one `finalize` per token gets past the claim.
+
 #### The path on the row
 
 A one-valued slot may name a **mirror column**, and Core keeps that slot's delivery path in it: written
