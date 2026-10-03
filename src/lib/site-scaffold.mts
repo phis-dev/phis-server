@@ -220,6 +220,19 @@ function runtimeModuleFiles() {
       + `export async function loadPhiSiteOverlayZones(request: unknown) {\n`
       + `  return loadPhiCmsOverlayZones(loadPhiSiteAreaBridge, request);\n`
       + `}\n`,
+    "src/runtime-modules/root-error-page.ts":
+      `"use server";\n\n`
+      + `import { renderPhiCmsRootErrorPage } from "@phis/ui/next/root-error-page";\n\n`
+      + `import { PHI_CMS_ROOT_ERROR_AREA } from "@/runtime-modules/root-error-area";\n\n`
+      + `/**\n`
+      + ` * The Site's error page, rendered once a refusal is on screen.\n`
+      + ` *\n`
+      + ` * A Server Action, because the Site alone holds its root error Area. The root refusal routes hand it to\n`
+      + ` * their placeholder; what it renders is decided in \`@phis/ui\`.\n`
+      + ` */\n`
+      + `export async function loadPhiSiteRootErrorPage(code: unknown) {\n`
+      + `  return renderPhiCmsRootErrorPage(PHI_CMS_ROOT_ERROR_AREA, code);\n`
+      + `}\n`,
     "src/runtime-modules/overlay-zones-client.tsx":
       `"use client";\n\n`
       + `import { createPhiOverlayZonesLoaderProvider } from "@phis/ui/next/overlay-zones-client";\n\n`
@@ -540,9 +553,9 @@ export function buildPhiSiteScaffoldFiles(
     [`${SITE_APP}/page.tsx`]: `import { PhiNextSiteIndexPage } from "@phis/ui/next/root-route";\n\nexport const dynamic = "force-dynamic";\nexport default PhiNextSiteIndexPage;\n`,
     "src/app/globals.css": "/* Site-specific global overrides may be added here. */\n",
     ".gitignore": PHI_SITE_GITIGNORE,
-    [`${SITE_APP}/not-found.tsx`]: `import { createPhiNextRootErrorPage } from "@phis/ui/next/area-route";\nimport { PHI_CMS_ROOT_ERROR_AREA } from "@/runtime-modules/root-error-area";\n\nexport default createPhiNextRootErrorPage(404, PHI_CMS_ROOT_ERROR_AREA);\n`,
-    [`${SITE_APP}/forbidden.tsx`]: `import { createPhiNextRootErrorPage } from "@phis/ui/next/area-route";\nimport { PHI_CMS_ROOT_ERROR_AREA } from "@/runtime-modules/root-error-area";\n\nexport default createPhiNextRootErrorPage(403, PHI_CMS_ROOT_ERROR_AREA);\n`,
-    [`${SITE_APP}/unauthorized.tsx`]: `import { createPhiNextRootErrorPage } from "@phis/ui/next/area-route";\nimport { PHI_CMS_ROOT_ERROR_AREA } from "@/runtime-modules/root-error-area";\n\nexport default createPhiNextRootErrorPage(401, PHI_CMS_ROOT_ERROR_AREA);\n`,
+    [`${SITE_APP}/not-found.tsx`]: `import { createPhiNextRootErrorPage } from "@phis/ui/next/area-route";\nimport { loadPhiSiteRootErrorPage } from "@/runtime-modules/root-error-page";\n\nexport default createPhiNextRootErrorPage(404, loadPhiSiteRootErrorPage);\n`,
+    [`${SITE_APP}/forbidden.tsx`]: `import { createPhiNextRootErrorPage } from "@phis/ui/next/area-route";\nimport { loadPhiSiteRootErrorPage } from "@/runtime-modules/root-error-page";\n\nexport default createPhiNextRootErrorPage(403, loadPhiSiteRootErrorPage);\n`,
+    [`${SITE_APP}/unauthorized.tsx`]: `import { createPhiNextRootErrorPage } from "@phis/ui/next/area-route";\nimport { loadPhiSiteRootErrorPage } from "@/runtime-modules/root-error-page";\n\nexport default createPhiNextRootErrorPage(401, loadPhiSiteRootErrorPage);\n`,
     /*
      * The 500, and the only refusal route that is not a Page.
      *

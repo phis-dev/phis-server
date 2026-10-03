@@ -103,10 +103,19 @@ describe("site scaffold", () => {
       expect(area).not.toContain(`@/runtime-modules/${other}`);
     }
 
-    // The Site's only refusal routes, and the reason the Areas carry none is pinned further down.
+    /*
+     * The Site's only refusal routes, and the reason the Areas carry none is pinned further down. They
+     * hand the Action to a placeholder rather than resolving the error page: Next renders every refusal
+     * boundary into every response, and resolved there it cost each page view six server calls.
+     */
     for (const route of ["not-found", "unauthorized", "forbidden"]) {
-      expect(files[`src/app/(site)/${route}.tsx`]).toContain("PHI_CMS_ROOT_ERROR_AREA");
+      expect(files[`src/app/(site)/${route}.tsx`]).toContain("createPhiNextRootErrorPage(");
+      expect(files[`src/app/(site)/${route}.tsx`]).toContain(", loadPhiSiteRootErrorPage)");
     }
+    expect(files["src/runtime-modules/root-error-page.ts"]?.startsWith('"use server";')).toBe(true);
+    expect(files["src/runtime-modules/root-error-page.ts"]).toContain(
+      "renderPhiCmsRootErrorPage(PHI_CMS_ROOT_ERROR_AREA, code)",
+    );
 
     /*
      * The 500 is the one refusal that resolves nothing. It is reached only once rendering has failed,
