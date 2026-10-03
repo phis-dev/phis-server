@@ -791,13 +791,19 @@ expires.
 | --- | --- |
 | `phis operator list [--email <email>]` | Lists operators (email, enabled, name). |
 | `phis operator add --email <email> --password <pw> [--name <display name>] [--disabled]` | Adds an operator; refuses a duplicate email. |
-| `phis operator passwd --email <email> --password <pw>` | Replaces the password. |
+| `phis operator passwd --email <email> --password <pw>` | Replaces the password and ends the operator's sessions. |
 | `phis operator enable|disable --email <email>` | Sets `enabled`. |
 | `phis operator del --email <email>` | Removes the operator. The last one can be removed. |
 | `phis operator secret` | Writes `operator.sessionSecret` if it is missing. Every operator write above does the same; this is for an installation from before the key existed, which has no operator sessions until it is set. |
 
 Operator session cookies are signed with `operator.sessionSecret` and with nothing else -- not with
 `api.internalToken`, which every Site runtime holds.
+
+The cookies are stateless, so what ends one is the operator's `sessionGeneration` in
+`platformSuperUsers`: every cookie carries the value it was signed with, and each request checks it
+against the runtime file. Logging out and `phis operator passwd` count it up, which ends every session
+that operator holds, a copied cookie included. A removed or disabled operator's sessions end the same
+way, on their next request.
 
 Passwords given on the command line are visible in the process list and shell history. A password
 that starts with `-` is passed as it is (`--password -x1` or `--password=-x1`).

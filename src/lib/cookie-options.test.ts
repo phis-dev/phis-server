@@ -64,7 +64,7 @@ describe("the cookies this server writes", () => {
     ["phis_locale", (r: NextResponse) => setLocaleCookie(r, "de"), false, undefined],
     [
       "phis_operator_session",
-      (r: NextResponse) => setOperatorSessionCookie(r, { email: "a@b.c", displayName: "A", expiresAt }),
+      (r: NextResponse) => setOperatorSessionCookie(r, { email: "a@b.c", displayName: "A", expiresAt, generation: 0 }),
       true,
       expiresAt,
     ],

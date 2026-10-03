@@ -10,6 +10,7 @@ import { isBootstrapEnabled } from "@/lib/config";
 import { readPhiRuntimeConfigSync } from "@/lib/config-files";
 import {
   buildOperatorSessionExpiresAt,
+  readOperatorSessionGeneration,
   setOperatorSessionCookie,
 } from "@/lib/operator-auth";
 import { verifyPasswordHash } from "@/lib/password";
@@ -129,6 +130,7 @@ export async function POST(request: NextRequest) {
       email: operator.email,
       displayName: operator.displayName?.trim() || operator.email,
       expiresAt,
+      generation: readOperatorSessionGeneration(operator),
     });
     setCsrfCookie(response, csrfToken);
     setAreaCookie(response, "operator", expiresAt);

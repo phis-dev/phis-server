@@ -8,6 +8,13 @@ export type PlatformSuperUser = {
   displayName?: string;
   passwordHash: string;
   enabled?: boolean;
+  /**
+   * Which of this operator's sessions are still good: a session cookie carries the value it was signed
+   * with, and one that no longer matches is refused. Logging out and a new password count it up, which
+   * ends every session the operator holds anywhere -- the cookies themselves stay stateless. Absent is
+   * 0, the value of an operator who never logged out.
+   */
+  sessionGeneration?: number;
   createdAt?: string;
   updatedAt?: string;
 };
@@ -491,6 +498,10 @@ export function validatePhiConfig(config: PhisConfig) {
     }
     if (!user.passwordHash?.trim()) {
       issues.push(`platformSuperUsers[${index}].passwordHash is required.`);
+    }
+    if (user.sessionGeneration !== undefined
+      && (!Number.isSafeInteger(user.sessionGeneration) || user.sessionGeneration < 0)) {
+      issues.push(`platformSuperUsers[${index}].sessionGeneration must be a non-negative integer.`);
     }
 
     const normalizedEmail = user.email.trim().toLowerCase();

@@ -37,6 +37,8 @@ export async function POST(request: NextRequest) {
     email: session.email,
     displayName: session.displayName,
     expiresAt,
+    // Reading the session already held it to the operator's current generation.
+    generation: session.generation,
   });
   setAreaCookie(response, "operator", expiresAt);
 

@@ -2206,6 +2206,8 @@ async function updateSuperUserPassword(flags: FlagMap, json: boolean) {
   existingUsers[userIndex] = {
     ...existingUsers[userIndex],
     passwordHash,
+    // A new password ends the sessions the old one opened, wherever they are.
+    sessionGeneration: (existingUsers[userIndex]!.sessionGeneration ?? 0) + 1,
     updatedAt: new Date().toISOString(),
   };
   upsertRuntimeSuperUsers(existingUsers);
