@@ -153,12 +153,19 @@ export async function readPhisAddonAsset(
 export async function writePhisAddonAssetMirror(
   db: Pool | PoolClient,
   location: PhisAddonAssetLocation,
-  input: { siteId: number; ownerId: string | number; column: string; path: string | null },
+  input: {
+    siteId: number;
+    ownerId: string | number;
+    /** The owning table's primary key column, which is what `owner_id` points at -- not always `id`. */
+    keyColumn: string;
+    column: string;
+    path: string | null;
+  },
 ) {
   await db.query(
     `UPDATE ${qualifyOwner(location)}
         SET ${quotePhiIdentifier(input.column)} = $3
-      WHERE site_id = $1 AND id = $2`,
+      WHERE site_id = $1 AND ${quotePhiIdentifier(input.keyColumn)} = $2`,
     [input.siteId, String(input.ownerId), input.path],
   );
 }

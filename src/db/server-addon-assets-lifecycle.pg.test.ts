@@ -56,6 +56,24 @@ const descriptor: PhisAddonSchemaDescriptor = {
         { name: "shots", cardinality: "many", maxBytes: 4096, contentTypes: ["image/png"] },
       ],
     },
+    {
+      // A key that is not called `id`, which is what the asset table's foreign key and the mirror name.
+      name: "listing",
+      siteScoped: true,
+      columns: [
+        { name: "listing_id", type: "identity" },
+      ],
+      primaryKey: ["listing_id"],
+      assets: [
+        {
+          name: "cover",
+          cardinality: "one",
+          maxBytes: 4096,
+          contentTypes: ["image/png"],
+          mirrorColumn: "cover_path",
+        },
+      ],
+    },
   ],
 };
 
@@ -70,6 +88,7 @@ let migrationPool: Pool;
 describe("putting a file on a row", () => {
   let site: PhiTestSite;
   let offeringId: string;
+  let listingId: string;
   let actor: number;
 
   function assets(options?: {
@@ -166,6 +185,11 @@ describe("putting a file on a row", () => {
       [site.id],
     );
     offeringId = String(rows[0]!.id);
+    const listing = await pool.query<{ listing_id: string }>(
+      `INSERT INTO ${SCHEMA}.listing (site_id) VALUES ($1) RETURNING listing_id`,
+      [site.id],
+    );
+    listingId = String(listing.rows[0]!.listing_id);
   });
 
   afterAll(async () => {
@@ -469,6 +493,25 @@ describe("putting a file on a row", () => {
     await deliver(again.token, GZIP);
     const restored = await assets().finalize({ table: "offering", token: again.token });
     expect(await mirror(offeringId)).toBe(restored.contentPath);
+  });
+
+  it("writes the mirror on a table whose key is not called id", async () => {
+    const pool = await requirePhiTestDatabase();
+    const coverPath = async () => (await pool.query<{ cover_path: string | null }>(
+      `SELECT cover_path FROM ${SCHEMA}.listing WHERE listing_id = $1`,
+      [listingId],
+    )).rows[0]?.cover_path ?? null;
+
+    const reservation = await assets().begin({
+      table: "listing", ownerId: listingId, slot: "cover",
+      contentType: "image/png", sizeBytes: PNG.byteLength,
+    });
+    await deliver(reservation.token, PNG, "image/png");
+    const file = await assets().finalize({ table: "listing", token: reservation.token });
+    expect(await coverPath()).toBe(file.contentPath);
+
+    expect(await assets().remove({ table: "listing", id: file.id })).toBe(true);
+    expect(await coverPath()).toBeNull();
   });
 
   it("takes a file away with its space, and out of the store", async () => {

@@ -129,6 +129,11 @@ export function buildPhisAddonAssetsCapability(input: {
     return { schemaName, table };
   }
 
+  /** The column `owner_id` points at: the asset table's foreign key names it, so the mirror must too. */
+  function ownerKeyColumn(table: string) {
+    return schema!.tables.find((entry) => entry.name === table)!.primaryKey[0]!;
+  }
+
   function requireSlot(table: string, slot: string): PhisAddonAssetSlotDescriptor {
     const declared = schema?.tables.find((entry) => entry.name === table);
     const found = (declared?.assets ?? []).find((entry) => entry.name === slot);
@@ -471,6 +476,7 @@ export function buildPhisAddonAssetsCapability(input: {
           await writePhisAddonAssetMirror(client, location, {
             siteId,
             ownerId: ref.ownerId,
+            keyColumn: ownerKeyColumn(table),
             column: declared.mirrorColumn,
             path: resolvePhiMediaDeliveryUrl({
               id: asset.id,
@@ -565,7 +571,7 @@ export function buildPhisAddonAssetsCapability(input: {
       if (mirror) {
         // Cleared before the file goes, so no moment shows a row pointing at something already removed.
         await writePhisAddonAssetMirror(getPool(), location, {
-          siteId, ownerId: existing.ownerId, column: mirror, path: null,
+          siteId, ownerId: existing.ownerId, keyColumn: ownerKeyColumn(table), column: mirror, path: null,
         });
       }
       const space = await ensureAddonMediaSpace(siteId, addonId);
