@@ -14,6 +14,7 @@ import { incidentSchemaDescriptor } from "../../test/fixtures/addon-schema.ts";
 import {
   closePhiTestPool,
   createPhiTestSite,
+  createPhiTestUser,
   dropPhiTestSites,
   requirePhiTestDatabase,
 } from "../../test/pg/harness";
@@ -209,10 +210,13 @@ describe("Add-on migration runner", () => {
      * the package -- and until it was deleted here the foreign key refused the purge outright, which is
      * how an Add-on that had ever granted anything became unpurgeable.
      */
+    // An account of its own rather than a fixed id: the grant needs a user that exists, and the test
+    // database holds whichever ids earlier runs left. `dropPhiTestSites` removes it again afterwards.
+    const vendor = await createPhiTestUser(site);
     await pool.query(
       `INSERT INTO phis.site_addon_user_roles (site_id, addon_id, user_id, role, granted_by_user_id)
        VALUES ($1, $2, $3, 'vendor', $3) ON CONFLICT DO NOTHING`,
-      [site.id, ADDON_ID, 45],
+      [site.id, ADDON_ID, vendor],
     );
 
     const result = await purgePhisAddon(migrationPool, ADDON_ID);
@@ -238,5 +242,10 @@ describe("Add-on migration runner", () => {
     );
     expect(schemas).toHaveLength(0);
     expect(await readCatalog()).toBeNull();
+    const { rows: grants } = await pool.query(
+      `SELECT 1 FROM phis.site_addon_user_roles WHERE addon_id = $1 AND user_id = $2`,
+      [ADDON_ID, vendor],
+    );
+    expect(grants).toHaveLength(0);
   });
 });
