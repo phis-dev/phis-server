@@ -93,6 +93,20 @@ function mirrorColumns(table: PhisAddonTableDescriptor) {
     .filter((name): name is string => typeof name === "string" && name.length > 0);
 }
 
+/**
+ * Whether a readable column can hold null, Core's own included.
+ *
+ * The declared columns say so themselves. Core's are fixed by the DDL: `owner_user_id` is NULL once the
+ * owning account is gone, and a mirror column is NULL while its slot is empty; the Site and group columns
+ * are NOT NULL. Asking only the declared list would let the two nullable ones through as paging columns.
+ */
+function isNullableColumn(table: PhisAddonTableDescriptor, column: string) {
+  if (column === PHIS_ADDON_OWNER_COLUMN || mirrorColumns(table).includes(column)) {
+    return true;
+  }
+  return table.columns.find((entry) => entry.name === column)?.nullable === true;
+}
+
 function checkColumn(context: QueryContext, column: unknown, where: string) {
   if (typeof column !== "string" || !context.columns.has(column)) {
     context.issues.push(
@@ -423,8 +437,7 @@ function validateQuery(
              * be written against one: a comparison with null is null, so the page would end early and
              * quietly rather than carry on. Refused here, where the author can still choose a default.
              */
-            const declaredColumn = table.columns.find((column) => column.name === entry.column);
-            if (declaredColumn?.nullable === true) {
+            if (isNullableColumn(table, entry.column as string)) {
               issues.push(
                 `${field}.orderBy[${index}].column "${entry.column}" is nullable. An ordering column ` +
                 "must be NOT NULL: paging continues by comparing against the last row's values, and " +
@@ -517,8 +530,7 @@ function validateQuery(
         // The grouping columns are the ordering, and an ordering column must be NOT NULL for the same
         // reason a select's must: the keyset comparison that continues a page matches nothing against a
         // null, so the paging would end early and quietly.
-        const declaredColumn = table.columns.find((entry) => entry.name === column);
-        if (declaredColumn?.nullable === true) {
+        if (isNullableColumn(table, column as string)) {
           issues.push(
             `${field}.groupBy[${index}] names nullable column "${column}". The grouping columns are ` +
             "what this query is paged by, and a paging column must be NOT NULL.",

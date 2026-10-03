@@ -456,14 +456,18 @@ describe("searching text", () => {
 });
 
 describe("what paging refuses at validation", () => {
-  function issuesFor(descriptor: Record<string, unknown>, parameters: unknown[] = []) {
+  function issuesFor(
+    descriptor: Record<string, unknown>,
+    parameters: unknown[] = [],
+    schema: PhisAddonSchemaDescriptor = pagingSchema,
+  ) {
     const issues: string[] = [];
     validatePhisAddonQueryCatalog(
       {
         parameters: { listing: parameters },
         queries: [{ kind: "select", name: "listing", table: "offering", limit: 25, ...descriptor }],
       },
-      pagingSchema,
+      schema,
       "queries",
       issues,
     );
@@ -473,6 +477,33 @@ describe("what paging refuses at validation", () => {
   it("refuses an ordering column that may be null", () => {
     expect(issuesFor({ orderBy: [{ column: "withdrawn_at", direction: "desc" }] }))
       .toMatch(/is nullable/);
+  });
+
+  it("refuses Core's nullable columns as paging columns too: the owner and a slot's mirror", () => {
+    // Neither is in the declared list, yet both are NULL for real rows: an owner whose account is gone,
+    // a slot with no file in it.
+    const scoped: PhisAddonSchemaDescriptor = {
+      ...pagingSchema,
+      tables: [{
+        ...pagingSchema.tables[0]!,
+        ownerScoped: true,
+        assets: [{
+          name: "cover",
+          cardinality: "one",
+          maxBytes: 4096,
+          contentTypes: ["image/png"],
+          mirrorColumn: "cover_path",
+        }],
+      }],
+    };
+    for (const column of ["owner_user_id", "cover_path"]) {
+      expect(issuesFor({ orderBy: [{ column, direction: "asc" }] }, [], scoped)).toMatch(/is nullable/);
+      expect(issuesFor({
+        kind: "aggregate",
+        aggregates: [{ name: "n", function: "count" }],
+        groupBy: [column],
+      }, [], scoped)).toMatch(/names nullable column/);
+    }
   });
 
   it("accepts an ordering column that may not", () => {
