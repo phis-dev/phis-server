@@ -88,6 +88,65 @@ export type ExternalTranslationUnit = {
   canonicalMsg: string;
 };
 
+/**
+ * The external units for many sources at once: one statement for the batch.
+ *
+ * Asked one source at a time, a page with fifty strings in a non-canonical source language waited for
+ * fifty statements in a row. The answer per source is the unit, null where there is none, or an Error
+ * where the hash names another source.
+ */
+async function findExternalTranslationUnits(input: {
+  siteId?: number;
+  locale: string;
+  ctx: string;
+  entries: ReadonlyArray<{ source: string; sourceHash: string }>;
+  database?: TranslationQueryClient;
+}): Promise<Map<string, ExternalTranslationUnit | null | Error>> {
+  const result = new Map<string, ExternalTranslationUnit | null | Error>();
+  if (input.entries.length === 0) {
+    return result;
+  }
+  const hashes = Array.from(new Set(input.entries.map((entry) => normalizeMessageHash(entry.sourceHash))));
+  const pool = input.database ?? getPool();
+  const { rows } = input.siteId == null
+    ? await pool.query<{ msg_id: number; canonical_msg: string; source: string; source_hash: string }>(
+        `SELECT lang.msg_id, msg.msg AS canonical_msg, lang.translation AS source,
+                encode(lang.source_hash, 'hex') AS source_hash
+         FROM phis.tr_lang lang
+         JOIN phis.tr_msg msg ON msg.id = lang.msg_id
+         WHERE lang.locale = $1
+           AND lang.source_hash = ANY(ARRAY(SELECT decode(hash, 'hex') FROM unnest($2::text[]) AS hash))
+           AND msg.ctx = $3`,
+        [input.locale, hashes, input.ctx],
+      )
+    : await pool.query<{ msg_id: number; canonical_msg: string; source: string; source_hash: string }>(
+        `SELECT lang.msg_id, msg.msg AS canonical_msg, lang.translation AS source,
+                encode(lang.source_hash, 'hex') AS source_hash
+         FROM phis.tr_site_lang lang
+         JOIN phis.tr_site_msg msg ON msg.id = lang.msg_id
+         WHERE msg.site_id = $1
+           AND lang.locale = $2
+           AND lang.source_hash = ANY(ARRAY(SELECT decode(hash, 'hex') FROM unnest($3::text[]) AS hash))
+           AND msg.ctx = $4`,
+        [input.siteId, input.locale, hashes, input.ctx],
+      );
+  for (const entry of input.entries) {
+    const hash = normalizeMessageHash(entry.sourceHash);
+    const candidates = rows.filter((row) => row.source_hash === hash);
+    const exact = candidates.find((row) => row.source === entry.source);
+    result.set(
+      entry.source,
+      exact
+        ? { msgId: exact.msg_id, canonicalMsg: exact.canonical_msg }
+        : candidates.length > 0
+          ? new Error("Hash collision detected for an external translation source.")
+          : null,
+    );
+  }
+  return result;
+}
+
+/** One source's unit, inside the transaction that is about to create it if it is missing. */
 async function findExternalTranslationUnit(input: {
   siteId?: number;
   locale: string;
@@ -96,56 +155,34 @@ async function findExternalTranslationUnit(input: {
   sourceHash: string;
   database?: TranslationQueryClient;
 }): Promise<ExternalTranslationUnit | null> {
-  const sourceHash = normalizeMessageHash(input.sourceHash);
-  const pool = input.database ?? getPool();
-  const { rows } = input.siteId == null
-    ? await pool.query<{ msg_id: number; canonical_msg: string; source: string }>(
-        `SELECT lang.msg_id, msg.msg AS canonical_msg, lang.translation AS source
-         FROM phis.tr_lang lang
-         JOIN phis.tr_msg msg ON msg.id = lang.msg_id
-         WHERE lang.locale = $1
-           AND lang.source_hash = decode($2, 'hex')
-           AND msg.ctx = $3`,
-        [input.locale, sourceHash, input.ctx],
-      )
-    : await pool.query<{ msg_id: number; canonical_msg: string; source: string }>(
-        `SELECT lang.msg_id, msg.msg AS canonical_msg, lang.translation AS source
-         FROM phis.tr_site_lang lang
-         JOIN phis.tr_site_msg msg ON msg.id = lang.msg_id
-         WHERE msg.site_id = $1
-           AND lang.locale = $2
-           AND lang.source_hash = decode($3, 'hex')
-           AND msg.ctx = $4`,
-        [input.siteId, input.locale, sourceHash, input.ctx],
-      );
-
-  const exact = rows.find((row) => row.source === input.source);
-  if (exact) {
-    return { msgId: exact.msg_id, canonicalMsg: exact.canonical_msg };
+  const unit = (await findExternalTranslationUnits({
+    siteId: input.siteId,
+    locale: input.locale,
+    ctx: input.ctx,
+    entries: [{ source: input.source, sourceHash: input.sourceHash }],
+    database: input.database,
+  })).get(input.source) ?? null;
+  if (unit instanceof Error) {
+    throw unit;
   }
-  if (rows.length > 0) {
-    throw new Error("Hash collision detected for an external translation source.");
-  }
-  return null;
+  return unit;
 }
 
-export function findGlobalExternalTranslationUnit(input: {
+export function findGlobalExternalTranslationUnits(input: {
   locale: string;
-  source: string;
   ctx: string;
-  sourceHash: string;
+  entries: ReadonlyArray<{ source: string; sourceHash: string }>;
 }) {
-  return findExternalTranslationUnit(input);
+  return findExternalTranslationUnits(input);
 }
 
-export function findSiteExternalTranslationUnit(input: {
+export function findSiteExternalTranslationUnits(input: {
   siteId: number;
   locale: string;
-  source: string;
   ctx: string;
-  sourceHash: string;
+  entries: ReadonlyArray<{ source: string; sourceHash: string }>;
 }) {
-  return findExternalTranslationUnit(input);
+  return findExternalTranslationUnits(input);
 }
 
 export async function getTranslations(
@@ -169,12 +206,14 @@ export async function getTranslations(
   const { rows } = await pool.query<
     { msg_hash: string; translation: string; msg: string }
   >(
+    // Compared as bytes, not as text: `encode(m.msg_hash, 'hex') = ANY(...)` computes the encoding for
+    // every row of the context, and the index on the hash is never asked.
     `SELECT encode(m.msg_hash, 'hex') AS msg_hash, l.translation, m.msg
      FROM phis.tr_lang l
      JOIN phis.tr_msg m ON m.id = l.msg_id
      WHERE l.locale = $1
        AND m.ctx = $2
-       AND encode(m.msg_hash, 'hex') = ANY($3::text[])`,
+       AND m.msg_hash = ANY(ARRAY(SELECT decode(hash, 'hex') FROM unnest($3::text[]) AS hash))`,
     [locale, ctx, uniqueHashes],
   );
 
@@ -391,6 +430,66 @@ export async function ensureSiteMessageId(
   }
 
   return insertedRows[0].id;
+}
+
+/**
+ * The message ids of many Site messages at once, created where missing.
+ *
+ * The per-message form wrote and then read for every message, also when every one already existed: two
+ * statements per string on every translation request, `2n + 1` for a page. Here a batch whose messages
+ * are all known costs one statement, and one that is not costs three. The answer per message is what
+ * `ensureSiteMessageId` would give -- the id, or the Error it would have thrown -- so one bad message
+ * does not cost the batch.
+ */
+export async function ensureSiteMessageIds(
+  siteId: number,
+  msgs: readonly string[],
+  ctx: string,
+  database: TranslationQueryClient = getPool(),
+): Promise<Map<string, number | Error>> {
+  const entries = Array.from(new Set(msgs)).map((msg) => ({ msg, hash: computeSiteMessageHash(msg) }));
+  const result = new Map<string, number | Error>();
+  if (entries.length === 0) {
+    return result;
+  }
+
+  const read = async (hashes: string[]) => {
+    const { rows } = await database.query<{ id: number; msg: string; msg_hash: string }>(
+      `SELECT id, msg, encode(msg_hash, 'hex') AS msg_hash
+       FROM phis.tr_site_msg
+       WHERE site_id = $1
+         AND ctx = $2
+         AND msg_hash = ANY(ARRAY(SELECT decode(hash, 'hex') FROM unnest($3::text[]) AS hash))`,
+      [siteId, ctx, hashes],
+    );
+    return new Map(rows.map((row) => [row.msg_hash, row]));
+  };
+
+  const stored = await read(entries.map((entry) => entry.hash));
+  const missing = entries.filter((entry) => !stored.has(entry.hash));
+  if (missing.length > 0) {
+    await database.query(
+      `INSERT INTO phis.tr_site_msg (site_id, msg, msg_hash, ctx)
+       SELECT $1, input.msg, decode(input.hash, 'hex'), $2
+       FROM unnest($3::text[], $4::text[]) AS input(msg, hash)
+       ON CONFLICT (site_id, msg_hash, ctx) DO NOTHING`,
+      [siteId, ctx, missing.map((entry) => entry.msg), missing.map((entry) => entry.hash)],
+    );
+    for (const [hash, row] of await read(missing.map((entry) => entry.hash))) {
+      stored.set(hash, row);
+    }
+  }
+
+  for (const entry of entries) {
+    const row = stored.get(entry.hash);
+    result.set(
+      entry.msg,
+      row && row.msg === entry.msg
+        ? row.id
+        : createSiteCollisionError(siteId, entry.msg, ctx, entry.hash, row?.msg ?? ""),
+    );
+  }
+  return result;
 }
 
 export async function ensureSiteExternalTranslationUnit(input: {

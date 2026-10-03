@@ -6,11 +6,11 @@ import { createHash } from "crypto";
 import {
   computeExternalSourceHash,
   ensureGlobalExternalTranslationUnit,
-  ensureSiteMessageId,
+  ensureSiteMessageIds,
   ensureSiteExternalTranslationUnit,
-  findGlobalExternalTranslationUnit,
+  findGlobalExternalTranslationUnits,
   findGlobalMessageHashes,
-  findSiteExternalTranslationUnit,
+  findSiteExternalTranslationUnits,
   getSiteTranslations,
   getTranslations,
   readTranslationChangeMarkers,
@@ -194,26 +194,32 @@ function isConfiguredSourceLocaleSupported(locale: string) {
  * language too. A page lost its translations over one paragraph. The message that failed still falls
  * back, on its own; the rest are unaffected.
  */
+type MessageIsolationContext = { stage: string; locale: string; ctx: string; siteId?: number; msg: string };
+
+function recordSkippedMessage(error: unknown, context: MessageIsolationContext) {
+  recordTranslationStandIn();
+  logRuntimeEvent("warn", "translation.message_skipped", {
+    message: "A single message could not be resolved in the catalogue. Falling back to source text for it.",
+    error: normalizeLogThrowable(error),
+    meta: {
+      stage: context.stage,
+      locale: context.locale,
+      ctx: context.ctx,
+      siteId: context.siteId ?? null,
+      msgLength: context.msg.length,
+      msgPrefix: context.msg.slice(0, 80),
+    },
+  });
+}
+
 async function withMessageIsolation<T>(
   step: () => Promise<T>,
-  context: { stage: string; locale: string; ctx: string; siteId?: number; msg: string },
+  context: MessageIsolationContext,
 ): Promise<T | null> {
   try {
     return await step();
   } catch (error) {
-    recordTranslationStandIn();
-    logRuntimeEvent("warn", "translation.message_skipped", {
-      message: "A single message could not be resolved in the catalogue. Falling back to source text for it.",
-      error: normalizeLogThrowable(error),
-      meta: {
-        stage: context.stage,
-        locale: context.locale,
-        ctx: context.ctx,
-        siteId: context.siteId ?? null,
-        msgLength: context.msg.length,
-        msgPrefix: context.msg.slice(0, 80),
-      },
-    });
+    recordSkippedMessage(error, context);
     return null;
   }
 }
@@ -396,18 +402,23 @@ async function translateExternalGlobalBatch(input: Required<Pick<BatchTranslatio
   const units = new Map<string, { msgId: number; canonicalMsg: string }>();
   const pending: Array<{ source: string; sourceHash: string }> = [];
 
-  for (const source of uniqueSources) {
-    const sourceHash = computeExternalSourceHash(source);
-    const existing = await findGlobalExternalTranslationUnit({
-      locale: input.sourceLocale,
-      source,
-      ctx: cacheContext,
-      sourceHash,
-    });
-    if (existing) {
-      units.set(source, existing);
+  const lookups = uniqueSources.map((source) => ({ source, sourceHash: computeExternalSourceHash(source) }));
+  const existing = await findGlobalExternalTranslationUnits({
+    locale: input.sourceLocale,
+    ctx: cacheContext,
+    entries: lookups,
+  });
+  for (const lookup of lookups) {
+    const unit = existing.get(lookup.source);
+    if (unit instanceof Error) {
+      // A hash that names another source: this one falls back, the rest of the batch does not.
+      recordSkippedMessage(unit, {
+        stage: "findGlobalExternalTranslationUnits", locale: input.locale, ctx: cacheContext, msg: lookup.source,
+      });
+    } else if (unit) {
+      units.set(lookup.source, unit);
     } else {
-      pending.push({ source, sourceHash });
+      pending.push(lookup);
     }
   }
 
@@ -544,13 +555,20 @@ async function translateCanonicalSiteBatch(input: Required<Pick<SiteBatchTransla
 }) {
   const cacheContext = buildTranslationCacheContext({ ctx: input.ctx, format: input.format });
   const uniqueMsgs = Array.from(new Set(input.msgs));
-  const entries = (await Promise.all(uniqueMsgs.map(async (msg) => {
-    const msgId = await withMessageIsolation(
-      () => ensureSiteMessageId(input.siteId, msg, cacheContext),
-      { stage: "ensureSiteMessageId", locale: input.locale, ctx: cacheContext, siteId: input.siteId, msg },
-    );
-    return msgId == null ? null : { msg, msgId };
-  }))).filter((entry) => entry != null);
+  const isolation = { stage: "ensureSiteMessageIds", locale: input.locale, ctx: cacheContext, siteId: input.siteId };
+  // One batch for every message; a message the batch could not place falls back on its own, as before.
+  const msgIds = await withMessageIsolation(
+    () => ensureSiteMessageIds(input.siteId, uniqueMsgs, cacheContext),
+    { ...isolation, msg: uniqueMsgs[0] ?? "" },
+  );
+  const entries = uniqueMsgs.flatMap((msg) => {
+    const msgId = msgIds?.get(msg);
+    if (msgId instanceof Error) {
+      recordSkippedMessage(msgId, { ...isolation, msg });
+      return [];
+    }
+    return msgId == null ? [] : [{ msg, msgId }];
+  });
   const cached = await getSiteTranslations(entries.map((entry) => entry.msgId), input.locale);
   const result = new Map<string, string>();
   const pending = entries.filter((entry) => {
@@ -607,19 +625,24 @@ async function translateExternalSiteBatch(input: Required<Pick<SiteBatchTranslat
   const uniqueSources = Array.from(new Set(input.msgs));
   const units = new Map<string, { msgId: number; canonicalMsg: string }>();
   const pending: Array<{ source: string; sourceHash: string }> = [];
-  for (const source of uniqueSources) {
-    const sourceHash = computeExternalSourceHash(source);
-    const existing = await findSiteExternalTranslationUnit({
-      siteId: input.siteId,
-      locale: input.sourceLocale,
-      source,
-      ctx: cacheContext,
-      sourceHash,
-    });
-    if (existing) {
-      units.set(source, existing);
+  const lookups = uniqueSources.map((source) => ({ source, sourceHash: computeExternalSourceHash(source) }));
+  const existing = await findSiteExternalTranslationUnits({
+    siteId: input.siteId,
+    locale: input.sourceLocale,
+    ctx: cacheContext,
+    entries: lookups,
+  });
+  for (const lookup of lookups) {
+    const unit = existing.get(lookup.source);
+    if (unit instanceof Error) {
+      // A hash that names another source: this one falls back, the rest of the batch does not.
+      recordSkippedMessage(unit, {
+        stage: "findSiteExternalTranslationUnits", locale: input.locale, ctx: cacheContext, siteId: input.siteId, msg: lookup.source,
+      });
+    } else if (unit) {
+      units.set(lookup.source, unit);
     } else {
-      pending.push({ source, sourceHash });
+      pending.push(lookup);
     }
   }
   if (pending.length > 0) {

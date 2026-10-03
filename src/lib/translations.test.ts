@@ -10,7 +10,16 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("@/db/translations", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/db/translations")>()),
-  ensureSiteMessageId: mocks.ensureSiteMessageId,
+  // The batch answers per message what the single form would: the id, or the Error it would throw.
+  ensureSiteMessageIds: async (siteId: number, msgs: readonly string[]) => new Map(await Promise.all(
+    msgs.map(async (msg) => {
+      try {
+        return [msg, await mocks.ensureSiteMessageId(siteId, msg)] as const;
+      } catch (error) {
+        return [msg, error as Error] as const;
+      }
+    }),
+  )),
   getSiteTranslations: mocks.getSiteTranslations,
   getTranslations: mocks.getTranslations,
   upsertSiteTranslations: mocks.upsertSiteTranslations,
@@ -70,7 +79,7 @@ describe("translateSiteBatchWithCache", () => {
     expect(mocks.logRuntimeEvent).toHaveBeenCalledWith(
       "warn",
       "translation.message_skipped",
-      expect.objectContaining({ meta: expect.objectContaining({ stage: "ensureSiteMessageId" }) }),
+      expect.objectContaining({ meta: expect.objectContaining({ stage: "ensureSiteMessageIds" }) }),
     );
   });
 
