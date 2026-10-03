@@ -32,6 +32,15 @@ export const AUTH_FLOW_COOKIE_NAME = "phis_auth_flow";
 
 const SESSION_TTL_SECONDS = 60 * 60 * 24 * 14;
 
+/**
+ * How long a session may wait for its second factor.
+ *
+ * Such a session holds the password and nothing more, and its only use is to try codes. Living as long
+ * as a signed-in session gave whoever had the password two weeks of guessing, slowed only by the attempt
+ * limit; ten minutes is enough to open an authenticator app and type a code.
+ */
+export const FACTOR_CHALLENGE_TTL_SECONDS = 60 * 10;
+
 export function sha256Hex(value: string) {
   return createHash("sha256").update(value).digest("hex");
 }

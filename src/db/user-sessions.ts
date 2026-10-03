@@ -13,6 +13,7 @@ import {
 import {
   buildSessionExpiresAt,
   createSessionId,
+  FACTOR_CHALLENGE_TTL_SECONDS,
   createSessionSecret,
   parseSessionCookieValue,
   SESSION_COOKIE_NAME,
@@ -227,6 +228,23 @@ export async function listUserSessionsForSite(userId: number, siteId: number, li
   }));
 }
 
+/**
+ * A session waiting for its second factor lapses long before its cookie does.
+ *
+ * `authenticated_at` is when the wait began: stamped when the password was accepted, and again when a
+ * policy change sends a signed-in session back to the challenge (`updateUserSessionAuthState`).
+ */
+export function hasFactorChallengeLapsed(
+  session: { authState: PhiAuthSessionState; authenticatedAt: string | null },
+  now = Date.now(),
+) {
+  if (session.authState !== PHI_AUTH_SESSION_STATES.factorChallengeRequired) {
+    return false;
+  }
+  return !session.authenticatedAt ||
+    new Date(session.authenticatedAt).getTime() + FACTOR_CHALLENGE_TTL_SECONDS * 1000 <= now;
+}
+
 export async function getSessionFromRequest(
   request: NextRequest,
   expectedSiteId?: number,
@@ -252,6 +270,10 @@ export async function getSessionFromRequest(
   }
 
   if (expectedSiteId && session.siteId !== expectedSiteId) {
+    return null;
+  }
+
+  if (hasFactorChallengeLapsed(session)) {
     return null;
   }
 
@@ -319,7 +341,13 @@ export async function updateUserSessionAuthState(input: {
            WHEN $5::varchar IS NULL OR $5::varchar = ANY(auth_method_keys) THEN auth_method_keys
            ELSE array_append(auth_method_keys, $5::varchar)
          END,
-         authenticated_at = CASE WHEN $2::smallint = 3 THEN NOW() ELSE authenticated_at END,
+         -- Completing a sign-in stamps it; entering the challenge stamps it too, because that is when the
+         -- challenge window starts (getSessionFromRequest).
+         authenticated_at = CASE
+           WHEN $2::smallint = 3 THEN NOW()
+           WHEN $2::smallint = 2 AND auth_state <> 2 THEN NOW()
+           ELSE authenticated_at
+         END,
          last_seen_at = NOW()
      WHERE id = $1`,
     [

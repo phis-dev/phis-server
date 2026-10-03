@@ -10,9 +10,10 @@ import {
 } from "../../test/pg/harness";
 import type { Pool } from "pg";
 
-import { createUserSession, revokeUserSessions } from "./user-sessions";
+import { createUserSession, revokeUserSessions, updateUserSessionAuthState } from "./user-sessions";
 import { upsertUserSiteMembership } from "./user-site-memberships";
 import { PhiBaseRole } from "@/lib/constants/phi-base-roles";
+import { PHI_AUTH_SESSION_STATES } from "@/lib/site-auth/contracts";
 
 // One pool for the file: the harness does not reopen one it has closed.
 afterAll(async () => {
@@ -141,5 +142,71 @@ describe("a Core role change against the sessions it concerns", () => {
     await upsertUserSiteMembership({ userId, siteId: site.id, coreRoleFlags: PhiBaseRole.Author });
 
     expect(await revisionOf(session.id)).toBe(1);
+  });
+});
+
+/**
+ * The challenge window is measured from `authenticated_at`, so a signed-in session a policy change sends
+ * back to the challenge has to start a fresh one -- measured from the original sign-in it would have
+ * lapsed already, and a second step on an hour-old request would answer with a kick to the login page.
+ */
+describe("entering the factor challenge against PostgreSQL", () => {
+  let pool: Pool;
+  let site: PhiTestSite;
+  let userId: number;
+
+  beforeAll(async () => {
+    pool = await requirePhiTestDatabase();
+    await dropPhiTestSites();
+    site = await createPhiTestSite("challenge");
+    userId = await createPhiTestUser(site);
+  });
+
+  afterAll(async () => {
+    await dropPhiTestSites();
+  });
+
+  async function authenticatedAt(sessionId: string) {
+    const { rows } = await pool.query<{ authenticated_at: Date }>(
+      `SELECT authenticated_at FROM phis.user_sessions WHERE id = $1`,
+      [sessionId],
+    );
+    return rows[0]!.authenticated_at.getTime();
+  }
+
+  async function signedInAnHourAgo() {
+    const { id } = await createUserSession({ userId, siteId: site.id, authMethodKeys: ["password"] });
+    await pool.query(
+      `UPDATE phis.user_sessions SET authenticated_at = NOW() - INTERVAL '1 hour' WHERE id = $1`,
+      [id],
+    );
+    return id;
+  }
+
+  it("restarts the clock when a signed-in session is sent back to the challenge", async () => {
+    const id = await signedInAnHourAgo();
+    const before = await authenticatedAt(id);
+
+    await updateUserSessionAuthState({
+      sessionId: id,
+      authState: PHI_AUTH_SESSION_STATES.factorChallengeRequired,
+      authPolicyRevision: 2,
+    });
+
+    expect(await authenticatedAt(id)).toBeGreaterThan(before + 30 * 60 * 1000);
+  });
+
+  it("leaves the clock alone for a session already waiting", async () => {
+    const id = await signedInAnHourAgo();
+    await pool.query(`UPDATE phis.user_sessions SET auth_state = 2 WHERE id = $1`, [id]);
+    const before = await authenticatedAt(id);
+
+    await updateUserSessionAuthState({
+      sessionId: id,
+      authState: PHI_AUTH_SESSION_STATES.factorChallengeRequired,
+      authPolicyRevision: 3,
+    });
+
+    expect(await authenticatedAt(id)).toBe(before);
   });
 });
