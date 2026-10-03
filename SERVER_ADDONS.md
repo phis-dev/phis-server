@@ -1144,9 +1144,15 @@ Add-on removed with its tables. It is the audit, not the mechanism.
 
 ### `secrets:v1`
 
-`read(name)` and nothing else. The owner and the Site are bound, so another Add-on's secret cannot be
+`read(name, scope?)` and nothing else. The owner and the Site are bound, so another Add-on's secret cannot be
 named, and the resolver checks the owner a second time because a wrong binding and a wrong argument are
 different mistakes.
+
+`scope` names which of the two secrets an operator can set: `"site"`, the default, is the one set with
+`phis secret set --addon <id> --site <key>` for the Site the call runs on; `"addon"` is the one set
+without `--site`, shared by every Site -- one credential for one external account, such as a single app
+registration. Neither stands in for the other: a missing Site secret reads as `null`, never as the shared
+one, so an operator who forgot a Site finds out on that Site.
 
 There is no writer, and there should not be one. An operator sets a secret with `phis secret set`; a
 package that could write its own could plant one, and the store would stop being the operator's record

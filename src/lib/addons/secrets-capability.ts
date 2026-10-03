@@ -21,12 +21,20 @@ export function buildPhisAddonSecretsCapability(input: {
 }): PhisSecretsCapabilityV1 {
   const owner = { kind: "addon", addonId: input.addonId } as const;
   return Object.freeze({
-    async read(name) {
-      // Site-scoped by construction: an Add-on on one Site cannot read what an operator set for it on
-      // another, because there is no argument through which it could name a different Site.
+    async read(name, scope = "site") {
+      /*
+       * Two secrets an operator can set, and the caller names which one it means. `"site"` is bound to
+       * this Site by construction: there is no argument through which another Site could be named.
+       * `"addon"` is the one set without `--site`, shared by every Site the Add-on runs on. Neither
+       * stands in for the other -- a missing Site secret is `null`, so an operator who forgot one Site
+       * is told so rather than finding the shared credential used in its place.
+       */
+      if (scope !== "site" && scope !== "addon") {
+        throw new Error(`Secret scope must be "site" or "addon", not ${JSON.stringify(scope)}.`);
+      }
       const reference = buildPhiSecretReference({
         owner,
-        siteKey: input.siteKey,
+        siteKey: scope === "site" ? input.siteKey : null,
         name,
       });
       // Null for "not configured" and a throw for "exists but unreadable" -- the resolver's own
