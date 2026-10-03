@@ -151,6 +151,20 @@ describe.skipIf(!configured)("support capability", () => {
     await expect(unsigned.findByThread(ticket.threadId)).rejects.toThrow(/unverified hook/);
   });
 
+  it("leaves a ticket opened for a person with that person, not with the Add-on", async () => {
+    // Opened on somebody's behalf, the ticket must not hand the Add-on actorless reach for good.
+    const forPerson = buildPhisAddonSupportCapability({
+      addonId: ADDON,
+      siteId: site.id,
+      actorUserId: supporter,
+    });
+    const ticket = await forPerson.create({ typeKey: "request", subject: "for a person", message: "m" });
+    expect(await actorless().get(ticket.id)).toBeNull();
+
+    const own = await actorless().create({ typeKey: "request", subject: "from outside", message: "m" });
+    expect(await actorless().get(own.id)).not.toBeNull();
+  });
+
   it("refuses a type or a queue this Site does not have", async () => {
     await expect(actorless().create({
       typeKey: "nonesuch", subject: "s", message: "m",

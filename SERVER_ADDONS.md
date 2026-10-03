@@ -1280,7 +1280,8 @@ the tables and the rules are Core's.
 
 Reach is the thread's answer and never a second one: a ticket is readable exactly when its thread is,
 which for an actorless Add-on means the two ways above -- it opened the thread, or somebody linked it
-and marked the link synced. There is no listing and no search, for the reason `resource-links:v1` has
+and marked the link synced. `create` makes the ticket the Add-on's own only when nobody is behind the
+call, as `threads:v1` does; a ticket opened for a person is that person's. There is no listing and no search, for the reason `resource-links:v1` has
 none.
 
 **It does not move a ticket's status.** An issue completes its task, and whether that finishes the

@@ -196,9 +196,11 @@ export function buildPhisAddonSupportCapability(input: {
         subject,
         message,
         channel: SUPPORT_TICKET_CHANNEL_API,
-        // The thread carries who opened it, and that is what lets this Add-on read the ticket back:
-        // work arriving from outside has nobody who could link it afterwards.
-        ownerProviderId: addonId,
+        // The same rule as `threads.create`: with nobody behind the call the ticket is the Add-on's own,
+        // which is what lets it read work arriving from outside back. Opened for a person, it is that
+        // person's, and the Add-on reaches it only while acting for someone who can see it -- otherwise
+        // one ticket opened on somebody's behalf would hand it actorless reach for good.
+        ownerProviderId: actorUserId == null ? addonId : null,
         externalRef: externalRef ?? null,
         createdByUserId: actorUserId,
       });
