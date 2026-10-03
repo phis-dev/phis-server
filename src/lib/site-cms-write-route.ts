@@ -22,7 +22,7 @@ import {
   SitePagePathChangeError,
   type SitePageScopeAddress,
 } from "@/db/site-pages";
-import { SiteCmsDraftConflictError } from "@/db/site-revision-scopes";
+import { SiteCmsAreaBaselineRequiredError, SiteCmsDraftConflictError } from "@/db/site-revision-scopes";
 import { resolvePhisCmsAreaMask } from "@/lib/constants/cms-areas";
 import { PhiCmsAuditEvent } from "@/lib/constants/phi-cms";
 import {
@@ -609,18 +609,32 @@ export async function handleSiteCmsAreaModulesWrite(request: NextRequest) {
   } catch (error) {
     const detail = readSiteCmsErrorDetail(error);
     const message = readSiteCmsErrorMessage(error, "CMS area Module save failed.");
-    logRuntimeEvent("error", "cms.area_modules_write.failed", {
-      message: "CMS area Module write failed.",
-      siteKey: context!.site!.key,
-      userId: context!.session?.userId ?? null,
-      method: request.method,
-      path: request.nextUrl.pathname,
-      targetType: "cms-area-modules-draft",
-      error: normalizeLogThrowable(error),
-      meta: {
-        areaMask: validated.value.areaMask,
-      },
-    });
+    if (error instanceof SiteCmsAreaBaselineRequiredError) {
+      logRuntimeEvent("info", "cms.area_modules_write.baseline_requested", {
+        message: "CMS area Module save asked for the Shell baseline.",
+        siteKey: context!.site!.key,
+        userId: context!.session?.userId ?? null,
+        method: request.method,
+        path: request.nextUrl.pathname,
+        targetType: "cms-area-modules-draft",
+        meta: {
+          areaMask: validated.value.areaMask,
+        },
+      });
+    } else {
+      logRuntimeEvent("error", "cms.area_modules_write.failed", {
+        message: "CMS area Module write failed.",
+        siteKey: context!.site!.key,
+        userId: context!.session?.userId ?? null,
+        method: request.method,
+        path: request.nextUrl.pathname,
+        targetType: "cms-area-modules-draft",
+        error: normalizeLogThrowable(error),
+        meta: {
+          areaMask: validated.value.areaMask,
+        },
+      });
+    }
     return NextResponse.json(
       {
         error: message,

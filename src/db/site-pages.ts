@@ -34,6 +34,7 @@ import {
   pruneSiteRevisionScopeReferencesWithDb,
   setSiteRevisionScopePointersWithDb,
   SITE_REVISION_TABLES,
+  SiteCmsAreaBaselineRequiredError,
   SiteCmsDraftConflictError,
   stableJsonStringify,
   updateSiteDraftRevisionWithDb,
@@ -2125,9 +2126,7 @@ export async function saveSiteAreaModulesDraftRevision(
       ? readValidatedAreaRevisionTree(sourceRevision.treeJson)
       : input.baseline ?? null;
     if (!sourceTree) {
-      throw new SiteCmsDraftConflictError(
-        "This Area has no stored revision yet, so a Module selection needs its Shell baseline.",
-      );
+      throw new SiteCmsAreaBaselineRequiredError();
     }
     if (!hasSamePresetIdentity(sourceTree.sourcePreset, input.sourcePreset)) {
       throw new Error("Area preset identity does not match the requested scope.");

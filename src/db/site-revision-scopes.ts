@@ -129,6 +129,18 @@ export class SiteCmsDraftConflictError extends Error {
 }
 
 /**
+ * The one conflict a client is meant to run into: an Area nobody has saved yet has no revision for a
+ * Module selection to patch, and the Builder answers by sending the Area's code-owned Shell as
+ * `baseline`. A step of the first save rather than its failure, and logged as one.
+ */
+export class SiteCmsAreaBaselineRequiredError extends SiteCmsDraftConflictError {
+  constructor() {
+    super("This Area has no stored revision yet, so a Module selection needs its Shell baseline.");
+    this.name = "SiteCmsAreaBaselineRequiredError";
+  }
+}
+
+/**
  * JSON with its object keys sorted, so two trees compare equal whenever they hold the same data. What a
  * revision summary compares to tell a real change from a save of the same state.
  */
