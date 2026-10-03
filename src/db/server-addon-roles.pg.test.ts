@@ -7,6 +7,8 @@ import {
   revokePhisAddonUserRole,
 } from "./server-addon-roles.mts";
 import { buildPhisAddonRolesCapability } from "@/lib/addons/roles-capability";
+import { PhiUserAccountFlag } from "@/lib/constants/user-account-flags";
+import { USER_SITE_FLAG_DISABLED } from "@/lib/user-site-flags";
 import { mayGrantPhisAddonRole } from "@/lib/addons/role-granting";
 import {
   closePhiTestPool,
@@ -100,6 +102,28 @@ describe("Add-on roles", () => {
     expect(await grantPhisAddonUserRole(pool, input)).toBe(true);
     expect(await grantPhisAddonUserRole(pool, input)).toBe(false);
     expect(await capabilityFor(vendor).has("vendor")).toBe(true);
+  });
+
+  it("holds a disabled member's roles without exercising them", async () => {
+    const pool = await requirePhiTestDatabase();
+    const suspended = await createPhiTestUser(site);
+    await grantPhisAddonUserRole(pool, {
+      addonId: ADDON, siteId: site.id, userId: suspended, role: "vendor", grantedByUserId: admin,
+    });
+    expect(await capabilityFor(suspended).has("vendor")).toBe(true);
+
+    const setSiteFlags = (flags: number) => pool.query(
+      `UPDATE phis.user_site_memberships SET user_site_flags = $3 WHERE site_id = $1 AND user_id = $2`,
+      [site.id, suspended, flags],
+    );
+    await setSiteFlags(USER_SITE_FLAG_DISABLED);
+    expect(await capabilityFor(suspended).has("vendor")).toBe(false);
+    await setSiteFlags(0);
+    expect(await capabilityFor(suspended).has("vendor")).toBe(true);
+
+    await pool.query(`UPDATE phis.user_accounts SET flags = flags | $2 WHERE id = $1`,
+      [suspended, PhiUserAccountFlag.Disabled]);
+    expect(await capabilityFor(suspended).all()).toEqual([]);
   });
 
   it("answers no for somebody who holds nothing, and for nobody at all", async () => {

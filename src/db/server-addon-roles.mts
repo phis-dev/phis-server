@@ -1,5 +1,8 @@
 import type { Pool, PoolClient } from "pg";
 
+import { PhiUserAccountFlag } from "../lib/constants/user-account-flags.ts";
+import { USER_SITE_FLAG_DISABLED } from "../lib/user-site-flags.ts";
+
 /**
  * Which roles of one Add-on a user holds on one Site.
  *
@@ -20,14 +23,25 @@ export type PhisAddonRoleGrant = {
   grantedByUserId: number | null;
 };
 
+/**
+ * The roles one user holds for one Add-on on one Site -- while they can act on that Site at all.
+ *
+ * A grant outlives a suspension, so lifting it gives the roles back; while the membership on the Site
+ * or the account everywhere is disabled, though, the grant is held and not exercised. The same two
+ * flags the session reader and `isPhiSiteMember` refuse on.
+ */
 export async function readPhisAddonUserRoles(
   db: Queryable,
   input: { addonId: string; siteId: number; userId: number },
 ): Promise<string[]> {
   const { rows } = await db.query<{ role: string }>(
-    `SELECT role
-       FROM phis.site_addon_user_roles
-      WHERE site_id = $1 AND addon_id = $2 AND user_id = $3`,
+    `SELECT r.role
+       FROM phis.site_addon_user_roles r
+       JOIN phis.user_site_memberships m ON m.site_id = r.site_id AND m.user_id = r.user_id
+       JOIN phis.user_accounts a ON a.id = r.user_id
+      WHERE r.site_id = $1 AND r.addon_id = $2 AND r.user_id = $3
+        AND (m.user_site_flags & ${USER_SITE_FLAG_DISABLED}) = 0
+        AND (a.flags & ${PhiUserAccountFlag.Disabled}) = 0`,
     [input.siteId, input.addonId, input.userId],
   );
   return rows.map((row) => row.role);
