@@ -2,25 +2,30 @@ import { describe, expect, it, vi } from "vitest";
 
 import { PHIS_CORE_CAPABILITIES } from "@phis/contracts/addon";
 
-const mocks = vi.hoisted(() => ({ installed: {} as Record<string, unknown> }));
+const mocks = vi.hoisted(() => ({ installed: {} as Record<string, unknown>, statements: 0 }));
 
 vi.mock("@/lib/addons/installed", () => ({
   getPhisAddonInstalledManifest: () => mocks.installed,
   getPhisAddonBuildDigest: () => "digest",
 }));
 vi.mock("@/db/server-addons", () => ({
-  getPhisAddonRegistryRecord: async (addonId: string) => {
-    const entry = mocks.installed[addonId] as { manifest: Record<string, unknown>; manifestDigest: string };
-    return {
-      globallyEnabled: true,
-      packageName: entry.manifest.packageName,
-      packageVersion: entry.manifest.packageVersion,
-      serverAbi: entry.manifest.serverAbi,
-      manifestDigest: entry.manifestDigest,
-      migrationVersion: entry.manifest.migrationVersion,
-    };
+  readPhisAddonCapabilityStates: async (addonIds: readonly string[]) => {
+    mocks.statements += 1;
+    return new Map(addonIds.map((addonId) => {
+      const entry = mocks.installed[addonId] as { manifest: Record<string, unknown>; manifestDigest: string };
+      return [addonId, {
+        registry: {
+          globallyEnabled: true,
+          packageName: entry.manifest.packageName,
+          packageVersion: entry.manifest.packageVersion,
+          serverAbi: entry.manifest.serverAbi,
+          manifestDigest: entry.manifestDigest,
+          migrationVersion: entry.manifest.migrationVersion,
+        },
+        siteState: { requestedEnabled: true, configurationStatus: "ready", diagnosticCode: null },
+      }];
+    }));
   },
-  getPhisAddonSiteState: async () => ({ requestedEnabled: true, configurationStatus: "ready" }),
 }));
 
 import { buildPhisCapabilitySnapshot, createPhisCoreCapabilityProvider } from "./capability-snapshot.ts";
@@ -91,5 +96,20 @@ describe("a capability two suppliers claim", () => {
       "@acme/auth": installedAddon("@acme/auth", [PHIS_CORE_CAPABILITIES.authentication]),
     };
     expect(await states()).toEqual({ "@acme/auth": "incompatible/capability_clash" });
+  });
+});
+
+/**
+ * The snapshot is built on every authorization read, so what it costs is paid on every signed-in request.
+ */
+describe("what building the snapshot costs", () => {
+  it("asks the database once, however many Add-ons are installed", async () => {
+    mocks.installed = Object.fromEntries(
+      ["@acme/a", "@acme/b", "@acme/c", "@acme/d"].map((addonId) => [addonId, installedAddon(addonId, [`${addonId}:v1`])]),
+    );
+    mocks.statements = 0;
+    const snapshot = await buildPhisCapabilitySnapshot(1);
+    expect(snapshot.providers.slice(1).every((provider) => provider.state === "available")).toBe(true);
+    expect(mocks.statements).toBe(1);
   });
 });

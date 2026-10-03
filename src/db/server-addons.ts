@@ -18,17 +18,33 @@ export type PhisAddonRegistryRecord = {
   globallyEnabled: boolean;
 };
 
+type PhisAddonRegistryRow = {
+  addon_id: string;
+  package_name: string;
+  package_version: string;
+  server_abi: string;
+  migration_version: number;
+  manifest_digest: string;
+  release_build_id: string;
+  flags: number;
+};
+
+function mapPhisAddonRegistryRow(row: PhisAddonRegistryRow) {
+  return {
+    addonId: row.addon_id,
+    packageName: row.package_name,
+    packageVersion: row.package_version,
+    serverAbi: row.server_abi,
+    migrationVersion: row.migration_version,
+    manifestDigest: row.manifest_digest,
+    releaseBuildId: row.release_build_id,
+    globallyEnabled:
+      hasPhiFlag(row.flags, PHIS_ADDON_FLAG_GLOBALLY_ENABLED),
+  } satisfies PhisAddonRegistryRecord;
+}
+
 export async function getPhisAddonRegistryRecord(addonId: string) {
-  const { rows } = await getPool().query<{
-    addon_id: string;
-    package_name: string;
-    package_version: string;
-    server_abi: string;
-    migration_version: number;
-    manifest_digest: string;
-    release_build_id: string;
-    flags: number;
-  }>(
+  const { rows } = await getPool().query<PhisAddonRegistryRow>(
     `SELECT addon_id,
             package_name,
             package_version,
@@ -44,21 +60,7 @@ export async function getPhisAddonRegistryRecord(addonId: string) {
   );
 
   const row = rows[0];
-  if (!row) {
-    return null;
-  }
-
-  return {
-    addonId: row.addon_id,
-    packageName: row.package_name,
-    packageVersion: row.package_version,
-    serverAbi: row.server_abi,
-    migrationVersion: row.migration_version,
-    manifestDigest: row.manifest_digest,
-    releaseBuildId: row.release_build_id,
-    globallyEnabled:
-      hasPhiFlag(row.flags, PHIS_ADDON_FLAG_GLOBALLY_ENABLED),
-  } satisfies PhisAddonRegistryRecord;
+  return row ? mapPhisAddonRegistryRow(row) : null;
 }
 
 export async function isPhisAddonEnabledForSite(addonId: string, siteId: number) {
@@ -82,33 +84,56 @@ export async function isPhisAddonEnabledForSite(addonId: string, siteId: number)
   );
 }
 
-export async function getPhisAddonSiteState(addonId: string, siteId: number) {
-  const { rows } = await getPool().query<{
-    flags: number;
-    configuration_status: string;
-    effective_status: string;
+/**
+ * The registry row of each named Add-on and its state on one Site, in one statement.
+ *
+ * The capability snapshot needs both for every installed Add-on, and it is built on every authorization
+ * read. Asked one Add-on at a time it cost two statements per Add-on per read; asked here it costs one,
+ * however many are installed. An Add-on without a registry row is absent from the answer; one the Site
+ * has no row for carries `siteState: null`.
+ */
+export async function readPhisAddonCapabilityStates(addonIds: readonly string[], siteId: number) {
+  const states = new Map<string, {
+    registry: PhisAddonRegistryRecord;
+    siteState: { requestedEnabled: boolean; configurationStatus: string; diagnosticCode: string | null } | null;
+  }>();
+  if (addonIds.length === 0) {
+    return states;
+  }
+  const { rows } = await getPool().query<PhisAddonRegistryRow & {
+    site_flags: number | null;
+    configuration_status: string | null;
     diagnostic_code: string | null;
   }>(
-    `SELECT flags,
-            configuration_status,
-            effective_status,
-            diagnostic_code
-       FROM phis.site_server_addons
-      WHERE addon_id = $1
-        AND site_id = $2
-      LIMIT 1`,
-    [addonId, siteId],
+    `SELECT a.addon_id,
+            a.package_name,
+            a.package_version,
+            a.server_abi,
+            a.migration_version,
+            a.manifest_digest,
+            a.release_build_id,
+            a.flags,
+            s.flags AS site_flags,
+            s.configuration_status,
+            s.diagnostic_code
+       FROM phis.server_addons a
+       LEFT JOIN phis.site_server_addons s
+         ON s.addon_id = a.addon_id
+        AND s.site_id = $2
+      WHERE a.addon_id = ANY($1::text[])`,
+    [addonIds, siteId],
   );
-
-  const row = rows[0];
-  return row
-    ? {
-        requestedEnabled:
-          hasPhiFlag(row.flags, PHI_SITE_SERVER_ADDON_FLAG_REQUESTED_ENABLED),
-        configurationStatus: row.configuration_status,
-        effectiveStatus: row.effective_status,
-        diagnosticCode: row.diagnostic_code,
-      }
-    : null;
+  for (const row of rows) {
+    states.set(row.addon_id, {
+      registry: mapPhisAddonRegistryRow(row),
+      siteState: row.site_flags === null || row.configuration_status === null
+        ? null
+        : {
+            requestedEnabled: hasPhiFlag(row.site_flags, PHI_SITE_SERVER_ADDON_FLAG_REQUESTED_ENABLED),
+            configurationStatus: row.configuration_status,
+            diagnosticCode: row.diagnostic_code,
+          },
+    });
+  }
+  return states;
 }
-

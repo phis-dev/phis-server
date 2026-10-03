@@ -1,9 +1,6 @@
 import "server-only";
 
-import {
-  getPhisAddonRegistryRecord,
-  getPhisAddonSiteState,
-} from "@/db/server-addons";
+import { readPhisAddonCapabilityStates } from "@/db/server-addons";
 import {
   getPhisAddonBuildDigest,
   getPhisAddonInstalledManifest,
@@ -84,6 +81,11 @@ export async function buildPhisCapabilitySnapshot(siteId: number) {
   const manifest = getPhisAddonInstalledManifest();
   const installed = Object.entries(manifest).sort(([left], [right]) => left.localeCompare(right));
   const clashing = readClashingAddonIds(manifest);
+  // One statement for every Add-on the loop below will ask about, rather than two per Add-on.
+  const stored = await readPhisAddonCapabilityStates(
+    installed.filter(([addonId, entry]) => entry.enabled && !clashing.has(addonId)).map(([addonId]) => addonId),
+    siteId,
+  );
 
   for (const [addonId, entry] of installed) {
     let state: PhiCapabilityState = "available";
@@ -103,7 +105,7 @@ export async function buildPhisCapabilitySnapshot(siteId: number) {
       state = "incompatible";
       diagnosticCode = "capability_clash";
     } else {
-      const registry = await getPhisAddonRegistryRecord(addonId);
+      const registry = stored.get(addonId)?.registry;
       if (!registry) {
         state = "unavailable";
         diagnosticCode = "registry_missing";
@@ -120,7 +122,7 @@ export async function buildPhisCapabilitySnapshot(siteId: number) {
         state = "incompatible";
         diagnosticCode = "deployment_mismatch";
       } else {
-        const siteState = await getPhisAddonSiteState(addonId, siteId);
+        const siteState = stored.get(addonId)?.siteState;
         if (!siteState?.requestedEnabled) {
           state = "disabled";
           diagnosticCode = "site_disabled";
@@ -158,4 +160,17 @@ export async function buildPhisCapabilitySnapshot(siteId: number) {
     buildManifestDigest: getPhisAddonBuildDigest(),
     providers,
   };
+}
+
+/**
+ * The providers that are available on a Site, which is all an authorization read asks of the snapshot.
+ *
+ * Built once by whoever reads a viewer's authorization and handed to the role and the group projection,
+ * so a single read does not build the same snapshot twice.
+ */
+export async function readAvailablePhisProviderIds(siteId: number): Promise<ReadonlySet<string>> {
+  const snapshot = await buildPhisCapabilitySnapshot(siteId);
+  return new Set(
+    snapshot.providers.filter((provider) => provider.state === "available").map((provider) => provider.providerId),
+  );
 }

@@ -11,6 +11,7 @@ import {
 import { isUserSiteEnabled } from "@/lib/user-site-flags";
 import { resolveEffectivePhiViewerRoleClaims } from "@/lib/effective-authorization";
 import { resolveEffectivePhiViewerGroupClaims } from "@/db/site-groups";
+import { readAvailablePhisProviderIds } from "@/lib/addons/capability-snapshot";
 import { toPhiIsoString } from "@/lib/helpers/timestamp";
 
 export type UserSiteMembershipRecord = {
@@ -83,11 +84,14 @@ export async function getUserSiteMembership(userId: number, siteId: number) {
 }
 
 export async function getEffectiveUserSiteAuthorization(userId: number, siteId: number) {
-  const membership = await getUserSiteMembership(userId, siteId);
-  const [roleClaims, groupClaims] = await Promise.all([
-    resolveEffectivePhiViewerRoleClaims(siteId, membership?.roleClaims ?? []),
-    resolveEffectivePhiViewerGroupClaims(siteId, userId),
+  // The available providers are read once and handed to both projections, which would otherwise each
+  // build the same capability snapshot.
+  const [membership, availableProviderIds] = await Promise.all([
+    getUserSiteMembership(userId, siteId),
+    readAvailablePhisProviderIds(siteId),
   ]);
+  const roleClaims = resolveEffectivePhiViewerRoleClaims(membership?.roleClaims ?? [], availableProviderIds);
+  const groupClaims = await resolveEffectivePhiViewerGroupClaims(siteId, userId, availableProviderIds);
   return {
     userId,
     siteId,

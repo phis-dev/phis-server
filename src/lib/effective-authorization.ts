@@ -1,21 +1,15 @@
 import "server-only";
 
-import { buildPhisCapabilitySnapshot } from "@/lib/addons/capability-snapshot";
 import {
   PHI_CORE_ROLE_PROVIDER_ID,
   type PhiViewerRoleClaim,
 } from "@/lib/authorization";
 
-export async function resolveEffectivePhiViewerRoleClaims(
-  siteId: number,
+export function resolveEffectivePhiViewerRoleClaims(
   persistedClaims: readonly PhiViewerRoleClaim[],
+  /** The providers available on the Site, as `readAvailablePhisProviderIds` answers it. */
+  availableProviders: ReadonlySet<string>,
 ) {
-  const snapshot = await buildPhisCapabilitySnapshot(siteId);
-  const availableProviders = new Set(
-    snapshot.providers
-      .filter((provider) => provider.state === "available")
-      .map((provider) => provider.providerId),
-  );
   const effective = persistedClaims.filter((claim) =>
     claim.providerId === PHI_CORE_ROLE_PROVIDER_ID ||
     availableProviders.has(claim.providerId),

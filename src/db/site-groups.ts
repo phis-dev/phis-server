@@ -2,7 +2,7 @@ import "server-only";
 
 import type { PoolClient } from "pg";
 
-import { buildPhisCapabilitySnapshot } from "@/lib/addons/capability-snapshot";
+import { readAvailablePhisProviderIds } from "@/lib/addons/capability-snapshot";
 import type { PhiGroupProviderId, PhiViewerGroupClaim } from "@/lib/authorization";
 import { getPool, withTransaction } from "@/lib/db";
 import {
@@ -184,7 +184,12 @@ export async function createLocalSiteGroup(input: { siteId: number; key: string;
   return mapGroup(rows[0]!);
 }
 
-export async function readEffectiveGroupFlagsWithDb(db: DbQueryable, siteId: number, userId: number) {
+export async function readEffectiveGroupFlagsWithDb(
+  db: DbQueryable,
+  siteId: number,
+  userId: number,
+  availableProviderIds?: ReadonlySet<string>,
+) {
   const { rows } = await db.query<{
     group_id: number;
     group_provider_id: string;
@@ -203,10 +208,7 @@ export async function readEffectiveGroupFlagsWithDb(db: DbQueryable, siteId: num
        AND (m.valid_until IS NULL OR m.valid_until > NOW())`,
     [siteId, userId],
   );
-  const snapshot = await buildPhisCapabilitySnapshot(siteId);
-  const availableProviders = new Set(
-    snapshot.providers.filter((provider) => provider.state === "available").map((provider) => provider.providerId),
-  );
+  const availableProviders = new Set(availableProviderIds ?? await readAvailablePhisProviderIds(siteId));
   availableProviders.add(PHI_CORE_GROUP_PROVIDER_ID);
   const claims = new Map<string, PhiViewerGroupClaim>();
   for (const row of rows) {
@@ -224,8 +226,12 @@ export async function readEffectiveGroupFlagsWithDb(db: DbQueryable, siteId: num
   );
 }
 
-export async function resolveEffectivePhiViewerGroupClaims(siteId: number, userId: number) {
-  return readEffectiveGroupFlagsWithDb(getPool(), siteId, userId);
+export async function resolveEffectivePhiViewerGroupClaims(
+  siteId: number,
+  userId: number,
+  availableProviderIds?: ReadonlySet<string>,
+) {
+  return readEffectiveGroupFlagsWithDb(getPool(), siteId, userId, availableProviderIds);
 }
 
 export async function getSiteGroupById(siteId: number, groupId: number) {
