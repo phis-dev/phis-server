@@ -1,7 +1,29 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { PHIS_CORE_CAPABILITIES } from "@phis/contracts/addon";
-import { createPhisCoreCapabilityProvider } from "./capability-snapshot.ts";
+
+const mocks = vi.hoisted(() => ({ installed: {} as Record<string, unknown> }));
+
+vi.mock("@/lib/addons/installed", () => ({
+  getPhisAddonInstalledManifest: () => mocks.installed,
+  getPhisAddonBuildDigest: () => "digest",
+}));
+vi.mock("@/db/server-addons", () => ({
+  getPhisAddonRegistryRecord: async (addonId: string) => {
+    const entry = mocks.installed[addonId] as { manifest: Record<string, unknown>; manifestDigest: string };
+    return {
+      globallyEnabled: true,
+      packageName: entry.manifest.packageName,
+      packageVersion: entry.manifest.packageVersion,
+      serverAbi: entry.manifest.serverAbi,
+      manifestDigest: entry.manifestDigest,
+      migrationVersion: entry.manifest.migrationVersion,
+    };
+  },
+  getPhisAddonSiteState: async () => ({ requestedEnabled: true, configurationStatus: "ready" }),
+}));
+
+import { buildPhisCapabilitySnapshot, createPhisCoreCapabilityProvider } from "./capability-snapshot.ts";
 import { isPhisAddonCapabilityDeliverable } from "./core-capabilities.ts";
 
 /**
@@ -21,5 +43,53 @@ describe("the Core provider in the capability snapshot", () => {
       Object.values(PHIS_CORE_CAPABILITIES).sort(),
     );
     expect(isPhisAddonCapabilityDeliverable(PHIS_CORE_CAPABILITIES.authentication)).toBe(false);
+  });
+});
+
+function installedAddon(addonId: string, capabilityIds: string[]) {
+  return {
+    enabled: true,
+    manifestDigest: `${addonId}-digest`,
+    manifest: {
+      packageName: addonId,
+      packageVersion: "1.0.0",
+      serverAbi: 1,
+      migrationVersion: 1,
+      capabilities: capabilityIds.map((id) => ({ id, interfaceDigest: "x" })),
+    },
+  };
+}
+
+/**
+ * A capability has one supplier. The CLI refuses an install that adds a second, but a desired state can
+ * reach the server without it, so the snapshot asks again and holds every party to a clash back.
+ */
+describe("a capability two suppliers claim", () => {
+  async function states() {
+    const snapshot = await buildPhisCapabilitySnapshot(1);
+    return Object.fromEntries(snapshot.providers.slice(1).map((provider) => [
+      provider.providerId,
+      `${provider.state}/${provider.diagnosticCode}`,
+    ]));
+  }
+
+  it("holds back both Add-ons that claim it, and leaves the others alone", async () => {
+    mocks.installed = {
+      "@acme/mail": installedAddon("@acme/mail", ["@acme/relay:v1"]),
+      "@other/mail": installedAddon("@other/mail", ["@acme/relay:v1"]),
+      "@acme/fax": installedAddon("@acme/fax", ["@acme/fax:v1"]),
+    };
+    expect(await states()).toEqual({
+      "@acme/fax": "available/null",
+      "@acme/mail": "incompatible/capability_clash",
+      "@other/mail": "incompatible/capability_clash",
+    });
+  });
+
+  it("holds back an Add-on that claims one of Core's", async () => {
+    mocks.installed = {
+      "@acme/auth": installedAddon("@acme/auth", [PHIS_CORE_CAPABILITIES.authentication]),
+    };
+    expect(await states()).toEqual({ "@acme/auth": "incompatible/capability_clash" });
   });
 });

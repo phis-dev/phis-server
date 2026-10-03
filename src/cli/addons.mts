@@ -24,7 +24,10 @@ import {
 } from "../db/server-addon-reconcile.mts";
 
 import { type PhisAddonDesiredState } from "../lib/addons/contract.ts";
-import { PHIS_CORE_CAPABILITIES } from "../lib/addons/core-capabilities.ts";
+import {
+  findPhisAddonCapabilityClashes,
+  PHIS_CORE_CAPABILITIES,
+} from "../lib/addons/core-capabilities.ts";
 import { phisAddonUnindexedSearches } from "../lib/addons/query-descriptor.ts";
 import { ensurePhisAddonSiteGroups } from "../db/server-addon-groups.mts";
 import {
@@ -411,32 +414,6 @@ async function readArtifact(flags: FlagMap) {
     manifest,
     manifestDigest: digestPhisAddonManifest(manifest),
   };
-}
-
-/**
- * The capability ids an artifact declares that something else already supplies.
- *
- * A capability has one supplier (`server_capabilities.capability_id` is unique), and nothing enforced
- * that before reconcile wrote the rows: the second supplier's insert broke on the constraint and took the
- * reconcile of every Add-on down with it. Asked here, the install or upgrade that would introduce the
- * clash is refused, and it names the supplier.
- */
-export function findPhisAddonCapabilityClashes(
-  capabilities: readonly { id: string }[],
-  others: readonly { addonId: string; manifest: { capabilities: readonly { id: string }[] } }[],
-) {
-  const suppliers = new Map<string, string>(
-    PHIS_CORE_CAPABILITIES.map((capability) => [capability.id, "@phis/server/core"]),
-  );
-  for (const other of others) {
-    for (const capability of other.manifest.capabilities) {
-      suppliers.set(capability.id, other.addonId);
-    }
-  }
-  return capabilities.flatMap((capability) => {
-    const supplier = suppliers.get(capability.id);
-    return supplier ? [{ capabilityId: capability.id, supplier }] : [];
-  });
 }
 
 function assertPhisAddonCapabilitiesUnclaimed(

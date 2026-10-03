@@ -69,3 +69,30 @@ const DELIVERABLE_CAPABILITY_ID_SET = new Set<string>([
 export function isPhisAddonCapabilityDeliverable(capabilityId: string) {
   return DELIVERABLE_CAPABILITY_ID_SET.has(capabilityId);
 }
+
+/**
+ * The capability ids an artifact declares that something else already supplies.
+ *
+ * A capability has one supplier (`server_capabilities.capability_id` is unique), and nothing enforced
+ * that before reconcile wrote the rows: the second supplier's insert broke on the constraint and took the
+ * reconcile of every Add-on down with it. The install or upgrade that would introduce the clash asks this
+ * and is refused, naming the supplier; the capability snapshot asks it of what is already installed,
+ * for a desired state that reached the server some other way.
+ */
+export function findPhisAddonCapabilityClashes(
+  capabilities: readonly { id: string }[],
+  others: readonly { addonId: string; manifest: { capabilities: readonly { id: string }[] } }[],
+) {
+  const suppliers = new Map<string, string>(
+    PHIS_CORE_CAPABILITIES.map((capability) => [capability.id, "@phis/server/core"]),
+  );
+  for (const other of others) {
+    for (const capability of other.manifest.capabilities) {
+      suppliers.set(capability.id, other.addonId);
+    }
+  }
+  return capabilities.flatMap((capability) => {
+    const supplier = suppliers.get(capability.id);
+    return supplier ? [{ capabilityId: capability.id, supplier }] : [];
+  });
+}

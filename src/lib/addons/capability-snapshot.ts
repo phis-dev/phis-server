@@ -8,7 +8,10 @@ import {
   getPhisAddonBuildDigest,
   getPhisAddonInstalledManifest,
 } from "@/lib/addons/installed";
-import { PHIS_CORE_CAPABILITIES } from "@/lib/addons/core-capabilities";
+import {
+  findPhisAddonCapabilityClashes,
+  PHIS_CORE_CAPABILITIES,
+} from "@/lib/addons/core-capabilities";
 
 export type { PhiCapabilityState } from "@phis/contracts/server-capabilities";
 import type { PhiCapabilityState } from "@phis/contracts/server-capabilities";
@@ -48,18 +51,57 @@ export function createPhisCoreCapabilityProvider(): PhisCapabilitySnapshotProvid
   };
 }
 
+/*
+ * The Add-ons whose capabilities clash, once per desired state rather than once per call.
+ *
+ * The snapshot is built on every authorization read, and the answer depends on the installed set alone.
+ * The reader hands back the same frozen object until the file changes, so that object is the key: an
+ * edited desired state is a new object and is asked afresh, and the old answer goes with the old object.
+ */
+const clashingAddonIdsByManifest = new WeakMap<object, ReadonlySet<string>>();
+
+function readClashingAddonIds(manifest: ReturnType<typeof getPhisAddonInstalledManifest>) {
+  const known = clashingAddonIdsByManifest.get(manifest);
+  if (known) {
+    return known;
+  }
+  const entries = Object.entries(manifest);
+  const clashing = new Set(entries
+    .filter(([addonId, entry]) => findPhisAddonCapabilityClashes(
+      entry.manifest.capabilities,
+      entries.filter(([otherId]) => otherId !== addonId).map(([otherId, other]) => ({
+        addonId: otherId,
+        manifest: other.manifest,
+      })),
+    ).length > 0)
+    .map(([addonId]) => addonId));
+  clashingAddonIdsByManifest.set(manifest, clashing);
+  return clashing;
+}
+
 export async function buildPhisCapabilitySnapshot(siteId: number) {
   const providers: PhisCapabilitySnapshotProvider[] = [createPhisCoreCapabilityProvider()];
+  const manifest = getPhisAddonInstalledManifest();
+  const installed = Object.entries(manifest).sort(([left], [right]) => left.localeCompare(right));
+  const clashing = readClashingAddonIds(manifest);
 
-  for (const [addonId, entry] of Object.entries(
-    getPhisAddonInstalledManifest(),
-  ).sort(([left], [right]) => left.localeCompare(right))) {
+  for (const [addonId, entry] of installed) {
     let state: PhiCapabilityState = "available";
     let diagnosticCode: string | null = null;
 
     if (!entry.enabled) {
       state = "disabled";
       diagnosticCode = "build_disabled";
+    } else if (clashing.has(addonId)) {
+      /*
+       * A capability has one supplier, and the CLI refuses an install that would add a second. A desired
+       * state that reached the server another way -- edited by hand, copied from elsewhere -- is not
+       * asked that, so it is asked here. Every party to the clash is held back, not only the newer one:
+       * which supplier was meant is the operator's decision, and answering a capability from whichever
+       * entry sorts first would be a guess that looks like a fact.
+       */
+      state = "incompatible";
+      diagnosticCode = "capability_clash";
     } else {
       const registry = await getPhisAddonRegistryRecord(addonId);
       if (!registry) {

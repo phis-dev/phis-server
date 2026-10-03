@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { findPhisAddonCapabilityClashes } from "./addons.mts";
-import { PHIS_CORE_CAPABILITIES } from "../lib/addons/core-capabilities.ts";
+import { findPhisAddonCapabilityClashes, PHIS_CORE_CAPABILITIES } from "./core-capabilities";
 
 /**
  * A capability has one supplier. Before this was asked at install, the clash surfaced in reconcile as a
