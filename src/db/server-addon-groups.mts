@@ -98,16 +98,17 @@ export async function retirePhisAddonSiteGroup(
 }
 
 /** Whether a group is this Add-on's to administer at all. Every writer asks before it writes. */
-export async function isPhisAddonSiteGroup(
+/** The key of one of an Add-on's live groups on a Site, or null when the group is not one. */
+export async function readPhisAddonSiteGroupKey(
   db: Queryable,
   input: { addonId: string; siteId: number; groupId: number },
 ) {
-  const { rows } = await db.query(
-    `SELECT 1 FROM phis.site_groups
+  const { rows } = await db.query<{ key: string }>(
+    `SELECT key FROM phis.site_groups
       WHERE provider_id = $1 AND site_id = $2 AND id = $3 AND retired_at IS NULL`,
     [input.addonId, input.siteId, input.groupId],
   );
-  return rows.length > 0;
+  return rows[0]?.key ?? null;
 }
 
 export async function retirePhisAddonSiteGroups(

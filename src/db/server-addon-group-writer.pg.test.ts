@@ -3,6 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { buildPhisAddonCapabilities } from "@/lib/addons/capabilities";
 import { PhiGroupMembershipFlags } from "@/lib/constants/site-groups";
 import { grantPhisAddonUserRole } from "./server-addon-roles.mts";
+import { ensurePhisAddonSiteGroups } from "./server-addon-groups.mts";
 import { getPool } from "@/lib/db";
 import { PhiUserAccountFlag } from "@/lib/constants/user-account-flags";
 import { USER_SITE_FLAG_DISABLED } from "@/lib/user-site-flags";
@@ -44,6 +45,7 @@ function manifestWith(groupWriter: unknown): PhisAddonManifestV1 {
     jobs: [],
     settings: [],
     roles: [{ name: "curator", description: "Runs it.", grantableBy: { siteAccess: "site-admin" } }],
+    groups: [{ key: "staff", name: "Staff" }],
     schema: null,
     queries: null,
     migrationVersion: 1,
@@ -169,6 +171,22 @@ describe("an Add-on that makes its own groups", () => {
       await expect(groups(curator).addMember({ groupId: group.id, userId, level: "member" }))
         .rejects.toThrow(/not an active member/);
     }
+  });
+
+  it("leaves the groups the manifest declares to the Site", async () => {
+    // Declared groups are the Site's to fill; a writer below its administrators must not reach them.
+    const [declared] = await ensurePhisAddonSiteGroups(getPool(), {
+      addonId: ADDON, siteId: site.id, declared: [{ key: "staff", name: "Staff" }],
+    });
+    await expect(groups(curator).create({ key: "staff", name: "Renamed" }))
+      .rejects.toThrow(/the manifest declares/);
+    await expect(groups(curator).addMember({ groupId: declared!.groupId, userId: member, level: "member" }))
+      .rejects.toThrow(/declared in the manifest/);
+    await expect(groups(curator).retire({ groupId: declared!.groupId })).rejects.toThrow(/declared in the manifest/);
+    const { rows } = await getPool().query<{ name: string }>(
+      `SELECT name FROM phis.site_groups WHERE id = $1`, [declared!.groupId],
+    );
+    expect(rows[0]!.name).toBe("Staff");
   });
 
   it("refuses a group belonging to another Add-on", async () => {

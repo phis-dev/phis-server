@@ -20,7 +20,7 @@ import {
 } from "@/lib/constants/site-groups";
 import {
   createPhisAddonSiteGroup,
-  isPhisAddonSiteGroup,
+  readPhisAddonSiteGroupKey,
   readPhisAddonSiteGroups,
   retirePhisAddonSiteGroup,
 } from "@/db/server-addon-groups.mts";
@@ -61,8 +61,11 @@ export function buildPhisAddonGroupsCapability(input: {
   actorUserId: number | null;
   /** Absent where the manifest declares no writer, and then every write below is refused. */
   groupWriter?: PhisAddonGroupWriterDescriptor | null;
+  /** The keys of the groups the manifest declares, which the writer leaves alone. */
+  declaredGroupKeys?: readonly string[];
 }): PhisGroupsCapabilityV1 {
   const { addonId, siteId, actorUserId } = input;
+  const declaredKeys = new Set(input.declaredGroupKeys ?? []);
 
   /**
    * Whether this caller may write groups at all.
@@ -90,8 +93,19 @@ export function buildPhisAddonGroupsCapability(input: {
 
   /** The group has to be this Add-on's, checked before every write and never inferred from the id. */
   async function requireOwnGroup(groupId: number) {
-    if (!await isPhisAddonSiteGroup(getPool(), { addonId, siteId, groupId })) {
+    const key = await readPhisAddonSiteGroupKey(getPool(), { addonId, siteId, groupId });
+    if (key == null) {
       throw new PhisAddonGroupWriteError(`Group ${groupId} is not ${addonId}'s to administer.`);
+    }
+    if (declaredKeys.has(key)) {
+      /*
+       * A group the manifest declares is one the Site always has, filled by its administrators. The
+       * writer's policy may be far below theirs, so filling such a group at runtime would be a way past
+       * whoever the Site trusted with it.
+       */
+      throw new PhisAddonGroupWriteError(
+        `Group "${key}" is declared in the manifest, so it is the Site's to fill, not the writer's.`,
+      );
     }
   }
 
@@ -156,6 +170,12 @@ export function buildPhisAddonGroupsCapability(input: {
 
     async create({ key, name }) {
       await requireWriter();
+      if (declaredKeys.has(key)) {
+        // The upsert would rename it and bring it back from retirement, and the writes after would fill it.
+        throw new PhisAddonGroupWriteError(
+          `"${key}" is a group the manifest declares; the writer makes groups of its own.`,
+        );
+      }
       const action = await createPhisAddonSiteGroup(getPool(), { addonId, siteId, key, name });
       return { id: action.groupId, key: action.key, name };
     },

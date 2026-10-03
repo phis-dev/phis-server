@@ -1233,6 +1233,10 @@ and the id is the database's to assign. `retire` is not a delete -- access polic
 against the provider-qualified key, and releasing it would let a later group of the same name inherit
 them.
 
+The groups the manifest declares are not the writer's. They are the ones a Site always has and its
+administrators fill, and the writer's `allowedBy` may sit well below them: `create` refuses a declared
+key, and `addMember`, `removeMember` and `retire` refuse a declared group.
+
 Nothing else changes: it is `phis.site_groups` with a different provider, so the ladder, the membership
 projection and the Site's group administration all keep reading one table. Core already filters group
 claims against the available providers, so one of these stops granting anything the moment the Add-on is
