@@ -58,7 +58,7 @@ export function mapUserAccountRow(row: UserAccountRow): UserAccountRecord {
   };
 }
 
-function userAccountProjection(siteParam: number) {
+export function userAccountProjection(siteParam: number) {
   return `SELECT account.id,
                  email.email_normalized,
                  external.external_account_id AS medusa_customer_id,

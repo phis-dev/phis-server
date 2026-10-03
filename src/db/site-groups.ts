@@ -184,31 +184,47 @@ export async function createLocalSiteGroup(input: { siteId: number; key: string;
   return mapGroup(rows[0]!);
 }
 
+export type PhiEffectiveGroupMemberRow = {
+  group_id: number;
+  group_provider_id: string;
+  group_key: string;
+  source_provider_id: string;
+  membership_flags: number;
+};
+
+/**
+ * The membership rows that grant anything, for one Site and user given as SQL expressions.
+ *
+ * Every authorization decision reads this one projection -- here, and inside the request-actor read
+ * (`site-request-actor.ts`), which embeds it -- so the rules below hold everywhere at once.
+ */
+export function phiEffectiveGroupMemberRowsSql(siteRef: string, userRef: string) {
+  return `SELECT g.id AS group_id, g.provider_id AS group_provider_id, g.key AS group_key,
+            m.source_provider_id, m.membership_flags
+     FROM phis.site_group_members m
+     JOIN phis.site_groups g ON g.id = m.group_id AND g.site_id = m.site_id
+     WHERE m.site_id = ${siteRef} AND m.user_id = ${userRef}
+       -- A retired group grants nothing.
+       AND g.retired_at IS NULL
+       AND (m.valid_until IS NULL OR m.valid_until > NOW())`;
+}
+
 export async function readEffectiveGroupFlagsWithDb(
   db: DbQueryable,
   siteId: number,
   userId: number,
   availableProviderIds?: ReadonlySet<string>,
 ) {
-  const { rows } = await db.query<{
-    group_id: number;
-    group_provider_id: string;
-    group_key: string;
-    source_provider_id: string;
-    membership_flags: number;
-  }>(
-    `SELECT g.id AS group_id, g.provider_id AS group_provider_id, g.key AS group_key,
-            m.source_provider_id, m.membership_flags
-     FROM phis.site_group_members m
-     JOIN phis.site_groups g ON g.id = m.group_id AND g.site_id = m.site_id
-     WHERE m.site_id = $1 AND m.user_id = $2
-       -- A retired group grants nothing. Filtering here rather than at each caller is what makes that
-       -- true everywhere at once: every authorization decision reads this one projection.
-       AND g.retired_at IS NULL
-       AND (m.valid_until IS NULL OR m.valid_until > NOW())`,
-    [siteId, userId],
-  );
-  const availableProviders = new Set(availableProviderIds ?? await readAvailablePhisProviderIds(siteId));
+  const { rows } = await db.query<PhiEffectiveGroupMemberRow>(phiEffectiveGroupMemberRowsSql("$1", "$2"), [siteId, userId]);
+  return projectPhiEffectiveGroupClaims(rows, availableProviderIds ?? await readAvailablePhisProviderIds(siteId));
+}
+
+/** The group claims those rows grant, from providers that are available on the Site. */
+export function projectPhiEffectiveGroupClaims(
+  rows: readonly PhiEffectiveGroupMemberRow[],
+  availableProviderIds: ReadonlySet<string>,
+) {
+  const availableProviders = new Set(availableProviderIds);
   availableProviders.add(PHI_CORE_GROUP_PROVIDER_ID);
   const claims = new Map<string, PhiViewerGroupClaim>();
   for (const row of rows) {

@@ -54,7 +54,7 @@ function readSessionAuthState(value: unknown) {
   return value;
 }
 
-function mapSessionRow(row: UserSessionRecord) {
+export function mapSessionRow(row: UserSessionRecord) {
   return {
     id: row.id,
     userId: row.user_id,
@@ -145,10 +145,12 @@ export async function deleteExpiredUserSessions(retentionDays = 30) {
   );
 }
 
-export async function getSessionById(sessionId: string) {
-  const pool = getPool();
-  const { rows } = await pool.query<UserSessionRecord>(
-    `SELECT session.id,
+/**
+ * The session row with what its checks need from the account, the membership, the Core role and the
+ * Site's auth policy. Shared with the request-actor read (`site-request-actor.ts`), which adds the rest
+ * of the authorization to the same statement; one projection means the two cannot answer differently.
+ */
+export const PHI_SESSION_ROW_COLUMNS = `session.id,
             session.user_id,
             session.site_id,
             session.session_secret_hash,
@@ -167,8 +169,9 @@ export async function getSessionById(sessionId: string) {
             account.flags AS account_flags,
             membership.user_site_flags,
             COALESCE(core_claim.role_flags, 0) AS core_role_flags,
-            auth_config.policy_revision AS current_policy_revision
-     FROM phis.user_sessions AS session
+            auth_config.policy_revision AS current_policy_revision`;
+
+export const PHI_SESSION_ROW_FROM = `phis.user_sessions AS session
      JOIN phis.user_accounts AS account
        ON account.id = session.user_id
      JOIN phis.user_site_memberships AS membership
@@ -179,7 +182,13 @@ export async function getSessionById(sessionId: string) {
       AND core_claim.site_id = session.site_id
       AND core_claim.provider_id = '@phis/server/core'
      JOIN phis.site_auth_config AS auth_config
-       ON auth_config.site_id = session.site_id
+       ON auth_config.site_id = session.site_id`;
+
+export async function getSessionById(sessionId: string) {
+  const pool = getPool();
+  const { rows } = await pool.query<UserSessionRecord>(
+    `SELECT ${PHI_SESSION_ROW_COLUMNS}
+     FROM ${PHI_SESSION_ROW_FROM}
      WHERE session.id = $1
      LIMIT 1`,
     [sessionId],
@@ -245,22 +254,41 @@ export function hasFactorChallengeLapsed(
     new Date(session.authenticatedAt).getTime() + FACTOR_CHALLENGE_TTL_SECONDS * 1000 <= now;
 }
 
+export type SessionAcceptOptions = {
+  allowDisabled?: boolean;
+  allowIncomplete?: boolean;
+  allowPasswordChangeRequired?: boolean;
+};
+
+/** The session cookie this request carries, parsed; null where there is none or it is malformed. */
+export function readSessionCookie(request: NextRequest) {
+  return parseSessionCookieValue(request.cookies.get(SESSION_COOKIE_NAME)?.value ?? null);
+}
+
 export async function getSessionFromRequest(
   request: NextRequest,
   expectedSiteId?: number,
-  options: {
-    allowDisabled?: boolean;
-    allowIncomplete?: boolean;
-    allowPasswordChangeRequired?: boolean;
-  } = {},
+  options: SessionAcceptOptions = {},
 ) {
-  const rawCookie = request.cookies.get(SESSION_COOKIE_NAME)?.value ?? null;
-  const parsed = parseSessionCookieValue(rawCookie);
+  const parsed = readSessionCookie(request);
   if (!parsed) {
     return null;
   }
+  return acceptSession(await getSessionById(parsed.sessionId), parsed, expectedSiteId, options);
+}
 
-  const session = await getSessionById(parsed.sessionId);
+/**
+ * Every check a session row has to pass before it counts, for whichever read fetched it.
+ *
+ * `getSessionFromRequest` reads the row alone; the request-actor read fetches it together with the
+ * authorization. Both hand it here, so a check added once applies to both.
+ */
+export async function acceptSession(
+  session: ReturnType<typeof mapSessionRow> | null,
+  parsed: NonNullable<ReturnType<typeof readSessionCookie>>,
+  expectedSiteId: number | undefined,
+  options: SessionAcceptOptions,
+) {
   if (!session || session.revokedAt) {
     return null;
   }

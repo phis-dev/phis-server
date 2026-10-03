@@ -12,9 +12,13 @@ const mocks = vi.hoisted(() => ({
 }));
 vi.mock("@/lib/site-context", () => ({ requireSiteFromRequest: mocks.site }));
 vi.mock("@/lib/auth", () => ({ verifyCsrfRequest: mocks.csrf }));
-vi.mock("@/db/user-sessions", () => ({ getSessionFromRequest: mocks.session }));
-vi.mock("@/db/user-accounts", () => ({ getUserAccountById: mocks.user }));
-vi.mock("@/db/user-site-memberships", () => ({ getEffectiveUserSiteAuthorization: mocks.role }));
+// One read answers session, account and authorization; the fixtures keep stating each link apart.
+vi.mock("@/db/site-request-actor", () => ({
+  getSiteRequestActorFromRequest: async (...args: unknown[]) => {
+    const session = await mocks.session(...args);
+    return session ? { session, user: await mocks.user(), siteRole: await mocks.role() } : null;
+  },
+}));
 
 import { requireAuthenticatedSiteUser, requireCsrfCheckedSite } from "./authenticated-site-user";
 
@@ -52,10 +56,12 @@ describe("the signed-in chain of the auth handlers", () => {
     await requireAuthenticatedSiteUser(request());
     expect(mocks.session).toHaveBeenLastCalledWith(expect.anything(), 7, {
       allowPasswordChangeRequired: undefined,
+      account: { externalSiteId: 0 },
     });
     await requireAuthenticatedSiteUser(request(), { allowPasswordChangeRequired: true });
     expect(mocks.session).toHaveBeenLastCalledWith(expect.anything(), 7, {
       allowPasswordChangeRequired: true,
+      account: { externalSiteId: 0 },
     });
   });
 });

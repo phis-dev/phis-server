@@ -84,28 +84,23 @@ export async function isPhisAddonEnabledForSite(addonId: string, siteId: number)
   );
 }
 
+export type PhisAddonCapabilityStateRow = PhisAddonRegistryRow & {
+  site_flags: number | null;
+  configuration_status: string | null;
+  diagnostic_code: string | null;
+};
+
+export type PhisAddonCapabilityState = {
+  registry: PhisAddonRegistryRecord;
+  siteState: { requestedEnabled: boolean; configurationStatus: string; diagnosticCode: string | null } | null;
+};
+
 /**
- * The registry row of each named Add-on and its state on one Site, in one statement.
- *
- * The capability snapshot needs both for every installed Add-on, and it is built on every authorization
- * read. Asked one Add-on at a time it cost two statements per Add-on per read; asked here it costs one,
- * however many are installed. An Add-on without a registry row is absent from the answer; one the Site
- * has no row for carries `siteState: null`.
+ * The registry rows of the named Add-ons with their state on one Site, the ids and the Site given as SQL
+ * expressions. Read here, and embedded in the request-actor read (`site-request-actor.ts`).
  */
-export async function readPhisAddonCapabilityStates(addonIds: readonly string[], siteId: number) {
-  const states = new Map<string, {
-    registry: PhisAddonRegistryRecord;
-    siteState: { requestedEnabled: boolean; configurationStatus: string; diagnosticCode: string | null } | null;
-  }>();
-  if (addonIds.length === 0) {
-    return states;
-  }
-  const { rows } = await getPool().query<PhisAddonRegistryRow & {
-    site_flags: number | null;
-    configuration_status: string | null;
-    diagnostic_code: string | null;
-  }>(
-    `SELECT a.addon_id,
+export function phisAddonCapabilityStatesSql(addonIdsRef: string, siteRef: string) {
+  return `SELECT a.addon_id,
             a.package_name,
             a.package_version,
             a.server_abi,
@@ -119,21 +114,38 @@ export async function readPhisAddonCapabilityStates(addonIds: readonly string[],
        FROM phis.server_addons a
        LEFT JOIN phis.site_server_addons s
          ON s.addon_id = a.addon_id
-        AND s.site_id = $2
-      WHERE a.addon_id = ANY($1::text[])`,
+        AND s.site_id = ${siteRef}
+      WHERE a.addon_id = ANY(${addonIdsRef})`;
+}
+
+export function mapPhisAddonCapabilityStateRows(rows: readonly PhisAddonCapabilityStateRow[]) {
+  return new Map<string, PhisAddonCapabilityState>(rows.map((row) => [row.addon_id, {
+    registry: mapPhisAddonRegistryRow(row),
+    siteState: row.site_flags === null || row.configuration_status === null
+      ? null
+      : {
+          requestedEnabled: hasPhiFlag(row.site_flags, PHI_SITE_SERVER_ADDON_FLAG_REQUESTED_ENABLED),
+          configurationStatus: row.configuration_status,
+          diagnosticCode: row.diagnostic_code,
+        },
+  }]));
+}
+
+/**
+ * The registry row of each named Add-on and its state on one Site, in one statement.
+ *
+ * The capability snapshot needs both for every installed Add-on, and it is built on every authorization
+ * read. Asked one Add-on at a time it cost two statements per Add-on per read; asked here it costs one,
+ * however many are installed. An Add-on without a registry row is absent from the answer; one the Site
+ * has no row for carries `siteState: null`.
+ */
+export async function readPhisAddonCapabilityStates(addonIds: readonly string[], siteId: number) {
+  if (addonIds.length === 0) {
+    return new Map<string, PhisAddonCapabilityState>();
+  }
+  const { rows } = await getPool().query<PhisAddonCapabilityStateRow>(
+    phisAddonCapabilityStatesSql("$1::text[]", "$2"),
     [addonIds, siteId],
   );
-  for (const row of rows) {
-    states.set(row.addon_id, {
-      registry: mapPhisAddonRegistryRow(row),
-      siteState: row.site_flags === null || row.configuration_status === null
-        ? null
-        : {
-            requestedEnabled: hasPhiFlag(row.site_flags, PHI_SITE_SERVER_ADDON_FLAG_REQUESTED_ENABLED),
-            configurationStatus: row.configuration_status,
-            diagnosticCode: row.diagnostic_code,
-          },
-    });
-  }
-  return states;
+  return mapPhisAddonCapabilityStateRows(rows);
 }

@@ -6,6 +6,7 @@ import { getPool, withTransaction } from "@/lib/db";
 import {
   PHI_CORE_ROLE_PROVIDER_ID,
   type PhiRoleProviderId,
+  type PhiViewerGroupClaim,
   type PhiViewerRoleClaim,
 } from "@/lib/authorization";
 import { isUserSiteEnabled } from "@/lib/user-site-flags";
@@ -90,20 +91,46 @@ export async function getEffectiveUserSiteAuthorization(userId: number, siteId: 
     getUserSiteMembership(userId, siteId),
     readAvailablePhisProviderIds(siteId),
   ]);
-  const roleClaims = resolveEffectivePhiViewerRoleClaims(membership?.roleClaims ?? [], availableProviderIds);
   const groupClaims = await resolveEffectivePhiViewerGroupClaims(siteId, userId, availableProviderIds);
-  return {
+  return composeEffectiveUserSiteAuthorization({
     userId,
     siteId,
-    roleClaims,
+    membership: membership
+      ? { siteFlags: membership.siteFlags, authorizationRevision: membership.authorizationRevision }
+      : null,
+    persistedRoleClaims: membership?.roleClaims ?? [],
     groupClaims,
+    availableProviderIds,
+  });
+}
+
+/**
+ * A viewer's authorization on a Site from what has been read about them.
+ *
+ * `getEffectiveUserSiteAuthorization` reads it in its own statements; the request-actor read
+ * (`site-request-actor.ts`) takes it from the one statement that also reads the session. Both end here.
+ */
+export function composeEffectiveUserSiteAuthorization(input: {
+  userId: number;
+  siteId: number;
+  membership: { siteFlags: number; authorizationRevision: number } | null;
+  persistedRoleClaims: readonly PhiViewerRoleClaim[];
+  groupClaims: PhiViewerGroupClaim[];
+  availableProviderIds: ReadonlySet<string>;
+}) {
+  const roleClaims = resolveEffectivePhiViewerRoleClaims(input.persistedRoleClaims, input.availableProviderIds);
+  return {
+    userId: input.userId,
+    siteId: input.siteId,
+    roleClaims,
+    groupClaims: input.groupClaims,
     coreRoleFlags:
       roleClaims.find((claim) => claim.providerId === PHI_CORE_ROLE_PROVIDER_ID)?.flags ?? 0,
-    siteFlags: membership?.siteFlags ?? 0,
-    authorizationRevision: membership?.authorizationRevision ?? 0,
+    siteFlags: input.membership?.siteFlags ?? 0,
+    authorizationRevision: input.membership?.authorizationRevision ?? 0,
     /** The providers available on the Site, for a caller that has a further question about them. */
-    availableProviderIds,
-    enabled: membership?.enabled === true,
+    availableProviderIds: input.availableProviderIds,
+    enabled: input.membership != null && isUserSiteEnabled(input.membership.siteFlags),
   };
 }
 

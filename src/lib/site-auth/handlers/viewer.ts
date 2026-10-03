@@ -2,10 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { readPhiViewerAddonRoleClaims } from "@/lib/addons/viewer-roles";
 import { readSiteLocaleCodes } from "@/db/sites";
-import { getUserAccountById } from "@/db/user-accounts";
 import { getUserProfileByUserId } from "@/db/user-profiles";
-import { getEffectiveUserSiteAuthorization } from "@/db/user-site-memberships";
-import { getSessionFromRequest, touchSession } from "@/db/user-sessions";
+import { getSiteRequestActorFromRequest } from "@/db/site-request-actor";
+import { touchSession } from "@/db/user-sessions";
 import { resolveSignedInLocale } from "@/lib/auth";
 import { requireSiteFromRequest } from "@/lib/site-context";
 import { resolvePhiUserArea } from "@/lib/user-area";
@@ -30,16 +29,19 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "Missing site context." }, { status: 400 });
   }
 
-  const session = await getSessionFromRequest(request, site.id, { allowPasswordChangeRequired: true });
-  if (!session) {
+  // Session, account and authorization from one statement (`getSiteRequestActorFromRequest`).
+  const actor = await getSiteRequestActorFromRequest(request, site.id, {
+    allowPasswordChangeRequired: true,
+    account: { externalSiteId: site.id },
+  });
+  if (!actor) {
     return NextResponse.json({ authenticated: false }, { status: 401 });
   }
 
-  const user = await getUserAccountById(session.userId, site.id);
+  const { session, user, siteRole } = actor;
   if (!user || !user.siteIds.includes(site.id)) {
     return NextResponse.json({ authenticated: false }, { status: 401 });
   }
-  const siteRole = await getEffectiveUserSiteAuthorization(user.id, site.id);
   if (!siteRole.enabled) {
     return NextResponse.json({ authenticated: false }, { status: 401 });
   }

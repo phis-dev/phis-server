@@ -2,8 +2,8 @@ import "server-only";
 
 import { NextRequest, NextResponse } from "next/server";
 
-import { getEffectiveUserSiteAuthorization } from "@/db/user-site-memberships";
-import { getSessionFromRequest, touchSession } from "@/db/user-sessions";
+import { getSiteRequestActorFromRequest } from "@/db/site-request-actor";
+import { touchSession } from "@/db/user-sessions";
 import { getApiV1TokenMode, guardApiV1 } from "@/lib/api-v1-guard";
 import { PhiBaseRole } from "@/lib/constants/phi-base-roles";
 import {
@@ -24,10 +24,10 @@ export type SiteAdminApiContext = {
   site: Awaited<ReturnType<typeof requireSiteFromRequest>>;
   tokenMode: ReturnType<typeof getApiV1TokenMode>;
   session:
-    | Awaited<ReturnType<typeof getSessionFromRequest>>
+    | NonNullable<Awaited<ReturnType<typeof getSiteRequestActorFromRequest>>>["session"]
     | null;
   siteRole:
-    | Awaited<ReturnType<typeof getEffectiveUserSiteAuthorization>>
+    | NonNullable<Awaited<ReturnType<typeof getSiteRequestActorFromRequest>>>["siteRole"]
     | null;
 };
 
@@ -66,12 +66,13 @@ export async function resolveSiteRoleApiContext(
   }
 
   const tokenMode = getApiV1TokenMode(request);
-  const session = await getSessionFromRequest(request, site.id);
-  if (!session) {
+  // Session and authorization from one statement (`getSiteRequestActorFromRequest`).
+  const actor = await getSiteRequestActorFromRequest(request, site.id);
+  if (!actor) {
     return refuse(NextResponse.json({ error: "Authentication required." }, { status: 401 }));
   }
 
-  const siteRole = await getEffectiveUserSiteAuthorization(session.userId, site.id);
+  const { session, siteRole } = actor;
   if (!siteRole.enabled) {
     return refuse(NextResponse.json({ error: "Site access disabled." }, { status: 403 }));
   }

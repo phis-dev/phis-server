@@ -1,6 +1,6 @@
 import "server-only";
 
-import { readPhisAddonCapabilityStates } from "@/db/server-addons";
+import { readPhisAddonCapabilityStates, type PhisAddonCapabilityState } from "@/db/server-addons";
 import {
   getPhisAddonBuildDigest,
   getPhisAddonInstalledManifest,
@@ -76,16 +76,35 @@ function readClashingAddonIds(manifest: ReturnType<typeof getPhisAddonInstalledM
   return clashing;
 }
 
+/** The Add-ons whose stored state the snapshot asks about: installed, enabled in the build, no clash. */
+export function listPhisSnapshotAddonIds(manifest = getPhisAddonInstalledManifest()) {
+  const clashing = readClashingAddonIds(manifest);
+  return Object.entries(manifest)
+    .filter(([addonId, entry]) => entry.enabled && !clashing.has(addonId))
+    .map(([addonId]) => addonId)
+    .sort();
+}
+
 export async function buildPhisCapabilitySnapshot(siteId: number) {
-  const providers: PhisCapabilitySnapshotProvider[] = [createPhisCoreCapabilityProvider()];
   const manifest = getPhisAddonInstalledManifest();
+  // One statement for every Add-on the snapshot asks about, rather than two per Add-on.
+  return composePhisCapabilitySnapshot(
+    manifest,
+    await readPhisAddonCapabilityStates(listPhisSnapshotAddonIds(manifest), siteId),
+  );
+}
+
+/**
+ * The snapshot from the installed set and the stored states, read by whoever had the statement to spare
+ * -- `buildPhisCapabilitySnapshot` on its own, the request-actor read as part of its one.
+ */
+export function composePhisCapabilitySnapshot(
+  manifest: ReturnType<typeof getPhisAddonInstalledManifest>,
+  stored: ReadonlyMap<string, PhisAddonCapabilityState>,
+) {
+  const providers: PhisCapabilitySnapshotProvider[] = [createPhisCoreCapabilityProvider()];
   const installed = Object.entries(manifest).sort(([left], [right]) => left.localeCompare(right));
   const clashing = readClashingAddonIds(manifest);
-  // One statement for every Add-on the loop below will ask about, rather than two per Add-on.
-  const stored = await readPhisAddonCapabilityStates(
-    installed.filter(([addonId, entry]) => entry.enabled && !clashing.has(addonId)).map(([addonId]) => addonId),
-    siteId,
-  );
 
   for (const [addonId, entry] of installed) {
     let state: PhiCapabilityState = "available";
@@ -169,8 +188,11 @@ export async function buildPhisCapabilitySnapshot(siteId: number) {
  * so a single read does not build the same snapshot twice.
  */
 export async function readAvailablePhisProviderIds(siteId: number): Promise<ReadonlySet<string>> {
-  const snapshot = await buildPhisCapabilitySnapshot(siteId);
+  return availablePhisProviderIdsOf(await buildPhisCapabilitySnapshot(siteId));
+}
+
+export function availablePhisProviderIdsOf(snapshot: { providers: readonly PhisCapabilitySnapshotProvider[] }) {
   return new Set(
     snapshot.providers.filter((provider) => provider.state === "available").map((provider) => provider.providerId),
-  );
+  ) as ReadonlySet<string>;
 }

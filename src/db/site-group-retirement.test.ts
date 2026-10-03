@@ -13,9 +13,13 @@ const read = (path: string) => readFile(new URL(`../../${path}`, import.meta.url
 describe("A retired group grants nothing", () => {
   it("is filtered out of the one claim projection every decision reads", async () => {
     const source = await read("src/db/site-groups.ts");
-    const projection = /async function readEffectiveGroupFlagsWithDb[\s\S]*?\[siteId, userId\]/u.exec(source);
+    const projection = /export function phiEffectiveGroupMemberRowsSql[\s\S]*?\n\}\n/u.exec(source);
     expect(projection, "the effective-claims query stays findable").not.toBeNull();
     expect(projection![0]).toMatch(/g\.retired_at IS NULL/u);
+    // Both readers take that one projection: the single one and the request-actor read.
+    expect(source).toMatch(/readEffectiveGroupFlagsWithDb[\s\S]*?phiEffectiveGroupMemberRowsSql\("\$1", "\$2"\)/u);
+    expect(await read("src/db/site-request-actor.ts"))
+      .toContain('phiEffectiveGroupMemberRowsSql("session.site_id", "session.user_id")');
   });
 
   it("keeps its key, so the row is updated rather than deleted", async () => {

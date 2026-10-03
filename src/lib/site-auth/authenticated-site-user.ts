@@ -1,9 +1,7 @@
 import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 
-import { getUserAccountById } from "@/db/user-accounts";
-import { getEffectiveUserSiteAuthorization } from "@/db/user-site-memberships";
-import { getSessionFromRequest } from "@/db/user-sessions";
+import { getSiteRequestActorFromRequest } from "@/db/site-request-actor";
 import { verifyCsrfRequest } from "@/lib/auth";
 import { requireSiteFromRequest } from "@/lib/site-context";
 
@@ -44,17 +42,18 @@ export async function requireAuthenticatedSiteUser(
     return refuse(checked.response);
   }
   const { site } = checked;
-  const session = await getSessionFromRequest(request, site.id, {
+  // Session, account and authorization from one statement (`getSiteRequestActorFromRequest`).
+  const actor = await getSiteRequestActorFromRequest(request, site.id, {
     allowPasswordChangeRequired: options.allowPasswordChangeRequired,
+    account: { externalSiteId: 0 },
   });
-  if (!session) {
+  if (!actor) {
     return refuse(unauthorized());
   }
-  const user = await getUserAccountById(session.userId);
+  const { session, user, siteRole } = actor;
   if (!user || !user.siteIds.includes(site.id)) {
     return refuse(unauthorized());
   }
-  const siteRole = await getEffectiveUserSiteAuthorization(user.id, site.id);
   if (!siteRole.enabled) {
     return refuse(unauthorized());
   }
