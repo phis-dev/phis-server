@@ -138,6 +138,9 @@ export async function sweepPhisAddonAssets(
        DELETE FROM phis.media_assets a
         WHERE a.site_id = $1 AND a.space_id = $2
           AND a.id NOT IN (${linked})
+          -- A file a message carries is not an orphan: the attachment's foreign key would refuse this
+          -- delete, and the whole pass with it. It goes once no message names it any more.
+          AND NOT EXISTS (SELECT 1 FROM phis.thread_message_assets t WHERE t.asset_id = a.id)
         RETURNING a.bytes, a.storage_key
      ), freed AS (
        SELECT COALESCE(SUM(bytes), 0)::bigint AS bytes FROM gone

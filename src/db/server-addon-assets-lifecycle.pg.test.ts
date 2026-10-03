@@ -13,8 +13,16 @@ import {
   updateMediaUploadSessionByToken,
 } from "@/db/media";
 import { PhiMediaUploadSessionStatus, isPhiMediaUploadBodyProxied } from "@/lib/media-upload-sessions";
+import { PhiMediaDeliveryPolicy } from "@phis/contracts/media";
+import { PhisSiteThreadKindFlag, PhisThreadKind } from "@phis/contracts/threads";
+import { PhiSiteGroupFlags } from "@/lib/constants/site-groups";
+import { buildPhisAddonRowAssets } from "@/lib/addons/row-assets";
+import { withTransaction } from "@/lib/db";
+import { sweepPhisAddonAssets } from "../cli/storage-sweep.mts";
+import { createThread } from "./threads";
 import {
   closePhiTestPool,
+  createPhiTestGroup,
   createPhiTestSite,
   createPhiTestUser,
   dropPhiTestSites,
@@ -664,6 +672,64 @@ describe("putting a file on a row", () => {
       .remove({ table: "offering", id: "999999999" })).toBe(false);
     // And a key that is not one at all names nothing either, rather than raising on its type.
     expect(await assets().remove({ table: "offering", id: "not-a-key" })).toBe(false);
+  });
+
+  it("leaves a slot's file to a message that carries it, public as its slot says", async () => {
+    /*
+     * An Add-on attaches files from its own Space, which are slot files. Attaching one must not narrow
+     * what the slot serves, and deleting its row must not take the file a message still holds -- the
+     * attachment's foreign key would refuse that at commit, and the row delete and every sweep with it.
+     */
+    const pool = await requirePhiTestDatabase();
+    await pool.query(
+      `INSERT INTO phis.site_thread_config (site_id, flags) VALUES ($1, $2)
+       ON CONFLICT (site_id) DO UPDATE SET flags = EXCLUDED.flags`,
+      [site.id, PhisSiteThreadKindFlag.Group],
+    );
+    const groupId = await createPhiTestGroup(site, "pgtest-assetlife-attach");
+    await pool.query(`UPDATE phis.site_groups SET flags = $2 WHERE id = $1`, [groupId, PhiSiteGroupFlags.Threads]);
+
+    const { rows } = await pool.query<{ id: string }>(
+      `INSERT INTO ${SCHEMA}.offering (site_id, name) VALUES ($1, 'attached') RETURNING id`,
+      [site.id],
+    );
+    const rowId = String(rows[0]!.id);
+    const reservation = await assets().begin({
+      table: "offering", ownerId: rowId, slot: "shots",
+      contentType: "image/png", sizeBytes: PNG.byteLength,
+    });
+    await deliver(reservation.token, PNG, "image/png");
+    const file = await assets().finalize({ table: "offering", token: reservation.token });
+
+    await createThread({
+      siteId: site.id,
+      kind: PhisThreadKind.Group,
+      message: "The picture in question.",
+      participantGroupIds: [groupId],
+      ownerProviderId: ADDON,
+      assetIds: [file.mediaAssetId],
+    });
+    const policy = async () => (await pool.query<{ delivery_policy: number }>(
+      `SELECT delivery_policy FROM phis.media_assets WHERE id = $1`, [file.mediaAssetId],
+    )).rows[0]?.delivery_policy;
+    expect(await policy()).toBe(PhiMediaDeliveryPolicy.Public);
+
+    // The row goes the way data.delete takes it: read the files, delete the row, give the files up.
+    const rowAssets = buildPhisAddonRowAssets({
+      addonId: ADDON, siteId: site.id, siteKey: site.key, schema: descriptor,
+    });
+    const objects = await withTransaction(async (client) => {
+      const ids = await rowAssets.collect(client, "offering", rowId);
+      await client.query(`DELETE FROM ${SCHEMA}.offering WHERE id = $1`, [rowId]);
+      return rowAssets.discard(client, ids);
+    });
+    expect(objects).toEqual([]);
+    expect(await policy()).toBe(PhiMediaDeliveryPolicy.Public);
+
+    // Unlinked now, and still not the sweep's: a message names it.
+    const swept = await sweepPhisAddonAssets(pool, { addonId: ADDON, siteId: site.id, siteKey: site.key });
+    expect(swept.storageKeys).not.toContain(await storageKeyOf(file.mediaAssetId));
+    expect(await policy()).toBe(PhiMediaDeliveryPolicy.Public);
   });
 
   it("lets only the person a reservation was made for redeem it", async () => {

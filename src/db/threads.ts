@@ -1701,11 +1701,20 @@ async function attachAssetsWithDb(
    * An attachment is reached through the message that names it and by no other address, whichever Space
    * holds the bytes. Leaving the Asset's own policy as it came would let a file that was public before
    * it was attached stay public afterwards, which is not what attaching it said.
+   *
+   * That holds for a person's own uploads. An Add-on's file is different: its delivery is what the slot
+   * it sits in declares, and the slot still serves it. Narrowing it here would quietly stop a public slot
+   * from delivering, with the manifest still saying `public` -- and attaching a file that is already
+   * public discloses nothing. So an Add-on's file keeps its slot's policy, whichever it is.
    */
   await db.query(
-    `UPDATE phis.media_assets
+    `UPDATE phis.media_assets asset
      SET delivery_policy = ${PhiMediaDeliveryPolicy.Internal}, updated_at = NOW()
-     WHERE site_id = $1 AND id = ANY($2::int[]) AND delivery_policy <> ${PhiMediaDeliveryPolicy.Internal}`,
+     FROM phis.media_spaces space
+     WHERE space.id = asset.space_id
+       AND space.kind = ${PhisMediaSpaceKind.User}
+       AND asset.site_id = $1 AND asset.id = ANY($2::int[])
+       AND asset.delivery_policy <> ${PhiMediaDeliveryPolicy.Internal}`,
     [input.siteId, assetIds],
   );
 
@@ -1883,6 +1892,31 @@ export async function recordDetectedThreadMessageSourceLang(input: {
 }
 
 /** What still hangs on a message, asked from the Asset's side by the delete path. */
+/**
+ * Which of these Assets a message on this Site still carries.
+ *
+ * For a caller about to give files up in bulk: an attached one is evidence a thread still holds, and the
+ * deferred foreign key would refuse the whole transaction at commit rather than just that file.
+ */
+export async function listThreadAttachedAssetIdsWithDb(
+  db: DbQueryable,
+  siteId: number,
+  assetIds: readonly number[],
+) {
+  if (assetIds.length === 0) {
+    return [];
+  }
+  const { rows } = await db.query<{ asset_id: number }>(
+    `SELECT DISTINCT link.asset_id
+     FROM phis.thread_message_assets link
+     JOIN phis.thread_messages message ON message.id = link.message_id
+     JOIN phis.threads thread ON thread.id = message.thread_id
+     WHERE thread.site_id = $1 AND link.asset_id = ANY($2::int[])`,
+    [siteId, [...assetIds]],
+  );
+  return rows.map((row) => row.asset_id);
+}
+
 export async function countThreadAttachmentsForAsset(siteId: number, assetId: number) {
   const { rows } = await getPool().query<{ count: string }>(
     `SELECT COUNT(*) AS count

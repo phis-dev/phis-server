@@ -7,6 +7,7 @@ import { derivePhisAddonSchemaName } from "./schema-name.ts";
 import { discardPhiMediaAssets, type PhiDiscardedMediaObject } from "@/db/media-discard";
 import { drainPhiDiscardedMediaObjects } from "@/lib/media-asset-delete";
 import { readPhisAddonRowAssetIds } from "@/db/server-addon-assets.mts";
+import { listThreadAttachedAssetIdsWithDb } from "@/db/threads";
 
 /**
  * What happens to a row's files when the row itself goes.
@@ -58,7 +59,17 @@ export function buildPhisAddonRowAssets(input: {
     },
 
     async discard(db: PoolClient, assetIds: readonly number[]) {
-      const { objects } = await discardPhiMediaAssets(db, { siteId, assetIds });
+      /*
+       * A file a message carries stays. The row's link goes with the row either way; the file is then
+       * pointed at by the message alone, still on the Add-on's Space, and `--sweep` takes it once no
+       * message names it any more. Discarding it here would not delete it anyway: the attachment's
+       * foreign key refuses at commit, and the whole row delete with it.
+       */
+      const attached = new Set(await listThreadAttachedAssetIdsWithDb(db, siteId, assetIds));
+      const { objects } = await discardPhiMediaAssets(db, {
+        siteId,
+        assetIds: assetIds.filter((id) => !attached.has(id)),
+      });
       return objects;
     },
 

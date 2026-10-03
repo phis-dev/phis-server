@@ -1258,6 +1258,13 @@ files, acting as itself its own, and neither reaches into the other's Space. Who
 message's answer and never the Space's, so a file an Add-on attaches is read by everyone in the
 conversation, and one it is shown does not thereby become its own.
 
+Attaching does not change how a slot's file is delivered. A person's own upload is narrowed to
+`internal` when it is attached, because attaching it said "reached through this message"; an Add-on's file
+keeps the policy its slot declares, because the slot still serves it and a file that is already public
+discloses nothing by being attached. A file a message carries also outlives its row: deleting the row
+takes the link, the file stays on the Add-on's Space for the message, and `--sweep` collects it once no
+message names it.
+
 ### `resource-links:v1`
 
 References from a Phi record into an Add-on's own system: `list`, `link`, `setState`, `unlink`,
