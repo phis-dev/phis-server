@@ -128,8 +128,12 @@ export function buildPhisAddonStorageCapability(input: {
        * Counting the whole body every time would charge an Add-on that rewrites one file each hour as
        * though it kept every version, and the total would climb until the ceiling refused a store that
        * had never actually grown.
+       *
+       * A head that fails is not an absent object: `null` is how a Provider says "not there", and a
+       * throw is a store that did not answer. Read as absent, it would book a new object and the whole
+       * body for a write that may only replace one -- so it fails the write instead.
        */
-      const existing = await service.headObject(storageKey).catch(() => null);
+      const existing = await service.headObject(storageKey);
       const deltaBytes = byteSize - (existing?.byteSize ?? 0);
       const deltaObjects = existing ? 0 : 1;
 
@@ -224,8 +228,9 @@ export function buildPhisAddonStorageCapability(input: {
       const storageKey = `${prefix}/${relative}`;
       // The head carries the content type; the object is only bytes. Both or nothing, so a caller never
       // has to guess what it was handed.
-      const head = await service.headObject(storageKey).catch(() => null);
-      const body = head ? await service.getObjectStream(storageKey).catch(() => null) : null;
+      // A store that does not answer throws; only "not there" is null.
+      const head = await service.headObject(storageKey);
+      const body = head ? await service.getObjectStream(storageKey) : null;
       return head && body
         ? { body, byteSize: head.byteSize, contentType: head.contentType }
         : null;
@@ -234,7 +239,7 @@ export function buildPhisAddonStorageCapability(input: {
     async head(key) {
       const relative = requireKey(key);
       const { service, prefix } = await resolveStorage(siteId, siteKey, addonId);
-      const head = await service.headObject(`${prefix}/${relative}`).catch(() => null);
+      const head = await service.headObject(`${prefix}/${relative}`);
       return head
         ? { key: relative, byteSize: head.byteSize, contentType: head.contentType }
         : null;
@@ -243,7 +248,7 @@ export function buildPhisAddonStorageCapability(input: {
     async remove(key) {
       const relative = requireKey(key);
       const { service, prefix } = await resolveStorage(siteId, siteKey, addonId);
-      const existed = await service.headObject(`${prefix}/${relative}`).catch(() => null);
+      const existed = await service.headObject(`${prefix}/${relative}`);
       if (!existed) {
         return false;
       }
