@@ -119,6 +119,12 @@ where *you share no group with anyone yet* is the one sentence that leads somebo
 Settled: opening a `Group` or `CrossGroup` thread needs `Author`; reading and replying need `Member`.
 Admin and Developer are covered below.
 
+**Archiving is for everyone, so not everyone may do it.** The status is one row, and closing a thread
+ends it for every participant. Whoever opened it, Staff, and a `Manager` of a group taking part may
+archive or reopen it; any other participant is refused (403). A Support thread's status belongs to the
+ticket's workflow, so its requester is refused even though they opened it. Add-ons and Core itself reach a
+thread through their own rules and are not asked again.
+
 **Admin and Developer may always write.** They may open a `Direct` thread to any Staff member and add
 any Staff member or group to a thread they are in, without sharing a group. This is authority to *reach*
 someone, not to *read*: it does not open a thread they are not a participant of.

@@ -41,7 +41,10 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
   return NextResponse.json({ thread });
 }
 
-/** Archiving and reopening. One row carries the status, so this is the thread closing for everyone. */
+/**
+ * Archiving and reopening. One row carries the status, so this is the thread closing for everyone -- and
+ * therefore only for its opener, Staff, or a Manager of a group in it (`setThreadStatus` decides).
+ */
 export async function PATCH(request: NextRequest, { params }: { params: Promise<{ threadId: string }> }) {
   const { context, error } = await requireSiteAuthenticatedApiContext(request);
   if (error) {

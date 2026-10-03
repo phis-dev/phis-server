@@ -1364,6 +1364,35 @@ export async function addThreadParticipants(
  * A status that is already the one asked for answers yes and writes nothing -- the caller wanted the
  * thread archived and it is, which is not a failure and is not a change worth telling anybody about.
  */
+/**
+ * Whether this person may close a thread for everyone in it, or open it again.
+ *
+ * Archiving is one status on one row, so it is never a private act: whoever does it ends the conversation
+ * for every participant. That is the opener's to decide, Staff's, and -- where groups take part -- their
+ * Managers', who answer for what happens in the group. A participant who is none of these reads and
+ * writes like the others and is refused this one act. Callers that are not a person (an Add-on, Core
+ * itself) reached the thread through their own rules already and are not asked again.
+ */
+async function mayChangeThreadStatus(
+  db: DbQueryable,
+  siteId: number,
+  reader: ThreadReader,
+  thread: { id: number; created_by_user_id: number | null },
+) {
+  if (reader.kind !== "user") return true;
+  if (thread.created_by_user_id === reader.userId) return true;
+  if (await readerIsStaff(db, siteId, reader)) return true;
+  const { rows } = await db.query<{ group_id: number }>(
+    `SELECT group_id FROM phis.thread_participants
+     WHERE thread_id = $1 AND participant_kind = 1 AND (flags & ${PhisThreadParticipantFlag.Left}) = 0`,
+    [thread.id],
+  );
+  const standing = await readGroupStanding(db, siteId, reader.userId, rows.map((row) => row.group_id));
+  return [...standing.values()].some(
+    (group) => (group.level & PhiGroupMembershipFlags.Manager) === PhiGroupMembershipFlags.Manager,
+  );
+}
+
 export async function setThreadStatus(input: {
   siteId: number;
   threadId: number;
@@ -1388,6 +1417,11 @@ export async function setThreadStatus(input: {
         if ((requester ?? 0) > 0) {
           throw new PhisThreadError("The requester of a Support thread cannot change its status.");
         }
+      }
+      if (!await mayChangeThreadStatus(client, input.siteId, input.reader, thread)) {
+        throw new PhisThreadError(
+          "Only whoever opened this thread, Staff, or a Manager of a group in it may change its status.",
+        );
       }
       const { rowCount } = await client.query(
         `UPDATE phis.threads

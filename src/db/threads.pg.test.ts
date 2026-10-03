@@ -495,6 +495,46 @@ describe("threads", () => {
     })).rejects.toThrow(/archived/u);
   });
 
+  it("leaves closing a group's thread to its opener, Staff and the group's Managers", async () => {
+    await requirePhiTestDatabase();
+    const site = await createPhiTestSite("threads-archive-authority");
+    await offerAllThreadKinds(site);
+    const group = await createPhiTestGroup(site, "pgtest-archive-authority");
+    await setSiteGroupFlags(site.id, group, PhiSiteGroupFlags.Threads);
+    const author = await createPhiTestUser(site);
+    const member = await createPhiTestUser(site);
+    const manager = await createPhiTestUser(site);
+    const staff = await createPhiTestUser(site);
+    await addPhiTestGroupMember({ site, groupId: group, userId: author, membershipFlags: 3 });
+    await addPhiTestGroupMember({ site, groupId: group, userId: member, membershipFlags: 1 });
+    await addPhiTestGroupMember({ site, groupId: group, userId: manager, membershipFlags: 15 });
+    // Staff in the group at the lowest level, so that only the Core role can be what admits them.
+    await addPhiTestGroupMember({ site, groupId: group, userId: staff, membershipFlags: 1 });
+    await grantCoreRole(site, staff, PhiBaseRole.Staff);
+
+    const opened = await createThread({
+      siteId: site.id,
+      kind: PhisThreadKind.Group,
+      subject: "Group business",
+      message: "Anyone here?",
+      participantGroupIds: [group],
+      createdByUserId: author,
+    });
+    const set = (userId: number, status: Parameters<typeof setThreadStatus>[0]["status"]) => setThreadStatus({
+      siteId: site.id,
+      threadId: opened.thread.id,
+      reader: { kind: "user", userId },
+      status,
+    });
+
+    // A member reads and writes like everybody else, and still may not end it for all of them.
+    await expect(set(member, PhisThreadStatus.Archived)).rejects.toThrow(/Only whoever opened this thread/u);
+    expect(await set(manager, PhisThreadStatus.Archived)).toBe(true);
+    await expect(set(member, PhisThreadStatus.Open)).rejects.toThrow(/Only whoever opened this thread/u);
+    expect(await set(author, PhisThreadStatus.Open)).toBe(true);
+    expect(await set(staff, PhisThreadStatus.Archived)).toBe(true);
+  });
+
   it("brings people in without letting them read what came before they could be seen", async () => {
     await requirePhiTestDatabase();
     const site = await createPhiTestSite("threads-participants");
