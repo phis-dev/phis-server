@@ -53,6 +53,8 @@ const descriptor: PhisAddonSchemaDescriptor = {
     {
       name: "offering",
       siteScoped: true,
+      // Owned, so the row's authority is the one asked; the tests stand in for its answer.
+      ownerScoped: true,
       columns: [
         { name: "id", type: "identity" },
         { name: "name", type: "string", maxLength: 64 },
@@ -73,6 +75,7 @@ const descriptor: PhisAddonSchemaDescriptor = {
       // A key that is not called `id`, which is what the asset table's foreign key and the mirror name.
       name: "listing",
       siteScoped: true,
+      ownerScoped: true,
       columns: [
         { name: "listing_id", type: "identity" },
       ],
@@ -84,6 +87,24 @@ const descriptor: PhisAddonSchemaDescriptor = {
           maxBytes: 4096,
           contentTypes: ["image/png"],
           mirrorColumn: "cover_path",
+        },
+      ],
+    },
+    {
+      // Nobody's row: a slot here states the role that may fill it, and that role is the authority.
+      name: "category",
+      siteScoped: true,
+      columns: [
+        { name: "id", type: "identity" },
+      ],
+      primaryKey: ["id"],
+      assets: [
+        {
+          name: "icon",
+          cardinality: "one",
+          maxBytes: 4096,
+          contentTypes: ["image/png"],
+          requiresRole: "catalog-admin",
         },
       ],
     },
@@ -110,6 +131,8 @@ describe("putting a file on a row", () => {
     actorUserId?: number | null;
     /** Collects what the row authority was asked, so a test can name the intent and not just the answer. */
     intents?: string[];
+    /** The roles the actor holds. */
+    roles?: string[];
   }) {
     return buildPhisAddonAssetsCapability({
       addonId: ADDON,
@@ -121,6 +144,7 @@ describe("putting a file on a row", () => {
         options?.intents?.push(intent);
         return options?.mayActOnRow ?? true;
       },
+      hasRole: async (role) => (options?.roles ?? []).includes(role),
       proxyUploadUrl: ({ token }) => `/api/site/media/uploads/${token}`,
     });
   }
@@ -730,6 +754,32 @@ describe("putting a file on a row", () => {
     const swept = await sweepPhisAddonAssets(pool, { addonId: ADDON, siteId: site.id, siteKey: site.key });
     expect(swept.storageKeys).not.toContain(await storageKeyOf(file.mediaAssetId));
     expect(await policy()).toBe(PhiMediaDeliveryPolicy.Public);
+  });
+
+  it("lets the holder of a slot's role fill it on a row nobody owns, and nobody else", async () => {
+    const pool = await requirePhiTestDatabase();
+    const { rows } = await pool.query<{ id: string }>(
+      `INSERT INTO ${SCHEMA}.category (site_id) VALUES ($1) RETURNING id`,
+      [site.id],
+    );
+    const categoryId = String(rows[0]!.id);
+    const intents: string[] = [];
+    const ask = { table: "category", ownerId: categoryId, slot: "icon", contentType: "image/png", sizeBytes: PNG.byteLength };
+
+    // Without the role: refused loudly, before any row is judged.
+    await expect(assets({ intents }).begin(ask)).rejects.toThrow(/requires the role "catalog-admin"/);
+    await expect(assets().list({ table: "category", ownerId: categoryId }))
+      .rejects.toThrow(/requires the role/);
+
+    // With it: the role is the whole authority, the row's ladder is never asked.
+    const admin = assets({ roles: ["catalog-admin"], intents });
+    const reservation = await admin.begin(ask);
+    await deliver(reservation.token, PNG, "image/png");
+    const file = await admin.finalize({ table: "category", token: reservation.token });
+    expect(await admin.list({ table: "category", ownerId: categoryId })).toHaveLength(1);
+    await expect(assets().remove({ table: "category", id: file.id })).rejects.toThrow(/requires the role/);
+    expect(await admin.remove({ table: "category", id: file.id })).toBe(true);
+    expect(intents).toEqual([]);
   });
 
   it("lets only the person a reservation was made for redeem it", async () => {

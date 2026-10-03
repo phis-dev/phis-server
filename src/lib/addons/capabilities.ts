@@ -403,6 +403,9 @@ export function buildPhisAddonCapabilities(input: {
           ? () => Promise.resolve(true)
           : ({ table, id, intent }) =>
             authorization.mayActOnRow({ table, id: id as number | string, intent }),
+        hasRole: input.systemAuthority
+          ? () => Promise.resolve(true)
+          : (role) => roles.has(role),
         // Core's own upload route, because an Add-on asset is an upload like any other. There is one
         // lifecycle and therefore one address it can be delivered to.
         proxyUploadUrl: ({ token }) => `/api/site/media/uploads/${token}`,

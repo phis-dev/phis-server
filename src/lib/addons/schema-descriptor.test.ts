@@ -255,9 +255,13 @@ describe("schema descriptor validation", () => {
  * and the reading that lets it through is the one nobody can take back afterwards.
  */
 describe("asset slots", () => {
-  function withAssets(assets: unknown) {
+  function withAssets(assets: unknown, scoped = true) {
     return withTable((table) => {
       table.assets = assets;
+      // Owned, so the row's authority decides who fills a slot; the unowned case has its own tests.
+      if (scoped) {
+        table.ownerScoped = true;
+      }
     });
   }
 
@@ -270,6 +274,16 @@ describe("asset slots", () => {
 
   it("accepts a table that declares them", () => {
     expect(validate(withAssets([slot])).issues).toEqual([]);
+  });
+
+  it("makes a slot on a table nobody owns state the role that may fill it", () => {
+    expect(validate(withAssets([slot], false)).issues.join("\n")).toMatch(/must state requiresRole/);
+    expect(validate(withAssets([{ ...slot, requiresRole: "catalog-admin" }], false)).issues).toEqual([]);
+  });
+
+  it("refuses a requiresRole that names nothing", () => {
+    expect(validate(withAssets([{ ...slot, requiresRole: "" }])).issues.join("\n"))
+      .toMatch(/requiresRole must name a role/);
   });
 
   it("refuses assets on a table that belongs to no Site", () => {

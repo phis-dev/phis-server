@@ -365,6 +365,11 @@ function validateAssetSlot(
       issues.push(`${field}.mirrorColumn is only for a slot that holds one file.`);
     }
   }
+  if (value.requiresRole !== undefined
+    && (typeof value.requiresRole !== "string" || value.requiresRole.trim() === "")) {
+    // Whether it names a declared role is the manifest's question; the schema does not know the roles.
+    issues.push(`${field}.requiresRole must name a role.`);
+  }
   return issues.length === before ? (value as PhisAddonAssetSlotDescriptor) : null;
 }
 
@@ -561,6 +566,21 @@ function validateTable(
     ] as const) {
       assertComposedNameFits(assetTable, part, suffix, `${field}.assets on "${assetTable}"`, issues);
     }
+  }
+  if (value.ownerScoped !== true && value.groupScoped !== true) {
+    /*
+     * A table with no owner and no group gives Core no row to judge, so the row's authority says no to
+     * every file on it. A slot there states the role that may fill it, which is then the whole of the
+     * authority -- the rule a declared query's write on such a table follows.
+     */
+    assets.forEach((slot, index) => {
+      if (isPhiRecord(slot) && slot.requiresRole === undefined) {
+        issues.push(
+          `${field}.assets[${index}] must state requiresRole: "${table}" is neither owner- nor ` +
+          "group-scoped, so Core has no row to judge and the role is the only authority there is.",
+        );
+      }
+    });
   }
   const declaredColumnNames = new Set(columns.map((column) => column.name));
   const slotNames = assets.map((slot, index) =>

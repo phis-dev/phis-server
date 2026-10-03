@@ -1072,6 +1072,13 @@ change the row**. That last one matters: putting a file on a row changes it, so 
 authority that decides. Without it this would be a second, quieter way past the ladder -- a caller who
 may not edit an offering could still hang a package off it, which is editing it by another name.
 
+A slot may also state `requiresRole`, one of the Add-on's declared roles. It is asked first and refused
+loudly, as on a declared query, and it governs `begin`, `list` and `remove` on that slot; `list` without
+a slot takes every slot's role. On an owner- or group-scoped table it narrows -- the row's authority
+still has to agree. A table with neither has no row to judge, so validation makes every slot on it state
+a role, and the role is then the whole authority: that is how a category icon or a shop logo carries a
+file.
+
 **The space is charged when the place is made, not when it is used.** A ceiling decided at the end would
 bound the bookkeeping and not the store: ten clients could each write a gigabyte and have five of them
 refused afterwards, with the bytes already paid for. Reserving is one conditional statement, so it is

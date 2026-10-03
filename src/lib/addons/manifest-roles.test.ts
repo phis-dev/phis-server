@@ -55,6 +55,29 @@ describe("declaring Add-on roles", () => {
       .toMatch(/does not name a role this Add-on declares/);
   });
 
+  it("refuses a slot whose requiresRole names a role this Add-on does not declare", () => {
+    const schema = (requiresRole: string) => ({
+      descriptorVersion: 1,
+      version: 1,
+      tables: [{
+        name: "category",
+        siteScoped: true,
+        columns: [{ name: "id", type: "identity" }],
+        primaryKey: ["id"],
+        assets: [{
+          name: "icon", cardinality: "one", maxBytes: 4096, contentTypes: ["image/png"], requiresRole,
+        }],
+      }],
+    });
+    const issues = (requiresRole: string) => validatePhisAddonManifest(manifest({
+      roles: [admin],
+      schema: schema(requiresRole),
+      migrationVersion: 1,
+    })).issues.join("\n");
+    expect(issues("market-admin")).toBe("");
+    expect(issues("someone-elses-admin")).toMatch(/requiresRole does not name a role this Add-on declares/);
+  });
+
   it("refuses a policy that states both sources, or neither", () => {
     expect(issuesFor([{ name: "vendor", grantableBy: { siteAccess: "site-admin", role: "x" } }]))
       .toMatch(/states either siteAccess or role, and not both/);

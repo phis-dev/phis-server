@@ -703,6 +703,19 @@ export function validatePhisAddonManifest(
   }
   assertUnique(groupKeys, "groups", issues);
 
+  // A slot's role is checked here rather than in the schema, which does not know the roles.
+  const declaredRoleNames = new Set(roleNames.filter((name) => name !== ""));
+  for (const [tableIndex, table] of (schema?.tables ?? []).entries()) {
+    for (const [slotIndex, slot] of (table.assets ?? []).entries()) {
+      if (slot.requiresRole !== undefined && !declaredRoleNames.has(slot.requiresRole)) {
+        issues.push(
+          `schema.tables[${tableIndex}].assets[${slotIndex}].requiresRole does not name a role this ` +
+          "Add-on declares.",
+        );
+      }
+    }
+  }
+
   // As with `settings`: absent means none, and is what every manifest written before queries existed
   // says. Stating it is only required to be right, not to be present.
   if (value.queries != null) {

@@ -116,6 +116,8 @@ export function buildPhisAddonAssetsCapability(input: {
   schema: PhisAddonSchemaDescriptor | null;
   /** The same row authority the data capability writes under: attaching a file changes the row. */
   mayActOnRow: (input: { table: string; id: unknown; intent: PhisRowIntent }) => Promise<boolean>;
+  /** Whether the actor holds one of this Add-on's roles: a slot's `requiresRole` asks it. */
+  hasRole: (role: string) => Promise<boolean>;
   /** Where Core receives a body for a Provider that cannot take one directly. */
   proxyUploadUrl: (input: { token: string }) => string;
 }): PhisAssetsCapabilityV1 {
@@ -159,6 +161,42 @@ export function buildPhisAddonAssetsCapability(input: {
         `Row ${String(ownerId)} of "${table}" is not this caller's to ` +
         `${intent === "read" ? "read" : "change"}.`,
       );
+    }
+  }
+
+  /**
+   * Who may act on these slots of this row: the slots' roles first, then the row.
+   *
+   * The roles are asked before the row for the reason a declared query asks them first: whether this
+   * caller may touch the slot at all does not depend on which row they named, and a refusal answered
+   * first cannot tell them the row exists. Refused loudly, unlike the ladder -- a missing role is not
+   * "no row for you".
+   *
+   * On a table with neither owner nor group the row has no authority to give, and validation has made
+   * every slot there state a role. That role is then the whole of it, as it is for such a table's writes.
+   */
+  async function requireSlotAuthority(
+    table: string,
+    slots: readonly PhisAddonAssetSlotDescriptor[],
+    ownerId: unknown,
+    intent: PhisRowIntent,
+  ) {
+    for (const slot of slots) {
+      if (slot.requiresRole && !await input.hasRole(slot.requiresRole)) {
+        throw new PhisAddonAssetError(
+          `Slot "${slot.name}" of "${table}" requires the role "${slot.requiresRole}", which this ` +
+          "actor does not hold.",
+        );
+      }
+    }
+    const declared = schema!.tables.find((entry) => entry.name === table)!;
+    if (declared.ownerScoped === true || declared.groupScoped === true) {
+      await requireRowAuthority(table, ownerId, intent);
+      return;
+    }
+    if (slots.some((slot) => !slot.requiresRole)) {
+      // Validation refuses such a manifest; reaching this is a descriptor that bypassed it.
+      throw new PhisAddonAssetError(`"${table}" judges no row, and a slot on it states no role.`);
     }
   }
 
@@ -276,7 +314,7 @@ export function buildPhisAddonAssetsCapability(input: {
         throw new PhisAddonAssetError("An upload needs an authenticated actor.");
       }
       // Putting a file on a row changes it, so whoever may change it may put one there.
-      await requireRowAuthority(table, ownerId, "update");
+      await requireSlotAuthority(table, [declared], ownerId, "update");
 
       const { space, profile, service } = await resolveSpace();
       /*
@@ -570,10 +608,11 @@ export function buildPhisAddonAssetsCapability(input: {
 
     async list({ table, ownerId, slot }) {
       const location = requireTable(table);
-      if (slot !== undefined) {
-        requireSlot(table, slot);
-      }
-      await requireRowAuthority(table, ownerId, "read");
+      // Without a slot the answer spans every slot, so it takes every slot's role.
+      const slots = slot !== undefined
+        ? [requireSlot(table, slot)]
+        : schema!.tables.find((entry) => entry.name === table)!.assets ?? [];
+      await requireSlotAuthority(table, slots, ownerId, "read");
       const rows = await readPhisAddonAssets(getPool(), location, { siteId, ownerId, slot });
       return rows.map(view);
     },
@@ -600,7 +639,7 @@ export function buildPhisAddonAssetsCapability(input: {
         return false;
       }
       // Taking a file out of a slot changes the row, the same act `begin` is measured against.
-      await requireRowAuthority(table, existing.ownerId, "update");
+      await requireSlotAuthority(table, [requireSlot(table, existing.slot)], existing.ownerId, "update");
       // The link first, the file second: a failure there leaves a file nobody points at, which is
       // findable, rather than a row pointing at nothing, which is not.
       const mediaAssetId = await unlinkPhisAddonAsset(getPool(), location, { siteId, id });
