@@ -13,7 +13,15 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("@/lib/api-v1-guard", () => ({ guardApiV1: mocks.guard, getApiV1TokenMode: () => "internal" }));
 vi.mock("@/lib/site-context", () => ({ requireSiteFromRequest: mocks.site }));
-vi.mock("@/db/site-pages", () => ({ listSitePageScopes: mocks.scopes }));
+// The route asks for the named scopes only; the fixtures stay catalogue rows, narrowed the way the query does.
+vi.mock("@/db/site-pages", () => ({
+  readSitePageScopeTargets: async (siteId: number, areaMask: number, ids: readonly number[]) => {
+    const rows = ((await mocks.scopes(siteId, areaMask, ids)) ?? []) as SitePageScopeCatalogRecord[];
+    return new Map(rows
+      .filter((row) => ids.includes(row.id))
+      .map((row) => [row.id, { path: row.path, tombstoned: row.tombstonedAt != null }]));
+  },
+}));
 vi.mock("@/db/media", () => ({ listPublicSiteSpaceMediaAssetsByIds: mocks.assets }));
 
 import { createPhiPageReference } from "@/lib/internal-references";
@@ -128,7 +136,7 @@ describe("Resolving internal references", () => {
     await resolve({ area: "app", references: [pageUri(18)] });
     // A Page Scope of the Public Area is not in the App Area's catalog, so the same id resolves
     // differently per Area -- which is why the Area is asked for and not inferred.
-    expect(mocks.scopes).toHaveBeenCalledWith(31, 2);
+    expect(mocks.scopes).toHaveBeenCalledWith(31, 2, [18]);
   });
 
   it("refuses a Page reference without an Area, and asks for no catalog at all", async () => {

@@ -31,7 +31,7 @@ import {
 } from "@/lib/cms/instance-id";
 import { normalizeSiteCmsPath } from "@/lib/helpers/cms-path";
 import { readPhiPageReference } from "@/lib/internal-references";
-import { listSitePageScopes } from "@/db/site-pages";
+import { readSitePageScopeTargets } from "@/db/site-pages";
 import { isPhiRecord } from "@/lib/helpers/record";
 import { requirePhiString } from "@/lib/helpers/string";
 
@@ -113,8 +113,17 @@ export async function projectSiteNavigationOverlayTargets(
 ): Promise<SiteNavigationOverlay> {
   const areaKey = overlay.navKey.slice(0, overlay.navKey.indexOf(":"));
   if (!isPhisCmsAreaKey(areaKey)) return overlay;
-  const scopes = await listSitePageScopes(siteId, resolvePhisCmsAreaMask(areaKey));
-  const scopesById = new Map(scopes.map((scope) => [scope.id, scope] as const));
+  // Only the scopes the custom items name, and nothing when none does: the Area's whole catalogue was
+  // read for every Navigation, with or without a page link in it.
+  const scopesById = await readSitePageScopeTargets(
+    siteId,
+    resolvePhisCmsAreaMask(areaKey),
+    overlay.customItems.flatMap((item) => {
+      if (item.target?.kind !== "page") return [];
+      const reference = readPhiPageReference(item.target.reference);
+      return reference?.target.kind === "site" ? [reference.target.pageScopeId] : [];
+    }),
+  );
   return {
     ...overlay,
     customItems: overlay.customItems.map((item) => {
@@ -122,7 +131,7 @@ export async function projectSiteNavigationOverlayTargets(
       const reference = readPhiPageReference(item.target.reference);
       if (!reference || reference.target.kind !== "site") return item;
       const scope = scopesById.get(reference.target.pageScopeId);
-      const deleted = !scope || scope.tombstonedAt != null || !scope.path;
+      const deleted = !scope || scope.tombstoned || !scope.path;
       return {
         ...item,
         target: {

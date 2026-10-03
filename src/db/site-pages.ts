@@ -961,6 +961,33 @@ export function listSiteModuleBlockUsage(siteId: number, areaMask: number, modul
   return listSiteModuleBlockUsageWithDb(getPool(), siteId, areaMask, moduleId);
 }
 
+/**
+ * Where the named Page scopes of an Area live, for resolving `phis:page/<id>` references.
+ *
+ * A reference names its scope, so only the named rows are read. Resolving through `listSitePageScopes`
+ * loaded the Area's whole catalogue for every render that held one link, and for every Navigation read.
+ * A scope that is not in the answer does not exist in this Area.
+ */
+export async function readSitePageScopeTargets(
+  siteId: number,
+  areaMask: number,
+  scopeIds: readonly number[],
+): Promise<Map<number, { path: string | null; tombstoned: boolean }>> {
+  const ids = Array.from(new Set(scopeIds.filter((id) => Number.isSafeInteger(id) && id > 0)));
+  if (!Number.isInteger(siteId) || siteId <= 0 || !Number.isInteger(areaMask) || areaMask <= 0 || ids.length === 0) {
+    return new Map();
+  }
+  const { rows } = await getPool().query<{ id: number; path: string | null; tombstoned_at: Date | string | null }>(
+    `SELECT id, path, tombstoned_at
+     FROM phis.site_page_scopes
+     WHERE site_id = $1
+       AND area_id = $2
+       AND id = ANY($3::int[])`,
+    [siteId, areaMask, ids],
+  );
+  return new Map(rows.map((row) => [row.id, { path: row.path, tombstoned: row.tombstoned_at != null }]));
+}
+
 export async function listSitePageScopes(siteId: number, areaMask: number): Promise<SitePageScopeCatalogRecord[]> {
   if (!Number.isInteger(siteId) || siteId <= 0 || !Number.isInteger(areaMask) || areaMask <= 0) {
     return [];

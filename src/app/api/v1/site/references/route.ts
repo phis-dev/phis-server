@@ -2,7 +2,7 @@ import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 
 import { listPublicSiteSpaceMediaAssetsByIds } from "@/db/media";
-import { listSitePageScopes } from "@/db/site-pages";
+import { readSitePageScopeTargets } from "@/db/site-pages";
 import { guardApiV1 } from "@/lib/api-v1-guard";
 import { isPhisCmsAreaKey, resolvePhisCmsAreaMask } from "@/lib/constants/cms-areas";
 import { readPhiPageReference } from "@/lib/internal-references";
@@ -53,17 +53,19 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Invalid Asset reference." }, { status: 400 });
   }
 
-  const scopes = references.length === 0
-    ? []
-    : await listSitePageScopes(site.id, resolvePhisCmsAreaMask(area));
-  const byId = new Map(scopes.map((scope) => [scope.id, scope] as const));
+  // Only the scopes the references name, and no read without one: the Area's whole catalogue was read
+  // for every page with a link.
+  const scopeIds = references.flatMap((entry) => entry!.target.kind === "site" ? [entry!.target.pageScopeId] : []);
+  const byId = scopeIds.length === 0
+    ? new Map<number, { path: string | null; tombstoned: boolean }>()
+    : await readSitePageScopeTargets(site.id, resolvePhisCmsAreaMask(area), scopeIds);
   const resolved = references.map((entry) => {
     const reference = entry!;
     if (reference.target.kind !== "site") {
       return { reference: reference.reference, path: null, deleted: false, targetKind: "module" as const };
     }
     const scope = byId.get(reference.target.pageScopeId);
-    const deleted = !scope || scope.tombstonedAt != null || !scope.path;
+    const deleted = !scope || scope.tombstoned || !scope.path;
     return {
       reference: reference.reference,
       path: deleted ? null : scope.path,
