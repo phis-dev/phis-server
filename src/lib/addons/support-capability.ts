@@ -136,7 +136,7 @@ export function buildPhisAddonSupportCapability(input: {
   const reachPerson = async (call: string, userId: number) => {
     requireBelievableCaller(call);
     if (!await isPhiSiteMember(getPool(), siteId, userId)) {
-      throw new PhisAddonSupportError(`User ${userId} is not a member of this Site.`);
+      throw new PhisAddonSupportError(`User ${userId} is not an active member of this Site.`);
     }
   };
 

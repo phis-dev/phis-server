@@ -7,6 +7,8 @@ import {
 } from "../lib/addons/schema-descriptor.ts";
 import { quotePhiIdentifier } from "../lib/addons/schema-ddl.ts";
 import { withPoolTransaction } from "../lib/db-transaction.ts";
+import { PhiUserAccountFlag } from "../lib/constants/user-account-flags.ts";
+import { USER_SITE_FLAG_DISABLED } from "../lib/user-site-flags.ts";
 
 /**
  * Handing an Add-on's rows from one account to another.
@@ -107,10 +109,22 @@ export async function transferPhisAddonOwnership(
   };
 }
 
-/** Whether an account is one of this Site's, which is what makes it eligible to receive rows. */
+/**
+ * Whether an account is one of this Site's and may still act on it, which is what makes it eligible to
+ * receive rows, memberships or an allowance.
+ *
+ * A membership disabled on this Site, or an account disabled everywhere, cannot sign in here; handing it
+ * something would grant nothing now and quietly come back to life the day the account is enabled again.
+ * The same two flags the session reader refuses on.
+ */
 export async function isPhiSiteMember(pool: Pool, siteId: number, userId: number) {
   const { rows } = await pool.query(
-    `SELECT 1 FROM phis.user_site_memberships WHERE site_id = $1 AND user_id = $2`,
+    `SELECT 1
+       FROM phis.user_site_memberships m
+       JOIN phis.user_accounts a ON a.id = m.user_id
+      WHERE m.site_id = $1 AND m.user_id = $2
+        AND (m.user_site_flags & ${USER_SITE_FLAG_DISABLED}) = 0
+        AND (a.flags & ${PhiUserAccountFlag.Disabled}) = 0`,
     [siteId, userId],
   );
   return rows.length > 0;

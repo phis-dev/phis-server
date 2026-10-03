@@ -882,7 +882,7 @@ export async function transferAddonOwnership(flags: FlagMap, pool: Pool, siteId:
     throw new Error("--from and --to name the same account, so there is nothing to hand over.");
   }
   if (!await isPhiSiteMember(pool, siteId, toUserId)) {
-    throw new Error(`User ${toUserId} is not a member of this Site and cannot be given its rows.`);
+    throw new Error(`User ${toUserId} is not an active member of this Site and cannot be given its rows.`);
   }
 
   const result = await transferPhisAddonOwnership(pool, {

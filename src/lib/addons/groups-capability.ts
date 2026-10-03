@@ -166,7 +166,7 @@ export function buildPhisAddonGroupsCapability(input: {
       if (!await isPhiSiteMember(getPool(), siteId, userId)) {
         // Refused rather than written: a membership for somebody who cannot sign in to this Site grants
         // nothing and would sit there looking like standing.
-        throw new PhisAddonGroupWriteError(`User ${userId} is not a member of this Site.`);
+        throw new PhisAddonGroupWriteError(`User ${userId} is not an active member of this Site.`);
       }
       const membershipFlags = phiGroupLevelFlags(level);
       if (membershipFlags === null) {

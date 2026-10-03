@@ -1207,7 +1207,8 @@ may cause a group and Core decides whether the condition is met. Without it, "an
 would mean "an Add-on may make itself an authority container and fill it". `allowedBy` has the policy
 shape a role's `grantableBy` uses, is evaluated by the same function (`satisfiesPhisAddonGrantPolicy` in
 `src/lib/addons/role-granting.ts`), and has the same Site Admin floor. `addMember` also refuses a user who
-is not a member of the Site.
+is not an active member of the Site: a membership disabled on the Site, or an account disabled
+everywhere, counts as none.
 
 **Ownership bounds the rest.** A group made here carries the Add-on's id as its provider, and every
 write checks that before it writes: group ids are integers out of one table, so without that check an

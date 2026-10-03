@@ -4,6 +4,8 @@ import { buildPhisAddonCapabilities } from "@/lib/addons/capabilities";
 import { PhiGroupMembershipFlags } from "@/lib/constants/site-groups";
 import { grantPhisAddonUserRole } from "./server-addon-roles.mts";
 import { getPool } from "@/lib/db";
+import { PhiUserAccountFlag } from "@/lib/constants/user-account-flags";
+import { USER_SITE_FLAG_DISABLED } from "@/lib/user-site-flags";
 import {
   closePhiTestPool,
   createPhiTestSite,
@@ -146,6 +148,27 @@ describe("an Add-on that makes its own groups", () => {
       [group.id, member],
     );
     expect(after).toHaveLength(0);
+  });
+
+  it("refuses somebody whose membership or account is disabled", async () => {
+    // A membership for somebody who cannot sign in here grants nothing now and would come back to
+    // life the day the account is enabled again.
+    const group = await groups(curator).create({ key: "vendor-disabled", name: "Disabled" });
+    const siteDisabled = await createPhiTestUser(site);
+    await getPool().query(
+      `UPDATE phis.user_site_memberships SET user_site_flags = user_site_flags | $3
+        WHERE site_id = $1 AND user_id = $2`,
+      [site.id, siteDisabled, USER_SITE_FLAG_DISABLED],
+    );
+    const accountDisabled = await createPhiTestUser(site);
+    await getPool().query(
+      `UPDATE phis.user_accounts SET flags = flags | $2 WHERE id = $1`,
+      [accountDisabled, PhiUserAccountFlag.Disabled],
+    );
+    for (const userId of [siteDisabled, accountDisabled]) {
+      await expect(groups(curator).addMember({ groupId: group.id, userId, level: "member" }))
+        .rejects.toThrow(/not an active member/);
+    }
   });
 
   it("refuses a group belonging to another Add-on", async () => {
