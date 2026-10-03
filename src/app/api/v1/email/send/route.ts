@@ -6,7 +6,8 @@ import { resolveSiteFromHeaders } from "@/lib/site-context";
 import { normalizeLocale } from "@/lib/locale";
 import { getSiteByKey } from "@/db/sites";
 import { stripHtml, type SupportedEmailTemplate } from "@/lib/email-templates";
-import { isPhiEmailAddress } from "@/lib/helpers/normalize";
+import { isPhiEmailAddress, normalizePhiEmail } from "@/lib/helpers/normalize";
+import { normalizeString } from "@/lib/helpers/request";
 
 type GenericEmailMessage = {
   subject?: unknown;
@@ -45,10 +46,6 @@ function normalizeTemplate(value: unknown): SupportedEmailTemplate | null {
   return value;
 }
 
-function normalizeEmail(value: unknown) {
-  return typeof value === "string" ? value.trim().toLowerCase() : "";
-}
-
 function normalizeText(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
 }
@@ -65,7 +62,7 @@ function normalizeTemplateBody(body: GenericEmailMessage | null, fallbackTo: str
     return null;
   }
 
-  const to = normalizeEmail(body.to) || fallbackTo;
+  const to = normalizePhiEmail(normalizeString(body.to)) || fallbackTo;
   const subject = normalizeText(body.subject);
   const html = normalizeText(body.html);
   const text = normalizeText(body.text);
@@ -111,7 +108,7 @@ export async function POST(request: Request) {
   }
 
   const template = normalizeTemplate(payload.template);
-  const fallbackTo = normalizeEmail(payload.to);
+  const fallbackTo = normalizePhiEmail(normalizeString(payload.to));
   const generic = normalizeGenericBody(payload.body);
   const genericBody = normalizeTemplateBody(generic, fallbackTo);
   if (!template && !genericBody) {
@@ -159,7 +156,7 @@ export async function POST(request: Request) {
     const notificationId = await notifyPhiPerson({
       siteId: site!.id,
       occasion: template,
-      recipient: { address: genericBody?.to ?? normalizeEmail(payload.to), locale },
+      recipient: { address: genericBody?.to ?? normalizePhiEmail(normalizeString(payload.to)), locale },
       params: { recipientName },
     });
 
@@ -168,7 +165,7 @@ export async function POST(request: Request) {
         sent: true,
         template,
         siteKey: site?.key,
-        to: genericBody?.to ?? normalizeEmail(payload.to),
+        to: genericBody?.to ?? normalizePhiEmail(normalizeString(payload.to)),
         notificationId,
       },
     );

@@ -23,6 +23,7 @@ import { USER_SITE_FLAG_NEWSLETTER_OPT_IN } from "@/lib/user-site-flags";
 
 import { PhiUserEmailSource } from "@phis/contracts/access";
 import { normalizeString } from "@/lib/helpers/request";
+import { isPhiEmailAddress } from "@/lib/helpers/normalize";
 
 type RegistrationPayload = {
   firstName?: unknown;
@@ -38,10 +39,6 @@ type RegistrationPayload = {
   issuedAt?: unknown;
   formToken?: unknown;
 };
-
-function isValidEmail(value: string) {
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
-}
 
 function countLetters(value: string) {
   return value.match(/\p{L}/gu)?.length ?? 0;
@@ -148,7 +145,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Missing required fields." }, { status: 400 });
   }
 
-  if (!isValidEmail(email)) {
+  if (!isPhiEmailAddress(email)) {
     return NextResponse.json({ error: "Invalid email address." }, { status: 400 });
   }
 
