@@ -387,14 +387,23 @@ export async function revokeUserSessionForSite(input: {
   return (rowCount ?? 0) > 0;
 }
 
-export async function touchSession(sessionId: string, request?: NextRequest) {
-  void request;
-  const pool = getPool();
-  await pool.query(
+/**
+ * How stale `last_seen_at` may get before a request writes it again.
+ *
+ * It answers "last seen" in the session lists, where minutes are the finest anybody reads. Written on
+ * every request it was an UPDATE on every signed-in page view and every guarded API call.
+ */
+const SESSION_TOUCH_INTERVAL_MS = 5 * 60 * 1000;
+
+export async function touchSession(session: { id: string; lastSeenAt: string | null }, now = Date.now()) {
+  if (session.lastSeenAt && now - new Date(session.lastSeenAt).getTime() < SESSION_TOUCH_INTERVAL_MS) {
+    return;
+  }
+  await getPool().query(
     `UPDATE phis.user_sessions
      SET last_seen_at = NOW()
      WHERE id = $1`,
-    [sessionId],
+    [session.id],
   );
 }
 

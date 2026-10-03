@@ -85,7 +85,7 @@ async function requireSiteRoleApiContext(
     };
   }
 
-  await touchSession(session.id, request);
+  await touchSession(session);
 
   return {
     context: {

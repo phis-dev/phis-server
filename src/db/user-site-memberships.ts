@@ -101,6 +101,8 @@ export async function getEffectiveUserSiteAuthorization(userId: number, siteId: 
       roleClaims.find((claim) => claim.providerId === PHI_CORE_ROLE_PROVIDER_ID)?.flags ?? 0,
     siteFlags: membership?.siteFlags ?? 0,
     authorizationRevision: membership?.authorizationRevision ?? 0,
+    /** The providers available on the Site, for a caller that has a further question about them. */
+    availableProviderIds,
     enabled: membership?.enabled === true,
   };
 }

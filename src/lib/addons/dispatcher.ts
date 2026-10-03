@@ -186,7 +186,7 @@ async function resolveApiIdentity(
         actor: null,
       };
     }
-    await touchSession(session.id, request);
+    await touchSession(session);
     return {
       error: null,
       site,

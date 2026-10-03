@@ -547,6 +547,34 @@ export async function readSiteAvailableLocales(siteId: number) {
   ].filter(Boolean)));
 }
 
+/**
+ * The locale codes a Site serves, exactly as `getSiteRuntimeConfig` lists them, from the one column.
+ *
+ * For the reads every page render makes -- the viewer, the request locale -- which need the list and
+ * nothing else: the runtime config also joins the theme scope and resolves each Asset-bound logo.
+ * Normalized and defaulted the same way, so a caller switching over sees the same list.
+ */
+export async function readSiteLocaleCodes(siteId: number) {
+  if (!Number.isInteger(siteId) || siteId <= 0) {
+    return null;
+  }
+  const { rows } = await getPool().query<{ default_locale: string; available_locales: string[] | null }>(
+    `SELECT default_locale, available_locales
+     FROM phis.sites
+     WHERE id = $1
+       AND (flags & $2) <> 0
+     LIMIT 1`,
+    [siteId, SITE_FLAG_ACTIVE],
+  );
+  const row = rows[0];
+  if (!row) {
+    return null;
+  }
+  return buildLocaleOptions(
+    Array.isArray(row.available_locales) ? row.available_locales : [row.default_locale],
+  ).map((option) => option.code);
+}
+
 export async function getSiteRuntimeConfig(siteId: number) {
   if (!Number.isInteger(siteId) || siteId <= 0) {
     return null;

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { readPhiViewerAddonRoleClaims } from "@/lib/addons/viewer-roles";
-import { getSiteRuntimeConfig } from "@/db/sites";
+import { readSiteLocaleCodes } from "@/db/sites";
 import { getUserAccountById } from "@/db/user-accounts";
 import { getUserProfileByUserId } from "@/db/user-profiles";
 import { getEffectiveUserSiteAuthorization } from "@/db/user-site-memberships";
@@ -43,8 +43,9 @@ export async function GET(request: NextRequest) {
   if (!siteRole.enabled) {
     return NextResponse.json({ authenticated: false }, { status: 401 });
   }
-  const runtimeConfig = await getSiteRuntimeConfig(site.id);
-  await touchSession(session.id, request);
+  // The locale codes and nothing else: the full runtime config also resolves the theme and the logos.
+  const availableLocales = await readSiteLocaleCodes(site.id);
+  await touchSession(session);
 
   let name = user.emailNormalized;
   const profile = await getUserProfileByUserId(user.id);
@@ -70,7 +71,7 @@ export async function GET(request: NextRequest) {
       name,
       roleClaims: siteRole.roleClaims,
       groupClaims: siteRole.groupClaims,
-      addonRoleClaims: await readPhiViewerAddonRoleClaims(site.id, user.id),
+      addonRoleClaims: await readPhiViewerAddonRoleClaims(site.id, user.id, siteRole.availableProviderIds),
       authorizationRevision: siteRole.authorizationRevision,
       newsletterOptIn: (siteRole.siteFlags & USER_SITE_FLAG_NEWSLETTER_OPT_IN) === USER_SITE_FLAG_NEWSLETTER_OPT_IN,
       /*
@@ -82,9 +83,8 @@ export async function GET(request: NextRequest) {
        */
       preferredLocale: resolveSignedInLocale(request, {
         user,
-        defaultLocale: runtimeConfig?.defaultLocale ?? site.defaultLocale,
-        availableLocales: runtimeConfig?.availableLocales.map((option) => option.code)
-          ?? [site.defaultLocale],
+        defaultLocale: site.defaultLocale,
+        availableLocales: availableLocales ?? [site.defaultLocale],
       }),
       /*
        * Unlike the locale, this is not resolved here. A Site has a default language and can answer for

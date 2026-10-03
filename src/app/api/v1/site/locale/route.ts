@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 
-import { getSiteRuntimeConfig } from "@/db/sites";
+import { readSiteLocaleCodes } from "@/db/sites";
 import { getUserAccountById } from "@/db/user-accounts";
 import { getSessionFromRequest } from "@/db/user-sessions";
 import { createJsonResponse } from "@/lib/api-response";
@@ -22,8 +22,10 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "Site not found." }, { status: 404 });
   }
 
-  const config = await getSiteRuntimeConfig(site.id);
-  if (!config) {
+  // The locale codes and nothing else: the full runtime config also resolves the theme and the logos,
+  // and this is asked on every page render.
+  const availableLocales = await readSiteLocaleCodes(site.id);
+  if (!availableLocales) {
     return NextResponse.json({ error: "Site not found." }, { status: 404 });
   }
 
@@ -40,8 +42,8 @@ export async function GET(request: NextRequest) {
     userPreferredLocale: user?.preferredLocale ?? null,
     cookieLocale,
     browserLocale,
-    defaultLocale: config.defaultLocale,
-    availableLocales: config.availableLocales.map((option) => option.code),
+    defaultLocale: site.defaultLocale,
+    availableLocales,
   });
 
   return createJsonResponse(request, {
