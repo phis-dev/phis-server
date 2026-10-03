@@ -10,6 +10,7 @@ import {
 import { requireSiteAuthenticatedApiContext } from "@/lib/guards/site-admin-api";
 import { logRuntimeEvent } from "@/lib/log";
 import { serializeMediaAssetForDetail } from "@/lib/media-response";
+import { requireJsonObjectBody } from "@/lib/helpers/request";
 
 export const dynamic = "force-dynamic";
 
@@ -29,11 +30,8 @@ async function resolveOwnUserSpace(siteId: number, userId: number) {
   return resolveAuthorizedMediaSpace({ siteId, userId, requestedSpaceId: "user", intent: "read" });
 }
 
-function readAssetId(body: unknown) {
-  if (!body || typeof body !== "object" || Array.isArray(body)) {
-    return { assetId: null, issue: "A JSON object with an assetId is required." };
-  }
-  const value = (body as { assetId?: unknown }).assetId;
+function readAssetId(body: Record<string, unknown>) {
+  const value = body.assetId;
   if (!Number.isSafeInteger(value) || (value as number) <= 0) {
     return { assetId: null, issue: "assetId must be a positive integer." };
   }
@@ -80,7 +78,11 @@ export async function PUT(request: NextRequest) {
     }
     const { site, session } = context;
 
-    const { assetId, issue } = readAssetId(await request.json().catch(() => null));
+    const parsed = await requireJsonObjectBody(request, "A JSON object with an assetId is required.");
+    if (!parsed.ok) {
+      return parsed.response;
+    }
+    const { assetId, issue } = readAssetId(parsed.body);
     if (issue || assetId == null) {
       return NextResponse.json({ error: issue }, { status: 400 });
     }

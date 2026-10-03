@@ -28,7 +28,14 @@ import { hasPhiFlag } from "@/lib/helpers/flags";
 import { listUserSessionsForSite, revokeUserSessionsForSite } from "@/db/user-sessions";
 import { resolveUserAccountFlagTags } from "@/lib/user-flags";
 import { USER_SITE_FLAG_DISABLED, USER_SITE_FLAG_NEWSLETTER_OPT_IN } from "@/lib/user-site-flags";
-import { normalizeString, readRequestBody } from "@/lib/helpers/request";
+import {
+  normalizeNullableString,
+  normalizeString,
+  parsePhiPagination,
+  parsePositiveIntWithFallback,
+  parseStrictPositiveInt,
+  readRequestBody,
+} from "@/lib/helpers/request";
 
 import { PhiUserEmailSource } from "@phis/contracts/access";
 
@@ -58,11 +65,6 @@ function normalize(value: QueryValue) {
   return value?.trim() ?? "";
 }
 
-function normalizeNullableString(value: unknown) {
-  const normalized = normalizeString(value);
-  return normalized ? normalized : null;
-}
-
 function normalizeBoolean(value: unknown) {
   if (typeof value === "boolean") {
     return value;
@@ -73,11 +75,6 @@ function normalizeBoolean(value: unknown) {
   }
 
   return false;
-}
-
-function parsePageValue(value: QueryValue, fallback: number) {
-  const parsed = Number.parseInt(normalize(value), 10);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
 function parseEnabledFilter(value: QueryValue) {
@@ -96,11 +93,6 @@ function parseAccountType(value: QueryValue) {
   }
 
   return "all";
-}
-
-function parsePositiveInt(value: QueryValue, fallback: number) {
-  const parsed = Number.parseInt(normalize(value), 10);
-  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
 }
 
 function buildRoleTags(coreRoleFlags: number) {
@@ -141,10 +133,6 @@ function buildBaseRoleFlagsFromSelection(value: unknown) {
   }
 
   return flags;
-}
-
-function buildRecipientName(firstName: string, lastName: string) {
-  return [firstName.trim(), lastName.trim()].filter(Boolean).join(" ").trim();
 }
 
 async function sendPasswordResetMail(input: {
@@ -196,22 +184,31 @@ export async function GET(request: NextRequest) {
   }
 
   const { searchParams } = new URL(request.url);
-  const historyUserId = parsePositiveInt(searchParams.get("historyUserId"), 0);
-  if (historyUserId > 0) {
+  // Ids are read strictly: "12abc" names nobody, and must not become user 12.
+  const historyUserParam = searchParams.get("historyUserId");
+  const historyUserId = historyUserParam === null ? null : parseStrictPositiveInt(historyUserParam);
+  if (historyUserParam !== null && !historyUserId) {
+    return NextResponse.json({ error: "Invalid historyUserId." }, { status: 400 });
+  }
+  if (historyUserId) {
     const target = await getUserAccountById(historyUserId, site.id);
     if (!target || !target.siteIds.includes(site.id)) {
       return NextResponse.json({ error: "User not found." }, { status: 404 });
     }
 
-    const sessions = await listUserSessionsForSite(historyUserId, site.id, parsePositiveInt(searchParams.get("limit"), 25));
+    const sessions = await listUserSessionsForSite(historyUserId, site.id, parsePositiveIntWithFallback(searchParams.get("limit"), 25));
     return NextResponse.json({
       userId: historyUserId,
       sessions,
     });
   }
 
-  const userId = parsePositiveInt(searchParams.get("userId"), 0);
-  if (userId > 0) {
+  const userParam = searchParams.get("userId");
+  const userId = userParam === null ? null : parseStrictPositiveInt(userParam);
+  if (userParam !== null && !userId) {
+    return NextResponse.json({ error: "Invalid userId." }, { status: 400 });
+  }
+  if (userId) {
     const [target, profile, membership] = await Promise.all([
       getUserAccountById(userId, site.id),
       getUserProfileByUserId(userId),
@@ -242,8 +239,7 @@ export async function GET(request: NextRequest) {
     enabled: parseEnabledFilter(searchParams.get("enabled")),
     sortKey: normalize(searchParams.get("sortKey")),
     sortOrder: normalize(searchParams.get("sortOrder")).toLowerCase() as "ascend" | "descend" | "",
-    page: parsePageValue(searchParams.get("page"), 1),
-    pageSize: parsePageValue(searchParams.get("pageSize"), 20),
+    ...parsePhiPagination(searchParams, 20),
   });
 
   const rows = result.rows.map((row) => ({
@@ -441,11 +437,7 @@ export async function PUT(request: NextRequest) {
   }
 
   const body = await readRequestBody(request);
-  const userId = typeof body.userId === "number" && Number.isInteger(body.userId) && body.userId > 0
-    ? body.userId
-    : typeof body.userId === "string"
-      ? parsePositiveInt(body.userId, 0)
-      : 0;
+  const userId = parseStrictPositiveInt(body.userId);
   if (!userId) {
     return NextResponse.json({ error: "Missing userId." }, { status: 400 });
   }
@@ -635,8 +627,8 @@ export async function PATCH(request: NextRequest) {
         ? null
         : ["1", "true", "yes", "on"].includes(enabledInput.trim().toLowerCase());
 
-  const userId = Number.parseInt(userIdInput, 10);
-  if (!Number.isInteger(userId) || userId <= 0) {
+  const userId = parseStrictPositiveInt(userIdInput);
+  if (!userId) {
     return NextResponse.json({ error: "Missing userId." }, { status: 400 });
   }
 
@@ -686,8 +678,8 @@ export async function DELETE(request: NextRequest) {
 
   const { searchParams } = new URL(request.url);
   const userIdInput = normalize(searchParams.get("userId"));
-  const userId = Number.parseInt(userIdInput, 10);
-  if (!Number.isInteger(userId) || userId <= 0) {
+  const userId = parseStrictPositiveInt(userIdInput);
+  if (!userId) {
     return NextResponse.json({ error: "Missing userId." }, { status: 400 });
   }
 

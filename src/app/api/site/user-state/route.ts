@@ -21,6 +21,7 @@ import {
   resolvePhiUserStateKeyOwner,
 } from "@/db/site-active-modules";
 import { requireSiteAuthenticatedApiContext } from "@/lib/guards/site-admin-api";
+import { requireJsonObjectBody } from "@/lib/helpers/request";
 
 export const dynamic = "force-dynamic";
 
@@ -44,10 +45,7 @@ type UserStateWritePayload = {
   limit?: unknown;
 };
 
-function readWritePayload(body: unknown) {
-  if (!body || typeof body !== "object" || Array.isArray(body)) {
-    return { issue: "A JSON object with a key and a shape is required." as const };
-  }
+function readWritePayload(body: Record<string, unknown>) {
   const { key, shape, value, limit } = body as UserStateWritePayload;
   if (!isPhisUserStateKey(key)) {
     return { issue: "key must be a `<module id>/<key>` identifier." as const };
@@ -145,14 +143,12 @@ export async function PATCH(request: NextRequest) {
   }
   const { site, session } = actor;
 
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON payload." }, { status: 400 });
+  const parsed = await requireJsonObjectBody(request, "A JSON object with a key and a shape is required.");
+  if (!parsed.ok) {
+    return parsed.response;
   }
 
-  const payload = readWritePayload(body);
+  const payload = readWritePayload(parsed.body);
   if ("issue" in payload) {
     return NextResponse.json({ error: payload.issue }, { status: 400 });
   }
