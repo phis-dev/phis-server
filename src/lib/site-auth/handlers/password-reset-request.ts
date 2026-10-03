@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+import { after, NextRequest, NextResponse } from "next/server";
 
 import { createUserPasswordResetToken } from "@/db/user-password-reset-tokens";
 import { getUserAccountByEmail } from "@/db/user-accounts";
@@ -57,13 +57,44 @@ export async function POST(request: NextRequest) {
     return tooManyAttemptsResponse(retryAfter);
   }
 
+  // Whether there is an account to reset is decided after the answer is out. Looking it up, issuing the
+  // token and queueing the mail take time only when the account exists, so doing them before answering
+  // would tell anybody with a stopwatch which addresses have one. The headers are copied now: the link
+  // is built from them, and the request is not ours to read once the response is gone.
+  const headers = new Headers(request.headers);
+  after(async () => {
+    try {
+      await issuePasswordReset({ site, email, locale, headers });
+    } catch (error) {
+      logRuntimeEvent("error", "auth.password.reset.request_failed", {
+        message: "Password reset could not be issued.",
+        siteKey: site.key,
+        error,
+      });
+    }
+  });
+
+  return NextResponse.json({});
+}
+
+async function issuePasswordReset({
+  site,
+  email,
+  locale,
+  headers,
+}: {
+  site: { id: number; key: string };
+  email: string;
+  locale: string;
+  headers: Headers;
+}) {
   const user = await getUserAccountByEmail(email, site.id);
   if (!user || !user.siteIds.includes(site.id) || !user.passwordHash) {
-    return NextResponse.json({});
+    return;
   }
   const siteRole = await getEffectiveUserSiteAuthorization(user.id, site.id);
   if (!isUserAccountEnabled(user.flags) || !siteRole.enabled) {
-    return NextResponse.json({});
+    return;
   }
 
   const resetToken = await createUserPasswordResetToken({
@@ -73,36 +104,25 @@ export async function POST(request: NextRequest) {
 
   const siteConfig = await getSiteMailConfig(site.id);
   const resetUrl = buildPasswordResetUrlForRequest(
-    request.headers,
+    headers,
     siteConfig.publicBaseUrl,
     resetToken.token,
     locale,
   );
-  try {
-    // The address and the name are not passed: the outbox resolves both when it sends, so a corrected
-    // address is used and the greeting comes from one place. The locale is, because it is the one this
-    // request was made in, and the link above was built with it.
-    const notificationId = await notifyPhiPerson({
-      siteId: site.id,
-      occasion: "password_reset",
-      recipient: { userId: user.id, locale },
-      params: { verificationUrl: resetUrl },
-    });
+  // The address and the name are not passed: the outbox resolves both when it sends, so a corrected
+  // address is used and the greeting comes from one place. The locale is, because it is the one this
+  // request was made in, and the link above was built with it.
+  const notificationId = await notifyPhiPerson({
+    siteId: site.id,
+    occasion: "password_reset",
+    recipient: { userId: user.id, locale },
+    params: { verificationUrl: resetUrl },
+  });
 
-    logRuntimeEvent("info", "auth.password.reset.requested", {
-      message: "Password reset email queued.",
-      siteKey: site.key,
-      userId: user.id,
-      meta: { notificationId },
-    });
-  } catch (error) {
-    logRuntimeEvent("error", "auth.password.reset.request_failed", {
-      message: "Password reset email could not be queued.",
-      siteKey: site.key,
-      userId: user.id,
-      error,
-    });
-  }
-
-  return NextResponse.json({});
+  logRuntimeEvent("info", "auth.password.reset.requested", {
+    message: "Password reset email queued.",
+    siteKey: site.key,
+    userId: user.id,
+    meta: { notificationId },
+  });
 }
