@@ -215,6 +215,8 @@ itself. How to build one is in [ADDON_HOWTO.md](./ADDON_HOWTO.md), the server co
 | [AUTHENTICATION.md](./AUTHENTICATION.md) | Global users, Site authentication methods, identity linking, sessions. |
 | [AUTHORIZATION.md](./AUTHORIZATION.md) | Site roles, Area access, access policies, Add-on roles. |
 | [GROUPS_AND_STORAGE.md](./GROUPS_AND_STORAGE.md) | Site groups, Media Spaces, quotas, Storage Profiles and Providers, Asset delivery. |
+| [PAYMENTS.md](./PAYMENTS.md) | Implemented Payment capability and Provider contract, currencies, ownership, grants and durable recovery. |
+| [PAYMENTS_STRIPE.md](./PAYMENTS_STRIPE.md) | Approved first Stripe checkout, merchant administration, notification and event contract; execution pending. |
 | [REFERENCES.md](./REFERENCES.md) | Page paths, Page and Asset references, trusted Markdown and HTML. |
 | [TRANSLATIONS.md](./TRANSLATIONS.md) | Locale capability and request locale resolution, source languages, translation requests and batching. |
 | [SERVER_ADDONS.md](./SERVER_ADDONS.md) | Add-on manifest, capabilities, installation, routing, migrations, instances. |

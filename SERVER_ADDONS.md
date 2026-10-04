@@ -487,6 +487,15 @@ writing owner-less rows on an address anybody may call.
 This is why a public listing endpoint is a hook and not an API route: the reading it needs is available,
 and the writing it must not do is impossible rather than merely undone.
 
+**Payment ingress:** a Payment Provider hook may request
+`@phis/server/payment-notifications:v1`. Its bound `receive` verifies the original request through the
+registered Provider and reconciles Core-owned payment records. This is narrowly verified ingress,
+not ambient write authority: the hook actor remains null, and the hook still cannot mutate Add-on
+data or perform merchant actions. It does not use the generic raw-body HMAC delivery claim as a
+completed-payment receipt. [PAYMENTS.md](./PAYMENTS.md) and [PAYMENTS_STRIPE.md](./PAYMENTS_STRIPE.md)
+define profile ownership, verification, durable acknowledgement and retryable failures. The capability
+is in the delivered catalogue and is bound only to the original Payment hook request.
+
 #### A hook that needs to write says how it can be believed
 
 `verification` on a hook descriptor is how an unauthenticated address stops being anonymous:
@@ -603,6 +612,13 @@ fallback Provider. Storage-specific profile, upload, delivery, and migration rul
 [GROUPS_AND_STORAGE.md](./GROUPS_AND_STORAGE.md). User/group Directory bindings, scoped synchronization,
 and assertion provenance are designed in [DIRECTORY_PROVIDERS.md](./design/DIRECTORY_PROVIDERS.md).
 
+Payments use the same Provider installation/factory boundary. Their implemented service kind,
+consumer capability, bound credentials and merchant profiles are normative in
+[PAYMENTS.md](./PAYMENTS.md). Payment types are exported from `@phis/contracts/payments` and `/addon`;
+the Payment service kind/version/digest and capabilities are admitted in runtime catalogues only
+when Core can execute them. Multiple Payment Provider Add-ons do not supply competing implementations
+of the consumer capability: Core is its sole supplier and selects the merchant profile's Provider.
+
 ### Jobs
 
 A job is declared as `{ id, handler, suggestedInterval? }`, where `handler` names an entry in
@@ -646,8 +662,19 @@ because events about one thread are a sequence and applying them out of order le
 happened.
 
 An event context carries `addonId`, `event`, `deliveryId` (the outbox key, stable across retries),
-`site`, `subject: { threadId, messageId }`, `capabilities`, and `signal`. Like a job, it runs with no
+`site`, a discriminated `subject`, `capabilities`, and `signal`. Current thread events use
+`subject: { kind: "thread", threadId, messageId }`. Like a job, it runs with no
 actor and system authority: Core is telling the Add-on about a thread it is already allowed to reach.
+
+**Payment events:** `PhisAddonEventContext` also describes
+`payment.changed` with a `kind: "payment"` subject containing payment/reference/version and nullable
+operation/refund ids. The event is routed only to the consuming Add-on stored on the payment. It does
+not require a thread link and is not broadcast. Current manifests are admitted against the delivered
+`PHIS_ADDON_EVENTS` catalogue, including this payment event. Checked outbox payment subjects,
+transactional persistence and owner-directed recipient routing accompany its admission;
+see [PAYMENTS_STRIPE.md](./PAYMENTS_STRIPE.md#6-event-contract-extension). Current thread persistence
+and enqueue functions are explicitly typed with `PhisAddonThreadEventId`, preventing payment facts
+from being inserted into a thread row.
 
 ## 11. Deployment and Site activation
 

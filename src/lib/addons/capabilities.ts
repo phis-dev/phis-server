@@ -1,5 +1,8 @@
 import "server-only";
 
+import type { PhisPaymentAuthority } from "../payments/types.ts";
+import { buildPhisPaymentsCapability, buildPhisPaymentNotificationsCapability } from "../payments/runtime.ts";
+
 import type { PoolClient } from "pg";
 
 import {
@@ -236,6 +239,9 @@ export function buildPhisAddonCapabilities(input: {
    * the job runner, which is reachable from the CLI and never from a request.
    */
   systemAuthority?: boolean;
+  paymentAuthority?: PhisPaymentAuthority;
+  signal?: AbortSignal;
+  paymentHook?: { method: string; headers: Readonly<Record<string, string>>; body: Uint8Array };
   /**
    * True when nobody authenticated, which today means a hook and nothing else.
    *
@@ -380,6 +386,15 @@ export function buildPhisAddonCapabilities(input: {
   // cannot name its Site is not a narrower capability, it is a broken one.
   if (input.siteKey) {
     const siteKey = input.siteKey;
+    const scope = { siteId, siteKey, consumerAddonId: input.manifest.addonId };
+    const signal = input.signal ?? new AbortController().signal;
+    if (required.includes(PHIS_CORE_CAPABILITIES.payments)) {
+      capabilities.payments = buildPhisPaymentsCapability({ scope, manifest: input.manifest, signal,
+        authority: input.paymentAuthority ?? (input.unauthenticated ? { kind: "hook" } : { kind: "request", operator: false, actorUserId: input.actorUserId }) });
+    }
+    if (required.includes(PHIS_CORE_CAPABILITIES.paymentNotifications) && input.paymentHook) {
+      capabilities.paymentNotifications = buildPhisPaymentNotificationsCapability({ scope, ...input.paymentHook, signal });
+    }
     if (required.includes(PHIS_CORE_CAPABILITIES.storage)) {
       capabilities.storage = buildPhisAddonStorageCapability({
         addonId: input.manifest.addonId,

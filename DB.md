@@ -1946,21 +1946,130 @@ Contract:
   window, because the cost of holding one too long is a row and the cost of dropping one too early is a
   duplicate that will look like the Add-on's fault.
 
+## Payment execution
+
+The creation script declares all Payment/outbox columns and constraints directly. As with other v1
+Core structural changes, reapplying `001_create_phis.pgsql` does not upgrade existing table columns;
+the workspace development database was updated explicitly for this work. On 2026-10-04, the separate
+`phis_dev` database behind the compiled Phisys installation also received the Payment tables and an
+explicit transactional outbox update, preserving existing thread rows. Coordinate an existing
+installation's outbox update before admitting Payment consumers.
+
+Runtime queries live in `src/db/payments.mts`; the same typed functions serve the Core engine and
+operator CLI. `PAYMENTS.md` specifies ownership, grants, financial semantics and read-only recovery.
+Every money value in a public record is a canonical minor-unit integer string. JSON records below
+contain only their corresponding `PhisPayment*` type; Provider credentials, card data and raw webhook
+bodies are never stored here. V1 admits redirect checkout; encrypted Provider UI parameters are not
+implemented or accepted. Financial records restrict deletion of their Site, consumer and profile;
+there is no product purge command. Fixture teardown in database tests is not an administrative API.
+
+### `phis.payment_profiles`
+
+- `(site_id SMALLINT REFERENCES phis.sites ON DELETE RESTRICT, key VARCHAR(64))` primary key;
+  the key is lowercase alphanumeric with `.`, `_`, `-`, bounded to 64 characters.
+- `provider_addon_id VARCHAR(255) REFERENCES phis.server_addons ON DELETE RESTRICT`.
+- `draft JSONB`: `PhisPaymentProfileDraft`, containing the immutable provider key/mode, credential
+  references and consumer grants/action policies; no secret values.
+- `merchant_identity VARCHAR(255) NULL`, `revision INT NOT NULL DEFAULT 1 CHECK (> 0)`.
+- `enabled BOOLEAN NOT NULL DEFAULT FALSE`, `retired BOOLEAN NOT NULL DEFAULT FALSE`.
+- `probed_at TIMESTAMPTZ NULL`, `methods JSONB NULL`: the last validated Provider method/features probe.
+- Enabling requires a pinned identity, successful probe and non-retired profile. CLI enabling also
+  verifies the registered/enabled Provider and matching artifacts/capabilities on ready instances.
+- Profile writes increment the revision, clear the probe/methods and disable new creation. They cannot
+  replace the provider/mode or reuse a retired key. A new identity discovered after credential rotation
+  is refused; existing payment bindings are never migrated. Retirement preserves existing reads and
+  remote reconciliation while the Provider remains enabled.
+
+### `phis.payments`
+
+- `id UUID PRIMARY KEY`, `site_id SMALLINT REFERENCES phis.sites ON DELETE RESTRICT`.
+- `consumer_addon_id VARCHAR(255) REFERENCES phis.server_addons ON DELETE RESTRICT`.
+- `profile_key VARCHAR(64)`, composite FK `(site_id, profile_key)` to `payment_profiles`, `ON DELETE RESTRICT`.
+- `provider_key VARCHAR(255)`, `merchant_identity VARCHAR(255)`, `profile_revision INT CHECK (> 0)`:
+  immutable payment execution binding; current credentials may rotate within that binding.
+- `currency_exponent SMALLINT CHECK (BETWEEN 0 AND 4)`, `method_features JSONB NOT NULL`:
+  validated ISO exponent and the selected method's agreed features.
+- `binding JSONB NULL`: `PhisPaymentProviderBinding`, server-only remote references/correlation.
+- `record JSONB NOT NULL`: `PhisPayment`; identity matches `id`, agreed minor amount is positive and
+  bounded, captured amount cannot exceed it, and successful refunds cannot exceed captured funds.
+- `generation BIGINT NOT NULL DEFAULT 0`, `lease_token UUID NULL`, `lease_until TIMESTAMPTZ NULL`:
+  a bounded execution/observation claim. Token/time are either both present or both absent.
+- `created_at`, `updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`.
+- Unique `(site_id, consumer_addon_id, id)` supports scoped operation FKs. A partial unique index on
+  `(site_id, profile_key, binding->>'reference')` prevents sharing one established remote binding.
+- The unique active-reference index covers `(site_id, consumer_addon_id, record->>'reference')`
+  while the payment is nonterminal or reconciliation is required. Captured/refunded payments retain
+  the reference; a confirmed failed/expired/canceled attempt permits a new explicit attempt.
+- Reservations and claim changes lock this row. No transaction spans a PSP call. Applying a result
+  checks generation/token under the same lock; a superseded response cannot overwrite newer facts.
+  Public facts/operation/refund changes increment the record's version and enqueue one owner event.
+  Updating `lastObservedAt` alone emits no event. Confirmed capture/refund facts cannot regress.
+
+### `phis.payment_operations`
+
+- `id UUID PRIMARY KEY`, `payment_id UUID REFERENCES phis.payments ON DELETE RESTRICT`.
+- `site_id SMALLINT`, `consumer_addon_id VARCHAR(255)`; composite ownership FK to `payments`, `ON DELETE RESTRICT`.
+- `action VARCHAR(16) CHECK IN (create, complete, capture, cancel, refund)`, `idempotency_key VARCHAR(255)`.
+- `request JSONB`: canonical consumer arguments; `command JSONB`: exact Provider command, including
+  stable provider idempotency key and canonical callback URLs, excluding the transient AbortSignal.
+- `record JSONB`: `PhisPaymentOperation`; checked state `reserved`, `pending`, `succeeded`, `failed`,
+  or `indeterminate`. `first_possible_submission_at TIMESTAMPTZ NOT NULL DEFAULT NOW()` precedes HTTP.
+- Unique `(site_id, consumer_addon_id, action, idempotency_key)`; a changed canonical request conflicts.
+  Unresolved operations have a partial index on `payment_id`.
+- A live claim returns the existing reservation; an expired/resumed claim uses Provider `recover`,
+  never a new financial execution. Unknown outcomes retain amount reservations and block conflicting
+  commands. Time passing never proves an operation failed.
+
+### `phis.payment_refunds`
+
+- `id UUID PRIMARY KEY`, `payment_id UUID REFERENCES phis.payments ON DELETE RESTRICT`.
+- `operation_id UUID NULL UNIQUE REFERENCES phis.payment_operations ON DELETE RESTRICT`.
+- `remote_reference VARCHAR(255) NULL`, `binding JSONB NULL`, `record JSONB NOT NULL` (`PhisPaymentRefund`).
+- Unique `(payment_id, remote_reference)` preserves one identity for each remote refund.
+- Amount is positive and bounded; status is `pending`, `succeeded`, `failed` or `canceled`.
+- A local reservation has its operation id and no remote binding until confirmed. An observed external
+  refund has no local operation and receives a stable Core identity. Pending/indeterminate local
+  refunds reserve their amount; only confirmed success increments `refundedMinor`. Failure/cancellation
+  releases a reservation. Observation must include every previously bound refund, not a partial list.
+
+### `phis.payment_notification_receipts`
+
+- Primary key `(site_id SMALLINT, profile_key VARCHAR(64), delivery_id VARCHAR(255))`.
+- `payment_id UUID REFERENCES phis.payments ON DELETE RESTRICT`; composite profile FK `ON DELETE RESTRICT`.
+- `processed BOOLEAN NOT NULL DEFAULT FALSE`, `claim_token UUID NOT NULL`, `claim_until TIMESTAMPTZ NOT NULL`.
+- `processed_at TIMESTAMPTZ NULL`.
+- Only authenticated Provider delivery ids enter this inbox. A live competing claim is unavailable,
+  never a completed duplicate; an expired claim can be reacquired. Final commit requires the receipt
+  token and atomically writes payment/refunds/operations, owner outbox and processed receipt. Failure
+  leaves the receipt retryable. Raw payloads/signatures are not retained. Lookup-only providers use
+  authenticated current-state reconciliation without inventing a signed delivery id.
+
 ### `phis.addon_event_outbox`
 
 - `id BIGSERIAL PRIMARY KEY`
 - `site_id SMALLINT NOT NULL REFERENCES phis.sites(id) ON DELETE CASCADE`
 - `addon_id VARCHAR(255) NOT NULL REFERENCES phis.server_addons(addon_id) ON DELETE CASCADE`
 - `event VARCHAR(120) NOT NULL` (CHECK `<> ''`)
-- `thread_id INT NOT NULL REFERENCES phis.threads(id) ON DELETE CASCADE`
+- `thread_id INT NULL REFERENCES phis.threads(id) ON DELETE CASCADE`
+- `subject_kind VARCHAR(16) NOT NULL DEFAULT 'thread'`
+- `payment_id UUID NULL REFERENCES phis.payments(id) ON DELETE RESTRICT`
 - `payload JSONB NOT NULL DEFAULT '{}'::jsonb`
 - `attempts SMALLINT NOT NULL DEFAULT 0`
 - `last_error TEXT NULL`
 - `created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
 - `delivered_at TIMESTAMPTZ NULL`
 - partial index `(addon_id, site_id, id) WHERE delivered_at IS NULL`
+- `addon_event_outbox_subject_check`: a thread subject has exactly `thread_id` and a thread event;
+  a payment subject has exactly `payment_id` and `payment.changed`.
 
-Contract:
+Payment recipients are the stored consuming Add-on, including while it is inactive; there is no
+thread link or broadcast. Payload contains payment/reference/version and nullable operation/refund
+ids. Delivery checks the owning Add-on's current declaration and activation. The consumer's handler
+runs with its declared event identity; merchant actions additionally require its profile policy.
+The payment version/state/refunds and this event are committed atomically, independently of consumer
+fulfilment. The existing ordered request/operator-driven drain delivers both subject kinds.
+
+Thread contract:
 - What Core owes an Add-on about a thread, written in the transaction that caused it
   (`src/db/addon-events.ts`) and dispatched after the commit (`src/lib/addons/event-delivery.ts`).
   Telling an integration from inside the request would tie a person's reply to a third party being

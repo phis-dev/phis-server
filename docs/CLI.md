@@ -875,3 +875,63 @@ Deletes rows of instances silent for longer than `--forget-after` seconds (defau
 | Reset a forgotten Site admin password | `phis site user --site <site> --email <email> --password <pw> --overwrite` |
 | Reset an operator password | `phis operator passwd --email <email> --password <pw>`, restart the server |
 | Take a server instance out of rotation | `phis instance drain --id <id>` |
+
+## Payment profiles
+
+Core owns merchant profiles and explicit consumer grants. The CLI uses only installed Provider
+artifacts; no profile file can select a package import or supply a credential value. Apply the Core
+creation schema (an existing outbox needs an explicit structural update as described in `DB.md`),
+install/activate the Provider globally and for the chosen development Site, and store secrets
+through `phis secret set` on stdin. The compiled Phisys Site is a separate installation.
+
+```bash
+phis payment profile list --site demo
+phis payment profile add --site demo --file /protected/path/stripe-sandbox.json
+phis payment profile set --site demo --file /protected/path/stripe-sandbox.json
+phis payment profile probe --site demo --key stripe-sandbox --currency CHF
+phis payment profile enable --site demo --key stripe-sandbox --currency CHF
+phis payment profile retire --site demo --key stripe-sandbox
+phis maintain --task payments --dry-run
+phis maintain --task payments
+```
+
+Add/set file (references only; its policy names must exist in the installed consumer manifest):
+
+```json
+{
+  "key": "stripe-sandbox",
+  "providerKey": "@phis/stripe/stripe",
+  "mode": "test",
+  "credentialReferences": {
+    "apiKey": "site:demo:addon:@phis/stripe:stripe-sandbox-api",
+    "webhookSecret": "site:demo:addon:@phis/stripe:stripe-sandbox-webhook"
+  },
+  "grants": [{
+    "consumerAddonId": "@example/shop",
+    "operations": ["read", "create", "complete", "refresh", "capture", "cancel", "refund"],
+    "merchantActions": {
+      "capture": { "roles": [], "jobs": [], "events": [] },
+      "cancel": { "roles": [], "jobs": [], "events": [] },
+      "refund": { "roles": [], "jobs": [], "events": [] }
+    }
+  }]
+}
+```
+
+The consumer must require `payments:v1` and declare `payment.changed`. Empty merchant policies permit
+only an authenticated operator or Site Admin, within that consumer/profile grant. Add starts disabled;
+set preserves the pinned merchant/provider/mode, increments the revision and disables new creation
+until reprobed/enabled. Changing provider, account or mode requires a new key. Retired keys are not
+reused, but existing payment evidence and reconciliation remain available. No profile delete or
+financial purge is offered. Grant removal hides existing records from that consumer without deleting
+financial evidence.
+
+Probe is read-only against the PSP and records merchant identity/mode/method features; a changed
+merchant or mode fails closed. Enable probes again and requires every ready serving instance (the
+existing 90-second readiness window) to carry the installed Provider version and Core Payment
+capabilities. It cannot establish that a webhook endpoint is reachable. Configure the separate
+Stripe endpoint signing secret and validate real notification delivery before relying on fulfilment.
+
+The maintenance task selects at most 100 unresolved payments, reconciles stored remote commands and
+reports unavailable/concurrent claims. Dry-run changes nothing and makes no Provider calls. Retries
+never switch Provider/account or generate replacement financial commands. No polling timer is added.

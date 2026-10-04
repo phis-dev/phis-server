@@ -654,6 +654,11 @@ export async function dispatchPhisAddonRequest(
           siteKey: identity.site?.key ?? null,
           actorUserId: identity.actor?.kind === "user" ? identity.actor.id : null,
           systemAuthority: verified,
+          signal: AbortSignal.any([request.signal, AbortSignal.timeout(descriptor.timeoutMs ?? DEFAULT_API_TIMEOUT_MS)]),
+          paymentAuthority: kind === "hook" ? { kind: "hook" } : {
+            kind: "request", operator: identity.actor?.kind === "operator", actorUserId: identity.actor?.kind === "user" ? identity.actor.id : null,
+          },
+          paymentHook: kind === "hook" ? { method: request.method, headers: Object.fromEntries(request.headers.entries()), body: bodyResult.body } : undefined,
           unauthenticated: identity.actor === null,
         }),
         signal: request.signal,

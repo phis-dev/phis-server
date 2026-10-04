@@ -2194,18 +2194,116 @@ CREATE INDEX IF NOT EXISTS addon_hook_deliveries_received_at_idx
 -- `thread_id` is not payload. It is what bounds the delivery: a row exists only for an Add-on holding a
 -- synced link to that thread, so the outbox cannot become a Site-wide feed of every conversation
 -- arriving by push instead of by pull.
+-- Minimal Payment execution records. Financial evidence is retained on consumer/provider removal.
+CREATE TABLE IF NOT EXISTS phis.payment_profiles (
+  site_id SMALLINT NOT NULL REFERENCES phis.sites(id) ON DELETE RESTRICT,
+  key VARCHAR(64) NOT NULL,
+  provider_addon_id VARCHAR(255) NOT NULL REFERENCES phis.server_addons(addon_id) ON DELETE RESTRICT,
+  draft JSONB NOT NULL,
+  merchant_identity VARCHAR(255) NULL,
+  revision INT NOT NULL DEFAULT 1 CHECK (revision > 0),
+  enabled BOOLEAN NOT NULL DEFAULT FALSE,
+  retired BOOLEAN NOT NULL DEFAULT FALSE,
+  probed_at TIMESTAMPTZ NULL,
+  methods JSONB NULL,
+  PRIMARY KEY (site_id, key),
+  CHECK (key ~ '^[a-z0-9][a-z0-9._-]{0,63}$'),
+  CHECK (NOT enabled OR (merchant_identity IS NOT NULL AND probed_at IS NOT NULL AND NOT retired))
+);
+
+CREATE TABLE IF NOT EXISTS phis.payments (
+  id UUID PRIMARY KEY,
+  site_id SMALLINT NOT NULL REFERENCES phis.sites(id) ON DELETE RESTRICT,
+  consumer_addon_id VARCHAR(255) NOT NULL REFERENCES phis.server_addons(addon_id) ON DELETE RESTRICT,
+  profile_key VARCHAR(64) NOT NULL,
+  provider_key VARCHAR(255) NOT NULL,
+  merchant_identity VARCHAR(255) NOT NULL,
+  profile_revision INT NOT NULL CHECK (profile_revision > 0),
+  currency_exponent SMALLINT NOT NULL CHECK (currency_exponent BETWEEN 0 AND 4),
+  method_features JSONB NOT NULL,
+  binding JSONB NULL,
+  record JSONB NOT NULL,
+  generation BIGINT NOT NULL DEFAULT 0,
+  lease_token UUID NULL,
+  lease_until TIMESTAMPTZ NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  FOREIGN KEY (site_id, profile_key) REFERENCES phis.payment_profiles(site_id, key) ON DELETE RESTRICT,
+  UNIQUE (site_id, consumer_addon_id, id),
+  CHECK (record->>'id' = id::text),
+  CHECK ((record->'amount'->>'minor') ~ '^[1-9][0-9]{0,15}$'),
+  CHECK ((record->>'capturedMinor')::numeric BETWEEN 0 AND (record->'amount'->>'minor')::numeric),
+  CHECK ((record->>'refundedMinor')::numeric BETWEEN 0 AND (record->>'capturedMinor')::numeric),
+  CHECK (record->>'status' IN ('created','awaiting_customer','processing','authorized','captured','canceled','expired','failed')),
+  CHECK ((lease_token IS NULL) = (lease_until IS NULL))
+);
+CREATE UNIQUE INDEX IF NOT EXISTS payments_remote_binding_idx
+  ON phis.payments (site_id, profile_key, (binding->>'reference')) WHERE binding IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS payments_active_reference_idx
+  ON phis.payments (site_id, consumer_addon_id, (record->>'reference'))
+  WHERE record->>'status' NOT IN ('failed','expired','canceled') OR (record->>'reconciliationRequired')::boolean;
+
+CREATE TABLE IF NOT EXISTS phis.payment_operations (
+  id UUID PRIMARY KEY,
+  payment_id UUID NOT NULL REFERENCES phis.payments(id) ON DELETE RESTRICT,
+  site_id SMALLINT NOT NULL,
+  consumer_addon_id VARCHAR(255) NOT NULL,
+  action VARCHAR(16) NOT NULL CHECK (action IN ('create','complete','capture','cancel','refund')),
+  idempotency_key VARCHAR(255) NOT NULL,
+  request JSONB NOT NULL,
+  command JSONB NOT NULL,
+  record JSONB NOT NULL,
+  first_possible_submission_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  FOREIGN KEY (site_id, consumer_addon_id, payment_id) REFERENCES phis.payments(site_id, consumer_addon_id, id) ON DELETE RESTRICT,
+  UNIQUE (site_id, consumer_addon_id, action, idempotency_key),
+  CHECK (record->>'state' IN ('reserved','pending','succeeded','failed','indeterminate'))
+);
+CREATE INDEX IF NOT EXISTS payment_operations_unresolved_idx ON phis.payment_operations (payment_id)
+  WHERE record->>'state' IN ('reserved','pending','indeterminate');
+
+CREATE TABLE IF NOT EXISTS phis.payment_refunds (
+  id UUID PRIMARY KEY,
+  payment_id UUID NOT NULL REFERENCES phis.payments(id) ON DELETE RESTRICT,
+  operation_id UUID NULL UNIQUE REFERENCES phis.payment_operations(id) ON DELETE RESTRICT,
+  remote_reference VARCHAR(255) NULL,
+  binding JSONB NULL,
+  record JSONB NOT NULL,
+  UNIQUE (payment_id, remote_reference),
+  CHECK ((record->'amount'->>'minor') ~ '^[1-9][0-9]{0,15}$'),
+  CHECK (record->>'status' IN ('pending','succeeded','failed','canceled'))
+);
+
+CREATE TABLE IF NOT EXISTS phis.payment_notification_receipts (
+  site_id SMALLINT NOT NULL,
+  profile_key VARCHAR(64) NOT NULL,
+  delivery_id VARCHAR(255) NOT NULL,
+  payment_id UUID NOT NULL REFERENCES phis.payments(id) ON DELETE RESTRICT,
+  processed BOOLEAN NOT NULL DEFAULT FALSE,
+  claim_token UUID NOT NULL,
+  claim_until TIMESTAMPTZ NOT NULL,
+  processed_at TIMESTAMPTZ NULL,
+  PRIMARY KEY (site_id, profile_key, delivery_id),
+  FOREIGN KEY (site_id, profile_key) REFERENCES phis.payment_profiles(site_id, key) ON DELETE RESTRICT
+);
+
 CREATE TABLE IF NOT EXISTS phis.addon_event_outbox (
   id BIGSERIAL PRIMARY KEY,
   site_id SMALLINT NOT NULL REFERENCES phis.sites(id) ON DELETE CASCADE,
   addon_id VARCHAR(255) NOT NULL REFERENCES phis.server_addons(addon_id) ON DELETE CASCADE,
   event VARCHAR(120) NOT NULL,
-  thread_id INT NOT NULL REFERENCES phis.threads(id) ON DELETE CASCADE,
+  thread_id INT NULL REFERENCES phis.threads(id) ON DELETE CASCADE,
+  subject_kind VARCHAR(16) NOT NULL DEFAULT 'thread',
+  payment_id UUID NULL REFERENCES phis.payments(id) ON DELETE RESTRICT,
   payload JSONB NOT NULL DEFAULT '{}'::jsonb,
   attempts SMALLINT NOT NULL DEFAULT 0,
   last_error TEXT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   delivered_at TIMESTAMPTZ NULL,
-  CONSTRAINT addon_event_outbox_event_check CHECK (event <> '')
+  CONSTRAINT addon_event_outbox_event_check CHECK (event <> ''),
+  CONSTRAINT addon_event_outbox_subject_check CHECK (
+    (subject_kind = 'thread' AND thread_id IS NOT NULL AND payment_id IS NULL AND event <> 'payment.changed') OR
+    (subject_kind = 'payment' AND thread_id IS NULL AND payment_id IS NOT NULL AND event = 'payment.changed')
+  )
 );
 
 -- The dispatcher's read: what is still owed, oldest first, for one Add-on on one Site. Ordering by the

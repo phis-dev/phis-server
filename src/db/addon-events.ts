@@ -2,7 +2,7 @@ import "server-only";
 
 import type { PoolClient } from "pg";
 
-import { PhisResourceLinkFlag, type PhisAddonEventId } from "@phis/contracts/addon";
+import { PhisResourceLinkFlag, type PhisAddonEventId, type PhisAddonThreadEventId } from "@phis/contracts/addon";
 
 import { getPool } from "@/lib/db";
 import { PHI_SITE_SERVER_ADDON_FLAG_REQUESTED_ENABLED } from "@/lib/constants/server-addons";
@@ -23,7 +23,9 @@ export type PhisAddonEventRow = {
   siteId: number;
   addonId: string;
   event: PhisAddonEventId;
-  threadId: number;
+  subjectKind: "thread" | "payment";
+  threadId: number | null;
+  paymentId: string | null;
   payload: Record<string, unknown>;
   attempts: number;
 };
@@ -33,7 +35,9 @@ type OutboxRow = {
   site_id: number;
   addon_id: string;
   event: string;
-  thread_id: number;
+  thread_id: number | null;
+  subject_kind: "thread" | "payment";
+  payment_id: string | null;
   payload: Record<string, unknown> | null;
   attempts: number;
 };
@@ -59,7 +63,7 @@ export async function enqueuePhisAddonThreadEventWithDb(
   input: {
     siteId: number;
     threadId: number;
-    event: PhisAddonEventId;
+    event: PhisAddonThreadEventId;
     payload?: Record<string, unknown>;
     exceptProviderId?: string | null;
   },
@@ -105,7 +109,7 @@ export async function listPendingPhisAddonEvents(input: {
   limit?: number;
 }): Promise<PhisAddonEventRow[]> {
   const { rows } = await getPool().query<OutboxRow>(
-    `SELECT id, site_id, addon_id, event, thread_id, payload, attempts
+    `SELECT id, site_id, addon_id, event, subject_kind, thread_id, payment_id, payload, attempts
      FROM phis.addon_event_outbox
      WHERE addon_id = $1
        AND site_id = $2
@@ -119,6 +123,8 @@ export async function listPendingPhisAddonEvents(input: {
     siteId: row.site_id,
     addonId: row.addon_id,
     event: row.event as PhisAddonEventId,
+    subjectKind: row.subject_kind,
+    paymentId: row.payment_id,
     threadId: row.thread_id,
     payload: row.payload ?? {},
     attempts: row.attempts,
@@ -138,7 +144,7 @@ export async function enqueuePhisAddonThreadEventForProviderWithDb(
     siteId: number;
     threadId: number;
     addonId: string;
-    event: PhisAddonEventId;
+    event: PhisAddonThreadEventId;
     payload?: Record<string, unknown>;
   },
 ) {

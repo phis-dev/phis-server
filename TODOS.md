@@ -5,6 +5,27 @@ must not be used to infer that an item is already available in `phis-cli` or at 
 several items live in [design/](./design/README.md). Items marked `phis-ui` are carried out there but
 tracked here because the server contract depends on them.
 
+## Payments
+
+The approved v1 contracts in [PAYMENTS.md](./PAYMENTS.md) and [PAYMENTS_STRIPE.md](./PAYMENTS_STRIPE.md)
+now have Core persistence/execution, grants, CLI controls, notification inbox, owner-directed outbox,
+registered Payment capabilities/service/event and the independent Stripe Provider. Fault/concurrency
+checks run against PostgreSQL. The real sandbox Core/Stripe checkout and partial/idempotent refunds
+passed with isolated test fixtures. The separate compiled Core behind Phisys was subsequently updated
+and its public proxy accepted a genuine Stripe checkout expiry notification (HTTP 200); signed smoke
+requests and missing/invalid/body-mismatched signature rejection also passed. The enabled test
+profile currently has no consumer grants. A subsequent installed `@phis/payment-probe` test verified
+correlated settlement through genuine public Stripe notifications, durable inbox/owner-event delivery
+and one persisted fulfilment, without a completion/refresh grant or browser completion command.
+Concurrent duplicate replays preserved the Payment version and fulfilment count, and a full refund's
+idempotent repeat reused its identities. All test purchases were refunded and all Core receipts/events
+processed. The temporary operator was removed; the test consumer is installed but disabled.
+
+- Extend the sandbox matrix with a real decline, manual authorization/final partial capture,
+  authorization cancellation and an external Dashboard refund. Automated Provider/Core tests cover
+  these mappings and transaction boundaries; the real sandbox run so far covered automatic payment.
+- Define administrative retention/export before adding any destructive financial purge.
+
 ## Page addresses and references
 
 - **Site Page against Module addresses.** The path-change collision check looks only in

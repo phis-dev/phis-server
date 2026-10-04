@@ -53,6 +53,7 @@ export type PhiMaintenanceStoreOpener = (
 export type PhiMaintenanceContext = {
   dryRun: boolean;
   openStore?: PhiMaintenanceStoreOpener;
+  recoverPayments?: (dryRun: boolean) => Promise<{ cleared: number; detail: string }>;
 };
 
 export type PhiMaintenanceTask = {
@@ -276,6 +277,12 @@ const addonStorageCounters: PhiMaintenanceTask = {
 
 /** Ordered as they run. A task must not depend on an earlier one having run first. */
 export const PHI_MAINTENANCE_TASKS: readonly PhiMaintenanceTask[] = Object.freeze([
+  { id: "payments", summary: "Reconcile up to 100 unresolved Payment operations without replaying financial commands.",
+    async run(_pool, { dryRun, recoverPayments }) {
+      if (!recoverPayments) return { cleared: 0, detail: "This invocation has no Payment Provider resolver." };
+      return recoverPayments(dryRun);
+    },
+  },
   expiredUploadSessions,
   orphanedAddonAssets,
   settledHookDeliveries,
@@ -290,7 +297,7 @@ export const PHI_MAINTENANCE_TASKS: readonly PhiMaintenanceTask[] = Object.freez
  */
 export async function runPhiMaintenance(
   pool: Pool,
-  options: { only?: string | null; dryRun?: boolean; openStore?: PhiMaintenanceStoreOpener } = {},
+  options: { only?: string | null; dryRun?: boolean; openStore?: PhiMaintenanceStoreOpener; recoverPayments?: PhiMaintenanceContext["recoverPayments"] } = {},
 ): Promise<PhiMaintenanceReport[]> {
   const dryRun = options.dryRun === true;
   const only = options.only?.trim() || null;
@@ -307,7 +314,7 @@ export async function runPhiMaintenance(
       continue;
     }
     try {
-      const result = await task.run(pool, { dryRun, openStore: options.openStore });
+      const result = await task.run(pool, { dryRun, openStore: options.openStore, recoverPayments: options.recoverPayments });
       reports.push({ id: task.id, cleared: result.cleared, detail: result.detail, error: null });
     } catch (error) {
       reports.push({

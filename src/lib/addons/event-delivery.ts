@@ -1,6 +1,6 @@
 import "server-only";
 
-import type { PhisAddonEventContext, PhisAddonEventId } from "./contract.ts";
+import type { PhisAddonEventContext, PhisAddonEventId, PhisAddonManifestV1 } from "./contract.ts";
 import { buildPhisAddonCapabilities } from "./capabilities.ts";
 import { isPhisAddonCapabilityDeliverable } from "./core-capabilities.ts";
 import { getPhisAddonInstalledManifest } from "./installed.ts";
@@ -43,27 +43,33 @@ async function invokeEventHandler(input: {
   row: PhisAddonEventRow;
   site: { id: number; key: string };
   handler: (context: PhisAddonEventContext) => Promise<void> | void;
-  capabilities: PhisAddonEventContext["capabilities"];
+  manifest: PhisAddonManifestV1;
+  manifestDigest: string;
 }) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), EVENT_TIMEOUT_MS);
   try {
-    await input.handler({
-      addonId: input.addonId,
-      event: input.event,
-      // The outbox key, which is stable across every retry of this same event. A handler that already
-      // settled one can say so without having to reason about what it saw.
-      deliveryId: input.row.id,
-      site: input.site,
-      subject: {
-        threadId: input.row.threadId,
-        messageId: typeof input.row.payload.messageId === "number"
-          ? input.row.payload.messageId
-          : null,
-      },
-      capabilities: input.capabilities,
-      signal: controller.signal,
-    });
+    const common = { addonId: input.addonId, deliveryId: input.row.id, site: input.site,
+      capabilities: buildPhisAddonCapabilities({ manifest: input.manifest, manifestDigest: input.manifestDigest,
+        siteId: input.site.id, siteKey: input.site.key, actorUserId: null, systemAuthority: true,
+        paymentAuthority: { kind: "event", id: input.event }, signal: controller.signal,
+      }), signal: controller.signal };
+    if (input.event === "payment.changed") {
+      if (input.row.subjectKind !== "payment" || !input.row.paymentId
+        || typeof input.row.payload.reference !== "string" || !Number.isInteger(input.row.payload.version)) throw new Error("Invalid Payment outbox subject.");
+      await input.handler({ ...common, event: input.event, subject: {
+        kind: "payment", paymentId: input.row.paymentId, reference: input.row.payload.reference,
+        version: input.row.payload.version as number,
+        operationId: typeof input.row.payload.operationId === "string" ? input.row.payload.operationId : null,
+        refundId: typeof input.row.payload.refundId === "string" ? input.row.payload.refundId : null,
+      } });
+    } else {
+      if (input.row.subjectKind !== "thread" || input.row.threadId === null) throw new Error("Invalid thread outbox subject.");
+      await input.handler({ ...common, event: input.event, subject: {
+        kind: "thread", threadId: input.row.threadId,
+        messageId: typeof input.row.payload.messageId === "number" ? input.row.payload.messageId : null,
+      } });
+    }
   } finally {
     clearTimeout(timer);
   }
@@ -121,14 +127,7 @@ export async function deliverPhisAddonEvents(input: {
   }
 
   let runtime: Awaited<ReturnType<typeof entry.load>> | null = null;
-  const capabilities = buildPhisAddonCapabilities({
-    manifest: entry.manifest,
-    manifestDigest: entry.manifestDigest,
-    siteId,
-    siteKey: site.key,
-    actorUserId: null,
-    systemAuthority: true,
-  });
+
 
   let delivered = 0;
   for (const row of pending) {
@@ -158,7 +157,8 @@ export async function deliverPhisAddonEvents(input: {
         row,
         site,
         handler,
-        capabilities,
+        manifest: entry.manifest,
+        manifestDigest: entry.manifestDigest,
       });
       await markPhisAddonEventDelivered(row.id);
       delivered += 1;

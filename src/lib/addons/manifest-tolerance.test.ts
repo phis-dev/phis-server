@@ -34,6 +34,18 @@ function manifest(extra: Record<string, unknown> = {}) {
 }
 
 describe("a manifest from before the newest fields", () => {
+  it("admits delivered thread and Payment events", () => {
+    const eventHandler = { id: "state", event: "payment.changed", handler: "state" };
+    const payment = validatePhisAddonManifest(manifest({ eventHandlers: [eventHandler] }));
+    expect(payment.manifest).not.toBeNull();
+    expect(payment.issues).toEqual([]);
+    const thread = validatePhisAddonManifest(manifest({
+      eventHandlers: [{ ...eventHandler, event: "thread.status.changed" }],
+    }));
+    expect(thread.issues).toEqual([]);
+    expect(thread.manifest).not.toBeNull();
+  });
+
   it("is accepted without settings or queries", () => {
     const result = validatePhisAddonManifest(manifest());
     expect(result.issues).toEqual([]);

@@ -189,6 +189,15 @@ shared account removes only this Site's membership.
 
 ## 5. Add-on roles
 
+The implemented v1 Payment contract adds profile/operation grants and merchant-action policies
+in [PAYMENTS_STRIPE.md](./PAYMENTS_STRIPE.md#2-merchant-administration-and-grants). Capture, cancel
+and refund require both a grant for the consuming Add-on and operator/Site Admin authority, a listed
+role of that consumer, or an explicitly listed consumer job/event context. An internal proxy token
+or external hook never grants merchant authority. Customer completion retains consumer-enforced
+business-resource access and cannot capture a manual authorization. These Payment checks use existing Core roles and Site access masks. A bound job/event id is checked
+against that consumer's declaration and policy; generic system authority does not grant merchant
+actions.
+
 An Add-on declares named roles in its manifest, each with the policy that decides who may grant it
 (`PhisAddonRoleDescriptor` in `@phis/contracts/addon`):
 

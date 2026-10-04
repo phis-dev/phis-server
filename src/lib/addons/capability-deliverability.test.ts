@@ -54,12 +54,22 @@ describe("core capability deliverability", () => {
         // Storage, assets and secrets address the Site by key and are not built without one.
         siteKey: "probe-site",
         actorUserId: 7,
+        paymentHook: { method: "POST", headers: {}, body: new Uint8Array() },
       });
       expect(
         (capabilities as Record<string, unknown>)[field],
         `${id} is gated as deliverable but no field was built for it`,
       ).toBeDefined();
     }
+  });
+
+  it("binds Payment notifications only to an original hook and keeps the consumer surface narrow", () => {
+    const capabilities = buildPhisAddonCapabilities({ manifest: manifestRequiring([PHIS_CORE_CAPABILITIES.payments, PHIS_CORE_CAPABILITIES.paymentNotifications]),
+      manifestDigest: "probe", siteId: 1, siteKey: "probe-site", actorUserId: null });
+    expect(capabilities.paymentNotifications).toBeUndefined();
+    expect(Object.keys(capabilities.payments!).sort()).toEqual(["listMethods", "create", "get", "getOperation", "getRefund", "complete", "refresh", "capture", "cancel", "refund"].sort());
+    expect(isPhisAddonCapabilityDeliverable(PHIS_CORE_CAPABILITIES.payments)).toBe(true);
+    expect(isPhisAddonCapabilityDeliverable(PHIS_CORE_CAPABILITIES.paymentNotifications)).toBe(true);
   });
 
   it("builds nothing for a capability it declares undeliverable", () => {

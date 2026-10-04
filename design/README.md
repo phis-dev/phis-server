@@ -9,6 +9,8 @@ design is built, its settled parts move into the owning contract and leave this 
   sidecar Add-ons, Add-on desired state in the database, and delegated installation.
 - [AUTHENTICATION_PLANNED.md](./AUTHENTICATION_PLANNED.md) -- passkeys, email and SMS one-time codes, the
   first-Admin setup token, and CLI emergency recovery.
+- [COMMERCE_AND_PAYMENTS.md](./COMMERCE_AND_PAYMENTS.md) -- a small optional Shop, Payment Provider
+  Add-ons behind a minimal Core service, and an independent Medusa Bridge with its own Site Modules.
 - [DIRECTORY_PROVIDERS.md](./DIRECTORY_PROVIDERS.md) -- external user and group Directory Providers behind
   the provider-neutral `groups:v1` facade.
 - [DISTRIBUTION.md](./DISTRIBUTION.md) -- package sources, the listing format, provenance, update checks,
@@ -22,6 +24,10 @@ design is built, its settled parts move into the owning contract and leave this 
 - [NOTIFICATIONS.md](./NOTIFICATIONS.md) -- a Core notification service an Add-on may ask for without
   holding an address, who owns the words of an occasion, the outbox that replaces sending inside a
   request, and the unsubscribe link Core owes every circular.
+- [PAYMENTS.md](./PAYMENTS.md) -- approval record pointing to the normative Payment contract;
+  shared types exist, execution remains pending.
+- [PAYMENTS_STRIPE.md](./PAYMENTS_STRIPE.md) -- approval record for the first hosted-checkout path,
+  merchant/grant control, notification receipts and event changes; runtime implementation is pending.
 - [PUBLIC_ADDRESSES.md](./PUBLIC_ADDRESSES.md) -- Site Page against Module address collisions, a standing
   list of Public addresses, and durable redirects.
 - [SUPPORT.md](./SUPPORT.md) -- the requester route and the types it offers, how a Module declares rows

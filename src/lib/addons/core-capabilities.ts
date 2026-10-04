@@ -57,6 +57,8 @@ const DELIVERABLE_CAPABILITY_ID_SET = new Set<string>([
   CORE_CAPABILITY_IDS.secrets,
   CORE_CAPABILITY_IDS.settings,
   CORE_CAPABILITY_IDS.roles,
+  CORE_CAPABILITY_IDS.payments,
+  CORE_CAPABILITY_IDS.paymentNotifications,
 ]);
 
 /**

@@ -120,6 +120,7 @@ import {
 } from "./storage-purge.mts";
 import { sweepPhisAddonAssets } from "./storage-sweep.mts";
 import { PHI_MAINTENANCE_TASKS, runPhiMaintenance } from "./maintain.mts";
+import { runPhisPaymentProfileCommand, recoverPhisPayments } from "./payments.mts";
 import { checkPhiDependencyLicenses } from "./licenses.mts";
 import { checkPhiMediaOwnership } from "./media-check.mts";
 import {
@@ -300,6 +301,13 @@ Usage:
   phis storage del   --site <site key> --key <profile key>
   phis storage cors
   phis storage probe --site <site key> [--key <profile key>]
+
+  phis payment profile list   --site <site key>
+  phis payment profile add    --site <site key> --file <profile.json>
+  phis payment profile set    --site <site key> --file <profile.json>
+  phis payment profile probe  --site <site key> --key <profile key> [--currency CHF]
+  phis payment profile enable --site <site key> --key <profile key> [--currency CHF]
+  phis payment profile retire --site <site key> --key <profile key>
 
   phis secret init-key
   phis secret set   --name <name> [--site <site key>] [--addon <@scope/name>] [--value <value>]   (value from stdin without --value)
@@ -2744,6 +2752,7 @@ async function main() {
     const reports = await runPhiMaintenance(getPool(), {
       only,
       dryRun,
+      recoverPayments: (dryRun) => recoverPhisPayments(configRoot, getPool(), readMaintenanceSecret, dryRun),
       // The same way `addon storage --recount` reaches a store; a Provider this process cannot list is
       // reported by the task rather than failing the run.
       openStore: (site) => resolvePhiStorageObjectAdapter(
@@ -2841,6 +2850,14 @@ async function main() {
       );
       process.exitCode = 1;
     }
+    return;
+  }
+
+  if (group === "payment" && command === "profile") {
+    const result = await runPhisPaymentProfileCommand(configRoot, getPool(), remaining[0] ?? "", flags,
+      reference => readPhisSecretWithDb(getPool(), reference, requireSecretEncryptionKey()));
+    if (json) printJson({ ok: true, action: `payment.profile.${remaining[0]}`, ...result });
+    else console.log(JSON.stringify(result, null, 2));
     return;
   }
 

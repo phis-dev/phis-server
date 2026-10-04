@@ -129,6 +129,8 @@ export async function runPhisAddonJob(input: {
       siteKey: site.key,
       actorUserId: null,
       systemAuthority: true,
+      paymentAuthority: { kind: "job", id: jobId },
+      signal: controller.signal,
     }),
     signal: controller.signal,
   };
