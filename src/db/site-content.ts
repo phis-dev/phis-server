@@ -650,7 +650,21 @@ export async function getResolvedSiteContentByVersionIds(
   return resolvedByVersionId;
 }
 
-export async function listPublishedNews(siteId: number, locale: string) {
+/**
+ * The published News, newest first, cut at `limit` where the caller states one.
+ *
+ * The cut belongs here and not at the caller: everything after this read -- translating title, subtitle
+ * and tags for the reader's language -- is paid per entry, and a Widget that shows ten should not have
+ * the whole history translated to find them.
+ */
+export async function listPublishedNews(
+  siteId: number,
+  locale: string,
+  options: { limit?: number } = {},
+) {
+  if (options.limit !== undefined && (!Number.isInteger(options.limit) || options.limit <= 0)) {
+    throw new Error("listPublishedNews: limit must be a positive integer.");
+  }
   const pool = getPool();
   const { rows } = await pool.query<SiteNewsRow>(
     `SELECT
@@ -685,8 +699,9 @@ export async function listPublishedNews(siteId: number, locale: string) {
        AND c.status = ${SITE_CONTENT_STATUS_PUBLISHED}
        AND (c.published_at IS NULL OR c.published_at <= NOW())
        AND (c.expires_at IS NULL OR c.expires_at > NOW())
-     ORDER BY COALESCE(c.published_at, c.created_at) DESC, c.sort_order ASC, c.id DESC`,
-    [siteId, locale],
+     ORDER BY COALESCE(c.published_at, c.created_at) DESC, c.sort_order ASC, c.id DESC
+     ${options.limit === undefined ? "" : "LIMIT $3"}`,
+    options.limit === undefined ? [siteId, locale] : [siteId, locale, options.limit],
   );
 
   return rows.map((row) => ({

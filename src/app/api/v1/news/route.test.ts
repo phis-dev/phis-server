@@ -59,8 +59,8 @@ function entry(overrides: Record<string, unknown> = {}) {
   };
 }
 
-function request(locale = "en") {
-  return new Request("https://server.test/api/v1/news", { headers: { "x-locale": locale } });
+function request(locale = "en", query = "") {
+  return new Request(`https://server.test/api/v1/news${query}`, { headers: { "x-locale": locale } });
 }
 
 async function read(locale = "en") {
@@ -80,6 +80,25 @@ beforeEach(() => {
 });
 
 describe("GET /api/v1/news", () => {
+  it("hands a stated limit to the read, so the cut comes before the translating", async () => {
+    const response = await GET(request("en", "?limit=10"));
+    expect(response.status).toBe(200);
+    expect(mocks.list).toHaveBeenCalledWith(SITE.id, "en", { limit: 10 });
+  });
+
+  it("reads everything when no limit is stated", async () => {
+    await GET(request("en"));
+    expect(mocks.list).toHaveBeenCalledWith(SITE.id, "en", {});
+  });
+
+  it("refuses a limit that is not a count", async () => {
+    for (const query of ["?limit=0", "?limit=-1", "?limit=ten", "?limit=2.5"]) {
+      const response = await GET(request("en", query));
+      expect(response.status, query).toBe(400);
+    }
+    expect(mocks.list).not.toHaveBeenCalled();
+  });
+
   it("asks for nothing when the reader's language is the one the entry was written in", async () => {
     const { body } = await read("en");
 

@@ -176,7 +176,16 @@ export async function GET(request: Request) {
   }
 
   const locale = resolveRequestLocale(request.headers);
-  const entries = await listPublishedNews(site.id, locale);
+  /*
+   * How many the caller will show. Optional for a caller that wants the list, refused when it is not a
+   * count: a `limit` that silently meant "all" would let a typo re-translate the whole history.
+   */
+  const rawLimit = new URL(request.url).searchParams.get("limit");
+  const limit = rawLimit === null ? undefined : Number(rawLimit);
+  if (limit !== undefined && (!Number.isInteger(limit) || limit <= 0)) {
+    return NextResponse.json({ error: "limit must be a positive integer." }, { status: 400 });
+  }
+  const entries = await listPublishedNews(site.id, locale, limit === undefined ? {} : { limit });
   const { value: translationFailed, standIn } = await trackTranslationStandIns(async () => {
     try {
       await translatePendingFields({
