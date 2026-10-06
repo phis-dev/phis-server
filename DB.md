@@ -1143,6 +1143,7 @@ Contract:
 Contract:
 - Area revisions are the persisted authoring source of truth for area drafts and published area state.
 - A Working Draft revision keeps its draft version and `nextNodeSequence` in `meta_json.draft`.
+- A Working Draft is one row rewritten in place, so `created_at` stays the first save. Every rewrite stamps `meta_json.saved = { at, byUserId }` (`updateSiteDraftRevisionWithDb`); the revision history answers it as `savedAt` and `savedByLabel`. A row without `saved` was never rewritten.
 - `tree_json` stores the concrete area as string field `area`.
 - `tree_json.sourcePreset` is mandatory and stores `ownerModuleId`, `presetKey`, and the positive `sourcePresetVersion` of the Area shell snapshot.
 - Forking a Draft from a Published snapshot preserves that source version. A newer installed preset never rewrites an existing Draft or Published snapshot.
@@ -1167,6 +1168,7 @@ Contract:
 Contract:
 - Page revisions are the persisted authoring source of truth for page drafts and published page state.
 - A Working Draft revision keeps its draft version and `nextNodeSequence` in `meta_json.draft`.
+- A Working Draft is one row rewritten in place, so `created_at` stays the first save. Every rewrite stamps `meta_json.saved = { at, byUserId }` (`updateSiteDraftRevisionWithDb`); the revision history answers it as `savedAt` and `savedByLabel`. A row without `saved` was never rewritten.
 - `tree_json` stores the concrete area as string field `area`.
 - `tree_json.sourcePreset` is either `null` for a Site-authored exact Page or stores `ownerModuleId`, `presetKey`, and positive `sourcePresetVersion` for a module route snapshot.
 - Forking a Draft from a Published snapshot preserves that source version. A newer installed preset never rewrites an existing Draft or Published snapshot.

@@ -1740,6 +1740,7 @@ export async function saveSitePageDraftRevision(
           treeJson: nextRevisionInput as unknown as Record<string, unknown>,
           message: options?.message ?? summary.message,
           metaJson: withSiteCmsDraftMeta(summary.metaJson, nextDraftMeta),
+          savedByUserId: options?.createdByUserId ?? null,
         })
       : await insertSiteRevisionWithDb(client, PAGE, {
           scopeId: scope.id,
@@ -1847,6 +1848,7 @@ export async function saveSiteAreaDraftRevision(
           treeJson: nextRevisionInput as unknown as Record<string, unknown>,
           message: options?.message ?? summary.message,
           metaJson: withSiteCmsDraftMeta(summary.metaJson, nextDraftMeta),
+          savedByUserId: options?.createdByUserId ?? null,
         })
       : await insertSiteRevisionWithDb(client, AREA, {
           scopeId: scope.id,
@@ -2178,6 +2180,7 @@ export async function saveSiteAreaModulesDraftRevision(
           treeJson: nextRevisionInput as unknown as Record<string, unknown>,
           message: options?.message ?? summary.message,
           metaJson: withSiteCmsDraftMeta(summary.metaJson, nextDraftMeta),
+          savedByUserId: options?.createdByUserId ?? null,
         })
       : await insertSiteRevisionWithDb(client, AREA, {
           scopeId: scope.id,

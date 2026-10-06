@@ -77,6 +77,12 @@ export type SiteRevisionHistoryRow = {
   createdAt: string;
   createdByUserId: number | null;
   createdByLabel: string | null;
+  /**
+   * When and by whom a Working Draft was last rewritten in place (`meta_json.saved`); null for a row
+   * that was never saved again after it was created, whose `createdAt` says the same.
+   */
+  savedAt: string | null;
+  savedByLabel: string | null;
   message: string | null;
   meta: Record<string, unknown>;
   sourceRevisionId: number | null;
@@ -167,6 +173,8 @@ function mapRevisionRows(
     created_by_user_id: number | null;
     created_by_label: string | null;
     created_at: string;
+    saved_at: string | null;
+    saved_by_label: string | null;
     tree_json: Record<string, unknown> | null;
   }>,
   scope: {
@@ -194,6 +202,8 @@ function mapRevisionRows(
       createdAt: row.created_at,
       createdByUserId: row.created_by_user_id,
       createdByLabel: row.created_by_label,
+      savedAt: row.saved_at,
+      savedByLabel: row.saved_by_label,
       message: row.message,
       meta: row.meta_json && typeof row.meta_json === "object" && !Array.isArray(row.meta_json)
         ? row.meta_json
@@ -224,6 +234,8 @@ async function listRevisionRowsWithDb(
     created_by_user_id: number | null;
     created_by_label: string | null;
     created_at: string;
+    saved_at: string | null;
+    saved_by_label: string | null;
     tree_json: Record<string, unknown> | null;
   }>(
     `SELECT revision.id,
@@ -242,12 +254,32 @@ async function listRevisionRowsWithDb(
               END
             ) AS created_by_label,
             revision.created_at,
+            revision.meta_json #>> '{saved,at}' AS saved_at,
+            CASE
+              WHEN revision.meta_json ? 'saved' THEN COALESCE(
+                NULLIF(TRIM(CONCAT_WS(' ', saved_profile.first_name, saved_profile.last_name)), ''),
+                saved_account.email_normalized,
+                CASE
+                  WHEN saved.user_id IS NOT NULL
+                    THEN 'User #' || saved.user_id::text
+                  ELSE NULL
+                END
+              )
+              ELSE NULL
+            END AS saved_by_label,
             revision.tree_json
      FROM phis.${table.revisionTable} revision
      LEFT JOIN phis.user_account_directory account
        ON account.id = revision.created_by_user_id
      LEFT JOIN phis.user_profiles profile
        ON profile.user_id = revision.created_by_user_id
+     CROSS JOIN LATERAL (
+       SELECT (revision.meta_json #>> '{saved,byUserId}')::int AS user_id
+     ) saved
+     LEFT JOIN phis.user_account_directory saved_account
+       ON saved_account.id = saved.user_id
+     LEFT JOIN phis.user_profiles saved_profile
+       ON saved_profile.user_id = saved.user_id
      WHERE revision.${table.scopeColumn} = $1
      ORDER BY revision.created_at DESC, revision.id DESC`,
     [scopeId],

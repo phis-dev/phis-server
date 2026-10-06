@@ -283,6 +283,9 @@ export async function insertSiteRevisionWithDb<TTable extends SiteRevisionTable>
 /**
  * Rewrites the scope's open Working Draft in place. A Draft that is gone by now was discarded or
  * published by another writer, and this save acted on a state that no longer stands.
+ *
+ * The row keeps its `created_at`, so every rewrite stamps `meta_json.saved` with when and by whom it
+ * was saved last: that is what the revision list shows next to the message.
  */
 export async function updateSiteDraftRevisionWithDb<TTable extends SiteRevisionTable>(
   db: DbQueryable,
@@ -294,6 +297,7 @@ export async function updateSiteDraftRevisionWithDb<TTable extends SiteRevisionT
     treeJson: Record<string, unknown>;
     message?: string | null;
     metaJson: Record<string, unknown>;
+    savedByUserId: number | null;
   },
 ): Promise<SiteRevisionRecordOf<TTable>> {
   const { rows } = await db.query<SiteRevisionRow>(
@@ -301,7 +305,9 @@ export async function updateSiteDraftRevisionWithDb<TTable extends SiteRevisionT
      SET flags = $3,
          tree_json = $4::jsonb,
          message = $5,
-         meta_json = $6::jsonb
+         meta_json = $6::jsonb || jsonb_build_object(
+           'saved', jsonb_build_object('at', NOW(), 'byUserId', $7::int)
+         )
      WHERE id = $1
        AND ${table.scopeColumn} = $2
      RETURNING ${selectSiteRevisionColumns(table)}`,
@@ -312,6 +318,7 @@ export async function updateSiteDraftRevisionWithDb<TTable extends SiteRevisionT
       JSON.stringify(input.treeJson),
       input.message ?? null,
       JSON.stringify(input.metaJson),
+      input.savedByUserId,
     ],
   );
   const row = rows[0];
