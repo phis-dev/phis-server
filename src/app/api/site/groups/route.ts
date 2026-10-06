@@ -1,20 +1,22 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import {
+  countSiteGroupMembers,
+  countSiteGroups,
   createLocalSiteGroup,
   getSiteGroupById,
   listSiteGroupMembers,
   listSiteGroups,
-  listSiteGroupsForUser,
   projectSiteGroupMemberForMember,
   readEffectiveGroupMembershipFlags,
   removeLocalSiteGroupMembership,
+  resolveEffectivePhiViewerGroupClaims,
   setLocalSiteGroupMembership,
   setSiteGroupFlags,
   setSiteGroupRetirement,
   SiteGroupMembershipRefusedError,
 } from "@/db/site-groups";
-import { getGroupMediaSpace } from "@/db/media-spaces";
+import { listGroupMediaSpaces } from "@/db/media-spaces";
 import {
   PhiGroupMembershipFlags,
   PhiSiteGroupFlags,
@@ -29,6 +31,7 @@ import {
   requireSiteAuthenticatedApiContext,
   requireSiteDeveloperApiContext,
 } from "@/lib/guards/site-admin-api";
+import { parsePhiPagination } from "@/lib/helpers/request";
 import { logRuntimeEvent } from "@/lib/log";
 import { canPhiViewerAccess, PHI_ACCESS_DEVELOPER_TOOLS } from "@/lib/authorization";
 
@@ -55,6 +58,14 @@ function readValue(value: unknown) {
   return typeof value === "string" ? value : null;
 }
 
+/*
+ * A list is paged when it asks to be: a table names its page, a Form that offers groups to choose from
+ * needs every one of them and names none.
+ */
+function readPage(searchParams: URLSearchParams) {
+  return searchParams.has("page") || searchParams.has("pageSize") ? parsePhiPagination(searchParams) : undefined;
+}
+
 function administers(authority: { siteWide: boolean; membershipFlags: number }) {
   return authority.siteWide ||
     (authority.membershipFlags & PhiGroupMembershipFlags.Manager) === PhiGroupMembershipFlags.Manager;
@@ -68,7 +79,11 @@ export async function GET(request: NextRequest) {
     const siteId = guarded.context!.site!.id;
     const group = await getSiteGroupById(siteId, groupId);
     if (!group) return NextResponse.json({ error: "group_not_found" }, { status: 404 });
-    const members = await listSiteGroupMembers(siteId, groupId);
+    const page = readPage(request.nextUrl.searchParams);
+    const [members, total] = await Promise.all([
+      listSiteGroupMembers(siteId, groupId, { page }),
+      page ? countSiteGroupMembers(siteId, groupId) : null,
+    ]);
     const manages = administers(guarded.context!.authority);
     return NextResponse.json({
       /*
@@ -84,6 +99,7 @@ export async function GET(request: NextRequest) {
       members: manages
         ? members
         : members.map((member) => projectSiteGroupMemberForMember(member, group.flags)),
+      total: total ?? members.length,
     });
   }
 
@@ -111,9 +127,12 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "site_scope_forbidden" }, { status: 403 });
   }
 
-  const memberships = new Map(
-    (await listSiteGroupsForUser(siteId, userId)).map((group) => [group.id, group.membershipFlags]),
-  );
+  /*
+   * The actor's claims answer both "which level do I hold" for every row and, in the member scope,
+   * "which groups": the same projection every authorization decision reads, asked once.
+   */
+  const claims = await resolveEffectivePhiViewerGroupClaims(siteId, userId);
+  const memberships = new Map(claims.map((claim) => [`${claim.providerId}\u0000${claim.key}`, claim.flags]));
   /*
    * Retired groups are asked for, never included by default. Every caller that offers a group to choose
    * from reads this route, and a retired group must disappear from selection -- so the default answer
@@ -121,18 +140,22 @@ export async function GET(request: NextRequest) {
    * contain one either way, because a retired group grants no membership.
    */
   const includeRetired = scope === "site" && request.nextUrl.searchParams.get("includeRetired") === "1";
-  const source = scope === "site"
-    ? await listSiteGroups(siteId, { includeRetired })
-    : await listSiteGroupsForUser(siteId, userId);
-
+  const filter = scope === "site" ? { includeRetired } : { identities: claims };
+  const page = readPage(request.nextUrl.searchParams);
+  const [source, total] = await Promise.all([
+    listSiteGroups(siteId, { ...filter, page }),
+    page ? countSiteGroups(siteId, filter) : null,
+  ]);
   /*
    * The Space is reported alongside each group because that is what the level means in practice: an
    * Author may write into it, a Member sees it. A group whose Space nothing has written to yet has
    * none -- reading must not be what creates it.
    */
-  const rows = await Promise.all(source.map(async (group) => {
-    const space = await getGroupMediaSpace(siteId, group.id);
-    const membershipFlags = memberships.get(group.id) ?? 0;
+  const spaces = await listGroupMediaSpaces(siteId, source.map((group) => group.id));
+
+  const rows = source.map((group) => {
+    const space = spaces.get(group.id);
+    const membershipFlags = memberships.get(`${group.providerId}\u0000${group.key}`) ?? 0;
     return {
       id: group.id,
       key: group.key,
@@ -146,7 +169,7 @@ export async function GET(request: NextRequest) {
         (membershipFlags & PhiGroupMembershipFlags.Author) === PhiGroupMembershipFlags.Author,
       manages: siteWide ||
         (membershipFlags & PhiGroupMembershipFlags.Manager) === PhiGroupMembershipFlags.Manager,
-      memberCount: "memberCount" in group ? group.memberCount : null,
+      memberCount: group.memberCount,
       showMemberCompany: (group.flags & PhiSiteGroupFlags.ShowMemberCompany) !== 0,
       // What this group may do with conversations. Availability of the kind is the Site's, declared by
       // the Modules it runs; these two say which groups actually use it.
@@ -158,8 +181,8 @@ export async function GET(request: NextRequest) {
       spaceUsedBytes: space?.usedBytes ?? null,
       spaceQuotaBytes: space?.quotaBytes ?? null,
     };
-  }));
-  return NextResponse.json({ rows, total: rows.length });
+  });
+  return NextResponse.json({ rows, total: total ?? rows.length });
 }
 
 /**

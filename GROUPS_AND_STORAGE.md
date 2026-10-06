@@ -196,6 +196,12 @@ membership write lived in two files. `groups:v1` under `/api/v1` stays separate:
 provider-neutral capability a Module speaks to, not a session surface. Both end in the same typed
 control-plane functions.
 
+Both lists are paged in SQL when they name a page (`page`, `pageSize`, capped like every list route)
+and then carry the whole count as `total`; the group list and the member list of `?groupId=` alike. The
+member scope is narrowed to the actor's claims in the query rather than read whole and sorted out
+afterwards, and the Spaces of a page are read at once. A Form that offers groups to choose from names no
+page and gets every group in service, because a choice that silently left some out would be wrong.
+
 The Groups Module is `@phis/ui/modules/groups` in the shared package, eligible in `admin` and `app`. It
 declares that a Site's groups need Group Spaces, carries the Admin and App Pages, and binds only to Core.
 Whether it moves to a separate package is an open question in the phis-ui `TODOS.md`.

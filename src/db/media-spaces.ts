@@ -679,6 +679,22 @@ export async function getGroupMediaSpace(siteId: number, groupId: number) {
   return rows[0] ? mapSpace(rows[0]) : null;
 }
 
+/** The Spaces of several groups in one read, by group id; a group without one is absent. */
+export async function listGroupMediaSpaces(siteId: number, groupIds: readonly number[]) {
+  if (groupIds.length === 0) return new Map<number, MediaSpaceRecord>();
+  const { rows } = await getPool().query<{
+    id: number; site_id: number; kind: number; user_id: number | null; group_id: number | null;
+    default_storage_profile_id: number; quota_bytes: number | string | null; used_bytes: number | string;
+    reserved_bytes: number | string; flags: number;
+  }>(
+    `SELECT id, site_id, kind, user_id, group_id, default_storage_profile_id,
+            quota_bytes, used_bytes, ${liveReservedBytes("")} AS reserved_bytes, flags
+     FROM phis.media_spaces WHERE site_id = $1 AND kind = $2 AND group_id = ANY($3::int[])`,
+    [siteId, PhisMediaSpaceKind.Group, groupIds],
+  );
+  return new Map(rows.map((row) => [row.group_id!, mapSpace(row)]));
+}
+
 export function isPhiMediaSpaceKindEnabled(config: SiteMediaConfigRecord, kind: number) {
   if (kind === PhisMediaSpaceKind.Site) return true;
   if (kind === PhisMediaSpaceKind.User) {

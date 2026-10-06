@@ -54,24 +54,70 @@ function mapGroup(row: SiteGroupRow): SiteGroupRecord {
   };
 }
 
+/** One page of a list: one-based, as the list routes read it. */
+export type SiteGroupListPage = { page: number; pageSize: number };
+
+export type SiteGroupListFilter = {
+  includeRetired?: boolean;
+  /** Only the groups with these identities -- the claims of one actor, for "the groups I am in". */
+  identities?: readonly { providerId: string; key: string }[];
+};
+
+/*
+ * The filter as SQL, shared by the list and its count so the two cannot answer different questions.
+ * An identity is a pair, and a group is matched on both halves of it.
+ */
+function siteGroupListWhere(siteId: number, filter: SiteGroupListFilter | undefined) {
+  const identities = filter?.identities;
+  return {
+    where: `g.site_id = $1 AND ($2 OR g.retired_at IS NULL)
+       AND ($3::text[] IS NULL OR (g.provider_id, g.key) IN (SELECT * FROM unnest($3::text[], $4::text[])))`,
+    params: [
+      siteId,
+      filter?.includeRetired === true,
+      identities ? identities.map((identity) => identity.providerId) : null,
+      identities ? identities.map((identity) => identity.key) : null,
+    ] as unknown[],
+  };
+}
+
 /**
  * The Site's groups.
  *
  * Retired groups are left out unless asked for, because every ordinary caller wants the groups that
  * are in service. Administration asks for them: a retired group still holds its key, so the one place
  * that could be surprised by a name being taken is the one place that must be able to see why.
+ *
+ * A page is cut here, in SQL, rather than by the caller: a Site's groups are not bounded by anything.
  */
-export async function listSiteGroups(siteId: number, options?: { includeRetired?: boolean }) {
+export async function listSiteGroups(
+  siteId: number,
+  options?: SiteGroupListFilter & { page?: SiteGroupListPage },
+) {
+  const { where, params } = siteGroupListWhere(siteId, options);
+  const page = options?.page;
+  if (page) params.push(page.pageSize, (page.page - 1) * page.pageSize);
   const { rows } = await getPool().query<SiteGroupRow & { member_count: number | string }>(
     `SELECT g.id, g.site_id, g.provider_id, g.key, g.name, g.flags, g.retired_at,
             (SELECT COUNT(*) FROM phis.site_group_members m
               WHERE m.group_id = g.id AND m.site_id = g.site_id) AS member_count
      FROM phis.site_groups g
-     WHERE g.site_id = $1 AND ($2 OR g.retired_at IS NULL)
-     ORDER BY g.retired_at IS NOT NULL, LOWER(g.name), g.id`,
-    [siteId, options?.includeRetired === true],
+     WHERE ${where}
+     ORDER BY g.retired_at IS NOT NULL, LOWER(g.name), g.id
+     ${page ? "LIMIT $5 OFFSET $6" : ""}`,
+    params,
   );
   return rows.map((row) => ({ ...mapGroup(row), memberCount: Number(row.member_count) }));
+}
+
+/** How many groups the same filter finds, for a list that shows one page of them. */
+export async function countSiteGroups(siteId: number, filter?: SiteGroupListFilter) {
+  const { where, params } = siteGroupListWhere(siteId, filter);
+  const { rows } = await getPool().query<{ total: number | string }>(
+    `SELECT COUNT(*) AS total FROM phis.site_groups g WHERE ${where}`,
+    params,
+  );
+  return Number(rows[0]?.total ?? 0);
 }
 
 /**
@@ -85,7 +131,7 @@ export async function listSiteGroupsForUser(siteId: number, userId: number) {
   const claims = await resolveEffectivePhiViewerGroupClaims(siteId, userId);
   if (claims.length === 0) return [];
   const byIdentity = new Map(claims.map((claim) => [`${claim.providerId}\u0000${claim.key}`, claim.flags]));
-  const groups = await listSiteGroups(siteId);
+  const groups = await listSiteGroups(siteId, { identities: claims });
   return groups.flatMap((group) => {
     const membershipFlags = byIdentity.get(`${group.providerId}\u0000${group.key}`);
     return membershipFlags == null ? [] : [{ ...group, membershipFlags }];
@@ -130,7 +176,12 @@ export function projectSiteGroupMemberForMember(
   };
 }
 
-export async function listSiteGroupMembers(siteId: number, groupId: number) {
+export async function listSiteGroupMembers(
+  siteId: number,
+  groupId: number,
+  options?: { page?: SiteGroupListPage },
+) {
+  const page = options?.page;
   const { rows } = await getPool().query<{
     user_id: number; display_name: string | null; email_normalized: string | null;
     company_name: string | null;
@@ -155,8 +206,9 @@ export async function listSiteGroupMembers(siteId: number, groupId: number) {
      WHERE m.site_id = $1 AND m.group_id = $2
      ORDER BY m.membership_flags DESC,
               LOWER(COALESCE(TRIM(CONCAT_WS(' ', up.first_name, up.last_name)), '')),
-              m.user_id`,
-    [siteId, groupId],
+              m.user_id
+     ${page ? "LIMIT $3 OFFSET $4" : ""}`,
+    page ? [siteId, groupId, page.pageSize, (page.page - 1) * page.pageSize] : [siteId, groupId],
   );
   return rows.map((row): SiteGroupMemberRecord => ({
     userId: row.user_id,
@@ -169,6 +221,15 @@ export async function listSiteGroupMembers(siteId: number, groupId: number) {
     validUntil: row.valid_until == null ? null : new Date(row.valid_until).toISOString(),
     createdAt: new Date(row.created_at).toISOString(),
   }));
+}
+
+/** How many members a group has, for a list that shows one page of them. */
+export async function countSiteGroupMembers(siteId: number, groupId: number) {
+  const { rows } = await getPool().query<{ total: number | string }>(
+    `SELECT COUNT(*) AS total FROM phis.site_group_members WHERE site_id = $1 AND group_id = $2`,
+    [siteId, groupId],
+  );
+  return Number(rows[0]?.total ?? 0);
 }
 
 export async function createLocalSiteGroup(input: { siteId: number; key: string; name: string }) {
