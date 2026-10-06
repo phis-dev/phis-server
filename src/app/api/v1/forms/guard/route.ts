@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { guardApiV1 } from "@/lib/api-v1-guard";
-import { getFormGuardSecret } from "@/lib/form-config";
+import { getFormGuardSecret, getFormTimingWindow } from "@/lib/form-config";
 import { issueFormGuard } from "@/lib/form-guard";
 import {
   FORM_DEFINITION_FLAG_REQUIRES_GUARD,
@@ -45,10 +45,18 @@ export async function GET(request: Request) {
     secret: await getFormGuardSecret(site.id),
   });
 
+  /*
+   * The window the token is good for, as durations rather than instants: the browser measures them from
+   * its own clock, which need not agree with this one. Without them it could only learn of expiry by
+   * having a submit refused.
+   */
+  const { minAgeMs, maxAgeMs } = getFormTimingWindow(form);
   return NextResponse.json({
     form,
     siteKey: site.key,
     issuedAt: formGuard.issuedAt,
     formToken: formGuard.formToken,
+    minSubmitMs: minAgeMs,
+    maxSubmitMs: maxAgeMs,
   });
 }

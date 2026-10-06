@@ -92,6 +92,16 @@ export async function POST(request: Request) {
       field: guardResult.reason === "honeypot" ? "website" : null,
       siteKey: site.key,
     });
+
+    // Expiry is the one refusal a person causes: the form stood open too long. Answering it with the
+    // silent success a bot gets lost their message; the code lets the browser renew the token.
+    if (guardResult.reason === "expired") {
+      return NextResponse.json(
+        { error: "The form expired. Please reload the page and try again.", code: "form_expired" },
+        { status: 409 },
+      );
+    }
+
     return NextResponse.json({ ok: true });
   }
 
