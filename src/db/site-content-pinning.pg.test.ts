@@ -76,6 +76,7 @@ function pageInput(
       contentVersionId: pin.contentVersionId,
       contentBinding: { storage: "text", sourceField: "text" },
     }],
+    controllerSettings: [],
   });
   if (!validated.ok) throw new Error(`Invalid test page input: ${validated.error}`);
   return validated.value;

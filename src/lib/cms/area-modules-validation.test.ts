@@ -143,6 +143,7 @@ describe("validateCmsAreaModulesWriteInput", () => {
         overlays: [],
         layoutNodes: [],
         contentWidgets: [],
+        controllerSettings: [],
       },
     });
 

@@ -68,6 +68,7 @@ function buildPagePayload() {
       config: {},
       contentId: null,
     }],
+    controllerSettings: [],
   };
 }
 
@@ -325,6 +326,80 @@ describe("CMS access policy write validation", () => {
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.details).toContain("page.accessPolicy must be an access policy object.");
+    }
+  });
+});
+
+/*
+ * A tree tells its Controllers whom they answer into, beside the routes it writes for its nodes. One
+ * reader for a Page and an Area, with the same rules as a node's routes.
+ */
+describe("CMS Controller settings write validation", () => {
+  const CONTROLLER_TYPE = "@phis/ui/modules/localization/controller/default";
+  function withSettings(controllerSettings: unknown) {
+    return { ...buildPagePayload(), controllerSettings };
+  }
+  function openRoute(receiver: string) {
+    return {
+      signalRoutes: {
+        emits: [{
+          routeKey: "controller-open",
+          capabilityId: "dialogOpen",
+          scope: "page",
+          channel: "dialog",
+          action: "activate",
+          valueType: "none",
+          receiver,
+        }],
+      },
+    };
+  }
+
+  it("keeps a Page's setting whose routes name the Page's own nodes", () => {
+    const result = validateCmsPageWriteInput(withSettings([{
+      type: CONTROLLER_TYPE,
+      instanceKey: "default",
+      mountScope: "page",
+      config: openRoute(`cms:${OVERLAY_ID}`),
+    }]));
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.controllerSettings).toEqual([{
+        type: CONTROLLER_TYPE,
+        instanceKey: "default",
+        mountScope: "page",
+        config: openRoute(`cms:${OVERLAY_ID}`),
+      }]);
+    }
+  });
+
+  it("refuses a tree that leaves the field out", () => {
+    const payload: Record<string, unknown> = buildPagePayload();
+    delete payload.controllerSettings;
+    const result = validateCmsPageWriteInput(payload);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.details).toContain("controllerSettings must be an array.");
+  });
+
+  it("refuses a setting in another scope, an enabled switch, a twin and a route to nothing", () => {
+    const result = validateCmsPageWriteInput(withSettings([
+      { type: CONTROLLER_TYPE, instanceKey: "default", mountScope: "area", config: null },
+      { type: CONTROLLER_TYPE, instanceKey: "default", mountScope: "page", enabled: true, config: null },
+      {
+        type: CONTROLLER_TYPE,
+        instanceKey: "other",
+        mountScope: "page",
+        config: openRoute(`cms:${createTestId("overlay/gone")}`),
+      },
+    ]));
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.details).toEqual(expect.arrayContaining([
+        'controllerSettings[0].mountScope must be "page" in a page tree.',
+        "controllerSettings[1].enabled is not part of a stored Controller setting.",
+        `controllerSettings configures "${CONTROLLER_TYPE}:default" twice.`,
+        "controllerSettings[2].config.signalRoutes.emits[0] targets an unknown CMS instance.",
+      ]));
     }
   });
 });

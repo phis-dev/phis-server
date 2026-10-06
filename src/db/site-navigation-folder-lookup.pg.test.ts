@@ -36,7 +36,7 @@ async function publishedPage(site: PhiTestSite, path: string) {
       contentRootLayoutNodeId: null, footerTopRootLayoutNodeId: null, drawerRightRootLayoutNodeId: null,
       layoutConfig: { pageRegionConfigs: {} },
     },
-    overlays: [], layoutNodes: [], contentWidgets: [],
+    overlays: [], layoutNodes: [], contentWidgets: [], controllerSettings: [],
   });
   if (!validated.ok) throw new Error(validated.error);
   const draft = await saveSitePageDraftRevision(site.id, validated.value, { createOnly: true });

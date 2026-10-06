@@ -221,6 +221,7 @@ export type SiteResolvedWidgetTree = {
   overlays: SiteOverlayRecord[];
   layoutNodes: SiteLayoutNodeRecord[];
   contentWidgets: SiteContentWidgetRecord[];
+  controllerSettings: CmsPageWriteInput["controllerSettings"];
 };
 
 export type SiteResolvedPageMeta = {
@@ -235,6 +236,7 @@ export type SiteResolvedAreaPresetTree = {
   overlays: SiteOverlayRecord[];
   layoutNodes: SiteLayoutNodeRecord[];
   contentWidgets: SiteContentWidgetRecord[];
+  controllerSettings: CmsAreaPresetWriteInput["controllerSettings"];
 };
 
 export type SiteAreaRevisionRecord = SiteRevisionRecord;
@@ -621,6 +623,7 @@ function buildDraftPreviewPageTree(siteId: number, input: CmsPageWriteInput): Si
       contentVersionId: widget.contentVersionId ?? null,
       resolvedContent: null,
     })),
+    controllerSettings: input.controllerSettings,
   };
 }
 
@@ -690,6 +693,7 @@ function buildDraftPreviewAreaTree(siteId: number, input: CmsAreaPresetWriteInpu
       contentVersionId: widget.contentVersionId ?? null,
       resolvedContent: null,
     })),
+    controllerSettings: input.controllerSettings,
   };
 }
 

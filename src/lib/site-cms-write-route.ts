@@ -398,6 +398,7 @@ export async function handleSiteEditorPageMetaWrite(request: NextRequest) {
           void resolvedContent;
           return stableWidget;
         }),
+        controllerSettings: resolvedPage.controllerSettings,
       },
       pageMeta: {
         ...(hasTitle ? { title } : {}),

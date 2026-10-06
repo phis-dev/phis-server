@@ -51,6 +51,7 @@ function request(path = "/about") {
       overlays: [],
       layoutNodes: [],
       contentWidgets: [],
+      controllerSettings: [],
     }),
   });
 }

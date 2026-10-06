@@ -32,6 +32,7 @@ function buildStructurePayload(shell?: unknown) {
     overlays: [],
     layoutNodes: [],
     contentWidgets: [],
+    controllerSettings: [],
   };
 }
 

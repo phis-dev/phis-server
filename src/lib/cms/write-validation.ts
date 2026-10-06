@@ -98,6 +98,20 @@ export type CmsDraftContentWidgetInput = {
   contentBinding?: CmsDraftContentBindingInput | null;
 };
 
+/**
+ * What a tree tells one of its Controllers: the same shape on a Page and on an Area.
+ *
+ * A Controller's receivers are the tree's to name, as every Widget's are -- so the tree carries them,
+ * beside the routes it writes for its nodes. `mountScope` is the tree's own scope (`page` on a Page,
+ * `area` on an Area); there is no `enabled`, because a setting a tree stores is one it means.
+ */
+export type CmsControllerSettingInput = {
+  type: string;
+  instanceKey: string;
+  mountScope: "page" | "area";
+  config: JsonRecord | null;
+};
+
 export type CmsAreaPresetWriteInput = {
   area: string;
   areaMask: number;
@@ -114,6 +128,7 @@ export type CmsAreaPresetWriteInput = {
   overlays: CmsDraftOverlayInput[];
   layoutNodes: CmsDraftLayoutNodeInput[];
   contentWidgets: CmsDraftContentWidgetInput[];
+  controllerSettings: CmsControllerSettingInput[];
 };
 
 /**
@@ -169,6 +184,7 @@ export type CmsPageWriteInput = {
   overlays: CmsDraftOverlayInput[];
   layoutNodes: CmsDraftLayoutNodeInput[];
   contentWidgets: CmsDraftContentWidgetInput[];
+  controllerSettings: CmsControllerSettingInput[];
 };
 
 export type CmsValidationResult<T> = {
@@ -901,6 +917,78 @@ function validateNodeSignalRoutes(
   }
 }
 
+const CMS_CONTROLLER_SETTING_KEYS = new Set(["type", "instanceKey", "mountScope", "config"]);
+const CMS_CONTROLLER_TYPE_PATTERN = /^[^\s/]+(?:\/[^\s/]+)+$/u;
+
+/**
+ * The Controllers a tree configures -- one reader for a Page and for an Area, because a Controller does
+ * not change what it can be told with the scope that tells it.
+ *
+ * A setting is keyed by type and instance; two for the same key would leave which one counts to read
+ * order. Its routes are checked as a node's are, against the nodes of the same tree: a receiver the
+ * tree does not hold is a wire to nothing.
+ */
+function parseControllerSettings(
+  value: unknown,
+  mountScope: CmsControllerSettingInput["mountScope"],
+  activeIds: ReadonlySet<PhiCmsInstanceId>,
+  errors: string[],
+): CmsControllerSettingInput[] {
+  if (!Array.isArray(value)) {
+    errors.push("controllerSettings must be an array.");
+    return [];
+  }
+  const parsed: CmsControllerSettingInput[] = [];
+  const keys = new Set<string>();
+  value.forEach((entry, index) => {
+    const label = `controllerSettings[${index}]`;
+    if (!isPhiRecord(entry)) {
+      errors.push(`${label} must be an object.`);
+      return;
+    }
+    for (const key of Object.keys(entry)) {
+      if (!CMS_CONTROLLER_SETTING_KEYS.has(key)) {
+        errors.push(`${label}.${key} is not part of a stored Controller setting.`);
+      }
+    }
+    const type = typeof entry.type === "string" ? entry.type.trim() : "";
+    if (!CMS_CONTROLLER_TYPE_PATTERN.test(type)) {
+      errors.push(`${label}.type must be a namespaced Controller type.`);
+    }
+    const instanceKey = typeof entry.instanceKey === "string" ? entry.instanceKey.trim() : "";
+    if (!instanceKey) {
+      errors.push(`${label}.instanceKey is required.`);
+    }
+    if (entry.mountScope !== mountScope) {
+      errors.push(`${label}.mountScope must be "${mountScope}" in a ${mountScope} tree.`);
+    }
+    if (entry.config != null && !isPhiRecord(entry.config)) {
+      errors.push(`${label}.config must be an object or null.`);
+    }
+    const config = isPhiRecord(entry.config) ? (entry.config as JsonRecord) : null;
+    errors.push(...collectCmsSignalRouteErrors(config?.signalRoutes, activeIds, `${label}.config.signalRoutes`));
+    const key = `${type}:${instanceKey}`;
+    if (keys.has(key)) {
+      errors.push(`controllerSettings configures "${key}" twice.`);
+    }
+    keys.add(key);
+    parsed.push({ type, instanceKey, mountScope, config });
+  });
+  return parsed;
+}
+
+function collectTreeNodeIds(
+  overlays: CmsDraftOverlayInput[],
+  layoutNodes: CmsDraftLayoutNodeInput[],
+  contentWidgets: CmsDraftContentWidgetInput[],
+) {
+  return new Set<PhiCmsInstanceId>([
+    ...overlays.map((node) => node.id),
+    ...layoutNodes.map((node) => node.id),
+    ...contentWidgets.map((node) => node.id),
+  ]);
+}
+
 function validateReferences(
   overlays: CmsDraftOverlayInput[],
   layoutNodes: CmsDraftLayoutNodeInput[],
@@ -1071,6 +1159,12 @@ export function validateCmsAreaPresetWriteInput(
 
   validateUniqueNodeIds(overlays, layoutNodes, contentWidgets, errors);
   validateNodeSignalRoutes(overlays, layoutNodes, contentWidgets, errors);
+  const controllerSettings = parseControllerSettings(
+    payload.controllerSettings,
+    "area",
+    collectTreeNodeIds(overlays, layoutNodes, contentWidgets),
+    errors,
+  );
   validateReferences(
     overlays,
     layoutNodes,
@@ -1097,6 +1191,7 @@ export function validateCmsAreaPresetWriteInput(
       overlays,
       layoutNodes,
       contentWidgets,
+      controllerSettings,
     },
   };
 }
@@ -1472,6 +1567,12 @@ export function validateCmsPageWriteInput(payload: unknown): CmsValidationResult
 
   validateUniqueNodeIds(overlays, layoutNodes, contentWidgets, errors);
   validateNodeSignalRoutes(overlays, layoutNodes, contentWidgets, errors);
+  const controllerSettings = parseControllerSettings(
+    payload.controllerSettings,
+    "page",
+    collectTreeNodeIds(overlays, layoutNodes, contentWidgets),
+    errors,
+  );
   validateReferences(
     overlays,
     layoutNodes,
@@ -1512,6 +1613,7 @@ export function validateCmsPageWriteInput(payload: unknown): CmsValidationResult
       overlays,
       layoutNodes,
       contentWidgets,
+      controllerSettings,
     },
   };
 }

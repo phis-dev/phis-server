@@ -38,6 +38,7 @@ function blankPageInput(path: string) {
     overlays: [],
     layoutNodes: [],
     contentWidgets: [],
+    controllerSettings: [],
   });
   if (!validated.ok) throw new Error(`Invalid test page input: ${validated.error}`);
   return validated.value;
