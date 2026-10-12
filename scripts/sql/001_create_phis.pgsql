@@ -1916,7 +1916,10 @@ CREATE TABLE IF NOT EXISTS phis.site_read_marker (
   marker BIGINT NOT NULL
 );
 
--- A statement trigger with transition tables, as for the translation markers. On the scope tables only a
+-- A statement trigger with transition tables, as for the translation markers. The Site's auth config
+-- counts as well: its manifest is read on every page with a sign-in Widget and kept like the rest, and
+-- registration mode or methods are not published but saved, so nothing else would move the marker.
+-- On the scope tables only a
 -- published pointer that changed counts (and for Pages the address and tombstone, which publishing
 -- writes); an inserted or deleted scope always counts. Rows whose Site is gone in the same statement drop
 -- out of the join: a deleted Site has nothing left to mark.
@@ -1955,6 +1958,19 @@ BEGIN
          OR new_rows.tombstoned_at IS DISTINCT FROM old_rows.tombstoned_at
     ) AS touched
     ON CONFLICT (site_id) DO UPDATE SET marker = EXCLUDED.marker;
+  ELSIF TG_TABLE_NAME = 'site_auth_config' THEN
+    -- Which sign-in methods and registration mode a Site offers is what its auth manifest says, and a
+    -- Site process keeps that manifest; a write that changed nothing in it moves nothing.
+    INSERT INTO phis.site_read_marker (site_id, marker)
+    SELECT touched.site_id, nextval('phis.site_read_marker_seq')
+    FROM (
+      SELECT DISTINCT new_rows.site_id
+      FROM new_rows
+      JOIN old_rows ON old_rows.site_id = new_rows.site_id
+      JOIN phis.sites AS sites ON sites.id = new_rows.site_id
+      WHERE new_rows.config IS DISTINCT FROM old_rows.config
+    ) AS touched
+    ON CONFLICT (site_id) DO UPDATE SET marker = EXCLUDED.marker;
   ELSE
     INSERT INTO phis.site_read_marker (site_id, marker)
     SELECT touched.site_id, nextval('phis.site_read_marker_seq')
@@ -1981,7 +1997,7 @@ DECLARE
   scope_table TEXT;
 BEGIN
   -- One trigger per event and table: a trigger with transition tables serves one event.
-  FOREACH scope_table IN ARRAY ARRAY['site_page_scopes', 'site_area_scopes', 'site_nav_scopes', 'site_theme_scopes'] LOOP
+  FOREACH scope_table IN ARRAY ARRAY['site_page_scopes', 'site_area_scopes', 'site_nav_scopes', 'site_theme_scopes', 'site_auth_config'] LOOP
     EXECUTE format('DROP TRIGGER IF EXISTS %1$s_touch_read_marker_insert ON phis.%1$s', scope_table);
     EXECUTE format(
       'CREATE TRIGGER %1$s_touch_read_marker_insert AFTER INSERT ON phis.%1$s '

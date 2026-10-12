@@ -1814,7 +1814,9 @@ Contract:
   `sites` row; an inserted or deleted row of `site_page_scopes`, `site_area_scopes`, `site_nav_scopes` or
   `site_theme_scopes`; an update there only when `published_revision_id` changed, and for Pages also
   `path` or `tombstoned_at` -- all three of which only a publish writes. Draft pointers do not move it,
-  and neither does a draft that marks a Page deleted. Application code never writes it.
+  and neither does a draft that marks a Page deleted. An inserted or deleted `site_auth_config` row moves
+  it too, and an update there when `config` changed: the auth manifest a Site keeps is read from it.
+  Application code never writes it.
 - `GET /api/v1/site` carries it as `readMarker` (`"0"` without a row). A Site process refreshes its config
   at most every few seconds and empties its other read caches, Navigation among them, when it moved.
 - Only equality of a marker means anything; it is not a count and not ordered.

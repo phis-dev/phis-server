@@ -96,4 +96,24 @@ describe("the Site read marker on /api/v1/site", () => {
     await query("DELETE FROM phis.site_theme_scopes WHERE id = $1", [scopeId]);
     expect(await marker()).not.toBe(afterInsert);
   });
+
+  it("moves when the Site's auth config changes, not when a write leaves it as it was", async () => {
+    // A Site may already carry its auth config row from creation; the insert only makes sure it exists.
+    await query("INSERT INTO phis.site_auth_config (site_id) VALUES ($1) ON CONFLICT (site_id) DO NOTHING", [site.id]);
+    const before = await marker();
+    const otherBefore = await marker(other);
+
+    await query(
+      `UPDATE phis.site_auth_config
+          SET config = jsonb_set(config, '{policy,registrationMode}', '"disabled"')
+        WHERE site_id = $1`,
+      [site.id],
+    );
+    const afterChange = await marker();
+    expect(afterChange).not.toBe(before);
+
+    await query("UPDATE phis.site_auth_config SET policy_revision = policy_revision WHERE site_id = $1", [site.id]);
+    expect(await marker()).toBe(afterChange);
+    expect(await marker(other)).toBe(otherBefore);
+  });
 });

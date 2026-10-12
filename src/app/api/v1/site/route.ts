@@ -4,6 +4,7 @@ import { readSiteReadMarker } from "@/db/site-read-marker";
 import { getSiteRuntimeConfig } from "@/db/sites";
 import { createJsonResponse } from "@/lib/api-response";
 import { guardApiV1 } from "@/lib/api-v1-guard";
+import { resolveSiteLocaleCapabilities } from "@/lib/locale";
 import { requireSiteFromRequest } from "@/lib/site-context";
 import { getTranslationChangeMarkers } from "@/lib/translations";
 
@@ -31,6 +32,8 @@ export async function GET(request: Request) {
     site: {
       id: site.id,
       ...config,
+      // What each served locale means, so a Site process resolves a request that names one itself.
+      localeCapabilities: resolveSiteLocaleCapabilities(config.availableLocales.map((option) => option.code)),
       translationMarkers,
       readMarker: readMarker ?? "0",
     },

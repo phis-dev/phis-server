@@ -56,6 +56,12 @@ matches an available Site locale, exactly or by language, wins; otherwise the Si
 response carries the capability entry together with `requestedLocale` and `source`
 (`requested`, `user`, `cookie`, `browser`, or `default`).
 
+Because the explicit locale comes first, a request that names one exactly as the Site serves it has an
+answer that depends on nothing else. `GET /api/v1/site` therefore carries `localeCapabilities`, the
+capability entry of every served locale in matching order (`resolveSiteLocaleCapabilities`), and a Site
+process answers such a request from it without asking this endpoint. It asks only when the visitor's
+preference has to decide.
+
 `user_accounts.preferred_locale` is empty until somebody answers the question, and its absence is what
 puts the cookie in charge. `PATCH /api/v1/auth/profile/locale` is the only endpoint that writes the
 column: registration leaves it empty although it knows the language the form was read in, the admin

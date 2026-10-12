@@ -217,6 +217,17 @@ export function getPhiLocaleCapability(locale: string | null | undefined): PhiLo
   return resolvePhiLocaleCapability(locale) ?? resolvePhiLocaleCapability(PHI_CANONICAL_SOURCE_LOCALE) as PhiLocaleCapability;
 }
 
+/**
+ * What each locale a Site serves means, in the order `resolveSiteLocale` matches them.
+ *
+ * A Site process given these can answer a request that names its locale itself -- the requested locale
+ * is matched first, so its answer depends on nothing else -- and asks `/api/v1/site/locale` only when
+ * the visitor's preference has to decide.
+ */
+export function resolveSiteLocaleCapabilities(availableLocales: readonly string[]) {
+  return normalizeAvailableLocaleCapabilities(availableLocales);
+}
+
 function normalizeAvailableLocaleCapabilities(availableLocales: readonly string[]) {
   const capabilities = availableLocales
     .map((locale) => resolvePhiLocaleCapability(locale))
