@@ -8,6 +8,7 @@ import {
   deleteSiteAreaOverride,
   deleteSiteAreaModulesDraftRevision,
   deleteSitePageDraftRevision,
+  getExactSiteAreaPresetTree,
   getSiteCurrentAreaDraft,
   getSiteCurrentAreaModulesDraft,
   getSiteCurrentPageDraft,
@@ -23,7 +24,7 @@ import {
   type SitePageScopeAddress,
 } from "@/db/site-pages";
 import { SiteCmsAreaBaselineRequiredError, SiteCmsDraftConflictError } from "@/db/site-revision-scopes";
-import { resolvePhisCmsAreaMask } from "@/lib/constants/cms-areas";
+import { resolvePhisCmsAreaKey, resolvePhisCmsAreaMask } from "@/lib/constants/cms-areas";
 import { PhiCmsAuditEvent } from "@/lib/constants/phi-cms";
 import {
   type CmsAreaModulesWriteInput,
@@ -1197,6 +1198,109 @@ export async function handleSiteCmsAreaDraftRead(request: NextRequest) {
       error: normalizeLogThrowable(error),
       meta: {
         areaMask,
+      },
+    });
+    return NextResponse.json(
+      {
+        error: message,
+        details: detail ? [detail] : [],
+      },
+      { status: 500 },
+    );
+  }
+}
+
+/** More Areas than a Site has would be a request nobody needs answered in one go. */
+const AREA_STRUCTURES_READ_LIMIT = 16;
+
+/**
+ * What several Areas store about their structure, in one request: per Area its open draft, else its
+ * published revision, else nothing.
+ *
+ * The Builder needs this for every Area on every view -- the Modules page edits all of them at once,
+ * and the Area switch carries the next Area's Module selection -- and asked for it with a draft read
+ * and, where no draft was open, a published read per Area: eleven requests on each Builder view. The
+ * answers are the ones those two reads give (`GET /api/site/cms/area/draft`, `GET /api/v1/site/area`),
+ * under the draft read's access, which is the stricter of the two. A read: POST only because a list of
+ * preset identities does not fit a query string.
+ *
+ * Body: `{ areas: [{ area, ownerModuleId, presetKey }] }`. Answer: `{ areas: [{ area, draft, published }] }`
+ * in request order, `draft` shaped like the draft read's answer, `published` like the published read's,
+ * `published` null whenever `draft` is not, both null for an Area that stores nothing.
+ */
+export async function handleSiteCmsAreaStructuresRead(request: NextRequest) {
+  const { context, error } = await requireSiteReviewApiContext(request);
+  if (error) {
+    return error;
+  }
+
+  const payload = (await readSiteCmsRequestJson(request)) as { areas?: unknown } | null;
+  const entries = Array.isArray(payload?.areas) ? payload.areas : null;
+  if (!entries || entries.length === 0 || entries.length > AREA_STRUCTURES_READ_LIMIT) {
+    return NextResponse.json(
+      { error: `areas must list between 1 and ${AREA_STRUCTURES_READ_LIMIT} Areas.` },
+      { status: 400 },
+    );
+  }
+  const requests: { area: string; areaMask: number; sourcePreset: { ownerModuleId: string; presetKey: string } }[] = [];
+  for (const entry of entries) {
+    const value = (entry ?? {}) as Record<string, unknown>;
+    const area = typeof value.area === "string" ? value.area.trim().toLowerCase() : "";
+    const areaMask = resolveAreaMask(area);
+    const sourcePreset = resolveCmsPresetIdentity({
+      ownerModuleId: typeof value.ownerModuleId === "string" ? value.ownerModuleId : null,
+      presetKey: typeof value.presetKey === "string" ? value.presetKey : null,
+    });
+    // An unknown key would resolve to Public: refused instead of answered for the wrong Area.
+    if (!area || resolvePhisCmsAreaKey(areaMask) !== area || !sourcePreset) {
+      return NextResponse.json(
+        { error: "Every Area needs a known area, an ownerModuleId and a presetKey." },
+        { status: 400 },
+      );
+    }
+    requests.push({ area, areaMask, sourcePreset });
+  }
+
+  const siteId = context!.site!.id;
+  const locale = resolveRequestLocale(request);
+  try {
+    const areas = await Promise.all(requests.map(async ({ area, areaMask, sourcePreset }) => {
+      const draft = await getSiteCurrentAreaDraft(siteId, { areaMask, sourcePreset });
+      if (draft) {
+        return {
+          area,
+          draft: {
+            areaMask,
+            revisionId: draft.revisionId,
+            version: draft.draft.version,
+            nextNodeSequence: draft.draft.nextNodeSequence,
+            sourcePreset: draft.preset.sourcePreset,
+            preset: draft.preset,
+          },
+          published: null,
+        };
+      }
+      const preset = await getExactSiteAreaPresetTree(siteId, areaMask, 0, locale, sourcePreset);
+      return {
+        area,
+        draft: null,
+        published: preset ? { areaMask, sourcePreset: preset.sourcePreset, preset } : null,
+      };
+    }));
+    return NextResponse.json({ areas });
+  } catch (error) {
+    const detail = readSiteCmsErrorDetail(error);
+    const message = readSiteCmsErrorMessage(error, "CMS area structures read failed.");
+    logRuntimeEvent("error", "cms.area_structures_read.failed", {
+      message: "CMS area structures read failed.",
+      siteKey: context!.site!.key,
+      userId: context!.session?.userId ?? null,
+      method: request.method,
+      path: request.nextUrl.pathname,
+      targetType: "cms-area-structures-read",
+      error: normalizeLogThrowable(error),
+      meta: {
+        areas: requests.map((entry) => entry.area),
       },
     });
     return NextResponse.json(

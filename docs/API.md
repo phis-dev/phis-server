@@ -8,13 +8,13 @@ public or internal token, and `session` is the visitor's Site session with the a
 passes (see [AUTHORIZATION.md](../AUTHORIZATION.md)). A route with no access entry performs its own checks
 or none; read its source. Request and response shapes are not listed; the source is linked per route.
 
-146 routes.
+147 routes.
 
 ## Contents
 
 - [`/api/operator`](#apioperator) (5)
 - [`/api/setup`](#apisetup) (2)
-- [`/api/site`](#apisite) (72)
+- [`/api/site`](#apisite) (73)
 - [`/api/v1/addons`](#apiv1addons) (2)
 - [`/api/v1/admin`](#apiv1admin) (1)
 - [`/api/v1/auth`](#apiv1auth) (29)
@@ -83,6 +83,7 @@ Site administration, CMS, media and support API. A Site's `/api/site` proxy forw
 | POST | [`/api/site/cms/area/modules/publish`](../src/app/api/site/cms/area/modules/publish/route.ts) | session, `publishing` (requireSitePublisherApiContext) |  |
 | DELETE | [`/api/site/cms/area/override`](../src/app/api/site/cms/area/override/route.ts) | session, `structure-authoring` (requireSiteBuilderApiContext) |  |
 | POST | [`/api/site/cms/area/publish`](../src/app/api/site/cms/area/publish/route.ts) | session, `publishing` (requireSitePublisherApiContext) |  |
+| POST | [`/api/site/cms/area/structures`](../src/app/api/site/cms/area/structures/route.ts) | session, `roles` (requireSiteReviewApiContext) |  |
 | GET | [`/api/site/cms/module-usage`](../src/app/api/site/cms/module-usage/route.ts) | session, `structure-authoring` (requireSiteBuilderApiContext) | What a Module currently draws on this Site's published pages. |
 | GET | [`/api/site/cms/navigation`](../src/app/api/site/cms/navigation/route.ts) | session, `roles` (requireSiteReviewApiContext) |  |
 | POST | [`/api/site/cms/navigation`](../src/app/api/site/cms/navigation/route.ts) | session, `structure-authoring` (requireSiteBuilderApiContext) |  |
