@@ -148,6 +148,7 @@ Site administration, CMS, media and support API. A Site's `/api/site` proxy forw
 | GET | [`/api/site/support/request/types`](../src/app/api/site/support/request/types/route.ts) | session, `authenticated` (requireSiteAuthenticatedApiContext) | What a person who is not Staff may ask for. |
 | GET | [`/api/site/support/ticket-types`](../src/app/api/site/support/ticket-types/route.ts) | session, `support` (requireSiteSupportApiContext) | The Site's ticket types. |
 | POST | [`/api/site/support/ticket-types`](../src/app/api/site/support/ticket-types/route.ts) | session, `developer-tools` (requireSiteDeveloperApiContext) | Adds a ticket type. |
+| PATCH | [`/api/site/support/ticket-types`](../src/app/api/site/support/ticket-types/route.ts) | session, `developer-tools` (requireSiteDeveloperApiContext) | Sets what the catalogue as a whole says: `requesterWindowDays`, the window every type without its own falls back to. `0` switches automatic closing off for every type at once. |
 | PATCH | [`/api/site/support/ticket-types/{typeId}`](../src/app/api/site/support/ticket-types/[typeId]/route.ts) | session, `developer-tools` (requireSiteDeveloperApiContext) | Edits one ticket type, and is where a Site decides who may ask for it. |
 | GET | [`/api/site/support/tickets`](../src/app/api/site/support/tickets/route.ts) | session, `support` (requireSiteSupportApiContext) |  |
 | POST | [`/api/site/support/tickets`](../src/app/api/site/support/tickets/route.ts) | session, `support` (requireSiteSupportApiContext) |  |

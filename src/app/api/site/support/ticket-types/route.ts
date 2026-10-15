@@ -4,7 +4,9 @@ import {
   SupportAdministrationError,
   createSupportTicketType,
   listSupportTicketTypes,
+  setSupportRequesterWindowDays,
 } from "@/db/support";
+import { readSiteThreadKinds } from "@/db/threads";
 import {
   requireSiteDeveloperApiContext,
   requireSiteSupportApiContext,
@@ -28,8 +30,11 @@ export const dynamic = "force-dynamic";
  * catalogue has to see what the tickets already opened are still naming.
  *
  * This is the Staff listing, behind the Supporter role. What a requester may choose is a different
- * question, answered by `PhisSupportTicketTypeFlag.Requestable`, and by a route that does not exist yet
+ * question, answered by `PhisSupportTicketTypeFlag.Requestable` and `GET /api/site/support/request/types`
  * ([design/SUPPORT.md](../../../../../design/SUPPORT.md) section 2).
+ *
+ * Beside the rows stands `requesterWindowDays`, the Site's window: what every type without one of its
+ * own falls back to, which makes it the catalogue's default rather than a setting of its own.
  */
 export async function GET(request: NextRequest) {
   const { context, error } = await requireSiteSupportApiContext(request);
@@ -40,7 +45,38 @@ export async function GET(request: NextRequest) {
   if (!site) {
     return NextResponse.json({ error: "Authentication required." }, { status: 401 });
   }
-  return NextResponse.json({ rows: await listSupportTicketTypes(site.id) });
+  const [rows, config] = await Promise.all([listSupportTicketTypes(site.id), readSiteThreadKinds(site.id)]);
+  return NextResponse.json({ rows, requesterWindowDays: config.requesterWindowDays });
+}
+
+/**
+ * Sets what the catalogue as a whole says: `requesterWindowDays`, the window every type without its own
+ * falls back to. `0` switches automatic closing off for every type at once.
+ *
+ * Behind `Developer | Admin`, as adding a type is.
+ */
+export async function PATCH(request: NextRequest) {
+  const { context, error } = await requireSiteDeveloperApiContext(request);
+  if (error) {
+    return error;
+  }
+  const site = context?.site;
+  if (!site) {
+    return NextResponse.json({ error: "Authentication required." }, { status: 401 });
+  }
+
+  const body = await readRequestBody(request);
+  const requesterWindowDays = readSupportInteger(body.requesterWindowDays);
+  if (requesterWindowDays == null) {
+    return NextResponse.json({ error: "requesterWindowDays is required." }, { status: 400 });
+  }
+  try {
+    await setSupportRequesterWindowDays(site.id, requesterWindowDays);
+  } catch (cause) {
+    return refuseSupportAdministration(cause, SupportAdministrationError);
+  }
+  const config = await readSiteThreadKinds(site.id);
+  return NextResponse.json({ requesterWindowDays: config.requesterWindowDays });
 }
 
 /**

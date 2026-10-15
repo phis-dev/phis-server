@@ -1943,3 +1943,26 @@ export async function hasSupportEntryQueue(siteId: number) {
   );
   return rows.length > 0;
 }
+
+/**
+ * How long a resolved ticket waits for its requester on this Site, in days, where its type says nothing.
+ *
+ * The Site's half of the requester window (`support-requester-window.mts`). `0` switches automatic
+ * closing off for every type at once. Stored on `site_thread_config`, whose row the thread kinds
+ * materialization owns too: this writes the window and leaves the kinds as they are, and a Site that
+ * has no row yet gets one offering no kind until its next publish says otherwise.
+ */
+export async function setSupportRequesterWindowDays(siteId: number, days: number) {
+  if (!Number.isInteger(days) || days < 0 || days > 3650) {
+    throw new SupportAdministrationError("A requester window is a whole number of days from 0 to 3650.");
+  }
+  await getPool().query(
+    `INSERT INTO phis.site_thread_config (site_id, flags, requester_window_days)
+     VALUES ($1, 0, $2)
+     ON CONFLICT (site_id) DO UPDATE
+     SET requester_window_days = EXCLUDED.requester_window_days,
+         updated_at = NOW()
+     WHERE phis.site_thread_config.requester_window_days IS DISTINCT FROM EXCLUDED.requester_window_days`,
+    [siteId, days],
+  );
+}

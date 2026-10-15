@@ -22,6 +22,8 @@ import {
   createSupportTicket,
   getSupportTicketDetail,
   listSupportTicketsForSite,
+  setSupportRequesterWindowDays,
+  SupportAdministrationError,
   updateSupportTicket,
 } from "./support";
 import { addThreadMessage } from "./threads";
@@ -244,5 +246,23 @@ describe("support ticket ladder", () => {
     for (const { site, ticket } of waiting) {
       expect((await readTicket(site.id, ticket.id)).status).toBe(PhisSupportTicketStatus.Resolved);
     }
+  });
+
+  it("takes the Site's window from the catalogue's settings, and 0 stops the closing", async () => {
+    await requirePhiTestDatabase();
+    const site = await createPhiTestSite("ladder-site-setting");
+    const { ticket, supporter } = await openTicket(site);
+    await updateSupportTicket({
+      siteId: site.id, ticketId: ticket.id, status: PhisSupportTicketStatus.Resolved, updatedByUserId: supporter,
+    });
+    await ageResolution(ticket.id, 20);
+    expect((await readTicket(site.id, ticket.id)).status).toBe(PhisSupportTicketStatus.Closed);
+
+    await setSupportRequesterWindowDays(site.id, 0);
+    expect((await readTicket(site.id, ticket.id)).status).toBe(PhisSupportTicketStatus.Resolved);
+
+    await setSupportRequesterWindowDays(site.id, 30);
+    expect((await readTicket(site.id, ticket.id)).status).toBe(PhisSupportTicketStatus.Resolved);
+    await expect(setSupportRequesterWindowDays(site.id, -1)).rejects.toThrow(SupportAdministrationError);
   });
 });
