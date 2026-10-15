@@ -142,7 +142,7 @@ Site administration, CMS, media and support API. A Site's `/api/site` proxy forw
 | POST | [`/api/site/media/uploads/{token}/report`](../src/app/api/site/media/uploads/[token]/report/route.ts) | Site session, checked in the handler; session (requireMediaSpaceWriteContext) |  |
 | POST | [`/api/site/media/uploads/init`](../src/app/api/site/media/uploads/init/route.ts) | session (requireMediaSpaceWriteContext) |  |
 | GET | [`/api/site/support/forward`](../src/app/api/site/support/forward/route.ts) | session, `support` (requireSiteSupportApiContext) | Where this Site's tickets may be forwarded right now. |
-| POST | [`/api/site/support/forward`](../src/app/api/site/support/forward/route.ts) | session, `support` (requireSiteSupportApiContext) | Hands one ticket's work to one target: `{ ticketId, providerKey, title? }`. |
+| POST | [`/api/site/support/forward`](../src/app/api/site/support/forward/route.ts) | session, `support` (requireSiteSupportApiContext) | Hands one ticket's work to one target: `{ ticketId, target, title? }`. |
 | GET | [`/api/site/support/queues`](../src/app/api/site/support/queues/route.ts) | session, `support` (requireSiteSupportApiContext) | The Site's Support queues. |
 | POST | [`/api/site/support/queues`](../src/app/api/site/support/queues/route.ts) | session, `developer-tools` (requireSiteDeveloperApiContext) | Adds a queue. |
 | PATCH | [`/api/site/support/queues/{queueId}`](../src/app/api/site/support/queues/[queueId]/route.ts) | session, `developer-tools` (requireSiteDeveloperApiContext) | Edits one queue: its name, the group it routes to, its order, and whether it is retired. |
