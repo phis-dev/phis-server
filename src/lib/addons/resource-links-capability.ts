@@ -10,7 +10,7 @@ import {
   setResourceLinkState,
   upsertResourceLink,
 } from "@/db/resource-links";
-import { getThreadDetail } from "@/db/threads";
+import { getThreadDetail, isThreadOwnedByProvider } from "@/db/threads";
 
 export class PhisAddonResourceLinksError extends Error {}
 
@@ -98,8 +98,23 @@ export function buildPhisAddonResourceLinksCapability(input: {
 
     async link(linkInput) {
       requireBelievableCaller("link");
-      const userId = requireActor("link");
-      await requireReachableSubject("link", linkInput.subject, userId);
+      /*
+       * A link is a person's consent -- except on what the Add-on opened itself.
+       *
+       * Its own thread it reaches by ownership already, so a link there grants nothing new and needs
+       * nobody to agree to it: a ticket opened for an issue that arrived from outside is linked to that
+       * issue by the integration that opened it, as a forwarded ticket is linked by the Supporter who
+       * forwarded it. Anything else still needs an actor who can see it.
+       */
+      const userId = actorUserId;
+      if (userId == null) {
+        const threadId = await resolveSubjectThreadId(siteId, linkInput.subject);
+        if (threadId == null || !await isThreadOwnedByProvider(siteId, threadId, addonId)) {
+          requireActor("link");
+        }
+      } else {
+        await requireReachableSubject("link", linkInput.subject, userId);
+      }
       return upsertResourceLink({
         siteId,
         providerId: addonId,

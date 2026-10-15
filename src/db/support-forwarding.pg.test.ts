@@ -167,6 +167,23 @@ describe("support forwarding", () => {
     await forwardSupportTicket({ site: silentSite, ticketId: silent.ticket.id, target: "issues#acme/app", title: null, actorUserId: silent.supporter });
     expect(forwarded[1]).toMatchObject({ mirror: true, body: null });
 
+    // A Supporter's opening words leave with a mirrored type; nobody had to agree to their own.
+    const staffSite = await createPhiTestSite("forward-staff-opened");
+    const staffSeed = await openTicket(staffSite, external, false);
+    await createSupportTicket({
+      siteId: staffSite.id,
+      typeId: staffSeed.typeId,
+      channel: 4,
+      subject: "Opened by Staff",
+      message: "Found in monitoring.",
+      createdByUserId: staffSeed.supporter,
+    }).then(async (created) => {
+      await forwardSupportTicket({
+        site: staffSite, ticketId: created!.ticket.id, target: "issues#acme/app", title: null, actorUserId: staffSeed.supporter,
+      });
+    });
+    expect(forwarded.at(-1)).toMatchObject({ mirror: true, body: "Found in monitoring." });
+
     // Mirrored, but the requester never agreed: their words stay, the Staff side leaves.
     await addThreadMessage({
       siteId: silentSite.id,

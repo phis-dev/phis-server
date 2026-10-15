@@ -20,6 +20,7 @@ import {
 import { createSupportTicket } from "./support";
 import { upsertResourceLink } from "./resource-links";
 import { buildPhisAddonSupportCapability } from "@/lib/addons/support-capability";
+import { buildPhisAddonResourceLinksCapability } from "@/lib/addons/resource-links-capability";
 
 const configured = process.env.PHIS_PG_TEST === "1";
 const ADDON = "@phis/github";
@@ -122,6 +123,21 @@ describe.skipIf(!configured)("support capability", () => {
     await pool.query(`UPDATE phis.resource_links SET flags = 0 WHERE id = $1`, [link.id]);
     // The link is the consent, so withdrawing it ends the reach rather than merely hiding a pointer.
     expect(await actorless().get(ticket.id)).toBeNull();
+  });
+
+  it("links what it opened itself without anybody behind it, and nothing else", async () => {
+    const links = buildPhisAddonResourceLinksCapability({ addonId: ADDON, siteId: site.id, actorUserId: null });
+    const mine = await openTicket("arrived as an issue", ADDON);
+    const task = await actorless().addTask({ ticketId: mine.id, type: 2, title: "The issue" });
+    const link = await links.link({
+      subject: { kind: "ticketTask", id: task.id }, type: 1, externalId: "acme/app#7", flags: 1,
+    });
+    expect(link.subject).toEqual({ kind: "ticketTask", id: task.id });
+
+    // Somebody else's ticket still needs a person to say the two belong together.
+    const theirs = await openTicket("a customer's");
+    await expect(links.link({ subject: { kind: "ticket", id: theirs.id }, type: 1, externalId: "acme/app#8" }))
+      .rejects.toThrow(/no acting user/);
   });
 
   it("finds a task's ticket from the task a link names, and nothing it cannot reach", async () => {

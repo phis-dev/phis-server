@@ -38,6 +38,7 @@ import {
   PHIS_THREAD_MESSAGE_MAX_ASSETS,
   PHIS_THREAD_MESSAGE_MAX_PAGE_SIZE,
   PHIS_THREAD_MESSAGE_PAGE_SIZE,
+  PHIS_THREAD_MESSAGE_REF_EXPORTED,
   PHIS_THREAD_MESSAGE_REF_IMPORTED,
   PHIS_THREAD_PARTICIPANT_KIND_GROUP,
   PHIS_THREAD_PARTICIPANT_KIND_USER,
@@ -2015,4 +2016,120 @@ export async function countThreadAttachmentsForAsset(siteId: number, assetId: nu
     [siteId, assetId],
   );
   return Number(rows[0]?.count ?? 0);
+}
+
+/**
+ * Records that a message was written out to another system, under that system's id for it.
+ *
+ * Only a message of a thread the provider reaches, and never an `Internal` one -- an Add-on is never
+ * handed those, so it can have no business saying it exported one. True when recorded now, false when the
+ * same message was already recorded for this provider: an event delivered twice finds its first export.
+ */
+export async function recordThreadMessageExport(input: {
+  siteId: number;
+  providerId: string;
+  messageId: number;
+  externalRef: string;
+}) {
+  const pool = getPool();
+  const { rows } = await pool.query<{ thread_id: number; flags: number }>(
+    `SELECT message.thread_id, message.flags
+     FROM phis.thread_messages message
+     JOIN phis.threads thread ON thread.id = message.thread_id
+     WHERE message.id = $1 AND thread.site_id = $2`,
+    [input.messageId, input.siteId],
+  );
+  const message = rows[0];
+  if (
+    !message
+    || (message.flags & PhisThreadMessageFlag.Internal) !== 0
+    || !await canReaderSeeThread(input.siteId, { kind: "provider", providerId: input.providerId }, message.thread_id)
+  ) {
+    throw new PhisThreadError("That message is not one this integration can reach.");
+  }
+  const existing = await findThreadMessageExport(input);
+  if (existing != null) {
+    return false;
+  }
+  const { rowCount } = await pool.query(
+    `INSERT INTO phis.thread_message_refs (site_id, provider_id, external_id, message_id, flags)
+     VALUES ($1, $2, $3, $4, ${PHIS_THREAD_MESSAGE_REF_EXPORTED})
+     ON CONFLICT (site_id, provider_id, external_id) DO NOTHING`,
+    [input.siteId, input.providerId, input.externalRef, input.messageId],
+  );
+  return (rowCount ?? 0) > 0;
+}
+
+/** The other system's id for a message this provider exported, or null. */
+export async function findThreadMessageExport(input: { siteId: number; providerId: string; messageId: number }) {
+  const { rows } = await getPool().query<{ external_id: string }>(
+    `SELECT external_id
+     FROM phis.thread_message_refs
+     WHERE site_id = $1 AND provider_id = $2 AND message_id = $3
+       AND (flags & ${PHIS_THREAD_MESSAGE_REF_EXPORTED}) <> 0
+     LIMIT 1`,
+    [input.siteId, input.providerId, input.messageId],
+  );
+  return rows[0]?.external_id ?? null;
+}
+
+/**
+ * Changes a message this provider imported, as its source changed it.
+ *
+ * New text replaces the old and marks it `Edited`; `null` withdraws it -- the text is emptied and the
+ * message stays, `Redacted`, so the conversation still reads around it. Only what this provider imported
+ * under that reference: a person's message is never anybody else's to change. Other integrations linked to
+ * the conversation hear `thread.message.updated`.
+ */
+export async function amendImportedThreadMessage(input: {
+  siteId: number;
+  providerId: string;
+  externalRef: string;
+  message: string | null;
+}) {
+  const changed = await withTransaction(async (client) => {
+    const { rows } = await client.query<{ id: number; thread_id: number }>(
+      `UPDATE phis.thread_messages message
+       SET body_text = COALESCE($4, ''),
+           body_markdown = NULL,
+           flags = message.flags | CASE WHEN $4::text IS NULL
+             THEN ${PhisThreadMessageFlag.Redacted} ELSE ${PhisThreadMessageFlag.Edited} END,
+           updated_at = NOW()
+       FROM phis.thread_message_refs ref
+       WHERE ref.site_id = $1
+         AND ref.provider_id = $2
+         AND ref.external_id = $3
+         AND (ref.flags & ${PHIS_THREAD_MESSAGE_REF_IMPORTED}) <> 0
+         AND message.id = ref.message_id
+       RETURNING message.id, message.thread_id`,
+      [input.siteId, input.providerId, input.externalRef, input.message],
+    );
+    const message = rows[0];
+    if (!message) {
+      return false;
+    }
+    await enqueuePhisAddonThreadEventWithDb(client, {
+      siteId: input.siteId,
+      threadId: message.thread_id,
+      event: PHIS_ADDON_EVENTS.threadMessageUpdated,
+      payload: { messageId: message.id },
+      exceptProviderId: input.providerId,
+    });
+    return true;
+  });
+  if (changed) {
+    schedulePhisAddonEventDelivery(input.siteId);
+  }
+  return changed;
+}
+
+/** Whether this provider opened the thread as its own, with nobody behind it. */
+export async function isThreadOwnedByProvider(siteId: number, threadId: number, providerId: string) {
+  const { rows } = await getPool().query<{ owned: boolean }>(
+    `SELECT EXISTS (
+       SELECT 1 FROM phis.threads WHERE site_id = $1 AND id = $2 AND owner_provider_id = $3
+     ) AS owned`,
+    [siteId, threadId, providerId],
+  );
+  return rows[0]?.owned === true;
 }

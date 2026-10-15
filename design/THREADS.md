@@ -631,8 +631,16 @@ progress.
 **Built in `@phis/github` (first round):** the forwarding implementation (a GitHub App opening an issue in
 the Site's repository), and one verified webhook that finishes, ends or reopens the engineering task as the
 issue is closed as completed, closed as not planned, or reopened, and imports maintainers' comments into the
-conversation. Not built yet: mirroring phis messages to GitHub, issues opened in GitHub becoming tickets,
-milestone and release messages, the link panel widget.
+conversation.
+
+**Built in the second round:** mirroring -- a message written in phis becomes a comment on the ticket's
+open linked issues, naming its author, when Core hands the text over (`External`, consent, never `Internal`)
+and never for what came from outside; `threads:v1.recordExport` keeps it to once per message. Issues opened
+in GitHub become tickets of the Site's `import-type` category, owned by the integration, with an
+engineering task and a synced link -- `resource-links:v1` lets an Add-on link what it owns without an
+actor, and the outbox tells a thread's owner as it tells its linked integrations. A comment edited or
+deleted in GitHub is `Edited` or `Redacted` in phis (`threads:v1.amendImported`). Not built yet: milestone
+and release messages, the link panel widget.
 
 ### Closing
 

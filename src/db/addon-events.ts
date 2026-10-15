@@ -43,10 +43,10 @@ type OutboxRow = {
 };
 
 /**
- * Enqueues one event for every Add-on a person has linked to this thread.
+ * Enqueues one event for every Add-on a person has linked to this thread, and for the one that owns it.
  *
- * The recipients are the synced links and nothing else -- the same predicate that decides whether an
- * actorless Add-on may read the thread at all, asked here in the other direction. Delivering to every
+ * The recipients are the synced links and the owner and nothing else -- the same predicate that decides
+ * whether an actorless Add-on may read the thread at all, asked here in the other direction. Delivering to every
  * Add-on that merely declares the event would be the Site-wide listing that `threads:v1` refuses,
  * arriving by push instead of by pull.
  *
@@ -68,24 +68,39 @@ export async function enqueuePhisAddonThreadEventWithDb(
     exceptProviderId?: string | null;
   },
 ) {
+  /*
+   * Who hears about a thread: every Add-on a person linked to it, synced -- and the Add-on that owns it.
+   * An Add-on that opened a thread itself (a ticket for an issue that arrived from outside) reaches it by
+   * ownership rather than by a link, and nobody could have written a link for it: writing one needs a
+   * person. Leaving the owner out would leave the one integration that started the conversation deaf to it.
+   */
   const { rowCount } = await db.query(
     `INSERT INTO phis.addon_event_outbox (site_id, addon_id, event, thread_id, payload)
-     SELECT DISTINCT $1::smallint, link.provider_id, $3, $2::int, $4::jsonb
-     FROM phis.resource_links link
+     SELECT DISTINCT $1::smallint, candidate.provider_id, $3, $2::int, $4::jsonb
+     FROM (
+       SELECT link.provider_id
+       FROM phis.resource_links link
+       ${PHIS_RESOURCE_LINK_THREAD_JOINS_SQL}
+       WHERE link.site_id = $1
+         AND (link.flags & ${PhisResourceLinkFlag.Synced}) <> 0
+         AND (
+           link.thread_id = $2
+           OR ticket.thread_id = $2
+           OR task_ticket.thread_id = $2
+         )
+       UNION
+       SELECT thread.owner_provider_id
+       FROM phis.threads thread
+       WHERE thread.site_id = $1
+         AND thread.id = $2
+         AND thread.owner_provider_id IS NOT NULL
+     ) candidate
      JOIN phis.site_server_addons installed
-       ON installed.addon_id = link.provider_id
-      AND installed.site_id = link.site_id
-     ${PHIS_RESOURCE_LINK_THREAD_JOINS_SQL}
-     WHERE link.site_id = $1
-       AND (link.flags & ${PhisResourceLinkFlag.Synced}) <> 0
-       AND (
-         link.thread_id = $2
-         OR ticket.thread_id = $2
-         OR task_ticket.thread_id = $2
-       )
-       AND (installed.flags & ${PHI_SITE_SERVER_ADDON_FLAG_REQUESTED_ENABLED}) <> 0
+       ON installed.addon_id = candidate.provider_id
+      AND installed.site_id = $1
+     WHERE (installed.flags & ${PHI_SITE_SERVER_ADDON_FLAG_REQUESTED_ENABLED}) <> 0
        AND installed.configuration_status = 'ready'
-       AND ($5::varchar IS NULL OR link.provider_id <> $5::varchar)`,
+       AND ($5::varchar IS NULL OR candidate.provider_id <> $5::varchar)`,
     [
       input.siteId,
       input.threadId,

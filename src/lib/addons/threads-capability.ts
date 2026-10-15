@@ -4,11 +4,14 @@ import type { PhisThreadsCapabilityV1 } from "./contract.ts";
 import {
   addThreadMessage,
   addThreadParticipants,
+  amendImportedThreadMessage,
   createThread,
   findThreadByExternalRef,
+  findThreadMessageExport,
   getThreadDetail,
   listThreadsForUser,
   markThreadRead,
+  recordThreadMessageExport,
   setThreadStatus,
   type ThreadReader,
 } from "@/db/threads";
@@ -174,6 +177,35 @@ export function buildPhisAddonThreadsCapability(input: {
     async findByExternalRef(externalRef) {
       requireBelievableCaller("findByExternalRef");
       return findThreadByExternalRef({ siteId, providerId: addonId, externalRef });
+    },
+
+    /*
+     * Its own record of what it wrote out and what it brought in -- never anybody else's. The writes are
+     * barred to an unverified hook like every other write here.
+     */
+    async recordExport(exportInput) {
+      requireBelievableCaller("recordExport");
+      return recordThreadMessageExport({
+        siteId,
+        providerId: addonId,
+        messageId: exportInput.messageId,
+        externalRef: exportInput.externalRef,
+      });
+    },
+
+    async findExport(messageId) {
+      requireBelievableCaller("findExport");
+      return findThreadMessageExport({ siteId, providerId: addonId, messageId });
+    },
+
+    async amendImported(amendInput) {
+      requireBelievableCaller("amendImported");
+      return amendImportedThreadMessage({
+        siteId,
+        providerId: addonId,
+        externalRef: amendInput.externalRef,
+        message: amendInput.message,
+      });
     },
   } satisfies PhisThreadsCapabilityV1);
 }

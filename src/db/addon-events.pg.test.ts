@@ -14,6 +14,8 @@ import {
 } from "../../test/pg/harness";
 import { createThread, addThreadMessage, setThreadStatus } from "./threads";
 import { deleteResourceLink, upsertResourceLink } from "./resource-links";
+import { buildPhisAddonThreadsCapability } from "@/lib/addons/threads-capability";
+import { PhisThreadMessageFlag } from "@phis/contracts/threads";
 
 /**
  * The outbox, and the one thing it must never become: a feed of a Site's conversations.
@@ -241,5 +243,94 @@ describe("the Add-on event outbox", () => {
       message: "After the unlink.",
     });
     expect(await readOutbox(site)).toHaveLength(before);
+  });
+
+  it("tells the Add-on that owns a thread, which nobody could have linked", async () => {
+    await requirePhiTestDatabase();
+    const site = await createPhiTestSite("events-owned");
+    await offerThreadKinds(site);
+    await enablePhiTestAddonForSite(site, ADDON_ID);
+    const author = await createPhiTestUser(site);
+    await openThread(site, author);
+    const owned = await createThread({
+      siteId: site.id,
+      kind: PhisThreadKind.Direct,
+      subject: "Arrived from outside",
+      message: "Opened by the integration.",
+      participantUserIds: [author],
+      createdByUserId: null,
+      ownerProviderId: ADDON_ID,
+    });
+    const pool = await requirePhiTestDatabase();
+    await pool.query(`DELETE FROM phis.addon_event_outbox WHERE site_id = $1`, [site.id]);
+
+    await addThreadMessage({
+      siteId: site.id,
+      threadId: owned.thread.id,
+      reader: { kind: "user", userId: author },
+      message: "Answered by a person.",
+    });
+    expect((await readOutbox(site)).map((row) => row.addon_id)).toEqual([ADDON_ID]);
+  });
+
+  it("keeps an integration's record of what it wrote out and changes only what it brought in", async () => {
+    await requirePhiTestDatabase();
+    const site = await createPhiTestSite("events-export");
+    await offerThreadKinds(site);
+    await enablePhiTestAddonForSite(site, ADDON_ID);
+    await enablePhiTestAddonForSite(site, OTHER_ADDON_ID);
+    const author = await createPhiTestUser(site);
+    const threadId = await openThread(site, author);
+    for (const providerId of [ADDON_ID, OTHER_ADDON_ID]) {
+      await upsertResourceLink({
+        siteId: site.id,
+        providerId,
+        subject: { kind: "thread", id: threadId },
+        type: LINK_TYPE,
+        externalId: `issue-export-${providerId}`,
+        flags: SYNCED,
+        createdByUserId: author,
+      });
+    }
+    const threads = buildPhisAddonThreadsCapability({ addonId: ADDON_ID, siteId: site.id, actorUserId: null });
+
+    const written = await addThreadMessage({
+      siteId: site.id, threadId, reader: { kind: "user", userId: author }, message: "Written here.",
+    });
+    const writtenId = written!.messages.at(-1)!.id;
+    expect(await threads.recordExport({ messageId: writtenId, externalRef: "gh-comment-1" })).toBe(true);
+    // A redelivered event finds the first export and posts nothing.
+    expect(await threads.recordExport({ messageId: writtenId, externalRef: "gh-comment-1" })).toBe(false);
+    expect(await threads.findExport(writtenId)).toBe("gh-comment-1");
+
+    await threads.reply({ threadId, message: "Said there.", externalRef: "gh-comment-2" });
+    const pool = await requirePhiTestDatabase();
+    await pool.query(`DELETE FROM phis.addon_event_outbox WHERE site_id = $1`, [site.id]);
+
+    expect(await threads.amendImported({ externalRef: "gh-comment-2", message: "Said there, corrected." })).toBe(true);
+    const edited = await pool.query<{ body_text: string; flags: number }>(
+      `SELECT message.body_text, message.flags FROM phis.thread_messages message
+       JOIN phis.thread_message_refs ref ON ref.message_id = message.id
+       WHERE ref.site_id = $1 AND ref.external_id = 'gh-comment-2'`,
+      [site.id],
+    );
+    expect(edited.rows[0]?.body_text).toBe("Said there, corrected.");
+    expect((edited.rows[0]!.flags & PhisThreadMessageFlag.Edited) !== 0).toBe(true);
+    // The other integration in the conversation hears about it; the one that changed it does not.
+    expect((await readOutbox(site)).map((row) => [row.addon_id, row.event]))
+      .toEqual([[OTHER_ADDON_ID, PHIS_ADDON_EVENTS.threadMessageUpdated]]);
+
+    expect(await threads.amendImported({ externalRef: "gh-comment-2", message: null })).toBe(true);
+    const withdrawn = await pool.query<{ body_text: string; flags: number }>(
+      `SELECT message.body_text, message.flags FROM phis.thread_messages message
+       JOIN phis.thread_message_refs ref ON ref.message_id = message.id
+       WHERE ref.site_id = $1 AND ref.external_id = 'gh-comment-2'`,
+      [site.id],
+    );
+    expect(withdrawn.rows[0]?.body_text).toBe("");
+    expect((withdrawn.rows[0]!.flags & PhisThreadMessageFlag.Redacted) !== 0).toBe(true);
+
+    // What it wrote out, or what a person wrote, is not its to change.
+    expect(await threads.amendImported({ externalRef: "gh-comment-1", message: "No." })).toBe(false);
   });
 });

@@ -2006,9 +2006,10 @@ export async function setSupportRequesterWindowDays(siteId: number, days: number
 /**
  * What a forward may tell the system the work goes to, read in one place so the rule is one rule.
  *
- * `mirror` is the type's `External`. The opening text is the ticket's first message, and only where the
- * conversation may leave and its author -- the requester -- agreed to that when they wrote; otherwise the
- * external record opens from its title alone. `status` is as it stands now, window included.
+ * `mirror` is the type's `External`. The opening text is the ticket's first message, where the
+ * conversation may leave -- and, when a requester wrote it, only if they agreed to that when they wrote,
+ * the same rule `getThreadDetail` applies to an Add-on reading the thread. Otherwise the external record
+ * opens from its title alone. `status` is as it stands now, window included.
  */
 export async function readSupportTicketForForward(siteId: number, ticketId: number) {
   const { rows } = await getPool().query<{
@@ -2020,7 +2021,7 @@ export async function readSupportTicketForForward(siteId: number, ticketId: numb
     settled_status: number;
     first_body: string | null;
     first_author_user_id: number | null;
-    author_consented: boolean | null;
+    author_withheld: boolean | null;
   }>(
     `SELECT t.id,
             t.thread_id,
@@ -2030,7 +2031,10 @@ export async function readSupportTicketForForward(siteId: number, ticketId: numb
             ${settledSupportTicketStatusSql("t")} AS settled_status,
             first_message.body_text AS first_body,
             first_message.author_user_id AS first_author_user_id,
-            (participant.flags & ${PhisThreadParticipantFlag.ExternalConsent}) <> 0 AS author_consented
+            (
+              (participant.flags & ${PhisThreadParticipantFlag.Requester}) <> 0
+              AND (participant.flags & ${PhisThreadParticipantFlag.ExternalConsent}) = 0
+            ) AS author_withheld
      FROM phis.support_tickets t
      JOIN phis.support_ticket_types type ON type.id = t.type_id
      LEFT JOIN LATERAL (
@@ -2059,7 +2063,7 @@ export async function readSupportTicketForForward(siteId: number, ticketId: numb
     typeKey: row.type_key,
     status: row.settled_status,
     mirror,
-    body: mirror && row.author_consented === true ? row.first_body : null,
+    body: mirror && row.author_withheld !== true ? row.first_body : null,
   };
 }
 
