@@ -133,6 +133,15 @@ describe("support forwarding", () => {
     const detail = (await getSupportTicketDetail(site.id, ticket.id))!;
     expect(detail.ticket.status).toBe(PhisSupportTicketStatus.WaitingInternal);
     expect(detail.tasks).toHaveLength(1);
+    // Staff see where the work went, hanging on the task it became, and that nothing of the text goes.
+    expect(detail.links).toMatchObject([{
+      taskId: detail.tasks[0]!.id,
+      providerId: PROVIDER_ID,
+      externalId: "issue-1-0",
+      url: "https://example.test/1",
+      flags: PhisResourceLinkFlag.Synced,
+    }]);
+    expect(detail.outbound).toEqual({ external: false, requesterConsent: false });
     const pool = await requirePhiTestDatabase();
     const links = await pool.query<{ provider_id: string; flags: number; ticket_task_id: number }>(
       `SELECT provider_id, flags, ticket_task_id FROM phis.resource_links WHERE site_id = $1`, [site.id],
@@ -166,6 +175,10 @@ describe("support forwarding", () => {
     const silent = await openTicket(silentSite, external, false);
     await forwardSupportTicket({ site: silentSite, ticketId: silent.ticket.id, target: "issues#acme/app", title: null, actorUserId: silent.supporter });
     expect(forwarded[1]).toMatchObject({ mirror: true, body: null });
+    expect((await getSupportTicketDetail(consentedSite.id, consented.ticket.id))!.outbound)
+      .toEqual({ external: true, requesterConsent: true });
+    expect((await getSupportTicketDetail(silentSite.id, silent.ticket.id))!.outbound)
+      .toEqual({ external: true, requesterConsent: false });
 
     // A Supporter's opening words leave with a mirrored type; nobody had to agree to their own.
     const staffSite = await createPhiTestSite("forward-staff-opened");

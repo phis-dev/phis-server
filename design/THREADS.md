@@ -646,7 +646,16 @@ milestone, and corrected when it moves; with `track-releases`, a published relea
 ticket it carries a fix for, read from its commits against the previous release. The window waits for it:
 `support:v1.awaitDelivery` holds a resolved ticket's window from the merge (`PhisSupportTicketFlag
 .AwaitingDelivery`), `markDelivered` starts it at the release (`delivered_at`), and any status move lets go
-of both. Not built yet: the link panel widget.
+of both.
+
+**Built: the link panel, in `@phis/support` rather than in a GitHub Module half.** Forwarding is a Core
+service kind, so where the work went is not GitHub's to show: the ticket route answers Staff with every
+`resource_links` row on the ticket and its tasks (where, through which Add-on, since when -- not the
+provider's `type`, `state` or `meta`) and with `outbound`, what of the conversation those systems receive.
+The Support Page lists them under the conversation as a Table, one row per external record with its task's
+state and a link to it, following the open ticket on the same binding param as the history; its footer
+says what leaves. A second integration appears there without a Module of its own. Linking an existing
+record instead of creating one is not built.
 
 ### Closing
 
@@ -752,9 +761,9 @@ differs -- and arriving is exactly the part that should differ.
   composer's conversation field. One mechanism for all three Modules, and no extension point inside anybody's widget.
 - **groups Module** -- group spaces; declares `Group` and, by setting, `CrossGroup`; administers the
   group flags for Core groups.
-- **`@phis/github` Module half** -- a link panel widget beside a ticket's conversation, wired by a
-  runtime signal carrying the ticket id: create or link an issue, the tasks it produced, their state,
-  and the export notice of an `External` ticket.
+- ~~**`@phis/github` Module half** -- a link panel widget beside a ticket's conversation.~~ Built
+  provider-neutral in `@phis/support` instead (§12): the linked work under the conversation, for every
+  forwarding implementation at once.
 
 ## 14. The language a message is written in
 

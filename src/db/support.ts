@@ -214,16 +214,41 @@ export type SupportTicketTaskRecord = {
 };
 
 /**
+ * Where a ticket's work went outside the Site: one `resource_links` row on the ticket or one of its tasks.
+ *
+ * What Staff see of it is where and since when -- the Add-on that wrote it, the provider's own id for the
+ * record, its address. Not `type`, `state` or `meta`: those are the provider's vocabulary, and Core shows
+ * no word it cannot read. Whether the work is finished is the task's status, which is Core's.
+ */
+export type SupportTicketLinkRecord = {
+  id: number;
+  /** The task the link hangs on, or null for a link on the ticket itself. */
+  taskId: number | null;
+  providerId: string;
+  externalId: string;
+  url: string | null;
+  flags: number;
+  createdAt: string;
+};
+
+/**
  * A ticket and its work, without its conversation.
  *
  * What anybody said about the ticket is its thread, read through the thread surface with the reader's
  * own visibility applied -- internal notes are withheld from the requester there, and reproducing that
  * rule here would be the second answer that eventually disagrees with the first. Cross-system
- * references are `resource_links`, and they are the linking Add-on's to read.
+ * references are `resource_links`: an Add-on reads only its own, through `resource-links:v1`; Staff
+ * read every one on the ticket here, because they are the people deciding where the work goes next.
+ *
+ * `outbound` is what of the conversation those systems may read, by the same rule `getThreadDetail`
+ * applies to an Add-on: nothing unless the type is `External`, and a requester's own words only where
+ * they agreed. `requesterConsent` is null on a ticket without a requester in its conversation.
  */
 export type SupportTicketDetailRecord = {
   ticket: SupportTicketRecord;
   tasks: SupportTicketTaskRecord[];
+  links: SupportTicketLinkRecord[];
+  outbound: { external: boolean; requesterConsent: boolean | null };
 };
 
 export type ListSupportTicketsOptions = {
@@ -926,6 +951,61 @@ export async function applySupportTicketAssignmentAction(input: SupportTicketAss
   return getSupportTicketDetail(input.siteId, input.ticketId);
 }
 
+async function listSupportTicketLinks(queryable: DbQueryable, siteId: number, ticketId: number) {
+  const { rows } = await queryable.query<{
+    id: number;
+    ticket_task_id: number | null;
+    provider_id: string;
+    external_id: string;
+    url: string | null;
+    flags: number;
+    created_at: string;
+  }>(
+    `SELECT link.id, link.ticket_task_id, link.provider_id, link.external_id, link.url, link.flags, link.created_at
+     FROM phis.resource_links link
+     LEFT JOIN phis.support_ticket_tasks task ON task.id = link.ticket_task_id
+     WHERE link.site_id = $1
+       AND (link.ticket_id = $2 OR task.ticket_id = $2)
+     ORDER BY link.id ASC`,
+    [siteId, ticketId],
+  );
+  return rows.map((row): SupportTicketLinkRecord => ({
+    id: row.id,
+    taskId: row.ticket_task_id,
+    providerId: row.provider_id,
+    externalId: row.external_id,
+    url: row.url,
+    flags: row.flags,
+    createdAt: row.created_at,
+  }));
+}
+
+async function readSupportTicketOutbound(queryable: DbQueryable, siteId: number, ticketId: number) {
+  const { rows } = await queryable.query<{ type_flags: number; requester_flags: number | null }>(
+    `SELECT type.flags AS type_flags,
+            (
+              SELECT participant.flags
+              FROM phis.thread_participants participant
+              WHERE participant.thread_id = ticket.thread_id
+                AND (participant.flags & ${PhisThreadParticipantFlag.Requester}) <> 0
+              ORDER BY participant.id ASC
+              LIMIT 1
+            ) AS requester_flags
+     FROM phis.support_tickets ticket
+     JOIN phis.support_ticket_types type ON type.id = ticket.type_id
+     WHERE ticket.site_id = $1
+       AND ticket.id = $2`,
+    [siteId, ticketId],
+  );
+  const row = rows[0];
+  return {
+    external: row != null && (row.type_flags & PhisSupportTicketTypeFlag.External) !== 0,
+    requesterConsent: row?.requester_flags == null
+      ? null
+      : (row.requester_flags & PhisThreadParticipantFlag.ExternalConsent) !== 0,
+  };
+}
+
 export async function getSupportTicketDetail(siteId: number, ticketId: number) {
   const pool = getPool();
   const ticketRow = await getSupportTicketRowById(pool, siteId, ticketId);
@@ -933,11 +1013,17 @@ export async function getSupportTicketDetail(siteId: number, ticketId: number) {
     return null;
   }
 
-  const tasks = await listSupportTicketTasksByTicketId(pool, ticketId);
+  const [tasks, links, outbound] = await Promise.all([
+    listSupportTicketTasksByTicketId(pool, ticketId),
+    listSupportTicketLinks(pool, siteId, ticketId),
+    readSupportTicketOutbound(pool, siteId, ticketId),
+  ]);
 
   return {
     ticket: mapSupportTicket(ticketRow),
     tasks,
+    links,
+    outbound,
   } satisfies SupportTicketDetailRecord;
 }
 
