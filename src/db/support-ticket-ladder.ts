@@ -248,6 +248,8 @@ export function supportTicketStatusAfterHandover(
  *   progress again, and from `Resolved` that is a reopening.
  * - Every engineering task finished, under `CodeAccepted`: the merge is acceptance, so the ticket is
  *   resolved, and the requester window starts.
+ * - Any engineering task canceled -- an issue closed as not planned -- never resolves; it is handled as
+ *   `Confirm` is.
  * - Every engineering task finished, under `Confirm`: the work came back, and a Supporter confirms. A
  *   ticket that was waiting on the work is in progress again -- back with Support -- and nothing closes.
  *
@@ -264,6 +266,7 @@ export async function followSupportTicketTasksWithDb(
     close_policy: number;
     engineering_total: number;
     engineering_open: number;
+    engineering_canceled: number;
   }>(
     `SELECT ticket.id,
             ticket.status,
@@ -273,7 +276,11 @@ export async function followSupportTicketTasksWithDb(
             COUNT(task.id) FILTER (
               WHERE task.type = ${SUPPORT_TICKET_TASK_TYPE_ENGINEERING}
                 AND task.status NOT IN (${SUPPORT_TICKET_TASK_STATUS_DONE}, ${SUPPORT_TICKET_TASK_STATUS_CANCELED})
-            )::int AS engineering_open
+            )::int AS engineering_open,
+            COUNT(task.id) FILTER (
+              WHERE task.type = ${SUPPORT_TICKET_TASK_TYPE_ENGINEERING}
+                AND task.status = ${SUPPORT_TICKET_TASK_STATUS_CANCELED}
+            )::int AS engineering_canceled
      FROM phis.support_tickets ticket
      JOIN phis.support_ticket_types type ON type.id = ticket.type_id
      LEFT JOIN phis.support_ticket_tasks task ON task.ticket_id = ticket.id
@@ -306,7 +313,12 @@ export async function followSupportTicketTasksWithDb(
   if (ticket.engineering_open > 0) {
     return;
   }
-  if (ticket.close_policy === PhisSupportClosePolicy.CodeAccepted) {
+  /*
+   * Canceled is finished but not done: an issue closed as not planned is somebody's decision about the
+   * external work, not about the Support work, and a repository's own stale automation must not resolve a
+   * customer's ticket. So a canceled task always hands the ticket back to Support, whatever the policy.
+   */
+  if (ticket.close_policy === PhisSupportClosePolicy.CodeAccepted && ticket.engineering_canceled === 0) {
     if (status !== PhisSupportTicketStatus.Resolved) {
       await moveSupportTicketStatusWithDb(db, {
         ticketId: ticket.id,

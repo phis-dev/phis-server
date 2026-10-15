@@ -626,7 +626,13 @@ implementation's name, and the ticket waiting on the work. What the implementati
 withheld by the same rule: an Add-on reading a Support thread sees no text but its own where the type is
 not `External`, and none of a requester's who did not consent. When every engineering task is finished,
 `CodeAccepted` resolves the ticket and `Confirm` hands it back to Support; a task reopened puts it back in
-progress. `@phis/github` is still to be built against this.
+progress.
+
+**Built in `@phis/github` (first round):** the forwarding implementation (a GitHub App opening an issue in
+the Site's repository), and one verified webhook that finishes, ends or reopens the engineering task as the
+issue is closed as completed, closed as not planned, or reopened, and imports maintainers' comments into the
+conversation. Not built yet: mirroring phis messages to GitHub, issues opened in GitHub becoming tickets,
+milestone and release messages, the link panel widget.
 
 ### Closing
 

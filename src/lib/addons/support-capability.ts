@@ -218,6 +218,17 @@ export function buildPhisAddonSupportCapability(input: {
       return (detail?.tasks ?? []).map(asTask);
     },
 
+    async getTask(taskId) {
+      requireBelievableCaller("getTask");
+      const ticketId = await getSupportTicketIdForTask(siteId, taskId);
+      if (ticketId == null || !await reachTicket("getTask", ticketId)) {
+        return null;
+      }
+      const detail = await getSupportTicketDetail(siteId, ticketId);
+      const task = detail?.tasks.find((candidate) => candidate.id === taskId);
+      return task ? asTask(task) : null;
+    },
+
     async addTask({ ticketId, type, title, description }) {
       await requireTicket("addTask", ticketId);
       const detail = await addSupportTicketTask({

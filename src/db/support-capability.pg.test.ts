@@ -124,6 +124,21 @@ describe.skipIf(!configured)("support capability", () => {
     expect(await actorless().get(ticket.id)).toBeNull();
   });
 
+  it("finds a task's ticket from the task a link names, and nothing it cannot reach", async () => {
+    const mine = await openTicket("forwarded work", ADDON);
+    const capability = actorless();
+    const task = await capability.addTask({ ticketId: mine.id, type: 2, title: "Fix it" });
+    expect(await capability.getTask(task.id)).toMatchObject({ id: task.id, ticketId: mine.id });
+
+    const theirs = await openTicket("not linked");
+    const pool = await requirePhiTestDatabase();
+    const { rows } = await pool.query<{ id: number }>(
+      `INSERT INTO phis.support_ticket_tasks (ticket_id, type, status, title) VALUES ($1, 2, 0, 'x') RETURNING id`,
+      [theirs.id],
+    );
+    expect(await capability.getTask(rows[0]!.id)).toBeNull();
+  });
+
   it("records work on a ticket it reaches, and moves the task without moving the ticket", async () => {
     const ticket = await openTicket("work to do", ADDON);
     const capability = actorless();

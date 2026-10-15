@@ -51,7 +51,9 @@ const installedTargets: SupportForwardingTargetSource = async (site) => {
   // installed manifest, the registry and the database, and most requests never forward anything.
   const { listPhisServiceProviders, resolvePhisServiceProvider } = await import("@/lib/addons/services");
   const { PHIS_SERVICE_KINDS } = await import("@/lib/addons/core-services");
-  const { resolvePhiSecret } = await import("@/lib/secrets/resolver");
+  const { getPhisAddonInstalledManifest } = await import("@/lib/addons/installed");
+  const { buildPhisAddonSecretsCapability } = await import("@/lib/addons/secrets-capability");
+  const { buildPhisAddonSettingsCapability } = await import("@/lib/addons/settings-capability");
 
   const targets: ForwardingTarget[] = [];
   for (const provider of listPhisServiceProviders(PHIS_SERVICE_KINDS.supportForwarding)) {
@@ -62,10 +64,16 @@ const installedTargets: SupportForwardingTargetSource = async (site) => {
         provider.providerKey,
         { siteId: site.id },
       );
+      // The implementation's own configuration on this Site, read the way its hooks and jobs read it.
       const context: PhisSupportForwardingServiceContext = {
         providerId: resolved.addonId,
         siteKey: site.key,
-        readSecret: (reference) => resolvePhiSecret({ kind: "addon", addonId: resolved.addonId }, reference),
+        secrets: buildPhisAddonSecretsCapability({ addonId: resolved.addonId, siteKey: site.key }),
+        settings: buildPhisAddonSettingsCapability({
+          addonId: resolved.addonId,
+          siteId: site.id,
+          declared: getPhisAddonInstalledManifest()[resolved.addonId]?.manifest.settings ?? [],
+        }),
       };
       const adapter = resolved.factory(null, context) as PhisSupportForwardingAdapterV1;
       if (typeof adapter?.forward !== "function" || typeof adapter?.probe !== "function") {

@@ -28,7 +28,11 @@ import {
 } from "../lib/support-forwarding";
 import { createSupportTicket, getSupportTicketDetail, updateSupportTicketTask } from "./support";
 import { addThreadMessage, getThreadDetail } from "./threads";
-import { SUPPORT_TICKET_TASK_STATUS_DONE, SUPPORT_TICKET_TASK_STATUS_OPEN } from "../lib/constants/support";
+import {
+  SUPPORT_TICKET_TASK_STATUS_CANCELED,
+  SUPPORT_TICKET_TASK_STATUS_DONE,
+  SUPPORT_TICKET_TASK_STATUS_OPEN,
+} from "../lib/constants/support";
 
 /**
  * Handing a ticket's work to another system, and what Core does with what comes back.
@@ -209,6 +213,13 @@ describe("support forwarding", () => {
 
     await updateSupportTicketTask({
       siteId: codeSite.id, ticketId: code.ticket.id, taskId: codeTask.id, status: SUPPORT_TICKET_TASK_STATUS_OPEN,
+    });
+    expect((await getSupportTicketDetail(codeSite.id, code.ticket.id))!.ticket.status)
+      .toBe(PhisSupportTicketStatus.InProgress);
+
+    // Closed as not planned is not done: under CodeAccepted too, the ticket goes back to Support.
+    await updateSupportTicketTask({
+      siteId: codeSite.id, ticketId: code.ticket.id, taskId: codeTask.id, status: SUPPORT_TICKET_TASK_STATUS_CANCELED,
     });
     expect((await getSupportTicketDetail(codeSite.id, code.ticket.id))!.ticket.status)
       .toBe(PhisSupportTicketStatus.InProgress);
