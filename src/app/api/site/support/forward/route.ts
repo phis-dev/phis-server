@@ -47,7 +47,8 @@ export async function POST(request: NextRequest) {
   }
 
   const body = await readRequestBody(request);
-  const ticketId = Number.parseInt(normalizeString(body.ticketId), 10);
+  // A number from a REST caller, a string from a Form's hidden field: the same ticket either way.
+  const ticketId = typeof body.ticketId === "number" ? body.ticketId : Number.parseInt(normalizeString(body.ticketId), 10);
   const providerKey = normalizeString(body.providerKey);
   if (!Number.isSafeInteger(ticketId) || ticketId <= 0 || !providerKey) {
     return NextResponse.json({ error: "A forward needs a ticket and a target." }, { status: 400 });
