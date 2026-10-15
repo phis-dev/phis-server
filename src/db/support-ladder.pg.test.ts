@@ -22,7 +22,9 @@ import {
   createSupportTicket,
   getSupportTicketDetail,
   listSupportTicketsForSite,
+  markSupportTicketDelivered,
   setSupportRequesterWindowDays,
+  setSupportTicketAwaitingDelivery,
   SupportAdministrationError,
   updateSupportTicket,
 } from "./support";
@@ -264,5 +266,30 @@ describe("support ticket ladder", () => {
     await setSupportRequesterWindowDays(site.id, 30);
     expect((await readTicket(site.id, ticket.id)).status).toBe(PhisSupportTicketStatus.Resolved);
     await expect(setSupportRequesterWindowDays(site.id, -1)).rejects.toThrow(SupportAdministrationError);
+  });
+
+  it("holds the window of a resolved ticket until its fix is delivered, then counts from the delivery", async () => {
+    const pool = await requirePhiTestDatabase();
+    const site = await createPhiTestSite("ladder-delivery");
+    const { ticket, supporter } = await openTicket(site);
+    // Not resolved: there is no window to hold.
+    expect(await setSupportTicketAwaitingDelivery(site.id, ticket.id)).toBe(false);
+
+    await updateSupportTicket({
+      siteId: site.id, ticketId: ticket.id, status: PhisSupportTicketStatus.Resolved, updatedByUserId: supporter,
+    });
+    expect(await setSupportTicketAwaitingDelivery(site.id, ticket.id)).toBe(true);
+    await ageResolution(ticket.id, 40);
+    expect((await readTicket(site.id, ticket.id)).status).toBe(PhisSupportTicketStatus.Resolved);
+
+    expect(await markSupportTicketDelivered(site.id, ticket.id)).toBe(true);
+    expect(await markSupportTicketDelivered(site.id, ticket.id)).toBe(false);
+    expect((await readTicket(site.id, ticket.id)).status).toBe(PhisSupportTicketStatus.Resolved);
+
+    await pool.query(
+      `UPDATE phis.support_tickets SET delivered_at = NOW() - make_interval(days => 15) WHERE id = $1`,
+      [ticket.id],
+    );
+    expect((await readTicket(site.id, ticket.id)).status).toBe(PhisSupportTicketStatus.Closed);
   });
 });

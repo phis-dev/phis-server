@@ -1672,6 +1672,7 @@ Contract:
 - `last_public_message_at TIMESTAMPTZ NULL`
 - `last_internal_message_at TIMESTAMPTZ NULL`
 - `resolved_at TIMESTAMPTZ NULL`
+- `delivered_at TIMESTAMPTZ NULL`
 - `closed_at TIMESTAMPTZ NULL`
 - `created_by_user_id INT NULL REFERENCES phis.user_accounts(id) ON DELETE SET NULL`
 - `updated_by_user_id INT NULL REFERENCES phis.user_accounts(id) ON DELETE SET NULL`
@@ -1686,7 +1687,7 @@ Contract:
 - `requester_user_id` is optional so external email-only tickets can exist without a local account.
 - `requester_email` may remain populated after `requester_user_id` becomes `NULL`; it is the only allowed lightweight requester fallback in the core ticket row.
 - User deletion must not delete the ticket; all user references use `ON DELETE SET NULL`.
-- Ticket-level `flags` are reserved for internal workflow/system bits, not for external-system ownership.
+- Ticket-level `flags` are reserved for internal workflow/system bits, not for external-system ownership. They are `PhisSupportTicketFlag`: `AwaitingDelivery` (1) holds a resolved ticket's requester window until an integration that tracks releases says the fix is out (`support:v1.awaitDelivery`, `markDelivered`); `delivered_at` is when it said so, and the window counts from there. Any status move clears both, since a delivery belongs to one resolution.
 - A ticket is the workflow record -- status, priority, assignment, tasks -- and everything anybody says about it is `thread_id`, the same thread model every other conversation on the Site uses. The ticket has exactly one, and it is not shared.
 - `type_id` is the Site's own type, which decides whether the conversation may leave the Site and what ends the ticket.
 - Cross-system relationships such as GitHub issues, PRs, Medusa orders, or CMS references belong in `resource_links`, not in dedicated columns on the ticket row. An issue is linked to a ticket task rather than to the ticket.

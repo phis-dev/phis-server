@@ -14,6 +14,8 @@ import {
   getSupportTicketIdForTask,
   getSupportTicketTypeIdByKey,
   getSupportTicketWithType,
+  markSupportTicketDelivered,
+  setSupportTicketAwaitingDelivery,
   updateSupportTicketTask,
   type SupportTicketTaskRecord,
   type SupportTicketWithTypeRecord,
@@ -273,6 +275,20 @@ export function buildPhisAddonSupportCapability(input: {
         throw new PhisAddonSupportError(`${addonId} moved a task that could not be read back.`);
       }
       return asTask(moved);
+    },
+
+    /*
+     * The fix's way to the requester, which an integration that tracks releases knows and phis does not.
+     * Both only move the requester window of a ticket it reaches; neither moves the ticket.
+     */
+    async awaitDelivery(ticketId) {
+      await requireTicket("awaitDelivery", ticketId);
+      return setSupportTicketAwaitingDelivery(siteId, ticketId);
+    },
+
+    async markDelivered(ticketId) {
+      await requireTicket("markDelivered", ticketId);
+      return markSupportTicketDelivered(siteId, ticketId);
     },
 
     async allowance({ userId, typeKey }) {

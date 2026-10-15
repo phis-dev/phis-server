@@ -639,8 +639,14 @@ and never for what came from outside; `threads:v1.recordExport` keeps it to once
 in GitHub become tickets of the Site's `import-type` category, owned by the integration, with an
 engineering task and a synced link -- `resource-links:v1` lets an Add-on link what it owns without an
 actor, and the outbox tells a thread's owner as it tells its linked integrations. A comment edited or
-deleted in GitHub is `Edited` or `Redacted` in phis (`threads:v1.amendImported`). Not built yet: milestone
-and release messages, the link panel widget.
+deleted in GitHub is `Edited` or `Redacted` in phis (`threads:v1.amendImported`).
+
+**Built in the third round:** the requester is told when the merge resolves their ticket, with the issue's
+milestone, and corrected when it moves; with `track-releases`, a published release tells every resolved
+ticket it carries a fix for, read from its commits against the previous release. The window waits for it:
+`support:v1.awaitDelivery` holds a resolved ticket's window from the merge (`PhisSupportTicketFlag
+.AwaitingDelivery`), `markDelivered` starts it at the release (`delivered_at`), and any status move lets go
+of both. Not built yet: the link panel widget.
 
 ### Closing
 

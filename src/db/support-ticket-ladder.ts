@@ -4,6 +4,7 @@ import type { PoolClient } from "pg";
 
 import {
   PhisSupportClosePolicy,
+  PhisSupportTicketFlag,
   PhisSupportTicketStatus,
   type PhisSupportTicketStatusValue,
 } from "@phis/contracts/support";
@@ -85,6 +86,9 @@ export async function moveSupportTicketStatusWithDb(
            ELSE NULL
          END,
          closed_at = CASE WHEN $2::smallint = ${PhisSupportTicketStatus.Closed} THEN NOW() ELSE NULL END,
+         -- A delivery belongs to one resolution: resolved again, or back in progress, it starts over.
+         flags = flags & ~${PhisSupportTicketFlag.AwaitingDelivery},
+         delivered_at = NULL,
          updated_by_user_id = $3,
          updated_at = NOW()
      WHERE id = $1`,

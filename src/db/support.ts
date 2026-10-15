@@ -6,6 +6,7 @@ import {
   PhisSupportAllowancePeriod,
   PhisSupportQueueFlag,
   PhisSupportTicketChannel,
+  PhisSupportTicketFlag,
   PhisSupportTicketPriority,
   PhisSupportTicketSeverity,
   PhisSupportTicketStatus,
@@ -2140,4 +2141,49 @@ export async function recordSupportTicketForward(input: {
     }
   });
   return getSupportTicketDetail(input.siteId, input.ticketId);
+}
+
+/**
+ * Holds a resolved ticket's requester window until its fix is delivered; see `PhisSupportTicketFlag`.
+ *
+ * Only a ticket that is resolved now -- one whose window already ran out is closed first, and has none to
+ * hold. True where the hold was set.
+ */
+export async function setSupportTicketAwaitingDelivery(siteId: number, ticketId: number) {
+  return withTransaction(async (client) => {
+    const ticket = await getSupportTicketRowById(client, siteId, ticketId, { forUpdate: true });
+    if (!ticket || ticket.status !== PhisSupportTicketStatus.Resolved) {
+      return false;
+    }
+    const { rowCount } = await client.query(
+      `UPDATE phis.support_tickets
+       SET flags = flags | ${PhisSupportTicketFlag.AwaitingDelivery}, delivered_at = NULL, updated_at = NOW()
+       WHERE id = $1 AND (flags & ${PhisSupportTicketFlag.AwaitingDelivery}) = 0`,
+      [ticketId],
+    );
+    return (rowCount ?? 0) > 0;
+  });
+}
+
+/**
+ * Records that a resolved ticket's fix reached the requester: its window starts now.
+ *
+ * Whether or not the window was held -- an integration may say a fix is out without having held anything,
+ * and the window then restarts from the moment it could be had. Once per resolution: a second release
+ * carrying the same fix says nothing new. True where it was recorded now.
+ */
+export async function markSupportTicketDelivered(siteId: number, ticketId: number) {
+  return withTransaction(async (client) => {
+    const ticket = await getSupportTicketRowById(client, siteId, ticketId, { forUpdate: true });
+    if (!ticket || ticket.status !== PhisSupportTicketStatus.Resolved) {
+      return false;
+    }
+    const { rowCount } = await client.query(
+      `UPDATE phis.support_tickets
+       SET flags = flags & ~${PhisSupportTicketFlag.AwaitingDelivery}, delivered_at = NOW(), updated_at = NOW()
+       WHERE id = $1 AND delivered_at IS NULL`,
+      [ticketId],
+    );
+    return (rowCount ?? 0) > 0;
+  });
 }

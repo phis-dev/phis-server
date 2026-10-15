@@ -1367,6 +1367,9 @@ CREATE TABLE IF NOT EXISTS phis.support_tickets (
   last_public_message_at TIMESTAMPTZ NULL,
   last_internal_message_at TIMESTAMPTZ NULL,
   resolved_at TIMESTAMPTZ NULL,
+  -- When the fix of a resolved ticket reached the requester, where an integration tracks releases; the
+  -- requester window counts from here rather than from resolved_at. See PhisSupportTicketFlag.
+  delivered_at TIMESTAMPTZ NULL,
   closed_at TIMESTAMPTZ NULL,
   created_by_user_id INT NULL REFERENCES phis.user_accounts(id) ON DELETE SET NULL,
   updated_by_user_id INT NULL REFERENCES phis.user_accounts(id) ON DELETE SET NULL,
