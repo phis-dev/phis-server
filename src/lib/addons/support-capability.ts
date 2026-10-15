@@ -243,11 +243,12 @@ export function buildPhisAddonSupportCapability(input: {
       }
       await requireTicket("setTaskStatus", ticketId);
       /*
-       * The task moves and the ticket does not.
+       * The task moves, and the ticket follows by Core's rule rather than by the integration's say.
        *
        * An issue completes its task; whether that finishes the Support work depends on the type's close
        * policy and on the other tasks, which an integration cannot see all of. So there is no ticket
-       * status here at all -- not a narrower one, none.
+       * status here at all -- not a narrower one, none -- and `followSupportTicketTasksWithDb` decides
+       * from all of them what the ticket is now.
        */
       const detail = await updateSupportTicketTask({
         siteId,

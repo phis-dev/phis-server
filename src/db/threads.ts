@@ -20,6 +20,7 @@ import {
   type PhisThreadStatusValue,
   type PhisThreadSummary,
 } from "@phis/contracts/addon";
+import { PhisSupportTicketTypeFlag } from "@phis/contracts/support";
 
 import { getPool, withTransaction } from "@/lib/db";
 import { PhisMediaSpaceKind } from "@/db/media-spaces";
@@ -530,9 +531,11 @@ function projectMessage(
   row: ThreadMessageRow,
   reader: ThreadReader,
   assets: PhisThreadMessageAsset[] = [],
+  mayLeave: (row: ThreadMessageRow) => boolean = () => true,
 ): PhisThreadMessage {
   const withheld =
     (row.flags & PhisThreadMessageFlag.Redacted) !== 0
+    || (reader.kind === "provider" && !mayLeave(row))
     || ((row.flags & PhisThreadMessageFlag.Confidential) !== 0 && reader.kind === "provider");
 
   return {
@@ -836,6 +839,44 @@ export async function canReaderSeeThread(
   return await readThreadRow(getPool(), siteId, reader, threadId) != null;
 }
 
+/**
+ * Which messages of a Support ticket's conversation may reach an Add-on, beyond `Internal` and
+ * `Confidential` (THREADS.md section 12, "The ticket type decides what leaves").
+ *
+ * A ticket whose type is not `External` mirrors nothing: an integration linked to it -- one a Supporter
+ * forwarded the work to -- reads its own messages and no one else's. Where the type is `External`, the
+ * requester's words still leave only with their consent, recorded on their participation when they wrote;
+ * until then only the Staff side does. What an Add-on wrote itself was never anybody else's to withhold.
+ *
+ * Withheld here means what `Confidential` means to an Add-on: the message is there and its text is not.
+ */
+async function readSupportExportRule(
+  db: DbQueryable,
+  threadId: number,
+  providerId: string,
+  participants: readonly ThreadParticipantRow[],
+) {
+  const { rows } = await db.query<{ type_flags: number }>(
+    `SELECT type.flags AS type_flags
+     FROM phis.support_tickets ticket
+     JOIN phis.support_ticket_types type ON type.id = ticket.type_id
+     WHERE ticket.thread_id = $1`,
+    [threadId],
+  );
+  const external = ((rows[0]?.type_flags ?? 0) & PhisSupportTicketTypeFlag.External) !== 0;
+  const silentRequesters = new Set(participants
+    .filter((participant) =>
+      participant.user_id != null
+      && (participant.flags & PhisThreadParticipantFlag.Requester) !== 0
+      && (participant.flags & PhisThreadParticipantFlag.ExternalConsent) === 0)
+    .map((participant) => participant.user_id));
+  return (row: ThreadMessageRow) => {
+    if (row.author_provider_id === providerId) return true;
+    if (!external) return false;
+    return row.author_user_id == null || !silentRequesters.has(row.author_user_id);
+  };
+}
+
 export async function getThreadDetail(
   siteId: number,
   reader: ThreadReader,
@@ -863,10 +904,13 @@ export async function getThreadDetail(
   ]);
 
   const assets = await readMessageAssets(pool, threadId, window.messages.map((row) => row.id));
+  const mayLeave = reader.kind === "provider" && thread.kind === PhisThreadKind.Support
+    ? await readSupportExportRule(pool, threadId, reader.providerId, participants)
+    : undefined;
   return {
     thread: projectThread(thread),
     participants: participants.map(projectParticipant),
-    messages: window.messages.map((row) => projectMessage(row, reader, assets.get(row.id) ?? [])),
+    messages: window.messages.map((row) => projectMessage(row, reader, assets.get(row.id) ?? [], mayLeave)),
     hasMoreMessages: window.hasMore,
   };
 }

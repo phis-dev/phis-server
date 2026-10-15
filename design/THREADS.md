@@ -617,6 +617,17 @@ Outbound: a person holding the Add-on's role creates or links an issue from a ti
 API route -- with an actor, so `threads.get` answers whether they may. From then on the event handler
 posts new exportable messages as comments and records each comment id in `thread_message_refs`.
 
+**Built: forwarding is a Core service kind, and GitHub one implementation of it.** A Supporter forwards
+from the ticket, to any installed `@phis/server/service/support-forwarding` implementation that resolves
+for the Site and probes usable (`GET/POST /api/site/support/forward`). Core asks the implementation to open
+the external record -- from the title alone where the type is not `External`, with the first message only
+where the requester consented -- and then writes the engineering task, the synced link from it in the
+implementation's name, and the ticket waiting on the work. What the implementation reads afterwards is
+withheld by the same rule: an Add-on reading a Support thread sees no text but its own where the type is
+not `External`, and none of a requester's who did not consent. When every engineering task is finished,
+`CodeAccepted` resolves the ticket and `Confirm` hands it back to Support; a task reopened puts it back in
+progress. `@phis/github` is still to be built against this.
+
 ### Closing
 
 `RESOLVED` and `CLOSED` already exist on tickets and take distinct meanings: **resolved** is technically

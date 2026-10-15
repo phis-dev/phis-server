@@ -2,7 +2,11 @@ import "server-only";
 
 import type { PoolClient } from "pg";
 
-import { PhisSupportTicketStatus, type PhisSupportTicketStatusValue } from "@phis/contracts/support";
+import {
+  PhisSupportClosePolicy,
+  PhisSupportTicketStatus,
+  type PhisSupportTicketStatusValue,
+} from "@phis/contracts/support";
 
 import { supportTicketWindowEndSql, supportTicketWindowPassedSql } from "@/db/support-requester-window.mts";
 import {
@@ -11,6 +15,9 @@ import {
   SUPPORT_TICKET_EVENT_REPLIED,
   SUPPORT_TICKET_EVENT_RESOLVED,
   SUPPORT_TICKET_EVENT_TRIAGED,
+  SUPPORT_TICKET_TASK_STATUS_CANCELED,
+  SUPPORT_TICKET_TASK_STATUS_DONE,
+  SUPPORT_TICKET_TASK_TYPE_ENGINEERING,
 } from "@/lib/constants/support";
 
 /*
@@ -229,4 +236,93 @@ export function supportTicketStatusAfterHandover(
   return handover === "moved" && status === PhisSupportTicketStatus.InProgress
     ? PhisSupportTicketStatus.Triaged
     : null;
+}
+
+/**
+ * What the engineering tasks of a ticket say about the ticket, after one of them moved.
+ *
+ * The engineering work is what a forward hands to another system, and it comes back as its tasks
+ * finishing (THREADS.md section 12, "Closing"):
+ *
+ * - A task reopened means the work is not done: a ticket that was resolved or waiting on the work is in
+ *   progress again, and from `Resolved` that is a reopening.
+ * - Every engineering task finished, under `CodeAccepted`: the merge is acceptance, so the ticket is
+ *   resolved, and the requester window starts.
+ * - Every engineering task finished, under `Confirm`: the work came back, and a Supporter confirms. A
+ *   ticket that was waiting on the work is in progress again -- back with Support -- and nothing closes.
+ *
+ * Only engineering tasks count. A follow-up or a documentation task is Support's own bookkeeping and
+ * finishing one says nothing about whether the work is done.
+ */
+export async function followSupportTicketTasksWithDb(
+  db: DbQueryable,
+  input: { ticketId: number; taskWasReopened: boolean; byUserId: number | null },
+) {
+  const { rows } = await db.query<{
+    id: number;
+    status: number;
+    close_policy: number;
+    engineering_total: number;
+    engineering_open: number;
+  }>(
+    `SELECT ticket.id,
+            ticket.status,
+            type.close_policy,
+            COUNT(task.id) FILTER (WHERE task.type = ${SUPPORT_TICKET_TASK_TYPE_ENGINEERING})::int
+              AS engineering_total,
+            COUNT(task.id) FILTER (
+              WHERE task.type = ${SUPPORT_TICKET_TASK_TYPE_ENGINEERING}
+                AND task.status NOT IN (${SUPPORT_TICKET_TASK_STATUS_DONE}, ${SUPPORT_TICKET_TASK_STATUS_CANCELED})
+            )::int AS engineering_open
+     FROM phis.support_tickets ticket
+     JOIN phis.support_ticket_types type ON type.id = ticket.type_id
+     LEFT JOIN phis.support_ticket_tasks task ON task.ticket_id = ticket.id
+     WHERE ticket.id = $1
+     GROUP BY ticket.id, ticket.status, type.close_policy`,
+    [input.ticketId],
+  );
+  const ticket = rows[0];
+  if (!ticket || ticket.engineering_total === 0) {
+    return;
+  }
+  const status = await settleSupportTicketWindowWithDb(db, ticket);
+  if (status === PhisSupportTicketStatus.Closed) {
+    return;
+  }
+
+  if (input.taskWasReopened) {
+    if (status === PhisSupportTicketStatus.Resolved || status === PhisSupportTicketStatus.WaitingInternal) {
+      await moveSupportTicketStatusWithDb(db, {
+        ticketId: ticket.id,
+        from: status,
+        to: PhisSupportTicketStatus.InProgress,
+        byUserId: input.byUserId,
+        eventType: status === PhisSupportTicketStatus.Resolved ? SUPPORT_TICKET_EVENT_REOPENED : undefined,
+      });
+    }
+    return;
+  }
+
+  if (ticket.engineering_open > 0) {
+    return;
+  }
+  if (ticket.close_policy === PhisSupportClosePolicy.CodeAccepted) {
+    if (status !== PhisSupportTicketStatus.Resolved) {
+      await moveSupportTicketStatusWithDb(db, {
+        ticketId: ticket.id,
+        from: status,
+        to: PhisSupportTicketStatus.Resolved,
+        byUserId: input.byUserId,
+      });
+    }
+    return;
+  }
+  if (status === PhisSupportTicketStatus.WaitingInternal) {
+    await moveSupportTicketStatusWithDb(db, {
+      ticketId: ticket.id,
+      from: status,
+      to: PhisSupportTicketStatus.InProgress,
+      byUserId: input.byUserId,
+    });
+  }
 }

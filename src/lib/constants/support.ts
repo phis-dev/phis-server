@@ -20,3 +20,18 @@ export const SUPPORT_TICKET_EVENT_CLOSED = 9;
 export const SUPPORT_TICKET_EVENT_TASK_CREATED = 10;
 export const SUPPORT_TICKET_EVENT_TASK_COMPLETED = 11;
 export const SUPPORT_TICKET_EVENT_TASK_REOPENED = 12;
+
+/** `support_ticket_tasks.type`: what kind of work a task is. */
+export const SUPPORT_TICKET_TASK_TYPE_INTERNAL = 0;
+export const SUPPORT_TICKET_TASK_TYPE_CUSTOMER_FOLLOWUP = 1;
+export const SUPPORT_TICKET_TASK_TYPE_ENGINEERING = 2;
+export const SUPPORT_TICKET_TASK_TYPE_QA = 3;
+export const SUPPORT_TICKET_TASK_TYPE_DEPLOYMENT = 4;
+export const SUPPORT_TICKET_TASK_TYPE_DOCUMENTATION = 5;
+
+/** `support_ticket_tasks.status`. Done and canceled are both finished; the others are not. */
+export const SUPPORT_TICKET_TASK_STATUS_OPEN = 0;
+export const SUPPORT_TICKET_TASK_STATUS_IN_PROGRESS = 1;
+export const SUPPORT_TICKET_TASK_STATUS_BLOCKED = 2;
+export const SUPPORT_TICKET_TASK_STATUS_DONE = 3;
+export const SUPPORT_TICKET_TASK_STATUS_CANCELED = 4;

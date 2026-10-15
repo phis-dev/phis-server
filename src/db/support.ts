@@ -14,7 +14,8 @@ import {
   type PhisSupportAllowancePeriodValue,
   type PhisSupportTicketStatusValue,
 } from "@phis/contracts/support";
-import { PhisThreadKind } from "@phis/contracts/threads";
+import { PhisThreadKind, PhisThreadParticipantFlag } from "@phis/contracts/threads";
+import { PhisResourceLinkFlag } from "@phis/contracts/addon";
 
 import { getPool, withTransaction } from "@/lib/db";
 import { createThreadWithDb } from "@/db/threads";
@@ -22,13 +23,28 @@ import { PHIS_THREAD_PARTICIPANT_KIND_GROUP } from "@/lib/constants/threads";
 import { consumeSupportAllowanceWithDb, readSupportAllowance } from "@/db/support-allowance";
 import { toPhiRecord } from "@/lib/helpers/record";
 import {
+  SUPPORT_TICKET_TASK_STATUS_BLOCKED,
+  SUPPORT_TICKET_TASK_STATUS_CANCELED,
+  SUPPORT_TICKET_TASK_STATUS_DONE,
+  SUPPORT_TICKET_TASK_STATUS_IN_PROGRESS,
+  SUPPORT_TICKET_TASK_STATUS_OPEN,
+  SUPPORT_TICKET_TASK_TYPE_CUSTOMER_FOLLOWUP,
+  SUPPORT_TICKET_TASK_TYPE_DEPLOYMENT,
+  SUPPORT_TICKET_TASK_TYPE_DOCUMENTATION,
+  SUPPORT_TICKET_TASK_TYPE_ENGINEERING,
+  SUPPORT_TICKET_TASK_TYPE_INTERNAL,
+  SUPPORT_TICKET_TASK_TYPE_QA,
+} from "@/lib/constants/support";
+import {
   SUPPORT_TICKET_EVENT_ASSIGNED,
   SUPPORT_TICKET_EVENT_CREATED,
+  SUPPORT_TICKET_EVENT_LINKED,
   SUPPORT_TICKET_EVENT_TASK_COMPLETED,
   SUPPORT_TICKET_EVENT_TASK_CREATED,
   SUPPORT_TICKET_EVENT_TASK_REOPENED,
 } from "@/lib/constants/support";
 import {
+  followSupportTicketTasksWithDb,
   insertSupportTicketEvent,
   moveSupportTicketStatusWithDb,
   settleSupportTicketWindowWithDb,
@@ -72,18 +88,20 @@ export const SUPPORT_TICKET_SEVERITY_MINOR = PhisSupportTicketSeverity.Minor;
 export const SUPPORT_TICKET_SEVERITY_MAJOR = PhisSupportTicketSeverity.Major;
 export const SUPPORT_TICKET_SEVERITY_CRITICAL = PhisSupportTicketSeverity.Critical;
 
-export const SUPPORT_TICKET_TASK_TYPE_INTERNAL = 0;
-export const SUPPORT_TICKET_TASK_TYPE_CUSTOMER_FOLLOWUP = 1;
-export const SUPPORT_TICKET_TASK_TYPE_ENGINEERING = 2;
-export const SUPPORT_TICKET_TASK_TYPE_QA = 3;
-export const SUPPORT_TICKET_TASK_TYPE_DEPLOYMENT = 4;
-export const SUPPORT_TICKET_TASK_TYPE_DOCUMENTATION = 5;
-
-export const SUPPORT_TICKET_TASK_STATUS_OPEN = 0;
-export const SUPPORT_TICKET_TASK_STATUS_IN_PROGRESS = 1;
-export const SUPPORT_TICKET_TASK_STATUS_BLOCKED = 2;
-export const SUPPORT_TICKET_TASK_STATUS_DONE = 3;
-export const SUPPORT_TICKET_TASK_STATUS_CANCELED = 4;
+// The task vocabulary lives with the event numbers, where the ladder module and the CLI reach it too.
+export {
+  SUPPORT_TICKET_TASK_STATUS_BLOCKED,
+  SUPPORT_TICKET_TASK_STATUS_CANCELED,
+  SUPPORT_TICKET_TASK_STATUS_DONE,
+  SUPPORT_TICKET_TASK_STATUS_IN_PROGRESS,
+  SUPPORT_TICKET_TASK_STATUS_OPEN,
+  SUPPORT_TICKET_TASK_TYPE_CUSTOMER_FOLLOWUP,
+  SUPPORT_TICKET_TASK_TYPE_DEPLOYMENT,
+  SUPPORT_TICKET_TASK_TYPE_DOCUMENTATION,
+  SUPPORT_TICKET_TASK_TYPE_ENGINEERING,
+  SUPPORT_TICKET_TASK_TYPE_INTERNAL,
+  SUPPORT_TICKET_TASK_TYPE_QA,
+};
 
 
 type DbQueryable = Pick<PoolClient, "query">;
@@ -1394,6 +1412,15 @@ export async function updateSupportTicketTask(input: UpdateSupportTicketTaskInpu
           toStatus: input.status,
         },
       });
+      const finished = (status: number) =>
+        status === SUPPORT_TICKET_TASK_STATUS_DONE || status === SUPPORT_TICKET_TASK_STATUS_CANCELED;
+      if (finished(input.status) !== finished(existing.status)) {
+        await followSupportTicketTasksWithDb(client, {
+          ticketId: input.ticketId,
+          taskWasReopened: !finished(input.status),
+          byUserId: input.updatedByUserId ?? null,
+        });
+      }
     }
 
     return true;
@@ -1965,4 +1992,139 @@ export async function setSupportRequesterWindowDays(siteId: number, days: number
      WHERE phis.site_thread_config.requester_window_days IS DISTINCT FROM EXCLUDED.requester_window_days`,
     [siteId, days],
   );
+}
+
+/**
+ * What a forward may tell the system the work goes to, read in one place so the rule is one rule.
+ *
+ * `mirror` is the type's `External`. The opening text is the ticket's first message, and only where the
+ * conversation may leave and its author -- the requester -- agreed to that when they wrote; otherwise the
+ * external record opens from its title alone. `status` is as it stands now, window included.
+ */
+export async function readSupportTicketForForward(siteId: number, ticketId: number) {
+  const { rows } = await getPool().query<{
+    id: number;
+    thread_id: number;
+    subject: string;
+    type_key: string;
+    type_flags: number;
+    settled_status: number;
+    first_body: string | null;
+    first_author_user_id: number | null;
+    author_consented: boolean | null;
+  }>(
+    `SELECT t.id,
+            t.thread_id,
+            t.subject,
+            type.key AS type_key,
+            type.flags AS type_flags,
+            ${settledSupportTicketStatusSql("t")} AS settled_status,
+            first_message.body_text AS first_body,
+            first_message.author_user_id AS first_author_user_id,
+            (participant.flags & ${PhisThreadParticipantFlag.ExternalConsent}) <> 0 AS author_consented
+     FROM phis.support_tickets t
+     JOIN phis.support_ticket_types type ON type.id = t.type_id
+     LEFT JOIN LATERAL (
+       SELECT message.body_text, message.author_user_id, message.flags
+       FROM phis.thread_messages message
+       WHERE message.thread_id = t.thread_id
+       ORDER BY message.id ASC
+       LIMIT 1
+     ) first_message ON TRUE
+     LEFT JOIN phis.thread_participants participant
+       ON participant.thread_id = t.thread_id
+      AND participant.user_id = first_message.author_user_id
+     WHERE t.site_id = $1
+       AND t.id = $2`,
+    [siteId, ticketId],
+  );
+  const row = rows[0];
+  if (!row) {
+    return null;
+  }
+  const mirror = (row.type_flags & PhisSupportTicketTypeFlag.External) !== 0;
+  return {
+    id: row.id,
+    threadId: row.thread_id,
+    subject: row.subject,
+    typeKey: row.type_key,
+    status: row.settled_status,
+    mirror,
+    body: mirror && row.author_consented === true ? row.first_body : null,
+  };
+}
+
+/**
+ * Writes down that a ticket's work went somewhere else, once that somewhere answered.
+ *
+ * One transaction: the engineering task the work now is, the synced link from that task to the external
+ * record -- in the implementing Add-on's name, which is what lets it read the conversation and finish the
+ * task afterwards -- the event, and the ticket waiting on the work. A ticket already finished does not
+ * wait on anything and keeps its status.
+ */
+export async function recordSupportTicketForward(input: {
+  siteId: number;
+  ticketId: number;
+  providerId: string;
+  title: string;
+  link: { type: number; externalId: string; url: string | null; state: number | null };
+  byUserId: number;
+}) {
+  await withTransaction(async (client) => {
+    const ticket = await getSupportTicketRowById(client, input.siteId, input.ticketId, { forUpdate: true });
+    if (!ticket) {
+      throw new SupportAdministrationError("This Site has no such ticket.");
+    }
+    const { rows: tasks } = await client.query<{ id: number }>(
+      `INSERT INTO phis.support_ticket_tasks (
+         ticket_id, type, status, title, created_by_user_id, updated_by_user_id
+       )
+       VALUES ($1, ${SUPPORT_TICKET_TASK_TYPE_ENGINEERING}, ${SUPPORT_TICKET_TASK_STATUS_OPEN}, $2, $3, $3)
+       RETURNING id`,
+      [input.ticketId, input.title, input.byUserId],
+    );
+    const taskId = tasks[0]!.id;
+    const { rowCount } = await client.query(
+      `INSERT INTO phis.resource_links (
+         site_id, ticket_task_id, provider_id, type, external_id, url, state, flags, created_by_user_id
+       )
+       VALUES ($1, $2, $3, $4, $5, $6, $7, ${PhisResourceLinkFlag.Synced}, $8)
+       ON CONFLICT (site_id, provider_id, type, external_id) DO NOTHING`,
+      [
+        input.siteId,
+        taskId,
+        input.providerId,
+        input.link.type,
+        input.link.externalId,
+        input.link.url,
+        input.link.state,
+        input.byUserId,
+      ],
+    );
+    if (!rowCount) {
+      throw new SupportAdministrationError("That external record is already linked to something on this Site.");
+    }
+    await insertSupportTicketEvent(client, {
+      ticketId: input.ticketId,
+      eventType: SUPPORT_TICKET_EVENT_TASK_CREATED,
+      createdByUserId: input.byUserId,
+      payload: { taskId, type: SUPPORT_TICKET_TASK_TYPE_ENGINEERING },
+    });
+    await insertSupportTicketEvent(client, {
+      ticketId: input.ticketId,
+      eventType: SUPPORT_TICKET_EVENT_LINKED,
+      createdByUserId: input.byUserId,
+      payload: { taskId, providerId: input.providerId, externalId: input.link.externalId, url: input.link.url },
+    });
+    const waits = ticket.status !== PhisSupportTicketStatus.Resolved && ticket.status !== PhisSupportTicketStatus.Closed;
+    if (waits) {
+      await moveSupportTicketStatusWithDb(client, {
+        ticketId: input.ticketId,
+        from: ticket.status,
+        to: PhisSupportTicketStatus.WaitingInternal,
+        byUserId: input.byUserId,
+      });
+    }
+  });
+  return getSupportTicketDetail(input.siteId, input.ticketId);
 }
