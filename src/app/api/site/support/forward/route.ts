@@ -13,8 +13,9 @@ export const dynamic = "force-dynamic";
 /**
  * Where this Site's tickets may be forwarded right now.
  *
- * Every installed `support-forwarding` implementation that resolves for the Site and answers its probe
- * as usable, by the name it gives itself. Behind `Developer | Supporter`, who forward.
+ * Every target of every installed `support-forwarding` implementation that resolves for the Site and
+ * answers its probe as usable: `{ target: "<providerKey>#<key>", label }`. Behind `Developer | Supporter`,
+ * who forward.
  */
 export async function GET(request: NextRequest) {
   const { context, error } = await requireSiteSupportApiContext(request);
@@ -29,7 +30,7 @@ export async function GET(request: NextRequest) {
 }
 
 /**
- * Hands one ticket's work to one target: `{ ticketId, providerKey, title? }`.
+ * Hands one ticket's work to one target: `{ ticketId, target, title? }`.
  *
  * The ticket travels in the body rather than in the path so a declared Form can relay here; a relay
  * handler names one static upstream path. The answer is the ticket as it now stands -- an engineering task
@@ -49,8 +50,8 @@ export async function POST(request: NextRequest) {
   const body = await readRequestBody(request);
   // A number from a REST caller, a string from a Form's hidden field: the same ticket either way.
   const ticketId = typeof body.ticketId === "number" ? body.ticketId : Number.parseInt(normalizeString(body.ticketId), 10);
-  const providerKey = normalizeString(body.providerKey);
-  if (!Number.isSafeInteger(ticketId) || ticketId <= 0 || !providerKey) {
+  const target = normalizeString(body.target);
+  if (!Number.isSafeInteger(ticketId) || ticketId <= 0 || !target) {
     return NextResponse.json({ error: "A forward needs a ticket and a target." }, { status: 400 });
   }
   const title = normalizeString(body.title);
@@ -62,7 +63,7 @@ export async function POST(request: NextRequest) {
     const detail = await forwardSupportTicket({
       site: { id: site.id, key: site.key },
       ticketId,
-      providerKey,
+      target,
       title: title || null,
       actorUserId: userId,
     });

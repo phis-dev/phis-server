@@ -72,6 +72,13 @@ export async function PATCH(
       requesterWindowDays: body.requesterWindowDays === undefined
         ? undefined
         : readSupportInteger(body.requesterWindowDays),
+      // `<providerKey>#<key>` of a forwarding target, or null/empty for none. Which targets exist is asked
+      // of the implementations when a forward happens, so a stored one that stopped existing is just unused.
+      forwardTarget: body.forwardTarget === undefined
+        ? undefined
+        : typeof body.forwardTarget === "string" && body.forwardTarget.trim()
+          ? body.forwardTarget.trim().slice(0, 512)
+          : null,
       sortOrder: body.sortOrder === undefined ? undefined : readSupportInteger(body.sortOrder) ?? undefined,
       retired: readSupportFlag(body.retired),
     });

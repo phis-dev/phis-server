@@ -995,6 +995,9 @@ CREATE TABLE IF NOT EXISTS phis.support_ticket_types (
   -- days, unlike `requester_window_days` above: that one measures a single ticket's silence and starts
   -- when the ticket does, where this is a budget somebody has to be able to name the start of.
   requester_allowance_period SMALLINT NOT NULL DEFAULT 0,
+  -- Where a Supporter's forward of this type's work goes unless they choose otherwise:
+  -- `<providerKey>#<key>` of a support-forwarding target. A preselection, not a rule; NULL is none.
+  forward_target VARCHAR(512) NULL,
   -- Retirement, which replaces deleting a type, as `site_groups` does it: the row and its key stay,
   -- a retired type is offered to nobody, and the tickets already opened with it keep naming it.
   retired_at TIMESTAMPTZ NULL,

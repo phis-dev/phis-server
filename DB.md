@@ -1387,6 +1387,7 @@ Contract:
 - `requester_window_days SMALLINT NULL`
 - `requester_allowance SMALLINT NULL`
 - `requester_allowance_period SMALLINT NOT NULL DEFAULT 0`
+- `forward_target VARCHAR(512) NULL`
 - `retired_at TIMESTAMPTZ NULL`
 - `sort_order SMALLINT NOT NULL DEFAULT 0`
 - `created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
@@ -1411,6 +1412,7 @@ Contract:
 - `(id, site_id)` is unique so a ticket's composite foreign key cannot point at another Site's type.
 - `retired_at` replaces deleting a type, as `site_groups` does it: the row and its key stay, a retired type is offered to nobody, and the tickets already opened with it keep naming it.
 - `requester_allowance` is how many of this type one person may open for themselves per period; `NULL` is no limit, which is what a type has until a Site says otherwise. The opposite default from `Requestable`, and not a contradiction: a flag that is off offers nothing, where a limit arriving by default would refuse people on a Site that never asked for one.
+- `forward_target` is where a forward of this type's work goes unless the Supporter chooses otherwise, as `<providerKey>#<key>` of a `support-forwarding` target ("GitHub acme/app"). A preselection in the forward dialog and not a rule: a target that is no longer offered is simply not preselected.
 - `requester_allowance_period` is `PhisSupportAllowancePeriod`: `0 = None`, `1 = Month`, `2 = Year`. A calendar period, unlike `requester_window_days` on the same row, which is a rolling window because it measures one ticket's silence.
 - The pair is written as an equality of two `IS NULL` tests rather than as two cases OR'd together, because `NULL >= 0` is `NULL`, `false OR NULL` is `NULL`, and a CHECK that evaluates to `NULL` passes -- which would let through exactly the half-written pair it exists to refuse.
 - Only tickets the person opened for themselves count against it: `channel = 0` and `requester_user_id` theirs. A Supporter opening one on somebody's behalf neither spends the budget nor can be refused for want of it.

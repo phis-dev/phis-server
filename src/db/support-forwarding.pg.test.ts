@@ -49,7 +49,7 @@ function useTargets(targets: { providerKey: string; usable: boolean; label: stri
     providerKey: target.providerKey,
     providerId: PROVIDER_ID,
     adapter: {
-      probe: async () => ({ usable: target.usable, label: target.label, findings: [] }),
+      probe: async () => ({ usable: target.usable, targets: [{ key: "acme/app", label: target.label }], findings: [] }),
       forward: async (request) => {
         forwarded.push(request);
         return { type: 1, externalId: `issue-${forwarded.length}-${index}`, url: "https://example.test/1", state: 0 };
@@ -118,7 +118,7 @@ describe("support forwarding", () => {
       { providerKey: "issues", usable: true, label: "Tracker acme/app" },
       { providerKey: "down", usable: false, label: "Unreachable" },
     ]);
-    expect(await listSupportForwardTargets(site)).toEqual([{ providerKey: "issues", label: "Tracker acme/app" }]);
+    expect(await listSupportForwardTargets(site)).toEqual([{ target: "issues#acme/app", label: "Tracker acme/app" }]);
   });
 
   it("hands over the title alone where nothing may leave, and the ticket waits on the work", async () => {
@@ -127,9 +127,9 @@ describe("support forwarding", () => {
     useTargets([{ providerKey: "issues", usable: true, label: "Tracker" }]);
     const { ticket, supporter } = await openTicket(site, { flags: 0, closePolicy: PhisSupportClosePolicy.Confirm });
 
-    await forwardSupportTicket({ site, ticketId: ticket.id, providerKey: "issues", title: null, actorUserId: supporter });
+    await forwardSupportTicket({ site, ticketId: ticket.id, target: "issues#acme/app", title: null, actorUserId: supporter });
 
-    expect(forwarded[0]).toMatchObject({ mirror: false, body: null, task: { title: "Export fails" } });
+    expect(forwarded[0]).toMatchObject({ target: "acme/app", mirror: false, body: null, task: { title: "Export fails" } });
     const detail = (await getSupportTicketDetail(site.id, ticket.id))!;
     expect(detail.ticket.status).toBe(PhisSupportTicketStatus.WaitingInternal);
     expect(detail.tasks).toHaveLength(1);
@@ -148,7 +148,7 @@ describe("support forwarding", () => {
     const asProvider = await getThreadDetail(site.id, { kind: "provider", providerId: PROVIDER_ID }, ticket.threadId);
     expect(asProvider?.messages[0]?.bodyText).toBeNull();
 
-    await expect(forwardSupportTicket({ site, ticketId: ticket.id, providerKey: "nowhere", title: null, actorUserId: supporter }))
+    await expect(forwardSupportTicket({ site, ticketId: ticket.id, target: "nowhere#acme/app", title: null, actorUserId: supporter }))
       .rejects.toBeInstanceOf(SupportForwardError);
   });
 
@@ -159,12 +159,12 @@ describe("support forwarding", () => {
 
     const consentedSite = await createPhiTestSite("forward-consented");
     const consented = await openTicket(consentedSite, external, true);
-    await forwardSupportTicket({ site: consentedSite, ticketId: consented.ticket.id, providerKey: "issues", title: "Bug", actorUserId: consented.supporter });
+    await forwardSupportTicket({ site: consentedSite, ticketId: consented.ticket.id, target: "issues#acme/app", title: "Bug", actorUserId: consented.supporter });
     expect(forwarded[0]).toMatchObject({ mirror: true, body: "It fails with a 500.", task: { title: "Bug" } });
 
     const silentSite = await createPhiTestSite("forward-silent");
     const silent = await openTicket(silentSite, external, false);
-    await forwardSupportTicket({ site: silentSite, ticketId: silent.ticket.id, providerKey: "issues", title: null, actorUserId: silent.supporter });
+    await forwardSupportTicket({ site: silentSite, ticketId: silent.ticket.id, target: "issues#acme/app", title: null, actorUserId: silent.supporter });
     expect(forwarded[1]).toMatchObject({ mirror: true, body: null });
 
     // Mirrored, but the requester never agreed: their words stay, the Staff side leaves.
@@ -185,7 +185,7 @@ describe("support forwarding", () => {
     const confirmSite = await createPhiTestSite("forward-confirm");
     const confirm = await openTicket(confirmSite, { flags: 0, closePolicy: PhisSupportClosePolicy.Confirm });
     const afterConfirm = await forwardSupportTicket({
-      site: confirmSite, ticketId: confirm.ticket.id, providerKey: "issues", title: null, actorUserId: confirm.supporter,
+      site: confirmSite, ticketId: confirm.ticket.id, target: "issues#acme/app", title: null, actorUserId: confirm.supporter,
     });
     const confirmTask = afterConfirm!.tasks[0]!;
     await updateSupportTicketTask({
@@ -201,7 +201,7 @@ describe("support forwarding", () => {
       closePolicy: PhisSupportClosePolicy.CodeAccepted,
     });
     const afterCode = await forwardSupportTicket({
-      site: codeSite, ticketId: code.ticket.id, providerKey: "issues", title: null, actorUserId: code.supporter,
+      site: codeSite, ticketId: code.ticket.id, target: "issues#acme/app", title: null, actorUserId: code.supporter,
     });
     const codeTask = afterCode!.tasks[0]!;
     await updateSupportTicketTask({

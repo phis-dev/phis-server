@@ -1606,6 +1606,8 @@ export type SupportTicketTypeRecord = {
   requesterWindowDays: number | null;
   /** How many of this type one person may open for themselves per period; `null` is no limit. */
   requesterAllowance: { limit: number; period: PhisSupportAllowancePeriodValue } | null;
+  /** Where a forward of this type's work goes unless the Supporter chooses otherwise; null is none. */
+  forwardTarget: string | null;
   sortOrder: number;
   retiredAt: string | null;
 };
@@ -1621,11 +1623,12 @@ export async function listSupportTicketTypes(siteId: number) {
     requester_window_days: number | null;
     requester_allowance: number | null;
     requester_allowance_period: number;
+    forward_target: string | null;
     sort_order: number;
     retired_at: string | null;
   }>(
     `SELECT id, site_id, key, name, flags, close_policy, requester_window_days,
-            requester_allowance, requester_allowance_period, sort_order, retired_at
+            requester_allowance, requester_allowance_period, forward_target, sort_order, retired_at
      FROM phis.support_ticket_types
      WHERE site_id = $1
      ORDER BY sort_order ASC, id ASC`,
@@ -1645,6 +1648,7 @@ export async function listSupportTicketTypes(siteId: number) {
       limit: row.requester_allowance,
       period: row.requester_allowance_period as PhisSupportAllowancePeriodValue,
     },
+    forwardTarget: row.forward_target,
     sortOrder: row.sort_order,
     retiredAt: row.retired_at,
   } satisfies SupportTicketTypeRecord));
@@ -1835,6 +1839,8 @@ export async function updateSupportTicketType(input: {
   requesterWindowDays?: number | null;
   /** Absent leaves it as it was; `null` removes the limit. See `createSupportTicketType`. */
   requesterAllowance?: { limit: number; period: PhisSupportAllowancePeriodValue } | null;
+  /** Absent leaves it as it was; `null` removes the preselection. */
+  forwardTarget?: string | null;
   sortOrder?: number;
   retired?: boolean;
 }) {
@@ -1849,6 +1855,7 @@ export async function updateSupportTicketType(input: {
          requester_allowance_period = CASE
            WHEN $10::boolean THEN $12::smallint ELSE requester_allowance_period
          END,
+         forward_target = CASE WHEN $13::boolean THEN $14::varchar ELSE forward_target END,
          sort_order = COALESCE($8, sort_order),
          retired_at = CASE
            WHEN $9::boolean IS NULL THEN retired_at
@@ -1870,6 +1877,8 @@ export async function updateSupportTicketType(input: {
       input.requesterAllowance !== undefined,
       input.requesterAllowance?.limit ?? null,
       input.requesterAllowance?.period ?? PhisSupportAllowancePeriod.None,
+      input.forwardTarget !== undefined,
+      input.forwardTarget ?? null,
     ],
   );
   if (!rowCount) {

@@ -115,14 +115,38 @@ async function probe(target: ForwardingTarget) {
 }
 
 /**
- * Where this Site's tickets may go right now: every implementation that resolves here and answers its
- * probe with `usable`, by the name it gives itself.
+ * One target as a single value: the implementation and its own key for the place, `<providerKey>#<key>`.
+ *
+ * One value because that is what a Supporter chooses and a ticket type remembers. The provider key comes
+ * first and never contains `#`; the target key is the implementation's own and is split off at the first.
+ */
+export function formatSupportForwardTarget(providerKey: string, key: string) {
+  return `${providerKey}#${key}`;
+}
+
+function parseSupportForwardTarget(value: string) {
+  const at = value.indexOf("#");
+  return at <= 0 || at === value.length - 1
+    ? null
+    : { providerKey: value.slice(0, at), key: value.slice(at + 1) };
+}
+
+/**
+ * Where this Site's tickets may go right now: every target of every implementation that resolves here and
+ * answers its probe with `usable`, by the name the implementation gives it.
  */
 export async function listSupportForwardTargets(site: { id: number; key: string }) {
-  const targets = await targetSource(site);
-  const probed = await Promise.all(targets.map(async (target) => ({ target, answer: await probe(target) })));
-  return probed.flatMap(({ target, answer }) =>
-    answer?.usable ? [{ providerKey: target.providerKey, label: answer.label }] : []);
+  const implementations = await targetSource(site);
+  const probed = await Promise.all(
+    implementations.map(async (implementation) => ({ implementation, answer: await probe(implementation) })),
+  );
+  return probed.flatMap(({ implementation, answer }) =>
+    answer?.usable
+      ? answer.targets.map((target) => ({
+        target: formatSupportForwardTarget(implementation.providerKey, target.key),
+        label: target.label,
+      }))
+      : []);
 }
 
 function readForwardResult(value: PhisSupportForwardResult | null | undefined) {
@@ -155,7 +179,8 @@ function readForwardResult(value: PhisSupportForwardResult | null | undefined) {
 export async function forwardSupportTicket(input: {
   site: { id: number; key: string };
   ticketId: number;
-  providerKey: string;
+  /** `<providerKey>#<key>`, as `listSupportForwardTargets` names it. */
+  target: string;
   title: string | null;
   actorUserId: number;
 }) {
@@ -167,12 +192,16 @@ export async function forwardSupportTicket(input: {
     throw new SupportForwardError("finished", "A closed ticket has no work left to hand over.");
   }
 
-  const target = (await targetSource(input.site)).find((candidate) => candidate.providerKey === input.providerKey);
-  if (!target) {
+  const chosen = parseSupportForwardTarget(input.target);
+  const target = chosen
+    ? (await targetSource(input.site)).find((candidate) => candidate.providerKey === chosen.providerKey)
+    : undefined;
+  if (!chosen || !target) {
     throw new SupportForwardError("unknown-target", "That is not somewhere this Site can forward to.");
   }
   const answer = await probe(target);
-  if (!answer?.usable) {
+  const place = answer?.usable ? answer.targets.find((candidate) => candidate.key === chosen.key) : undefined;
+  if (!place) {
     throw new SupportForwardError("unusable", "That target cannot take work right now.");
   }
 
@@ -180,6 +209,7 @@ export async function forwardSupportTicket(input: {
   let result: ReturnType<typeof readForwardResult>;
   try {
     result = readForwardResult(await target.adapter.forward({
+      target: place.key,
       ticket: { id: ticket.id, threadId: ticket.threadId, subject: ticket.subject, typeKey: ticket.typeKey },
       task: { title },
       mirror: ticket.mirror,
@@ -192,12 +222,12 @@ export async function forwardSupportTicket(input: {
       message: "A support forwarding add-on did not take the work.",
       siteKey: input.site.key,
       error: normalizeLogThrowable(error),
-      meta: { providerKey: input.providerKey, ticketId: input.ticketId },
+      meta: { target: input.target, ticketId: input.ticketId },
     });
-    throw new SupportForwardError("failed", `${answer.label} did not take the work.`);
+    throw new SupportForwardError("failed", `${place.label} did not take the work.`);
   }
   if (!result) {
-    throw new SupportForwardError("failed", `${answer.label} answered without saying where the work went.`);
+    throw new SupportForwardError("failed", `${place.label} answered without saying where the work went.`);
   }
 
   try {
@@ -214,7 +244,7 @@ export async function forwardSupportTicket(input: {
       message: "Work was handed to another system and could not be recorded on the ticket.",
       siteKey: input.site.key,
       error: normalizeLogThrowable(error),
-      meta: { providerKey: input.providerKey, ticketId: input.ticketId, externalId: result.externalId, url: result.url },
+      meta: { target: input.target, ticketId: input.ticketId, externalId: result.externalId, url: result.url },
     });
     if (error instanceof SupportAdministrationError) {
       throw new SupportForwardError("failed", error.message);
