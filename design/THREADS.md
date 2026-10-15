@@ -663,8 +663,11 @@ beside `upload-sessions` and `addon-assets`, which an operator already runs from
 Add-on job, because closing a Support ticket is Core's work and must keep happening when `@phis/github`
 is not installed.
 
-Built: the `support-requester-window` task, and the reopening on the requester's answer in the message
-write. The Site's `requester_window_days` at `0` is the one place that switches it off.
+Built, and not dependent on the task: every read of a ticket derives the close from the window, and
+every write that locks the ticket records it first, so a Site whose operator never runs `phis maintain`
+loses nothing. The `support-requester-window` task only writes the close down for tickets nobody touches
+again. The requester's answer reopens in the message write. The Site's `requester_window_days` at `0` is
+the one place that switches it off.
 
 ## 13. Modules
 

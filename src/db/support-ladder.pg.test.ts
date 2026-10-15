@@ -21,6 +21,7 @@ import {
   applySupportTicketAssignmentAction,
   createSupportTicket,
   getSupportTicketDetail,
+  listSupportTicketsForSite,
   updateSupportTicket,
 } from "./support";
 import { addThreadMessage } from "./threads";
@@ -169,23 +170,59 @@ describe("support ticket ladder", () => {
     expect(reopened.resolvedAt).toBeNull();
   });
 
-  it("closes a resolved ticket once the requester window has passed in silence", async () => {
-    await requirePhiTestDatabase();
+  it("writes down the close for a ticket nobody touches again, through phis maintain", async () => {
     const site = await createPhiTestSite("ladder-window");
     const { ticket, supporter } = await openTicket(site);
     await updateSupportTicket({
       siteId: site.id, ticketId: ticket.id, status: PhisSupportTicketStatus.Resolved, updatedByUserId: supporter,
     });
 
+    const pool = await requirePhiTestDatabase();
+    const storedStatus = async () => (await pool.query<{ status: number }>(
+      `SELECT status FROM phis.support_tickets WHERE id = $1`, [ticket.id],
+    )).rows[0]?.status;
+
     await ageResolution(ticket.id, 13);
     await runRequesterWindow();
-    expect((await readTicket(site.id, ticket.id)).status).toBe(PhisSupportTicketStatus.Resolved);
+    expect(await storedStatus()).toBe(PhisSupportTicketStatus.Resolved);
 
     await ageResolution(ticket.id, 15);
     await runRequesterWindow();
-    const closed = await readTicket(site.id, ticket.id);
-    expect(closed.status).toBe(PhisSupportTicketStatus.Closed);
-    expect(closed.closedAt).not.toBeNull();
+    expect(await storedStatus()).toBe(PhisSupportTicketStatus.Closed);
+  });
+
+  it("reads a ticket past its window as closed and keeps it closed, without phis maintain", async () => {
+    const pool = await requirePhiTestDatabase();
+    const site = await createPhiTestSite("ladder-settled");
+    const { ticket, requester, supporter } = await openTicket(site);
+    await updateSupportTicket({
+      siteId: site.id, ticketId: ticket.id, status: PhisSupportTicketStatus.Resolved, updatedByUserId: supporter,
+    });
+    await ageResolution(ticket.id, 15);
+
+    // Nothing has written anything; every read already answers closed, closed when the window ended.
+    const read = await readTicket(site.id, ticket.id);
+    expect(read.status).toBe(PhisSupportTicketStatus.Closed);
+    expect(read.closedAt).not.toBeNull();
+    const listed = await listSupportTicketsForSite(site.id, { status: PhisSupportTicketStatus.Closed });
+    expect(listed.rows.map((row) => row.id)).toContain(ticket.id);
+    const stored = await pool.query<{ status: number }>(
+      `SELECT status FROM phis.support_tickets WHERE id = $1`, [ticket.id],
+    );
+    expect(stored.rows[0]?.status).toBe(PhisSupportTicketStatus.Resolved);
+
+    // An answer after the window answers a closed ticket: it is written down as closed, not reopened.
+    await addThreadMessage({
+      siteId: site.id,
+      threadId: ticket.threadId,
+      reader: { kind: "user", userId: requester },
+      message: "Oh, and one more thing.",
+    });
+    const after = await pool.query<{ status: number; closed_at: string | null }>(
+      `SELECT status, closed_at FROM phis.support_tickets WHERE id = $1`, [ticket.id],
+    );
+    expect(after.rows[0]?.status).toBe(PhisSupportTicketStatus.Closed);
+    expect(after.rows[0]?.closed_at).not.toBeNull();
   });
 
   it("leaves the closing to a Supporter where the type or the Site waits for one", async () => {

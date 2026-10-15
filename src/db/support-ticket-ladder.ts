@@ -4,6 +4,7 @@ import type { PoolClient } from "pg";
 
 import { PhisSupportTicketStatus, type PhisSupportTicketStatusValue } from "@phis/contracts/support";
 
+import { supportTicketWindowEndSql, supportTicketWindowPassedSql } from "@/db/support-requester-window.mts";
 import {
   SUPPORT_TICKET_EVENT_CLOSED,
   SUPPORT_TICKET_EVENT_REOPENED,
@@ -97,6 +98,47 @@ export async function moveSupportTicketStatusWithDb(
 }
 
 /**
+ * Records that a ticket's requester window ran out, if it did, before anything else is done to it.
+ *
+ * Readers already show such a ticket as closed (`settledSupportTicketColumnsSql`); a writer that has
+ * locked the ticket writes that down first, so what it then does starts from where the ticket actually
+ * stands. A requester answering after their window has closed answers a closed ticket, not a resolved
+ * one they could still reopen. `closed_at` is when the window ended, which is what readers showed.
+ *
+ * Answers the status the ticket is at afterwards.
+ */
+export async function settleSupportTicketWindowWithDb(
+  db: DbQueryable,
+  ticket: { id: number; status: number },
+): Promise<number> {
+  const { rows } = await db.query<{ id: number }>(
+    `UPDATE phis.support_tickets ticket
+     SET status = ${PhisSupportTicketStatus.Closed},
+         closed_at = ${supportTicketWindowEndSql("ticket")},
+         updated_by_user_id = NULL,
+         updated_at = NOW()
+     WHERE ticket.id = $1
+       AND ${supportTicketWindowPassedSql("ticket")}
+     RETURNING ticket.id`,
+    [ticket.id],
+  );
+  if (rows.length === 0) {
+    return ticket.status;
+  }
+  await insertSupportTicketEvent(db, {
+    ticketId: ticket.id,
+    eventType: SUPPORT_TICKET_EVENT_CLOSED,
+    createdByUserId: null,
+    payload: {
+      fromStatus: PhisSupportTicketStatus.Resolved,
+      toStatus: PhisSupportTicketStatus.Closed,
+      reason: "requester_window",
+    },
+  });
+  return PhisSupportTicketStatus.Closed;
+}
+
+/**
  * What a message in a ticket's conversation does to the ticket.
  *
  * Only a person's message that the requester could read counts. An internal note is Staff talking among
@@ -126,6 +168,7 @@ export async function recordSupportTicketMessageWithDb(
   if (!ticket) {
     return;
   }
+  ticket.status = await settleSupportTicketWindowWithDb(db, ticket);
 
   await db.query(
     `UPDATE phis.support_tickets

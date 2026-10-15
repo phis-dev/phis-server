@@ -31,8 +31,13 @@ import {
 import {
   insertSupportTicketEvent,
   moveSupportTicketStatusWithDb,
+  settleSupportTicketWindowWithDb,
   supportTicketStatusAfterHandover,
 } from "@/db/support-ticket-ladder";
+import {
+  settledSupportTicketColumnsSql,
+  settledSupportTicketStatusSql,
+} from "@/db/support-requester-window.mts";
 
 /*
  * The ticket vocabulary, from the contract rather than spelled out again.
@@ -88,6 +93,9 @@ type SupportTicketListRow = {
   type_id: number;
   thread_id: number;
   status: number;
+  /** `status` as it stands now; see `settledSupportTicketColumnsSql`. */
+  settled_status: number;
+  settled_closed_at: string | null;
   channel: number;
   priority: number;
   severity: number | null;
@@ -449,6 +457,7 @@ async function getSupportTicketRowById(
   const { rows } = await queryable.query<SupportTicketListRow>(
     `SELECT
        t.*,
+       ${settledSupportTicketColumnsSql("t")},
        assignee.email_normalized AS assignee_email,
        queue.name AS queue_name
      FROM phis.support_tickets t
@@ -463,7 +472,20 @@ async function getSupportTicketRowById(
     [siteId, ticketId],
   );
 
-  return rows[0] ?? null;
+  const row = rows[0];
+  if (!row) {
+    return null;
+  }
+  // A writer holding the lock writes down a window that ran out before it acts; a reader only shows it.
+  if (options.forUpdate && row.settled_status !== row.status) {
+    await settleSupportTicketWindowWithDb(queryable, row);
+  }
+  return settledSupportTicketRow(row);
+}
+
+/** The row with its status and close time as they stand now, which is what every caller works from. */
+function settledSupportTicketRow(row: SupportTicketListRow): SupportTicketListRow {
+  return { ...row, status: row.settled_status, closed_at: row.settled_closed_at };
 }
 
 async function getSupportTicketTaskRowById(
@@ -527,7 +549,7 @@ export async function listSupportTicketsForSite(siteId: number, options: ListSup
 
   if (Number.isInteger(options.status)) {
     params.push(options.status);
-    conditions.push(`t.status = $${params.length}`);
+    conditions.push(`${settledSupportTicketStatusSql("t")} = $${params.length}`);
   }
 
   if (Number.isInteger(options.channel)) {
@@ -554,6 +576,7 @@ export async function listSupportTicketsForSite(siteId: number, options: ListSup
     `WITH base AS (
        SELECT
          t.*,
+         ${settledSupportTicketColumnsSql("t")},
          COUNT(*) OVER()::int AS total_count
        FROM phis.support_tickets t
        WHERE ${conditions.join(" AND ")}
@@ -574,7 +597,7 @@ export async function listSupportTicketsForSite(siteId: number, options: ListSup
   );
 
   return {
-    rows: rows.map(mapSupportTicket),
+    rows: rows.map((row) => mapSupportTicket(settledSupportTicketRow(row))),
     total: rows[0]?.total_count ?? 0,
     page,
     pageSize,
@@ -1436,7 +1459,7 @@ const TICKET_WITH_TYPE_SQL = `
   SELECT ticket.id,
          ticket.thread_id,
          ticket.subject,
-         ticket.status,
+         ${settledSupportTicketStatusSql("ticket")} AS status,
          ticket.queue_id,
          ticket.type_id,
          type.key AS type_key,
