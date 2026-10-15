@@ -8,13 +8,13 @@ public or internal token, and `session` is the visitor's Site session with the a
 passes (see [AUTHORIZATION.md](../AUTHORIZATION.md)). A route with no access entry performs its own checks
 or none; read its source. Request and response shapes are not listed; the source is linked per route.
 
-148 routes.
+149 routes.
 
 ## Contents
 
 - [`/api/operator`](#apioperator) (5)
 - [`/api/setup`](#apisetup) (2)
-- [`/api/site`](#apisite) (74)
+- [`/api/site`](#apisite) (75)
 - [`/api/v1/addons`](#apiv1addons) (2)
 - [`/api/v1/admin`](#apiv1admin) (1)
 - [`/api/v1/auth`](#apiv1auth) (29)
@@ -37,7 +37,7 @@ Operator console authentication.
 |---|---|---|---|
 | GET | [`/api/operator/auth/csrf`](../src/app/api/operator/auth/csrf/route.ts) | -- | The CSRF token the operator login form sends back. The operator console is served by this server, so it asks here rather than through a Site's `/api/auth` door, which reaches Core only with the Site's token. |
 | POST | [`/api/operator/auth/login`](../src/app/api/operator/auth/login/route.ts) | setup mode (`bootstrap.enabled`); CSRF token |  |
-| POST | [`/api/operator/auth/logout`](../src/app/api/operator/auth/logout/route.ts) | -- |  |
+| POST | [`/api/operator/auth/logout`](../src/app/api/operator/auth/logout/route.ts) | operator session |  |
 | POST | [`/api/operator/auth/refresh`](../src/app/api/operator/auth/refresh/route.ts) | operator session |  |
 | GET | [`/api/operator/overview/metrics`](../src/app/api/operator/overview/metrics/route.ts) | operator session; setup mode (`bootstrap.enabled`) |  |
 
@@ -123,10 +123,10 @@ Site administration, CMS, media and support API. A Site's `/api/site` proxy forw
 | GET | [`/api/site/media`](../src/app/api/site/media/route.ts) | session (requireMediaManagementSiteContext) |  |
 | GET | [`/api/site/media/{id}`](../src/app/api/site/media/[id]/route.ts) | session (requireMediaAssetContext) |  |
 | PATCH | [`/api/site/media/{id}`](../src/app/api/site/media/[id]/route.ts) | session (requireMediaAssetContext) |  |
-| DELETE | [`/api/site/media/{id}`](../src/app/api/site/media/[id]/route.ts) | Site session, checked in the handler; session (requireMediaAssetContext) |  |
+| DELETE | [`/api/site/media/{id}`](../src/app/api/site/media/[id]/route.ts) | session (requireMediaAssetContext) |  |
 | GET | [`/api/site/media/{id}/content`](../src/app/api/site/media/[id]/content/route.ts) | Asset delivery policy (public Assets need no session) | The bytes of one Asset, whole or in part. |
 | HEAD | [`/api/site/media/{id}/content`](../src/app/api/site/media/[id]/content/route.ts) | Asset delivery policy (public Assets need no session) | The bytes of one Asset, whole or in part. |
-| PUT | [`/api/site/media/{id}/owner`](../src/app/api/site/media/[id]/owner/route.ts) | Site session, checked in the handler; session (requireMediaAssetContext) | Handing one Asset over. |
+| PUT | [`/api/site/media/{id}/owner`](../src/app/api/site/media/[id]/owner/route.ts) | session (requireMediaAssetContext) | Handing one Asset over. |
 | GET | [`/api/site/media/{id}/subsets/{subsetKey}`](../src/app/api/site/media/[id]/subsets/[subsetKey]/route.ts) | Asset delivery policy (public Assets need no session) |  |
 | HEAD | [`/api/site/media/{id}/subsets/{subsetKey}`](../src/app/api/site/media/[id]/subsets/[subsetKey]/route.ts) | Asset delivery policy (public Assets need no session) |  |
 | GET | [`/api/site/media/{id}/variants/{variantKey}`](../src/app/api/site/media/[id]/variants/[variantKey]/route.ts) | Asset delivery policy (public Assets need no session) |  |
@@ -138,9 +138,9 @@ Site administration, CMS, media and support API. A Site's `/api/site` proxy forw
 | DELETE | [`/api/site/media/folders/{id}`](../src/app/api/site/media/folders/[id]/route.ts) | session (requireMediaManagementSiteContext) |  |
 | PATCH | [`/api/site/media/spaces/{address}`](../src/app/api/site/media/spaces/[address]/route.ts) | session, `authenticated` (requireSiteAuthenticatedApiContext) |  |
 | PUT | [`/api/site/media/uploads/{token}`](../src/app/api/site/media/uploads/[token]/route.ts) | Site session, checked in the handler; session (requireMediaSpaceWriteContext) |  |
-| POST | [`/api/site/media/uploads/{token}/finalize`](../src/app/api/site/media/uploads/[token]/finalize/route.ts) | Site session, checked in the handler; session (requireMediaSpaceWriteContext) |  |
+| POST | [`/api/site/media/uploads/{token}/finalize`](../src/app/api/site/media/uploads/[token]/finalize/route.ts) | session (requireMediaSpaceWriteContext) |  |
 | POST | [`/api/site/media/uploads/{token}/report`](../src/app/api/site/media/uploads/[token]/report/route.ts) | Site session, checked in the handler; session (requireMediaSpaceWriteContext) |  |
-| POST | [`/api/site/media/uploads/init`](../src/app/api/site/media/uploads/init/route.ts) | Site session, checked in the handler; session (requireMediaSpaceWriteContext) |  |
+| POST | [`/api/site/media/uploads/init`](../src/app/api/site/media/uploads/init/route.ts) | session (requireMediaSpaceWriteContext) |  |
 | GET | [`/api/site/support/forward`](../src/app/api/site/support/forward/route.ts) | session, `support` (requireSiteSupportApiContext) | Where this Site's tickets may be forwarded right now. |
 | POST | [`/api/site/support/forward`](../src/app/api/site/support/forward/route.ts) | session, `support` (requireSiteSupportApiContext) | Hands one ticket's work to one target: `{ ticketId, providerKey, title? }`. |
 | GET | [`/api/site/support/queues`](../src/app/api/site/support/queues/route.ts) | session, `support` (requireSiteSupportApiContext) | The Site's Support queues. |
@@ -149,21 +149,22 @@ Site administration, CMS, media and support API. A Site's `/api/site` proxy forw
 | POST | [`/api/site/support/request`](../src/app/api/site/support/request/route.ts) | session, `authenticated` (requireSiteAuthenticatedApiContext) | The way in for the person asking. |
 | GET | [`/api/site/support/request/types`](../src/app/api/site/support/request/types/route.ts) | session, `authenticated` (requireSiteAuthenticatedApiContext) | What a person who is not Staff may ask for. |
 | GET | [`/api/site/support/ticket-types`](../src/app/api/site/support/ticket-types/route.ts) | session, `support` (requireSiteSupportApiContext) | The Site's ticket types. |
-| POST | [`/api/site/support/ticket-types`](../src/app/api/site/support/ticket-types/route.ts) | session, `developer-tools` (requireSiteDeveloperApiContext) | Adds a ticket type. |
 | PATCH | [`/api/site/support/ticket-types`](../src/app/api/site/support/ticket-types/route.ts) | session, `developer-tools` (requireSiteDeveloperApiContext) | Sets what the catalogue as a whole says: `requesterWindowDays`, the window every type without its own falls back to. `0` switches automatic closing off for every type at once. |
+| POST | [`/api/site/support/ticket-types`](../src/app/api/site/support/ticket-types/route.ts) | session, `developer-tools` (requireSiteDeveloperApiContext) | Adds a ticket type. |
 | PATCH | [`/api/site/support/ticket-types/{typeId}`](../src/app/api/site/support/ticket-types/[typeId]/route.ts) | session, `developer-tools` (requireSiteDeveloperApiContext) | Edits one ticket type, and is where a Site decides who may ask for it. |
 | GET | [`/api/site/support/tickets`](../src/app/api/site/support/tickets/route.ts) | session, `support` (requireSiteSupportApiContext) |  |
 | POST | [`/api/site/support/tickets`](../src/app/api/site/support/tickets/route.ts) | session, `support` (requireSiteSupportApiContext) |  |
 | GET | [`/api/site/support/tickets/{ticketId}`](../src/app/api/site/support/tickets/[ticketId]/route.ts) | session, `support` (requireSiteSupportApiContext) |  |
 | PATCH | [`/api/site/support/tickets/{ticketId}`](../src/app/api/site/support/tickets/[ticketId]/route.ts) | session, `support` (requireSiteSupportApiContext) |  |
 | POST | [`/api/site/support/tickets/{ticketId}/assignment`](../src/app/api/site/support/tickets/[ticketId]/assignment/route.ts) | session, `support` (requireSiteSupportApiContext) |  |
+| GET | [`/api/site/support/tickets/{ticketId}/events`](../src/app/api/site/support/tickets/[ticketId]/events/route.ts) | session, `support` (requireSiteSupportApiContext) | What happened to a ticket, oldest first: opened, moved on the ladder, taken, moved between queues, forwarded, closed. For Supporters only -- the history names queues, owners and where work was forwarded, which a requester is not told. |
 | POST | [`/api/site/support/tickets/{ticketId}/tasks`](../src/app/api/site/support/tickets/[ticketId]/tasks/route.ts) | session, `support` (requireSiteSupportApiContext) |  |
 | PATCH | [`/api/site/support/tickets/{ticketId}/tasks/{taskId}`](../src/app/api/site/support/tickets/[ticketId]/tasks/[taskId]/route.ts) | session, `support` (requireSiteSupportApiContext) |  |
 | DELETE | [`/api/site/support/tickets/{ticketId}/tasks/{taskId}`](../src/app/api/site/support/tickets/[ticketId]/tasks/[taskId]/route.ts) | session, `support` (requireSiteSupportApiContext) |  |
 | GET | [`/api/site/threads`](../src/app/api/site/threads/route.ts) | session, `authenticated` (requireSiteAuthenticatedApiContext) |  |
 | POST | [`/api/site/threads`](../src/app/api/site/threads/route.ts) | session, `authenticated` (requireSiteAuthenticatedApiContext) |  |
 | GET | [`/api/site/threads/{threadId}`](../src/app/api/site/threads/[threadId]/route.ts) | session, `authenticated` (requireSiteAuthenticatedApiContext) |  |
-| PATCH | [`/api/site/threads/{threadId}`](../src/app/api/site/threads/[threadId]/route.ts) | session, `authenticated` (requireSiteAuthenticatedApiContext) | Archiving and reopening. One row carries the status, so this is the thread closing for everyone. |
+| PATCH | [`/api/site/threads/{threadId}`](../src/app/api/site/threads/[threadId]/route.ts) | session, `authenticated` (requireSiteAuthenticatedApiContext) | Archiving and reopening. One row carries the status, so this is the thread closing for everyone -- and therefore only for its opener, Staff, or a Manager of a group in it (`setThreadStatus` decides). |
 | POST | [`/api/site/threads/{threadId}/messages`](../src/app/api/site/threads/[threadId]/messages/route.ts) | session, `authenticated` (requireSiteAuthenticatedApiContext) | Writing into one conversation, addressed by path. |
 | GET | [`/api/site/threads/{threadId}/messages/{messageId}/assets/{assetId}`](../src/app/api/site/threads/[threadId]/messages/[messageId]/assets/[assetId]/route.ts) | session, `authenticated` (requireSiteAuthenticatedApiContext) | The bytes of one attachment, reached through the message that names it. |
 | POST | [`/api/site/threads/{threadId}/messages/{messageId}/translate`](../src/app/api/site/threads/[threadId]/messages/[messageId]/translate/route.ts) | session, `authenticated` (requireSiteAuthenticatedApiContext) | One message, read in another language, and nothing kept. |
@@ -253,8 +254,8 @@ Versioned API a Site calls server-to-server with its token (`x-phis-token`), and
 |---|---|---|---|
 | POST | [`/api/v1/forms/contact`](../src/app/api/v1/forms/contact/route.ts) | internal token |  |
 | GET | [`/api/v1/forms/guard`](../src/app/api/v1/forms/guard/route.ts) | internal token |  |
-| POST | [`/api/v1/forms/media-folder`](../src/app/api/v1/forms/media-folder/route.ts) | session, `site-media` (requireSiteMediaApiContext) |  |
-| POST | [`/api/v1/forms/media-metadata`](../src/app/api/v1/forms/media-metadata/route.ts) | session, `site-media` (requireSiteMediaApiContext) |  |
+| POST | [`/api/v1/forms/media-folder`](../src/app/api/v1/forms/media-folder/route.ts) | session (requireSiteMediaApiContext) |  |
+| POST | [`/api/v1/forms/media-metadata`](../src/app/api/v1/forms/media-metadata/route.ts) | session (requireSiteMediaApiContext) |  |
 | POST | [`/api/v1/forms/register`](../src/app/api/v1/forms/register/route.ts) | internal token |  |
 | POST | [`/api/v1/forms/register/confirm`](../src/app/api/v1/forms/register/confirm/route.ts) | internal token |  |
 | GET | [`/api/v1/forms/register/confirm-preview`](../src/app/api/v1/forms/register/confirm-preview/route.ts) | internal token |  |
