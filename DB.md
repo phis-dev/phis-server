@@ -1690,6 +1690,10 @@ Contract:
 - Cross-system relationships such as GitHub issues, PRs, Medusa orders, or CMS references belong in `resource_links`, not in dedicated columns on the ticket row. An issue is linked to a ticket task rather than to the ticket.
 - `meta` is the free-form extension field for lightweight origin or UI context such as locale, path, or browser hints.
 - `allowance_grant_id` is which granted stock this ticket came out of, or `NULL` for the type's periodic allowance. Not a flag: the id is what lets whoever handed the stock over say which requests it was spent on, and "was this a paid one" falls out of the same column.
+- `status` moves on the ladder of `PhisSupportTicketStatus`, and part of the ladder moves by itself (`src/db/support-ticket-ladder.ts`): taking a `New` or `Triaged` ticket makes it `Assigned`, putting an `Assigned` one down makes it `Triaged` again, a move to another queue sends an `Assigned` or `InProgress` ticket back to `Triaged`, the first answer to the requester makes an `Assigned` ticket `InProgress`, and the requester answering a `WaitingCustomer` or `Resolved` ticket makes it `InProgress` (from `Resolved` recorded as a reopening). A status somebody sets wins over all of these.
+- `resolved_at` and `closed_at` are written by the status move and never by a caller. Arriving at `Resolved` stamps `resolved_at` afresh, leaving it for anything short of `Closed` clears it, and `closed_at` is set only while the ticket is `Closed`.
+- `last_public_message_at` and `last_internal_message_at` are set by the message write in the ticket's thread: a person's message the requester can read, and an `Internal` note, respectively. An integration's message sets neither.
+- A `Resolved` ticket with a requester closes after the requester window passes in silence: the type's `requester_window_days`, else the Site's (`site_thread_config`), counted from `resolved_at`. A Site at `0` switches this off for every type, a type at `0` waits for a Supporter, and a ticket without a requester always does. `phis maintain` (`support-requester-window`) does the closing, at most 500 tickets a run.
 
 ### `phis.support_ticket_tasks`
 

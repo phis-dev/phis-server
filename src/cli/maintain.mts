@@ -8,6 +8,8 @@ import {
 } from "./storage-purge.mts";
 import { readPhisAddonStorageUsage } from "../db/server-addon-storage-usage.mts";
 import { PhisMediaSpaceKind } from "../lib/constants/media-space-kinds.ts";
+import { SUPPORT_TICKET_EVENT_CLOSED } from "../lib/constants/support.ts";
+import { PHIS_SUPPORT_REQUESTER_WINDOW_DEFAULT_DAYS, PhisSupportTicketStatus } from "@phis/contracts/support";
 
 /**
  * The one place cleanup lives, and the reason there is only one.
@@ -275,6 +277,77 @@ const addonStorageCounters: PhiMaintenanceTask = {
   },
 };
 
+/**
+ * Resolved tickets whose requester stayed silent for the whole window.
+ *
+ * A resolved ticket is Support saying it is done and the requester being given the chance to object:
+ * answering puts it back in progress, which the message write does in its own transaction. Silence has no
+ * request to happen in, so closing for it is this task's -- THREADS.md section 12 put it here rather than
+ * in an Add-on job, because closing a ticket is Core's work and must go on when no integration is
+ * installed.
+ *
+ * The window is the ticket type's, else the Site's. A Site at `0` has switched automatic closing off for
+ * every type at once, and a type at `0` waits for a Supporter. A ticket nobody asked for -- opened by
+ * Staff or an integration with no requester -- has nobody to wait for and is closed by a Supporter.
+ *
+ * Bounded at 500 tickets a run, oldest resolution first, and `SKIP LOCKED`, so two runs at once close
+ * each ticket once and a ticket somebody is answering right now is left to the next run.
+ */
+const supportRequesterWindow: PhiMaintenanceTask = {
+  id: "support-requester-window",
+  summary: "Close resolved tickets whose requester did not answer within the window.",
+  async run(pool, { dryRun }) {
+    const due = `
+      SELECT t.id
+        FROM phis.support_tickets t
+        JOIN phis.support_ticket_types ty ON ty.id = t.type_id
+        LEFT JOIN phis.site_thread_config c ON c.site_id = t.site_id
+       WHERE t.status = ${PhisSupportTicketStatus.Resolved}
+         AND t.requester_user_id IS NOT NULL
+         AND t.resolved_at IS NOT NULL
+         AND COALESCE(c.requester_window_days, ${PHIS_SUPPORT_REQUESTER_WINDOW_DEFAULT_DAYS}) > 0
+         AND COALESCE(ty.requester_window_days, c.requester_window_days, ${PHIS_SUPPORT_REQUESTER_WINDOW_DEFAULT_DAYS}) > 0
+         AND t.resolved_at + make_interval(days => COALESCE(
+               ty.requester_window_days, c.requester_window_days, ${PHIS_SUPPORT_REQUESTER_WINDOW_DEFAULT_DAYS}
+             )) < NOW()
+       ORDER BY t.resolved_at ASC
+       LIMIT 500`;
+    if (dryRun) {
+      const { rows } = await pool.query<{ count: number }>(`SELECT COUNT(*)::int AS count FROM (${due}) due`);
+      const count = rows[0]?.count ?? 0;
+      return { cleared: count, detail: `${count} ticket(s) past their requester window.` };
+    }
+    const { rows } = await pool.query<{ count: number }>(
+      `WITH due AS (${due} FOR UPDATE OF t SKIP LOCKED),
+       closed AS (
+         UPDATE phis.support_tickets t
+            SET status = ${PhisSupportTicketStatus.Closed}, closed_at = NOW(),
+                updated_by_user_id = NULL, updated_at = NOW()
+           FROM due
+          WHERE t.id = due.id
+         RETURNING t.id
+       ),
+       recorded AS (
+         INSERT INTO phis.support_ticket_events (ticket_id, event_type, payload, created_by_user_id)
+         SELECT id, ${SUPPORT_TICKET_EVENT_CLOSED},
+                jsonb_build_object('fromStatus', ${PhisSupportTicketStatus.Resolved},
+                                   'toStatus', ${PhisSupportTicketStatus.Closed},
+                                   'reason', 'requester_window'),
+                NULL
+           FROM closed
+       )
+       SELECT COUNT(*)::int AS count FROM closed`,
+    );
+    const count = rows[0]?.count ?? 0;
+    return {
+      cleared: count,
+      detail: count === 0
+        ? "No resolved ticket was past its window."
+        : `${count} ticket(s) closed${count === 500 ? "; more may be due, run again" : ""}.`,
+    };
+  },
+};
+
 /** Ordered as they run. A task must not depend on an earlier one having run first. */
 export const PHI_MAINTENANCE_TASKS: readonly PhiMaintenanceTask[] = Object.freeze([
   { id: "payments", summary: "Reconcile up to 100 unresolved Payment operations without replaying financial commands.",
@@ -287,6 +360,7 @@ export const PHI_MAINTENANCE_TASKS: readonly PhiMaintenanceTask[] = Object.freez
   orphanedAddonAssets,
   settledHookDeliveries,
   addonStorageCounters,
+  supportRequesterWindow,
 ]);
 
 /**

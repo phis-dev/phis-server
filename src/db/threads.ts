@@ -46,6 +46,7 @@ import {
   siteThreadKindFlagOf,
 } from "@/lib/constants/threads";
 import { PHIS_RESOURCE_LINK_THREAD_JOINS_SQL } from "@/db/resource-link-sql";
+import { recordSupportTicketMessageWithDb } from "@/db/support-ticket-ladder";
 
 type DbQueryable = Pick<PoolClient, "query">;
 
@@ -1287,6 +1288,10 @@ export async function addThreadMessage(input: AddThreadMessageInput): Promise<Ph
     const authorUserId = input.reader.kind === "user" ? input.reader.userId : null;
     const isStaff = await readerIsStaff(client, input.siteId, input.reader);
 
+    const flags = normalizeMessageFlags(input.messageFlags, {
+      isStaff,
+      imported: Boolean(input.externalRef),
+    });
     const messageId = await insertMessage(client, {
       siteId: input.siteId,
       threadId: input.threadId,
@@ -1295,13 +1300,18 @@ export async function addThreadMessage(input: AddThreadMessageInput): Promise<Ph
       bodyText: input.message,
       bodyMarkdown: input.messageMarkdown ?? null,
       sourceLang: normalizeMessageSourceLang(input.messageSourceLang),
-      flags: normalizeMessageFlags(input.messageFlags, {
-        isStaff,
-        imported: Boolean(input.externalRef),
-      }),
+      flags,
       meta: authorMeta(input.messageMeta, input.externalAuthor),
       externalRef: input.externalRef ?? null,
     });
+    // A person answering in a ticket's conversation moves the ticket; an integration's message does not.
+    if (thread.kind === PhisThreadKind.Support && authorUserId != null && providerId == null) {
+      await recordSupportTicketMessageWithDb(client, {
+        threadId: input.threadId,
+        authorUserId,
+        visibleToRequester: (flags & PhisThreadMessageFlag.Internal) === 0,
+      });
+    }
 
     await attachAssetsWithDb(client, {
       siteId: input.siteId,

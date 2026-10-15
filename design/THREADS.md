@@ -663,6 +663,9 @@ beside `upload-sessions` and `addon-assets`, which an operator already runs from
 Add-on job, because closing a Support ticket is Core's work and must keep happening when `@phis/github`
 is not installed.
 
+Built: the `support-requester-window` task, and the reopening on the requester's answer in the message
+write. The Site's `requester_window_days` at `0` is the one place that switches it off.
+
 ## 13. Modules
 
 ### One conversation view, and more than one listing

@@ -88,12 +88,6 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     resolutionDueAt: Object.prototype.hasOwnProperty.call(body, "resolutionDueAt")
       ? normalizeNullableString(body.resolutionDueAt)
       : undefined,
-    resolvedAt: Object.prototype.hasOwnProperty.call(body, "resolvedAt")
-      ? normalizeNullableString(body.resolvedAt)
-      : undefined,
-    closedAt: Object.prototype.hasOwnProperty.call(body, "closedAt")
-      ? normalizeNullableString(body.closedAt)
-      : undefined,
     updatedByUserId: context.session?.userId ?? null,
     });
   } catch (cause) {

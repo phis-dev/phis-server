@@ -12,6 +12,7 @@ import {
   PhisSupportTicketTypeFlag,
   type PhisSupportAllowance,
   type PhisSupportAllowancePeriodValue,
+  type PhisSupportTicketStatusValue,
 } from "@phis/contracts/support";
 import { PhisThreadKind } from "@phis/contracts/threads";
 
@@ -20,6 +21,18 @@ import { createThreadWithDb } from "@/db/threads";
 import { PHIS_THREAD_PARTICIPANT_KIND_GROUP } from "@/lib/constants/threads";
 import { consumeSupportAllowanceWithDb, readSupportAllowance } from "@/db/support-allowance";
 import { toPhiRecord } from "@/lib/helpers/record";
+import {
+  SUPPORT_TICKET_EVENT_ASSIGNED,
+  SUPPORT_TICKET_EVENT_CREATED,
+  SUPPORT_TICKET_EVENT_TASK_COMPLETED,
+  SUPPORT_TICKET_EVENT_TASK_CREATED,
+  SUPPORT_TICKET_EVENT_TASK_REOPENED,
+} from "@/lib/constants/support";
+import {
+  insertSupportTicketEvent,
+  moveSupportTicketStatusWithDb,
+  supportTicketStatusAfterHandover,
+} from "@/db/support-ticket-ladder";
 
 /*
  * The ticket vocabulary, from the contract rather than spelled out again.
@@ -67,19 +80,6 @@ export const SUPPORT_TICKET_TASK_STATUS_BLOCKED = 2;
 export const SUPPORT_TICKET_TASK_STATUS_DONE = 3;
 export const SUPPORT_TICKET_TASK_STATUS_CANCELED = 4;
 
-export const SUPPORT_TICKET_EVENT_CREATED = 0;
-export const SUPPORT_TICKET_EVENT_TRIAGED = 1;
-export const SUPPORT_TICKET_EVENT_ASSIGNED = 2;
-export const SUPPORT_TICKET_EVENT_REPLIED = 3;
-export const SUPPORT_TICKET_EVENT_LINKED = 4;
-export const SUPPORT_TICKET_EVENT_UNLINKED = 5;
-export const SUPPORT_TICKET_EVENT_ESCALATED = 6;
-export const SUPPORT_TICKET_EVENT_RESOLVED = 7;
-export const SUPPORT_TICKET_EVENT_REOPENED = 8;
-export const SUPPORT_TICKET_EVENT_CLOSED = 9;
-export const SUPPORT_TICKET_EVENT_TASK_CREATED = 10;
-export const SUPPORT_TICKET_EVENT_TASK_COMPLETED = 11;
-export const SUPPORT_TICKET_EVENT_TASK_REOPENED = 12;
 
 type DbQueryable = Pick<PoolClient, "query">;
 
@@ -134,7 +134,6 @@ type SupportTicketTaskRow = {
   updated_at: string;
 };
 
-type SupportTicketEventInsertPayload = Record<string, unknown>;
 
 export type SupportTicketRecord = {
   id: number;
@@ -271,8 +270,6 @@ export type UpdateSupportTicketInput = {
   meta?: Record<string, unknown>;
   firstResponseDueAt?: string | null;
   resolutionDueAt?: string | null;
-  resolvedAt?: string | null;
-  closedAt?: string | null;
   updatedByUserId?: number | null;
 };
 
@@ -397,27 +394,6 @@ function mapSupportTicketTask(row: SupportTicketTaskRow): SupportTicketTaskRecor
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
-}
-
-async function insertSupportTicketEvent(
-  queryable: DbQueryable,
-  input: {
-    ticketId: number;
-    eventType: number;
-    createdByUserId?: number | null;
-    payload?: SupportTicketEventInsertPayload;
-  },
-) {
-  await queryable.query(
-    `INSERT INTO phis.support_ticket_events (
-       ticket_id,
-       event_type,
-       payload,
-       created_by_user_id
-     )
-     VALUES ($1, $2, $3::jsonb, $4)`,
-    [input.ticketId, input.eventType, JSON.stringify(input.payload ?? {}), input.createdByUserId ?? null],
-  );
 }
 
 async function insertSupportTicketAssignment(
@@ -878,6 +854,28 @@ export async function applySupportTicketAssignmentAction(input: SupportTicketAss
       }
     }
 
+    const nextStatus = supportTicketStatusAfterHandover(
+      existing.status,
+      input.action === "move_to_queue"
+        ? "moved"
+        : input.action === "unassign"
+          ? "released"
+          : "taken",
+    );
+    const handedOver = input.action === "unassign"
+      ? existing.assignee_user_id !== null
+      : input.action === "move_to_queue"
+        ? existing.queue_id !== input.queueId || existing.assignee_user_id !== null
+        : true;
+    if (nextStatus != null && handedOver) {
+      await moveSupportTicketStatusWithDb(client, {
+        ticketId: input.ticketId,
+        from: existing.status,
+        to: nextStatus,
+        byUserId: input.userId,
+      });
+    }
+
     return true;
   });
   if (!found) {
@@ -945,6 +943,9 @@ export async function createSupportTicket(input: CreateSupportTicketInput) {
       allowanceGrantId = spent.grantId;
     }
 
+    // Opened already in somebody's hands is opened assigned, as taking it a moment later would have left it.
+    const initialStatus = input.status ?? (input.assigneeUserId != null ? SUPPORT_TICKET_STATUS_ASSIGNED : SUPPORT_TICKET_STATUS_NEW);
+
     const thread = await createThreadWithDb(client, {
       siteId: input.siteId,
       kind: PhisThreadKind.Support,
@@ -989,7 +990,7 @@ export async function createSupportTicket(input: CreateSupportTicketInput) {
         input.siteId,
         input.typeId,
         thread.id,
-        input.status ?? SUPPORT_TICKET_STATUS_NEW,
+        initialStatus,
         input.channel,
         input.priority ?? SUPPORT_TICKET_PRIORITY_NORMAL,
         input.severity ?? null,
@@ -1028,7 +1029,7 @@ export async function createSupportTicket(input: CreateSupportTicketInput) {
       eventType: SUPPORT_TICKET_EVENT_CREATED,
       createdByUserId: input.createdByUserId ?? null,
       payload: {
-        status: input.status ?? SUPPORT_TICKET_STATUS_NEW,
+        status: initialStatus,
         assigneeUserId: input.assigneeUserId ?? null,
         queueId: queue.id,
       },
@@ -1141,7 +1142,6 @@ export async function updateSupportTicket(input: UpdateSupportTicketInput) {
     };
 
     if (typeof input.typeId === "number") addSet("type_id", input.typeId);
-    if (typeof input.status === "number") addSet("status", input.status);
     if (typeof input.channel === "number") addSet("channel", input.channel);
     if (typeof input.priority === "number") addSet("priority", input.priority);
     if (input.severity !== undefined) addSet("severity", input.severity ?? null);
@@ -1157,8 +1157,6 @@ export async function updateSupportTicket(input: UpdateSupportTicketInput) {
     }
     if (input.firstResponseDueAt !== undefined) addSet("first_response_due_at", input.firstResponseDueAt ?? null);
     if (input.resolutionDueAt !== undefined) addSet("resolution_due_at", input.resolutionDueAt ?? null);
-    if (input.resolvedAt !== undefined) addSet("resolved_at", input.resolvedAt ?? null);
-    if (input.closedAt !== undefined) addSet("closed_at", input.closedAt ?? null);
     addSet("updated_by_user_id", input.updatedByUserId ?? null);
     sets.push("updated_at = NOW()");
 
@@ -1203,20 +1201,25 @@ export async function updateSupportTicket(input: UpdateSupportTicketInput) {
       });
     }
 
-    if (typeof input.status === "number" && input.status !== existing.status) {
-      await insertSupportTicketEvent(client, {
+    /*
+     * A status somebody set wins; without one, a change of hands moves the ticket the way taking or
+     * putting it down does. The status is written by the move alone, which stamps `resolved_at` and
+     * `closed_at` -- they are what the move did, not fields a caller supplies.
+     */
+    const assigneeAfter = input.assigneeUserId !== undefined ? (input.assigneeUserId ?? null) : existing.assignee_user_id;
+    const nextStatus = typeof input.status === "number"
+      ? input.status as PhisSupportTicketStatusValue
+      : input.queueId !== undefined && (input.queueId ?? null) !== existing.queue_id
+        ? supportTicketStatusAfterHandover(existing.status, "moved")
+        : assigneeAfter !== existing.assignee_user_id
+          ? supportTicketStatusAfterHandover(existing.status, assigneeAfter == null ? "released" : "taken")
+          : null;
+    if (nextStatus != null) {
+      await moveSupportTicketStatusWithDb(client, {
         ticketId: input.ticketId,
-        eventType:
-          input.status === SUPPORT_TICKET_STATUS_RESOLVED
-            ? SUPPORT_TICKET_EVENT_RESOLVED
-            : input.status === SUPPORT_TICKET_STATUS_CLOSED
-              ? SUPPORT_TICKET_EVENT_CLOSED
-              : SUPPORT_TICKET_EVENT_TRIAGED,
-        createdByUserId: input.updatedByUserId ?? null,
-        payload: {
-          fromStatus: existing.status,
-          toStatus: input.status,
-        },
+        from: existing.status,
+        to: nextStatus,
+        byUserId: input.updatedByUserId ?? null,
       });
     }
 

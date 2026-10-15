@@ -5,7 +5,6 @@ import {
   listSupportTicketsForSite,
   SUPPORT_TICKET_CHANNEL_INTERNAL,
   SUPPORT_TICKET_PRIORITY_NORMAL,
-  SUPPORT_TICKET_STATUS_NEW,
 } from "@/db/support";
 import { requireSiteSupportApiContext } from "@/lib/guards/site-admin-api";
 import { logRuntimeEvent } from "@/lib/log";
@@ -84,7 +83,7 @@ export async function POST(request: NextRequest) {
     typeId,
     message,
     messageMarkdown: normalizeNullableString(body.messageMarkdown),
-    status: normalizeNullableInteger(body.status) ?? SUPPORT_TICKET_STATUS_NEW,
+    status: normalizeNullableInteger(body.status) ?? undefined,
     channel: normalizeNullableInteger(body.channel) ?? SUPPORT_TICKET_CHANNEL_INTERNAL,
     priority: normalizeNullableInteger(body.priority) ?? SUPPORT_TICKET_PRIORITY_NORMAL,
     severity: normalizeNullableInteger(body.severity),
