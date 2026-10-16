@@ -6,6 +6,7 @@ import {
   PhisSupportTicketStatus,
   PhisSupportTicketTypeFlag,
   type PhisSupportForwardRequest,
+  type PhisSupportLinkedNotice,
 } from "@phis/contracts/support";
 import { PhisSiteThreadKindFlag } from "@phis/contracts/threads";
 import { PhisResourceLinkFlag } from "@phis/contracts/addon";
@@ -22,6 +23,7 @@ import {
 } from "../../test/pg/harness";
 import {
   forwardSupportTicket,
+  linkSupportTicket,
   listSupportForwardTargets,
   setSupportForwardingTargetSourceForTests,
   SupportForwardError,
@@ -43,6 +45,21 @@ import {
 
 const PROVIDER_ID = "@test/forwarder";
 let forwarded: PhisSupportForwardRequest[] = [];
+let announced: PhisSupportLinkedNotice[] = [];
+
+/*
+ * What the double knows: `acme/app#7` is open, `acme/app#8` is closed, anything else is not its own. A
+ * second implementation that knows nothing stands first, so the answer has to come from asking on.
+ */
+async function linkAnswer(request: { reference: string }) {
+  if (request.reference === "acme/app#8") return { status: "refused" as const, reason: "That issue is closed." };
+  if (request.reference !== "acme/app#7") return { status: "unknown" as const };
+  return {
+    status: "linkable" as const,
+    record: { type: 1, externalId: "acme/app#7", url: "https://example.test/7", state: 0 },
+    title: "Exports time out",
+  };
+}
 
 function useTargets(targets: { providerKey: string; usable: boolean; label: string }[]) {
   setSupportForwardingTargetSourceForTests(async () => targets.map((target, index) => ({
@@ -54,8 +71,32 @@ function useTargets(targets: { providerKey: string; usable: boolean; label: stri
         forwarded.push(request);
         return { type: 1, externalId: `issue-${forwarded.length}-${index}`, url: "https://example.test/1", state: 0 };
       },
+      lookup: linkAnswer,
+      linked: async (notice) => { announced.push(notice); },
     },
   })));
+}
+
+function useLinkers() {
+  setSupportForwardingTargetSourceForTests(async () => [{
+    providerKey: "elsewhere",
+    providerId: "@test/elsewhere",
+    adapter: {
+      probe: async () => ({ usable: true, targets: [], findings: [] }),
+      forward: async () => { throw new Error("not used"); },
+      lookup: async () => ({ status: "unknown" as const }),
+      linked: async () => { throw new Error("not this one"); },
+    },
+  }, {
+    providerKey: "issues",
+    providerId: PROVIDER_ID,
+    adapter: {
+      probe: async () => ({ usable: true, targets: [{ key: "acme/app", label: "Tracker" }], findings: [] }),
+      forward: async () => ({ type: 1, externalId: "acme/app#7", url: null, state: 0 }),
+      lookup: linkAnswer,
+      linked: async (notice) => { announced.push(notice); },
+    },
+  }]);
 }
 
 async function seed(site: PhiTestSite, type: { flags: number; closePolicy: number }) {
@@ -103,6 +144,7 @@ describe("support forwarding", () => {
 
   afterEach(() => {
     forwarded = [];
+    announced = [];
     setSupportForwardingTargetSourceForTests(null);
   });
 
@@ -159,6 +201,47 @@ describe("support forwarding", () => {
 
     await expect(forwardSupportTicket({ site, ticketId: ticket.id, target: "nowhere#acme/app", title: null, actorUserId: supporter }))
       .rejects.toBeInstanceOf(SupportForwardError);
+  });
+
+  it("links an issue that already exists, by whichever implementation knows the reference", async () => {
+    await requirePhiTestDatabase();
+    const site = await createPhiTestSite("forward-link");
+    useLinkers();
+    const { ticket, supporter } = await openTicket(site, { flags: 0, closePolicy: PhisSupportClosePolicy.Confirm });
+
+    const detail = await linkSupportTicket({ site, ticketId: ticket.id, reference: "acme/app#7", actorUserId: supporter });
+
+    // Asked in turn: the first did not know it, the second did and was told once the link stood.
+    expect(announced).toMatchObject([{ record: { externalId: "acme/app#7" }, ticket: { id: ticket.id } }]);
+    expect(detail?.ticket.status).toBe(PhisSupportTicketStatus.WaitingInternal);
+    expect(detail?.tasks).toMatchObject([{ title: "Exports time out" }]);
+    expect(detail?.links).toMatchObject([{
+      taskId: detail!.tasks[0]!.id,
+      providerId: PROVIDER_ID,
+      externalId: "acme/app#7",
+      url: "https://example.test/7",
+      flags: PhisResourceLinkFlag.Synced,
+    }]);
+
+    // Once linked, it is linked: a second ticket cannot claim the same issue.
+    const other = await createSupportTicket({
+      siteId: site.id,
+      typeId: detail!.ticket.typeId,
+      channel: 0,
+      subject: "Same here",
+      message: "Mine too.",
+      requesterUserId: supporter,
+      createdByUserId: supporter,
+    });
+    await expect(linkSupportTicket({ site, ticketId: other!.ticket.id, reference: "acme/app#7", actorUserId: supporter }))
+      .rejects.toMatchObject({ code: "refused", message: expect.stringMatching(/already linked/u) });
+    await expect(linkSupportTicket({ site, ticketId: other!.ticket.id, reference: "acme/app#8", actorUserId: supporter }))
+      .rejects.toMatchObject({ code: "refused", message: "That issue is closed." });
+    await expect(linkSupportTicket({ site, ticketId: other!.ticket.id, reference: "nobody/knows#1", actorUserId: supporter }))
+      .rejects.toMatchObject({ code: "unknown-reference" });
+    // Refused and unknown leave the second ticket as it was, and nothing more was said on the record.
+    expect((await getSupportTicketDetail(site.id, other!.ticket.id))?.tasks).toHaveLength(0);
+    expect(announced).toHaveLength(1);
   });
 
   it("opens with the requester's words only where they leave and the requester agreed", async () => {

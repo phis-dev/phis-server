@@ -654,8 +654,16 @@ service kind, so where the work went is not GitHub's to show: the ticket route a
 provider's `type`, `state` or `meta`) and with `outbound`, what of the conversation those systems receive.
 The Support Page lists them under the conversation as a Table, one row per external record with its task's
 state and a link to it, following the open ticket on the same binding param as the history; its footer
-says what leaves. A second integration appears there without a Module of its own. Linking an existing
-record instead of creating one is not built.
+says what leaves. A second integration appears there without a Module of its own.
+
+**Built: linking a record that already exists.** *Link issue* on the ticket row takes what the Supporter
+pastes -- a URL, `owner/name#12` -- and `POST /api/site/support/link` asks each implementation in turn
+(`lookup`) until one knows it; it answers `unknown`, `refused` with a reason the Supporter reads, or the
+record and its title. Core then writes the task and the synced link exactly as for a forward, and only once
+that stands tells the record (`linked`), so a refused link leaves nothing said there. GitHub accepts an open
+issue in a repository the installation reaches and comments where it is linked from. A record is linked to
+one ticket: the uniqueness of `resource_links` refuses a second, which is what a duplicate report would need
+-- one issue for many tickets is a change to `resource-links:v1`, `threads:v1` and the schema, not built.
 
 ### Closing
 

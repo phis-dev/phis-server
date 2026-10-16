@@ -5,6 +5,7 @@ import {
   type PhisSupportForwardingAdapterV1,
   type PhisSupportForwardingServiceContext,
   type PhisSupportForwardResult,
+  type PhisSupportLinkResult,
 } from "@phis/contracts/support";
 
 import {
@@ -23,10 +24,14 @@ import { logRuntimeEvent, normalizeLogThrowable } from "@/lib/log";
  */
 
 const PROBE_TIMEOUT_MS = 5_000;
+const LINK_TIMEOUT_MS = 20_000;
 const FORWARD_TIMEOUT_MS = 20_000;
 
 export class SupportForwardError extends Error {
-  constructor(readonly code: "unknown-target" | "unusable" | "failed" | "not-found" | "finished", message: string) {
+  constructor(
+    readonly code: "unknown-target" | "unknown-reference" | "refused" | "unusable" | "failed" | "not-found" | "finished",
+    message: string,
+  ) {
     super(message);
   }
 }
@@ -76,7 +81,12 @@ const installedTargets: SupportForwardingTargetSource = async (site) => {
         }),
       };
       const adapter = resolved.factory(null, context) as PhisSupportForwardingAdapterV1;
-      if (typeof adapter?.forward !== "function" || typeof adapter?.probe !== "function") {
+      if (
+        typeof adapter?.forward !== "function"
+        || typeof adapter?.probe !== "function"
+        || typeof adapter?.lookup !== "function"
+        || typeof adapter?.linked !== "function"
+      ) {
         throw new Error(`${resolved.addonId} built something that is not a forwarding adapter.`);
       }
       targets.push({ providerKey: provider.providerKey, providerId: resolved.addonId, adapter });
@@ -230,25 +240,135 @@ export async function forwardSupportTicket(input: {
     throw new SupportForwardError("failed", `${place.label} answered without saying where the work went.`);
   }
 
+  return recordHandOver({
+    site: input.site,
+    ticketId: input.ticketId,
+    providerId: target.providerId,
+    title,
+    link: result,
+    byUserId: input.actorUserId,
+    meta: { target: input.target },
+  });
+}
+
+/**
+ * Writes down work that now lives elsewhere: an engineering task of the ticket, linked to the record.
+ *
+ * Called once the other system has answered, by forwarding and by linking alike, so a hand-over that did
+ * not happen leaves nothing behind. Where the write fails after the record exists, the record is logged
+ * with its address so it can be linked or closed by hand -- no ticket claims work that does not exist.
+ */
+async function recordHandOver(input: {
+  site: { id: number; key: string };
+  ticketId: number;
+  providerId: string;
+  title: string;
+  link: NonNullable<ReturnType<typeof readForwardResult>>;
+  byUserId: number;
+  meta: Record<string, unknown>;
+}) {
   try {
     return await recordSupportTicketForward({
       siteId: input.site.id,
       ticketId: input.ticketId,
-      providerId: target.providerId,
-      title,
-      link: result,
-      byUserId: input.actorUserId,
+      providerId: input.providerId,
+      title: input.title,
+      link: input.link,
+      byUserId: input.byUserId,
     });
   } catch (error) {
     logRuntimeEvent("error", "support.forward.unrecorded", {
       message: "Work was handed to another system and could not be recorded on the ticket.",
       siteKey: input.site.key,
       error: normalizeLogThrowable(error),
-      meta: { target: input.target, ticketId: input.ticketId, externalId: result.externalId, url: result.url },
+      meta: { ...input.meta, ticketId: input.ticketId, externalId: input.link.externalId, url: input.link.url },
     });
+    // What the write refuses -- the record is linked to something already -- is said as it is.
     if (error instanceof SupportAdministrationError) {
-      throw new SupportForwardError("failed", error.message);
+      throw new SupportForwardError("refused", error.message);
     }
     throw error;
   }
+}
+
+/**
+ * Links a record that already exists elsewhere to the ticket, as if the ticket had forwarded it there.
+ *
+ * Every implementation is asked in turn, and the first that recognises the reference answers for it: a
+ * Supporter pastes what they have, a URL or `owner/name#12`, and does not say whose it is. A record that is
+ * already linked to anything on this Site is refused by the write, as a forward to it would be.
+ */
+export async function linkSupportTicket(input: {
+  site: { id: number; key: string };
+  ticketId: number;
+  reference: string;
+  actorUserId: number;
+}) {
+  const ticket = await readSupportTicketForForward(input.site.id, input.ticketId);
+  if (!ticket) {
+    throw new SupportForwardError("not-found", "This Site has no such ticket.");
+  }
+  if (ticket.status === PhisSupportTicketStatus.Closed) {
+    throw new SupportForwardError("finished", "A closed ticket has no work left to link.");
+  }
+
+  for (const implementation of await targetSource(input.site)) {
+    let answer: PhisSupportLinkResult;
+    try {
+      answer = await implementation.adapter.lookup({
+        reference: input.reference,
+        signal: AbortSignal.timeout(LINK_TIMEOUT_MS),
+      });
+    } catch (error) {
+      // One implementation failing is not an answer about the reference; the next may know it.
+      logRuntimeEvent("warn", "support.link.failed", {
+        message: "A support forwarding add-on could not look up a reference.",
+        siteKey: input.site.key,
+        error: normalizeLogThrowable(error),
+        meta: { providerKey: implementation.providerKey, ticketId: input.ticketId },
+      });
+      continue;
+    }
+    if (answer?.status === "refused") {
+      throw new SupportForwardError(
+        "refused",
+        typeof answer.reason === "string" && answer.reason ? answer.reason : "That record cannot take work.",
+      );
+    }
+    if (answer?.status !== "linkable") continue;
+
+    const record = readForwardResult(answer.record);
+    if (!record) {
+      throw new SupportForwardError("failed", "The record was found, but without saying what it is.");
+    }
+    const title = (typeof answer.title === "string" ? answer.title.trim() : "").slice(0, 200) || ticket.subject;
+    const detail = await recordHandOver({
+      site: input.site,
+      ticketId: input.ticketId,
+      providerId: implementation.providerId,
+      title,
+      link: record,
+      byUserId: input.actorUserId,
+      meta: { providerKey: implementation.providerKey, reference: input.reference },
+    });
+    // Only now is the record told, so a link the write refused leaves nothing said there. The link stands
+    // whether or not the record hears of it.
+    try {
+      await implementation.adapter.linked({
+        record,
+        ticket: { id: ticket.id, threadId: ticket.threadId, subject: ticket.subject, typeKey: ticket.typeKey },
+        actor: { userId: input.actorUserId, displayName: null },
+        signal: AbortSignal.timeout(LINK_TIMEOUT_MS),
+      });
+    } catch (error) {
+      logRuntimeEvent("warn", "support.link.unannounced", {
+        message: "Work was linked to a ticket, and the record could not be told where from.",
+        siteKey: input.site.key,
+        error: normalizeLogThrowable(error),
+        meta: { providerKey: implementation.providerKey, ticketId: input.ticketId, externalId: record.externalId },
+      });
+    }
+    return detail;
+  }
+  throw new SupportForwardError("unknown-reference", "Nothing this Site is connected to knows that reference.");
 }
