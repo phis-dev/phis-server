@@ -48,6 +48,8 @@ export async function GET(request: NextRequest) {
     total: result.total,
     page: result.page,
     pageSize: result.pageSize,
+    // The Site's tickets by state, beside the filtered slice: what an inbox's footer says.
+    counts: result.counts,
   });
 }
 

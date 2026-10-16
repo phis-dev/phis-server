@@ -391,6 +391,9 @@ describe("threads", () => {
 
     const customerUnread = await listThreadsForUser(site.id, customer, { unreadOnly: true });
     expect(customerUnread.rows.map((row) => row.id)).not.toContain(threadId);
+    // The unread count says the same, over everything the listing matches.
+    expect(customerUnread.unread).toBe(customerUnread.rows.length);
+    expect((await listThreadsForUser(site.id, customer)).unread).toBe(customerUnread.rows.length);
     const after = (await listThreadsForUser(site.id, customer)).rows.find((row) => row.id === threadId);
     expect(after?.latestMessageAt).toEqual(before?.latestMessageAt);
     const staffUnread = await listThreadsForUser(site.id, supporter, { unreadOnly: true });

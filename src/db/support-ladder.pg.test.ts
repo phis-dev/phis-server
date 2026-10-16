@@ -1,4 +1,5 @@
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
+import { PhiBaseRole } from "@phis/contracts/access";
 
 import {
   PhisSupportQueueFlag,
@@ -114,6 +115,8 @@ describe("support ticket ladder", () => {
     expect(ticket.status).toBe(PhisSupportTicketStatus.New);
     const open = await listSupportTicketsForSite(site.id, { status: "open" });
     expect(open.rows.map((row) => row.id)).toContain(ticket.id);
+    // The Site's tickets by state, whatever the listing is filtered to.
+    expect(open.counts).toEqual({ open: 1, resolved: 0, closed: 0 });
 
     await applySupportTicketAssignmentAction({
       siteId: site.id, ticketId: ticket.id, action: "assign_to_me", userId: supporter,
@@ -151,6 +154,27 @@ describe("support ticket ladder", () => {
       siteId: site.id, ticketId: ticket.id, action: "unassign", userId: supporter,
     });
     expect((await readTicket(site.id, ticket.id)).status).toBe(PhisSupportTicketStatus.InProgress);
+  });
+
+  it("lets an Admin take a ticket of a queue they are not in, and nobody else", async () => {
+    const pool = await requirePhiTestDatabase();
+    const site = await createPhiTestSite("ladder-admin-takes");
+    const { ticket } = await openTicket(site);
+    const outsider = await createPhiTestUser(site);
+    await expect(applySupportTicketAssignmentAction({
+      siteId: site.id, ticketId: ticket.id, action: "assign_to_me", userId: outsider,
+    })).rejects.toThrow(/belong to the assigned queue/u);
+
+    const admin = await createPhiTestUser(site);
+    await pool.query(
+      `INSERT INTO phis.user_site_role_claims (site_id, user_id, provider_id, role_flags)
+       VALUES ($1, $2, '@phis/server/core', $3)`,
+      [site.id, admin, PhiBaseRole.Admin],
+    );
+    await applySupportTicketAssignmentAction({
+      siteId: site.id, ticketId: ticket.id, action: "assign_to_me", userId: admin,
+    });
+    expect((await readTicket(site.id, ticket.id)).assigneeUserId).toBe(admin);
   });
 
   it("reopens a resolved ticket when the requester answers", async () => {

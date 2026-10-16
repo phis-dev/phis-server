@@ -276,7 +276,7 @@ function readerParamValue(reader: ThreadReader) {
  * reader that is not a person is not Staff either: an integration mirrors a conversation outwards, and
  * a note written past the customer is the one thing that must not go.
  */
-async function readCoreRoleFlags(db: DbQueryable, siteId: number, userId: number) {
+export async function readCoreRoleFlags(db: DbQueryable, siteId: number, userId: number) {
   const { rows } = await db.query<{ role_flags: number }>(
     `SELECT role_flags
      FROM phis.user_site_role_claims
@@ -696,10 +696,14 @@ export async function listThreadsForUser(
        AND ${pointer} > COALESCE(reads.last_read_message_id, 0)`
     : "";
 
-  const { rows } = await pool.query<ThreadRow>(
+  // Unread among everything the listing matches, not only the page shown: what its footer says.
+  const { rows } = await pool.query<ThreadRow & { unread_count: number | string }>(
     `SELECT ${threadColumns(isStaff)},
             reads.last_read_message_id,
-            COUNT(*) OVER () AS total_count
+            COUNT(*) OVER () AS total_count,
+            COUNT(*) FILTER (
+              WHERE ${pointer} IS NOT NULL AND ${pointer} > COALESCE(reads.last_read_message_id, 0)
+            ) OVER () AS unread_count
      FROM phis.threads t
      LEFT JOIN phis.thread_messages latest
        ON latest.id = ${pointer}
@@ -716,6 +720,7 @@ export async function listThreadsForUser(
   return {
     rows: rows.map(projectThread),
     total: Number(rows[0]?.total_count ?? 0),
+    unread: Number(rows[0]?.unread_count ?? 0),
     page,
     pageSize,
   };

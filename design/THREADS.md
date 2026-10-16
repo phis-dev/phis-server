@@ -744,32 +744,26 @@ A Supporter reading a customer's reply and a colleague reading a direct message 
 widget, with the same attachment rules and the same composer beneath it. Only the way they arrived
 differs -- and arriving is exactly the part that should differ.
 
-- **`@phis/ui/threads`** -- thin, first-party, like `@phis/ui/groups`: inbox, conversation, composer, the
-  candidates picker. Declares `Direct`. The composer is where an attachment is offered, so it is the one
-  surface both other Modules reuse for it rather than each growing its own. **The Module, its composer
-  and its conversation exist**; the inbox and the candidates picker do not. It also declares the User
-  Space, because a composer offering a file on a Site with no User Spaces would be offering something
-  the control plane is about to refuse.
-
-  The composer is not a widget: it is the `threads/message` Form, placed through the one generic Form
-  Widget, with a hidden conversation field, a message and the shared upload field. What it is told and what
-  it says are unchanged, only the shape is -- a Form cannot listen on the `thread` channel, so the Module's
-  Controller sends the open conversation into that hidden field and the route names which field it is.
-
-  The conversation widget and the composer know nothing of each other and are joined on the `thread`
-  channel by that Controller. The conversation **announces** the one it has open -- after it is open, never
-  before, so nothing is pointed at a thread that turned out to be absent or out of reach. A conversation it
-  was *told* about it does not re-announce: whoever broadcast a selection told every listener at once, and
-  an echo on a channel you also listen to is a loop. A written message produces `reload` rather than a
-  second `change`, because the conversation has not changed, only its contents: `change` would put every
-  listener through switching threads, which means clearing a reply somebody is halfway through. Until an inbox exists, `?thread=` on the address is what selects one -- which is also what a
-  link in a notification needs, so it is not scaffolding that gets thrown away.
+- **Core** -- the conversation and its reply, for every Module that runs conversations: the
+  `thread-conversation` Widget (a card with the subject as its heading, the messages ruled apart, earlier
+  ones on demand, translation, the internal and withheld markers), its Reply action, Core's Reply Form
+  (`PHI_SHARED_FORM_IDS.threadReply`) for a dialog, and the thread inbox Provider
+  (`PHI_THREAD_LIBRARY_DATA_PROVIDER_KEYS.table`) that a Module pins to its kind with `fixedFilters`. The
+  Reply names the thread as its row and the Form reads it from there, so nothing carries a conversation into
+  a hidden field. They were the conversations Module's; they moved to Core because Support and any add-on
+  need them, and a Module cannot depend on another Module that a Site may switch off
+  (THIRD_PARTY_MODULES.md, "Messaging").
+- **`@phis/ui/threads`** -- thin, first-party, like `@phis/ui/groups`: the conversations Page, the candidates
+  picker and the Form that opens a conversation. Declares `Direct`. Its Page places Core's conversation, its
+  Reply dialog and the thread inbox, and its Controller turns the inbox's selection into the open thread. It
+  also declares the User Space, because a reply offering a file on a Site with no User Spaces would be
+  offering something the control plane is about to refuse.
 - **`@phis/support`** -- declares `Support` and the User Space its requesters submit into
-  ([SUPPORT.md](./SUPPORT.md)); seeds its group; ticket and queue surfaces; a customer widget listing
-  only the viewer's own Support threads. Reuses the thread widgets by Layout composition: its ticket
-  panel -- status, queue, assignee, tasks, the two clocks, what is left of the requester's allowance --
-  sits beside the conversation and learns which ticket from the same runtime signal that fills the
-  composer's conversation field. One mechanism for all three Modules, and no extension point inside anybody's widget.
+  ([SUPPORT.md](./SUPPORT.md)); seeds its group; ticket and queue surfaces. Both halves of its Page place
+  Core's conversation and Reply -- the Supporter's with the internal note offered -- and beside the
+  conversation the one Widget Support draws itself: the ticket's heading (status, queue, owner), told by
+  the same Controller that tells the conversation which thread is open. No extension point inside anybody's
+  widget.
 - **groups Module** -- group spaces; declares `Group` and, by setting, `CrossGroup`; administers the
   group flags for Core groups.
 - ~~**`@phis/github` Module half** -- a link panel widget beside a ticket's conversation.~~ Built

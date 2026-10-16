@@ -19,7 +19,8 @@ import { PhisThreadKind, PhisThreadParticipantFlag } from "@phis/contracts/threa
 import { PhisResourceLinkFlag } from "@phis/contracts/addon";
 
 import { getPool, withTransaction } from "@/lib/db";
-import { createThreadWithDb } from "@/db/threads";
+import { PhiBaseRole } from "@phis/contracts/access";
+import { createThreadWithDb, readCoreRoleFlags } from "@/db/threads";
 import { PHIS_THREAD_PARTICIPANT_KIND_GROUP } from "@/lib/constants/threads";
 import { consumeSupportAllowanceWithDb, readSupportAllowance } from "@/db/support-allowance";
 import { toPhiRecord } from "@/lib/helpers/record";
@@ -650,7 +651,30 @@ export async function listSupportTicketsForSite(siteId: number, options: ListSup
     total: rows[0]?.total_count ?? 0,
     page,
     pageSize,
+    counts: await countSupportTicketsByState(siteId),
   };
+}
+
+/**
+ * How many of the Site's tickets are open, resolved and closed, whatever the listing is filtered to.
+ *
+ * What an inbox's footer says: how much work there is, beside the slice it shows. Read with the settled
+ * status, so a ticket whose requester window ran out counts as closed, as every read of it answers.
+ */
+async function countSupportTicketsByState(siteId: number) {
+  const status = settledSupportTicketStatusSql("t");
+  const { rows } = await getPool().query<{ open: number; resolved: number; closed: number }>(
+    `SELECT
+       COUNT(*) FILTER (
+         WHERE ${status} NOT IN (${PhisSupportTicketStatus.Resolved}, ${PhisSupportTicketStatus.Closed})
+       )::int AS open,
+       COUNT(*) FILTER (WHERE ${status} = ${PhisSupportTicketStatus.Resolved})::int AS resolved,
+       COUNT(*) FILTER (WHERE ${status} = ${PhisSupportTicketStatus.Closed})::int AS closed
+     FROM phis.support_tickets t
+     WHERE t.site_id = $1`,
+    [siteId],
+  );
+  return rows[0] ?? { open: 0, resolved: 0, closed: 0 };
 }
 
 export type SupportQueueRecord = {
@@ -752,7 +776,14 @@ export async function applySupportTicketAssignmentAction(input: SupportTicketAss
     }
 
     if (input.action === "assign_to_me") {
-      if (existing.queue_id) {
+      /*
+       * Taking a ticket asks for a seat in its queue -- except of an Admin or a Developer, who reach every
+       * queue as they reach every Staff member in a conversation (`threads.ts`, "reachesAllStaff"). They
+       * are the people who step in where a queue's own members are not there.
+       */
+      const roleFlags = await readCoreRoleFlags(client, input.siteId, input.userId);
+      const reachesEveryQueue = (roleFlags & (PhiBaseRole.Admin | PhiBaseRole.Developer)) !== 0;
+      if (existing.queue_id && !reachesEveryQueue) {
         const member = await isSupportQueueMember(input.siteId, existing.queue_id, input.userId);
         if (!member) {
           throw new Error("You must belong to the assigned queue before claiming this ticket.");
