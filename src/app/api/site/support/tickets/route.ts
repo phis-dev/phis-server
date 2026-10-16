@@ -34,7 +34,8 @@ export async function GET(request: NextRequest) {
   const { page, pageSize } = parsePhiPagination(searchParams);
   const result = await listSupportTicketsForSite(site.id, {
     search: searchParams.get("search")?.trim() ?? searchParams.get("q")?.trim() ?? "",
-    status: normalizeNullableInteger(searchParams.get("status")),
+    // `open` is every ticket still to be worked on; a number is one status.
+    status: searchParams.get("status") === "open" ? "open" : normalizeNullableInteger(searchParams.get("status")),
     channel: normalizeNullableInteger(searchParams.get("channel")),
     assigneeUserId: normalizeNullableInteger(searchParams.get("assigneeUserId")),
     queueId: normalizeNullableInteger(searchParams.get("queueId")),

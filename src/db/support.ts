@@ -253,7 +253,8 @@ export type SupportTicketDetailRecord = {
 
 export type ListSupportTicketsOptions = {
   search?: string;
-  status?: number | null;
+  /** One status, or `open` for every ticket not yet resolved or closed -- what an inbox starts on. */
+  status?: number | "open" | null;
   channel?: number | null;
   assigneeUserId?: number | null;
   queueId?: number | null;
@@ -591,7 +592,11 @@ export async function listSupportTicketsForSite(siteId: number, options: ListSup
     );
   }
 
-  if (Number.isInteger(options.status)) {
+  if (options.status === "open") {
+    conditions.push(
+      `${settledSupportTicketStatusSql("t")} NOT IN (${PhisSupportTicketStatus.Resolved}, ${PhisSupportTicketStatus.Closed})`,
+    );
+  } else if (Number.isInteger(options.status)) {
     params.push(options.status);
     conditions.push(`${settledSupportTicketStatusSql("t")} = $${params.length}`);
   }

@@ -112,6 +112,8 @@ describe("support ticket ladder", () => {
     const site = await createPhiTestSite("ladder-handover");
     const { ticket, supporter } = await openTicket(site);
     expect(ticket.status).toBe(PhisSupportTicketStatus.New);
+    const open = await listSupportTicketsForSite(site.id, { status: "open" });
+    expect(open.rows.map((row) => row.id)).toContain(ticket.id);
 
     await applySupportTicketAssignmentAction({
       siteId: site.id, ticketId: ticket.id, action: "assign_to_me", userId: supporter,
@@ -203,6 +205,10 @@ describe("support ticket ladder", () => {
       siteId: site.id, ticketId: ticket.id, status: PhisSupportTicketStatus.Resolved, updatedByUserId: supporter,
     });
     await ageResolution(ticket.id, 15);
+
+    // Resolved, it has left the open tickets an inbox starts on.
+    const resolvedOpen = await listSupportTicketsForSite(site.id, { status: "open" });
+    expect(resolvedOpen.rows.map((row) => row.id)).not.toContain(ticket.id);
 
     // Nothing has written anything; every read already answers closed, closed when the window ended.
     const read = await readTicket(site.id, ticket.id);
