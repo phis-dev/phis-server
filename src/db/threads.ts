@@ -949,14 +949,20 @@ function normalizeMessageSourceLang(value: string | null | undefined) {
  * `Internal` is Staff's to set, because it is what a note past a customer is made of; `Imported` and
  * `Edited` are Core's own record of where a message came from. What is left -- `Confidential` -- anybody
  * may set, including the customer who just pasted a password into a Support thread.
+ *
+ * An Add-on importing a message may set `Internal` too (`@phis/contracts/threads`, `create`): it narrows
+ * who reads what the Add-on brought in, and so cannot put anything in front of somebody who could not
+ * read it before.
  */
 function normalizeMessageFlags(requested: number | undefined, input: {
   isStaff: boolean;
   imported: boolean;
+  reader: ThreadReader;
 }) {
   const asked = Number.isSafeInteger(requested) ? (requested as number) : 0;
   let flags = asked & PhisThreadMessageFlag.Confidential;
-  if (input.isStaff && (asked & PhisThreadMessageFlag.Internal) !== 0) {
+  const mayMarkInternal = input.isStaff || (input.imported && input.reader.kind === "provider");
+  if (mayMarkInternal && (asked & PhisThreadMessageFlag.Internal) !== 0) {
     flags |= PhisThreadMessageFlag.Internal;
   }
   if (input.imported) {
@@ -1248,6 +1254,7 @@ export async function createThreadWithDb(
       flags: normalizeMessageFlags(input.messageFlags, {
         isStaff,
         imported: Boolean(input.externalRef),
+        reader: openerId != null ? { kind: "user", userId: openerId } : { kind: "system" },
       }),
       meta: authorMeta(input.messageMeta, input.externalAuthor),
       externalRef: input.externalRef ?? null,
@@ -1336,6 +1343,7 @@ export async function addThreadMessage(input: AddThreadMessageInput): Promise<Ph
     const flags = normalizeMessageFlags(input.messageFlags, {
       isStaff,
       imported: Boolean(input.externalRef),
+      reader: input.reader,
     });
     const messageId = await insertMessage(client, {
       siteId: input.siteId,

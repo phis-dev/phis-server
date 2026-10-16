@@ -663,4 +663,34 @@ describe("threads", () => {
     const asPerson = await getThreadDetail(site.id, { kind: "user", userId: recipient }, opened.thread.id);
     expect(asPerson?.messages[0]?.bodyText).toBe("The password is hunter2.");
   });
+
+  it("lets an actorless Add-on keep what it imports from the requester, and nothing else", async () => {
+    await requirePhiTestDatabase();
+    const site = await createPhiTestSite("threads-imported-internal");
+    await offerAllThreadKinds(site);
+    const supporter = await createPhiTestUser(site);
+    const customer = await createPhiTestUser(site);
+    await grantCoreRole(site, supporter, PhiBaseRole.Supporter);
+    const threadId = await openSupportThread(site, { requester: customer, supporter });
+    await linkAddonToThread(site, threadId, supporter);
+    const asJob = buildPhisAddonThreadsCapability({ addonId: ADDON_ID, siteId: site.id, actorUserId: null });
+
+    // What it brings in from outside may be an internal note: Staff read it, the requester does not.
+    await asJob.reply({
+      threadId,
+      message: "Root cause is yesterday's migration.",
+      messageFlags: PhisThreadMessageFlag.Internal,
+      externalRef: "comment-1",
+      externalAuthor: { name: "octocat" },
+    });
+    const asStaff = await getThreadDetail(site.id, { kind: "user", userId: supporter }, threadId);
+    const asCustomer = await getThreadDetail(site.id, { kind: "user", userId: customer }, threadId);
+    expect(asStaff?.messages).toHaveLength(2);
+    expect(asCustomer?.messages).toHaveLength(1);
+
+    // Its own word, written without a reference, is not an import: the flag is dropped, not honoured.
+    await asJob.reply({ threadId, message: "Status update.", messageFlags: PhisThreadMessageFlag.Internal });
+    const afterOwn = await getThreadDetail(site.id, { kind: "user", userId: customer }, threadId);
+    expect(afterOwn?.messages).toHaveLength(2);
+  });
 });
