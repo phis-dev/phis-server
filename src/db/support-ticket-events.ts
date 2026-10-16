@@ -43,7 +43,13 @@ const SUPPORT_TICKET_EVENT_KINDS = {
   [SUPPORT_TICKET_EVENT_TASK_REOPENED]: "task_reopened",
 } as const;
 
-export type SupportTicketEventKind = (typeof SUPPORT_TICKET_EVENT_KINDS)[keyof typeof SUPPORT_TICKET_EVENT_KINDS];
+/*
+ * `forwarded` is a `linked` event whose record was opened for the ticket (`payload.origin`), as against
+ * one that was already there: the same fact for the ticket, a different thing the Supporter did.
+ */
+export type SupportTicketEventKind =
+  | (typeof SUPPORT_TICKET_EVENT_KINDS)[keyof typeof SUPPORT_TICKET_EVENT_KINDS]
+  | "forwarded";
 
 export type SupportTicketEventPerson = {
   userId: number;
@@ -118,11 +124,12 @@ function readText(value: unknown) {
 }
 
 function mapEvent(row: SupportTicketEventRow): SupportTicketEventRecord | null {
-  const kind = SUPPORT_TICKET_EVENT_KINDS[row.event_type as keyof typeof SUPPORT_TICKET_EVENT_KINDS];
-  if (!kind) {
+  const stored = SUPPORT_TICKET_EVENT_KINDS[row.event_type as keyof typeof SUPPORT_TICKET_EVENT_KINDS];
+  if (!stored) {
     return null;
   }
   const payload = row.payload ?? {};
+  const kind: SupportTicketEventKind = stored === "linked" && payload.origin === "forward" ? "forwarded" : stored;
   const hasAssignees = "fromUserId" in payload || "toUserId" in payload || "assigneeUserId" in payload;
   /*
    * A queue moved, or the queue a ticket opened in. An assignment states the queue it happened in as

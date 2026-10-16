@@ -3,7 +3,12 @@ import { NextRequest, NextResponse } from "next/server";
 import { addThreadMessage, PhisThreadError } from "@/db/threads";
 import { requireSiteAuthenticatedApiContext } from "@/lib/guards/site-admin-api";
 import { logRuntimeEvent } from "@/lib/log";
-import { normalizePositiveIdArray, normalizeString, readRequestBody } from "@/lib/helpers/request";
+import {
+  normalizeNullableInteger,
+  normalizePositiveIdArray,
+  normalizeString,
+  readRequestBody,
+} from "@/lib/helpers/request";
 
 /**
  * Writing one message into one conversation, for the two addresses that offer it.
@@ -50,8 +55,9 @@ export async function writePhisSiteThreadMessage(
       reader: { kind: "user", userId },
       message,
       messageMarkdown: normalizeString(body.messageMarkdown) || null,
-      // Normalized against who is writing: `Internal` needs Staff, and the flags Core owns are ignored.
-      messageFlags: typeof body.messageFlags === "number" ? body.messageFlags : 0,
+      // Normalized against who is writing: `Internal` needs Staff, and the flags Core owns are ignored. A
+      // number from a REST caller, a string from a Form's choice: the same flags either way.
+      messageFlags: normalizeNullableInteger(body.messageFlags) ?? 0,
       // Dropped rather than refused where an entry is no id: one that does not exist is caught where
       // every other one is -- in the write itself.
       assetIds: normalizePositiveIdArray(body.assetIds),

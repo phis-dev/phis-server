@@ -2174,6 +2174,8 @@ export async function recordSupportTicketForward(input: {
   title: string;
   link: { type: number; externalId: string; url: string | null; state: number | null };
   byUserId: number;
+  /** How the record came to be the ticket's work: opened for it, or already there and linked. */
+  origin: "forward" | "link";
 }) {
   await withTransaction(async (client) => {
     const ticket = await getSupportTicketRowById(client, input.siteId, input.ticketId, { forUpdate: true });
@@ -2234,7 +2236,13 @@ export async function recordSupportTicketForward(input: {
       ticketId: input.ticketId,
       eventType: SUPPORT_TICKET_EVENT_LINKED,
       createdByUserId: input.byUserId,
-      payload: { taskId, providerId: input.providerId, externalId: input.link.externalId, url: input.link.url },
+      payload: {
+        taskId,
+        providerId: input.providerId,
+        externalId: input.link.externalId,
+        url: input.link.url,
+        origin: input.origin,
+      },
     });
     const waits = ticket.status !== PhisSupportTicketStatus.Resolved && ticket.status !== PhisSupportTicketStatus.Closed;
     if (waits) {

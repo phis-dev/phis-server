@@ -247,6 +247,7 @@ export async function forwardSupportTicket(input: {
     title,
     link: result,
     byUserId: input.actorUserId,
+    origin: "forward",
     meta: { target: input.target },
   });
 }
@@ -265,6 +266,7 @@ async function recordHandOver(input: {
   title: string;
   link: NonNullable<ReturnType<typeof readForwardResult>>;
   byUserId: number;
+  origin: "forward" | "link";
   meta: Record<string, unknown>;
 }) {
   try {
@@ -275,6 +277,7 @@ async function recordHandOver(input: {
       title: input.title,
       link: input.link,
       byUserId: input.byUserId,
+      origin: input.origin,
     });
   } catch (error) {
     logRuntimeEvent("error", "support.forward.unrecorded", {
@@ -350,6 +353,7 @@ export async function linkSupportTicket(input: {
       title,
       link: record,
       byUserId: input.actorUserId,
+      origin: "link",
       meta: { providerKey: implementation.providerKey, reference: input.reference },
     });
     // Only now is the record told, so a link the write refused leaves nothing said there. The link stands
