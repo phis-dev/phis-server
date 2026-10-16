@@ -7,6 +7,7 @@ import {
   SUPPORT_TICKET_PRIORITY_NORMAL,
 } from "@/db/support";
 import { requireSiteSupportApiContext } from "@/lib/guards/site-admin-api";
+import { readSupportTicketReach } from "@/lib/support-reach";
 import { logRuntimeEvent } from "@/lib/log";
 import {
   normalizeNullableInteger,
@@ -41,6 +42,8 @@ export async function GET(request: NextRequest) {
     queueId: normalizeNullableInteger(searchParams.get("queueId")),
     page,
     pageSize,
+    // The tickets of the reader's queues, or every one for an Admin or a Developer.
+    reach: readSupportTicketReach(context),
   });
 
   return NextResponse.json({

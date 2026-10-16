@@ -18,6 +18,7 @@ import {
   type PhiTestSite,
 } from "../../test/pg/harness";
 import { PHI_MAINTENANCE_TASKS } from "../cli/maintain.mts";
+import { supportTicketWithinReach } from "../lib/support-reach";
 import {
   applySupportTicketAssignmentAction,
   createSupportTicket,
@@ -175,6 +176,27 @@ describe("support ticket ladder", () => {
       siteId: site.id, ticketId: ticket.id, action: "assign_to_me", userId: admin,
     });
     expect((await readTicket(site.id, ticket.id)).assigneeUserId).toBe(admin);
+  });
+
+  it("lists a Supporter the tickets of their queues, and an Admin every one", async () => {
+    await requirePhiTestDatabase();
+    const site = await createPhiTestSite("ladder-reach");
+    const { ticket, supporter } = await openTicket(site);
+    const outsider = await createPhiTestUser(site);
+
+    const asMember = await listSupportTicketsForSite(site.id, { reach: { all: false, userId: supporter } });
+    expect(asMember.rows.map((row) => row.id)).toContain(ticket.id);
+    expect(asMember.counts.open).toBe(1);
+
+    const asOutsider = await listSupportTicketsForSite(site.id, { reach: { all: false, userId: outsider } });
+    expect(asOutsider.rows.map((row) => row.id)).not.toContain(ticket.id);
+    expect(asOutsider.counts).toEqual({ open: 0, resolved: 0, closed: 0 });
+    expect(await supportTicketWithinReach(site.id, ticket.id, { all: false, userId: outsider })).toBe(false);
+    expect(await supportTicketWithinReach(site.id, ticket.id, { all: false, userId: supporter })).toBe(true);
+
+    const asAdmin = await listSupportTicketsForSite(site.id, { reach: { all: true } });
+    expect(asAdmin.rows.map((row) => row.id)).toContain(ticket.id);
+    expect(await supportTicketWithinReach(site.id, ticket.id, { all: true })).toBe(true);
   });
 
   it("reopens a resolved ticket when the requester answers", async () => {

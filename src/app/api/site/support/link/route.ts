@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireSiteSupportApiContext } from "@/lib/guards/site-admin-api";
 import { normalizeString, readRequestBody } from "@/lib/helpers/request";
 import { linkSupportTicket, SupportForwardError } from "@/lib/support-forwarding";
+import { readSupportTicketReach, supportTicketWithinReach } from "@/lib/support-reach";
 
 export const dynamic = "force-dynamic";
 
@@ -30,6 +31,10 @@ export async function POST(request: NextRequest) {
   const reference = normalizeString(body.reference);
   if (!Number.isSafeInteger(ticketId) || ticketId <= 0 || !reference) {
     return NextResponse.json({ error: "A link needs a ticket and a reference." }, { status: 400 });
+  }
+  // A ticket outside the reader's queues answers as one that is not there (`lib/support-reach.ts`).
+  if (!(await supportTicketWithinReach(site.id, ticketId, readSupportTicketReach(context)))) {
+    return NextResponse.json({ error: "Ticket not found." }, { status: 404 });
   }
   if (reference.length > 500) {
     return NextResponse.json({ error: "That reference is too long." }, { status: 400 });

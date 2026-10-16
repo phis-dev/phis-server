@@ -11,6 +11,7 @@ import {
   readRequestBody,
 } from "@/lib/helpers/request";
 import { toPhiRecord } from "@/lib/helpers/record";
+import { readSupportTicketReach, supportTicketWithinReach } from "@/lib/support-reach";
 
 export const dynamic = "force-dynamic";
 
@@ -28,6 +29,10 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
   const ticketId = parseStrictPositiveInt((await params).ticketId);
   if (!ticketId) {
     return NextResponse.json({ error: "Invalid ticket id." }, { status: 400 });
+  }
+  // A ticket outside the reader's queues answers as one that is not there (`lib/support-reach.ts`).
+  if (!(await supportTicketWithinReach(site.id, ticketId, readSupportTicketReach(context)))) {
+    return NextResponse.json({ error: "Ticket not found." }, { status: 404 });
   }
 
   const detail = await getSupportTicketDetail(site.id, ticketId);
@@ -52,6 +57,10 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
   const ticketId = parseStrictPositiveInt((await params).ticketId);
   if (!ticketId) {
     return NextResponse.json({ error: "Invalid ticket id." }, { status: 400 });
+  }
+  // A ticket outside the reader's queues answers as one that is not there (`lib/support-reach.ts`).
+  if (!(await supportTicketWithinReach(site.id, ticketId, readSupportTicketReach(context)))) {
+    return NextResponse.json({ error: "Ticket not found." }, { status: 404 });
   }
 
   const body = await readRequestBody(request);

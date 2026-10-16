@@ -11,6 +11,7 @@ import {
   readRequestBody,
 } from "@/lib/helpers/request";
 import { toPhiRecord } from "@/lib/helpers/record";
+import { readSupportTicketReach, supportTicketWithinReach } from "@/lib/support-reach";
 
 export const dynamic = "force-dynamic";
 
@@ -33,6 +34,10 @@ export async function PATCH(
   const taskId = parseStrictPositiveInt(resolved.taskId);
   if (!ticketId || !taskId) {
     return NextResponse.json({ error: "Invalid task id." }, { status: 400 });
+  }
+  // A ticket outside the reader's queues answers as one that is not there (`lib/support-reach.ts`).
+  if (!(await supportTicketWithinReach(site.id, ticketId, readSupportTicketReach(context)))) {
+    return NextResponse.json({ error: "Ticket not found." }, { status: 404 });
   }
 
   const body = await readRequestBody(request);
@@ -103,6 +108,10 @@ export async function DELETE(
   const taskId = parseStrictPositiveInt(resolved.taskId);
   if (!ticketId || !taskId) {
     return NextResponse.json({ error: "Invalid task id." }, { status: 400 });
+  }
+  // A ticket outside the reader's queues answers as one that is not there (`lib/support-reach.ts`).
+  if (!(await supportTicketWithinReach(site.id, ticketId, readSupportTicketReach(context)))) {
+    return NextResponse.json({ error: "Ticket not found." }, { status: 404 });
   }
 
   const ticket = await deleteSupportTicketTask(site.id, ticketId, taskId, context.session?.userId ?? null);

@@ -21,6 +21,7 @@ import { PhisResourceLinkFlag } from "@phis/contracts/addon";
 import { getPool, withTransaction } from "@/lib/db";
 import { PhiBaseRole } from "@phis/contracts/access";
 import { createThreadWithDb, readCoreRoleFlags } from "@/db/threads";
+import { supportTicketReachSql, type SupportTicketReach } from "@/lib/support-reach";
 import { PHIS_THREAD_PARTICIPANT_KIND_GROUP } from "@/lib/constants/threads";
 import { consumeSupportAllowanceWithDb, readSupportAllowance } from "@/db/support-allowance";
 import { toPhiRecord } from "@/lib/helpers/record";
@@ -256,6 +257,8 @@ export type ListSupportTicketsOptions = {
   search?: string;
   /** One status, or `open` for every ticket not yet resolved or closed -- what an inbox starts on. */
   status?: number | "open" | null;
+  /** Which tickets the reader reaches (`lib/support-reach.ts`); everything where it is not given. */
+  reach?: SupportTicketReach;
   channel?: number | null;
   assigneeUserId?: number | null;
   queueId?: number | null;
@@ -579,6 +582,11 @@ export async function listSupportTicketsForSite(siteId: number, options: ListSup
   const pool = getPool();
   const params: unknown[] = [siteId];
   const conditions: string[] = [`t.site_id = $1`];
+  const reach = options.reach ?? { all: true };
+  if (!reach.all) {
+    params.push(reach.userId);
+    conditions.push(supportTicketReachSql("t", `$${params.length}`, reach)!);
+  }
 
   const search = normalizeSearch(options.search);
   if (search) {
@@ -651,7 +659,7 @@ export async function listSupportTicketsForSite(siteId: number, options: ListSup
     total: rows[0]?.total_count ?? 0,
     page,
     pageSize,
-    counts: await countSupportTicketsByState(siteId),
+    counts: await countSupportTicketsByState(siteId, reach),
   };
 }
 
@@ -661,8 +669,10 @@ export async function listSupportTicketsForSite(siteId: number, options: ListSup
  * What an inbox's footer says: how much work there is, beside the slice it shows. Read with the settled
  * status, so a ticket whose requester window ran out counts as closed, as every read of it answers.
  */
-async function countSupportTicketsByState(siteId: number) {
+async function countSupportTicketsByState(siteId: number, reach: SupportTicketReach) {
   const status = settledSupportTicketStatusSql("t");
+  // What the reader reaches, as the listing beside it: a count of tickets they cannot see says nothing.
+  const condition = supportTicketReachSql("t", "$2", reach);
   const { rows } = await getPool().query<{ open: number; resolved: number; closed: number }>(
     `SELECT
        COUNT(*) FILTER (
@@ -671,8 +681,8 @@ async function countSupportTicketsByState(siteId: number) {
        COUNT(*) FILTER (WHERE ${status} = ${PhisSupportTicketStatus.Resolved})::int AS resolved,
        COUNT(*) FILTER (WHERE ${status} = ${PhisSupportTicketStatus.Closed})::int AS closed
      FROM phis.support_tickets t
-     WHERE t.site_id = $1`,
-    [siteId],
+     WHERE t.site_id = $1${condition ? ` AND ${condition}` : ""}`,
+    reach.all ? [siteId] : [siteId, reach.userId],
   );
   return rows[0] ?? { open: 0, resolved: 0, closed: 0 };
 }
