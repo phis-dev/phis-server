@@ -14,7 +14,6 @@ import {
   requirePhiTestDatabase,
   type PhiTestSite,
 } from "../../test/pg/harness";
-import { PhisResourceLinkError } from "./resource-links";
 import { createThread, getThreadDetail } from "./threads";
 import { buildPhisAddonResourceLinksCapability } from "@/lib/addons/resource-links-capability";
 
@@ -86,20 +85,27 @@ describe("resource links against PostgreSQL", () => {
     await closePhiTestPool();
   });
 
-  it("does not hand one person's link to another who names the same record elsewhere", async () => {
+  it("gives each subject its own link to the same record, and never hands over another's", async () => {
     const annas = await asUser(anna).link({
       subject: { kind: "thread", id: annasThread }, type: LINK_TYPE, externalId: "issue-7",
     });
     expect(annas.subject).toEqual({ kind: "thread", id: annasThread });
 
     // Carla may reach her own thread, and that is the only thing that was checked. The record is
-    // already linked to Anna's, which she may not see: the answer is a refusal, not Anna's link.
-    await expect(asUser(carla).link({
+    // linked to Anna's as well, which she may not see: she gets a link of her own, not Anna's.
+    const carlas = await asUser(carla).link({
       subject: { kind: "thread", id: carlasThread }, type: LINK_TYPE, externalId: "issue-7",
-    })).rejects.toThrow(PhisResourceLinkError);
-    expect(await asUser(carla).list({ kind: "thread", id: carlasThread })).toEqual([]);
+    });
+    expect(carlas.id).not.toBe(annas.id);
+    expect(carlas.subject).toEqual({ kind: "thread", id: carlasThread });
+    expect((await asUser(carla).list({ kind: "thread", id: carlasThread })).map((link) => link.id))
+      .toEqual([carlas.id]);
     expect((await asUser(anna).list({ kind: "thread", id: annasThread })).map((link) => link.id))
       .toEqual([annas.id]);
+
+    // What an event about the record has to reach: both, oldest first.
+    expect((await asUser(anna).listByExternalId({ type: LINK_TYPE, externalId: "issue-7" })).map((link) => link.id))
+      .toEqual([annas.id, carlas.id]);
   });
 
   it("says the same link again for the same subject, and keeps a consent once given", async () => {

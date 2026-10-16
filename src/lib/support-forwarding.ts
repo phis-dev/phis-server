@@ -295,8 +295,9 @@ async function recordHandOver(input: {
  * Links a record that already exists elsewhere to the ticket, as if the ticket had forwarded it there.
  *
  * Every implementation is asked in turn, and the first that recognises the reference answers for it: a
- * Supporter pastes what they have, a URL or `owner/name#12`, and does not say whose it is. A record that is
- * already linked to anything on this Site is refused by the write, as a forward to it would be.
+ * Supporter pastes what they have, a URL or `owner/name#12`, and does not say whose it is. A record may be
+ * the work of several tickets -- the same bug, reported twice -- and the write refuses it only where it is
+ * already this ticket's.
  */
 export async function linkSupportTicket(input: {
   site: { id: number; key: string };

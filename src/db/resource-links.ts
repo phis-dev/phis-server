@@ -145,7 +145,8 @@ export async function listResourceLinks(input: {
  * Records a reference, or hands back the one that is already there.
  *
  * Asking twice is how an id is learned, the way a declared group's is: the external id is unique per
- * Site and provider, so a second call answers with the first link instead of failing. The subject is
+ * Site, provider and subject, so a second call for the same subject answers with the first link instead
+ * of failing, and a call for another subject records a link of its own. The subject is
  * checked to exist on this Site before anything is written; whether the acting user may reach it is
  * the caller's question, asked with the answer this module returns from `resolveSubjectThreadId`.
  */
@@ -180,15 +181,12 @@ export async function upsertResourceLink(input: {
        created_by_user_id
      )
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-     ON CONFLICT (site_id, provider_id, type, external_id) DO UPDATE
+     -- The same external record on the same subject is the same link, said again.
+     ON CONFLICT ON CONSTRAINT resource_links_subject_external_unique DO UPDATE
      SET url = COALESCE(EXCLUDED.url, phis.resource_links.url),
          state = COALESCE(EXCLUDED.state, phis.resource_links.state),
          flags = phis.resource_links.flags | EXCLUDED.flags,
          updated_at = NOW()
-     -- The same external record on the same subject is the same link, said again. On another subject
-     -- it is a different statement, and the row must not be handed to whoever made it: the caller
-     -- was checked against the subject they named, not against the one the row already has.
-     WHERE phis.resource_links.${column} = EXCLUDED.${column}
      RETURNING ${LINK_COLUMNS.replaceAll("link.", "phis.resource_links.")}`,
     [
       input.siteId,
@@ -203,14 +201,7 @@ export async function upsertResourceLink(input: {
     ],
   );
 
-  const row = rows[0];
-  if (!row) {
-    // The one way the statement answers with nothing: the external record is already linked elsewhere.
-    throw new PhisResourceLinkError(
-      "This external record is already linked to another subject on this Site.",
-    );
-  }
-  return projectLink(row);
+  return projectLink(rows[0]!);
 }
 
 export async function setResourceLinkState(input: {
@@ -321,12 +312,12 @@ export async function deleteResourceLink(input: {
   return removed;
 }
 
-export async function findResourceLinkByExternalId(input: {
+export async function listResourceLinksByExternalId(input: {
   siteId: number;
   providerId: string;
   type: number;
   externalId: string;
-}): Promise<PhisResourceLink | null> {
+}): Promise<PhisResourceLink[]> {
   const pool = getPool();
   const { rows } = await pool.query<ResourceLinkRow>(
     `SELECT ${LINK_COLUMNS}
@@ -334,11 +325,11 @@ export async function findResourceLinkByExternalId(input: {
      WHERE link.site_id = $1
        AND link.provider_id = $2
        AND link.type = $3
-       AND link.external_id = $4`,
+       AND link.external_id = $4
+     ORDER BY link.id`,
     [input.siteId, input.providerId, input.type, input.externalId],
   );
-  const row = rows[0];
-  return row ? projectLink(row) : null;
+  return rows.map(projectLink);
 }
 
 export { resolveSubjectThreadId };

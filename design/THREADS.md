@@ -457,7 +457,7 @@ the people and groups this actor may address -- projections, capped, never addre
 
 **`resource-links:v1`** is built in `@phis/contracts/src/resource-links.ts`: a subject that is a thread,
 a ticket or a ticket task, `PhisResourceLinkFlag.Synced`, and `list`, `link`, `setState`, `unlink`,
-`findByExternalId`. Reads are bounded by the actor seeing the subject; writing needs an actor at all,
+`listByExternalId`. Reads are bounded by the actor seeing the subject; writing needs an actor at all,
 because a link is a person saying two things belong together.
 
 **The Support vocabulary both ends share** is `@phis/contracts/src/support.ts`:
@@ -661,9 +661,12 @@ pastes -- a URL, `owner/name#12` -- and `POST /api/site/support/link` asks each 
 (`lookup`) until one knows it; it answers `unknown`, `refused` with a reason the Supporter reads, or the
 record and its title. Core then writes the task and the synced link exactly as for a forward, and only once
 that stands tells the record (`linked`), so a refused link leaves nothing said there. GitHub accepts an open
-issue in a repository the installation reaches and comments where it is linked from. A record is linked to
-one ticket: the uniqueness of `resource_links` refuses a second, which is what a duplicate report would need
--- one issue for many tickets is a change to `resource-links:v1`, `threads:v1` and the schema, not built.
+issue in a repository the installation reaches and comments where it is linked from. A record may be
+linked to several tickets -- a duplicate report waits on the issue the first one does -- and once to each: a link is
+unique per subject and record (`resource_links_subject_external_unique`), and Core refuses a record already
+linked to the ticket or one of its tasks. Everything GitHub says about the issue reaches every ticket on it,
+each by its own close policy, and a maintainer's comment becomes an internal note in each conversation; what
+one ticket mirrors to the issue never reaches another, since the App's own comments are not imported.
 
 ### Closing
 

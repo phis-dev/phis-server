@@ -223,7 +223,9 @@ describe("support forwarding", () => {
       flags: PhisResourceLinkFlag.Synced,
     }]);
 
-    // Once linked, it is linked: a second ticket cannot claim the same issue.
+    // Once linked to this ticket, it is linked; a second report of the same bug may wait on it too.
+    await expect(linkSupportTicket({ site, ticketId: ticket.id, reference: "acme/app#7", actorUserId: supporter }))
+      .rejects.toMatchObject({ code: "refused", message: expect.stringMatching(/already linked to this ticket/u) });
     const other = await createSupportTicket({
       siteId: site.id,
       typeId: detail!.ticket.typeId,
@@ -233,15 +235,26 @@ describe("support forwarding", () => {
       requesterUserId: supporter,
       createdByUserId: supporter,
     });
-    await expect(linkSupportTicket({ site, ticketId: other!.ticket.id, reference: "acme/app#7", actorUserId: supporter }))
-      .rejects.toMatchObject({ code: "refused", message: expect.stringMatching(/already linked/u) });
-    await expect(linkSupportTicket({ site, ticketId: other!.ticket.id, reference: "acme/app#8", actorUserId: supporter }))
+    const second = await linkSupportTicket({ site, ticketId: other!.ticket.id, reference: "acme/app#7", actorUserId: supporter });
+    expect(second?.links).toMatchObject([{ externalId: "acme/app#7", taskId: second!.tasks[0]!.id }]);
+    expect(announced).toHaveLength(2);
+
+    const third = await createSupportTicket({
+      siteId: site.id,
+      typeId: detail!.ticket.typeId,
+      channel: 0,
+      subject: "Unrelated",
+      message: "Something else.",
+      requesterUserId: supporter,
+      createdByUserId: supporter,
+    });
+    await expect(linkSupportTicket({ site, ticketId: third!.ticket.id, reference: "acme/app#8", actorUserId: supporter }))
       .rejects.toMatchObject({ code: "refused", message: "That issue is closed." });
-    await expect(linkSupportTicket({ site, ticketId: other!.ticket.id, reference: "nobody/knows#1", actorUserId: supporter }))
+    await expect(linkSupportTicket({ site, ticketId: third!.ticket.id, reference: "nobody/knows#1", actorUserId: supporter }))
       .rejects.toMatchObject({ code: "unknown-reference" });
-    // Refused and unknown leave the second ticket as it was, and nothing more was said on the record.
-    expect((await getSupportTicketDetail(site.id, other!.ticket.id))?.tasks).toHaveLength(0);
-    expect(announced).toHaveLength(1);
+    // Refused and unknown leave the ticket as it was, and nothing more was said on the record.
+    expect((await getSupportTicketDetail(site.id, third!.ticket.id))?.tasks).toHaveLength(0);
+    expect(announced).toHaveLength(2);
   });
 
   it("opens with the requester's words only where they leave and the requester agreed", async () => {

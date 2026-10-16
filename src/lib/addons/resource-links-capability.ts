@@ -3,7 +3,7 @@ import "server-only";
 import type { PhisResourceLinksCapabilityV1 } from "./contract.ts";
 import {
   deleteResourceLink,
-  findResourceLinkByExternalId,
+  listResourceLinksByExternalId,
   getResourceLinkThreadId,
   listResourceLinks,
   resolveSubjectThreadId,
@@ -159,9 +159,9 @@ export function buildPhisAddonResourceLinksCapability(input: {
       return deleteResourceLink({ siteId, providerId: addonId, linkId });
     },
 
-    async findByExternalId(findInput) {
-      requireBelievableCaller("findByExternalId");
-      return findResourceLinkByExternalId({
+    async listByExternalId(findInput) {
+      requireBelievableCaller("listByExternalId");
+      return listResourceLinksByExternalId({
         siteId,
         providerId: addonId,
         type: findInput.type,

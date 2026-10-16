@@ -1313,7 +1313,8 @@ message names it.
 ### `resource-links:v1`
 
 References from a Phi record into an Add-on's own system: `list`, `link`, `setState`, `unlink`,
-`findByExternalId`. The subject is a thread, a Support ticket, or a ticket task.
+`listByExternalId`. The subject is a thread, a Support ticket, or a ticket task, and one external record
+may be linked from several subjects -- each link its own, so `listByExternalId` answers all of them.
 
 Bounded twice. The provider is closed over, so an Add-on reads and writes its own links and sees no
 other's -- two integrations on one ticket do not have to know about each other, and removing one takes

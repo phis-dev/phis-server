@@ -1483,8 +1483,11 @@ CREATE TABLE IF NOT EXISTS phis.resource_links (
     + (ticket_id IS NOT NULL)::int
     + (ticket_task_id IS NOT NULL)::int = 1
   ),
-  CONSTRAINT resource_links_site_provider_external_unique
-    UNIQUE (site_id, provider_id, type, external_id)
+  -- One link per subject and external record. The same record may be linked from several subjects --
+  -- one issue several tickets wait on -- so the record alone is not the key. Exactly one subject column
+  -- is set, and NULLS NOT DISTINCT makes the other two compare equal rather than always unique.
+  CONSTRAINT resource_links_subject_external_unique
+    UNIQUE NULLS NOT DISTINCT (site_id, provider_id, type, external_id, thread_id, ticket_id, ticket_task_id)
 );
 
 CREATE INDEX IF NOT EXISTS resource_links_thread_idx

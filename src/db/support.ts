@@ -2180,6 +2180,25 @@ export async function recordSupportTicketForward(input: {
     if (!ticket) {
       throw new SupportAdministrationError("This Site has no such ticket.");
     }
+    /*
+     * One record may be the work of several tickets -- the same bug, reported twice -- but of one ticket
+     * only once: a second task waiting on the same issue would finish twice and say so twice. The ticket
+     * row is locked above, so two links racing to the same ticket meet here one after the other.
+     */
+    const { rowCount: linkedHere } = await client.query(
+      `SELECT 1
+       FROM phis.resource_links link
+       LEFT JOIN phis.support_ticket_tasks task ON task.id = link.ticket_task_id
+       WHERE link.site_id = $1
+         AND link.provider_id = $3
+         AND link.type = $4
+         AND link.external_id = $5
+         AND (link.ticket_id = $2 OR task.ticket_id = $2)`,
+      [input.siteId, input.ticketId, input.providerId, input.link.type, input.link.externalId],
+    );
+    if (linkedHere) {
+      throw new SupportAdministrationError("That external record is already linked to this ticket.");
+    }
     const { rows: tasks } = await client.query<{ id: number }>(
       `INSERT INTO phis.support_ticket_tasks (
          ticket_id, type, status, title, created_by_user_id, updated_by_user_id
@@ -2189,12 +2208,11 @@ export async function recordSupportTicketForward(input: {
       [input.ticketId, input.title, input.byUserId],
     );
     const taskId = tasks[0]!.id;
-    const { rowCount } = await client.query(
+    await client.query(
       `INSERT INTO phis.resource_links (
          site_id, ticket_task_id, provider_id, type, external_id, url, state, flags, created_by_user_id
        )
-       VALUES ($1, $2, $3, $4, $5, $6, $7, ${PhisResourceLinkFlag.Synced}, $8)
-       ON CONFLICT (site_id, provider_id, type, external_id) DO NOTHING`,
+       VALUES ($1, $2, $3, $4, $5, $6, $7, ${PhisResourceLinkFlag.Synced}, $8)`,
       [
         input.siteId,
         taskId,
@@ -2206,9 +2224,6 @@ export async function recordSupportTicketForward(input: {
         input.byUserId,
       ],
     );
-    if (!rowCount) {
-      throw new SupportAdministrationError("That external record is already linked to something on this Site.");
-    }
     await insertSupportTicketEvent(client, {
       ticketId: input.ticketId,
       eventType: SUPPORT_TICKET_EVENT_TASK_CREATED,
