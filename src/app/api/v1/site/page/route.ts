@@ -119,7 +119,18 @@ export async function GET(request: NextRequest) {
     }
   }
 
-  const tree = await getResolvedSitePageTree(site.id, resolvedPath.areaMask, address, locale);
+  /*
+   * `stage=current` is the published Page as an editor reads it: its Widgets' current content and the
+   * version each builds on, the base of the next draft (CONTENT.md). Drafts are not public.
+   */
+  const stage = url.searchParams.get("stage") === "current" ? "current" : "published";
+  if (stage === "current") {
+    const { error } = await requireSiteCmsPreviewApiContext(request);
+    if (error) {
+      return error;
+    }
+  }
+  const tree = await getResolvedSitePageTree(site.id, resolvedPath.areaMask, address, locale, stage);
 
   if (!tree) {
     return NextResponse.json({ error: "Page not found." }, { status: 404 });

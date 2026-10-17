@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
-import { publishSiteContentNews, withdrawSiteContentNews } from "@/db/site-content";
+import { publishSiteContentEntry, withdrawSiteContentEntry } from "@/db/site-content-entries";
+import { readEntryKind, type EntryRouteContext } from "@/lib/site-content-entry-route";
 import { requireSitePublisherApiContext } from "@/lib/guards/site-admin-api";
 import {
   normalizeNullableInteger,
@@ -13,10 +14,11 @@ import { logRuntimeEvent } from "@/lib/log";
 export const dynamic = "force-dynamic";
 
 /*
- * When a News entry is seen, which is the publishing half of `design/NEWS.md`.
+ * When a content type's entry is seen, which is the publishing half of CONTENT.md.
  *
- * `POST` states the terms -- from when, and until when -- and points the publication at the draft the
- * author last saved. `DELETE` takes the publication back and leaves the words alone. Both are behind
+ * `POST` states the terms -- from when, and until when -- and points the publication at the version the
+ * Publisher names (`versionId`), normally the submitted one; publishing clears the submission. `DELETE`
+ * takes the publication back and leaves the words alone. Both are behind
  * `requireSitePublisherApiContext`, and nothing here writes a single word of content.
  *
  * Neither date needs anything to run at the appointed minute: the public read filters
@@ -40,7 +42,12 @@ function readPublicationDate(
     : { date };
 }
 
-export async function POST(request: NextRequest) {
+export async function POST(request: NextRequest, { params }: EntryRouteContext) {
+  const entryKind = await readEntryKind(params);
+  if ("error" in entryKind) {
+    return entryKind.error;
+  }
+  const { kind } = entryKind;
   const { context, error } = await requireSitePublisherApiContext(request);
   if (error) {
     return error;
@@ -55,6 +62,10 @@ export async function POST(request: NextRequest) {
   const contentId = normalizeNullableInteger(body.contentId);
   if (contentId === null || contentId <= 0) {
     return NextResponse.json({ error: "A valid contentId is required." }, { status: 400 });
+  }
+  const versionId = normalizeNullableInteger(body.versionId);
+  if (versionId === null || versionId <= 0) {
+    return NextResponse.json({ error: "The versionId to publish is required." }, { status: 400 });
   }
 
   const publishedAt = readPublicationDate(body.publishedAt, "publishedAt");
@@ -81,27 +92,31 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  const publication = await publishSiteContentNews({
+  const publication = await publishSiteContentEntry({
+    kind,
     siteId: site.id,
     contentId,
+    versionId,
     publishedAt: publishedAt.date?.toISOString() ?? null,
     expiresAt: expiresAt.date?.toISOString() ?? null,
   });
 
-  if (!publication) {
-    return NextResponse.json(
-      { error: "No such news entry, or it has no saved version to publish." },
-      { status: 404 },
-    );
+  if (publication === "missing") {
+    return NextResponse.json({ error: "No such entry." }, { status: 404 });
+  }
+  if (publication === "version_mismatch") {
+    return NextResponse.json({ error: "That version is not one of this entry's.", code: "version_mismatch" }, { status: 409 });
   }
 
-  logRuntimeEvent("info", "site.editor.news.published", {
+  logRuntimeEvent("info", "site.editor.entry.published", {
     area: "editor",
-    message: "News entry published.",
+    message: "Content entry published.",
     siteKey: site.key,
     userId: context.session?.userId ?? null,
     meta: {
+      kind,
       contentId,
+      versionId,
       publishedAt: publication.publishedAt,
       expiresAt: publication.expiresAt,
     },
@@ -110,7 +125,12 @@ export async function POST(request: NextRequest) {
   return NextResponse.json(publication);
 }
 
-export async function DELETE(request: NextRequest) {
+export async function DELETE(request: NextRequest, { params }: EntryRouteContext) {
+  const entryKind = await readEntryKind(params);
+  if ("error" in entryKind) {
+    return entryKind.error;
+  }
+  const { kind } = entryKind;
   const { context, error } = await requireSitePublisherApiContext(request);
   if (error) {
     return error;
@@ -127,17 +147,17 @@ export async function DELETE(request: NextRequest) {
     return NextResponse.json({ error: "A valid contentId is required." }, { status: 400 });
   }
 
-  const withdrawn = await withdrawSiteContentNews({ siteId: site.id, contentId });
+  const withdrawn = await withdrawSiteContentEntry({ kind, siteId: site.id, contentId });
   if (!withdrawn) {
-    return NextResponse.json({ error: "News entry not found." }, { status: 404 });
+    return NextResponse.json({ error: "Entry not found." }, { status: 404 });
   }
 
-  logRuntimeEvent("info", "site.editor.news.withdrawn", {
+  logRuntimeEvent("info", "site.editor.entry.withdrawn", {
     area: "editor",
-    message: "News entry withdrawn.",
+    message: "Content entry withdrawn.",
     siteKey: site.key,
     userId: context.session?.userId ?? null,
-    meta: { contentId },
+    meta: { kind, contentId },
   });
 
   return NextResponse.json({ withdrawn: true });

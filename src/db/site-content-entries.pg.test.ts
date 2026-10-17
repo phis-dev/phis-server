@@ -7,17 +7,62 @@ import {
   requirePhiTestDatabase,
   type PhiTestSite,
 } from "../../test/pg/harness";
+import { SITE_CONTENT_STATUS_DRAFT, SITE_CONTENT_STATUS_PUBLISHED } from "./site-content";
 import {
-  deleteSiteContentNews,
-  PHI_NEWS_TRANSLATION_CONTEXTS,
-  listPublishedNews,
-  listSiteContentNewsForEditor,
-  publishSiteContentNews,
-  saveSiteContentNewsDraft,
-  SITE_CONTENT_STATUS_DRAFT,
-  SITE_CONTENT_STATUS_PUBLISHED,
-  withdrawSiteContentNews,
-} from "./site-content";
+  deleteSiteContentEntry,
+  listPublishedSiteContentEntries,
+  listSiteContentEntriesForEditor,
+  publishSiteContentEntry,
+  saveSiteContentEntryDraft,
+  SITE_CONTENT_ENTRY_KINDS,
+  submitSiteContentEntry,
+  withdrawSiteContentEntry,
+  type SiteContentEntryInput,
+} from "./site-content-entries";
+
+/*
+ * News is the first content type on the generic entry path (CONTENT.md). These shorthands state the kind,
+ * and stand in for the writer who read the entry: a save builds on the current version and a publish
+ * names it, unless a case states otherwise.
+ */
+const PHI_NEWS_TRANSLATION_CONTEXTS = SITE_CONTENT_ENTRY_KINDS.news.contexts;
+
+async function currentVersionOf(contentId: number) {
+  const pool = await requirePhiTestDatabase();
+  const { rows } = await pool.query<{ current_version_id: number | null }>(
+    `SELECT current_version_id FROM phis.site_content WHERE id = $1`,
+    [contentId],
+  );
+  return rows[0]?.current_version_id ?? null;
+}
+
+async function saveSiteContentNewsDraft(input: Omit<SiteContentEntryInput, "kind">) {
+  const baseVersionId = input.baseVersionId !== undefined || !input.contentId
+    ? input.baseVersionId
+    : await currentVersionOf(input.contentId);
+  return saveSiteContentEntryDraft({ ...input, kind: "news", baseVersionId });
+}
+
+async function publishSiteContentNews(input: {
+  siteId: number;
+  contentId: number;
+  versionId?: number;
+  publishedAt: string | null;
+  expiresAt: string | null;
+}) {
+  const versionId = input.versionId ?? await currentVersionOf(input.contentId);
+  const outcome = await publishSiteContentEntry({ ...input, kind: "news", versionId: versionId ?? 0 });
+  return typeof outcome === "string" ? null : outcome;
+}
+
+const listPublishedNews = (siteId: number, locale: string, options?: { limit?: number }) =>
+  listPublishedSiteContentEntries("news", siteId, locale, options);
+const listSiteContentNewsForEditor = (input: Omit<Parameters<typeof listSiteContentEntriesForEditor>[0], "kind">) =>
+  listSiteContentEntriesForEditor({ ...input, kind: "news" });
+const withdrawSiteContentNews = (input: { siteId: number; contentId: number }) =>
+  withdrawSiteContentEntry({ ...input, kind: "news" });
+const deleteSiteContentNews = (input: { siteId: number; contentId: number }) =>
+  deleteSiteContentEntry({ ...input, kind: "news" });
 
 /**
  * The News write path against PostgreSQL, because every question it raises is the database's answer.
@@ -25,7 +70,7 @@ import {
  * What a draft is, what a publish moves, whether a schedule needs anything to run and whether an expiry
  * needs anything written -- none of that can be shown by mocking the store that decides it.
  */
-describe("the News write path against PostgreSQL", () => {
+describe("the content entry write path, as News, against PostgreSQL", () => {
   let site: PhiTestSite;
 
   beforeAll(async () => {
@@ -315,5 +360,59 @@ describe("the News write path against PostgreSQL", () => {
     if (!saved.ok) throw new Error("the draft did not save");
     expect(await withdrawSiteContentNews({ siteId: site.id, contentId: saved.contentId })).toBe(true);
     expect(await withdrawSiteContentNews({ siteId: site.id, contentId: 2_147_483_600 })).toBe(false);
+  });
+
+  it("refuses a save that does not build on the current version, and writes nothing", async () => {
+    const saved = await saveSiteContentNewsDraft({
+      siteId: site.id, slug: "two-authors", title: "First", content: "Body.",
+    });
+    if (!saved.ok) throw new Error("save failed");
+    const base = saved.versionId;
+    const second = await saveSiteContentNewsDraft({
+      siteId: site.id, contentId: saved.contentId, baseVersionId: base, title: "Second", content: "Body.",
+    });
+    if (!second.ok) throw new Error("second save failed");
+
+    const stale = await saveSiteContentNewsDraft({
+      siteId: site.id, contentId: saved.contentId, baseVersionId: base, title: "Stale", content: "Body.",
+    });
+    expect(stale).toEqual({ ok: false, reason: "conflict", currentVersionId: second.versionId });
+    expect(await currentVersionOf(saved.contentId)).toBe(second.versionId);
+  });
+
+  it("publishes the version that was submitted, not the one written after it", async () => {
+    const saved = await saveSiteContentNewsDraft({
+      siteId: site.id, slug: "submitted-entry", title: "Submitted", content: "Body.",
+    });
+    if (!saved.ok) throw new Error("save failed");
+    expect(await submitSiteContentEntry({
+      kind: "news", siteId: site.id, contentId: saved.contentId, versionId: saved.versionId,
+    })).toBe("submitted");
+    await saveSiteContentNewsDraft({
+      siteId: site.id, contentId: saved.contentId, title: "Written on", content: "Body.",
+    });
+
+    const editorRow = (await editorEntries()).find((entry) => entry.contentId === saved.contentId);
+    expect(editorRow?.submittedVersionId).toBe(saved.versionId);
+    expect(editorRow?.versionId).not.toBe(saved.versionId);
+
+    await publishSiteContentNews({
+      siteId: site.id, contentId: saved.contentId, versionId: saved.versionId, publishedAt: null, expiresAt: null,
+    });
+    const item = (await listPublishedNews(site.id, "en")).find((entry) => entry.slug === "submitted-entry");
+    expect(item?.title.source).toBe("Submitted");
+    expect((await editorEntries()).find((entry) => entry.contentId === saved.contentId)?.submittedVersionId)
+      .toBeNull();
+  });
+
+  it("refuses to publish a version that is not the entry's", async () => {
+    const saved = await saveSiteContentNewsDraft({
+      siteId: site.id, slug: "foreign-version", title: "Mine", content: "Body.",
+    });
+    if (!saved.ok) throw new Error("save failed");
+    expect(await publishSiteContentEntry({
+      kind: "news", siteId: site.id, contentId: saved.contentId, versionId: saved.versionId + 100_000,
+      publishedAt: null, expiresAt: null,
+    })).toBe("version_mismatch");
   });
 });

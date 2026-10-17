@@ -1,14 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 
+import { SITE_CONTENT_STATUS_DRAFT, SITE_CONTENT_STATUS_PUBLISHED } from "@/db/site-content";
 import {
-  deleteSiteContentNews,
-  listSiteContentNewsForEditor,
-  listSiteContentNewsTagsInUse,
-  normalizePhiNewsTag,
-  saveSiteContentNewsDraft,
-  SITE_CONTENT_STATUS_DRAFT,
-  SITE_CONTENT_STATUS_PUBLISHED,
-} from "@/db/site-content";
+  deleteSiteContentEntry,
+  listSiteContentEntriesForEditor,
+  listSiteContentEntryTagsInUse,
+  normalizePhiContentEntryTag,
+  saveSiteContentEntryDraft,
+  type SiteContentEntryKind,
+} from "@/db/site-content-entries";
+import { readEntryKind, type EntryRouteContext } from "@/lib/site-content-entry-route";
 import { requireSiteAuthorApiContext } from "@/lib/guards/site-admin-api";
 import { resolvePhiLocaleBase, resolvePhiLocaleCapability } from "@/lib/locale";
 import {
@@ -23,10 +24,10 @@ import { logRuntimeEvent } from "@/lib/log";
 export const dynamic = "force-dynamic";
 
 /*
- * The words of a News entry, which is the authoring half of `design/NEWS.md`.
+ * The words of a content type's entry (CONTENT.md), under its kind: `/api/site/editor/entries/news`.
  *
  * Every method here is behind `requireSiteAuthorApiContext` and none of them touches `status`,
- * `published_at` or `expires_at`: when an entry is seen is stated at `news/publish`, behind the
+ * `published_at` or `expires_at`: when an entry is seen is stated at `entries/<kind>/publish`, behind the
  * publishing policy. A delete is refused while an entry is published, because removing something from a
  * Site is that same authority's act wearing a different verb.
  *
@@ -40,21 +41,27 @@ export const dynamic = "force-dynamic";
  * call with two meanings is how a save that only corrected a typo silently dropped an entry's link. The one
  * exception is the address: an entry must have a slug, so a save that names none keeps it.
  *
+ * **A save of an entry that exists names the version it read** (`versionId`, the key the editor's rows
+ * answer it under, so a Form bound to a row sends it back unasked). One that does not build
+ * on the current version is refused with `409` and writes nothing: two Authors may work on one entry, and
+ * neither overwrites the other unseen.
+ *
  * **One `PUT`, whether the entry exists yet or not.** With a `contentId` it is that entry; without one it is
  * a new entry at the slug it names, and a slug somebody else holds is refused with `409`. There is no second
  * method for creating, because a Form binds one handler and one path -- two would mean two Forms and two
  * dialogs for one act, and a surface where "save" means different things depending on how you got there.
  */
 
-const NEWS_SLUG_PATTERN = /^[a-z0-9][a-z0-9-]{0,119}$/;
-const MAX_NEWS_TAGS = 12;
-const MAX_NEWS_TAG_LENGTH = 40;
-const MAX_NEWS_TITLE_LENGTH = 200;
-const MAX_NEWS_SUBTITLE_LENGTH = 300;
-const MAX_NEWS_CONTENT_LENGTH = 20_000;
+const ENTRY_SLUG_PATTERN = /^[a-z0-9][a-z0-9-]{0,119}$/;
+const MAX_ENTRY_TAGS = 12;
+const MAX_ENTRY_TAG_LENGTH = 40;
+const MAX_ENTRY_TITLE_LENGTH = 200;
+const MAX_ENTRY_SUBTITLE_LENGTH = 300;
+const MAX_ENTRY_CONTENT_LENGTH = 20_000;
 
-type NewsDraftBody = {
+type EntryDraftBody = {
   contentId: number | null;
+  baseVersionId: number | null;
   slug: string | null;
   title: string;
   subtitle: string | null;
@@ -89,7 +96,7 @@ function readOptionalBoolean(value: unknown) {
  * It is rendered as an `href` on a public page, so a scheme nobody validated is a scheme somebody chose.
  * A protocol-relative `//host` is refused with the rest: it reads like a path and resolves like a host.
  */
-function readNewsLink(value: unknown): { link: string | null } | { error: string } {
+function readEntryLink(value: unknown): { link: string | null } | { error: string } {
   const link = normalizeString(value);
   if (!link) {
     return { link: null };
@@ -112,7 +119,7 @@ function readNewsLink(value: unknown): { link: string | null } | { error: string
     : { error: "link must be a site-relative path or an http(s) URL." };
 }
 
-function readNewsTags(value: unknown): { tags: string[] } | { error: string } {
+function readEntryTags(value: unknown): { tags: string[] } | { error: string } {
   if (value === undefined || value === null) {
     return { tags: [] };
   }
@@ -123,27 +130,27 @@ function readNewsTags(value: unknown): { tags: string[] } | { error: string } {
   const tags: string[] = [];
   for (const entry of value) {
     // The same normalisation the store applies, so what is refused here is refused for its real length.
-    const tag = normalizePhiNewsTag(entry);
+    const tag = normalizePhiContentEntryTag(entry);
     if (!tag) {
       continue;
     }
-    if (tag.length > MAX_NEWS_TAG_LENGTH) {
-      return { error: `A tag must be at most ${MAX_NEWS_TAG_LENGTH} characters.` };
+    if (tag.length > MAX_ENTRY_TAG_LENGTH) {
+      return { error: `A tag must be at most ${MAX_ENTRY_TAG_LENGTH} characters.` };
     }
     if (!tags.includes(tag)) {
       tags.push(tag);
     }
   }
 
-  return tags.length > MAX_NEWS_TAGS
-    ? { error: `At most ${MAX_NEWS_TAGS} tags are allowed.` }
+  return tags.length > MAX_ENTRY_TAGS
+    ? { error: `At most ${MAX_ENTRY_TAGS} tags are allowed.` }
     : { tags };
 }
 
-function readNewsDraftBody(
+function readEntryDraftBody(
   body: Record<string, unknown>,
   options: { requireSlug: boolean; canonicalLocale: string },
-): { input: NewsDraftBody } | { error: string; code?: string } {
+): { input: EntryDraftBody } | { error: string; code?: string } {
   // A Form's hidden field sends the id as a string, a client holding it sends a number; both arrive here.
   const contentId = normalizeNullableInteger(body.contentId);
   const slug = normalizeString(body.slug).toLowerCase();
@@ -152,7 +159,7 @@ function readNewsDraftBody(
   const content = normalizeString(body.content);
 
   if (options.requireSlug || slug) {
-    if (!NEWS_SLUG_PATTERN.test(slug)) {
+    if (!ENTRY_SLUG_PATTERN.test(slug)) {
       return {
         error: "slug must be lower-case letters, digits and hyphens, and start with a letter or digit.",
       };
@@ -161,17 +168,17 @@ function readNewsDraftBody(
   if (!options.requireSlug && (contentId === null || contentId <= 0)) {
     return { error: "A valid contentId, or a slug for a new entry, is required." };
   }
-  if (!title || title.length > MAX_NEWS_TITLE_LENGTH) {
-    return { error: `title is required and must be at most ${MAX_NEWS_TITLE_LENGTH} characters.` };
+  if (!title || title.length > MAX_ENTRY_TITLE_LENGTH) {
+    return { error: `title is required and must be at most ${MAX_ENTRY_TITLE_LENGTH} characters.` };
   }
-  if (subtitle.length > MAX_NEWS_SUBTITLE_LENGTH) {
-    return { error: `subtitle must be at most ${MAX_NEWS_SUBTITLE_LENGTH} characters.` };
+  if (subtitle.length > MAX_ENTRY_SUBTITLE_LENGTH) {
+    return { error: `subtitle must be at most ${MAX_ENTRY_SUBTITLE_LENGTH} characters.` };
   }
-  if (!content || content.length > MAX_NEWS_CONTENT_LENGTH) {
-    return { error: `content is required and must be at most ${MAX_NEWS_CONTENT_LENGTH} characters.` };
+  if (!content || content.length > MAX_ENTRY_CONTENT_LENGTH) {
+    return { error: `content is required and must be at most ${MAX_ENTRY_CONTENT_LENGTH} characters.` };
   }
 
-  const link = readNewsLink(body.link);
+  const link = readEntryLink(body.link);
   if ("error" in link) {
     return link;
   }
@@ -202,7 +209,7 @@ function readNewsDraftBody(
       code: "untranslatable_foreign_source",
     };
   }
-  const tags = readNewsTags(body.tags);
+  const tags = readEntryTags(body.tags);
   if ("error" in tags) {
     return tags;
   }
@@ -210,6 +217,7 @@ function readNewsDraftBody(
   return {
     input: {
       contentId: contentId !== null && contentId > 0 ? contentId : null,
+      baseVersionId: readPositiveInteger(body.versionId),
       slug: slug || null,
       title,
       subtitle: subtitle || null,
@@ -221,6 +229,11 @@ function readNewsDraftBody(
       translate,
     },
   };
+}
+
+function readPositiveInteger(value: unknown) {
+  const number = normalizeNullableInteger(value);
+  return number !== null && number > 0 ? number : null;
 }
 
 /**
@@ -236,7 +249,12 @@ function readStatusFilter(value: string | null) {
   return null;
 }
 
-export async function GET(request: NextRequest) {
+export async function GET(request: NextRequest, { params }: EntryRouteContext) {
+  const entryKind = await readEntryKind(params);
+  if ("error" in entryKind) {
+    return entryKind.error;
+  }
+  const { kind } = entryKind;
   const { context, error } = await requireSiteAuthorApiContext(request);
   if (error) {
     return error;
@@ -253,10 +271,11 @@ export async function GET(request: NextRequest) {
   /*
    * The Site's source locale, never a requested one. What this surface edits is source text, and showing a
    * translated title in a form that writes the source would overwrite the original with its translation
-   * on the next save. Translating a News entry is the translations editor's work on the same messages.
+   * on the next save. Translating an entry is the translations editor's work on the same messages.
    */
   const [listing, tags] = await Promise.all([
-    listSiteContentNewsForEditor({
+    listSiteContentEntriesForEditor({
+      kind,
       siteId: site.id,
       locale: site.sourceLocale,
       page,
@@ -265,7 +284,7 @@ export async function GET(request: NextRequest) {
       status: readStatusFilter(searchParams.get("status")),
     }),
     // The offer a tag field picks from, answered beside the page so a picker needs no second endpoint.
-    listSiteContentNewsTagsInUse(site.id),
+    listSiteContentEntryTagsInUse(kind, site.id),
   ]);
 
   return NextResponse.json({
@@ -278,7 +297,7 @@ export async function GET(request: NextRequest) {
   });
 }
 
-async function writeNewsDraft(request: NextRequest) {
+async function writeEntryDraft(request: NextRequest, kind: SiteContentEntryKind) {
   const { context, error } = await requireSiteAuthorApiContext(request);
   if (error) {
     return error;
@@ -290,7 +309,7 @@ async function writeNewsDraft(request: NextRequest) {
   }
 
   const body = await readRequestBody(request);
-  const parsed = readNewsDraftBody(body, {
+  const parsed = readEntryDraftBody(body, {
     // No id means a new entry, and a new entry needs the address it is to live at.
     requireSlug: normalizeNullableInteger(body.contentId) === null,
     canonicalLocale: site.sourceLocale,
@@ -302,9 +321,11 @@ async function writeNewsDraft(request: NextRequest) {
     );
   }
 
-  const outcome = await saveSiteContentNewsDraft({
+  const outcome = await saveSiteContentEntryDraft({
+    kind,
     siteId: site.id,
     contentId: parsed.input.contentId,
+    baseVersionId: parsed.input.baseVersionId,
     slug: parsed.input.slug,
     title: parsed.input.title,
     subtitle: parsed.input.subtitle,
@@ -318,17 +339,28 @@ async function writeNewsDraft(request: NextRequest) {
   });
 
   if (!outcome.ok) {
+    if (outcome.reason === "conflict") {
+      return NextResponse.json(
+        {
+          error: "The entry changed since it was read.",
+          code: "conflict",
+          currentVersionId: outcome.currentVersionId,
+        },
+        { status: 409 },
+      );
+    }
     return outcome.reason === "slug_taken"
-      ? NextResponse.json({ error: "A news entry with that slug already exists.", code: "slug_taken" }, { status: 409 })
-      : NextResponse.json({ error: "News entry not found." }, { status: 404 });
+      ? NextResponse.json({ error: "An entry with that slug already exists.", code: "slug_taken" }, { status: 409 })
+      : NextResponse.json({ error: "Entry not found." }, { status: 404 });
   }
 
-  logRuntimeEvent("info", "site.editor.news.saved", {
+  logRuntimeEvent("info", "site.editor.entry.saved", {
     area: "editor",
-    message: "News draft saved.",
+    message: "Content entry draft saved.",
     siteKey: site.key,
     userId: context.session?.userId ?? null,
     meta: {
+      kind,
       contentId: outcome.contentId,
       versionId: outcome.versionId,
       slug: outcome.slug,
@@ -343,11 +375,17 @@ async function writeNewsDraft(request: NextRequest) {
   });
 }
 
-export async function PUT(request: NextRequest) {
-  return writeNewsDraft(request);
+export async function PUT(request: NextRequest, { params }: EntryRouteContext) {
+  const entryKind = await readEntryKind(params);
+  return "error" in entryKind ? entryKind.error : writeEntryDraft(request, entryKind.kind);
 }
 
-export async function DELETE(request: NextRequest) {
+export async function DELETE(request: NextRequest, { params }: EntryRouteContext) {
+  const entryKind = await readEntryKind(params);
+  if ("error" in entryKind) {
+    return entryKind.error;
+  }
+  const { kind } = entryKind;
   const { context, error } = await requireSiteAuthorApiContext(request);
   if (error) {
     return error;
@@ -364,23 +402,23 @@ export async function DELETE(request: NextRequest) {
     return NextResponse.json({ error: "A valid contentId is required." }, { status: 400 });
   }
 
-  const outcome = await deleteSiteContentNews({ siteId: site.id, contentId });
+  const outcome = await deleteSiteContentEntry({ kind, siteId: site.id, contentId });
   if (outcome === "missing") {
-    return NextResponse.json({ error: "News entry not found." }, { status: 404 });
+    return NextResponse.json({ error: "Entry not found." }, { status: 404 });
   }
   if (outcome === "published") {
     return NextResponse.json(
-      { error: "A published news entry must be withdrawn before it can be deleted.", code: "published" },
+      { error: "A published entry must be withdrawn before it can be deleted.", code: "published" },
       { status: 409 },
     );
   }
 
-  logRuntimeEvent("info", "site.editor.news.deleted", {
+  logRuntimeEvent("info", "site.editor.entry.deleted", {
     area: "editor",
-    message: "News draft deleted.",
+    message: "Content entry draft deleted.",
     siteKey: site.key,
     userId: context.session?.userId ?? null,
-    meta: { contentId },
+    meta: { kind, contentId },
   });
 
   return NextResponse.json({ deletedCount: 1 });

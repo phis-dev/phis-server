@@ -8,25 +8,25 @@ public or internal token, and `session` is the visitor's Site session with the a
 passes (see [AUTHORIZATION.md](../AUTHORIZATION.md)). A route with no access entry performs its own checks
 or none; read its source. Request and response shapes are not listed; the source is linked per route.
 
-149 routes.
+157 routes.
 
 ## Contents
 
 - [`/api/operator`](#apioperator) (5)
 - [`/api/setup`](#apisetup) (2)
-- [`/api/site`](#apisite) (75)
+- [`/api/site`](#apisite) (82)
 - [`/api/v1/addons`](#apiv1addons) (2)
 - [`/api/v1/admin`](#apiv1admin) (1)
 - [`/api/v1/auth`](#apiv1auth) (29)
 - [`/api/v1/email`](#apiv1email) (1)
+- [`/api/v1/entries`](#apiv1entries) (1)
 - [`/api/v1/forms`](#apiv1forms) (8)
 - [`/api/v1/groups`](#apiv1groups) (3)
 - [`/api/v1/hooks`](#apiv1hooks) (1)
 - [`/api/v1/locales`](#apiv1locales) (1)
 - [`/api/v1/media`](#apiv1media) (2)
-- [`/api/v1/news`](#apiv1news) (1)
 - [`/api/v1/notifications`](#apiv1notifications) (2)
-- [`/api/v1/site`](#apiv1site) (15)
+- [`/api/v1/site`](#apiv1site) (16)
 - [`/api/v1/tr`](#apiv1tr) (1)
 
 ## `/api/operator`
@@ -81,7 +81,7 @@ Site administration, CMS, media and support API. A Site's `/api/site` proxy forw
 | DELETE | [`/api/site/cms/area/modules`](../src/app/api/site/cms/area/modules/route.ts) | session, `structure-authoring` (requireSiteBuilderApiContext) |  |
 | GET | [`/api/site/cms/area/modules/draft`](../src/app/api/site/cms/area/modules/draft/route.ts) | session, `roles` (requireSiteReviewApiContext) |  |
 | POST | [`/api/site/cms/area/modules/publish`](../src/app/api/site/cms/area/modules/publish/route.ts) | session, `publishing` (requireSitePublisherApiContext) |  |
-| DELETE | [`/api/site/cms/area/override`](../src/app/api/site/cms/area/override/route.ts) | session, `structure-authoring` (requireSiteBuilderApiContext) |  |
+| DELETE | [`/api/site/cms/area/override`](../src/app/api/site/cms/area/override/route.ts) | session, `publishing` (requireSitePublisherApiContext) |  |
 | POST | [`/api/site/cms/area/publish`](../src/app/api/site/cms/area/publish/route.ts) | session, `publishing` (requireSitePublisherApiContext) |  |
 | POST | [`/api/site/cms/area/structures`](../src/app/api/site/cms/area/structures/route.ts) | session, `roles` (requireSiteReviewApiContext) |  |
 | GET | [`/api/site/cms/module-usage`](../src/app/api/site/cms/module-usage/route.ts) | session, `structure-authoring` (requireSiteBuilderApiContext) | What a Module currently draws on this Site's published pages. |
@@ -94,6 +94,7 @@ Site administration, CMS, media and support API. A Site's `/api/site` proxy forw
 | DELETE | [`/api/site/cms/page`](../src/app/api/site/cms/page/route.ts) | session, `structure-authoring` (requireSiteBuilderApiContext) |  |
 | POST | [`/api/site/cms/page/create`](../src/app/api/site/cms/page/create/route.ts) | session, `structure-authoring` (requireSiteBuilderApiContext) |  |
 | GET | [`/api/site/cms/page/draft`](../src/app/api/site/cms/page/draft/route.ts) | session, `roles` (requireSiteReviewApiContext) |  |
+| DELETE | [`/api/site/cms/page/override`](../src/app/api/site/cms/page/override/route.ts) | session, `publishing` (requireSitePublisherApiContext) |  |
 | POST | [`/api/site/cms/page/publish`](../src/app/api/site/cms/page/publish/route.ts) | session, `publishing` (requireSitePublisherApiContext) |  |
 | GET | [`/api/site/cms/pages`](../src/app/api/site/cms/pages/route.ts) | session, `structure-authoring` (requireSiteBuilderApiContext) |  |
 | POST | [`/api/site/cms/pages/{scopeId}/path`](../src/app/api/site/cms/pages/[scopeId]/path/route.ts) | session, `structure-authoring` (requireSiteBuilderApiContext) |  |
@@ -105,15 +106,24 @@ Site administration, CMS, media and support API. A Site's `/api/site` proxy forw
 | DELETE | [`/api/site/cms/theme`](../src/app/api/site/cms/theme/route.ts) | session, `structure-authoring` (requireSiteBuilderApiContext) |  |
 | GET | [`/api/site/cms/theme/draft`](../src/app/api/site/cms/theme/draft/route.ts) | session, `roles` (requireSiteReviewApiContext) |  |
 | POST | [`/api/site/cms/theme/publish`](../src/app/api/site/cms/theme/publish/route.ts) | session, `publishing` (requireSitePublisherApiContext) |  |
-| GET | [`/api/site/editor/news`](../src/app/api/site/editor/news/route.ts) | session, `content-editing` (requireSiteAuthorApiContext) |  |
-| PUT | [`/api/site/editor/news`](../src/app/api/site/editor/news/route.ts) | session, `content-editing` (requireSiteAuthorApiContext) |  |
-| DELETE | [`/api/site/editor/news`](../src/app/api/site/editor/news/route.ts) | session, `content-editing` (requireSiteAuthorApiContext) |  |
-| POST | [`/api/site/editor/news/publish`](../src/app/api/site/editor/news/publish/route.ts) | session, `publishing` (requireSitePublisherApiContext) |  |
-| DELETE | [`/api/site/editor/news/publish`](../src/app/api/site/editor/news/publish/route.ts) | session, `publishing` (requireSitePublisherApiContext) |  |
+| GET | [`/api/site/editor/content`](../src/app/api/site/editor/content/route.ts) | session, `roles` (requireSiteReviewApiContext) |  |
+| PUT | [`/api/site/editor/content`](../src/app/api/site/editor/content/route.ts) | session, `roles` (requireSiteReviewApiContext) |  |
+| POST | [`/api/site/editor/content/publish`](../src/app/api/site/editor/content/publish/route.ts) | session, `publishing` (requireSitePublisherApiContext) |  |
+| DELETE | [`/api/site/editor/content/publish`](../src/app/api/site/editor/content/publish/route.ts) | session, `publishing` (requireSitePublisherApiContext) |  |
+| POST | [`/api/site/editor/content/submit`](../src/app/api/site/editor/content/submit/route.ts) | session, `roles` (requireSiteReviewApiContext) |  |
+| DELETE | [`/api/site/editor/content/submit`](../src/app/api/site/editor/content/submit/route.ts) | session, `roles` (requireSiteReviewApiContext) |  |
+| GET | [`/api/site/editor/entries/{kind}`](../src/app/api/site/editor/entries/[kind]/route.ts) | session, `content-editing` (requireSiteAuthorApiContext) |  |
+| PUT | [`/api/site/editor/entries/{kind}`](../src/app/api/site/editor/entries/[kind]/route.ts) | session, `content-editing` (requireSiteAuthorApiContext) |  |
+| DELETE | [`/api/site/editor/entries/{kind}`](../src/app/api/site/editor/entries/[kind]/route.ts) | session, `content-editing` (requireSiteAuthorApiContext) |  |
+| POST | [`/api/site/editor/entries/{kind}/publish`](../src/app/api/site/editor/entries/[kind]/publish/route.ts) | session, `publishing` (requireSitePublisherApiContext) |  |
+| DELETE | [`/api/site/editor/entries/{kind}/publish`](../src/app/api/site/editor/entries/[kind]/publish/route.ts) | session, `publishing` (requireSitePublisherApiContext) |  |
+| POST | [`/api/site/editor/entries/{kind}/submit`](../src/app/api/site/editor/entries/[kind]/submit/route.ts) | session, `content-editing` (requireSiteAuthorApiContext) |  |
+| DELETE | [`/api/site/editor/entries/{kind}/submit`](../src/app/api/site/editor/entries/[kind]/submit/route.ts) | session, `content-editing` (requireSiteAuthorApiContext) |  |
 | POST | [`/api/site/editor/page-meta`](../src/app/api/site/editor/page-meta/route.ts) | session, `content-editing` (requireSiteAuthorApiContext) |  |
+| GET | [`/api/site/editor/releases`](../src/app/api/site/editor/releases/route.ts) | session, `roles` (requireSiteReviewApiContext) |  |
 | GET | [`/api/site/editor/translations`](../src/app/api/site/editor/translations/route.ts) | session, `content-editing` (requireSiteAuthorApiContext) |  |
-| PATCH | [`/api/site/editor/translations`](../src/app/api/site/editor/translations/route.ts) | session, `content-editing` (requireSiteAuthorApiContext) |  |
-| DELETE | [`/api/site/editor/translations`](../src/app/api/site/editor/translations/route.ts) | session, `roles` (requireSiteReviewApiContext); session, `content-editing` (requireSiteAuthorApiContext) |  |
+| PATCH | [`/api/site/editor/translations`](../src/app/api/site/editor/translations/route.ts) | session, `publishing` (requireSitePublisherApiContext) |  |
+| DELETE | [`/api/site/editor/translations`](../src/app/api/site/editor/translations/route.ts) | session, `roles` (requireSiteReviewApiContext); session, `publishing` (requireSitePublisherApiContext) |  |
 | GET | [`/api/site/groups`](../src/app/api/site/groups/route.ts) | session (requireSiteGroupMemberApiContext); session, `authenticated` (requireSiteAuthenticatedApiContext) |  |
 | POST | [`/api/site/groups`](../src/app/api/site/groups/route.ts) | session, `developer-tools` (requireSiteDeveloperApiContext) | Creating a group is Site administration: a group is an authorization unit Pages, Navigation, and Assets refer to, so group membership must never confer the authority to create more of them. |
 | PATCH | [`/api/site/groups`](../src/app/api/site/groups/route.ts) | session (requireSiteGroupManagerApiContext) |  |
@@ -143,6 +153,7 @@ Site administration, CMS, media and support API. A Site's `/api/site` proxy forw
 | POST | [`/api/site/media/uploads/init`](../src/app/api/site/media/uploads/init/route.ts) | session (requireMediaSpaceWriteContext) |  |
 | GET | [`/api/site/support/forward`](../src/app/api/site/support/forward/route.ts) | session, `support` (requireSiteSupportApiContext) | Where this Site's tickets may be forwarded right now. |
 | POST | [`/api/site/support/forward`](../src/app/api/site/support/forward/route.ts) | session, `support` (requireSiteSupportApiContext) | Hands one ticket's work to one target: `{ ticketId, target, title? }`. |
+| POST | [`/api/site/support/link`](../src/app/api/site/support/link/route.ts) | session, `support` (requireSiteSupportApiContext) | Links a record that already exists elsewhere to one ticket: `{ ticketId, reference }`. |
 | GET | [`/api/site/support/queues`](../src/app/api/site/support/queues/route.ts) | session, `support` (requireSiteSupportApiContext) | The Site's Support queues. |
 | POST | [`/api/site/support/queues`](../src/app/api/site/support/queues/route.ts) | session, `developer-tools` (requireSiteDeveloperApiContext) | Adds a queue. |
 | PATCH | [`/api/site/support/queues/{queueId}`](../src/app/api/site/support/queues/[queueId]/route.ts) | session, `developer-tools` (requireSiteDeveloperApiContext) | Edits one queue: its name, the group it routes to, its order, and whether it is retired. |
@@ -246,6 +257,14 @@ Versioned API a Site calls server-to-server with its token (`x-phis-token`), and
 |---|---|---|---|
 | POST | [`/api/v1/email/send`](../src/app/api/v1/email/send/route.ts) | internal token |  |
 
+## `/api/v1/entries`
+
+Versioned API a Site calls server-to-server with its token (`x-phis-token`), and the public endpoints under it.
+
+| Method | Address | Access | Description |
+|---|---|---|---|
+| GET | [`/api/v1/entries/{kind}`](../src/app/api/v1/entries/[kind]/route.ts) | API token (public or internal) |  |
+
 ## `/api/v1/forms`
 
 Versioned API a Site calls server-to-server with its token (`x-phis-token`), and the public endpoints under it.
@@ -302,14 +321,6 @@ Versioned API a Site calls server-to-server with its token (`x-phis-token`), and
 | POST | [`/api/v1/media/checksums/recompute`](../src/app/api/v1/media/checksums/recompute/route.ts) | internal token | Gives Assets stored before this a digest duplicate detection can compare. |
 | POST | [`/api/v1/media/storage-policies/reconcile`](../src/app/api/v1/media/storage-policies/reconcile/route.ts) | internal token | Writes every storage's rules from the Site registry: who may write to it, and what it is to clean up. |
 
-## `/api/v1/news`
-
-Versioned API a Site calls server-to-server with its token (`x-phis-token`), and the public endpoints under it.
-
-| Method | Address | Access | Description |
-|---|---|---|---|
-| GET | [`/api/v1/news`](../src/app/api/v1/news/route.ts) | API token (public or internal) |  |
-
 ## `/api/v1/notifications`
 
 Versioned API a Site calls server-to-server with its token (`x-phis-token`), and the public endpoints under it.
@@ -331,6 +342,7 @@ Versioned API a Site calls server-to-server with its token (`x-phis-token`), and
 | GET | [`/api/v1/site/auth/installations`](../src/app/api/v1/site/auth/installations/route.ts) | internal token | Internal read of the Site's provider installations for server-side composition. Secrets never leave the store; the payload carries only the configured/missing status. Mutations stay on the session-guarded /api/v1/auth/admin/installations endpoints. |
 | GET | [`/api/v1/site/auth/settings`](../src/app/api/v1/site/auth/settings/route.ts) | internal token | Internal read of the Auth Admin section values for server-side composition (the Admin Authentication Settings page loads its Form initial values here). Contains no provider installations and no secrets; mutations stay on the session-guarded section endpoints. |
 | GET | [`/api/v1/site/capabilities`](../src/app/api/v1/site/capabilities/route.ts) | internal token |  |
+| GET | [`/api/v1/site/content`](../src/app/api/v1/site/content/route.ts) | internal token |  |
 | GET | [`/api/v1/site/locale`](../src/app/api/v1/site/locale/route.ts) | Site session, checked in the handler; internal token |  |
 | GET | [`/api/v1/site/media/settings`](../src/app/api/v1/site/media/settings/route.ts) | internal token | Internal read of the Site's Media configuration for server-side composition (the Admin Media Settings page loads its Form initial values here). Mutations stay on the session-guarded /api/site/admin/media route; this endpoint is internal-token read-only. |
 | GET | [`/api/v1/site/nav`](../src/app/api/v1/site/nav/route.ts) | internal token; session (requireSiteCmsPreviewApiContext) |  |

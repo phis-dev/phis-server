@@ -134,12 +134,24 @@ export async function GET(request: NextRequest) {
     }
   }
 
+  /*
+   * `stage=current` is the published Area as an editor reads it: its Widgets' current content and the
+   * version each builds on, the base of the next draft (CONTENT.md). Drafts are not public.
+   */
+  const stage = url.searchParams.get("stage") === "current" ? "current" : "published";
+  if (stage === "current") {
+    const { error } = await requireSiteCmsPreviewApiContext(request);
+    if (error) {
+      return error;
+    }
+  }
   const preset = await getExactSiteAreaPresetTree(
     site.id,
     resolvedPath.areaMask,
     0,
     locale,
     sourcePreset,
+    stage,
   );
 
   if (includePublishedPages) {

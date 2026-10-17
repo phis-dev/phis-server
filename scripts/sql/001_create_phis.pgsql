@@ -1665,6 +1665,12 @@ CREATE TABLE IF NOT EXISTS phis.site_content (
   status SMALLINT NOT NULL DEFAULT 0,
   current_version_id INT NULL,
   published_version_id INT NULL,
+  -- The version an Author put forward for publication (CONTENT.md, Submission). A pointer and not a
+  -- flag: a save after the submission must not change what the Publisher was asked to look at.
+  submitted_version_id INT NULL,
+  -- The Widget instance (PhiCmsInstanceId) this row is the content of; NULL for a content type's entry.
+  -- Revision trees carry no content id: the binding lives here, so it survives a structure reset.
+  instance_id VARCHAR(16) NULL,
   published_at TIMESTAMPTZ NULL,
   expires_at TIMESTAMPTZ NULL,
   sort_order INT NOT NULL DEFAULT 0,
@@ -1673,6 +1679,14 @@ CREATE TABLE IF NOT EXISTS phis.site_content (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   CONSTRAINT site_content_site_type_slug_unique UNIQUE (site_id, type, slug)
 );
+
+CREATE UNIQUE INDEX IF NOT EXISTS site_content_site_instance_unique_idx
+  ON phis.site_content (site_id, instance_id)
+  WHERE instance_id IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS site_content_site_submitted_idx
+  ON phis.site_content (site_id)
+  WHERE submitted_version_id IS NOT NULL;
 
 CREATE INDEX IF NOT EXISTS site_content_site_type_status_idx
   ON phis.site_content (site_id, type, status);
@@ -1967,6 +1981,21 @@ BEGIN
          OR new_rows.tombstoned_at IS DISTINCT FROM old_rows.tombstoned_at
     ) AS touched
     ON CONFLICT (site_id) DO UPDATE SET marker = EXCLUDED.marker;
+  ELSIF TG_TABLE_NAME = 'site_content' THEN
+    -- Content publishes apart from structure (CONTENT.md): only a moved published version is something
+    -- a Site holds. Saves and submissions move current_version_id and submitted_version_id only.
+    INSERT INTO phis.site_read_marker (site_id, marker)
+    SELECT touched.site_id, nextval('phis.site_read_marker_seq')
+    FROM (
+      SELECT DISTINCT new_rows.site_id
+      FROM new_rows
+      JOIN old_rows ON old_rows.id = new_rows.id
+      JOIN phis.sites AS sites ON sites.id = new_rows.site_id
+      WHERE new_rows.published_version_id IS DISTINCT FROM old_rows.published_version_id
+         OR new_rows.published_at IS DISTINCT FROM old_rows.published_at
+         OR new_rows.expires_at IS DISTINCT FROM old_rows.expires_at
+    ) AS touched
+    ON CONFLICT (site_id) DO UPDATE SET marker = EXCLUDED.marker;
   ELSIF TG_TABLE_NAME = 'site_auth_config' THEN
     -- Which sign-in methods and registration mode a Site offers is what its auth manifest says, and a
     -- Site process keeps that manifest; a write that changed nothing in it moves nothing.
@@ -2030,6 +2059,20 @@ BEGIN
   END LOOP;
 END;
 $$;
+
+-- Content moves the marker on a publish and on a deletion. An insert never carries a published version:
+-- a row is created by a save and published by a later update, so the insert trigger would only move the
+-- marker for drafts.
+DROP TRIGGER IF EXISTS site_content_touch_read_marker_update ON phis.site_content;
+CREATE TRIGGER site_content_touch_read_marker_update
+  AFTER UPDATE ON phis.site_content
+  REFERENCING OLD TABLE AS old_rows NEW TABLE AS new_rows
+  FOR EACH STATEMENT EXECUTE FUNCTION phis.site_read_touch_markers();
+DROP TRIGGER IF EXISTS site_content_touch_read_marker_delete ON phis.site_content;
+CREATE TRIGGER site_content_touch_read_marker_delete
+  AFTER DELETE ON phis.site_content
+  REFERENCING OLD TABLE AS old_rows
+  FOR EACH STATEMENT EXECUTE FUNCTION phis.site_read_touch_markers();
 
 CREATE TABLE IF NOT EXISTS phis.server_addons (
   addon_id VARCHAR(255) PRIMARY KEY,

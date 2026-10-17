@@ -92,8 +92,10 @@ export type CmsDraftContentWidgetInput = {
   visibilityMask?: number;
   label?: string | null;
   config?: JsonRecord;
-  contentId?: number | null;
-  /** The content version this revision shows; the save that writes the content sets it. */
+  /**
+   * The content version the writer read for this Widget's bound field (CONTENT.md, Concurrent writers).
+   * A write's base, never stored: revision trees carry no content id and no version pin.
+   */
   contentVersionId?: number | null;
   contentBinding?: CmsDraftContentBindingInput | null;
 };
@@ -688,12 +690,6 @@ function parseContentWidgets(value: unknown, errors: string[], domain: PhiCmsIns
         nullable: true,
       }),
       config: readRenderableConfig(entry.config, `contentWidgets[${index}].config`, errors),
-      contentId: readNullableOptionalInteger(
-        entry.contentId,
-        `contentWidgets[${index}].contentId`,
-        errors,
-        { min: 1 },
-      ),
       contentVersionId: readNullableOptionalInteger(
         entry.contentVersionId,
         `contentWidgets[${index}].contentVersionId`,

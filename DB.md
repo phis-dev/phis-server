@@ -49,6 +49,7 @@ The target PostgreSQL schema for `phis` is:
   - `5 = text`
   - `6 = html`
   - `7 = markdown`
+  - `8 = blog`
 - `phis.site_content_versions.asset_id INT`
   - each version of a site-owned asset content row references the canonical `media_assets.id`
   - versions of type `asset` rows must set this column
@@ -88,13 +89,12 @@ The target PostgreSQL schema for `phis` is:
   - namespaced widget type identity, for example `@phis/ui/widgets/simple-text`
 - `phis` CMS revision payload `slotIndex`
   - canonical slot position inside a layout-owned `slots[]` contract
-- `phis` CMS revision payload `contentWidgets[].contentId`
-  - direct reference to the canonical `site_content` row consumed by the widget
-  - widget ownership remains site-local and must be validated against the referenced content site
-- `phis` CMS revision payload `contentWidgets[].contentVersionId`
-  - the `site_content_versions` row this revision shows; set by the save that wrote it
-  - readers resolve content through this pin only, so a draft save never changes what a published
-    revision renders, and discard and restore return exactly the content of the revision they keep
+- `phis` CMS revision payload `contentWidgets[]` carries no content id and no version pin: a Widget's
+  content is the `site_content` row whose `instance_id` is the Widget's id ([CONTENT.md](./CONTENT.md)).
+  The bound field (`contentBinding.sourceField`) is removed from the stored config once the Widget has
+  content.
+- `phis` CMS write payload `contentWidgets[].contentVersionId`
+  - the content version the writer read; a write's base, compared and never stored
 - `phis.sites.flags INT`
   - `1 << 0 = active`
 - `phis` CMS revision payload `flags` (`PhiCmsFlags` in `@phis/contracts/cms`; not every flag applies to every row kind)
@@ -918,6 +918,8 @@ Contract:
 - `status SMALLINT NOT NULL DEFAULT 0`
 - `current_version_id INT NULL`
 - `published_version_id INT NULL`
+- `submitted_version_id INT NULL`
+- `instance_id VARCHAR(16) NULL`, unique per Site where set
 - `published_at TIMESTAMPTZ NULL`
 - `expires_at TIMESTAMPTZ NULL`
 - `sort_order INT NOT NULL DEFAULT 0`
@@ -928,14 +930,14 @@ Contract:
 
 Contract:
 - `site_content*` remains the canonical redaction/publishing store for site-owned content.
-- Content widgets should reference `site_content` by numeric `content_id` instead of embedding large copy payloads directly in widget config.
+- Content widgets are bound to `site_content` by their instance id (`instance_id`) instead of embedding copy in widget config.
 - `asset` is the content type for a reusable image/media wrapper and must point at `media_assets.id` through `site_content_versions.asset_id`.
-- Widget-owned content (`asset`, `text`, `html`, `markdown`) is versioned per save: the save appends a
-  version, moves `current_version_id` to it and pins it in the revision tree. It never touches
-  `published_version_id` or `published_at`; those belong to `news`, whose readers use them. What a page
-  shows is decided by the revision that is published and the versions it pins.
-- `news` is the one content type whose own columns decide what is answered, and two authorities write
-  them. A save is `PHI_ACCESS_CONTENT_EDITING`: it appends a version, writes `title`, `subtitle` and
+- Widget-owned content (`asset`, `text`, `html`, `markdown`) follows [CONTENT.md](./CONTENT.md): it is
+  bound to its Widget by `instance_id`, every changed save appends a version and moves
+  `current_version_id`, and only a publish moves `published_version_id`. The live Site reads the
+  published version, editors and previews the current one; a structure publish never moves either.
+- `submitted_version_id` is the version put forward for publication; a publish clears it.
+- `news` states its terms in its own columns as well, and two authorities write them. A save is `PHI_ACCESS_CONTENT_EDITING`: it appends a version, writes `title`, `subtitle` and
   `content` as `site_content_version_text` rows and moves `current_version_id`. A publish is
   `PHI_ACCESS_PUBLISHING`: it sets `status`, points `published_version_id` at `current_version_id` and
   states `published_at` and `expires_at`. An edit after a publish is therefore kept back until it is
@@ -961,17 +963,16 @@ Contract:
   fields, under the context `news tag`, and become messages the first time they are read in another
   language -- the translator ensures a message for whatever it is handed, so nothing registers them first.
 - A `news` body is Markdown and is translated where it is rendered, paragraph by paragraph, so its
-  structure never reaches a provider. `GET /api/v1/news` therefore answers `content` as it was written,
+  structure never reaches a provider. `GET /api/v1/entries/news` therefore answers `content` as it was written,
   with `sourceLocale` beside it.
 - A published `news` entry must be withdrawn before it can be deleted. Withdrawal clears
   `published_version_id`, `published_at` and `expires_at` and leaves every version in place.
 - `site_content(type=asset)` is created on demand when a widget binds to a media asset, not eagerly on media upload.
 - `text` is the canonical content type for database-backed `simple-text` widget copy.
-- A `simple-text` widget should normally persist its source text through `site_content(type=text)` so search and later publisher/editor flows can resolve that copy centrally.
 - Rich text should use its own dedicated `site_content(type=html)` path instead of overloading `type=text`.
 - The CMS POST path is the authoritative HTML trust boundary. For `contentBinding.storage=html`, the
-  backend sanitizes the declared source field before persisting both the Widget config and the immutable
-  `site_content(type=html)` version. Client-side authoring checks are advisory and cannot replace this
+  backend sanitizes the declared source field before persisting the immutable `site_content(type=html)`
+  version; the Widget config does not keep the field. Client-side authoring checks are advisory and cannot replace this
   write-time enforcement.
 - `site_content(type=html)` and `site_content(type=markdown)` are the declared internal content channel
   from [REFERENCES.md](./REFERENCES.md). The write sanitizer accepts `phis:page/<reference>` and
@@ -990,9 +991,10 @@ Contract:
 - URL-backed markdown remains external-source content and should not create a `site_content` row.
 - The backend write path must not hardcode those persistence routes by concrete widget `typeKey`.
 - The CMS widget write payload should instead carry explicit content-binding metadata, for example storage channel plus source config field, and persistence should follow that declarative contract.
-- Shared preset trees are the explicit exception: they may still ship local `config.text` values without a backing `content_id`.
-- If a widget-owned `site_content` row is deleted, its version and translation rows are removed through the existing cascade chain.
-- If the same `content_id` is still referenced by another widget on the same site, only the widget row should be deleted.
+- A preset node keeps its shipped value in config until a content write binds it; a structure save never
+  creates a row for a preset node.
+- A widget-owned row is deleted with the last revision that places its Widget; a preset node's row is not
+  swept by revision deletion.
 - Structure and placement are modeled through CMS revision trees, not through separate relational layout/widget tables.
 
 ### `phis.site_area_scopes`
@@ -1192,10 +1194,9 @@ Contract:
 - `UNIQUE (content_id, version_no)`
 
 Contract:
-- `asset_id` lives on the version because a revision pins the version it shows: an image swapped in a
-  draft must not reach the published page before the draft is published.
-- A media asset stays referenced while any version still names it, which is as long as any revision of
-  the Site could be restored to that version.
+- `asset_id` lives on the version because the live Site shows the published version: an image swapped
+  in a draft must not reach the published page before the content is published.
+- A media asset stays referenced while any version still names it.
 
 ### `phis.site_content_version_text`
 

@@ -2,13 +2,15 @@
 
 **Status: Core reads and writes, the Module renders, and the entries translate themselves. No mail.** `phis.site_content` carries News as
 content type `0` ([DB.md](../DB.md)), versioned through `site_content_versions` and translated through
-`site_content_version_text` and `tr_site_msg`; `listPublishedNews`
-([src/db/site-content.ts](../src/db/site-content.ts)) filters `status`, `published_at <= NOW()` and
-`expires_at > NOW()` in the query; `GET /api/v1/news`
-([src/app/api/v1/news/route.ts](../src/app/api/v1/news/route.ts)) serves it per Site and locale behind the
+`site_content_version_text` and `tr_site_msg`. Since 16.10. it is the first kind on the generic content
+type path of [CONTENT.md](../CONTENT.md): `listPublishedSiteContentEntries`
+([src/db/site-content-entries.ts](../src/db/site-content-entries.ts)) filters `status`, `published_at <= NOW()` and
+`expires_at > NOW()` in the query; `GET /api/v1/entries/news`
+([src/app/api/v1/entries/[kind]/route.ts](../src/app/api/v1/entries/[kind]/route.ts)) serves it per Site and locale behind the
 internal token, and two Sites in the workspace already read it. Since 30.09. the write path of §3, the
-Module of §4 and the translation path of §6 exist as well. What does not exist: an editor surface in the
-shared UI, and any mail. `scripts/seed-site-news.mjs` is gone -- it hard-coded two Site keys and had stopped working
+Module of §4 and the translation path of §6 exist as well, and the editor Area has a News page
+(`/editor/news`). Saves name the version they build on, Authors submit, Publishers publish a named
+version (CONTENT.md). What does not exist: any mail. `scripts/seed-site-news.mjs` is gone -- it hard-coded two Site keys and had stopped working
 when the content enums became `SMALLINT`, which nothing noticed because nothing ran it.
 
 The mail half is [NOTIFICATIONS.md](./NOTIFICATIONS.md) and this document does not repeat it.
@@ -54,8 +56,8 @@ minute. A minute is acceptable; discovering it later, while debugging, is not.
 ## 3. The write path
 
 **Built.** `GET`, `PUT` and `DELETE` on
-[/api/site/editor/news](../src/app/api/site/editor/news/route.ts) are the words; `POST` and `DELETE` on
-[/api/site/editor/news/publish](../src/app/api/site/editor/news/publish/route.ts) are the publication.
+[/api/site/editor/entries/news](../src/app/api/site/editor/entries/[kind]/route.ts) are the words; `POST` and `DELETE` on
+[/api/site/editor/entries/news/publish](../src/app/api/site/editor/entries/[kind]/publish/route.ts) are the publication.
 Underneath, `saveSiteContentNewsDraft`, `publishSiteContentNews`, `withdrawSiteContentNews`,
 `deleteSiteContentNews` and `listSiteContentNewsForEditor` in
 [src/db/site-content.ts](../src/db/site-content.ts). Three things the writing settled, which the plan
@@ -134,7 +136,7 @@ that asks nothing and blocks nothing, and the `marker` shape of
 case. On a Public page, with anonymous visitors and one render for everybody, neither is free; a signed-in
 Area is where that becomes cheap.
 
-**The read is a gateway read.** `/api/v1/news` requires the internal token, so the page is rendered from a
+**The read is a gateway read.** `/api/v1/entries/news` requires the internal token, so the page is rendered from a
 server-side read and not from a browser fetch. That is also what lets an entry be absent from the HTML
 rather than appear and vanish.
 
@@ -175,7 +177,7 @@ entry translated into it.
 **An entry in another language than the Site's own takes the external route**, the one external Markdown has
 always taken: translated into the Site's language once and kept as its own message, the original kept as
 the answer for its own language, every further language derived from the canonical one. Title and subtitle
-go field by field through `GET /api/v1/news`; the body goes paragraph by paragraph where it is rendered, so
+go field by field through `GET /api/v1/entries/news`; the body goes paragraph by paragraph where it is rendered, so
 correcting one paragraph costs one paragraph.
 
 **Nothing is ever invalidated.** A corrected text is a different message row, because a message's identity

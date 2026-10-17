@@ -11,6 +11,7 @@ import {
 } from "@/db/translations";
 import {
   requireSiteAuthorApiContext,
+  requireSitePublisherApiContext,
   requireSiteReviewApiContext,
 } from "@/lib/guards/site-admin-api";
 import {
@@ -112,8 +113,13 @@ export async function GET(request: NextRequest) {
   });
 }
 
+/*
+ * A Site translation is live the moment it is written: no draft stands between the row and the reader. So
+ * writing one is a publish, and the Publisher's (CONTENT.md, Rights); reading them stays with everyone
+ * who edits content.
+ */
 export async function PATCH(request: NextRequest) {
-  const { context, error } = await requireSiteAuthorApiContext(request);
+  const { context, error } = await requireSitePublisherApiContext(request);
   if (error) {
     return error;
   }
@@ -215,7 +221,7 @@ export async function DELETE(request: NextRequest) {
   const scope = searchParams.get("scope")?.trim().toLowerCase() ?? "";
   const { context, error } = scope === "external-unit"
     ? await requireSiteReviewApiContext(request)
-    : await requireSiteAuthorApiContext(request);
+    : await requireSitePublisherApiContext(request);
   if (error) {
     return error;
   }

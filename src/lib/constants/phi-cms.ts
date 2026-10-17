@@ -23,6 +23,7 @@ export const PhiCmsAuditEvent = {
   AreaDraftSaved: "cms.area_draft.saved",
   AreaDraftDeleted: "cms.area_draft.deleted",
   AreaOverrideDeleted: "cms.area_override.deleted",
+  PageOverrideDeleted: "cms.page_override.deleted",
   AreaPublished: "cms.area.published",
   AreaModulesDraftSaved: "cms.area_modules_draft.saved",
   AreaModulesDraftDeleted: "cms.area_modules_draft.deleted",

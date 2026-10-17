@@ -57,27 +57,26 @@ describe("trusted content reference projection", () => {
   });
 });
 
-describe("revision content id collection", () => {
-  it("collects positive widget content ids once each", async () => {
-    const { collectRevisionContentIds } = await import("@/db/site-content");
-    expect(collectRevisionContentIds({
+describe("revision widget instance collection", () => {
+  it("collects every placed widget id once", async () => {
+    const { collectRevisionWidgetInstanceIds } = await import("@/db/site-widget-content");
+    expect(collectRevisionWidgetInstanceIds({
       contentWidgets: [
-        { id: "a", contentId: 7 },
-        { id: "b", contentId: null },
-        { id: "c", contentId: 7 },
-        { id: "d", contentId: 12 },
-        { id: "e", contentId: 0 },
-        { id: "f", contentId: -3 },
-        { id: "g" },
+        { id: "a" },
+        { id: "b" },
+        { id: "a" },
+        { id: "" },
+        { id: 7 },
+        {},
         null,
       ],
-    })).toEqual([7, 12]);
+    })).toEqual(["a", "b"]);
   });
 
   it("returns nothing for trees without a widget array", async () => {
-    const { collectRevisionContentIds } = await import("@/db/site-content");
+    const { collectRevisionWidgetInstanceIds } = await import("@/db/site-widget-content");
     for (const tree of [null, undefined, {}, { contentWidgets: null }, { contentWidgets: "x" }]) {
-      expect(collectRevisionContentIds(tree)).toEqual([]);
+      expect(collectRevisionWidgetInstanceIds(tree)).toEqual([]);
     }
   });
 });

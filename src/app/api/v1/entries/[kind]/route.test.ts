@@ -12,14 +12,15 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("@/lib/api-v1-guard", () => ({ guardApiV1: () => null }));
 vi.mock("@/lib/site-context", () => ({ requireSiteFromRequest: mocks.site }));
-vi.mock("@/db/site-content", () => ({
-  listPublishedNews: mocks.list,
-  PHI_NEWS_TRANSLATION_CONTEXTS: {
+vi.mock("@/db/site-content-entries", () => ({
+  isSiteContentEntryKind: (value: unknown) => value === "news",
+  listPublishedSiteContentEntries: (_kind: string, ...args: unknown[]) => mocks.list(...args),
+  SITE_CONTENT_ENTRY_KINDS: { news: { type: 0, contexts: {
     title: "news entry title",
     subtitle: "news entry subtitle",
     content: "news entry body",
     tag: "news tag",
-  },
+  } } },
 }));
 vi.mock("@/lib/translations", () => ({
   translateSiteBatchWithCache: mocks.translateSite,
@@ -60,11 +61,11 @@ function entry(overrides: Record<string, unknown> = {}) {
 }
 
 function request(locale = "en", query = "") {
-  return new Request(`https://server.test/api/v1/news${query}`, { headers: { "x-locale": locale } });
+  return new Request(`https://server.test/api/v1/entries/news${query}`, { headers: { "x-locale": locale } });
 }
 
 async function read(locale = "en") {
-  const response = await GET(request(locale));
+  const response = await GET(request(locale), { params: Promise.resolve({ kind: "news" }) });
   return { status: response.status, body: await response.json(), response };
 }
 
@@ -79,21 +80,26 @@ beforeEach(() => {
     msgs.map((msg) => `en:${msg}`));
 });
 
-describe("GET /api/v1/news", () => {
+describe("GET /api/v1/entries/news", () => {
   it("hands a stated limit to the read, so the cut comes before the translating", async () => {
-    const response = await GET(request("en", "?limit=10"));
+    const response = await GET(request("en", "?limit=10"), { params: Promise.resolve({ kind: "news" }) });
     expect(response.status).toBe(200);
     expect(mocks.list).toHaveBeenCalledWith(SITE.id, "en", { limit: 10 });
   });
 
+  it("answers the one entry at an address", async () => {
+    await GET(request("en", "?slug=a-post"), { params: Promise.resolve({ kind: "news" }) });
+    expect(mocks.list).toHaveBeenCalledWith(SITE.id, "en", { slug: "a-post" });
+  });
+
   it("reads everything when no limit is stated", async () => {
-    await GET(request("en"));
+    await GET(request("en"), { params: Promise.resolve({ kind: "news" }) });
     expect(mocks.list).toHaveBeenCalledWith(SITE.id, "en", {});
   });
 
   it("refuses a limit that is not a count", async () => {
     for (const query of ["?limit=0", "?limit=-1", "?limit=ten", "?limit=2.5"]) {
-      const response = await GET(request("en", query));
+      const response = await GET(request("en", query), { params: Promise.resolve({ kind: "news" }) });
       expect(response.status, query).toBe(400);
     }
     expect(mocks.list).not.toHaveBeenCalled();
@@ -104,7 +110,7 @@ describe("GET /api/v1/news", () => {
 
     expect(mocks.translateSite).not.toHaveBeenCalled();
     expect(mocks.translateExternal).not.toHaveBeenCalled();
-    expect(body.news[0]).toMatchObject({ title: "An entry", subtitle: "Its subtitle" });
+    expect(body.entries[0]).toMatchObject({ title: "An entry", subtitle: "Its subtitle" });
   });
 
   it("translates title and subtitle for another language, each under its own context", async () => {
@@ -116,7 +122,7 @@ describe("GET /api/v1/news", () => {
     expect(mocks.translateSite.mock.calls[0]![0]).toMatchObject({
       siteId: 3, locale: "de", sourceLocale: "en", format: "text",
     });
-    expect(body.news[0]).toMatchObject({ title: "de:An entry", subtitle: "de:Its subtitle" });
+    expect(body.entries[0]).toMatchObject({ title: "de:An entry", subtitle: "de:Its subtitle" });
   });
 
   /*
@@ -126,8 +132,8 @@ describe("GET /api/v1/news", () => {
   it("answers the body as written, with the language beside it", async () => {
     const { body } = await read("de");
 
-    expect(body.news[0].content).toBe("# Its body\n\nA paragraph.");
-    expect(body.news[0]).toMatchObject({ sourceLocale: null, translate: true });
+    expect(body.entries[0].content).toBe("# Its body\n\nA paragraph.");
+    expect(body.entries[0]).toMatchObject({ sourceLocale: null, translate: true });
     for (const call of mocks.translateSite.mock.calls) {
       expect(call[0].msgs).not.toContain("# Its body\n\nA paragraph.");
     }
@@ -141,7 +147,7 @@ describe("GET /api/v1/news", () => {
     expect(mocks.translateExternal.mock.calls[0]![0]).toMatchObject({
       locale: "fr", sourceLocale: "de", canonicalLocale: "en",
     });
-    expect(body.news[0].title).toBe("en:An entry");
+    expect(body.entries[0].title).toBe("en:An entry");
   });
 
   it("asks for nothing when the reader speaks the language the entry was written in", async () => {
@@ -149,7 +155,7 @@ describe("GET /api/v1/news", () => {
     const { body } = await read("de");
 
     expect(mocks.translateExternal).not.toHaveBeenCalled();
-    expect(body.news[0].title).toBe("An entry");
+    expect(body.entries[0].title).toBe("An entry");
   });
 
   it("respects a stated no to translating", async () => {
@@ -157,7 +163,7 @@ describe("GET /api/v1/news", () => {
     const { body } = await read("de");
 
     expect(mocks.translateSite).not.toHaveBeenCalled();
-    expect(body.news[0].title).toBe("An entry");
+    expect(body.entries[0].title).toBe("An entry");
   });
 
   it("leaves a field somebody already translated alone", async () => {
@@ -166,7 +172,7 @@ describe("GET /api/v1/news", () => {
 
     expect(mocks.translateSite).toHaveBeenCalledTimes(1);
     expect(mocks.translateSite.mock.calls[0]![0].ctx).toBe("news entry subtitle");
-    expect(body.news[0].title).toBe("Ein Eintrag");
+    expect(body.entries[0].title).toBe("Ein Eintrag");
   });
 
   it("asks once for every entry that needs the same language and context", async () => {
@@ -187,7 +193,7 @@ describe("GET /api/v1/news", () => {
     const tagCall = mocks.translateSite.mock.calls
       .find(([input]) => input.ctx === "news tag");
     expect(tagCall?.[0]).toMatchObject({ msgs: ["release", "modules"], format: "text" });
-    expect(body.news[0].tags).toEqual(["de:release", "de:modules"]);
+    expect(body.entries[0].tags).toEqual(["de:release", "de:modules"]);
   });
 
   /*
@@ -211,7 +217,7 @@ describe("GET /api/v1/news", () => {
     const { body } = await read("de");
 
     expect(mocks.translateSite).not.toHaveBeenCalled();
-    expect(body.news[0].tags).toEqual(["mehrsprachig"]);
+    expect(body.entries[0].tags).toEqual(["mehrsprachig"]);
   });
 
   it("marks a stand-in as provisional and refuses to have it kept", async () => {
@@ -227,7 +233,7 @@ describe("GET /api/v1/news", () => {
     const { status, body, response } = await read("de");
 
     expect(status).toBe(200);
-    expect(body.news[0].title).toBe("An entry");
+    expect(body.entries[0].title).toBe("An entry");
     expect(body.provisional).toBe(true);
     expect(response.headers.get("cache-control")).toBe("no-store");
   });

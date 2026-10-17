@@ -3,9 +3,9 @@ import "server-only";
 import type { PoolClient } from "pg";
 
 import {
-  collectRevisionContentIds,
-  deleteOrphanedSiteContentByIdsWithDb,
-} from "@/db/site-content";
+  collectRevisionWidgetInstanceIds,
+  deleteOrphanedSiteWidgetContentWithDb,
+} from "@/db/site-widget-content";
 import { getPool, withTransaction } from "@/lib/db";
 import { hasPhiFlag } from "@/lib/helpers/flags";
 import { resolvePhisCmsAreaKey } from "@/lib/constants/cms-areas";
@@ -536,10 +536,10 @@ async function deleteScopeRevisionsWithDb(
   const table = SITE_REVISION_TABLES[scope.kind];
   const removed = await deleteSiteRevisionsWithDb(db, table, scope.scopeId, revisionIds);
   if (table.carriesContent) {
-    await deleteOrphanedSiteContentByIdsWithDb(
+    await deleteOrphanedSiteWidgetContentWithDb(
       db,
       siteId,
-      removed.trees.flatMap((tree) => collectRevisionContentIds(tree)),
+      removed.trees.flatMap((tree) => collectRevisionWidgetInstanceIds(tree)),
     );
   }
   if (scope.kind === "page" && removed.deletedCount > 0) {

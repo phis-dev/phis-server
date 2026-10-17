@@ -5,22 +5,25 @@ import { createHash } from "node:crypto";
 import type { PoolClient } from "pg";
 
 import {
-  collectRevisionContentIds,
-  deleteOrphanedSiteContentByIdsWithDb,
   getResolvedSiteContentByVersionIds,
-  upsertSiteContentAssetWithClient,
-  upsertSiteContentHtmlWithClient,
-  upsertSiteContentMarkdownWithClient,
-  upsertSiteContentTextWithClient,
   type SiteResolvedContentRecord,
 } from "@/db/site-content";
+import {
+  collectRevisionWidgetInstanceIds,
+  deleteOrphanedSiteWidgetContentWithDb,
+  isPresetWidgetInstance,
+  readSiteWidgetContentRowsWithDb,
+  readSiteWidgetContentVersionsWithDb,
+  writeSiteWidgetContentWithClient,
+  type SiteWidgetContentPlace,
+  type SiteWidgetContentStage,
+} from "@/db/site-widget-content";
 import { getMediaAssetBySiteAndId } from "@/db/media";
 import { listSiteModuleBlockUsageWithDb } from "@/db/site-module-usage";
 import { materializeSiteMediaAvailabilityWithDb } from "@/db/media-spaces";
 import { materializeSiteThreadKindsWithDb } from "@/db/threads";
 import { materializeSiteModuleSeedsWithDb } from "@/db/module-seeds";
 import {
-  collectSiteCmsContentReferences,
   collectSiteCmsReferences,
   countSiteCmsReferencesToPageWithDb,
   PhiCmsReferenceSourceKind,
@@ -50,6 +53,7 @@ import {
   PhiCmsStatus,
 } from "@phis/contracts/cms";
 import { normalizeSiteCmsPath } from "@/lib/helpers/cms-path";
+import { resolvePhisCmsAreaKey } from "@/lib/constants/cms-areas";
 import { hasPhiFlag } from "@/lib/helpers/flags";
 import type {
   CmsAreaModulesWriteInput,
@@ -208,8 +212,13 @@ export type SiteContentWidgetRecord = {
   visibilityMask: number;
   label: string | null;
   config: Record<string, unknown>;
-  contentId: number | null;
+  contentBinding: CmsDraftContentBindingInput | null;
+  /**
+   * The current version of the Widget's bound content: the base a writer hands back with its next save
+   * (CONTENT.md, Concurrent writers). `null` for a Widget without content.
+   */
   contentVersionId: number | null;
+  /** The bound content in the stage the tree was read for. */
   resolvedContent?: SiteResolvedContentRecord | null;
 };
 
@@ -619,8 +628,8 @@ function buildDraftPreviewPageTree(siteId: number, input: CmsPageWriteInput): Si
       visibilityMask: widget.visibilityMask ?? 0,
       label: widget.label ?? null,
       config: toPhiRecord(widget.config),
-      contentId: widget.contentId ?? null,
-      contentVersionId: widget.contentVersionId ?? null,
+      contentBinding: widget.contentBinding ?? null,
+      contentVersionId: null,
       resolvedContent: null,
     })),
     controllerSettings: input.controllerSettings,
@@ -689,42 +698,74 @@ function buildDraftPreviewAreaTree(siteId: number, input: CmsAreaPresetWriteInpu
       visibilityMask: widget.visibilityMask ?? 0,
       label: widget.label ?? null,
       config: toPhiRecord(widget.config),
-      contentId: widget.contentId ?? null,
-      contentVersionId: widget.contentVersionId ?? null,
+      contentBinding: widget.contentBinding ?? null,
+      contentVersionId: null,
       resolvedContent: null,
     })),
     controllerSettings: input.controllerSettings,
   };
 }
 
+/**
+ * Puts each bound Widget's content in, in the stage the tree is read for (CONTENT.md, Drafts, versions and
+ * the published stage).
+ *
+ * The published stage answers `resolvedContent` and nothing else, so a Widget the Site created whose
+ * content was never published shows nothing. The current stage also writes the value back into the bound
+ * field, which is where an editor shows it and from where a save hands it back for comparison.
+ */
 async function resolveTreeContentWidgetsWithDb(
   db: DbQueryable,
   siteId: number,
   widgets: SiteContentWidgetRecord[],
-  locale?: string | null,
+  locale: string | null,
+  stage: SiteWidgetContentStage,
 ) {
-  const pinned = widgets.filter((widget) => widget.contentVersionId != null);
-  const translatedVersionIds = pinned
+  const versions = await readSiteWidgetContentVersionsWithDb(
+    db,
+    siteId,
+    widgets.filter((widget) => widget.contentBinding).map((widget) => widget.id),
+    stage,
+  );
+  const versionIdOf = (widget: SiteContentWidgetRecord) => versions.get(widget.id)?.versionId ?? null;
+  const translatedVersionIds = widgets
     .filter((widget) => !hasPhiFlag(widget.flags, PhiCmsFlags.NoTranslate))
-    .map((widget) => widget.contentVersionId ?? 0);
-  const sourceOnlyVersionIds = pinned
+    .flatMap((widget) => versionIdOf(widget) ?? []);
+  const sourceOnlyVersionIds = widgets
     .filter((widget) => hasPhiFlag(widget.flags, PhiCmsFlags.NoTranslate))
-    .map((widget) => widget.contentVersionId ?? 0);
+    .flatMap((widget) => versionIdOf(widget) ?? []);
 
   const [translatedResolvedById, sourceOnlyResolvedById] = await Promise.all([
-    getResolvedSiteContentByVersionIds(siteId, translatedVersionIds, locale ?? null),
+    getResolvedSiteContentByVersionIds(siteId, translatedVersionIds, locale),
     getResolvedSiteContentByVersionIds(siteId, sourceOnlyVersionIds, null),
   ]);
 
-  return widgets.map((widget) => ({
-    ...widget,
-    resolvedContent:
-      widget.contentVersionId == null
-        ? null
-        : hasPhiFlag(widget.flags, PhiCmsFlags.NoTranslate)
-          ? sourceOnlyResolvedById.get(widget.contentVersionId) ?? null
-          : translatedResolvedById.get(widget.contentVersionId) ?? null,
-  }));
+  return widgets.map((widget) => {
+    const entry = versions.get(widget.id);
+    const versionId = entry?.versionId ?? null;
+    const resolvedContent = versionId == null
+      ? null
+      : hasPhiFlag(widget.flags, PhiCmsFlags.NoTranslate)
+        ? sourceOnlyResolvedById.get(versionId) ?? null
+        : translatedResolvedById.get(versionId) ?? null;
+    const binding = widget.contentBinding;
+    const config = stage === "current" && binding && resolvedContent
+      ? { ...widget.config, [binding.sourceField]: readResolvedContentSourceValue(binding, resolvedContent) }
+      : widget.config;
+    return {
+      ...widget,
+      config,
+      contentVersionId: entry?.row.currentVersionId ?? null,
+      resolvedContent,
+    };
+  });
+}
+
+function readResolvedContentSourceValue(
+  binding: CmsDraftContentBindingInput,
+  content: SiteResolvedContentRecord,
+) {
+  return binding.storage === "asset" ? content.assetId : content.textFields[binding.storage]?.source ?? null;
 }
 
 async function buildResolvedPageTreeFromRevisionWithDb(
@@ -732,7 +773,8 @@ async function buildResolvedPageTreeFromRevisionWithDb(
   siteId: number,
   scope: SitePageScopeRecord,
   input: CmsPageWriteInput,
-  locale?: string | null,
+  locale: string | null,
+  stage: SiteWidgetContentStage,
 ): Promise<SiteResolvedWidgetTree> {
   const tree = buildDraftPreviewPageTree(siteId, {
     ...input,
@@ -747,7 +789,7 @@ async function buildResolvedPageTreeFromRevisionWithDb(
   return {
     ...tree,
     pageMeta,
-    contentWidgets: await resolveTreeContentWidgetsWithDb(db, siteId, tree.contentWidgets, locale ?? null),
+    contentWidgets: await resolveTreeContentWidgetsWithDb(db, siteId, tree.contentWidgets, locale, stage),
   };
 }
 
@@ -787,7 +829,8 @@ async function buildResolvedAreaTreeFromRevisionWithDb(
   siteId: number,
   scope: SiteAreaScopeRecord,
   input: CmsAreaPresetWriteInput,
-  locale?: string | null,
+  locale: string | null,
+  stage: SiteWidgetContentStage,
 ): Promise<SiteResolvedAreaPresetTree> {
   const tree = buildDraftPreviewAreaTree(siteId, {
     ...input,
@@ -799,7 +842,7 @@ async function buildResolvedAreaTreeFromRevisionWithDb(
 
   return {
     ...tree,
-    contentWidgets: await resolveTreeContentWidgetsWithDb(db, siteId, tree.contentWidgets, locale ?? null),
+    contentWidgets: await resolveTreeContentWidgetsWithDb(db, siteId, tree.contentWidgets, locale, stage),
   };
 }
 
@@ -1370,6 +1413,7 @@ async function getExactSiteAreaPresetTreeWithDb(
   areaMask: number,
   locale?: string | null,
   sourcePreset?: SitePresetIdentity | null,
+  stage: SiteWidgetContentStage = "published",
 ): Promise<SiteResolvedAreaPresetTree | null> {
   const scope = await getSiteAreaScopeWithDb(db, siteId, areaMask);
   if (!scope?.publishedRevisionId) {
@@ -1391,7 +1435,8 @@ async function getExactSiteAreaPresetTreeWithDb(
     siteId,
     scope,
     revisionTree,
-    locale,
+    locale ?? null,
+    stage,
   );
 }
 
@@ -1401,6 +1446,7 @@ async function getResolvedSitePageTreeWithDb(
   areaMask: number,
   address: SitePageScopeAddress,
   locale?: string | null,
+  stage: SiteWidgetContentStage = "published",
 ): Promise<SiteResolvedWidgetTree | null> {
   const scope = await getSitePageScopeWithDb(db, siteId, areaMask, address);
   if (!scope?.publishedRevisionId) {
@@ -1422,44 +1468,21 @@ async function getResolvedSitePageTreeWithDb(
     siteId,
     scope,
     revisionTree,
-    locale,
+    locale ?? null,
+    stage,
   );
 }
 
-async function siteContentVersionBelongsTo(
-  db: DbQueryable,
-  contentId: number,
-  versionId: number,
-) {
-  const { rows } = await db.query<{ id: number }>(
-    `SELECT id
-     FROM phis.site_content_versions
-     WHERE id = $2
-       AND content_id = $1
-     LIMIT 1`,
-    [contentId, versionId],
-  );
-
-  return Boolean(rows[0]);
-}
-
-async function siteContentExistsOnSite(
-  db: DbQueryable,
-  siteId: number,
-  contentId: number,
-) {
-  const { rows } = await db.query<{ id: number }>(
-    `SELECT id
-     FROM phis.site_content
-     WHERE site_id = $1
-       AND id = $2
-     LIMIT 1`,
-    [siteId, contentId],
-  );
-
-  return Boolean(rows[0]);
-}
-
+/**
+ * Hands every bound field of a structure save to the content store and returns the Widgets as the tree
+ * stores them -- with the field removed (CONTENT.md, Binding a Widget to its content).
+ *
+ * A Widget the Site created gets its row with the first save that places it; that version is the
+ * Builder's placeholder and is not published. A preset node without a row keeps its field: until a
+ * content write binds it, its text is the Module's and follows structure. Once a row exists the field is
+ * compared with the version the writer read (`contentVersionId`): an unchanged value writes nothing, a
+ * changed one is a content write that must build on the current version.
+ */
 async function normalizeRevisionContentWidgetsWithDb(
   db: PoolClient,
   siteId: number,
@@ -1468,188 +1491,84 @@ async function normalizeRevisionContentWidgetsWithDb(
     scopeKind: "page" | "area";
     areaMask: number;
     path?: string | null;
+    /** The preset the scope stands on, which is what lets a preset node keep its field. */
+    sourcePreset: SitePresetIdentity | null;
     createdByUserId?: number | null;
   },
 ) {
+  const area = resolvePhisCmsAreaKey(scope.areaMask);
+  const place: SiteWidgetContentPlace = scope.scopeKind === "area"
+    ? { scope: "area", area }
+    : {
+        scope: "page",
+        area,
+        path: scope.sourcePreset ? null : scope.path ?? null,
+        ownerModuleId: scope.sourcePreset?.ownerModuleId ?? null,
+        presetKey: scope.sourcePreset?.presetKey ?? null,
+      };
+  const rows = await readSiteWidgetContentRowsWithDb(
+    db,
+    siteId,
+    widgets.filter((widget) => widget.contentBinding).map((widget) => widget.id),
+  );
   const normalizedWidgets: typeof widgets = [];
 
   for (const widget of widgets) {
-    const { contentBinding, ...inputWidget } = widget;
-    let stableWidget = inputWidget;
-    let contentId = stableWidget.contentId ?? null;
-    // Every write below pins the version it appends; a widget that writes nothing keeps the pin it came
-    // with, which is what makes discard and restore return the content of the revision they keep.
-    let contentVersionId = stableWidget.contentVersionId ?? null;
-
-    // Content is only swept once no revision names it, so an id that is not this Site's is a foreign or
-    // forged one: refused, not swapped for a fresh row that silently cuts the widget from its content.
-    if (contentId != null && !(await siteContentExistsOnSite(db, siteId, contentId))) {
-      throw new Error(`Widget ${stableWidget.id} references unknown content ${contentId}.`);
+    const { contentBinding, contentVersionId: baseVersionId, ...stableWidget } = widget;
+    if (!contentBinding) {
+      normalizedWidgets.push(stableWidget);
+      continue;
+    }
+    const row = rows.get(widget.id) ?? null;
+    if (!row && scope.sourcePreset && isPresetWidgetInstance(widget.id)) {
+      normalizedWidgets.push({ ...stableWidget, contentBinding });
+      continue;
     }
 
-    if (contentBinding?.storage === "text") {
-      const rawText = readWidgetContentBindingSourceValue(stableWidget.config, contentBinding, stableWidget.id);
+    const config = { ...(stableWidget.config ?? {}) };
+    const rawValue = config[contentBinding.sourceField];
+    delete config[contentBinding.sourceField];
+    if (rawValue !== undefined || !row) {
       const { typeKey } = parseWidgetNamespacedTypeKey(stableWidget.widgetType);
-      const contentWrite = await upsertSiteContentTextWithClient(db, {
-        siteId,
-        contentId,
-        slug:
-          contentId == null
-            ? buildWidgetContentSlug(
-                {
-                  scopeKind: scope.scopeKind,
-                  areaMask: scope.areaMask,
-                  path: scope.path ?? null,
-                },
-                {
-                  id: stableWidget.id,
-                  label: stableWidget.label ?? null,
-                },
-                typeKey,
-              )
-            : null,
-        text: rawText,
-        status: stableWidget.status ?? 0,
-        sortOrder: stableWidget.sortOrder ?? 0,
-        meta: {},
-        createdByUserId: scope.createdByUserId ?? null,
-      });
-      contentId = contentWrite.contentId;
-      contentVersionId = contentWrite.versionId;
-    } else if (contentBinding?.storage === "html") {
-      const rawHtml = readWidgetContentBindingSourceValue(stableWidget.config, contentBinding, stableWidget.id);
-      const { typeKey } = parseWidgetNamespacedTypeKey(stableWidget.widgetType);
-      const contentWrite = await upsertSiteContentHtmlWithClient(db, {
-        siteId,
-        contentId,
-        slug:
-          contentId == null
-            ? buildWidgetContentSlug(
-                {
-                  scopeKind: scope.scopeKind,
-                  areaMask: scope.areaMask,
-                  path: scope.path ?? null,
-                },
-                {
-                  id: stableWidget.id,
-                  label: stableWidget.label ?? null,
-                },
-                typeKey,
-              )
-            : null,
-        html: rawHtml,
-        status: stableWidget.status ?? 0,
-        sortOrder: stableWidget.sortOrder ?? 0,
-        meta: {},
-        createdByUserId: scope.createdByUserId ?? null,
-      });
-      contentId = contentWrite.contentId;
-      contentVersionId = contentWrite.versionId;
-      await replaceSiteCmsReferencesWithDb(db, {
-        siteId,
-        sourceKind: PhiCmsReferenceSourceKind.Content,
-        sourceScopeId: contentWrite.contentId,
-        sourceRevisionId: contentWrite.versionId,
-        references: collectSiteCmsContentReferences("html", contentWrite.html, {
-          targetAreaId: scope.areaMask,
-        }),
-      });
-      stableWidget = {
-        ...stableWidget,
-        config: {
-          ...(stableWidget.config ?? {}),
-          [contentBinding.sourceField]: contentWrite.html,
-        },
-      };
-    } else if (contentBinding?.storage === "markdown") {
-      const rawMarkdown = readWidgetContentBindingSourceValue(stableWidget.config, contentBinding, stableWidget.id);
-      const { typeKey } = parseWidgetNamespacedTypeKey(stableWidget.widgetType);
-      const contentWrite = await upsertSiteContentMarkdownWithClient(db, {
-        siteId,
-        contentId,
-        slug:
-          contentId == null
-            ? buildWidgetContentSlug(
-                {
-                  scopeKind: scope.scopeKind,
-                  areaMask: scope.areaMask,
-                  path: scope.path ?? null,
-                },
-                {
-                  id: stableWidget.id,
-                  label: stableWidget.label ?? null,
-                },
-                typeKey,
-              )
-            : null,
-        markdown: rawMarkdown,
-        status: stableWidget.status ?? 0,
-        sortOrder: stableWidget.sortOrder ?? 0,
-        meta: {},
-        createdByUserId: scope.createdByUserId ?? null,
-      });
-      contentId = contentWrite.contentId;
-      contentVersionId = contentWrite.versionId;
-      await replaceSiteCmsReferencesWithDb(db, {
-        siteId,
-        sourceKind: PhiCmsReferenceSourceKind.Content,
-        sourceScopeId: contentWrite.contentId,
-        sourceRevisionId: contentWrite.versionId,
-        references: collectSiteCmsContentReferences("markdown", contentWrite.markdown, {
-          targetAreaId: scope.areaMask,
-        }),
-      });
-    } else if (contentBinding?.storage === "asset") {
-      const assetId = readWidgetAssetContentBindingSourceValue(stableWidget.config, contentBinding, stableWidget.id);
-      const asset = await getMediaAssetBySiteAndId(siteId, assetId);
-      if (!asset) {
-        throw new Error(`Widget ${stableWidget.id} references unknown media asset ${assetId}.`);
-      }
-      const { typeKey } = parseWidgetNamespacedTypeKey(stableWidget.widgetType);
-      const contentWrite = await upsertSiteContentAssetWithClient(db, {
-        siteId,
-        contentId,
-        assetId,
-        title: asset.title,
-        altText: asset.altText,
-        slug:
-          contentId == null
-            ? buildWidgetContentSlug(
-                {
-                  scopeKind: scope.scopeKind,
-                  areaMask: scope.areaMask,
-                  path: scope.path ?? null,
-                },
-                {
-                  id: stableWidget.id,
-                  label: stableWidget.label ?? null,
-                },
-                typeKey,
-              )
-            : "",
-        status: stableWidget.status ?? 0,
-        sortOrder: stableWidget.sortOrder ?? 0,
-        meta: {},
-        createdByUserId: scope.createdByUserId ?? null,
-      });
-      contentId = contentWrite.contentId;
-      contentVersionId = contentWrite.versionId;
-    } else if (
-      contentId == null
-        ? contentVersionId != null
-        : contentVersionId == null || !(await siteContentVersionBelongsTo(db, contentId, contentVersionId))
-    ) {
-      throw new Error(
-        `Widget ${stableWidget.id} pins content version ${contentVersionId} that is not one of content ${contentId}.`,
+      const slug = buildWidgetContentSlug(
+        { scopeKind: scope.scopeKind, areaMask: scope.areaMask, path: scope.path ?? null },
+        { id: stableWidget.id, label: stableWidget.label ?? null },
+        typeKey,
       );
+      if (contentBinding.storage === "asset") {
+        const assetId = readWidgetAssetContentBindingSourceValue(stableWidget.config, contentBinding, stableWidget.id);
+        const asset = await getMediaAssetBySiteAndId(siteId, assetId);
+        if (!asset) {
+          throw new Error(`Widget ${stableWidget.id} references unknown media asset ${assetId}.`);
+        }
+        await writeSiteWidgetContentWithClient(db, {
+          siteId,
+          instanceId: stableWidget.id,
+          storage: "asset",
+          value: assetId,
+          baseVersionId: row ? baseVersionId ?? null : null,
+          slug,
+          referenceAreaId: scope.areaMask,
+          asset: { title: asset.title, altText: asset.altText },
+          place,
+          createdByUserId: scope.createdByUserId ?? null,
+        });
+      } else {
+        await writeSiteWidgetContentWithClient(db, {
+          siteId,
+          instanceId: stableWidget.id,
+          storage: contentBinding.storage,
+          value: readWidgetContentBindingSourceValue(stableWidget.config, contentBinding, stableWidget.id),
+          baseVersionId: row ? baseVersionId ?? null : null,
+          slug,
+          referenceAreaId: scope.areaMask,
+          place,
+          createdByUserId: scope.createdByUserId ?? null,
+        });
+      }
     }
 
-    normalizedWidgets.push({
-      ...stableWidget,
-      contentId,
-      contentVersionId,
-      ...(contentBinding ? { contentBinding } : {}),
-    });
+    normalizedWidgets.push({ ...stableWidget, config, contentBinding });
   }
 
   return normalizedWidgets;
@@ -1711,16 +1630,18 @@ export async function saveSitePageDraftRevision(
       );
     }
     const sourceTree = sourceRevision ? readValidatedPageRevisionTree(sourceRevision.treeJson) : null;
+    const sourcePreset = resolveSnapshotPresetSource(sourceTree?.sourcePreset, revisionInput.sourcePreset);
     const normalizedWidgets = await normalizeRevisionContentWidgetsWithDb(client, siteId, input.contentWidgets, {
       scopeKind: "page",
       areaMask,
       path: scope.path ?? input.path,
+      sourcePreset: sourcePreset ?? null,
       createdByUserId: options?.createdByUserId ?? null,
     });
     const nextRevisionInput = {
       ...revisionInput,
       path: scope.path ?? revisionInput.path,
-      sourcePreset: resolveSnapshotPresetSource(sourceTree?.sourcePreset, revisionInput.sourcePreset),
+      sourcePreset,
       contentWidgets: normalizedWidgets,
     } satisfies Omit<CmsPageWriteInput, "areaMask">;
     const summary = buildPageRevisionSummary(
@@ -1772,11 +1693,11 @@ export async function saveSitePageDraftRevision(
     // A widget removed by this save may leave its content row orphaned. The candidates are the ids
     // this save dropped; the delete itself re-checks them against every revision of the Site, so
     // anything still restorable survives.
-    const nextContentIds = new Set(collectRevisionContentIds(nextRevisionInput));
-    await deleteOrphanedSiteContentByIdsWithDb(
+    const nextInstanceIds = new Set(collectRevisionWidgetInstanceIds(nextRevisionInput));
+    await deleteOrphanedSiteWidgetContentWithDb(
       client,
       siteId,
-      collectRevisionContentIds(sourceTree).filter((id) => !nextContentIds.has(id)),
+      collectRevisionWidgetInstanceIds(sourceTree).filter((id) => !nextInstanceIds.has(id)),
     );
 
     return {
@@ -1824,14 +1745,16 @@ export async function saveSiteAreaDraftRevision(
       );
     }
     const sourceTree = sourceRevision ? readValidatedAreaRevisionTree(sourceRevision.treeJson) : null;
+    const sourcePreset = resolveSnapshotPresetSource(sourceTree?.sourcePreset, revisionInput.sourcePreset);
     const normalizedWidgets = await normalizeRevisionContentWidgetsWithDb(client, siteId, input.contentWidgets, {
       scopeKind: "area",
       areaMask,
+      sourcePreset: sourcePreset ?? null,
       createdByUserId: options?.createdByUserId ?? null,
     });
     const nextRevisionInput = {
       ...revisionInput,
-      sourcePreset: resolveSnapshotPresetSource(sourceTree?.sourcePreset, revisionInput.sourcePreset),
+      sourcePreset,
       contentWidgets: normalizedWidgets,
     } satisfies Omit<CmsAreaPresetWriteInput, "areaMask">;
     const summary = buildAreaRevisionSummary(
@@ -1876,11 +1799,11 @@ export async function saveSiteAreaDraftRevision(
       sourceRevisionId: revision.id,
       references: collectSiteCmsReferences(nextRevisionInput, { targetAreaId: areaMask }),
     });
-    const nextAreaContentIds = new Set(collectRevisionContentIds(nextRevisionInput));
-    await deleteOrphanedSiteContentByIdsWithDb(
+    const nextAreaInstanceIds = new Set(collectRevisionWidgetInstanceIds(nextRevisionInput));
+    await deleteOrphanedSiteWidgetContentWithDb(
       client,
       siteId,
-      collectRevisionContentIds(sourceTree).filter((id) => !nextAreaContentIds.has(id)),
+      collectRevisionWidgetInstanceIds(sourceTree).filter((id) => !nextAreaInstanceIds.has(id)),
     );
 
     return {
@@ -2000,6 +1923,7 @@ export async function publishSitePageRevision(
           { ...scope, path: movedOnly.movedTo, draftPath: null },
           readValidatedPageRevisionTree(publishedRevision.treeJson),
           options?.locale ?? null,
+          "published",
         );
         return { revisionId: publishedRevision.id, page: movedPage, moved: movedOnly };
       }
@@ -2028,6 +1952,7 @@ export async function publishSitePageRevision(
       scope,
       materializedTree,
       options?.locale ?? null,
+      "published",
     );
 
     const deleted = isDeletedPageRevision(revisionTree, revision.flags);
@@ -2281,6 +2206,7 @@ export async function publishSiteAreaRevision(
       scope,
       materializedTree,
       options?.locale ?? null,
+      "published",
     );
 
     await writePublishedSiteRevisionWithDb(client, AREA, revision.id, {
@@ -2391,6 +2317,7 @@ export async function publishSiteAreaModulesRevision(
       scope,
       materializedTree,
       options?.locale ?? null,
+      "published",
     );
 
     await writePublishedSiteRevisionWithDb(client, AREA, revision.id, {
@@ -2452,6 +2379,7 @@ export async function getSitePageDraftRevisionPreview(
       scope,
       readValidatedPageRevisionTree(revision.treeJson),
       input.locale ?? null,
+      "current",
     ),
   };
 }
@@ -2483,6 +2411,7 @@ export async function getSitePageRevisionReview(
       scope,
       readValidatedPageRevisionTree(revision.treeJson),
       input.locale ?? null,
+      "current",
     ),
   };
 }
@@ -2518,6 +2447,7 @@ export async function getSiteCurrentPageDraft(
       scope,
       readValidatedPageRevisionTree(revision.treeJson),
       input.locale ?? null,
+      "current",
     ),
   };
 }
@@ -2553,6 +2483,7 @@ export async function getSiteAreaDraftRevisionPreview(
       scope,
       revisionTree,
       null,
+      "current",
     ),
   };
 }
@@ -2588,6 +2519,7 @@ export async function getSiteAreaRevisionReview(
       scope,
       revisionTree,
       null,
+      "current",
     ),
   };
 }
@@ -2627,6 +2559,7 @@ export async function getSiteCurrentAreaDraft(
       scope,
       revisionTree,
       null,
+      "current",
     ),
   };
 }
@@ -2661,7 +2594,7 @@ export async function getSiteCurrentAreaModulesDraft(
   return {
     revisionId: revision.id,
     draft: readSiteCmsDraftState(revision),
-    preset: await buildResolvedAreaTreeFromRevisionWithDb(getPool(), siteId, scope, revisionTree, null),
+    preset: await buildResolvedAreaTreeFromRevisionWithDb(getPool(), siteId, scope, revisionTree, null, "current"),
   };
 }
 
@@ -2733,10 +2666,10 @@ export async function deleteSitePageDraftRevision(
     const removedDraft = await deleteSiteRevisionsWithDb(client, PAGE, scope.id, [
       scope.workingDraftRevisionId,
     ]);
-    await deleteOrphanedSiteContentByIdsWithDb(
+    await deleteOrphanedSiteWidgetContentWithDb(
       client,
       siteId,
-      collectRevisionContentIds(removedDraft.trees[0] ?? null),
+      collectRevisionWidgetInstanceIds(removedDraft.trees[0] ?? null),
     );
     await setSiteRevisionScopePointersWithDb(client, PAGE, scope.id, {
       publishedRevisionId: scope.publishedRevisionId,
@@ -2769,10 +2702,10 @@ export async function deleteSiteAreaDraftRevision(
     const removedAreaDraft = await deleteSiteRevisionsWithDb(client, AREA, scope.id, [
       scope.workingDraftRevisionId,
     ]);
-    await deleteOrphanedSiteContentByIdsWithDb(
+    await deleteOrphanedSiteWidgetContentWithDb(
       client,
       siteId,
-      collectRevisionContentIds(removedAreaDraft.trees[0] ?? null),
+      collectRevisionWidgetInstanceIds(removedAreaDraft.trees[0] ?? null),
     );
     await setSiteAreaScopePointersWithDb(client, scope.id, {
       publishedRevisionId: scope.publishedRevisionId,
@@ -2834,10 +2767,10 @@ export async function deleteSiteAreaOverride(
       [scope.id],
     );
     for (const row of removed.rows) {
-      await deleteOrphanedSiteContentByIdsWithDb(
+      await deleteOrphanedSiteWidgetContentWithDb(
         client,
         siteId,
-        collectRevisionContentIds(row.tree_json ?? null),
+        collectRevisionWidgetInstanceIds(row.tree_json ?? null),
       );
     }
     await client.query(
@@ -2852,12 +2785,69 @@ export async function deleteSiteAreaOverride(
   });
 }
 
+/**
+ * Removes the Site's own override of a Module's Page, leaving the preset to answer for it again
+ * (CONTENT.md, Reset).
+ *
+ * Structure only. The Page's revisions and pointers go, and with them every Widget the Site added to the
+ * preset; the content written for the preset's own nodes stays bound to them and is shown by the preset
+ * tree. What is live changes at once -- there is no override left to publish -- so the caller is the
+ * publishing authority. A Page the Site made has no preset to go back to and is refused.
+ */
+export async function deleteSitePageOverride(
+  siteId: number,
+  input: {
+    areaMask: number;
+    sourcePreset: SitePresetIdentity;
+  },
+): Promise<{ deleted: boolean }> {
+  return withTransaction(async (client) => {
+    const scope = await getSitePageScopeWithDb(client, siteId, input.areaMask, {
+      kind: "preset",
+      ownerModuleId: input.sourcePreset.ownerModuleId,
+      presetKey: input.sourcePreset.presetKey,
+    }, { forUpdate: true });
+    if (!scope) {
+      return { deleted: false };
+    }
+
+    await setSiteRevisionScopePointersWithDb(client, PAGE, scope.id, {
+      publishedRevisionId: null,
+      workingDraftRevisionId: null,
+    });
+    const removed = await client.query<{ tree_json: Record<string, unknown> }>(
+      `DELETE FROM phis.site_page_revisions WHERE page_scope_id = $1 RETURNING tree_json`,
+      [scope.id],
+    );
+    await deleteOrphanedSiteWidgetContentWithDb(
+      client,
+      siteId,
+      removed.rows.flatMap((row) => collectRevisionWidgetInstanceIds(row.tree_json ?? null)),
+    );
+    await client.query(
+      `DELETE FROM phis.site_cms_references
+       WHERE site_id = $1 AND source_kind = $2 AND source_scope_id = $3`,
+      [siteId, PhiCmsReferenceSourceKind.Page, scope.id],
+    );
+    await client.query(
+      `DELETE FROM phis.site_page_scopes
+       WHERE id = $1
+         AND published_revision_id IS NULL
+         AND working_draft_revision_id IS NULL`,
+      [scope.id],
+    );
+    return { deleted: removed.rowCount != null && removed.rowCount > 0 };
+  });
+}
+
 export async function getExactSiteAreaPresetTree(
   siteId: number,
   areaMask: number,
   pageId = 0,
   locale?: string | null,
   sourcePreset?: SitePresetIdentity | null,
+  /** `current` for an editor reading what is published as the base of its next draft (CONTENT.md). */
+  stage: SiteWidgetContentStage = "published",
 ): Promise<SiteResolvedAreaPresetTree | null> {
   void pageId;
   return getExactSiteAreaPresetTreeWithDb(
@@ -2866,6 +2856,7 @@ export async function getExactSiteAreaPresetTree(
     areaMask,
     locale ?? null,
     sourcePreset,
+    stage,
   );
 }
 
@@ -2874,8 +2865,10 @@ export async function getResolvedSitePageTree(
   areaMask: number,
   address: SitePageScopeAddress,
   locale?: string | null,
+  /** `current` for an editor reading what is published as the base of its next draft (CONTENT.md). */
+  stage: SiteWidgetContentStage = "published",
 ): Promise<SiteResolvedWidgetTree | null> {
-  return getResolvedSitePageTreeWithDb(getPool(), siteId, areaMask, address, locale ?? null);
+  return getResolvedSitePageTreeWithDb(getPool(), siteId, areaMask, address, locale ?? null, stage);
 }
 
 /**

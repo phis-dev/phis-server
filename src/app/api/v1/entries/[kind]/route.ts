@@ -2,10 +2,12 @@ import { NextResponse } from "next/server";
 import { createJsonResponse } from "@/lib/api-response";
 import { guardApiV1 } from "@/lib/api-v1-guard";
 import {
-  listPublishedNews,
-  PHI_NEWS_TRANSLATION_CONTEXTS,
-  type SiteNewsFieldValue,
-} from "@/db/site-content";
+  isSiteContentEntryKind,
+  listPublishedSiteContentEntries,
+  SITE_CONTENT_ENTRY_KINDS,
+  type SiteContentEntryFieldValue,
+  type SiteContentEntryKind,
+} from "@/db/site-content-entries";
 import { resolvePhiLocaleBase, resolveRequestLocale } from "@/lib/locale";
 import { logRuntimeEvent, normalizeLogThrowable } from "@/lib/log";
 import { requireSiteFromRequest } from "@/lib/site-context";
@@ -17,8 +19,13 @@ import {
 
 const CACHE_CONTROL = "public, max-age=300, stale-while-revalidate=3600";
 
-type PublishedNews = Awaited<ReturnType<typeof listPublishedNews>>;
-type PublishedNewsEntry = PublishedNews[number];
+/*
+ * The published entries of one content type (CONTENT.md), translated for the reader's language. Every
+ * content type answers here, under its own kind: `/api/v1/entries/news`.
+ */
+
+type PublishedEntries = Awaited<ReturnType<typeof listPublishedSiteContentEntries>>;
+type PublishedEntry = PublishedEntries[number];
 
 /**
  * A field still waiting for the language it was asked in, and where its answer belongs.
@@ -35,7 +42,7 @@ type PendingField = {
   | { field: "tag"; tagIndex: number }
 );
 
-function readEntrySourceLocale(entry: PublishedNewsEntry, canonicalLocale: string) {
+function readEntrySourceLocale(entry: PublishedEntry, canonicalLocale: string) {
   return entry.sourceLocale?.trim() || canonicalLocale;
 }
 
@@ -45,21 +52,27 @@ function readEntrySourceLocale(entry: PublishedNewsEntry, canonicalLocale: strin
  * Two cases, and neither is worth a provider: the reader asked in the language the entry was written in,
  * or the entry says it may not be translated.
  */
-function answersInSourceLanguage(entry: PublishedNewsEntry, locale: string, canonicalLocale: string) {
+function answersInSourceLanguage(entry: PublishedEntry, locale: string, canonicalLocale: string) {
   return !entry.translate
     || resolvePhiLocaleBase(readEntrySourceLocale(entry, canonicalLocale)) === resolvePhiLocaleBase(locale);
 }
 
-function collectPendingFields(entries: PublishedNews, locale: string, canonicalLocale: string) {
+function collectPendingFields(
+  kind: SiteContentEntryKind,
+  entries: PublishedEntries,
+  locale: string,
+  canonicalLocale: string,
+) {
+  const contexts = SITE_CONTENT_ENTRY_KINDS[kind].contexts;
   const pending = new Map<string, { sourceLocale: string; ctx: string; fields: PendingField[] }>();
   entries.forEach((entry, entryIndex) => {
     if (answersInSourceLanguage(entry, locale, canonicalLocale)) {
       return;
     }
     const sourceLocale = readEntrySourceLocale(entry, canonicalLocale);
-    const candidates: ReadonlyArray<["title" | "subtitle", SiteNewsFieldValue, string]> = [
-      ["title", entry.title, PHI_NEWS_TRANSLATION_CONTEXTS.title],
-      ["subtitle", entry.subtitle, PHI_NEWS_TRANSLATION_CONTEXTS.subtitle],
+    const candidates: ReadonlyArray<["title" | "subtitle", SiteContentEntryFieldValue, string]> = [
+      ["title", entry.title, contexts.title],
+      ["subtitle", entry.subtitle, contexts.subtitle],
     ];
     const add = (ctx: string, field: PendingField) => {
       const key = `${sourceLocale}\u0000${ctx}`;
@@ -87,7 +100,7 @@ function collectPendingFields(entries: PublishedNews, locale: string, canonicalL
      */
     entry.tags.forEach((tag, tagIndex) => {
       if (tag.trim()) {
-        add(PHI_NEWS_TRANSLATION_CONTEXTS.tag, { entryIndex, field: "tag", tagIndex, text: tag });
+        add(contexts.tag, { entryIndex, field: "tag", tagIndex, text: tag });
       }
     });
   });
@@ -107,12 +120,13 @@ function collectPendingFields(entries: PublishedNews, locale: string, canonicalL
  * as it was written, beside the language it was written in.
  */
 async function translatePendingFields(input: {
+  kind: SiteContentEntryKind;
   siteId: number;
   locale: string;
   canonicalLocale: string;
-  entries: PublishedNews;
+  entries: PublishedEntries;
 }) {
-  const groups = collectPendingFields(input.entries, input.locale, input.canonicalLocale);
+  const groups = collectPendingFields(input.kind, input.entries, input.locale, input.canonicalLocale);
   if (groups.length === 0) {
     return;
   }
@@ -161,10 +175,14 @@ async function translatePendingFields(input: {
   }
 }
 
-export async function GET(request: Request) {
+export async function GET(request: Request, { params }: { params: Promise<{ kind: string }> }) {
   const guardError = guardApiV1(request);
   if (guardError) {
     return guardError;
+  }
+  const { kind } = await params;
+  if (!isSiteContentEntryKind(kind)) {
+    return NextResponse.json({ error: "No such content type." }, { status: 404 });
   }
 
   const site = await requireSiteFromRequest(request);
@@ -185,10 +203,16 @@ export async function GET(request: Request) {
   if (limit !== undefined && (!Number.isInteger(limit) || limit <= 0)) {
     return NextResponse.json({ error: "limit must be a positive integer." }, { status: 400 });
   }
-  const entries = await listPublishedNews(site.id, locale, limit === undefined ? {} : { limit });
+  // One entry by its address, for a detail Page: the same answer, cut to the entry with that slug.
+  const slug = new URL(request.url).searchParams.get("slug")?.trim() || undefined;
+  const entries = await listPublishedSiteContentEntries(kind, site.id, locale, {
+    ...(limit === undefined ? {} : { limit }),
+    ...(slug ? { slug } : {}),
+  });
   const { value: translationFailed, standIn } = await trackTranslationStandIns(async () => {
     try {
       await translatePendingFields({
+        kind,
         siteId: site.id,
         locale,
         canonicalLocale: site.sourceLocale,
@@ -200,9 +224,9 @@ export async function GET(request: Request) {
        * they were written in, and a News page that renders them is better than one that reports an
        * outage -- which is why this is caught here and marked below rather than raised.
        */
-      logRuntimeEvent("error", "news.translation.failed", {
-        area: "news",
-        message: "News translation failed; answering in the source language.",
+      logRuntimeEvent("error", "content.entries.translation.failed", {
+        area: kind,
+        message: "Content entry translation failed; answering in the source language.",
         siteKey: site.key,
         error: normalizeLogThrowable(error),
         meta: { locale, entries: entries.length },
@@ -246,7 +270,8 @@ export async function GET(request: Request) {
       version,
       site: site.key,
       locale,
-      news: items,
+      kind,
+      entries: items,
       // `provisional`: at least one answer is source text standing in for a failure; do not keep it.
       ...(provisional ? { provisional: true } : {}),
     },

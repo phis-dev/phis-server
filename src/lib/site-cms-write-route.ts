@@ -7,6 +7,7 @@ import {
   deleteSiteAreaDraftRevision,
   deleteSiteAreaOverride,
   deleteSiteAreaModulesDraftRevision,
+  deleteSitePageOverride,
   deleteSitePageDraftRevision,
   getExactSiteAreaPresetTree,
   getSiteCurrentAreaDraft,
@@ -24,6 +25,7 @@ import {
   type SitePageScopeAddress,
 } from "@/db/site-pages";
 import { SiteCmsAreaBaselineRequiredError, SiteCmsDraftConflictError } from "@/db/site-revision-scopes";
+import { SiteContentConflictError } from "@/db/site-widget-content";
 import { resolvePhisCmsAreaKey, resolvePhisCmsAreaMask } from "@/lib/constants/cms-areas";
 import { PhiCmsAuditEvent } from "@/lib/constants/phi-cms";
 import {
@@ -214,6 +216,15 @@ async function applySitePageMetaPatch(input: {
   };
 }
 
+
+/**
+ * A write that did not build on what is stored now: another Working Draft, or a Widget's content somebody
+ * saved since it was read (CONTENT.md, Concurrent writers). The writer reloads; nothing was written.
+ */
+function isSiteCmsWriteConflict(error: unknown) {
+  return error instanceof SiteCmsDraftConflictError || error instanceof SiteContentConflictError;
+}
+
 export async function handleSiteCmsPageWrite(request: NextRequest) {
   return writeSiteCmsPage(request, "save");
 }
@@ -332,7 +343,7 @@ async function writeSiteCmsPage(request: NextRequest, mode: "save" | "create") {
         error: message,
         details: detail ? [detail] : [],
       },
-      { status: error instanceof SiteCmsDraftConflictError ? 409 : 500 },
+      { status: isSiteCmsWriteConflict(error) ? 409 : 500 },
     );
   }
 }
@@ -473,7 +484,7 @@ export async function handleSiteEditorPageMetaWrite(request: NextRequest) {
         error: message,
         details: detail ? [detail] : [],
       },
-      { status: error instanceof SiteCmsDraftConflictError ? 409 : 500 },
+      { status: isSiteCmsWriteConflict(error) ? 409 : 500 },
     );
   }
 }
@@ -546,7 +557,7 @@ export async function handleSiteCmsAreaWrite(request: NextRequest) {
         error: message,
         details: detail ? [detail] : [],
       },
-      { status: error instanceof SiteCmsDraftConflictError ? 409 : 500 },
+      { status: isSiteCmsWriteConflict(error) ? 409 : 500 },
     );
   }
 }
@@ -642,7 +653,7 @@ export async function handleSiteCmsAreaModulesWrite(request: NextRequest) {
         error: message,
         details: detail ? [detail] : [],
       },
-      { status: error instanceof SiteCmsDraftConflictError ? 409 : 500 },
+      { status: isSiteCmsWriteConflict(error) ? 409 : 500 },
     );
   }
 }
@@ -866,7 +877,7 @@ export async function handleSiteCmsAreaModulesPublish(request: NextRequest) {
         error: message,
         details: detail ? [detail] : [],
       },
-      { status: error instanceof SiteCmsDraftConflictError ? 409 : 500 },
+      { status: isSiteCmsWriteConflict(error) ? 409 : 500 },
     );
   }
 }
@@ -1083,7 +1094,8 @@ export async function handleSiteCmsAreaDelete(request: NextRequest) {
  * rather than a flag on that one.
  */
 export async function handleSiteCmsAreaOverrideDelete(request: NextRequest) {
-  const { context, error } = await requireSiteBuilderApiContext(request);
+  // What is live changes the moment the override goes, so this is a publish (CONTENT.md, Reset).
+  const { context, error } = await requireSitePublisherApiContext(request);
   if (error) {
     return error;
   }
@@ -1145,6 +1157,71 @@ export async function handleSiteCmsAreaOverrideDelete(request: NextRequest) {
       {
         error: readSiteCmsErrorMessage(error, "CMS area override delete failed."),
       },
+      { status: 500 },
+    );
+  }
+}
+
+/**
+ * Takes a Module's Page back to its preset by removing the Site's override (CONTENT.md, Reset).
+ *
+ * Offered in Revisions only, beside the history it discards. Structure only: content written for the
+ * preset's own nodes stays and is shown by the preset. What is live changes at once, so it is the
+ * Publisher's act. A Page the Site made has no preset and is answered `400`.
+ */
+export async function handleSiteCmsPageOverrideDelete(request: NextRequest) {
+  const { context, error } = await requireSitePublisherApiContext(request);
+  if (error) {
+    return error;
+  }
+
+  const payload = (await readSiteCmsRequestJson(request)) as {
+    area?: unknown;
+    ownerModuleId?: unknown;
+    presetKey?: unknown;
+  } | null;
+  const area = readSiteCmsRequestSearchParam(request, "area") ?? (typeof payload?.area === "string" ? payload.area : null);
+  const sourcePreset = resolveCmsPresetIdentity({
+    ownerModuleId: readSiteCmsRequestSearchParam(request, "ownerModuleId") ??
+      (typeof payload?.ownerModuleId === "string" ? payload.ownerModuleId : null),
+    presetKey: readSiteCmsRequestSearchParam(request, "presetKey") ??
+      (typeof payload?.presetKey === "string" ? payload.presetKey : null),
+  });
+  if (!area || !sourcePreset) {
+    return NextResponse.json(
+      { error: "area, ownerModuleId, and presetKey must be provided: only a Module's Page has a preset." },
+      { status: 400 },
+    );
+  }
+
+  const areaMask = resolveAreaMask(area);
+  try {
+    const result = await deleteSitePageOverride(context!.site!.id, { areaMask, sourcePreset });
+    if (result.deleted) {
+      logSiteCmsAuditEvent(PhiCmsAuditEvent.PageOverrideDeleted, {
+        request,
+        siteKey: context!.site!.key,
+        area,
+        userId: context!.session?.userId ?? null,
+        targetType: "cms-page-override",
+        targetId: `${sourcePreset.ownerModuleId}/${sourcePreset.presetKey}`,
+        meta: { areaMask, ownerModuleId: sourcePreset.ownerModuleId, presetKey: sourcePreset.presetKey },
+      });
+    }
+    return NextResponse.json({ areaMask, deleted: result.deleted });
+  } catch (error) {
+    logRuntimeEvent("error", "cms.page_override_delete.failed", {
+      message: "CMS page override delete failed.",
+      siteKey: context!.site!.key,
+      userId: context!.session?.userId ?? null,
+      method: request.method,
+      path: request.nextUrl.pathname,
+      targetType: "cms-page-override",
+      error: normalizeLogThrowable(error),
+      meta: { areaMask },
+    });
+    return NextResponse.json(
+      { error: readSiteCmsErrorMessage(error, "CMS page override delete failed.") },
       { status: 500 },
     );
   }
@@ -1280,7 +1357,7 @@ export async function handleSiteCmsAreaStructuresRead(request: NextRequest) {
           published: null,
         };
       }
-      const preset = await getExactSiteAreaPresetTree(siteId, areaMask, 0, locale, sourcePreset);
+      const preset = await getExactSiteAreaPresetTree(siteId, areaMask, 0, locale, sourcePreset, "current");
       return {
         area,
         draft: null,
@@ -1414,7 +1491,7 @@ export async function handleSiteCmsPagePublish(request: NextRequest) {
       // A pending path another Page took, or settled beneath, since it was proposed is a conflict the
       // Builder can resolve, not a fault of the server.
       {
-        status: error instanceof SitePagePathChangeError || error instanceof SiteCmsDraftConflictError
+        status: error instanceof SitePagePathChangeError || isSiteCmsWriteConflict(error)
           ? 409
           : 500,
       },
@@ -1510,7 +1587,7 @@ export async function handleSiteCmsAreaPublish(request: NextRequest) {
         error: message,
         details: detail ? [detail] : [],
       },
-      { status: error instanceof SiteCmsDraftConflictError ? 409 : 500 },
+      { status: isSiteCmsWriteConflict(error) ? 409 : 500 },
     );
   }
 }

@@ -166,6 +166,9 @@ Accounting           = Developer | Accountant
 ```
 
 Core Admin is omitted from the masks because the evaluator grants the Site-admin override centrally.
+Who drafts, submits and publishes content -- Widget content apart from structure, and the content types
+-- is set out in [CONTENT.md](./CONTENT.md#rights). Writing a Site translation is Publishing, because it
+is live the moment it is written.
 These are also the Site accesses an Add-on names in `grantableBy` or `hasSiteAccess`: `site-admin`,
 `developer-tools`, `structure-authoring`, `content-editing`, `publishing`, `site-media`, `support`,
 `accounting`.

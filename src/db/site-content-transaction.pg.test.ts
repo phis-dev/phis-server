@@ -8,7 +8,11 @@ import {
   withPhiTestClient,
   type PhiTestSite,
 } from "../../test/pg/harness";
-import { upsertSiteContentTextWithClient } from "./site-content";
+import { writeSiteWidgetContentWithClient } from "./site-widget-content";
+import { createPhiDraftCmsInstanceId } from "@/lib/cms/instance-id";
+
+let sequence = 0;
+const nextInstanceId = () => createPhiDraftCmsInstanceId({ domain: "page", draftRevisionId: 1, sequence: ++sequence });
 
 /**
  * A content save writes its text as a site message. Whether that row belongs to the save's transaction
@@ -41,8 +45,14 @@ describe("a content save's message row against PostgreSQL", () => {
     const text = `pgtest rolled back ${Math.random()}`;
     await withPhiTestClient(async (client) => {
       await client.query("BEGIN");
-      await upsertSiteContentTextWithClient(client, {
-        siteId: site.id, slug: `pgtest-${Math.random()}`, text,
+      await writeSiteWidgetContentWithClient(client, {
+        siteId: site.id,
+        instanceId: nextInstanceId(),
+        storage: "text",
+        value: text,
+        baseVersionId: null,
+        slug: `pgtest-${Math.random()}`,
+        referenceAreaId: 1,
       });
       await client.query("ROLLBACK");
     });
@@ -53,8 +63,14 @@ describe("a content save's message row against PostgreSQL", () => {
     const text = `pgtest committed ${Math.random()}`;
     await withPhiTestClient(async (client) => {
       await client.query("BEGIN");
-      await upsertSiteContentTextWithClient(client, {
-        siteId: site.id, slug: `pgtest-${Math.random()}`, text,
+      await writeSiteWidgetContentWithClient(client, {
+        siteId: site.id,
+        instanceId: nextInstanceId(),
+        storage: "text",
+        value: text,
+        baseVersionId: null,
+        slug: `pgtest-${Math.random()}`,
+        referenceAreaId: 1,
       });
       await client.query("COMMIT");
     });

@@ -14,6 +14,7 @@ const PHI_CMS_AUDIT_MESSAGES = {
   [PhiCmsAuditEvent.AreaDraftSaved]: "CMS area draft saved.",
   [PhiCmsAuditEvent.AreaDraftDeleted]: "CMS area draft deleted.",
   [PhiCmsAuditEvent.AreaOverrideDeleted]: "CMS area override deleted.",
+  [PhiCmsAuditEvent.PageOverrideDeleted]: "CMS page override deleted.",
   [PhiCmsAuditEvent.AreaPublished]: "CMS area published.",
   [PhiCmsAuditEvent.AreaModulesDraftSaved]: "CMS area Module draft saved.",
   [PhiCmsAuditEvent.AreaModulesDraftDeleted]: "CMS area Module draft deleted.",
