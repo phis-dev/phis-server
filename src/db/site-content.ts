@@ -21,6 +21,13 @@ export const SITE_CONTENT_TYPE_BLOG = 8;
 export const SITE_CONTENT_STATUS_DRAFT = 0;
 export const SITE_CONTENT_STATUS_PUBLISHED = 1;
 
+/**
+ * The vocabularies an entry's terms belong to (CONTENT.md, Terms): words it is tagged with, and the
+ * category it is filed under. One table holds both, so a later vocabulary is a value and not a schema.
+ */
+export const SITE_CONTENT_VOCABULARY_TAG = 1;
+export const SITE_CONTENT_VOCABULARY_CATEGORY = 2;
+
 export type SiteResolvedContentTextField = {
   msgId: number;
   source: string;

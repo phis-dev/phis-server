@@ -98,6 +98,9 @@ CREATE TABLE IF NOT EXISTS phis.user_profiles (
   user_id INT PRIMARY KEY REFERENCES phis.user_accounts(id) ON DELETE CASCADE,
   first_name VARCHAR(128) NOT NULL,
   last_name VARCHAR(128) NOT NULL,
+  -- The name a person is shown under where others see them -- a byline, a conversation. Optional; the
+  -- first and last name stand in for it, and an e-mail address never does.
+  display_name VARCHAR(128) NULL,
   company_name VARCHAR(256) NULL,
   phone VARCHAR(64) NULL,
   mobile VARCHAR(64) NULL,
@@ -108,6 +111,8 @@ CREATE TABLE IF NOT EXISTS phis.user_profiles (
   city VARCHAR(128) NULL,
   province VARCHAR(128) NULL,
   country_code CHAR(2) NULL,
+  -- What a profile says about a person beyond the fields above (a biography, later). Nothing reads it yet.
+  meta JSONB NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -1675,9 +1680,18 @@ CREATE TABLE IF NOT EXISTS phis.site_content (
   expires_at TIMESTAMPTZ NULL,
   sort_order INT NOT NULL DEFAULT 0,
   meta JSONB NOT NULL DEFAULT '{}'::jsonb,
+  -- Who the entry is attributed to (CONTENT.md, Curation). The creator until a Publisher names somebody
+  -- else or nobody; a member of this Site, so leaving it clears the byline and keeps the entry.
+  author_user_id INT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  CONSTRAINT site_content_site_type_slug_unique UNIQUE (site_id, type, slug)
+  CONSTRAINT site_content_site_type_slug_unique UNIQUE (site_id, type, slug),
+  -- What a term link names its entry by, so the database holds a link to its own Site and kind.
+  CONSTRAINT site_content_id_site_type_unique UNIQUE (id, site_id, type),
+  CONSTRAINT site_content_author_membership_fk
+    FOREIGN KEY (author_user_id, site_id)
+    REFERENCES phis.user_site_memberships (user_id, site_id)
+    ON DELETE SET NULL (author_user_id)
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS site_content_site_instance_unique_idx
@@ -1693,6 +1707,52 @@ CREATE INDEX IF NOT EXISTS site_content_site_type_status_idx
 
 CREATE INDEX IF NOT EXISTS site_content_published_at_idx
   ON phis.site_content (published_at);
+
+-- The words an entry is filed under (CONTENT.md, Terms): its tags and its category, one row per term of
+-- one kind on one Site. `vocabulary` is 1 for a tag and 2 for a category. The label is source text and is
+-- translated where it is read, under the kind's context for its vocabulary.
+CREATE TABLE IF NOT EXISTS phis.site_content_terms (
+  id SERIAL PRIMARY KEY,
+  site_id SMALLINT NOT NULL REFERENCES phis.sites(id) ON DELETE CASCADE,
+  type SMALLINT NOT NULL,
+  vocabulary SMALLINT NOT NULL,
+  slug VARCHAR(128) NOT NULL,
+  label VARCHAR(128) NOT NULL,
+  sort_order INT NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT site_content_terms_vocabulary_check CHECK (vocabulary IN (1, 2)),
+  CONSTRAINT site_content_terms_slug_unique UNIQUE (site_id, type, vocabulary, slug),
+  CONSTRAINT site_content_terms_identity_unique UNIQUE (id, site_id, type, vocabulary)
+);
+
+-- Which entry carries which term. Site, kind and vocabulary are repeated so two foreign keys can hold a
+-- link to one Site and one kind, and so the index below can say "one category" without a trigger.
+CREATE TABLE IF NOT EXISTS phis.site_content_term_links (
+  content_id INT NOT NULL,
+  term_id INT NOT NULL,
+  site_id SMALLINT NOT NULL,
+  type SMALLINT NOT NULL,
+  vocabulary SMALLINT NOT NULL,
+  sort_order INT NOT NULL DEFAULT 0,
+  PRIMARY KEY (content_id, term_id),
+  CONSTRAINT site_content_term_links_content_fk
+    FOREIGN KEY (content_id, site_id, type)
+    REFERENCES phis.site_content (id, site_id, type)
+    ON DELETE CASCADE,
+  CONSTRAINT site_content_term_links_term_fk
+    FOREIGN KEY (term_id, site_id, type, vocabulary)
+    REFERENCES phis.site_content_terms (id, site_id, type, vocabulary)
+    ON DELETE CASCADE
+);
+
+-- One category per entry for now. Allowing several is dropping this index; nothing else changes.
+CREATE UNIQUE INDEX IF NOT EXISTS site_content_term_links_one_category_idx
+  ON phis.site_content_term_links (content_id)
+  WHERE vocabulary = 2;
+
+CREATE INDEX IF NOT EXISTS site_content_term_links_term_idx
+  ON phis.site_content_term_links (term_id);
 
 CREATE TABLE IF NOT EXISTS phis.site_area_scopes (
   id SERIAL PRIMARY KEY,

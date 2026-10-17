@@ -4,6 +4,7 @@ import type { PoolClient } from "pg";
 
 import { readAvailablePhisProviderIds } from "@/lib/addons/capability-snapshot";
 import type { PhiGroupProviderId, PhiViewerGroupClaim } from "@/lib/authorization";
+import { userDisplayNameSql } from "@/db/user-profiles";
 import { getPool, withTransaction } from "@/lib/db";
 import {
   PHI_CORE_GROUP_PROVIDER_ID,
@@ -189,7 +190,7 @@ export async function listSiteGroupMembers(
     valid_until: Date | string | null; created_at: Date | string;
   }>(
     `SELECT m.user_id,
-            NULLIF(TRIM(CONCAT_WS(' ', up.first_name, up.last_name)), '') AS display_name,
+            ${userDisplayNameSql("up")} AS display_name,
             email.email_normalized,
             up.company_name,
             m.membership_flags, m.source_provider_id, m.source_connection_key,
@@ -205,7 +206,7 @@ export async function listSiteGroupMembers(
      ) email ON TRUE
      WHERE m.site_id = $1 AND m.group_id = $2
      ORDER BY m.membership_flags DESC,
-              LOWER(COALESCE(TRIM(CONCAT_WS(' ', up.first_name, up.last_name)), '')),
+              LOWER(COALESCE(${userDisplayNameSql("up")}, '')),
               m.user_id
      ${page ? "LIMIT $3 OFFSET $4" : ""}`,
     page ? [siteId, groupId, page.pageSize, (page.page - 1) * page.pageSize] : [siteId, groupId],

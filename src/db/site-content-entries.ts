@@ -18,8 +18,15 @@ import {
   SITE_CONTENT_STATUS_PUBLISHED,
   SITE_CONTENT_TYPE_BLOG,
   SITE_CONTENT_TYPE_NEWS,
+  SITE_CONTENT_VOCABULARY_CATEGORY,
+  SITE_CONTENT_VOCABULARY_TAG,
   type DbQueryable,
 } from "@/db/site-content";
+import { PhiMediaDeliveryPolicy, PhiMediaLifecycleStatus } from "@/db/media-spaces";
+import { replaceSiteContentEntryTags, setSiteContentEntryCategory } from "@/db/site-content-terms";
+import { userDisplayNameSql } from "@/db/user-profiles";
+import { USER_SITE_FLAG_DISABLED } from "@/lib/user-site-flags";
+import { PHI_CORE_ROLE_PROVIDER_ID, PhiBaseRole } from "@phis/contracts/access";
 
 /*
  * Content types: entries that are content only, written by Authors and published by Publishers
@@ -56,6 +63,7 @@ export const SITE_CONTENT_ENTRY_KINDS = {
        * as a plain string and becomes a message the first time somebody reads it in another language.
        */
       tag: "news tag",
+      category: "news category",
     },
   },
   /*
@@ -70,11 +78,12 @@ export const SITE_CONTENT_ENTRY_KINDS = {
       subtitle: "blog post teaser",
       content: "blog post body",
       tag: "blog tag",
+      category: "blog category",
     },
   },
 } as const satisfies Record<string, {
   type: number;
-  contexts: { title: string; subtitle: string; content: string; tag: string };
+  contexts: { title: string; subtitle: string; content: string; tag: string; category: string };
 }>;
 
 export type SiteContentEntryKind = keyof typeof SITE_CONTENT_ENTRY_KINDS;
@@ -129,6 +138,33 @@ export type SiteContentEntryFieldValue = {
   translated: boolean;
 };
 
+/** A term an entry carries, as a reader is given it: its address and its label, still in the words written. */
+export type SiteContentEntryTerm = {
+  slug: string;
+  label: string;
+};
+
+/**
+ * The picture an author is shown with: a Public, ready image Asset bound as their avatar on this Site.
+ * The parts a delivery address is built from, not the address, so the route builds it the one way it is
+ * built everywhere.
+ */
+export type SiteContentEntryAuthorAvatar = {
+  assetId: number;
+  deliveryRevision: number;
+  variantVersion: number | null;
+  contentType: string;
+};
+
+/**
+ * Who an entry is attributed to, as a reader may see it: the name the person is shown under and their
+ * picture. Never an address -- a person without a name to show is no byline at all.
+ */
+export type SiteContentEntryAuthor = {
+  name: string;
+  avatar: SiteContentEntryAuthorAvatar | null;
+};
+
 export type SiteContentEntryWriteOutcome =
   | { ok: true; contentId: number; versionId: number; slug: string }
   | { ok: false; reason: "missing" | "slug_taken" }
@@ -144,8 +180,13 @@ export type SiteContentEntryPublication = {
 
 export type SiteContentEntryEditorRecord = SiteContentEntryVersionTerms & {
   contentId: number;
-  /** Who wrote the entry -- the writer of its first version -- or `null` where nobody is on record. */
+  /** Who the entry is attributed to (CONTENT.md, Curation), or `null` for nobody. */
+  authorUserId: number | null;
+  /** That person's name as administration names them -- an address where they have no name -- or `null`. */
   author: string | null;
+  /** The category the entry is filed under, by its id, or `null` for none. */
+  categoryId: number | null;
+  category: string | null;
   slug: string;
   status: number;
   sortOrder: number;
@@ -200,18 +241,12 @@ function readVersionTerms(meta: unknown): SiteContentEntryVersionTerms {
   };
 }
 
-function readTags(meta: { tags?: unknown } | null) {
-  return Array.isArray(meta?.tags)
-    ? meta.tags.filter((item: unknown): item is string => typeof item === "string")
-    : [];
-}
-
 /**
- * What a tag is, in one place: trimmed and lower-cased.
+ * What a tag is written as, in one place: trimmed and lower-cased.
  *
- * The string is the tag's identity -- there is no row and no id behind it -- so two spellings would be two
- * tags, each with its own translation to pay for. Lower case rather than title case because a tag is a key
- * here as much as a label, and the label a reader sees is its translation anyway.
+ * Its address is derived from this (`slugifySiteContentTerm`), so two spellings of one word are one term
+ * with one translation to pay for. Lower case rather than title case because a tag is a key here as much
+ * as a label, and the label a reader sees is its translation anyway.
  */
 export function normalizePhiContentEntryTag(value: unknown) {
   return typeof value === "string" ? value.trim().toLowerCase() : "";
@@ -220,10 +255,60 @@ export function normalizePhiContentEntryTag(value: unknown) {
 /*
  * The link is kept under `linkTarget`, the one name a stored target answers to (REFERENCES.md): the
  * reference index and every reader find it by that name, and nothing else in `meta` is mistaken for one.
+ * Tags are not here: they are terms (`site-content-terms.ts`).
  */
-function buildEntryMeta(input: Pick<SiteContentEntryInput, "link" | "tags">) {
-  const tags = [...new Set((input.tags ?? []).map(normalizePhiContentEntryTag).filter(Boolean))];
-  return { linkTarget: readPhiLinkTarget(input.link), tags };
+function buildEntryMeta(input: Pick<SiteContentEntryInput, "link">) {
+  return { linkTarget: readPhiLinkTarget(input.link) };
+}
+
+function normalizeEntryTags(tags: readonly string[] | undefined) {
+  return [...new Set((tags ?? []).map(normalizePhiContentEntryTag).filter(Boolean))];
+}
+
+/**
+ * The roles that may be named as an entry's author: whoever may write entries (CONTENT.md). Admin is
+ * named because it is a role a membership carries like any other, not because it passes every check.
+ */
+const ENTRY_AUTHOR_ROLE_FLAGS = PhiBaseRole.Admin | PhiBaseRole.Developer | PhiBaseRole.Author | PhiBaseRole.Publisher;
+
+/**
+ * An entry's terms, as one JSON array per entry: category first, then the tags in the order they were
+ * given. One lateral read per entry rather than a second query, because every reader of an entry wants
+ * them and a second round trip is paid on every page.
+ */
+const ENTRY_TERMS_JOIN = `LEFT JOIN LATERAL (
+       SELECT json_agg(json_build_object('vocabulary', link.vocabulary, 'slug', term.slug, 'label', term.label)
+                       ORDER BY link.vocabulary DESC, link.sort_order ASC, term.id ASC) AS terms
+       FROM phis.site_content_term_links link
+       JOIN phis.site_content_terms term ON term.id = link.term_id
+       WHERE link.content_id = c.id
+     ) entry_terms ON TRUE`;
+
+/**
+ * The author as a reader sees them: the name the person is shown under and a picture that is already
+ * public. The avatar's own delivery policy decides, not this read -- an Asset that is not Public and ready
+ * is no picture here, so a byline can never be the way a private file leaves its Space.
+ */
+const ENTRY_AUTHOR_JOIN = `LEFT JOIN phis.user_profiles author_profile ON author_profile.user_id = c.author_user_id
+     LEFT JOIN phis.user_site_avatars author_avatar
+       ON author_avatar.user_id = c.author_user_id AND author_avatar.site_id = c.site_id
+     LEFT JOIN phis.media_assets author_asset
+       ON author_asset.id = author_avatar.asset_id
+      AND author_asset.site_id = c.site_id
+      AND author_asset.lifecycle_status = ${PhiMediaLifecycleStatus.Ready}
+      AND author_asset.delivery_policy = ${PhiMediaDeliveryPolicy.Public}`;
+
+type EntryTermsColumn = Array<{ vocabulary: number; slug: string; label: string }> | null;
+
+function readEntryTerms(terms: EntryTermsColumn) {
+  const list = Array.isArray(terms) ? terms : [];
+  const category = list.find((term) => term.vocabulary === SITE_CONTENT_VOCABULARY_CATEGORY) ?? null;
+  return {
+    category: category ? { slug: category.slug, label: category.label } : null,
+    tags: list
+      .filter((term) => term.vocabulary === SITE_CONTENT_VOCABULARY_TAG)
+      .map((term) => ({ slug: term.slug, label: term.label })),
+  };
 }
 
 /** An entry is read on Public pages, so a Page target that names no Area is a Public Page. */
@@ -251,8 +336,14 @@ type PublishedEntryRow = {
   expires_at: string | null;
   created_at: string;
   updated_at: string;
-  meta: { linkTarget?: unknown; tags?: string[] | null } | null;
+  meta: { linkTarget?: unknown } | null;
   version_meta: unknown;
+  terms: EntryTermsColumn;
+  author_name: string | null;
+  author_asset_id: number | null;
+  author_asset_delivery_revision: number | null;
+  author_asset_variant_version: number | null;
+  author_asset_content_type: string | null;
   title_source: string | null;
   title_translation: string | null;
   subtitle_source: string | null;
@@ -262,22 +353,34 @@ type PublishedEntryRow = {
 };
 
 /**
- * The published entries of a kind, newest first, cut at `limit` where the caller states one.
+ * The published entries of a kind as one statement, narrowed by what the caller adds.
  *
- * The cut belongs here and not at the caller: everything after this read -- translating title, subtitle
- * and tags for the reader's language -- is paid per entry, and a Widget that shows ten should not have
- * the whole history translated to find them.
+ * Every public read goes through here -- the list, one entry by its address, the entries related to one --
+ * so what "published" means is written once: published, already due, not yet expired.
  */
-export async function listPublishedSiteContentEntries(
-  kind: SiteContentEntryKind,
-  siteId: number,
-  locale: string,
-  /** `slug` answers the one entry at that address -- a detail Page's question -- or none. */
-  options: { limit?: number; slug?: string } = {},
-) {
-  if (options.limit !== undefined && (!Number.isInteger(options.limit) || options.limit <= 0)) {
-    throw new Error("listPublishedSiteContentEntries: limit must be a positive integer.");
+async function queryPublishedEntries(input: {
+  kind: SiteContentEntryKind;
+  siteId: number;
+  locale: string;
+  /** Extra conditions on `c`, with their parameters numbered from `$5`. */
+  where?: string;
+  /** Extra joins, before the conditions; may read `$5` onwards like `where`. */
+  joins?: string;
+  orderBy?: string;
+  params?: readonly unknown[];
+  limit?: number;
+}) {
+  if (input.limit !== undefined && (!Number.isInteger(input.limit) || input.limit <= 0)) {
+    throw new Error("A published entry read: limit must be a positive integer.");
   }
+  const params = [
+    input.siteId,
+    input.locale,
+    SITE_CONTENT_ENTRY_KINDS[input.kind].type,
+    SITE_CONTENT_STATUS_PUBLISHED,
+    ...(input.params ?? []),
+  ];
+  const limitClause = input.limit === undefined ? "" : `LIMIT $${params.push(input.limit)}`;
   const { rows } = await getPool().query<PublishedEntryRow>(
     `SELECT
        c.id,
@@ -294,28 +397,31 @@ export async function listPublishedSiteContentEntries(
        ms.msg AS subtitle_source,
        ts.translation AS subtitle_translation,
        mc.msg AS content_source,
-       tc.translation AS content_translation
+       tc.translation AS content_translation,
+       entry_terms.terms,
+       ${userDisplayNameSql("author_profile")} AS author_name,
+       author_asset.id AS author_asset_id,
+       author_asset.delivery_revision AS author_asset_delivery_revision,
+       author_asset.variant_version AS author_asset_variant_version,
+       author_asset.content_type AS author_asset_content_type
      FROM phis.site_content c
      ${entryTextJoins("published_version_id", "$2")}
+     ${ENTRY_TERMS_JOIN}
+     ${ENTRY_AUTHOR_JOIN}
+     ${input.joins ?? ""}
      WHERE c.site_id = $1
        AND c.type = $3
        AND c.status = $4
        AND (c.published_at IS NULL OR c.published_at <= NOW())
        AND (c.expires_at IS NULL OR c.expires_at > NOW())
-       AND ($5::text IS NULL OR c.slug = $5)
-     ORDER BY COALESCE(c.published_at, c.created_at) DESC, c.sort_order ASC, c.id DESC
-     ${options.limit === undefined ? "" : "LIMIT $6"}`,
-    [
-      siteId,
-      locale,
-      SITE_CONTENT_ENTRY_KINDS[kind].type,
-      SITE_CONTENT_STATUS_PUBLISHED,
-      options.slug ?? null,
-      ...(options.limit === undefined ? [] : [options.limit]),
-    ],
+       ${input.where ? `AND ${input.where}` : ""}
+     ORDER BY ${input.orderBy ? `${input.orderBy}, ` : ""}COALESCE(c.published_at, c.created_at) DESC, c.sort_order ASC, c.id DESC
+     ${limitClause}`,
+    params,
   );
 
   return rows.map((row) => ({
+    contentId: row.id,
     id: row.slug || String(row.id),
     slug: row.slug,
     created: toIsoDate(row.published_at) ?? toIsoDate(row.created_at) ?? new Date().toISOString(),
@@ -324,9 +430,81 @@ export async function listPublishedSiteContentEntries(
     subtitle: readField(row.subtitle_source, row.subtitle_translation),
     content: readField(row.content_source, row.content_translation),
     link: readPhiLinkTarget(row.meta?.linkTarget),
-    tags: readTags(row.meta),
+    ...readEntryTerms(row.terms),
+    author: row.author_name
+      ? {
+        name: row.author_name,
+        avatar: row.author_asset_id !== null
+          ? {
+            assetId: row.author_asset_id,
+            deliveryRevision: row.author_asset_delivery_revision ?? 1,
+            variantVersion: row.author_asset_variant_version,
+            contentType: row.author_asset_content_type ?? "",
+          }
+          : null,
+      } satisfies SiteContentEntryAuthor
+      : null,
     ...readVersionTerms(row.version_meta),
   }));
+}
+
+export type SiteContentPublishedEntry = Awaited<ReturnType<typeof queryPublishedEntries>>[number];
+
+/**
+ * The published entries of a kind, newest first, cut at `limit` where the caller states one.
+ *
+ * The cut belongs here and not at the caller: everything after this read -- translating title, subtitle
+ * and terms for the reader's language -- is paid per entry, and a Widget that shows ten should not have
+ * the whole history translated to find them.
+ */
+export async function listPublishedSiteContentEntries(
+  kind: SiteContentEntryKind,
+  siteId: number,
+  locale: string,
+  options: { limit?: number } = {},
+) {
+  return queryPublishedEntries({ kind, siteId, locale, limit: options.limit });
+}
+
+/** The one published entry at an address -- a detail Page's question -- or `null`. */
+export async function readPublishedSiteContentEntry(
+  kind: SiteContentEntryKind,
+  siteId: number,
+  locale: string,
+  slug: string,
+) {
+  const [entry] = await queryPublishedEntries({ kind, siteId, locale, where: "c.slug = $5", params: [slug], limit: 1 });
+  return entry ?? null;
+}
+
+/**
+ * The published entries closest to one, for a "more like this" list under it.
+ *
+ * Closeness is what the two have in common: the same category counts two, every shared tag one, and the
+ * newest wins among equals -- so an entry with nothing in common with any other still gets the latest ones
+ * rather than an empty list. The entry itself is never among them.
+ */
+export async function listRelatedSiteContentEntries(
+  kind: SiteContentEntryKind,
+  siteId: number,
+  locale: string,
+  options: { contentId: number; limit: number },
+) {
+  return queryPublishedEntries({
+    kind,
+    siteId,
+    locale,
+    joins: `LEFT JOIN LATERAL (
+       SELECT COALESCE(SUM(CASE WHEN mine.vocabulary = ${SITE_CONTENT_VOCABULARY_CATEGORY} THEN 2 ELSE 1 END), 0) AS score
+       FROM phis.site_content_term_links theirs
+       JOIN phis.site_content_term_links mine ON mine.term_id = theirs.term_id AND mine.content_id = $5
+       WHERE theirs.content_id = c.id
+     ) closeness ON TRUE`,
+    where: "c.id <> $5",
+    orderBy: "closeness.score DESC",
+    params: [options.contentId],
+    limit: options.limit,
+  });
 }
 
 type EntryRowOutcome =
@@ -377,13 +555,19 @@ async function createOrUpdateEntryRow(db: DbQueryable, input: SiteContentEntryIn
   /*
    * `DO NOTHING`: an entry's slug is authored and is its public address, so a second entry claiming it is
    * a mistake to report, not an edit to perform silently.
+   *
+   * The writer of a new entry is its author until a Publisher says otherwise (CONTENT.md, Curation) -- read
+   * through the membership, because a writer who is no member of this Site (an operator) can be no byline.
    */
   const { rows } = await db.query<{ id: number }>(
-    `INSERT INTO phis.site_content (site_id, type, slug, status, sort_order, meta)
-     VALUES ($1, $2, $3, $4, $5, $6::jsonb)
+    `INSERT INTO phis.site_content (site_id, type, slug, status, sort_order, meta, author_user_id)
+     VALUES (
+       $1, $2, $3, $4, $5, $6::jsonb,
+       (SELECT m.user_id FROM phis.user_site_memberships m WHERE m.site_id = $1 AND m.user_id = $7)
+     )
      ON CONFLICT (site_id, type, slug) DO NOTHING
      RETURNING id`,
-    [input.siteId, type, slug, SITE_CONTENT_STATUS_DRAFT, input.sortOrder ?? 0, meta],
+    [input.siteId, type, slug, SITE_CONTENT_STATUS_DRAFT, input.sortOrder ?? 0, meta, input.createdByUserId ?? null],
   );
   const contentId = rows[0]?.id;
   return contentId ? { ok: true, contentId, slug } : { ok: false, reason: "slug_taken" };
@@ -449,6 +633,13 @@ export async function saveSiteContentEntryDraft(input: SiteContentEntryInput): P
       value: content,
     });
     await setSiteContentCurrentVersion(client, { contentId: row.contentId, versionId });
+    // The tags are the entry's, like the link: stated whole by every save.
+    await replaceSiteContentEntryTags(client, {
+      siteId: input.siteId,
+      type: SITE_CONTENT_ENTRY_KINDS[input.kind].type,
+      contentId: row.contentId,
+      tags: normalizeEntryTags(input.tags),
+    });
     // The link lives on the row, so its reference set is the entry's whole set, replaced with every save.
     await replaceSiteCmsReferencesWithDb(client, {
       siteId: input.siteId,
@@ -647,12 +838,15 @@ type EditorEntryRow = {
   current_version_id: number | null;
   published_version_id: number | null;
   submitted_version_id: number | null;
-  meta: { linkTarget?: unknown; tags?: string[] | null } | null;
+  meta: { linkTarget?: unknown } | null;
   version_meta: unknown;
   title: string | null;
   subtitle: string | null;
   content: string | null;
+  author_user_id: number | null;
   author: string | null;
+  terms: EntryTermsColumn;
+  category_id: number | null;
 };
 
 /**
@@ -693,22 +887,18 @@ export async function listSiteContentEntriesForEditor(input: {
        COALESCE(tt.translation, mt.msg) AS title,
        COALESCE(ts.translation, ms.msg) AS subtitle,
        COALESCE(tc.translation, mc.msg) AS content,
-       author.name AS author
+       c.author_user_id,
+       -- Administration names a person without a name by their address, which a reader never sees.
+       COALESCE(${userDisplayNameSql("author_profile")}, author_account.email_normalized) AS author,
+       entry_terms.terms,
+       category_link.term_id AS category_id
      FROM phis.site_content c
      ${entryTextJoins("current_version_id", "$2")}
-     -- Who wrote the entry: the writer of its first version, named as the directory names them.
-     LEFT JOIN LATERAL (
-       SELECT COALESCE(
-                NULLIF(TRIM(CONCAT_WS(' ', p.first_name, p.last_name)), ''),
-                d.email_normalized
-              ) AS name
-       FROM phis.site_content_versions first_version
-       LEFT JOIN phis.user_profiles p ON p.user_id = first_version.created_by_user_id
-       LEFT JOIN phis.user_account_directory d ON d.id = first_version.created_by_user_id
-       WHERE first_version.content_id = c.id
-       ORDER BY first_version.version_no ASC
-       LIMIT 1
-     ) author ON TRUE
+     ${ENTRY_TERMS_JOIN}
+     LEFT JOIN phis.user_profiles author_profile ON author_profile.user_id = c.author_user_id
+     LEFT JOIN phis.user_account_directory author_account ON author_account.id = c.author_user_id
+     LEFT JOIN phis.site_content_term_links category_link
+       ON category_link.content_id = c.id AND category_link.vocabulary = ${SITE_CONTENT_VOCABULARY_CATEGORY}
      WHERE c.site_id = $1
        AND c.type = $3
        AND ($4::smallint IS NULL OR c.status = $4)
@@ -728,7 +918,9 @@ export async function listSiteContentEntriesForEditor(input: {
     ],
   );
 
-  const records = rows.map((row) => ({
+  const records = rows.map((row) => {
+    const terms = readEntryTerms(row.terms);
+    return {
     contentId: row.id,
     slug: row.slug,
     status: row.status,
@@ -737,34 +929,144 @@ export async function listSiteContentEntriesForEditor(input: {
     subtitle: row.subtitle ?? "",
     content: row.content ?? "",
     link: readPhiLinkTarget(row.meta?.linkTarget),
-    tags: readTags(row.meta),
+    tags: terms.tags.map((tag) => tag.label),
     publishedAt: toIsoDate(row.published_at),
     expiresAt: toIsoDate(row.expires_at),
     updatedAt: toIsoDate(row.updated_at),
+    authorUserId: row.author_user_id,
     author: row.author,
+    categoryId: row.category_id,
+    category: terms.category?.label ?? null,
     hasUnpublishedChanges: row.published_version_id !== row.current_version_id,
     versionId: row.current_version_id,
     publishedVersionId: row.published_version_id,
     submittedVersionId: row.submitted_version_id,
     ...readVersionTerms(row.version_meta),
-  }));
+    };
+  });
 
   return { rows: records, total: Number(rows[0]?.total_count ?? 0), page, pageSize };
 }
 
+/** A person who may be named as an entry's author, as the curation offer names them. */
+export type SiteContentEntryAuthorCandidate = {
+  userId: number;
+  name: string;
+};
+
 /**
- * The tags this Site has already used for a kind, which is the offer an author picks from. A tag nobody
- * carries any more leaves the offer by itself, which for tags is right rather than lossy.
+ * Who may be named as an entry's author on this Site: the enabled members whose core roles let them
+ * write entries. Named as administration names people, an address where there is no name.
  */
-export async function listSiteContentEntryTagsInUse(kind: SiteContentEntryKind, siteId: number): Promise<string[]> {
-  const { rows } = await getPool().query<{ tag: string }>(
-    `SELECT DISTINCT tag
-     FROM phis.site_content c,
-          jsonb_array_elements_text(COALESCE(c.meta -> 'tags', '[]'::jsonb)) AS tag
-     WHERE c.site_id = $1
-       AND c.type = $2
-     ORDER BY tag`,
-    [siteId, SITE_CONTENT_ENTRY_KINDS[kind].type],
+export async function listSiteContentEntryAuthorCandidates(siteId: number): Promise<SiteContentEntryAuthorCandidate[]> {
+  const { rows } = await getPool().query<{ user_id: number; name: string }>(
+    `SELECT m.user_id,
+            COALESCE(${userDisplayNameSql("profile")}, account.email_normalized, 'User #' || m.user_id::text) AS name
+     FROM phis.user_site_memberships m
+     JOIN phis.user_site_role_claims claim
+       ON claim.user_id = m.user_id AND claim.site_id = m.site_id AND claim.provider_id = $2
+     LEFT JOIN phis.user_profiles profile ON profile.user_id = m.user_id
+     LEFT JOIN phis.user_account_directory account ON account.id = m.user_id
+     WHERE m.site_id = $1
+       AND (m.user_site_flags & ${USER_SITE_FLAG_DISABLED}) = 0
+       AND (claim.role_flags & $3) <> 0
+     ORDER BY LOWER(COALESCE(${userDisplayNameSql("profile")}, account.email_normalized, '')), m.user_id`,
+    [siteId, PHI_CORE_ROLE_PROVIDER_ID, ENTRY_AUTHOR_ROLE_FLAGS],
   );
-  return rows.map((row) => row.tag);
+  return rows.map((row) => ({ userId: row.user_id, name: row.name }));
+}
+
+export type SiteContentEntryCuration = {
+  contentId: number;
+  authorUserId: number | null;
+  categoryId: number | null;
+};
+
+/**
+ * Names an entry's author and files it under a category -- the Publisher's half of an entry that is not
+ * about when it is seen (CONTENT.md, Curation).
+ *
+ * On the entry rather than on a version, like its link and tags, so it is seen at once and not with the
+ * next publish: an attribution is not a word of the text. A field left `undefined` is left as it is;
+ * `null` clears it. An author who may not write entries here, or a category that is not one of this
+ * kind's, is refused and nothing is written.
+ */
+export async function curateSiteContentEntry(input: {
+  kind: SiteContentEntryKind;
+  siteId: number;
+  contentId: number;
+  authorUserId?: number | null;
+  categoryId?: number | null;
+}): Promise<SiteContentEntryCuration | "missing" | "author_not_eligible" | "category_missing"> {
+  const type = SITE_CONTENT_ENTRY_KINDS[input.kind].type;
+  return withTransaction(async (client) => {
+    const { rows: current } = await client.query<{ author_user_id: number | null }>(
+      `SELECT author_user_id FROM phis.site_content
+       WHERE site_id = $1 AND id = $2 AND type = $3
+       FOR UPDATE`,
+      [input.siteId, input.contentId, type],
+    );
+    if (!current[0]) {
+      return "missing" as const;
+    }
+
+    if (input.authorUserId !== undefined && input.authorUserId !== null) {
+      const { rowCount } = await client.query(
+        `SELECT 1
+         FROM phis.user_site_memberships m
+         JOIN phis.user_site_role_claims claim
+           ON claim.user_id = m.user_id AND claim.site_id = m.site_id AND claim.provider_id = $3
+         WHERE m.site_id = $1 AND m.user_id = $2
+           AND (m.user_site_flags & ${USER_SITE_FLAG_DISABLED}) = 0
+           AND (claim.role_flags & $4) <> 0`,
+        [input.siteId, input.authorUserId, PHI_CORE_ROLE_PROVIDER_ID, ENTRY_AUTHOR_ROLE_FLAGS],
+      );
+      if ((rowCount ?? 0) === 0) {
+        return "author_not_eligible" as const;
+      }
+    }
+    if (input.authorUserId !== undefined) {
+      await client.query(
+        `UPDATE phis.site_content SET author_user_id = $3, updated_at = NOW() WHERE site_id = $1 AND id = $2`,
+        [input.siteId, input.contentId, input.authorUserId],
+      );
+    }
+    if (input.categoryId !== undefined) {
+      const outcome = await setSiteContentEntryCategory(client, {
+        siteId: input.siteId,
+        type,
+        contentId: input.contentId,
+        categoryId: input.categoryId,
+      });
+      if (outcome === "category_missing") {
+        // Nothing of this curation may stand when part of it is refused.
+        throw new CurationRefused("category_missing");
+      }
+    }
+
+    const { rows } = await client.query<{ author_user_id: number | null; category_id: number | null }>(
+      `SELECT c.author_user_id, link.term_id AS category_id
+       FROM phis.site_content c
+       LEFT JOIN phis.site_content_term_links link
+         ON link.content_id = c.id AND link.vocabulary = ${SITE_CONTENT_VOCABULARY_CATEGORY}
+       WHERE c.id = $1`,
+      [input.contentId],
+    );
+    return {
+      contentId: input.contentId,
+      authorUserId: rows[0]?.author_user_id ?? null,
+      categoryId: rows[0]?.category_id ?? null,
+    };
+  }).catch((error: unknown) => {
+    if (error instanceof CurationRefused) {
+      return error.reason;
+    }
+    throw error;
+  });
+}
+
+class CurationRefused extends Error {
+  constructor(readonly reason: "category_missing") {
+    super(reason);
+  }
 }

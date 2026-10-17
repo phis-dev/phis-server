@@ -40,7 +40,15 @@ export function resolvePhiMediaDeliveryUrl(asset: Pick<MediaAssetRecord, "id" | 
   return `/api/site/media/${asset.id}/content?r=${asset.deliveryRevision}`;
 }
 
-function resolveThumbnailUrl(asset: MediaAssetRecord) {
+/**
+ * Where an image Asset's thumbnail is served from, or `null` for an Asset that is no image.
+ *
+ * Exported for the readers that hold an Asset's parts rather than its record -- a byline joins them -- so
+ * the address is still built in one place.
+ */
+export function resolvePhiMediaThumbnailUrl(
+  asset: Pick<MediaAssetRecord, "id" | "deliveryRevision" | "variantVersion" | "contentType">,
+) {
   if (!isImageAsset(asset.contentType)) {
     return null;
   }
@@ -48,6 +56,10 @@ function resolveThumbnailUrl(asset: MediaAssetRecord) {
   return (
     `/api/site/media/${asset.id}/variants/${PhiImageAssetVariantKey.Thumbnail}?r=${asset.deliveryRevision}&v=${asset.variantVersion ?? 0}`
   );
+}
+
+function resolveThumbnailUrl(asset: MediaAssetRecord) {
+  return resolvePhiMediaThumbnailUrl(asset);
 }
 
 function resolvePreviewUrl(asset: MediaAssetRecord) {

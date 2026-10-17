@@ -108,6 +108,7 @@ export async function GET(request: NextRequest) {
         ? {
             firstName: profile.firstName,
             lastName: profile.lastName,
+            displayName: profile.displayName,
             companyName: profile.companyName,
           }
         : null,

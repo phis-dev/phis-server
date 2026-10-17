@@ -4,11 +4,12 @@ import { SITE_CONTENT_STATUS_DRAFT, SITE_CONTENT_STATUS_PUBLISHED } from "@/db/s
 import {
   deleteSiteContentEntry,
   listSiteContentEntriesForEditor,
-  listSiteContentEntryTagsInUse,
   normalizePhiContentEntryTag,
   saveSiteContentEntryDraft,
+  SITE_CONTENT_ENTRY_KINDS,
   type SiteContentEntryKind,
 } from "@/db/site-content-entries";
+import { listSiteContentTagsInUse, slugifySiteContentTerm } from "@/db/site-content-terms";
 import { readEntryKind, type EntryRouteContext } from "@/lib/site-content-entry-route";
 import { requireSiteAuthorApiContext } from "@/lib/guards/site-admin-api";
 import { resolvePhiLocaleBase, resolvePhiLocaleCapability } from "@/lib/locale";
@@ -123,6 +124,10 @@ function readEntryTags(value: unknown): { tags: string[] } | { error: string } {
     }
     if (tag.length > MAX_ENTRY_TAG_LENGTH) {
       return { error: `A tag must be at most ${MAX_ENTRY_TAG_LENGTH} characters.` };
+    }
+    // A tag is an address as well as a word; one with no letter or digit in it would have none.
+    if (!slugifySiteContentTerm(tag)) {
+      return { error: "A tag must contain a letter or a digit." };
     }
     if (!tags.includes(tag)) {
       tags.push(tag);
@@ -272,7 +277,7 @@ export async function GET(request: NextRequest, { params }: EntryRouteContext) {
       status: readStatusFilter(searchParams.get("status")),
     }),
     // The offer a tag field picks from, answered beside the page so a picker needs no second endpoint.
-    listSiteContentEntryTagsInUse(kind, site.id),
+    listSiteContentTagsInUse(site.id, SITE_CONTENT_ENTRY_KINDS[kind].type),
   ]);
 
   // The Site's source language is not repeated here: the Site config (`/api/v1/site`) answers it.

@@ -24,8 +24,11 @@ vi.mock("@/db/site-content-entries", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/db/site-content-entries")>()),
   deleteSiteContentEntry: mocks.remove,
   listSiteContentEntriesForEditor: mocks.list,
-  listSiteContentEntryTagsInUse: mocks.tags,
   saveSiteContentEntryDraft: mocks.save,
+}));
+vi.mock("@/db/site-content-terms", async (importOriginal) => ({
+  ...await importOriginal<typeof import("@/db/site-content-terms")>(),
+  listSiteContentTagsInUse: mocks.tags,
 }));
 vi.mock("@/lib/log", () => ({ logRuntimeEvent: vi.fn() }));
 

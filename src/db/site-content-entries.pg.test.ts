@@ -188,8 +188,8 @@ describe("the content entry write path, as News, against PostgreSQL", () => {
     expect(item).toMatchObject({
       title: { text: "Title published-entry", source: "Title published-entry", translated: false },
       link: { kind: "external", href: "https://example.test/somewhere" },
-      // Trimmed, lower-cased and deduplicated: the string is the tag's identity.
-      tags: ["one", "two"],
+      // Trimmed, lower-cased and deduplicated: one term per address, in the order they were given.
+      tags: [{ slug: "one", label: "one" }, { slug: "two", label: "two" }],
       // Nothing was declared, so the words are the Site's own language and may be translated.
       sourceLocale: null,
       translate: true,

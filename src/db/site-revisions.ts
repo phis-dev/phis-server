@@ -6,6 +6,7 @@ import {
   collectRevisionWidgetInstanceIds,
   deleteOrphanedSiteWidgetContentWithDb,
 } from "@/db/site-widget-content";
+import { userDisplayNameSql } from "@/db/user-profiles";
 import { getPool, withTransaction } from "@/lib/db";
 import { hasPhiFlag } from "@/lib/helpers/flags";
 import { resolvePhisCmsAreaKey } from "@/lib/constants/cms-areas";
@@ -245,7 +246,7 @@ async function listRevisionRowsWithDb(
             revision.source_revision_id,
             revision.created_by_user_id,
             COALESCE(
-              NULLIF(TRIM(CONCAT_WS(' ', profile.first_name, profile.last_name)), ''),
+              ${userDisplayNameSql("profile")},
               account.email_normalized,
               CASE
                 WHEN revision.created_by_user_id IS NOT NULL
@@ -257,7 +258,7 @@ async function listRevisionRowsWithDb(
             revision.meta_json #>> '{saved,at}' AS saved_at,
             CASE
               WHEN revision.meta_json ? 'saved' THEN COALESCE(
-                NULLIF(TRIM(CONCAT_WS(' ', saved_profile.first_name, saved_profile.last_name)), ''),
+                ${userDisplayNameSql("saved_profile")},
                 saved_account.email_normalized,
                 CASE
                   WHEN saved.user_id IS NOT NULL

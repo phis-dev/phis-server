@@ -1,6 +1,7 @@
 import "server-only";
 
 import { mapUserAccountRow, type UserAccountRow } from "@/db/user-accounts";
+import { userDisplayNameSql } from "@/db/user-profiles";
 import { getPool } from "@/lib/db";
 import { USER_SITE_FLAG_DISABLED, isUserSiteEnabled } from "@/lib/user-site-flags";
 import { PHI_CORE_ROLE_PROVIDER_ID } from "@/lib/authorization";
@@ -87,6 +88,7 @@ export async function listAdminUsersForSite(siteId: number, options: ListAdminUs
         OR lower(COALESCE(up.last_name, '')) LIKE $${index} ESCAPE '\\'
         OR lower(COALESCE(up.company_name, '')) LIKE $${index} ESCAPE '\\'
         OR lower(COALESCE(CONCAT_WS(' ', up.first_name, up.last_name), '')) LIKE $${index} ESCAPE '\\'
+        OR lower(COALESCE(up.display_name, '')) LIKE $${index} ESCAPE '\\'
         OR lower(COALESCE(external.customer_number, '')) LIKE $${index} ESCAPE '\\'
       )`,
     );
@@ -139,7 +141,7 @@ export async function listAdminUsersForSite(siteId: number, options: ListAdminUs
         COALESCE(core_claim.role_flags, 0) AS core_role_flags,
         usr.user_site_flags,
         usr.last_login_at,
-        COALESCE(NULLIF(TRIM(CONCAT_WS(' ', up.first_name, up.last_name)), ''), email.email_normalized) AS display_name,
+        COALESCE(${userDisplayNameSql("up")}, email.email_normalized) AS display_name,
         CASE
           WHEN external.external_account_id IS NOT NULL THEN 'customer'
           WHEN COALESCE(core_claim.role_flags, 0) <> 0 THEN 'roles'
@@ -273,7 +275,7 @@ export async function searchSiteGroupMemberCandidates(input: {
     id: number; display_name: string | null; company_name: string | null; member: boolean;
   }>(
     `SELECT ua.id,
-            COALESCE(NULLIF(TRIM(CONCAT_WS(' ', up.first_name, up.last_name)), ''), email.email_normalized)
+            COALESCE(${userDisplayNameSql("up")}, email.email_normalized)
               AS display_name,
             up.company_name,
             EXISTS (
@@ -294,8 +296,8 @@ export async function searchSiteGroupMemberCandidates(input: {
      WHERE usm.site_id = $1
        AND ($2 = ''
          OR email.email_normalized ILIKE $3 ESCAPE '\\'
-         OR COALESCE(NULLIF(TRIM(CONCAT_WS(' ', up.first_name, up.last_name)), ''), '') ILIKE $3 ESCAPE '\\')
-     ORDER BY LOWER(COALESCE(NULLIF(TRIM(CONCAT_WS(' ', up.first_name, up.last_name)), ''), email.email_normalized, '')),
+         OR COALESCE(${userDisplayNameSql("up")}, '') ILIKE $3 ESCAPE '\\')
+     ORDER BY LOWER(COALESCE(${userDisplayNameSql("up")}, email.email_normalized, '')),
               ua.id
      LIMIT $4`,
     [input.siteId, query, pattern, limit, input.groupId ?? 0],

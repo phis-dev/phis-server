@@ -22,6 +22,7 @@ import {
 } from "@phis/contracts/addon";
 import { PhisSupportTicketTypeFlag } from "@phis/contracts/support";
 
+import { userDisplayNameSql } from "@/db/user-profiles";
 import { getPool, withTransaction } from "@/lib/db";
 import { PhisMediaSpaceKind } from "@/db/media-spaces";
 import { PhiMediaDeliveryPolicy } from "@phis/contracts/media";
@@ -769,7 +770,7 @@ async function readParticipants(db: DbQueryable, threadId: number) {
             participant.user_id,
             participant.group_id,
             participant.flags,
-            NULLIF(TRIM(CONCAT_WS(' ', profile.first_name, profile.last_name)), '') AS user_display_name,
+            ${userDisplayNameSql("profile")} AS user_display_name,
             profile.company_name AS user_company_name,
             grp.name AS group_name
      FROM phis.thread_participants participant
@@ -804,7 +805,7 @@ async function readMessageWindow(
             message.author_kind,
             message.author_user_id,
             message.author_provider_id,
-            NULLIF(TRIM(CONCAT_WS(' ', profile.first_name, profile.last_name)), '') AS author_display_name,
+            ${userDisplayNameSql("profile")} AS author_display_name,
             profile.company_name AS author_company_name,
             message.body_text,
             message.body_markdown,
@@ -1649,7 +1650,7 @@ export async function listThreadCandidates(siteId: number, userId: number) {
   }>(
     `SELECT DISTINCT ON (account.id)
             account.id,
-            NULLIF(TRIM(CONCAT_WS(' ', profile.first_name, profile.last_name)), '') AS display_name,
+            ${userDisplayNameSql("profile")} AS display_name,
             profile.company_name,
             BOOL_OR((COALESCE(grp.flags, 0) & $4) <> 0) OVER (PARTITION BY account.id) AS show_company
      FROM phis.user_site_role_claims claim

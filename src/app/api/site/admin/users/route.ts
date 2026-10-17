@@ -223,6 +223,7 @@ export async function GET(request: NextRequest) {
         email: target.emailNormalized,
         firstName: profile?.firstName ?? "",
         lastName: profile?.lastName ?? "",
+        displayName: profile?.displayName ?? "",
         companyName: profile?.companyName ?? "",
         enabled: membership.enabled,
         coreRoleFlags: membership.coreRoleFlags,
@@ -296,6 +297,7 @@ export async function POST(request: NextRequest) {
   const firstName = normalizeString(body.firstName);
   const lastName = normalizeString(body.lastName);
   const companyName = normalizeNullableString(body.companyName);
+  const displayName = normalizeNullableString(body.displayName);
   const roleFlags = buildBaseRoleFlagsFromSelection(body.roles);
 
   if (!email || !firstName || !lastName) {
@@ -320,7 +322,7 @@ export async function POST(request: NextRequest) {
       coreRoleFlags: roleFlags,
     });
     if (!await getUserProfileByUserId(existingUser.id)) {
-      await upsertUserProfile({ userId: existingUser.id, firstName, lastName, companyName });
+      await upsertUserProfile({ userId: existingUser.id, firstName, lastName, displayName, companyName });
     }
 
     return NextResponse.json({
@@ -360,6 +362,7 @@ export async function POST(request: NextRequest) {
     userId: account.id,
     firstName,
     lastName,
+    displayName,
     companyName,
   });
 
@@ -457,6 +460,8 @@ export async function PUT(request: NextRequest) {
   const requestedFirstName = normalizeString(body.firstName);
   const requestedLastName = normalizeString(body.lastName);
   const requestedCompanyName = normalizeNullableString(body.companyName);
+  // Absent leaves the stored name alone, like a profile write that does not know about it.
+  const requestedDisplayName = Object.hasOwn(body, "displayName") ? normalizeNullableString(body.displayName) : undefined;
   // A save that does not mention roles leaves them as they are; read as an empty selection, it took
   // every role away from whoever was edited.
   const requestedRoleFlags = body.roles === undefined
@@ -493,7 +498,8 @@ export async function PUT(request: NextRequest) {
       requestedEmail !== target.emailNormalized ||
       requestedFirstName !== (profile?.firstName ?? "") ||
       requestedLastName !== (profile?.lastName ?? "") ||
-      requestedCompanyName !== (profile?.companyName ?? null);
+      requestedCompanyName !== (profile?.companyName ?? null) ||
+      (requestedDisplayName !== undefined && requestedDisplayName !== (profile?.displayName ?? null));
     if (touchesAccount) {
       return NextResponse.json(ACCOUNT_SHARED_RESPONSE, { status: 409 });
     }
@@ -512,6 +518,7 @@ export async function PUT(request: NextRequest) {
       userId: target.id,
       firstName: requestedFirstName,
       lastName: requestedLastName,
+      displayName: requestedDisplayName,
       companyName: requestedCompanyName,
     });
   }

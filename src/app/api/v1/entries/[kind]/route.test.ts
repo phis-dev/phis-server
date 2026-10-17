@@ -20,7 +20,11 @@ vi.mock("@/db/site-content-entries", () => ({
     subtitle: "news entry subtitle",
     content: "news entry body",
     tag: "news tag",
+    category: "news category",
   } } },
+}));
+vi.mock("@/lib/media-response", () => ({
+  resolvePhiMediaThumbnailUrl: ({ id }: { id: number }) => `/api/site/media/${id}/variants/1`,
 }));
 vi.mock("@/lib/translations", () => ({
   translateSiteBatchWithCache: mocks.translateSite,
@@ -43,6 +47,10 @@ function field(text: string, translated = false) {
   return { text, source: text, translated };
 }
 
+function tag(label: string) {
+  return { slug: label, label };
+}
+
 function entry(overrides: Record<string, unknown> = {}) {
   return {
     id: "an-entry",
@@ -53,7 +61,9 @@ function entry(overrides: Record<string, unknown> = {}) {
     subtitle: field("Its subtitle"),
     content: field("# Its body\n\nA paragraph."),
     link: null,
+    category: null,
     tags: [],
+    author: null,
     sourceLocale: null,
     translate: true,
     ...overrides,
@@ -85,11 +95,6 @@ describe("GET /api/v1/entries/news", () => {
     const response = await GET(request("en", "?limit=10"), { params: Promise.resolve({ kind: "news" }) });
     expect(response.status).toBe(200);
     expect(mocks.list).toHaveBeenCalledWith(SITE.id, "en", { limit: 10 });
-  });
-
-  it("answers the one entry at an address", async () => {
-    await GET(request("en", "?slug=a-post"), { params: Promise.resolve({ kind: "news" }) });
-    expect(mocks.list).toHaveBeenCalledWith(SITE.id, "en", { slug: "a-post" });
   });
 
   it("reads everything when no limit is stated", async () => {
@@ -187,23 +192,44 @@ describe("GET /api/v1/entries/news", () => {
   });
 
   it("translates the tags too, under their own context", async () => {
-    mocks.list.mockResolvedValue([entry({ tags: ["release", "modules"] })]);
+    mocks.list.mockResolvedValue([entry({ tags: [tag("release"), tag("modules")] })]);
     const { body } = await read("de");
 
     const tagCall = mocks.translateSite.mock.calls
       .find(([input]) => input.ctx === "news tag");
     expect(tagCall?.[0]).toMatchObject({ msgs: ["release", "modules"], format: "text" });
-    expect(body.entries[0].tags).toEqual(["de:release", "de:modules"]);
+    // The label is read; the address stays as written, because it is the term's identity.
+    expect(body.entries[0].tags).toEqual([
+      { slug: "release", label: "de:release" },
+      { slug: "modules", label: "de:modules" },
+    ]);
+  });
+
+  it("translates the category under its own context", async () => {
+    mocks.list.mockResolvedValue([entry({ category: { slug: "press", label: "Press" } })]);
+    const { body } = await read("de");
+
+    const call = mocks.translateSite.mock.calls.find(([input]) => input.ctx === "news category");
+    expect(call?.[0].msgs).toEqual(["Press"]);
+    expect(body.entries[0].category).toEqual({ slug: "press", label: "de:Press" });
+  });
+
+  it("names an author with a picture by its delivery address, and nothing else about them", async () => {
+    mocks.list.mockResolvedValue([entry({
+      author: { name: "Ada", avatar: { assetId: 41, deliveryRevision: 2, variantVersion: 1, contentType: "image/png" } },
+    })]);
+    const { body } = await read("en");
+    expect(body.entries[0].author).toEqual({ name: "Ada", avatar: { url: "/api/site/media/41/variants/1" } });
   });
 
   /*
-   * One message for the same word, however many entries carry it: the tag's identity is its text, so a
-   * context naming the entry would make a Site pay for "release" once per entry.
+   * One message for the same word, however many entries carry it: the label is the message, so a context
+   * naming the entry would make a Site pay for "release" once per entry.
    */
   it("asks once for a tag two entries share", async () => {
     mocks.list.mockResolvedValue([
-      entry({ slug: "one", subtitle: field(""), tags: ["release"] }),
-      entry({ slug: "two", subtitle: field(""), tags: ["release"] }),
+      entry({ slug: "one", subtitle: field(""), tags: [tag("release")] }),
+      entry({ slug: "two", subtitle: field(""), tags: [tag("release")] }),
     ]);
     await read("de");
 
@@ -213,11 +239,11 @@ describe("GET /api/v1/entries/news", () => {
   });
 
   it("leaves the tags as written when the entry may not be translated", async () => {
-    mocks.list.mockResolvedValue([entry({ translate: false, tags: ["mehrsprachig"] })]);
+    mocks.list.mockResolvedValue([entry({ translate: false, tags: [tag("mehrsprachig")] })]);
     const { body } = await read("de");
 
     expect(mocks.translateSite).not.toHaveBeenCalled();
-    expect(body.entries[0].tags).toEqual(["mehrsprachig"]);
+    expect(body.entries[0].tags).toEqual([tag("mehrsprachig")]);
   });
 
   it("marks a stand-in as provisional and refuses to have it kept", async () => {
