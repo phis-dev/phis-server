@@ -144,6 +144,8 @@ export type SiteContentEntryPublication = {
 
 export type SiteContentEntryEditorRecord = SiteContentEntryVersionTerms & {
   contentId: number;
+  /** Who wrote the entry -- the writer of its first version -- or `null` where nobody is on record. */
+  author: string | null;
   slug: string;
   status: number;
   sortOrder: number;
@@ -650,6 +652,7 @@ type EditorEntryRow = {
   title: string | null;
   subtitle: string | null;
   content: string | null;
+  author: string | null;
 };
 
 /**
@@ -689,9 +692,23 @@ export async function listSiteContentEntriesForEditor(input: {
        v.meta AS version_meta,
        COALESCE(tt.translation, mt.msg) AS title,
        COALESCE(ts.translation, ms.msg) AS subtitle,
-       COALESCE(tc.translation, mc.msg) AS content
+       COALESCE(tc.translation, mc.msg) AS content,
+       author.name AS author
      FROM phis.site_content c
      ${entryTextJoins("current_version_id", "$2")}
+     -- Who wrote the entry: the writer of its first version, named as the directory names them.
+     LEFT JOIN LATERAL (
+       SELECT COALESCE(
+                NULLIF(TRIM(CONCAT_WS(' ', p.first_name, p.last_name)), ''),
+                d.email_normalized
+              ) AS name
+       FROM phis.site_content_versions first_version
+       LEFT JOIN phis.user_profiles p ON p.user_id = first_version.created_by_user_id
+       LEFT JOIN phis.user_account_directory d ON d.id = first_version.created_by_user_id
+       WHERE first_version.content_id = c.id
+       ORDER BY first_version.version_no ASC
+       LIMIT 1
+     ) author ON TRUE
      WHERE c.site_id = $1
        AND c.type = $3
        AND ($4::smallint IS NULL OR c.status = $4)
@@ -724,6 +741,7 @@ export async function listSiteContentEntriesForEditor(input: {
     publishedAt: toIsoDate(row.published_at),
     expiresAt: toIsoDate(row.expires_at),
     updatedAt: toIsoDate(row.updated_at),
+    author: row.author,
     hasUnpublishedChanges: row.published_version_id !== row.current_version_id,
     versionId: row.current_version_id,
     publishedVersionId: row.published_version_id,
