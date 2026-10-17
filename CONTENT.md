@@ -82,6 +82,39 @@ bound Widget (`contentVersionId`) so that a structure save carries its base too.
   to. Rows whose current version differs from the published one without a submission are drafts in
   progress, visible but not queued.
 
+## Terms
+
+An entry of a content type is filed under **terms**: tags and, for now, one category. Both are rows of
+`site_content_terms` -- one per term of one kind on one Site, with an address (`slug`) and a label -- and
+`site_content_term_links` says which entry carries which. `vocabulary` tells them apart: `1` a tag, `2` a
+category. The links repeat the Site, the kind and the vocabulary, so two foreign keys hold a link to its own
+Site and kind, and a partial unique index allows one category per entry. Several categories later is
+dropping that index; nothing else changes.
+
+- **Tags** are the Author's. A save states the entry's tags whole; the terms behind them are found or made
+  by their address, and a tag nobody carries leaves the offer by itself.
+- **Categories** are kept as their own list per kind (`/api/site/editor/entries/<kind>/categories`), the
+  Publisher's to change. Filing an entry under one is curation (below), never a save.
+- A label is source text; the public read translates it under the kind's context for its vocabulary
+  (`news tag`, `blog category`). The address is the term's identity and is answered as written.
+
+## Curation
+
+Who an entry is attributed to and what it is filed under are the Publisher's
+(`PATCH /api/site/editor/entries/<kind>/curation`): a byline is a public statement about a person, and a
+category is the Site's order. Both live on the entry rather than a version, so they are seen at once.
+
+- `site_content.author_user_id` names a member of the Site whose core roles let them write entries. A new
+  entry starts with its writer; a Publisher names somebody else or nobody. A member who leaves the Site
+  leaves the byline empty and the entry in place.
+- A reader is shown the name the person chose (`user_profiles.display_name`) or their first and last name,
+  and their avatar only while it is a Public, ready image. Never an address: a person without a name to
+  show is no byline. The same name rule serves threads, groups and revisions (`userDisplayNameSql`).
+
+`GET /api/v1/entries/<kind>/<slug>` answers one published entry with its author and terms, and with
+`include=related` the entries closest to it -- the same category counts two, every shared tag one, the
+newest wins among equals. A detail Page asks this once for all of its parts.
+
 ## Rights
 
 | Act | Widget content (`text`, `html`, `markdown`, `asset`) | Content types (`news`, `blog`) |
