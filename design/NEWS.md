@@ -170,7 +170,8 @@ text would have its code fences translated as prose.
 
 **An author writes in their own language and says so.** A save states two things about its words, which
 live in the version's `meta` because a later version may be written in another language: `sourceLocale`
-and `translate`. A save translates nothing.
+and `translate`. A save that states no language stores the Site's source language, so every version says
+what it was written in. A save translates nothing.
 
 **Translation is pulled, never pushed.** The first read in a language that has nothing yet asks for one and
 caches it; every reader after that reads the cache. A draft is never read publicly and so costs nothing,

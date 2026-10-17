@@ -32,6 +32,12 @@ export async function GET(request: Request) {
     site: {
       id: site.id,
       ...config,
+      /*
+       * The language the Site's own words are written in -- what a Builder types, what an entry is written
+       * in when nobody says otherwise, what every translation starts from. Operator configuration, not the
+       * default a visitor is shown, which is `defaultLocale` and may differ.
+       */
+      sourceLocale: site.sourceLocale,
       // What each served locale means, so a Site process resolves a request that names one itself.
       localeCapabilities: resolveSiteLocaleCapabilities(config.availableLocales.map((option) => option.code)),
       translationMarkers,

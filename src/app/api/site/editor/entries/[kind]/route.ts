@@ -171,15 +171,16 @@ function readEntryDraftBody(
   }
 
   /*
-   * The language the words are written in, which an author states rather than Core guessing. Empty means
-   * the Site's canonical one. A language the platform cannot translate is refused here rather than stored:
-   * the read path would silently answer every reader in it, which looks like a translation failure and is
-   * a typo.
+   * The language the words are written in, which an author states rather than Core guessing. Left empty,
+   * it is the Site's source language, and that is what is stored: every version says what it was written
+   * in, so a later change of the Site's language does not quietly re-read old words as another one. A
+   * language the platform cannot translate is refused here rather than stored: the read path would
+   * silently answer every reader in it, which looks like a translation failure and is a typo.
    */
   const declaredLocale = normalizeString(body.sourceLocale);
   const sourceLocale = declaredLocale
     ? resolvePhiLocaleCapability(declaredLocale)?.locale ?? null
-    : null;
+    : options.canonicalLocale;
   if (declaredLocale && !sourceLocale) {
     return { error: "sourceLocale must be a language this installation can translate." };
   }
@@ -274,8 +275,8 @@ export async function GET(request: NextRequest, { params }: EntryRouteContext) {
     listSiteContentEntryTagsInUse(kind, site.id),
   ]);
 
+  // The Site's source language is not repeated here: the Site config (`/api/v1/site`) answers it.
   return NextResponse.json({
-    sourceLocale: site.sourceLocale,
     entries: listing.rows,
     total: listing.total,
     page: listing.page,

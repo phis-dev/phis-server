@@ -125,9 +125,9 @@ describe("the language a save declares", () => {
     expect(mocks.save.mock.calls[0]![0]).toMatchObject({ sourceLocale: "de", translate: true });
   });
 
-  it("reads no language as the Site's own", async () => {
+  it("stores the Site's source language where none is stated", async () => {
     await PUT(request("PUT", ENTRY), { params: Promise.resolve({ kind: "news" }) });
-    expect(mocks.save.mock.calls[0]![0]).toMatchObject({ sourceLocale: null, translate: true });
+    expect(mocks.save.mock.calls[0]![0]).toMatchObject({ sourceLocale: "en", translate: true });
   });
 
   it("refuses a language this installation cannot translate", async () => {
@@ -219,11 +219,10 @@ describe("DELETE /api/site/editor/entries/news", () => {
 });
 
 describe("GET /api/site/editor/entries/news", () => {
-  it("reads the Site's source locale, not a requested one", async () => {
+  it("reads the entries in the Site's source locale, not a requested one", async () => {
     const response = await GET(request("GET", undefined, "?locale=de"), { params: Promise.resolve({ kind: "news" }) });
 
     expect(response.status).toBe(200);
-    expect(await response.json()).toMatchObject({ sourceLocale: "en" });
     expect(mocks.list).toHaveBeenCalledWith(expect.objectContaining({ siteId: 4, locale: "en" }));
   });
 

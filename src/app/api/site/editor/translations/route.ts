@@ -106,7 +106,6 @@ export async function GET(request: NextRequest) {
     site: {
       availableLocales: targetLocales,
     },
-    sourceLocale: site.sourceLocale,
     selectedLocale: resolvedLocale?.locale ?? null,
     contexts,
     translations,
