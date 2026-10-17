@@ -96,7 +96,7 @@ Site administration, CMS, media and support API. A Site's `/api/site` proxy forw
 | GET | [`/api/site/cms/page/draft`](../src/app/api/site/cms/page/draft/route.ts) | session, `roles` (requireSiteReviewApiContext) |  |
 | DELETE | [`/api/site/cms/page/override`](../src/app/api/site/cms/page/override/route.ts) | session, `publishing` (requireSitePublisherApiContext) |  |
 | POST | [`/api/site/cms/page/publish`](../src/app/api/site/cms/page/publish/route.ts) | session, `publishing` (requireSitePublisherApiContext) |  |
-| GET | [`/api/site/cms/pages`](../src/app/api/site/cms/pages/route.ts) | session, `structure-authoring` (requireSiteBuilderApiContext) |  |
+| GET | [`/api/site/cms/pages`](../src/app/api/site/cms/pages/route.ts) | session, `roles` (requireSiteReviewApiContext) |  |
 | POST | [`/api/site/cms/pages/{scopeId}/path`](../src/app/api/site/cms/pages/[scopeId]/path/route.ts) | session, `structure-authoring` (requireSiteBuilderApiContext) |  |
 | GET | [`/api/site/cms/revisions`](../src/app/api/site/cms/revisions/route.ts) | session, `roles` (requireSiteReviewApiContext) |  |
 | DELETE | [`/api/site/cms/revisions`](../src/app/api/site/cms/revisions/route.ts) | session, `structure-authoring` (requireSiteBuilderApiContext) |  |

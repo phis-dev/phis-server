@@ -2,6 +2,13 @@ import "server-only";
 
 import { getPool, withTransaction } from "@/lib/db";
 import { toPhiRecord } from "@/lib/helpers/record";
+import { resolvePhisCmsAreaMask } from "@/lib/constants/cms-areas";
+import { readPhiLinkTarget, type PhiLinkTarget } from "@/lib/internal-references";
+import {
+  collectSiteCmsReferences,
+  PhiCmsReferenceSourceKind,
+  replaceSiteCmsReferencesWithDb,
+} from "@/db/site-cms-references";
 import {
   insertSiteContentVersion,
   normalizeOptionalText,
@@ -86,7 +93,8 @@ export type SiteContentEntryInput = {
   title: string;
   subtitle?: string | null;
   content: string;
-  link?: string | null;
+  /** A Page target or an external address (REFERENCES.md); a Page target without an Area means Public. */
+  link?: PhiLinkTarget | null;
   tags?: readonly string[];
   sortOrder?: number;
   /**
@@ -142,7 +150,7 @@ export type SiteContentEntryEditorRecord = SiteContentEntryVersionTerms & {
   title: string;
   subtitle: string;
   content: string;
-  link: string | null;
+  link: PhiLinkTarget | null;
   tags: string[];
   publishedAt: string | null;
   expiresAt: string | null;
@@ -207,10 +215,17 @@ export function normalizePhiContentEntryTag(value: unknown) {
   return typeof value === "string" ? value.trim().toLowerCase() : "";
 }
 
+/*
+ * The link is kept under `linkTarget`, the one name a stored target answers to (REFERENCES.md): the
+ * reference index and every reader find it by that name, and nothing else in `meta` is mistaken for one.
+ */
 function buildEntryMeta(input: Pick<SiteContentEntryInput, "link" | "tags">) {
   const tags = [...new Set((input.tags ?? []).map(normalizePhiContentEntryTag).filter(Boolean))];
-  return { link: normalizeOptionalText(input.link), tags };
+  return { linkTarget: readPhiLinkTarget(input.link), tags };
 }
+
+/** An entry is read on Public pages, so a Page target that names no Area is a Public Page. */
+const ENTRY_LINK_AREA_ID = resolvePhisCmsAreaMask("public");
 
 /** The words of one version, joined three times over: title, subtitle and body, with their translations. */
 function entryTextJoins(versionColumn: string, localeParam: string) {
@@ -234,7 +249,7 @@ type PublishedEntryRow = {
   expires_at: string | null;
   created_at: string;
   updated_at: string;
-  meta: { link?: string | null; tags?: string[] | null } | null;
+  meta: { linkTarget?: unknown; tags?: string[] | null } | null;
   version_meta: unknown;
   title_source: string | null;
   title_translation: string | null;
@@ -306,7 +321,7 @@ export async function listPublishedSiteContentEntries(
     title: readField(row.title_source, row.title_translation),
     subtitle: readField(row.subtitle_source, row.subtitle_translation),
     content: readField(row.content_source, row.content_translation),
-    link: row.meta?.link ?? null,
+    link: readPhiLinkTarget(row.meta?.linkTarget),
     tags: readTags(row.meta),
     ...readVersionTerms(row.version_meta),
   }));
@@ -432,6 +447,14 @@ export async function saveSiteContentEntryDraft(input: SiteContentEntryInput): P
       value: content,
     });
     await setSiteContentCurrentVersion(client, { contentId: row.contentId, versionId });
+    // The link lives on the row, so its reference set is the entry's whole set, replaced with every save.
+    await replaceSiteCmsReferencesWithDb(client, {
+      siteId: input.siteId,
+      sourceKind: PhiCmsReferenceSourceKind.Content,
+      sourceScopeId: row.contentId,
+      sourceRevisionId: versionId,
+      references: collectSiteCmsReferences({ linkTarget: input.link ?? null }, { targetAreaId: ENTRY_LINK_AREA_ID }),
+    });
 
     return { ok: true, contentId: row.contentId, versionId, slug: row.slug };
   });
@@ -556,12 +579,22 @@ export async function deleteSiteContentEntry(input: {
   if (status === SITE_CONTENT_STATUS_PUBLISHED) {
     return "published";
   }
-  const { rowCount } = await pool.query(
-    `DELETE FROM phis.site_content
-     WHERE site_id = $1 AND id = $2 AND type = $3 AND status <> $4`,
-    [input.siteId, input.contentId, type, SITE_CONTENT_STATUS_PUBLISHED],
-  );
-  return (rowCount ?? 0) > 0 ? "deleted" : "published";
+  return withTransaction(async (client) => {
+    const { rowCount } = await client.query(
+      `DELETE FROM phis.site_content
+       WHERE site_id = $1 AND id = $2 AND type = $3 AND status <> $4`,
+      [input.siteId, input.contentId, type, SITE_CONTENT_STATUS_PUBLISHED],
+    );
+    if ((rowCount ?? 0) === 0) {
+      return "published" as const;
+    }
+    await client.query(
+      `DELETE FROM phis.site_cms_references
+       WHERE site_id = $1 AND source_kind = $2 AND source_scope_id = $3`,
+      [input.siteId, PhiCmsReferenceSourceKind.Content, input.contentId],
+    );
+    return "deleted" as const;
+  });
 }
 
 /**
@@ -612,7 +645,7 @@ type EditorEntryRow = {
   current_version_id: number | null;
   published_version_id: number | null;
   submitted_version_id: number | null;
-  meta: { link?: string | null; tags?: string[] | null } | null;
+  meta: { linkTarget?: unknown; tags?: string[] | null } | null;
   version_meta: unknown;
   title: string | null;
   subtitle: string | null;
@@ -686,7 +719,7 @@ export async function listSiteContentEntriesForEditor(input: {
     title: row.title ?? "",
     subtitle: row.subtitle ?? "",
     content: row.content ?? "",
-    link: row.meta?.link ?? null,
+    link: readPhiLinkTarget(row.meta?.linkTarget),
     tags: readTags(row.meta),
     publishedAt: toIsoDate(row.published_at),
     expiresAt: toIsoDate(row.expires_at),

@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { listSitePageScopes } from "@/db/site-pages";
 import { isPhisCmsAreaKey, resolvePhisCmsAreaMask } from "@/lib/constants/cms-areas";
-import { requireSiteBuilderApiContext } from "@/lib/guards/site-admin-api";
+import { requireSiteReviewApiContext } from "@/lib/guards/site-admin-api";
 import { createPhiPageReference } from "@/lib/internal-references";
 
 function normalizeArea(value: string | null) {
@@ -10,8 +10,13 @@ function normalizeArea(value: string | null) {
   return normalized && normalized.length > 0 ? normalized : "public";
 }
 
+/*
+ * Read by everybody who writes for the Site, not only by those who build it: an Author linking a News
+ * entry to a Page picks it from this list (REFERENCES.md, stable internal targets). Moving a Page stays
+ * structure authoring.
+ */
 export async function GET(request: NextRequest) {
-  const { context, error } = await requireSiteBuilderApiContext(request);
+  const { context, error } = await requireSiteReviewApiContext(request);
   if (error) {
     return error;
   }

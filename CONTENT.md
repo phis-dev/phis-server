@@ -24,7 +24,9 @@ same draft, submission and publish rules below and have no structure of their ow
 them (a list, a detail route) is ordinary structure. Every kind is declared once in
 `SITE_CONTENT_ENTRY_KINDS` (`src/db/site-content-entries.ts`) -- its type number and the translation
 contexts of its fields -- and is served under its kind: `/api/site/editor/entries/<kind>` (save, list,
-delete), `/submit`, `/publish`, and the public read `/api/v1/entries/<kind>`.
+delete), `/submit`, `/publish`, and the public read `/api/v1/entries/<kind>`. An entry's link is a stored
+target under `meta.linkTarget` (REFERENCES.md), indexed as Content references with every save and
+released with the entry.
 
 ## Binding a Widget to its content
 

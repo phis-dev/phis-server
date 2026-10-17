@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest, NextResponse } from "next/server";
+import { createPhiPageReference } from "@/lib/internal-references";
 
 vi.mock("server-only", () => ({}));
 
@@ -71,18 +72,29 @@ describe("PUT /api/site/editor/entries/news, as a save", () => {
     expect(mocks.save).not.toHaveBeenCalled();
   });
 
-  it("refuses a link whose scheme nobody chose", async () => {
-    for (const link of ["javascript:alert(1)", "//evil.test/path", "data:text/html,x", "mailto:a@b.test"]) {
+  it("refuses a link that is not a stored target, a typed path included", async () => {
+    for (const link of [
+      "/news/one",
+      "https://example.test/a",
+      { kind: "external", href: "javascript:alert(1)" },
+      { kind: "external", href: "data:text/html,x" },
+      { kind: "page", reference: "not-a-reference" },
+      { kind: "elsewhere" },
+    ]) {
       const response = await PUT(request("PUT", { ...ENTRY, link }), { params: Promise.resolve({ kind: "news" }) });
-      expect(response.status, link).toBe(400);
+      expect(response.status, JSON.stringify(link)).toBe(400);
     }
     expect(mocks.save).not.toHaveBeenCalled();
   });
 
-  it("takes a site-relative path and an http(s) address", async () => {
-    for (const link of ["/news/one", "https://example.test/a", "http://example.test/b"]) {
+  it("takes a Page target and an external address, and no link at all", async () => {
+    for (const link of [
+      { kind: "page", reference: createPhiPageReference({ kind: "site", pageScopeId: 7 }), area: "public" },
+      { kind: "external", href: "https://example.test/a", newTab: true },
+      null,
+    ]) {
       const response = await PUT(request("PUT", { ...ENTRY, link }), { params: Promise.resolve({ kind: "news" }) });
-      expect(response.status, link).toBe(200);
+      expect(response.status, JSON.stringify(link)).toBe(200);
     }
   });
 

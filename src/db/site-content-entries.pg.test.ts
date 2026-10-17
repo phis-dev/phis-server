@@ -2,12 +2,14 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import {
   closePhiTestPool,
+  createPhiTestPageScope,
   createPhiTestSite,
   dropPhiTestSites,
   requirePhiTestDatabase,
   type PhiTestSite,
 } from "../../test/pg/harness";
 import { SITE_CONTENT_STATUS_DRAFT, SITE_CONTENT_STATUS_PUBLISHED } from "./site-content";
+import { createPhiPageReference } from "@/lib/internal-references";
 import {
   deleteSiteContentEntry,
   listPublishedSiteContentEntries,
@@ -164,7 +166,10 @@ describe("the content entry write path, as News, against PostgreSQL", () => {
   });
 
   it("publishes the draft version and answers the entry", async () => {
-    const saved = await draft("published-entry", { link: "/somewhere", tags: ["One", "two", " one "] });
+    const saved = await draft("published-entry", {
+      link: { kind: "external", href: "https://example.test/somewhere" },
+      tags: ["One", "two", " one "],
+    });
     if (!saved.ok) throw new Error("the draft did not save");
 
     const publication = await publishSiteContentNews({
@@ -182,13 +187,44 @@ describe("the content entry write path, as News, against PostgreSQL", () => {
     const item = (await listPublishedNews(site.id, "en")).find((entry) => entry.slug === "published-entry");
     expect(item).toMatchObject({
       title: { text: "Title published-entry", source: "Title published-entry", translated: false },
-      link: "/somewhere",
+      link: { kind: "external", href: "https://example.test/somewhere" },
       // Trimmed, lower-cased and deduplicated: the string is the tag's identity.
       tags: ["one", "two"],
       // Nothing was declared, so the words are the Site's own language and may be translated.
       sourceLocale: null,
       translate: true,
     });
+  });
+
+  /*
+   * A Page an entry links to is guarded like any other referenced Page (REFERENCES.md): the entry's link
+   * is in the index from the save on, a save that drops it drops the row, and deleting the entry frees
+   * the Page again.
+   */
+  it("indexes a linked Page and lets it go with the link and with the entry", async () => {
+    const pool = await requirePhiTestDatabase();
+    const target = await createPhiTestPageScope(site, "/pgtest-entry-link-target");
+    const link = { kind: "page", reference: createPhiPageReference({ kind: "site", pageScopeId: target }) };
+    const references = async (contentId: number) => (await pool.query<{ target_page_scope_id: number; target_area_id: number }>(
+      `SELECT target_page_scope_id, target_area_id FROM phis.site_cms_references
+       WHERE site_id = $1 AND source_kind = 3 AND source_scope_id = $2`,
+      [site.id, contentId],
+    )).rows;
+
+    const saved = await draft("linked-entry", { link });
+    if (!saved.ok) throw new Error("the draft did not save");
+    // A target that names no Area is a Public Page: an entry is read there.
+    expect(await references(saved.contentId)).toEqual([{ target_page_scope_id: target, target_area_id: 1 }]);
+    expect((await editorEntries()).find((entry) => entry.contentId === saved.contentId)?.link).toEqual(link);
+
+    const unlinked = await draft("linked-entry", { contentId: saved.contentId, link: null });
+    if (!unlinked.ok) throw new Error("the second save did not go through");
+    expect(await references(saved.contentId)).toEqual([]);
+
+    const relinked = await draft("linked-entry", { contentId: saved.contentId, link });
+    if (!relinked.ok) throw new Error("the third save did not go through");
+    expect(await deleteSiteContentEntry({ kind: "news", siteId: site.id, contentId: saved.contentId })).toBe("deleted");
+    expect(await references(saved.contentId)).toEqual([]);
   });
 
   it("keeps an edit made after a publish back until it is published in turn", async () => {

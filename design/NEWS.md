@@ -44,7 +44,10 @@ Two of the questions that usually need machinery need none here:
   without anything changing a status. This is the maintenance contract of [AGENTS.md](../AGENTS.md) --
   the reader corrects lazily, there is no background timer -- applied to content rather than to leases.
 
-`meta` carries `link` and `tags`, and `sort_order` breaks ties within a day.
+`meta` carries `linkTarget` and `tags`, and `sort_order` breaks ties within a day. The link is a stored
+target (REFERENCES.md) -- a Page by its reference or an explicit external address, never a typed path --
+answered to readers as `link`. A Page target that names no Area is a Public Page, and every save replaces
+the entry's row in `site_cms_references`, so a linked Page is guarded like one a Widget links to.
 
 One interaction is worth knowing before it is discovered. A Public page is rendered once for everybody and
 kept under an address that joins the Site's `readMarker` with the translation markers

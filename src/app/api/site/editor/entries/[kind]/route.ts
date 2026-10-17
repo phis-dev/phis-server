@@ -20,6 +20,7 @@ import {
   readRequestBody,
 } from "@/lib/helpers/request";
 import { logRuntimeEvent } from "@/lib/log";
+import { readPhiLinkTarget, type PhiLinkTarget } from "@/lib/internal-references";
 
 export const dynamic = "force-dynamic";
 
@@ -66,7 +67,7 @@ type EntryDraftBody = {
   title: string;
   subtitle: string | null;
   content: string;
-  link: string | null;
+  link: PhiLinkTarget | null;
   tags: string[];
   sortOrder: number;
   sourceLocale: string | null;
@@ -91,32 +92,18 @@ function readOptionalBoolean(value: unknown) {
 }
 
 /**
- * A link is either the Site's own path or an absolute `http(s)` address, and nothing else.
+ * A link is a stored target (REFERENCES.md): a Page by its reference, or an explicit external address.
  *
- * It is rendered as an `href` on a public page, so a scheme nobody validated is a scheme somebody chose.
- * A protocol-relative `//host` is refused with the rest: it reads like a path and resolves like a host.
+ * A typed path is refused rather than read as a Page -- root-relative strings are not a second internal
+ * format, and a path that moves would leave the entry pointing at whatever answers there next. Absent or
+ * `null` is no link.
  */
-function readEntryLink(value: unknown): { link: string | null } | { error: string } {
-  const link = normalizeString(value);
-  if (!link) {
+function readEntryLink(value: unknown): { link: PhiLinkTarget | null } | { error: string } {
+  if (value === undefined || value === null || value === "") {
     return { link: null };
   }
-  if (link.startsWith("/")) {
-    return link.startsWith("//")
-      ? { error: "link must not be protocol-relative." }
-      : { link };
-  }
-
-  let parsed: URL;
-  try {
-    parsed = new URL(link);
-  } catch {
-    return { error: "link must be a site-relative path or an http(s) URL." };
-  }
-
-  return parsed.protocol === "http:" || parsed.protocol === "https:"
-    ? { link: parsed.toString() }
-    : { error: "link must be a site-relative path or an http(s) URL." };
+  const link = readPhiLinkTarget(value);
+  return link ? { link } : { error: "link must be a Page target or an external address." };
 }
 
 function readEntryTags(value: unknown): { tags: string[] } | { error: string } {
