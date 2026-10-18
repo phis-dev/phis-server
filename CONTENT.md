@@ -94,7 +94,9 @@ dropping that index; nothing else changes.
 - **Tags** are the Author's. A save states the entry's tags whole; the terms behind them are found or made
   by their address, and a tag nobody carries leaves the offer by itself.
 - **Categories** are kept as their own list per kind (`/api/site/editor/entries/<kind>/categories`), the
-  Publisher's to change. Filing an entry under one is curation (below), never a save.
+  Publisher's to change. Shaped like the entries route: `PUT` states one whole -- with an `id` that
+  category, without one a new one -- and `DELETE ?id=` removes one, filing its entries under none. Filing
+  an entry under one is curation (below), never a save.
 - A label is source text; the public read translates it under the kind's context for its vocabulary
   (`news tag`, `blog category`). The address is the term's identity and is answered as written.
 
