@@ -461,10 +461,40 @@ export async function listPublishedSiteContentEntries(
   kind: SiteContentEntryKind,
   siteId: number,
   locale: string,
-  options: { limit?: number } = {},
+  options: { limit?: number; categories?: SiteContentEntryCategoryFilter } = {},
 ) {
-  return queryPublishedEntries({ kind, siteId, locale, limit: options.limit });
+  const filter = options.categories;
+  if (!filter || (filter.categoryIds.length === 0 && !filter.uncategorized)) {
+    return queryPublishedEntries({ kind, siteId, locale, limit: options.limit });
+  }
+  /*
+   * Filtered in the read, before the cut: a list of ten whose newest entries are in other categories
+   * still shows ten, and only those ten are translated.
+   */
+  return queryPublishedEntries({
+    kind,
+    siteId,
+    locale,
+    where: `(EXISTS (
+         SELECT 1 FROM phis.site_content_term_links link
+         WHERE link.content_id = c.id AND link.vocabulary = ${SITE_CONTENT_VOCABULARY_CATEGORY} AND link.term_id = ANY($5::int[])
+       ) OR ($6::boolean AND NOT EXISTS (
+         SELECT 1 FROM phis.site_content_term_links link
+         WHERE link.content_id = c.id AND link.vocabulary = ${SITE_CONTENT_VOCABULARY_CATEGORY}
+       )))`,
+    params: [filter.categoryIds, filter.uncategorized],
+    limit: options.limit,
+  });
 }
+
+/**
+ * Which categories a list shows: the entries filed under any of `categoryIds`, and with `uncategorized`
+ * those filed under none. Neither is no filter at all.
+ */
+export type SiteContentEntryCategoryFilter = {
+  categoryIds: number[];
+  uncategorized: boolean;
+};
 
 /** The one published entry at an address -- a detail Page's question -- or `null`. */
 export async function readPublishedSiteContentEntry(

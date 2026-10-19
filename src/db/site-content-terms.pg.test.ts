@@ -243,6 +243,36 @@ describe("content entry terms and authors, against PostgreSQL", () => {
     await expect(link(second.id)).rejects.toMatchObject({ code: "23505" });
   });
 
+  it("lists only the categories a list is set to, filed under none among them, before the cut", async () => {
+    const pool = await requirePhiTestDatabase();
+    const kept = await createSiteContentCategory({ siteId: site.id, type: BLOG, slug: "kept", label: "Kept", sortOrder: 0 });
+    const other = await createSiteContentCategory({ siteId: site.id, type: BLOG, slug: "other", label: "Other", sortOrder: 0 });
+    if (kept === "slug_taken" || other === "slug_taken") throw new Error("not created");
+    const inKept = await publishedPost("filter-kept");
+    const inOther = await publishedPost("filter-other");
+    await publishedPost("filter-none");
+    await curateSiteContentEntry({ kind: "blog", siteId: site.id, contentId: inKept, categoryId: kept.id });
+    await curateSiteContentEntry({ kind: "blog", siteId: site.id, contentId: inOther, categoryId: other.id });
+    // The kept entry is the oldest, so a cut of one before the filter would never reach it.
+    await pool.query(`UPDATE phis.site_content SET published_at = NOW() - INTERVAL '1 day' WHERE id = $1`, [inKept]);
+
+    const slugs = async (categories: { categoryIds: number[]; uncategorized: boolean }, limit?: number) =>
+      (await listPublishedSiteContentEntries("blog", site.id, "en", { categories, ...(limit ? { limit } : {}) }))
+        .map((entry) => entry.slug);
+
+    expect(await slugs({ categoryIds: [kept.id], uncategorized: false }, 1)).toEqual(["filter-kept"]);
+    const keptAndNone = await slugs({ categoryIds: [kept.id], uncategorized: true });
+    expect(keptAndNone).toEqual(expect.arrayContaining(["filter-kept", "filter-none"]));
+    expect(keptAndNone).not.toContain("filter-other");
+    const none = await slugs({ categoryIds: [], uncategorized: true });
+    expect(none).toContain("filter-none");
+    expect(none).not.toContain("filter-kept");
+    expect(none).not.toContain("filter-other");
+    // Neither is no filter.
+    expect(await slugs({ categoryIds: [], uncategorized: false }))
+      .toEqual(expect.arrayContaining(["filter-kept", "filter-other", "filter-none"]));
+  });
+
   it("puts the closest entries first: the same category, then shared tags, then the newest", async () => {
     const pool = await requirePhiTestDatabase();
     const category = await createSiteContentCategory({ siteId: site.id, type: BLOG, slug: "near", label: "Near", sortOrder: 0 });

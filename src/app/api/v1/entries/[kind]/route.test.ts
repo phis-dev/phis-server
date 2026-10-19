@@ -110,6 +110,22 @@ describe("GET /api/v1/entries/news", () => {
     expect(mocks.list).not.toHaveBeenCalled();
   });
 
+  it("hands the categories to the read, filed under none among them where the list says so", async () => {
+    await GET(request("en", "?limit=5&categories=3,none,7"), { params: Promise.resolve({ kind: "news" }) });
+    expect(mocks.list).toHaveBeenCalledWith(SITE.id, "en", {
+      limit: 5,
+      categories: { categoryIds: [3, 7], uncategorized: true },
+    });
+  });
+
+  it("refuses a category list with anything but ids and none in it", async () => {
+    for (const query of ["?categories=travel", "?categories=3,0", "?categories=-1", "?categories=1.5"]) {
+      const response = await GET(request("en", query), { params: Promise.resolve({ kind: "news" }) });
+      expect(response.status, query).toBe(400);
+    }
+    expect(mocks.list).not.toHaveBeenCalled();
+  });
+
   it("asks for nothing when the reader's language is the one the entry was written in", async () => {
     const { body } = await read("en");
 

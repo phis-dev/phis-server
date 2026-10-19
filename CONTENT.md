@@ -113,6 +113,11 @@ category is the Site's order. Both live on the entry rather than a version, so t
   and their avatar only while it is a Public, ready image. Never an address: a person without a name to
   show is no byline. The same name rule serves threads, groups and revisions (`userDisplayNameSql`).
 
+`GET /api/v1/entries/<kind>` answers a kind's published entries, newest first; `limit` cuts the list and
+`categories=3,7,none` keeps the entries filed under any of those category ids, `none` standing for no
+category. Both apply in the read, the filter before the cut, so a list of ten still finds ten. A list
+with anything but ids and `none` in it is refused.
+
 `GET /api/v1/entries/<kind>/<slug>` answers one published entry with its author and terms, and with
 `include=related` the entries closest to it -- the same category counts two, every shared tag one, the
 newest wins among equals. A detail Page asks this once for all of its parts.
