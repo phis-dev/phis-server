@@ -164,6 +164,13 @@ is reversible -- it takes its routes with it and gives them back -- so there is 
 a guard to stand in front of, and no row for a foreign key to point at. The absence of an index row
 therefore does not mean nothing points at a Module Page.
 
+A configuration that sends somewhere is a link target like any other. An Area's forwarding root keeps its
+Page as `preset.config.shell.rootRoute.targetLinkTarget`, the Page alone -- a forward carries no fragment,
+no parameters, no new tab and never leaves its Area, so the write refuses anything else in it. A landing's
+`target` beside it is not one: it chooses which Module's applicant stands at the root, it is only ever a
+Module Page reference, and it is never followed, so it stays a bare reference and contributes no row. A
+Region's Page scope names its Pages as `pageLinkTarget` entries for the same reason a forward does.
+
 A target may name the Area to resolve its reference in, and is then indexed under that Area rather than
 the one whose tree carries it: that is where the Page it guards lives, and filing it against the Area
 that merely points at it would put the row beside Pages it has nothing to do with. Absent, the Area

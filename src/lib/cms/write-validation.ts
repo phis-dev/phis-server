@@ -1321,10 +1321,17 @@ function readAreaShellConfig(value: unknown, errors: string[], label: string) {
 
   const rootRouteLabel = `${label}.${PHI_AREA_ROOT_ROUTE_KEY}`;
   if (rootRoute.mode === "landing") {
-    // A landing names the applicant whose Page stands at the root, or nothing -- a landing without an
-    // applicant is a Page the Site authors itself, which is a state and not an omission.
-    if (rootRoute.target !== undefined && !readPhiPageReference(rootRoute.target)) {
-      errors.push(`${rootRouteLabel}.target must be an internal Page reference.`);
+    /*
+     * A landing names the applicant whose Page stands at the root, or nothing -- a landing without an
+     * applicant is a Page the Site authors itself, which is a state and not an omission. Only a Module
+     * applies for the slot, so only a Module Page reference names an applicant; a Site Page's would be
+     * read as no applicant at all, and storing it would record a choice nobody can see.
+     */
+    if (rootRoute.target !== undefined && readPhiPageReference(rootRoute.target)?.target.kind !== "module") {
+      errors.push(`${rootRouteLabel}.target must be a Module Page reference.`);
+    }
+    if (rootRoute.targetLinkTarget !== undefined) {
+      errors.push(`${rootRouteLabel}.targetLinkTarget belongs to a redirect.`);
     }
     return;
   }
@@ -1332,8 +1339,29 @@ function readAreaShellConfig(value: unknown, errors: string[], label: string) {
     errors.push(`${rootRouteLabel}.mode must be "landing" or "redirect".`);
     return;
   }
-  if (!readPhiPageReference(rootRoute.target)) {
-    errors.push(`${rootRouteLabel}.target must be an internal Page reference.`);
+  /*
+   * A forward is somewhere the visitor is sent, so its Page is a link target and lives under a
+   * `*LinkTarget` key, where the reference index reads it (REFERENCES.md). It is the Page and nothing
+   * else: a forward carries no fragment, no parameters and no new tab, and it never leaves its Area, so
+   * an `area` the index would file the row under is refused rather than stored.
+   */
+  if (rootRoute.target !== undefined) {
+    errors.push(`${rootRouteLabel}.target belongs to a landing; a redirect names its Page in targetLinkTarget.`);
+  }
+  const target = readOptionalRecord(rootRoute.targetLinkTarget, `${rootRouteLabel}.targetLinkTarget`, errors);
+  if (!target) {
+    if (rootRoute.targetLinkTarget === undefined) {
+      errors.push(`${rootRouteLabel}.targetLinkTarget is required.`);
+    }
+    return;
+  }
+  for (const key of Object.keys(target)) {
+    if (key !== "kind" && key !== "reference") {
+      errors.push(`${rootRouteLabel}.targetLinkTarget.${key} is not part of a redirect target.`);
+    }
+  }
+  if (target.kind !== "page" || !readPhiPageReference(target.reference)) {
+    errors.push(`${rootRouteLabel}.targetLinkTarget must be an internal Page target.`);
   }
 }
 

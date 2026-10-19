@@ -88,19 +88,19 @@ describe("reading a stored Area revision back", () => {
 describe("the Shell half of an Area config", () => {
   it("takes a redirect to a Page the Site authored", () => {
     const result = validateCmsAreaPresetWriteInput(
-      buildStructurePayload({ rootRoute: { mode: "redirect", target: pageReference } }),
+      buildStructurePayload({ rootRoute: { mode: "redirect", targetLinkTarget: { kind: "page", reference: pageReference } } }),
     );
 
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.value.preset?.config).toEqual({
-        shell: { rootRoute: { mode: "redirect", target: pageReference } },
+        shell: { rootRoute: { mode: "redirect", targetLinkTarget: { kind: "page", reference: pageReference } } },
       });
     }
   });
 
   it("takes a redirect to a Page a Module carries", () => {
-    expect(errorsOf({ rootRoute: { mode: "redirect", target: moduleReference } })).toEqual([]);
+    expect(errorsOf({ rootRoute: { mode: "redirect", targetLinkTarget: { kind: "page", reference: moduleReference } } })).toEqual([]);
   });
 
   it("takes a landing page that names no applicant, which the Site authors itself", () => {
@@ -117,7 +117,17 @@ describe("the Shell half of an Area config", () => {
 
   it("refuses a landing page whose applicant is not a reference", () => {
     expect(errorsOf({ rootRoute: { mode: "landing", target: "the welcome page" } })).toEqual([
-      "preset.config.shell.rootRoute.target must be an internal Page reference.",
+      "preset.config.shell.rootRoute.target must be a Module Page reference.",
+    ]);
+  });
+
+  /*
+   * Only a Module applies for the slot. A Site Page reference there would be read as no applicant at
+   * all, so it is refused rather than stored as a choice nobody can see.
+   */
+  it("refuses a landing page whose applicant is a Page the Site authored", () => {
+    expect(errorsOf({ rootRoute: { mode: "landing", target: pageReference } })).toEqual([
+      "preset.config.shell.rootRoute.target must be a Module Page reference.",
     ]);
   });
 
@@ -129,8 +139,27 @@ describe("the Shell half of an Area config", () => {
 
   it("refuses a target that is a path rather than a reference", () => {
     // A path is a fact about today's routing table; the stored answer has to survive a rename.
-    expect(errorsOf({ rootRoute: { mode: "redirect", target: "/dashboard" } })).toEqual([
-      "preset.config.shell.rootRoute.target must be an internal Page reference.",
+    expect(errorsOf({ rootRoute: { mode: "redirect", targetLinkTarget: { kind: "page", reference: "/dashboard" } } }))
+      .toEqual(["preset.config.shell.rootRoute.targetLinkTarget must be an internal Page target."]);
+  });
+
+  /*
+   * A forward is a link target, kept where the reference index reads one (REFERENCES.md); the landing's
+   * bare `target` key on a redirect would be a forward the index cannot see.
+   */
+  it("refuses a redirect that keeps its Page under the landing's key", () => {
+    expect(errorsOf({ rootRoute: { mode: "redirect", target: pageReference } })).toEqual([
+      "preset.config.shell.rootRoute.target belongs to a landing; a redirect names its Page in targetLinkTarget.",
+      "preset.config.shell.rootRoute.targetLinkTarget is required.",
+    ]);
+  });
+
+  it("refuses what a forward cannot carry", () => {
+    expect(errorsOf({
+      rootRoute: { mode: "redirect", targetLinkTarget: { kind: "page", reference: pageReference, area: "app", fragment: "top" } },
+    })).toEqual([
+      "preset.config.shell.rootRoute.targetLinkTarget.area is not part of a redirect target.",
+      "preset.config.shell.rootRoute.targetLinkTarget.fragment is not part of a redirect target.",
     ]);
   });
 

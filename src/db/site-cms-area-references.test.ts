@@ -40,6 +40,48 @@ describe("An Area's own tree is a reference source", () => {
     expect(page!.location).toBe("/regions/0/config/ctaHref");
   });
 
+  /*
+   * A forwarding root sends the visitor to a Page, and its Page is kept as a link target so this sees it.
+   * A landing's applicant is a choice among Modules, and a Module Page is never a row.
+   */
+  it("finds the Page a forwarding root leads to, and no landing applicant", () => {
+    const forward = collectSiteCmsReferences(
+      {
+        preset: {
+          config: {
+            shell: {
+              rootRoute: {
+                mode: "redirect",
+                targetLinkTarget: { kind: "page", reference: createPhiPageReference({ kind: "site", pageScopeId: 42 }) },
+              },
+            },
+          },
+        },
+      },
+      { targetAreaId: 2 },
+    );
+    expect(forward).toHaveLength(1);
+    expect(forward[0]).toMatchObject({ targetAreaId: 2 });
+    expect(forward[0]!.location).toBe("/preset/config/shell/rootRoute/targetLinkTarget");
+
+    const landing = collectSiteCmsReferences(
+      {
+        preset: {
+          config: {
+            shell: {
+              rootRoute: {
+                mode: "landing",
+                target: createPhiPageReference({ kind: "module", ownerModuleId: "@phis/ui/modules/public", presetKey: "welcome" }),
+              },
+            },
+          },
+        },
+      },
+      { targetAreaId: 2 },
+    );
+    expect(landing).toEqual([]);
+  });
+
   it("is written by the Area save, inside the transaction that persists the revision", async () => {
     const source = await read("src/db/site-pages.ts");
     const fn = /export async function saveSiteAreaDraftRevision[\s\S]*?\n\}\n/u.exec(source);
