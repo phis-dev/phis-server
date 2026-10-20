@@ -17,7 +17,10 @@ override_dh_auto_build:
 
 override_dh_auto_install:
 	install -d debian/phis/usr/lib/phis/server
-	cp -a .next/standalone/node_modules debian/phis/usr/lib/phis/
+# Built inside the workspace, the tracer puts the workspace's `node_modules` at the top of the
+# standalone output; built from this checkout alone, as the release does, there is none there and the
+# app directory's own `node_modules` below holds all of it.
+	if [ -d .next/standalone/node_modules ]; then cp -a .next/standalone/node_modules debian/phis/usr/lib/phis/; fi
 # The app directory inside the standalone output carries the name of the checkout it was built from,
 # which is not ours to depend on -- spelling it out is what left the unit pointing at a path the build
 # had stopped producing. It is found by its entry point and lands under a fixed name.
