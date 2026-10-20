@@ -88,7 +88,10 @@ jobs:
           # `-nc` because `debian/clean` lists `.next` and `dist`: for an operator they are leftovers to
           # remove, but here they are this build's inputs, and the clean target would delete them.
           # `-b` builds the binary package alone -- there is no source package to sign or upload.
-          dpkg-buildpackage -us -uc -b -nc
+          # `-u` because `debian/rules` puts the package into ARTIFACT_DIR, and the buildinfo and changes
+          # files written after it look for it in `..` otherwise.
+          dpkg-buildpackage -us -uc -b -nc \
+            --buildinfo-option=-u"$ARTIFACT_DIR" --changes-option=-u"$ARTIFACT_DIR"
 
       # Before the publish, because this is the half that can still fail: a tarball on the registry cannot
       # be recalled, and a release without its package can be attached to afterwards.
