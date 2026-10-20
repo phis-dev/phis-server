@@ -344,6 +344,7 @@ Versioned API a Site calls server-to-server with its token (`x-phis-token`), and
 | GET | [`/api/v1/site/capabilities`](../src/app/api/v1/site/capabilities/route.ts) | internal token |  |
 | GET | [`/api/v1/site/content`](../src/app/api/v1/site/content/route.ts) | internal token |  |
 | GET | [`/api/v1/site/locale`](../src/app/api/v1/site/locale/route.ts) | Site session, checked in the handler; internal token |  |
+| GET | [`/api/v1/site/media/folder-images`](../src/app/api/v1/site/media/folder-images/route.ts) | internal token | The public pictures of a Media Folder (`folderId`, `subfolders=1`, `sort=name_asc|created_at_desc`, `limit`≤200) in the public reference projection, for a page that shows a Folder. The Folder must be in the Site Space. |
 | GET | [`/api/v1/site/media/settings`](../src/app/api/v1/site/media/settings/route.ts) | internal token | Internal read of the Site's Media configuration for server-side composition (the Admin Media Settings page loads its Form initial values here). Mutations stay on the session-guarded /api/site/admin/media route; this endpoint is internal-token read-only. |
 | GET | [`/api/v1/site/nav`](../src/app/api/v1/site/nav/route.ts) | internal token; session (requireSiteCmsPreviewApiContext) |  |
 | GET | [`/api/v1/site/nav/folder`](../src/app/api/v1/site/nav/folder/route.ts) | internal token | Where a folder address of an Area leads, as a Page reference, for the Site to answer a request that found no Page with a 307. Asked on the miss path only; 404 when the address leads nowhere. |

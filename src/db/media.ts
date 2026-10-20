@@ -709,6 +709,49 @@ export async function countMediaAssetsBySiteWithFilters(siteId: number, filters:
   const { rows } = await getPool().query<{ total: string }>(parts.join("\n"), values); return Number.parseInt(rows[0]?.total ?? "0", 10) || 0;
 }
 
+export type PublicMediaFolderImagesSort = "name_asc" | "created_at_desc";
+
+/**
+ * The pictures a public page may show out of a Folder, on the same terms as
+ * `listPublicSiteSpaceMediaAssetsByIds`: Site Space, Ready, Public. The Folder itself has to be in the
+ * Site Space, or the branch is empty -- a Group's Folder is nobody's slideshow.
+ *
+ * `folderIds` already holds the branch (`listMediaFolderDescendantIds`) or the one Folder; this does
+ * not walk the tree again. Name order is what somebody prepares by naming files, which is the one order
+ * a Folder of photographs can be given without a tool.
+ */
+export async function listPublicSiteSpaceMediaImagesInFolders(siteId: number, input: {
+  folderIds: readonly number[];
+  sort: PublicMediaFolderImagesSort;
+  limit: number;
+}) {
+  const folderIds = [...new Set(input.folderIds.filter((id) => Number.isSafeInteger(id) && id > 0))];
+  if (folderIds.length === 0 || !(input.limit > 0)) return [];
+  const order = input.sort === "name_asc"
+    ? "ORDER BY LOWER(original_name) ASC, id ASC"
+    : "ORDER BY created_at DESC, id DESC";
+  const { rows } = await getPool().query<AssetRow>(
+    `SELECT ${ASSET_COLUMNS} FROM phis.media_assets
+     WHERE site_id = $1 AND folder_id = ANY($2::int[])
+       AND LOWER(content_type) LIKE 'image/%'
+       AND lifecycle_status = $4 AND delivery_policy = $5
+       AND space_id IN (
+         SELECT id FROM phis.media_spaces WHERE site_id = $1 AND kind = $3
+       )
+     ${order}
+     LIMIT $6`,
+    [
+      siteId,
+      folderIds,
+      PhisMediaSpaceKind.Site,
+      PhiMediaLifecycleStatus.Ready,
+      PhiMediaDeliveryPolicy.Public,
+      Math.floor(input.limit),
+    ],
+  );
+  return rows.map(mapAsset);
+}
+
 /**
  * Hands an Asset to someone else, or to nobody.
  *
