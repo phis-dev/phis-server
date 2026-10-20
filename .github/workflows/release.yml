@@ -82,7 +82,8 @@ jobs:
           ARTIFACT_DIR: ${{ runner.temp }}/artifacts
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends debhelper dpkg-dev
+          # `build-essential` is not in Build-Depends, but dpkg-buildpackage checks for it on every build.
+          sudo apt-get install -y --no-install-recommends build-essential debhelper dpkg-dev
           mkdir -p "$ARTIFACT_DIR"
           # `-nc` because `debian/clean` lists `.next` and `dist`: for an operator they are leftovers to
           # remove, but here they are this build's inputs, and the clean target would delete them.
