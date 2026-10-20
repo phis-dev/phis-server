@@ -1,6 +1,6 @@
 {
   "name": "@phis/server",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "license": "Apache-2.0",
   "description": "The phis control plane: the server that answers for Sites, Spaces, media, authorization, translations and Add-ons, and the phis operator CLI that installs, configures and migrates an installation.",
   "repository": {
@@ -49,7 +49,7 @@
     "phis:dist": "node ./dist/phis.mjs"
   },
   "dependencies": {
-    "@phis/contracts": "^0.5.0",
+    "@phis/contracts": "^0.6.0",
     "argon2": "^0.45.1",
     "harfbuzzjs": "^1.6.1",
     "next": "^16.3.5",
