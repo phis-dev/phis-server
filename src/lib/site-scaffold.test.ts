@@ -74,6 +74,13 @@ describe("site scaffold", () => {
     expect(files["next.config.ts"]).toContain('transpilePackages: ["@phis/ui", ...siteModulePackages]');
   });
 
+  it("generates Ant Design's structure from the Site's own Ant Design", () => {
+    const files = buildPhiSiteScaffoldFiles(context);
+
+    expect(files["next.config.ts"]).toContain('import { withPhiNextConfig } from "@phis/ui/next/config";');
+    expect(files["next.config.ts"]).toContain("export default withPhiNextConfig(nextConfig, { dir: __dirname });");
+  });
+
   it("draws the Shell below an Area root and nothing around the root itself", () => {
     const files = buildPhiSiteScaffoldFiles(context);
 
