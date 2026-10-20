@@ -15,6 +15,9 @@ vi.mock("@/lib/guards/site-admin-api", async (importOriginal) => ({
 vi.mock("@/db/site-pages", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/db/site-pages")>()),
   saveSitePageDraftRevision: mocks.saveDraft,
+  // A new path has neither a draft nor a published tree to take the meta from.
+  getSiteCurrentPageDraft: vi.fn(async () => null),
+  getResolvedSitePageTree: vi.fn(async () => null),
 }));
 vi.mock("@/lib/site-cms-audit", () => ({ logSiteCmsAuditEvent: mocks.audit }));
 

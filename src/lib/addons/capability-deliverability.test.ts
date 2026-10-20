@@ -1,4 +1,10 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+// Building a capability binds it to the pool without querying it; a test that builds them needs no database.
+vi.mock("@/lib/db", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/db")>()),
+  getPool: () => ({}),
+}));
 
 import { PHIS_CORE_CAPABILITIES } from "@phis/contracts/addon";
 import { buildPhisAddonCapabilities } from "./capabilities.ts";
