@@ -1,3 +1,9 @@
+phis (0.2.0-1) unstable; urgency=medium
+
+  * Release 0.2.0 on @phis/contracts 0.6.0; scaffolded Sites use @phis/ui 0.3.0.
+
+ -- Phisys Ltd. <debian@phisys.com>  Tue, 20 Oct 2026 16:35:00 +0000
+
 phis (0.1.0-1) unstable; urgency=medium
 
   * Add initial Debian packaging scaffold for the standalone runtime.
