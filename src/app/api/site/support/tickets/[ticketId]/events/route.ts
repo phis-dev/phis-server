@@ -3,7 +3,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { listSupportTicketEvents } from "@/db/support-ticket-events";
 import { requireSiteSupportApiContext } from "@/lib/guards/site-admin-api";
 import { parseStrictPositiveInt } from "@/lib/helpers/request";
-import { readSupportTicketReach, supportTicketWithinReach } from "@/lib/support-reach";
+import { readSupportTicketReach } from "@/lib/support-reach";
+import { supportTicketWithinReach } from "@/db/support";
 
 export const dynamic = "force-dynamic";
 

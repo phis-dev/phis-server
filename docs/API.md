@@ -8,25 +8,25 @@ public or internal token, and `session` is the visitor's Site session with the a
 passes (see [AUTHORIZATION.md](../AUTHORIZATION.md)). A route with no access entry performs its own checks
 or none; read its source. Request and response shapes are not listed; the source is linked per route.
 
-157 routes.
+161 routes.
 
 ## Contents
 
 - [`/api/operator`](#apioperator) (5)
 - [`/api/setup`](#apisetup) (2)
-- [`/api/site`](#apisite) (82)
+- [`/api/site`](#apisite) (84)
 - [`/api/v1/addons`](#apiv1addons) (2)
 - [`/api/v1/admin`](#apiv1admin) (1)
 - [`/api/v1/auth`](#apiv1auth) (29)
 - [`/api/v1/email`](#apiv1email) (1)
-- [`/api/v1/entries`](#apiv1entries) (1)
+- [`/api/v1/entries`](#apiv1entries) (2)
 - [`/api/v1/forms`](#apiv1forms) (8)
 - [`/api/v1/groups`](#apiv1groups) (3)
 - [`/api/v1/hooks`](#apiv1hooks) (1)
 - [`/api/v1/locales`](#apiv1locales) (1)
 - [`/api/v1/media`](#apiv1media) (2)
 - [`/api/v1/notifications`](#apiv1notifications) (2)
-- [`/api/v1/site`](#apiv1site) (16)
+- [`/api/v1/site`](#apiv1site) (17)
 - [`/api/v1/tr`](#apiv1tr) (1)
 
 ## `/api/operator`
@@ -115,6 +115,11 @@ Site administration, CMS, media and support API. A Site's `/api/site` proxy forw
 | GET | [`/api/site/editor/entries/{kind}`](../src/app/api/site/editor/entries/[kind]/route.ts) | session, `content-editing` (requireSiteAuthorApiContext) |  |
 | PUT | [`/api/site/editor/entries/{kind}`](../src/app/api/site/editor/entries/[kind]/route.ts) | session, `content-editing` (requireSiteAuthorApiContext) |  |
 | DELETE | [`/api/site/editor/entries/{kind}`](../src/app/api/site/editor/entries/[kind]/route.ts) | session, `content-editing` (requireSiteAuthorApiContext) |  |
+| GET | [`/api/site/editor/entries/{kind}/categories`](../src/app/api/site/editor/entries/[kind]/categories/route.ts) | session, `content-editing` (requireSiteAuthorApiContext) |  |
+| PUT | [`/api/site/editor/entries/{kind}/categories`](../src/app/api/site/editor/entries/[kind]/categories/route.ts) | session, `publishing` (requireSitePublisherApiContext); session, `content-editing` (requireSiteAuthorApiContext) |  |
+| DELETE | [`/api/site/editor/entries/{kind}/categories`](../src/app/api/site/editor/entries/[kind]/categories/route.ts) | session, `publishing` (requireSitePublisherApiContext); session, `content-editing` (requireSiteAuthorApiContext) |  |
+| GET | [`/api/site/editor/entries/{kind}/curation`](../src/app/api/site/editor/entries/[kind]/curation/route.ts) | session, `content-editing` (requireSiteAuthorApiContext) |  |
+| PATCH | [`/api/site/editor/entries/{kind}/curation`](../src/app/api/site/editor/entries/[kind]/curation/route.ts) | session, `publishing` (requireSitePublisherApiContext) |  |
 | POST | [`/api/site/editor/entries/{kind}/publish`](../src/app/api/site/editor/entries/[kind]/publish/route.ts) | session, `publishing` (requireSitePublisherApiContext) |  |
 | DELETE | [`/api/site/editor/entries/{kind}/publish`](../src/app/api/site/editor/entries/[kind]/publish/route.ts) | session, `publishing` (requireSitePublisherApiContext) |  |
 | POST | [`/api/site/editor/entries/{kind}/submit`](../src/app/api/site/editor/entries/[kind]/submit/route.ts) | session, `content-editing` (requireSiteAuthorApiContext) |  |
@@ -264,6 +269,7 @@ Versioned API a Site calls server-to-server with its token (`x-phis-token`), and
 | Method | Address | Access | Description |
 |---|---|---|---|
 | GET | [`/api/v1/entries/{kind}`](../src/app/api/v1/entries/[kind]/route.ts) | API token (public or internal) |  |
+| GET | [`/api/v1/entries/{kind}/{slug}`](../src/app/api/v1/entries/[kind]/[slug]/route.ts) | API token (public or internal) | As many relatives as a page shows under an entry; more is a list Page of its own. */ const DEFAULT_RELATED_LIMIT = 3; const MAX_RELATED_LIMIT = 12; |
 
 ## `/api/v1/forms`
 
@@ -344,7 +350,7 @@ Versioned API a Site calls server-to-server with its token (`x-phis-token`), and
 | GET | [`/api/v1/site/capabilities`](../src/app/api/v1/site/capabilities/route.ts) | internal token |  |
 | GET | [`/api/v1/site/content`](../src/app/api/v1/site/content/route.ts) | internal token |  |
 | GET | [`/api/v1/site/locale`](../src/app/api/v1/site/locale/route.ts) | Site session, checked in the handler; internal token |  |
-| GET | [`/api/v1/site/media/folder-images`](../src/app/api/v1/site/media/folder-images/route.ts) | internal token | The public pictures of a Media Folder (`folderId`, `subfolders=1`, `sort=name_asc|created_at_desc`, `limit`≤200) in the public reference projection, for a page that shows a Folder. The Folder must be in the Site Space. |
+| GET | [`/api/v1/site/media/folder-images`](../src/app/api/v1/site/media/folder-images/route.ts) | internal token | The public pictures of a Media Folder, for a page that shows a Folder rather than named Assets. |
 | GET | [`/api/v1/site/media/settings`](../src/app/api/v1/site/media/settings/route.ts) | internal token | Internal read of the Site's Media configuration for server-side composition (the Admin Media Settings page loads its Form initial values here). Mutations stay on the session-guarded /api/site/admin/media route; this endpoint is internal-token read-only. |
 | GET | [`/api/v1/site/nav`](../src/app/api/v1/site/nav/route.ts) | internal token; session (requireSiteCmsPreviewApiContext) |  |
 | GET | [`/api/v1/site/nav/folder`](../src/app/api/v1/site/nav/folder/route.ts) | internal token | Where a folder address of an Area leads, as a Page reference, for the Site to answer a request that found no Page with a 307. Asked on the miss path only; 404 when the address leads nowhere. |

@@ -5,6 +5,7 @@ import {
   SUPPORT_TICKET_TASK_STATUS_OPEN,
   SUPPORT_TICKET_TASK_TYPE_INTERNAL,
   SupportAdministrationError,
+  supportTicketWithinReach,
 } from "@/db/support";
 import { requireSiteSupportApiContext } from "@/lib/guards/site-admin-api";
 import { logRuntimeEvent } from "@/lib/log";
@@ -16,7 +17,7 @@ import {
   readRequestBody,
 } from "@/lib/helpers/request";
 import { toPhiRecord } from "@/lib/helpers/record";
-import { readSupportTicketReach, supportTicketWithinReach } from "@/lib/support-reach";
+import { readSupportTicketReach } from "@/lib/support-reach";
 
 export const dynamic = "force-dynamic";
 

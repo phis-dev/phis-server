@@ -7,7 +7,8 @@ import {
   listSupportForwardTargets,
   SupportForwardError,
 } from "@/lib/support-forwarding";
-import { readSupportTicketReach, supportTicketWithinReach } from "@/lib/support-reach";
+import { readSupportTicketReach } from "@/lib/support-reach";
+import { supportTicketWithinReach } from "@/db/support";
 
 export const dynamic = "force-dynamic";
 

@@ -18,7 +18,6 @@ import {
   type PhiTestSite,
 } from "../../test/pg/harness";
 import { PHI_MAINTENANCE_TASKS } from "../cli/maintain.mts";
-import { supportTicketWithinReach } from "../lib/support-reach";
 import {
   applySupportTicketAssignmentAction,
   createSupportTicket,
@@ -28,6 +27,7 @@ import {
   setSupportRequesterWindowDays,
   setSupportTicketAwaitingDelivery,
   SupportAdministrationError,
+  supportTicketWithinReach,
   updateSupportTicket,
 } from "./support";
 import { addThreadMessage } from "./threads";

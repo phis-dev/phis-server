@@ -2,7 +2,6 @@ import "server-only";
 
 import { PhiBaseRole } from "@phis/contracts/access";
 
-import { getPool } from "@/lib/db";
 import { PHI_CORE_ROLE_PROVIDER_ID } from "@/lib/authorization";
 
 /*
@@ -51,15 +50,4 @@ export function supportTicketReachSql(alias: string, userParam: string, reach: S
       AND reach_group.retired_at IS NULL
       AND (reach_member.valid_until IS NULL OR reach_member.valid_until > NOW())
   ))`;
-}
-
-/** Whether one ticket of the Site is within the reach. An absent ticket is not. */
-export async function supportTicketWithinReach(siteId: number, ticketId: number, reach: SupportTicketReach) {
-  const condition = supportTicketReachSql("t", "$3", reach);
-  const { rowCount } = await getPool().query(
-    `SELECT 1 FROM phis.support_tickets t
-     WHERE t.site_id = $1 AND t.id = $2${condition ? ` AND ${condition}` : ""}`,
-    reach.all ? [siteId, ticketId] : [siteId, ticketId, reach.userId],
-  );
-  return (rowCount ?? 0) > 0;
 }

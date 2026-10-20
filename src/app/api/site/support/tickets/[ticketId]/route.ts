@@ -11,7 +11,8 @@ import {
   readRequestBody,
 } from "@/lib/helpers/request";
 import { toPhiRecord } from "@/lib/helpers/record";
-import { readSupportTicketReach, supportTicketWithinReach } from "@/lib/support-reach";
+import { readSupportTicketReach } from "@/lib/support-reach";
+import { supportTicketWithinReach } from "@/db/support";
 
 export const dynamic = "force-dynamic";
 

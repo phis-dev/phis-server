@@ -10,10 +10,10 @@ vi.mock("@/lib/guards/site-admin-api", () => ({
     error: null,
   }),
 }));
-vi.mock("@/db/support", () => ({ applySupportTicketAssignmentAction: mocks.apply }));
 // Within reach: what is under test here is how the route reads its input, not whose ticket it is.
-vi.mock("@/lib/support-reach", () => ({
-  readSupportTicketReach: () => ({}),
+vi.mock("@/lib/support-reach", () => ({ readSupportTicketReach: () => ({}) }));
+vi.mock("@/db/support", () => ({
+  applySupportTicketAssignmentAction: mocks.apply,
   supportTicketWithinReach: async () => true,
 }));
 vi.mock("@/lib/log", () => ({ logRuntimeEvent: vi.fn() }));

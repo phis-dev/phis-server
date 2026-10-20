@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 
-import { deleteSupportTicketTask, SupportAdministrationError, updateSupportTicketTask } from "@/db/support";
+import {
+  deleteSupportTicketTask,
+  SupportAdministrationError,
+  supportTicketWithinReach,
+  updateSupportTicketTask,
+} from "@/db/support";
 import { requireSiteSupportApiContext } from "@/lib/guards/site-admin-api";
 import { logRuntimeEvent } from "@/lib/log";
 import {
@@ -11,7 +16,7 @@ import {
   readRequestBody,
 } from "@/lib/helpers/request";
 import { toPhiRecord } from "@/lib/helpers/record";
-import { readSupportTicketReach, supportTicketWithinReach } from "@/lib/support-reach";
+import { readSupportTicketReach } from "@/lib/support-reach";
 
 export const dynamic = "force-dynamic";
 

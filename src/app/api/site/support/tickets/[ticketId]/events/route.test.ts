@@ -12,10 +12,8 @@ vi.mock("@/lib/guards/site-admin-api", () => ({
 }));
 vi.mock("@/db/support-ticket-events", () => ({ listSupportTicketEvents: mocks.list }));
 // Within reach: what is under test here is how the route reads its input, not whose ticket it is.
-vi.mock("@/lib/support-reach", () => ({
-  readSupportTicketReach: () => ({}),
-  supportTicketWithinReach: async () => true,
-}));
+vi.mock("@/lib/support-reach", () => ({ readSupportTicketReach: () => ({}) }));
+vi.mock("@/db/support", () => ({ supportTicketWithinReach: async () => true }));
 
 import { GET } from "./route";
 

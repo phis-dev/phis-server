@@ -2342,3 +2342,14 @@ export async function markSupportTicketDelivered(siteId: number, ticketId: numbe
     return (rowCount ?? 0) > 0;
   });
 }
+
+/** Whether one ticket of the Site is within the reach. An absent ticket is not. */
+export async function supportTicketWithinReach(siteId: number, ticketId: number, reach: SupportTicketReach) {
+  const condition = supportTicketReachSql("t", "$3", reach);
+  const { rowCount } = await getPool().query(
+    `SELECT 1 FROM phis.support_tickets t
+     WHERE t.site_id = $1 AND t.id = $2${condition ? ` AND ${condition}` : ""}`,
+    reach.all ? [siteId, ticketId] : [siteId, ticketId, reach.userId],
+  );
+  return (rowCount ?? 0) > 0;
+}

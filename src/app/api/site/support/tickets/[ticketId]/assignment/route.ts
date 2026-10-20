@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 
-import { applySupportTicketAssignmentAction } from "@/db/support";
+import { applySupportTicketAssignmentAction, supportTicketWithinReach } from "@/db/support";
 import { requireSiteSupportApiContext } from "@/lib/guards/site-admin-api";
 import { logRuntimeEvent } from "@/lib/log";
 import { normalizeString, parseStrictPositiveInt, readRequestBody } from "@/lib/helpers/request";
-import { readSupportTicketReach, supportTicketWithinReach } from "@/lib/support-reach";
+import { readSupportTicketReach } from "@/lib/support-reach";
 
 export const dynamic = "force-dynamic";
 

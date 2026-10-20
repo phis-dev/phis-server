@@ -25,8 +25,11 @@ const readDirectories = ["src/lib/site-auth", "src/app/api/v1/auth"];
 const catalogFile = "src/lib/site-auth/installation-catalog.ts";
 const writerName = "buildAuthInstallationConfig";
 
-/** A read of the installation's config: `installation.config.<key>`, however the installation is held. */
-const readPattern = /\binstallation\.config\.([A-Za-z_$][\w$]*)/gu;
+/**
+ * A read of the installation's config, however the installation is held: `installation.config.<key>`,
+ * or through a stored-config reader that takes the key as a string, `readStoredPhiAuthConfig…(installation.config, "<key>")`.
+ */
+const readPattern = /\binstallation\.config(?:\.([A-Za-z_$][\w$]*)|,\s*"([A-Za-z_$][\w$]*)")/gu;
 /** A write inside the writer: `config.<key> = …` and `delete config.<key>`. */
 const writePattern = /(?:delete\s+)?\bconfig\.([A-Za-z_$][\w$]*)\s*(?:=[^=]|;)/gu;
 /** The provider catalog's restriction names, which are written through a computed key. */
@@ -63,8 +66,9 @@ for (const directory of readDirectories) {
   for (const file of await listSourceFiles(directory)) {
     const source = await readFile(path.join(repositoryRoot, file), "utf8");
     for (const match of source.matchAll(readPattern)) {
-      if (!readBy.has(match[1])) {
-        readBy.set(match[1], `${file}:${lineOf(source, match.index)}`);
+      const key = match[1] ?? match[2];
+      if (!readBy.has(key)) {
+        readBy.set(key, `${file}:${lineOf(source, match.index)}`);
       }
     }
     if (file === catalogFile) {
