@@ -232,14 +232,19 @@ itself. How to build one is in [ADDON_HOWTO.md](./ADDON_HOWTO.md), the server co
 ## Distribution
 
 A release is a tag. Pushing `v<version>` builds the standalone server, the CLI bundle and the schema file
-once, and ships both forms of that one build: the Debian package `phis`, attached to the GitHub release, and
-the npm package `@phis/server`. The tag must agree with `package.json` and with `debian/changelog`, or the
-workflow refuses it before anything is built.
+once, and ships them as the Debian package `phis`, attached to the GitHub release. The tag must agree with
+`package.json` and with `debian/changelog`, or the workflow refuses it before anything is built.
+
+`@phis/server` is not published to npm. It is no runtime that starts once installed: a stage is set up
+around it by `phis` (or phis-host) -- service account, unit, configuration, proxy -- which is what the
+Debian package brings and a registry package would leave to whoever installed it. A registry publish is
+also the one step nothing undoes, and the tarball has not been installed anywhere yet. `pnpm package:dist`
+still assembles and validates it, so publishing later is a step added to the release, not a build to write.
 
 | Installed from | What it carries | Described in |
 | --- | --- | --- |
 | `phis_<version>_<arch>.deb` | The server, the CLI, the schema file, the stage layout, the systemd unit, `/usr/bin/phis`, the proxy templates, and the traced `node_modules`: the install reads no registry and needs no network. | [debian/README.Debian](./debian/README.Debian), [docs/INSTALL.md](./docs/INSTALL.md) |
-| `@phis/server` from npm | The same server, the same CLI and the same schema file, with the runtime dependencies resolved by npm instead. No stage layout, no unit, no proxy configuration. | [docs/INSTALL.md](./docs/INSTALL.md) |
+| `@phis/server` tarball (`pnpm package:pack`, not published) | The same server, the same CLI and the same schema file, with the runtime dependencies resolved by npm instead. No stage layout, no unit, no proxy configuration. | [docs/INSTALL.md](./docs/INSTALL.md) |
 
 The build links the packages it treats as external -- `pg`, `argon2`, `sharp` and two more -- into
 `.next/node_modules` under a hashed name that the emitted chunks import by, and those links point into the
@@ -247,10 +252,10 @@ workspace's pnpm store. `prepare-package-dist.mjs` therefore follows them rather
 links, which a tarball would drop; the server would otherwise start and fail on the first module it loads.
 `validate-package-dist.mjs` refuses any remaining link for that reason.
 
-The published tarball is not this checkout. `pnpm package:dist` assembles it by naming what belongs in it
+The tarball is not this checkout. `pnpm package:dist` assembles it by naming what belongs in it
 (`scripts/prepare-package-dist.mjs`), and `scripts/validate-package-dist.mjs` then refuses an artifact that
 is missing the schema file or that carries an installation's own `config/`. The workspace manifest stays
-`private`: the assembled tree is the only thing in this repository that can be published, which is what
+`private`: the assembled tree is the only thing in this repository that could be published, which is what
 keeps a real installation's runtime configuration out of a registry.
 
 ## Stability

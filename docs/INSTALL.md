@@ -94,16 +94,18 @@ the packaged `phis-config.json` (`/usr/share/phis/phis-config.json`), and `.env`
 `PHIS_ROOT` names another stage ([CLI.md](./CLI.md#running-the-cli)). Continue with the configuration
 below.
 
-### From the npm package
+### From the package tarball
 
-`@phis/server` on npm carries the same standalone server, the same operator CLI and the same schema file as
-the Debian package, with the runtime dependencies resolved by npm instead of copied in beside them. What it
+`@phis/server` is not on npm; the Debian package is the release (README, "Distribution"). The tarball
+`pnpm package:pack` builds carries the same standalone server, the same operator CLI and the same schema
+file as the Debian package, with the runtime dependencies resolved by npm instead of copied in beside them.
+It has not been installed on a real host yet. What it
 does not carry is the machine: no service account, no stage, no service unit, no proxy configuration, and no
 generated `NEXT_SERVER_ACTIONS_ENCRYPTION_KEY` -- which production requires and every Instance of one
 installation has to share. Take those from [debian/](../debian/) where the installation needs them.
 
 ```sh
-npm install -g @phis/server
+npm install -g ./phis-server-<version>.tgz
 phis --help                          # the bin wrapper names the application root the CLI reads
 ```
 

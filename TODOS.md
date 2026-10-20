@@ -240,16 +240,11 @@ processed. The temporary operator was removed; the test consumer is installed bu
 
 ## Site bootstrap and releases
 
-- **The first release waits on `@phis/contracts@0.4.0` reaching the registry.** The publish itself is
-  prepared: `pnpm package:dist` assembles the tarball and validates it, and a `v*` tag ships that one build
-  as both `@phis/server` on npm and the Debian package on the GitHub release. What a tag here still needs is
-  the sibling it names. The manifest names it the way a published package must -- `^0.4.0` rather than
-  `workspace:*` -- and the release installs this repository as a package of its own, so that range is
-  answered by the registry and not by the workspace. `@phis/contracts` is tagged `v0.4.0` and carries the
-  media upload assembly, the resumption input and the thread and translation shapes this code compiles
-  against, but that tag has to be pushed and its own release has to succeed before a tag here can get
-  through its typecheck. Nothing changes locally in the meantime: `linkWorkspacePackages` keeps linking the
-  local sibling for as long as its version satisfies the range.
+- **`@phis/server` on npm is deferred (20.10.2026).** A `v*` tag releases the Debian package only. The
+  server is no runtime that starts once installed -- `phis` or phis-host sets a stage up around it -- and
+  the tarball `pnpm package:dist` assembles has never been installed. Publishing is a step added back to
+  `release.yml` (npm trusted publishing needs the package to exist first, so the first publish is by hand)
+  once it is decided what a registry install is for.
 - **Nothing sets the mode or the owner of `phis-runtime.json`.** `docs/INSTALL.md` states that the file holds
   secrets and wants mode `0600` owned by the service account, and `writePhiRuntimeConfigSync` writes it
   through a temporary file and a rename without touching either -- so its permissions are whatever the
