@@ -42,6 +42,19 @@ override_dh_auto_install:
 # `next` among it, which `server.js` requires first. Its links point at `../../node_modules/.pnpm`, so
 # they resolve once it sits beside the top-level copy above.
 	cp -a .next/static debian/phis/usr/lib/phis/server/.next/
+# Turbopack reaches its external packages -- `pg`, `argon2`, `sharp` -- through hashed links in
+# `.next/node_modules`, written relative to the app directory's own `node_modules`. That one was moved to
+# the top above, so each link is one level short and the server fails on its first database import
+# (`Cannot find package 'pg-<hash>'`). They are pointed at the top-level copy, and a link that still
+# leads nowhere fails the package rather than the first start.
+	cd debian/phis/usr/lib/phis/server/.next && if [ -d node_modules ]; then \
+		for link in node_modules/*; do \
+			target=$$(readlink "$$link") || continue; \
+			if [ ! -e "$$link" ]; then case "$$target" in ../../node_modules/*) ln -sfn "../$$target" "$$link";; esac; fi; \
+		done; \
+		dangling=$$(find node_modules -maxdepth 1 -type l ! -exec test -e {} \; -print); \
+		test -z "$$dangling" || { echo "external package links lead nowhere:" >&2; echo "$$dangling" >&2; exit 1; }; \
+	fi
 	rm -rf debian/phis/usr/lib/phis/server/.next/cache
 # Read at run time through the app root: the Core schema by setup and `phis schema apply`.
 	install -D -m 0644 scripts/sql/001_create_phis.pgsql \

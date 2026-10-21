@@ -1,3 +1,11 @@
+phis (0.2.3-1) unstable; urgency=medium
+
+  * The server's external package links (pg, argon2, sharp) resolve to the packaged node_modules; 0.2.0
+    to 0.2.2 failed their first start with "Cannot find package 'pg-<hash>'". The package build now
+    fails on a link that leads nowhere.
+
+ -- Phisys Ltd. <debian@phisys.com>  Wed, 21 Oct 2026 16:30:00 +0000
+
 phis (0.2.2-1) unstable; urgency=medium
 
   * The Site scaffold mounts the Public Client boundary in the static tree's Area Layouts and not-found
