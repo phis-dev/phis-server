@@ -193,17 +193,16 @@ function runtimeModuleFiles() {
       `import { createPhiNextStaticRootLayout, createPhiNextStaticRootMetadata } from "@phis/ui/next/root-route";\n\n`
       + `import { PHI_SITE_MODULES } from "@/generated/site-modules";\n`
       + `import { PHI_SITE_MODULE_FONTS } from "@/generated/site-modules-fonts";\n`
-      + `import { PhiSiteOverlayZonesProvider } from "@/runtime-modules/overlay-zones-client";\n`
-      + `import { PhiPublicRuntimeModuleClientBoundary } from "@/runtime-modules/public-client";\n\n`
+      + `import { PhiSiteOverlayZonesProvider } from "@/runtime-modules/overlay-zones-client";\n\n`
       + `/**\n`
-      + ` * The document shell of the static tree. Only the Public Area renders there, so its Client boundary\n`
-      + ` * is mounted here rather than in a \`[root]\` Layout, and the request-reading root never imports it.\n`
+      + ` * The document shell of the static tree. The Public Area's Client boundary is mounted by the Area's\n`
+      + ` * Layouts below it, as in the dynamic tree; mounted here, its Widget clients were split against the root\n`
+      + ` * segment alone and each carried its own copy of what the Layouts load.\n`
       + ` */\n`
       + `export const PhiSiteStaticRootLayout = createPhiNextStaticRootLayout(\n`
       + `  PHI_SITE_MODULES,\n`
       + `  PHI_SITE_MODULE_FONTS,\n`
       + `  PhiSiteOverlayZonesProvider,\n`
-      + `  PhiPublicRuntimeModuleClientBoundary,\n`
       + `);\n\n`
       + `/** The head of the static tree, read from the published Site. */\n`
       + `export const generatePhiSiteStaticRootMetadata = createPhiNextStaticRootMetadata(PHI_SITE_MODULES);\n`,
@@ -466,15 +465,17 @@ function dynamicRootFiles() {
  */
 function staticPublicFiles() {
   const bridgeImport = `import { PHI_PUBLIC_CMS_SITE_BRIDGE } from "@/runtime-modules/public";\n`;
+  // The Public Client boundary sits in the Area's Layouts and its not-found page, not in the root (root-static.ts).
+  const publicBoundaryImport = `import { PhiPublicRuntimeModuleClientBoundary } from "@/runtime-modules/public-client";\n`;
   const noParams = `export async function generateStaticParams() {\n  return [];\n}\n`;
   const page = `import { createPhiNextStaticPublicPage } from "@phis/ui/next/area-route";\n${bridgeImport}\n${STATIC_SEGMENT_CONFIG}${noParams}\nconst route = createPhiNextStaticPublicPage(PHI_PUBLIC_CMS_SITE_BRIDGE);\n\nexport const generateMetadata = route.generateMetadata;\nexport default route.Page;\n`;
   const files: Record<string, string> = {
     [`${STATIC_APP}/layout.tsx`]: `import { generatePhiSiteStaticRootMetadata, PhiSiteStaticRootLayout } from "@/runtime-modules/root-static";\n\nimport "@/app/globals.css";\n\n${STATIC_SEGMENT_CONFIG}${noParams}\nexport const generateMetadata = generatePhiSiteStaticRootMetadata;\nexport default PhiSiteStaticRootLayout;\n`,
-    [`${STATIC_APP}/not-found.tsx`]: `import { root } from "next/root-params";\nimport { createPhiNextStaticPublicNotFound } from "@phis/ui/next/area-route";\n${bridgeImport}\nconst PhiStaticPublicNotFound = createPhiNextStaticPublicNotFound(PHI_PUBLIC_CMS_SITE_BRIDGE);\n\nexport default async function StaticPublicNotFound() {\n  return <PhiStaticPublicNotFound locale={await root()} />;\n}\n`,
+    [`${STATIC_APP}/not-found.tsx`]: `import { root } from "next/root-params";\nimport { createPhiNextStaticPublicNotFound } from "@phis/ui/next/area-route";\n${bridgeImport}${publicBoundaryImport}\nconst PhiStaticPublicNotFound = createPhiNextStaticPublicNotFound(\n  PHI_PUBLIC_CMS_SITE_BRIDGE,\n  PhiPublicRuntimeModuleClientBoundary,\n);\n\nexport default async function StaticPublicNotFound() {\n  return <PhiStaticPublicNotFound locale={await root()} />;\n}\n`,
     [`${STATIC_APP}/(root)/page.tsx`]: page,
     [`${STATIC_APP}/(pages)/[...path]/page.tsx`]: page,
-    [`${STATIC_APP}/(root)/layout.tsx`]: `import { createPhiNextStaticPublicLayout } from "@phis/ui/next/area-route";\n${bridgeImport}\n${STATIC_SEGMENT_CONFIG}\nexport default createPhiNextStaticPublicLayout(PHI_PUBLIC_CMS_SITE_BRIDGE, "none");\n`,
-    [`${STATIC_APP}/(pages)/[...path]/layout.tsx`]: `import { createPhiNextStaticPublicLayout } from "@phis/ui/next/area-route";\n${bridgeImport}\n${STATIC_SEGMENT_CONFIG}\nexport default createPhiNextStaticPublicLayout(PHI_PUBLIC_CMS_SITE_BRIDGE, "shell");\n`,
+    [`${STATIC_APP}/(root)/layout.tsx`]: `import { createPhiNextStaticPublicLayout } from "@phis/ui/next/area-route";\n${bridgeImport}${publicBoundaryImport}\n${STATIC_SEGMENT_CONFIG}\nexport default createPhiNextStaticPublicLayout(\n  PHI_PUBLIC_CMS_SITE_BRIDGE,\n  "none",\n  PhiPublicRuntimeModuleClientBoundary,\n);\n`,
+    [`${STATIC_APP}/(pages)/[...path]/layout.tsx`]: `import { createPhiNextStaticPublicLayout } from "@phis/ui/next/area-route";\n${bridgeImport}${publicBoundaryImport}\n${STATIC_SEGMENT_CONFIG}\nexport default createPhiNextStaticPublicLayout(\n  PHI_PUBLIC_CMS_SITE_BRIDGE,\n  "shell",\n  PhiPublicRuntimeModuleClientBoundary,\n);\n`,
   };
   for (const [slot, regionType] of ROOT_SLOTS) {
     const slotPage = `import { PhiCmsRegionType } from "@phis/ui/cms/root-slot-page";\nimport { createPhiNextStaticPublicSlotPage } from "@phis/ui/next/area-route";\n${bridgeImport}\n${STATIC_SEGMENT_CONFIG}\nexport default createPhiNextStaticPublicSlotPage(\n  PHI_PUBLIC_CMS_SITE_BRIDGE,\n  PhiCmsRegionType.${regionType},\n);\n`;

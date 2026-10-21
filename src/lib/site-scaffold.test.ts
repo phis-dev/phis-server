@@ -271,10 +271,12 @@ describe("site scaffold", () => {
     expect(files["src/app/layout.tsx"]).toBeUndefined();
     expect(files["src/app/(site)/layout.tsx"]).toContain("PhiSiteRootLayout");
     expect(files[`${staticRoot}/layout.tsx`]).toContain("PhiSiteStaticRootLayout");
-    expect(files["src/runtime-modules/root-static.ts"]).toContain("PhiPublicRuntimeModuleClientBoundary");
+    // The Public Client boundary sits in the Area's Layouts, as in the dynamic tree, not in either root.
+    expect(files["src/runtime-modules/root-static.ts"]).not.toContain("public-client");
     expect(files["src/runtime-modules/root.ts"]).not.toContain("public-client");
-    expect(files[`${staticRoot}/(root)/layout.tsx`]).toContain('PHI_PUBLIC_CMS_SITE_BRIDGE, "none"');
-    expect(files[`${staticRoot}/(pages)/[...path]/layout.tsx`]).toContain('PHI_PUBLIC_CMS_SITE_BRIDGE, "shell"');
+    expect(files[`${staticRoot}/(root)/layout.tsx`]).toContain('PHI_PUBLIC_CMS_SITE_BRIDGE,\n  "none",\n  PhiPublicRuntimeModuleClientBoundary');
+    expect(files[`${staticRoot}/(pages)/[...path]/layout.tsx`]).toContain('PHI_PUBLIC_CMS_SITE_BRIDGE,\n  "shell",\n  PhiPublicRuntimeModuleClientBoundary');
+    expect(files[`${staticRoot}/not-found.tsx`]).toContain("PhiPublicRuntimeModuleClientBoundary");
     expect(files[`${staticRoot}/(pages)/[...path]/@hero/page.tsx`]).toContain("PhiCmsRegionType.Hero");
     expect(files[`${staticRoot}/not-found.tsx`]).toContain('from "next/root-params"');
 

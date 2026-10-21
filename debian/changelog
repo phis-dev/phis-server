@@ -1,3 +1,10 @@
+phis (0.2.2-1) unstable; urgency=medium
+
+  * The Site scaffold mounts the Public Client boundary in the static tree's Area Layouts and not-found
+    page, as @phis/ui 0.4.0 expects; Sites reconciled by 0.2.1 failed their typecheck.
+
+ -- Phisys Ltd. <debian@phisys.com>  Wed, 21 Oct 2026 16:20:00 +0000
+
 phis (0.2.1-1) unstable; urgency=medium
 
   * Built on next 16.4.2 and react 19.3.1; scaffolded Sites start on @phis/ui 0.4.0, antd 6.6.7,
