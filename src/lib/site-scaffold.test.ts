@@ -62,7 +62,7 @@ describe("site scaffold", () => {
     expect(hooks).toContain("buildPhiHookProxyHandlers");
     // What arrives from the open internet must not pick up a claim to have come from inside.
     expect(hooks).toContain("{ internalToken: false }");
-    expect(JSON.parse(files["package.json"]!).dependencies["@phis/ui"]).toBe("0.3.0");
+    expect(JSON.parse(files["package.json"]!).dependencies["@phis/ui"]).toBe("0.4.0");
   });
 
   it("compiles the installed Module packages the projection lists", () => {
@@ -448,7 +448,7 @@ describe("site scaffold", () => {
 
     expect(merged.dependencies["@phis/ui"]).toBe("^0.4.2");
     expect(merged.dependencies["@acme/extra"]).toBe("1.0.0");
-    expect(merged.dependencies.antd).toBe("6.6.4");
+    expect(merged.dependencies.antd).toBe("6.6.7");
     expect(merged.devDependencies.typescript).toBeUndefined();
     expect(merged.scripts.build).toBe("next build --debug");
     expect(merged.scripts.typecheck).toBe("tsc --noEmit");

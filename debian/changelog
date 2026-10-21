@@ -1,3 +1,10 @@
+phis (0.2.1-1) unstable; urgency=medium
+
+  * Built on next 16.4.2 and react 19.3.1; scaffolded Sites start on @phis/ui 0.4.0, antd 6.6.7,
+    next 16.4.2 and react 19.3.1.
+
+ -- Phisys Ltd. <debian@phisys.com>  Wed, 21 Oct 2026 15:30:00 +0000
+
 phis (0.2.0-1) unstable; urgency=medium
 
   * Release 0.2.0 on @phis/contracts 0.6.0; scaffolded Sites use @phis/ui 0.3.0.

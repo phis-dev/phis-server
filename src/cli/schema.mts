@@ -71,11 +71,12 @@ export type PhiSchemaApplyResult = {
    * How many objects the script found already in place, counted from PostgreSQL's own notices.
    *
    * `null` for a check, which changes nothing and has nothing to count. For an apply it is the honest
-   * half of the answer that `created` cannot give: the script reaches far past `CREATE TABLE` -- columns,
-   * constraints and indexes are all nursed along with `IF NOT EXISTS` -- so a run that creates no table
-   * may still have added a column, and a run that adds nothing at all looks exactly the same from the
-   * table list. The server says "already exists, skipping" for each one it passes over, so counting
-   * those separates "there was nothing to do" from "something was done that tables do not show".
+   * half of the answer that `created` cannot give: indexes, triggers and extensions come with
+   * `IF NOT EXISTS` too, so a run that creates no table may still have created one of those, and a run
+   * that adds nothing at all looks exactly the same from the table list. The server says "already exists,
+   * skipping" for each one it passes over, so counting those separates "there was nothing to do" from
+   * "something was done that tables do not show". A column is never among them: the script adds nothing
+   * to a table that exists, and before v1 an existing database is adjusted by hand (DB.md).
    */
   alreadyPresent: number | null;
 };
