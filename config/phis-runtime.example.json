@@ -27,7 +27,7 @@
   },
   "email": {
     "from": "no-reply@localhost",
-    "fromName": "Phisys",
+    "fromName": "phis",
     "smtp": {
       "targets": ["127.0.0.1:25"],
       "secure": false,

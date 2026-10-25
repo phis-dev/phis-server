@@ -882,7 +882,7 @@ Core owns merchant profiles and explicit consumer grants. The CLI uses only inst
 artifacts; no profile file can select a package import or supply a credential value. Apply the Core
 creation schema (an existing outbox needs an explicit structural update as described in `DB.md`),
 install/activate the Provider globally and for the chosen development Site, and store secrets
-through `phis secret set` on stdin. The compiled Phisys Site is a separate installation.
+through `phis secret set` on stdin. A compiled installation is updated separately.
 
 ```bash
 phis payment profile list --site demo

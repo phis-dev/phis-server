@@ -154,7 +154,7 @@ export function buildPasswordResetUrlForRequest(
 function buildFromHeader() {
   const emailConfig = getPhisConfigSync().email;
   const configuredFrom = emailConfig?.from?.trim();
-  const senderName = emailConfig?.fromName?.trim() || "Phisys";
+  const senderName = emailConfig?.fromName?.trim() || "phis";
   const senderAddress = configuredFrom ?? "no-reply@localhost";
 
   if (configuredFrom && configuredFrom.includes("<")) {

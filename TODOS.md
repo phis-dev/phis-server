@@ -11,7 +11,7 @@ The approved v1 contracts in [PAYMENTS.md](./PAYMENTS.md) and [PAYMENTS_STRIPE.m
 now have Core persistence/execution, grants, CLI controls, notification inbox, owner-directed outbox,
 registered Payment capabilities/service/event and the independent Stripe Provider. Fault/concurrency
 checks run against PostgreSQL. The real sandbox Core/Stripe checkout and partial/idempotent refunds
-passed with isolated test fixtures. The separate compiled Core behind Phisys was subsequently updated
+passed with isolated test fixtures. A separate compiled test installation's Core was subsequently updated
 and its public proxy accepted a genuine Stripe checkout expiry notification (HTTP 200); signed smoke
 requests and missing/invalid/body-mismatched signature rejection also passed. The enabled test
 profile currently has no consumer grants. A subsequent installed `@phis/payment-probe` test verified

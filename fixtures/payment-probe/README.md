@@ -20,7 +20,7 @@ or Site Admin. It has no completion or refresh grant, which keeps the browser re
 the settlement path. The fixture's primary key prevents duplicate durable fulfilment; a conflicting
 insert fails delivery and its eventual retry observes the existing row.
 
-On 2026-10-04, the compiled `dev.phisys.com` installation settled a genuine test Checkout through the
+On 2026-10-04, a separate compiled test installation settled a genuine test Checkout through the
 public Stripe hook, delivered its owner events and stored one fulfilment. Three concurrent re-signed
 copies of one actual Stripe event were acknowledged as duplicates without changing Payment version
 or fulfilment count. A full refund and identical retry reused their Core identities. Genuine events

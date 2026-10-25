@@ -49,14 +49,14 @@ describe("the config a provider installation is given", () => {
   });
 
   it("clears a list an operator emptied out", () => {
-    const base = { scopes: ["read:user"], allowedOrganizations: ["phi-systems"] };
+    const base = { scopes: ["read:user"], allowedOrganizations: ["example-org"] };
     expect(config(buildAuthInstallationConfig(github, base, { scopes: "", restrictions: "" })))
       .toEqual({});
   });
 
   it("stores the restriction under the name its provider is narrowed by", () => {
-    expect(config(buildAuthInstallationConfig(github, {}, { restrictions: "phi-systems" })))
-      .toEqual({ allowedOrganizations: ["phi-systems"] });
+    expect(config(buildAuthInstallationConfig(github, {}, { restrictions: "example-org" })))
+      .toEqual({ allowedOrganizations: ["example-org"] });
     expect(config(buildAuthInstallationConfig(google, {}, { restrictions: "example.com" })))
       .toEqual({ hostedDomains: ["example.com"] });
   });
@@ -98,7 +98,7 @@ describe("the config a provider installation is given", () => {
   });
 
   it("leaves a key the body did not mention where it was", () => {
-    const base = { scopes: ["read:user"], allowedOrganizations: ["phi-systems"], trustedEmailLink: true };
+    const base = { scopes: ["read:user"], allowedOrganizations: ["example-org"], trustedEmailLink: true };
     expect(config(buildAuthInstallationConfig(github, base, { }))).toEqual(base);
   });
 });

@@ -6,8 +6,8 @@ on 2026-10-04. Core execution, merchant persistence, CLI profile/grant controls 
 the Core engine and bundled adapter, followed by a CHF 5.00 partial refund, an idempotent retry of that
 refund, and refund of the remaining CHF 14.90. CHF/EUR/USD checkout creation and expiry also passed.
 The sandbox driver used isolated database fixtures and the Provider factory directly; it did not
-install a consumer or activate the compiled Phisys Site. Subsequently, on 2026-10-04, Stripe was
-installed and the separate compiled Core behind `dev.phisys.com` was updated. The `phisys` Site's
+install a consumer or activate a Site. Subsequently, on 2026-10-04, Stripe was installed on a
+separate compiled test installation and its Core was updated. That installation's
 `stripe-sandbox` test profile is enabled with encrypted credential references and no consumer grants.
 The public hook accepted a genuine Stripe `checkout.session.expired` event (HTTP 200, zero pending
 webhooks) using the Dashboard endpoint's `2026-08-26.dahlia` event version. That Session carried no
@@ -346,6 +346,6 @@ failure after state commit, API replay-window expiry and consumer outbox failure
 financial operation and one business fulfilment despite retries. Sandbox credentials are a prerequisite
 for the external test, not for implementing Core and its automated fault tests.
 
-The existing published Phisys Site and parallel `phis-server`/`phis-ui` development stay separate.
-No production/live merchant setup, deployment, Site restart or change to `dev.phisys.com` is implied
-by this implementation design.
+Published Sites and parallel `phis-server`/`phis-ui` development stay separate.
+No production/live merchant setup, deployment, Site restart or change to a published installation is
+implied by this implementation design.

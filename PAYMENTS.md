@@ -4,7 +4,7 @@
 The consumer and Provider types are exported from `@phis/contracts/payments` and `/addon`. Core now
 binds both capabilities, resolves statically installed Providers, persists merchant profiles/grants,
 payments, commands, refunds and verified receipts, and routes `payment.changed` to the owning consumer.
-The development database has been updated explicitly to the creation schema; this does not deploy the compiled Phisys Site.
+The development database has been updated explicitly to the creation schema; this does not deploy any compiled installation.
 
 The agreed commerce ownership is recorded in [COMMERCE_AND_PAYMENTS.md](./design/COMMERCE_AND_PAYMENTS.md).
 The existing installation and Service Provider boundary is

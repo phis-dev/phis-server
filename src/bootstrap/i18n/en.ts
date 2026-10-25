@@ -179,10 +179,10 @@ export const bootstrapEn = {
       ],
       goodToKnowTitle: "Open source",
       goodToKnowBodyBeforeLink:
-        "phis is fully open-source under GPLv3. Contributions are welcome via pull requests on ",
+        "phis is open source under the Apache License 2.0. Contributions are welcome via pull requests on ",
       goodToKnowLinkLabel: "GitHub",
       goodToKnowBodyAfterLink: ".",
-      goodToKnowLinkHref: "https://github.com/phisys-ltd/phis",
+      goodToKnowLinkHref: "https://github.com/phis-dev",
     },
     operator: {
       title: "Platform operator",

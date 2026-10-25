@@ -1965,7 +1965,7 @@ Contract:
 The creation script declares all Payment/outbox columns and constraints directly. As with other v1
 Core structural changes, reapplying `001_create_phis.pgsql` does not upgrade existing table columns;
 the workspace development database was updated explicitly for this work. On 2026-10-04, the separate
-`phis_dev` database behind the compiled Phisys installation also received the Payment tables and an
+`phis_dev` database behind a separate compiled test installation also received the Payment tables and an
 explicit transactional outbox update, preserving existing thread rows. Coordinate an existing
 installation's outbox update before admitting Payment consumers.
 
