@@ -1,3 +1,13 @@
+phis (0.2.4-1) unstable; urgency=medium
+
+  * deepl.formality (prefer_more or prefer_less) asks DeepL for one address form, so a store shared by
+    every Site no longer mixes German Sie and du. It is part of the translation fingerprint, so Sites
+    drop translations they kept from before a change.
+  * The setup page links the phis-dev organisation and names the Apache License 2.0; the default
+    sender name is phis.
+
+ -- Phisys Ltd. <debian@phisys.com>  Sun, 25 Oct 2026 15:24:15 +0000
+
 phis (0.2.3-1) unstable; urgency=medium
 
   * The server's external package links (pg, argon2, sharp) resolve to the packaged node_modules; 0.2.0
