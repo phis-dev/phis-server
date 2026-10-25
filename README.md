@@ -85,6 +85,7 @@ not a property of the repository, so they are untracked and an absent one reads 
 | `operator.sessionSecret` | Signs operator session cookies, and nothing else does. The setup finish and `phis operator add` write one if it is missing; without it there are no operator sessions. |
 | `registration.intentEncryptionKey` | 64 hex characters. Encrypts the password held by a pending registration intent. |
 | `deepl.apiKey`, `deepl.apiUrl` | DeepL access, for the `deepl` and `cdn+deepl` modes. |
+| `deepl.formality` | `prefer_more` or `prefer_less`: one address form (German Sie or du) for every translation. Absent, DeepL decides per sentence. |
 | `translation.mode` | `deepl`, `cdn+deepl`, `add-on`, or `none`. See [TRANSLATIONS.md](./TRANSLATIONS.md). |
 | `translation.sourceLocale` | Installation fallback for a Site source locale. |
 | `translation.supportedLocales` | Locales the installation offers. `translation.allowedLocales` is read when `supportedLocales` is absent. |

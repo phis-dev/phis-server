@@ -107,3 +107,43 @@ describe("the CDN step of cdn+deepl", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 });
+
+/*
+ * The address form DeepL is asked for. One per installation, because the global store is every Site's:
+ * left to DeepL, a page read "Sie" in one sentence and "du" in the next.
+ */
+describe("the DeepL step's address form", () => {
+  const translateWith = async (formality?: "prefer_more" | "prefer_less") => {
+    mocks.getPhisConfigSync.mockReturnValue({
+      translation: { mode: "deepl" },
+      deepl: { apiKey: "key", ...(formality ? { formality } : {}) },
+    } as PhisConfig);
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ translations: [{ text: "Hallo", detected_source_language: "EN" }] }),
+    }) as unknown as Response);
+    vi.stubGlobal("fetch", fetchMock);
+    await requestPhisTranslationUnit({
+      locale: "de",
+      msgs: [`Hello ${formality ?? "default"}`],
+      ctx: "",
+      sourceLocale: "en",
+      format: "text",
+      audience: "platform",
+    });
+    const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    return new URLSearchParams(String(init.body));
+  };
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("asks for the configured form", async () => {
+    expect((await translateWith("prefer_more")).get("formality")).toBe("prefer_more");
+  });
+
+  it("leaves the form to DeepL where none is configured", async () => {
+    expect((await translateWith()).has("formality")).toBe(false);
+  });
+});

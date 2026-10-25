@@ -21,6 +21,7 @@ import { getPhisConfigSync } from "@/lib/config";
 import {
   getConfiguredTranslationMode,
   normalizeBatchMessages,
+  readDeepLFormality,
   requestPhisTranslationUnit,
 } from "@/lib/translation-unit";
 import { getConfiguredTranslationSupportedLocalesSync } from "@/lib/translation-locale-options";
@@ -153,6 +154,7 @@ function getTranslationConfigurationFingerprint() {
     .update(JSON.stringify({
       mode: getConfiguredTranslationMode(),
       deepl: Boolean(config.deepl?.apiKey?.trim()),
+      formality: readDeepLFormality(config.deepl?.formality) ?? null,
       locales: getConfiguredTranslationSupportedLocalesSync(),
     }))
     .digest("hex")

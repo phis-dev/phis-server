@@ -320,6 +320,11 @@ async function requestCdnTranslations(input: {
   return data.translations.map((entry) => String(entry ?? ""));
 }
 
+/** The configured address form, or nothing where the config names none DeepL knows. */
+export function readDeepLFormality(value: unknown): "prefer_more" | "prefer_less" | undefined {
+  return value === "prefer_more" || value === "prefer_less" ? value : undefined;
+}
+
 async function requestDeepL(
   texts: string[],
   locale: string,
@@ -339,6 +344,7 @@ async function requestDeepL(
   }
 
   const url = getPhisConfigSync().deepl?.apiUrl?.trim() ?? DEFAULT_DEEPL_URL;
+  const formality = readDeepLFormality(getPhisConfigSync().deepl?.formality);
   const createParams = (batch: readonly string[]) => {
     const params = new URLSearchParams({
       target_lang: resolveDeepLTargetLang(locale),
@@ -356,6 +362,9 @@ async function requestDeepL(
     if (format === "html") {
       params.set("tag_handling", "html");
       params.set("tag_handling_version", "v2");
+    }
+    if (formality) {
+      params.set("formality", formality);
     }
     return params;
   };

@@ -68,6 +68,14 @@ export type PhisConfig = {
   deepl?: {
     apiKey?: string;
     apiUrl?: string;
+    /**
+     * How a translation addresses its reader where the target language tells the forms apart -- German
+     * Sie or du. One answer for the installation: the global store is shared by every Site, and a store
+     * that mixed both read as two voices on one page. `prefer_*` falls back to DeepL's default for a
+     * language without the distinction instead of refusing it. Absent is DeepL's default, which decides
+     * per sentence.
+     */
+    formality?: "prefer_more" | "prefer_less";
   };
   registration?: {
     intentEncryptionKey?: string;
