@@ -181,7 +181,9 @@ module scope empty.
 - **No PII beyond what your actor could already see.** The request context carries a user *id*. A
   display name comes from `@phis/server/groups:v1`, and only for someone the acting user shares a
   group with; an email address is not on offer at all. If you need a person to receive a message, that
-  is Core's to send, not yours to address.
+  is Core's to send, not yours to address: declare the occasion in your manifest and call
+  `@phis/server/notifications:v1`. The one address you may hand Core is one a person gave *you* for
+  that purpose -- a guest's order confirmation -- and Core keeps it only while the message is owed.
 - **No authorization of your own over Core's scopes.** If a table is `ownerScoped` or `groupScoped`,
   Core wrote those columns and Core answers about them: declare `@phis/server/authorization:v1` and
   ask `context.capabilities.authorization.mayActOnRow({ table, id, intent })`. Rebuilding the ladder

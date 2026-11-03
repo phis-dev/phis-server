@@ -30,6 +30,7 @@ import { buildPhisAddonSupportCapability } from "./support-capability.ts";
 import { buildPhisAddonThreadsCapability } from "./threads-capability.ts";
 import { buildPhisAddonSecretsCapability } from "./secrets-capability.ts";
 import { buildPhisAddonSettingsCapability } from "./settings-capability.ts";
+import { buildPhisAddonNotificationsCapability } from "./notifications-capability.ts";
 import { buildPhisAddonStorageCapability } from "./storage-capability.ts";
 import { buildPhisAddonAssetsCapability } from "./assets-capability.ts";
 import { buildPhisAddonRowAssets } from "./row-assets.ts";
@@ -326,6 +327,16 @@ export function buildPhisAddonCapabilities(input: {
       addonId: input.manifest.addonId,
       siteId,
       declared: input.manifest.settings ?? [],
+    });
+  }
+  if (required.includes(PHIS_CORE_CAPABILITIES.notifications)) {
+    capabilities.notifications = buildPhisAddonNotificationsCapability({
+      addonId: input.manifest.addonId,
+      siteId,
+      declared: input.manifest.occasions ?? [],
+      // An unsigned hook may change nothing, and a message written down is a change. A verified one
+      // carries system authority and writes as a job does.
+      unauthenticated: input.unauthenticated === true && input.systemAuthority !== true,
     });
   }
   if (required.includes(PHIS_CORE_CAPABILITIES.roles)) {

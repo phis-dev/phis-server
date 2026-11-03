@@ -1,16 +1,24 @@
 # Payment integration probe
 
-This installable test consumer owns one agreed CHF 19.90 amount and one durable fulfilment row per
-Payment. It is a test fixture, not a Shop implementation. Its manifest uses only approved Core
+This installable test consumer owns one agreed base amount per pricing policy and one durable
+fulfilment row per Payment. The checkout body's `policy` selects it: `fixed` (CHF 19.90, v1), `net`
+and `gross` (two CHF 10.00 widgets, CHF 5.00 shipping, a stated CHF 5.00 discount, Stripe Tax on top
+of or inside the price) or `code` (no stated discount, the customer may enter a promotion code). It is a test fixture, not a Shop implementation. Its manifest uses only approved Core
 Payment/data capabilities, a declarative schema/query catalog and `payment.changed`. It receives no
 credentials, SQL connection or direct Provider access. Its Checkout, read and refund HTTP routes all
 require an authenticated operator. The `drain` job lets the existing operator retry path deliver owed
 events.
 
+Since 0.3.0 it also declares one asked-for occasion, `payment-captured`, and requires
+`@phis/server/notifications:v1` and `@phis/server/settings:v1`: when the setting `notify-contact` holds
+an address, a captured payment is confirmed to it as a contact recipient (no account, locale `en`),
+deduplicated by payment id, and the `notify` job sends the same occasion without a payment so the mail
+path of a stage can be verified from the CLI. Unset, nothing is sent.
+
 Build with the workspace toolchain:
 
 ```bash
-pnpm exec esbuild fixtures/payment-probe/addon.ts --bundle --platform=node --format=esm --target=node24 --outfile=/opt/projects/artifacts/phis-payment-probe-0.1.0.mjs
+pnpm exec esbuild fixtures/payment-probe/addon.ts --bundle --platform=node --format=esm --target=node24 --outfile=/opt/projects/artifacts/phis-payment-probe-0.3.0.mjs
 ```
 
 Install/reconcile/migrate and activate the artifact using the target installation's CLI. For the test,

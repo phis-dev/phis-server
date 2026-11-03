@@ -30,6 +30,9 @@ design is built, its settled parts move into the owning contract and leave this 
   merchant/grant control, notification receipts and event changes; runtime implementation is pending.
 - [PUBLIC_ADDRESSES.md](./PUBLIC_ADDRESSES.md) -- Site Page against Module address collisions, a standing
   list of Public addresses, and durable redirects.
+- [SHOP.md](./SHOP.md) -- the small Shop as one Add-on: four callers and their doors, the cart in the
+  browser, the destination that picks profile and pricing policy per country, the order as a record
+  changed only by authority, and what still needs Core.
 - [SUPPORT.md](./SUPPORT.md) -- the requester route and the types it offers, how a Module declares rows
   a Site needs written rather than made available, and how a Site administers them afterwards -- all
   built; what a submission brings with it, and who pays for it, is not.

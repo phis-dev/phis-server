@@ -285,7 +285,7 @@ Every Add-on exports a server-only manifest, `PhisAddonManifestV1` from `@phis/c
 - `jobs`
 - `schema`: the schema descriptor, or `null` when the Add-on owns no tables, and `migrationVersion`
 - `queries`: the declared query catalog
-- optional `settings`, `roles`, `groups`, `groupWriter`, and `modules`
+- optional `settings`, `roles`, `groups`, `groupWriter`, `occasions`, and `modules`
 
 The manifest digest is the SHA-256 of the manifest's canonical JSON and therefore covers every field. The
 manifest never contains runtime secrets.
@@ -1358,6 +1358,55 @@ The declared descriptors are the shape of the answer, not the stored row. A valu
 to its declared default; a stored key nobody declares is ignored; a stored value of the wrong type falls
 back rather than being handed over. An Add-on therefore reads exactly what it declared it would read,
 whatever has accumulated in the column across versions. As with secrets, there is no writer.
+
+### `notifications:v1`
+
+`notify({ occasion, recipient, params, dedupeKey? })` and nothing else. The call names **who** and
+**what happened**; Core does the rest -- resolves the address, picks the language, writes the salutation,
+renders the lines through its own layout and translation, chooses the Site's sender, and sends through
+the notification outbox with its retry and its record ([DB.md](./DB.md#phisnotification_outbox)). There
+is no subject, body, `from`, header or attachment on the call, because each of those is a decision about
+how a Site speaks, and a Site speaks with one voice whether the occasion came from Core or from an Add-on.
+
+**The words are declared, not composed.** An occasion is an entry in the manifest's `occasions`: a name,
+a class, a subject line, body lines and the parameters they take (`PhisAddonOccasionDescriptor`). Each
+line is a sentence with `%1`, `%2`, ... standing for the named parameters, the way Core's own templates
+are written, so it translates as one unit and the values go in afterwards. The manifest digest seals the
+words: what a Site can say in an Add-on's name is readable at install and cannot change under a running
+Site without a reconcile. A line whose placeholders and parameters disagree, or a parameter no line
+names, is refused at install, which is the only moment the author is there. `recipientName` and
+`siteName` are Core's parameter names and cannot be declared.
+
+**Every declared occasion is asked-for.** `class` admits `asked-for` and nothing else this release: the
+person's own action is the reason for the message -- an order they placed, a request they made -- so no
+consent bit is consulted and no unsubscribe footer is offered. The sent class, a message somebody decided
+to send to people who did not ask today, is Core's own bulk case with the footer and the headers it owes,
+and is not declarable by an Add-on until the day it is.
+
+**Two recipients.** `{ kind: "user", userId, locale? }` is a member of this Site, named by id: the
+address is resolved when the row is drained, so a corrected address is used and a membership that is gone
+takes the message with it; somebody who is not a member of this Site is refused before anything is
+written. `{ kind: "contact", address, locale, name? }` is a person who has no account here and gave the
+Add-on their address for exactly this purpose -- a guest who placed an order, somebody who filled in a
+form. It is the one place an Add-on hands Core an address, and the rule of [ADDON_HOWTO.md](./ADDON_HOWTO.md)
+§4 still holds in the direction that matters: the Add-on never *obtains* an address from Core. The
+address sits on the outbox row only while the message is owed and is cleared with the other parameters
+once it is settled; `locale` is required because there is no profile to ask.
+
+**Parameters are values about the event, never about the person.** A `text` parameter is inserted as
+written, escaped where it lands. A `path` parameter is a Site-relative path (`/shop/order/1234`) that
+Core turns into an absolute link on the Site's public address in the recipient's locale -- an occasion
+cannot put another host into a Site's outgoing mail. A call must bring exactly the declared parameters.
+
+`dedupeKey` is unique within the Site for this Add-on; a second call with the same key writes nothing and
+answers `notificationId: null`, which is what makes a repeated job run safe. The request that wrote the
+row attempts the send once itself, as Core's own messages do; what that attempt leaves behind,
+`phis maintain` drains. An unverified hook may not call `notify`: a message written down is a change, and
+a request with no actor may change nothing.
+
+An occasion is rendered from the manifest installed at the moment of sending, so a reconciled manifest
+speaks with its current words, an occasion that was withdrawn settles the row without sending, and an
+Add-on that is disabled keeps its message owed until it is enabled again.
 
 ### Add-on roles
 

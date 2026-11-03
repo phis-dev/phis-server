@@ -7,6 +7,11 @@ tracked here because the server contract depends on them.
 
 ## Payments
 
+- **Pricing policies in the sandbox.** PAYMENTS.md section 12 and the Stripe mapping of PAYMENTS_STRIPE.md
+  section 8 are implemented and unit-tested against recorded Sessions. A real test-mode run per policy is
+  open: a net checkout with a Swiss tax registration, a gross (inclusive) checkout, a stated coupon, a
+  customer promotion code and, once the account is eligible, a Managed Payments checkout. The development
+  database carries the altered `phis.payments` check constraints only after the in-place alter of DB.md.
 The approved v1 contracts in [PAYMENTS.md](./PAYMENTS.md) and [PAYMENTS_STRIPE.md](./PAYMENTS_STRIPE.md)
 now have Core persistence/execution, grants, CLI controls, notification inbox, owner-directed outbox,
 registered Payment capabilities/service/event and the independent Stripe Provider. Fault/concurrency
@@ -25,6 +30,23 @@ processed. The temporary operator was removed; the test consumer is installed bu
   authorization cancellation and an external Dashboard refund. Automated Provider/Core tests cover
   these mappings and transaction boundaries; the real sandbox run so far covered automatic payment.
 - Define administrative retention/export before adding any destructive financial purge.
+
+## Shop
+
+- **The Module half of `@phis/shop`** (design/SHOP.md section 8): storefront pages, the product
+  Providers, the checkout Form and its state machine, the order page with the token, the customer's
+  orders in App, and the management surface in Accounting. The Add-on half is built and installed on
+  the dev stage; the checkout machine is the second consumer of phis-ui's state-machine binding and may
+  need Foundation work first (SHOP.md section 10).
+- **The Shop's public address** comes with the new phisys.com Site: the present one is an old test
+  construct without the skeleton's `/api/addons` and `/api/hooks` routes and is to be regenerated from
+  the skeleton, which has them. Until then the Shop's routes are reached against Core directly.
+- **A sandbox checkout through the Shop** on `stripe-sandbox`: a manager creates a destination for `CH`
+  (`net`/`provider`) and a product, then `POST /api/addons/phis/shop/orders` and the hosted page.
+- **Product pictures in the catalogue answer**: the `image` slot exists; the hook does not yet list the
+  files a product carries.
+- **`pnpm install` for `@phis/shop`** with a terminal: the package gained `@phis/contracts`, `esbuild`
+  and `vitest`, linked by hand so far; the lockfile has not been updated.
 
 ## Page addresses and references
 

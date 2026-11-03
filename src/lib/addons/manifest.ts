@@ -68,6 +68,11 @@ function hasReachableRoleRoot(roles: { name: string; grantableBy: unknown }[]) {
   );
 }
 const SETTING_TYPES = new Set(["text", "integer", "boolean"]);
+const OCCASION_PARAMETER_TYPES = new Set(["text", "path"]);
+/** Core fills these when it renders; an occasion declaring one would be overwritten without noticing. */
+const OCCASION_RESERVED_PARAMETERS = new Set(["recipientName", "siteName"]);
+const OCCASION_TEXT_MAX_LENGTH = 500;
+const OCCASION_MAX_LINES = 20;
 const POSTGRES_SMALLINT_MAX = 32_767;
 const COMPATIBLE_SERVER_ABI_PATTERNS = [
   /^1(?:\.0(?:\.0)?)?$/,
@@ -649,6 +654,110 @@ export function validatePhisAddonManifest(
       }
     }
   }
+
+  /*
+   * The occasions an Add-on may write to a person about. Absent means none.
+   *
+   * The words are checked here because they are the one part of a mail an Add-on supplies: a line whose
+   * placeholders and parameters disagree would render "%2" into somebody's inbox, and a parameter the
+   * occasion never declared would be a value Core inserts without knowing what it is. Both are refused
+   * at install, which is the only moment the author is there to fix them.
+   */
+  const occasions = Array.isArray(value.occasions) ? value.occasions : [];
+  if (value.occasions !== undefined && !Array.isArray(value.occasions)) {
+    issues.push("occasions must be an array when it is stated at all.");
+  }
+  const occasionNames: string[] = [];
+  for (const [index, occasion] of occasions.entries()) {
+    const field = `occasions[${index}]`;
+    if (!isPhiRecord(occasion)) {
+      issues.push(`${field} must be an object.`);
+      continue;
+    }
+    const name = readString(occasion.name, `${field}.name`, issues);
+    if (name && !SETTING_NAME_PATTERN.test(name)) {
+      issues.push(`${field}.name is invalid.`);
+    }
+    occasionNames.push(name);
+    if (occasion.class !== "asked-for") {
+      issues.push(`${field}.class must be "asked-for".`);
+    }
+    if (occasion.description !== undefined && typeof occasion.description !== "string") {
+      issues.push(`${field}.description must be a string when it is stated at all.`);
+    }
+    const parameters = Array.isArray(occasion.parameters) ? occasion.parameters : null;
+    if (!parameters) {
+      issues.push(`${field}.parameters must be an array.`);
+    }
+    const parameterNames: string[] = [];
+    for (const [parameterIndex, parameter] of (parameters ?? []).entries()) {
+      const parameterField = `${field}.parameters[${parameterIndex}]`;
+      if (!isPhiRecord(parameter)) {
+        issues.push(`${parameterField} must be an object.`);
+        continue;
+      }
+      const parameterName = readString(parameter.name, `${parameterField}.name`, issues);
+      if (parameterName && !SETTING_NAME_PATTERN.test(parameterName)) {
+        issues.push(`${parameterField}.name is invalid.`);
+      }
+      if (OCCASION_RESERVED_PARAMETERS.has(parameterName)) {
+        issues.push(`${parameterField}.name is reserved for Core.`);
+      }
+      parameterNames.push(parameterName);
+      if (!OCCASION_PARAMETER_TYPES.has(String(parameter.type))) {
+        issues.push(`${parameterField}.type must be text or path.`);
+      }
+    }
+    assertUnique(parameterNames, `${field}.parameters`, issues);
+
+    const validateLine = (line: unknown, lineField: string) => {
+      if (!isPhiRecord(line)) {
+        issues.push(`${lineField} must be an object.`);
+        return;
+      }
+      const text = readString(line.text, `${lineField}.text`, issues);
+      if (text.length > OCCASION_TEXT_MAX_LENGTH) {
+        issues.push(`${lineField}.text is longer than ${OCCASION_TEXT_MAX_LENGTH} characters.`);
+      }
+      const names = Array.isArray(line.parameters) ? line.parameters : [];
+      if (line.parameters !== undefined && !Array.isArray(line.parameters)) {
+        issues.push(`${lineField}.parameters must be an array when it is stated at all.`);
+      }
+      for (const [nameIndex, lineParameter] of names.entries()) {
+        if (typeof lineParameter !== "string" || !parameterNames.includes(lineParameter)) {
+          issues.push(
+            `${lineField}.parameters[${nameIndex}] does not name a parameter this occasion declares.`,
+          );
+        }
+      }
+      // `%1` to `%n` for n named parameters, each present, and nothing beyond n: a placeholder without
+      // a value would reach the reader as written.
+      const placeholders = new Set(
+        Array.from(text.matchAll(/%(\d+)/g), (match) => Number(match[1])),
+      );
+      for (let position = 1; position <= names.length; position += 1) {
+        if (!placeholders.has(position)) {
+          issues.push(`${lineField}.text does not use %${position}.`);
+        }
+      }
+      for (const position of placeholders) {
+        if (position < 1 || position > names.length) {
+          issues.push(`${lineField}.text uses %${position}, which names no parameter.`);
+        }
+      }
+    };
+    validateLine(occasion.subject, `${field}.subject`);
+    const lines = Array.isArray(occasion.lines) ? occasion.lines : null;
+    if (!lines || lines.length === 0) {
+      issues.push(`${field}.lines must be a non-empty array.`);
+    } else if (lines.length > OCCASION_MAX_LINES) {
+      issues.push(`${field}.lines has more than ${OCCASION_MAX_LINES} lines.`);
+    }
+    for (const [lineIndex, line] of (lines ?? []).entries()) {
+      validateLine(line, `${field}.lines[${lineIndex}]`);
+    }
+  }
+  assertUnique(occasionNames, "occasions", issues);
 
   const modules = Array.isArray(value.modules) ? value.modules : [];
   if (value.modules !== undefined && !Array.isArray(value.modules)) {

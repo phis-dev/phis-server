@@ -7,6 +7,7 @@ import {
   markPhiNotificationDropped,
   markPhiNotificationFailed,
   markPhiNotificationSent,
+  PHI_NOTIFICATION_CORE_PROVIDER_ID,
   PHI_NOTIFICATION_FLAG_SENT,
   type PhiNotificationRow,
 } from "@/db/notifications";
@@ -15,6 +16,7 @@ import { getSiteByKey, getSiteIdentityById } from "@/db/sites";
 import { getUserAccountById } from "@/db/user-accounts";
 import { getUserProfileByUserId } from "@/db/user-profiles";
 import { getUserSiteMembership } from "@/db/user-site-memberships";
+import { getPhisAddonInstalledManifest } from "@/lib/addons/installed";
 import { sendEmail } from "@/lib/email";
 import { sendTemplatedEmail, type SupportedEmailTemplate } from "@/lib/email-templates";
 import { logRuntimeEvent } from "@/lib/log";
@@ -25,6 +27,7 @@ import {
   buildPhiUnsubscribeUrl,
   createPhiNotificationLinkSalt,
 } from "./links";
+import { renderPhiAddonOccasion } from "./occasion";
 
 /**
  * Which words render each occasion Core declares itself.
@@ -183,6 +186,55 @@ export async function deliverPhiNotification(row: PhiNotificationRow): Promise<D
         message: "Verbatim message sent.",
         siteKey: site.key,
         meta: { occasion: row.occasion, notificationId: row.id, messageId: verbatimMessageId },
+      });
+      return "sent";
+    }
+
+    if (row.providerId !== PHI_NOTIFICATION_CORE_PROVIDER_ID) {
+      /*
+       * An Add-on's occasion: its words are in the manifest the server has installed, read at the moment
+       * of sending rather than copied onto the row, so a reconciled manifest speaks with its current
+       * words and an occasion that was withdrawn is not sent at all. An Add-on that is merely disabled
+       * keeps its message owed -- it may come back, and a mail that was asked for should follow.
+       */
+      const entry = getPhisAddonInstalledManifest()[row.providerId];
+      const occasion = entry?.manifest.occasions?.find((candidate) => candidate.name === row.occasion);
+      if (!entry || !occasion) {
+        throw new DropError(`${row.providerId} no longer declares the occasion ${row.occasion}.`);
+      }
+      if (!entry.enabled) {
+        throw new Error(`${row.providerId} is not enabled; its message stays owed.`);
+      }
+
+      const recipient = await resolveRecipient(row, site);
+      const rendered = await renderPhiAddonOccasion({
+        addonId: row.providerId,
+        occasion,
+        params: row.params,
+        locale: recipient.locale,
+        recipientName: recipient.name,
+        publicBaseUrl: siteConfig.publicBaseUrl,
+      });
+      const addonMessageId = await sendEmail({
+        to: recipient.address,
+        from: `${siteConfig.mailFromName} <${siteConfig.mailFrom}>`,
+        subject: rendered.subject,
+        text: rendered.bodyText,
+        html: rendered.bodyHtml,
+      });
+
+      await markPhiNotificationSent(row.id, addonMessageId);
+      logRuntimeEvent("info", "mail.sent", {
+        message: "Add-on notification sent.",
+        siteKey: site.key,
+        userId: recipient.userId ?? undefined,
+        meta: {
+          occasion: row.occasion,
+          providerId: row.providerId,
+          notificationId: row.id,
+          messageId: addonMessageId,
+          attempts: row.attempts,
+        },
       });
       return "sent";
     }

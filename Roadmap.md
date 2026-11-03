@@ -45,6 +45,16 @@ live in [design/](./design/README.md). Nothing here describes current behaviour.
 - **Validate both halves end to end** with the `@phis/github` reference binding of SERVER_ADDONS.md
   section 20.
 
+## Payments
+
+- **Further Payment Providers** follow the same contract as independent Add-ons. A Merchant of Record
+  such as Paddle or Polar is one more Provider whose tax additions are `collectedBy: "provider"`
+  (PAYMENTS.md section 12), not a new service kind; PayPal and Mollie are Providers without a tax engine
+  that support the fixed-total policy only, or a consumer-side tax engine in front of them.
+- **The small Shop as the first consumer of a taxed policy**: a tax category per product, a Site
+  listing mode (gross or net), totals on the order, receipt wording, and export orders whose import
+  charges the carrier collects. Designed in [design/SHOP.md](./design/SHOP.md).
+
 ## Distribution
 
 - **Sources, lists, packages, and provenance** as designed in

@@ -32,7 +32,7 @@ type SmtpTarget = {
   port: number;
 };
 
-function buildBaseUrlWithLocale(baseUrl: string, locale?: string | null) {
+export function buildBaseUrlWithLocale(baseUrl: string, locale?: string | null) {
   const normalizedBaseUrl = baseUrl.trim().replace(/\/+$/, "");
   if (!normalizedBaseUrl) {
     throw new Error("Missing site public base URL.");

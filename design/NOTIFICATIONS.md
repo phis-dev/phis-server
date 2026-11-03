@@ -1,13 +1,21 @@
 # Notifications: Planned Design
 
-**Status: design.** What exists is the plumbing for Core's own four mails: `sendEmail` over SMTP with a
-target list as failover ([src/lib/email.ts](../src/lib/email.ts)), a closed template set with translated
-lines ([src/lib/email-templates.ts](../src/lib/email-templates.ts)), per-Site sender columns
-(`sites.mail_from`, `mail_from_name`, `support_email`), and an internal send route
-([src/app/api/v1/email/send/route.ts](../src/app/api/v1/email/send/route.ts)) that two of the templates
-reach. What does not exist: anything an Add-on may call, an outbox, retry, bulk send, a rate limit, an
-unsubscribe link, the `List-Unsubscribe` headers, and bounce handling. `USER_SITE_FLAG_NEWSLETTER_OPT_IN`
-is a consent bit that no line of code reads in order to send anything.
+**Status: built, except the bulk run.** The send path of §4 and §5 (`headers` on `EmailMessage`, the
+outbox `phis.notification_outbox`, the immediate attempt plus the `phis maintain` drain, `replyTo` for a
+circular), the unsubscribe link of §6 (`phis.notification_link_salts`, the signed link, the `GET` page and
+`POST` action, `List-Unsubscribe` without a one-click claim) and the capability of §8 step 3
+(`@phis/server/notifications:v1`, normative in [SERVER_ADDONS.md](../SERVER_ADDONS.md) §13, with the
+occasion declaration of §2 as `occasions` in the manifest) exist. Core's own four mails and the contact
+form go through the outbox. What does not exist: a bulk run that enumerates recipients inside Core (§1),
+a rate limit, bounce handling, and the sent class for an Add-on's occasion -- every declared occasion is
+asked-for.
+
+One amendment to §1 was made when the first consumer arrived. The small Shop
+([SHOP.md](./SHOP.md)) writes to guests, who have an address on an order and no user id, so `notify` takes
+a second recipient beside the user id: a **contact**, an address a person gave the Add-on for exactly
+this message, admitted only for an asked-for occasion and only with a locale. The rule stays in the
+direction that matters -- an Add-on never obtains an address from Core -- and the address lives on the
+outbox row only while the message is owed.
 
 The Add-on contract that holds today is [SERVER_ADDONS.md](../SERVER_ADDONS.md), and the rule this whole
 design is shaped by is in [ADDON_HOWTO.md](../ADDON_HOWTO.md) §4.

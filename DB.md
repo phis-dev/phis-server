@@ -2004,8 +2004,9 @@ there is no product purge command. Fixture teardown in database tests is not an 
 - `currency_exponent SMALLINT CHECK (BETWEEN 0 AND 4)`, `method_features JSONB NOT NULL`:
   validated ISO exponent and the selected method's agreed features.
 - `binding JSONB NULL`: `PhisPaymentProviderBinding`, server-only remote references/correlation.
-- `record JSONB NOT NULL`: `PhisPayment`; identity matches `id`, agreed minor amount is positive and
-  bounded, captured amount cannot exceed it, and successful refunds cannot exceed captured funds.
+- `record JSONB NOT NULL`: `PhisPayment`; identity matches `id`, the base minor amount is positive and
+  bounded, `pricing` is an object, captured amount cannot exceed the validated total when `totals` is
+  present and the base amount otherwise, and successful refunds cannot exceed captured funds.
 - `generation BIGINT NOT NULL DEFAULT 0`, `lease_token UUID NULL`, `lease_until TIMESTAMPTZ NULL`:
   a bounded execution/observation claim. Token/time are either both present or both absent.
 - `created_at`, `updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`.
@@ -2181,8 +2182,10 @@ Contract:
   inside the request ties the answer to a transport being reachable.
 - **The recipient is an id wherever one exists**, and the address is resolved at drain time. A corrected
   address is therefore used, and a membership that is gone sends nothing instead of writing to a stale
-  copy. `recipient_address` is only for messages that precede an account, where there is no membership
-  to point at. Carrying both recipient forms at once is refused by CHECK.
+  copy. `recipient_address` is only for messages to a person without an account: a registration that
+  precedes one, or an Add-on's contact recipient -- a guest who gave the Add-on their address for this
+  very message (`notifications:v1`, SERVER_ADDONS.md section 13). Carrying both recipient forms at once
+  is refused by CHECK, and the address is cleared with `params` once the row is settled.
 - `flags & 1` means the message was **sent** rather than asked for: consent decided whether the row was
   written at all, and the rendered mail owes an unsubscribe footer. A message the person's own action
   asked for carries no such footer, because offering to withdraw what cannot be withdrawn is the
@@ -2198,7 +2201,8 @@ Contract:
   now. Somebody half-way through a reset on the German Site gets a German mail whatever their profile
   says. Empty falls to the profile, then to the Site's default.
 - `provider_id` is who declared the occasion and therefore whose words render it -- `@phis/server/core`
-  today, an Add-on id once a notification capability exists. Same convention as
+  for Core's own templates, an Add-on id for an occasion its manifest declares; the words are read from
+  the installed manifest when the row is drained, never copied onto it. Same convention as
   `server_capabilities.provider_id`.
 - `dedupe_key` is what makes a repeated run safe: the second run's inserts are refused per row by the
   partial unique index rather than by a count somebody keeps. A caller that names no key gets no
