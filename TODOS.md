@@ -384,13 +384,6 @@ front of is infrastructure work, and belongs with
   30.09., from every content path that ever deleted a row, and the News delete adds to them. A sweep
   belongs to `phis maintain` as a bounded operator-invoked step (`AGENTS.md`), not to the delete -- a
   message may be shared by more than one version, so removing it with one of them is not a local decision.
-- **Site-store copies of Platform words.** From the first `@phis/ui` after 0.4.2 on, the Module navigation
-  labels (ctx `Web UI label`, the `[extern]` units included) and the Public error pages' Result words
-  ("Not found" and the like, "Back to homepage") are translated through the global store, so their
-  `tr_site_*` copies in each Site are no longer read. Once an installation runs that `@phis/ui`, they can
-  go -- like the orphaned content messages, as a bounded `phis maintain` step rather than a delete hook.
-  Before that, check that a Site admin's translation editor writes `tr_site_*` only and that `tr_lang` is
-  the operator's alone. (`phis-ui`)
 - **Test placement.** Most tests are co-located as `src/**/*.test.ts`, while `test/` still holds
   `config-core.test.ts`, `html.test.ts`, `locale.test.ts`, `translation-context.test.ts`, and fixtures.
   Pick one convention.
