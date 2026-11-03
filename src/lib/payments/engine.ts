@@ -12,8 +12,9 @@ import {
 } from "../../db/payments.mts";
 import { withPoolTransaction } from "../db-transaction.ts";
 import { PHIS_PAYMENT_CALL_TIMEOUT_MS, PHIS_PAYMENT_ERROR_CODES } from "../constants/payments.ts";
-import { PhisPaymentError, phisPaymentReturnUrl, requirePhisPaymentMinor, requirePhisPaymentReference,
-  validatePhisPaymentMoney, validatePhisPaymentObservation, validatePhisPaymentProviderProbe } from "./validation.ts";
+import { PhisPaymentError, copyPhisPaymentAdditions, normalizePhisPaymentTotals, phisPaymentMethodSupports, phisPaymentPricingSelector,
+  phisPaymentReturnUrl, requirePhisPaymentMinor, requirePhisPaymentReference, validatePhisPaymentMoney, validatePhisPaymentObservation,
+  validatePhisPaymentPricing, validatePhisPaymentPricingSelector, validatePhisPaymentProviderProbe } from "./validation.ts";
 import type {
   PhisPaymentProfile, PhisPaymentReceipt, PhisPaymentScope, PhisStoredPayment, PhisStoredPaymentCommand,
   PhisStoredPaymentOperation, PhisStoredPaymentRefund,
@@ -76,21 +77,22 @@ export class PhisPaymentEngine implements PhisPaymentsCapabilityV1 {
     input = structuredClone(input);
     validatePhisPaymentMoney(input.amount);
     this.validateFlow(input.captureMode, input.checkoutKind);
+    const pricing = validatePhisPaymentPricingSelector(input.pricing);
     const profile = await this.profile(input.profileKey, "read", true);
-    return this.methods(profile, input);
+    return this.methods(profile, { amount: { currency: input.amount.currency, minor: input.amount.minor }, captureMode: input.captureMode, checkoutKind: input.checkoutKind, pricing });
   }
   private validateFlow(captureMode: string, checkoutKind: string) {
     if (!["automatic", "manual"].includes(captureMode) || checkoutKind !== "redirect") throw new PhisPaymentError("unsupported_operation");
   }
-  private async methods(profile: PhisPaymentProfile, input: Parameters<PhisPaymentsCapabilityV1["listMethods"]>[0]) {
+  private async methods(profile: PhisPaymentProfile, input: Omit<Parameters<PhisPaymentProviderV1["probe"]>[0], "signal">) {
     let probe;
     try {
       const provider = await this.options.resolveProvider(profile);
       probe = await provider.probe({ ...input, signal: this.signal() });
     } catch { throw new PhisPaymentError("provider_unavailable"); }
     const normalized = validatePhisPaymentProviderProbe(probe, profile);
-    return normalized.methods.filter(m => m.features.captureModes.includes(input.captureMode) && m.features.checkoutKinds.includes(input.checkoutKind))
-      .map(method => ({ ...method, profileKey: profile.key }));
+    return normalized.methods.filter(m => m.features.captureModes.includes(input.captureMode) && m.features.checkoutKinds.includes(input.checkoutKind)
+      && phisPaymentMethodSupports(m.features.pricing, input.pricing)).map(method => ({ ...method, profileKey: profile.key }));
   }
 
   async create(input: PhisPaymentCreateInput): Promise<PhisPaymentCommandResult> {
@@ -100,8 +102,9 @@ export class PhisPaymentEngine implements PhisPaymentsCapabilityV1 {
     this.validateFlow(input.captureMode, input.checkoutKind);
     if (typeof input.description !== "string" || input.description.length < 1 || input.description.length > 200
       || (input.methodKey !== null && (typeof input.methodKey !== "string" || input.methodKey.length > 255))) throw new PhisPaymentError("invalid_input");
+    const pricing = validatePhisPaymentPricing(input.pricing, input.amount);
     const profile = await this.profile(input.profileKey, "create");
-    const request = { profileKey: input.profileKey, reference: input.reference, amount: { currency: input.amount.currency, minor: input.amount.minor },
+    const request = { profileKey: input.profileKey, reference: input.reference, amount: { currency: input.amount.currency, minor: input.amount.minor }, pricing,
       description: input.description, captureMode: input.captureMode, methodKey: input.methodKey, checkoutKind: input.checkoutKind, returnPath: input.returnPath };
     // Idempotent retries are checked before a live availability probe; completed requests do not depend on the PSP answering.
     const previous = await withPoolTransaction(this.pool, db => findPhisPaymentIdempotency(db, this.scope, "create", input.idempotencyKey));
@@ -113,7 +116,7 @@ export class PhisPaymentEngine implements PhisPaymentsCapabilityV1 {
     const baseUrl = await this.options.publicBaseUrl();
     const id = randomUUID();
     const returnUrl = phisPaymentReturnUrl(baseUrl, input.returnPath, id);
-    const available = await this.methods(profile, { ...input });
+    const available = await this.methods(profile, { amount: request.amount, captureMode: input.captureMode, checkoutKind: input.checkoutKind, pricing: phisPaymentPricingSelector(pricing) });
     const method = available.find(m => m.methodKey === input.methodKey);
     if (!method) throw new PhisPaymentError("method_unavailable");
     const providerId = profile.providerAddonId.slice(1).split("/").map(encodeURIComponent).join("/");
@@ -123,13 +126,13 @@ export class PhisPaymentEngine implements PhisPaymentsCapabilityV1 {
       siteId: this.scope.siteId, consumerAddonId: this.scope.consumerAddonId, providerKey: profile.providerKey,
       merchantIdentity: profile.merchantIdentity!, profileRevision: profile.revision, currencyExponent: exponent, features: method.features,
       binding: null, generation: 0, leaseToken: null, leaseUntil: null,
-      record: { id, reference: input.reference, profileKey: profile.key, mode: profile.mode, amount: request.amount, captureMode: input.captureMode,
+      record: { id, reference: input.reference, profileKey: profile.key, mode: profile.mode, amount: request.amount, pricing, totals: null, captureMode: input.captureMode,
         status: "created", authorizedMinor: "0", capturedMinor: "0", refundedMinor: "0", authorizationExpiresAt: null,
         checkout: null, reconciliationRequired: true, version: 1, lastObservedAt: null },
     };
     const operation: PhisStoredPaymentOperation = {
       record: { id: operationId, paymentId: id, action: "create", state: "reserved", errorCode: null }, request,
-      command: { action: "create", operationId, paymentId: id, providerIdempotencyKey: operationId, amount: request.amount,
+      command: { action: "create", operationId, paymentId: id, providerIdempotencyKey: operationId, amount: request.amount, pricing,
         description: input.description, captureMode: input.captureMode, methodKey: input.methodKey, checkoutKind: input.checkoutKind, returnUrl, notificationUrl },
     };
     const reservation = await withPoolTransaction(this.pool, async db => {
@@ -192,7 +195,7 @@ export class PhisPaymentEngine implements PhisPaymentsCapabilityV1 {
       const operation: PhisStoredPaymentOperation = { record: { id: operationId, paymentId: input.paymentId, action, state: "reserved", errorCode: null }, request, command };
       await insertPhisPaymentOperation(db, this.scope, input.idempotencyKey, operation);
       const refund: PhisStoredPaymentRefund | null = action === "refund" ? {
-        record: { id: randomUUID(), paymentId: input.paymentId, amount: { currency: payment.record.amount.currency, minor: minor! }, status: "pending" },
+        record: { id: randomUUID(), paymentId: input.paymentId, amount: { currency: payment.record.amount.currency, minor: minor! }, additions: null, status: "pending" },
         binding: null, operationId,
       } : null;
       if (refund) await writePhisPaymentRefund(db, refund);
@@ -339,11 +342,16 @@ export class PhisPaymentEngine implements PhisPaymentsCapabilityV1 {
       if (refund && (refund.record.amount.minor !== remote.minor || (refund.binding && !isDeepStrictEqual(refund.binding, remote.binding))
         || (refund.record.status === "succeeded" && remote.status !== "succeeded"))) throw new PhisPaymentError("provider_unavailable");
       if (!refund) {
-        refund = { record: { id: randomUUID(), paymentId: payment.record.id, amount: { currency: payment.record.amount.currency, minor: remote.minor }, status: remote.status },
+        refund = { record: { id: randomUUID(), paymentId: payment.record.id, amount: { currency: payment.record.amount.currency, minor: remote.minor }, additions: null, status: remote.status },
           operationId: remote.operationId, binding: { reference: remote.binding.reference, data: { ...remote.binding.data } } };
         refunds.push(refund); changedRefundId = refund.record.id;
       }
       if (refund.record.status !== remote.status) changedRefundId = refund.record.id;
+      if (remote.additions !== null) {
+        const additions = copyPhisPaymentAdditions(remote.additions);
+        if (refund.record.additions !== null && !isDeepStrictEqual(refund.record.additions, additions)) throw new PhisPaymentError("provider_unavailable");
+        if (refund.record.additions === null) { refund.record.additions = additions; changedRefundId = refund.record.id; }
+      }
       refund.binding = { reference: remote.binding.reference, data: { ...remote.binding.data } }; refund.record.status = remote.status;
       if (operation) {
         operation.record.state = remote.status === "pending" ? "pending" : remote.status === "succeeded" ? "succeeded" : "failed";
@@ -356,8 +364,11 @@ export class PhisPaymentEngine implements PhisPaymentsCapabilityV1 {
     if (reserved > BigInt(observation.capturedMinor)) throw new PhisPaymentError("provider_unavailable");
     const refundedMinor = refunds.filter(r => r.record.status === "succeeded").reduce((sum, r) => sum + BigInt(r.record.amount.minor), BigInt(0)).toString();
     payment.binding = { reference: observation.binding.reference, data: { ...observation.binding.data } };
+    // Totals bind the first time the Provider reports them for authorized or captured funds; see validateObservedTotals.
+    const totals = observation.totals === null ? payment.record.totals : normalizePhisPaymentTotals(observation.totals,
+      payment.record.totals?.frozenAt ?? (["authorized", "captured"].includes(observation.status) ? new Date().toISOString() : null));
     Object.assign(payment.record, { status: observation.status, authorizedMinor: observation.authorizedMinor, capturedMinor: observation.capturedMinor,
-      refundedMinor, authorizationExpiresAt: observation.authorizationExpiresAt,
+      refundedMinor, totals, authorizationExpiresAt: observation.authorizationExpiresAt,
       checkout: observation.checkout?.kind === "redirect" ? { kind: "redirect", url: new URL(observation.checkout.url).href, expiresAt: observation.checkout.expiresAt } : null,
       lastObservedAt: new Date().toISOString() });
     // Resolve earlier create/complete/capture/cancel commands only from current authoritative evidence.

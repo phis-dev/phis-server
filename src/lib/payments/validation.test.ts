@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import type { PhisAddonManifestV1 } from "@phis/contracts/addon";
 import { buildPhisPaymentProviderContext } from "./provider.ts";
-import { phisPaymentReturnUrl, validatePhisPaymentMoney, validatePhisPaymentProfileDraft, validatePhisPaymentProviderProbe } from "./validation.ts";
+import { phisPaymentMethodSupports, phisPaymentPricingSelector, phisPaymentReturnUrl, validatePhisPaymentMoney, validatePhisPaymentPricing,
+  validatePhisPaymentProfileDraft, validatePhisPaymentProviderProbe } from "./validation.ts";
 import type { PhisPaymentProfile } from "./types.ts";
 
 describe("Payment authority inputs", () => {
@@ -15,11 +16,39 @@ describe("Payment authority inputs", () => {
     for (const minor of ["0", "01", "1.2", "-1", "1e2", "10000000000000000"]) expect(() => validatePhisPaymentMoney({ currency: "CHF", minor })).toThrow();
   });
   it("copies only public method facts out of a Provider probe", () => {
-    const features = { captureModes: ["automatic"] as const, checkoutKinds: ["redirect"] as const, canPartialCapture: false, canCancel: true, canRefund: true, canPartialRefund: true, extra: "private-provider-data" };
+    const pricing = { bases: ["final"] as const, tax: ["none"] as const, maxDiscounts: 0, promotionCodes: "none" as const, collectsCustomerDetails: false, collectsTaxIds: false, extra: "private-provider-data" };
+    const features = { captureModes: ["automatic"] as const, checkoutKinds: ["redirect"] as const, canPartialCapture: false, canCancel: true, canRefund: true, canPartialRefund: true, pricing, extra: "private-provider-data" };
     const probe = { merchantIdentity: "acct_test", mode: "test" as const, methods: [{ methodKey: "card", title: "Card", features, extra: "private-provider-data" }] };
     const normalized = validatePhisPaymentProviderProbe(probe, { merchantIdentity: "acct_test", mode: "test" });
     expect(JSON.stringify(normalized)).not.toContain("private-provider-data");
     expect(() => validatePhisPaymentProviderProbe({ ...probe, methods: [...probe.methods, ...probe.methods] }, { merchantIdentity: "acct_test", mode: "test" })).toThrow();
+    // Every Provider supports the fixed-total policy; a probe that withholds it is refused.
+    const withheld = { ...probe, methods: [{ ...probe.methods[0]!, features: { ...features, pricing: { ...pricing, bases: ["net"] } } }] };
+    expect(() => validatePhisPaymentProviderProbe(withheld as unknown as typeof probe, { merchantIdentity: "acct_test", mode: "test" })).toThrow();
+  });
+  it("normalizes a pricing policy and ties the base amount to its lines", () => {
+    expect(validatePhisPaymentPricing({ basis: "final", tax: "none" }, { currency: "CHF", minor: "1990" })).toEqual({ basis: "final", tax: "none" });
+    expect(() => validatePhisPaymentPricing({ basis: "final", tax: "none", promotionCodes: "none" }, { currency: "CHF", minor: "1990" })).toThrow();
+    const line = { reference: "sku-1", description: "Widget", quantity: 3, unitMinor: "1000", taxCategory: "general", providerTaxCodes: { "@phis/stripe/stripe": "txcd_99999999" } };
+    const policy = { basis: "net", tax: "provider", lineItems: [line], shipping: { minor: "500", taxCategory: "shipping" }, discounts: [{ reference: "d1", label: "Deal", minor: "250" }], promotionCodes: "none", customer: null };
+    const normalized = validatePhisPaymentPricing(policy, { currency: "CHF", minor: "3250" });
+    expect(normalized).toEqual(policy);
+    expect(phisPaymentPricingSelector(normalized)).toEqual({ basis: "net", tax: "provider", discounts: 1, promotionCodes: "none" });
+    expect(() => validatePhisPaymentPricing(policy, { currency: "CHF", minor: "3500" })).toThrow();
+    expect(() => validatePhisPaymentPricing({ ...policy, discounts: [{ reference: "d1", label: "Deal", minor: "4000" }] }, { currency: "CHF", minor: "1" })).toThrow();
+    expect(() => validatePhisPaymentPricing({ ...policy, lineItems: [{ ...line, taxCategory: "luxury" }] }, { currency: "CHF", minor: "3250" })).toThrow();
+    expect(() => validatePhisPaymentPricing({ ...policy, lineItems: [{ ...line, quantity: 1.5 }] }, { currency: "CHF", minor: "1750" })).toThrow();
+    expect(() => validatePhisPaymentPricing({ ...policy, customer: { country: "ch", postalCode: null, region: null, addressSource: "billing", taxIds: [] } }, { currency: "CHF", minor: "3250" })).toThrow();
+  });
+  it("matches a policy against a method's pricing features", () => {
+    const features = { bases: ["final", "net"] as const, tax: ["none", "provider"] as const, maxDiscounts: 1, promotionCodes: "alone" as const, collectsCustomerDetails: true, collectsTaxIds: true };
+    const selector = { basis: "net" as const, tax: "provider" as const, discounts: 1, promotionCodes: "none" as const };
+    expect(phisPaymentMethodSupports(features, selector)).toBe(true);
+    expect(phisPaymentMethodSupports(features, { ...selector, discounts: 0, promotionCodes: "provider" })).toBe(true);
+    expect(phisPaymentMethodSupports(features, { ...selector, promotionCodes: "provider" })).toBe(false);
+    expect(phisPaymentMethodSupports({ ...features, promotionCodes: "with-discounts" }, { ...selector, promotionCodes: "provider" })).toBe(true);
+    expect(phisPaymentMethodSupports(features, { ...selector, tax: "merchant-of-record" })).toBe(false);
+    expect(phisPaymentMethodSupports(features, { ...selector, discounts: 2 })).toBe(false);
   });
   it("constructs callbacks solely from the configured Site origin", () => {
     expect(phisPaymentReturnUrl("https://shop.example/old", "/de/return?order=opaque", "payment-1"))

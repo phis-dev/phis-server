@@ -141,10 +141,12 @@ There is no profile delete, payment purge or live-charge smoke test in this slic
 2. Core validates currency/minor units, grants, profile and same-reference attempts. In one
    transaction it reserves the payment and create operation, pins configuration/merchant binding
    and stores the canonical command and stable provider idempotency key.
-3. Outside that transaction the Stripe adapter creates a payment-mode Checkout Session with one
-   fixed quantity/amount line, card methods, the agreed capture mode and Core's return URL. Promotions,
-   adjustable quantities, automatic tax and additional shipping charges are disabled: the agreed
-   total cannot change inside Checkout.
+3. Outside that transaction the Stripe adapter creates a payment-mode Checkout Session with card
+   methods, the agreed capture mode and Core's return URL. Under the fixed-total policy it carries one
+   fixed quantity/amount line and disables promotions, automatic tax and shipping charges: the agreed
+   total cannot change inside Checkout. Under a line-item policy it carries the lines, the shipping
+   rate, the stated discount and Stripe Tax as section 8 maps them. Adaptive Pricing and adjustable
+   quantities are always disabled.
 4. Session and PaymentIntent metadata carry only opaque Core payment/create-operation identities.
    No guest access token, email or full order record is copied into correlation metadata.
 5. Core commits the normalized observation and returns the hosted redirect URL. A transport failure
@@ -349,3 +351,59 @@ for the external test, not for implementing Core and its automated fault tests.
 Published Sites and parallel `phis-server`/`phis-ui` development stay separate.
 No production/live merchant setup, deployment, Site restart or change to a published installation is
 implied by this implementation design.
+
+## 8. Pricing policy mapping
+
+The policy's `basis:tax` is written into the Session's and the PaymentIntent's metadata so that an
+observation can read the Session's totals without the stored command. The adapter advertises
+`pricing: { bases: ["final", "net"], tax: ["none", "provider", "merchant-of-record"], maxDiscounts: 1,
+promotionCodes: "alone", collectsCustomerDetails: true, collectsTaxIds: true }` on every method: one
+Checkout Session carries one coupon, which is either the stated discount or the customer's promotion
+code, and a create that asks for both is refused with `method_unavailable` before any Stripe call.
+
+Create, line-item policy:
+
+- one `line_items[]` entry per line with `quantity`, `unit_amount`, and under tax handling other than
+  `none` a `tax_behavior` of `inclusive` for `basis: "final"` and `exclusive` for `net`, plus the
+  product tax code of the table below;
+- `shipping_options` with one fixed-amount `shipping_rate_data` for the policy's shipping line, taxed
+  with `txcd_92010001` under the same behaviour;
+- the stated discount as an `amount_off` Coupon created under the create operation's idempotency key
+  with the discount's reference in its metadata, applied through `discounts[]`;
+  `allow_promotion_codes` is true exactly under `promotionCodes: "provider"`;
+- `automatic_tax.enabled` when tax handling is not `none`, then `billing_address_collection:
+  "required"`; under `provider` also `tax_id_collection` with `customer_creation: "always"` so a
+  business customer's VAT id reaches the calculation for reverse charge;
+- `managed_payments.enabled` under `merchant-of-record`, admitted only when every line is a
+  `digital-goods` or `digital-service` category, since Managed Payments sells digital products only.
+
+| Category | Stripe product tax code |
+| --- | --- |
+| `general` | `txcd_99999999` (General - Tangible Goods) |
+| `reduced-goods` | none; the consumer sets the exact code in `providerTaxCodes` |
+| `digital-goods` | `txcd_10000000` (General - Electronically Supplied Services) |
+| `digital-service` | `txcd_10103001` (Software as a service, business use) |
+| `service` | `txcd_20030000` (General - Services) |
+| `shipping` | `txcd_92010001` (Shipping) |
+| `exempt` | `txcd_00000000` (Nontaxable) |
+
+Observe: the Session is retrieved with `total_details.breakdown` expanded. The base amount is
+`amount_subtotal` plus `amount_shipping` minus the discounts whose coupon metadata names a stated
+reference. Each `breakdown.taxes` entry becomes a `tax` addition with the rate's display name,
+percentage, country and state, `inclusive` from the rate and `collectedBy: "provider"` when the
+Session has Managed Payments enabled; an enabled calculation without any rate reports one zero tax
+addition labelled "Not collecting". `shipping_cost.amount_subtotal` becomes the inclusive `shipping`
+addition. Each `breakdown.discounts` entry becomes a `discount` addition whose `code` is the stated
+reference or, for a customer code, the promotion code's `code` (retrieved by id when not expanded).
+`customer_details.address` and `tax_ids` fill the customer details. Totals are `null` while
+`automatic_tax.status` is `requires_location_inputs`; a `failed` calculation is an availability
+failure. Under the fixed-total policy any tax, discount or shipping on the Session is an
+inconsistency. The adapter checks that `amount_total` equals the base amount plus exclusive tax minus
+customer-code discounts, and the PaymentIntent amount equals `amount_total`; captured and authorized
+funds are compared to the total. Refund observations report no additions.
+
+Before a Site relies on a taxed policy: Stripe Tax needs the merchant's origin address and a tax
+registration per jurisdiction in the Dashboard, otherwise every calculation returns zero tax with
+`not_collecting`. Managed Payments needs the account's eligibility review. The unit tests run against
+recorded Sessions for the fixed, net, Managed Payments and promotion-code cases; a sandbox run per
+policy is listed in [TODOS.md](./TODOS.md).

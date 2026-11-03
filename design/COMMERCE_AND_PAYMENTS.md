@@ -59,6 +59,10 @@ Products may carry independent prices in CHF, EUR, USD or another supported curr
 the purchasing currency, validates that every item has a price in it and calculates the agreed total
 on the server. Its own price lists and any conversion do not become Core Payment responsibilities.
 
+Where a Payment Provider computes destination tax or acts as Merchant of Record, the Shop still
+calculates the base amount and states the pricing policy; the validated total then comes from Core
+([PAYMENTS.md](../PAYMENTS.md) section 12).
+
 Its order records retain the commercial facts agreed at checkout: item descriptions, quantities,
 prices, tax and shipping amounts, currency and the relevant payment references. Prices and totals are
 calculated on the server. A browser supplies product choices, not authoritative amounts.
@@ -168,6 +172,11 @@ path and explicit event routing.
 Provider-neutral payment interfaces should account for authorization, capture, cancellation and
 partial refunds from the outset. This prepares for Medusa without requiring Medusa, its dependencies
 or its full commerce model on small-shop Sites.
+
+Medusa computes tax in its own Tax Module and would hand the Core Payment service totals that already
+contain it. The pricing policy of [PAYMENTS.md](../PAYMENTS.md) section 12 therefore keeps the v1
+single-amount behaviour as its default; provider-added tax is an option the small Shop needs, not a
+requirement on the Medusa path.
 
 ## 8. Implementation sequence and unresolved contracts
 

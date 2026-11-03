@@ -2360,7 +2360,9 @@ CREATE TABLE IF NOT EXISTS phis.payments (
   UNIQUE (site_id, consumer_addon_id, id),
   CHECK (record->>'id' = id::text),
   CHECK ((record->'amount'->>'minor') ~ '^[1-9][0-9]{0,15}$'),
-  CHECK ((record->>'capturedMinor')::numeric BETWEEN 0 AND (record->'amount'->>'minor')::numeric),
+  CHECK (jsonb_typeof(record->'pricing') = 'object'),
+  -- The customer owes the validated total once the Provider reported one, and the base amount before.
+  CHECK ((record->>'capturedMinor')::numeric BETWEEN 0 AND COALESCE((record->'totals'->'total'->>'minor')::numeric, (record->'amount'->>'minor')::numeric)),
   CHECK ((record->>'refundedMinor')::numeric BETWEEN 0 AND (record->>'capturedMinor')::numeric),
   CHECK (record->>'status' IN ('created','awaiting_customer','processing','authorized','captured','canceled','expired','failed')),
   CHECK ((lease_token IS NULL) = (lease_until IS NULL))

@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import type { PhisPaymentProviderCommand, PhisPaymentProviderExecution, PhisPaymentProviderObservation, PhisPaymentProviderV1 } from "@phis/contracts/payments";
+import type { PhisPaymentPricing, PhisPaymentProviderCommand, PhisPaymentProviderExecution, PhisPaymentProviderObservation, PhisPaymentProviderV1 } from "@phis/contracts/payments";
 import { PhisPaymentEngine } from "@/lib/payments/engine";
 import { buildPhisPaymentNotificationsCapability } from "@/lib/payments/runtime";
 import { schedulePhisAddonEventDelivery } from "@/lib/addons/event-trigger.ts";
@@ -25,7 +25,8 @@ class FakeProvider implements PhisPaymentProviderV1 {
   pause: Promise<void> | null = null;
   entered: (() => void) | null = null;
   async probe() { return { merchantIdentity: "acct_test", mode: "test" as const, methods: [{ methodKey: "card", title: "Test card",
-    features: { captureModes: ["automatic", "manual"] as const, checkoutKinds: ["redirect"] as const, canPartialCapture: true, canCancel: true, canRefund: true, canPartialRefund: true } }] }; }
+    features: { captureModes: ["automatic", "manual"] as const, checkoutKinds: ["redirect"] as const, canPartialCapture: true, canCancel: true, canRefund: true, canPartialRefund: true,
+      pricing: { bases: ["final", "net"] as const, tax: ["none", "provider"] as const, maxDiscounts: 1, promotionCodes: "alone" as const, collectsCustomerDetails: true, collectsTaxIds: false } } }] }; }
   async execute(command: PhisPaymentProviderCommand): Promise<PhisPaymentProviderExecution> {
     this.calls[command.action] = (this.calls[command.action] ?? 0) + 1;
     this.entered?.(); if (this.pause) await this.pause;
@@ -33,6 +34,8 @@ class FakeProvider implements PhisPaymentProviderV1 {
     if (command.action === "create") {
       state = { binding: { reference: `remote-${command.paymentId}`, data: { id: command.paymentId } }, merchantIdentity: "acct_test", mode: "test",
         status: "awaiting_customer", amount: command.amount, authorizedMinor: "0", capturedMinor: "0", authorizationExpiresAt: null,
+        // A fixed-total policy knows its total at once; a line-item policy learns it from the customer's location.
+        totals: "lineItems" in command.pricing ? null : { total: command.amount, additions: [], customer: null },
         checkout: { kind: "redirect", url: "https://provider.example/checkout#provider-fragment", expiresAt: null }, refunds: [] };
       this.states.set(command.paymentId, state);
     }
@@ -40,7 +43,7 @@ class FakeProvider implements PhisPaymentProviderV1 {
     if (command.action === "capture") { state.status = "captured"; state.capturedMinor = command.minor; state.authorizedMinor = "0"; state.checkout = null; }
     if (command.action === "cancel") { state.status = "expired"; state.checkout = null; state.authorizedMinor = "0"; }
     if (command.action === "refund") state.refunds = [...state.refunds, { operationId: command.operationId, minor: command.minor, status: "succeeded",
-      binding: { reference: randomUUID(), data: {} } }];
+      binding: { reference: randomUUID(), data: {} }, additions: null }];
     if (this.unknownAfter === command.action) { this.unknownAfter = null; return { outcome: "unknown" }; }
     if (this.malformedRefusal) { this.malformedRefusal = false; return { outcome: "rejected", code: "sensitive-provider-error" } as unknown as PhisPaymentProviderExecution; }
     return { outcome: "applied", observation: structuredClone(state) };
@@ -103,7 +106,11 @@ describe("durable Payment execution", () => {
       signal: new AbortController().signal, publicBaseUrl: async () => `https://${selected.key}.invalid`, resolveProvider: async () => remote, merchantAuthorized: async () => merchant });
   }
   function input(overrides = {}) { return { profileKey: "sandbox", reference: randomUUID(), idempotencyKey: randomUUID(), amount: { currency: "CHF", minor: "1990" },
-    description: "Test purchase", captureMode: "automatic" as const, methodKey: "card", checkoutKind: "redirect" as const, returnPath: "/return", ...overrides }; }
+    pricing: { basis: "final", tax: "none" } as PhisPaymentPricing, description: "Test purchase", captureMode: "automatic" as const, methodKey: "card", checkoutKind: "redirect" as const, returnPath: "/return", ...overrides }; }
+  const netPricing: PhisPaymentPricing = { basis: "net", tax: "provider", promotionCodes: "provider", customer: null,
+    lineItems: [{ reference: "sku-1", description: "Widget", quantity: 2, unitMinor: "1000", taxCategory: "general", providerTaxCodes: null }],
+    shipping: { minor: "500", taxCategory: "shipping" }, discounts: [{ reference: "promo-spring", label: "Spring sale", minor: "500" }] };
+  const addition = (kind: "tax" | "shipping" | "discount", minor: string, patch = {}) => ({ kind, minor, label: kind, inclusive: kind === "shipping", rate: null, jurisdiction: null, collectedBy: "merchant" as const, code: null, ...patch });
   async function captured() {
     const api = await service(); const result = await api.create(input()); const state = remote.states.get(result.payment.id)!;
     state.status = "captured"; state.capturedMinor = "1990"; state.checkout = null;
@@ -214,7 +221,7 @@ describe("durable Payment execution", () => {
   });
   it("tracks pending and external refunds and releases confirmed failed reservations", async () => {
     const { api, id, state } = await captured();
-    state.refunds = [{ operationId: null, binding: { reference: randomUUID(), data: {} }, minor: "500", status: "pending" }];
+    state.refunds = [{ operationId: null, binding: { reference: randomUUID(), data: {} }, minor: "500", status: "pending", additions: null }];
     await api.refresh(id); expect((await api.get(id))!.refundedMinor).toBe("0");
     await expect(api.refund({ paymentId: id, idempotencyKey: randomUUID(), minor: "1600", reason: "Return" })).rejects.toMatchObject({ code: "invalid_state" });
     state.refunds[0]!.status = "failed"; await api.refresh(id);
@@ -252,7 +259,7 @@ describe("durable Payment execution", () => {
   it("acknowledges a signed notification only with durable inbox, payment and owner outbox", async () => {
     vi.mocked(schedulePhisAddonEventDelivery).mockClear();
     const { api, id, state } = await captured(); const deliveryId = randomUUID();
-    state.refunds = [{ operationId: null, binding: { reference: randomUUID(), data: {} }, minor: "500", status: "succeeded" }];
+    state.refunds = [{ operationId: null, binding: { reference: randomUUID(), data: {} }, minor: "500", status: "succeeded", additions: null }];
     const ingress = hook(id, deliveryId); expect(await ingress.receive({ profileKey: "sandbox" })).toEqual({ outcome: "processed" });
     expect(await ingress.receive({ profileKey: "sandbox" })).toEqual({ outcome: "duplicate" });
     expect(schedulePhisAddonEventDelivery).toHaveBeenCalledTimes(2);
@@ -280,6 +287,66 @@ describe("durable Payment execution", () => {
     await expect(hook(result.payment.id, id).receive({ profileKey: "sandbox" })).rejects.toMatchObject({ code: "provider_unavailable" });
     remote.unavailable = false;
     expect(await hook(result.payment.id, id).receive({ profileKey: "sandbox" })).toEqual({ outcome: "processed" });
+  });
+  it("lists only methods whose pricing features cover the requested policy", async () => {
+    const api = await service(); const selector = { basis: "net" as const, tax: "provider" as const, discounts: 1, promotionCodes: "none" as const };
+    const base = { profileKey: "sandbox", amount: { currency: "CHF", minor: "2000" }, captureMode: "automatic" as const, checkoutKind: "redirect" as const };
+    expect(await api.listMethods({ ...base, pricing: selector })).toHaveLength(1);
+    for (const unsupported of [{ tax: "merchant-of-record" as const }, { discounts: 2 }, { promotionCodes: "provider" as const }]) {
+      expect(await api.listMethods({ ...base, pricing: { ...selector, ...unsupported } })).toEqual([]);
+    }
+    await expect(api.create(input({ amount: { currency: "CHF", minor: "2000" }, pricing: netPricing }))).rejects.toMatchObject({ code: "method_unavailable" });
+    await expect(api.listMethods({ ...base, pricing: { ...selector, extra: true } as unknown as typeof selector })).rejects.toMatchObject({ code: "invalid_input" });
+  });
+  it("refuses a policy whose lines, shipping and discounts do not produce the agreed amount", async () => {
+    const api = await service(); const pricing = { ...netPricing, promotionCodes: "none" as const };
+    await expect(api.create(input({ amount: { currency: "CHF", minor: "1999" }, pricing }))).rejects.toMatchObject({ code: "invalid_input" });
+    await expect(api.create(input({ amount: { currency: "CHF", minor: "2000" }, pricing: { ...pricing, lineItems: [...pricing.lineItems, ...pricing.lineItems] } }))).rejects.toMatchObject({ code: "invalid_input" });
+    await expect(api.create(input({ pricing: { basis: "final", tax: "none", lineItems: [] } as unknown as PhisPaymentPricing }))).rejects.toMatchObject({ code: "invalid_input" });
+  });
+  it("accepts provider additions under the policy, measures funds against the total and binds it at capture", async () => {
+    const api = await service(); const pricing = { ...netPricing, promotionCodes: "none" as const };
+    const result = await api.create(input({ amount: { currency: "CHF", minor: "2000" }, pricing }));
+    expect(result.payment.totals).toBeNull(); expect(result.payment.pricing).toEqual(pricing);
+    const state = remote.states.get(result.payment.id)!; const id = result.payment.id;
+    const customer = { country: "CH", postalCode: "8000", region: null, addressSource: "billing" as const, taxIds: [] };
+    state.totals = { total: { currency: "CHF", minor: "2162" }, customer, additions: [
+      addition("tax", "162", { label: "MwSt", rate: "8.1", jurisdiction: "CH" }), addition("shipping", "500"), addition("discount", "500", { code: "promo-spring" }),
+    ] };
+    await api.refresh(id); expect((await api.get(id))!.totals).toMatchObject({ total: { minor: "2162" }, frozenAt: null, customer });
+    state.status = "captured"; state.capturedMinor = "2162"; state.checkout = null;
+    await api.refresh(id);
+    const captured = (await api.get(id))!; expect(captured.capturedMinor).toBe("2162"); expect(captured.totals!.frozenAt).not.toBeNull();
+    // Consistent arithmetic, but the bound total may not move any more.
+    state.totals = { ...state.totals, total: { currency: "CHF", minor: "2161" }, additions: [addition("tax", "161"), addition("shipping", "500"), addition("discount", "500", { code: "promo-spring" })] };
+    await expect(api.refresh(id)).rejects.toMatchObject({ code: "provider_unavailable" });
+    expect((await api.get(id))!.totals!.total.minor).toBe("2162");
+    state.totals = captured.totals && { total: captured.totals.total, additions: captured.totals.additions, customer: captured.totals.customer };
+    const refund = await api.refund({ paymentId: id, idempotencyKey: randomUUID(), minor: "1081", reason: "Half" });
+    state.refunds[0]!.additions = [addition("tax", "81", { label: "MwSt" })];
+    await api.refresh(id); expect((await api.getRefund(refund.refund!.id))!.additions).toEqual([addition("tax", "81", { label: "MwSt" })]);
+  });
+  it("refuses additions the policy did not allow, missing stated discounts and settled funds without a total", async () => {
+    const api = await service();
+    const fixed = await api.create(input()); const fixedState = remote.states.get(fixed.payment.id)!;
+    fixedState.totals = { total: { currency: "CHF", minor: "2151" }, additions: [addition("tax", "161")], customer: null };
+    await expect(api.refresh(fixed.payment.id)).rejects.toMatchObject({ code: "provider_unavailable" });
+    const pricing = { ...netPricing, promotionCodes: "none" as const };
+    const result = await api.create(input({ amount: { currency: "CHF", minor: "2000" }, pricing })); const state = remote.states.get(result.payment.id)!;
+    const shipping = addition("shipping", "500"); const stated = addition("discount", "500", { code: "promo-spring" });
+    for (const totals of [
+      { total: { currency: "CHF", minor: "2000" }, additions: [shipping], customer: null },
+      { total: { currency: "CHF", minor: "1900" }, additions: [shipping, stated, addition("discount", "100", { code: "WELCOME" })], customer: null },
+      { total: { currency: "CHF", minor: "2162" }, additions: [addition("tax", "162", { inclusive: true }), shipping, stated], customer: null },
+      { total: { currency: "CHF", minor: "2162" }, additions: [addition("tax", "162", { collectedBy: "provider" }), shipping, stated], customer: null },
+      { total: { currency: "CHF", minor: "2163" }, additions: [addition("tax", "162"), shipping, stated], customer: null },
+    ]) {
+      state.totals = totals; await expect(api.refresh(result.payment.id)).rejects.toMatchObject({ code: "provider_unavailable" });
+      expect((await api.get(result.payment.id))!.totals).toBeNull();
+    }
+    state.totals = null; state.status = "captured"; state.capturedMinor = "2000"; state.checkout = null;
+    await expect(api.refresh(result.payment.id)).rejects.toMatchObject({ code: "provider_unavailable" });
+    expect((await api.get(result.payment.id))!.status).toBe("awaiting_customer");
   });
   it("retired profiles reject new payments and preserve access to existing evidence", async () => {
     const api = await service(); const args = input(); const result = await api.create(args); const pool = await requirePhiTestDatabase();

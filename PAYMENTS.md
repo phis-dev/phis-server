@@ -1,6 +1,7 @@
 # Payment Service and Capabilities
 
-**Status: approved v1 contract, Core execution implemented in the workspace.** Approved on 2026-10-04.
+**Status: approved v1 contract, Core execution implemented in the workspace.** Approved on 2026-10-04;
+the pricing extension of section 12 (provider-added tax, shipping and discounts) was approved and built on 2026-11-02.
 The consumer and Provider types are exported from `@phis/contracts/payments` and `/addon`. Core now
 binds both capabilities, resolves statically installed Providers, persists merchant profiles/grants,
 payments, commands, refunds and verified receipts, and routes `payment.changed` to the owning consumer.
@@ -102,7 +103,9 @@ export type PhisPaymentOperationId = string;
 export type PhisPaymentRefundId = string;
 
 export type PhisPaymentMoney = {
+  /** Uppercase ISO currency code; one agreed currency for the whole payment. */
   currency: string;
+  /** Canonical non-negative integer string of minor units, never floating-point money. */
   minor: string;
 };
 
@@ -116,6 +119,7 @@ export type PhisPaymentFeatures = {
   canCancel: boolean;
   canRefund: boolean;
   canPartialRefund: boolean;
+  pricing: PhisPaymentPricingFeatures;
 };
 
 export type PhisPaymentMethod = {
@@ -154,7 +158,10 @@ export type PhisPayment = {
   reference: string;
   profileKey: string;
   mode: "test" | "live";
+  /** The consumer's base amount; the customer pays `totals.total` once the Provider reports it. */
   amount: PhisPaymentMoney;
+  pricing: PhisPaymentPricing;
+  totals: PhisPaymentTotals | null;
   captureMode: PhisPaymentCaptureMode;
   status: PhisPaymentStatus;
   authorizedMinor: string;
@@ -194,6 +201,8 @@ export type PhisPaymentRefund = {
   id: PhisPaymentRefundId;
   paymentId: PhisPaymentId;
   amount: PhisPaymentMoney;
+  /** The tax or discount share of this refund when the Provider reports one; informational. */
+  additions: readonly PhisPaymentAddition[] | null;
   status: "pending" | "succeeded" | "failed" | "canceled";
 };
 
@@ -208,6 +217,7 @@ export type PhisPaymentCreateInput = {
   reference: string;
   idempotencyKey: string;
   amount: PhisPaymentMoney;
+  pricing: PhisPaymentPricing;
   description: string;
   captureMode: PhisPaymentCaptureMode;
   methodKey: string | null;
@@ -226,22 +236,300 @@ export interface PhisPaymentsCapabilityV1 {
     amount: PhisPaymentMoney;
     captureMode: PhisPaymentCaptureMode;
     checkoutKind: PhisPaymentCheckoutKind;
+    pricing: PhisPaymentPricingSelector;
   }): Promise<readonly PhisPaymentMethod[]>;
+  /** Core binds Site/consumer/profile; the consumer checks access to its business resource. */
   create(input: PhisPaymentCreateInput): Promise<PhisPaymentCommandResult>;
   get(paymentId: PhisPaymentId): Promise<PhisPayment | null>;
   getOperation(operationId: PhisPaymentOperationId): Promise<PhisPaymentOperation | null>;
   getRefund(refundId: PhisPaymentRefundId): Promise<PhisPaymentRefund | null>;
+  /** Customer continuation; never captures a manually authorized payment. */
   complete(input: PhisPaymentCommandInput): Promise<PhisPaymentCommandResult>;
+  /** Explicit bounded reconciliation that may update state and enqueue a consumer event. */
   refresh(paymentId: PhisPaymentId): Promise<PhisPayment | null>;
+  /** One final merchant-authorized capture; minor units inherit the stored currency. */
   capture(input: PhisPaymentCommandInput & {
     minor: string;
   }): Promise<PhisPaymentCommandResult>;
   cancel(input: PhisPaymentCommandInput): Promise<PhisPaymentCommandResult>;
+  /** Merchant-authorized refund; pending/unknown amounts reserve the captured balance. */
   refund(input: PhisPaymentCommandInput & {
     minor: string;
     reason: string;
   }): Promise<PhisPaymentCommandResult>;
 }
+
+export type PhisPaymentProviderConfigV1 = {
+  profileKey: string;
+  mode: "test" | "live";
+  merchantIdentity: string | null;
+};
+
+export type PhisPaymentProviderContextV1 = {
+  providerKey: string;
+  readCredentials(): Promise<Readonly<Record<string, string>> | null>;
+};
+
+export type PhisPaymentProviderBinding = {
+  reference: string;
+  data: Readonly<Record<string, string>>;
+};
+
+export type PhisPaymentProviderProbe = {
+  merchantIdentity: string;
+  mode: "test" | "live";
+  methods: readonly Omit<PhisPaymentMethod, "profileKey">[];
+};
+
+export type PhisPaymentProviderObservation = {
+  binding: PhisPaymentProviderBinding;
+  merchantIdentity: string;
+  mode: "test" | "live";
+  status: PhisPaymentStatus;
+  /** The base amount as created; a Provider never changes it. */
+  amount: PhisPaymentMoney;
+  /** Null only while the Provider cannot yet know the total; required from `authorized` on. */
+  totals: PhisPaymentObservedTotals | null;
+  authorizedMinor: string;
+  capturedMinor: string;
+  authorizationExpiresAt: string | null;
+  checkout: PhisPaymentCheckoutPlan | null;
+  /** Complete refund observations, including remote refunds created outside Core. */
+  refunds: readonly {
+    operationId: PhisPaymentOperationId | null;
+    binding: PhisPaymentProviderBinding;
+    minor: string;
+    status: PhisPaymentRefund["status"];
+    additions: readonly PhisPaymentAddition[] | null;
+  }[];
+};
+
+export type PhisPaymentProviderCommand = {
+  operationId: PhisPaymentOperationId;
+  paymentId: PhisPaymentId;
+  providerIdempotencyKey: string;
+  signal: AbortSignal;
+} & (
+  | {
+      action: "create";
+      amount: PhisPaymentMoney;
+      pricing: PhisPaymentPricing;
+      description: string;
+      captureMode: PhisPaymentCaptureMode;
+      methodKey: string | null;
+      checkoutKind: PhisPaymentCheckoutKind;
+      returnUrl: string;
+      notificationUrl: string;
+    }
+  | { action: "complete" | "cancel"; binding: PhisPaymentProviderBinding }
+  | { action: "capture"; binding: PhisPaymentProviderBinding; minor: string }
+  | { action: "refund"; binding: PhisPaymentProviderBinding; minor: string; reason: string }
+);
+
+export type PhisPaymentProviderExecution =
+  | {
+      outcome: "applied" | "pending";
+      observation: PhisPaymentProviderObservation;
+    }
+  | { outcome: "rejected"; code: PhisPaymentErrorCode }
+  | { outcome: "unknown" };
+
+export type PhisPaymentProviderNotification =
+  | { outcome: "verified"; deliveryId: string; reference: string }
+  | { outcome: "lookup-required"; reference: string }
+  | { outcome: "irrelevant" }
+  | { outcome: "rejected" }
+  | { outcome: "unavailable" };
+
+export interface PhisPaymentProviderV1 {
+  probe(input: {
+    amount: PhisPaymentMoney;
+    captureMode: PhisPaymentCaptureMode;
+    checkoutKind: PhisPaymentCheckoutKind;
+    pricing: PhisPaymentPricingSelector;
+    signal: AbortSignal;
+  }): Promise<PhisPaymentProviderProbe>;
+  execute(input: PhisPaymentProviderCommand): Promise<PhisPaymentProviderExecution>;
+  observe(input: {
+    binding: PhisPaymentProviderBinding;
+    signal: AbortSignal;
+  }): Promise<PhisPaymentProviderObservation>;
+  /** Recover the same command; never replace its key, merchant, mode or Provider. */
+  recover(input: {
+    command: PhisPaymentProviderCommand;
+    binding: PhisPaymentProviderBinding | null;
+  }): Promise<PhisPaymentProviderExecution>;
+  verifyNotification(input: {
+    method: string;
+    headers: Readonly<Record<string, string>>;
+    body: Uint8Array;
+    signal: AbortSignal;
+  }): Promise<PhisPaymentProviderNotification>;
+}
+
+export interface PhisPaymentNotificationsCapabilityV1 {
+  receive(input: {
+    profileKey: string;
+  }): Promise<{ outcome: "processed" | "duplicate" | "ignored" }>;
+}
+
+export type PhisPaymentGrantedOperation =
+  | "read"
+  | "create"
+  | "complete"
+  | "refresh"
+  | "capture"
+  | "cancel"
+  | "refund";
+
+export type PhisPaymentMerchantActionPolicy = {
+  roles: readonly string[];
+  jobs: readonly string[];
+  events: readonly string[];
+};
+
+export type PhisPaymentProfileGrant = {
+  consumerAddonId: string;
+  operations: readonly PhisPaymentGrantedOperation[];
+  merchantActions: {
+    capture: PhisPaymentMerchantActionPolicy;
+    cancel: PhisPaymentMerchantActionPolicy;
+    refund: PhisPaymentMerchantActionPolicy;
+  };
+};
+
+/** Operator-controlled references and grants; contains no credential values. */
+export type PhisPaymentProfileDraft = {
+  key: string;
+  providerKey: string;
+  mode: "test" | "live";
+  credentialReferences: Readonly<Record<string, string>>;
+  grants: readonly PhisPaymentProfileGrant[];
+};
+
+/** A payment event reaches only the consuming Add-on stored on that payment. */
+export type PhisPaymentChangedEventFacts = {
+  event: "payment.changed";
+  subject: {
+    kind: "payment";
+    paymentId: PhisPaymentId;
+    reference: string;
+    version: number;
+    operationId: PhisPaymentOperationId | null;
+    refundId: PhisPaymentRefundId | null;
+  };
+};
+
+/*
+ * Pricing: how a consumer lets a Provider add tax, shipping and discounts to its base amount, and how
+ * the Provider reports the customer's total with its parts. PAYMENTS.md section 12 states the rules Core
+ * enforces; a Provider documents its mapping of the closed tax-category vocabulary to its own codes.
+ */
+
+export type PhisPaymentPricingBasis = "final" | "net";
+export type PhisPaymentTaxHandling = "none" | "provider" | "merchant-of-record";
+export type PhisPaymentPromotionCodes = "none" | "provider";
+
+/** What is sold, never a rate; each Provider maps the closed vocabulary to its own codes. */
+export type PhisPaymentTaxCategory =
+  | "general"
+  | "reduced-goods"
+  | "digital-goods"
+  | "digital-service"
+  | "service"
+  | "shipping"
+  | "exempt";
+
+export type PhisPaymentLineItem = {
+  reference: string;
+  description: string;
+  quantity: number;
+  unitMinor: string;
+  taxCategory: PhisPaymentTaxCategory;
+  /** Provider-specific code overriding the category mapping, keyed by provider key. */
+  providerTaxCodes: Readonly<Record<string, string>> | null;
+};
+
+/** A reduction the consumer decided; the Provider shows it and taxes the reduced amount. */
+export type PhisPaymentDiscount = {
+  reference: string;
+  label: string;
+  minor: string;
+};
+
+export type PhisPaymentCustomerDetails = {
+  country: string;
+  postalCode: string | null;
+  region: string | null;
+  addressSource: "billing" | "shipping";
+  taxIds: readonly { type: string; value: string }[];
+};
+
+/**
+ * `final`/`none` is v1: the base amount is what the customer pays and the Provider adds nothing. Every
+ * other policy carries line items; the base amount then equals their sum plus shipping minus discounts.
+ */
+export type PhisPaymentPricing =
+  | { basis: "final"; tax: "none" }
+  | {
+      basis: PhisPaymentPricingBasis;
+      tax: PhisPaymentTaxHandling;
+      lineItems: readonly PhisPaymentLineItem[];
+      shipping: { minor: string; taxCategory: "shipping" } | null;
+      discounts: readonly PhisPaymentDiscount[];
+      promotionCodes: PhisPaymentPromotionCodes;
+      customer: PhisPaymentCustomerDetails | null;
+    };
+
+/** The facts of a policy a method must support; `discounts` is the number of stated discounts. */
+export type PhisPaymentPricingSelector = {
+  basis: PhisPaymentPricingBasis;
+  tax: PhisPaymentTaxHandling;
+  discounts: number;
+  promotionCodes: PhisPaymentPromotionCodes;
+};
+
+export type PhisPaymentPricingFeatures = {
+  /** Always includes `final`. */
+  bases: readonly PhisPaymentPricingBasis[];
+  /** Always includes `none`. */
+  tax: readonly PhisPaymentTaxHandling[];
+  /** How many stated discounts one payment may carry; 0 when the Provider shows none. */
+  maxDiscounts: number;
+  /** Whether a customer may enter a code on the Provider's page, and whether next to stated discounts. */
+  promotionCodes: "none" | "alone" | "with-discounts";
+  collectsCustomerDetails: boolean;
+  collectsTaxIds: boolean;
+};
+
+export type PhisPaymentAdditionKind = "tax" | "shipping" | "discount";
+
+export type PhisPaymentAddition = {
+  kind: PhisPaymentAdditionKind;
+  minor: string;
+  label: string;
+  /** Contained in the base amount rather than added to it; a `discount` is never inclusive. */
+  inclusive: boolean;
+  /** Display-only decimal string such as "8.1"; never enters Core arithmetic. */
+  rate: string | null;
+  /** ISO country code, optionally followed by "-" and a region. */
+  jurisdiction: string | null;
+  /** Who owes a tax addition to the authority: the merchant, or the Provider as Merchant of Record. */
+  collectedBy: "merchant" | "provider";
+  /** The promotion code or stated discount reference behind a `discount`; null for every other kind. */
+  code: string | null;
+};
+
+export type PhisPaymentObservedTotals = {
+  total: PhisPaymentMoney;
+  additions: readonly PhisPaymentAddition[];
+  customer: PhisPaymentCustomerDetails | null;
+};
+
+export type PhisPaymentTotals = PhisPaymentObservedTotals & {
+  /** Set by Core when the total became binding; a differing total afterwards is an inconsistency. */
+  frozenAt: string | null;
+};
 ```
 
 Money uses an uppercase ISO currency code and a canonical non-negative integer string of minor units:
@@ -313,8 +601,9 @@ requests. Pending and indeterminate refunds reserve their amount so concurrent c
 the captured balance. A failed/canceled refund releases its reservation only after an authoritative
 result. A full refund does not turn the original payment into a failed or canceled payment.
 
-Core enforces same currency, non-negative totals, captured amount no greater than the agreed amount,
-and successful plus reserved refunds no greater than captured funds. Fulfilment remains the consumer's
+Core enforces same currency, non-negative totals, captured amount no greater than the customer's total
+(section 12; under the fixed-total policy that is the agreed amount), and successful plus reserved
+refunds no greater than captured funds. Fulfilment remains the consumer's
 decision: it checks the captured amount against its own amount due, not merely the state name.
 Captured funds are not a claim of payout completion or immunity from later disputes. Payouts,
 settlement accounting, subscriptions, saved cards, dispute workflows and platform commissions are
@@ -646,6 +935,82 @@ approved first implementation scope. Deployment and external notification verifi
 Provider-specific public UI schemas and external Medusa backend exposure remain later contracts.
 The first implementation retains financial records and offers no destructive purge; an administrative
 retention/export policy is required before such an operation is introduced.
+
+## 12. Pricing: provider-added tax, shipping and discounts
+
+`amount` is the consumer's **base amount**. A pricing policy, stated on create and immutable afterwards,
+says whether the customer pays exactly that amount or whether the Provider adds to it. The policy
+types are in section 4; the vocabulary is provider-neutral, and each Provider documents its mapping
+of the closed tax-category vocabulary to its own codes.
+
+| `basis` | `tax` | Meaning | Customer's total |
+| --- | --- | --- | --- |
+| `final` | `none` | v1 behaviour; no line items; the default and the only policy every Provider must support | equals the base amount |
+| `final` | `provider` | gross prices; the Provider reports the tax included | equals the base amount; tax additions are `inclusive` |
+| `net` | `provider` | net prices; the Provider adds tax on top | base plus exclusive additions |
+| any | `merchant-of-record` | the Provider is the legal seller and owes the tax | as above; tax additions are `collectedBy: "provider"` |
+
+Every policy but `final`/`none` carries line items with a tax category each, shipping as a line of its
+own, the consumer's stated discounts and whether the customer may enter a promotion code on the
+Provider's page. The base amount then equals the lines' sum plus shipping minus the stated discounts;
+Core refuses a create whose `amount` disagrees with its own lines. A tax category names what is sold,
+never a rate; a consumer that needs a finer Provider code sets it in `providerTaxCodes` under that
+Provider's key. `exempt` is a consumer assertion. Reverse charge is detected by the Provider from the
+customer's tax ids and reported as a zero tax addition. Gift cards, store credit and loyalty balances
+are consumer state: the consumer lowers a unit price or states a discount, and Core keeps no balance.
+
+**Ownership does not move.** The consumer keeps catalogue, prices, tax categories, listing mode, orders
+and receipts; it delegates the arithmetic under rules it states. Core stores policy, total and
+additions and enforces the rules below. The Provider translates; its method features (`pricing`)
+declare which bases, tax handlings, how many stated discounts and which promotion-code arrangement it
+supports, and `listMethods` filters by them. On the Medusa path totals already contain tax and arrive
+under `final`/`none` (design/COMMERCE_AND_PAYMENTS.md section 7).
+
+**Create.** Core validates the policy's shape and bounds (at most 200 lines, 20 discounts, 8 tax ids,
+8 Provider code overrides per line, texts of 200 characters), requires the selected method's features
+to cover it (`method_unavailable` otherwise), stores it in the payment record and passes it to the
+Provider's create command. The policy is part of the idempotent request.
+
+**Observation.** `amount` must still equal the stored base amount; a Provider never changes it.
+`totals` may be `null` only while nothing is authorized or captured and no total is bound yet; from
+`authorized` or `captured` on it is required. When present, Core checks:
+
+- Under `final`/`none` there are no additions and the total equals the base amount.
+- A `tax` addition exists only when the policy's tax handling is not `none`; it is `inclusive`
+  exactly under `basis: "final"`, and `collectedBy` is `provider` under `merchant-of-record` and
+  `merchant` otherwise.
+- A `shipping` addition is `inclusive`, appears once, and only with the policy's shipping line, whose
+  amount it repeats.
+- Every stated discount appears exactly once as a `discount` addition whose `code` is its reference
+  and whose amount is the stated one. A further `discount` addition is admitted only under
+  `promotionCodes: "provider"` and carries the customer's code. All discounts together are at most
+  the lines plus shipping.
+- The total equals the base amount plus exclusive `tax` additions minus the discounts that are not
+  stated ones (those are already inside the base amount). Inclusive additions sum to at most the total.
+- Authorized and captured minors are at most the total (the base amount while no total is known).
+
+While a total is not bound, a later observation may replace it: a hosted page recomputes tax when the
+customer changes the address. Core binds the total (`frozenAt`) the first time it stores an
+observation in `authorized` or `captured`; afterwards a differing total, additions or customer
+details fail the observation like a differing base amount does, and stored facts stay untouched.
+
+**Refunds** are issued against captured money, which includes tax. A Provider that knows a refund's
+tax or discount share reports it as the refund's `additions`; Core stores it, requires it to be at
+most the refund's amount and never to change once reported, and derives nothing from it.
+
+**Consumers** read `totals` from the payment after `payment.changed`, keep it verbatim next to their
+own lines, and use `totals.total` rather than recomputing it. When a tax addition says
+`collectedBy: "provider"`, the receipt names the Provider as the seller of record. An export order
+whose import charges the carrier collects on delivery uses `final`/`none` and states that on the
+order; the payment carries no tax.
+
+**Persistence.** Policy and totals are members of the payment record; a refund's additions are
+members of the refund record. The `phis.payments` check constraint measures captured funds against the
+total when one is present and against the base amount otherwise ([DB.md](./DB.md#phispayments)).
+
+Subscriptions, saved payment methods, multiple captures, platform commissions and disputes remain
+outside this contract (section 5); they are other kinds of extension, not richer amounts. The first
+Provider mapping is in [PAYMENTS_STRIPE.md](./PAYMENTS_STRIPE.md) section 8.
 
 ## References
 

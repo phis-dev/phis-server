@@ -74,7 +74,8 @@ export async function runPhisPaymentProfileCommand(root: string, pool: Pool, com
   const adapter = await resolvePaymentProvider(root, pool, profile, selectedSite.key, readSecret);
   const currency = typeof flags.get("currency") === "string" ? flag(flags, "currency") : "CHF";
   validatePhisPaymentMoney({ currency, minor: "100" });
-  const probe = validatePhisPaymentProviderProbe(await adapter.probe({ amount: { currency, minor: "100" }, captureMode: "automatic", checkoutKind: "redirect", signal: AbortSignal.timeout(PHIS_PAYMENT_CALL_TIMEOUT_MS) }), profile);
+  const probe = validatePhisPaymentProviderProbe(await adapter.probe({ amount: { currency, minor: "100" }, captureMode: "automatic", checkoutKind: "redirect",
+    pricing: { basis: "final", tax: "none", discounts: 0, promotionCodes: "none" }, signal: AbortSignal.timeout(PHIS_PAYMENT_CALL_TIMEOUT_MS) }), profile);
   if (probe.methods.length === 0) throw new PhisPaymentError("method_unavailable");
   await recordPhisPaymentProfileProbe(pool, profile, probe.merchantIdentity, probe.mode, probe.methods);
   if (command === "enable") {
