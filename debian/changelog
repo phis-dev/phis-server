@@ -1,3 +1,16 @@
+phis (0.2.5-1) unstable; urgency=medium
+
+  * Payments: a Provider may complete the price with tax, shipping and discounts. Core validates the
+    pricing policy at create, filters methods by their pricing features, checks totals on every
+    Observation, freezes the total at authorisation or capture and carries additions on refunds. The
+    payments table's CHECKs changed (a `pricing` object, captured up to the validated total): an
+    existing database needs them replaced by hand, `schema apply` does not alter them.
+  * notifications:v1 for Add-ons: occasions declared in the manifest, notify() reaches a Site member or
+    a contact; Core renders salutation, frame and Site link and sends through the outbox.
+  * Built against @phis/contracts 0.7.0.
+
+ -- Phisys Ltd. <debian@phisys.com>  Wed, 04 Nov 2026 18:30:00 +0000
+
 phis (0.2.4-1) unstable; urgency=medium
 
   * deepl.formality (prefer_more or prefer_less) asks DeepL for one address form, so a store shared by
