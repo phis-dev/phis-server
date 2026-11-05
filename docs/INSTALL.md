@@ -35,8 +35,12 @@ examples below assume the variable is exported.
   under React Flight rendering and run out of memory under load. `@phis/server` declares
   `"engines": {"node": ">=24.21.0"}`, a generated Site the same, the Debian package depends on
   `nodejs (>= 24.21.0)`, and the server's setup page fails its Node check below that.
-- **pnpm** (the workspace pins `pnpm@11.9.0`; `@phis/server` declares it in `devEngines`, so `npm`
-  refuses to run its scripts). A Site can use npm, yarn or bun instead; see
+- **No package manager for the server itself** when it is installed from the Debian package or the
+  package tarball: the server and the `phis` CLI run on Node alone. **pnpm** is needed only to build the
+  server from the source workspace (the workspace pins `pnpm@11.9.0`; `@phis/server` declares it in
+  `devEngines`, so npm refuses to run the repository's own scripts).
+- **A package manager for each Site**, which `phis init` and `phis update` run in the Site's directory:
+  **npm** by default for a new Site, or yarn, bun or pnpm if the Site uses one; see
   [Package manager](./CLI.md#package-manager).
 - **PostgreSQL** with the `pg_trgm` extension available (Debian: part of the `postgresql`
   package). `pg_trgm` is a trusted extension, so a role with `CREATE` on the database can install it.
