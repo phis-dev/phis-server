@@ -1,0 +1,15 @@
+#!/bin/sh
+set -e
+
+# On remove, the running instances stop with the code they run: the unit file and the server go with the
+# package, and a process left behind would serve from a directory that no longer exists. An upgrade does
+# not stop them here; postinst restarts them once the new release is in place.
+case "$1" in
+  remove|deconfigure)
+    if [ -d /run/systemd/system ]; then
+      systemctl stop 'phis@*.service' >/dev/null 2>&1 || true
+    fi
+    ;;
+esac
+
+exit 0

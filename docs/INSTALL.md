@@ -37,7 +37,9 @@ examples below assume the variable is exported.
   `nodejs (>= 24.21.0)`, and the server's setup page fails its Node check below that. Neither Debian 13
   (trixie) nor Ubuntu 24.04 (noble) ships Node 24 in its own archive; install it from
   [NodeSource](https://github.com/nodesource/distributions) first, whose `nodejs` package satisfies that
-  dependency.
+  dependency. Without it `apt install phis` stops on the unmet dependency, because noble's own `nodejs`
+  is 18; a host whose NodeSource Node is older than 24.21 gets it upgraded along with the package, and
+  services already running on the old Node keep it until they restart.
 - **No package manager for the server itself** when it is installed from the Debian package or the
   package tarball: the server and the `phis` CLI run on Node alone. **pnpm** is needed only to build the
   server from the source workspace (the workspace pins `pnpm@11.9.0`; `@phis/server` declares it in
@@ -529,7 +531,9 @@ Secrets the Add-on declares are stored with `phis secret set --addon @acme/statu
 ### Server
 
 Install the new server release -- `sudo apt update && sudo apt install phis` from the Debian package, or
-pull and rebuild the workspace (step 2) from source -- then:
+pull and rebuild the workspace (step 2) from source. The Debian package restarts every running
+`phis@<stage>` instance itself once the new release is in place, one after the other; from source the
+restart below is yours. Then:
 
 ```sh
 phis schema apply
@@ -538,7 +542,7 @@ phis addon migrate
 phis addon reconcile
 ```
 
-Restart the server instances one by one (`phis instance drain` first), check
+From source, restart the server instances one by one (`phis instance drain` first). Then check
 `phis instance list`, and run `phis site check --key acme` against each Site.
 
 ### Site

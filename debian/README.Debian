@@ -9,7 +9,10 @@ Releases are built by the GitHub release workflow and published to
 `arm64`. One build per architecture serves both distributions; each gets its
 own changelog entry and version, `<version>+<distribution>`, stamped at build
 time and never committed. Installing from the repository is described in
-`docs/INSTALL.md`, step 2.
+the installation guide, step 2, which the package carries as
+`/usr/share/doc/phis/INSTALL.md.gz` beside the CLI reference `CLI.md.gz`
+(`zless` reads both); the current version is
+https://github.com/phis-dev/phis-server/blob/main/docs/INSTALL.md.
 
 Node 24.21 or later comes from NodeSource: neither trixie nor noble carries it
 in its own archive.
@@ -47,6 +50,24 @@ rendering fixed in Node 24.21).
 No runtime configuration is stored under `/etc/phis`. Stage-local mutable state
 belongs under `/srv/phis/stages/<stage>/`, while `phis-host` keeps its own host
 configuration under `/var/lib/phis/phis-host/`.
+
+Installing, upgrading, removing
+-------------------------------
+
+- A fresh install starts nothing: the stage needs a database and a configuration
+  first. `systemctl enable --now phis@prod.service` follows the configuration
+  (installation guide, step 4).
+- An upgrade restarts every running `phis@<stage>` instance, one after the
+  other, once the new release is in place. A process left running would hold
+  the previous release in memory while the files on disk are the new one's.
+  Instances that were stopped stay stopped. The schema is not applied by the
+  package: run `phis schema apply` and the Add-on steps after the upgrade
+  (installation guide, step 11).
+- Remove stops the running instances.
+- Purge also drops the instances' `multi-user.target.wants` links. It leaves
+  the `phis` account and `/srv/phis` in place: they hold each stage's
+  configuration, secrets and Local media, which are the installation's data,
+  not the package's. Remove them by hand when the data is no longer needed.
 
 Server Actions encryption key
 -----------------------------

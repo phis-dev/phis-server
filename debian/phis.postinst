@@ -97,6 +97,18 @@ case "$1" in
     if command -v systemctl >/dev/null 2>&1; then
       systemctl daemon-reload >/dev/null || true
     fi
+
+    # An upgrade ("$2" names the version it comes from) restarts every running instance, one after the
+    # other. A process left running would keep the previous release in memory while the files under
+    # /usr/lib/phis/server are the new one's, and load a chunk of a build it was not started from. Only
+    # running instances: one an operator stopped stays stopped, and a fresh install starts nothing --
+    # its stage needs a database first (docs/INSTALL.md, step 4). The schema is not applied here;
+    # `phis schema apply` follows the upgrade (step 11).
+    if [ "$1" = configure ] && [ -n "$2" ] && [ -d /run/systemd/system ]; then
+      for unit in $(systemctl list-units --type=service --state=active --no-legend --plain 'phis@*.service' | awk '{print $1}'); do
+        systemctl try-restart "$unit" || echo "phis: restarting $unit failed; see journalctl -u $unit" >&2
+      done
+    fi
     ;;
 esac
 

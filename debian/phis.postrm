@@ -1,0 +1,21 @@
+#!/bin/sh
+set -e
+
+# Purge removes what the package wired into systemd, and nothing of a stage. The `phis` account and
+# /srv/phis hold the stages' configuration, secrets and Local media: they are an installation's data,
+# not the package's, and are left for the operator to remove (README.Debian, "Removing the package").
+case "$1" in
+  purge)
+    rm -f /etc/systemd/system/multi-user.target.wants/phis@*.service
+    if [ -d /run/systemd/system ]; then
+      systemctl daemon-reload >/dev/null 2>&1 || true
+    fi
+    ;;
+  remove)
+    if [ -d /run/systemd/system ]; then
+      systemctl daemon-reload >/dev/null 2>&1 || true
+    fi
+    ;;
+esac
+
+exit 0

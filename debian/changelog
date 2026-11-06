@@ -6,6 +6,10 @@ phis (0.2.7-1) unstable; urgency=medium
     the configuration, even after a chmod by hand. postinst sets 0600 on every configure, which corrects
     an existing stage on upgrade. A write as root (an operator running phis) gives the file the owner
     and group of the file it replaces, or of config/, so the stage account can still read it.
+  * Packaging: an upgrade restarts every running phis@<stage> instance once the new release is in
+    place; remove stops them; purge drops their wants links and leaves the phis account and /srv/phis,
+    the stages' data. The installation guide and the CLI reference ship under /usr/share/doc/phis.
+  * INSTALL: without NodeSource, apt install stops on the unmet nodejs dependency (noble carries 18).
 
  -- Phisys Ltd. <debian@phisys.com>  Fri, 06 Nov 2026 16:43:25 +0000
 

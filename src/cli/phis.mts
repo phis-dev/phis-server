@@ -221,7 +221,7 @@ Usage:
   Flags: --flag value or --flag=value. A flag that takes a value always takes the next word, so
   --password -x works; a switch takes none. A flag the command does not read is refused.
   Environment: PHIS_ROOT, PHIS_APP_ROOT, PHIS_INSTANCE_ID, PHIS_SKIP_VERSION_CHECK=1.
-  Reference: docs/CLI.md
+  Reference: docs/CLI.md; installed from the Debian package, /usr/share/doc/phis/CLI.md.gz.
 
   phis config
   phis config paths
