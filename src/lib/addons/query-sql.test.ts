@@ -372,6 +372,37 @@ describe("searching text", () => {
     );
   });
 
+  const flagsCatalog = (match: "all" | "none", mask: unknown) => ({
+    parameters: { find: [] },
+    queries: [{
+      kind: "select",
+      name: "find",
+      table: "offering",
+      where: { kind: "flags", column: "rank", mask, match },
+      limit: 25,
+    }],
+  }) as unknown as PhisAddonQueryCatalog;
+
+  it("tests the bits of a flags column, every bit or none", () => {
+    const literal = { kind: "literal", value: 1 };
+    const all = compilePhisAddonQueries(SCHEMA, searchSchema, flagsCatalog("all", literal)).get("find")!.sql;
+    const none = compilePhisAddonQueries(SCHEMA, searchSchema, flagsCatalog("none", literal)).get("find")!.sql;
+    expect(all).toMatch(/\("rank" & \$\d+\) = \$\d+/);
+    expect(none).toMatch(/\("rank" & \$\d+\) = 0/);
+  });
+
+  it("refuses a mask of no bits, and a column that is not an integer", () => {
+    const issues: string[] = [];
+    validatePhisAddonQueryCatalog(flagsCatalog("none", { kind: "literal", value: 0 }), searchSchema, "queries", issues);
+    expect(issues.join("\n")).toMatch(/positive integer/);
+    const onText: string[] = [];
+    validatePhisAddonQueryCatalog({
+      ...flagsCatalog("all", { kind: "literal", value: 2 }),
+      queries: [{ ...flagsCatalog("all", { kind: "literal", value: 2 }).queries[0], where: { kind: "flags", column: "title", mask: { kind: "literal", value: 2 }, match: "all" } }],
+    } as unknown as PhisAddonQueryCatalog, searchSchema, "queries", onText);
+    expect(onText.join("\n")).toMatch(/is not an integer column/);
+  });
+
   it("refuses to search a column that does not hold text", () => {
     const issues: string[] = [];
     validatePhisAddonQueryCatalog(

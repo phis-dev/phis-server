@@ -181,6 +181,38 @@ function checkCondition(
     case "isNull":
       checkColumn(context, condition.column, `${where}.column`);
       return;
+    case "flags": {
+      if (checkColumn(context, condition.column, `${where}.column`)) {
+        const declared = context.table.columns.find((column) => column.name === condition.column);
+        const type = declared && !("references" in declared) ? declared.type : undefined;
+        if (type !== "smallInteger" && type !== "integer" && type !== "bigInteger") {
+          context.issues.push(
+            `${context.field}.${where}.column "${condition.column}" is not an integer column. ` +
+            "flags tests the bits of an integer and nothing else.",
+          );
+        }
+      }
+      if (condition.match !== "all" && condition.match !== "none") {
+        context.issues.push(`${context.field}.${where}.match must be "all" or "none".`);
+      }
+      const mask = condition.mask;
+      if (isPhiRecord(mask) && mask.kind === "literal") {
+        if (typeof mask.value !== "number" || !Number.isSafeInteger(mask.value) || mask.value <= 0) {
+          context.issues.push(
+            `${context.field}.${where}.mask must be a positive integer: a mask of no bits matches ` +
+            "every row under all and none alike.",
+          );
+        }
+      } else if (isPhiRecord(mask) && mask.kind === "parameter") {
+        checkValue(context, mask, `${where}.mask`);
+      } else {
+        context.issues.push(
+          `${context.field}.${where}.mask must be a parameter or a literal: an actor id and the ` +
+          "current instant are not bits.",
+        );
+      }
+      return;
+    }
     case "contains": {
       if (checkColumn(context, condition.column, `${where}.column`)) {
         // Core's scope columns are readable but hold ids, and none of them is text -- a `find` returns

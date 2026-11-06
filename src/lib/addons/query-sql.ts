@@ -169,6 +169,15 @@ function conditionSql(
       return `${quotePhiIdentifier(condition.column)} IS ${condition.negated ? "NOT " : ""}NULL`;
     case "contains":
       return containsSql(compiler, condition.column, condition.value);
+    case "flags": {
+      // The mask is placed again for `all` rather than reused, which the compiler allows: each `place`
+      // binds it under its own number, and one call resolves both from the same argument.
+      const column = quotePhiIdentifier(condition.column);
+      const masked = `(${column} & ${valueSql(compiler, condition.mask)})`;
+      return condition.match === "all"
+        ? `${masked} = ${valueSql(compiler, condition.mask)}`
+        : `${masked} = 0`;
+    }
     case "in": {
       if (condition.parameter !== undefined) {
         /*
