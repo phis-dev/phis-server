@@ -9,6 +9,8 @@ phis (0.2.7-1) unstable; urgency=medium
   * Packaging: an upgrade restarts every running phis@<stage> instance once the new release is in
     place; remove stops them; purge drops their wants links and leaves the phis account and /srv/phis,
     the stages' data. The installation guide and the CLI reference ship under /usr/share/doc/phis.
+  * Packaging: a stop is no failure; the unit takes the server's exit status 143 on SIGTERM as success.
+    Purge removes the proxy templates postinst copied, unless changed or enabled.
   * INSTALL: without NodeSource, apt install stops on the unmet nodejs dependency (noble carries 18).
 
  -- Phisys Ltd. <debian@phisys.com>  Fri, 06 Nov 2026 16:43:25 +0000

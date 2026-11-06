@@ -17,6 +17,9 @@ ExecStart=/usr/bin/node /usr/lib/phis/server/server.js
 # Stop reporting ready before the process goes, so the proxy drops this instance first. Tolerated
 # on failure: a shutdown must not hang on a database that is already gone.
 ExecStop=-/usr/bin/phis --root /srv/phis/stages/%i instance drain
+# The server ends on SIGTERM with status 143 (128 + 15); that is the stop systemd asked for, not a
+# failure. Without it every stop, remove and upgrade restart leaves the unit "failed".
+SuccessExitStatus=143
 Restart=on-failure
 RestartSec=5
 NoNewPrivileges=true

@@ -1,11 +1,37 @@
 #!/bin/sh
 set -e
 
-# Purge removes what the package wired into systemd, and nothing of a stage. The `phis` account and
+# Purge removes what the package wired into systemd and the proxy templates it copied, and nothing of a
+# stage. The `phis` account and
 # /srv/phis hold the stages' configuration, secrets and Local media: they are an installation's data,
 # not the package's, and are left for the operator to remove (README.Debian, "Removing the package").
+COPIED_TEMPLATES="/var/lib/phis/package/copied-templates.sha256"
+
+# A proxy template postinst copied into sites-available goes with the package, but only as it was copied:
+# one the operator edited is theirs, and one a sites-enabled link points to would leave the web server
+# with a dangling link on its next reload.
+remove_copied_templates() {
+  [ -f "${COPIED_TEMPLATES}" ] || return 0
+  while read -r checksum path; do
+    [ -f "${path}" ] || continue
+    enabled="$(dirname "$(dirname "${path}")")/sites-enabled/$(basename "${path}")"
+    if [ -e "${enabled}" ] || [ -L "${enabled}" ]; then
+      echo "phis: keeping ${path}, it is enabled" >&2
+      continue
+    fi
+    if [ "$(sha256sum "${path}" | cut -d' ' -f1)" = "${checksum}" ]; then
+      rm -f "${path}"
+    else
+      echo "phis: keeping ${path}, it was changed after installation" >&2
+    fi
+  done < "${COPIED_TEMPLATES}"
+  rm -f "${COPIED_TEMPLATES}"
+  rmdir "$(dirname "${COPIED_TEMPLATES}")" 2>/dev/null || true
+}
+
 case "$1" in
   purge)
+    remove_copied_templates
     rm -f /etc/systemd/system/multi-user.target.wants/phis@*.service
     if [ -d /run/systemd/system ]; then
       systemctl daemon-reload >/dev/null 2>&1 || true

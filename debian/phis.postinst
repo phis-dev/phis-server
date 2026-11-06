@@ -9,6 +9,9 @@ RUNTIME_CONFIG_PATH="${CONFIG_DIR}/phis-runtime.json"
 NGINX_SITE="/etc/nginx/sites-available/phis.conf"
 APACHE_SITE="/etc/apache2/sites-available/phis.conf"
 TEMPLATE_ROOT="/usr/share/phis/templates"
+# The proxy templates this package copied into /etc, with the checksum they had: purge removes one only
+# while it is still unchanged (postrm).
+COPIED_TEMPLATES="/var/lib/phis/package/copied-templates.sha256"
 
 ensure_group() {
   if ! getent group phis >/dev/null 2>&1; then
@@ -37,6 +40,11 @@ ensure_stage_dir() {
 # Server Actions encrypt their bound arguments with a key that "next build" bakes
 # into the artifact. Every installation of the same .deb would otherwise share it,
 # so each stage gets its own and keeps it across upgrades.
+record_copied_template() {
+  install -d -m 0755 "$(dirname "${COPIED_TEMPLATES}")"
+  sha256sum "$1" >> "${COPIED_TEMPLATES}"
+}
+
 ensure_server_actions_key() {
   env_path="$1"
 
@@ -88,10 +96,12 @@ case "$1" in
 
     if [ -d /etc/nginx/sites-available ] && [ ! -e "${NGINX_SITE}" ]; then
       install -m 0644 "${TEMPLATE_ROOT}/nginx/phis.conf" "${NGINX_SITE}"
+      record_copied_template "${NGINX_SITE}"
     fi
 
     if [ -d /etc/apache2/sites-available ] && [ ! -e "${APACHE_SITE}" ]; then
       install -m 0644 "${TEMPLATE_ROOT}/apache2/phis.conf" "${APACHE_SITE}"
+      record_copied_template "${APACHE_SITE}"
     fi
 
     if command -v systemctl >/dev/null 2>&1; then

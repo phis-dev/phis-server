@@ -64,7 +64,9 @@ Installing, upgrading, removing
   package: run `phis schema apply` and the Add-on steps after the upgrade
   (installation guide, step 11).
 - Remove stops the running instances.
-- Purge also drops the instances' `multi-user.target.wants` links. It leaves
+- Purge also drops the instances' `multi-user.target.wants` links and the
+  proxy templates postinst copied into `sites-available`, unless one was
+  changed since or is enabled; those stay and purge says so. It leaves
   the `phis` account and `/srv/phis` in place: they hold each stage's
   configuration, secrets and Local media, which are the installation's data,
   not the package's. Remove them by hand when the data is no longer needed.
