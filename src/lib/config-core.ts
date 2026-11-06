@@ -1,4 +1,4 @@
-import { readFileSync, renameSync, writeFileSync } from "node:fs";
+import { readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 
 export const PHIS_ROOT_ENV = "PHIS_ROOT";
 export const PHIS_DEFAULT_STAGE_ROOT = "/srv/phis/stages/prod";
@@ -404,10 +404,18 @@ export function readMergedPhiConfigSync(configPaths: PhiConfigPaths) {
   );
 }
 
+/**
+ * The runtime file holds the database passwords and the API tokens, so it is readable by its owner alone.
+ * The mode is set where the file is created rather than corrected afterwards: the write replaces the file
+ * by renaming a fresh one over it, which would otherwise carry the umask's mode and undo a `chmod 0600`
+ * an operator made. A temp file an interrupted write left behind is removed first, because `mode` only
+ * applies to a file the write creates.
+ */
 export function writePhiRuntimeConfigSync(configPaths: PhiConfigPaths, config: PhisConfig) {
   const nextContent = `${JSON.stringify(config, null, 2)}\n`;
   const tempPath = `${configPaths.runtime}.tmp`;
-  writeFileSync(tempPath, nextContent, "utf-8");
+  rmSync(tempPath, { force: true });
+  writeFileSync(tempPath, nextContent, { encoding: "utf-8", mode: 0o600 });
   renameSync(tempPath, configPaths.runtime);
 }
 

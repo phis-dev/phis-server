@@ -1,3 +1,13 @@
+phis (0.2.7-1) unstable; urgency=medium
+
+  * Security: config/phis-runtime.json, which holds the database passwords and the API tokens, is
+    written with mode 0600. Every write replaced it with a file carrying the umask's mode (usually
+    0644), so it was world-readable after db bootstrap, the setup pages or any CLI command that writes
+    the configuration, even after a chmod by hand. postinst sets 0600 on every configure, which corrects
+    an existing stage on upgrade.
+
+ -- Phisys Ltd. <debian@phisys.com>  Fri, 06 Nov 2026 16:43:25 +0000
+
 phis (0.2.6-1) unstable; urgency=medium
 
   * Packaging: released for Debian 13 (trixie) and Ubuntu 24.04 (noble), on amd64 and arm64, through

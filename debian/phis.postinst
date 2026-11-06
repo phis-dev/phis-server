@@ -77,7 +77,9 @@ case "$1" in
     ensure_server_actions_key "${STAGE_ENV_PATH}"
 
     chown phis:phis "${STAGE_ROOT}" "${CONFIG_DIR}" "${RUNTIME_CONFIG_PATH}" "${STAGE_ENV_PATH}"
-    chmod 0600 "${STAGE_ENV_PATH}"
+    # Both hold secrets: the Server Actions key here, the database passwords and API tokens in the runtime
+    # file. Set on every configure, so a stage an earlier version left world-readable is corrected on upgrade.
+    chmod 0600 "${STAGE_ENV_PATH}" "${RUNTIME_CONFIG_PATH}"
     if [ -L "${STATIC_CONFIG_LINK}" ]; then
       chown -h phis:phis "${STATIC_CONFIG_LINK}" || true
     elif [ -e "${STATIC_CONFIG_LINK}" ]; then
