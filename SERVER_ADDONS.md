@@ -59,7 +59,7 @@ A Module id is `<npm-package>/modules/<module>`, and everything the Module owns 
 `<npm-package>/modules/<module>/<namespace>/<leaf>`. The `modules` marker is required, including for a
 package with a single Module: without it, nothing can tell a Module name from a namespace. The grammar
 and its enforcement are normative in
-[THIRD_PARTY_MODULES.md](../phis-ui/THIRD_PARTY_MODULES.md).
+[THIRD_PARTY_MODULES.md](https://github.com/phis-dev/phis-ui/blob/main/THIRD_PARTY_MODULES.md).
 
 Examples:
 

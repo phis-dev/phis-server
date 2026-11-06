@@ -824,12 +824,16 @@ allowed to do so, typically root. Missing roots are reported.
 
 ### `phis maintain [--list] [--task <id>] [--dry-run]`
 
-Runs bounded, idempotent cleanup tasks. `--list` prints them. Tasks:
+Runs bounded, idempotent cleanup tasks, in the order below. `--list` prints them. Tasks:
 
 | Id | Effect |
 | --- | --- |
+| `payments` | Reconciles up to 100 Payments that are marked as needing reconciliation or have an operation still `reserved`, `pending` or `indeterminate`: it asks the Payment Provider for the current state and records it, and never replays a financial command. Needs `secrets.encryptionKey` to reach the Provider's credential. With `--dry-run` it only counts the candidates and makes no Provider call. |
 | `upload-sessions` | Deletes expired upload sessions and gives their reserved bytes back to their Media Spaces. |
 | `addon-assets` | Deletes the rows of Media Assets in Add-on Spaces that nothing links to any more. The stored objects are not removed; `phis addon storage --sweep` removes them per Add-on and Site. With `--dry-run` it only reports how many Spaces it would examine. |
+| `hook-deliveries` | Deletes the records of verified hook deliveries (`phis.addon_hook_deliveries`, used to recognise a retried webhook) older than 30 days, far past any sender's retry window. |
+| `addon-storage` | Lists every Add-on store of every Site and rewrites its byte and object counters from what is really stored, the same as `phis addon storage --recount` for all of them. Costs a full listing per store; stores this process cannot reach are named and skipped. With `--dry-run` it only reports how many stores it would list. |
+| `support-requester-window` | Closes resolved support tickets whose requester did not answer within the window (the ticket type's, else the Site's; `0` switches it off), recording a close event. At most 500 per run, oldest resolution first; tickets locked by another writer are left to the next run. Reads already show such tickets as closed, so this only brings the stored row in line. |
 
 `--task` runs one, `--dry-run` reports without changing anything. A failing task is reported and the
 others still run; the exit code is `1` when any task failed. Safe to run from a timer.
@@ -844,8 +848,7 @@ posts to `<api base url>/api/v1/notifications/drain` with the internal token, so
 serving process, where the mail configuration, the translation cache and the transport are.
 
 `--api-base-url` is required, the server's address as reached from where the CLI runs (Debian package:
-`http://127.0.0.1:5301`); the usage text shows it in brackets, but the command refuses to run without
-it. `--limit` is the number of rows to claim in one run, a positive whole number; the server takes 100
+`http://127.0.0.1:5301`); there is no default. `--limit` is the number of rows to claim in one run, a positive whole number; the server takes 100
 when it is not given and never more than 1000. The command prints how many rows it claimed, sent,
 dropped and failed, or the server's JSON answer with `--json`. It exits `1` when the server refuses or
 fails the request. Requires `api.internalToken` and a running server.

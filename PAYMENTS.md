@@ -1,6 +1,6 @@
 # Payment Service and Capabilities
 
-**Status: approved v1 contract, Core execution implemented in the workspace.** Approved on 2026-10-04;
+**Status: approved v1 contract, Core execution implemented.** Approved on 2026-10-04;
 the pricing extension of section 12 (provider-added tax, shipping and discounts) was approved and built on 2026-11-02.
 The consumer and Provider types are exported from `@phis/contracts/payments` and `/addon`. Core now
 binds both capabilities, resolves statically installed Providers, persists merchant profiles/grants,

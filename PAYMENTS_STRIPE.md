@@ -1,6 +1,6 @@
 # First Payment Implementation: Stripe Hosted Checkout
 
-**Status: approved v1 Provider and administration contract, implemented in the workspace.** Approved
+**Status: approved v1 Provider and administration contract, implemented.** Approved
 on 2026-10-04. Core execution, merchant persistence, CLI profile/grant controls and the independent
 `@phis/stripe` adapter are implemented. A real test-mode hosted checkout for CHF 19.90 passed through
 the Core engine and bundled adapter, followed by a CHF 5.00 partial refund, an idempotent retry of that

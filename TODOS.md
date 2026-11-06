@@ -24,7 +24,7 @@ correlated settlement through genuine public Stripe notifications, durable inbox
 and one persisted fulfilment, without a completion/refresh grant or browser completion command.
 Concurrent duplicate replays preserved the Payment version and fulfilment count, and a full refund's
 idempotent repeat reused its identities. All test purchases were refunded and all Core receipts/events
-processed. The temporary operator was removed; the test consumer is installed but disabled.
+processed.
 
 - Extend the sandbox matrix with a real decline, manual authorization/final partial capture,
   authorization cancellation and an external Dashboard refund. Automated Provider/Core tests cover
@@ -352,6 +352,14 @@ front of is infrastructure work, and belongs with
   than at the first call"), and why `phis addon check` validated the same state without complaint while the
   serving process refused it. The pre-v1 rule in `@phis/contracts`' README avoids the trigger; it does not
   make the failure mode acceptable.
+- **A manifest names the secrets it reads.** Today an Add-on reads a secret by name
+  (`capabilities.secrets.read("github-token")`) and nothing in the manifest says which names it will ask
+  for; the operator learns them from the Add-on's README, and a missing one shows up only as `null` at the
+  first call. A `secrets: [{ name, scope, description, required }]` declaration, beside `settings`, would
+  let `phis addon check` and `phis addon site --enable` report what is unset for a Site, let the Admin say
+  so, and let `secrets.read` refuse a name the manifest did not declare -- the same closing over the owner
+  the capability already does for the Site. Contract change in `@phis/contracts` (manifest type and
+  validator); the hook `verification.secret` would name one of the declared entries.
 
 ## Code hygiene
 

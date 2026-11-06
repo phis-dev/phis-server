@@ -51,7 +51,7 @@ the entry's row in `site_cms_references`, so a linked Page is guarded like one a
 
 One interaction is worth knowing before it is discovered. A Public page is rendered once for everybody and
 kept under an address that joins the Site's `readMarker` with the translation markers
-([phis-ui gateway/CACHES.md](../../phis-ui/gateway/CACHES.md)). A publish moves that marker and is seen
+([phis-ui gateway/CACHES.md](https://github.com/phis-dev/phis-ui/blob/main/gateway/CACHES.md)). A publish moves that marker and is seen
 within the config refresh. **An expiry moves no marker**, because nothing was written. The expired entry
 therefore leaves a cached Public page with the next render, which `revalidate = 60` guarantees within a
 minute. A minute is acceptable; discovering it later, while debugging, is not.
@@ -122,20 +122,20 @@ decision and does not change the code.
 
 **The address and the navigation entry are one descriptor.** `presets.ts` states the route and, beside it,
 a navigation entry with `navKey: "public:header"` -- exactly what the auth Module does for `/register`
-([phis-ui plugins/runtime-modules/auth/presets.ts](../../phis-ui/plugins/runtime-modules/auth/presets.ts)).
+([phis-ui plugins/runtime-modules/auth/presets.ts](https://github.com/phis-dev/phis-ui/blob/main/plugins/runtime-modules/auth/presets.ts)).
 Nothing is seeded: the entry is computed per request from the compiled catalog once the Module is active
 for the Area and published. A Site may rename, reorder or tombstone it through the `site_nav_scopes`
 overlay, and may not hide a computed entry -- which is the rule that keeps a Module's address reachable.
 
-**`/news` only.** No detail address in this version. [phis-ui MODULES.md](../../phis-ui/MODULES.md) permits
+**`/news` only.** No detail address in this version. [phis-ui MODULES.md](https://github.com/phis-dev/phis-ui/blob/main/MODULES.md) permits
 one whole-segment parameter and names `/news/:id` as its example, and the slug is already on the row, so
 adding `/news/<slug>` later costs a descriptor and no data change.
 
 **No dismissal and no banner.** A page is a place one goes to, and it needs no per-visitor state at all --
 which is the whole reason this version is a page. If a dismissible strip is ever wanted it is two things
-that are not this document's: stage 2 of [design/CONSENT.md](../../phis-ui/design/CONSENT.md), the notice
+that are not this document's: stage 2 of [design/CONSENT.md](https://github.com/phis-dev/phis-ui/blob/main/design/CONSENT.md), the notice
 that asks nothing and blocks nothing, and the `marker` shape of
-[design/USER_STATE.md](../../phis-ui/design/USER_STATE.md), which already names a read news list as its
+[design/USER_STATE.md](https://github.com/phis-dev/phis-ui/blob/main/design/USER_STATE.md), which already names a read news list as its
 case. On a Public page, with anonymous visitors and one render for everybody, neither is free; a signed-in
 Area is where that becomes cheap.
 

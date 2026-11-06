@@ -30,7 +30,7 @@ API; the only pages it renders are the operator pages described under [Operator 
 - Session state and CSRF validation are owned by `phis`; the Site sets and reads the browser cookies.
 - The Site's route graph (`src/app/(site)/{area}`, the Public `(site)/[root]` tree, and the static
   rendering tree) is specified in
-  [phis-ui NEXT_INTEGRATION.md](../phis-ui/NEXT_INTEGRATION.md).
+  [phis-ui NEXT_INTEGRATION.md](https://github.com/phis-dev/phis-ui/blob/main/NEXT_INTEGRATION.md).
 - CMS Areas are `public`, `app`, `admin`, `builder`, `editor`, and `accounting`
   (`src/lib/constants/cms-areas.ts`). Which roles reach which Area is defined in
   [AUTHORIZATION.md](./AUTHORIZATION.md).

@@ -4,7 +4,7 @@ This document defines the `@phis/server` persistence, authorization, sanitizatio
 contract for mutable Site Page paths and structured Page/Asset references. It is also the single
 statement of the shared wire rules: the `phis:page/` and `phis:asset/` URI forms, the `assetId` field
 convention, and the external-document sanitization rule. The Builder, Navigation, and Control side lives
-in [phis-ui REFERENCES.md](../phis-ui/REFERENCES.md). Both sides use one wire format and no aliases.
+in [phis-ui REFERENCES.md](https://github.com/phis-dev/phis-ui/blob/main/REFERENCES.md). Both sides use one wire format and no aliases.
 
 ## Page identity and path ownership
 

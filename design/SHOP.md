@@ -275,7 +275,7 @@ Accounting Area what a manager uses. Addresses in Public follow the collision ru
 /phis/shop              catalogue, destinations, promotions, orders, refunds (Accounting)
 ```
 
-Providers and Forms, in the vocabulary of [phis-ui MODULES.md](../../phis-ui/MODULES.md):
+Providers and Forms, in the vocabulary of [phis-ui MODULES.md](https://github.com/phis-dev/phis-ui/blob/main/MODULES.md):
 
 - a `collection` Provider `@phis/shop/products` with resources `published` (through the hook) and
   `managed` (through the role-guarded route);
@@ -290,7 +290,7 @@ Providers and Forms, in the vocabulary of [phis-ui MODULES.md](../../phis-ui/MOD
 
 **Two state machines, both declared, neither invented here.** The checkout (address, destination,
 summary, pay, return) is a flow with a named current state, and
-[phis-ui design/STATE_MACHINES.md](../../phis-ui/design/STATE_MACHINES.md) already lists "checkout and
+[phis-ui design/STATE_MACHINES.md](https://github.com/phis-dev/phis-ui/blob/main/design/STATE_MACHINES.md) already lists "checkout and
 payment" as a candidate under composed authority: the Shop Module declares the `checkout` machine and its
 Controller hosts a `PhiStateMachineBinding`, with the stages as Forms placed side by side. The order page
 hosts a second, `server`-authority projection whose reader is the order-status route -- `awaiting_payment`,
@@ -298,7 +298,7 @@ hosts a second, `server`-authority projection whose reader is the order-status r
 phase string in a Widget is not an allowed substitute, which that design says in as many words. The Shop
 is thereby the second Module to declare a machine, and the first with composed authority; where the
 binding or the diagnostics fall short of it, the Foundation is extended first (the generalization gate in
-[phis-ui MODULES.md](../../phis-ui/MODULES.md)), not worked around in the Shop.
+[phis-ui MODULES.md](https://github.com/phis-dev/phis-ui/blob/main/MODULES.md)), not worked around in the Shop.
 
 On the server there is no machine to host. The order's `status` and `fulfilment` are columns under an
 enumeration constraint, and the transitions of section 6 are a small table in the Add-on that the event
@@ -393,5 +393,5 @@ file leaves the directory.
 - [PAYMENTS.md](../PAYMENTS.md) -- the consumer capability and the pricing policies (section 12)
 - [PAYMENTS_STRIPE.md](../PAYMENTS_STRIPE.md) -- the first Provider mapping
 - [SERVER_ADDONS.md](../SERVER_ADDONS.md) -- doors, tables, queries, roles, events
-- [phis-ui MODULES.md](../../phis-ui/MODULES.md) -- Providers, Forms, Widgets, presets
+- [phis-ui MODULES.md](https://github.com/phis-dev/phis-ui/blob/main/MODULES.md) -- Providers, Forms, Widgets, presets
 - [NOTIFICATIONS.md](./NOTIFICATIONS.md) -- the outbox and `notifications:v1`; [PUBLIC_ADDRESSES.md](./PUBLIC_ADDRESSES.md)

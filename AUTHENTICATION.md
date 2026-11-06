@@ -4,7 +4,7 @@ This document is the server-side contract for Site authentication, global Phi us
 authentication-method policy, account linking, Site sessions, and bootstrap recovery. Authorization starts
 only after this contract has established a Site session and follows [AUTHORIZATION.md](./AUTHORIZATION.md).
 The presentation side -- the `@phis/ui/auth` Module, its Areas, the Auth UI provider, and the Account
-Widget -- is specified in [phis-ui AUTHENTICATION.md](../phis-ui/AUTHENTICATION.md).
+Widget -- is specified in [phis-ui AUTHENTICATION.md](https://github.com/phis-dev/phis-ui/blob/main/AUTHENTICATION.md).
 
 Email-address upserts, a Medusa-owned browser session, and UI-owned authentication decisions are not
 identity or session paths. The schema is defined by `scripts/sql/001_create_phis.pgsql`; table columns are
@@ -382,7 +382,7 @@ normalized relative Site paths; open redirects are forbidden.
 ## 12. Auth UI Module, Areas, and Account Widget
 
 The first-party Auth Module, its Public/Admin/App contributions, the replaceable Auth UI provider, and the
-`PhiAccountWidget` boundary are specified in [phis-ui AUTHENTICATION.md](../phis-ui/AUTHENTICATION.md).
+`PhiAccountWidget` boundary are specified in [phis-ui AUTHENTICATION.md](https://github.com/phis-dev/phis-ui/blob/main/AUTHENTICATION.md).
 Core's obligations toward them are the ones in this document: Core owns every security decision, and a
 provider submits responses to Core but cannot declare a factor, assurance result, or session complete.
 

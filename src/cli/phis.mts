@@ -328,7 +328,7 @@ Usage:
 
   phis media check [--fix]
   phis maintain [--list] [--task <id>] [--dry-run]
-  phis mail drain [--limit <rows>] [--api-base-url <url>]
+  phis mail drain [--limit <rows>] --api-base-url <url>
   phis licenses check [--package <directory>]
 
   phis instance list [--stale-after <seconds>]

@@ -2,7 +2,8 @@
 
 This is the practical guide for shipping an Add-on. The normative rules stay in
 [SERVER_ADDONS.md](./SERVER_ADDONS.md); where this guide is more specific, it is specific about the
-same rules and cannot widen them.
+same rules and cannot widen them. [Section 9](#9-a-minimal-add-on-end-to-end) walks through one small
+Add-on from package layout to upgrade.
 
 ## The one shape
 
@@ -65,8 +66,10 @@ are documented in [SERVER_ADDONS.md](./SERVER_ADDONS.md). Two reminders that cat
 
 - A route `path` is relative to the fixed catch-all, so `ping` and `echo/:token`, never a leading
   slash and never `/api/v1/...`.
-- A handler name in a descriptor is a key in `apiHandlers`, `hookHandlers`, or `jobHandlers`. A descriptor naming a
-  handler the runtime does not export is a failed installation, not a 404 later.
+- A handler name in a descriptor is a key in `apiHandlers`, `hookHandlers`, or `jobHandlers`. Installation
+  validates the manifest, not the handler maps: a descriptor naming a handler the runtime does not export
+  installs, and then answers 503 (`addon.handler.missing` in the log) or fails its job run. Check the maps
+  before you hand the artifact over.
 
 ### Tables
 
@@ -351,3 +354,477 @@ and enable last.
 - constraints are in the first schema version; columns and indexes may come later
 - handlers honour `context.signal` and stop when it aborts
 - the digest of the file you hand over is the digest you tell the operator
+
+## 9. A minimal Add-on, end to end
+
+Everything above, applied once to a small Add-on, `@acme/notes`: one Site-scoped table of notes, a
+public hook that lists the visible ones, a Site Admin route that adds one, and a job that imports notes
+from a feed with a secret token. The files below are complete; they type-check against
+`@phis/contracts/addon`, and the manifest passes the validator `phis addon install` runs.
+
+### Package layout
+
+An **Add-on-only** package -- a storage provider, an integration with no surface in the Site -- has two
+exports and nothing else:
+
+```text
+@acme/notes/
+  package.json
+  src/addon/manifest.ts     # phisAddonManifest: declares, does nothing
+  src/addon/handlers.ts     # the handler functions, exported for tests
+  src/addon/runtime.ts      # phisAddon: the one export of the artifact
+  dist/addon.mjs            # the artifact, built by "bundle"
+```
+
+```json
+{
+  "name": "@acme/notes",
+  "version": "1.0.0",
+  "type": "module",
+  "exports": {
+    "./addon/manifest": { "types": "./dist/addon/manifest.d.ts", "default": "./dist/addon/manifest.js" },
+    "./addon/runtime": { "types": "./dist/addon/runtime.d.ts", "default": "./dist/addon/runtime.js" }
+  },
+  "scripts": {
+    "bundle": "esbuild src/addon/runtime.ts --bundle --format=esm --platform=node --target=node24 --outfile=dist/addon.mjs --banner:js=\"import{createRequire as __phisCreateRequire}from\\\"node:module\\\";const require=__phisCreateRequire(import.meta.url);\""
+  },
+  "devDependencies": {
+    "@phis/contracts": "^0.7.1",
+    "esbuild": "^0.28",
+    "typescript": "^6",
+    "vitest": "^3"
+  }
+}
+```
+
+A package that is **Module + Add-on** adds the Module doors beside the Add-on doors, names its Modules in
+`phis.modules`, and moves `@phis/contracts` to `dependencies`, because the Module half imports it in the
+Site:
+
+```json
+{
+  "name": "@acme/notes",
+  "version": "1.0.0",
+  "type": "module",
+  "exports": {
+    ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" },
+    "./server": { "types": "./dist/server.d.ts", "default": "./dist/server.js" },
+    "./client": { "types": "./dist/client.d.ts", "default": "./dist/client.js" },
+    "./authoring-client": { "types": "./dist/authoring-client.d.ts", "default": "./dist/authoring-client.js" },
+    "./addon/manifest": { "types": "./dist/addon/manifest.d.ts", "default": "./dist/addon/manifest.js" },
+    "./addon/runtime": { "types": "./dist/addon/runtime.d.ts", "default": "./dist/addon/runtime.js" }
+  },
+  "dependencies": { "@phis/contracts": "^0.7.1" },
+  "phis": {
+    "modules": [
+      { "moduleId": "@acme/notes/modules/notes", "category": "integration", "eligibleAreas": ["public", "admin"] }
+    ]
+  }
+}
+```
+
+The two halves meet at the server binding, never through an import. The Module definition names the
+Add-on as the provider of its server half:
+
+```ts
+serverBinding: { providerId: "@acme/notes", requiredCapabilities: [] },
+```
+
+and the manifest lists the Module in `modules`, which is what lets `phis addon site --enable` check that
+the Site has the other half. The Module never imports from `src/addon/`, and the Add-on never imports the
+Module or `@phis/ui` ([SERVER_ADDONS.md](./SERVER_ADDONS.md#3-package-halves-and-module-graphs)).
+How the Module half itself is written is `@phis/ui`'s subject, in
+[THIRD_PARTY_MODULES.md](https://github.com/phis-dev/phis-ui/blob/main/THIRD_PARTY_MODULES.md).
+
+### The manifest
+
+`src/addon/manifest.ts`. It imports constants and types and nothing else, so `addon/manifest` can be
+inspected without running anything.
+
+```ts
+import {
+  PHIS_ADDON_ABI_VERSION,
+  PHIS_ADDON_MANIFEST_VERSION,
+  PHIS_ADDON_SCHEMA_DESCRIPTOR_VERSION,
+  PHIS_CORE_CAPABILITIES,
+  type PhisAddonManifestV1,
+  type PhisAddonQueryCatalog,
+  type PhisAddonSchemaDescriptor,
+} from "@phis/contracts/addon";
+
+export const NOTES_ADDON_ID = "@acme/notes";
+export const NOTES_ROLE_EDITOR = "editor";
+export const NOTES_SETTING_FEED_URL = "feed-url";
+export const NOTES_SECRET_FEED_TOKEN = "feed-token";
+
+/** Bit flags of `notes.flags`. Yes/no state is a bit of an integer column, never a boolean column. */
+export const NoteFlags = { Hidden: 1 } as const;
+
+const NOTES_SCHEMA: PhisAddonSchemaDescriptor = {
+  descriptorVersion: PHIS_ADDON_SCHEMA_DESCRIPTOR_VERSION,
+  version: 1,
+  tables: [{
+    name: "notes",
+    // Core adds the Site column, its foreign key, its cascade and its index.
+    siteScoped: true,
+    columns: [
+      { name: "id", type: "identity" },
+      { name: "title", type: "string", maxLength: 200 },
+      { name: "body", type: "text" },
+      { name: "flags", type: "smallInteger", default: { kind: "literal", value: 0 } },
+      // Set for notes the import job brought in, so a second run does not insert them again.
+      { name: "source_id", type: "string", maxLength: 200, nullable: true },
+      { name: "created_at", type: "instant", default: { kind: "now" } },
+    ],
+    primaryKey: ["id"],
+    indexes: [
+      { name: "by_created", columns: ["created_at"] },
+      { name: "by_source", columns: ["source_id"], unique: true },
+    ],
+    // Constraints belong in the first version: one added later meets the rows already there.
+    constraints: [
+      { kind: "notEmpty", name: "title", column: "title" },
+      { kind: "range", name: "flags", column: "flags", min: 0 },
+    ],
+  }],
+};
+
+const NOTES_QUERIES: PhisAddonQueryCatalog = {
+  parameters: {
+    notes_visible: [],
+    note_by_source: [{ name: "source_id", type: "text" }],
+    notes_insert: [
+      { name: "title", type: "text" },
+      { name: "body", type: "text" },
+      { name: "flags", type: "integer" },
+      { name: "source_id", type: "text", nullable: true },
+    ],
+  },
+  queries: [
+    {
+      kind: "select",
+      name: "notes_visible",
+      table: "notes",
+      columns: ["id", "title", "body", "created_at"],
+      // Every row whose Hidden bit is not set.
+      where: {
+        kind: "flags",
+        column: "flags",
+        mask: { kind: "literal", value: NoteFlags.Hidden },
+        match: "none",
+      },
+      orderBy: [{ column: "created_at", direction: "desc" }],
+      limit: 50,
+    },
+    {
+      kind: "select",
+      name: "note_by_source",
+      table: "notes",
+      columns: ["id"],
+      where: { kind: "compare", column: "source_id", operator: "=", value: { kind: "parameter", name: "source_id" } },
+      limit: 1,
+    },
+    {
+      kind: "insert",
+      name: "notes_insert",
+      table: "notes",
+      // The table has no owner and no group, so its writes must name a role.
+      requiresRole: NOTES_ROLE_EDITOR,
+      values: [
+        { column: "title", value: { kind: "parameter", name: "title" } },
+        { column: "body", value: { kind: "parameter", name: "body" } },
+        { column: "flags", value: { kind: "parameter", name: "flags" } },
+        { column: "source_id", value: { kind: "parameter", name: "source_id" } },
+      ],
+    },
+  ],
+};
+
+export const phisAddonManifest = {
+  manifestVersion: PHIS_ADDON_MANIFEST_VERSION,
+  addonId: NOTES_ADDON_ID,
+  packageName: "@acme/notes", // keep in step with package.json
+  packageVersion: "1.0.0",    // keep in step with package.json
+  serverAbi: `^${PHIS_ADDON_ABI_VERSION}`,
+  capabilities: [],
+  serviceProviders: [],
+  requiredCoreCapabilities: [
+    PHIS_CORE_CAPABILITIES.data,
+    PHIS_CORE_CAPABILITIES.settings,
+    PHIS_CORE_CAPABILITIES.secrets,
+  ],
+  // Only for a package with a Module half; an Add-on-only package leaves the field out.
+  modules: ["@acme/notes/modules/notes"],
+  apiRoutes: [{
+    id: "create-note",
+    method: "POST",
+    path: "notes", // relative to /api/v1/addons/acme/notes/
+    handler: "createNote",
+    auth: "site-admin",
+    siteScoped: true,
+    bodyLimitBytes: 16_384,
+    timeoutMs: 10_000,
+  }],
+  hooks: [{
+    id: "notes",
+    method: "GET",
+    path: "notes", // relative to /api/v1/hooks/acme/notes/
+    handler: "listNotes",
+    // Told its Site through x-phis-site-key; has no actor, so it may read and never write.
+    siteScoped: true,
+    bodyLimitBytes: 1_024,
+    rateLimitClass: "public-read",
+    timeoutMs: 5_000,
+  }],
+  jobs: [{ id: "import", handler: "importFeed", suggestedInterval: "hourly" }],
+  settings: [{
+    name: NOTES_SETTING_FEED_URL,
+    type: "text",
+    // No default: the Site stays "missing" configuration until an operator sets it.
+    description: "The JSON feed the import job reads notes from.",
+  }],
+  roles: [{
+    name: NOTES_ROLE_EDITOR,
+    description: "May add notes.",
+    grantableBy: { siteAccess: "site-admin" },
+  }],
+  schema: NOTES_SCHEMA,
+  queries: NOTES_QUERIES,
+  migrationVersion: NOTES_SCHEMA.version,
+} satisfies PhisAddonManifestV1;
+```
+
+What each part is for:
+
+- `requiredCoreCapabilities` is what arrives in `context.capabilities`. A capability not listed is
+  `undefined` there, which is why every handler checks for the ones it uses.
+- `schema.version` and `migrationVersion` must be equal; raising both is a new schema version, and
+  `phis addon migrate` applies the difference.
+- `notes_insert` names a role because the table has no owner and no group: without one Core would have
+  nothing to judge the write by, and the validator refuses it. The role must be one the manifest
+  declares.
+- The hook has no actor. It may read, and every write through `data:v1` is refused before it runs.
+  `bodyLimitBytes`, `rateLimitClass` and `timeoutMs` are required on a hook; on a route they are
+  optional.
+- A setting without a `default` leaves the Site's configuration `missing` until an operator sets it,
+  and an Add-on whose configuration is missing does not answer for that Site.
+- Secrets are not declared in the manifest. The Add-on reads one by name; the operator sets it with
+  `phis secret set`, and an unset one reads as `null`. (The one place a manifest names a secret is a
+  hook's `verification.secret`.)
+
+### The handlers
+
+`src/addon/handlers.ts`. Exported so a test can call them; the artifact's only export is still
+`phisAddon`, because the bundle's exports are those of `runtime.ts`.
+
+```ts
+import type {
+  PhisAddonJobContext,
+  PhisAddonRequestContext,
+} from "@phis/contracts/addon";
+
+import {
+  NOTES_SECRET_FEED_TOKEN,
+  NOTES_SETTING_FEED_URL,
+} from "./manifest.js";
+
+function json(body: unknown, status = 200) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "content-type": "application/json; charset=utf-8" },
+  });
+}
+
+/** The public hook: the visible notes of the Site named by `x-phis-site-key`. */
+export async function listNotes(context: PhisAddonRequestContext): Promise<Response> {
+  const { data } = context.capabilities;
+  if (!data) throw new Error("listNotes needs the data capability.");
+  const page = await data.select("notes_visible", {}, { limit: 20 });
+  return json({ notes: page.rows, cursor: page.cursor });
+}
+
+/** The Site Admin route. The acting user must also hold the `editor` role of this Add-on. */
+export async function createNote(context: PhisAddonRequestContext): Promise<Response> {
+  const { data } = context.capabilities;
+  if (!data) throw new Error("createNote needs the data capability.");
+  let input: { title?: unknown; body?: unknown };
+  try {
+    input = JSON.parse(new TextDecoder().decode(context.body)) as typeof input;
+  } catch {
+    return json({ error: "The body is not JSON." }, 400);
+  }
+  if (typeof input.title !== "string" || input.title.trim() === "" || typeof input.body !== "string") {
+    return json({ error: "title and body are required." }, 400);
+  }
+  // A handler that lost its timeout race must not write: the caller was already told 504.
+  context.signal.throwIfAborted();
+  const row = await data.insert("notes_insert", {
+    title: input.title.trim(),
+    body: input.body,
+    flags: 0,
+    source_id: null,
+  });
+  return json({ note: row }, 201);
+}
+
+type FeedItem = { id: string; title: string; body: string };
+
+/** The job, with `fetch` passed in so a test can answer for the feed. */
+export async function importFeed(
+  context: Pick<PhisAddonJobContext, "capabilities" | "signal">,
+  fetchImpl: typeof fetch = fetch,
+): Promise<void> {
+  const { data, settings, secrets } = context.capabilities;
+  if (!data || !settings || !secrets) throw new Error("importFeed needs data, settings and secrets.");
+  const feedUrl = await settings.read(NOTES_SETTING_FEED_URL);
+  if (typeof feedUrl !== "string" || feedUrl === "") return;
+  const token = await secrets.read(NOTES_SECRET_FEED_TOKEN); // null when the operator set none
+  const response = await fetchImpl(feedUrl, {
+    headers: token ? { authorization: `Bearer ${token}` } : {},
+    signal: context.signal,
+  });
+  if (!response.ok) throw new Error(`The feed answered ${response.status}.`);
+  const items = (await response.json()) as FeedItem[];
+  for (const item of items) {
+    context.signal.throwIfAborted();
+    const existing = await data.select("note_by_source", { source_id: item.id });
+    if (existing.rows.length > 0) continue;
+    await data.insert("notes_insert", { title: item.title, body: item.body, flags: 0, source_id: item.id });
+  }
+}
+
+```
+
+The job inserts through `notes_insert` without anybody holding `editor`: a job runs with the Add-on's
+own system authority, so role guards and the row ladder pass. A person reaching `create-note` needs the
+Site Admin claim for the route *and* the `editor` role for the query.
+
+### The runtime
+
+`src/addon/runtime.ts`, the bundle's entry point:
+
+```ts
+import type { PhisAddonRuntimeV1 } from "@phis/contracts/addon";
+
+import { createNote, importFeed, listNotes } from "./handlers.js";
+import { phisAddonManifest } from "./manifest.js";
+
+/** The one export. Nothing else happens at module scope. */
+export const phisAddon = {
+  manifest: phisAddonManifest,
+  apiHandlers: { createNote },
+  hookHandlers: { listNotes },
+  jobHandlers: { importFeed: (context) => importFeed(context) },
+} satisfies PhisAddonRuntimeV1;
+```
+
+### Testing
+
+Test the handlers, not the artifact, and give them everything from outside: `fetch` as a parameter,
+and a fake `data` capability that answers the declared query names. A fake that refuses names and
+parameters the catalog does not declare catches most wiring mistakes before Core does.
+
+```ts
+import { describe, expect, it } from "vitest";
+
+import type { PhisAddonJobContext, PhisDataCapabilityV1 } from "@phis/contracts/addon";
+
+import { importFeed } from "./handlers.js";
+
+function fakeCore(settings: Record<string, string>) {
+  const inserted: Record<string, unknown>[] = [];
+  const data = {
+    async select(name: string, args?: Record<string, unknown>) {
+      if (name !== "note_by_source") throw new Error(`unexpected select ${name}`);
+      return { rows: inserted.filter((row) => row.source_id === args?.source_id), cursor: null };
+    },
+    async insert(name: string, args?: Record<string, unknown>) {
+      if (name !== "notes_insert") throw new Error(`unexpected insert ${name}`);
+      inserted.push({ ...args });
+      return { id: inserted.length, ...args };
+    },
+  } as unknown as PhisDataCapabilityV1;
+  const capabilities = {
+    data,
+    settings: { async read(name: string) { return settings[name] ?? null; }, async all() { return settings; } },
+    secrets: { async read() { return null; } },
+  } as PhisAddonJobContext["capabilities"];
+  return { inserted, context: { capabilities, signal: new AbortController().signal } };
+}
+
+describe("importFeed", () => {
+  it("inserts each feed item once", async () => {
+    const core = fakeCore({ "feed-url": "https://feed.example/notes.json" });
+    const fakeFetch = (async () =>
+      Response.json([{ id: "a", title: "Hello", body: "First" }])) as unknown as typeof fetch;
+    await importFeed(core.context, fakeFetch);
+    await importFeed(core.context, fakeFetch);
+    expect(core.inserted).toHaveLength(1);
+  });
+});
+```
+
+### Bundling
+
+```sh
+pnpm run bundle   # the "bundle" script above
+```
+
+That is esbuild with the settings of [section 3](#3-how-to-compile-it): one self-contained ESM file,
+`dist/addon.mjs`, every dependency inlined, and the `require` shim in the banner for whatever CommonJS
+is in the tree (harmless when there is none). Check that nothing but `node:` builtins is imported:
+
+```sh
+grep -oE '(from ?|import ?\()"[^"]+"' dist/addon.mjs | sort -u   # expect only "node:..." specifiers
+sha256sum dist/addon.mjs                                         # the digest you hand to the operator
+```
+
+### Installing and running it
+
+On the server, as the user that owns the phis root:
+
+```sh
+phis addon install --artifact ./dist/addon.mjs
+phis addon reconcile
+phis addon migrate --addon @acme/notes
+phis addon enable  --addon @acme/notes
+phis addon reconcile
+
+# Module + Add-on only: the Site gets the Module half first, then is rebuilt.
+phis module add --site acme --package @acme/notes
+
+phis addon site --addon @acme/notes --site acme --enable
+
+# The setting without a default; until it is set the Site's configuration is "missing".
+phis addon config --addon @acme/notes --site acme --name feed-url --value https://feed.example/notes.json
+phis addon config --addon @acme/notes --site acme          # lists settings and values
+
+# The secret, from stdin -- never a terminal, and --value would put it in the process list.
+phis secret set --name feed-token --addon @acme/notes --site acme < ./feed-token.txt
+
+# Whoever adds notes through the admin route needs the role.
+phis addon role --site acme --addon @acme/notes --user <user id> --grant editor
+
+# Run the job once; schedule the same command from a timer at the suggested interval.
+phis addon job --addon @acme/notes --job import --site acme --api-base-url http://127.0.0.1:5301
+```
+
+`--api-base-url` is the server's address as reached from where the CLI runs (the Debian package listens
+on `http://127.0.0.1:5301`); it has no default, and the command needs `api.internalToken` and a running
+server. The hook then answers at `GET <server>/api/v1/hooks/acme/notes/notes` with the header
+`x-phis-site-key: acme`; the admin route at `POST <server>/api/v1/addons/acme/notes/notes`, called by
+the Site for a signed-in Site Admin. Every command is described in [docs/CLI.md](./docs/CLI.md#addon-server-add-ons).
+
+### Upgrading it
+
+Build the new artifact and point `upgrade` at it:
+
+```sh
+phis addon upgrade --addon @acme/notes --artifact ./dist/addon.mjs
+phis addon migrate --addon @acme/notes    # only when schema.version rose
+phis addon reconcile
+```
+
+The same `packageVersion` with different bytes is accepted -- that is a patch in place; the identical
+artifact, a different Add-on id, or a lower schema version is refused. Between `upgrade` and `reconcile`
+the Add-on answers 503, so run the commands back to back ([Upgrading](#upgrading)).

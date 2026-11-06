@@ -107,7 +107,7 @@ the same move:
 
 - **Asked for.** The person's own action is the reason: a password reset, an address confirmation, an
   answer on their support ticket. No opt-in applies, and offering an unsubscribe link would be a lie --
-  the same lie [design/CONSENT.md](../../phis-ui/design/CONSENT.md) documents for a consent banner over
+  the same lie [design/CONSENT.md](https://github.com/phis-dev/phis-ui/blob/main/design/CONSENT.md) documents for a consent banner over
   strictly necessary cookies, which "suggeriert, dass die Verarbeitung freiwillig ist".
 - **Sent.** Somebody decided to write to people who did not ask today: a news digest. It requires the
   opt-in bit and must carry the unsubscribe link.
@@ -198,7 +198,7 @@ Three places where an unsubscribe token is not a reset token:
 
 The bit lives on `user_site_memberships`, so a token that outlives the membership finds nothing to clear
 and should say so plainly rather than reporting success. None of this is a consent question:
-[design/CONSENT.md](../../phis-ui/design/CONSENT.md) governs access to a device, and an unsubscribe link
+[design/CONSENT.md](https://github.com/phis-dev/phis-ui/blob/main/design/CONSENT.md) governs access to a device, and an unsubscribe link
 is Art. 21 GDPR and § 7 UWG -- an obligation, not a choice to be offered.
 
 ## 7. What this is not
@@ -211,7 +211,7 @@ is Art. 21 GDPR and § 7 UWG -- an obligation, not a choice to be offered.
 - **Not one-click unsubscribe.** See section 6: the header is honest about what the Site can answer.
 - **Not a marketing tool.** No segments, no click tracking, no open tracking. Named here because the
   first request after the first digest will be open rates, and a tracking pixel is access to a device
-  that [design/CONSENT.md](../../phis-ui/design/CONSENT.md) would have to gate -- which would turn a
+  that [design/CONSENT.md](https://github.com/phis-dev/phis-ui/blob/main/design/CONSENT.md) would have to gate -- which would turn a
   Site that needs no banner into one that does.
 
 ## 8. Order, and what needs approval first
@@ -226,7 +226,7 @@ is Art. 21 GDPR and § 7 UWG -- an obligation, not a choice to be offered.
 
 Step 3 has no consumer today -- neither `@phis/marketplace` nor `@phis/support` nor `@phis/storage-s3`
 needs it. That is an argument for building it now rather than against: the same one
-[design/CONSENT.md](../../phis-ui/design/CONSENT.md) makes for its own gate, that a seam is best built
+[design/CONSENT.md](https://github.com/phis-dev/phis-ui/blob/main/design/CONSENT.md) makes for its own gate, that a seam is best built
 while it can be tested against nothing rather than under the pressure of its first caller. But the shape
 should not be designed against nothing. "A support ticket got an answer" is the nearest real occasion,
 `support:v1` and `threads:v1` are both built, and designing `notify` against that one occasion is what

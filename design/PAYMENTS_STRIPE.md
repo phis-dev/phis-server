@@ -1,6 +1,6 @@
 # First Payment Implementation: Stripe Hosted Checkout
 
-**Status: contract approved and promoted on 2026-10-04; Core and Provider implemented in the workspace.**
+**Status: contract approved and promoted on 2026-10-04; Core and Provider implemented.**
 
 The owning first-provider and administrative contract is [PAYMENTS_STRIPE.md](../PAYMENTS_STRIPE.md).
 The shared execution contract is [PAYMENTS.md](../PAYMENTS.md). Follow [TODOS.md](../TODOS.md#payments)
