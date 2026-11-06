@@ -8,7 +8,7 @@ same rules and cannot widen them.
 
 There is exactly one way an Add-on reaches a running server, and it is not a rebuild.
 
-An Add-on is **one self-contained ESM file** that `phis-cli` places into the install root. The server
+An Add-on is **one self-contained ESM file** that the `phis` CLI places into the install root. The server
 loads it at dispatch time through a `file:` URL derived from the Add-on id, after verifying its
 digest. No Add-on is compiled into the server, and no second mechanism exists beside this one.
 
@@ -34,6 +34,7 @@ export const phisAddon = {
   apiHandlers,      // optional
   hookHandlers,     // optional
   jobHandlers,      // optional
+  eventHandlers,    // optional
   serviceFactories  // optional
 };
 ```
@@ -41,7 +42,7 @@ export const phisAddon = {
 The manifest is reached as `phisAddon.manifest`. There is no second entrypoint, no separate
 manifest file, and no `package.json` in the install root -- the artifact is the unit.
 
-**The module must have no top-level side effects.** `phis-cli` imports the artifact to read and
+**The module must have no top-level side effects.** `phis` imports the artifact to read and
 validate the manifest during installation, before the Add-on is enabled and before any request has
 reached it. Anything your module does while being evaluated happens at that moment, on an operator's
 machine, for an Add-on that may then be rejected. Open no connections, start no timers, read no
@@ -87,8 +88,11 @@ later meets the rows that are already there.
 Two steps, both in your own package. Nothing in this section involves `@phis/server`.
 
 **Type-check against the ABI.** `@phis/contracts/addon` carries the types an Add-on declares or
-implements. It contains no runtime code, so it disappears entirely from the compiled artifact -- it
-belongs in `devDependencies`, never in `dependencies`.
+implements. It is not only types: it also exports constants an Add-on uses in its manifest, such as
+`PHIS_CORE_CAPABILITIES`, `PHIS_ADDON_MANIFEST_VERSION` and `PHIS_ADDON_SCHEMA_DESCRIPTOR_VERSION`.
+Whatever of them the Add-on imports is bundled into `addon.mjs` like any other code, so the installed
+artifact never needs the package at runtime. Declare it as a `dependency` when the package also has a
+Module half, which imports it in the Site; otherwise a `devDependency` is enough.
 
 **Bundle to one file.** Any bundler that emits ESM will do; the settings are what matter.
 
@@ -199,7 +203,7 @@ module scope empty.
 
 ## 5. How it is installed and activated
 
-`phis-cli` is the only thing that may install, and installation is an operator action, never a Site
+The `phis` CLI is the only thing that may install, and installation is an operator action, never a Site
 configuration action.
 
 ```text

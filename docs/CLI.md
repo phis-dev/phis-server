@@ -25,9 +25,11 @@ For a first installation, read [INSTALL.md](./INSTALL.md) instead; it runs these
 - [operator](#operator)
 - [media](#media)
 - [maintain](#maintain)
+- [mail](#mail)
 - [licenses](#licenses)
 - [instance](#instance)
 - [Common tasks](#common-tasks)
+- [Payment profiles](#payment-profiles)
 
 ## Running the CLI
 
@@ -83,7 +85,8 @@ Output and exit codes:
   `--json` stderr also carries `{"ok": false, "error": "<message>"}`.
 - Some commands finish without throwing but still exit `1` because they found a problem; each is
   noted below (`config validate`, `schema check`, `site check`, `module add|check`, `addon list|check`,
-  `addon job`, `secret check`, `media check`, `maintain`, `licenses check`).
+  `addon job`, `secret check`, `media check`, `maintain`, `mail drain`, `licenses check`, and
+  `instance list` when the instances have not converged on one release and one Add-on set).
 
 ## Environment variables
 
@@ -134,10 +137,10 @@ server keeps the old values for up to four hours.
 | --- | --- |
 | An administrative database connection, passed in | `db bootstrap` — it creates what every row below already expects to exist |
 | Configuration files only | `config`, `operator`, `secret init-key`, `module list`, `addon list|check|install|upgrade|enable|disable|remove|forget`, `site config set|add|del` (also read the Site row, so a database), `licenses check` |
-| `database.uri` (serving role) | `schema check|apply`, all `site` commands except `config set|add|del`, `init|reconcile|update`, `module add|del|sync|check`, `addon reconcile|site|config|role|owner|storage|job`, `storage`, `secret set|check|list|del`, `auth`, `media check`, `maintain`, `instance` |
+| `database.uri` (serving role) | `schema check|apply`, all `site` commands except `config set|add|del`, `init|reconcile|update`, `module add|del|sync|check`, `addon reconcile|site|config|role|owner|storage|job`, `storage`, `secret set|check|list|del`, `auth`, `media check`, `maintain`, `payment profile`, `instance` |
 | `database.migrationUri` (migration role) | `schema drop --force`, `addon migrate`, `addon purge` |
-| `secrets.encryptionKey` | `secret set|check`, `auth import-secrets`, `storage` commands that reach a Provider credential, `addon purge` and `addon storage --sweep|--recount` on a Site with an external store |
-| `api.internalToken` | `init` (copied into the Site), `site check` (running Site), `addon job` (running server) |
+| `secrets.encryptionKey` | `secret set|check`, `auth import-secrets`, `storage` commands that reach a Provider credential, `addon purge` and `addon storage --sweep|--recount` on a Site with an external store, `payment profile probe|enable` and `maintain --task payments` (they reach the Provider's credential) |
+| `api.internalToken` | `init` (copied into the Site), `site check` (running Site), `addon job` and `mail drain` (running server) |
 
 There is no fallback from `database.migrationUri` to `database.uri`.
 
@@ -831,6 +834,22 @@ Runs bounded, idempotent cleanup tasks. `--list` prints them. Tasks:
 `--task` runs one, `--dry-run` reports without changing anything. A failing task is reported and the
 others still run; the exit code is `1` when any task failed. Safe to run from a timer.
 
+## mail
+
+### `phis mail drain [--limit <rows>] --api-base-url <url>`
+
+Sends what is still owed from the notification outbox (`phis.notification_outbox`). A notification is
+tried once by the request that wrote it; this command is the retry, meant to be run from a timer. It
+posts to `<api base url>/api/v1/notifications/drain` with the internal token, so the drain runs in the
+serving process, where the mail configuration, the translation cache and the transport are.
+
+`--api-base-url` is required, the server's address as reached from where the CLI runs (Debian package:
+`http://127.0.0.1:5301`); the usage text shows it in brackets, but the command refuses to run without
+it. `--limit` is the number of rows to claim in one run, a positive whole number; the server takes 100
+when it is not given and never more than 1000. The command prints how many rows it claimed, sent,
+dropped and failed, or the server's JSON answer with `--json`. It exits `1` when the server refuses or
+fails the request. Requires `api.internalToken` and a running server.
+
 ## licenses
 
 ### `phis licenses check [--package <directory>]`
@@ -849,7 +868,7 @@ readiness).
 
 Lists instances; one counts as ready only if it reported ready within `--stale-after` seconds
 (default `90`). Reports when several releases or Add-on sets are serving at once, which means a
-rollout has not finished.
+rollout has not finished, and exits `1` in that case, so a deployment script can wait on it.
 
 ### `phis instance drain [--id <instance id>]`
 
@@ -879,10 +898,15 @@ Deletes rows of instances silent for longer than `--forget-after` seconds (defau
 ## Payment profiles
 
 Core owns merchant profiles and explicit consumer grants. The CLI uses only installed Provider
-artifacts; no profile file can select a package import or supply a credential value. Apply the Core
-creation schema (an existing outbox needs an explicit structural update as described in `DB.md`),
-install/activate the Provider globally and for the chosen development Site, and store secrets
-through `phis secret set` on stdin. A compiled installation is updated separately.
+artifacts; no profile file can select a package import or supply a credential value.
+
+Before the first profile: apply the Core schema with `phis schema apply`. It creates the Payment
+tables, but it does not change a table that already exists, so a database whose
+`phis.addon_event_outbox` predates Payments needs that table's new columns and constraints added by
+hand before a Payment consumer is admitted ([DB.md](../DB.md#payment-execution)).
+Then install and enable the Provider Add-on, enable it for the Site that will take payments
+(`phis addon site --enable`), and store its credentials with `phis secret set`, passing the value on
+stdin rather than on the command line.
 
 ```bash
 phis payment profile list --site demo

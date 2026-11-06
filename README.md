@@ -217,7 +217,7 @@ itself. How to build one is in [ADDON_HOWTO.md](./ADDON_HOWTO.md), the server co
 | [AUTHORIZATION.md](./AUTHORIZATION.md) | Site roles, Area access, access policies, Add-on roles. |
 | [GROUPS_AND_STORAGE.md](./GROUPS_AND_STORAGE.md) | Site groups, Media Spaces, quotas, Storage Profiles and Providers, Asset delivery. |
 | [PAYMENTS.md](./PAYMENTS.md) | Implemented Payment capability and Provider contract, currencies, ownership, grants and durable recovery. |
-| [PAYMENTS_STRIPE.md](./PAYMENTS_STRIPE.md) | Approved first Stripe checkout, merchant administration, notification and event contract; execution pending. |
+| [PAYMENTS_STRIPE.md](./PAYMENTS_STRIPE.md) | The first Provider, Stripe hosted checkout: merchant administration, notification and event contract. Implemented and run against the Stripe sandbox; the remaining sandbox scenarios are in TODOS.md. |
 | [REFERENCES.md](./REFERENCES.md) | Page paths, Page and Asset references, trusted Markdown and HTML. |
 | [TRANSLATIONS.md](./TRANSLATIONS.md) | Locale capability and request locale resolution, source languages, translation requests and batching. |
 | [SERVER_ADDONS.md](./SERVER_ADDONS.md) | Add-on manifest, capabilities, installation, routing, migrations, instances. |
@@ -252,7 +252,7 @@ still assembles and validates it, so publishing later is a step added to the rel
 
 | Installed from | What it carries | Described in |
 | --- | --- | --- |
-| `phis_<version>+<distribution>_<arch>.deb`, from `apt.phisys.com` or the GitHub release | The server, the CLI, the schema file, the stage layout, the systemd unit, `/usr/bin/phis`, the proxy templates, and the traced `node_modules`: the install reads no registry and needs no network. | [debian/README.Debian](./debian/README.Debian), [docs/INSTALL.md](./docs/INSTALL.md) |
+| `phis_<version>-<revision>+<distribution>_<arch>.deb` (e.g. `phis_0.2.7-1+trixie_amd64.deb`), from `apt.phisys.com` or the GitHub release | The server, the CLI, the schema file, the stage layout, the systemd unit, `/usr/bin/phis`, the proxy templates, and the traced `node_modules`: the install reads no registry and needs no network. | [debian/README.Debian](./debian/README.Debian), [docs/INSTALL.md](./docs/INSTALL.md) |
 | `@phis/server` tarball (`pnpm package:pack`, not published) | The same server, the same CLI and the same schema file, with the runtime dependencies resolved by npm instead. No stage layout, no unit, no proxy configuration. | [docs/INSTALL.md](./docs/INSTALL.md) |
 
 The build links the packages it treats as external -- `pg`, `argon2`, `sharp` and two more -- into

@@ -15,10 +15,11 @@ an address, a captured payment is confirmed to it as a contact recipient (no acc
 deduplicated by payment id, and the `notify` job sends the same occasion without a payment so the mail
 path of a stage can be verified from the CLI. Unset, nothing is sent.
 
-Build with the workspace toolchain:
+Build it from the repository root with the repository's own toolchain; the output path is yours to
+choose:
 
 ```bash
-pnpm exec esbuild fixtures/payment-probe/addon.ts --bundle --platform=node --format=esm --target=node24 --outfile=/opt/projects/artifacts/phis-payment-probe-0.3.0.mjs
+pnpm exec esbuild fixtures/payment-probe/addon.ts --bundle --platform=node --format=esm --target=node24 --outfile=dist/phis-payment-probe-0.3.0.mjs
 ```
 
 Install/reconcile/migrate and activate the artifact using the target installation's CLI. For the test,
@@ -35,5 +36,5 @@ or fulfilment count. A full refund and identical retry reused their Core identit
 delayed by concurrent reservations processed when re-signed and replayed, leaving no pending Core
 receipts or consumer events. All test purchases were fully refunded. The temporary operator was
 deleted, the consumer disabled and its profile grant removed; financial and fulfilment evidence was
-retained. The detailed sanitized report is
-`/opt/projects/artifacts/phis-payment-settlement-test-20261004.json`.
+retained. A sanitized report of the run was kept with the test records; it is not part of this
+repository.

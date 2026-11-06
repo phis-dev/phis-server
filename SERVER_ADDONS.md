@@ -290,6 +290,45 @@ Every Add-on exports a server-only manifest, `PhisAddonManifestV1` from `@phis/c
 The manifest digest is the SHA-256 of the manifest's canonical JSON and therefore covers every field. The
 manifest never contains runtime secrets.
 
+### Route descriptors
+
+An entry in `apiRoutes` (`PhisAddonApiRouteDescriptor`) and an entry in `hooks`
+(`PhisAddonHookDescriptor`) share most of their fields. They differ in which of them may be left out,
+because a hook has no authentication policy to fall back on and Core will not guess its limits for it.
+`src/lib/addons/manifest.ts` validates the descriptors when the manifest is admitted, and
+`src/lib/addons/dispatcher.ts` applies them on every request.
+
+| Field | API route | Hook | Meaning |
+| --- | --- | --- | --- |
+| `id` | required | required | Lower-case descriptor id, unique across the Add-on's routes and hooks together. |
+| `method` | required | required | `GET`, `POST`, `PUT`, `PATCH` or `DELETE`. |
+| `path` | required | required | The path below the Add-on's root, without leading or trailing slash; a segment may be a `:name` parameter. |
+| `handler` | required | required | The key in `apiHandlers` or `hookHandlers` that serves it. |
+| `auth` | required | -- | The minimum authentication policy; see below. A hook is unauthenticated by construction. |
+| `siteScoped` | required | optional, absent means `false` | Whether the request names a Site (`x-phis-site-key`), which every capability needs. |
+| `bodyLimitBytes` | optional, default 1 MiB | **required** | A body above it is refused with `413` before the handler runs. |
+| `timeoutMs` | optional, default 15 s | **required** | The handler is aborted through its `signal` and the caller is answered `504`. |
+| `rateLimitClass` | optional, absent means no limit | **required** | The bucket the request is counted in; see below. |
+| `verification` | -- | optional | How Core checks the caller's signature; see [External hooks](#external-hooks). |
+
+`auth` takes one of four values (`PhisAddonAuthPolicy`):
+
+- `internal` -- the caller holds the internal API token, which is what a Site's server presents. No user
+  is resolved; the handler sees an internal actor.
+- `site-user` -- the internal API token and a signed-in user of the Site. `siteScoped` must be `true`.
+- `site-admin` -- the internal API token and a signed-in user holding the Site admin role, refused with
+  `403` otherwise. `siteScoped` must be `true`.
+- `operator` -- an operator session. `siteScoped` is the descriptor's choice here, since an operator is
+  not a user of any one Site.
+
+`rateLimitClass` is a name, not a number. Every class has the same limit: 60 requests per client IP in a
+fixed window of 60 seconds, after which Core answers `429` with a `Retry-After` header
+(`src/lib/rate-limit.ts`). The counter is kept per Add-on, per class and per client IP, so two routes that
+name the same class share one budget, and a route in a class of its own has its own. The counter lives in
+the memory of the running instance: it is not shared between the instances of a load-balanced
+installation, and it starts afresh when the process does. Callers whose address cannot be read share a
+single bucket rather than each getting their own.
+
 ### Adding to the manifest
 
 A field added after this manifest version is already in the wild is **optional, and defines what its
@@ -311,7 +350,8 @@ The package exposes two explicit server entrypoints, both under `addon/`:
 
 `addon/manifest` exports `phisAddonManifest` and must be safe for inspection without starting jobs,
 opening connections, or reading secrets. `addon/runtime` exports `phisAddon`: the same manifest plus the
-handler maps (`apiHandlers`, `hookHandlers`, `jobHandlers`) and `serviceFactories`. There is no
+handler maps (`apiHandlers`, `hookHandlers`, `jobHandlers`, `eventHandlers`) and `serviceFactories`,
+each optional (`PhisAddonRuntimeV1`). There is no
 package-root fallback. The installed artifact is `addon/runtime` bundled into one file, and Core reads
 the manifest from its `phisAddon.manifest` ([ADDON_HOWTO.md](./ADDON_HOWTO.md)).
 
@@ -439,7 +479,8 @@ The route files are Core-owned and are never generated per Add-on.
 ### Authenticated Add-on API
 
 `/api/v1/addons/*` handles Site-, user-, or operator-authenticated Add-on operations. Core applies the
-declared minimum authentication policy before dispatch.
+declared minimum authentication policy before dispatch; the policies, and the limits a route may leave
+to their defaults, are listed under [Route descriptors](#route-descriptors).
 
 ```text
 /api/v1/addons/phis/github/installations
@@ -459,7 +500,9 @@ provider-originated requests.
 ```
 
 Hook authentication is provider-specific but descriptor-controlled. Core still enforces method, body
-limit, request identity, rate-limit class, logging envelope, and timeout policy. Authenticated APIs
+limit, request identity, rate-limit class, logging envelope, and timeout policy. A hook has to state its body limit,
+rate-limit class and timeout itself; the defaults an API route may rely on do not apply to it
+([Route descriptors](#route-descriptors)). Authenticated APIs
 and external hooks never share an implicit authentication policy.
 
 #### A hook may be told its Site, and may still not write
@@ -623,8 +666,10 @@ of the consumer capability: Core is its sole supplier and selects the merchant p
 ### Jobs
 
 A job is declared as `{ id, handler, suggestedInterval? }`, where `handler` names an entry in
-`jobHandlers`. It is run by `phis addon job --addon <id> --job <job id> --site <site key>`, which posts to
-the serving instance's internal `/api/v1/addons/jobs` route. It is not scheduled by Core, and the interval is documentation for the operator
+`jobHandlers`. It is run by `phis addon job --addon <id> --job <job id> --site <site key> --api-base-url
+<url>`, which posts to the serving instance's internal `/api/v1/addons/jobs` route. `--api-base-url` is
+required: it is the server's address as seen from where the CLI runs, which the phis root does not record
+(for the Debian package `http://127.0.0.1:5301` on the same host). It is not scheduled by Core, and the interval is documentation for the operator
 rather than a promise: `@phis/server` serves from several instances, so an in-process timer would fire once
 per instance for one intended run, and every Add-on would have to defend against a concurrency nobody
 asked for. The operator's own scheduler is one runner by construction.
@@ -638,6 +683,54 @@ able to start its own job from a handler would have built itself a way around th
 The job runs in the serving process rather than in the CLI, against the release that instance actually
 serves. The CLI stays a caller instead of becoming a second runtime that would have to reproduce the
 loader, the pool, and the capability bindings.
+
+#### Scheduling a job
+
+On a host that runs the Debian package, the operator's scheduler is naturally a systemd timer: a
+one-shot service that calls the CLI once, and a timer that starts it. Run it as `phis`, because
+`config/phis-runtime.json`, where the CLI reads the internal token, is readable by that account alone.
+`/usr/bin/phis` operates on `/srv/phis/stages/prod` unless `PHIS_ROOT` names another stage.
+
+```ini
+# /etc/systemd/system/phis-job-acme-status-sync.service
+[Unit]
+Description=phis: @acme/status job "sync" for Site acme
+After=phis@prod.service
+
+[Service]
+Type=oneshot
+User=phis
+Group=phis
+ExecStart=/usr/bin/phis addon job --addon @acme/status --job sync --site acme --api-base-url http://127.0.0.1:5301
+```
+
+```ini
+# /etc/systemd/system/phis-job-acme-status-sync.timer
+[Unit]
+Description=Run @acme/status job "sync" for Site acme every 15 minutes
+
+[Timer]
+OnCalendar=*:0/15
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+```
+
+```sh
+systemctl daemon-reload
+systemctl enable --now phis-job-acme-status-sync.timer
+```
+
+A job is run per Site, so a job several Sites need gets one service per Site, or one service with
+several `ExecStart=` lines. A timer is one runner even when the stage is served by several instances,
+which is the point made above; with several hosts, install it on one of them. The command exits `1`
+when the server refuses the job, so `systemctl status` and the journal show a failed run.
+
+The same pattern serves the two other commands meant for a timer: `phis mail drain --api-base-url
+<url>`, which sends what the notification outbox still owes, and `phis maintain`, which runs Core's
+bounded cleanup tasks in the CLI process against the database
+([docs/CLI.md](./docs/CLI.md#mail), [docs/CLI.md](./docs/CLI.md#maintain)).
 
 ### Events
 
@@ -887,6 +980,9 @@ dispatch, by the job runner, and when its service factory is resolved.
 | `@phis/server/secrets:v1` | yes |
 | `@phis/server/settings:v1` | yes |
 | `@phis/server/roles:v1` | yes |
+| `@phis/server/payments:v1` | yes -- see [PAYMENTS.md](./PAYMENTS.md) §4 |
+| `@phis/server/payment-notifications:v1` | yes -- see [PAYMENTS.md](./PAYMENTS.md) §7 and [External hooks](#external-hooks) |
+| `@phis/server/notifications:v1` | yes -- see [`notifications:v1`](#notificationsv1) |
 
 Core descriptors are generated from the running release and reconciled into the registry. They are not
 editable Site settings and cannot be disabled per Site.
@@ -1941,6 +2037,38 @@ The declaration form carries what a real query needs and refuses what does not s
 - there are no joins, not even between the Add-on's own tables. A join onto a Core table would fix
   Core's shape inside an Add-on and undo what the symbolic reference buys; what an Add-on may know about
   a user comes from a Core service.
+
+#### Condition and value reference
+
+A `where` is a tree built from a closed set of conditions (`PhisAddonQueryCondition` in
+`@phis/contracts/addon`, `phis-contracts/src/queries.ts`). `src/lib/addons/query-descriptor.ts` validates
+it when the manifest is admitted, and `src/lib/addons/query-sql.ts` turns it into the statement. Every
+`column` must name a column of the query's table; the tree nests at most eight levels deep.
+
+| Condition | Shape | Statement | Rules |
+| --- | --- | --- | --- |
+| `compare` | `{ kind, column, operator, value }` | `column <op> value` | `operator` is one of `=`, `<>`, `<`, `<=`, `>`, `>=`. |
+| `isNull` | `{ kind, column, negated? }` | `column IS NULL`, or `IS NOT NULL` with `negated: true` | -- |
+| `contains` | `{ kind, column, value }` | `column ILIKE '%' \|\| value \|\| '%'`, with `%`, `_` and `\` in the value escaped | Case-insensitive. The column must be `text` or `string`; the value a parameter or a literal, not `actor` or `now`. It wants a `text` index on the column: without one it reads the whole table, and `phis addon check` reports it. |
+| `in` (fixed) | `{ kind, column, values }` | `column IN (...)`; an empty list is `FALSE` | The values are fixed in the descriptor. |
+| `in` (list) | `{ kind, column, parameter }` | `column = ANY($n::TYPE[])` | The parameter must be declared with `list: true`. `values` and `parameter` are never both given. A call with more than `PHIS_ADDON_QUERY_MAX_LIST` (500) values is refused. |
+| `flags` | `{ kind, column, mask, match }` | `all`: `(column & mask) = mask`; `none`: `(column & mask) = 0` | The column must be an integer column (`smallInteger`, `integer` or `bigInteger`). `match` is `"all"` or `"none"`. `mask` is a parameter or a literal; a literal mask must be a positive integer, because a mask of no bits matches every row under both. |
+| `all` | `{ kind, conditions }` | the conditions joined with `AND`; empty is `TRUE` | -- |
+| `any` | `{ kind, conditions }` | the conditions joined with `OR`; empty is `FALSE` | -- |
+| `whenPresent` | `{ kind, parameter, condition }` | `($n IS NULL OR condition)` | The parameter must be declared `nullable`; passing null switches the condition off. |
+
+A value (`PhisAddonQueryValue`) says where the thing a condition compares with, or an assignment writes,
+comes from:
+
+| Value | Shape | Meaning |
+| --- | --- | --- |
+| `parameter` | `{ kind: "parameter", name }` | A parameter the query declares, bound when the handler calls it. A `json` parameter is a document: it may be assigned to a `json` column, and validation refuses it as the value of any condition. |
+| `literal` | `{ kind: "literal", value }` | A string, number or boolean fixed in the descriptor, bound like a parameter rather than written into the statement. |
+| `actor` | `{ kind: "actor" }` | The acting user's id, substituted by Core so a query cannot be aimed at somebody else. Null when nobody is acting, which matches nothing. |
+| `now` | `{ kind: "now" }` | The database's current instant (`NOW()`), not the process's. |
+
+A parameter is declared per query with a `name`, a `type` (`integer`, `bigInteger`, `text`, `boolean`,
+`instant`, `uuid` or `json`), and optionally `nullable` and `list`. A `json` parameter cannot be a list.
 
 Result types are to be generated from the declared queries at the Add-on's own build time by
 `@phis/addon-sdk` (section 3, not built), because an Add-on is built separately and cannot read

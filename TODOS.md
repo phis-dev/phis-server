@@ -35,18 +35,18 @@ processed. The temporary operator was removed; the test consumer is installed bu
 
 - **The Module half of `@phis/shop`** (design/SHOP.md section 8): storefront pages, the product
   Providers, the checkout Form and its state machine, the order page with the token, the customer's
-  orders in App, and the management surface in Accounting. The Add-on half is built and installed on
-  the dev stage; the checkout machine is the second consumer of phis-ui's state-machine binding and may
-  need Foundation work first (SHOP.md section 10).
-- **The Shop's public address** comes with the new phisys.com Site: the present one is an old test
-  construct without the skeleton's `/api/addons` and `/api/hooks` routes and is to be regenerated from
-  the skeleton, which has them. Until then the Shop's routes are reached against Core directly.
+  orders in App, and the management surface in Accounting. The Add-on half is built; the checkout
+  machine is the second consumer of phis-ui's state-machine binding and may need Foundation work first
+  (SHOP.md section 10).
+- **The Shop's public address.** A Site reaches the Shop through its `/api/addons` and `/api/hooks`
+  routes, which the current Site skeleton has; a Site generated from an older skeleton lacks them and has
+  to be regenerated. Until then the Shop's routes are reached against Core directly.
 - **A sandbox checkout through the Shop** on `stripe-sandbox`: a manager creates a destination for `CH`
   (`net`/`provider`) and a product, then `POST /api/addons/phis/shop/orders` and the hosted page.
 - **Product pictures in the catalogue answer**: the `image` slot exists; the hook does not yet list the
   files a product carries.
-- **`pnpm install` for `@phis/shop`** with a terminal: the package gained `@phis/contracts`, `esbuild`
-  and `vitest`, linked by hand so far; the lockfile has not been updated.
+- **The lockfile of `@phis/shop`** has to record its `@phis/contracts`, `esbuild` and `vitest`
+  dependencies (`pnpm install`).
 
 ## Page addresses and references
 
@@ -267,16 +267,6 @@ processed. The temporary operator was removed; the test consumer is installed bu
   the tarball `pnpm package:dist` assembles has never been installed. Publishing is a step added back to
   `release.yml` (npm trusted publishing needs the package to exist first, so the first publish is by hand)
   once it is decided what a registry install is for.
-- **Nothing sets the mode or the owner of `phis-runtime.json`.** `docs/INSTALL.md` states that the file holds
-  secrets and wants mode `0600` owned by the service account, and `writePhiRuntimeConfigSync` writes it
-  through a temporary file and a rename without touching either -- so its permissions are whatever the
-  umask of whoever ran the command produced. `db bootstrap` made this visible by writing two generated
-  passwords into it, and says so in its output rather than acting, because the right answer is not obvious
-  from inside: a CLI run as root against a remote database would leave a file the server cannot read if it
-  set `0600` alone, and it does not know which account the server is. Either the runtime configuration
-  carries its own expectation -- an owner in `phis-config.json`, checked and set on every write -- or
-  `config validate` reports a file that is readable by more than the service account. Not both, and not a
-  `chmod` buried in a writer.
 - **One first-install flow.** A new Site needs `phis site add` before `phis init`. Provide one documented,
   transactional CLI flow that registers and validates the Site and then materializes its scaffold, leaving
   neither a partially registered Site nor a partial source tree on failure.

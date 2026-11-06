@@ -1963,11 +1963,11 @@ Contract:
 ## Payment execution
 
 The creation script declares all Payment/outbox columns and constraints directly. As with other v1
-Core structural changes, reapplying `001_create_phis.pgsql` does not upgrade existing table columns;
-the workspace development database was updated explicitly for this work. On 2026-10-04, the separate
-`phis_dev` database behind a separate compiled test installation also received the Payment tables and an
-explicit transactional outbox update, preserving existing thread rows. Coordinate an existing
-installation's outbox update before admitting Payment consumers.
+Core structural changes, reapplying `001_create_phis.pgsql` does not upgrade existing table columns:
+it creates the Payment tables where they are missing, but a `phis.addon_event_outbox` created before
+Payments keeps its old shape. Such an installation needs an explicit, transactional update of that table
+to the shape listed below (notably `subject_kind`, `payment_id` and `addon_event_outbox_subject_check`), which
+keeps the existing thread rows. Make that update before admitting Payment consumers.
 
 Runtime queries live in `src/db/payments.mts`; the same typed functions serve the Core engine and
 operator CLI. `PAYMENTS.md` specifies ownership, grants, financial semantics and read-only recovery.

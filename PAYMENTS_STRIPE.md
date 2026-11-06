@@ -24,9 +24,9 @@ as duplicates without changing the Payment version or fulfilment count. The full
 idempotent repeat returned the same operation/refund identities. Concurrent reservation conflicts
 returned retryable HTTP 503; re-signed genuine pending events subsequently processed successfully.
 Both sandbox purchases from the test runs were fully refunded, with no pending Core receipts/events.
-The test consumer was disabled, its profile grant removed and the temporary operator deleted.
-Evidence: `/opt/projects/artifacts/phis-payment-settlement-test-20261004.json`. Remaining scenarios
-are tracked in [TODOS.md](./TODOS.md).
+The test consumer was disabled, its profile grant removed and the temporary operator deleted. A
+sanitized report of the run was kept with the test records; it is not part of this repository.
+Remaining scenarios are tracked in [TODOS.md](./TODOS.md).
 
 ## 1. Deliverable and ownership
 

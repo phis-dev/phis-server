@@ -42,8 +42,8 @@ examples below assume the variable is exported.
   services already running on the old Node keep it until they restart.
 - **No package manager for the server itself** when it is installed from the Debian package or the
   package tarball: the server and the `phis` CLI run on Node alone. **pnpm** is needed only to build the
-  server from the source workspace (the workspace pins `pnpm@11.9.0`; `@phis/server` declares it in
-  `devEngines`, so npm refuses to run the repository's own scripts).
+  server from source (the release builds with pnpm 11; `@phis/server` names pnpm in `devEngines`, so npm
+  refuses to run the repository's own scripts).
 - **A package manager for each Site**, which `phis init` and `phis update` run in the Site's directory:
   **npm** by default for a new Site, or yarn, bun or pnpm if the Site uses one; see
   [Package manager](./CLI.md#package-manager).
@@ -79,15 +79,21 @@ GRANT CREATE ON DATABASE phis_prod TO phis_prod_migrator;
 
 ## 2. Install the server and configure the phis root
 
-### From the source workspace
+### From source
 
-`@phis/server` depends on the workspace package `@phis/contracts`, so it is built inside the phis
-pnpm workspace:
+The repository builds as a package of its own, the way the release workflow builds it
+(`.github/workflows/release.yml`). It carries no lockfile and no `pnpm-workspace.yaml`; its one sibling
+dependency, `@phis/contracts`, comes from npm at the version `package.json` names. It needs Node 24.21 or
+later and pnpm 11. Write the workspace file the release writes -- it allows the native build scripts and
+exempts the `@phis` packages from pnpm's minimum release age -- then install, build the server and
+bundle the CLI:
 
 ```sh
-pnpm install                                   # at the workspace root
-pnpm --filter @phis/server build               # next build
-pnpm --filter @phis/server build:cli           # optional: dist/phis.mjs
+git clone https://github.com/phis-dev/phis-server.git && cd phis-server
+printf 'allowBuilds:\n  argon2: true\n  esbuild: true\n  sharp: true\n  unrs-resolver: true\nminimumReleaseAgeExclude:\n  - "@phis/*"\n' > pnpm-workspace.yaml
+pnpm install --no-frozen-lockfile
+pnpm build                                     # next build
+pnpm build:cli                                 # dist/phis.mjs, which ./phis prefers
 ```
 
 Run the CLI as `pnpm phis ...` or `./phis ...` from the `phis-server` directory
@@ -109,7 +115,8 @@ sudo apt update
 sudo apt install phis
 ```
 
-The same packages are attached to each GitHub release, as `phis_<version>+<distribution>_<arch>.deb`,
+The same packages are attached to each GitHub release, as
+`phis_<version>-<revision>+<distribution>_<arch>.deb` (for example `phis_0.2.7-1+trixie_amd64.deb`),
 for a host that installs without the repository (`sudo apt install ./phis_<...>.deb`). Debian 12
 (bookworm) is not served: its glibc is older than the one the package is built against.
 
@@ -118,8 +125,13 @@ The package installs the server to `/usr/lib/phis/server`, the CLI to `/usr/bin/
 the packaged `phis-config.json` (`/usr/share/phis/phis-config.json`), and `.env` holding `PORT=5301`, `HOSTNAME=127.0.0.1` and a generated
 `NEXT_SERVER_ACTIONS_ENCRYPTION_KEY`. The service is `phis@prod.service`. The server address is then
 `http://127.0.0.1:5301`. `/usr/bin/phis` operates on `/srv/phis/stages/prod` unless `--root` or
-`PHIS_ROOT` names another stage ([CLI.md](./CLI.md#running-the-cli)). Continue with the configuration
-below.
+`PHIS_ROOT` names another stage ([CLI.md](./CLI.md#running-the-cli)).
+
+The package makes `config/phis-runtime.json` and `.env` mode `0600`, owned by `phis:phis`, and sets that
+again on every upgrade, because both hold secrets. An ordinary user therefore cannot run the CLI against
+the stage: run it as the service account, `sudo -u phis phis ...`, or as root. A write as root keeps the
+file's owner and group, so the server can still read it afterwards; the CLI creates the file mode `0600`
+whoever runs it. Continue with the configuration below.
 
 ### From the package tarball
 
@@ -160,7 +172,7 @@ install -d -o phis -g phis /srv/phis/stages/prod/config
 
 | File | Action |
 | --- | --- |
-| `config/phis-config.json` | Copy from `phis-server/config/phis-config.json` and adjust. |
+| `config/phis-config.json` | Copy from `phis-server/config/phis-config.json` and adjust. On Debian it is a symbolic link to the packaged `/usr/share/phis/phis-config.json`, which an upgrade replaces: put a change in `phis-runtime.json`, whose values override it, or replace the link with a copy of your own, which the package then leaves alone. |
 | `config/phis-runtime.json` | Create; start from `phis-server/config/phis-runtime.example.json` (Debian: `/usr/share/doc/phis/examples/`). Contains secrets: mode `0600`, owned by the service account. |
 | `config/phis-addons.json` | Optional; `phis addon install` creates it. |
 | `config/phis-modules.json` | Optional; `phis module add` creates it. |
@@ -233,7 +245,7 @@ upgrade ([CLI.md](./CLI.md#schema)).
 Start the server with the phis root and a loopback bind:
 
 ```sh
-# source workspace, in phis-server/
+# from source, in the phis-server checkout
 PHIS_ROOT=/srv/phis/stages/prod NEXT_SERVER_ACTIONS_ENCRYPTION_KEY=<key> \
   pnpm exec next start -H 127.0.0.1 -p 5301
 
@@ -318,15 +330,15 @@ What `init` writes (scaffold version 3):
 | Path | Content |
 | --- | --- |
 | `package.json` | Scripts `dev`, `build`, `start`, `typecheck`; `next`, `react`, `antd`, `@phis/ui` and types; `engines.node >=24.21.0`; `packageManager`. |
-| `tsconfig.json`, `next.config.ts` | `output: "standalone"`, the in-memory render cache handler from `@phis/ui/next/cache-handler`, `transpilePackages` with `@phis/ui` and the installed Module packages from `src/generated/site-module-packages.json`. |
+| `tsconfig.json`, `next.config.ts` | `output: "standalone"`, the in-memory render cache handler from `@phis/ui/next/cache-handler`, `transpilePackages` with `@phis/ui` and the installed Module packages from `src/generated/site-module-packages.json`. The configuration is wrapped in `withPhiNextConfig` from `@phis/ui/next/config`, which generates Ant Design's structure from the Ant Design installed in the Site. |
 | `.gitignore` | Ignores `node_modules/`, `.next/`, build output, `.phis/releases/` and `config/site-runtime.json`. |
 | `config/site-runtime.json` | `site.key`, `site.publicUrl`, `phis.apiBaseUrl`, `phis.internalToken` (from `api.internalToken`), `network.internalApiTimeoutMs` (`8000`). |
 | `config/site-runtime.example.json` | The same keys with `site.publicUrl`, `phis.apiBaseUrl` and `phis.internalToken` empty. |
 | `src/proxy.ts` | Request routing (`@phis/ui/next/site-proxy`). |
 | `src/app/(site)/` | Route group for everything that reads the request: root layout, index page, `not-found`, `forbidden`, `unauthorized`; the Public Area under `[root]/` and the Areas `accounting`, `admin`, `app`, `builder`, `editor`, each with a `(root)` and a `(pages)` branch and their region slots; `builder/api/[[...path]]`. |
 | `src/app/(static)/static-render/[marker]/[mode]/[root]/` | Route group for the anonymous Public Area render that is cached per page, locale and colour scheme. |
-| `src/app/api/{auth,site,addons,hooks}/[[...path]]/route.ts`, `src/app/api/site/forms/route.ts` | Thin proxies to `@phis/server`. |
-| `src/app/api/site/module-diagnostics/route.ts`, `src/app/api/site/navigation-target/route.ts` | Used by `phis site check` and navigation. |
+| `src/app/api/{auth,site,addons,hooks}/[[...path]]/route.ts` | Thin proxies to `@phis/server`. |
+| `src/app/global-error.tsx` | The page of last resort for an error the root layouts throw; it renders its own document from `@phis/ui/next/global-error` and asks the CMS for nothing. |
 | `src/app/sitemap.xml/route.ts`, `src/app/robots.txt/route.ts` | The crawler files. Asset bytes travel through the `/api/site` proxy. |
 | `src/app/globals.css` | Empty Site stylesheet. |
 | `src/runtime-modules/` | Area hosts that receive the Module projection. |
@@ -526,12 +538,18 @@ Secrets the Add-on declares are stored with `phis secret set --addon @acme/statu
 <name>` (value on stdin). Roles are granted with `phis addon role`
 ([CLI.md](./CLI.md#addon-server-add-ons)).
 
+Core schedules nothing. An Add-on that declares jobs (`phis addon list --json` shows each manifest,
+its `jobs` included) runs them only when something calls `phis addon job`, the notification outbox is
+retried only by `phis mail drain`, and Core's cleanup tasks run with `phis maintain`. On a systemd host,
+give each a one-shot service and a timer: [SERVER_ADDONS.md](../SERVER_ADDONS.md#scheduling-a-job) has
+an example for a job, and the same pair of units with another `ExecStart=` serves the other two.
+
 ## 11. Updating later
 
 ### Server
 
 Install the new server release -- `sudo apt update && sudo apt install phis` from the Debian package, or
-pull and rebuild the workspace (step 2) from source. The Debian package restarts every running
+pull and rebuild the checkout (step 2) from source. The Debian package restarts every running
 `phis@<stage>` instance itself once the new release is in place, one after the other; from source the
 restart below is yours. Then:
 
