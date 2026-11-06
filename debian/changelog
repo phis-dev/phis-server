@@ -1,3 +1,12 @@
+phis (0.2.6-1) unstable; urgency=medium
+
+  * Packaging: released for Debian 13 (trixie) and Ubuntu 24.04 (noble), on amd64 and arm64, through
+    the apt repository on apt.phisys.com (channel testing); each distribution carries its own version,
+    <version>+<distribution>.
+  * INSTALL: the Debian package installs from apt.phisys.com; Node 24 comes from NodeSource.
+
+ -- Phisys Ltd. <debian@phisys.com>  Fri, 06 Nov 2026 15:18:50 +0000
+
 phis (0.2.5-1) unstable; urgency=medium
 
   * Payments: a Provider may complete the price with tax, shipping and discounts. Core validates the
