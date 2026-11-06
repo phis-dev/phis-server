@@ -1,6 +1,19 @@
 PHIS for Debian
 ================
 
+Where the package comes from
+----------------------------
+
+Releases are built by the GitHub release workflow and published to
+`https://apt.phisys.com/<testing|stable> <trixie|noble> main`, for `amd64` and
+`arm64`. One build per architecture serves both distributions; each gets its
+own changelog entry and version, `<version>+<distribution>`, stamped at build
+time and never committed. Installing from the repository is described in
+`docs/INSTALL.md`, step 2.
+
+Node 24.21 or later comes from NodeSource: neither trixie nor noble carries it
+in its own archive.
+
 Install layout
 --------------
 

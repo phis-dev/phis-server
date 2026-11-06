@@ -34,7 +34,10 @@ examples below assume the variable is exported.
 - **Node.js 24.21.0** or later, for the server, the CLI and every Site. Earlier releases leak memory
   under React Flight rendering and run out of memory under load. `@phis/server` declares
   `"engines": {"node": ">=24.21.0"}`, a generated Site the same, the Debian package depends on
-  `nodejs (>= 24.21.0)`, and the server's setup page fails its Node check below that.
+  `nodejs (>= 24.21.0)`, and the server's setup page fails its Node check below that. Neither Debian 13
+  (trixie) nor Ubuntu 24.04 (noble) ships Node 24 in its own archive; install it from
+  [NodeSource](https://github.com/nodesource/distributions) first, whose `nodejs` package satisfies that
+  dependency.
 - **No package manager for the server itself** when it is installed from the Debian package or the
   package tarball: the server and the `phis` CLI run on Node alone. **pnpm** is needed only to build the
   server from the source workspace (the workspace pins `pnpm@11.9.0`; `@phis/server` declares it in
@@ -89,6 +92,24 @@ Run the CLI as `pnpm phis ...` or `./phis ...` from the `phis-server` directory
 ([CLI.md](./CLI.md#running-the-cli)).
 
 ### From the Debian package
+
+The package is published to the apt repository on `apt.phisys.com` for Debian 13 (trixie) and Ubuntu
+24.04 (noble), on `amd64` and `arm64`. Every release lands in the `testing` channel; `stable` receives a
+release once it is promoted. Add the repository and its signing key, then install:
+
+```sh
+sudo install -d -m 0755 /etc/apt/keyrings
+curl -fsSL https://apt.phisys.com/repo-signing-key.asc \
+  | sudo gpg --dearmor -o /etc/apt/keyrings/phisys-archive-keyring.gpg
+echo "deb [signed-by=/etc/apt/keyrings/phisys-archive-keyring.gpg] https://apt.phisys.com/testing $(. /etc/os-release && echo "$VERSION_CODENAME") main" \
+  | sudo tee /etc/apt/sources.list.d/phisys.list
+sudo apt update
+sudo apt install phis
+```
+
+The same packages are attached to each GitHub release, as `phis_<version>+<distribution>_<arch>.deb`,
+for a host that installs without the repository (`sudo apt install ./phis_<...>.deb`). Debian 12
+(bookworm) is not served: its glibc is older than the one the package is built against.
 
 The package installs the server to `/usr/lib/phis/server`, the CLI to `/usr/bin/phis`, creates the
 `phis` user and the stage `/srv/phis/stages/prod` with an empty `config/phis-runtime.json`, a link to
@@ -507,7 +528,8 @@ Secrets the Add-on declares are stored with `phis secret set --addon @acme/statu
 
 ### Server
 
-Install the new server release, then:
+Install the new server release -- `sudo apt update && sudo apt install phis` from the Debian package, or
+pull and rebuild the workspace (step 2) from source -- then:
 
 ```sh
 phis schema apply

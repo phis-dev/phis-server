@@ -41,8 +41,8 @@
 - Run `pnpm build` only when production behavior, bundling, routing, or SSR output must be verified explicitly.
 - `pnpm package:dist` assembles and validates the publishable tree from an existing `pnpm build` and
   `pnpm build:cli`; `pnpm package:pack` runs all three and packs the tarball. A `v*` tag runs the release
-  (`.github/workflows/release.yml`), which publishes the same build as both `@phis/server` on npm and the
-  Debian package on the GitHub release. A release needs the tag, `package.json` and `debian/changelog` to
+  (`.github/workflows/release.yml`), which builds the Debian package for trixie and noble on amd64 and arm64,
+  publishes it to `apt.phisys.com` and attaches it to the GitHub release; nothing goes to npm. A release needs the tag, `package.json` and `debian/changelog` to
   agree.
 
 ## Project Intent

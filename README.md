@@ -233,8 +233,16 @@ itself. How to build one is in [ADDON_HOWTO.md](./ADDON_HOWTO.md), the server co
 ## Distribution
 
 A release is a tag. Pushing `v<version>` builds the standalone server, the CLI bundle and the schema file
-once, and ships them as the Debian package `phis`, attached to the GitHub release. The tag must agree with
-`package.json` and with `debian/changelog`, or the workflow refuses it before anything is built.
+on `amd64` and `arm64`, and ships them as the Debian package `phis` for Debian 13 (trixie) and Ubuntu
+24.04 (noble): published to the `testing` channel of the apt repository on `apt.phisys.com`, and attached
+to the GitHub release. Each distribution gets its own version, `<version>-1+<distribution>`, because the
+repository's package pool is shared between them. Running the workflow again on the tag with
+`channel: stable` publishes the same sources to `stable`. The tag must agree with `package.json` and with
+`debian/changelog`, or the workflow refuses it before anything is built.
+
+The upload signs each `.changes` with the build signer `build-ci@phisys.com` and hands it to the
+repository server, which takes it only through a gate admitting the upload and the publish call. Both
+keys live in the GitHub environment `apt-publish`.
 
 `@phis/server` is not published to npm. It is no runtime that starts once installed: a stage is set up
 around it by `phis` (or phis-host) -- service account, unit, configuration, proxy -- which is what the
@@ -244,7 +252,7 @@ still assembles and validates it, so publishing later is a step added to the rel
 
 | Installed from | What it carries | Described in |
 | --- | --- | --- |
-| `phis_<version>_<arch>.deb` | The server, the CLI, the schema file, the stage layout, the systemd unit, `/usr/bin/phis`, the proxy templates, and the traced `node_modules`: the install reads no registry and needs no network. | [debian/README.Debian](./debian/README.Debian), [docs/INSTALL.md](./docs/INSTALL.md) |
+| `phis_<version>+<distribution>_<arch>.deb`, from `apt.phisys.com` or the GitHub release | The server, the CLI, the schema file, the stage layout, the systemd unit, `/usr/bin/phis`, the proxy templates, and the traced `node_modules`: the install reads no registry and needs no network. | [debian/README.Debian](./debian/README.Debian), [docs/INSTALL.md](./docs/INSTALL.md) |
 | `@phis/server` tarball (`pnpm package:pack`, not published) | The same server, the same CLI and the same schema file, with the runtime dependencies resolved by npm instead. No stage layout, no unit, no proxy configuration. | [docs/INSTALL.md](./docs/INSTALL.md) |
 
 The build links the packages it treats as external -- `pg`, `argon2`, `sharp` and two more -- into

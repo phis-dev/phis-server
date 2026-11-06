@@ -3,18 +3,39 @@ name: Release
 on:
   push:
     tags: ["v*"]
+  # A release already built for testing reaches stable by running this again on its tag with
+  # `channel: stable`. There is no promote step on the repository server: a channel is a value of the
+  # upload, so stable receives a fresh upload of the same sources.
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: "apt.phisys.com channel to publish to"
+        type: choice
+        options: [testing, stable]
+        default: testing
 
 permissions:
-  # The Debian package is attached to the release this workflow creates, which is a write.
+  # The Debian packages are attached to the release this workflow creates, which is a write.
   contents: write
 
-# A tag releases the server as the Debian package only. Not to npm: `@phis/server` is no runtime that
-# starts once installed -- a stage is set up by `phis` (or phis-host) around it, with its unit, its
-# configuration and its proxy -- and a registry publish is the one step nothing undoes. `package:dist`
-# still assembles the npm tarball, so publishing it later is a step added here, not a build to write.
+# A tag releases the server as Debian packages: attached to the GitHub release and published to the
+# apt repository on apt.phisys.com, for each distribution and architecture below. Not to npm:
+# `@phis/server` is no runtime that starts once installed -- a stage is set up by `phis` (or phis-host)
+# around it, with its unit, its configuration and its proxy -- and a registry publish is the one step
+# nothing undoes. `package:dist` still assembles the npm tarball, so publishing it later is a step added
+# here, not a build to write.
+env:
+  # The distributions the package is published for. One binary per architecture serves both: it is built
+  # on Ubuntu 24.04, whose glibc is the older of the two, and its shared-library dependencies are
+  # computed there. bookworm's glibc is older still, so a package built here would not run on it.
+  APT_DISTRIBUTIONS: trixie noble
+  # The build signer the repository server accepts uploads from. Its own key, not the one local builds
+  # sign with, so that it can be withdrawn alone.
+  APT_SIGNING_FINGERPRINT: B4F38F4BF95F0E3136F3F469F951822510323749
+
 jobs:
-  release:
-    runs-on: ubuntu-latest
+  check:
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
 
@@ -33,6 +54,10 @@ jobs:
       # the one released.
       - name: Refuse a tag that disagrees with what the sources call this release
         run: |
+          case "$GITHUB_REF" in
+            refs/tags/v*) ;;
+            *) echo "A release runs on a tag; $GITHUB_REF is none" >&2; exit 1 ;;
+          esac
           tag="${GITHUB_REF_NAME#v}"
           pkg="$(node -p "require('./package.json').version")"
           if [ "$tag" != "$pkg" ]; then
@@ -64,35 +89,155 @@ jobs:
       - run: pnpm db:boundary
       - run: pnpm auth:config-keys
 
-      # The inputs the Debian package is assembled from.
+  build:
+    needs: check
+    strategy:
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          # Native, not emulated: the traced `node_modules` carry argon2's and sharp's binaries for the
+          # architecture the install ran on, and a Next build under emulation takes most of an hour.
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+
+      - name: Install as a package of its own
+        run: |
+          printf 'allowBuilds:\n  argon2: true\n  esbuild: true\n  sharp: true\n  unrs-resolver: true\nminimumReleaseAgeExclude:\n  - "@phis/*"\n' > pnpm-workspace.yaml
+          pnpm install --no-frozen-lockfile
+
+      # The inputs the Debian packages are assembled from.
       - run: pnpm build
       - run: pnpm build:cli
 
-      - name: Build the Debian package
-        env:
-          # Where the upload below looks for the package.
-          ARTIFACT_DIR: ${{ runner.temp }}/artifacts
+      - name: Install the Debian build tools
         run: |
           sudo apt-get update
           # `build-essential` is not in Build-Depends, but dpkg-buildpackage checks for it on every build.
           sudo apt-get install -y --no-install-recommends build-essential debhelper dpkg-dev
-          mkdir -p "$ARTIFACT_DIR"
-          # `-nc` because `debian/clean` lists `.next` and `dist`: for an operator they are leftovers to
-          # remove, but here they are this build's inputs, and the clean target would delete them.
-          # `-b` builds the binary package alone -- there is no source package to sign or upload.
-          # Built into `..`, where the buildinfo and changes files written after the package expect it
-          # (ARTIFACT_DIR removed for the build, which `debian/rules` would otherwise put it into), and
-          # moved for the upload afterwards.
-          env -u ARTIFACT_DIR dpkg-buildpackage -us -uc -b -nc
-          mv ../*.deb "$ARTIFACT_DIR"/
 
-      - name: Attach the Debian package to the release
+      # One package per distribution, built from its own copy of the tree. The repository server takes a
+      # `.changes` only for the distribution it names, and its package pool is shared between
+      # distributions, so each one carries its own version: `<version>+<distribution>`, a changelog entry
+      # stamped here and never committed. The copy keeps one build's `debian/phis` out of the next.
+      - name: Build the Debian packages
+        env:
+          OUT: ${{ runner.temp }}/out
+        run: |
+          base="$(dpkg-parsechangelog -SVersion)"
+          mkdir -p "$OUT"
+          for dist in $APT_DISTRIBUTIONS; do
+            src="$RUNNER_TEMP/src-$dist"
+            rm -rf "$src"
+            mkdir -p "$src"
+            tar --exclude-vcs --exclude='./node_modules' --exclude='./.next/cache' -cf - . | tar -xf - -C "$src"
+            {
+              printf 'phis (%s+%s) %s; urgency=medium\n\n' "$base" "$dist" "$dist"
+              printf '  * Release %s, built for %s.\n\n' "$base" "$dist"
+              printf ' -- Phisys Ltd. <debian@phisys.com>  %s\n\n' "$(date -R)"
+              cat debian/changelog
+            } > "$src/debian/changelog"
+            # `-nc` because `debian/clean` lists `.next` and `dist`: for an operator they are leftovers to
+            # remove, but here they are this build's inputs, and the clean target would delete them.
+            # `-b` builds the binary package alone -- there is no source package to upload. The
+            # `.changes` and `.buildinfo` are what the repository server takes the upload by.
+            (cd "$src" && ARTIFACT_DIR="$OUT" dpkg-buildpackage -us -uc -b -nc \
+              --buildinfo-option="-u$OUT" --changes-option="-u$OUT" \
+              --buildinfo-file="$OUT/phis_${base}+${dist}_${{ matrix.arch }}.buildinfo" \
+              --changes-file="$OUT/phis_${base}+${dist}_${{ matrix.arch }}.changes")
+          done
+          ls -l "$OUT"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: deb-${{ matrix.arch }}
+          path: ${{ runner.temp }}/out/*
+          if-no-files-found: error
+
+  # Signs each `.changes` with the build signer and uploads it through the repository server's own
+  # path: copied into `/srv/aptly/incoming/<pipeline id>/`, then taken in by `phi-aptly-publish`, which
+  # refuses an unsigned upload. One pipeline id per distribution, carrying both architectures.
+  publish:
+    needs: build
+    runs-on: ubuntu-24.04
+    # Holds the signing key and the upload key; nothing else in this repository can read them.
+    environment: apt-publish
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: deb-*
+          path: ${{ runner.temp }}/out
+          merge-multiple: true
+
+      - name: Install the signing tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends devscripts gnupg openssh-client
+
+      - name: Sign the uploads
+        env:
+          APT_SIGNING_KEY: ${{ secrets.APT_SIGNING_KEY }}
+          OUT: ${{ runner.temp }}/out
+        run: |
+          printf '%s\n' "$APT_SIGNING_KEY" | gpg --batch --import
+          for changes in "$OUT"/*.changes; do
+            debsign --no-re-sign -k"$APT_SIGNING_FINGERPRINT" "$changes"
+          done
+
+      - name: Upload to apt.phisys.com
+        env:
+          APT_SSH_KEY: ${{ secrets.APT_SSH_KEY }}
+          APT_SSH_KNOWN_HOSTS: ${{ secrets.APT_SSH_KNOWN_HOSTS }}
+          CHANNEL: ${{ inputs.channel || 'testing' }}
+          OUT: ${{ runner.temp }}/out
+        run: |
+          install -d -m 0700 ~/.ssh
+          printf '%s\n' "$APT_SSH_KEY" > ~/.ssh/apt_upload
+          chmod 0600 ~/.ssh/apt_upload
+          printf '%s\n' "$APT_SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          ssh_opts="-i $HOME/.ssh/apt_upload -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes"
+          remote=aptly-publisher@phisys.com
+          version="${GITHUB_REF_NAME#v}"
+          # The upload key is bound to a gate on the server that admits exactly two commands: a classic
+          # scp into `incoming/phis-<id>/`, which creates the directory itself, and the publish call. So
+          # `scp -O` (the SFTP protocol is refused), no `mkdir`, and a pipeline id that starts with `phis-`.
+          for dist in $APT_DISTRIBUTIONS; do
+            # Unique per run and attempt, so a rerun never lands in a directory an earlier one left.
+            pipeline="phis-${version}-${dist}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+            files="$(ls "$OUT"/phis_*+"$dist"_*)"
+            scp -O $ssh_opts $files "$remote:/srv/aptly/incoming/$pipeline/"
+            ssh $ssh_opts "$remote" sudo /usr/local/sbin/phi-aptly-publish "$CHANNEL" "$dist" "$pipeline" --cleanup
+          done
+
+  release:
+    needs: publish
+    # A stable publish runs on a tag that was released before; the GitHub release already exists.
+    if: github.event_name == 'push'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: deb-*
+          path: ${{ runner.temp }}/out
+          merge-multiple: true
+
+      - name: Attach the Debian packages to the release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          ARTIFACT_DIR: ${{ runner.temp }}/artifacts
         run: |
           gh release create "$GITHUB_REF_NAME" \
             --repo "$GITHUB_REPOSITORY" \
             --title "$GITHUB_REF_NAME" \
             --generate-notes \
-            "$ARTIFACT_DIR"/*.deb
+            "$RUNNER_TEMP"/out/*.deb
