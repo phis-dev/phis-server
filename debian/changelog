@@ -4,7 +4,8 @@ phis (0.2.7-1) unstable; urgency=medium
     written with mode 0600. Every write replaced it with a file carrying the umask's mode (usually
     0644), so it was world-readable after db bootstrap, the setup pages or any CLI command that writes
     the configuration, even after a chmod by hand. postinst sets 0600 on every configure, which corrects
-    an existing stage on upgrade.
+    an existing stage on upgrade. A write as root (an operator running phis) gives the file the owner
+    and group of the file it replaces, or of config/, so the stage account can still read it.
 
  -- Phisys Ltd. <debian@phisys.com>  Fri, 06 Nov 2026 16:43:25 +0000
 

@@ -1,4 +1,5 @@
-import { readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { chownSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import path from "node:path";
 
 export const PHIS_ROOT_ENV = "PHIS_ROOT";
 export const PHIS_DEFAULT_STAGE_ROOT = "/srv/phis/stages/prod";
@@ -410,13 +411,31 @@ export function readMergedPhiConfigSync(configPaths: PhiConfigPaths) {
  * by renaming a fresh one over it, which would otherwise carry the umask's mode and undo a `chmod 0600`
  * an operator made. A temp file an interrupted write left behind is removed first, because `mode` only
  * applies to a file the write creates.
+ *
+ * Owner-only makes the owner decide who can start the server. The rename hands the file to whoever wrote
+ * it, and an operator typically runs `phis` as root while the server runs as the stage's account: a file
+ * root then owns is one the server can no longer read. So a write as root gives the new file the owner and
+ * group of the file it replaces, or of the `config/` directory when there is none yet. Another account
+ * cannot change ownership and keeps its own.
  */
 export function writePhiRuntimeConfigSync(configPaths: PhiConfigPaths, config: PhisConfig) {
   const nextContent = `${JSON.stringify(config, null, 2)}\n`;
   const tempPath = `${configPaths.runtime}.tmp`;
   rmSync(tempPath, { force: true });
   writeFileSync(tempPath, nextContent, { encoding: "utf-8", mode: 0o600 });
+  if (process.getuid?.() === 0) {
+    const owner = statOrNull(configPaths.runtime) ?? statOrNull(path.dirname(configPaths.runtime));
+    if (owner) chownSync(tempPath, owner.uid, owner.gid);
+  }
   renameSync(tempPath, configPaths.runtime);
+}
+
+function statOrNull(target: string) {
+  try {
+    return statSync(target);
+  } catch {
+    return null;
+  }
 }
 
 function isStringArray(value: unknown): value is string[] {

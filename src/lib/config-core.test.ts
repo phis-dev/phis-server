@@ -1,4 +1,4 @@
-import { chmodSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, chownSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -37,5 +37,24 @@ describe("writePhiRuntimeConfigSync", () => {
     chmodSync(`${paths.runtime}.tmp`, 0o644);
     writePhiRuntimeConfigSync(paths, DEFAULT_CONFIG);
     expect(modeOf(paths.runtime)).toBe(0o600);
+  });
+
+  // Ownership can only be handed over by root, so these run only where the suite runs as root.
+  const asRoot = process.getuid?.() === 0;
+  const otherAccount = { uid: 65534, gid: 65534 };
+
+  it.runIf(asRoot)("keeps the owner of the file it replaces when written as root", () => {
+    writeFileSync(paths.runtime, "{}\n");
+    chownSync(paths.runtime, otherAccount.uid, otherAccount.gid);
+    writePhiRuntimeConfigSync(paths, DEFAULT_CONFIG);
+    const stat = statSync(paths.runtime);
+    expect({ uid: stat.uid, gid: stat.gid }).toEqual(otherAccount);
+  });
+
+  it.runIf(asRoot)("gives a new file the owner of config/ when written as root", () => {
+    chownSync(root, otherAccount.uid, otherAccount.gid);
+    writePhiRuntimeConfigSync(paths, DEFAULT_CONFIG);
+    const stat = statSync(paths.runtime);
+    expect({ uid: stat.uid, gid: stat.gid }).toEqual(otherAccount);
   });
 });
