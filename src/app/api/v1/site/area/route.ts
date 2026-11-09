@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { PHI_SEARCH_INDEXED_AREA_MASK } from "@phis/contracts/search";
 
 import {
   getExactSiteAreaPresetTree,
@@ -9,7 +10,6 @@ import {
 import { createJsonResponse } from "@/lib/api-response";
 import { guardApiV1 } from "@/lib/api-v1-guard";
 import { resolveCmsPath } from "@/lib/helpers/access";
-import { resolvePhisCmsAreaMask } from "@/lib/constants/cms-areas";
 import { requireSiteCmsPreviewApiContext } from "@/lib/guards/site-admin-api";
 import { normalizeLocale } from "@/lib/locale";
 import { requireSiteFromRequest } from "@/lib/site-context";
@@ -66,18 +66,19 @@ export async function GET(request: NextRequest) {
    *
    * On this read because the sitemap already asks it -- the Area's `index` and `sitemap` switches are
    * in the preset -- so one request answers both. Opt-in, because this is the live read every page
-   * view pays for. Public only: it is the one Area anything indexes, and a list of the staff Areas'
-   * addresses is what the Site keeps out of its robots.txt. Live only: a sitemap never reads a draft.
-   * With the flag the read answers even while the Area has no published revision, because Pages can
-   * be published before it is -- `preset` is then null rather than the whole answer a 404.
+   * view pays for. Public and App only: they are the two Areas anything indexes -- a crawler the
+   * first, the Site's own search (SEARCH.md) both -- and a list of the staff Areas' addresses is what
+   * the Site keeps out of its robots.txt. Live only: a sitemap never reads a draft. With the flag the
+   * read answers even while the Area has no published revision, because Pages can be published before
+   * it is -- `preset` is then null rather than the whole answer a 404.
    */
   const include = url.searchParams.get("include")?.trim() ?? "";
   if (include && include !== PUBLISHED_PAGES_INCLUDE) {
     return NextResponse.json({ error: `include must be "${PUBLISHED_PAGES_INCLUDE}".` }, { status: 400 });
   }
   const includePublishedPages = include === PUBLISHED_PAGES_INCLUDE;
-  if (includePublishedPages && resolvedPath.areaMask !== resolvePhisCmsAreaMask("public")) {
-    return NextResponse.json({ error: "publishedPages is answered for the Public Area only." }, { status: 400 });
+  if (includePublishedPages && (resolvedPath.areaMask & PHI_SEARCH_INDEXED_AREA_MASK) !== resolvedPath.areaMask) {
+    return NextResponse.json({ error: "publishedPages is answered for the Public and App Areas only." }, { status: 400 });
   }
   if (includePublishedPages && (revisionValue != null || reviewRevisionValue != null)) {
     return NextResponse.json({ error: "publishedPages is answered on the live read only." }, { status: 400 });

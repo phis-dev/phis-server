@@ -2134,6 +2134,56 @@ CREATE TRIGGER site_content_touch_read_marker_delete
   REFERENCING OLD TABLE AS old_rows
   FOR EACH STATEMENT EXECUTE FUNCTION phis.site_read_touch_markers();
 
+/*
+ * The Site's own search (SEARCH.md): what a visitor finds when they search a Site's Pages.
+ *
+ * The documents are the Site's, not derived here. A Page's words stand in Widget configs, in content
+ * whose Page this schema does not know, and in documents a Widget fetches while the Page is drawn, so the
+ * Site resolves each published Page the way a request does and writes the result -- one set per Area and
+ * language, replaced whole. A set names what it was built from in `fingerprint`; a Site process offering
+ * the set phis already holds is told so and writes nothing, which is how several processes noticing one
+ * publish produce one index.
+ *
+ * `search_vector` is derived in the database so the Site never says how text is indexed. The `simple`
+ * configuration on purpose: a Site is written in any language and translated into others, and a stemmer
+ * for the wrong one does worse than none. The query matches each word as a prefix instead, which is the
+ * part of stemming a reader expects ("install" finds "installieren" and "installation").
+ *
+ * Only the Public and App Areas: the operator's chrome is not a thing anybody searches.
+ */
+CREATE TABLE IF NOT EXISTS phis.site_search_sets (
+  site_id SMALLINT NOT NULL REFERENCES phis.sites(id) ON DELETE CASCADE,
+  area_id SMALLINT NOT NULL,
+  locale VARCHAR(8) NOT NULL,
+  fingerprint VARCHAR(128) NOT NULL,
+  document_count INT NOT NULL DEFAULT 0,
+  indexed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT site_search_sets_pkey PRIMARY KEY (site_id, area_id, locale),
+  CONSTRAINT site_search_sets_area_check CHECK (area_id IN (1, 2))
+);
+
+CREATE TABLE IF NOT EXISTS phis.site_search_documents (
+  id BIGSERIAL PRIMARY KEY,
+  site_id SMALLINT NOT NULL,
+  area_id SMALLINT NOT NULL,
+  locale VARCHAR(8) NOT NULL,
+  path VARCHAR(512) NOT NULL,
+  title VARCHAR(512) NOT NULL DEFAULT '',
+  description VARCHAR(2048) NOT NULL DEFAULT '',
+  body TEXT NOT NULL DEFAULT '',
+  search_vector TSVECTOR GENERATED ALWAYS AS (
+    setweight(to_tsvector('simple'::regconfig, title), 'A')
+    || setweight(to_tsvector('simple'::regconfig, description), 'B')
+    || setweight(to_tsvector('simple'::regconfig, body), 'C')
+  ) STORED,
+  CONSTRAINT site_search_documents_set_fk FOREIGN KEY (site_id, area_id, locale)
+    REFERENCES phis.site_search_sets (site_id, area_id, locale) ON DELETE CASCADE,
+  CONSTRAINT site_search_documents_path_unique UNIQUE (site_id, area_id, locale, path)
+);
+
+CREATE INDEX IF NOT EXISTS site_search_documents_vector_idx
+  ON phis.site_search_documents USING gin (search_vector);
+
 CREATE TABLE IF NOT EXISTS phis.server_addons (
   addon_id VARCHAR(255) PRIMARY KEY,
   package_name VARCHAR(255) NOT NULL,

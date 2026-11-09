@@ -8,7 +8,7 @@ public or internal token, and `session` is the visitor's Site session with the a
 passes (see [AUTHORIZATION.md](../AUTHORIZATION.md)). A route with no access entry performs its own checks
 or none; read its source. Request and response shapes are not listed; the source is linked per route.
 
-161 routes.
+163 routes.
 
 ## Contents
 
@@ -26,7 +26,7 @@ or none; read its source. Request and response shapes are not listed; the source
 - [`/api/v1/locales`](#apiv1locales) (1)
 - [`/api/v1/media`](#apiv1media) (2)
 - [`/api/v1/notifications`](#apiv1notifications) (2)
-- [`/api/v1/site`](#apiv1site) (17)
+- [`/api/v1/site`](#apiv1site) (19)
 - [`/api/v1/tr`](#apiv1tr) (1)
 
 ## `/api/operator`
@@ -357,6 +357,9 @@ Versioned API a Site calls server-to-server with its token (`x-phis-token`), and
 | GET | [`/api/v1/site/nav/scopes`](../src/app/api/v1/site/nav/scopes/route.ts) | internal token |  |
 | GET | [`/api/v1/site/page`](../src/app/api/v1/site/page/route.ts) | internal token; session (requireSiteCmsPreviewApiContext) |  |
 | POST | [`/api/v1/site/references`](../src/app/api/v1/site/references/route.ts) | internal token | Bulk resolver for the internal reference forms defined by `REFERENCES.md`. |
+| GET | [`/api/v1/site/search`](../src/app/api/v1/site/search/route.ts) | internal token | `GET /api/v1/site/search?q=&areas=public,app&limit=` -- the Site's Pages matching a visitor's query (SEARCH.md), in the language of the request. |
+| GET | [`/api/v1/site/search/index`](../src/app/api/v1/site/search/index/route.ts) | internal token | `GET /api/v1/site/search/index` -- the sets phis holds of this Site, with the fingerprint each was built from (SEARCH.md). A Site process compares them with what it would build now and writes only the sets that differ. |
+| PUT | [`/api/v1/site/search/index`](../src/app/api/v1/site/search/index/route.ts) | internal token | `PUT /api/v1/site/search/index` -- one set of documents, replacing what phis held of that Area and language (SEARCH.md). |
 | GET | [`/api/v1/site/settings`](../src/app/api/v1/site/settings/route.ts) | internal token | Internal read of the Site's Admin settings surface for server-side composition (the Admin Settings General page loads its Form initial values here). Mutations stay on the session-guarded /api/site/admin/settings route; this endpoint is internal-token read-only. |
 | GET | [`/api/v1/site/stats`](../src/app/api/v1/site/stats/route.ts) | internal token |  |
 | GET | [`/api/v1/site/theme`](../src/app/api/v1/site/theme/route.ts) | internal token; session (requireSiteCmsPreviewApiContext) |  |

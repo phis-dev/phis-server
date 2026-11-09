@@ -1829,6 +1829,37 @@ Contract:
   at most every few seconds and empties its other read caches, Navigation among them, when it moved.
 - Only equality of a marker means anything; it is not a count and not ordered.
 
+### `phis.site_search_sets`
+
+- `site_id SMALLINT NOT NULL REFERENCES phis.sites(id) ON DELETE CASCADE`, `area_id SMALLINT NOT NULL`
+  (`1` Public or `2` App, checked), `locale VARCHAR(8) NOT NULL`
+- `fingerprint VARCHAR(128) NOT NULL`: what the Site built the set from, as the Site names it; only
+  equality means anything
+- `document_count INT NOT NULL DEFAULT 0`, `indexed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
+- primary key `(site_id, area_id, locale)`
+
+### `phis.site_search_documents`
+
+- `id BIGSERIAL PRIMARY KEY`
+- `site_id`, `area_id`, `locale`: the set, `FOREIGN KEY ... REFERENCES phis.site_search_sets ON DELETE
+  CASCADE`
+- `path VARCHAR(512) NOT NULL`: the Page's address within its Area; unique per set
+- `title VARCHAR(512)`, `description VARCHAR(2048)`, `body TEXT`, each `NOT NULL DEFAULT ''`
+- `search_vector TSVECTOR GENERATED ALWAYS AS (...) STORED`: `simple` configuration, title weighted `A`,
+  description `B`, body `C`; GIN index `site_search_documents_vector_idx`
+
+Contract (SEARCH.md):
+- Written only by `PUT /api/v1/site/search/index` (internal token), one set per Area and language,
+  replaced whole in one transaction. A set offered with the fingerprint already held is not written and
+  the answer says so. A Site never reads these rows; it asks `GET /api/v1/site/search`.
+- The documents are the Site's reading of its published Pages, not derived from the CMS tables: the
+  Site resolves each Page as a request would and writes what a visitor could read. Which text a Widget
+  contributes is the Widget's declaration in `@phis/ui`.
+- The query is the words of `readPhiSearchQuery` (`@phis/contracts/search`), each matched as a prefix,
+  all required; ranked with `ts_rank_cd`; the snippet is `ts_headline` over `body`.
+- Deleting a Site drops its sets and documents. Nothing else here is maintenance: a set is replaced by
+  the next publish the Site notices.
+
 ### `phis.server_addons`
 
 - `addon_id VARCHAR(255) PRIMARY KEY`
