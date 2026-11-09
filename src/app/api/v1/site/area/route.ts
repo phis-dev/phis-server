@@ -11,8 +11,9 @@ import { createJsonResponse } from "@/lib/api-response";
 import { guardApiV1 } from "@/lib/api-v1-guard";
 import { resolveCmsPath } from "@/lib/helpers/access";
 import { requireSiteCmsPreviewApiContext } from "@/lib/guards/site-admin-api";
-import { normalizeLocale } from "@/lib/locale";
+import { resolveSiteReadLocale } from "@/lib/locale";
 import { requireSiteFromRequest } from "@/lib/site-context";
+import { readSiteCmsRevisionId } from "@/lib/helpers/site-cms-route";
 
 function resolveAreaPresetIdentity(url: URL) {
   const ownerModuleId = url.searchParams.get("ownerModuleId")?.trim() ?? "";
@@ -21,20 +22,6 @@ function resolveAreaPresetIdentity(url: URL) {
 }
 
 const PUBLISHED_PAGES_INCLUDE = "publishedPages";
-
-function resolveRequestLocale(request: Request) {
-  const url = new URL(request.url);
-  const rawLocale =
-    url.searchParams.get("locale") ??
-    request.headers.get("x-locale") ??
-    request.headers.get("accept-language");
-
-  if (!rawLocale?.trim()) {
-    return null;
-  }
-
-  return normalizeLocale(rawLocale);
-}
 
 export async function GET(request: NextRequest) {
   const guardError = guardApiV1(request, { requireInternalToken: true });
@@ -52,7 +39,7 @@ export async function GET(request: NextRequest) {
   const revisionValue = url.searchParams.get("revision");
   const reviewKind = url.searchParams.get("reviewKind")?.trim().toLowerCase() ?? "";
   const reviewRevisionValue = reviewKind === "area" ? url.searchParams.get("reviewRevision") : null;
-  const locale = resolveRequestLocale(request);
+  const locale = resolveSiteReadLocale(request);
   const resolvedPath = resolveCmsPath(rawPath);
   const sourcePreset = resolveAreaPresetIdentity(url);
   if (!sourcePreset) {
@@ -84,8 +71,8 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "publishedPages is answered on the live read only." }, { status: 400 });
   }
   if (reviewRevisionValue != null) {
-    const revisionId = Number(reviewRevisionValue);
-    if (!Number.isInteger(revisionId) || revisionId <= 0) {
+    const revisionId = readSiteCmsRevisionId(reviewRevisionValue);
+    if (revisionId == null) {
       return NextResponse.json({ error: "reviewRevision must be a positive integer." }, { status: 400 });
     }
 
@@ -111,8 +98,8 @@ export async function GET(request: NextRequest) {
   }
 
   if (revisionValue != null) {
-    const revisionId = Number(revisionValue);
-    if (!Number.isInteger(revisionId) || revisionId <= 0) {
+    const revisionId = readSiteCmsRevisionId(revisionValue);
+    if (revisionId == null) {
       return NextResponse.json({ error: "revision must be a positive integer." }, { status: 400 });
     }
 

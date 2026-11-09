@@ -5,6 +5,7 @@ import { createJsonResponse } from "@/lib/api-response";
 import { guardApiV1 } from "@/lib/api-v1-guard";
 import { requireSiteCmsPreviewApiContext } from "@/lib/guards/site-admin-api";
 import { requireSiteFromRequest } from "@/lib/site-context";
+import { readSiteCmsRevisionId } from "@/lib/helpers/site-cms-route";
 
 export async function GET(request: NextRequest) {
   const guardError = guardApiV1(request, { requireInternalToken: true });
@@ -24,8 +25,8 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "revision is required." }, { status: 400 });
   }
 
-  const revisionId = Number(revisionValue);
-  if (!Number.isInteger(revisionId) || revisionId <= 0) {
+  const revisionId = readSiteCmsRevisionId(revisionValue);
+  if (revisionId == null) {
     return NextResponse.json({ error: "revision must be a positive integer." }, { status: 400 });
   }
 

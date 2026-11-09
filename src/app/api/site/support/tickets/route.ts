@@ -27,10 +27,7 @@ export async function GET(request: NextRequest) {
     return error;
   }
 
-  const site = context?.site;
-  if (!site) {
-    return NextResponse.json({ error: "Authentication required." }, { status: 401 });
-  }
+  const site = context.site;
 
   const { searchParams } = new URL(request.url);
   const { page, pageSize } = parsePhiPagination(searchParams);
@@ -63,10 +60,7 @@ export async function POST(request: NextRequest) {
     return error;
   }
 
-  const site = context?.site;
-  if (!site) {
-    return NextResponse.json({ error: "Authentication required." }, { status: 401 });
-  }
+  const site = context.site;
 
   const body = await readRequestBody(request);
   const subject = normalizeString(body.subject);

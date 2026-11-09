@@ -14,10 +14,7 @@ export async function POST(request: NextRequest) {
   if (error) {
     return error;
   }
-  const site = context?.site;
-  if (!site) {
-    return NextResponse.json({ error: "Authentication required." }, { status: 401 });
-  }
+  const site = context.site;
 
   const body = await request.json().catch(() => null) as {
     sourceUrl?: unknown;

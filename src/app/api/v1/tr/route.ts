@@ -152,48 +152,79 @@ function resolveTranslationNamespace(request: Request, ctx: string) {
   return { named: true, ctx: built.context };
 }
 
-async function handleTranslation(request: Request, payload: TranslationPayload) {
+/**
+ * Who is asking, before anything else is read: the token mode, and the Site key a public caller may
+ * not name. Shared by the single and the batch handler, which used to carry this and everything in
+ * `prepareTranslation` twice over.
+ */
+function readTranslationCaller(request: Request) {
   const guardError = guardApiV1(request);
   if (guardError) {
-    return guardError;
+    return { error: guardError };
   }
-
   const tokenMode = getApiV1TokenMode(request);
   const explicitSiteKey = request.headers.get(PHIS_SITE_KEY_HEADER)?.trim() ?? "";
   if (tokenMode === "public" && explicitSiteKey) {
-    return NextResponse.json({ error: "Forbidden." }, { status: 403 });
+    return { error: NextResponse.json({ error: "Forbidden." }, { status: 403 }) };
   }
+  return { error: null, tokenMode, explicitSiteKey };
+}
 
-  const validated = validatePayload(payload);
-  if (validated instanceof NextResponse) {
-    return validated;
-  }
+type TranslationCaller = Exclude<ReturnType<typeof readTranslationCaller>, { error: NextResponse }>;
 
-  const { locale, msg, hash, sourceLocale, format } = validated;
-  const namespace = resolveTranslationNamespace(request, validated.ctx);
+/**
+ * The namespace, the locale and the write mode of a validated request, or the answer that ends it.
+ *
+ * `localeAllowed` false is not an error: the caller gets its source text back, as it always did, and
+ * the handler says so in the shape of its own answer.
+ */
+async function prepareTranslation(request: Request, caller: TranslationCaller, requestCtx: string, locale: string) {
+  const namespace = resolveTranslationNamespace(request, requestCtx);
   if (namespace.error) {
-    return namespace.error;
+    return { error: namespace.error };
   }
-  const ctx = namespace.ctx ?? validated.ctx;
+  const ctx = namespace.ctx ?? requestCtx;
   const normalizedLocale = resolvePhiLocaleBase(locale);
   const config = await getPhisConfig();
   const allowedLocales = new Set(getConfiguredTranslationSupportedLocalesSync());
   const allowPublicReads = config.translation?.allowPublicReads === true;
-  if (tokenMode === "public" && !allowPublicReads) {
-    return NextResponse.json({ error: "Forbidden." }, { status: 403 });
+  if (caller.tokenMode === "public" && !allowPublicReads) {
+    return { error: NextResponse.json({ error: "Forbidden." }, { status: 403 }) };
   }
-  const write = resolvePhisTranslationWriteMode({ tokenMode, named: namespace.named === true });
-  if (!allowedLocales.has(normalizedLocale)) {
+  const write = resolvePhisTranslationWriteMode({ tokenMode: caller.tokenMode, named: namespace.named === true });
+  const localeAllowed = allowedLocales.has(normalizedLocale);
+  if (!localeAllowed) {
     logRuntimeEvent("warn", "translation.locale_not_allowed", {
       area: "tr",
       message: "Translation locale is not allowed.",
       meta: {
         locale: normalizedLocale,
-        tokenMode,
+        tokenMode: caller.tokenMode,
       },
     });
+  }
+  return { error: null, ctx, normalizedLocale, write, localeAllowed };
+}
+
+async function handleTranslation(request: Request, payload: TranslationPayload) {
+  const caller = readTranslationCaller(request);
+  if (caller.error) {
+    return caller.error;
+  }
+  const validated = validatePayload(payload);
+  if (validated instanceof NextResponse) {
+    return validated;
+  }
+  const { locale, msg, hash, sourceLocale, format } = validated;
+  const prepared = await prepareTranslation(request, caller, validated.ctx, locale);
+  if (prepared.error) {
+    return prepared.error;
+  }
+  if (!prepared.localeAllowed) {
     return NextResponse.json({ translation: msg });
   }
+  const { tokenMode, explicitSiteKey } = caller;
+  const { ctx, normalizedLocale, write } = prepared;
 
   try {
     const site =
@@ -252,49 +283,26 @@ async function handleTranslation(request: Request, payload: TranslationPayload) 
 }
 
 async function handleBatchTranslation(request: Request, payload: TranslationPayload) {
-  const guardError = guardApiV1(request);
-  if (guardError) {
-    return guardError;
+  const caller = readTranslationCaller(request);
+  if (caller.error) {
+    return caller.error;
   }
-
-  const tokenMode = getApiV1TokenMode(request);
-  const explicitSiteKey = request.headers.get(PHIS_SITE_KEY_HEADER)?.trim() ?? "";
-  if (tokenMode === "public" && explicitSiteKey) {
-    return NextResponse.json({ error: "Forbidden." }, { status: 403 });
-  }
-
   const validated = validateBatchPayload(payload);
   if (validated instanceof NextResponse) {
     return validated;
   }
-
   const { locale, msgs, sourceLocale, format } = validated;
-  const namespace = resolveTranslationNamespace(request, validated.ctx);
-  if (namespace.error) {
-    return namespace.error;
+  const prepared = await prepareTranslation(request, caller, validated.ctx, locale);
+  if (prepared.error) {
+    return prepared.error;
   }
-  const ctx = namespace.ctx ?? validated.ctx;
-  const normalizedLocale = resolvePhiLocaleBase(locale);
-  const config = await getPhisConfig();
-  const allowedLocales = new Set(getConfiguredTranslationSupportedLocalesSync());
-  const allowPublicReads = config.translation?.allowPublicReads === true;
-  if (tokenMode === "public" && !allowPublicReads) {
-    return NextResponse.json({ error: "Forbidden." }, { status: 403 });
-  }
-  const write = resolvePhisTranslationWriteMode({ tokenMode, named: namespace.named === true });
-  if (!allowedLocales.has(normalizedLocale)) {
-    logRuntimeEvent("warn", "translation.locale_not_allowed", {
-      area: "tr",
-      message: "Translation locale is not allowed.",
-      meta: {
-        locale: normalizedLocale,
-        tokenMode,
-      },
-    });
+  if (!prepared.localeAllowed) {
     return NextResponse.json(
       { translations: msgs.map((msg) => (typeof msg === "string" ? msg : "")) },
     );
   }
+  const { tokenMode, explicitSiteKey } = caller;
+  const { ctx, normalizedLocale, write } = prepared;
 
   try {
     const site =

@@ -19,11 +19,12 @@ import {
 } from "@/lib/media-delivery";
 import { createPhisMediaStorageServiceForProfile } from "@/lib/media-storage";
 import { requireSiteFromRequest } from "@/lib/site-context";
+import { parseStrictPositiveInt } from "@/lib/helpers/request";
 
 async function deliver(request: NextRequest, rawId: string) {
   const site = await requireSiteFromRequest(request);
-  const id = Number.parseInt(rawId, 10);
-  if (!site || !Number.isSafeInteger(id) || id <= 0) return new NextResponse(null, { status: 404 });
+  const id = parseStrictPositiveInt(rawId);
+  if (!site || id == null) return new NextResponse(null, { status: 404 });
   const asset = await getMediaAssetBySiteAndId(site.id, id);
   if (!asset || !await canDeliverMediaAsset(request, asset)) return new NextResponse(null, { status: 404 });
   const profile = await getMediaStorageProfile(site.id, asset.storageProfileId);

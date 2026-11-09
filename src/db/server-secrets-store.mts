@@ -139,16 +139,6 @@ export async function readPhisSecretWithDb(
   return decryptPhiSecret(toCipher(row), key);
 }
 
-/** Whether a secret exists, without decrypting it -- what a status surface is allowed to know. */
-export async function hasPhisSecretWithDb(db: DbQueryable, reference: string) {
-  if (!isPhiSecretReference(reference)) return false;
-  const { rows } = await db.query<{ exists: boolean }>(
-    `SELECT TRUE AS exists FROM phis.server_secrets WHERE reference = $1 LIMIT 1`,
-    [reference],
-  );
-  return rows.length > 0;
-}
-
 /**
  * Which of these secrets exist, in one query and without decrypting any.
  *

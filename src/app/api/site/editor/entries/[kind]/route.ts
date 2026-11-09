@@ -253,10 +253,7 @@ export async function GET(request: NextRequest, { params }: EntryRouteContext) {
     return error;
   }
 
-  const site = context?.site;
-  if (!site) {
-    return NextResponse.json({ error: "Authentication required." }, { status: 401 });
-  }
+  const site = context.site;
 
   const { searchParams } = new URL(request.url);
   const { page, pageSize } = parsePhiPagination(searchParams);
@@ -296,10 +293,7 @@ async function writeEntryDraft(request: NextRequest, kind: SiteContentEntryKind)
     return error;
   }
 
-  const site = context?.site;
-  if (!site) {
-    return NextResponse.json({ error: "Authentication required." }, { status: 401 });
-  }
+  const site = context.site;
 
   const body = await readRequestBody(request);
   const parsed = readEntryDraftBody(body, {
@@ -384,10 +378,7 @@ export async function DELETE(request: NextRequest, { params }: EntryRouteContext
     return error;
   }
 
-  const site = context?.site;
-  if (!site) {
-    return NextResponse.json({ error: "Authentication required." }, { status: 401 });
-  }
+  const site = context.site;
 
   const { searchParams } = new URL(request.url);
   const contentId = parsePositiveIntWithFallback(searchParams.get("contentId"), 0);

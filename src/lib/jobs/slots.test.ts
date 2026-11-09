@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { isPhiJobStepSubHourly, resolvePhiJobSlot, resolvePhiJobStepMs } from "./slots";
+import { isPhiJobStepSubHourly, resolvePhiJobSlot } from "./slots";
 
 /**
  * The moments a schedule names are the scheduler's whole coordination: every instance has to compute
@@ -40,6 +40,6 @@ describe("the latest moment of a schedule", () => {
     expect(isPhiJobStepSubHourly("5m")).toBe(true);
     expect(isPhiJobStepSubHourly("30m")).toBe(true);
     expect(isPhiJobStepSubHourly("hourly")).toBe(false);
-    expect(resolvePhiJobStepMs("weekly")).toBe(7 * 24 * 60 * 60_000);
+    expect(isPhiJobStepSubHourly("weekly")).toBe(false);
   });
 });

@@ -8,10 +8,7 @@ vi.mock("@/lib/db", async (importOriginal) => ({
 
 import { PHIS_CORE_CAPABILITIES } from "@phis/contracts/addon";
 import { buildPhisAddonCapabilities } from "./capabilities.ts";
-import {
-  hasPhisCoreCapability,
-  isPhisAddonCapabilityDeliverable,
-} from "./core-capabilities.ts";
+import { isPhisAddonCapabilityDeliverable } from "./core-capabilities.ts";
 
 /**
  * The gate that admits an Add-on has to ask what Core can hand over, not what Core can name.
@@ -33,9 +30,6 @@ describe("core capability deliverability", () => {
   }) as never;
 
   it("separates naming a capability from offering it", () => {
-    for (const id of Object.values(PHIS_CORE_CAPABILITIES)) {
-      expect(hasPhisCoreCapability(id)).toBe(true);
-    }
     expect(isPhisAddonCapabilityDeliverable(PHIS_CORE_CAPABILITIES.threads)).toBe(true);
     expect(isPhisAddonCapabilityDeliverable(PHIS_CORE_CAPABILITIES.resourceLinks)).toBe(true);
     expect(isPhisAddonCapabilityDeliverable(PHIS_CORE_CAPABILITIES.support)).toBe(true);

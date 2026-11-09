@@ -47,7 +47,7 @@ export async function POST(request: Request) {
 
   const site = await requireSiteFromRequest(request);
   if (!site) {
-    return NextResponse.json({ error: "Missing site context." }, { status: 400 });
+    return NextResponse.json({ error: "Site not found." }, { status: 404 });
   }
 
   let payload: ConfirmPayload = {};

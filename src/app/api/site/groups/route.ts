@@ -30,7 +30,7 @@ import {
   requireSiteAuthenticatedApiContext,
   requireSiteDeveloperApiContext,
 } from "@/lib/guards/site-admin-api";
-import { parsePhiPagination } from "@/lib/helpers/request";
+import { parsePhiPagination, parseStrictPositiveInt } from "@/lib/helpers/request";
 import { logRuntimeEvent } from "@/lib/log";
 import { canPhiViewerAccess, PHI_ACCESS_DEVELOPER_TOOLS } from "@/lib/authorization";
 
@@ -45,12 +45,6 @@ export const dynamic = "force-dynamic";
  * always settled anyway. `groups:v1` under /api/v1 stays separate: that is the provider-neutral
  * capability a Module speaks to, not a session surface.
  */
-function parseId(value: string | null) {
-  if (!value) return null;
-  const id = Number.parseInt(value, 10);
-  return Number.isSafeInteger(id) && id > 0 ? id : null;
-}
-
 /** A Form control hands back a string even for a numeric choice. */
 function readValue(value: unknown) {
   if (typeof value === "number") return String(value);
@@ -71,7 +65,7 @@ function administers(authority: { siteWide: boolean; membershipFlags: number }) 
 }
 
 export async function GET(request: NextRequest) {
-  const groupId = parseId(request.nextUrl.searchParams.get("groupId"));
+  const groupId = parseStrictPositiveInt(request.nextUrl.searchParams.get("groupId"));
   if (groupId != null) {
     const guarded = await requireSiteGroupMemberApiContext(request, groupId);
     if (guarded.error) return guarded.error;
@@ -258,7 +252,7 @@ function applyGroupFlag(flags: number, name: keyof typeof PATCHABLE_GROUP_FLAGS,
 }
 
 export async function PATCH(request: NextRequest) {
-  const groupId = parseId(request.nextUrl.searchParams.get("groupId"));
+  const groupId = parseStrictPositiveInt(request.nextUrl.searchParams.get("groupId"));
   const body = await request.json().catch(() => null) as Record<string, unknown> | null;
   const flagNames = (Object.keys(PATCHABLE_GROUP_FLAGS) as (keyof typeof PATCHABLE_GROUP_FLAGS)[])
     .filter((name) => typeof body?.[name] === "boolean");
@@ -315,8 +309,8 @@ export async function PUT(request: NextRequest) {
     groupId?: unknown; userId?: unknown; membershipFlags?: unknown;
   } | null;
   // Named in the query by a Table editing one cell, in the body by a Form relaying to a fixed path.
-  const groupId = parseId(request.nextUrl.searchParams.get("groupId")) ?? parseId(readValue(body?.groupId));
-  const userId = parseId(request.nextUrl.searchParams.get("userId")) ?? parseId(readValue(body?.userId));
+  const groupId = parseStrictPositiveInt(request.nextUrl.searchParams.get("groupId")) ?? parseStrictPositiveInt(readValue(body?.groupId));
+  const userId = parseStrictPositiveInt(request.nextUrl.searchParams.get("userId")) ?? parseStrictPositiveInt(readValue(body?.userId));
   // One of the four levels, or the request is refused here: an out-of-range value used to reach the
   // normalizer and come back as a 500.
   const next = readPhiGroupMembershipFlags(Number(readValue(body?.membershipFlags)));
@@ -355,8 +349,8 @@ export async function PUT(request: NextRequest) {
 }
 
 export async function DELETE(request: NextRequest) {
-  const groupId = parseId(request.nextUrl.searchParams.get("groupId"));
-  const userId = parseId(request.nextUrl.searchParams.get("userId"));
+  const groupId = parseStrictPositiveInt(request.nextUrl.searchParams.get("groupId"));
+  const userId = parseStrictPositiveInt(request.nextUrl.searchParams.get("userId"));
   if (!groupId || !userId) {
     return NextResponse.json({ error: "invalid_membership" }, { status: 400 });
   }

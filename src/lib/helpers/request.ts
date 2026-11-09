@@ -110,6 +110,21 @@ export function isSameOriginRequest(request: { headers: Headers }) {
   }
 }
 
+/**
+ * A whole number of zero or more -- a flag word, a size, a count -- as a JSON body or a form carries it,
+ * or null for anything else. Strict like `parseStrictPositiveInt`: `"12abc"` and `1.5` are refused.
+ */
+export function normalizeNonNegativeInteger(value: unknown) {
+  if (typeof value === "number") {
+    return Number.isSafeInteger(value) && value >= 0 ? value : null;
+  }
+  if (typeof value !== "string" || !/^\d+$/u.test(value.trim())) {
+    return null;
+  }
+  const parsed = Number(value.trim());
+  return Number.isSafeInteger(parsed) ? parsed : null;
+}
+
 export function parsePositiveInt(value: string | null | undefined) {
   const parsed = Number.parseInt((value ?? "").trim(), 10);
   return Number.isInteger(parsed) && parsed > 0 ? parsed : null;

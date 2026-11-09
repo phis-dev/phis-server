@@ -13,7 +13,6 @@ import {
   claimDuePhiNotifications,
   claimPhiNotificationById,
   readPhiNotificationLinkSalt,
-  countOwedPhiNotifications,
   ensurePhiNotificationLinkSalt,
   enqueuePhiNotification,
   markPhiNotificationDropped,
@@ -161,9 +160,6 @@ describe("the notification outbox against PostgreSQL", () => {
 
     expect(await claimPhiNotificationById(id!)).toBeNull();
     expect((await claimDuePhiNotifications(50)).map((entry) => entry.id)).not.toContain(id);
-
-    const counts = await countOwedPhiNotifications(site.id);
-    expect(counts.dropped).toBeGreaterThanOrEqual(1);
   });
 
   it("mints one link salt per membership and hands the same one back", async () => {

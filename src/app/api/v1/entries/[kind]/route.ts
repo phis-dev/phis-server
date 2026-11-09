@@ -46,10 +46,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ kind
 
   const site = await requireSiteFromRequest(request);
   if (!site) {
-    return NextResponse.json(
-      { error: "Missing site context." },
-      { status: 400 },
-    );
+    return NextResponse.json({ error: "Site not found." }, { status: 404 });
   }
 
   const locale = resolveRequestLocale(request.headers);

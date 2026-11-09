@@ -19,10 +19,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
     return error;
   }
 
-  const site = context?.site;
-  if (!site) {
-    return NextResponse.json({ error: "Authentication required." }, { status: 401 });
-  }
+  const site = context.site;
 
   const ticketId = parseStrictPositiveInt((await params).ticketId);
   if (!ticketId) {

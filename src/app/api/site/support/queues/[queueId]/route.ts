@@ -31,10 +31,7 @@ export async function PATCH(
   if (error) {
     return error;
   }
-  const site = context?.site;
-  if (!site) {
-    return NextResponse.json({ error: "Authentication required." }, { status: 401 });
-  }
+  const site = context.site;
 
   const queueId = readSupportInteger((await params).queueId);
   if (queueId == null || !await getSupportQueueBySiteAndId(site.id, queueId)) {

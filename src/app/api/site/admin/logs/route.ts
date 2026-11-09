@@ -10,10 +10,7 @@ export async function GET(request: NextRequest) {
   if (error) {
     return error;
   }
-  const site = context?.site;
-  if (!site) {
-    return NextResponse.json({ error: "Authentication required." }, { status: 401 });
-  }
+  const site = context.site;
 
   const query = parsePhiAdminLogQuery(new URL(request.url).searchParams);
 

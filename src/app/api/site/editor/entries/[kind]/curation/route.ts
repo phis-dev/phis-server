@@ -49,10 +49,7 @@ export async function GET(request: NextRequest, { params }: EntryRouteContext) {
   if (error) {
     return error;
   }
-  const site = context?.site;
-  if (!site) {
-    return NextResponse.json({ error: "Authentication required." }, { status: 401 });
-  }
+  const site = context.site;
 
   const [authors, categories] = await Promise.all([
     listSiteContentEntryAuthorCandidates(site.id),
@@ -71,10 +68,7 @@ export async function PATCH(request: NextRequest, { params }: EntryRouteContext)
   if (error) {
     return error;
   }
-  const site = context?.site;
-  if (!site) {
-    return NextResponse.json({ error: "Authentication required." }, { status: 401 });
-  }
+  const site = context.site;
 
   const body = await readRequestBody(request);
   const contentId = normalizeNullableInteger(body.contentId);

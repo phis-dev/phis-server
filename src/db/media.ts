@@ -344,32 +344,6 @@ export async function updateMediaFolder(input: {
   });
 }
 
-export async function resolveOrCreateMediaFolderPath(siteId: number, spaceId: number, folderPath: string[]): Promise<number | null> {
-  const path = normalizeMediaFolderPath(folderPath); if (!path) throw new Error("Invalid Media Folder path.");
-  let parentId: number | null = null;
-  return withTransaction(async (client) => {
-    for (const name of path) {
-      const found: { rows: FolderRow[] } = await client.query<FolderRow>(
-        `SELECT id, site_id, space_id, parent_id, name, sort_order, flags, created_at, updated_at
-         FROM phis.media_folders WHERE site_id = $1 AND space_id = $2
-           AND COALESCE(parent_id, 0) = COALESCE($3, 0) AND LOWER(name) = LOWER($4)`,
-        [siteId, spaceId, parentId, name],
-      );
-      const folder: MediaFolderRecord = found.rows[0] ? mapFolder(found.rows[0]) : await createMediaFolderWithDb(client, { siteId, spaceId, parentId, name });
-      parentId = folder.id;
-    }
-    return parentId;
-  });
-}
-
-async function createMediaFolderWithDb(db: DbQueryable, input: { siteId: number; spaceId: number; parentId: number | null; name: string }) {
-  const { rows } = await db.query<FolderRow>(
-    `INSERT INTO phis.media_folders (site_id, space_id, parent_id, name)
-     VALUES ($1, $2, $3, $4) RETURNING id, site_id, space_id, parent_id, name, sort_order, flags, created_at, updated_at`,
-    [input.siteId, input.spaceId, input.parentId, input.name],
-  ); return mapFolder(rows[0]!);
-}
-
 export async function findMediaFolderPathId(siteId: number, spaceId: number, folderPath: string[] | null | undefined) {
   const path = normalizeMediaFolderPath(folderPath ?? []); if (!path || path.length === 0) return null;
   let parentId: number | null = null;
@@ -678,12 +652,7 @@ export async function setMediaAssetChecksum(input: {
   });
 }
 
-export async function getMediaAssetById(id: number) {
-  const { rows } = await getPool().query<AssetRow>(`SELECT ${ASSET_COLUMNS} FROM phis.media_assets WHERE id = $1`, [id]);
-  return rows[0] ? mapAsset(rows[0]) : null;
-}
-
-/** `getMediaAssetById` for several ids in one statement; an id with no row is absent from the map. */
+/** Several Assets by id in one statement; an id with no row is absent from the map. */
 export async function getMediaAssetsByIds(ids: readonly number[]) {
   const unique = Array.from(new Set(ids.filter((id) => Number.isSafeInteger(id) && id > 0)));
   if (unique.length === 0) return new Map<number, ReturnType<typeof mapAsset>>();

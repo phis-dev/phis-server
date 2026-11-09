@@ -29,10 +29,7 @@ export async function PATCH(
     return error;
   }
 
-  const site = context?.site;
-  if (!site) {
-    return NextResponse.json({ error: "Authentication required." }, { status: 401 });
-  }
+  const site = context.site;
 
   const resolved = await params;
   const ticketId = parseStrictPositiveInt(resolved.ticketId);
@@ -103,10 +100,7 @@ export async function DELETE(
     return error;
   }
 
-  const site = context?.site;
-  if (!site) {
-    return NextResponse.json({ error: "Authentication required." }, { status: 401 });
-  }
+  const site = context.site;
 
   const resolved = await params;
   const ticketId = parseStrictPositiveInt(resolved.ticketId);

@@ -268,29 +268,6 @@ export async function markPhiNotificationFailed(id: string, error: string) {
   );
 }
 
-/** What is still owed on a Site, for the operator asking whether anything is stuck. */
-export async function countOwedPhiNotifications(siteId: number) {
-  const { rows } = await getPool().query<{ owed: string; exhausted: string; dropped: string }>(
-    `SELECT
-       count(*) FILTER (
-         WHERE attempts < ${MAX_ATTEMPTS} AND (flags & ${PHI_NOTIFICATION_FLAG_DROPPED}) = 0
-       ) AS owed,
-       count(*) FILTER (
-         WHERE attempts >= ${MAX_ATTEMPTS} AND (flags & ${PHI_NOTIFICATION_FLAG_DROPPED}) = 0
-       ) AS exhausted,
-       count(*) FILTER (WHERE (flags & ${PHI_NOTIFICATION_FLAG_DROPPED}) <> 0) AS dropped
-     FROM phis.notification_outbox
-     WHERE site_id = $1 AND sent_at IS NULL`,
-    [siteId],
-  );
-
-  return {
-    owed: Number(rows[0]?.owed ?? 0),
-    exhausted: Number(rows[0]?.exhausted ?? 0),
-    dropped: Number(rows[0]?.dropped ?? 0),
-  };
-}
-
 /**
  * The salt beside one membership, minted on first need and handed back every time after.
  *

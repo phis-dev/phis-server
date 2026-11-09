@@ -2,7 +2,6 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import {
   deletePhisSecretWithDb,
-  hasPhisSecretWithDb,
   listPhisSecretsWithDb,
   readPhisSecretWithDb,
   writePhisSecretWithDb,
@@ -45,7 +44,7 @@ describe("server secret store", () => {
     await writePhisSecretWithDb(pool, { reference, value: "hunter2", key, siteId: site.id });
 
     expect(await readPhisSecretWithDb(pool, reference, key)).toBe("hunter2");
-    expect(await hasPhisSecretWithDb(pool, reference)).toBe(true);
+    expect(await readPhisSecretWithDb(pool, reference, key)).not.toBeNull();
   });
 
   it("never stores the value in a readable column", async () => {
@@ -99,7 +98,7 @@ describe("server secret store", () => {
   it("answers null for a secret nobody configured", async () => {
     const pool = await requirePhiTestDatabase();
     expect(await readPhisSecretWithDb(pool, "core:pgtest-never-written", key)).toBeNull();
-    expect(await hasPhisSecretWithDb(pool, "core:pgtest-never-written")).toBe(false);
+    expect(await readPhisSecretWithDb(pool, "core:pgtest-never-written", key)).toBeNull();
   });
 
   it("derives the owner columns from the reference", async () => {
@@ -153,11 +152,11 @@ describe("server secret store", () => {
       name: "goes-away",
     });
     await writePhisSecretWithDb(pool, { reference, value: "x", key, siteId: doomed.id });
-    expect(await hasPhisSecretWithDb(pool, reference)).toBe(true);
+    expect(await readPhisSecretWithDb(pool, reference, key)).not.toBeNull();
 
     await pool.query(`DELETE FROM phis.sites WHERE id = $1`, [doomed.id]);
 
-    expect(await hasPhisSecretWithDb(pool, reference)).toBe(false);
+    expect(await readPhisSecretWithDb(pool, reference, key)).toBeNull();
   });
 
   it("deletes on request and reports whether anything went", async () => {

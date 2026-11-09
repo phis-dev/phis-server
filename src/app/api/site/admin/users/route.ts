@@ -167,19 +167,9 @@ export async function GET(request: NextRequest) {
     return error;
   }
 
-  if (!context) {
-    return NextResponse.json({ error: "Authentication required." }, { status: 401 });
-  }
-
   const session = context.session;
-  if (!session) {
-    return NextResponse.json({ error: "Authentication required." }, { status: 401 });
-  }
 
   const site = context.site;
-  if (!site) {
-    return NextResponse.json({ error: "Authentication required." }, { status: 401 });
-  }
 
   const { searchParams } = new URL(request.url);
   // Ids are read strictly: "12abc" names nobody, and must not become user 12.
@@ -276,19 +266,7 @@ export async function POST(request: NextRequest) {
     return error;
   }
 
-  if (!context) {
-    return NextResponse.json({ error: "Authentication required." }, { status: 401 });
-  }
-
-  const session = context.session;
-  if (!session) {
-    return NextResponse.json({ error: "Authentication required." }, { status: 401 });
-  }
-
   const site = context.site;
-  if (!site) {
-    return NextResponse.json({ error: "Authentication required." }, { status: 401 });
-  }
 
   const body = await readRequestBody(request);
   const email = normalizeString(body.email).toLowerCase();
@@ -422,19 +400,9 @@ export async function PUT(request: NextRequest) {
     return error;
   }
 
-  if (!context) {
-    return NextResponse.json({ error: "Authentication required." }, { status: 401 });
-  }
-
   const session = context.session;
-  if (!session) {
-    return NextResponse.json({ error: "Authentication required." }, { status: 401 });
-  }
 
   const site = context.site;
-  if (!site) {
-    return NextResponse.json({ error: "Authentication required." }, { status: 401 });
-  }
 
   const body = await readRequestBody(request);
   const userId = parseStrictPositiveInt(body.userId);
@@ -605,19 +573,9 @@ export async function PATCH(request: NextRequest) {
     return error;
   }
 
-  if (!context) {
-    return NextResponse.json({ error: "Authentication required." }, { status: 401 });
-  }
-
   const session = context.session;
-  if (!session) {
-    return NextResponse.json({ error: "Authentication required." }, { status: 401 });
-  }
 
   const site = context.site;
-  if (!site) {
-    return NextResponse.json({ error: "Authentication required." }, { status: 401 });
-  }
 
   const { searchParams } = new URL(request.url);
   const body = await readRequestBody(request);
@@ -665,19 +623,9 @@ export async function DELETE(request: NextRequest) {
     return error;
   }
 
-  if (!context) {
-    return NextResponse.json({ error: "Authentication required." }, { status: 401 });
-  }
-
   const session = context.session;
-  if (!session) {
-    return NextResponse.json({ error: "Authentication required." }, { status: 401 });
-  }
 
   const site = context.site;
-  if (!site) {
-    return NextResponse.json({ error: "Authentication required." }, { status: 401 });
-  }
 
   const { searchParams } = new URL(request.url);
   const userIdInput = normalize(searchParams.get("userId"));

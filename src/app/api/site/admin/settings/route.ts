@@ -39,10 +39,7 @@ export async function GET(request: NextRequest) {
     return error;
   }
 
-  const site = context?.site;
-  if (!site) {
-    return NextResponse.json({ error: "Authentication required." }, { status: 401 });
-  }
+  const site = context.site;
 
   const [runtime, config] = await Promise.all([
     getSiteRuntimeConfig(site.id),
@@ -61,10 +58,7 @@ export async function PATCH(request: NextRequest) {
     return error;
   }
 
-  const site = context?.site;
-  if (!site) {
-    return NextResponse.json({ error: "Authentication required." }, { status: 401 });
-  }
+  const site = context.site;
 
   const body = await readRequestBody(request);
 

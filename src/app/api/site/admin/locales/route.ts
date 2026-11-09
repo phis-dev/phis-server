@@ -20,18 +20,11 @@ import {
   normalizeString,
   parsePhiPagination,
   parsePositiveIntWithFallback,
+  parseStrictPositiveInt,
   readRequestBody,
 } from "@/lib/helpers/request";
 
 export const dynamic = "force-dynamic";
-
-function normalizePositiveInt(value: unknown) {
-  if (typeof value === "number" && Number.isInteger(value) && value > 0) {
-    return value;
-  }
-
-  return Number.parseInt(normalizeString(value), 10);
-}
 
 function normalizeLocaleArray(value: unknown) {
   if (Array.isArray(value)) {
@@ -77,10 +70,7 @@ export async function GET(request: NextRequest) {
     return error;
   }
 
-  const site = context?.site;
-  if (!site) {
-    return NextResponse.json({ error: "Authentication required." }, { status: 401 });
-  }
+  const site = context.site;
 
   const config = await getSiteRuntimeConfig(site.id);
   if (!config) {
@@ -128,10 +118,7 @@ export async function PATCH(request: NextRequest) {
     return error;
   }
 
-  const site = context?.site;
-  if (!site) {
-    return NextResponse.json({ error: "Authentication required." }, { status: 401 });
-  }
+  const site = context.site;
 
   const config = await getSiteRuntimeConfig(site.id);
   if (!config) {
@@ -166,7 +153,10 @@ export async function PATCH(request: NextRequest) {
   }
 
   if (action === "translation") {
-    const msgId = normalizePositiveInt(body.msgId);
+    const msgId = parseStrictPositiveInt(body.msgId);
+    if (msgId == null) {
+      return NextResponse.json({ error: "msgId must be a positive integer." }, { status: 400 });
+    }
     const requestedLocale = normalizeString(body.locale);
     const locale = resolvePhiLocaleCapability(requestedLocale)?.locale ?? "";
     const translation = normalizeString(body.translation);
@@ -212,10 +202,7 @@ export async function DELETE(request: NextRequest) {
     return error;
   }
 
-  const site = context?.site;
-  if (!site) {
-    return NextResponse.json({ error: "Authentication required." }, { status: 401 });
-  }
+  const site = context.site;
 
   const config = await getSiteRuntimeConfig(site.id);
   if (!config) {
@@ -233,7 +220,8 @@ export async function DELETE(request: NextRequest) {
     );
     const selectedRows = selectedIdentities.map((identity) => {
       const [msgIdValue = "", requestedLocale = ""] = identity.split(":", 2);
-      const msgId = normalizePositiveInt(msgIdValue);
+      // 0 for an id that is none, which the check below refuses with the row.
+      const msgId = parseStrictPositiveInt(msgIdValue) ?? 0;
       const locale = resolvePhiLocaleCapability(requestedLocale)?.locale ?? "";
       return { msgId, locale };
     });

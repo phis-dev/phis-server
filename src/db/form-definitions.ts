@@ -118,25 +118,6 @@ function buildFormDefinitionCacheKey(siteId: number, formId: string) {
   return `${siteId}:${normalizeKey(formId)}`;
 }
 
-export function clearFormDefinitionCache(siteId?: number, formId?: string) {
-  if (typeof siteId === "number" && Number.isInteger(siteId) && siteId > 0) {
-    if (typeof formId === "string" && formId.trim()) {
-      publishedFormDefinitionCache.delete(buildFormDefinitionCacheKey(siteId, formId));
-      publishedFormDefinitionsBySiteCache.delete(siteId);
-      return;
-    }
-    publishedFormDefinitionsBySiteCache.delete(siteId);
-    for (const key of publishedFormDefinitionCache.keys()) {
-      if (key.startsWith(`${siteId}:`)) {
-        publishedFormDefinitionCache.delete(key);
-      }
-    }
-    return;
-  }
-  publishedFormDefinitionCache.clear();
-  publishedFormDefinitionsBySiteCache.clear();
-}
-
 const FORM_DEFINITION_COLUMNS = `id,
   site_id,
   owner_module_id,

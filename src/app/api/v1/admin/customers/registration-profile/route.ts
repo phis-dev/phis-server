@@ -19,7 +19,7 @@ export async function GET(request: Request) {
 
   const site = await requireSiteFromRequest(request);
   if (!site) {
-    return NextResponse.json({ error: "Missing site context." }, { status: 400 });
+    return NextResponse.json({ error: "Site not found." }, { status: 404 });
   }
 
   const url = new URL(request.url);

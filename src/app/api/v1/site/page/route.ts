@@ -10,22 +10,9 @@ import { createJsonResponse } from "@/lib/api-response";
 import { guardApiV1 } from "@/lib/api-v1-guard";
 import { resolveCmsPath } from "@/lib/helpers/access";
 import { requireSiteCmsPreviewApiContext } from "@/lib/guards/site-admin-api";
-import { normalizeLocale } from "@/lib/locale";
+import { resolveSiteReadLocale } from "@/lib/locale";
 import { requireSiteFromRequest } from "@/lib/site-context";
-
-function resolveRequestLocale(request: Request) {
-  const url = new URL(request.url);
-  const rawLocale =
-    url.searchParams.get("locale") ??
-    request.headers.get("x-locale") ??
-    request.headers.get("accept-language");
-
-  if (!rawLocale?.trim()) {
-    return null;
-  }
-
-  return normalizeLocale(rawLocale);
-}
+import { readSiteCmsRevisionId } from "@/lib/helpers/site-cms-route";
 
 function resolvePageScopeAddress(url: URL, path: string): SitePageScopeAddress | null {
   const ownerModuleId = url.searchParams.get("ownerModuleId")?.trim() ?? "";
@@ -54,7 +41,7 @@ export async function GET(request: NextRequest) {
   const revisionValue = url.searchParams.get("revision");
   const reviewKind = url.searchParams.get("reviewKind")?.trim().toLowerCase() ?? "";
   const reviewRevisionValue = reviewKind === "page" ? url.searchParams.get("reviewRevision") : null;
-  const locale = resolveRequestLocale(request);
+  const locale = resolveSiteReadLocale(request);
   const resolvedPath = resolveCmsPath(rawPath);
   const address = resolvePageScopeAddress(url, resolvedPath.path);
   if (!address) {
@@ -64,8 +51,8 @@ export async function GET(request: NextRequest) {
     );
   }
   if (reviewRevisionValue != null) {
-    const revisionId = Number(reviewRevisionValue);
-    if (!Number.isInteger(revisionId) || revisionId <= 0) {
+    const revisionId = readSiteCmsRevisionId(reviewRevisionValue);
+    if (revisionId == null) {
       return NextResponse.json({ error: "reviewRevision must be a positive integer." }, { status: 400 });
     }
 
@@ -93,8 +80,8 @@ export async function GET(request: NextRequest) {
   }
 
   if (revisionValue != null) {
-    const revisionId = Number(revisionValue);
-    if (!Number.isInteger(revisionId) || revisionId <= 0) {
+    const revisionId = readSiteCmsRevisionId(revisionValue);
+    if (revisionId == null) {
       return NextResponse.json({ error: "revision must be a positive integer." }, { status: 400 });
     }
 

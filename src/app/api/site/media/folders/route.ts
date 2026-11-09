@@ -9,18 +9,17 @@ import {
 import { logRuntimeEvent, normalizeLogThrowable } from "@/lib/log";
 import { resolveAuthorizedMediaSpace } from "@/db/media-spaces";
 import { nextMediaSpaceError, serializeMediaSpace } from "@/lib/media-response";
-import { normalizeString, parsePositiveInt, parseStrictPositiveInt } from "@/lib/helpers/request";
+import {
+  normalizeNonNegativeInteger,
+  normalizeString,
+  parsePositiveInt,
+  parseStrictPositiveInt,
+} from "@/lib/helpers/request";
 
 export const dynamic = "force-dynamic";
 
 function normalizeFlags(value: FormDataEntryValue | null) {
-  const normalized = normalizeString(value);
-  if (!normalized) {
-    return null;
-  }
-
-  const parsed = Number.parseInt(normalized, 10);
-  return Number.isInteger(parsed) && parsed >= 0 ? parsed : null;
+  return normalizeNonNegativeInteger(normalizeString(value));
 }
 
 export async function GET(request: NextRequest) {

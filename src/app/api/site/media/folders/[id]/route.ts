@@ -10,6 +10,7 @@ import { logRuntimeEvent, normalizeLogThrowable } from "@/lib/log";
 import { resolveAuthorizedMediaSpace } from "@/db/media-spaces";
 import { nextMediaSpaceError } from "@/lib/media-response";
 import {
+  normalizeNonNegativeInteger,
   normalizeString,
   parsePositiveInt,
   parseStrictPositiveInt,
@@ -18,35 +19,6 @@ import {
 
 export const dynamic = "force-dynamic";
 
-function normalizeNullableInt(value: unknown) {
-  if (value === null || value === undefined || value === "") {
-    return null;
-  }
-
-  if (typeof value === "number" && Number.isInteger(value) && value >= 0) {
-    return value;
-  }
-
-  if (typeof value === "string") {
-    const parsed = Number.parseInt(value.trim(), 10);
-    return Number.isInteger(parsed) && parsed >= 0 ? parsed : null;
-  }
-
-  return null;
-}
-
-function normalizeFlags(value: unknown) {
-  if (typeof value === "number" && Number.isInteger(value) && value >= 0) {
-    return value;
-  }
-
-  if (typeof value === "string") {
-    const parsed = Number.parseInt(value.trim(), 10);
-    return Number.isInteger(parsed) && parsed >= 0 ? parsed : null;
-  }
-
-  return null;
-}
 
 export async function GET(
   request: NextRequest,
@@ -125,8 +97,8 @@ export async function PATCH(
       return NextResponse.json({ error: "Folder name cannot be empty." }, { status: 400 });
     }
 
-    const sortOrder = Object.hasOwn(payload, "sortOrder") ? normalizeNullableInt(payload.sortOrder) : undefined;
-    const flags = Object.hasOwn(payload, "flags") ? normalizeFlags(payload.flags) : undefined;
+    const sortOrder = Object.hasOwn(payload, "sortOrder") ? normalizeNonNegativeInteger(payload.sortOrder) : undefined;
+    const flags = Object.hasOwn(payload, "flags") ? normalizeNonNegativeInteger(payload.flags) : undefined;
     // `null` moves the Folder to the root; anything else has to name a Folder, not fall back to the root.
     const parentId = !Object.hasOwn(payload, "parentId")
       ? undefined

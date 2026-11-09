@@ -29,10 +29,7 @@ export async function GET(request: NextRequest) {
     return error;
   }
 
-  const site = context?.site;
-  if (!site) {
-    return NextResponse.json({ error: "Authentication required." }, { status: 401 });
-  }
+  const site = context.site;
 
   const offer = await resolvePhisTranslationOffer(await readSiteAvailableLocales(site.id));
 

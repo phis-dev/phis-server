@@ -25,12 +25,6 @@ export const PHIS_CORE_CAPABILITIES = Object.freeze(
   Object.values(CORE_CAPABILITY_IDS).map(coreCapability),
 );
 
-const CORE_CAPABILITY_ID_SET = new Set<string>(Object.values(CORE_CAPABILITY_IDS));
-
-export function hasPhisCoreCapability(capabilityId: string) {
-  return CORE_CAPABILITY_ID_SET.has(capabilityId);
-}
-
 /**
  * The capabilities this release actually binds to a handler's context.
  *
@@ -66,7 +60,7 @@ const DELIVERABLE_CAPABILITY_ID_SET = new Set<string>([
 /**
  * Whether an Add-on requiring this capability can be served at all.
  *
- * Not the same question as `hasPhisCoreCapability`, which answers whether the id is one Core knows.
+ * Not the same question as whether the id is one Core knows (`PHIS_CORE_CAPABILITIES` is that list).
  * A name Core knows but cannot yet hand over is refused here, and refused early, because the failure
  * belongs at the point where the Add-on is admitted and not somewhere inside its handler.
  */

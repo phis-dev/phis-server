@@ -43,7 +43,7 @@ const INVALID = {
 async function resolveOutcome(request: NextRequest, token: string, act: boolean) {
   const site = await requireSiteFromRequest(request);
   if (!site) {
-    return { status: 400 as const, body: { error: "Missing site context." } };
+    return { status: 404 as const, body: { error: "Site not found." } };
   }
 
   const subject = token ? readPhiUnsubscribeTokenSubject(token) : null;

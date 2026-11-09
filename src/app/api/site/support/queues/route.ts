@@ -31,10 +31,7 @@ export async function GET(request: NextRequest) {
     return error;
   }
 
-  const site = context?.site;
-  if (!site) {
-    return NextResponse.json({ error: "Authentication required." }, { status: 401 });
-  }
+  const site = context.site;
 
   return NextResponse.json({ rows: await listSupportQueues(site.id) });
 }
@@ -52,10 +49,7 @@ export async function POST(request: NextRequest) {
   if (error) {
     return error;
   }
-  const site = context?.site;
-  if (!site) {
-    return NextResponse.json({ error: "Authentication required." }, { status: 401 });
-  }
+  const site = context.site;
 
   const body = await readRequestBody(request);
   const key = readSupportAdministrationKey(body.key);

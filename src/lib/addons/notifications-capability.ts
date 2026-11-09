@@ -10,6 +10,7 @@ import type {
 import { enqueuePhiNotification } from "@/db/notifications";
 import { getUserSiteMembership } from "@/db/user-site-memberships";
 import { attemptPhiNotificationNow } from "@/lib/notifications/deliver";
+import { PHIS_ADDON_DEDUPE_KEY_MAX_LENGTH } from "@/lib/constants/server-addons";
 
 /**
  * Writing to a person on an Add-on's behalf.
@@ -32,7 +33,6 @@ const LOCALE_PATTERN = /^[a-z]{2,3}(?:[-_][A-Za-z0-9]{2,8})*$/;
 const TEXT_MAX_LENGTH = 2000;
 const PATH_MAX_LENGTH = 1024;
 const NAME_MAX_LENGTH = 200;
-const DEDUPE_KEY_MAX_LENGTH = 200;
 
 class PhisNotificationError extends Error {}
 
@@ -154,7 +154,7 @@ export function buildPhisAddonNotificationsCapability(input: {
 
       let dedupeKey: string | null = null;
       if (call.dedupeKey !== undefined && call.dedupeKey !== null) {
-        if (typeof call.dedupeKey !== "string" || !call.dedupeKey || call.dedupeKey.length > DEDUPE_KEY_MAX_LENGTH) {
+        if (typeof call.dedupeKey !== "string" || !call.dedupeKey || call.dedupeKey.length > PHIS_ADDON_DEDUPE_KEY_MAX_LENGTH) {
           refuse("dedupeKey must be a non-empty string of at most 200 characters.");
         }
         // The key is unique within the Site across every sender, so the Add-on's is kept in its own

@@ -74,26 +74,12 @@ const databaseBackend: PhiSecretBackend = {
   resolve: (reference) => readPhisSecret(reference, readPhiSecretEncryptionKey()),
 };
 
-const backends = new Map<string, PhiSecretBackend>([[databaseBackend.id, databaseBackend]]);
-let activeBackendId = databaseBackend.id;
-
-export function registerPhiSecretBackend(backend: PhiSecretBackend) {
-  if (backends.has(backend.id)) {
-    throw new Error(`Secret backend "${backend.id}" is already registered.`);
-  }
-  backends.set(backend.id, backend);
-}
-
-export function usePhiSecretBackend(backendId: string) {
-  if (!backends.has(backendId)) {
-    throw new Error(`Secret backend "${backendId}" is not registered.`);
-  }
-  activeBackendId = backendId;
-}
-
-export function getPhiSecretBackendId() {
-  return activeBackendId;
-}
+/*
+ * The one backend this release has. A registry for others stood here, with register/use/get functions
+ * nobody called; the type and the id above are the seam a second backend would plug into, and the
+ * registry comes back with the second backend, not before it.
+ */
+const activeBackend: PhiSecretBackend = databaseBackend;
 
 /**
  * Resolves a reference for a stated owner.
@@ -112,5 +98,5 @@ export async function resolvePhiSecret(owner: PhiSecretOwner, reference: string)
       `${owner.kind === "addon" ? owner.addonId : "Core"} may not resolve ${reference}.`,
     );
   }
-  return backends.get(activeBackendId)!.resolve(reference);
+  return activeBackend.resolve(reference);
 }

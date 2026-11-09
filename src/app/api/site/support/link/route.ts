@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { requireSiteSupportApiContext } from "@/lib/guards/site-admin-api";
-import { normalizeString, readRequestBody } from "@/lib/helpers/request";
+import { normalizeString, parseStrictPositiveInt, readRequestBody } from "@/lib/helpers/request";
 import { linkSupportTicket, SupportForwardError } from "@/lib/support-forwarding";
 import { readSupportTicketReach } from "@/lib/support-reach";
 import { supportTicketWithinReach } from "@/db/support";
@@ -28,9 +28,9 @@ export async function POST(request: NextRequest) {
   }
 
   const body = await readRequestBody(request);
-  const ticketId = typeof body.ticketId === "number" ? body.ticketId : Number.parseInt(normalizeString(body.ticketId), 10);
+  const ticketId = parseStrictPositiveInt(body.ticketId);
   const reference = normalizeString(body.reference);
-  if (!Number.isSafeInteger(ticketId) || ticketId <= 0 || !reference) {
+  if (ticketId == null || !reference) {
     return NextResponse.json({ error: "A link needs a ticket and a reference." }, { status: 400 });
   }
   // A ticket outside the reader's queues answers as one that is not there (`lib/support-reach.ts`).

@@ -31,6 +31,24 @@ export type SiteAdminApiContext = {
     | null;
 };
 
+/** A context the guard let through: the Site, the session and the authorization are all present. */
+export type SiteAdminApiGuardedContext = SiteAdminApiContext & {
+  site: NonNullable<SiteAdminApiContext["site"]>;
+  session: NonNullable<SiteAdminApiContext["session"]>;
+  siteRole: NonNullable<SiteAdminApiContext["siteRole"]>;
+};
+
+/**
+ * What a `require*` guard answers: a context or an error, never neither and never both.
+ *
+ * The two used to be independently nullable, and every route re-checked after `if (error) return error`
+ * that the context, its Site and its session were there -- forty routes, a hundred lines, all of them
+ * dead. Stated as a union, `if (error) return error` leaves a context the types vouch for.
+ */
+export type SiteAdminApiGuard =
+  | { context: SiteAdminApiGuardedContext; error: null }
+  | { context: null; error: NextResponse };
+
 export type SiteRoleApiResolution = {
   /** The signed-in, enabled actor -- present also when the policy refused them. */
   context: SiteAdminApiContext | null;
@@ -101,49 +119,38 @@ async function requireSiteRoleApiContext(
     policy: PhiViewerAccessPolicy;
     missingRoleMessage: string;
   },
-): Promise<{
-  context: SiteAdminApiContext | null;
-  error: NextResponse | null;
-}> {
+): Promise<SiteAdminApiGuard> {
   const { context, error } = await resolveSiteRoleApiContext(request, options);
   // A refused actor is not handed out: the caller of a plain guard reads a context as a pass.
-  return error ? { context: null, error } : { context, error: null };
+  if (error) {
+    return { context: null, error };
+  }
+  // The resolution above returns a context only with its Site, session and authorization read.
+  return { context: context as SiteAdminApiGuardedContext, error: null };
 }
 
-export async function requireSiteAdminOnlyApiContext(request: NextRequest): Promise<{
-  context: SiteAdminApiContext | null;
-  error: NextResponse | null;
-}> {
+export async function requireSiteAdminOnlyApiContext(request: NextRequest): Promise<SiteAdminApiGuard> {
   return requireSiteRoleApiContext(request, {
     policy: PHI_ACCESS_SITE_ADMIN,
     missingRoleMessage: "Site admin role required.",
   });
 }
 
-export async function requireSiteDeveloperApiContext(request: NextRequest): Promise<{
-  context: SiteAdminApiContext | null;
-  error: NextResponse | null;
-}> {
+export async function requireSiteDeveloperApiContext(request: NextRequest): Promise<SiteAdminApiGuard> {
   return requireSiteRoleApiContext(request, {
     policy: PHI_ACCESS_DEVELOPER_TOOLS,
     missingRoleMessage: "Site developer or admin role required.",
   });
 }
 
-export async function requireSiteAuthorApiContext(request: NextRequest): Promise<{
-  context: SiteAdminApiContext | null;
-  error: NextResponse | null;
-}> {
+export async function requireSiteAuthorApiContext(request: NextRequest): Promise<SiteAdminApiGuard> {
   return requireSiteRoleApiContext(request, {
     policy: PHI_ACCESS_CONTENT_EDITING,
     missingRoleMessage: "Site author, publisher, developer, or admin role required.",
   });
 }
 
-export async function requireSiteBuilderApiContext(request: NextRequest): Promise<{
-  context: SiteAdminApiContext | null;
-  error: NextResponse | null;
-}> {
+export async function requireSiteBuilderApiContext(request: NextRequest): Promise<SiteAdminApiGuard> {
   return requireSiteRoleApiContext(request, {
     policy: PHI_ACCESS_STRUCTURE_AUTHORING,
     missingRoleMessage: "Site builder, developer, or admin role required.",
@@ -160,37 +167,25 @@ export const PHI_SITE_MEDIA_API_POLICY = {
   missingRoleMessage: "Site builder, author, publisher, developer, or admin role required.",
 } as const;
 
-export async function requireSiteMediaApiContext(request: NextRequest): Promise<{
-  context: SiteAdminApiContext | null;
-  error: NextResponse | null;
-}> {
+export async function requireSiteMediaApiContext(request: NextRequest): Promise<SiteAdminApiGuard> {
   return requireSiteRoleApiContext(request, PHI_SITE_MEDIA_API_POLICY);
 }
 
-export async function requireSiteSupportApiContext(request: NextRequest): Promise<{
-  context: SiteAdminApiContext | null;
-  error: NextResponse | null;
-}> {
+export async function requireSiteSupportApiContext(request: NextRequest): Promise<SiteAdminApiGuard> {
   return requireSiteRoleApiContext(request, {
     policy: PHI_ACCESS_SUPPORT,
     missingRoleMessage: "Site supporter, developer, or admin role required.",
   });
 }
 
-export async function requireSitePublisherApiContext(request: NextRequest): Promise<{
-  context: SiteAdminApiContext | null;
-  error: NextResponse | null;
-}> {
+export async function requireSitePublisherApiContext(request: NextRequest): Promise<SiteAdminApiGuard> {
   return requireSiteRoleApiContext(request, {
     policy: PHI_ACCESS_PUBLISHING,
     missingRoleMessage: "Site publisher, developer, or admin role required.",
   });
 }
 
-export async function requireSiteReviewApiContext(request: NextRequest): Promise<{
-  context: SiteAdminApiContext | null;
-  error: NextResponse | null;
-}> {
+export async function requireSiteReviewApiContext(request: NextRequest): Promise<SiteAdminApiGuard> {
   return requireSiteRoleApiContext(request, {
     policy: {
       access: "roles",
@@ -205,10 +200,7 @@ export async function requireSiteReviewApiContext(request: NextRequest): Promise
   });
 }
 
-export async function requireSiteCmsPreviewApiContext(request: NextRequest): Promise<{
-  context: SiteAdminApiContext | null;
-  error: NextResponse | null;
-}> {
+export async function requireSiteCmsPreviewApiContext(request: NextRequest): Promise<SiteAdminApiGuard> {
   return requireSiteReviewApiContext(request);
 }
 
@@ -218,10 +210,7 @@ export async function requireSiteCmsPreviewApiContext(request: NextRequest): Pro
  * Group administration is authorized by membership rather than by a Site role, so the role gate has to
  * pass before the group level can be looked at. The session, Site, and enablement checks still run.
  */
-export async function requireSiteAuthenticatedApiContext(request: NextRequest): Promise<{
-  context: SiteAdminApiContext | null;
-  error: NextResponse | null;
-}> {
+export async function requireSiteAuthenticatedApiContext(request: NextRequest): Promise<SiteAdminApiGuard> {
   return requireSiteRoleApiContext(request, {
     policy: { access: "authenticated" },
     missingRoleMessage: "Authentication required.",

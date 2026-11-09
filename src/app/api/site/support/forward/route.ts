@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { requireSiteSupportApiContext } from "@/lib/guards/site-admin-api";
-import { normalizeString, readRequestBody } from "@/lib/helpers/request";
+import { normalizeString, parseStrictPositiveInt, readRequestBody } from "@/lib/helpers/request";
 import {
   forwardSupportTicket,
   listSupportForwardTargets,
@@ -24,10 +24,7 @@ export async function GET(request: NextRequest) {
   if (error) {
     return error;
   }
-  const site = context?.site;
-  if (!site) {
-    return NextResponse.json({ error: "Authentication required." }, { status: 401 });
-  }
+  const site = context.site;
   return NextResponse.json({ rows: await listSupportForwardTargets({ id: site.id, key: site.key }) });
 }
 
@@ -51,9 +48,9 @@ export async function POST(request: NextRequest) {
 
   const body = await readRequestBody(request);
   // A number from a REST caller, a string from a Form's hidden field: the same ticket either way.
-  const ticketId = typeof body.ticketId === "number" ? body.ticketId : Number.parseInt(normalizeString(body.ticketId), 10);
+  const ticketId = parseStrictPositiveInt(body.ticketId);
   const target = normalizeString(body.target);
-  if (!Number.isSafeInteger(ticketId) || ticketId <= 0 || !target) {
+  if (ticketId == null || !target) {
     return NextResponse.json({ error: "A forward needs a ticket and a target." }, { status: 400 });
   }
   // A ticket outside the reader's queues answers as one that is not there (`lib/support-reach.ts`).

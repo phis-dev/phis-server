@@ -64,10 +64,7 @@ export async function GET(request: NextRequest) {
     return error;
   }
 
-  const site = context?.site;
-  if (!site) {
-    return NextResponse.json({ error: "Authentication required." }, { status: 401 });
-  }
+  const site = context.site;
 
   const config = await getSiteRuntimeConfig(site.id);
   if (!config) {
@@ -125,10 +122,7 @@ export async function PATCH(request: NextRequest) {
     return error;
   }
 
-  const site = context?.site;
-  if (!site) {
-    return NextResponse.json({ error: "Authentication required." }, { status: 401 });
-  }
+  const site = context.site;
 
   const config = await getSiteRuntimeConfig(site.id);
   if (!config) {
@@ -225,10 +219,7 @@ export async function DELETE(request: NextRequest) {
     return error;
   }
 
-  const site = context?.site;
-  if (!site) {
-    return NextResponse.json({ error: "Authentication required." }, { status: 401 });
-  }
+  const site = context.site;
 
   const config = await getSiteRuntimeConfig(site.id);
   if (!config) {

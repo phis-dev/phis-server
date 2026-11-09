@@ -41,10 +41,7 @@ export async function GET(request: NextRequest) {
   if (error) {
     return error;
   }
-  const site = context?.site;
-  if (!site) {
-    return NextResponse.json({ error: "Authentication required." }, { status: 401 });
-  }
+  const site = context.site;
   const [rows, config] = await Promise.all([listSupportTicketTypes(site.id), readSiteThreadKinds(site.id)]);
   return NextResponse.json({ rows, requesterWindowDays: config.requesterWindowDays });
 }
@@ -60,10 +57,7 @@ export async function PATCH(request: NextRequest) {
   if (error) {
     return error;
   }
-  const site = context?.site;
-  if (!site) {
-    return NextResponse.json({ error: "Authentication required." }, { status: 401 });
-  }
+  const site = context.site;
 
   const body = await readRequestBody(request);
   const requesterWindowDays = readSupportInteger(body.requesterWindowDays);
@@ -90,10 +84,7 @@ export async function POST(request: NextRequest) {
   if (error) {
     return error;
   }
-  const site = context?.site;
-  if (!site) {
-    return NextResponse.json({ error: "Authentication required." }, { status: 401 });
-  }
+  const site = context.site;
 
   const body = await readRequestBody(request);
   const key = readSupportAdministrationKey(body.key);

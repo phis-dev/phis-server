@@ -5,13 +5,9 @@ import { getMediaStorageProfile } from "@/db/media-spaces";
 import { readThreadMessageAsset } from "@/db/threads";
 import { requireSiteAuthenticatedApiContext } from "@/lib/guards/site-admin-api";
 import { createPhisMediaStorageServiceForProfile } from "@/lib/media-storage";
+import { parseStrictPositiveInt } from "@/lib/helpers/request";
 
 export const dynamic = "force-dynamic";
-
-function readId(value: string) {
-  const parsed = Number.parseInt(value?.trim() ?? "", 10);
-  return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
-}
 
 /**
  * The bytes of one attachment, reached through the message that names it.
@@ -46,9 +42,9 @@ export async function GET(
 
   const { threadId, messageId, assetId } = await params;
   const ids = {
-    threadId: readId(threadId),
-    messageId: readId(messageId),
-    assetId: readId(assetId),
+    threadId: parseStrictPositiveInt(threadId),
+    messageId: parseStrictPositiveInt(messageId),
+    assetId: parseStrictPositiveInt(assetId),
   };
   if (ids.threadId == null || ids.messageId == null || ids.assetId == null) {
     return new NextResponse(null, { status: 404 });

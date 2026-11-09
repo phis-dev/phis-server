@@ -38,39 +38,19 @@ import {
 import { discardReleasedPhiMediaUploadStaging } from "@/lib/media-upload-staging";
 import { findPhiMediaUploadToResume } from "@/lib/media-upload-resume";
 import { nextMediaError } from "../_helpers";
-import { normalizeString, readJsonObjectBody } from "@/lib/helpers/request";
+import {
+  normalizeNonNegativeInteger,
+  normalizeString,
+  parseStrictPositiveInt,
+  readJsonObjectBody,
+} from "@/lib/helpers/request";
 import { readPhisMediaRequestArea } from "@/lib/media-request-area";
 
 export const dynamic = "force-dynamic";
 
-function normalizePositiveNumber(value: unknown) {
-  if (typeof value === "number" && Number.isFinite(value) && value > 0) {
-    return value;
-  }
-
-  if (typeof value === "string") {
-    const parsed = Number.parseInt(value.trim(), 10);
-    return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
-  }
-
-  return null;
-}
-
+/** Absent flags are none; present ones are a flag word or a refused request. */
 function normalizeFlags(value: unknown) {
-  if (value == null) {
-    return 0;
-  }
-
-  if (typeof value === "number" && Number.isInteger(value) && value >= 0) {
-    return value;
-  }
-
-  if (typeof value === "string") {
-    const parsed = Number.parseInt(value.trim(), 10);
-    return Number.isInteger(parsed) && parsed >= 0 ? parsed : null;
-  }
-
-  return null;
+  return value == null ? 0 : normalizeNonNegativeInteger(value);
 }
 
 function normalizeUploadMeta(value: unknown) {
@@ -156,8 +136,8 @@ export async function POST(request: NextRequest) {
 
   const filename = normalizeString(payload.filename);
   const contentType = normalizeString(payload.contentType);
-  const size = normalizePositiveNumber(payload.size);
-  const folderId = payload.folderId == null ? null : normalizePositiveNumber(payload.folderId);
+  const size = parseStrictPositiveInt(payload.size);
+  const folderId = payload.folderId == null ? null : parseStrictPositiveInt(payload.folderId);
   const meta = normalizeUploadMeta(payload.meta);
   const presentationFlags = normalizeFlags(payload.presentationFlags);
   if (!filename) {

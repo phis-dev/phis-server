@@ -56,10 +56,7 @@ export async function GET(request: NextRequest, { params }: EntryRouteContext) {
   if (error) {
     return error;
   }
-  const site = context?.site;
-  if (!site) {
-    return NextResponse.json({ error: "Authentication required." }, { status: 401 });
-  }
+  const site = context.site;
 
   const categories = await listSiteContentCategories(site.id, SITE_CONTENT_ENTRY_KINDS[entryKind.kind].type);
   return NextResponse.json({ categories, total: categories.length });

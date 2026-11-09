@@ -12,6 +12,7 @@ import { getPhisAddonInstalledManifest } from "./installed.ts";
 import { enqueuePhisAddonEmittedEvent } from "@/db/addon-events";
 import { getPool } from "@/lib/db";
 import { logRuntimeEvent } from "@/lib/log";
+import { PHIS_ADDON_DEDUPE_KEY_MAX_LENGTH } from "@/lib/constants/server-addons";
 
 /**
  * An Add-on saying that something happened (SERVER_ADDONS.md, Events).
@@ -29,7 +30,6 @@ import { logRuntimeEvent } from "@/lib/log";
  */
 
 const FACTS_MAX_BYTES = 16 * 1024;
-const DEDUPE_KEY_MAX_LENGTH = 200;
 const DEDUPE_KEY_PATTERN = /^[^\s\u0000-\u001f\u007f]+$/;
 
 class PhisEventEmitError extends Error {}
@@ -109,10 +109,10 @@ export function buildPhisAddonEventsCapability(input: {
         if (
           typeof call.dedupeKey !== "string" ||
           call.dedupeKey.length === 0 ||
-          call.dedupeKey.length > DEDUPE_KEY_MAX_LENGTH ||
+          call.dedupeKey.length > PHIS_ADDON_DEDUPE_KEY_MAX_LENGTH ||
           !DEDUPE_KEY_PATTERN.test(call.dedupeKey)
         ) {
-          refuse(`dedupeKey must be 1 to ${DEDUPE_KEY_MAX_LENGTH} characters without whitespace or control characters.`);
+          refuse(`dedupeKey must be 1 to ${PHIS_ADDON_DEDUPE_KEY_MAX_LENGTH} characters without whitespace or control characters.`);
         }
         dedupeKey = call.dedupeKey;
       }

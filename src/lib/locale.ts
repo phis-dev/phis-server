@@ -305,3 +305,22 @@ export function resolveRequestLocale(headers: Headers) {
     .find((tag) => resolvePhiLocaleCapability(tag));
   return normalizeLocale(accepted);
 }
+
+/**
+ * The locale a Site read names, from its query, its `x-locale` header or the browser's preference, in
+ * that order; null where none says anything. The Page and the Area route each carried a copy of this.
+ * Unlike `resolveRequestLocale` above it reads the query too and answers null rather than a fallback.
+ */
+export function resolveSiteReadLocale(request: Request) {
+  const url = new URL(request.url);
+  const rawLocale =
+    url.searchParams.get("locale") ??
+    request.headers.get("x-locale") ??
+    request.headers.get("accept-language");
+
+  if (!rawLocale?.trim()) {
+    return null;
+  }
+
+  return normalizeLocale(rawLocale);
+}

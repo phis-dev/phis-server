@@ -19,7 +19,6 @@ import {
   getMediaAssetBySiteAndId,
   getMediaFolderBySiteAndId,
   listMediaFolders,
-  resolveOrCreateMediaFolderPath,
 } from "./media";
 import { getEffectiveUserSiteAuthorization } from "./user-site-memberships";
 
@@ -79,15 +78,6 @@ describe("Media Folders and authorization claims against PostgreSQL", () => {
       ).rejects.toThrow();
     });
 
-    it("resolves an existing path instead of creating a second branch", async () => {
-      const spaceId = await createPhiTestGroupSpace(site, 1_000);
-
-      const first = await resolveOrCreateMediaFolderPath(site.id, spaceId, ["pgtest-a", "pgtest-b"]);
-      const again = await resolveOrCreateMediaFolderPath(site.id, spaceId, ["pgtest-a", "pgtest-b"]);
-
-      expect(again).toBe(first);
-      expect(await listMediaFolders(site.id, spaceId)).toHaveLength(2);
-    });
 
     // Deleting a Folder moves what it held to the Space root rather than taking it along: the FK is
     // `ON DELETE SET NULL (folder_id)`, so an Asset outlives the arrangement it happened to be filed

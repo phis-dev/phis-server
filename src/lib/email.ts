@@ -103,22 +103,22 @@ function createMailTransport(target: SmtpTarget) {
  * header mailed the person a reset link into the forger's domain, token included (site-context.ts
  * refuses those headers for the same reason).
  */
-export function buildVerificationUrlForLocale(
+export function buildSiteLinkForLocale(
   baseUrl: string,
-  token: string,
-  locale?: string | null,
+  path: string,
+  locale: string | null | undefined,
+  params: Record<string, string>,
 ) {
-  const localizedBaseUrl = buildBaseUrlWithLocale(baseUrl, locale);
-  return `${localizedBaseUrl}/confirm?token=${encodeURIComponent(token)}`;
+  const query = new URLSearchParams(params).toString();
+  return `${buildBaseUrlWithLocale(baseUrl, locale)}${path}${query ? `?${query}` : ""}`;
 }
 
-export function buildPasswordResetUrlForLocale(
-  baseUrl: string,
-  token: string,
-  locale?: string | null,
-) {
-  const localizedBaseUrl = buildBaseUrlWithLocale(baseUrl, locale);
-  return `${localizedBaseUrl}/reset-password?token=${encodeURIComponent(token)}`;
+export function buildVerificationUrlForLocale(baseUrl: string, token: string, locale?: string | null) {
+  return buildSiteLinkForLocale(baseUrl, "/confirm", locale, { token });
+}
+
+export function buildPasswordResetUrlForLocale(baseUrl: string, token: string, locale?: string | null) {
+  return buildSiteLinkForLocale(baseUrl, "/reset-password", locale, { token });
 }
 
 function buildFromHeader() {

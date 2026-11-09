@@ -26,11 +26,6 @@ const STEP_MS: Record<PhisAddonJobInterval, number> = {
 
 export const PHI_JOB_TIME_PATTERN = /^([01][0-9]|2[0-3]):([0-5][0-9])$/;
 
-/** The step of a schedule in milliseconds, which is also how long one of its runs may last at most. */
-export function resolvePhiJobStepMs(every: PhisAddonJobInterval): number {
-  return STEP_MS[every];
-}
-
 /** Whether a step is shorter than an hour, which decides how long its successful runs are kept. */
 export function isPhiJobStepSubHourly(every: PhisAddonJobInterval): boolean {
   return STEP_MS[every] < HOUR_MS;
