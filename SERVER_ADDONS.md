@@ -687,7 +687,9 @@ ledger are in [DB.md](./DB.md#phisjob_runs):
   again. A job is therefore written to be repeatable: a run that is interrupted and run again must
   arrive at the same state, which `data:v1` upserts and `dedupeKey` on `notify` and `emit` give you.
 - **No run beside itself.** A job still going when its next moment comes has that moment recorded as
-  skipped, not run. A handler finishes well inside its own step or declares a longer one.
+  skipped, not run -- a run past its lease included, since that one is the next takeover's. A handler
+  finishes well inside its own step or declares a longer one. A tick claims one moment after another
+  and lets the runs go side by side, so a slow job of one Add-on delays nobody else's.
 - **Five minutes at the shortest.** A job that would have to look more often is polling for an event,
   and an event is what it should be given (see Events). Jobs run per Site, so a short step multiplies by
   the Sites of a stage, and the services a job reads have quotas of their own.

@@ -31,6 +31,19 @@ type Options = {
   merchantAuthorized: (action: "capture" | "cancel" | "refund", policy: PhisPaymentMerchantActionPolicy) => Promise<boolean>;
   unauthenticated?: boolean;
   afterCommit?: () => Promise<unknown>;
+  /**
+   * Told what a Provider threw. The engine itself answers `provider_unavailable` or an unknown outcome,
+   * which is right for the caller and said nothing to the operator; whoever constructs the engine
+   * writes the failure where it logs. Not the engine, because the CLI loads this module too and the
+   * server's log is `server-only`.
+   */
+  providerFailed?: (failure: PhisPaymentProviderFailure) => void;
+};
+
+export type PhisPaymentProviderFailure = {
+  call: "probe" | "execute" | "recover" | "reconcile";
+  error: unknown;
+  meta: { siteId: number; consumerAddonId: string; profileKey: string; paymentId?: string; operationId?: string | null };
 };
 
 /** No transaction spans an external request. A fenced lease serializes observations and commands. */
@@ -51,6 +64,18 @@ export class PhisPaymentEngine implements PhisPaymentsCapabilityV1 {
       if (!await this.options.merchantAuthorized(operation, grant.merchantActions[operation])) throw new PhisPaymentError("forbidden");
     }
     return profile;
+  }
+
+  private providerFailed(
+    call: PhisPaymentProviderFailure["call"],
+    error: unknown,
+    meta: Omit<PhisPaymentProviderFailure["meta"], "siteId" | "consumerAddonId">,
+  ) {
+    this.options.providerFailed?.({
+      call,
+      error,
+      meta: { siteId: this.scope.siteId, consumerAddonId: this.scope.consumerAddonId, ...meta },
+    });
   }
 
   private async persisted(id: string, operation: PhisPaymentGrantedOperation): Promise<{ payment: PhisStoredPayment; profile: PhisPaymentProfile } | null> {
@@ -89,7 +114,10 @@ export class PhisPaymentEngine implements PhisPaymentsCapabilityV1 {
     try {
       const provider = await this.options.resolveProvider(profile);
       probe = await provider.probe({ ...input, signal: this.signal() });
-    } catch { throw new PhisPaymentError("provider_unavailable"); }
+    } catch (error) {
+      this.providerFailed("probe", error, { profileKey: profile.key });
+      throw new PhisPaymentError("provider_unavailable");
+    }
     const normalized = validatePhisPaymentProviderProbe(probe, profile);
     return normalized.methods.filter(m => m.features.captureModes.includes(input.captureMode) && m.features.checkoutKinds.includes(input.checkoutKind)
       && phisPaymentMethodSupports(m.features.pricing, input.pricing)).map(method => ({ ...method, profileKey: profile.key }));
@@ -236,7 +264,10 @@ export class PhisPaymentEngine implements PhisPaymentsCapabilityV1 {
       const command = { ...operation.command, signal: this.signal() };
       // db-boundary-exempt: the Provider executes a PSP HTTP command and receives no database handle.
       result = recover ? await provider.recover({ command, binding: payment.binding }) : await provider.execute(command);
-    } catch { result = { outcome: "unknown" }; }
+    } catch (error) {
+      this.providerFailed(recover ? "recover" : "execute", error, { profileKey: profile.key, paymentId: payment.record.id, operationId: operation.record.id });
+      result = { outcome: "unknown" };
+    }
     try { await this.apply(payment, profile, result, operation.record.id); }
     catch {
       // Invalid observations after submission preserve the durable operation and its reservation.
@@ -275,7 +306,8 @@ export class PhisPaymentEngine implements PhisPaymentsCapabilityV1 {
       } else if (claimed.binding) result = { outcome: "applied", observation: await provider.observe({ binding: claimed.binding, signal: this.signal() }) };
       else throw new PhisPaymentError("reconciliation_required");
       if (result.outcome === "unknown" || result.outcome === "rejected") throw new PhisPaymentError("provider_unavailable");
-    } catch {
+    } catch (error) {
+      if (!(error instanceof PhisPaymentError)) this.providerFailed("reconcile", error, { profileKey: profile.key, paymentId: claimed.record.id, operationId });
       await this.apply(claimed, profile, { outcome: "unknown" }, operationId);
       throw new PhisPaymentError("provider_unavailable");
     }

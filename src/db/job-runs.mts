@@ -79,9 +79,11 @@ function mapRun(row: RunRow): PhiJobRunRecord {
  * Claims one moment for this instance, or learns that it is not this instance's to run.
  *
  * `claimed` carries the new row. `taken` means another instance holds the moment already, or the job
- * is paused. `skipped` means the previous moment's run is still going under a live lease: the moment is
- * recorded as skipped, finished on the spot, so that a slow job never runs beside itself and the ledger
- * shows the moment it missed. One statement, so two instances claiming at once see one row.
+ * is paused. `skipped` means the previous moment's run is still unfinished: the moment is recorded as
+ * skipped, finished on the spot, so that a slow job never runs beside itself and the ledger shows the
+ * moment it missed. Unfinished counts whether or not the lease is live: a row past its lease is the
+ * next takeover's, and a moment claimed beside that takeover would have run the job twice at once. One
+ * statement, so two instances claiming at once see one row.
  */
 export async function claimPhiJobSlot(
   db: Queryable,
@@ -98,7 +100,6 @@ export async function claimPhiJobSlot(
        FROM phis.job_runs
        WHERE owner = $1 AND job_id = $2 AND COALESCE(site_id, 0) = COALESCE($3::smallint, 0)
          AND finished_at IS NULL
-         AND locked_until > NOW()
        LIMIT 1
      ),
      inserted AS (

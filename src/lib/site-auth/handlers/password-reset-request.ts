@@ -3,7 +3,7 @@ import { after, NextRequest, NextResponse } from "next/server";
 import { createUserPasswordResetToken } from "@/db/user-password-reset-tokens";
 import { getUserAccountByEmail } from "@/db/user-accounts";
 import { getEffectiveUserSiteAuthorization } from "@/db/user-site-memberships";
-import { buildPasswordResetUrlForRequest } from "@/lib/email";
+import { buildPasswordResetUrlForLocale } from "@/lib/email";
 import { notifyPhiPerson } from "@/lib/notifications/enqueue";
 import { getSiteMailConfig } from "@/lib/form-config";
 import { normalizeLocale } from "@/lib/locale";
@@ -59,12 +59,10 @@ export async function POST(request: NextRequest) {
 
   // Whether there is an account to reset is decided after the answer is out. Looking it up, issuing the
   // token and queueing the mail take time only when the account exists, so doing them before answering
-  // would tell anybody with a stopwatch which addresses have one. The headers are copied now: the link
-  // is built from them, and the request is not ours to read once the response is gone.
-  const headers = new Headers(request.headers);
+  // would tell anybody with a stopwatch which addresses have one.
   after(async () => {
     try {
-      await issuePasswordReset({ site, email, locale, headers });
+      await issuePasswordReset({ site, email, locale });
     } catch (error) {
       logRuntimeEvent("error", "auth.password.reset.request_failed", {
         message: "Password reset could not be issued.",
@@ -81,12 +79,10 @@ async function issuePasswordReset({
   site,
   email,
   locale,
-  headers,
 }: {
   site: { id: number; key: string };
   email: string;
   locale: string;
-  headers: Headers;
 }) {
   const user = await getUserAccountByEmail(email, site.id);
   if (!user || !user.siteIds.includes(site.id) || !user.passwordHash) {
@@ -103,8 +99,7 @@ async function issuePasswordReset({
   });
 
   const siteConfig = await getSiteMailConfig(site.id);
-  const resetUrl = buildPasswordResetUrlForRequest(
-    headers,
+  const resetUrl = buildPasswordResetUrlForLocale(
     siteConfig.publicBaseUrl,
     resetToken.token,
     locale,

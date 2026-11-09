@@ -130,6 +130,23 @@ export function buildPhisAddonResourceLinksCapability(input: {
 
     async setState(stateInput) {
       requireBelievableCaller("setState");
+      /*
+       * The reach `unlink` asks for, for the same reason: by id, a signed-in person driving the Add-on
+       * could otherwise move the state of a link on a conversation they cannot see. A run with nobody
+       * behind it -- a job, an event handler -- acts on the Add-on's own authority over its links.
+       */
+      if (actorUserId != null) {
+        const threadId = await getResourceLinkThreadId({ siteId, providerId: addonId, linkId: stateInput.linkId });
+        if (threadId == null) {
+          return false;
+        }
+        const detail = await getThreadDetail(siteId, { kind: "user", userId: actorUserId }, threadId);
+        if (!detail) {
+          throw new PhisAddonResourceLinksError(
+            `${addonId} called resourceLinks.setState for a subject its actor cannot reach.`,
+          );
+        }
+      }
       return setResourceLinkState({
         siteId,
         providerId: addonId,

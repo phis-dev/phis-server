@@ -97,6 +97,12 @@ function createMailTransport(target: SmtpTarget) {
   });
 }
 
+/*
+ * A link in a mail is built from the Site's public base URL and nothing else. It used to prefer the
+ * request's `x-forwarded-host` and `host`, which a caller sets: a reset request with a forged host
+ * header mailed the person a reset link into the forger's domain, token included (site-context.ts
+ * refuses those headers for the same reason).
+ */
 export function buildVerificationUrlForLocale(
   baseUrl: string,
   token: string,
@@ -106,24 +112,6 @@ export function buildVerificationUrlForLocale(
   return `${localizedBaseUrl}/confirm?token=${encodeURIComponent(token)}`;
 }
 
-export function buildVerificationUrlForRequest(
-  headers: Headers,
-  baseUrl: string,
-  token: string,
-  locale?: string | null,
-) {
-  const forwardedHost = headers.get("x-forwarded-host")?.trim();
-  const host = forwardedHost || headers.get("host")?.trim();
-  const proto = headers.get("x-forwarded-proto")?.trim() || "https";
-
-  if (!host) {
-    return buildVerificationUrlForLocale(baseUrl, token, locale);
-  }
-
-  const normalizedLocale = normalizeLocale(locale);
-  return `${proto}://${host}/${normalizedLocale}/confirm?token=${encodeURIComponent(token)}`;
-}
-
 export function buildPasswordResetUrlForLocale(
   baseUrl: string,
   token: string,
@@ -131,24 +119,6 @@ export function buildPasswordResetUrlForLocale(
 ) {
   const localizedBaseUrl = buildBaseUrlWithLocale(baseUrl, locale);
   return `${localizedBaseUrl}/reset-password?token=${encodeURIComponent(token)}`;
-}
-
-export function buildPasswordResetUrlForRequest(
-  headers: Headers,
-  baseUrl: string,
-  token: string,
-  locale?: string | null,
-) {
-  const forwardedHost = headers.get("x-forwarded-host")?.trim();
-  const host = forwardedHost || headers.get("host")?.trim();
-  const proto = headers.get("x-forwarded-proto")?.trim() || "https";
-
-  if (!host) {
-    return buildPasswordResetUrlForLocale(baseUrl, token, locale);
-  }
-
-  const normalizedLocale = normalizeLocale(locale);
-  return `${proto}://${host}/${normalizedLocale}/reset-password?token=${encodeURIComponent(token)}`;
 }
 
 function buildFromHeader() {

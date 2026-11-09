@@ -117,6 +117,9 @@ export async function GET(request: NextRequest) {
         page: preview.tree,
       });
     }
+    // Asked for a draft and there is none: falling through to the published Page here answered 200
+    // with a tree the caller did not ask for, where the review branch above says 404.
+    return NextResponse.json({ error: "Page revision not found." }, { status: 404 });
   }
 
   /*

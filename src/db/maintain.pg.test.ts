@@ -183,6 +183,12 @@ describe("maintenance", () => {
       { query: () => Promise.reject(new Error("the database went away")) } as never,
     );
     expect(reports).toHaveLength(PHI_MAINTENANCE_TASKS.length);
-    expect(reports.every((report) => report.error === "the database went away")).toBe(true);
+    // The Payments task never touches the database it is handed: without a Provider resolver it says so.
+    const payments = reports.find((report) => report.id === "payments");
+    expect(payments?.error).toBeNull();
+    expect(payments?.detail).toMatch(/no Payment Provider resolver/);
+    expect(
+      reports.filter((report) => report.id !== "payments").every((report) => report.error === "the database went away"),
+    ).toBe(true);
   });
 });

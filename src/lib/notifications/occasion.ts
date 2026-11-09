@@ -33,15 +33,25 @@ function translate(locale: string, text: string, ctx: string) {
     : translateWithCache({ locale, msg: text, ctx });
 }
 
+/**
+ * `%1`, `%2`, … stand for the parameters in the order the manifest names them.
+ *
+ * Read in one pass: replacing one token after another had `%1` eat the start of `%10`, and a value that
+ * itself contained `%2` replaced again by the next step. A token the manifest names no parameter for
+ * stays as it is.
+ */
 function substitute(
   text: string,
   names: readonly string[] | undefined,
   value: (name: string) => string,
 ) {
-  return (names ?? []).reduce(
-    (result, name, index) => result.replaceAll(`%${index + 1}`, value(name)),
-    text,
-  );
+  if (!names || names.length === 0) {
+    return text;
+  }
+  return text.replace(/%(\d+)/g, (token, digits: string) => {
+    const name = names[Number(digits) - 1];
+    return name === undefined ? token : value(name);
+  });
 }
 
 export async function renderPhiAddonOccasion(input: {

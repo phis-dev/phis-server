@@ -53,7 +53,19 @@ async function invokeEventHandler(input: {
   manifestDigest: string;
 }) {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), EVENT_TIMEOUT_MS);
+  /*
+   * The signal asks the handler to stop; the race makes sure the delivery does, whether or not the
+   * handler listens. Without the race a handler that ignored its signal held this drain -- and the
+   * tick's whole slate of jobs with it -- for as long as it pleased.
+   */
+  let expire: NodeJS.Timeout | null = null;
+  const expired = new Promise<never>((_, reject) => {
+    expire = setTimeout(() => {
+      controller.abort();
+      reject(new Error(`The event handler did not finish within ${EVENT_TIMEOUT_MS} ms.`));
+    }, EVENT_TIMEOUT_MS);
+  });
+  const timed = <T>(work: Promise<T> | T) => Promise.race([Promise.resolve(work), expired]);
   try {
     const common = { addonId: input.addonId, deliveryId: input.row.id, site: input.site,
       capabilities: buildPhisAddonCapabilities({ manifest: input.manifest, manifestDigest: input.manifestDigest,
@@ -63,12 +75,12 @@ async function invokeEventHandler(input: {
     if (input.event === "payment.changed") {
       if (input.row.subjectKind !== "payment" || !input.row.paymentId
         || typeof input.row.payload.reference !== "string" || !Number.isInteger(input.row.payload.version)) throw new Error("Invalid Payment outbox subject.");
-      await input.handler({ ...common, event: input.event, subject: {
+      await timed(input.handler({ ...common, event: input.event, subject: {
         kind: "payment", paymentId: input.row.paymentId, reference: input.row.payload.reference,
         version: input.row.payload.version as number,
         operationId: typeof input.row.payload.operationId === "string" ? input.row.payload.operationId : null,
         refundId: typeof input.row.payload.refundId === "string" ? input.row.payload.refundId : null,
-      } });
+      } }));
     } else if (input.row.subjectKind === "emitted") {
       /*
        * What another Add-on said (SERVER_ADDONS.md, Events). The envelope is the row: who emitted it,
@@ -77,23 +89,25 @@ async function invokeEventHandler(input: {
        */
       if (!input.row.emitter || !input.event.startsWith("@")) throw new Error("Invalid emitted outbox subject.");
       const facts = input.row.payload.facts;
-      await input.handler({ ...common, event: input.event as `@${string}/${string}:${string}`, subject: {
+      await timed(input.handler({ ...common, event: input.event as `@${string}/${string}:${string}`, subject: {
         kind: "emitted",
         emitter: input.row.emitter,
         occurredAt: input.row.createdAt,
         hop: input.row.hop,
         dedupeKey: input.row.dedupeKey,
         facts: typeof facts === "object" && facts !== null && !Array.isArray(facts) ? facts as Record<string, unknown> : {},
-      } });
+      } }));
     } else {
       if (input.row.subjectKind !== "thread" || input.row.threadId === null) throw new Error("Invalid thread outbox subject.");
-      await input.handler({ ...common, event: input.event as PhisAddonThreadEventId, subject: {
+      await timed(input.handler({ ...common, event: input.event as PhisAddonThreadEventId, subject: {
         kind: "thread", threadId: input.row.threadId,
         messageId: typeof input.row.payload.messageId === "number" ? input.row.payload.messageId : null,
-      } });
+      } }));
     }
   } finally {
-    clearTimeout(timer);
+    if (expire) clearTimeout(expire);
+    // A race nobody waits for any more must not surface as an unhandled rejection when it fires.
+    expired.catch(() => undefined);
   }
 }
 

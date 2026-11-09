@@ -161,13 +161,22 @@ export async function ensureUserAccount(input: EnsureUserAccountInput) {
         [input.preferredLocale ?? null, input.flags ?? 0],
       );
       userId = created.rows[0].id;
-      await client.query(
+      /*
+       * The lock above holds a row that exists; an address nobody has yet has no row to lock, so two
+       * registrations of it at once both got here. The unique index decides, and the one it refuses
+       * reports the address as taken -- the transaction takes the account it just made back with it.
+       */
+      const claimed = await client.query(
         `INSERT INTO phis.user_emails (
            user_id, email_normalized, verified_at, flags, source
          )
-         VALUES ($1, $2, NOW(), $3, $4)`,
+         VALUES ($1, $2, NOW(), $3, $4)
+         ON CONFLICT (email_normalized) DO NOTHING`,
         [userId, normalizedEmail, PhiUserEmailFlag.Primary, input.emailSource],
       );
+      if ((claimed.rowCount ?? 0) === 0) {
+        throw new Error("ACCOUNT_EXISTS");
+      }
     } else {
       await client.query(
         `UPDATE phis.user_accounts

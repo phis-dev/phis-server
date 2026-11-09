@@ -133,6 +133,8 @@ export async function GET(request: NextRequest) {
         preset: preview.preset,
       });
     }
+    // Asked for a draft and there is none: 404, as the review branch above answers, not the published Area.
+    return NextResponse.json({ error: "Area revision not found." }, { status: 404 });
   }
 
   /*

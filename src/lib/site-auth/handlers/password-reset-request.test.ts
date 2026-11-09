@@ -30,7 +30,7 @@ vi.mock("@/db/user-site-memberships", () => ({
 }));
 vi.mock("@/db/user-password-reset-tokens", () => ({ createUserPasswordResetToken: mocks.createToken }));
 vi.mock("@/lib/form-config", () => ({ getSiteMailConfig: async () => ({ publicBaseUrl: "https://acme.test" }) }));
-vi.mock("@/lib/email", () => ({ buildPasswordResetUrlForRequest: () => "https://acme.test/reset" }));
+vi.mock("@/lib/email", () => ({ buildPasswordResetUrlForLocale: () => "https://acme.test/reset" }));
 vi.mock("@/lib/notifications/enqueue", () => ({ notifyPhiPerson: mocks.notify }));
 vi.mock("@/lib/user-flags", () => ({ isUserAccountEnabled: () => true }));
 vi.mock("@/lib/log", () => ({ logRuntimeEvent: vi.fn() }));

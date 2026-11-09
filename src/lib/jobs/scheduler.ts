@@ -40,12 +40,27 @@ import { resolvePhiJobSlot } from "./slots";
  * row unfinished belonged to an instance that died, and the next tick of any instance takes the row
  * over and runs the job again -- which is why a job must be repeatable. A job still going when its
  * next moment comes has that moment recorded as skipped, never run beside itself.
+ *
+ * A tick claims one moment after another and lets the runs go side by side. Run one after another, a
+ * slow job of one Add-on held up the outbox drain and the notifications of everybody else for as long
+ * as it renewed its lease; what keeps a job from running beside itself is its row, not the tick.
  */
 
 type JobWork = (signal: AbortSignal) => Promise<void>;
 
 let timer: NodeJS.Timeout | null = null;
 let ticking = false;
+/** The runs this instance has going, so that a tick never waits for one and nothing is lost track of. */
+const runs = new Set<Promise<unknown>>();
+
+function launch(run: PhiJobRunRecord, work: JobWork | null) {
+  const pending: Promise<unknown> = execute(run, work)
+    .catch(() => undefined)
+    .finally(() => {
+      runs.delete(pending);
+    });
+  runs.add(pending);
+}
 
 function instanceId(): string {
   return resolvePhisInstanceId(getDefaultServerPhiRoot());
@@ -133,7 +148,7 @@ async function attempt(key: PhiJobKey, schedule: PhisAddonJobSchedule, now: Date
     leaseMs: PHI_JOB_LEASE_MS,
   });
   if (claim.outcome === "claimed") {
-    await execute(claim.run, work);
+    launch(claim.run, work);
   } else if (claim.outcome === "skipped") {
     logRuntimeEvent("warn", "job.skipped", {
       message: "The previous moment's run was still going.",
@@ -151,7 +166,7 @@ async function tick() {
   try {
     const now = new Date();
     for (const run of await takeOverPhiJobRuns(getPool(), { instanceId: instanceId(), leaseMs: PHI_JOB_LEASE_MS })) {
-      await execute(run, resolveWork({ owner: run.owner, jobId: run.jobId, siteId: run.siteId }));
+      launch(run, resolveWork({ owner: run.owner, jobId: run.jobId, siteId: run.siteId }));
     }
     for (const job of PHI_CORE_JOBS) {
       await attempt({ owner: PHI_CORE_JOB_OWNER, jobId: job.id, siteId: null }, job.schedule, now, (signal) => job.run(signal));
@@ -176,6 +191,7 @@ async function tick() {
     // A tick that cannot reach the database claims nothing and runs nothing; the next one tries again.
     logRuntimeEvent("error", "job.tick_failed", { error: normalizeLogThrowable(error) });
   } finally {
+    // The claims are done; the runs they started go on under their own leases.
     ticking = false;
   }
 }

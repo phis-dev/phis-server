@@ -51,7 +51,7 @@ vi.mock("@/db/user-sessions", () => ({
   listUserSessionsForSite: vi.fn(),
   revokeUserSessionsForSite: mocks.revokeSessions,
 }));
-vi.mock("@/lib/email", () => ({ buildPasswordResetUrlForRequest: () => "https://site.test/reset" }));
+vi.mock("@/lib/email", () => ({ buildPasswordResetUrlForLocale: () => "https://site.test/reset" }));
 vi.mock("@/lib/form-config", () => ({ getSiteMailConfig: async () => ({ publicBaseUrl: null }) }));
 vi.mock("@/lib/notifications/enqueue", () => ({ notifyPhiPerson: mocks.notify }));
 vi.mock("@/lib/log", () => ({

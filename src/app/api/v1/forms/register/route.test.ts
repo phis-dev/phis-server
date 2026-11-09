@@ -41,7 +41,7 @@ vi.mock("@/lib/site-auth/attempt-limit", () => ({
 vi.mock("@/db/registration-intents", () => ({ createRegistrationIntent: mocks.createIntent }));
 vi.mock("@/db/user-profiles", () => ({ getUserProfileByUserId: vi.fn(), upsertUserProfile: vi.fn() }));
 vi.mock("@/db/user-site-memberships", () => ({ upsertUserSiteMembership: vi.fn() }));
-vi.mock("@/lib/email", () => ({ buildVerificationUrlForRequest: () => "https://site.test/verify" }));
+vi.mock("@/lib/email", () => ({ buildVerificationUrlForLocale: () => "https://site.test/verify" }));
 vi.mock("@/lib/notifications/enqueue", () => ({ notifyPhiPerson: mocks.notify }));
 vi.mock("@/lib/log", () => ({ logRuntimeEvent: vi.fn() }));
 

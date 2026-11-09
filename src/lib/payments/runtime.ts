@@ -9,8 +9,9 @@ import { holdsPhisSiteAccess } from "../addons/site-access.ts";
 import { buildPhisAddonRolesCapability } from "../addons/roles-capability.ts";
 import { schedulePhisAddonEventDelivery } from "../addons/event-trigger.ts";
 import { resolvePhiSecret } from "../secrets/resolver";
+import { logRuntimeEvent, normalizeLogThrowable } from "../log";
 import { PHIS_SERVICE_KINDS, PHIS_SITE_ACCESS } from "@phis/contracts/addon";
-import { PhisPaymentEngine } from "./engine.ts";
+import { PhisPaymentEngine, type PhisPaymentProviderFailure } from "./engine.ts";
 import { createPhisPaymentProvider } from "./provider.ts";
 import { PhisPaymentError, requirePhisPaymentReference } from "./validation.ts";
 import type { PhisPaymentAuthority, PhisPaymentProfile, PhisPaymentScope } from "./types.ts";
@@ -30,13 +31,27 @@ function afterPaymentCommit<Args extends unknown[], Result>(siteId: number, acti
   };
 }
 
+
+/**
+ * A Provider that failed, in the log: a Provider bug, a secret that ran out and a network that was down
+ * all read as "reconciliation required" with no line to find them by until this was written.
+ */
+function logPhisPaymentProviderFailure(failure: PhisPaymentProviderFailure) {
+  logRuntimeEvent("error", "payment.provider.failed", {
+    message: `The payment Provider failed on ${failure.call}.`,
+    pluginKey: failure.meta.consumerAddonId,
+    error: normalizeLogThrowable(failure.error),
+    meta: { ...failure.meta, call: failure.call },
+  });
+}
+
 export function buildPhisPaymentsCapability(input: {
   scope: PhisPaymentScope; manifest: PhisAddonManifestV1; authority: PhisPaymentAuthority; signal: AbortSignal;
 }) {
   const { scope, manifest, authority } = input;
   const roles = buildPhisAddonRolesCapability({ addonId: scope.consumerAddonId, siteId: scope.siteId,
     actorUserId: authority.kind === "request" ? authority.actorUserId : null, declared: manifest.roles ?? [] });
-  const engine = new PhisPaymentEngine({
+  const engine = new PhisPaymentEngine({ providerFailed: logPhisPaymentProviderFailure,
     pool: getPool(), scope, signal: input.signal,
     publicBaseUrl: async () => { const site = await getSiteByKey(scope.siteKey); if (!site) throw new PhisPaymentError("not_found"); return site.publicBaseUrl; },
     resolveProvider: profile => provider(profile, scope.siteKey),
@@ -75,7 +90,15 @@ export function buildPhisPaymentNotificationsCapability(input: {
       try {
         adapter = await provider(profile, input.scope.siteKey);
         verified = await adapter.verifyNotification({ method: input.method, headers, body: new Uint8Array(body), signal: input.signal });
-      } catch { throw new PhisPaymentError("provider_unavailable"); }
+      } catch (error) {
+        logRuntimeEvent("error", "payment.provider.failed", {
+          message: "The payment Provider failed on verifyNotification.",
+          siteKey: input.scope.siteKey,
+          error: normalizeLogThrowable(error),
+          meta: { call: "verifyNotification", profileKey: profile.key },
+        });
+        throw new PhisPaymentError("provider_unavailable");
+      }
       if (verified.outcome === "rejected") throw new PhisPaymentError("invalid_input");
       if (verified.outcome === "unavailable") throw new PhisPaymentError("provider_unavailable");
       if (verified.outcome === "irrelevant") return { outcome: "ignored" as const };
@@ -93,7 +116,7 @@ export function buildPhisPaymentNotificationsCapability(input: {
         if (claim === "busy") throw new PhisPaymentError("provider_unavailable");
         receipt = claim;
       }
-      const engine = new PhisPaymentEngine({ pool: getPool(), scope: { ...input.scope, consumerAddonId: payment.consumerAddonId }, signal: input.signal,
+      const engine = new PhisPaymentEngine({ providerFailed: logPhisPaymentProviderFailure, pool: getPool(), scope: { ...input.scope, consumerAddonId: payment.consumerAddonId }, signal: input.signal,
         publicBaseUrl: async () => { throw new PhisPaymentError("forbidden"); }, resolveProvider: async () => adapter!, merchantAuthorized: async () => false });
       try { await engine.reconcile(payment, profile, receipt); }
       catch (error) { if (receipt) await releasePhisPaymentReceipt(getPool(), profile.siteId, receipt).catch(() => {}); throw error; }

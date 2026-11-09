@@ -1096,7 +1096,7 @@ export async function createSupportTicket(input: CreateSupportTicketInput) {
     );
     const queue = queueRows.rows[0];
     if (!queue) {
-      throw new Error("No Support queue to route this ticket to.");
+      throw new SupportAdministrationError("No Support queue to route this ticket to.");
     }
 
     /*

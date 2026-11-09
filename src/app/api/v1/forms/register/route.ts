@@ -6,7 +6,7 @@ import { getSiteAuthPolicy } from "@/db/site-auth";
 import { getUserProfileByUserId, upsertUserProfile } from "@/db/user-profiles";
 import { upsertUserSiteMembership } from "@/db/user-site-memberships";
 import { guardApiV1 } from "@/lib/api-v1-guard";
-import { buildVerificationUrlForRequest } from "@/lib/email";
+import { buildVerificationUrlForLocale } from "@/lib/email";
 import { notifyPhiPerson } from "@/lib/notifications/enqueue";
 import { getSiteConfigBySiteId } from "@/db/site-config";
 import { normalizeLocale } from "@/lib/locale";
@@ -293,8 +293,7 @@ export async function POST(request: Request) {
   });
 
   const siteMailConfig = await getSiteMailConfig(site.id);
-  const verificationUrl = buildVerificationUrlForRequest(
-    request.headers,
+  const verificationUrl = buildVerificationUrlForLocale(
     siteMailConfig.publicBaseUrl,
     intent.verificationToken,
     intent.locale,

@@ -19,7 +19,7 @@ import { getUserSiteMembership, upsertUserSiteMembership } from "@/db/user-site-
 import { requireSiteAdminOnlyApiContext } from "@/lib/guards/site-admin-api";
 import { PHI_BASE_ROLE_OPTIONS } from "@/lib/constants/phi-base-role-metadata";
 import { PhiUserAccountFlag } from "@/lib/constants/user-account-flags";
-import { buildPasswordResetUrlForRequest } from "@/lib/email";
+import { buildPasswordResetUrlForLocale } from "@/lib/email";
 import { getSiteMailConfig } from "@/lib/form-config";
 import { notifyPhiPerson } from "@/lib/notifications/enqueue";
 import { logRuntimeEvent, normalizeLogThrowable } from "@/lib/log";
@@ -136,7 +136,6 @@ function buildBaseRoleFlagsFromSelection(value: unknown) {
 }
 
 async function sendPasswordResetMail(input: {
-  request: NextRequest;
   site: AdminSite;
   userId: number;
   email: string;
@@ -147,8 +146,7 @@ async function sendPasswordResetMail(input: {
     userId: input.userId,
     siteId: input.site.id,
   });
-  const resetUrl = buildPasswordResetUrlForRequest(
-    input.request.headers,
+  const resetUrl = buildPasswordResetUrlForLocale(
     siteConfig.publicBaseUrl,
     resetToken.token,
     input.locale,
@@ -374,7 +372,6 @@ export async function POST(request: NextRequest) {
 
   try {
     const messageId = await sendPasswordResetMail({
-      request,
       site,
       userId: account.id,
       email,
@@ -553,7 +550,6 @@ export async function PUT(request: NextRequest) {
 
     try {
       const messageId = await sendPasswordResetMail({
-        request,
         site,
         userId: target.id,
         email: requestedEmail,

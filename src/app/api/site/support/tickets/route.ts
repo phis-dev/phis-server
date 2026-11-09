@@ -5,6 +5,7 @@ import {
   listSupportTicketsForSite,
   SUPPORT_TICKET_CHANNEL_INTERNAL,
   SUPPORT_TICKET_PRIORITY_NORMAL,
+  SupportAdministrationError,
 } from "@/db/support";
 import { requireSiteSupportApiContext } from "@/lib/guards/site-admin-api";
 import { readSupportTicketReach } from "@/lib/support-reach";
@@ -84,26 +85,35 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "message is required." }, { status: 400 });
   }
 
-  const ticket = await createSupportTicket({
-    siteId: site.id,
-    typeId,
-    message,
-    messageMarkdown: normalizeNullableString(body.messageMarkdown),
-    status: normalizeNullableInteger(body.status) ?? undefined,
-    channel: normalizeNullableInteger(body.channel) ?? SUPPORT_TICKET_CHANNEL_INTERNAL,
-    priority: normalizeNullableInteger(body.priority) ?? SUPPORT_TICKET_PRIORITY_NORMAL,
-    severity: normalizeNullableInteger(body.severity),
-    requesterUserId: normalizeNullableInteger(body.requesterUserId),
-    requesterEmail: normalizeNullableString(body.requesterEmail),
-    assigneeUserId: normalizeNullableInteger(body.assigneeUserId),
-    queueId: normalizeNullableInteger(body.queueId),
-    subject,
-    summary: normalizeNullableString(body.summary),
-    meta: toPhiRecord(body.meta),
-    firstResponseDueAt: normalizeNullableString(body.firstResponseDueAt),
-    resolutionDueAt: normalizeNullableString(body.resolutionDueAt),
-    createdByUserId: context.session?.userId ?? null,
-  });
+  let ticket: Awaited<ReturnType<typeof createSupportTicket>>;
+  try {
+    ticket = await createSupportTicket({
+      siteId: site.id,
+      typeId,
+      message,
+      messageMarkdown: normalizeNullableString(body.messageMarkdown),
+      status: normalizeNullableInteger(body.status) ?? undefined,
+      channel: normalizeNullableInteger(body.channel) ?? SUPPORT_TICKET_CHANNEL_INTERNAL,
+      priority: normalizeNullableInteger(body.priority) ?? SUPPORT_TICKET_PRIORITY_NORMAL,
+      severity: normalizeNullableInteger(body.severity),
+      requesterUserId: normalizeNullableInteger(body.requesterUserId),
+      requesterEmail: normalizeNullableString(body.requesterEmail),
+      assigneeUserId: normalizeNullableInteger(body.assigneeUserId),
+      queueId: normalizeNullableInteger(body.queueId),
+      subject,
+      summary: normalizeNullableString(body.summary),
+      meta: toPhiRecord(body.meta),
+      firstResponseDueAt: normalizeNullableString(body.firstResponseDueAt),
+      resolutionDueAt: normalizeNullableString(body.resolutionDueAt),
+      createdByUserId: context.session?.userId ?? null,
+    });
+  } catch (cause) {
+    // A queue this Site does not have: the body's fault, and said so, as the PATCH of one ticket does.
+    if (cause instanceof SupportAdministrationError) {
+      return NextResponse.json({ error: cause.message }, { status: 400 });
+    }
+    throw cause;
+  }
 
   logRuntimeEvent("info", "site.support.ticket.created", {
     area: "support",

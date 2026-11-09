@@ -5,7 +5,7 @@ import { getSiteRuntimeConfig } from "@/db/sites";
 import { getUserAccountByEmail } from "@/db/user-accounts";
 import { getUserProfileByUserId } from "@/db/user-profiles";
 import { resolveSignedInLocale } from "@/lib/auth";
-import { buildVerificationUrlForRequest } from "@/lib/email";
+import { buildVerificationUrlForLocale } from "@/lib/email";
 import { notifyPhiPerson } from "@/lib/notifications/enqueue";
 import { getSiteMailConfig } from "@/lib/form-config";
 import { logRuntimeEvent } from "@/lib/log";
@@ -99,8 +99,7 @@ export async function POST(request: NextRequest) {
   }
 
   const siteMailConfig = await getSiteMailConfig(site.id);
-  const verificationUrl = buildVerificationUrlForRequest(
-    request.headers,
+  const verificationUrl = buildVerificationUrlForLocale(
     siteMailConfig.publicBaseUrl,
     intent.verificationToken,
     intent.locale,

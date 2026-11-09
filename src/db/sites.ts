@@ -200,7 +200,13 @@ export async function getSiteByKey(input: string) {
   );
 
   const site = rows[0] ? mapSiteRow(rows[0]) : null;
-  siteByKeyCache.set(key, site);
+  /*
+   * Only a Site is remembered. The key comes from a request header on routes anybody can reach, and a
+   * cache that remembered every miss too grew by one entry per made-up key, for the life of the process.
+   */
+  if (site) {
+    siteByKeyCache.set(key, site);
+  }
   return site;
 }
 
