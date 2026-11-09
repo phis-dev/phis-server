@@ -4,12 +4,10 @@ import type {
   PhisAddonEventContext,
   PhisAddonEventId,
   PhisAddonManifestV1,
-  PhisAddonThreadEventId,
-} from "./contract.ts";
+  PhisAddonThreadEventId } from "./contract.ts";
 import { buildPhisAddonCapabilities } from "./capabilities.ts";
-import { isPhisAddonCapabilityDeliverable } from "./core-capabilities.ts";
-import { getPhisAddonInstalledManifest } from "./installed.ts";
-import { digestPhisAddonManifest, validatePhisAddonManifest } from "./manifest.ts";
+import { getPhisAddonInstalledManifest, readPhisAddonServability } from "./installed.ts";
+import { } from "./manifest.ts";
 import { verifyPhisAddonRegistryState } from "./registry-state.ts";
 import {
   listPendingPhisAddonEvents,
@@ -17,8 +15,7 @@ import {
   markPhisAddonEventDelivered,
   markPhisAddonEventFailed,
   withPhisAddonEventDeliveryLock,
-  type PhisAddonEventRow,
-} from "@/db/addon-events";
+  type PhisAddonEventRow } from "@/db/addon-events";
 import { getSiteIdentityById } from "@/db/sites";
 import { logRuntimeEvent } from "@/lib/log";
 
@@ -153,14 +150,7 @@ async function deliverPhisAddonEventsLocked(input: {
     // should find its events, and a release rolled back should not silently lose them.
     return { delivered: 0, failed: pending.length };
   }
-  const validation = validatePhisAddonManifest(entry.manifest);
-  if (
-    !validation.manifest ||
-    digestPhisAddonManifest(validation.manifest) !== entry.manifestDigest ||
-    entry.manifest.requiredCoreCapabilities.some(
-      (capability) => !isPhisAddonCapabilityDeliverable(capability),
-    )
-  ) {
+  if (readPhisAddonServability(entry) !== "ok") {
     return { delivered: 0, failed: pending.length };
   }
   // A build whose schema is not migrated yet, or that the registry does not describe, handles no event:

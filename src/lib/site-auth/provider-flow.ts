@@ -7,7 +7,6 @@ import * as oidc from "openid-client";
 import {
   consumeAuthTransaction,
   createAuthTransaction,
-  deleteExpiredAuthTransactions,
   getSiteAuthMethod,
   type AuthProviderInstallation,
 } from "@/db/site-auth";
@@ -162,7 +161,6 @@ export async function startProviderAuthentication(input: {
     expiresAt: expiresAt.toISOString(),
     consumedAt: null,
   });
-  void deleteExpiredAuthTransactions().catch(() => undefined);
 
   if (input.methodKey === "github") {
     const url = new URL("https://github.com/login/oauth/authorize");

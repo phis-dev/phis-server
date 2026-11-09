@@ -699,8 +699,9 @@ ledger are in [DB.md](./DB.md#phisjob_runs):
   skipped.
 
 Core's own owed work runs on the same clock as Core jobs owned by `@phis/server`: `addon-events.deliver`
-and `notifications.deliver` every five minutes, the retries behind the two outboxes, and
-`job-runs.prune` daily. `phis mail drain` remains for a retry the operator wants now.
+and `notifications.deliver` every five minutes, the retries behind the two outboxes, `auth.prune` hourly
+for expired sessions and finished sign-in transactions, and `job-runs.prune` daily. `phis mail drain`
+remains for a retry the operator wants now.
 
 **A job has no actor.** It is the Add-on acting on its own data, not a person acting through it, so the
 row-level ladder has nobody to apply and `data:v1` writes with system authority. A job context carries

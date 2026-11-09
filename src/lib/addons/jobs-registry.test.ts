@@ -12,7 +12,7 @@ const entry = {
     jobs: [{ id: "sync", handler: "sync" }],
   },
 };
-vi.mock("./installed.ts", () => ({ getPhisAddonInstalledManifest: () => ({ "acme.shop": entry }) }));
+vi.mock("./installed.ts", () => ({ getPhisAddonInstalledManifest: () => ({ "acme.shop": entry }), readPhisAddonServability: () => "ok" }));
 vi.mock("./manifest.ts", () => ({
   validatePhisAddonManifest: () => ({ manifest: entry.manifest }),
   digestPhisAddonManifest: () => "digest",

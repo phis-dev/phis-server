@@ -349,7 +349,7 @@ Versioned API a Site calls server-to-server with its token (`x-phis-token`), and
 | GET | [`/api/v1/site/auth/settings`](../src/app/api/v1/site/auth/settings/route.ts) | internal token | Internal read of the Auth Admin section values for server-side composition (the Admin Authentication Settings page loads its Form initial values here). Contains no provider installations and no secrets; mutations stay on the session-guarded section endpoints. |
 | GET | [`/api/v1/site/capabilities`](../src/app/api/v1/site/capabilities/route.ts) | internal token |  |
 | GET | [`/api/v1/site/content`](../src/app/api/v1/site/content/route.ts) | internal token |  |
-| GET | [`/api/v1/site/locale`](../src/app/api/v1/site/locale/route.ts) | Site session, checked in the handler; internal token |  |
+| GET | [`/api/v1/site/locale`](../src/app/api/v1/site/locale/route.ts) | internal token |  |
 | GET | [`/api/v1/site/media/folder-images`](../src/app/api/v1/site/media/folder-images/route.ts) | internal token | The public pictures of a Media Folder, for a page that shows a Folder rather than named Assets. |
 | GET | [`/api/v1/site/media/settings`](../src/app/api/v1/site/media/settings/route.ts) | internal token | Internal read of the Site's Media configuration for server-side composition (the Admin Media Settings page loads its Form initial values here). Mutations stay on the session-guarded /api/site/admin/media route; this endpoint is internal-token read-only. |
 | GET | [`/api/v1/site/nav`](../src/app/api/v1/site/nav/route.ts) | internal token; session (requireSiteCmsPreviewApiContext) |  |

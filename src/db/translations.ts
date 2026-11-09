@@ -925,6 +925,56 @@ export async function upsertSiteTranslationForSite(input: {
   return (rowCount ?? 0) > 0;
 }
 
+/** The most rows one bulk write takes; the editor sends a page of them, not a store. */
+export const PHI_SITE_TRANSLATION_BULK_LIMIT = 200;
+
+/**
+ * Writes a page of Site translations in one statement, and answers how many rows it touched.
+ *
+ * The editor's bulk action used to make one round trip per row with no upper bound. Rows naming the
+ * same message and locale twice are collapsed to the last, since one statement may touch a row once;
+ * a message that is not this Site's, or a translation with a source hash of its own, is left alone as
+ * the single write leaves it.
+ */
+export async function upsertSiteTranslationsForSite(
+  siteId: number,
+  rows: readonly { msgId: number; locale: string; translation: string }[],
+) {
+  if (!Number.isInteger(siteId) || siteId <= 0) {
+    throw new Error("A valid site id is required.");
+  }
+  if (rows.length > PHI_SITE_TRANSLATION_BULK_LIMIT) {
+    throw new Error(`At most ${PHI_SITE_TRANSLATION_BULK_LIMIT} translations are written at once.`);
+  }
+  const unique = new Map<string, { msgId: number; locale: string; translation: string }>();
+  for (const row of rows) {
+    const locale = row.locale.trim();
+    const translation = row.translation.trim();
+    if (!Number.isInteger(row.msgId) || row.msgId <= 0 || !locale || !translation) {
+      continue;
+    }
+    unique.set(`${row.msgId}\u0000${locale}`, { msgId: row.msgId, locale, translation });
+  }
+  if (unique.size === 0) {
+    return 0;
+  }
+  const entries = [...unique.values()];
+  const { rowCount } = await getPool().query(
+    `INSERT INTO phis.tr_site_lang (msg_id, locale, translation)
+     SELECT msg.id, input.locale, input.translation
+     FROM UNNEST($2::int[], $3::text[], $4::text[]) AS input(msg_id, locale, translation)
+     JOIN phis.tr_site_msg msg
+       ON msg.id = input.msg_id
+      AND msg.site_id = $1
+     ON CONFLICT (msg_id, locale)
+     DO UPDATE SET translation = EXCLUDED.translation,
+                   updated_at = NOW()
+     WHERE phis.tr_site_lang.source_hash IS NULL`,
+    [siteId, entries.map((row) => row.msgId), entries.map((row) => row.locale), entries.map((row) => row.translation)],
+  );
+  return rowCount ?? 0;
+}
+
 export async function updateSiteTranslation(input: {
   siteId: number;
   msgId: number;

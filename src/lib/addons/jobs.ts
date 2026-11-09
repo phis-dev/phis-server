@@ -6,11 +6,9 @@ import type { PhisAddonBuildEntry, PhisAddonJobContext } from "./contract.ts";
 import { buildPhisAddonCapabilities } from "./capabilities.ts";
 import { isPhisAddonCapabilityDeliverable } from "./core-capabilities.ts";
 import { deliverPhisAddonEvents } from "./event-delivery.ts";
-import { getPhisAddonInstalledManifest } from "./installed.ts";
+import { getPhisAddonInstalledManifest, readPhisAddonServability } from "./installed.ts";
 import {
-  digestPhisAddonManifest,
-  validatePhisAddonManifest,
-} from "./manifest.ts";
+  } from "./manifest.ts";
 import { verifyPhisAddonRegistryState } from "./registry-state.ts";
 
 /**
@@ -46,17 +44,13 @@ function requireEntry(addonId: string): PhisAddonBuildEntry {
   if (!entry.enabled) {
     throw new PhisAddonJobError(`${addonId} is not enabled.`);
   }
-  const validation = validatePhisAddonManifest(entry.manifest);
-  if (
-    !validation.manifest ||
-    digestPhisAddonManifest(validation.manifest) !== entry.manifestDigest
-  ) {
+  const servable = readPhisAddonServability(entry);
+  if (servable === "invalid_manifest") {
     throw new PhisAddonJobError(`${addonId} has an invalid build manifest.`);
   }
-  for (const capability of entry.manifest.requiredCoreCapabilities) {
-    if (!isPhisAddonCapabilityDeliverable(capability)) {
-      throw new PhisAddonJobError(`${addonId} requires the missing Core capability ${capability}.`);
-    }
+  if (servable === "missing_capability") {
+    const missing = entry.manifest.requiredCoreCapabilities.find((capability) => !isPhisAddonCapabilityDeliverable(capability));
+    throw new PhisAddonJobError(`${addonId} requires the missing Core capability ${missing}.`);
   }
   return entry;
 }

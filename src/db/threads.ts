@@ -732,6 +732,8 @@ async function readThreadRow(
   siteId: number,
   reader: ThreadReader,
   threadId: number,
+  /** Whether the reader is staff, where the caller has already asked; asked here otherwise. */
+  knownStaff?: boolean,
 ) {
   const params: unknown[] = [siteId, threadId];
   const readerValue = readerParamValue(reader);
@@ -743,7 +745,7 @@ async function readThreadRow(
   const viewerUserId = reader.kind === "user" ? reader.userId : null;
   params.push(viewerUserId);
   const readsParam = `$${params.length}`;
-  const isStaff = await readerIsStaff(db, siteId, reader);
+  const isStaff = knownStaff ?? await readerIsStaff(db, siteId, reader);
 
   const { rows } = await db.query<ThreadRow>(
     `SELECT ${threadColumns(isStaff)},
@@ -891,7 +893,9 @@ export async function getThreadDetail(
   options: { messageLimit?: number; beforeMessageId?: number | null } = {},
 ): Promise<PhisThreadDetail | null> {
   const pool = getPool();
-  const thread = await readThreadRow(pool, siteId, reader, threadId);
+  // Asked once: the row's columns and the messages' visibility both depend on it.
+  const includeInternal = await readerIsStaff(pool, siteId, reader);
+  const thread = await readThreadRow(pool, siteId, reader, threadId, includeInternal);
   if (!thread) {
     return null;
   }
@@ -900,7 +904,6 @@ export async function getThreadDetail(
     1,
     Math.min(PHIS_THREAD_MESSAGE_MAX_PAGE_SIZE, options.messageLimit ?? PHIS_THREAD_MESSAGE_PAGE_SIZE),
   );
-  const includeInternal = await readerIsStaff(pool, siteId, reader);
   const [participants, window] = await Promise.all([
     readParticipants(pool, threadId),
     readMessageWindow(pool, threadId, {
@@ -1335,7 +1338,8 @@ export async function addThreadMessage(input: AddThreadMessageInput): Promise<Ph
   }
 
   const found = await withTransaction(async (client) => {
-    const thread = await readThreadRow(client, input.siteId, input.reader, input.threadId);
+    const isStaff = await readerIsStaff(client, input.siteId, input.reader);
+    const thread = await readThreadRow(client, input.siteId, input.reader, input.threadId, isStaff);
     if (!thread) {
       return false;
     }
@@ -1344,7 +1348,6 @@ export async function addThreadMessage(input: AddThreadMessageInput): Promise<Ph
     }
 
     const authorUserId = input.reader.kind === "user" ? input.reader.userId : null;
-    const isStaff = await readerIsStaff(client, input.siteId, input.reader);
 
     const flags = normalizeMessageFlags(input.messageFlags, {
       isStaff,

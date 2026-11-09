@@ -6,6 +6,8 @@ import { getPhisAddonInstalledManifest } from "@/lib/addons/installed";
 import { drainPhisAddonEventsForSite } from "@/lib/addons/event-delivery";
 import { listPhisAddonEventSiteIds } from "@/db/addon-events";
 import { prunePhiJobRuns } from "@/db/job-runs.mts";
+import { deleteExpiredAuthTransactions } from "@/db/site-auth";
+import { deleteExpiredUserSessions } from "@/db/user-sessions";
 import {
   PHI_CORE_JOB_OWNER,
   PHI_JOB_RUN_RETENTION_MS,
@@ -62,6 +64,19 @@ export const PHI_CORE_JOBS: readonly PhiCoreJob[] = Object.freeze([
     summary: "Sends what the notification outbox still owes.",
     async run() {
       await drainPhiNotifications(500);
+    },
+  },
+  {
+    id: "auth.prune",
+    schedule: { every: "hourly" },
+    summary: "Drops expired sessions and finished sign-in transactions.",
+    async run() {
+      /*
+       * This used to run inside every sign-in and every provider start, a housekeeping delete on the
+       * request path of the person signing in. It is the clock's work.
+       */
+      await deleteExpiredUserSessions();
+      await deleteExpiredAuthTransactions();
     },
   },
   {

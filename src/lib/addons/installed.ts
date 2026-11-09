@@ -10,7 +10,12 @@ import {
   resolvePhisAddonArtifactPath,
   resolvePhisAddonInstallRoot,
 } from "@/lib/addons/install-root";
-import { validatePhisAddonDesiredState } from "@/lib/addons/manifest";
+import { isPhisAddonCapabilityDeliverable } from "@/lib/addons/core-capabilities";
+import {
+  digestPhisAddonManifest,
+  validatePhisAddonDesiredState,
+  validatePhisAddonManifest,
+} from "@/lib/addons/manifest";
 import type {
   PhisAddonBuildEntry,
   PhisAddonBuildManifest,
@@ -162,4 +167,56 @@ export function getPhisAddonBuildDigest() {
   return createHash("sha256")
     .update(JSON.stringify(buildState))
     .digest("hex");
+}
+
+export type PhisAddonServability = "ok" | "invalid_manifest" | "missing_capability";
+
+const servability = new WeakMap<PhisAddonBuildEntry, { digest: string; verdict: PhisAddonServability }>();
+
+/**
+ * Whether this installed build may run: its manifest validates to the digest the desired state names,
+ * and every Core capability it requires is one this release delivers.
+ *
+ * The dispatcher, the job runner and the event drain each asked this of the same entry with the same
+ * three steps, and the dispatcher asked it on every request -- a thousand-line validation plus a stable
+ * JSON digest per call. The answer cannot change while the digest does not, so it is held on the entry.
+ */
+export function readPhisAddonServability(entry: PhisAddonBuildEntry): PhisAddonServability {
+  const held = servability.get(entry);
+  if (held && held.digest === entry.manifestDigest) {
+    return held.verdict;
+  }
+  const validation = validatePhisAddonManifest(entry.manifest);
+  let verdict: PhisAddonServability = "ok";
+  if (!validation.manifest || digestPhisAddonManifest(validation.manifest) !== entry.manifestDigest) {
+    verdict = "invalid_manifest";
+  } else if (
+    entry.manifest.requiredCoreCapabilities.some((capability) => !isPhisAddonCapabilityDeliverable(capability))
+  ) {
+    verdict = "missing_capability";
+  }
+  servability.set(entry, { digest: entry.manifestDigest, verdict });
+  return verdict;
+}
+
+const runtimeManifestCurrent = new WeakMap<object, boolean>();
+
+/**
+ * Whether a loaded runtime module's own manifest is the one the desired state installed.
+ *
+ * Asked by the dispatcher of every request. The module is loaded once per process and its manifest
+ * cannot change afterwards, so the digest comparison is made once per loaded module.
+ */
+export function isPhisAddonRuntimeManifestCurrent(entry: PhisAddonBuildEntry, runtime: object | undefined) {
+  if (!runtime || typeof runtime !== "object") {
+    return false;
+  }
+  const held = runtimeManifestCurrent.get(runtime);
+  if (held !== undefined) {
+    return held;
+  }
+  const validation = validatePhisAddonManifest((runtime as { manifest?: unknown }).manifest);
+  const current = Boolean(validation.manifest) && digestPhisAddonManifest(validation.manifest!) === entry.manifestDigest;
+  runtimeManifestCurrent.set(runtime, current);
+  return current;
 }

@@ -690,7 +690,8 @@ url>/api/v1/addons/jobs` with the internal token. Core runs a job with a `schedu
 ([SERVER_ADDONS.md](../SERVER_ADDONS.md#jobs)); this command is for a job without one, or for a run
 the operator wants now. The run goes through the scheduler's ledger, so `phis addon jobs` shows it, and
 it is refused while a run of the same job is still going. With `--addon @phis/server` and no `--site`
-it runs one of Core's own jobs (`addon-events.deliver`, `notifications.deliver`, `job-runs.prune`).
+it runs one of Core's own jobs (`addon-events.deliver`, `notifications.deliver`, `auth.prune`,
+`job-runs.prune`).
 `--api-base-url` is required, the server's address as reached from where the CLI runs (Debian package:
 `http://127.0.0.1:5301`); there is no default. Exits `1` when the server refuses. Requires
 `api.internalToken` and a running server.

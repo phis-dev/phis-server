@@ -7,25 +7,20 @@ import { NextResponse } from "next/server";
 
 import {
   getSessionFromRequest,
-  touchSession,
-} from "@/db/user-sessions";
-import { getPhisAddonInstalledManifest } from "@/lib/addons/installed";
+  touchSession } from "@/db/user-sessions";
+import { getPhisAddonInstalledManifest, isPhisAddonRuntimeManifestCurrent, readPhisAddonServability } from "@/lib/addons/installed";
 import { verifyPhisAddonRegistryState } from "@/lib/addons/registry-state";
 import {
   type PhisAddonApiRouteDescriptor,
   type PhisAddonHandler,
   type PhisAddonHookDescriptor,
   type PhisAddonHttpMethod,
-  type PhisAddonRequestContext,
-} from "@/lib/addons/contract";
+  type PhisAddonRequestContext } from "@/lib/addons/contract";
 import { buildPhisAddonCapabilities } from "@/lib/addons/capabilities";
 import { PhisAddonAssetError } from "@/lib/addons/assets-capability";
-import { isPhisAddonCapabilityDeliverable } from "@/lib/addons/core-capabilities";
 import { verifyPhisAddonHookDelivery } from "@/lib/addons/hook-verification";
 import {
-  digestPhisAddonManifest,
-  validatePhisAddonManifest,
-} from "@/lib/addons/manifest";
+  } from "@/lib/addons/manifest";
 import { guardApiV1 } from "@/lib/api-v1-guard";
 import { requireSiteAdminOnlyApiContext } from "@/lib/guards/site-admin-api";
 import { createLogger } from "@/lib/log";
@@ -486,19 +481,12 @@ export async function dispatchPhisAddonRequest(
     return notFound();
   }
 
-  const manifestValidation = validatePhisAddonManifest(entry.manifest);
-  if (
-    !manifestValidation.manifest ||
-    digestPhisAddonManifest(manifestValidation.manifest) !== entry.manifestDigest
-  ) {
+  const servable = readPhisAddonServability(entry);
+  if (servable === "invalid_manifest") {
     logger.error("addon.build_manifest.invalid");
     return unavailable(requestId);
   }
-  if (
-    entry.manifest.requiredCoreCapabilities.some(
-      (capability) => !isPhisAddonCapabilityDeliverable(capability),
-    )
-  ) {
+  if (servable === "missing_capability") {
     logger.error("addon.core_capability.incompatible");
     return unavailable(requestId);
   }
@@ -608,11 +596,7 @@ export async function dispatchPhisAddonRequest(
 
     const runtimeModule = await entry.load();
     const runtime = runtimeModule.phisAddon;
-    const runtimeValidation = validatePhisAddonManifest(runtime?.manifest);
-    if (
-      !runtimeValidation.manifest ||
-      digestPhisAddonManifest(runtimeValidation.manifest) !== entry.manifestDigest
-    ) {
+    if (!isPhisAddonRuntimeManifestCurrent(entry, runtime)) {
       logger.error("addon.runtime_manifest.mismatch");
       return unavailable(requestId);
     }

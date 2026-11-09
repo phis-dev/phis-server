@@ -6,6 +6,7 @@ import type {
   PhisUserProjection,
 } from "./contract.ts";
 import {
+  findFirstSharedSiteGroupMember,
   listSiteGroupMembers,
   listSiteGroupsForUser,
   getSiteGroupById,
@@ -156,16 +157,18 @@ export function buildPhisAddonGroupsCapability(input: {
       if (actorUserId == null) {
         return null;
       }
-      for (const group of await actorGroups()) {
-        const members = await listSiteGroupMembers(siteId, group.id);
-        const found = members.find((member) => member.userId === userId);
-        if (found) {
-          // The first group the two share settles the disclosure. Trying every group and taking the
-          // most generous would let a person's company leak out of the one group that discloses it.
-          return project(found, group.flags);
-        }
+      /*
+       * The first group the two share settles the disclosure. Trying every group and taking the most
+       * generous would let a person's company leak out of the one group that discloses it -- so the
+       * groups go to the database in the actor's order, and the first that holds the person answers.
+       */
+      const groups = await actorGroups();
+      const shared = await findFirstSharedSiteGroupMember(siteId, groups.map((group) => group.id), userId);
+      if (!shared) {
+        return null;
       }
-      return null;
+      const group = groups.find((candidate) => candidate.id === shared.groupId);
+      return group ? project(shared.member, group.flags) : null;
     },
 
     async create({ key, name }) {

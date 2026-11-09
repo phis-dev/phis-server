@@ -71,6 +71,11 @@ export type SiteRuntimeConfig = {
 
 
 const siteByKeyCache = new Map<string, SiteRecord | null>();
+/**
+ * Which key a Site id names. The notification drain and the event drain ask this for every row they
+ * work through, and a drain of five hundred rows asked the same question five hundred times.
+ */
+const siteIdentityCache = new Map<number, { id: number; key: string }>();
 
 function normalizeHostname(input: string) {
   return input.trim().toLowerCase();
@@ -225,11 +230,20 @@ export async function getSiteByKey(input: string) {
  * not the place to decide whether it may be served.
  */
 export async function getSiteIdentityById(siteId: number) {
+  const held = siteIdentityCache.get(siteId);
+  if (held) {
+    return held;
+  }
   const { rows } = await getPool().query<{ id: number; key: string }>(
     `SELECT id, key FROM phis.sites WHERE id = $1 LIMIT 1`,
     [siteId],
   );
-  return rows[0] ?? null;
+  const identity = rows[0] ?? null;
+  // A key is never renamed, so the pair holds for the life of the process; a deleted Site is dropped below.
+  if (identity) {
+    siteIdentityCache.set(siteId, identity);
+  }
+  return identity;
 }
 
 export async function listSites() {
@@ -483,6 +497,7 @@ export async function deleteSite(siteIdInput: number) {
   await pool.query(`DELETE FROM phis.sites WHERE id = $1`, [siteId]);
 
   siteByKeyCache.delete(site.key);
+  siteIdentityCache.delete(siteId);
   clearSiteConfigCache(siteId);
 }
 

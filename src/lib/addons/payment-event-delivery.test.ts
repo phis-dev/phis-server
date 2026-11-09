@@ -7,7 +7,7 @@ const state = vi.hoisted(() => ({
   entry: null as unknown, pending: [] as unknown[], handler: vi.fn(), delivered: vi.fn(), failed: vi.fn(),
   build: vi.fn(() => ({})), active: true, lockHeld: false,
 }));
-vi.mock("./installed.ts", () => ({ getPhisAddonInstalledManifest: () => ({ "@test/consumer": state.entry }) }));
+vi.mock("./installed.ts", () => ({ getPhisAddonInstalledManifest: () => ({ "@test/consumer": state.entry }), readPhisAddonServability: () => "ok" }));
 vi.mock("./registry-state.ts", () => ({ verifyPhisAddonRegistryState: async () => state.active ? "ready" : "hidden" }));
 vi.mock("./capabilities.ts", () => ({ buildPhisAddonCapabilities: (...args: unknown[]) => state.build(...args as []) }));
 vi.mock("@/db/sites", () => ({ getSiteIdentityById: async () => ({ id: 1, key: "demo" }) }));

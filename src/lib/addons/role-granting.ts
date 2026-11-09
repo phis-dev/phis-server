@@ -110,19 +110,39 @@ export async function readPhisAddonGrantableRoles(input: {
 }) {
   const installed = getPhisAddonInstalledManifest();
   const grantable: { addonId: string; role: PhisAddonRoleDescriptor }[] = [];
+  /*
+   * The same decision `mayGrantPhisAddonRole` makes, asked of the database once per question rather
+   * than once per role: the Site Admin floor is one answer for every role, a Site-access policy is one
+   * answer per access level, and the roles the person holds in an Add-on are one read per Add-on.
+   * User administration asks this for every Add-on's every role on every visit.
+   */
+  const siteAdmin = await holdsPhisSiteAccess(input.siteId, input.actorUserId, PHIS_SITE_ACCESS.siteAdmin);
+  const siteAccessHeld = new Map<string, boolean>();
+  const holdsSiteAccess = async (access: Parameters<typeof holdsPhisSiteAccess>[2]) => {
+    const key = String(access);
+    let held = siteAccessHeld.get(key);
+    if (held === undefined) {
+      held = await holdsPhisSiteAccess(input.siteId, input.actorUserId, access);
+      siteAccessHeld.set(key, held);
+    }
+    return held;
+  };
   for (const entry of Object.values(installed)) {
     if (!entry.manifest.roles?.length || !await isPhisAddonEnabledForSite(entry.manifest.addonId, input.siteId)) {
       continue;
     }
-    for (const role of entry.manifest.roles) {
-      const verdict = await mayGrantPhisAddonRole({
+    const held = siteAdmin
+      ? null
+      : await readPhisAddonUserRoles(getPool(), {
         addonId: entry.manifest.addonId,
         siteId: input.siteId,
-        actorUserId: input.actorUserId,
-        role: role.name,
-        declared: entry.manifest.roles ?? [],
+        userId: input.actorUserId,
       });
-      if (verdict.allowed) {
+    for (const role of entry.manifest.roles) {
+      const policy = role.grantableBy;
+      const allowed = siteAdmin
+        || ("siteAccess" in policy ? await holdsSiteAccess(policy.siteAccess) : (held ?? []).includes(policy.role));
+      if (allowed) {
         grantable.push({ addonId: entry.manifest.addonId, role });
       }
     }

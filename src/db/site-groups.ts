@@ -224,6 +224,71 @@ export async function listSiteGroupMembers(
   }));
 }
 
+/**
+ * The first of `groupIds`, in the order given, that `userId` is a member of, with the member row.
+ *
+ * `groups.user` used to list every member of every one of the actor's groups until the person turned
+ * up: one query per group, each carrying the whole group. This is one query that walks the groups in
+ * the actor's order and stops at the first that holds the person -- the order matters, because the
+ * first shared group settles what the Add-on may see of them.
+ */
+export async function findFirstSharedSiteGroupMember(
+  siteId: number,
+  groupIds: readonly number[],
+  userId: number,
+): Promise<{ groupId: number; member: SiteGroupMemberRecord } | null> {
+  if (groupIds.length === 0) {
+    return null;
+  }
+  const { rows } = await getPool().query<{
+    group_id: number;
+    user_id: number; display_name: string | null; email_normalized: string | null;
+    company_name: string | null;
+    membership_flags: number; source_provider_id: string; source_connection_key: string;
+    valid_until: Date | string | null; created_at: Date | string;
+  }>(
+    `SELECT m.group_id,
+            m.user_id,
+            ${userDisplayNameSql("up")} AS display_name,
+            email.email_normalized,
+            up.company_name,
+            m.membership_flags, m.source_provider_id, m.source_connection_key,
+            m.valid_until, m.created_at
+     FROM UNNEST($2::int[]) WITH ORDINALITY AS wanted(group_id, position)
+     JOIN phis.site_group_members m
+       ON m.site_id = $1 AND m.group_id = wanted.group_id AND m.user_id = $3
+     LEFT JOIN phis.user_profiles up ON up.user_id = m.user_id
+     LEFT JOIN LATERAL (
+       SELECT candidate.email_normalized
+       FROM phis.user_emails candidate
+       WHERE candidate.user_id = m.user_id
+       ORDER BY (candidate.flags & 1) DESC, candidate.verified_at DESC, candidate.id ASC
+       LIMIT 1
+     ) email ON TRUE
+     ORDER BY wanted.position
+     LIMIT 1`,
+    [siteId, [...groupIds], userId],
+  );
+  const row = rows[0];
+  if (!row) {
+    return null;
+  }
+  return {
+    groupId: row.group_id,
+    member: {
+      userId: row.user_id,
+      displayName: row.display_name ?? `#${row.user_id}`,
+      email: row.email_normalized,
+      companyName: row.company_name,
+      membershipFlags: row.membership_flags,
+      sourceProviderId: row.source_provider_id,
+      sourceConnectionKey: row.source_connection_key,
+      validUntil: row.valid_until == null ? null : new Date(row.valid_until).toISOString(),
+      createdAt: new Date(row.created_at).toISOString(),
+    },
+  };
+}
+
 /** How many members a group has, for a list that shows one page of them. */
 export async function countSiteGroupMembers(siteId: number, groupId: number) {
   const { rows } = await getPool().query<{ total: number | string }>(

@@ -5,7 +5,6 @@ import {
 } from "@/db/user-accounts";
 import { getSiteRuntimeConfig } from "@/db/sites";
 import { getEffectiveUserSiteAuthorization, recordUserSiteLogin } from "@/db/user-site-memberships";
-import { deleteExpiredUserSessions } from "@/db/user-sessions";
 import {
   setAreaCookie,
   clearAreaCookie,
@@ -187,19 +186,6 @@ export async function POST(request: NextRequest) {
     const complete = session.authState === PHI_AUTH_SESSION_STATES.complete;
     if (complete) {
       await recordUserSiteLogin(user.id, site.id);
-    }
-
-    try {
-      await deleteExpiredUserSessions();
-    } catch (error) {
-      logRuntimeEvent("error", "auth.login.session_cleanup_failed", {
-        message: "Expired session cleanup failed after login.",
-        siteKey: site.key,
-        userId: user.id,
-        method: request.method,
-        path: request.nextUrl.pathname,
-        error: normalizeLogThrowable(error),
-      });
     }
 
     const area = resolvePhiUserArea({

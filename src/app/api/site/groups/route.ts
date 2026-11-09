@@ -10,7 +10,6 @@ import {
   projectSiteGroupMemberForMember,
   readEffectiveGroupMembershipFlags,
   removeLocalSiteGroupMembership,
-  resolveEffectivePhiViewerGroupClaims,
   setLocalSiteGroupMembership,
   setSiteGroupFlags,
   setSiteGroupRetirement,
@@ -106,7 +105,6 @@ export async function GET(request: NextRequest) {
   const guarded = await requireSiteAuthenticatedApiContext(request);
   if (guarded.error) return guarded.error;
   const siteId = guarded.context!.site!.id;
-  const userId = guarded.context!.session!.userId;
   /*
    * Developer and Admin administer every group, so the rows say so too -- otherwise a page would offer
    * them nothing while the routes accept everything, and the two would disagree about the same actor.
@@ -131,7 +129,8 @@ export async function GET(request: NextRequest) {
    * The actor's claims answer both "which level do I hold" for every row and, in the member scope,
    * "which groups": the same projection every authorization decision reads, asked once.
    */
-  const claims = await resolveEffectivePhiViewerGroupClaims(siteId, userId);
+  // The guard read these for the authorization above; the same projection, not a second read of it.
+  const claims = guarded.context!.siteRole?.groupClaims ?? [];
   const memberships = new Map(claims.map((claim) => [`${claim.providerId}\u0000${claim.key}`, claim.flags]));
   /*
    * Retired groups are asked for, never included by default. Every caller that offers a group to choose

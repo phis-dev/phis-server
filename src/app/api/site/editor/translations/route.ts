@@ -8,6 +8,8 @@ import {
   listSiteTranslationEditorRows,
   type SiteTranslationEditorStatus,
   upsertSiteTranslationForSite,
+  PHI_SITE_TRANSLATION_BULK_LIMIT,
+  upsertSiteTranslationsForSite,
 } from "@/db/translations";
 import {
   requireSiteAuthorApiContext,
@@ -175,8 +177,13 @@ export async function PATCH(request: NextRequest) {
 
   if (action === "translations") {
     const rows = Array.isArray(body.rows) ? body.rows : [];
-    let updatedCount = 0;
-
+    if (rows.length > PHI_SITE_TRANSLATION_BULK_LIMIT) {
+      return NextResponse.json(
+        { error: `rows holds at most ${PHI_SITE_TRANSLATION_BULK_LIMIT} translations per call.` },
+        { status: 400 },
+      );
+    }
+    const writes: { msgId: number; locale: string; translation: string }[] = [];
     for (const row of rows) {
       if (!row || typeof row !== "object" || Array.isArray(row)) {
         continue;
@@ -189,17 +196,10 @@ export async function PATCH(request: NextRequest) {
       if (!Number.isInteger(msgId) || msgId <= 0 || !locale || !translation) {
         continue;
       }
-
-      const updated = await upsertSiteTranslationForSite({
-        siteId: site.id,
-        msgId,
-        locale,
-        translation,
-      });
-      if (updated) {
-        updatedCount += 1;
-      }
+      writes.push({ msgId, locale, translation });
     }
+    // One statement for the page, where it used to be one round trip per row.
+    const updatedCount = await upsertSiteTranslationsForSite(site.id, writes);
 
     logRuntimeEvent("info", "site.editor.translations.upserted", {
       area: "editor",
