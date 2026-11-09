@@ -278,6 +278,44 @@ export async function listPhisAddonEventAddonIds(siteId: number) {
   return rows.map((row) => row.addon_id);
 }
 
+/**
+ * Runs `body` while holding the delivery lock for one Add-on on one Site, or returns null without
+ * running it when another drain holds the lock.
+ *
+ * Three things drain the outbox (event-delivery.ts), on every instance of Core, and none of them knew
+ * about the others: two drains reading the same owed rows handed the handler each row twice, and the
+ * order the rows promise -- a message, then a status, then the link going away -- held only within one
+ * drain. The lock is a session-level advisory lock on the database, so it is one lock across every
+ * instance, and it goes with the connection when a process dies holding it. Held on a connection of
+ * its own for the length of the drain; the handlers' own queries run on the pool as before.
+ */
+export async function withPhisAddonEventDeliveryLock<T>(
+  addonId: string,
+  siteId: number,
+  body: () => Promise<T>,
+): Promise<T | null> {
+  const client = await getPool().connect();
+  let locked = false;
+  try {
+    const { rows } = await client.query<{ locked: boolean }>(
+      `SELECT pg_try_advisory_lock(hashtext('addon-events:' || $1::text), $2::int) AS locked`,
+      [addonId, siteId],
+    );
+    locked = rows[0]?.locked === true;
+    if (!locked) {
+      return null;
+    }
+    return await body();
+  } finally {
+    if (locked) {
+      await client
+        .query(`SELECT pg_advisory_unlock(hashtext('addon-events:' || $1::text), $2::int)`, [addonId, siteId])
+        .catch(() => undefined);
+    }
+    client.release();
+  }
+}
+
 export async function markPhisAddonEventDelivered(id: string) {
   await getPool().query(
     `UPDATE phis.addon_event_outbox

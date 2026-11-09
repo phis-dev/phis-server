@@ -5,14 +5,15 @@ import { digestPhisAddonManifest } from "./manifest.ts";
 
 const state = vi.hoisted(() => ({
   entry: null as unknown, pending: [] as unknown[], handler: vi.fn(), delivered: vi.fn(), failed: vi.fn(),
-  build: vi.fn(() => ({})), active: true,
+  build: vi.fn(() => ({})), active: true, lockHeld: false,
 }));
 vi.mock("./installed.ts", () => ({ getPhisAddonInstalledManifest: () => ({ "@test/consumer": state.entry }) }));
 vi.mock("./registry-state.ts", () => ({ verifyPhisAddonRegistryState: async () => state.active ? "ready" : "hidden" }));
 vi.mock("./capabilities.ts", () => ({ buildPhisAddonCapabilities: (...args: unknown[]) => state.build(...args as []) }));
 vi.mock("@/db/sites", () => ({ getSiteIdentityById: async () => ({ id: 1, key: "demo" }) }));
 vi.mock("@/db/addon-events", () => ({ listPendingPhisAddonEvents: async () => state.pending, markPhisAddonEventDelivered: (...args: unknown[]) => state.delivered(...args),
-  markPhisAddonEventFailed: (...args: unknown[]) => state.failed(...args), listPhisAddonEventAddonIds: async () => [] }));
+  markPhisAddonEventFailed: (...args: unknown[]) => state.failed(...args), listPhisAddonEventAddonIds: async () => [],
+  withPhisAddonEventDeliveryLock: async (_addonId: string, _siteId: number, body: () => Promise<unknown>) => state.lockHeld ? null : body() }));
 vi.mock("@/lib/log", () => ({ logRuntimeEvent: vi.fn() }));
 
 describe("owner Payment outbox delivery", () => {
@@ -23,7 +24,12 @@ describe("owner Payment outbox delivery", () => {
     state.entry = { enabled: true, manifest, manifestDigest: digestPhisAddonManifest(manifest), load: async () => ({ phisAddon: { manifest, eventHandlers: { changed: state.handler } } }) };
     state.pending = [{ id: "receipt-1", siteId: 1, addonId: manifest.addonId, event: "payment.changed", subjectKind: "payment", paymentId: "payment-1", threadId: null,
       payload: { reference: "order-1", version: 3, operationId: "operation-1", refundId: null }, attempts: 0 }];
-    state.active = true; state.handler.mockReset(); state.build.mockClear(); state.failed.mockClear(); state.delivered.mockClear();
+    state.active = true; state.lockHeld = false; state.handler.mockReset(); state.build.mockClear(); state.failed.mockClear(); state.delivered.mockClear();
+  });
+  it("leaves the rows to the drain that holds the lock", async () => {
+    state.lockHeld = true;
+    expect(await deliverPhisAddonEvents({ addonId: "@test/consumer", siteId: 1 })).toEqual({ delivered: 0, failed: 0 });
+    expect(state.handler).not.toHaveBeenCalled(); expect(state.delivered).not.toHaveBeenCalled();
   });
   it("delivers payment facts and its exact event authority, without manufacturing a thread", async () => {
     expect(await deliverPhisAddonEvents({ addonId: "@test/consumer", siteId: 1 })).toEqual({ delivered: 1, failed: 0 });

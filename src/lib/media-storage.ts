@@ -103,8 +103,16 @@ function normalizeStorageKeyPrefix(value: string | undefined) {
   return normalized;
 }
 
-function buildEtag(body: Buffer) {
-  return createHash("sha256").update(body).digest("hex");
+/** The sha256 of a file, read as a stream so the file's size never lands in memory. */
+async function hashFileSha256(filePath: string) {
+  const hash = createHash("sha256");
+  const handle = await open(filePath, "r");
+  try {
+    await pipeline(handle.createReadStream({ autoClose: false }), hash);
+  } finally {
+    await handle.close().catch(() => {});
+  }
+  return hash.digest("hex");
 }
 
 /**
@@ -453,7 +461,16 @@ export class PhisLocalMediaStorageAdapter implements PhisMediaStorageAdapter {
       const fileStats = await stat(filePath);
       const metaRaw = await readFile(metaPath, "utf-8").catch(() => null);
       const meta = metaRaw ? (JSON.parse(metaRaw) as Partial<LocalObjectMeta>) : {};
-      const body = await readFile(filePath).catch(() => null);
+      /*
+       * The ETag comes from the meta file every put writes. Only an object without one -- a file placed
+       * here by hand -- is read for it, and then as a stream: this answers every HEAD, Range and variant
+       * request, and reading a whole object into memory for a digest nobody usually needs put the
+       * object's size on the heap each time.
+       */
+      const etag =
+        typeof meta.etag === "string" && meta.etag.trim()
+          ? meta.etag
+          : await hashFileSha256(filePath).catch(() => "");
 
       return {
         storageKey: normalizedKey,
@@ -461,12 +478,7 @@ export class PhisLocalMediaStorageAdapter implements PhisMediaStorageAdapter {
         contentType: typeof meta.contentType === "string" && meta.contentType.trim()
           ? meta.contentType
           : "application/octet-stream",
-        etag:
-          typeof meta.etag === "string" && meta.etag.trim()
-            ? meta.etag
-            : body
-              ? buildEtag(body)
-              : "",
+        etag,
         metadata: normalizeMetadata(meta.metadata),
         lastModifiedAt:
           typeof meta.lastModifiedAt === "string" && meta.lastModifiedAt.trim()

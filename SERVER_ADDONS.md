@@ -815,7 +815,10 @@ the commit. The request that caused it tries once and reports nothing -- the per
 message, not operating an integration -- and `phis addon job run` drains what is still owed before the
 job it was asked for. Delivery is in key order and stops at the first failure for that Add-on and Site,
 because events about one thread are a sequence and applying them out of order leaves a state that never
-happened.
+happened. One drain at a time per Add-on and Site, across every instance of Core: the drain holds a
+database advisory lock for its length, and a drain that finds it taken leaves the rows to the one that
+holds it. Without that, the after-commit attempt on one instance and the `addon-events.deliver` job on
+another read the same owed rows and handed the handler each of them twice.
 
 An event context carries `addonId`, `event`, `deliveryId` (the outbox key, stable across retries),
 `site`, a discriminated `subject`, `capabilities`, and `signal`. Current thread events use

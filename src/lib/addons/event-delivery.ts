@@ -16,6 +16,7 @@ import {
   listPhisAddonEventAddonIds,
   markPhisAddonEventDelivered,
   markPhisAddonEventFailed,
+  withPhisAddonEventDeliveryLock,
   type PhisAddonEventRow,
 } from "@/db/addon-events";
 import { getSiteIdentityById } from "@/db/sites";
@@ -104,6 +105,21 @@ async function invokeEventHandler(input: {
  * one is still owed would leave the Add-on holding a state that never happened.
  */
 export async function deliverPhisAddonEvents(input: {
+  addonId: string;
+  siteId: number;
+}): Promise<{ delivered: number; failed: number }> {
+  /*
+   * One drain at a time per Add-on and Site, across every instance (withPhisAddonEventDeliveryLock).
+   * A drain that finds the lock taken leaves: whoever holds it is delivering these same rows, in
+   * order, and what it does not get through the next drain finds still owed.
+   */
+  const outcome = await withPhisAddonEventDeliveryLock(input.addonId, input.siteId, () =>
+    deliverPhisAddonEventsLocked(input),
+  );
+  return outcome ?? { delivered: 0, failed: 0 };
+}
+
+async function deliverPhisAddonEventsLocked(input: {
   addonId: string;
   siteId: number;
 }): Promise<{ delivered: number; failed: number }> {

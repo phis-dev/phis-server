@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+
 import { NextRequest, NextResponse } from "next/server";
 
 import {
@@ -13,8 +15,9 @@ import {
   readOperatorSessionGeneration,
   setOperatorSessionCookie,
 } from "@/lib/operator-auth";
-import { verifyPasswordHash } from "@/lib/password";
+import { hashPassword, verifyPasswordHash } from "@/lib/password";
 import { logRuntimeEvent, normalizeLogThrowable } from "@/lib/log";
+import { checkAuthAttemptLimit, tooManyAttemptsResponse } from "@/lib/site-auth/attempt-limit";
 import { warmTranslationLocaleSourceOptions } from "@/lib/translation-locale-options";
 import { normalizeString } from "@/lib/helpers/request";
 
@@ -24,6 +27,21 @@ type OperatorLoginPayload = {
   email?: unknown;
   password?: unknown;
 };
+
+/**
+ * A hash to verify against when the address names nobody.
+ *
+ * Without it the answer for an unknown address came back before the Argon2 verification that a known
+ * one goes through, and the difference in time told the caller which addresses are Operators. The
+ * value hashed does not matter, since no password is ever right against it; what matters is that both
+ * branches do the same work. Computed once per process, the first time it is needed.
+ */
+let absentOperatorHash: Promise<string> | null = null;
+
+function readAbsentOperatorHash() {
+  absentOperatorHash ??= hashPassword(randomUUID());
+  return absentOperatorHash;
+}
 
 export async function POST(request: NextRequest) {
   if (isBootstrapEnabled()) {
@@ -82,12 +100,31 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Missing email or password." }, { status: 400 });
   }
 
+  /*
+   * The Site login counts guesses per address and per subject (`attempt-limit.ts`); this door had no
+   * count at all, and it is the one behind which every Site sits. Keyed on the address being guessed
+   * at, with the caller's network address added where a trusted proxy hands one over.
+   */
+  const retryAfter = checkAuthAttemptLimit(request, [`operator-login:${email}`]);
+  if (retryAfter !== null) {
+    logRuntimeEvent("warn", "operator.login.rate_limited", {
+      message: "Operator login rejected because too many attempts were made.",
+      area: "operator",
+      method: request.method,
+      path: request.nextUrl.pathname,
+      meta: { email, retryAfter },
+    });
+    return tooManyAttemptsResponse(retryAfter);
+  }
+
   const runtimeConfig = readPhiRuntimeConfigSync();
   const operator = (runtimeConfig.platformSuperUsers ?? []).find(
     (entry) => entry.email.trim().toLowerCase() === email,
   );
 
   if (!operator || operator.enabled === false || !operator.passwordHash?.trim()) {
+    // Same work as the known-address branch below, so the answer takes the same time.
+    await verifyPasswordHash(await readAbsentOperatorHash(), password).catch(() => false);
     logRuntimeEvent("warn", "operator.login.failed", {
       message: "Operator login failed.",
       area: "operator",
