@@ -15,6 +15,7 @@ export type PhiCliSiteRecord = {
   supportEmail: string;
   defaultLocale: string;
   availableLocales: string[];
+  timeZone: string;
   mailFrom?: string;
   contactRecipient?: string;
 };
@@ -29,6 +30,7 @@ type SiteRow = {
   support_email: string;
   default_locale: string;
   available_locales: string[] | null;
+  time_zone: string;
   mail_from: string | null;
   contact_recipient: string | null;
 };
@@ -44,6 +46,7 @@ function mapSiteRow(row: SiteRow): PhiCliSiteRecord {
     supportEmail: row.support_email,
     defaultLocale: row.default_locale,
     availableLocales: row.available_locales ?? [row.default_locale],
+    timeZone: row.time_zone,
     mailFrom: row.mail_from ?? undefined,
     contactRecipient: row.contact_recipient ?? undefined,
   };
@@ -63,6 +66,8 @@ export type PhiSiteInsertInput = {
   availableLocales: string[];
   supportEmail: string;
   mailHost: string;
+  /** An IANA zone, already validated (`normalizePhiTimeZone`); UTC where the caller names none. */
+  timeZone?: string;
 };
 
 /**
@@ -80,6 +85,7 @@ export async function insertPhiSite(db: Pick<PoolClient, "query">, input: PhiSit
        hostname,
        default_locale,
        available_locales,
+       time_zone,
        flags,
        theme,
        public_base_url,
@@ -90,9 +96,9 @@ export async function insertPhiSite(db: Pick<PoolClient, "query">, input: PhiSit
        customer_number_prefix,
        form_guard_secret
      )
-     VALUES ($1, $2, $3, $4, $5::varchar(8)[], $6, '{}'::jsonb, $7, $8, $9, $10, $10, $11, $12)
+     VALUES ($1, $2, $3, $4, $5::varchar(8)[], $13, $6, '{}'::jsonb, $7, $8, $9, $10, $10, $11, $12)
      RETURNING id, key, name, hostname, flags, public_base_url, support_email, default_locale,
-               available_locales, mail_from, contact_recipient`,
+               available_locales, time_zone, mail_from, contact_recipient`,
     [
       input.key,
       input.name,
@@ -106,6 +112,7 @@ export async function insertPhiSite(db: Pick<PoolClient, "query">, input: PhiSit
       input.supportEmail,
       buildCustomerNumberPrefix(input.key),
       randomBytes(32).toString("hex"),
+      input.timeZone ?? "UTC",
     ],
   );
   const created = rows[0];
@@ -136,7 +143,7 @@ export async function deletePhiCliSiteByKey(pool: Pool, siteKey: string) {
 export async function listPhiCliSites(pool: Pool) {
   const { rows } = await pool.query<SiteRow>(
     `SELECT id, key, name, hostname, flags, public_base_url, support_email, default_locale,
-            available_locales, mail_from, contact_recipient
+            available_locales, time_zone, mail_from, contact_recipient
      FROM phis.sites
      ORDER BY id`,
   );
@@ -146,7 +153,7 @@ export async function listPhiCliSites(pool: Pool) {
 export async function getPhiCliSiteByKey(pool: Pool, siteKey: string) {
   const { rows } = await pool.query<SiteRow>(
     `SELECT id, key, name, hostname, flags, public_base_url, support_email, default_locale,
-            available_locales, mail_from, contact_recipient
+            available_locales, time_zone, mail_from, contact_recipient
      FROM phis.sites
      WHERE key = $1
      LIMIT 1`,
@@ -161,6 +168,7 @@ export async function updatePhiCliSite(pool: Pool, input: {
   hostname?: string;
   publicBaseUrl?: string;
   supportEmail?: string;
+  timeZone?: string;
   mailFrom: string;
   mailFromName: string;
   contactRecipient: string;
@@ -174,10 +182,11 @@ export async function updatePhiCliSite(pool: Pool, input: {
          mail_from = $6,
          mail_from_name = $7,
          contact_recipient = $8,
+         time_zone = COALESCE($9, time_zone),
          updated_at = NOW()
      WHERE key = $1
      RETURNING id, key, name, hostname, flags, public_base_url, support_email, default_locale,
-               available_locales, mail_from, contact_recipient`,
+               available_locales, time_zone, mail_from, contact_recipient`,
     [
       input.siteKey,
       input.name ?? null,
@@ -187,6 +196,7 @@ export async function updatePhiCliSite(pool: Pool, input: {
       input.mailFrom,
       input.mailFromName,
       input.contactRecipient,
+      input.timeZone ?? null,
     ],
   );
   return rows[0] ? mapSiteRow(rows[0]) : null;

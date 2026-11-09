@@ -167,6 +167,7 @@ The target PostgreSQL schema for `phis` is:
 - `hostname VARCHAR(255) NOT NULL UNIQUE`
 - `default_locale VARCHAR(8) NOT NULL DEFAULT 'en'`
 - `available_locales VARCHAR(8)[] NOT NULL DEFAULT ARRAY['en']::VARCHAR(8)[]`
+- `time_zone VARCHAR(64) NOT NULL DEFAULT 'UTC'` -- the IANA zone the Site's dates and times are shown in, server render and browser alike (`phis site set --time-zone`). Added 2026-11-09; existing databases received `ALTER TABLE phis.sites ADD COLUMN IF NOT EXISTS time_zone VARCHAR(64) NOT NULL DEFAULT 'UTC'` by hand.
 - `flags INT NOT NULL DEFAULT 0`
 - `theme JSONB NOT NULL DEFAULT '{}'::jsonb`
 - `public_base_url VARCHAR(512) NOT NULL`

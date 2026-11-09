@@ -58,9 +58,9 @@ export const PHIS_COMMAND_FLAGS: Record<string, FlagSpec> = {
   "site list": { key: S },
   "site add": {
     key: S, name: S, hostname: S, "public-base-url": S, "source-locale": S, "default-locale": S,
-    "available-locales": S, "support-email": S, email: S,
+    "available-locales": S, "support-email": S, email: S, "time-zone": S,
   },
-  "site set": { key: S, name: S, hostname: S, "public-base-url": S, "support-email": S, email: S },
+  "site set": { key: S, name: S, hostname: S, "public-base-url": S, "support-email": S, email: S, "time-zone": S },
   "site enable": { key: S },
   "site disable": { key: S },
   "site del": { key: S },

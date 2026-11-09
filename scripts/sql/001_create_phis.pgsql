@@ -15,6 +15,8 @@ CREATE TABLE IF NOT EXISTS phis.sites (
   hostname VARCHAR(255) NOT NULL UNIQUE,
   default_locale VARCHAR(8) NOT NULL DEFAULT 'en',
   available_locales VARCHAR(8)[] NOT NULL DEFAULT ARRAY['en']::VARCHAR(8)[],
+  -- The IANA zone every date and time of the Site is shown in, on the server and in the browser alike.
+  time_zone VARCHAR(64) NOT NULL DEFAULT 'UTC',
   flags INT NOT NULL DEFAULT 0,
   theme JSONB NOT NULL DEFAULT '{}'::jsonb,
   public_base_url VARCHAR(512) NOT NULL,

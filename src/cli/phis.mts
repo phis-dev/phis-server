@@ -168,6 +168,7 @@ import {
 } from "../lib/site-scaffold.mts";
 import { parsePhisArgv, type FlagMap } from "./argv.mts";
 import { normalizePhiEmail, normalizePhiSiteKey } from "../lib/helpers/normalize.ts";
+import { normalizePhiTimeZone } from "../lib/helpers/time-zone.ts";
 
 let configRoot = getDefaultPhiRoot();
 
@@ -240,8 +241,8 @@ Usage:
   phis site list [--key|-k <site key>]
   phis site add --key|-k <site key> --name|-n <site name> --hostname|-h <hostname> --public-base-url|-u <url>
                 --source-locale <locale> --default-locale <locale> [--available-locales <csv>]
-                --support-email|-e <email>
-  phis site set --key|-k <site key> [--name|-n <site name>] [--hostname|-h <hostname>] [--public-base-url|-u <url>] [--support-email|-e <email>]
+                --support-email|-e <email> [--time-zone <iana zone>]
+  phis site set --key|-k <site key> [--name|-n <site name>] [--hostname|-h <hostname>] [--public-base-url|-u <url>] [--support-email|-e <email>] [--time-zone <iana zone>]
   phis site enable --key|-k <site key>
   phis site disable --key|-k <site key>
   phis site del --key|-k <site key>
@@ -802,6 +803,7 @@ async function createSite(flags: FlagMap, json: boolean) {
   const sourceLocale = getRequiredFlag(flags, "source-locale").toLowerCase();
   const defaultLocale = getRequiredFlag(flags, "default-locale").toLowerCase();
   const supportEmail = normalizePhiEmail(getSiteSupportEmailFlag(flags, true) ?? "");
+  const timeZone = readTimeZoneFlag(flags) ?? "UTC";
   const availableLocales = Array.from(
     new Set(
       [
@@ -876,6 +878,7 @@ async function createSite(flags: FlagMap, json: boolean) {
       availableLocales,
       supportEmail,
       mailHost,
+      timeZone,
     });
   } catch (error) {
     writeCliRuntimeConfig(previousRuntimeConfig);
@@ -1862,6 +1865,19 @@ async function printSiteConfig(targetInput: string, flags: FlagMap, json: boolea
   console.log(config);
 }
 
+/** `--time-zone`, validated and in its canonical spelling, or undefined where the flag is absent. */
+function readTimeZoneFlag(flags: FlagMap) {
+  const value = getOptionalFlag(flags, "time-zone");
+  if (value === undefined) {
+    return undefined;
+  }
+  const timeZone = normalizePhiTimeZone(value);
+  if (!timeZone) {
+    throw new Error(`Expected --time-zone to be an IANA time zone such as Europe/Berlin or UTC, not "${value}".`);
+  }
+  return timeZone;
+}
+
 async function updateSiteFields(flags: FlagMap, json: boolean) {
   const siteKey = getRequiredFlag(flags, "key").toLowerCase();
   const current = await getPhiCliSiteByKey(getPool(), siteKey);
@@ -1891,9 +1907,11 @@ async function updateSiteFields(flags: FlagMap, json: boolean) {
     }
   }
 
-  if (!name && !supportEmail && !hostname && !publicBaseUrl) {
+  const timeZone = readTimeZoneFlag(flags);
+
+  if (!name && !supportEmail && !hostname && !publicBaseUrl && !timeZone) {
     throw new Error(
-      "Nothing to set. Provide at least --name, --hostname, --public-base-url, or --support-email.",
+      "Nothing to set. Provide at least --name, --hostname, --public-base-url, --support-email, or --time-zone.",
     );
   }
 
@@ -1912,6 +1930,7 @@ async function updateSiteFields(flags: FlagMap, json: boolean) {
     hostname,
     publicBaseUrl,
     supportEmail,
+    timeZone,
     mailFrom: `no-reply@${mailHost}`,
     mailFromName: name ?? current.name,
     contactRecipient: nextSupportEmail,
@@ -1929,6 +1948,7 @@ async function updateSiteFields(flags: FlagMap, json: boolean) {
       hostname: updated.hostname,
       publicBaseUrl: updated.publicBaseUrl,
       supportEmail: updated.supportEmail,
+      timeZone: updated.timeZone,
     });
     return;
   }

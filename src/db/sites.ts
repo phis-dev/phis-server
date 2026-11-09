@@ -53,6 +53,12 @@ export type SiteRuntimeConfig = {
   hostname: string;
   defaultLocale: string;
   availableLocales: SiteLocaleOption[];
+  /**
+   * The IANA zone the Site's dates and times are shown in. One zone for the server render and the
+   * browser, because the two format the same instant and a reader's page is hydrated against the
+   * server's text: a zone that differed between them changed the words under the reader's eyes.
+   */
+  timeZone: string;
   store?: {
     enabled: boolean;
   };
@@ -488,6 +494,7 @@ function mapSiteRuntimeConfigRow(
     hostname: string;
     default_locale: string;
     available_locales: string[] | null;
+    time_zone: string;
     medusa_base_url: string | null;
     medusa_publishable_key: string | null;
     theme: Record<string, unknown> | null;
@@ -509,6 +516,7 @@ function mapSiteRuntimeConfigRow(
     hostname: row.hostname,
     defaultLocale: row.default_locale,
     availableLocales: buildLocaleOptions(availableLocaleCodes),
+    timeZone: row.time_zone,
     store: {
       enabled: storeEnabled,
     },
@@ -595,6 +603,7 @@ export async function getSiteRuntimeConfig(siteId: number) {
     hostname: string;
     default_locale: string;
     available_locales: string[] | null;
+    time_zone: string;
     medusa_base_url: string | null;
     medusa_publishable_key: string | null;
     theme: Record<string, unknown> | null;
@@ -607,6 +616,7 @@ export async function getSiteRuntimeConfig(siteId: number) {
             sites.public_base_url,
             sites.default_locale,
             sites.available_locales,
+            sites.time_zone,
             sites.medusa_base_url,
             sites.medusa_publishable_key,
             sites.theme,

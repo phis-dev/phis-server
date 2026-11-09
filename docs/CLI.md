@@ -245,7 +245,7 @@ CLI reads and the resolved `sourceLocale`.
 ```text
 phis site add --key <site key> --name <site name> --hostname <hostname> --public-base-url <url>
               --source-locale <locale> --default-locale <locale> [--available-locales <csv>]
-              --support-email <email>
+              --support-email <email> [--time-zone <iana zone>]
 ```
 
 Creates a Site.
@@ -260,8 +260,12 @@ Creates a Site.
 | `--default-locale` | yes | Always added to the available locales. |
 | `--available-locales` | no | Comma-separated additional locales. |
 | `--support-email`, `-e` | yes | `--email` is accepted as an alias. |
+| `--time-zone` | no | The IANA zone the Site's dates and times are shown in, e.g. `Europe/Berlin`; `UTC` when absent. Stored in its canonical spelling. |
 
 Every locale must be listed in `translation.supportedLocales` (default: `["en"]`).
+
+The time zone is one for the server render and the browser: both format the same instant with it, so
+the text a page is hydrated against is the text the reader sees. The host's own zone plays no part.
 
 Side effects: writes `sites.overrides.<key>.sourceLocale` to `phis-runtime.json` first, then inserts
 the `phis.sites` row (mail sender `no-reply@<hostname>`, contact recipient = support email, a random
@@ -269,7 +273,7 @@ form guard secret) and an empty `phis.site_auth_config` row in one transaction. 
 the runtime file is restored. Refuses when an override with a `sourceLocale` already exists for the
 key.
 
-### `phis site set --key <site key> [--name] [--hostname] [--public-base-url] [--support-email]`
+### `phis site set --key <site key> [--name] [--hostname] [--public-base-url] [--support-email] [--time-zone]`
 
 Updates the given fields; at least one is required. Also rewrites the mail sender
 (`no-reply@<hostname>`), the sender name and the contact recipient from the resulting values.
