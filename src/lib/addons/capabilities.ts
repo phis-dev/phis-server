@@ -30,6 +30,7 @@ import { buildPhisAddonSupportCapability } from "./support-capability.ts";
 import { buildPhisAddonThreadsCapability } from "./threads-capability.ts";
 import { buildPhisAddonSecretsCapability } from "./secrets-capability.ts";
 import { buildPhisAddonSettingsCapability } from "./settings-capability.ts";
+import { buildPhisAddonEventsCapability } from "./events-capability.ts";
 import { buildPhisAddonNotificationsCapability } from "./notifications-capability.ts";
 import { buildPhisAddonStorageCapability } from "./storage-capability.ts";
 import { buildPhisAddonAssetsCapability } from "./assets-capability.ts";
@@ -244,6 +245,11 @@ export function buildPhisAddonCapabilities(input: {
   signal?: AbortSignal;
   paymentHook?: { method: string; headers: Readonly<Record<string, string>>; body: Uint8Array };
   /**
+   * The hop of the event being handled, set by event delivery alone. An emit from inside a handler
+   * writes the next hop, which is how a chain of handlers answering each other is bounded.
+   */
+  eventHop?: number;
+  /**
    * True when nobody authenticated, which today means a hook and nothing else.
    *
    * Kept apart from `actorUserId == null`, which an operator, an internal caller and a job all satisfy
@@ -341,6 +347,17 @@ export function buildPhisAddonCapabilities(input: {
   }
   if (required.includes(PHIS_CORE_CAPABILITIES.roles)) {
     capabilities.roles = roles;
+  }
+  if (required.includes(PHIS_CORE_CAPABILITIES.events) && input.siteKey) {
+    capabilities.events = buildPhisAddonEventsCapability({
+      addonId: input.manifest.addonId,
+      siteId,
+      siteKey: input.siteKey,
+      declared: input.manifest.emits ?? [],
+      // An unsigned hook may change nothing, and an outbox row is a change.
+      unauthenticated: input.unauthenticated === true && input.systemAuthority !== true,
+      hop: input.eventHop ?? 0,
+    });
   }
   if (required.includes(PHIS_CORE_CAPABILITIES.threads)) {
     /*

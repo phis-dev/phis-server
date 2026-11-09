@@ -538,11 +538,12 @@ Secrets the Add-on declares are stored with `phis secret set --addon @acme/statu
 <name>` (value on stdin). Roles are granted with `phis addon role`
 ([CLI.md](./CLI.md#addon-server-add-ons)).
 
-Core schedules nothing. An Add-on that declares jobs (`phis addon list --json` shows each manifest,
-its `jobs` included) runs them only when something calls `phis addon job`, the notification outbox is
-retried only by `phis mail drain`, and Core's cleanup tasks run with `phis maintain`. On a systemd host,
-give each a one-shot service and a timer: [SERVER_ADDONS.md](../SERVER_ADDONS.md#scheduling-a-job) has
-an example for a job, and the same pair of units with another `ExecStart=` serves the other two.
+Core keeps its own clock. An Add-on's job runs at the moments its `schedule` names, the notification
+outbox and the Add-on event outbox are retried every five minutes, and one instance runs each moment
+however many serve the stage ([SERVER_ADDONS.md](../SERVER_ADDONS.md#jobs)); `phis addon jobs` shows
+what ran. Nothing to install for that. What still wants a timer of the operator's is `phis maintain`,
+Core's cleanup tasks, which run in the CLI process against the database: on a systemd host, a one-shot
+service and a timer ([SERVER_ADDONS.md](../SERVER_ADDONS.md#maintenance-from-a-timer) has the pair).
 
 ## 11. Updating later
 

@@ -14,18 +14,17 @@ import {
 import { verifyPhisAddonRegistryState } from "./registry-state.ts";
 
 /**
- * Running an Add-on's declared jobs.
+ * Running one of an Add-on's declared jobs, for one Site, now.
  *
- * There is no in-process scheduler and there should not be one. phi-server serves from several
- * instances, so a timer would fire once per instance for one intended run, and the Add-on would have to
- * defend against a concurrency nobody asked for. The operator schedules `phis addon job run` -- through
- * systemd, cron, or whatever already runs their maintenance -- which is exactly one runner by
- * construction. What the Add-on wants is documentation on the descriptor, not a promise Core keeps.
+ * Who decides that it is now is `src/lib/jobs/scheduler.ts`: every instance computes the moments a
+ * job's `schedule` names and claims each by a row keyed on it, so one instance runs it however many
+ * serve the stage, and an operator's `phis addon job` claims a moment of its own. This module is the
+ * run itself, with no clock in it.
  *
  * A job has no actor. It is the Add-on acting on its own data rather than a person acting through it,
  * so the row-level ladder does not apply inside one, and `data:v1` writes with system authority. That
- * is also why a job is reachable only from the CLI: an Add-on able to start its own job from a request
- * would have built itself a way around the ladder.
+ * is also why a job is started only by the scheduler or the CLI: an Add-on able to start its own job
+ * from a request would have built itself a way around the ladder.
  */
 
 export type PhisAddonJobOutcome = {
@@ -99,11 +98,10 @@ export async function runPhisAddonJob(input: {
   /*
    * What Core still owes this Add-on, before the job it was asked for.
    *
-   * There is no scheduler here, so the operator's own is the only thing that runs on a clock -- and an
-   * event whose delivery failed has to ride along with something. It runs first because the job is
-   * likely to act on the state those events carry, and settling them afterwards would leave the job
-   * working from what it knew one run ago. A failure is already recorded against the row it belongs to,
-   * so nothing here stops the job from running.
+   * The scheduled drain settles the outbox every five minutes; this is the same settlement at the one
+   * moment it matters most, because the job is likely to act on the state those events carry, and
+   * settling them afterwards would leave the job working from what it knew one run ago. A failure is
+   * already recorded against the row it belongs to, so nothing here stops the job from running.
    */
   await deliverPhisAddonEvents({ addonId, siteId: site.id });
 

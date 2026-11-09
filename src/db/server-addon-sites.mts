@@ -70,6 +70,23 @@ export async function readPhisAddonEnabledSiteIds(db: Queryable, addonId: string
 }
 
 /**
+ * The Sites on which this Add-on is asked for and configured: where the scheduler runs its jobs.
+ *
+ * Narrower than `readPhisAddonEnabledSiteIds` on purpose. A Site that asked for the Add-on and has not
+ * configured it would have every scheduled moment refused by the job runner and recorded as a failure,
+ * which is noise about a state the operator already sees under `phis addon site`.
+ */
+export async function readPhisAddonReadySiteIds(db: Queryable, addonId: string) {
+  const { rows } = await db.query<{ site_id: number }>(
+    `SELECT site_id FROM phis.site_server_addons
+      WHERE addon_id = $1 AND (flags & $2) <> 0 AND configuration_status = 'ready'
+      ORDER BY site_id`,
+    [addonId, PHI_SITE_SERVER_ADDON_FLAG_REQUESTED_ENABLED],
+  );
+  return rows.map((row) => row.site_id);
+}
+
+/**
  * Asks for an Add-on on one Site, or withdraws the request.
  *
  * `effective_status` is not written here. What a Site asks for and what it gets are different

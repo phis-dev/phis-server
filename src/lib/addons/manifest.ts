@@ -7,6 +7,7 @@ import { PHIS_ADDON_ID_PATTERN } from "./schema-name.ts";
 import {
   PHIS_ADDON_ABI_VERSION,
   PHIS_ADDON_EVENTS,
+  PHIS_ADDON_JOB_INTERVALS,
   PHIS_ADDON_MANIFEST_VERSION,
   PHIS_SITE_ACCESS,
   type PhisAddonApiRouteDescriptor,
@@ -55,6 +56,48 @@ const HTTP_HEADER_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
 const SECRET_NAME_PATTERN = /^[a-z0-9][a-z0-9._-]{0,63}$/;
 const HOOK_VERIFICATION_SCHEMES = new Set(["hmac-sha256"]);
 const ADDON_EVENT_IDS = new Set<string>(Object.values(PHIS_ADDON_EVENTS));
+const JOB_INTERVALS = new Set<string>(PHIS_ADDON_JOB_INTERVALS);
+const JOB_TIME_PATTERN = /^([01][0-9]|2[0-3]):[0-5][0-9]$/;
+
+/**
+ * An event an Add-on emits: its own id, a colon, its own word for what happened (SERVER_ADDONS.md,
+ * Events). The emitter half is checked against the manifest's `addonId` where the event is declared
+ * under `emits`; where it is listened to under `eventHandlers`, any emitter's shape is admitted, since
+ * the emitter is another Add-on.
+ */
+const EMITTED_EVENT_ID_PATTERN = /^(@[^/\s:]+\/[^/\s:]+(?:\/[^/\s:]+)*):([a-z][a-z0-9.-]*)$/;
+const EMITTED_EVENT_AUDIENCES = new Set(["stage", "self"]);
+
+/**
+ * A job's schedule, checked for the shape the scheduler reads: a step from the catalogue, a time of day
+ * only where the step has a day, a weekday only where it has a week. A schedule Core cannot read would
+ * be a job that never runs, with nothing at runtime to say why.
+ */
+function validateJobSchedule(value: unknown, field: string, issues: string[]) {
+  if (!isPhiRecord(value)) {
+    issues.push(`${field} must be an object.`);
+    return;
+  }
+  const every = readString(value.every, `${field}.every`, issues);
+  if (every && !JOB_INTERVALS.has(every)) {
+    issues.push(`${field}.every must be one of ${PHIS_ADDON_JOB_INTERVALS.join(", ")}.`);
+  }
+  const hasDay = every === "daily" || every === "weekly";
+  if (value.at !== undefined) {
+    if (typeof value.at !== "string" || !JOB_TIME_PATTERN.test(value.at)) {
+      issues.push(`${field}.at must be a time of day, HH:MM in UTC.`);
+    } else if (!hasDay) {
+      issues.push(`${field}.at is only for the daily and weekly steps.`);
+    }
+  }
+  if (value.weekday !== undefined) {
+    if (!Number.isInteger(value.weekday) || (value.weekday as number) < 1 || (value.weekday as number) > 7) {
+      issues.push(`${field}.weekday must be an ISO weekday, 1 (Monday) to 7 (Sunday).`);
+    } else if (every !== "weekly") {
+      issues.push(`${field}.weekday is only for the weekly step.`);
+    }
+  }
+}
 
 /**
  * Whether at least one role can be reached without already holding another.
@@ -492,6 +535,11 @@ export function validatePhisAddonManifest(
     if (handler && !HANDLER_ID_PATTERN.test(handler)) {
       issues.push(`jobs[${index}].handler is invalid.`);
     }
+    // Absent means the job runs only when an operator starts it; like every field added after this
+    // manifest version was in the wild, only a wrong shape is an issue.
+    if (job.schedule !== undefined) {
+      validateJobSchedule(job.schedule, `jobs[${index}].schedule`, issues);
+    }
     jobIds.push(id);
   }
   assertUnique(jobIds, "jobs", issues);
@@ -521,8 +569,8 @@ export function validatePhisAddonManifest(
     if (id && !DESCRIPTOR_ID_PATTERN.test(id)) {
       issues.push(`eventHandlers[${index}].id is invalid.`);
     }
-    if (event && !ADDON_EVENT_IDS.has(event)) {
-      issues.push(`eventHandlers[${index}].event is not an event Core emits.`);
+    if (event && !ADDON_EVENT_IDS.has(event) && !EMITTED_EVENT_ID_PATTERN.test(event)) {
+      issues.push(`eventHandlers[${index}].event is neither an event Core emits nor one an Add-on emits (@scope/name:event).`);
     }
     if (handler && !HANDLER_ID_PATTERN.test(handler)) {
       issues.push(`eventHandlers[${index}].handler is invalid.`);
@@ -534,6 +582,38 @@ export function validatePhisAddonManifest(
   // One handler per event. Two would need an order Core does not define, and an Add-on that wants two
   // things to happen can do both in one function where the order is visible.
   assertUnique(eventNames, "eventHandlers events", issues);
+
+  /*
+   * The events this Add-on emits. Each is named under this Add-on's own id, so the emitter half of
+   * the id is checked against `addonId`: an Add-on cannot declare that it emits somebody else's event,
+   * which is what keeps a listener's `eventHandlers` entry meaning what it says.
+   */
+  const emits = Array.isArray(value.emits) ? value.emits : [];
+  if (value.emits !== undefined && !Array.isArray(value.emits)) {
+    issues.push("emits must be an array when it is stated at all.");
+  }
+  const emittedIds: string[] = [];
+  for (const [index, entry] of emits.entries()) {
+    if (!isPhiRecord(entry)) {
+      issues.push(`emits[${index}] must be an object.`);
+      continue;
+    }
+    const id = readString(entry.id, `emits[${index}].id`, issues);
+    const match = id ? EMITTED_EVENT_ID_PATTERN.exec(id) : null;
+    if (id && !match) {
+      issues.push(`emits[${index}].id must be this Add-on's id, a colon and the event (@scope/name:event).`);
+    } else if (match && typeof value.addonId === "string" && match[1] !== value.addonId) {
+      issues.push(`emits[${index}].id names ${match[1]} as emitter, not this Add-on.`);
+    }
+    if (entry.description !== undefined && typeof entry.description !== "string") {
+      issues.push(`emits[${index}].description must be a string when it is stated at all.`);
+    }
+    if (entry.audience !== undefined && !EMITTED_EVENT_AUDIENCES.has(String(entry.audience))) {
+      issues.push(`emits[${index}].audience must be "stage" or "self".`);
+    }
+    emittedIds.push(id);
+  }
+  assertUnique(emittedIds, "emits", issues);
 
   let schema: PhisAddonSchemaDescriptor | null = null;
   if (value.schema === null) {

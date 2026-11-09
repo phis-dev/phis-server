@@ -150,6 +150,8 @@ import {
 } from "../lib/secrets/crypto.ts";
 import { buildPhiSecretReference, PHI_SECRET_SEGMENT_PATTERN } from "../lib/secrets/reference.ts";
 import { PHIS_TOKEN_HEADER } from "../lib/constants/http-headers.ts";
+import { PHI_CORE_JOB_OWNER, PhiJobRunFlag, PhiJobStateFlag } from "../lib/constants/jobs.ts";
+import { listPhiJobRuns, listPhiJobStates, setPhiJobPaused } from "../db/job-runs.mts";
 import { PHIS_CMS_AREA_KEYS, resolvePhisCmsAreaMask } from "../lib/constants/cms-areas.ts";
 import {
   listSiteModuleBlockUsageWithDb,
@@ -291,6 +293,8 @@ Usage:
   phis addon storage --addon <@scope/name> --site <site key> [--quota-bytes <n>] [--max-objects <n>] [--unlimited]
                      [--sweep] [--recount]
   phis addon job     --addon <@scope/name> --job <job id> --site <site key> --api-base-url <url>
+  phis addon job     --addon <@scope/name> --job <job id> [--site <site key>] --pause | --resume
+  phis addon jobs    [--addon <@scope/name>] [--site <site key>] [--limit <runs>]
 
   phis storage list  --site <site key>
   phis storage add   --site <site key> --key <profile key> --provider <provider id>
@@ -3200,14 +3204,83 @@ async function main() {
     return;
   }
 
+  if (group === "addon" && command === "jobs") {
+    /*
+     * The scheduler's ledger, read here from the database: what each job last did, whether an operator
+     * paused it, and the most recent runs. Nothing is started.
+     */
+    const addonId = getOptionalFlag(flags, "addon");
+    const siteKey = getOptionalFlag(flags, "site");
+    const site = siteKey ? await getSiteByKey(siteKey) : null;
+    const rawLimit = flags.get("limit");
+    const limit = typeof rawLimit === "string" ? Number(rawLimit) : 20;
+    if (!Number.isInteger(limit) || limit <= 0) {
+      throw new Error("--limit must be a positive whole number of runs.");
+    }
+    const filter = { owner: addonId ?? null, siteId: site?.id ?? null };
+    const [states, runs] = await Promise.all([
+      listPhiJobStates(getPool(), filter),
+      listPhiJobRuns(getPool(), { ...filter, limit }),
+    ]);
+    if (json) {
+      printJson({ ok: true, action: "addon.jobs", states, runs });
+      return;
+    }
+    if (states.length === 0 && runs.length === 0) {
+      console.log("No job has run or been scheduled yet.");
+      return;
+    }
+    for (const state of states) {
+      const where = state.siteId === null ? "stage" : `site ${state.siteId}`;
+      const paused = (state.flags & PhiJobStateFlag.Paused) !== 0 ? " PAUSED" : "";
+      const last = state.lastSuccessAt ? `last success ${state.lastSuccessAt}` : "never succeeded";
+      console.log(`${state.owner} ${state.jobId} (${where})${paused}: ${last}${state.lastError ? `, last error: ${state.lastError}` : ""}`);
+    }
+    for (const run of runs) {
+      const where = run.siteId === null ? "stage" : `site ${run.siteId}`;
+      const outcome = run.finishedAt === null
+        ? "running"
+        : (run.flags & PhiJobRunFlag.Skipped) !== 0
+          ? "skipped"
+          : (run.flags & PhiJobRunFlag.Succeeded) !== 0
+            ? "ok"
+            : `failed: ${run.error ?? "unknown"}`;
+      console.log(`  ${run.slotAt} ${run.owner} ${run.jobId} (${where}) on ${run.instanceId}: ${outcome}`);
+    }
+    return;
+  }
+
   if (group === "addon" && command === "job") {
     const addonId = getRequiredFlag(flags, "addon");
     const jobId = getRequiredFlag(flags, "job");
-    const site = await getSiteByKey(getRequiredFlag(flags, "site"));
+    const pause = flags.get("pause") === true;
+    const resume = flags.get("resume") === true;
+    if (pause && resume) {
+      throw new Error("--pause and --resume exclude each other.");
+    }
+    if (pause || resume) {
+      /*
+       * The operator's switch on the scheduler (SERVER_ADDONS.md, Jobs), written to the ledger directly:
+       * a paused job is passed by on every instance from the next tick on. Without --site the switch is
+       * the stage's, which is where a Core job lives; an Add-on job is paused per Site.
+       */
+      const siteKey = getOptionalFlag(flags, "site");
+      const site = siteKey ? await getSiteByKey(siteKey) : null;
+      await setPhiJobPaused(getPool(), { owner: addonId, jobId, siteId: site?.id ?? null }, pause);
+      if (json) {
+        printJson({ ok: true, action: pause ? "addon.job.pause" : "addon.job.resume", addonId, jobId, siteKey: site?.key ?? null });
+      } else {
+        console.log(`${pause ? "Paused" : "Resumed"} ${addonId} job ${jobId}${site ? ` for ${site.key}` : ""}.`);
+      }
+      return;
+    }
+    const coreJob = addonId === PHI_CORE_JOB_OWNER;
+    const site = coreJob ? null : await getSiteByKey(getRequiredFlag(flags, "site"));
     /*
      * Posted to the serving instance rather than run here. The Add-on is loaded there, against the
      * release that instance actually serves, and the CLI stays a caller instead of becoming a second
-     * runtime that would have to reproduce the loader, the pool, and the capability bindings.
+     * runtime that would have to reproduce the loader, the pool, and the capability bindings. The run
+     * goes through the scheduler's ledger, so `phis addon jobs` shows it.
      */
     const mergedConfig = readCliMergedConfig();
     const apiBaseUrl = readApiBaseUrlFlag(flags, "addon job");
@@ -3218,15 +3291,16 @@ async function main() {
     const response = await fetch(`${apiBaseUrl}/api/v1/addons/jobs`, {
       method: "POST",
       headers: { "content-type": "application/json", [PHIS_TOKEN_HEADER]: internalToken },
-      body: JSON.stringify({ addonId, jobId, siteKey: site.key }),
+      body: JSON.stringify({ addonId, jobId, ...(site ? { siteKey: site.key } : {}) }),
     });
     const outcome = await response.json().catch(() => ({ error: "The server answered unreadably." }));
+    const where = site ? ` for ${site.key}` : "";
     if (json) {
       printJson(outcome);
     } else if (response.ok) {
-      console.log(`Ran ${addonId} job ${jobId} for ${site.key} (run ${outcome.runId}).`);
+      console.log(`Ran ${addonId} job ${jobId}${where} (run ${outcome.runId}).`);
     } else {
-      console.error(`Job ${jobId} did not run for ${site.key}: ${outcome.error ?? response.status}`);
+      console.error(`Job ${jobId} did not run${where}: ${outcome.error ?? response.status}`);
     }
     if (!response.ok) {
       process.exitCode = 1;

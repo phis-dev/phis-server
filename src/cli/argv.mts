@@ -107,7 +107,8 @@ export const PHIS_COMMAND_FLAGS: Record<string, FlagSpec> = {
   "addon storage": {
     addon: S, site: S, "quota-bytes": S, "max-objects": S, unlimited: B, sweep: B, recount: B,
   },
-  "addon job": { addon: S, job: S, site: S, "api-base-url": S },
+  "addon job": { addon: S, job: S, site: S, "api-base-url": S, pause: B, resume: B },
+  "addon jobs": { addon: S, site: S, limit: S },
 
   "mail drain": { limit: S, "api-base-url": S },
 

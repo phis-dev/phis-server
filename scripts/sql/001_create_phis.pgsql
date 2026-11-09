@@ -2475,16 +2475,29 @@ CREATE TABLE IF NOT EXISTS phis.addon_event_outbox (
   subject_kind VARCHAR(16) NOT NULL DEFAULT 'thread',
   payment_id UUID NULL REFERENCES phis.payments(id) ON DELETE RESTRICT,
   payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+  -- An event an Add-on emitted (SERVER_ADDONS.md, Events): who said it, how many handlers the chain has
+  -- passed through, and the emitter's own key against saying it twice. NULL and 0 on Core's own events.
+  emitter VARCHAR(255) NULL REFERENCES phis.server_addons(addon_id) ON DELETE CASCADE,
+  hop SMALLINT NOT NULL DEFAULT 0,
+  dedupe_key VARCHAR(200) NULL,
   attempts SMALLINT NOT NULL DEFAULT 0,
   last_error TEXT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   delivered_at TIMESTAMPTZ NULL,
   CONSTRAINT addon_event_outbox_event_check CHECK (event <> ''),
+  CONSTRAINT addon_event_outbox_hop_check CHECK (hop >= 0),
   CONSTRAINT addon_event_outbox_subject_check CHECK (
-    (subject_kind = 'thread' AND thread_id IS NOT NULL AND payment_id IS NULL AND event <> 'payment.changed') OR
-    (subject_kind = 'payment' AND thread_id IS NULL AND payment_id IS NOT NULL AND event = 'payment.changed')
+    (subject_kind = 'thread' AND thread_id IS NOT NULL AND payment_id IS NULL AND emitter IS NULL AND event <> 'payment.changed' AND event NOT LIKE '@%') OR
+    (subject_kind = 'payment' AND thread_id IS NULL AND payment_id IS NOT NULL AND emitter IS NULL AND event = 'payment.changed') OR
+    (subject_kind = 'emitted' AND thread_id IS NULL AND payment_id IS NULL AND emitter IS NOT NULL AND event LIKE '@%/%:%')
   )
 );
+
+-- An emitter's key says it once per listener: a second emit with the same key finds this and writes
+-- nothing, which is what makes a repeated job run safe (addon-events.ts, enqueuePhisAddonEmittedEvent).
+CREATE UNIQUE INDEX IF NOT EXISTS addon_event_outbox_dedupe_unique
+  ON phis.addon_event_outbox (site_id, addon_id, event, dedupe_key)
+  WHERE dedupe_key IS NOT NULL;
 
 -- The dispatcher's read: what is still owed, oldest first, for one Add-on on one Site. Ordering by the
 -- key rather than by `created_at` is deliberate -- two events in the same transaction share a timestamp,
@@ -2541,6 +2554,60 @@ CREATE TABLE IF NOT EXISTS phis.server_instances (
 
 CREATE INDEX IF NOT EXISTS server_instances_release_ready_idx
   ON phis.server_instances (release_build_id, ((flags & 1) <> 0), last_seen_at DESC);
+
+-- The scheduler's ledger (SERVER_ADDONS.md, Jobs): one row per moment a schedule named, claimed by the
+-- instance that inserted it. The unique key is the moment itself, so when every instance computes the
+-- same moment from the same clock the database admits exactly one of them and a leader is never
+-- elected. `owner` is an Add-on id, or '@phis/server' for Core's own jobs; `site_id` is NULL for a job
+-- that runs for the stage rather than for one Site. `locked_until` is the runner's lease: a row whose
+-- lease ran out with `finished_at` still NULL belonged to an instance that died mid-run, and another
+-- instance may take it over. flags: 1 = succeeded, 2 = taken over after a lost lease, 4 = skipped
+-- because the previous moment's run was still going, 8 = started by an operator rather than the clock.
+CREATE TABLE IF NOT EXISTS phis.job_runs (
+  id BIGSERIAL PRIMARY KEY,
+  owner VARCHAR(255) NOT NULL,
+  job_id VARCHAR(120) NOT NULL,
+  site_id SMALLINT NULL REFERENCES phis.sites(id) ON DELETE CASCADE,
+  slot_at TIMESTAMPTZ NOT NULL,
+  instance_id VARCHAR(255) NOT NULL,
+  started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  locked_until TIMESTAMPTZ NOT NULL,
+  finished_at TIMESTAMPTZ NULL,
+  flags INT NOT NULL DEFAULT 0,
+  error TEXT NULL,
+  CONSTRAINT job_runs_owner_check CHECK (owner ~ '^@[^/]+/[^/]+(?:/[^/]+)*$'),
+  CONSTRAINT job_runs_job_id_check CHECK (job_id <> '')
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS job_runs_slot_unique
+  ON phis.job_runs (owner, job_id, COALESCE(site_id, 0), slot_at);
+
+-- The takeover read: runs nobody finished whose lease ran out, and the retention read by age.
+CREATE INDEX IF NOT EXISTS job_runs_unfinished_idx
+  ON phis.job_runs (locked_until)
+  WHERE finished_at IS NULL;
+CREATE INDEX IF NOT EXISTS job_runs_finished_idx
+  ON phis.job_runs (finished_at)
+  WHERE finished_at IS NOT NULL;
+
+-- One row per job and Site, kept across runs: the operator's switch and the last outcome, which is
+-- what a short-stepped job leaves behind once its individual rows are pruned. flags: 1 = paused.
+CREATE TABLE IF NOT EXISTS phis.job_states (
+  id BIGSERIAL PRIMARY KEY,
+  owner VARCHAR(255) NOT NULL,
+  job_id VARCHAR(120) NOT NULL,
+  site_id SMALLINT NULL REFERENCES phis.sites(id) ON DELETE CASCADE,
+  flags INT NOT NULL DEFAULT 0,
+  last_slot_at TIMESTAMPTZ NULL,
+  last_success_at TIMESTAMPTZ NULL,
+  last_error TEXT NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT job_states_owner_check CHECK (owner ~ '^@[^/]+/[^/]+(?:/[^/]+)*$'),
+  CONSTRAINT job_states_job_id_check CHECK (job_id <> '')
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS job_states_job_unique
+  ON phis.job_states (owner, job_id, COALESCE(site_id, 0));
 
 /*
  * Objects whose rows are already gone, and the only thing that still knows they exist.

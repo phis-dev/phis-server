@@ -182,9 +182,12 @@ module scope empty.
   none. Declare the queries you run in the manifest and call them by name through
   `@phis/server/data:v1`: `context.capabilities.data.select("mine", { ... })`. Core derives the
   statements once, puts the Site filter into every one of them, and writes the scope columns itself.
-- **No scheduler of your own.** Declare a job and let `phis addon job` start it. A `setInterval` in an
-  Add-on fires once per serving instance for one intended run, and there is no way for you to know how
-  many instances there are.
+- **No scheduler of your own.** Declare a job with a `schedule` and let Core start it. A `setInterval`
+  in an Add-on fires once per serving instance for one intended run, and there is no way for you to know
+  how many instances there are; Core's scheduler runs each moment of a schedule on exactly one of them
+  ([SERVER_ADDONS.md](./SERVER_ADDONS.md#jobs)). Likewise no polling: a job that would have to run more
+  often than every five minutes is waiting for an event, and `emits` with the `events:v1` capability is
+  how one Add-on tells another that something happened.
 - **No PII beyond what your actor could already see.** The request context carries a user *id*. A
   display name comes from `@phis/server/groups:v1`, and only for someone the acting user shares a
   group with; an email address is not on offer at all. If you need a person to receive a message, that
@@ -576,7 +579,7 @@ export const phisAddonManifest = {
     rateLimitClass: "public-read",
     timeoutMs: 5_000,
   }],
-  jobs: [{ id: "import", handler: "importFeed", suggestedInterval: "hourly" }],
+  jobs: [{ id: "import", handler: "importFeed", schedule: { every: "hourly" } }],
   settings: [{
     name: NOTES_SETTING_FEED_URL,
     type: "text",
@@ -805,7 +808,8 @@ phis secret set --name feed-token --addon @acme/notes --site acme < ./feed-token
 # Whoever adds notes through the admin route needs the role.
 phis addon role --site acme --addon @acme/notes --user <user id> --grant editor
 
-# Run the job once; schedule the same command from a timer at the suggested interval.
+# Run the job once, now. Core runs it hourly by itself from here on, as its schedule says;
+# `phis addon jobs --addon @acme/notes` shows each run.
 phis addon job --addon @acme/notes --job import --site acme --api-base-url http://127.0.0.1:5301
 ```
 

@@ -2,7 +2,12 @@ import "server-only";
 
 import type { PoolClient } from "pg";
 
-import { PhisResourceLinkFlag, type PhisAddonEventId, type PhisAddonThreadEventId } from "@phis/contracts/addon";
+import {
+  PhisResourceLinkFlag,
+  type PhisAddonEmittedEventId,
+  type PhisAddonEventId,
+  type PhisAddonThreadEventId,
+} from "@phis/contracts/addon";
 
 import { getPool } from "@/lib/db";
 import { PHI_SITE_SERVER_ADDON_FLAG_REQUESTED_ENABLED } from "@/lib/constants/server-addons";
@@ -23,11 +28,17 @@ export type PhisAddonEventRow = {
   siteId: number;
   addonId: string;
   event: PhisAddonEventId;
-  subjectKind: "thread" | "payment";
+  subjectKind: "thread" | "payment" | "emitted";
   threadId: number | null;
   paymentId: string | null;
   payload: Record<string, unknown>;
   attempts: number;
+  /** The Add-on that emitted this event, for an `emitted` subject; null on Core's own events. */
+  emitter: string | null;
+  /** How many handlers the chain had passed through when this row was written. */
+  hop: number;
+  dedupeKey: string | null;
+  createdAt: string;
 };
 
 type OutboxRow = {
@@ -36,11 +47,36 @@ type OutboxRow = {
   addon_id: string;
   event: string;
   thread_id: number | null;
-  subject_kind: "thread" | "payment";
+  subject_kind: "thread" | "payment" | "emitted";
   payment_id: string | null;
   payload: Record<string, unknown> | null;
   attempts: number;
+  emitter: string | null;
+  hop: number;
+  dedupe_key: string | null;
+  created_at: string | Date;
 };
+
+const OUTBOX_COLUMNS =
+  "id, site_id, addon_id, event, subject_kind, thread_id, payment_id, payload, attempts, emitter, hop, dedupe_key, created_at";
+
+function mapOutboxRow(row: OutboxRow): PhisAddonEventRow {
+  return {
+    id: row.id,
+    siteId: row.site_id,
+    addonId: row.addon_id,
+    event: row.event as PhisAddonEventId,
+    subjectKind: row.subject_kind,
+    paymentId: row.payment_id,
+    threadId: row.thread_id,
+    payload: row.payload ?? {},
+    attempts: row.attempts,
+    emitter: row.emitter,
+    hop: row.hop,
+    dedupeKey: row.dedupe_key,
+    createdAt: row.created_at instanceof Date ? row.created_at.toISOString() : String(row.created_at),
+  };
+}
 
 /**
  * Enqueues one event for every Add-on a person has linked to this thread, and for the one that owns it.
@@ -124,7 +160,7 @@ export async function listPendingPhisAddonEvents(input: {
   limit?: number;
 }): Promise<PhisAddonEventRow[]> {
   const { rows } = await getPool().query<OutboxRow>(
-    `SELECT id, site_id, addon_id, event, subject_kind, thread_id, payment_id, payload, attempts
+    `SELECT ${OUTBOX_COLUMNS}
      FROM phis.addon_event_outbox
      WHERE addon_id = $1
        AND site_id = $2
@@ -133,17 +169,64 @@ export async function listPendingPhisAddonEvents(input: {
      LIMIT $3::int`,
     [input.addonId, input.siteId, Math.max(1, Math.min(input.limit ?? 200, 1000))],
   );
-  return rows.map((row) => ({
-    id: row.id,
-    siteId: row.site_id,
-    addonId: row.addon_id,
-    event: row.event as PhisAddonEventId,
-    subjectKind: row.subject_kind,
-    paymentId: row.payment_id,
-    threadId: row.thread_id,
-    payload: row.payload ?? {},
-    attempts: row.attempts,
-  }));
+  return rows.map(mapOutboxRow);
+}
+
+/**
+ * Writes what an Add-on emitted, one row per listener (SERVER_ADDONS.md, Events).
+ *
+ * The listeners are named by the caller, who read the installed manifests for the handlers that declare
+ * this event; the insert keeps only those asked for and configured on this Site, which is the same gate
+ * every other row of this table passes. The emitter's `dedupeKey` meets the partial unique index: a
+ * second emit with the same key writes nothing for a listener already owed the first, and the count
+ * says how many rows were new.
+ */
+export async function enqueuePhisAddonEmittedEvent(
+  db: DbQueryable,
+  input: {
+    siteId: number;
+    emitter: string;
+    event: PhisAddonEmittedEventId;
+    recipients: readonly string[];
+    facts: Record<string, unknown>;
+    dedupeKey: string | null;
+    hop: number;
+  },
+): Promise<number> {
+  if (input.recipients.length === 0) {
+    return 0;
+  }
+  const { rowCount } = await db.query(
+    `INSERT INTO phis.addon_event_outbox (site_id, addon_id, event, subject_kind, emitter, payload, dedupe_key, hop)
+     SELECT $1::smallint, installed.addon_id, $3, 'emitted', $2, $5::jsonb, $6, $7::smallint
+     FROM phis.site_server_addons installed
+     WHERE installed.site_id = $1
+       AND installed.addon_id = ANY($4::text[])
+       AND (installed.flags & ${PHI_SITE_SERVER_ADDON_FLAG_REQUESTED_ENABLED}) <> 0
+       AND installed.configuration_status = 'ready'
+     ON CONFLICT DO NOTHING`,
+    [
+      input.siteId,
+      input.emitter,
+      input.event,
+      input.recipients,
+      JSON.stringify({ facts: input.facts }),
+      input.dedupeKey,
+      input.hop,
+    ],
+  );
+  return rowCount ?? 0;
+}
+
+/** The Sites with something still owed, for the scheduled drain that walks all of them. */
+export async function listPhisAddonEventSiteIds() {
+  const { rows } = await getPool().query<{ site_id: number }>(
+    `SELECT DISTINCT site_id
+     FROM phis.addon_event_outbox
+     WHERE delivered_at IS NULL
+     ORDER BY site_id ASC`,
+  );
+  return rows.map((row) => row.site_id);
 }
 
 /**

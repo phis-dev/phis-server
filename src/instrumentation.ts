@@ -31,6 +31,11 @@ export async function register() {
   const { startPhisInstanceHeartbeat } = await import("@/lib/instance-heartbeat");
   startPhisInstanceHeartbeat();
 
+  // The clock for Core's and the Add-ons' jobs (SERVER_ADDONS.md, Jobs). Every instance ticks; the
+  // database decides which one runs each moment, so a dev instance ticks like any other.
+  const { startPhiJobScheduler } = await import("@/lib/jobs/scheduler");
+  startPhiJobScheduler();
+
   if (process.env.NODE_ENV !== "production") {
     return;
   }

@@ -1998,7 +1998,11 @@ Core structural changes, reapplying `001_create_phis.pgsql` does not upgrade exi
 it creates the Payment tables where they are missing, but a `phis.addon_event_outbox` created before
 Payments keeps its old shape. Such an installation needs an explicit, transactional update of that table
 to the shape listed below (notably `subject_kind`, `payment_id` and `addon_event_outbox_subject_check`), which
-keeps the existing thread rows. Make that update before admitting Payment consumers.
+keeps the existing thread rows. Make that update before admitting Payment consumers. The same holds for
+the columns emitted events added later -- `emitter`, `hop`, `dedupe_key`, the widened
+`addon_event_outbox_subject_check` and the partial unique index `addon_event_outbox_dedupe_unique`: an
+outbox created before them is brought to the shape below by hand (`ADD COLUMN IF NOT EXISTS`, drop and
+re-add the check, create the index) before an Add-on that emits is enabled.
 
 Runtime queries live in `src/db/payments.mts`; the same typed functions serve the Core engine and
 operator CLI. `PAYMENTS.md` specifies ownership, grants, financial semantics and read-only recovery.
@@ -2100,13 +2104,28 @@ there is no product purge command. Fixture teardown in database tests is not an 
 - `subject_kind VARCHAR(16) NOT NULL DEFAULT 'thread'`
 - `payment_id UUID NULL REFERENCES phis.payments(id) ON DELETE RESTRICT`
 - `payload JSONB NOT NULL DEFAULT '{}'::jsonb`
+- `emitter VARCHAR(255) NULL REFERENCES phis.server_addons(addon_id) ON DELETE CASCADE`
+- `hop SMALLINT NOT NULL DEFAULT 0` (CHECK `>= 0`)
+- `dedupe_key VARCHAR(200) NULL`
 - `attempts SMALLINT NOT NULL DEFAULT 0`
 - `last_error TEXT NULL`
 - `created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
 - `delivered_at TIMESTAMPTZ NULL`
 - partial index `(addon_id, site_id, id) WHERE delivered_at IS NULL`
-- `addon_event_outbox_subject_check`: a thread subject has exactly `thread_id` and a thread event;
-  a payment subject has exactly `payment_id` and `payment.changed`.
+- partial unique index `addon_event_outbox_dedupe_unique` on `(site_id, addon_id, event, dedupe_key)
+  WHERE dedupe_key IS NOT NULL`
+- `addon_event_outbox_subject_check`: a thread subject has exactly `thread_id`, a bare thread event and
+  no emitter; a payment subject has exactly `payment_id`, `payment.changed` and no emitter; an emitted
+  subject has an `emitter`, an event of the shape `@scope/name:event`, and neither thread nor payment.
+
+Emitted events (SERVER_ADDONS.md, Events): an Add-on emits through the `events:v1` capability, and Core
+writes one row per listener -- every Add-on of the Site that is requested-enabled, `ready`, and
+declares an `eventHandlers` entry for the id -- with `subject_kind = 'emitted'`, the emitter, the hop
+the chain has reached, the emitter's `dedupe_key` where it gave one, and `payload = { facts }`. The
+partial unique index is what makes a repeated emit with the same key write nothing new. Delivery is the
+same ordered drain as for Core's events; the handler's context carries `subject.kind = 'emitted'` with
+emitter, `occurredAt = created_at`, `hop`, `dedupeKey` and `facts`, and emits from inside that handler
+carry `hop + 1`, refused at `PHIS_ADDON_EVENT_MAX_HOPS`.
 
 Payment recipients are the stored consuming Add-on, including while it is inactive; there is no
 thread link or broadcast. Payload contains payment/reference/version and nullable operation/refund
@@ -2135,8 +2154,56 @@ Thread contract:
   integration applying them out of order would leave the older state as the current one. Delivery stops
   at the first failure for that Add-on and Site.
 - There is no attempt ceiling. A row nobody can deliver is a row an operator should see; what removes it
-  is the link or the thread going away, which takes it by cascade. `phis addon job run` drains what is
-  owed before the job it was asked for.
+  is the link or the thread going away, which takes it by cascade. Core's job `addon-events.deliver`
+  drains what is owed every five minutes, and an Add-on's job run drains what its Add-on is owed before
+  the job it was asked for.
+
+### `phis.job_runs`
+
+- `id BIGSERIAL PRIMARY KEY`
+- `owner VARCHAR(255) NOT NULL` (CHECK: an Add-on id; `@phis/server` for Core's own jobs)
+- `job_id VARCHAR(120) NOT NULL` (CHECK `<> ''`)
+- `site_id SMALLINT NULL REFERENCES phis.sites(id) ON DELETE CASCADE` (NULL: a job of the stage)
+- `slot_at TIMESTAMPTZ NOT NULL`
+- `instance_id VARCHAR(255) NOT NULL`
+- `started_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
+- `locked_until TIMESTAMPTZ NOT NULL`
+- `finished_at TIMESTAMPTZ NULL`
+- `flags INT NOT NULL DEFAULT 0`
+- `error TEXT NULL`
+- unique index `job_runs_slot_unique` on `(owner, job_id, COALESCE(site_id, 0), slot_at)`
+- partial index `(locked_until) WHERE finished_at IS NULL`; partial index `(finished_at) WHERE finished_at IS NOT NULL`
+
+Contract (SERVER_ADDONS.md, Jobs; `src/db/job-runs.mts`, `src/lib/jobs/scheduler.ts`):
+- One row per moment a schedule named. A moment is claimed by inserting its row; the unique index on
+  the moment admits exactly one instance and tells the others it is taken. No leader is elected: every
+  instance computes the same moment from its clock (`src/lib/jobs/slots.ts`) and asks the database.
+- `locked_until` is the runner's lease, renewed every 30 seconds while the job runs. A row unfinished
+  past its lease belonged to an instance that died mid-run; the next tick of any instance takes it over
+  (`flags & 2`) under a fresh lease and runs the job again, which is why a job must be repeatable.
+- A moment whose predecessor's run still holds a live lease is inserted finished with `flags & 4`
+  (skipped) and an `error` saying so: a slow job never runs beside itself, and the ledger shows the
+  moment it missed.
+- `flags & 1` is success; `flags & 8` marks a run an operator started with `phis addon job`, which
+  claims a moment of its own (`slot_at` = now).
+- Retention is Core's job `job-runs.prune`, daily: successful runs of a step shorter than an hour go
+  after a day, every finished run after thirty days. `phis.job_states` keeps the last outcome.
+
+### `phis.job_states`
+
+- `id BIGSERIAL PRIMARY KEY`
+- `owner VARCHAR(255) NOT NULL`, `job_id VARCHAR(120) NOT NULL`, `site_id SMALLINT NULL REFERENCES
+  phis.sites(id) ON DELETE CASCADE` (as in `job_runs`)
+- `flags INT NOT NULL DEFAULT 0` (`1` = paused by the operator)
+- `last_slot_at TIMESTAMPTZ NULL`, `last_success_at TIMESTAMPTZ NULL`, `last_error TEXT NULL`
+- `updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
+- unique index `job_states_job_unique` on `(owner, job_id, COALESCE(site_id, 0))`
+
+Contract:
+- One row per job and Site (or stage), written when a run finishes and by `phis addon job --pause |
+  --resume`. A paused job is passed by on every instance from its next tick on; the claim statement
+  reads the bit, so nothing else has to.
+- `last_success_at` moves only on a success; `last_error` is the latest run's, null after a success.
 
 ### `phis.server_secrets`
 

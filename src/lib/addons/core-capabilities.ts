@@ -60,6 +60,7 @@ const DELIVERABLE_CAPABILITY_ID_SET = new Set<string>([
   CORE_CAPABILITY_IDS.payments,
   CORE_CAPABILITY_IDS.paymentNotifications,
   CORE_CAPABILITY_IDS.notifications,
+  CORE_CAPABILITY_IDS.events,
 ]);
 
 /**

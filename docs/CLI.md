@@ -681,10 +681,29 @@ from installed Add-ons.
 
 ### `phis addon job --addon <@scope/name> --job <job id> --site <site key> --api-base-url <url>`
 
-Asks the running server to run a declared job for a Site: `POST <api base url>/api/v1/addons/jobs`
-with the internal token. `--api-base-url` is required, the server's address as reached from where the
-CLI runs (Debian package: `http://127.0.0.1:5301`); there is no default. Exits `1` when the server
-refuses. Requires `api.internalToken` and a running server.
+Asks the running server to run a declared job for a Site now, out of turn: `POST <api base
+url>/api/v1/addons/jobs` with the internal token. Core runs a job with a `schedule` by itself
+([SERVER_ADDONS.md](../SERVER_ADDONS.md#jobs)); this command is for a job without one, or for a run
+the operator wants now. The run goes through the scheduler's ledger, so `phis addon jobs` shows it, and
+it is refused while a run of the same job is still going. With `--addon @phis/server` and no `--site`
+it runs one of Core's own jobs (`addon-events.deliver`, `notifications.deliver`, `job-runs.prune`).
+`--api-base-url` is required, the server's address as reached from where the CLI runs (Debian package:
+`http://127.0.0.1:5301`); there is no default. Exits `1` when the server refuses. Requires
+`api.internalToken` and a running server.
+
+### `phis addon job --addon <@scope/name> --job <job id> [--site <site key>] --pause | --resume`
+
+The operator's switch on the scheduler, written to the ledger directly: a paused job is passed by on
+every instance from its next tick on, and `phis addon job` refuses to run it. With `--site` the switch
+is one Site's; without, it is the stage's, which is where a Core job (`--addon @phis/server`) lives.
+Needs the database, not a running server.
+
+### `phis addon jobs [--addon <@scope/name>] [--site <site key>] [--limit <runs>]`
+
+The scheduler's ledger: for every job that ran or was paused, its last success, its last error and
+whether it is paused, then the most recent runs (20 unless `--limit` says otherwise), each with the
+moment it was for, the instance that ran it, and `ok`, `failed`, `skipped` or `running`. Nothing is
+started. `--json` answers `{ states, runs }`.
 
 ## storage (Storage Profiles)
 
@@ -843,9 +862,11 @@ others still run; the exit code is `1` when any task failed. Safe to run from a 
 ### `phis mail drain [--limit <rows>] --api-base-url <url>`
 
 Sends what is still owed from the notification outbox (`phis.notification_outbox`). A notification is
-tried once by the request that wrote it; this command is the retry, meant to be run from a timer. It
-posts to `<api base url>/api/v1/notifications/drain` with the internal token, so the drain runs in the
-serving process, where the mail configuration, the translation cache and the transport are.
+tried once by the request that wrote it, and Core's own job `notifications.deliver` retries every five
+minutes ([SERVER_ADDONS.md](../SERVER_ADDONS.md#jobs)); this command is the same retry when an
+operator wants it now. It posts to `<api base url>/api/v1/notifications/drain` with the internal
+token, so the drain runs in the serving process, where the mail configuration, the translation cache
+and the transport are.
 
 `--api-base-url` is required, the server's address as reached from where the CLI runs (Debian package:
 `http://127.0.0.1:5301`); there is no default. `--limit` is the number of rows to claim in one run, a positive whole number; the server takes 100

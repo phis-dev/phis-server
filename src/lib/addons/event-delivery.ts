@@ -1,6 +1,11 @@
 import "server-only";
 
-import type { PhisAddonEventContext, PhisAddonEventId, PhisAddonManifestV1 } from "./contract.ts";
+import type {
+  PhisAddonEventContext,
+  PhisAddonEventId,
+  PhisAddonManifestV1,
+  PhisAddonThreadEventId,
+} from "./contract.ts";
 import { buildPhisAddonCapabilities } from "./capabilities.ts";
 import { isPhisAddonCapabilityDeliverable } from "./core-capabilities.ts";
 import { getPhisAddonInstalledManifest } from "./installed.ts";
@@ -19,11 +24,11 @@ import { logRuntimeEvent } from "@/lib/log";
 /**
  * Handing an Add-on what Core owes it.
  *
- * The outbox is written with the change and drained here, after it. Two things drain it: the request
+ * The outbox is written with the change and drained here, after it. Three things drain it: the request
  * that caused the row, which tries once and does not report failure to the person who was only writing
- * a message, and `phis addon job run`, which is what eventually gets it there. That division is the
- * same one the job runner already states -- Core keeps no scheduler, and an operator's own scheduler is
- * the thing that runs on a clock.
+ * a message; Core's own `addon-events.deliver` job, which the scheduler runs every five minutes and is
+ * what eventually gets a row there; and an Add-on's job run, which settles what its Add-on is owed
+ * before the job acts on that state.
  *
  * A handler runs with no actor and system authority over its own tables, exactly as a job does. It is
  * Core telling the Add-on about a thread the Add-on is already allowed to reach, so there is nobody
@@ -52,7 +57,7 @@ async function invokeEventHandler(input: {
     const common = { addonId: input.addonId, deliveryId: input.row.id, site: input.site,
       capabilities: buildPhisAddonCapabilities({ manifest: input.manifest, manifestDigest: input.manifestDigest,
         siteId: input.site.id, siteKey: input.site.key, actorUserId: null, systemAuthority: true,
-        paymentAuthority: { kind: "event", id: input.event }, signal: controller.signal,
+        paymentAuthority: { kind: "event", id: input.event }, signal: controller.signal, eventHop: input.row.hop,
       }), signal: controller.signal };
     if (input.event === "payment.changed") {
       if (input.row.subjectKind !== "payment" || !input.row.paymentId
@@ -63,9 +68,25 @@ async function invokeEventHandler(input: {
         operationId: typeof input.row.payload.operationId === "string" ? input.row.payload.operationId : null,
         refundId: typeof input.row.payload.refundId === "string" ? input.row.payload.refundId : null,
       } });
+    } else if (input.row.subjectKind === "emitted") {
+      /*
+       * What another Add-on said (SERVER_ADDONS.md, Events). The envelope is the row: who emitted it,
+       * when the row was written, how many handlers the chain has passed, the emitter's own key, and the
+       * facts as it gave them. The handler's own emits carry `hop + 1`, bound above through `eventHop`.
+       */
+      if (!input.row.emitter || !input.event.startsWith("@")) throw new Error("Invalid emitted outbox subject.");
+      const facts = input.row.payload.facts;
+      await input.handler({ ...common, event: input.event as `@${string}/${string}:${string}`, subject: {
+        kind: "emitted",
+        emitter: input.row.emitter,
+        occurredAt: input.row.createdAt,
+        hop: input.row.hop,
+        dedupeKey: input.row.dedupeKey,
+        facts: typeof facts === "object" && facts !== null && !Array.isArray(facts) ? facts as Record<string, unknown> : {},
+      } });
     } else {
       if (input.row.subjectKind !== "thread" || input.row.threadId === null) throw new Error("Invalid thread outbox subject.");
-      await input.handler({ ...common, event: input.event, subject: {
+      await input.handler({ ...common, event: input.event as PhisAddonThreadEventId, subject: {
         kind: "thread", threadId: input.row.threadId,
         messageId: typeof input.row.payload.messageId === "number" ? input.row.payload.messageId : null,
       } });

@@ -665,52 +665,89 @@ of the consumer capability: Core is its sole supplier and selects the merchant p
 
 ### Jobs
 
-A job is declared as `{ id, handler, suggestedInterval? }`, where `handler` names an entry in
-`jobHandlers`. It is run by `phis addon job --addon <id> --job <job id> --site <site key> --api-base-url
-<url>`, which posts to the serving instance's internal `/api/v1/addons/jobs` route. `--api-base-url` is
-required: it is the server's address as seen from where the CLI runs, which the phis root does not record
-(for the Debian package `http://127.0.0.1:5301` on the same host). It is not scheduled by Core, and the interval is documentation for the operator
-rather than a promise: `@phis/server` serves from several instances, so an in-process timer would fire once
-per instance for one intended run, and every Add-on would have to defend against a concurrency nobody
-asked for. The operator's own scheduler is one runner by construction.
+A job is declared as `{ id, handler, schedule? }`, where `handler` names an entry in `jobHandlers` and
+`schedule` says when Core runs it: `{ every, at?, weekday? }` with `every` one of `5m`, `15m`, `30m`,
+`hourly`, `daily`, `weekly` (`PHIS_ADDON_JOB_INTERVALS`), `at` a time of day `HH:MM` in UTC for the
+daily and weekly steps, and `weekday` an ISO weekday (1 = Monday) for the weekly step. A job without a
+schedule runs only when an operator starts it.
+
+**Core keeps the schedule.** Every serving instance runs the same clock (`src/lib/jobs/scheduler.ts`):
+once a minute it computes, for every scheduled job and every Site the Add-on is ready on, the latest
+moment the schedule names (`src/lib/jobs/slots.ts`), and claims that moment by inserting a row keyed on
+it into `phis.job_runs`. The unique key admits exactly one instance; the others are told the moment is
+taken. No leader is elected and no instance knows how many there are, which is why `@phis/server`
+serving from several instances is no longer a reason for the operator to own a timer. The rules of the
+ledger are in [DB.md](./DB.md#phisjob_runs):
+
+- **One run per moment**, however many instances. A moment nobody claimed while every instance was down
+  is run once at the next start -- the latest one only. A job does not receive a week of missed runs
+  after a week of downtime.
+- **A lease, and a takeover.** The runner renews a lease on its row while the job runs. A row unfinished
+  past its lease belonged to an instance that died, and the next tick of any instance runs the job
+  again. A job is therefore written to be repeatable: a run that is interrupted and run again must
+  arrive at the same state, which `data:v1` upserts and `dedupeKey` on `notify` and `emit` give you.
+- **No run beside itself.** A job still going when its next moment comes has that moment recorded as
+  skipped, not run. A handler finishes well inside its own step or declares a longer one.
+- **Five minutes at the shortest.** A job that would have to look more often is polling for an event,
+  and an event is what it should be given (see Events). Jobs run per Site, so a short step multiplies by
+  the Sites of a stage, and the services a job reads have quotas of their own.
+- **The operator's switch.** `phis addon job --addon <id> --job <job id> [--site <site key>] --pause`
+  stops the clock for one job, `--resume` starts it again; `phis addon jobs` shows every job's last
+  outcome and the recent runs, with the instance that ran each and whether it succeeded, failed or was
+  skipped.
+
+Core's own owed work runs on the same clock as Core jobs owned by `@phis/server`: `addon-events.deliver`
+and `notifications.deliver` every five minutes, the retries behind the two outboxes, and
+`job-runs.prune` daily. `phis mail drain` remains for a retry the operator wants now.
 
 **A job has no actor.** It is the Add-on acting on its own data, not a person acting through it, so the
 row-level ladder has nobody to apply and `data:v1` writes with system authority. A job context carries
-`addonId`, `jobId`, `runId`, `site`, `capabilities`, and `signal`. That is
-exactly why a job is reachable only through the internal-token route and never from a request: an Add-on
-able to start its own job from a handler would have built itself a way around the ladder.
+`addonId`, `jobId`, `runId`, `site`, `capabilities`, and `signal`; the signal fires when the run loses
+its lease to another instance. That is exactly why a job is started only by the scheduler or through the
+internal-token route and never from a request: an Add-on able to start its own job from a handler would
+have built itself a way around the ladder.
+
+#### Running a job now
+
+`phis addon job --addon <id> --job <job id> --site <site key> --api-base-url <url>` posts to the serving
+instance's internal `/api/v1/addons/jobs` route and runs the job out of turn -- a job without a
+schedule, or a scheduled one the operator wants now. The run claims a moment of its own in the ledger,
+so it shows in `phis addon jobs` and is refused while the clock's run of the same job is still going.
+`--api-base-url` is required: it is the server's address as seen from where the CLI runs, which the
+phis root does not record (for the Debian package `http://127.0.0.1:5301` on the same host).
 
 The job runs in the serving process rather than in the CLI, against the release that instance actually
 serves. The CLI stays a caller instead of becoming a second runtime that would have to reproduce the
 loader, the pool, and the capability bindings.
 
-#### Scheduling a job
+#### Maintenance from a timer
 
-On a host that runs the Debian package, the operator's scheduler is naturally a systemd timer: a
-one-shot service that calls the CLI once, and a timer that starts it. Run it as `phis`, because
-`config/phis-runtime.json`, where the CLI reads the internal token, is readable by that account alone.
-`/usr/bin/phis` operates on `/srv/phis/stages/prod` unless `PHIS_ROOT` names another stage.
+`phis maintain`, Core's bounded cleanup tasks, runs in the CLI process against the database and is the
+one thing left that wants a timer of the operator's. On a host that runs the Debian package that is a
+systemd one-shot service and a timer, run as `phis`, because `config/phis-runtime.json` is readable by
+that account alone; `/usr/bin/phis` operates on `/srv/phis/stages/prod` unless `PHIS_ROOT` names
+another stage.
 
 ```ini
-# /etc/systemd/system/phis-job-acme-status-sync.service
+# /etc/systemd/system/phis-maintain.service
 [Unit]
-Description=phis: @acme/status job "sync" for Site acme
+Description=phis: maintenance tasks
 After=phis@prod.service
 
 [Service]
 Type=oneshot
 User=phis
 Group=phis
-ExecStart=/usr/bin/phis addon job --addon @acme/status --job sync --site acme --api-base-url http://127.0.0.1:5301
+ExecStart=/usr/bin/phis maintain
 ```
 
 ```ini
-# /etc/systemd/system/phis-job-acme-status-sync.timer
+# /etc/systemd/system/phis-maintain.timer
 [Unit]
-Description=Run @acme/status job "sync" for Site acme every 15 minutes
+Description=Run phis maintenance daily
 
 [Timer]
-OnCalendar=*:0/15
+OnCalendar=*-*-* 03:45:00 UTC
 Persistent=true
 
 [Install]
@@ -719,28 +756,53 @@ WantedBy=timers.target
 
 ```sh
 systemctl daemon-reload
-systemctl enable --now phis-job-acme-status-sync.timer
+systemctl enable --now phis-maintain.timer
 ```
-
-A job is run per Site, so a job several Sites need gets one service per Site, or one service with
-several `ExecStart=` lines. A timer is one runner even when the stage is served by several instances,
-which is the point made above; with several hosts, install it on one of them. The command exits `1`
-when the server refuses the job, so `systemctl status` and the journal show a failed run.
-
-The same pattern serves the two other commands meant for a timer: `phis mail drain --api-base-url
-<url>`, which sends what the notification outbox still owes, and `phis maintain`, which runs Core's
-bounded cleanup tasks in the CLI process against the database
-([docs/CLI.md](./docs/CLI.md#mail), [docs/CLI.md](./docs/CLI.md#maintain)).
 
 ### Events
 
-A job is the Add-on asking. An event is Core telling.
+A job is the Add-on asking. An event is Core telling -- or, since Add-ons may emit, another Add-on
+telling.
 
-An Add-on declares `eventHandlers: [{ id, event, handler }]`, where `event` is one of
-`thread.message.created`, `thread.message.updated`, `thread.status.changed`, `thread.link.removed`, and
-`handler` names an entry in `eventHandlers` on the runtime. One handler per event: two would need an
-order Core does not define, and an Add-on wanting two things to happen can do both in one function where
-the order is visible.
+An Add-on declares `eventHandlers: [{ id, event, handler }]`, where `event` is one of Core's own,
+`thread.message.created`, `thread.message.updated`, `thread.status.changed`, `thread.link.removed`,
+`payment.changed`, or an event an Add-on emits, named `@scope/name:what.happened`, and `handler` names
+an entry in `eventHandlers` on the runtime. One handler per event: two would need an order Core does not
+define, and an Add-on wanting two things to happen can do both in one function where the order is
+visible.
+
+#### Events an Add-on emits
+
+An Add-on that has something to tell declares it under `emits: [{ id, description?, audience? }]` and
+sends it through the `@phis/server/events:v1` capability: `context.capabilities.events.emit({ event,
+facts?, dedupeKey? })`, from a job, a verified hook or a request handler. The rules:
+
+- **The id carries the emitter.** `@acme/shop:order.placed` is `@acme/shop`'s and nobody else's: the
+  manifest validator refuses an `emits` entry whose first half is not the declaring Add-on's own id, and
+  Core's names stay bare, so a bare name is Core's and a prefixed one is an Add-on's. The second half is
+  `^[a-z][a-z0-9.-]*$`.
+- **Emitting is a write to the outbox and nothing more.** Core reads the installed manifests for every
+  enabled Add-on whose `eventHandlers` names the id, writes one `phis.addon_event_outbox` row per
+  listener that is asked for and configured on this Site, and delivers them the way it delivers its own
+  events: after the fact, in key order, retried until they arrive. Nobody listening is zero rows, not an
+  error. `audience: "self"` keeps the event to the emitter, for an Add-on that hands work to its own
+  handler after the fact; the default, `"stage"`, is every Add-on of the Site, because the operator
+  installed each of them.
+- **Facts are values, never references.** `facts` is JSON of at most 16 KiB about what happened. A
+  listener runs with system authority over its own tables only, so a fact it would have to look up in
+  the emitter's tables is a fact it cannot read; hand it the value.
+- **A key makes a repeat safe.** `dedupeKey`, unique within the Site and the event, meets a partial
+  unique index: a second emit with the same key writes nothing for a listener already owed the first.
+  A job that is run again after a lost lease therefore emits once.
+- **A chain ends.** The outbox row carries a hop count: zero for Core's events, the incoming hop plus
+  one for an emit from inside an event handler. At `PHIS_ADDON_EVENT_MAX_HOPS` (4) the emit is refused
+  and logged (`addon.event.hop_limit`), which is what stops two handlers answering each other forever.
+- **An unverified hook may not emit.** An outbox row is a change, and an unsigned hook changes nothing.
+
+A listener's context is the envelope: `event`, `subject: { kind: "emitted", emitter, occurredAt, hop,
+dedupeKey, facts }`, and `deliveryId`, the outbox key, stable across retries. Core itself may listen
+later -- a notification occasion raised by an Add-on's event, say -- which is why the envelope is
+general and not shaped to any listener.
 
 **Declaring an event is not receiving it.** An event reaches an Add-on only for a thread the Add-on
 holds a `Synced` resource link to -- the same predicate that decides whether it may read that thread at
@@ -921,6 +983,8 @@ Initial flag assignments are:
 phis.server_addons.flags       bit 0 = globally enabled
 phis.site_server_addons.flags  bit 0 = requested enabled for Site
 phis.server_instances.flags    bit 0 = ready
+phis.job_runs.flags            bit 0 = succeeded, bit 1 = taken over, bit 2 = skipped, bit 3 = started by an operator
+phis.job_states.flags          bit 0 = paused
 ```
 
 Write authority is fixed:
@@ -983,6 +1047,7 @@ dispatch, by the job runner, and when its service factory is resolved.
 | `@phis/server/payments:v1` | yes -- see [PAYMENTS.md](./PAYMENTS.md) §4 |
 | `@phis/server/payment-notifications:v1` | yes -- see [PAYMENTS.md](./PAYMENTS.md) §7 and [External hooks](#external-hooks) |
 | `@phis/server/notifications:v1` | yes -- see [`notifications:v1`](#notificationsv1) |
+| `@phis/server/events:v1` | yes -- see [Events an Add-on emits](#events-an-add-on-emits) |
 
 Core descriptors are generated from the running release and reconciled into the registry. They are not
 editable Site settings and cannot be disabled per Site.
