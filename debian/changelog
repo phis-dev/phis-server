@@ -1,3 +1,18 @@
+phis (0.2.8-1) unstable; urgency=medium
+
+  * Site search: Core keeps the page texts of a Site's Public and App Areas, per locale, as one set
+    under a fingerprint the Site computes (phis.site_search_sets, phis.site_search_documents), and
+    answers a query with ranked hits and highlighted snippets: Postgres full text with prefix matching,
+    the title weighing more than the description and the body. The Site extracts the texts and hands
+    them in; Core refuses a set for any other Area. A set whose fingerprint Core already holds is not
+    written again. SEARCH.md describes the split; the API reference carries the three endpoints.
+  * Site API: the Area endpoint lists the published pages of App as it did of Public, which the Site's
+    indexer reads.
+  * Schema: the two search tables are new; `phis schema apply` creates them on an existing installation.
+  * Depends on @phis/contracts 0.7.3 (the search contract).
+
+ -- Phisys Ltd. <debian@phisys.com>  Mon, 09 Nov 2026 07:53:36 +0000
+
 phis (0.2.7-1) unstable; urgency=medium
 
   * Security: config/phis-runtime.json, which holds the database passwords and the API tokens, is
