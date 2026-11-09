@@ -1,3 +1,24 @@
+phis (0.2.9-1) unstable; urgency=medium
+
+  * Jobs: Core keeps the clock. A job declares a schedule (5m, 15m, 30m, hourly, daily, weekly, with a
+    time of day for the daily and weekly steps) and every serving instance claims each moment of it by
+    a row in phis.job_runs; the unique key on the moment admits one instance, which runs the job under a
+    lease the others take over if it dies, and a moment during a running run is recorded as skipped.
+    The latest missed moment runs once at the next start. phis addon jobs reads the ledger, phis addon
+    job --pause | --resume switches a job, phis addon job runs one now through the same ledger.
+  * Jobs: the Add-on event outbox and the notification outbox are drained every five minutes by Core's
+    own jobs, and the ledger is pruned daily; the operator's timers for phis addon job and phis mail
+    drain are no longer needed. phis maintain keeps its timer.
+  * Events: an Add-on emits events under its own id (@scope/name:event), declared in emits and sent
+    through the events:v1 capability; Core writes one outbox row per listening Add-on with emitter, hop
+    and dedupe key and delivers them as its own events. A chain of handlers ends at four hops.
+  * Schema: phis.job_runs and phis.job_states are new, created by phis schema apply. The outbox columns
+    emitter, hop and dedupe_key, its widened subject check and the dedupe index are declared in the
+    creation script; an outbox created before them is brought to that shape by hand (DB.md).
+  * Depends on @phis/contracts 0.7.4 (job schedules, emitted events).
+
+ -- Phisys Ltd. <debian@phisys.com>  Mon, 09 Nov 2026 10:39:13 +0000
+
 phis (0.2.8-1) unstable; urgency=medium
 
   * Site search: Core keeps the page texts of a Site's Public and App Areas, per locale, as one set
