@@ -1,3 +1,20 @@
+phis (0.2.10-1) unstable; urgency=medium
+
+  * Security: the Operator login counts attempts and answers an unknown address as slowly as a known
+    one. Links in mails are built from the Site's public base URL, never from a request header. A
+    resource link's state asks the same reach as unlinking it.
+  * Events: one drain at a time per Add-on and Site across every instance; the handler timeout holds.
+  * Jobs: a tick claims in turn and runs side by side; an unfinished run counts as running past its
+    lease. auth.prune removes expired sessions and sign-in transactions hourly.
+  * Sites have a time zone: phis site add|set --time-zone, UTC by default. Existing databases need
+    ALTER TABLE phis.sites ADD COLUMN IF NOT EXISTS time_zone VARCHAR(64) NOT NULL DEFAULT 'UTC'.
+  * Requests that name no known Site answer 404 everywhere. An unknown revision is 404, a double
+    registration 409, an unknown Support queue 400.
+  * Performance: fewer queries for notifications, groups, grantable roles, threads, locale and bulk
+    translations; the local media store answers a head without reading the object.
+
+ -- Phisys Ltd. <debian@phisys.com>  Mon, 09 Nov 2026 20:04:15 +0000
+
 phis (0.2.9-1) unstable; urgency=medium
 
   * Jobs: Core keeps the clock. A job declares a schedule (5m, 15m, 30m, hourly, daily, weekly, with a
