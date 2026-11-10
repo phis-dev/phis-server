@@ -1,3 +1,10 @@
+phis (0.2.12-1) unstable; urgency=medium
+
+  * The content of 0.2.11, whose release stopped at a test that asked the database; the test now
+    mocks the Folder lock reader. 0.2.11 was never published.
+
+ -- Phisys Ltd. <debian@phisys.com>  Tue, 10 Nov 2026 23:20:00 +0000
+
 phis (0.2.11-1) unstable; urgency=medium
 
   * Payments: stored payment methods, charges without the customer present and subscriptions on Core's
