@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   getMediaAssetBySiteAndId: vi.fn(),
   getMediaFolderBySiteAndId: vi.fn(),
   getMediaStorageProfile: vi.fn(),
+  hasLockedMediaFolder: vi.fn(),
   updateMediaAsset: vi.fn(),
 }));
 vi.mock("@/db/media-spaces", () => ({
@@ -22,6 +23,7 @@ vi.mock("@/db/media", async (importOriginal) => ({
   findMediaFolderPathId: mocks.findMediaFolderPathId,
   getMediaAssetBySiteAndId: mocks.getMediaAssetBySiteAndId,
   getMediaFolderBySiteAndId: mocks.getMediaFolderBySiteAndId,
+  hasLockedMediaFolder: mocks.hasLockedMediaFolder,
   updateMediaAsset: mocks.updateMediaAsset,
 }));
 vi.mock("@/db/site-config", () => ({
@@ -74,6 +76,8 @@ function asset(overrides: Partial<MediaAssetRecord> = {}): MediaAssetRecord {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // No Folder is locked unless a test says so; the real reader would ask the database.
+  mocks.hasLockedMediaFolder.mockResolvedValue(false);
   const current = asset();
   mocks.getMediaAssetBySiteAndId.mockResolvedValue(current);
   mocks.getMediaFolderBySiteAndId.mockResolvedValue({ id: 4 });
