@@ -784,13 +784,13 @@ async function buildResolvedPageTreeFromRevisionWithDb(
     },
   });
 
-  const pageMeta = await resolveSitePageMetaWithDb(tree.page, locale ?? null);
+  // Neither read needs the other's answer.
+  const [pageMeta, contentWidgets] = await Promise.all([
+    resolveSitePageMetaWithDb(tree.page, locale ?? null),
+    resolveTreeContentWidgetsWithDb(db, siteId, tree.contentWidgets, locale, stage),
+  ]);
 
-  return {
-    ...tree,
-    pageMeta,
-    contentWidgets: await resolveTreeContentWidgetsWithDb(db, siteId, tree.contentWidgets, locale, stage),
-  };
+  return { ...tree, pageMeta, contentWidgets };
 }
 
 async function resolveSitePageMetaWithDb(

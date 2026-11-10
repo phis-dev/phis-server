@@ -20,7 +20,7 @@ const MAX_REFERENCES_PER_REQUEST = 256;
  * the Site Space, not Ready, or not publicly deliverable is simply absent from the result.
  */
 export async function POST(request: NextRequest) {
-  const guardError = guardApiV1(request, { requireInternalToken: true });
+  const guardError = await guardApiV1(request, { requireInternalToken: true });
   if (guardError) return guardError;
   const site = await requireSiteFromRequest(request);
   if (!site) return NextResponse.json({ error: "Site not found." }, { status: 404 });
@@ -56,9 +56,13 @@ export async function POST(request: NextRequest) {
   // Only the scopes the references name, and no read without one: the Area's whole catalogue was read
   // for every page with a link.
   const scopeIds = references.flatMap((entry) => entry!.target.kind === "site" ? [entry!.target.pageScopeId] : []);
-  const byId = scopeIds.length === 0
-    ? new Map<number, { path: string | null; tombstoned: boolean }>()
-    : await readSitePageScopeTargets(site.id, resolvePhisCmsAreaMask(area), scopeIds);
+  // Page targets and Assets are independent reads.
+  const [byId, publicAssets] = await Promise.all([
+    scopeIds.length === 0
+      ? new Map<number, { path: string | null; tombstoned: boolean }>()
+      : readSitePageScopeTargets(site.id, resolvePhisCmsAreaMask(area), scopeIds),
+    listPublicSiteSpaceMediaAssetsByIds(site.id, requestedAssets as number[]),
+  ]);
   const resolved = references.map((entry) => {
     const reference = entry!;
     if (reference.target.kind !== "site") {
@@ -74,8 +78,7 @@ export async function POST(request: NextRequest) {
     };
   });
 
-  const assets = (await listPublicSiteSpaceMediaAssetsByIds(site.id, requestedAssets as number[]))
-    .map(serializeMediaAssetForPublicReference);
+  const assets = publicAssets.map(serializeMediaAssetForPublicReference);
 
   return NextResponse.json({ area: area || null, resolved, assets });
 }

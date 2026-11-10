@@ -7,12 +7,14 @@ const mocks = vi.hoisted(() => ({
   ensureSiteSpace: vi.fn(),
   findPath: vi.fn(),
   guard: vi.fn(),
+  locked: vi.fn(),
   log: vi.fn(),
 }));
 
 vi.mock("@/db/media", () => ({
   createMediaFolder: mocks.createFolder,
   findMediaFolderPathId: mocks.findPath,
+  hasLockedMediaFolder: mocks.locked,
 }));
 vi.mock("@/db/site-config", () => ({ clearSiteConfigCache: mocks.clearCache }));
 vi.mock("@/db/media-spaces", () => ({ ensureSiteMediaSpace: mocks.ensureSiteSpace }));
@@ -34,6 +36,7 @@ function request(body: unknown) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mocks.locked.mockResolvedValue(false);
   mocks.guard.mockResolvedValue({
     context: {
       site: { id: 7, key: "example" },
@@ -72,6 +75,16 @@ describe("POST /api/v1/forms/media-folder", () => {
       flags: 0,
     });
     expect(mocks.clearCache).toHaveBeenCalledWith(7);
+  });
+
+  it("creates nothing in a locked parent", async () => {
+    mocks.locked.mockResolvedValueOnce(true);
+
+    const response = await POST(request({ name: "Campaign", parentPath: "/Products/Summer" }));
+
+    expect(response.status).toBe(409);
+    expect(mocks.locked).toHaveBeenCalledWith(7, 4, [9]);
+    expect(mocks.createFolder).not.toHaveBeenCalled();
   });
 
   it("supports the top level and rejects invalid or missing parents", async () => {

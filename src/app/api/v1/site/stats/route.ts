@@ -6,7 +6,7 @@ import { guardApiV1 } from "@/lib/api-v1-guard";
 import { requireSiteFromRequest } from "@/lib/site-context";
 
 export async function GET(request: Request) {
-  const guardError = guardApiV1(request, { requireInternalToken: true });
+  const guardError = await guardApiV1(request, { requireInternalToken: true });
   if (guardError) {
     return guardError;
   }

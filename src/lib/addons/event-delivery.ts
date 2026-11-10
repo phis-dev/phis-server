@@ -69,7 +69,15 @@ async function invokeEventHandler(input: {
         siteId: input.site.id, siteKey: input.site.key, actorUserId: null, systemAuthority: true,
         paymentAuthority: { kind: "event", id: input.event }, signal: controller.signal, eventHop: input.row.hop,
       }), signal: controller.signal };
-    if (input.event === "payment.changed") {
+    if (input.event === "payment.changed" && input.row.subjectKind === "subscription") {
+      // The same event with its second subject: a handler narrows on `kind` (PAYMENTS.md, subscriptions).
+      if (!input.row.subscriptionId || typeof input.row.payload.reference !== "string" || !Number.isInteger(input.row.payload.version)) throw new Error("Invalid subscription outbox subject.");
+      await timed(input.handler({ ...common, event: input.event, subject: {
+        kind: "subscription", subscriptionId: input.row.subscriptionId, reference: input.row.payload.reference,
+        version: input.row.payload.version as number,
+        periodIndex: Number.isInteger(input.row.payload.periodIndex) ? input.row.payload.periodIndex as number : null,
+      } }));
+    } else if (input.event === "payment.changed") {
       if (input.row.subjectKind !== "payment" || !input.row.paymentId
         || typeof input.row.payload.reference !== "string" || !Number.isInteger(input.row.payload.version)) throw new Error("Invalid Payment outbox subject.");
       await timed(input.handler({ ...common, event: input.event, subject: {

@@ -2,6 +2,7 @@ import { describe, expect, it, beforeAll, afterAll } from "vitest";
 
 import {
   PhisSiteThreadKindFlag,
+  PhisThreadFlag,
   PhisThreadKind,
   PhisThreadMessageFlag,
   PhisThreadStatus,
@@ -28,6 +29,7 @@ import {
   getThreadDetail,
   listThreadsForUser,
   markThreadRead,
+  setThreadLocked,
   setThreadStatus,
 } from "./threads";
 import { buildPhisAddonThreadsCapability } from "@/lib/addons/threads-capability";
@@ -496,6 +498,47 @@ describe("threads", () => {
       reader: { kind: "user", userId: other },
       message: "One more thing.",
     })).rejects.toThrow(/archived/u);
+  });
+
+  it("locks against new messages without archiving, and takes them again once unlocked", async () => {
+    await requirePhiTestDatabase();
+    const site = await createPhiTestSite("threads-lock");
+    await offerAllThreadKinds(site);
+    const { users: [author, other] } = await createStaffWhoShareAGroup(site, "pgtest-lock", 2);
+    const opened = await createThread({
+      siteId: site.id,
+      kind: PhisThreadKind.Direct,
+      message: "Read this.",
+      participantUserIds: [other],
+      createdByUserId: author,
+    });
+    const asAuthor = { kind: "user", userId: author } as const;
+    const asOther = { kind: "user", userId: other } as const;
+
+    // Who may lock is who may change the status, decided by the same function; that rule has its own case.
+    expect(await setThreadLocked({ siteId: site.id, threadId: opened.thread.id, reader: asAuthor, locked: true }))
+      .toBe(true);
+
+    const locked = await getThreadDetail(site.id, asOther, opened.thread.id);
+    // Still open and still readable: a lock is not an archive.
+    expect(locked?.thread.status).toBe(PhisThreadStatus.Open);
+    expect((locked?.thread.flags ?? 0) & PhisThreadFlag.Locked).toBe(PhisThreadFlag.Locked);
+    expect(locked?.messages).toHaveLength(1);
+    // Nobody writes into it, the one who locked it included.
+    for (const reader of [asOther, asAuthor]) {
+      await expect(addThreadMessage({ siteId: site.id, threadId: opened.thread.id, reader, message: "One more." }))
+        .rejects.toThrow(/locked/u);
+    }
+
+    await setThreadLocked({ siteId: site.id, threadId: opened.thread.id, reader: asAuthor, locked: false });
+    const reopened = await addThreadMessage({
+      siteId: site.id,
+      threadId: opened.thread.id,
+      reader: asOther,
+      message: "Now it goes through.",
+    });
+    expect(reopened?.messages).toHaveLength(2);
+    expect((reopened?.thread.flags ?? 0) & PhisThreadFlag.Locked).toBe(0);
   });
 
   it("leaves closing a group's thread to its opener, Staff and the group's Managers", async () => {

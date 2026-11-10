@@ -2,6 +2,7 @@ import "server-only";
 
 import type {
   PhisAddonGroupWriterDescriptor,
+  PhisAddonRoleDescriptor,
   PhisGroupsCapabilityV1,
   PhisUserProjection,
 } from "./contract.ts";
@@ -64,6 +65,8 @@ export function buildPhisAddonGroupsCapability(input: {
   groupWriter?: PhisAddonGroupWriterDescriptor | null;
   /** The keys of the groups the manifest declares, which the writer leaves alone. */
   declaredGroupKeys?: readonly string[];
+  /** The roles the manifest declares: a writer policy that names a role is met by what implies it too. */
+  declaredRoles?: readonly PhisAddonRoleDescriptor[];
 }): PhisGroupsCapabilityV1 {
   const { addonId, siteId, actorUserId } = input;
   const declaredKeys = new Set(input.declaredGroupKeys ?? []);
@@ -85,7 +88,7 @@ export function buildPhisAddonGroupsCapability(input: {
     if (actorUserId == null) {
       throw new PhisAddonGroupWriteError("A group is made for somebody, and nobody is acting here.");
     }
-    if (!await satisfiesPhisAddonGrantPolicy({ addonId, siteId, actorUserId, policy })) {
+    if (!await satisfiesPhisAddonGrantPolicy({ addonId, siteId, actorUserId, policy, declared: input.declaredRoles ?? [] })) {
       throw new PhisAddonGroupWriteError(
         "This caller does not meet the policy the manifest states for making a group.",
       );

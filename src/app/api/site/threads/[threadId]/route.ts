@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { PhisThreadStatus, type PhisThreadStatusValue } from "@phis/contracts/threads";
 
-import { getThreadDetail, PhisThreadError, setThreadStatus } from "@/db/threads";
+import { getThreadDetail, PhisThreadError, setThreadLocked, setThreadStatus } from "@/db/threads";
 import { requireSiteAuthenticatedApiContext } from "@/lib/guards/site-admin-api";
 import {
   normalizeNullableInteger,
@@ -63,28 +63,41 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
   }
 
   const body = await readRequestBody(request);
+  // Either or both: where a thread stands, and whether it takes new messages.
+  const statesStatus = Object.hasOwn(body, "status");
+  const statesLocked = Object.hasOwn(body, "locked");
   const status = typeof body.status === "number" ? body.status : null;
-  if (status !== PhisThreadStatus.Open && status !== PhisThreadStatus.Archived) {
+  if (statesStatus && status !== PhisThreadStatus.Open && status !== PhisThreadStatus.Archived) {
     return NextResponse.json({ error: "status must be open or archived." }, { status: 400 });
   }
+  if (statesLocked && typeof body.locked !== "boolean") {
+    return NextResponse.json({ error: "locked must be true or false." }, { status: 400 });
+  }
+  if (!statesStatus && !statesLocked) {
+    return NextResponse.json({ error: "status or locked must be provided." }, { status: 400 });
+  }
 
-  let changed: boolean;
+  let found = true;
   try {
-    changed = await setThreadStatus({
-      siteId: site.id,
-      threadId,
-      reader: { kind: "user", userId },
-      status: status as PhisThreadStatusValue,
-    });
+    const reader = { kind: "user", userId } as const;
+    if (statesStatus) {
+      found = await setThreadStatus({ siteId: site.id, threadId, reader, status: status as PhisThreadStatusValue });
+    }
+    if (found && statesLocked) {
+      found = await setThreadLocked({ siteId: site.id, threadId, reader, locked: body.locked as boolean });
+    }
   } catch (cause) {
     if (cause instanceof PhisThreadError) {
       return NextResponse.json({ error: cause.message }, { status: 403 });
     }
     throw cause;
   }
-  if (!changed) {
+  if (!found) {
     return NextResponse.json({ error: "Thread not found." }, { status: 404 });
   }
 
-  return NextResponse.json({ status });
+  return NextResponse.json({
+    ...(statesStatus ? { status } : {}),
+    ...(statesLocked ? { locked: body.locked } : {}),
+  });
 }

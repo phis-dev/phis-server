@@ -25,7 +25,7 @@ export const dynamic = "force-dynamic";
  * around the row-level ladder.
  */
 export async function POST(request: NextRequest) {
-  const guardError = guardApiV1(request, { requireInternalToken: true });
+  const guardError = await guardApiV1(request, { requireInternalToken: true });
   if (guardError) {
     return guardError;
   }

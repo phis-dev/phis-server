@@ -12,7 +12,7 @@ import { toPhiRecord } from "@/lib/helpers/record";
 export const dynamic = "force-dynamic";
 
 export async function POST(request: NextRequest) {
-  const guardError = guardApiV1(request, { requireInternalToken: true });
+  const guardError = await guardApiV1(request, { requireInternalToken: true });
   if (guardError) return guardError;
   const siteContext = await requireSiteFromExplicitKeyRequest(request);
   if (siteContext.error || !siteContext.site) return siteContext.error;

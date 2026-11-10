@@ -11,7 +11,7 @@ import { handleSiteWidgetContentRead } from "@/lib/site-content-route";
  * phi-server, so its Widgets' content is asked for here.
  */
 export async function GET(request: NextRequest) {
-  const guardError = guardApiV1(request, { requireInternalToken: true });
+  const guardError = await guardApiV1(request, { requireInternalToken: true });
   if (guardError) {
     return guardError;
   }

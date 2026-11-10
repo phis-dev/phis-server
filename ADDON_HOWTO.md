@@ -97,6 +97,14 @@ Whatever of them the Add-on imports is bundled into `addon.mjs` like any other c
 artifact never needs the package at runtime. Declare it as a `dependency` when the package also has a
 Module half, which imports it in the Site; otherwise a `devDependency` is enough.
 
+**Share values with the Module half through the package's own contract.** When the package also has a
+Module half, the two halves never import each other, yet they must agree on route paths, a header of
+their own, role names, row states and the paths of the Module's Pages the Add-on writes into mails and
+payment return addresses. Those values go in one dependency-free file both halves import, copied into
+each artifact when it is built; changing one is a breaking change between two separately installed
+halves. The layout and the rules are in `@phis/ui`'s
+[THIRD_PARTY_MODULES.md](https://github.com/phis-dev/phis-ui/blob/main/THIRD_PARTY_MODULES.md#the-contract-between-a-packages-two-halves).
+
 **Bundle to one file.** Any bundler that emits ESM will do; the settings are what matter.
 
 | Setting | Value | Why |

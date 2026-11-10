@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 
 import { isPhisServiceInterfaceCurrent, isPhisServiceKind } from "./core-services.ts";
 import { validatePhisAddonQueryCatalog } from "./query-descriptor.ts";
+import { findPhisAddonRoleInclusionCycle } from "./role-inclusion.ts";
 import { validatePhisAddonSchemaDescriptor } from "./schema-descriptor.ts";
 import { PHIS_ADDON_ID_PATTERN } from "./schema-name.ts";
 import {
@@ -694,8 +695,35 @@ export function validatePhisAddonManifest(
     } else if (byRole && typeof grantableBy.role !== "string") {
       issues.push(`roles[${index}].grantableBy.role must be a string.`);
     }
+    if (role.includes !== undefined && (!Array.isArray(role.includes) || role.includes.some((entry) => typeof entry !== "string"))) {
+      issues.push(`roles[${index}].includes must be an array of role names when it is stated at all.`);
+    }
   }
   assertUnique(roleNames, "roles", issues);
+  for (const [index, role] of roles.entries()) {
+    // An inclusion names a role of this same Add-on, never the role itself, and each one once: a role
+    // implied from elsewhere would be a promise Core cannot keep.
+    const includes = isPhiRecord(role) && Array.isArray(role.includes) ? role.includes.filter((entry) => typeof entry === "string") : [];
+    for (const included of includes) {
+      if (!roleNames.includes(included)) {
+        issues.push(`roles[${index}].includes names "${included}", which is not a role this Add-on declares.`);
+      } else if (isPhiRecord(role) && included === role.name) {
+        issues.push(`roles[${index}].includes names the role itself.`);
+      }
+    }
+    if (new Set(includes).size !== includes.length) {
+      issues.push(`roles[${index}].includes names a role twice.`);
+    }
+  }
+  const inclusionCycle = findPhisAddonRoleInclusionCycle(
+    roles.filter(isPhiRecord).map((role) => ({
+      name: String(role.name),
+      includes: Array.isArray(role.includes) ? role.includes.filter((entry): entry is string => typeof entry === "string") : [],
+    })).map((role) => ({ ...role, includes: role.includes.filter((entry) => entry !== role.name) })),
+  );
+  if (inclusionCycle) {
+    issues.push(`roles include each other in a cycle (${inclusionCycle.join(" -> ")}); two roles that imply each other are one role.`);
+  }
   for (const [index, role] of roles.entries()) {
     // A role granted by another role has to name one this same Add-on declares. Pointing at a stranger
     // would be a policy nobody here can evaluate.

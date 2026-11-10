@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 
-import { createMediaFolder, listMediaFolders } from "@/db/media";
+import { createMediaFolder, hasLockedMediaFolder, listMediaFolders } from "@/db/media";
 import { clearSiteConfigCache } from "@/db/site-config";
 import {
   readRequestedMediaSpaceId,
@@ -96,6 +96,12 @@ export async function POST(request: NextRequest) {
     });
     if (!resolution.ok) return nextMediaSpaceError(resolution.reason);
     const { space } = resolution;
+    if (await hasLockedMediaFolder(site.id, space.id, [parentId])) {
+      return NextResponse.json(
+        { error: "media_folder_locked", message: "The Media Folder is locked." },
+        { status: 409 },
+      );
+    }
     const folder = await createMediaFolder({
       siteId: site.id,
       spaceId: space.id,

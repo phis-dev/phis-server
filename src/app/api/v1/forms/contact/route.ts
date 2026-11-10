@@ -30,7 +30,7 @@ type ContactPayload = {
 const CONTACT_SUBMISSIONS_PER_HOUR = 5;
 const CONTACT_WINDOW_MS = 3_600_000;
 
-function checkContactLimit(request: Request, siteId: number, email: string) {
+async function checkContactLimit(request: Request, siteId: number, email: string) {
   const address = readPhiClientIp(request);
   const keys = [
     `contact:${siteId}:email:${email.toLowerCase()}`,
@@ -38,7 +38,7 @@ function checkContactLimit(request: Request, siteId: number, email: string) {
   ];
   let retryAfter: number | null = null;
   for (const key of keys) {
-    const answer = checkRateLimit(key, CONTACT_SUBMISSIONS_PER_HOUR, CONTACT_WINDOW_MS);
+    const answer = await checkRateLimit(key, CONTACT_SUBMISSIONS_PER_HOUR, CONTACT_WINDOW_MS);
     if (answer !== null && (retryAfter === null || answer > retryAfter)) {
       retryAfter = answer;
     }
@@ -51,7 +51,7 @@ function sanitizeHeaderValue(value: string) {
 }
 
 export async function POST(request: Request) {
-  const guardError = guardApiV1(request, { requireInternalToken: true });
+  const guardError = await guardApiV1(request, { requireInternalToken: true });
   if (guardError) {
     return guardError;
   }
@@ -113,7 +113,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Invalid email address." }, { status: 400 });
   }
 
-  const retryAfter = checkContactLimit(request, site.id, email);
+  const retryAfter = await checkContactLimit(request, site.id, email);
   if (retryAfter !== null) {
     return tooManyAttemptsResponse(retryAfter);
   }

@@ -14,7 +14,7 @@ export const dynamic = "force-dynamic";
  * /api/site/admin/media route; this endpoint is internal-token read-only.
  */
 export async function GET(request: Request) {
-  const guardError = guardApiV1(request, { requireInternalToken: true });
+  const guardError = await guardApiV1(request, { requireInternalToken: true });
   if (guardError) {
     return guardError;
   }

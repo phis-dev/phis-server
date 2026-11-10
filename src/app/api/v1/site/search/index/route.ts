@@ -21,7 +21,7 @@ import { requireSiteFromRequest } from "@/lib/site-context";
  * sets that differ.
  */
 export async function GET(request: NextRequest) {
-  const guardError = guardApiV1(request, { requireInternalToken: true });
+  const guardError = await guardApiV1(request, { requireInternalToken: true });
   if (guardError) return guardError;
 
   const site = await requireSiteFromRequest(request);
@@ -41,7 +41,7 @@ export async function GET(request: NextRequest) {
  * to leave the whole Site unsearchable, and the Site's log says which one.
  */
 export async function PUT(request: NextRequest) {
-  const guardError = guardApiV1(request, { requireInternalToken: true });
+  const guardError = await guardApiV1(request, { requireInternalToken: true });
   if (guardError) return guardError;
 
   const site = await requireSiteFromRequest(request);

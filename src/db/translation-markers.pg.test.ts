@@ -124,7 +124,7 @@ describe("translation change markers against PostgreSQL", () => {
   it("leaves the global marker alone on a fill and moves it on any other write", async () => {
     const pool = await requirePhiTestDatabase();
     const msg = "Global fill me";
-    const hash = createHash("sha256").update(msg.slice(0, 50)).digest("hex");
+    const hash = createHash("sha256").update(msg).digest("hex");
     const before = await markers(siteA);
 
     await upsertTranslation("de", msg, globalCtx, "Global füll mich", hash);

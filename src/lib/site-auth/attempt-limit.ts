@@ -19,7 +19,7 @@ import { checkRateLimit } from "@/lib/rate-limit";
  */
 export const AUTH_ATTEMPTS_PER_MINUTE = 10;
 
-export function checkAuthAttemptLimit(
+export async function checkAuthAttemptLimit(
   request: { headers: Headers },
   keys: readonly string[],
   limit = AUTH_ATTEMPTS_PER_MINUTE,
@@ -28,7 +28,7 @@ export function checkAuthAttemptLimit(
   const subjects = address ? [...keys, `${keys[0]}@${address}`] : [...keys];
   let retryAfter: number | null = null;
   for (const subject of subjects) {
-    const answer = checkRateLimit(`auth-attempt:${subject}`, limit);
+    const answer = await checkRateLimit(`auth-attempt:${subject}`, limit);
     if (answer !== null && (retryAfter === null || answer > retryAfter)) {
       retryAfter = answer;
     }

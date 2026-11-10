@@ -2,6 +2,7 @@ import "server-only";
 
 import type { PhisAddonRoleDescriptor, PhisRolesCapabilityV1 } from "./contract.ts";
 import { readPhisAddonUserRoles } from "@/db/server-addon-roles.mts";
+import { expandPhisAddonHeldRoles } from "./role-inclusion.ts";
 import { getPool } from "@/lib/db";
 
 /**
@@ -32,11 +33,10 @@ export function buildPhisAddonRolesCapability(input: {
     if (actorUserId == null) {
       return [] as string[];
     }
-    const stored = new Set(
-      await readPhisAddonUserRoles(getPool(), { addonId, siteId, userId: actorUserId }),
-    );
-    // Declaration order, not storage order: what the Add-on listed is what it reads back.
-    return declaredNames.filter((name) => stored.has(name));
+    const stored = await readPhisAddonUserRoles(getPool(), { addonId, siteId, userId: actorUserId });
+    // Granted and implied, in declaration order, not storage order: what the Add-on listed is what it
+    // reads back.
+    return expandPhisAddonHeldRoles(declared, stored);
   }
 
   return Object.freeze({

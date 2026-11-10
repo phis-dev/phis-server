@@ -1,6 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 
-import { deleteMediaFolderBySite, getMediaFolderBySiteAndId, updateMediaFolder } from "@/db/media";
+import {
+  deleteMediaFolderBySite,
+  getMediaFolderBySiteAndId,
+  hasLockedMediaFolder,
+  hasLockedMediaFolderInBranch,
+  updateMediaFolder,
+} from "@/db/media";
+import { PhiMediaFolderFlags } from "@phis/contracts/media";
 import { clearSiteConfigCache } from "@/db/site-config";
 import {
   readRequestedMediaSpaceId,
@@ -130,6 +137,23 @@ export async function PATCH(
       return NextResponse.json({ error: "Media Folder not found." }, { status: 404 });
     }
 
+    /*
+     * A locked Folder takes one change: its flags, which is how it is unlocked again. A Folder also
+     * does not move into a locked Folder or out of one, because that changes what the locked one holds.
+     */
+    const changesMoreThanFlags = Object.hasOwn(payload, "name") ||
+      Object.hasOwn(payload, "parentId") ||
+      Object.hasOwn(payload, "sortOrder");
+    const lockedSelf = (folder.flags & PhiMediaFolderFlags.Locked) !== 0 && changesMoreThanFlags;
+    const lockedMove = parentId !== undefined && parentId !== folder.parentId &&
+      await hasLockedMediaFolder(site.id, space.id, [parentId, folder.parentId]);
+    if (lockedSelf || lockedMove) {
+      return NextResponse.json(
+        { error: "media_folder_locked", message: "The Media Folder is locked." },
+        { status: 409 },
+      );
+    }
+
     const updated = await updateMediaFolder({
       siteId: site.id,
       spaceId: space.id,
@@ -195,6 +219,17 @@ export async function DELETE(
     const folder = await getMediaFolderBySiteAndId(site.id, space.id, folderId);
     if (!folder) {
       return NextResponse.json({ error: "Media Folder not found." }, { status: 404 });
+    }
+
+    // Deleting a Folder deletes its branch, and takes it out of its parent.
+    if (
+      await hasLockedMediaFolderInBranch(site.id, space.id, folderId) ||
+      await hasLockedMediaFolder(site.id, space.id, [folder.parentId])
+    ) {
+      return NextResponse.json(
+        { error: "media_folder_locked", message: "The Media Folder is locked." },
+        { status: 409 },
+      );
     }
 
     const deleted = await deleteMediaFolderBySite(site.id, space.id, folderId);

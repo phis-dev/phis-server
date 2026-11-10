@@ -160,7 +160,7 @@ async function resolveApiIdentity(
     };
   }
 
-  const guardError = guardApiV1(request, { requireInternalToken: true });
+  const guardError = await guardApiV1(request, { requireInternalToken: true });
   if (guardError) {
     return { error: guardError, site: null, actor: null };
   }
@@ -521,7 +521,7 @@ export async function dispatchPhisAddonRequest(
 
   const rateLimitClass = match.descriptor.rateLimitClass;
   if (rateLimitClass) {
-    const retryAfter = checkRateLimit(
+    const retryAfter = await checkRateLimit(
       `${addonId}:${rateLimitClass}:${getClientIp(request)}`,
     );
     if (retryAfter !== null) {

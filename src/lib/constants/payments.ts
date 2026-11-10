@@ -4,6 +4,7 @@ import type { PhisPaymentErrorCode, PhisPaymentTaxCategory } from "@phis/contrac
 export const PHIS_PAYMENT_ERROR_CODES: readonly PhisPaymentErrorCode[] = [
   "invalid_input", "not_found", "forbidden", "profile_unavailable", "method_unavailable", "unsupported_operation",
   "invalid_state", "active_attempt_exists", "idempotency_conflict", "payment_declined", "provider_rejected", "provider_unavailable", "reconciliation_required",
+  "customer_action_required", "stored_method_unavailable",
 ];
 
 export const PHIS_PAYMENT_CURRENCY_EXPONENTS: Readonly<Record<string, number>> = {

@@ -9,7 +9,7 @@ import { requireSiteFromRequest } from "@/lib/site-context";
  * found no Page with a 307. Asked on the miss path only; 404 when the address leads nowhere.
  */
 export async function GET(request: NextRequest) {
-  const guardError = guardApiV1(request, { requireInternalToken: true });
+  const guardError = await guardApiV1(request, { requireInternalToken: true });
   if (guardError) {
     return guardError;
   }

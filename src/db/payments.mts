@@ -5,7 +5,7 @@ import { withPoolTransaction } from "../lib/db-transaction.ts";
 import { PHIS_PAYMENT_LEASE_SECONDS } from "../lib/constants/payments.ts";
 import { PhisPaymentError, requirePhisPaymentReference } from "../lib/payments/validation.ts";
 import type {
-  PhisPaymentProfile, PhisPaymentReceipt, PhisPaymentScope, PhisStoredPayment,
+  PhisPaymentProfile, PhisPaymentReceipt, PhisPaymentScope, PhisStoredPayment, PhisStoredPaymentMethod,
   PhisStoredPaymentOperation, PhisStoredPaymentRefund,
 } from "../lib/payments/types.ts";
 
@@ -18,7 +18,10 @@ type PaymentRow = {
 function paymentFromRow(row: PaymentRow): PhisStoredPayment {
   return { siteId: row.site_id, consumerAddonId: row.consumer_addon_id, providerKey: row.provider_key,
     merchantIdentity: row.merchant_identity, profileRevision: row.profile_revision, currencyExponent: row.currency_exponent,
-    features: row.method_features, binding: row.binding, record: row.record, generation: Number(row.generation), leaseToken: row.lease_token, leaseUntil: row.lease_until };
+    // A payment written before stored methods existed was started by a customer and stored nothing.
+    features: row.method_features, binding: row.binding, record: { ...row.record, initiator: row.record.initiator ?? "customer", storedMethodId: row.record.storedMethodId ?? null,
+      subscriptionId: row.record.subscriptionId ?? null, periodIndex: row.record.periodIndex ?? null },
+    generation: Number(row.generation), leaseToken: row.lease_token, leaseUntil: row.lease_until };
 }
 
 export async function readPhisPaymentProfile(db: Db, siteId: number, key: string, lock = false): Promise<PhisPaymentProfile | null> {
@@ -192,6 +195,72 @@ export async function finishPhisPaymentReceipt(db: Db, siteId: number, receipt: 
 export async function releasePhisPaymentReceipt(db: Db, siteId: number, receipt: PhisPaymentReceipt) {
   await db.query(`UPDATE phis.payment_notification_receipts SET claim_until = NOW() WHERE site_id = $1 AND profile_key = $2
     AND delivery_id = $3 AND claim_token = $4 AND NOT processed`, [siteId, receipt.profileKey, receipt.deliveryId, receipt.token]);
+}
+
+type StoredMethodRow = {
+  site_id: number; consumer_addon_id: string; method_features: PhisStoredPaymentMethod["features"];
+  binding: PhisStoredPaymentMethod["binding"]; record: PhisStoredPaymentMethod["record"];
+};
+function storedMethodFromRow(row: StoredMethodRow): PhisStoredPaymentMethod {
+  return { siteId: row.site_id, consumerAddonId: row.consumer_addon_id, features: row.method_features, binding: row.binding, record: row.record };
+}
+
+export async function insertPhisPaymentStoredMethod(db: Db, method: PhisStoredPaymentMethod, setupKey: string | null = null) {
+  await db.query(`INSERT INTO phis.payment_stored_methods (id, site_id, consumer_addon_id, profile_key, payer_reference, method_features, binding, record, setup_key)
+    VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb, $8::jsonb, $9)`,
+    [method.record.id, method.siteId, method.consumerAddonId, method.record.profileKey, method.record.payerReference,
+      JSON.stringify(method.features), JSON.stringify(method.binding), JSON.stringify(method.record), setupKey]);
+}
+
+/**
+ * The stored method a set-up without payment made under this key, with the hosted page it was answered
+ * with. Also serializes a first request, before there is a row to find.
+ */
+export async function findPhisPaymentStoredMethodSetup(db: Db, scope: PhisPaymentScope, key: string): Promise<{ method: PhisStoredPaymentMethod; checkout: unknown } | null> {
+  await db.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [JSON.stringify(["payment-method-setup", scope.siteId, scope.consumerAddonId, key])]);
+  const { rows } = await db.query<StoredMethodRow & { setup_checkout: unknown }>(`SELECT * FROM phis.payment_stored_methods
+    WHERE site_id = $1 AND consumer_addon_id = $2 AND setup_key = $3`, [scope.siteId, scope.consumerAddonId, key]);
+  return rows[0] ? { method: storedMethodFromRow(rows[0]), checkout: rows[0].setup_checkout } : null;
+}
+
+export async function writePhisPaymentStoredMethodSetupCheckout(db: Db, id: string, checkout: unknown) {
+  await db.query("UPDATE phis.payment_stored_methods SET setup_checkout = $2::jsonb WHERE id = $1", [id, JSON.stringify(checkout)]);
+}
+
+export async function readPhisPaymentStoredMethod(db: Db, siteId: number, id: string, consumerAddonId: string | null = null, lock = false): Promise<PhisStoredPaymentMethod | null> {
+  const { rows } = await db.query<StoredMethodRow>(`SELECT * FROM phis.payment_stored_methods WHERE site_id = $1 AND id::text = $2
+    AND ($3::text IS NULL OR consumer_addon_id = $3) ${lock ? "FOR UPDATE" : ""}`, [siteId, id, consumerAddonId]);
+  return rows[0] ? storedMethodFromRow(rows[0]) : null;
+}
+
+export async function listPhisPaymentStoredMethods(db: Db, scope: PhisPaymentScope, profileKey: string, payerReference: string): Promise<PhisStoredPaymentMethod[]> {
+  return (await db.query<StoredMethodRow>(`SELECT * FROM phis.payment_stored_methods
+    WHERE site_id = $1 AND consumer_addon_id = $2 AND profile_key = $3 AND payer_reference = $4 ORDER BY created_at DESC, id`,
+    [scope.siteId, scope.consumerAddonId, profileKey, payerReference])).rows.map(storedMethodFromRow);
+}
+
+/** Every record the reference names: one means stored twice is two records with one reference. */
+export async function findPhisPaymentStoredMethodsForNotification(db: Db, siteId: number, profileKey: string, reference: string): Promise<PhisStoredPaymentMethod[]> {
+  const { rows } = await db.query<StoredMethodRow>(`SELECT * FROM phis.payment_stored_methods WHERE site_id = $1 AND profile_key = $2
+    AND (id::text = $3 OR binding->>'reference' = $3) ORDER BY created_at, id LIMIT 20`, [siteId, profileKey, reference]);
+  return rows.map(storedMethodFromRow);
+}
+
+export async function writePhisPaymentStoredMethod(db: Db, method: PhisStoredPaymentMethod) {
+  await db.query("UPDATE phis.payment_stored_methods SET record = $2::jsonb, binding = $3::jsonb, updated_at = NOW() WHERE id = $1",
+    [method.record.id, JSON.stringify(method.record), JSON.stringify(method.binding)]);
+}
+
+/**
+ * Where a Provider keeps one stored method per payer, a new one has replaced the others there already.
+ * The records follow: every other active method of the same payer, profile and method ends as revoked.
+ */
+export async function revokeSupersededPhisPaymentStoredMethods(db: Db, method: PhisStoredPaymentMethod): Promise<string[]> {
+  return (await db.query<{ id: string }>(`UPDATE phis.payment_stored_methods
+    SET record = record || jsonb_build_object('status', 'revoked', 'version', (record->>'version')::int + 1), updated_at = NOW()
+    WHERE site_id = $1 AND consumer_addon_id = $2 AND profile_key = $3 AND payer_reference = $4 AND id <> $5
+      AND record->>'status' = 'active' AND (record->>'methodKey') IS NOT DISTINCT FROM $6 RETURNING id`,
+    [method.siteId, method.consumerAddonId, method.record.profileKey, method.record.payerReference, method.record.id, method.record.methodKey])).rows.map(row => row.id);
 }
 
 export async function listPhisPaymentRecoveryCandidates(db: Db, limit: number) {

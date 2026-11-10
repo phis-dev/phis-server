@@ -4,6 +4,7 @@ import type { PoolClient } from "pg";
 
 import { getPool, withTransaction } from "@/lib/db";
 import { isPhisMediaIdentityChecksum } from "@phis/contracts/addon";
+import { PhiMediaFolderFlags } from "@phis/contracts/media";
 import {
   PhiMediaUploadPlanKind,
   PhiMediaUploadPurpose,
@@ -370,6 +371,33 @@ export async function getMediaFolderBySiteAndId(siteId: number, spaceId: number,
   ); return rows[0] ? mapFolder(rows[0]) : null;
 }
 
+/**
+ * Whether one of these Folders is locked.
+ *
+ * A locked Folder keeps what it is and what it holds: it is not renamed, moved or deleted, and nothing
+ * is put into it, taken out of it or deleted from it, until someone who may edit the Folder clears the
+ * flag. `null` is the root of the Space, which cannot be locked.
+ */
+export async function hasLockedMediaFolder(
+  siteId: number,
+  spaceId: number,
+  folderIds: readonly (number | null | undefined)[],
+) {
+  const ids = Array.from(new Set(folderIds.filter((id): id is number => typeof id === "number" && id > 0)));
+  if (ids.length === 0) return false;
+  const { rowCount } = await getPool().query(
+    `SELECT 1 FROM phis.media_folders
+      WHERE site_id = $1 AND space_id = $2 AND id = ANY($3::int[]) AND (flags & $4) <> 0 LIMIT 1`,
+    [siteId, spaceId, ids, PhiMediaFolderFlags.Locked],
+  );
+  return (rowCount ?? 0) > 0;
+}
+
+/** The same question for a Folder and everything below it: deleting a branch deletes all of it. */
+export async function hasLockedMediaFolderInBranch(siteId: number, spaceId: number, folderId: number) {
+  return hasLockedMediaFolder(siteId, spaceId, await listMediaFolderDescendantIds(siteId, spaceId, folderId));
+}
+
 export async function listMediaFolderDescendantIds(siteId: number, spaceId: number, folderId: number) {
   const { rows } = await getPool().query<{ id: number }>(
     `WITH RECURSIVE branch AS (
@@ -390,8 +418,11 @@ export async function pruneEmptyMediaFolderBranch(siteId: number, spaceId: numbe
          DELETE FROM phis.media_folders f USING candidate c WHERE f.id = c.id
            AND NOT EXISTS (SELECT 1 FROM phis.media_folders child WHERE child.parent_id = f.id)
            AND NOT EXISTS (SELECT 1 FROM phis.media_assets asset WHERE asset.folder_id = f.id)
+           -- Tidying up is not a reason to remove a locked Folder, or to take one out of a locked parent.
+           AND (f.flags & $4) = 0
+           AND NOT EXISTS (SELECT 1 FROM phis.media_folders parent WHERE parent.id = f.parent_id AND (parent.flags & $4) <> 0)
          RETURNING c.parent_id
-       ) SELECT parent_id, TRUE AS deleted FROM removed`, [siteId, spaceId, current],
+       ) SELECT parent_id, TRUE AS deleted FROM removed`, [siteId, spaceId, current, PhiMediaFolderFlags.Locked],
     ); if (!rows[0]?.deleted) break; current = rows[0].parent_id;
   }
 }
@@ -652,13 +683,17 @@ export async function setMediaAssetChecksum(input: {
   });
 }
 
-/** Several Assets by id in one statement; an id with no row is absent from the map. */
-export async function getMediaAssetsByIds(ids: readonly number[]) {
+/**
+ * Several Assets of one Site by id in one statement; an id with no row in that Site is absent from the
+ * map. The Site is part of the question: an id a Site wrote into its own configuration is not proof
+ * that the Asset is its own.
+ */
+export async function getMediaAssetsByIds(siteId: number, ids: readonly number[]) {
   const unique = Array.from(new Set(ids.filter((id) => Number.isSafeInteger(id) && id > 0)));
   if (unique.length === 0) return new Map<number, ReturnType<typeof mapAsset>>();
   const { rows } = await getPool().query<AssetRow>(
-    `SELECT ${ASSET_COLUMNS} FROM phis.media_assets WHERE id = ANY($1::int[])`,
-    [unique],
+    `SELECT ${ASSET_COLUMNS} FROM phis.media_assets WHERE site_id = $1 AND id = ANY($2::int[])`,
+    [siteId, unique],
   );
   return new Map(rows.map((row) => { const asset = mapAsset(row); return [asset.id, asset] as const; }));
 }

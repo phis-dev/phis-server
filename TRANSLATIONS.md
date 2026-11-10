@@ -244,8 +244,8 @@ string, and it cannot hold one of a message somebody wrote a minute ago. `tr_sit
 from it, and neither is anything outside this contract.
 
 **And only messages written in the canonical source language.** A shared answer needs a shared
-identity, and identity here is the exact canonical text: `msg_hash` over the first 50 characters of
-`msg`, plus `ctx`. An external source variant has none. Its `tr_msg` row is owned by a *generated*
+identity, and identity here is the exact canonical text: `msg_hash`, SHA-256 over the whole `msg`, plus
+`ctx`. An external source variant has none. Its `tr_msg` row is owned by a *generated*
 canonical result (steps 2 and 3 of "External and non-canonical sources" below), so the same German
 sentence becomes one English text on this installation and a slightly different one on the next -- two
 hashes for one string. A mirror can hold neither of them, and whichever it does answer, it answers for
@@ -442,10 +442,11 @@ A batch is a transport detail, not a unit of failure. One message that cannot be
 catalogue falls back to its source text on its own; every other message in the same request is
 translated and stored as usual, and the request answers `200`.
 
-This matters because catalogue identity can genuinely fail for a single message. `msg_hash` covers the
-first 50 characters of `msg`, which the public `hash` parameter of `/api/v1/tr` is documented against, so
-two messages sharing an opening are one message to the unique key `(site_id, msg_hash, ctx)` and the
-second is rejected. An external source can likewise conflict with a stored protected variant. Before
+This matters because catalogue identity can still fail for a single message: an external source can
+conflict with a stored protected variant, and a `hash` sent to `/api/v1/tr` must be SHA-256 over the
+whole message or it is refused. `msg_hash` covered only the first 50 characters until 2026-11-10, and
+every HTML message opening with the same link or code element was then one key to `(site_id, msg_hash,
+ctx)` -- the second such paragraph was skipped on every request. Before
 batch isolation such an error left the whole request: a page lost every translation on it because one
 paragraph began like another.
 

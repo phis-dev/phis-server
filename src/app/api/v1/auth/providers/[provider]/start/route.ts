@@ -12,7 +12,7 @@ export const dynamic = "force-dynamic";
 type Context = { params: Promise<{ provider: string }> };
 
 export async function POST(request: NextRequest, context: Context) {
-  const guardError = guardApiV1(request, { requireInternalToken: true });
+  const guardError = await guardApiV1(request, { requireInternalToken: true });
   if (guardError) {
     return guardError;
   }

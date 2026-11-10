@@ -106,6 +106,14 @@ const descriptor: PhisAddonSchemaDescriptor = {
           contentTypes: ["image/png"],
           requiresRole: "catalog-admin",
         },
+        {
+          name: "sheet",
+          cardinality: "one",
+          maxBytes: 4096,
+          contentTypes: ["image/png"],
+          requiresRole: "catalog-admin",
+          delivery: "internal",
+        },
       ],
     },
   ],
@@ -768,6 +776,11 @@ describe("putting a file on a row", () => {
 
     // Without the role: refused loudly, before any row is judged.
     await expect(assets({ intents }).begin(ask)).rejects.toThrow(/requires the role "catalog-admin"/);
+    // Listing a public slot asks no role: its files are fetched by anyone with the address. A slot that
+    // is not public keeps the role for reading too, and so does a listing that spans it.
+    expect(await assets().list({ table: "category", ownerId: categoryId, slot: "icon" })).toEqual([]);
+    await expect(assets().list({ table: "category", ownerId: categoryId, slot: "sheet" }))
+      .rejects.toThrow(/requires the role/);
     await expect(assets().list({ table: "category", ownerId: categoryId }))
       .rejects.toThrow(/requires the role/);
 
@@ -777,6 +790,7 @@ describe("putting a file on a row", () => {
     await deliver(reservation.token, PNG, "image/png");
     const file = await admin.finalize({ table: "category", token: reservation.token });
     expect(await admin.list({ table: "category", ownerId: categoryId })).toHaveLength(1);
+    expect(await assets().list({ table: "category", ownerId: categoryId, slot: "icon" })).toHaveLength(1);
     await expect(assets().remove({ table: "category", id: file.id })).rejects.toThrow(/requires the role/);
     expect(await admin.remove({ table: "category", id: file.id })).toBe(true);
     expect(intents).toEqual([]);

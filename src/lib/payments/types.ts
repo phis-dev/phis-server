@@ -1,6 +1,6 @@
 import type {
   PhisPayment, PhisPaymentFeatures, PhisPaymentOperation, PhisPaymentProfileDraft, PhisPaymentProviderBinding,
-  PhisPaymentProviderCommand, PhisPaymentRefund, PhisPaymentProviderProbe,
+  PhisPaymentProviderCommand, PhisPaymentRefund, PhisPaymentProviderProbe, PhisPaymentStoredMethod, PhisPaymentSubscription,
 } from "@phis/contracts/payments";
 
 export type PhisPaymentProfile = PhisPaymentProfileDraft & {
@@ -42,6 +42,31 @@ export type PhisStoredPaymentRefund = {
   record: PhisPaymentRefund;
   operationId: string | null;
   binding: PhisPaymentProviderBinding | null;
+};
+
+/**
+ * A stored method with what only Core sees: the Provider's binding a charge is sent with, and the
+ * method's features as they stood when it was stored.
+ */
+export type PhisStoredPaymentMethod = {
+  siteId: number;
+  consumerAddonId: string;
+  features: PhisPaymentFeatures;
+  binding: PhisPaymentProviderBinding | null;
+  record: PhisPaymentStoredMethod;
+};
+
+/**
+ * A subscription with what only Core sees: the request it was created from, for idempotency, the start
+ * of its first period, from which every boundary is computed, and the scheduler's lease where one holds.
+ */
+export type PhisStoredPaymentSubscription = {
+  siteId: number;
+  consumerAddonId: string;
+  record: PhisPaymentSubscription;
+  request: Record<string, unknown>;
+  anchorAt: string | null;
+  leaseToken: string | null;
 };
 
 /** Assigned by the dispatcher/job/event runner, never accepted from request arguments. */

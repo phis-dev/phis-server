@@ -35,7 +35,7 @@ function readCategoryFilter(value: string): SiteContentEntryCategoryFilter | nul
 }
 
 export async function GET(request: Request, { params }: { params: Promise<{ kind: string }> }) {
-  const guardError = guardApiV1(request);
+  const guardError = await guardApiV1(request);
   if (guardError) {
     return guardError;
   }

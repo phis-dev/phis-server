@@ -3,6 +3,7 @@ import "server-only";
 import type { PhisAddonRoleDescriptor, PhisAddonRoleGrantPolicy } from "./contract.ts";
 import { PHIS_SITE_ACCESS } from "./contract.ts";
 import { getPhisAddonInstalledManifest } from "./installed.ts";
+import { expandPhisAddonHeldRoles } from "./role-inclusion.ts";
 import { readPhisAddonUserRoles } from "@/db/server-addon-roles.mts";
 import { getPool } from "@/lib/db";
 import { isPhisAddonEnabledForSite } from "@/db/server-addons";
@@ -50,6 +51,12 @@ export async function satisfiesPhisAddonGrantPolicy(input: {
   siteId: number;
   actorUserId: number;
   policy: PhisAddonRoleGrantPolicy;
+  /**
+   * The roles the Add-on's manifest declares, from the caller, who holds that manifest. They decide
+   * which roles a granted one implies; read here from installed state instead, a caller whose Add-on
+   * that state does not know would be refused everything.
+   */
+  declared: readonly PhisAddonRoleDescriptor[];
 }) {
   if (await holdsPhisSiteAccess(input.siteId, input.actorUserId, PHIS_SITE_ACCESS.siteAdmin)) {
     return true;
@@ -57,12 +64,14 @@ export async function satisfiesPhisAddonGrantPolicy(input: {
   if ("siteAccess" in input.policy) {
     return await holdsPhisSiteAccess(input.siteId, input.actorUserId, input.policy.siteAccess);
   }
-  const held = await readPhisAddonUserRoles(getPool(), {
+  const granted = await readPhisAddonUserRoles(getPool(), {
     addonId: input.addonId,
     siteId: input.siteId,
     userId: input.actorUserId,
   });
-  return held.includes(input.policy.role);
+  // Implied roles count: whoever may grant `clerk` because they hold it may also when they hold the
+  // `manager` that includes it.
+  return expandPhisAddonHeldRoles(input.declared, granted).includes(input.policy.role);
 }
 
 /**
@@ -93,6 +102,7 @@ export async function mayGrantPhisAddonRole(input: {
     siteId: input.siteId,
     actorUserId: input.actorUserId,
     policy: descriptor.grantableBy,
+    declared,
   })
     ? { allowed: true, descriptor }
     : { allowed: false, reason: "not_permitted" };
@@ -133,11 +143,11 @@ export async function readPhisAddonGrantableRoles(input: {
     }
     const held = siteAdmin
       ? null
-      : await readPhisAddonUserRoles(getPool(), {
+      : expandPhisAddonHeldRoles(entry.manifest.roles, await readPhisAddonUserRoles(getPool(), {
         addonId: entry.manifest.addonId,
         siteId: input.siteId,
         userId: input.actorUserId,
-      });
+      }));
     for (const role of entry.manifest.roles) {
       const policy = role.grantableBy;
       const allowed = siteAdmin

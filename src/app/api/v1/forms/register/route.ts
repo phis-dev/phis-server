@@ -59,7 +59,7 @@ async function notifyExistingAccountOwner(
   email: string,
   locale: string,
 ) {
-  if (checkAuthAttemptLimit(request, [`register-notice:${site.id}:${email}`], 3) !== null) {
+  if (await checkAuthAttemptLimit(request, [`register-notice:${site.id}:${email}`], 3) !== null) {
     return;
   }
   try {
@@ -80,7 +80,7 @@ async function notifyExistingAccountOwner(
 }
 
 export async function POST(request: Request) {
-  const guardError = guardApiV1(request, { requireInternalToken: true });
+  const guardError = await guardApiV1(request, { requireInternalToken: true });
   if (guardError) {
     return guardError;
   }
@@ -199,7 +199,7 @@ export async function POST(request: Request) {
     // Linking verifies a password, so it is a place to guess at one: measured like the login, and a
     // guess past the limit is simply not believed.
     const withinLimit = mayLink &&
-      checkAuthAttemptLimit(request, [`login:${site.id}:${email}`]) === null;
+      await checkAuthAttemptLimit(request, [`login:${site.id}:${email}`]) === null;
     const linked = withinLimit &&
       isUserAccountEnabled(existingUser.flags) &&
       await verifyPasswordHash(existingUser.passwordHash!, password);

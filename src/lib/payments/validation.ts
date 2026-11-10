@@ -2,7 +2,7 @@ import { isDeepStrictEqual } from "node:util";
 import type {
   PhisPayment, PhisPaymentAddition, PhisPaymentCustomerDetails, PhisPaymentErrorCode, PhisPaymentMoney, PhisPaymentObservedTotals,
   PhisPaymentPricing, PhisPaymentPricingFeatures, PhisPaymentPricingSelector, PhisPaymentProfileDraft, PhisPaymentProviderObservation,
-  PhisPaymentProviderProbe, PhisPaymentTotals,
+  PhisPaymentProviderProbe, PhisPaymentProviderStoredMethod, PhisPaymentStoredFeatures, PhisPaymentTotals,
 } from "@phis/contracts/payments";
 import type { PhisAddonManifestV1 } from "@phis/contracts/addon";
 import {
@@ -58,6 +58,7 @@ export function validatePhisPaymentProviderProbe(value: PhisPaymentProviderProbe
         captureModes: [...features.captureModes], checkoutKinds: [...features.checkoutKinds], canPartialCapture: features.canPartialCapture,
         canCancel: features.canCancel, canRefund: features.canRefund, canPartialRefund: features.canPartialRefund,
         pricing: validatePricingFeatures(features.pricing),
+        stored: features.stored == null ? null : validateStoredFeatures(features.stored),
       } };
     });
     return { merchantIdentity: value.merchantIdentity, mode: value.mode, methods };
@@ -103,10 +104,12 @@ export function validatePhisPaymentProfileDraft(
       || !manifest.eventHandlers?.some(h => h.event === "payment.changed")
       || Object.keys(grant).some(k => !["consumerAddonId", "operations", "merchantActions"].includes(k))
       || !Array.isArray(grant.operations) || grant.operations.length === 0 || new Set(grant.operations).size !== grant.operations.length
-      || grant.operations.some((op: string) => !["read", "create", "complete", "refresh", "capture", "cancel", "refund"].includes(op))
-      || !grant.merchantActions || Object.keys(grant.merchantActions).some(k => !["capture", "cancel", "refund"].includes(k))) return fail();
+      || grant.operations.some((op: string) => !["read", "create", "complete", "refresh", "capture", "cancel", "refund", "method-store", "method-read", "method-remove",
+        "subscription-read", "subscription-create", "subscription-cancel"].includes(op))
+      || !grant.merchantActions || Object.keys(grant.merchantActions).some(k => !["capture", "cancel", "refund", "subscriptionEnd", "subscriptionPrice"].includes(k))) return fail();
     owners.add(grant.consumerAddonId);
-    for (const action of ["capture", "cancel", "refund"] as const) {
+    // The three a payment has are required; ending a subscription at once is checked where it is stated.
+    for (const action of ["capture", "cancel", "refund", ...(["subscriptionEnd", "subscriptionPrice"] as const).filter(optional => grant.merchantActions[optional] !== undefined)] as const) {
       const policy = grant.merchantActions[action];
       if (!policy || Object.keys(policy).some(k => !["roles", "jobs", "events"].includes(k))) return fail();
       for (const [kind, choices] of [["roles", manifest.roles?.map(r => r.name) ?? []], ["jobs", manifest.jobs.map(j => j.id)], ["events", manifest.eventHandlers?.map(e => e.event) ?? []]] as const) {
@@ -276,6 +279,37 @@ export function validatePhisPaymentPricingSelector(value: unknown): PhisPaymentP
 export function phisPaymentMethodSupports(features: PhisPaymentPricingFeatures, selector: PhisPaymentPricingSelector): boolean {
   return features.bases.includes(selector.basis) && features.tax.includes(selector.tax) && selector.discounts <= features.maxDiscounts
     && (selector.promotionCodes === "none" || (features.promotionCodes !== "none" && (selector.discounts === 0 || features.promotionCodes === "with-discounts")));
+}
+
+function validateStoredFeatures(value: unknown): PhisPaymentStoredFeatures {
+  requireKeys(value, ["setup", "chargeResult", "expires", "perPayer", "pricing"], false);
+  requireList(value.setup, 2);
+  for (const way of value.setup) requireOneOf(way, ["with-payment", "alone"]);
+  requireOneOf(value.chargeResult, ["notified", "immediate"]); requireOneOf(value.perPayer, ["single", "many"]);
+  if (value.setup.length === 0 || new Set(value.setup).size !== value.setup.length || typeof value.expires !== "boolean") invalid();
+  return { setup: [...value.setup] as PhisPaymentStoredFeatures["setup"], chargeResult: value.chargeResult, expires: value.expires,
+    perPayer: value.perPayer, pricing: validatePricingFeatures(value.pricing) };
+}
+
+/**
+ * A stored method as a Provider reported it, copied field by field. The display is for a person and
+ * must not carry what identifies the method elsewhere, so it is short text and nothing more is kept.
+ */
+export function validatePhisPaymentProviderStoredMethod(value: unknown): PhisPaymentProviderStoredMethod {
+  try {
+    requireKeys(value, ["binding", "display", "status", "expiresAt"], false);
+    const binding = value.binding as PhisPaymentProviderStoredMethod["binding"];
+    requirePhisPaymentReference(binding?.reference);
+    if (!binding.data || Array.isArray(binding.data) || Object.keys(binding.data).length > 32) throw new Error();
+    for (const [key, item] of Object.entries(binding.data)) { requirePhisPaymentReference(key); requirePhisPaymentReference(item); }
+    const display = value.display as PhisPaymentProviderStoredMethod["display"];
+    if (!display || typeof display.title !== "string" || display.title.length < 1 || display.title.length > 80
+      || (display.hint !== null && (typeof display.hint !== "string" || display.hint.length < 1 || display.hint.length > 80))) throw new Error();
+    requireOneOf(value.status, ["pending", "active", "invalid", "revoked", "expired"]);
+    if (value.expiresAt !== null && (typeof value.expiresAt !== "string" || Number.isNaN(Date.parse(value.expiresAt)))) throw new Error();
+    return { binding: { reference: binding.reference, data: { ...binding.data } }, display: { title: display.title, hint: display.hint },
+      status: value.status, expiresAt: value.expiresAt === null ? null : new Date(value.expiresAt as string).toISOString() };
+  } catch { throw new PhisPaymentError("provider_unavailable", "Provider returned an invalid stored method."); }
 }
 
 function validatePricingFeatures(value: unknown): PhisPaymentPricingFeatures {

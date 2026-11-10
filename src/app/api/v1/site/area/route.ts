@@ -24,7 +24,7 @@ function resolveAreaPresetIdentity(url: URL) {
 const PUBLISHED_PAGES_INCLUDE = "publishedPages";
 
 export async function GET(request: NextRequest) {
-  const guardError = guardApiV1(request, { requireInternalToken: true });
+  const guardError = await guardApiV1(request, { requireInternalToken: true });
   if (guardError) {
     return guardError;
   }

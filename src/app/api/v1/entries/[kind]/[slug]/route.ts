@@ -28,7 +28,7 @@ const MAX_RELATED_LIMIT = 12;
  * expired, or withdrawn.
  */
 export async function GET(request: Request, { params }: { params: Promise<{ kind: string; slug: string }> }) {
-  const guardError = guardApiV1(request);
+  const guardError = await guardApiV1(request);
   if (guardError) {
     return guardError;
   }

@@ -66,6 +66,16 @@ export type PhisConfig = {
     internalToken?: string;
     disableRateLimit?: boolean;
   };
+  /**
+   * A cache every Core instance shares, where the installation runs one.
+   *
+   * Optional, and nothing depends on it being there: what counts in it (the rate limits) counts in the
+   * process instead when the address is absent or the cache does not answer. `redis://` or `rediss://`,
+   * with credentials and a database number where needed: `redis://:secret@127.0.0.1:6379/2`.
+   */
+  cache?: {
+    redisUrl?: string;
+  };
   deepl?: {
     apiKey?: string;
     apiUrl?: string;
@@ -333,6 +343,10 @@ export function mergeConfig(base: PhisConfig, override: PhisConfig): PhisConfig 
     api: {
       ...base.api,
       ...override.api,
+    },
+    cache: {
+      ...base.cache,
+      ...override.cache,
     },
     deepl: {
       ...base.deepl,

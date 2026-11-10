@@ -3,7 +3,12 @@ import type { PhisAddonManifestV1 } from "@phis/contracts/addon";
 import type { PhisPaymentNotificationsCapabilityV1 } from "@phis/contracts/payments";
 import { getPool } from "../db";
 import { getSiteByKey } from "../../db/sites";
-import { claimPhisPaymentReceipt, findPhisPaymentForNotification, readPhisPaymentProfile, releasePhisPaymentReceipt } from "../../db/payments.mts";
+import {
+  claimPhisPaymentReceipt, findPhisPaymentForNotification, findPhisPaymentStoredMethodsForNotification, readPhisPaymentProfile,
+  releasePhisPaymentReceipt,
+} from "../../db/payments.mts";
+import { claimDuePhisPaymentSubscriptions, releasePhisPaymentSubscription } from "../../db/payment-subscriptions.mts";
+import { withPoolTransaction } from "../db-transaction.ts";
 import { resolvePhisServiceProvider } from "../addons/services.ts";
 import { holdsPhisSiteAccess } from "../addons/site-access.ts";
 import { buildPhisAddonRolesCapability } from "../addons/roles-capability.ts";
@@ -72,7 +77,63 @@ export function buildPhisPaymentsCapability(input: {
     getOperation: engine.getOperation.bind(engine), getRefund: engine.getRefund.bind(engine), complete: afterPaymentCommit(scope.siteId, engine.complete.bind(engine)),
     refresh: afterPaymentCommit(scope.siteId, engine.refresh.bind(engine)), capture: afterPaymentCommit(scope.siteId, engine.capture.bind(engine)),
     cancel: afterPaymentCommit(scope.siteId, engine.cancel.bind(engine)), refund: afterPaymentCommit(scope.siteId, engine.refund.bind(engine)),
+    getStoredMethod: engine.getStoredMethod.bind(engine), listStoredMethods: engine.listStoredMethods.bind(engine),
+    removeStoredMethod: afterPaymentCommit(scope.siteId, engine.removeStoredMethod.bind(engine)),
+    createSubscription: afterPaymentCommit(scope.siteId, engine.createSubscription.bind(engine)),
+    getSubscription: engine.getSubscription.bind(engine), listSubscriptionPeriods: engine.listSubscriptionPeriods.bind(engine),
+    cancelSubscription: afterPaymentCommit(scope.siteId, engine.cancelSubscription.bind(engine)),
+    resumeSubscription: afterPaymentCommit(scope.siteId, engine.resumeSubscription.bind(engine)),
+    settleSubscription: afterPaymentCommit(scope.siteId, engine.settleSubscription.bind(engine)),
+    replaceSubscriptionMethod: afterPaymentCommit(scope.siteId, engine.replaceSubscriptionMethod.bind(engine)),
+    setupMethod: afterPaymentCommit(scope.siteId, engine.setupMethod.bind(engine)),
+    refreshStoredMethod: afterPaymentCommit(scope.siteId, engine.refreshStoredMethod.bind(engine)),
+    changeSubscriptionPrice: afterPaymentCommit(scope.siteId, engine.changeSubscriptionPrice.bind(engine)),
   });
+}
+
+/**
+ * The schedule: every subscription that owes something now, one after another, each under a lease.
+ *
+ * It acts as nobody. The engine it builds holds the consumer's scope, because a scheduled charge is made
+ * under the consumer's stored agreement and its grant, and it authorizes no merchant action at all. One
+ * subscription that fails does not stop the others; what it could not do it will be offered again.
+ */
+export async function runDuePhisPaymentSubscriptions(limit = 50, signal: AbortSignal = new AbortController().signal) {
+  const pool = getPool();
+  const due = await withPoolTransaction(pool, db => claimDuePhisPaymentSubscriptions(db, limit));
+  const sites = new Set<number>();
+  for (const subscription of due) {
+    if (signal.aborted) break;
+    const scope = { siteId: subscription.siteId, siteKey: subscription.siteKey, consumerAddonId: subscription.consumerAddonId };
+    try {
+      const engine = new PhisPaymentEngine({ providerFailed: logPhisPaymentProviderFailure, pool, scope, signal,
+        publicBaseUrl: async () => { const site = await getSiteByKey(scope.siteKey); if (!site) throw new PhisPaymentError("not_found"); return site.publicBaseUrl; },
+        resolveProvider: profile => provider(profile, scope.siteKey), merchantAuthorized: async () => false });
+      const outcome = await engine.advanceSubscription(subscription.record.id);
+      if (outcome) {
+        logRuntimeEvent("warn", "payment.subscription.postponed", {
+          message: "A subscription period could not be charged and is looked at again in an hour.",
+          siteKey: scope.siteKey,
+          pluginKey: scope.consumerAddonId,
+          error: normalizeLogThrowable(outcome.postponed),
+          meta: { subscriptionId: subscription.record.id, code: outcome.postponed instanceof PhisPaymentError ? outcome.postponed.code : null },
+        });
+      }
+    } catch (error) {
+      logRuntimeEvent("error", "payment.subscription.schedule_failed", {
+        message: "The schedule could not advance a subscription.",
+        siteKey: scope.siteKey,
+        pluginKey: scope.consumerAddonId,
+        error: normalizeLogThrowable(error),
+        meta: { subscriptionId: subscription.record.id },
+      });
+    } finally {
+      sites.add(scope.siteId);
+      if (subscription.leaseToken) await releasePhisPaymentSubscription(pool, subscription.record.id, subscription.leaseToken).catch(() => {});
+    }
+  }
+  for (const siteId of sites) schedulePhisAddonEventDelivery(siteId);
+  return due.length;
 }
 
 /** Available only for a dispatcher-bound hook. Successful verification grants no ambient authority. */
@@ -103,6 +164,21 @@ export function buildPhisPaymentNotificationsCapability(input: {
       if (verified.outcome === "unavailable") throw new PhisPaymentError("provider_unavailable");
       if (verified.outcome === "irrelevant") return { outcome: "ignored" as const };
       requirePhisPaymentReference(verified.reference);
+      if (verified.subject === "stored-method") {
+        /*
+         * A stored method changed outside phis: revoked by the payer, expired, replaced. There is no
+         * receipt to claim, because the answer is read from the Provider again and writing the same
+         * state twice changes nothing.
+         */
+        const methods = await findPhisPaymentStoredMethodsForNotification(getPool(), profile.siteId, profileKey, verified.reference);
+        if (methods.length === 0) return { outcome: "ignored" as const };
+        for (const method of methods) {
+          const engine = new PhisPaymentEngine({ providerFailed: logPhisPaymentProviderFailure, pool: getPool(), scope: { ...input.scope, consumerAddonId: method.consumerAddonId }, signal: input.signal,
+            publicBaseUrl: async () => { throw new PhisPaymentError("forbidden"); }, resolveProvider: async () => adapter!, merchantAuthorized: async () => false });
+          await engine.reconcileStoredMethod(method, profile);
+        }
+        return { outcome: "processed" as const };
+      }
       const payment = await findPhisPaymentForNotification(getPool(), profile.siteId, profileKey, verified.reference);
       if (!payment) throw new PhisPaymentError("provider_unavailable");
       let receipt;

@@ -12,6 +12,7 @@ import {
 import {
   getMediaAssetBySiteAndChecksum,
   getMediaAssetBySiteAndId,
+  getMediaAssetsByIds,
   listPublicSiteSpaceMediaAssetsByIds,
 } from "./media";
 import { getMediaSpaceById } from "./media-spaces";
@@ -42,6 +43,15 @@ describe("Media Site and Space isolation against PostgreSQL", () => {
 
     expect(await getMediaAssetBySiteAndId(siteA.id, assetId)).not.toBeNull();
     expect(await getMediaAssetBySiteAndId(siteB.id, assetId)).toBeNull();
+  });
+
+  it("does not return another Site's Assets from a list of ids", async () => {
+    const own = await createPhiTestAsset(siteA, "pgtest/isolation-list-a");
+    const foreign = await createPhiTestAsset(siteB, "pgtest/isolation-list-b");
+
+    // The ids come from a Site's own Theme, which only says what the Site wrote, not what it owns.
+    const assets = await getMediaAssetsByIds(siteA.id, [own, foreign]);
+    expect([...assets.keys()]).toEqual([own]);
   });
 
   it("does not return an Asset from a Space it was not asked about", async () => {

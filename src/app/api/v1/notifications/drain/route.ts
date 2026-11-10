@@ -18,7 +18,7 @@ export const dynamic = "force-dynamic";
  * so what is left here is the retry, which is late by definition.
  */
 export async function POST(request: NextRequest) {
-  const guardError = guardApiV1(request, { requireInternalToken: true });
+  const guardError = await guardApiV1(request, { requireInternalToken: true });
   if (guardError) {
     return guardError;
   }

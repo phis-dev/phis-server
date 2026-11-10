@@ -105,7 +105,7 @@ export async function POST(request: NextRequest) {
    * count at all, and it is the one behind which every Site sits. Keyed on the address being guessed
    * at, with the caller's network address added where a trusted proxy hands one over.
    */
-  const retryAfter = checkAuthAttemptLimit(request, [`operator-login:${email}`]);
+  const retryAfter = await checkAuthAttemptLimit(request, [`operator-login:${email}`]);
   if (retryAfter !== null) {
     logRuntimeEvent("warn", "operator.login.rate_limited", {
       message: "Operator login rejected because too many attempts were made.",

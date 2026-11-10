@@ -28,9 +28,10 @@ export type PhisAddonEventRow = {
   siteId: number;
   addonId: string;
   event: PhisAddonEventId;
-  subjectKind: "thread" | "payment" | "emitted";
+  subjectKind: "thread" | "payment" | "subscription" | "emitted";
   threadId: number | null;
   paymentId: string | null;
+  subscriptionId: string | null;
   payload: Record<string, unknown>;
   attempts: number;
   /** The Add-on that emitted this event, for an `emitted` subject; null on Core's own events. */
@@ -47,8 +48,9 @@ type OutboxRow = {
   addon_id: string;
   event: string;
   thread_id: number | null;
-  subject_kind: "thread" | "payment" | "emitted";
+  subject_kind: "thread" | "payment" | "subscription" | "emitted";
   payment_id: string | null;
+  subscription_id: string | null;
   payload: Record<string, unknown> | null;
   attempts: number;
   emitter: string | null;
@@ -58,7 +60,7 @@ type OutboxRow = {
 };
 
 const OUTBOX_COLUMNS =
-  "id, site_id, addon_id, event, subject_kind, thread_id, payment_id, payload, attempts, emitter, hop, dedupe_key, created_at";
+  "id, site_id, addon_id, event, subject_kind, thread_id, payment_id, subscription_id, payload, attempts, emitter, hop, dedupe_key, created_at";
 
 function mapOutboxRow(row: OutboxRow): PhisAddonEventRow {
   return {
@@ -68,6 +70,7 @@ function mapOutboxRow(row: OutboxRow): PhisAddonEventRow {
     event: row.event as PhisAddonEventId,
     subjectKind: row.subject_kind,
     paymentId: row.payment_id,
+    subscriptionId: row.subscription_id,
     threadId: row.thread_id,
     payload: row.payload ?? {},
     attempts: row.attempts,

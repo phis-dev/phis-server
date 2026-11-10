@@ -157,8 +157,8 @@ function resolveTranslationNamespace(request: Request, ctx: string) {
  * not name. Shared by the single and the batch handler, which used to carry this and everything in
  * `prepareTranslation` twice over.
  */
-function readTranslationCaller(request: Request) {
-  const guardError = guardApiV1(request);
+async function readTranslationCaller(request: Request) {
+  const guardError = await guardApiV1(request);
   if (guardError) {
     return { error: guardError };
   }
@@ -170,7 +170,7 @@ function readTranslationCaller(request: Request) {
   return { error: null, tokenMode, explicitSiteKey };
 }
 
-type TranslationCaller = Exclude<ReturnType<typeof readTranslationCaller>, { error: NextResponse }>;
+type TranslationCaller = Exclude<Awaited<ReturnType<typeof readTranslationCaller>>, { error: NextResponse }>;
 
 /**
  * The namespace, the locale and the write mode of a validated request, or the answer that ends it.
@@ -207,7 +207,7 @@ async function prepareTranslation(request: Request, caller: TranslationCaller, r
 }
 
 async function handleTranslation(request: Request, payload: TranslationPayload) {
-  const caller = readTranslationCaller(request);
+  const caller = await readTranslationCaller(request);
   if (caller.error) {
     return caller.error;
   }
@@ -283,7 +283,7 @@ async function handleTranslation(request: Request, payload: TranslationPayload) 
 }
 
 async function handleBatchTranslation(request: Request, payload: TranslationPayload) {
-  const caller = readTranslationCaller(request);
+  const caller = await readTranslationCaller(request);
   if (caller.error) {
     return caller.error;
   }

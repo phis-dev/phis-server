@@ -49,13 +49,26 @@ describe("translation batches against PostgreSQL", () => {
       .toEqual(new Map([["New message", ids.get("New message")], ["Known message", known]]));
   });
 
-  it("answers a hash collision as an Error for that message alone", async () => {
-    // The hash covers the first fifty characters, so these two share one.
-    const prefix = "x".repeat(50);
-    const ids = await ensureSiteMessageIds(site.id, [`${prefix} first`, `${prefix} second`, "Plain"], ctx);
+  it("keeps two messages sharing a long opening apart", async () => {
+    // The hash covered the first fifty characters once, and HTML opening with the same link did not.
+    const opening = '<x-link data-index="0"><x-code data-index="0" translate="no">';
+    const ids = await ensureSiteMessageIds(site.id, [`${opening}/api/v1/tr</x-code></x-link>`, `${opening}/api/operator</x-code></x-link>`], ctx);
 
-    expect(typeof ids.get(`${prefix} first`)).toBe("number");
-    expect(ids.get(`${prefix} second`)).toBeInstanceOf(Error);
+    expect(typeof ids.get(`${opening}/api/v1/tr</x-code></x-link>`)).toBe("number");
+    expect(typeof ids.get(`${opening}/api/operator</x-code></x-link>`)).toBe("number");
+    expect(ids.get(`${opening}/api/v1/tr</x-code></x-link>`)).not.toBe(ids.get(`${opening}/api/operator</x-code></x-link>`));
+  });
+
+  it("answers a row stored under the hash for another text as an Error for that message alone", async () => {
+    const pool = await requirePhiTestDatabase();
+    await pool.query(
+      `INSERT INTO phis.tr_site_msg (site_id, msg, msg_hash, ctx)
+       VALUES ($1, 'Somebody else', sha256(convert_to('Taken', 'UTF8')), $2)`,
+      [site.id, ctx],
+    );
+    const ids = await ensureSiteMessageIds(site.id, ["Taken", "Plain"], ctx);
+
+    expect(ids.get("Taken")).toBeInstanceOf(Error);
     expect(typeof ids.get("Plain")).toBe("number");
   });
 

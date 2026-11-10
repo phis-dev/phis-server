@@ -27,7 +27,7 @@ function parsePositiveInt(value: string | null) {
  * Folder must be in the Site Space; a Group's Folder answers empty rather than leaking its pictures.
  */
 export async function GET(request: Request) {
-  const guardError = guardApiV1(request, { requireInternalToken: true });
+  const guardError = await guardApiV1(request, { requireInternalToken: true });
   if (guardError) return guardError;
   const site = await requireSiteFromRequest(request);
   if (!site) return NextResponse.json({ error: "Site not found." }, { status: 404 });

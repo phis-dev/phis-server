@@ -136,7 +136,7 @@ export function getApiV1TokenMode(request: Request): ApiV1TokenMode {
   return null;
 }
 
-export function guardApiV1(request: Request, options: GuardOptions = {}) {
+export async function guardApiV1(request: Request, options: GuardOptions = {}) {
   const tokenMode = getApiV1TokenMode(request);
 
   if (
@@ -180,7 +180,7 @@ export function guardApiV1(request: Request, options: GuardOptions = {}) {
   ) {
     const visitor = readFormRelayVisitor(request);
     const retryAfter = visitor
-      ? checkRateLimit(`form-relay:${visitor}`, FORM_RELAY_SUBMISSIONS_PER_MINUTE)
+      ? await checkRateLimit(`form-relay:${visitor}`, FORM_RELAY_SUBMISSIONS_PER_MINUTE)
       : null;
     if (retryAfter !== null) {
       return NextResponse.json(
@@ -198,8 +198,8 @@ export function guardApiV1(request: Request, options: GuardOptions = {}) {
      */
     const limit = RATE_LIMIT_PER_MINUTE_BY_PATH[path];
     const retryAfter = limit == null
-      ? checkRateLimit(getClientIp(request))
-      : checkRateLimit(`${path}:${getClientIp(request)}`, limit);
+      ? await checkRateLimit(getClientIp(request))
+      : await checkRateLimit(`${path}:${getClientIp(request)}`, limit);
     if (retryAfter !== null) {
       return NextResponse.json(
         { error: "Too many requests." },

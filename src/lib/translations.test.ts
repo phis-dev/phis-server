@@ -33,9 +33,8 @@ const { trackTranslationStandIns, translateBatchWithCache, translateSiteBatchWit
   await import("@/lib/translations");
 
 /*
- * Catalogue identity can genuinely fail for one message: `tr_site_msg` is unique on
- * (site_id, msg_hash, ctx) and the hash covers a prefix, so two messages sharing an opening are one
- * message to it. That failure used to leave the whole batch, and every other string travelling with it
+ * Catalogue identity can genuinely fail for one message: a row stored under its hash for another text,
+ * or an external source conflicting with a protected variant. That failure used to leave the whole batch, and every other string travelling with it
  * fell back to its source language -- a page lost its translations over one paragraph.
  */
 describe("translateSiteBatchWithCache", () => {

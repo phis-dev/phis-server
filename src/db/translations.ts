@@ -74,10 +74,9 @@ function normalizeMessageHash(msgHash: string) {
   return msgHash.toLowerCase();
 }
 
-const TR_HASH_PREFIX_LENGTH = 50;
-
+/** SHA-256 over the whole text, as for a global message (`computeTranslationHash`). */
 function computeSiteMessageHash(msg: string) {
-  return createHash("sha256").update(msg.slice(0, TR_HASH_PREFIX_LENGTH)).digest("hex");
+  return createHash("sha256").update(msg).digest("hex");
 }
 
 export function computeExternalSourceHash(msg: string) {
@@ -248,9 +247,9 @@ export async function getTranslations(
  * extend it turns on (TRANSLATIONS.md, "Somebody else's strings in the global store"). Asked separately
  * rather than folded into that query: only the restricted path needs it, and only for what it missed.
  *
- * A hash whose stored message is a different text counts as absent. `msg_hash` covers the opening of a
- * message, so a collision is two messages to us and one key to the column; the requested one is not in
- * the catalogue, and treating it as present would fill in a translation under somebody else's text.
+ * A hash whose stored message is a different text counts as absent. `msg_hash` covers the whole text, so
+ * that is a hash computed elsewhere for another text, not a collision; the requested one is not in the
+ * catalogue, and treating it as present would fill in a translation under somebody else's text.
  */
 export async function findGlobalMessageHashes(
   entries: Array<{ msg: string; hash: string }>,

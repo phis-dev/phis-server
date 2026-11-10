@@ -40,7 +40,7 @@ function buildRecipientName(firstName: string, lastName: string) {
 }
 
 export async function POST(request: Request) {
-  const guardError = guardApiV1(request, { requireInternalToken: true });
+  const guardError = await guardApiV1(request, { requireInternalToken: true });
   if (guardError) {
     return guardError;
   }

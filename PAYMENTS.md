@@ -5,6 +5,8 @@ the pricing extension of section 12 (provider-added tax, shipping and discounts)
 The consumer and Provider types are exported from `@phis/contracts/payments` and `/addon`. Core now
 binds both capabilities, resolves statically installed Providers, persists merchant profiles/grants,
 payments, commands, refunds and verified receipts, and routes `payment.changed` to the owning consumer.
+Stored payment methods and subscriptions on Core's own schedule (section 13) were approved by the owner
+and built on 2026-11-10, as an extension of this contract in place.
 The development database has been updated explicitly to the creation schema; this does not deploy any compiled installation.
 
 The agreed commerce ownership is recorded in [COMMERCE_AND_PAYMENTS.md](./design/COMMERCE_AND_PAYMENTS.md).
@@ -36,8 +38,8 @@ The second capability has intentionally narrower authority. A webhook cannot mar
 select another consumer, supply a trusted amount or gain the general write authority of a verified
 system actor. It can only submit its bound external request for verification and reconciliation.
 
-Core owns payment execution records, not a product catalogue, a cart, tax calculations, invoices,
-inventory, fulfilment or accounting. The consuming Add-on supplies the final amount and decides what
+Core owns payment execution records and the schedule of a subscription (section 13), not a product
+catalogue, a cart, tax calculations, invoices, inventory, fulfilment or accounting. The consuming Add-on supplies the final amount and decides what
 that payment means for its own business record. Core does not inspect another Add-on's tables.
 
 ## 2. Merchant profiles and ownership
@@ -606,8 +608,8 @@ Core enforces same currency, non-negative totals, captured amount no greater tha
 refunds no greater than captured funds. Fulfilment remains the consumer's
 decision: it checks the captured amount against its own amount due, not merely the state name.
 Captured funds are not a claim of payout completion or immunity from later disputes. Payouts,
-settlement accounting, subscriptions, saved cards, dispute workflows and platform commissions are
-outside this initial execution contract.
+settlement accounting, dispute workflows and platform commissions are outside this execution contract.
+Stored payment methods and subscriptions are section 13.
 
 ## 6. Provider adapter
 
@@ -1008,9 +1010,88 @@ order; the payment carries no tax.
 members of the refund record. The `phis.payments` check constraint measures captured funds against the
 total when one is present and against the base amount otherwise ([DB.md](./DB.md#phispayments)).
 
-Subscriptions, saved payment methods, multiple captures, platform commissions and disputes remain
-outside this contract (section 5); they are other kinds of extension, not richer amounts. The first
+Multiple captures, platform commissions and disputes remain outside this contract (section 5); they
+are other kinds of extension, not richer amounts. A stored-method charge and a subscription period
+follow the same arithmetic as any payment (section 13). The first
 Provider mapping is in [PAYMENTS_STRIPE.md](./PAYMENTS_STRIPE.md) section 8.
+
+## 13. Stored payment methods and subscriptions
+
+Part of `payments:v1`, extended in place: no further capability, service kind or notification ingress.
+The reasons for each choice are in [design/SUBSCRIPTIONS.md](./design/SUBSCRIPTIONS.md); this section
+is what is built. The types are in `@phis/contracts/payments`, the tables in
+[DB.md](./DB.md#phispayment_stored_methods).
+
+**Who owns what.** Core owns the schedule, the retries and the end of a subscription. A Provider only
+stores a payment method while the customer is present and charges it later without them; it runs no
+schedule, issues no invoice and decides no retry. The consumer states the price and owns the service
+state and the billing document. Payment details never reach phis.
+
+**Declared per method.** `PhisPaymentFeatures.stored` says whether a method can be stored and how:
+`setup` (`with-payment`, `alone`), `chargeResult` (`notified`, `immediate`), `expires`, `perPayer`
+(`single`, `many`) and the `pricing` a charge without a checkout can carry. Absent or `null` means not
+storable, which is every Provider built before this section. Core holds no list of method names.
+`listMethods` and `probe` take `usage: "recurring"` and then answer only what can be stored.
+
+**Stored methods.** `create` with `store` stores the method the customer pays with (`with-payment`);
+`setupMethod` opens a hosted page on which a method is stored and nothing is charged (`alone`). Either
+way the record exists at once as `pending` and becomes `active` when the Provider reports the method,
+or `invalid` when the payment or the page ended without one. `invalid`, `revoked` and `expired` are
+final. `removeStoredMethod` revokes at the Provider first and records it second, and is refused while a
+subscription that has not ended is charged to the method. Where a Provider keeps one method per payer,
+a new one revokes the others and takes over their subscriptions. Storing needs the grant
+`method-store`, which `create` does not imply.
+
+**A charge without the customer** is an ordinary payment with `initiator` `schedule` or `merchant`, no
+checkout, and operation action `charge`. It is not a consumer method: Core makes it for a subscription
+period, idempotent on a key derived from the subscription, the period and the attempt. Its answer is
+one of three: paid (or pending where `chargeResult` is `notified`); failed with `payment_declined`; or
+failed with `customer_action_required` or `stored_method_unavailable`, after which no retry can succeed
+without the payer. An unknown outcome is recovered, never sent again.
+
+**Subscriptions.** `createSubscription` stores the agreement as `pending` and opens its first payment,
+which stores the method. It is `active` from that payment's capture, which starts the first period, and
+`canceled` if that payment ends without one. Every boundary is computed from the start of the first
+period and the period index, so neither a late charge nor a short month moves the schedule. Each period
+is one row and is settled in the transaction of the payment that pays it; the payment carries
+`subscriptionId` and `periodIndex` and is referenced `<subscription reference>#<index>`.
+
+| Status | Means |
+| --- | --- |
+| `pending` | the first payment is open |
+| `active` | the latest period is paid; `nextChargeAt` is its end |
+| `past_due` | a renewal failed; Core retries by the dunning policy, or waits for the customer where `customerActionRequired` |
+| `unpaid` | the policy is used up; nothing more is charged until the customer settles or somebody ends it |
+| `canceled` | final |
+
+**Dunning.** The consumer states `retryAfterDays` (at most 8 attempts, each within 60 days, counted from
+the day the period fell due) and `onExhausted` (`unpaid` or `cancel`); the default is 3, 5 and 7 days,
+then `unpaid`. Where the customer has to return, no attempt is made and the wait ends when the last
+attempt would have been made. `settleSubscription` is the customer paying the open period on a
+checkout, which stores the method anew and makes the subscription `active` again.
+
+**Ending and changing.** `cancelSubscription` at `period-end` charges nothing further and ends the
+subscription with the paid period; `resumeSubscription` takes it back until then. A subscription with
+nothing paid ahead ends at once. `now` ends a paid subscription at once and is a merchant action under
+`merchantActions.subscriptionEnd`; it refunds nothing. `changeSubscriptionPrice` replaces what every
+later period costs, under `merchantActions.subscriptionPrice`, in the same currency and within what the
+stored method can be charged; a period that already exists keeps its amount. Both policies are optional
+and absent means nobody.
+
+**The schedule** is the Core job `payments.subscriptions.advance`, every five minutes: it takes what is
+due under a lease, acts as nobody with the consumer's scope and grant, and never charges while an
+earlier payment for the same period is unresolved. A charge that could not be made at all (a disabled
+profile, a withdrawn grant) uses no attempt; it is logged and looked at again in an hour.
+
+**Events.** `payment.changed` has two subjects: a payment, and a subscription with the period it
+concerns. A renewal produces both, and a handler narrows on `subject.kind`.
+
+**Grants.** `method-store`, `method-read`, `method-remove`, `subscription-read`, `subscription-create`
+(also needs `create` and `method-store`; it is also what a price change asks for) and
+`subscription-cancel` (cancel at the period end, resume, settle, change the method).
+
+**Not built:** trials, pauses, proration, a cancellation at a chosen date, a Provider-run schedule, and
+a notice when several periods are overdue after an outage (they are charged one per run).
 
 ## References
 

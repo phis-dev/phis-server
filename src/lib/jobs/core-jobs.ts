@@ -15,6 +15,7 @@ import {
 } from "@/lib/constants/jobs";
 import { getPool } from "@/lib/db";
 import { drainPhiNotifications } from "@/lib/notifications/deliver";
+import { runDuePhisPaymentSubscriptions } from "@/lib/payments/runtime";
 import { isPhiJobStepSubHourly } from "./slots";
 
 /**
@@ -56,6 +57,18 @@ export const PHI_CORE_JOBS: readonly PhiCoreJob[] = Object.freeze([
         if (signal.aborted) return;
         await drainPhisAddonEventsForSite(siteId);
       }
+    },
+  },
+  {
+    id: "payments.subscriptions.advance",
+    schedule: { every: "5m" },
+    summary: "Charges the subscription periods that fell due, retries the ones that failed, and ends what was cancelled.",
+    async run(signal: AbortSignal) {
+      /*
+       * Bounded per run, and run again in five minutes: a long list is worked off over several runs
+       * instead of holding one for as long as every Provider takes to answer.
+       */
+      await runDuePhisPaymentSubscriptions(100, signal);
     },
   },
   {

@@ -46,11 +46,15 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ authenticated: false }, { status: 401 });
   }
   // The locale codes and nothing else: the full runtime config also resolves the theme and the logos.
-  const availableLocales = await readSiteLocaleCodes(site.id);
-  await touchSession(session);
+  // Four independent statements; the answer needs all of them and none needs another.
+  const [availableLocales, , profile, addonRoleClaims] = await Promise.all([
+    readSiteLocaleCodes(site.id),
+    touchSession(session),
+    getUserProfileByUserId(user.id),
+    readPhiViewerAddonRoleClaims(site.id, user.id, siteRole.availableProviderIds),
+  ]);
 
   let name = user.emailNormalized;
-  const profile = await getUserProfileByUserId(user.id);
   if (profile) {
     name = buildDisplayName({
       email: user.emailNormalized,
@@ -73,7 +77,7 @@ export async function GET(request: NextRequest) {
       name,
       roleClaims: siteRole.roleClaims,
       groupClaims: siteRole.groupClaims,
-      addonRoleClaims: await readPhiViewerAddonRoleClaims(site.id, user.id, siteRole.availableProviderIds),
+      addonRoleClaims,
       authorizationRevision: siteRole.authorizationRevision,
       newsletterOptIn: (siteRole.siteFlags & USER_SITE_FLAG_NEWSLETTER_OPT_IN) === USER_SITE_FLAG_NEWSLETTER_OPT_IN,
       /*

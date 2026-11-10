@@ -73,7 +73,7 @@ export async function resolveSiteRoleApiContext(
   },
 ): Promise<SiteRoleApiResolution> {
   const refuse = (error: NextResponse) => ({ context: null, error, refusedByPolicy: false });
-  const guardError = guardApiV1(request, { requireInternalToken: true });
+  const guardError = await guardApiV1(request, { requireInternalToken: true });
   if (guardError) {
     return refuse(guardError);
   }

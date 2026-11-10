@@ -3,6 +3,7 @@ import { after, NextRequest, NextResponse } from "next/server";
 import {
   createMediaUploadSession,
   getMediaFolderBySiteAndId,
+  hasLockedMediaFolder,
   releaseExpiredMediaUploadSessions,
 } from "@/db/media";
 import {
@@ -256,6 +257,14 @@ export async function POST(request: NextRequest) {
       reason: "folder_not_found",
       message: "Folder not found in the active Media Space.",
       status: 404,
+      meta: { folderId, spaceId: space.id },
+    });
+  }
+  if (await hasLockedMediaFolder(site.id, space.id, [folderId])) {
+    return refuseUpload(request, actor, {
+      reason: "folder_locked",
+      message: "The Media Folder is locked.",
+      status: 409,
       meta: { folderId, spaceId: space.id },
     });
   }

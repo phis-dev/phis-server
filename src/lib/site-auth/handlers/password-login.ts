@@ -81,7 +81,7 @@ export async function POST(request: NextRequest) {
 
   // Measured per account, because the internal token this route arrives with is exempt from the
   // per-address limit and nothing else counted the guesses.
-  const retryAfter = email ? checkAuthAttemptLimit(request, [`login:${site.id}:${email}`]) : null;
+  const retryAfter = email ? await checkAuthAttemptLimit(request, [`login:${site.id}:${email}`]) : null;
   if (retryAfter !== null) {
     logRuntimeEvent("warn", "auth.login.throttled", {
       message: "Login throttled after too many attempts.",

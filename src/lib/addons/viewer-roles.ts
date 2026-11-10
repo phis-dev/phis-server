@@ -2,6 +2,7 @@ import "server-only";
 
 import type { PhiViewerAddonRoleClaim } from "@/lib/authorization";
 import { getPhisAddonInstalledManifest } from "./installed.ts";
+import { expandPhisAddonHeldRoles } from "./role-inclusion.ts";
 import { readPhiSiteUserAddonRoles } from "@/db/server-addon-roles.mts";
 import { getPool } from "@/lib/db";
 
@@ -32,17 +33,20 @@ export async function readPhiViewerAddonRoleClaims(
   }
 
   const installed = getPhisAddonInstalledManifest();
-  const byAddon = new Map<string, string[]>();
+  const grantedByAddon = new Map<string, string[]>();
   for (const grant of grants) {
-    const entry = installed[grant.addonId];
-    if (!entry?.enabled) {
+    if (!installed[grant.addonId]?.enabled) {
       continue;
     }
-    const declared = entry.manifest.roles ?? [];
-    if (!declared.some((role) => role.name === grant.role)) {
-      continue;
+    grantedByAddon.set(grant.addonId, [...(grantedByAddon.get(grant.addonId) ?? []), grant.role]);
+  }
+  // Granted and implied: a viewer holding `manager` is shown what a `clerk` sees, as the server answers.
+  const byAddon = new Map<string, string[]>();
+  for (const [addonId, granted] of grantedByAddon) {
+    const held = expandPhisAddonHeldRoles(installed[addonId]!.manifest.roles ?? [], granted);
+    if (held.length > 0) {
+      byAddon.set(addonId, held);
     }
-    byAddon.set(grant.addonId, [...(byAddon.get(grant.addonId) ?? []), grant.role]);
   }
 
   const claims: PhiViewerAddonRoleClaim[] = [];

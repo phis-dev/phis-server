@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 
-import { createMediaFolder, findMediaFolderPathId } from "@/db/media";
+import { createMediaFolder, findMediaFolderPathId, hasLockedMediaFolder } from "@/db/media";
 import { clearSiteConfigCache } from "@/db/site-config";
 import { requireSiteMediaApiContext } from "@/lib/guards/site-admin-api";
 import { logRuntimeEvent, normalizeLogThrowable } from "@/lib/log";
@@ -60,6 +60,13 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(
         { ok: false, error: "Parent Media Folder not found." },
         { status: 404 },
+      );
+    }
+
+    if (await hasLockedMediaFolder(site.id, space.id, [parentId])) {
+      return NextResponse.json(
+        { ok: false, error: "The parent Media Folder is locked." },
+        { status: 409 },
       );
     }
 

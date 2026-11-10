@@ -11,7 +11,7 @@ import { getConfiguredTranslationSupportedLocalesSync } from "@/lib/translation-
 const CACHE_CONTROL = "public, max-age=300, stale-while-revalidate=3600";
 
 export async function GET(request: Request) {
-  const guardError = guardApiV1(request);
+  const guardError = await guardApiV1(request);
   if (guardError) {
     return guardError;
   }

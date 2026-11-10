@@ -229,6 +229,17 @@ describe("inspecting a built Module package", () => {
     expect(codesFor(siteRoot)).toEqual(["server_only_in_client_graph"]);
   });
 
+  it("follows an extensionless import to the file beside a directory of the same name", () => {
+    const siteRoot = writeNeighbour(writePackage({
+      files: {
+        "dist/index.js": 'import { w } from "./widgets";\nexport const phiModuleDefinitions = [w];\n',
+        "dist/widgets.js": 'import { createPhiFormId } from "@phis/ui/forms";\nexport const w = createPhiFormId("a");\n',
+      },
+    }), ["./forms"]);
+    mkdirSync(path.join(siteRoot, "node_modules", "@acme", "widgets", "dist", "widgets"));
+    expect(codesFor(siteRoot)).toEqual(["server_only_in_client_graph"]);
+  });
+
   it("leaves the Server entrypoint alone, which may reach whatever it likes", () => {
     const siteRoot = writeNeighbour(writePackage({
       files: {

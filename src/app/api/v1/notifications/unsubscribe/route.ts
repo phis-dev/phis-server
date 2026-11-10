@@ -100,7 +100,7 @@ async function resolveOutcome(request: NextRequest, token: string, act: boolean)
 
 /** What the link is, without doing anything about it, so a page can be drawn from it. */
 export async function GET(request: NextRequest) {
-  const guardError = guardApiV1(request, { requireInternalToken: true });
+  const guardError = await guardApiV1(request, { requireInternalToken: true });
   if (guardError) {
     return guardError;
   }
@@ -111,7 +111,7 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
-  const guardError = guardApiV1(request, { requireInternalToken: true });
+  const guardError = await guardApiV1(request, { requireInternalToken: true });
   if (guardError) {
     return guardError;
   }

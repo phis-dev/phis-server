@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, readdirSync, realpathSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, realpathSync, statSync } from "node:fs";
 import path from "node:path";
 
 import {
@@ -249,7 +249,8 @@ function readStaticSpecifiers(source: string) {
 function resolveRelative(fromFile: string, specifier: string) {
   const base = path.resolve(path.dirname(fromFile), specifier);
   for (const candidate of [base, `${base}.js`, `${base}.mjs`, path.join(base, "index.js")]) {
-    if (existsSync(candidate) && !candidate.endsWith(path.sep)) {
+    // A file, not merely an existing path: `./widgets` beside a `widgets/` directory is `widgets.js`.
+    if (existsSync(candidate) && statSync(candidate).isFile()) {
       return candidate;
     }
   }

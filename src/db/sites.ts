@@ -59,9 +59,6 @@ export type SiteRuntimeConfig = {
    * server's text: a zone that differed between them changed the words under the reader's eyes.
    */
   timeZone: string;
-  store?: {
-    enabled: boolean;
-  };
   theme: Record<string, unknown>;
   themeRevision: {
     publishedRevisionId: number | null;
@@ -137,27 +134,44 @@ function capitalizeLocaleLabel(value: string) {
 }
 
 
+/*
+ * A language's own name for itself does not change while the process runs, and building the formatter
+ * that knows it is the expensive part. The set of locales is closed by the locale capabilities, so the
+ * map stays as small as that list.
+ */
+const LOCALE_LABELS = new Map<string, string>();
+
 function buildLocaleLabel(code: string) {
   const normalized = code.trim();
   if (!normalized) {
     return code.toUpperCase();
   }
+  const known = LOCALE_LABELS.get(normalized);
+  if (known !== undefined) {
+    return known;
+  }
 
+  let label: string;
   try {
     const display = new Intl.DisplayNames([normalized], { type: "language" }).of(normalized);
-    return display ? capitalizeLocaleLabel(display) : normalized.toUpperCase();
+    label = display ? capitalizeLocaleLabel(display) : normalized.toUpperCase();
   } catch {
-    return normalized.toUpperCase();
+    label = normalized.toUpperCase();
   }
+  LOCALE_LABELS.set(normalized, label);
+  return label;
 }
 
-function buildLocaleOptions(codes: string[]) {
+/** The configured locales, normalized, deduplicated and defaulted; the list every reader agrees on. */
+function normalizeLocaleCodes(codes: string[]) {
   const normalizedCodes = codes
     .map((code) => resolvePhiLocaleCapability(code)?.locale)
     .filter((code): code is string => Boolean(code));
-  const uniqueCodes = Array.from(new Set(normalizedCodes.length > 0 ? normalizedCodes : [PHI_CANONICAL_SOURCE_LOCALE]));
+  return Array.from(new Set(normalizedCodes.length > 0 ? normalizedCodes : [PHI_CANONICAL_SOURCE_LOCALE]));
+}
 
-  return uniqueCodes.map((code) => ({
+function buildLocaleOptions(codes: string[]) {
+  return normalizeLocaleCodes(codes).map((code) => ({
     code,
     label: buildLocaleLabel(code),
   }));
@@ -510,8 +524,6 @@ function mapSiteRuntimeConfigRow(
     default_locale: string;
     available_locales: string[] | null;
     time_zone: string;
-    medusa_base_url: string | null;
-    medusa_publishable_key: string | null;
     theme: Record<string, unknown> | null;
     theme_published_revision_id: number | null;
     theme_working_draft_revision_id: number | null;
@@ -520,9 +532,6 @@ function mapSiteRuntimeConfigRow(
   const availableLocaleCodes = Array.isArray(row.available_locales)
     ? row.available_locales
     : [row.default_locale];
-  const storeEnabled = Boolean(
-    row.medusa_base_url?.trim() && row.medusa_publishable_key?.trim(),
-  );
 
   return {
     publicUrl: row.public_base_url,
@@ -532,9 +541,6 @@ function mapSiteRuntimeConfigRow(
     defaultLocale: row.default_locale,
     availableLocales: buildLocaleOptions(availableLocaleCodes),
     timeZone: row.time_zone,
-    store: {
-      enabled: storeEnabled,
-    },
     theme: row.theme && typeof row.theme === "object" ? row.theme : {},
     themeRevision: {
       publishedRevisionId: row.theme_published_revision_id,
@@ -600,9 +606,9 @@ export async function readSiteLocaleCodes(siteId: number) {
   if (!row) {
     return null;
   }
-  return buildLocaleOptions(
+  return normalizeLocaleCodes(
     Array.isArray(row.available_locales) ? row.available_locales : [row.default_locale],
-  ).map((option) => option.code);
+  );
 }
 
 export async function getSiteRuntimeConfig(siteId: number) {
@@ -619,8 +625,6 @@ export async function getSiteRuntimeConfig(siteId: number) {
     default_locale: string;
     available_locales: string[] | null;
     time_zone: string;
-    medusa_base_url: string | null;
-    medusa_publishable_key: string | null;
     theme: Record<string, unknown> | null;
     theme_published_revision_id: number | null;
     theme_working_draft_revision_id: number | null;
@@ -632,8 +636,6 @@ export async function getSiteRuntimeConfig(siteId: number) {
             sites.default_locale,
             sites.available_locales,
             sites.time_zone,
-            sites.medusa_base_url,
-            sites.medusa_publishable_key,
             sites.theme,
             theme_scope.published_revision_id AS theme_published_revision_id,
             theme_scope.working_draft_revision_id AS theme_working_draft_revision_id
@@ -673,6 +675,7 @@ export async function getSiteRuntimeConfig(siteId: number) {
     };
     // Both modes in one statement -- and often one row, since light and dark tend to share a picture.
     const assets = await getMediaAssetsByIds(
+      siteId,
       (["light", "dark"] as const).flatMap((mode) => assetIdOf(logos[mode]) ?? []),
     );
     for (const mode of ["light", "dark"] as const) {

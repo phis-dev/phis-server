@@ -208,7 +208,7 @@ An Add-on declares named roles in its manifest, each with the policy that decide
 
 ```ts
 roles: [
-  { name: "market-admin", grantableBy: { siteAccess: "site-admin" } },
+  { name: "market-admin", grantableBy: { siteAccess: "site-admin" }, includes: ["vendor"] },
   { name: "vendor",       grantableBy: { role: "market-admin" } },
 ]
 ```
@@ -219,13 +219,17 @@ roles: [
 - At least one role must be grantable by a Site access; a set in which every role is granted by another
   role is refused at validation.
 - A Site Admin may always grant and revoke any role of any Add-on.
+- `includes` names other roles of the same Add-on that holding this one implies, followed transitively.
+  Every check below answers yes for an implied role. Only the granted role is stored; an inclusion may
+  not name the role itself or form a cycle.
 
 Assignments are stored in `phis.site_addon_user_roles` (`site_id`, `addon_id`, `user_id`, `role`,
 `granted_by_user_id`, `granted_at`), written by `POST`/`DELETE /api/site/addon-roles` after `grantableBy`
 is evaluated against the acting user, and by `phis addon role --grant`/`--revoke` for the operator.
 Add-ons never write this table.
 
-Add-on roles are checked in three places, all against the roles the current manifest declares:
+Add-on roles are checked in three places, all against the roles the current manifest declares, granted
+or implied through `includes`:
 
 - the handler, through `roles:v1` (`has(role)`, `all()`);
 - a declared query stating `requiresRole` or `alsoAllowedByRole`;

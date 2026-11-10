@@ -7,6 +7,7 @@ import {
   PHIS_DECLARABLE_THREAD_KINDS,
   PHIS_SITE_THREAD_KIND_FLAG_BY_DECLARATION,
   PhisResourceLinkFlag,
+  PhisThreadFlag,
   PhisThreadKind,
   PhisThreadMessageFlag,
   PhisThreadParticipantFlag,
@@ -1346,6 +1347,10 @@ export async function addThreadMessage(input: AddThreadMessageInput): Promise<Ph
     if (thread.status !== PhisThreadStatus.Open) {
       throw new PhisThreadError("This thread is archived.");
     }
+    // From anybody, Staff and integrations included: whoever wants to write unlocks it first.
+    if ((thread.flags & PhisThreadFlag.Locked) !== 0) {
+      throw new PhisThreadError("This thread is locked.");
+    }
 
     const authorUserId = input.reader.kind === "user" ? input.reader.userId : null;
 
@@ -1436,6 +1441,51 @@ export async function addThreadParticipants(
  * A status that is already the one asked for answers yes and writes nothing -- the caller wanted the
  * thread archived and it is, which is not a failure and is not a change worth telling anybody about.
  */
+/**
+ * Locks a thread against new messages, or opens it again.
+ *
+ * A lock is not an archive: the thread stays where it is in everybody's list and stays readable, it
+ * only takes nothing new. Whoever may change the status may set it, by the same rule, and the requester
+ * of a Support thread may not, for the reason they may not archive it.
+ */
+export async function setThreadLocked(input: {
+  siteId: number;
+  threadId: number;
+  reader: ThreadReader;
+  locked: boolean;
+}) {
+  let seen = false;
+  await withTransaction(async (client) => {
+    const thread = await readThreadRow(client, input.siteId, input.reader, input.threadId);
+    if (!thread) return;
+    seen = true;
+    if (thread.kind === PhisThreadKind.Support && input.reader.kind === "user") {
+      const { rowCount: requester } = await client.query(
+        `SELECT 1 FROM phis.thread_participants
+         WHERE thread_id = $1 AND user_id = $2 AND (flags & $3) <> 0`,
+        [input.threadId, input.reader.userId, PhisThreadParticipantFlag.Requester],
+      );
+      if ((requester ?? 0) > 0) {
+        throw new PhisThreadError("The requester of a Support thread cannot lock it.");
+      }
+    }
+    if (!await mayChangeThreadStatus(client, input.siteId, input.reader, thread)) {
+      throw new PhisThreadError(
+        "Only whoever opened this thread, Staff, or a Manager of a group in it may lock it.",
+      );
+    }
+    await client.query(
+      `UPDATE phis.threads
+       SET flags = CASE WHEN $2 THEN flags | $3 ELSE flags & ~$3::int END,
+           updated_at = NOW()
+       WHERE id = $1
+         AND ((flags & $3) <> 0) IS DISTINCT FROM $2`,
+      [input.threadId, input.locked, PhisThreadFlag.Locked],
+    );
+  });
+  return seen;
+}
+
 /**
  * Whether this person may close a thread for everyone in it, or open it again.
  *

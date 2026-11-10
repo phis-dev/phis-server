@@ -4,8 +4,9 @@ import {
   deleteImageAssetVariantsByAssetId,
   getMediaAssetBySiteAndId,
   getMediaFolderBySiteAndId,
-  type MediaAssetRecord,
+  hasLockedMediaFolder,
   normalizeMediaFocalRect,
+  type MediaAssetRecord,
   updateMediaAsset,
 } from "@/db/media";
 import { clearSiteConfigCache } from "@/db/site-config";
@@ -100,6 +101,14 @@ async function updateLoadedSiteMediaAsset(
     !await getMediaFolderBySiteAndId(siteId, asset.spaceId, folderId)
   ) {
     throw new MediaAssetUpdateError("Media Folder not found.", 404);
+  }
+  // Moving a file changes what both Folders hold, so neither may be locked.
+  if (
+    Object.hasOwn(payload, "folderId") &&
+    folderId !== asset.folderId &&
+    await hasLockedMediaFolder(siteId, asset.spaceId, [folderId, asset.folderId])
+  ) {
+    throw new MediaAssetUpdateError("The Media Folder is locked.", 409);
   }
 
   const title = Object.hasOwn(payload, "title") ? nullableString(payload.title) : undefined;

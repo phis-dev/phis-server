@@ -6,5 +6,5 @@ import { guardApiV1 } from "@/lib/api-v1-guard";
 export const dynamic = "force-dynamic";
 
 export async function PATCH(request: NextRequest) {
-  return guardApiV1(request, { requireInternalToken: true }) ?? handleProfileLocale(request);
+  return (await guardApiV1(request, { requireInternalToken: true })) ?? handleProfileLocale(request);
 }

@@ -13,7 +13,7 @@ export const dynamic = "force-dynamic";
  * installations and no secrets; mutations stay on the session-guarded section endpoints.
  */
 export async function GET(request: Request) {
-  const guardError = guardApiV1(request, { requireInternalToken: true });
+  const guardError = await guardApiV1(request, { requireInternalToken: true });
   if (guardError) {
     return guardError;
   }

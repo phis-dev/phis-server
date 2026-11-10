@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 import {
   getMediaAssetBySiteAndId,
+  hasLockedMediaFolder,
   pruneEmptyMediaFolderBranch,
 } from "@/db/media";
 import { clearSiteConfigCache } from "@/db/site-config";
@@ -180,6 +181,13 @@ export async function DELETE(
     const asset = await getMediaAssetBySiteAndId(site.id, assetId);
     if (!asset) {
       return NextResponse.json({ error: "Media asset not found." }, { status: 404 });
+    }
+
+    if (await hasLockedMediaFolder(site.id, asset.spaceId, [asset.folderId])) {
+      return NextResponse.json(
+        { error: "media_folder_locked", message: "The Media Folder is locked." },
+        { status: 409 },
+      );
     }
 
     const references = await collectMediaAssetDeleteReferences(site.id, asset);

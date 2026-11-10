@@ -31,7 +31,7 @@ describe("the rate limit of a public caller", () => {
   );
 
   const askRepeatedly = (path: string, token: string, ip: string, times: number) =>
-    Array.from({ length: times }, () => ask(path, token, ip));
+    Promise.all(Array.from({ length: times }, () => ask(path, token, ip)));
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -39,33 +39,33 @@ describe("the rate limit of a public caller", () => {
     mocks.getPhisConfigSync.mockReturnValue(CONFIG as PhisConfig);
   });
 
-  it("lets a cold installation warm a locale before it refuses one", () => {
-    const answers = askRepeatedly("/api/v1/tr", "public-token", "203.0.113.1", 120);
+  it("lets a cold installation warm a locale before it refuses one", async () => {
+    const answers = await askRepeatedly("/api/v1/tr", "public-token", "203.0.113.1", 120);
 
     expect(answers.every((answer) => answer === null)).toBe(true);
 
-    const refused = ask("/api/v1/tr", "public-token", "203.0.113.1");
+    const refused = await ask("/api/v1/tr", "public-token", "203.0.113.1");
     expect(refused?.status).toBe(429);
     expect(refused?.headers.get("Retry-After")).toBeTruthy();
   });
 
-  it("refuses an ordinary path sixty requests earlier", () => {
-    const answers = askRepeatedly("/api/v1/site", "public-token", "203.0.113.2", 60);
+  it("refuses an ordinary path sixty requests earlier", async () => {
+    const answers = await askRepeatedly("/api/v1/site", "public-token", "203.0.113.2", 60);
 
     expect(answers.every((answer) => answer === null)).toBe(true);
-    expect(ask("/api/v1/site", "public-token", "203.0.113.2")?.status).toBe(429);
+    expect((await ask("/api/v1/site", "public-token", "203.0.113.2"))?.status).toBe(429);
   });
 
-  it("keeps the batch endpoint's allowance out of every other path's bucket", () => {
+  it("keeps the batch endpoint's allowance out of every other path's bucket", async () => {
     // Seventy is a locale's worth of Label Sets, and it is also over the ordinary ceiling. Sharing one
     // bucket, the next request to any other path would be refused for requests it never made.
-    askRepeatedly("/api/v1/tr", "public-token", "203.0.113.3", 70);
+    await askRepeatedly("/api/v1/tr", "public-token", "203.0.113.3", 70);
 
-    expect(ask("/api/v1/site", "public-token", "203.0.113.3")).toBeNull();
+    expect(await ask("/api/v1/site", "public-token", "203.0.113.3")).toBeNull();
   });
 
-  it("does not count the internal caller at all", () => {
-    const answers = askRepeatedly("/api/v1/tr", "internal-token", "203.0.113.4", 200);
+  it("does not count the internal caller at all", async () => {
+    const answers = await askRepeatedly("/api/v1/tr", "internal-token", "203.0.113.4", 200);
 
     expect(answers.every((answer) => answer === null)).toBe(true);
   });
@@ -91,26 +91,26 @@ describe("the limit on relayed form submissions", () => {
     mocks.getPhisConfigSync.mockReturnValue(CONFIG as PhisConfig);
   });
 
-  it("counts one session's submissions and refuses the thirty-first in a minute", () => {
+  it("counts one session's submissions and refuses the thirty-first in a minute", async () => {
     const visitor = { "x-phis-form-relay": "1", cookie: "phis_session=session-a; other=1" };
-    const answers = Array.from({ length: 30 }, () => relay(visitor));
+    const answers = await Promise.all(Array.from({ length: 30 }, () => relay(visitor)));
     expect(answers.every((answer) => answer === null)).toBe(true);
 
-    const refused = relay(visitor);
+    const refused = await relay(visitor);
     expect(refused?.status).toBe(429);
     expect(refused?.headers.get("Retry-After")).toBeTruthy();
     // Another visitor of the same Site is not affected.
-    expect(relay({ "x-phis-form-relay": "1", cookie: "phis_session=session-b" })).toBeNull();
+    expect(await relay({ "x-phis-form-relay": "1", cookie: "phis_session=session-b" })).toBeNull();
   });
 
-  it("counts an anonymous visitor by the address a trusted proxy names", () => {
+  it("counts an anonymous visitor by the address a trusted proxy names", async () => {
     const visitor = { "x-phis-form-relay": "1", "x-forwarded-for": "198.51.100.7" };
-    Array.from({ length: 30 }, () => relay(visitor));
-    expect(relay(visitor)?.status).toBe(429);
+    await Promise.all(Array.from({ length: 30 }, () => relay(visitor)));
+    expect((await relay(visitor))?.status).toBe(429);
   });
 
-  it("leaves the Site runtime's own internal requests alone", () => {
-    const answers = Array.from({ length: 100 }, () => relay({ cookie: "phis_session=session-c" }));
+  it("leaves the Site runtime's own internal requests alone", async () => {
+    const answers = await Promise.all(Array.from({ length: 100 }, () => relay({ cookie: "phis_session=session-c" })));
     expect(answers.every((answer) => answer === null)).toBe(true);
   });
 });
@@ -134,25 +134,25 @@ describe("cross-origin writes to /api/site", () => {
     mocks.getPhisConfigSync.mockReturnValue(CONFIG as PhisConfig);
   });
 
-  it("takes a write the browser marks as same-origin", () => {
-    expect(write({ "sec-fetch-site": "same-origin" })).toBeNull();
+  it("takes a write the browser marks as same-origin", async () => {
+    expect(await write({ "sec-fetch-site": "same-origin" })).toBeNull();
   });
 
-  it("refuses one from a sibling subdomain or another site", () => {
-    expect(write({ "sec-fetch-site": "same-site" })?.status).toBe(403);
-    expect(write({ "sec-fetch-site": "cross-site" }, "DELETE")?.status).toBe(403);
+  it("refuses one from a sibling subdomain or another site", async () => {
+    expect((await write({ "sec-fetch-site": "same-site" }))?.status).toBe(403);
+    expect((await write({ "sec-fetch-site": "cross-site" }, "DELETE"))?.status).toBe(403);
   });
 
-  it("falls back to the Origin against the host the Site forwarded for", () => {
+  it("falls back to the Origin against the host the Site forwarded for", async () => {
     const forwarded = { "x-forwarded-host": "site.test" };
-    expect(write({ ...forwarded, origin: "https://site.test" })).toBeNull();
-    expect(write({ ...forwarded, origin: "https://evil.site.test" })?.status).toBe(403);
-    expect(write({ ...forwarded, origin: "null" })?.status).toBe(403);
+    expect(await write({ ...forwarded, origin: "https://site.test" })).toBeNull();
+    expect((await write({ ...forwarded, origin: "https://evil.site.test" }))?.status).toBe(403);
+    expect((await write({ ...forwarded, origin: "null" }))?.status).toBe(403);
   });
 
-  it("leaves requests without a browser context, reads and other paths alone", () => {
-    expect(write({})).toBeNull();
-    expect(write({ "sec-fetch-site": "cross-site" }, "GET")).toBeNull();
-    expect(write({ "sec-fetch-site": "cross-site" }, "POST", "/api/v1/tr")).toBeNull();
+  it("leaves requests without a browser context, reads and other paths alone", async () => {
+    expect(await write({})).toBeNull();
+    expect(await write({ "sec-fetch-site": "cross-site" }, "GET")).toBeNull();
+    expect(await write({ "sec-fetch-site": "cross-site" }, "POST", "/api/v1/tr")).toBeNull();
   });
 });

@@ -11,7 +11,7 @@ import { requireSiteCmsPreviewApiContext } from "@/lib/guards/site-admin-api";
 import { requireSiteFromRequest } from "@/lib/site-context";
 
 export async function GET(request: NextRequest) {
-  const guardError = guardApiV1(request, { requireInternalToken: true });
+  const guardError = await guardApiV1(request, { requireInternalToken: true });
   if (guardError) {
     return guardError;
   }

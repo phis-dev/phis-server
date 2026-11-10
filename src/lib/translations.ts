@@ -39,7 +39,6 @@ import {
   type TranslationContextFlag,
 } from "@/lib/translation-context";
 
-const TR_HASH_PREFIX_LENGTH = 50;
 type TranslationFormat = "text" | "html";
 
 type TranslationInput = {
@@ -81,10 +80,15 @@ type BatchTranslationInput = {
 
 const SHA256_HEX_LENGTH = 64;
 
+/**
+ * A message's catalogue identity: SHA-256 over the whole text.
+ *
+ * It covered only the first 50 characters once, and every HTML message opening with the same link or code
+ * element -- `<x-link data-index="0"><x-code ...>` alone is longer than that -- was one key to the column
+ * and a "collision" to the request, so the second paragraph of its kind was never translated.
+ */
 function computeTranslationHash(msg: string) {
-  return createHash("sha256")
-    .update(msg.slice(0, TR_HASH_PREFIX_LENGTH))
-    .digest("hex");
+  return createHash("sha256").update(msg).digest("hex");
 }
 
 function normalizeProvidedHash(hash: string) {

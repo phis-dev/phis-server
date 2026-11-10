@@ -1274,6 +1274,12 @@ still has to agree. A table with neither has no row to judge, so validation make
 a role, and the role is then the whole authority: that is how a category icon or a shop logo carries a
 file.
 
+Listing a `public` slot asks no role. Its files are fetched by anyone with the address, so which files a
+row carries is no secret, and a catalogue showing a product's pictures to a visitor has to be able to ask.
+`begin` and `remove` keep the role, a slot with another `delivery` keeps it for `list` too, and a `list`
+without a slot still takes the role of every slot that is not public. The row's own authority is asked as
+before.
+
 **The space is charged when the place is made, not when it is used.** A ceiling decided at the end would
 bound the bookkeeping and not the store: ten clients could each write a gigabyte and have five of them
 refused afterwards, with the bytes already paid for. Reserving is one conditional statement, so it is
@@ -1621,13 +1627,13 @@ What already holds without any role:
 
 ```ts
 roles: [
-  { name: "market-admin", grantableBy: { siteAccess: "site-admin" } },
+  { name: "market-admin", grantableBy: { siteAccess: "site-admin" }, includes: ["reviewer"] },
   { name: "vendor",       grantableBy: { role: "market-admin" } },
   { name: "reviewer",     grantableBy: { role: "market-admin" } },
 ]
 ```
 
-A role is `{ name, description?, grantableBy }` (`PhisAddonRoleDescriptor` in `@phis/contracts/addon`).
+A role is `{ name, description?, grantableBy, includes? }` (`PhisAddonRoleDescriptor` in `@phis/contracts/addon`).
 `name` matches `^[a-z][a-z0-9-]{0,63}$` and is frozen from the first assignment: a grant is stored as
 text, and text does not follow a rename. `grantableBy` names exactly one of:
 
@@ -1646,6 +1652,15 @@ Manifest validation (`src/lib/addons/manifest.ts`) refuses a `role` that names a
 declare, and refuses a role set in which no role is grantable by a Site access, because nobody could ever
 enter such a set. A Site Admin may always grant any role of any Add-on, so a badly declared graph never
 locks a Site out.
+
+`includes` is the ladder. A role usually stands above others: whoever administers the market also does
+what a reviewer does. Holding a role that includes another answers yes for the included one in every
+check Core makes -- `roles:v1` (`has()` and `all()`), `requiresRole` and `alsoAllowedByRole` on a query, a
+slot's `requiresRole`, a `{ role }` grant policy, and the viewer's `addonRoleClaims`. It is followed
+transitively and stays within the Add-on. What is stored is only what was granted, so revoking the upper
+role takes the implied ones with it, and the grant screens list grants, not implications
+(`expandPhisAddonHeldRoles` in `src/lib/addons/role-inclusion.ts`). Validation refuses an inclusion that
+names an undeclared role, the role itself, or a cycle: two roles that imply each other are one role.
 
 #### Where assignments are stored
 

@@ -174,6 +174,11 @@ export function buildPhisAddonAssetsCapability(input: {
    *
    * On a table with neither owner nor group the row has no authority to give, and validation has made
    * every slot there state a role. That role is then the whole of it, as it is for such a table's writes.
+   *
+   * Reading a `public` slot asks no role. Its files are fetched by anyone who has the address, so saying
+   * which files the row carries gives away nothing the delivery has not -- and a catalogue that shows a
+   * product's pictures to a visitor must be able to ask. The row's own authority still applies where
+   * there is one, and a slot that is not public keeps its role for reading too.
    */
   async function requireSlotAuthority(
     table: string,
@@ -182,7 +187,8 @@ export function buildPhisAddonAssetsCapability(input: {
     intent: PhisRowIntent,
   ) {
     for (const slot of slots) {
-      if (slot.requiresRole && !await input.hasRole(slot.requiresRole)) {
+      const openRead = intent === "read" && (slot.delivery ?? "public") === "public";
+      if (slot.requiresRole && !openRead && !await input.hasRole(slot.requiresRole)) {
         throw new PhisAddonAssetError(
           `Slot "${slot.name}" of "${table}" requires the role "${slot.requiresRole}", which this ` +
           "actor does not hold.",

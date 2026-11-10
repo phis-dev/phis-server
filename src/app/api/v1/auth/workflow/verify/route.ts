@@ -13,7 +13,7 @@ import { toPhiRecord } from "@/lib/helpers/record";
 export const dynamic = "force-dynamic";
 
 export async function POST(request: NextRequest) {
-  const guardError = guardApiV1(request, { requireInternalToken: true });
+  const guardError = await guardApiV1(request, { requireInternalToken: true });
   if (guardError) return guardError;
   const siteContext = await requireSiteFromExplicitKeyRequest(request);
   if (siteContext.error || !siteContext.site) return siteContext.error;
@@ -28,7 +28,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Factor challenge required." }, { status: 409 });
   }
   // Six digits at the speed of the wire is an hour's work; ten a minute per challenge is not.
-  const retryAfter = checkAuthAttemptLimit(request, [`verify:${session.id}`]);
+  const retryAfter = await checkAuthAttemptLimit(request, [`verify:${session.id}`]);
   if (retryAfter !== null) {
     return tooManyAttemptsResponse(retryAfter);
   }

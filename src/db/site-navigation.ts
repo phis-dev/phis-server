@@ -715,13 +715,22 @@ export async function resolvePublishedSiteNavigationFolderTarget(
     return null;
   }
   const pool = getPool();
+  /*
+   * Only the Navigations that can take part in this chain are read back and parsed. Every step of the
+   * chain is the address itself or lies below it, so a tree that holds no string beginning with the
+   * address has nothing to say here -- and that is every tree when the address does not exist, which
+   * is the case a stranger probing paths produces. The needle is the address as JSON writes the start
+   * of a string; a tree that merely mentions it elsewhere is still parsed and then decides nothing.
+   */
+  const needle = JSON.stringify(address).slice(0, -1);
   const { rows } = await pool.query<{ key: string; tree_json: unknown }>(
     `SELECT s.key, r.tree_json
      FROM phis.site_nav_scopes s
      JOIN phis.site_nav_revisions r ON r.id = s.published_revision_id
      WHERE s.site_id = $1 AND starts_with(s.key, $2::text || ':')
+       AND position($3::text in r.tree_json::text) > 0
      ORDER BY r.created_at DESC, r.id DESC`,
-    [siteId, areaKey],
+    [siteId, areaKey, needle],
   );
   const targets = new Map<string, SiteNavigationFolderTarget | null>();
   for (const row of rows) {

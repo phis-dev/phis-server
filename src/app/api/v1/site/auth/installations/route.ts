@@ -17,7 +17,7 @@ export const dynamic = "force-dynamic";
  * session-guarded /api/v1/auth/admin/installations endpoints.
  */
 export async function GET(request: Request) {
-  const guardError = guardApiV1(request, { requireInternalToken: true });
+  const guardError = await guardApiV1(request, { requireInternalToken: true });
   if (guardError) {
     return guardError;
   }

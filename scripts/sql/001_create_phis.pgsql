@@ -2425,12 +2425,46 @@ CREATE UNIQUE INDEX IF NOT EXISTS payments_active_reference_idx
   ON phis.payments (site_id, consumer_addon_id, (record->>'reference'))
   WHERE record->>'status' NOT IN ('failed','expired','canceled') OR (record->>'reconciliationRequired')::boolean;
 
+-- A payment method a Provider holds for a payer (PAYMENTS.md, stored methods). Core keeps the Provider's
+-- opaque binding and the record a consumer reads; payment details never reach this database. The
+-- features are the method's as they stood when it was stored, so a later charge is judged by what was
+-- agreed then and needs no live probe.
+CREATE TABLE IF NOT EXISTS phis.payment_stored_methods (
+  id UUID PRIMARY KEY,
+  site_id SMALLINT NOT NULL REFERENCES phis.sites(id) ON DELETE RESTRICT,
+  consumer_addon_id VARCHAR(255) NOT NULL REFERENCES phis.server_addons(addon_id) ON DELETE RESTRICT,
+  profile_key VARCHAR(64) NOT NULL,
+  payer_reference VARCHAR(255) NOT NULL,
+  method_features JSONB NOT NULL,
+  binding JSONB NULL,
+  record JSONB NOT NULL,
+  -- A set-up without payment: the consumer's key, so a repeated request finds the same record, and the
+  -- hosted page it was answered with, so that request can be answered the same way again.
+  setup_key VARCHAR(255) NULL,
+  setup_checkout JSONB NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  FOREIGN KEY (site_id, profile_key) REFERENCES phis.payment_profiles(site_id, key) ON DELETE RESTRICT,
+  UNIQUE (site_id, consumer_addon_id, setup_key),
+  CHECK (record->>'id' = id::text),
+  CHECK (record->>'payerReference' = payer_reference),
+  CHECK (record->>'status' IN ('pending','active','invalid','revoked','expired')),
+  -- A method a charge can be sent to has a binding; one that never got one cannot be active.
+  CHECK (record->>'status' <> 'active' OR binding IS NOT NULL)
+);
+-- Not unique: a payer who stores the same means twice may be given the same reference by the Provider,
+-- and refusing the second record would leave its payment unable to settle.
+CREATE INDEX IF NOT EXISTS payment_stored_methods_remote_binding_idx
+  ON phis.payment_stored_methods (site_id, profile_key, (binding->>'reference')) WHERE binding IS NOT NULL;
+CREATE INDEX IF NOT EXISTS payment_stored_methods_payer_idx
+  ON phis.payment_stored_methods (site_id, consumer_addon_id, profile_key, payer_reference, created_at DESC);
+
 CREATE TABLE IF NOT EXISTS phis.payment_operations (
   id UUID PRIMARY KEY,
   payment_id UUID NOT NULL REFERENCES phis.payments(id) ON DELETE RESTRICT,
   site_id SMALLINT NOT NULL,
   consumer_addon_id VARCHAR(255) NOT NULL,
-  action VARCHAR(16) NOT NULL CHECK (action IN ('create','complete','capture','cancel','refund')),
+  action VARCHAR(16) NOT NULL CHECK (action IN ('create','complete','capture','cancel','refund','charge')),
   idempotency_key VARCHAR(255) NOT NULL,
   request JSONB NOT NULL,
   command JSONB NOT NULL,
@@ -2468,6 +2502,49 @@ CREATE TABLE IF NOT EXISTS phis.payment_notification_receipts (
   FOREIGN KEY (site_id, profile_key) REFERENCES phis.payment_profiles(site_id, key) ON DELETE RESTRICT
 );
 
+-- An agreement Core charges on a schedule of its own (PAYMENTS.md, subscriptions). `record` is what a
+-- consumer reads. `anchor_at` is the start of the first period, from which every later boundary is
+-- computed; `next_charge_at` mirrors the record for the scheduler's index; the lease keeps two scheduler
+-- runs from working on one subscription at a time.
+CREATE TABLE IF NOT EXISTS phis.payment_subscriptions (
+  id UUID PRIMARY KEY,
+  site_id SMALLINT NOT NULL REFERENCES phis.sites(id) ON DELETE RESTRICT,
+  consumer_addon_id VARCHAR(255) NOT NULL REFERENCES phis.server_addons(addon_id) ON DELETE RESTRICT,
+  profile_key VARCHAR(64) NOT NULL,
+  idempotency_key VARCHAR(255) NOT NULL,
+  request JSONB NOT NULL,
+  record JSONB NOT NULL,
+  anchor_at TIMESTAMPTZ NULL,
+  next_charge_at TIMESTAMPTZ NULL,
+  lease_token UUID NULL,
+  lease_until TIMESTAMPTZ NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  FOREIGN KEY (site_id, profile_key) REFERENCES phis.payment_profiles(site_id, key) ON DELETE RESTRICT,
+  UNIQUE (site_id, consumer_addon_id, idempotency_key),
+  CHECK (record->>'id' = id::text),
+  CHECK (record->>'status' IN ('pending','active','past_due','unpaid','canceled')),
+  CHECK ((lease_token IS NULL) = (lease_until IS NULL))
+);
+CREATE UNIQUE INDEX IF NOT EXISTS payment_subscriptions_live_reference_idx
+  ON phis.payment_subscriptions (site_id, consumer_addon_id, (record->>'reference')) WHERE record->>'status' <> 'canceled';
+CREATE INDEX IF NOT EXISTS payment_subscriptions_due_idx
+  ON phis.payment_subscriptions (next_charge_at) WHERE next_charge_at IS NOT NULL;
+CREATE INDEX IF NOT EXISTS payment_subscriptions_method_idx
+  ON phis.payment_subscriptions ((record->>'storedMethodId')) WHERE record->>'status' <> 'canceled';
+
+-- One row per period. The key is what makes a period exist once however often the scheduler tries.
+CREATE TABLE IF NOT EXISTS phis.payment_subscription_periods (
+  subscription_id UUID NOT NULL REFERENCES phis.payment_subscriptions(id) ON DELETE RESTRICT,
+  period_index INT NOT NULL CHECK (period_index >= 0),
+  -- How many charges the schedule has made for this period; what the dunning policy counts.
+  attempts SMALLINT NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+  record JSONB NOT NULL,
+  PRIMARY KEY (subscription_id, period_index),
+  CHECK ((record->>'index')::int = period_index),
+  CHECK (record->>'status' IN ('open','paid','failed','void'))
+);
+
 CREATE TABLE IF NOT EXISTS phis.addon_event_outbox (
   id BIGSERIAL PRIMARY KEY,
   site_id SMALLINT NOT NULL REFERENCES phis.sites(id) ON DELETE CASCADE,
@@ -2476,6 +2553,7 @@ CREATE TABLE IF NOT EXISTS phis.addon_event_outbox (
   thread_id INT NULL REFERENCES phis.threads(id) ON DELETE CASCADE,
   subject_kind VARCHAR(16) NOT NULL DEFAULT 'thread',
   payment_id UUID NULL REFERENCES phis.payments(id) ON DELETE RESTRICT,
+  subscription_id UUID NULL REFERENCES phis.payment_subscriptions(id) ON DELETE RESTRICT,
   payload JSONB NOT NULL DEFAULT '{}'::jsonb,
   -- An event an Add-on emitted (SERVER_ADDONS.md, Events): who said it, how many handlers the chain has
   -- passed through, and the emitter's own key against saying it twice. NULL and 0 on Core's own events.
@@ -2489,9 +2567,10 @@ CREATE TABLE IF NOT EXISTS phis.addon_event_outbox (
   CONSTRAINT addon_event_outbox_event_check CHECK (event <> ''),
   CONSTRAINT addon_event_outbox_hop_check CHECK (hop >= 0),
   CONSTRAINT addon_event_outbox_subject_check CHECK (
-    (subject_kind = 'thread' AND thread_id IS NOT NULL AND payment_id IS NULL AND emitter IS NULL AND event <> 'payment.changed' AND event NOT LIKE '@%') OR
-    (subject_kind = 'payment' AND thread_id IS NULL AND payment_id IS NOT NULL AND emitter IS NULL AND event = 'payment.changed') OR
-    (subject_kind = 'emitted' AND thread_id IS NULL AND payment_id IS NULL AND emitter IS NOT NULL AND event LIKE '@%/%:%')
+    (subject_kind = 'thread' AND thread_id IS NOT NULL AND payment_id IS NULL AND subscription_id IS NULL AND emitter IS NULL AND event <> 'payment.changed' AND event NOT LIKE '@%') OR
+    (subject_kind = 'payment' AND thread_id IS NULL AND payment_id IS NOT NULL AND subscription_id IS NULL AND emitter IS NULL AND event = 'payment.changed') OR
+    (subject_kind = 'subscription' AND thread_id IS NULL AND payment_id IS NULL AND subscription_id IS NOT NULL AND emitter IS NULL AND event = 'payment.changed') OR
+    (subject_kind = 'emitted' AND thread_id IS NULL AND payment_id IS NULL AND subscription_id IS NULL AND emitter IS NOT NULL AND event LIKE '@%/%:%')
   )
 );
 

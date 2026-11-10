@@ -79,6 +79,7 @@ not a property of the repository, so they are untracked and an absent one reads 
 | `api.publicToken` | Optional token without internal scope. An installation that serves as a translation mirror needs one, or it refuses every reader with `403` ([TRANSLATIONS.md](./TRANSLATIONS.md), "How a mirror is served"). |
 | `api.phisCdnPublicToken` | Token this installation sends when it reads global translations from `translation.cdnBaseUrl`. |
 | `api.disableRateLimit` | Turns off the per-address rate limit of `/api/v1/*`. |
+| `cache.redisUrl` | Optional. A Redis every Core instance shares (`redis://` or `rediss://`, with credentials and a database number where needed). The rate limits then count across instances; without it, or while it does not answer, each process counts by itself. |
 | `secrets.encryptionKey` | 64 hex characters. Key for the encrypted secret store `phis.server_secrets`; an instance without it does not report ready. `phis secret init-key` writes it. |
 | `secrets.encryptionKeyVersion` | Positive integer version of that key. |
 | `auth.transactionEncryptionKey` | 64 hex characters. Encrypts authentication transaction state. |

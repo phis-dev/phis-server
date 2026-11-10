@@ -52,7 +52,7 @@ export async function POST(request: NextRequest) {
   }
   // A reset mail per request is a mailbox somebody else can fill; ten a minute per address is enough
   // for anybody who is really waiting for one.
-  const retryAfter = checkAuthAttemptLimit(request, [`reset:${site.id}:${email}`]);
+  const retryAfter = await checkAuthAttemptLimit(request, [`reset:${site.id}:${email}`]);
   if (retryAfter !== null) {
     return tooManyAttemptsResponse(retryAfter);
   }

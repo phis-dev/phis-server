@@ -270,7 +270,11 @@ Contract:
 Contract:
 - A Folder is a presentation-level bucket inside exactly one Space. It never crosses Spaces and never carries authorization.
 - Folder names are unique per Space and per parent, case-insensitively.
-- `flags` follows `PhiMediaFolderFlags` (`collapsed`, `hidden`, `locked`) and is display state only.
+- `flags` follows `PhiMediaFolderFlags`. `collapsed` and `hidden` are display state. `locked` is a rule Core
+  enforces: a locked Folder is not renamed, moved or deleted, nothing is created in it, uploaded into it,
+  moved into or out of it or deleted from it, and the tidy-up after a deleted file leaves it and its
+  children in place. The one change it takes is its flags, which is how it is unlocked. A refused request
+  answers `409` with `media_folder_locked`. An upload already started when the lock is set still lands.
 - The server vocabulary is Folder. `groupId` and `groupPath` are retired and must not reappear as aliases.
 
 ### `phis.site_media_config`
@@ -1502,6 +1506,7 @@ Contract:
   - `3 = support`, a requester and a queue's group
 - The kind is fixed when the thread is opened. A Site offers a kind only while one of its active Modules declares it in `site_thread_config`.
 - `status` is `0 = open`, `1 = archived`. One row carries it, so archiving closes the thread for everyone in it rather than hiding it from one reader.
+- `flags` are `PhisThreadFlag`. `Locked` (`1 << 0`) refuses every new message, from people, Staff and integrations alike, while the thread stays open, listed and readable; whoever may change the status sets and clears it (`PATCH /api/site/threads/{id}` with `locked`), and the requester of a Support thread may not.
 - `owner_provider_id` is the Add-on that opened the thread with no actor behind it, and is what lets it reach the thread again without one. `NULL` is Core's own, which is every thread a person opened.
 - A ticket's conversation is an ordinary thread; the reference lives on `support_tickets.thread_id`.
 - `last_message_id` is denormalized so an inbox orders and previews without a lateral join per row. The two tables reference each other, so the constraint is added after `thread_messages` exists.
@@ -1525,7 +1530,8 @@ Contract:
 - `flags` are `PhisThreadParticipantFlag`:
   - `1 = Requester`: the person a Support thread is about.
   - `2 = ExternalConsent`: this requester has acknowledged that the conversation is mirrored outside, without which their own messages are not exported.
-  - `4 = Left`, `8 = Muted`.
+  - `4 = Left`.
+  - `8 = Muted`: reserved. Core sends no notification for a thread message yet, so there is nothing for it to silence; it takes effect with thread notifications and has no setter until then.
 - At most one participant per thread carries `Requester`: internal messages are written past that person, so a second one would make "hidden from them" a question with two answers.
 - Recommended uniqueness: `(thread_id, user_id)` where `user_id IS NOT NULL`, `(thread_id, group_id)` where `group_id IS NOT NULL`.
 
@@ -1762,7 +1768,10 @@ Contract:
 
 - `id SERIAL PRIMARY KEY`
 - `msg TEXT NOT NULL`
-- `msg_hash BYTEA NOT NULL`
+- `msg_hash BYTEA NOT NULL` -- SHA-256 over the whole `msg`. Until 2026-11-10 it covered the first 50
+  characters; existing databases are re-keyed by hand, together with `tr_site_msg`, when that release is
+  installed (and not before, or the running version keeps adding rows under the old keys):
+  `UPDATE phis.tr_msg SET msg_hash = sha256(convert_to(msg, 'UTF8')); UPDATE phis.tr_site_msg SET msg_hash = sha256(convert_to(msg, 'UTF8'));`
 - `ctx VARCHAR(128) NOT NULL DEFAULT ''`
 - `created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
 - `UNIQUE (msg_hash, ctx)`
@@ -1783,7 +1792,7 @@ Contract:
 - `id SERIAL PRIMARY KEY`
 - `site_id SMALLINT NOT NULL REFERENCES phis.sites(id) ON DELETE CASCADE`
 - `msg TEXT NOT NULL`
-- `msg_hash BYTEA NOT NULL`
+- `msg_hash BYTEA NOT NULL` -- SHA-256 over the whole `msg`, re-keyed with `tr_msg` (above)
 - `ctx VARCHAR(128) NOT NULL DEFAULT ''`
 - `created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
 - `UNIQUE (site_id, msg_hash, ctx)`
@@ -2056,11 +2065,96 @@ there is no product purge command. Fixture teardown in database tests is not an 
   Public facts/operation/refund changes increment the record's version and enqueue one owner event.
   Updating `lastObservedAt` alone emits no event. Confirmed capture/refund facts cannot regress.
 
+### `phis.payment_stored_methods`
+
+A payment method a Provider holds for a payer. Core keeps the Provider's opaque binding and the record a
+consumer reads; payment details never reach the database.
+
+- `id UUID PRIMARY KEY`; `site_id`, `consumer_addon_id`, `profile_key` as on `payments`, with the profile
+  FK `ON DELETE RESTRICT`.
+- `payer_reference VARCHAR(255)`: the consumer's own, opaque to Core; checked equal to the record's.
+- `method_features JSONB`: the method's `PhisPaymentFeatures` as they stood when it was stored. A later
+  charge is judged by `stored.pricing` from here and needs no live probe.
+- `binding JSONB NULL`: the Provider's reference a charge is sent with; never returned to a consumer.
+- `setup_key VARCHAR(255) NULL`, unique per Site and consumer, and `setup_checkout JSONB NULL`: for a
+  method stored without a payment (`setupMethod`). The key makes a repeated request find the same
+  record, and the hosted page it was answered with is kept so it can be answered the same way again.
+  While such a record is `pending` its binding is the Provider's set-up page; the method's own binding
+  takes its place once the method exists.
+- `record JSONB`: `PhisPaymentStoredMethod`; checked status `pending`, `active`, `invalid`, `revoked` or
+  `expired`, and `active` only with a binding. The last three are final: a later report that the method
+  is active does not bring it back.
+- Index `(site_id, profile_key, binding->>'reference')` where bound, deliberately not unique: the same
+  means stored twice may carry the same reference, and both records then follow a notification.
+  Index `(site_id, consumer_addon_id, profile_key, payer_reference, created_at DESC)` for the payer's list.
+- A payment names its method in `record.storedMethodId`: the method it created (`initiator` `customer`)
+  or was charged to (`merchant`, `schedule`). Payments written before stored methods read as
+  `customer` and `null`.
+
+The creation script creates this table where it is missing. An existing installation additionally needs
+the wider action list of `payment_operations`, by hand, before a stored method is charged:
+
+```sql
+BEGIN;
+ALTER TABLE phis.payment_operations DROP CONSTRAINT IF EXISTS payment_operations_action_check;
+ALTER TABLE phis.payment_operations ADD CONSTRAINT payment_operations_action_check
+  CHECK (action IN ('create','complete','capture','cancel','refund','charge'));
+COMMIT;
+```
+
+### `phis.payment_subscriptions`
+
+An agreement Core charges on a schedule of its own. Every period is settled by an ordinary payment
+against the payer's stored method; the schedule, the retries and the end belong to Core.
+
+- `id UUID PRIMARY KEY`; `site_id`, `consumer_addon_id`, `profile_key` as on `payments`.
+- `idempotency_key VARCHAR(255)`, unique per Site and consumer, and `request JSONB`: the canonical
+  arguments it was created from. The same key with other arguments conflicts.
+- `record JSONB`: `PhisPaymentSubscription`; checked status `pending`, `active`, `past_due`, `unpaid` or
+  `canceled`. A consumer's reference is unique among its subscriptions that are not `canceled`.
+- `anchor_at TIMESTAMPTZ NULL`: the start of the first period, set when the first payment is captured.
+  Every later boundary is computed from it and the period index, never from the previous boundary or
+  from the day a charge succeeded, so a late charge and a short month do not move the schedule.
+- `next_charge_at TIMESTAMPTZ NULL`: mirrors `record.nextChargeAt` for the scheduler's partial index. It
+  is when Core next acts by itself: a renewal, a retry, or the end of the time a customer is waited for.
+- `lease_token`, `lease_until`: the scheduler's claim, so that two runs do not work on one subscription.
+  A payment's outcome arriving during a run writes the record and leaves the lease alone.
+
+### `phis.payment_subscription_periods`
+
+- Primary key `(subscription_id, period_index)`, which is what makes a period exist once however often
+  the schedule tries. `record JSONB` is `PhisPaymentSubscriptionPeriod`: `open`, `paid`, `failed`, `void`.
+- `attempts SMALLINT`: how many charges the schedule made for the period. The dunning policy counts
+  these; a payment the customer makes on a checkout to settle the period is listed and not counted.
+- The first period has no row until its payment is captured. A later one is created when the paid
+  period is over, and its payment is referenced `<subscription reference>#<index>`; the rule that one
+  reference has one active payment is what keeps a second charge from being made beside an unresolved
+  one.
+
+A payment of a subscription carries `record.subscriptionId` and `record.periodIndex`, and the period is
+settled in the payment's own transaction. `phis.addon_event_outbox` gains `subscription_id` and the
+subject kind `subscription` for `payment.changed`. An existing installation needs, by hand, the two
+tables above (as the creation script declares them) and:
+
+```sql
+BEGIN;
+ALTER TABLE phis.addon_event_outbox ADD COLUMN IF NOT EXISTS subscription_id UUID NULL REFERENCES phis.payment_subscriptions(id) ON DELETE RESTRICT;
+ALTER TABLE phis.addon_event_outbox DROP CONSTRAINT addon_event_outbox_subject_check;
+ALTER TABLE phis.addon_event_outbox ADD CONSTRAINT addon_event_outbox_subject_check CHECK (
+    (subject_kind = 'thread' AND thread_id IS NOT NULL AND payment_id IS NULL AND subscription_id IS NULL AND emitter IS NULL AND event <> 'payment.changed' AND event NOT LIKE '@%') OR
+    (subject_kind = 'payment' AND thread_id IS NULL AND payment_id IS NOT NULL AND subscription_id IS NULL AND emitter IS NULL AND event = 'payment.changed') OR
+    (subject_kind = 'subscription' AND thread_id IS NULL AND payment_id IS NULL AND subscription_id IS NOT NULL AND emitter IS NULL AND event = 'payment.changed') OR
+    (subject_kind = 'emitted' AND thread_id IS NULL AND payment_id IS NULL AND subscription_id IS NULL AND emitter IS NOT NULL AND event LIKE '@%/%:%')
+  );;
+COMMIT;
+```
+
 ### `phis.payment_operations`
 
 - `id UUID PRIMARY KEY`, `payment_id UUID REFERENCES phis.payments ON DELETE RESTRICT`.
 - `site_id SMALLINT`, `consumer_addon_id VARCHAR(255)`; composite ownership FK to `payments`, `ON DELETE RESTRICT`.
-- `action VARCHAR(16) CHECK IN (create, complete, capture, cancel, refund)`, `idempotency_key VARCHAR(255)`.
+- `action VARCHAR(16) CHECK IN (create, complete, capture, cancel, refund, charge)`, `idempotency_key VARCHAR(255)`.
+  `charge` is a stored method charged without the customer; like `create` it brings the payment into being.
 - `request JSONB`: canonical consumer arguments; `command JSONB`: exact Provider command, including
   stable provider idempotency key and canonical callback URLs, excluding the transient AbortSignal.
 - `record JSONB`: `PhisPaymentOperation`; checked state `reserved`, `pending`, `succeeded`, `failed`,

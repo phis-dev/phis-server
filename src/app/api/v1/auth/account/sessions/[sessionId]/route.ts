@@ -10,7 +10,7 @@ export const dynamic = "force-dynamic";
 type Context = { params: Promise<{ sessionId: string }> };
 
 export async function DELETE(request: NextRequest, context: Context) {
-  const guardError = guardApiV1(request, { requireInternalToken: true });
+  const guardError = await guardApiV1(request, { requireInternalToken: true });
   if (guardError) return guardError;
   const siteContext = await requireSiteFromExplicitKeyRequest(request);
   if (siteContext.error || !siteContext.site) return siteContext.error;
