@@ -1,3 +1,18 @@
+phis (0.2.11-1) unstable; urgency=medium
+
+  * Payments: stored payment methods, charges without the customer present and subscriptions on Core's
+    own schedule (PAYMENTS.md section 13), with their tables, the payments.subscriptions.advance job
+    and the subscription subject of payment.changed.
+  * Add-ons: a role can include other roles; listing a public slot asks no role.
+  * Rate limits count in an optional shared Redis, and in the process otherwise.
+  * A locked Media Folder and a locked thread are enforced.
+  * Audit: Assets by id are read within their Site, a folder-address miss parses no Navigation, and the
+    page, references and /auth/me reads run side by side. The translation hash covers the whole
+    message. The Medusa store flag is gone from the Site config.
+  * Existing databases need the hand SQL in DB.md.
+
+ -- Phisys Ltd. <debian@phisys.com>  Tue, 10 Nov 2026 23:10:00 +0000
+
 phis (0.2.10-1) unstable; urgency=medium
 
   * Security: the Operator login counts attempts and answers an unknown address as slowly as a known
