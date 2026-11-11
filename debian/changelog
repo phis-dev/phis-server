@@ -1,3 +1,12 @@
+phis (0.2.15-1) unstable; urgency=medium
+
+  * When a message was last read: tr_msg_usage and tr_site_msg_usage note the day Core last answered a
+    request for a message from a translation, at most once per message and day. Created by
+    `phis schema apply`; no hand SQL.
+  * phis translations usage reports which texts nothing has read in a while. It deletes nothing.
+
+ -- Phisys Ltd. <debian@phisys.com>  Wed, 11 Nov 2026 12:00:00 +0000
+
 phis (0.2.14-1) unstable; urgency=medium
 
   * The translation message hash covers the first 50 characters again, as defined; 0.2.11 to 0.2.13
