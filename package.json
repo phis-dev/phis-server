@@ -1,6 +1,6 @@
 {
   "name": "@phis/server",
-  "version": "0.2.13",
+  "version": "0.2.14",
   "license": "Apache-2.0",
   "description": "The phis control plane: the server that answers for Sites, Spaces, media, authorization, translations and Add-ons, and the phis operator CLI that installs, configures and migrates an installation.",
   "repository": {

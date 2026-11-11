@@ -1,3 +1,10 @@
+phis (0.2.14-1) unstable; urgency=medium
+
+  * The translation message hash covers the first 50 characters again, as defined; 0.2.11 to 0.2.13
+    hashed the whole text. Existing databases are keyed back by hand with the SQL in DB.md.
+
+ -- Phisys Ltd. <debian@phisys.com>  Wed, 11 Nov 2026 11:00:00 +0000
+
 phis (0.2.13-1) unstable; urgency=medium
 
   * Mail links into an Area other than Public carry no language prefix, as /app and the other Areas
