@@ -147,3 +147,46 @@ describe("the DeepL step's address form", () => {
     expect((await translateWith()).has("formality")).toBe(false);
   });
 });
+
+/*
+ * A spent character quota (HTTP 456). It used to open no breaker at all, so every render of a page with
+ * untranslated labels asked DeepL again and was refused again, for as long as the quota stayed spent.
+ */
+describe("a DeepL account whose quota is used up", () => {
+  const translate = (msg: string) => requestPhisTranslationUnit({
+    locale: "de",
+    msgs: [msg],
+    ctx: "",
+    sourceLocale: "en",
+    format: "text",
+    audience: "platform",
+  });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    // Only the clock, and set in the past: the breaker this leaves open has run out before any other test asks.
+    vi.useFakeTimers({ toFake: ["Date"], now: new Date("2001-01-01T00:00:00Z") });
+    mocks.getPhisConfigSync.mockReturnValue({ translation: { mode: "deepl" }, deepl: { apiKey: "key" } } as PhisConfig);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  it("is not asked again for an hour, and is asked again after it", async () => {
+    const fetchMock = vi.fn(async () => ({ ok: false, status: 456, text: async () => "Quota exceeded" }) as unknown as Response);
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(translate("Quota one")).resolves.toMatchObject({ succeeded: false, translations: ["Quota one"] });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    vi.setSystemTime(new Date("2001-01-01T00:59:00Z"));
+    await expect(translate("Quota two")).resolves.toMatchObject({ succeeded: false, translations: ["Quota two"] });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    vi.setSystemTime(new Date("2001-01-01T01:00:01Z"));
+    await translate("Quota three");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+});

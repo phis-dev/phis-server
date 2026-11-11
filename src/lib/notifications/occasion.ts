@@ -2,6 +2,7 @@ import "server-only";
 
 import type { PhisAddonOccasionDescriptor, PhisAddonOccasionLine } from "@phis/contracts/addon";
 
+import { PHIS_SPECIAL_AREA_KEYS } from "@/lib/constants/cms-areas";
 import { buildBaseUrlWithLocale } from "@/lib/email";
 import { escapeHtml } from "@/lib/email-templates";
 import { PHI_CANONICAL_SOURCE_LOCALE, normalizeLocale } from "@/lib/locale";
@@ -13,11 +14,24 @@ import { translateWithCache } from "@/lib/translations";
  * The Add-on wrote the sentences and the manifest digest sealed them; what happens here is Core's part
  * of the split in `design/NOTIFICATIONS.md` section 2: the salutation, the translation, the escaping,
  * the paragraphs, and the links -- a `path` parameter becomes an absolute address on the Site's own
- * public URL, so nothing an occasion carries can point a Site's mail at another host.
+ * public URL, so nothing an occasion carries can point a Site's mail at another host. A Public path is
+ * given the recipient's language; a path into another Area is left as it is.
  *
  * Each line is translated as the unparameterised sentence and the values are put in afterwards, exactly
  * as `resolveEmailTemplate` does for Core's own templates, so a declared line translates like a Core one.
  */
+
+/**
+ * Whether a Site path lies in an Area other than Public.
+ *
+ * Only Public addresses name the language they are read in (`/de/shop`); the App, Admin and the other
+ * Areas are served at `/app/…` for every language and take the reader's from the account. A locale put
+ * in front of such a path is an address nobody serves.
+ */
+function isSpecialAreaPath(path: string) {
+  const first = path.split(/[/?#]/).find((segment) => segment.length > 0);
+  return first !== undefined && (PHIS_SPECIAL_AREA_KEYS as readonly string[]).includes(first);
+}
 
 const SALUTATION: PhisAddonOccasionLine = { text: "Hello %1,", parameters: ["recipientName"] };
 
@@ -64,7 +78,9 @@ export async function renderPhiAddonOccasion(input: {
 }): Promise<RenderedOccasion> {
   const locale = normalizeLocale(input.locale);
   const types = new Map(input.occasion.parameters.map((parameter) => [parameter.name, parameter.type]));
-  const base = buildBaseUrlWithLocale(input.publicBaseUrl, locale);
+  const localized = buildBaseUrlWithLocale(input.publicBaseUrl, locale);
+  const unlocalized = input.publicBaseUrl.trim().replace(/\/+$/, "");
+  const address = (path: string) => `${isSpecialAreaPath(path) ? unlocalized : localized}${path}`;
 
   const raw = (name: string) => {
     if (name === "recipientName") return input.recipientName;
@@ -72,11 +88,11 @@ export async function renderPhiAddonOccasion(input: {
     return typeof value === "string" ? value : "";
   };
   // What a reader of plain text sees: the value, or for a path the whole address.
-  const asText = (name: string) => (types.get(name) === "path" ? `${base}${raw(name)}` : raw(name));
+  const asText = (name: string) => (types.get(name) === "path" ? address(raw(name)) : raw(name));
   // What an HTML reader sees: the value escaped, or for a path a link to that address.
   const asHtml = (name: string) => {
     if (types.get(name) !== "path") return escapeHtml(raw(name));
-    const url = escapeHtml(`${base}${raw(name)}`);
+    const url = escapeHtml(address(raw(name)));
     return `<a href="${url}">${url}</a>`;
   };
 

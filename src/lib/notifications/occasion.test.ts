@@ -59,4 +59,30 @@ describe("rendering an Add-on's occasion", () => {
     expect(rendered.bodyText.startsWith("[de] Hello Gast,")).toBe(true);
     expect(rendered.bodyText).toContain("https://shop.example/de/shop/order/1001");
   });
+
+  // Only Public addresses carry a language; `/de/app/…` is an address no Site serves.
+  it("leaves a path into another Area without the language in front", async () => {
+    const rendered = await renderPhiAddonOccasion({
+      addonId: "@acme/shop",
+      occasion,
+      params: { number: "1001", link: "/app/acme/shop/subscriptions?subscription=S1" },
+      locale: "de",
+      recipientName: "Gast",
+      publicBaseUrl: "https://shop.example/",
+    });
+    expect(rendered.bodyText).toContain("Follow it here: https://shop.example/app/acme/shop/subscriptions?subscription=S1");
+    expect(rendered.bodyHtml).toContain('<a href="https://shop.example/app/acme/shop/subscriptions?subscription=S1">');
+  });
+
+  it("still gives a Public path that merely starts like an Area its language", async () => {
+    const rendered = await renderPhiAddonOccasion({
+      addonId: "@acme/shop",
+      occasion,
+      params: { number: "1001", link: "/apps/overview" },
+      locale: "de",
+      recipientName: "Gast",
+      publicBaseUrl: "https://shop.example",
+    });
+    expect(rendered.bodyText).toContain("https://shop.example/de/apps/overview");
+  });
 });

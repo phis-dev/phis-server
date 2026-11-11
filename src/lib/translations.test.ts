@@ -5,6 +5,8 @@ const mocks = vi.hoisted(() => ({
   getSiteTranslations: vi.fn(),
   getTranslations: vi.fn(),
   upsertSiteTranslations: vi.fn(),
+  upsertTranslation: vi.fn(),
+  requestPhisTranslationUnit: vi.fn(),
   logRuntimeEvent: vi.fn(),
 }));
 
@@ -23,7 +25,19 @@ vi.mock("@/db/translations", async (importOriginal) => ({
   getSiteTranslations: mocks.getSiteTranslations,
   getTranslations: mocks.getTranslations,
   upsertSiteTranslations: mocks.upsertSiteTranslations,
+  upsertTranslation: mocks.upsertTranslation,
 }));
+vi.mock("@/lib/translation-unit", async (importOriginal) => {
+  const original = await importOriginal<typeof import("@/lib/translation-unit")>();
+  return {
+    ...original,
+    // The real unit unless a test gave the provider an answer.
+    requestPhisTranslationUnit: (...args: Parameters<typeof original.requestPhisTranslationUnit>) =>
+      (mocks.requestPhisTranslationUnit.getMockImplementation()
+        ? mocks.requestPhisTranslationUnit(...args)
+        : original.requestPhisTranslationUnit(...args)),
+  };
+});
 vi.mock("@/lib/log", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/log")>()),
   logRuntimeEvent: mocks.logRuntimeEvent,
@@ -229,5 +243,46 @@ describe("a read of the global store that may not write", () => {
       value: ["two-de", "three-de"],
       standIn: false,
     });
+  });
+});
+
+/*
+ * What the global store keeps of a provider's answer. A message it does not hold is asked of the provider
+ * on every render, so what is kept decides what is paid for twice.
+ */
+describe("a provider's answer for the global store", () => {
+  const translate = (msgs: string[]) => translateBatchWithCache({
+    locale: "de",
+    sourceLocale: "en",
+    msgs,
+    ctx: "",
+    write: "extend",
+    format: "text",
+  });
+  const stored = () => mocks.upsertTranslation.mock.calls.map((call) => [call[1], call[3]]);
+
+  beforeEach(() => {
+    vi.resetAllMocks();
+    mocks.getTranslations.mockResolvedValue(new Map());
+  });
+
+  it("is kept also where the translation reads like the source", async () => {
+    mocks.requestPhisTranslationUnit.mockImplementation(async () => ({
+      translations: ["Dashboard", "Hallo"], succeeded: true, outcome: "translated", detectedSourceLocales: [],
+    }));
+
+    await expect(translate(["Dashboard", "Hello"])).resolves.toEqual(["Dashboard", "Hallo"]);
+
+    expect(stored()).toEqual([["Dashboard", "Dashboard"], ["Hello", "Hallo"]]);
+  });
+
+  it("is not kept where the provider did not answer and the source text stands in", async () => {
+    mocks.requestPhisTranslationUnit.mockImplementation(async () => ({
+      translations: ["Dashboard", "Hello"], succeeded: false, outcome: "failed", detectedSourceLocales: [],
+    }));
+
+    await expect(translate(["Dashboard", "Hello"])).resolves.toEqual(["Dashboard", "Hello"]);
+
+    expect(mocks.upsertTranslation).not.toHaveBeenCalled();
   });
 });

@@ -95,7 +95,9 @@ closed; a declared occasion is a second source of words, not a way into that rec
 - **No address and no name.** The parameters are values about the event, not about the person. The
   salutation is Core's, resolved from the profile.
 - **No absolute link outside the Site.** A link parameter is a path, and Core builds the URL on
-  `site.publicBaseUrl`. An occasion that can put any URL into a Site's outgoing mail is a phishing
+  `site.publicBaseUrl`. A Public path gets the recipient's language in front (`/de/shop/order/1001`); a
+  path into another Area (`/app/…`, `/admin/…`, `/accounting/…`, `/builder/…`, `/editor/…`) is left as
+  it is, because those Areas are served at one address for every language. An occasion that can put any URL into a Site's outgoing mail is a phishing
   primitive with the Site's own domain in the `From`.
 - **No HTML.** Lines are text. Core escapes and wraps them, as `resolveEmailTemplate` already does for
   its own.

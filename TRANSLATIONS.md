@@ -238,6 +238,14 @@ content and conversation messages. The CDN is therefore asked before the key is 
 deciding on the key first would make a half-configured installation translate nothing, which is not
 what the operator configured.
 
+**What the provider is asked, and how often.** The store is read first and the provider is asked only
+for what it does not hold. Every answer the provider gave is kept, also one that reads like the source
+("Dashboard" is German for "Dashboard"): a message left out of the store is asked again on every render.
+A stand-in is never kept, so a message that fell back to its source text is translated once the provider
+answers again. A refused request pauses DeepL: thirty seconds after `429`, `500` or `503`, and an hour
+after `456`, which says the account's character quota is used up and does not change within seconds.
+While it is paused every miss falls back to the source text without a request.
+
 **The CDN only ever serves global messages.** A CDN can hold translations of text that is the same
 everywhere -- `phis.tr_msg` and the label sets above it. It cannot hold a translation of a Site's own
 string, and it cannot hold one of a message somebody wrote a minute ago. `tr_site_msg` is never served

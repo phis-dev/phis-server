@@ -358,7 +358,13 @@ async function translateCanonicalGlobalBatch(input: Required<Pick<BatchTranslati
     });
     await Promise.all(askable.map(async (entry, index) => {
       const value = fresh.translations[index] ?? entry.msg;
-      if (fresh.succeeded && value !== entry.msg) {
+      /*
+       * Stored whenever the provider answered, also where the answer reads like the source: "Dashboard"
+       * is German for "Dashboard". Leaving those out left them missing for good, and a message the store
+       * does not hold is asked of the provider again on every render -- paid for each time, to learn the
+       * same thing. A stand-in never gets here: it arrives as `succeeded: false`.
+       */
+      if (fresh.succeeded) {
         // The translation itself is in hand; failing to cache it is not a reason to withhold it.
         await withMessageIsolation(
           () => upsertTranslation(input.locale, entry.msg, cacheContext, value, entry.hash),

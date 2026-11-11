@@ -38,6 +38,16 @@ const DEFAULT_DEEPL_URL = "https://api-free.deepl.com/v2/translate";
  */
 const DEEPL_MAX_CONCURRENT_REQUESTS = 1;
 const DEEPL_CIRCUIT_BREAKER_MS = 30_000;
+/**
+ * How long DeepL is left alone after it said the account's character quota is used up (HTTP 456).
+ *
+ * A quota does not come back in thirty seconds; it comes back with the next billing period or when the
+ * operator changes the plan. Until then every request is a round trip that can only be refused, and a
+ * page with a hundred untranslated labels made one on every render. An hour is short enough that a
+ * raised quota is noticed without a restart and long enough that the wait costs nothing.
+ */
+const DEEPL_QUOTA_BREAKER_MS = 60 * 60_000;
+const DEEPL_QUOTA_EXCEEDED_STATUS = 456;
 const DEEPL_MAX_REQUEST_BYTES = 128 * 1024;
 const DEEPL_MAX_TEXTS_PER_REQUEST = 50;
 /**
@@ -157,8 +167,17 @@ export function translationModeUsesDeepL(mode = getConfiguredTranslationMode()) 
   return mode === "deepl" || mode === "cdn+deepl";
 }
 
-function openDeepLCircuitBreaker() {
-  deepLCircuitOpenUntil = Date.now() + DEEPL_CIRCUIT_BREAKER_MS;
+function openDeepLCircuitBreaker(forMs = DEEPL_CIRCUIT_BREAKER_MS) {
+  deepLCircuitOpenUntil = Math.max(deepLCircuitOpenUntil, Date.now() + forMs);
+}
+
+/** What a refused request means for the next ones: a pause for an overloaded service, a long one for a spent quota. */
+function noteDeepLRefusal(status: number) {
+  if (status === DEEPL_QUOTA_EXCEEDED_STATUS) {
+    openDeepLCircuitBreaker(DEEPL_QUOTA_BREAKER_MS);
+  } else if (status === 429 || status === 500 || status === 503) {
+    openDeepLCircuitBreaker();
+  }
 }
 
 async function acquireDeepLSlot() {
@@ -409,9 +428,7 @@ async function requestDeepL(
 
       if (!response.ok) {
         const details = await response.text();
-        if (response.status === 429 || response.status === 500 || response.status === 503) {
-          openDeepLCircuitBreaker();
-        }
+        noteDeepLRefusal(response.status);
         throw new Error(`DeepL request failed: ${response.status} ${details}`);
       }
 
@@ -628,6 +645,7 @@ export async function detectTranslationSourceLocale(input: {
     });
     if (!response.ok) {
       const details = await response.text();
+      noteDeepLRefusal(response.status);
       throw new Error(`DeepL language detection failed: ${response.status} ${details}`);
     }
     const data = (await response.json()) as {
