@@ -30,7 +30,8 @@ export type PhiSiteModulePackageIssueCode =
   | "declaration_invalid"
   | "declaration_foreign_module"
   | "declaration_unknown_category"
-  | "server_only_in_client_graph";
+  | "server_only_in_client_graph"
+  | "client_in_server_graph";
 
 export type PhiSiteModulePackageIssue = {
   code: PhiSiteModulePackageIssueCode;
@@ -62,7 +63,7 @@ type PackageManifest = {
   exports?: Record<string, unknown>;
   dependencies?: Record<string, string>;
   sideEffects?: unknown;
-  phis?: { serverOnlyExports?: unknown };
+  phis?: { serverOnlyExports?: unknown; clientExports?: unknown };
 };
 
 /**
@@ -304,6 +305,125 @@ function findServerOnlyReach(root: string, siteRoot: string, manifest: PackageMa
   return null;
 }
 
+/**
+ * The names each door of a dependency hands out that are Client components, as that dependency states
+ * them in `package.json#phis.clientExports` (`@phis/ui` writes its own with
+ * `scripts/validate-module-boundary-exports.mjs`). Null when it states nothing.
+ */
+function readClientExports(siteRoot: string, packageName: string) {
+  const manifestFile = path.join(siteRoot, "node_modules", ...packageName.split("/"), "package.json");
+  if (!existsSync(manifestFile)) {
+    return null;
+  }
+  let manifest: PackageManifest;
+  try {
+    manifest = JSON.parse(readFileSync(manifestFile, "utf8")) as PackageManifest;
+  } catch {
+    return null;
+  }
+  const declared = manifest.phis?.clientExports;
+  if (!declared || typeof declared !== "object" || Array.isArray(declared)) {
+    return null;
+  }
+  const doors = new Map<string, Set<string>>();
+  for (const [subpath, names] of Object.entries(declared)) {
+    if (Array.isArray(names)) {
+      doors.set(subpath, new Set(names.filter((name): name is string => typeof name === "string")));
+    }
+  }
+  return doors;
+}
+
+const NAMED_IMPORT_PATTERN =
+  /(?:^|\n|;)\s*(?:import|export)\s*(?:[A-Za-z_$][\w$]*\s*,\s*)?(\{[^}]*\}|\*(?:\s*as\s+[\w$]+)?)\s*from\s*(['"])([^'"]+)\2/g;
+const DYNAMIC_IMPORT_PATTERN = /\bimport\(\s*(['"])([^'"]+)\1\s*\)/g;
+
+/** What a built file takes from where: named imports and re-exports, a namespace as `*`. */
+function readNamedImports(source: string) {
+  const code = source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:"'`])\/\/.*$/gm, "$1");
+  const found: { specifier: string; names: string[] | "*" }[] = [];
+  for (const match of code.matchAll(NAMED_IMPORT_PATTERN)) {
+    const clause = match[1] ?? "";
+    const specifier = match[3] ?? "";
+    found.push({
+      specifier,
+      names: clause.startsWith("*")
+        ? "*"
+        : clause.slice(1, -1).split(",").map((part) => part.trim().split(/\s+as\s+/)[0]!.trim()).filter(Boolean),
+    });
+  }
+  return { code, found };
+}
+
+/**
+ * The first Client component the package's server half takes, and how it was reached.
+ *
+ * The server half is in the server graph of every route of the Site -- the catalog that lists it is --
+ * and its Widget loaders are too, lazy as they are, so dynamic edges are followed here. Every Client
+ * component that graph imports becomes a Client reference of every route and ships on every page,
+ * whether or not a Page places the Widget (THIRD_PARTY_MODULES.md, "What a Server half may import").
+ * Two ways in: a name a dependency states is a Client component, and a file of the package's own that
+ * begins with `"use client"`, imported statically.
+ */
+function findClientInServerGraph(root: string, siteRoot: string, manifest: PackageManifest) {
+  const target = resolveExportTarget(manifest, "./server");
+  const entry = target ? path.join(root, target) : null;
+  if (!entry || !existsSync(entry)) {
+    return null;
+  }
+  const doors = new Map<string, Map<string, Set<string>> | null>();
+  const seen = new Set<string>();
+  const queue: { file: string; trail: string[]; dynamic: boolean }[] = [{ file: entry, trail: [target as string], dynamic: false }];
+
+  while (queue.length > 0) {
+    const { file, trail, dynamic } = queue.shift()!;
+    if (seen.has(file)) {
+      continue;
+    }
+    seen.add(file);
+    const source = readFileSync(file, "utf8");
+    if (!dynamic && trail.length > 1 && declaresClientBoundary(source)) {
+      return { trail, what: `${trail.at(-1)}, which begins with "use client"` };
+    }
+    const { code, found } = readNamedImports(source);
+    for (const { specifier, names } of found) {
+      if (specifier.startsWith(".")) {
+        continue;
+      }
+      const { packageName, subpath } = splitSpecifier(specifier);
+      if (!doors.has(packageName)) {
+        doors.set(packageName, readClientExports(siteRoot, packageName));
+      }
+      const clientNames = doors.get(packageName)?.get(subpath);
+      if (!clientNames || clientNames.size === 0) {
+        continue;
+      }
+      const taken = names === "*" ? [...clientNames] : names.filter((name) => clientNames.has(name));
+      if (taken.length > 0) {
+        return { trail, what: `${taken.slice(0, 3).join(", ")} from "${specifier}"` };
+      }
+    }
+    for (const specifier of readStaticSpecifiers(source)) {
+      if (specifier.startsWith(".")) {
+        const next = resolveRelative(file, specifier);
+        if (next) {
+          queue.push({ file: next, trail: [...trail, path.relative(root, next)], dynamic: false });
+        }
+      }
+    }
+    for (const match of code.matchAll(DYNAMIC_IMPORT_PATTERN)) {
+      const specifier = match[2] ?? "";
+      if (specifier.startsWith(".")) {
+        const next = resolveRelative(file, specifier);
+        if (next) {
+          queue.push({ file: next, trail: [...trail, path.relative(root, next)], dynamic: true });
+        }
+      }
+    }
+  }
+  return null;
+}
+
 export function inspectSiteModulePackage(
   siteRoot: string,
   packageName: string,
@@ -452,6 +572,18 @@ export function inspectSiteModulePackage(
         "states is server-only. Reached from an entrypoint the browser gets, so the Site answers 500 " +
         "on every page rather than failing to build. Import it only from ./server, or take the " +
         "narrower door.",
+    });
+  }
+
+  const clientInServer = findClientInServerGraph(root, siteRoot, manifest);
+  if (clientInServer) {
+    issues.push({
+      code: "client_in_server_graph",
+      message:
+        `${clientInServer.trail.join(" -> ")} takes ${clientInServer.what}. The server half is reached by ` +
+        "every route of the Site, so a Client component it imports ships on every page, whether or not " +
+        "a Page places the Widget. Hand a view model to the Widget's Render Client through " +
+        "PhiRuntimeModuleRenderClientHost and import the Controls there.",
     });
   }
 

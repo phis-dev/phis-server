@@ -87,6 +87,14 @@ function writeNeighbour(siteRoot: string, serverOnlyExports: string[] | null) {
   return siteRoot;
 }
 
+/** A dependency that says which names its doors hand out are Client components. */
+function writeClientNeighbour(siteRoot: string, clientExports: Record<string, string[]>) {
+  const root = path.join(siteRoot, "node_modules", "@phis", "ui");
+  mkdirSync(root, { recursive: true });
+  writeFileSync(path.join(root, "package.json"), JSON.stringify({ name: "@phis/ui", phis: { clientExports } }));
+  return siteRoot;
+}
+
 describe("inspecting a built Module package", () => {
   it("passes a package that is put together correctly", () => {
     expect(codesFor(writePackage({}))).toEqual([]);
@@ -265,6 +273,53 @@ describe("inspecting a built Module package", () => {
         "dist/index.js": 'import { x } from "@phis/ui/constants";\nexport const phiModuleDefinitions = [x];\n',
       },
     }), ["./forms", "./server-helpers"]);
+    expect(codesFor(siteRoot)).toEqual([]);
+  });
+
+  /*
+   * The other direction: a server half is in the server graph of every route, so a Client component it
+   * imports ships on every page. On 2026-11-11 a Download Widget that drew its card on the server doubled
+   * the Public landing's JavaScript.
+   */
+  it("catches a Control imported by the server half, behind a lazy Widget loader", () => {
+    const siteRoot = writeClientNeighbour(writePackage({
+      files: {
+        "dist/server.js":
+          'export const phiModuleServerContributions = [{ load: () => import("./plugin.js") }];\n',
+        "dist/plugin.js": 'import { PhiCardControl, readPhiControlSize } from "@phis/ui/controls";\nexport const p = [PhiCardControl, readPhiControlSize];\n',
+      },
+    }), { "./controls": ["PhiCardControl", "PhiFlexControl"] });
+    const report = inspectSiteModulePackage(siteRoot, PACKAGE);
+    expect(report.issues.map((issue) => issue.code)).toEqual(["client_in_server_graph"]);
+    expect(report.issues[0]?.message).toContain("dist/server.js -> dist/plugin.js");
+    expect(report.issues[0]?.message).toContain('PhiCardControl from "@phis/ui/controls"');
+  });
+
+  it("passes a name of the same door that is not a Client component", () => {
+    const siteRoot = writeClientNeighbour(writePackage({
+      files: {
+        "dist/server.js": 'import { readPhiControlSize } from "@phis/ui/controls";\nexport const phiModuleServerContributions = [readPhiControlSize];\n',
+      },
+    }), { "./controls": ["PhiCardControl"] });
+    expect(codesFor(siteRoot)).toEqual([]);
+  });
+
+  it("catches a file of the package's own that begins with use client, imported by the server half", () => {
+    const siteRoot = writePackage({
+      files: {
+        "dist/server.js": 'import { Box } from "./box.js";\nexport const phiModuleServerContributions = [Box];\n',
+        "dist/box.js": '"use client";\nexport function Box() { return null; }\n',
+      },
+    });
+    expect(codesFor(siteRoot)).toEqual(["client_in_server_graph"]);
+  });
+
+  it("leaves the Client entrypoint alone, which is where Controls belong", () => {
+    const siteRoot = writeClientNeighbour(writePackage({
+      files: {
+        "dist/client.js": '"use client";\nimport { PhiCardControl } from "@phis/ui/controls";\nexport const phiModuleClientContributions = { PhiCardControl };\n',
+      },
+    }), { "./controls": ["PhiCardControl"] });
     expect(codesFor(siteRoot)).toEqual([]);
   });
 
