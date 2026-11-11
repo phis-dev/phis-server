@@ -45,6 +45,8 @@ yarn-error.log*
 # show up as a diff. The .example files carry the shape a fresh root starts from; the CLI
 # reads an absent file as an empty state and writes the real one itself.
 config/phis-runtime.json
+# Copies of it carry the same credentials.
+config/phis-runtime.json.bak*
 config/phis-instance.json
 config/phis-modules.json
 config/phis-addons.json
