@@ -39,6 +39,18 @@ import {
   type TranslationContextFlag,
 } from "@/lib/translation-context";
 
+/**
+ * How much of a message its catalogue hash covers. Fixed, and deliberately a prefix.
+ *
+ * Hashing a prefix keeps the cost of a key independent of the length of the text, and 50 characters tell
+ * nearly every message apart. Two messages that share their opening are one key; the second is reported
+ * as a conflict for that message alone and shown in its source text. The key is the hash together with
+ * the context, so a conflict is resolved where it arises: the author changes the wording, or the second
+ * message is given a context of its own. That is the intended answer to a collision, and a conflict
+ * warning is a notice to an author, not a defect of the hash. Do not widen the hash to remove one: every
+ * stored key changes with it and every installation translates its whole catalogue again.
+ */
+const TR_HASH_PREFIX_LENGTH = 50;
 type TranslationFormat = "text" | "html";
 
 type TranslationInput = {
@@ -80,15 +92,10 @@ type BatchTranslationInput = {
 
 const SHA256_HEX_LENGTH = 64;
 
-/**
- * A message's catalogue identity: SHA-256 over the whole text.
- *
- * It covered only the first 50 characters once, and every HTML message opening with the same link or code
- * element -- `<x-link data-index="0"><x-code ...>` alone is longer than that -- was one key to the column
- * and a "collision" to the request, so the second paragraph of its kind was never translated.
- */
 function computeTranslationHash(msg: string) {
-  return createHash("sha256").update(msg).digest("hex");
+  return createHash("sha256")
+    .update(msg.slice(0, TR_HASH_PREFIX_LENGTH))
+    .digest("hex");
 }
 
 function normalizeProvidedHash(hash: string) {

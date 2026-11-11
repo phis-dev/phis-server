@@ -3,9 +3,9 @@ import "server-only";
 /**
  * The namespace an application outside this platform writes its strings under.
  *
- * `tr_msg` is unique on `(msg_hash, ctx)`, so two writers sharing a context share one key space: a foreign
- * string can occupy the row a Label Set will want later, with a translation of its own choosing, and then
- * ours is answered with it while nobody looks there. An application therefore names
+ * `tr_msg` is unique on `(msg_hash, ctx)` and the hash covers only the opening of a message, so two
+ * writers sharing a context share one key space: a foreign string can occupy the hash a Label Set will
+ * want later, and then ours is the one rejected while nobody looks there. An application therefore names
  * itself in `PHIS_APP_HEADER` and the server puts that name in front of the context it was sent
  * (TRANSLATIONS.md, "Somebody else's strings in the global store").
  *

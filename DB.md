@@ -1768,10 +1768,36 @@ Contract:
 
 - `id SERIAL PRIMARY KEY`
 - `msg TEXT NOT NULL`
-- `msg_hash BYTEA NOT NULL` -- SHA-256 over the whole `msg`. Until 2026-11-10 it covered the first 50
-  characters; existing databases are re-keyed by hand, together with `tr_site_msg`, when that release is
-  installed (and not before, or the running version keeps adding rows under the old keys):
-  `UPDATE phis.tr_msg SET msg_hash = sha256(convert_to(msg, 'UTF8')); UPDATE phis.tr_site_msg SET msg_hash = sha256(convert_to(msg, 'UTF8'));`
+- `msg_hash BYTEA NOT NULL` -- SHA-256 over the first 50 characters of `msg`. The length is fixed: a
+  hash over a prefix is cheap for a long text, 50 characters tell nearly every message apart, and two
+  that share an opening are reported as a conflict for the second one. The key is `(msg_hash, ctx)`, so
+  the author resolves it by changing the wording or by giving the second message a context of its own;
+  the conflict is the intended signal and no reason to widen the hash. Releases 0.2.11 and 0.2.12 hashed the whole text; a database they ran on is keyed back by
+  hand when a later release is installed (and not before, or the running version keeps adding rows
+  under the other keys). Where several rows of one key remain, the first stored is kept, as it would
+  have been:
+
+  ```sql
+  BEGIN;
+  DELETE FROM phis.tr_site_msg m USING (
+    SELECT id, row_number() OVER (PARTITION BY site_id, ctx, sha256(convert_to(left(msg, 50), 'UTF8')) ORDER BY id) AS n
+      FROM phis.tr_site_msg) k
+   WHERE k.id = m.id AND k.n > 1;
+  UPDATE phis.tr_site_msg SET msg_hash = sha256(convert_to(left(msg, 50), 'UTF8'))
+   WHERE msg_hash <> sha256(convert_to(left(msg, 50), 'UTF8'));
+  DELETE FROM phis.tr_msg m USING (
+    SELECT id, row_number() OVER (PARTITION BY ctx, sha256(convert_to(left(msg, 50), 'UTF8')) ORDER BY id) AS n
+      FROM phis.tr_msg) k
+   WHERE k.id = m.id AND k.n > 1;
+  UPDATE phis.tr_msg SET msg_hash = sha256(convert_to(left(msg, 50), 'UTF8'))
+   WHERE msg_hash <> sha256(convert_to(left(msg, 50), 'UTF8'));
+  COMMIT;
+  ```
+
+  A deleted row takes its translations and any `site_content_version_text` row pointing at it along
+  (`ON DELETE CASCADE`), so count those first; and `left()` counts characters where the server counts
+  UTF-16 units, so a message with a character outside the Basic Multilingual Plane among its first 50
+  is keyed by hand.
 - `ctx VARCHAR(128) NOT NULL DEFAULT ''`
 - `created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
 - `UNIQUE (msg_hash, ctx)`
@@ -1792,7 +1818,7 @@ Contract:
 - `id SERIAL PRIMARY KEY`
 - `site_id SMALLINT NOT NULL REFERENCES phis.sites(id) ON DELETE CASCADE`
 - `msg TEXT NOT NULL`
-- `msg_hash BYTEA NOT NULL` -- SHA-256 over the whole `msg`, re-keyed with `tr_msg` (above)
+- `msg_hash BYTEA NOT NULL` -- SHA-256 over the first 50 characters of `msg`, as in `tr_msg` (above)
 - `ctx VARCHAR(128) NOT NULL DEFAULT ''`
 - `created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
 - `UNIQUE (site_id, msg_hash, ctx)`
