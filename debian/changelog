@@ -1,3 +1,13 @@
+phis (0.2.13-1) unstable; urgency=medium
+
+  * Mail links into an Area other than Public carry no language prefix, as /app and the other Areas
+    are served at one address for every language.
+  * The global translation store keeps every answer the provider gave, also one that reads like the
+    source, instead of asking again on every render.
+  * A spent DeepL quota (456) pauses DeepL for an hour.
+
+ -- Phisys Ltd. <debian@phisys.com>  Wed, 11 Nov 2026 10:00:00 +0000
+
 phis (0.2.12-1) unstable; urgency=medium
 
   * The content of 0.2.11, whose release stopped at a test that asked the database; the test now
