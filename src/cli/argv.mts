@@ -137,6 +137,7 @@ export const PHIS_COMMAND_FLAGS: Record<string, FlagSpec> = {
   "operator del": { email: S },
 
   "media check": { fix: B },
+  "translations usage": { "unused-for": S, site: S, examples: S },
   "maintain": { list: B, task: S, "dry-run": B },
   "licenses check": { package: S },
 

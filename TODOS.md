@@ -376,6 +376,10 @@ front of is infrastructure work, and belongs with
 - **Exports used only by tests:** `createPhiAssetUri` and `createPhiPageUri` (server side),
   `createPhiPresetCmsInstanceId`, `createTotpCode`, `encryptAuthTransactionPayloadWithKey`, and
   `hasTranslationContextFlag`. Remove them or give them a production caller.
+- **Deleting unread translations.** `phis translations usage` reports what nothing has read in a while
+  (TRANSLATIONS.md, "When a message was last read"); deleting by it is deliberately not built. Once a few
+  weeks of reads are in, decide the rule -- a CLI step an operator runs, excluding messages a content
+  version still points at -- and whether the orphaned content messages below go the same way.
 - **Orphaned content messages.** Deleting a `site_content` row cascades its versions and its
   `site_content_version_text` rows, but the `tr_site_msg` rows they pointed at stay: the foreign key
   cascades from the message to the text row, not the other way. The dev database held 88 such rows on

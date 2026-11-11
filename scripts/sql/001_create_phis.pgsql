@@ -1556,6 +1556,21 @@ CREATE INDEX IF NOT EXISTS tr_site_lang_external_source_idx
   ON phis.tr_site_lang (locale, source_hash)
   WHERE source_hash IS NOT NULL;
 
+-- When a message was last read, one row per message that has been: the day Core last answered a request
+-- for it from a translation. Kept apart from the stores so that writing it touches no change marker (the
+-- triggers below watch the stores alone) and so that it can be emptied without touching a translation.
+-- Written at most once per message and day (src/db/translation-usage.ts); a message without a row has not
+-- been read since its table was created. Read by `phis translations usage`; nothing deletes by it.
+CREATE TABLE IF NOT EXISTS phis.tr_msg_usage (
+  msg_id INT PRIMARY KEY REFERENCES phis.tr_msg(id) ON DELETE CASCADE,
+  last_used_on DATE NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS phis.tr_site_msg_usage (
+  msg_id INT PRIMARY KEY REFERENCES phis.tr_site_msg(id) ON DELETE CASCADE,
+  last_used_on DATE NOT NULL
+);
+
 -- Change markers for the translation stores. A Site keeps translations without expiry and compares these
 -- on every Site config read; a different value empties that scope. Only equality means anything: the
 -- value is a fresh number per change, not a count, so a reset costs one refill and nothing else.

@@ -531,6 +531,25 @@ empties a store whose marker differs from the one it saw last. Only equality mea
   set, the offered locales), because that decides every answer that is source text by configuration.
 - The markers are rows, not statistics counters: a read replica sees them, with its replication lag.
 
+## When a message was last read
+
+Core notes the day it last answered a request for a message from a translation, in `tr_msg_usage` and
+`tr_site_msg_usage` (DB.md), so that texts nothing has asked for in a while can be found:
+`phis translations usage [--unused-for 90d] [--site <key>]`. It only reports; deleting by it is not built.
+
+- The lookups in `src/db/translations.ts` note the ids they found -- canonical global and Site messages,
+  external units, a Site's resolved message fields. `src/db/translation-usage.ts` keeps what it saw today in
+  memory and writes the new ones a minute later in one statement that only moves a date forward. Another
+  instance or a restart on the same day writes nothing new; a crash loses at most a minute of notes, which
+  the next read puts back.
+- A Site keeps a translation for a day and some hours at most (phis-ui gateway/CACHES.md, "Translation
+  Caching"), so a text it still shows reaches Core again within a day, and one it no longer shows does not.
+- What counts is a read in a translated language. A Site serving its source language asks Core nothing,
+  so a text only ever shown in it has no reads -- it would be in the store only as a content message or
+  because some reader asked for it in another language.
+- A store tracked for fewer days than the question asks about reads as unread; the command says since when
+  each store is tracked.
+
 ## Content revisions and deletion
 
 Site content keeps stable content identity but immutable version text links:

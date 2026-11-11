@@ -123,6 +123,7 @@ import { PHI_MAINTENANCE_TASKS, runPhiMaintenance } from "./maintain.mts";
 import { runPhisPaymentProfileCommand, recoverPhisPayments } from "./payments.mts";
 import { checkPhiDependencyLicenses } from "./licenses.mts";
 import { checkPhiMediaOwnership } from "./media-check.mts";
+import { parsePhiUsageDays, readPhiTranslationUsage } from "./translations-usage.mts";
 import {
   addStorageProfile,
   listStorageProfiles,
@@ -332,6 +333,7 @@ Usage:
   phis operator secret
 
   phis media check [--fix]
+  phis translations usage [--unused-for <days, e.g. 90d>] [--site <site key>] [--examples <n>]
   phis maintain [--list] [--task <id>] [--dry-run]
   phis mail drain [--limit <rows>] --api-base-url <url>
   phis licenses check [--package <directory>]
@@ -2800,6 +2802,40 @@ async function main() {
     }
     if (failed.length > 0) {
       process.exitCode = 1;
+    }
+    return;
+  }
+
+  if (group === "translations" && command === "usage") {
+    // Reads only: which texts nothing has read in a while (TRANSLATIONS.md, "When a message was last read").
+    const days = parsePhiUsageDays(flags.get("unused-for"), 90);
+    const examplesRaw = getOptionalFlag(flags, "examples");
+    const examples = examplesRaw == null ? 5 : Number(examplesRaw);
+    if (!Number.isInteger(examples) || examples < 0) {
+      throw new Error(`--examples takes a whole number, not "${examplesRaw}".`);
+    }
+    const stores = await readPhiTranslationUsage(getPool(), {
+      days,
+      siteKey: getOptionalFlag(flags, "site") ?? null,
+      examples,
+    });
+    if (json) {
+      printJson({ ok: true, action: "translations.usage", unusedForDays: days, stores });
+      return;
+    }
+    for (const store of stores) {
+      const since = store.trackedSince ? `tracked since ${store.trackedSince}` : "nothing tracked yet";
+      console.log(
+        `${store.store}: ${store.messages} messages, ${store.readWithin} read in the last ${days} days, `
+          + `${store.unread} unread for longer (${store.unreadCharacters} characters); ${since}.`,
+      );
+      for (const example of store.examples) {
+        const last = example.lastUsedOn ? `last read ${example.lastUsedOn}` : "never read since tracking began";
+        console.log(`  [${example.ctx || "-"}] ${JSON.stringify(example.msg)}  (${last}, created ${example.createdOn})`);
+      }
+    }
+    if (stores.some((store) => !store.trackedSince)) {
+      console.log("A store tracked for fewer days than asked about reads as unread; nothing is deleted by this.");
     }
     return;
   }

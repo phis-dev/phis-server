@@ -23,6 +23,7 @@ For a first installation, read [INSTALL.md](./INSTALL.md) instead; it runs these
 - [secret](#secret)
 - [auth](#auth)
 - [operator](#operator)
+- [translations](#translations)
 - [media](#media)
 - [maintain](#maintain)
 - [mail](#mail)
@@ -137,7 +138,7 @@ server keeps the old values for up to four hours.
 | --- | --- |
 | An administrative database connection, passed in | `db bootstrap` — it creates what every row below already expects to exist |
 | Configuration files only | `config`, `operator`, `secret init-key`, `module list`, `addon list|check|install|upgrade|enable|disable|remove|forget`, `site config set|add|del` (also read the Site row, so a database), `licenses check` |
-| `database.uri` (serving role) | `schema check|apply`, all `site` commands except `config set|add|del`, `init|reconcile|update`, `module add|del|sync|check`, `addon reconcile|site|config|role|owner|storage|job`, `storage`, `secret set|check|list|del`, `auth`, `media check`, `maintain`, `payment profile`, `instance` |
+| `database.uri` (serving role) | `schema check|apply`, all `site` commands except `config set|add|del`, `init|reconcile|update`, `module add|del|sync|check`, `addon reconcile|site|config|role|owner|storage|job`, `storage`, `secret set|check|list|del`, `auth`, `media check`, `translations usage`, `maintain`, `payment profile`, `instance` |
 | `database.migrationUri` (migration role) | `schema drop --force`, `addon migrate`, `addon purge` |
 | `secrets.encryptionKey` | `secret set|check`, `auth import-secrets`, `storage` commands that reach a Provider credential, `addon purge` and `addon storage --sweep|--recount` on a Site with an external store, `payment profile probe|enable` and `maintain --task payments` (they reach the Provider's credential) |
 | `api.internalToken` | `init` (copied into the Site), `site check` (running Site), `addon job` and `mail drain` (running server) |
@@ -834,6 +835,17 @@ way, on their next request.
 
 Passwords given on the command line are visible in the process list and shell history. A password
 that starts with `-` is passed as it is (`--password -x1` or `--password=-x1`).
+
+## translations
+
+### `phis translations usage [--unused-for <days>] [--site <site key>] [--examples <n>]`
+
+Reports, per store -- the global one and each Site's, or one Site's with `--site` -- how many messages it
+holds, how many were read in the last `--unused-for` days (`90d` by default; `12w` or a number of days),
+how many were not and how many characters they make, since when the store is tracked, and up to
+`--examples` (5) of the unread ones. A message counts as unread when its last read, or its creation if it
+was never read, lies further back. It changes nothing. Needs `database.uri`. TRANSLATIONS.md, "When a
+message was last read".
 
 ## media
 

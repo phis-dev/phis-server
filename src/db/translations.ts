@@ -5,6 +5,7 @@ import { getPool, withTransaction } from "@/lib/db";
 import { requirePhiTranslationLocale } from "@/lib/locale";
 import { toPhiIsoString } from "@/lib/helpers/timestamp";
 import { phiPrepared } from "@/lib/db-prepared";
+import { notePhiTranslationUse } from "@/db/translation-usage";
 
 type TranslationQueryClient = Pick<Pool | PoolClient, "query">;
 
@@ -132,6 +133,8 @@ async function findExternalTranslationUnits(input: {
            AND msg.ctx = $4`,
         [input.siteId, input.locale, hashes, input.ctx],
       );
+  // A unit read is a message read, in the store it belongs to (db/translation-usage.ts).
+  notePhiTranslationUse(input.siteId == null ? "global" : "site", rows.map((row) => row.msg_id));
   for (const entry of input.entries) {
     const hash = normalizeMessageHash(entry.sourceHash);
     const candidates = rows.filter((row) => row.source_hash === hash);
@@ -206,11 +209,11 @@ export async function getTranslations(
   const uniqueHashes = Array.from(new Set(normalizedEntries.map((entry) => entry.hash)));
   const pool = getPool();
   const { rows } = await pool.query<
-    { msg_hash: string; translation: string; msg: string }
+    { id: number; msg_hash: string; translation: string; msg: string }
   >(
     // Compared as bytes, not as text: `encode(m.msg_hash, 'hex') = ANY(...)` computes the encoding for
     // every row of the context, and the index on the hash is never asked.
-    `SELECT encode(m.msg_hash, 'hex') AS msg_hash, l.translation, m.msg
+    `SELECT m.id, encode(m.msg_hash, 'hex') AS msg_hash, l.translation, m.msg
      FROM phis.tr_lang l
      JOIN phis.tr_msg m ON m.id = l.msg_id
      WHERE l.locale = $1
@@ -232,6 +235,7 @@ export async function getTranslations(
 
     translationByHash.set(row.msg_hash, row.translation);
   }
+  notePhiTranslationUse("global", rows.map((row) => row.id));
 
   return translationByHash;
 }
@@ -561,6 +565,7 @@ export async function getSiteTranslations(msgIds: number[], locale: string) {
        AND locale = $2`,
     [uniqueMsgIds, locale],
   );
+  notePhiTranslationUse("site", rows.map((row) => row.msg_id));
 
   return new Map(rows.map((row) => [row.msg_id, row.translation]));
 }
@@ -591,6 +596,8 @@ export async function getResolvedSiteMessageFields(msgIds: number[], locale: str
      WHERE msg.id = ANY($1::int[])`,
     [uniqueMsgIds, locale],
   );
+  // Read in the source language too: a field shows its message whether or not it has a translation.
+  notePhiTranslationUse("site", rows.map((row) => row.id));
 
   return new Map(
     rows.map((row) => [

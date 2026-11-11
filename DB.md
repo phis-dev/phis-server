@@ -1834,6 +1834,17 @@ Contract:
 - `UNIQUE (msg_id, locale)`
 - partial index `(locale, source_hash) WHERE source_hash IS NOT NULL`
 
+### `phis.tr_msg_usage` and `phis.tr_site_msg_usage`
+
+- `msg_id INT PRIMARY KEY` -- `REFERENCES phis.tr_msg(id)` resp. `phis.tr_site_msg(id)`, `ON DELETE CASCADE`
+- `last_used_on DATE NOT NULL` -- the last day Core answered a request for the message from a translation
+- One row per message that has been read since the table was created; a message without one has not.
+  Written at most once per message and day by `src/db/translation-usage.ts`, moved forward only. Apart
+  from the stores on purpose: the change-marker triggers watch the stores alone, so writing here empties
+  no Site cache, and the table can be emptied without touching a translation. No index but the key.
+  Read by `phis translations usage`; nothing deletes by it (TRANSLATIONS.md, "When a message was last
+  read").
+
 ### `phis.tr_marker` and `phis.tr_site_marker`
 
 - `tr_marker`: `scope VARCHAR(16) PRIMARY KEY CHECK (scope = 'global')`, `marker BIGINT NOT NULL`
