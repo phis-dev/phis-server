@@ -259,6 +259,15 @@ processed.
   `primary-login`. The check belongs wherever the Module catalog is resolvable.
 - **Passkeys, email OTP, SMS OTP, setup token, and CLI emergency recovery**
   ([AUTHENTICATION_PLANNED.md](./design/AUTHENTICATION_PLANNED.md)).
+- **Proof-of-work for public contributions (deferred, decided 11.11.2026).** Add an ALTCHA-style
+  challenge (MIT library, self-hosted, no third party) to the form guard together with the first form whose
+  submissions become publicly visible -- ratings or reviews in Shop/Marketplace, comments on blog entries
+  -- or earlier, once spam gets past honeypot, signed timing and rate limit on contact or registration.
+  Not before: today no phis form publishes what it receives, and none sees spam. Shape: `issueFormGuard`
+  hands out the signed challenge next to the timestamp, `verifyFormGuard` checks the solution; a solved
+  challenge counts once (short entry in the cache the rate limit already uses, since the guard is
+  stateless today); difficulty per form, optionally raised only once the rate limit trips. `phis-ui`
+  places the widget, which only fills a hidden field.
 
 ## Site bootstrap and releases
 
