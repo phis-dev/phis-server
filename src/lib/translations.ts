@@ -329,6 +329,12 @@ async function translateCanonicalGlobalBatch(input: Required<Pick<BatchTranslati
   const cached = await getTranslations(input.locale, entries, cacheContext);
   const pending = entries.filter((entry) => {
     const value = cached.get(entry.hash);
+    // A collision is not asked of the provider: its answer could not be stored and would be paid for on every render.
+    if (value instanceof Error) {
+      recordSkippedMessage(value, { stage: "getTranslations", locale: input.locale, ctx: cacheContext, msg: entry.msg });
+      result.set(entry.msg, entry.msg);
+      return false;
+    }
     if (value != null) {
       result.set(entry.msg, value);
       return false;
@@ -486,6 +492,11 @@ async function translateExternalGlobalBatch(input: Required<Pick<BatchTranslatio
   );
   const targetPending = canonicalEntries.filter((entry) => {
     const value = cached.get(entry.hash);
+    if (value instanceof Error) {
+      recordSkippedMessage(value, { stage: "getTranslations", locale: input.locale, ctx: cacheContext, msg: entry.canonicalMsg });
+      resolved.set(entry.source, entry.source);
+      return false;
+    }
     if (value != null) {
       resolved.set(entry.source, value);
       return false;

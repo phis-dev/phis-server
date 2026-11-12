@@ -190,6 +190,11 @@ export function findSiteExternalTranslationUnits(input: {
   return findExternalTranslationUnits(input);
 }
 
+/**
+ * The stored translations of the requested messages by hash: the translation, or the collision Error where
+ * the catalogue holds another message under the same hash and context. The caller answers that message with
+ * its source text and leaves the rest of the request alone.
+ */
 export async function getTranslations(
   locale: string,
   entries: Array<{ msg: string; hash: string }>,
@@ -225,12 +230,15 @@ export async function getTranslations(
   const requestedMessageByHash = new Map(
     normalizedEntries.map((entry) => [entry.hash, entry.msg]),
   );
-  const translationByHash = new Map<string, string>();
+  const translationByHash = new Map<string, string | Error>();
 
   for (const row of rows) {
     const requestedMsg = requestedMessageByHash.get(row.msg_hash);
+    // A stored message that shares the requested one's opening is that message's conflict alone; thrown,
+    // it took every other string of the request down with it, and a reworded Widget label broke the Builder.
     if (requestedMsg && requestedMsg !== row.msg) {
-      throw createGlobalCollisionError(requestedMsg, ctx, row.msg_hash, row.msg);
+      translationByHash.set(row.msg_hash, createGlobalCollisionError(requestedMsg, ctx, row.msg_hash, row.msg));
+      continue;
     }
 
     translationByHash.set(row.msg_hash, row.translation);

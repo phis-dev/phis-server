@@ -287,3 +287,37 @@ describe("a provider's answer for the global store", () => {
     expect(mocks.upsertTranslation).not.toHaveBeenCalled();
   });
 });
+
+/*
+ * A reworded message whose opening matches the stored one is one key to the catalogue. Reading the store
+ * used to throw for the whole request, so a renamed Widget description took the Builder's labels down.
+ */
+describe("a collision on reading the global store", () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    mocks.getTranslations.mockImplementation(async (
+      _locale: string,
+      entries: Array<{ msg: string; hash: string }>,
+    ) => new Map(entries.map((entry) => [
+      entry.hash,
+      entry.msg === "one" ? new Error("Hash collision detected for tr_msg") : `${entry.msg}-de`,
+    ])));
+    mocks.requestPhisTranslationUnit.mockImplementation(async (input: { msgs: string[] }) => ({
+      translations: input.msgs.map((msg) => `${msg}-fresh`), succeeded: true, outcome: "translated", detectedSourceLocales: [],
+    }));
+  });
+
+  it("answers that message with its source text, the others stay translated, nothing is asked", async () => {
+    await expect(trackTranslationStandIns(() => translateBatchWithCache({
+      locale: "de",
+      sourceLocale: "en",
+      msgs: ["one", "two"],
+      ctx: "",
+      write: "extend",
+      format: "text",
+    }))).resolves.toEqual({ value: ["one", "two-de"], standIn: true });
+
+    expect(mocks.requestPhisTranslationUnit).not.toHaveBeenCalled();
+    expect(mocks.logRuntimeEvent).toHaveBeenCalledWith("warn", "translation.message_skipped", expect.anything());
+  });
+});
