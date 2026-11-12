@@ -450,7 +450,7 @@ describe("site scaffold", () => {
 
     expect(merged.dependencies["@phis/ui"]).toBe("^0.4.2");
     expect(merged.dependencies["@acme/extra"]).toBe("1.0.0");
-    expect(merged.dependencies.antd).toBe("6.6.7");
+    expect(merged.dependencies.antd).toBe("6.7.0");
     expect(merged.devDependencies.typescript).toBeUndefined();
     expect(merged.scripts.build).toBe("next build --debug");
     expect(merged.scripts.typecheck).toBe("tsc --noEmit");

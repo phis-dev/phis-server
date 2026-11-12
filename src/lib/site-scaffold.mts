@@ -125,7 +125,7 @@ export type PhiSiteReleaseArtifact = {
 const DEFAULT_VERSIONS: Record<string, string> = {
   "@ant-design/icons": "6.3.4",
   "@phis/ui": "0.4.0",
-  antd: "6.6.7",
+  antd: "6.7.0",
   next: "16.4.2",
   react: "19.3.1",
   "react-dom": "19.3.1",
