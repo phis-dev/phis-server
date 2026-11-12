@@ -9,6 +9,27 @@ export type {
 } from "@phis/contracts/logging";
 import type { PhiLogEvent, PhiLogLevel, PhiLoggerContext, PhiLogger } from "@phis/contracts/logging";
 
+import { AsyncLocalStorage } from "node:async_hooks";
+
+/*
+ * The Site a request was resolved for, stamped on every record that request writes without naming one.
+ *
+ * Callers almost never passed `siteKey`, so nearly every record carried null and a Site's admin log,
+ * which shows only its own Site's records, came up empty. A record written outside a Site's request --
+ * start-up, the scheduler -- stays null and is nobody's Site log, because this Core serves several.
+ * Kept on `globalThis` because the bundler may give each route its own copy of this module, and the
+ * Site noted in one copy must be read in the other.
+ */
+const PHI_LOG_SITE_SCOPE_KEY = Symbol.for("phis.log.siteScope");
+const phiLogSiteScope: AsyncLocalStorage<{ siteKey: string }> =
+  ((globalThis as Record<symbol, unknown>)[PHI_LOG_SITE_SCOPE_KEY] as AsyncLocalStorage<{ siteKey: string }> | undefined)
+  ?? ((globalThis as Record<symbol, unknown>)[PHI_LOG_SITE_SCOPE_KEY] = new AsyncLocalStorage<{ siteKey: string }>()) as AsyncLocalStorage<{ siteKey: string }>;
+
+/** Notes the Site the current request was resolved for; what it logs from here on carries that Site. */
+export function notePhiLogSite(siteKey: string) {
+  phiLogSiteScope.enterWith({ siteKey });
+}
+
 function serializeError(error: unknown) {
   if (error instanceof Error) {
     return {
@@ -105,7 +126,7 @@ function normalizeContext(context: Partial<PhiLoggerContext>): PhiLoggerContext 
 
   return {
     service: context.service,
-    siteKey: context.siteKey ?? null,
+    siteKey: context.siteKey ?? phiLogSiteScope.getStore()?.siteKey ?? null,
     area: context.area ?? null,
     requestId: context.requestId ?? null,
     userId: context.userId ?? null,

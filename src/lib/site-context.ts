@@ -5,6 +5,7 @@ import { NextResponse } from "next/server";
 import { getSiteByKey, type SiteRecord } from "@/db/sites";
 import { PHIS_SITE_KEY_HEADER } from "@/lib/constants/http-headers";
 import { normalizePhiSiteKey } from "@/lib/helpers/normalize";
+import { notePhiLogSite } from "@/lib/log";
 
 type HeaderReader = {
   get(name: string): string | null;
@@ -23,7 +24,9 @@ export async function resolveSiteFromHeaders(headers: HeaderReader): Promise<Sit
   if (!explicitKey) {
     return null;
   }
-  return getSiteByKey(explicitKey);
+  const site = await getSiteByKey(explicitKey);
+  if (site) notePhiLogSite(site.key);
+  return site;
 }
 
 export async function requireSiteFromRequest(request: Request) {
@@ -40,6 +43,7 @@ export async function requireSiteFromExplicitKeyRequest(request: Request) {
   }
 
   const site = await getSiteByKey(explicitKey);
+  if (site) notePhiLogSite(site.key);
   if (!site) {
     return {
       site: null,

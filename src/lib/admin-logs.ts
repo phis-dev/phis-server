@@ -1,6 +1,8 @@
 import "server-only";
 
-import { spawn } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
+import { readFileSync } from "node:fs";
+import { promisify } from "node:util";
 import { createInterface } from "node:readline";
 
 import { normalizeString } from "@/lib/helpers/request";
@@ -51,6 +53,11 @@ export type PhiAdminLogResponse = {
   total: number;
   page: number;
   pageSize: number;
+  /**
+   * Whether the period held more records than one request reads, and how many that is. Only the newest
+   * `recordLimit` were read and `total` counts those; the admin log says so and asks for a shorter period.
+   */
+  summary: { truncated: boolean; recordLimit: number };
 };
 
 function asPositiveInt(value: string | null, fallback: number, max = 100) {
@@ -70,7 +77,44 @@ function parseCsv(value: string | null, fallback: string[]) {
   return values.length > 0 ? values : fallback;
 }
 
-function resolveJournalUnits() {
+/** The unit this Core runs as, read from its cgroup; null outside a systemd service. */
+function readOwnServiceUnit(): string | null {
+  try {
+    const cgroup = readFileSync("/proc/self/cgroup", "utf8");
+    const match = /\/([^/\s]+\.service)\s*$/m.exec(cgroup);
+    return match?.[1] ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** The Site's own service units: `phis-site-<key>.service`, or a variant of it such as `phis-site-<key>-dev.service`. */
+async function listSiteServiceUnits(siteKey: string): Promise<string[]> {
+  const { stdout } = await promisify(execFile)("systemctl", [
+    "list-units",
+    "--all",
+    "--type=service",
+    "--plain",
+    "--no-legend",
+    `phis-site-${siteKey}.service`,
+    `phis-site-${siteKey}-*.service`,
+  ]);
+  return stdout
+    .split("\n")
+    .map((line) => line.trim().split(/\s+/)[0] ?? "")
+    .filter((unit) => unit.endsWith(".service"));
+}
+
+/**
+ * The journals a Site's log is read from: this Core's own unit and the Site's own process.
+ *
+ * The list used to be fixed to the development units, so an installation under any other name -- every
+ * one but the workshop's -- read journals that were not its own and showed an empty log. Only the Site's
+ * own unit is named rather than every `phis-site-*`: journalctl then reads every other Site's journal too,
+ * and over thirty days that took seconds longer than the records it found were worth.
+ * `PHIS_ADMIN_LOG_JOURNAL_UNITS` overrides the list for a layout that names its units otherwise.
+ */
+async function resolveJournalUnits(siteKey: string) {
   const override = (process.env.PHIS_ADMIN_LOG_JOURNAL_UNITS ?? "").trim();
   if (override) {
     return override
@@ -79,7 +123,23 @@ function resolveJournalUnits() {
       .filter(Boolean);
   }
 
-  return ["phi-server-dev.service", "phis-site-skeleton-dev.service"];
+  const ownUnit = readOwnServiceUnit();
+  if (!ownUnit) {
+    throw new Error("This Core does not run as a systemd service; set PHIS_ADMIN_LOG_JOURNAL_UNITS to read its log.");
+  }
+  return [ownUnit, ...await listSiteServiceUnits(siteKey)];
+}
+
+/** At most this many records are read per request, the newest first; a longer range is cut. */
+const PHI_ADMIN_LOG_RECORD_LIMIT = 10_000;
+
+/**
+ * The journal match for one Site's records. journalctl filters with it, so the unstructured output of a
+ * process and the records of other Sites never reach this process: over thirty days that was hundreds of
+ * thousands of lines and a quarter of a gigabyte, parsed in full on every page turn.
+ */
+function buildSiteRecordPattern(siteKey: string) {
+  return `"siteKey":"${siteKey.replace(/[\\^$.*+?()[\]{}|]/g, "\\$&")}"`;
 }
 
 function normalizeNumber(value: unknown): number | string | null {
@@ -286,13 +346,17 @@ async function readPhiSiteAdminLogRecords(siteKey: string, sinceValue: string, u
     "--output-fields=__CURSOR,__REALTIME_TIMESTAMP,MESSAGE",
     "--since",
     since,
+    "--reverse",
+    "--grep",
+    buildSiteRecordPattern(siteKey),
+    "--case-sensitive=true",
   ];
 
   if (untilValue.trim()) {
     args.push("--until", untilValue.trim());
   }
 
-  for (const unit of resolveJournalUnits()) {
+  for (const unit of await resolveJournalUnits(siteKey)) {
     args.push("-u", unit);
   }
 
@@ -322,20 +386,30 @@ async function readPhiSiteAdminLogRecords(siteKey: string, sinceValue: string, u
     const structured = journalRecord ? normalizeLogRecord(journalRecord, siteKey) : null;
     if (structured) {
       records.push(structured);
+      if (records.length >= PHI_ADMIN_LOG_RECORD_LIMIT) {
+        break;
+      }
     }
   }
 
+  const truncated = records.length >= PHI_ADMIN_LOG_RECORD_LIMIT;
   const exitCode = await new Promise<number | null>((resolve, reject) => {
     child.once("error", reject);
     child.once("close", (code) => resolve(code));
+    if (truncated) {
+      reader.close();
+      child.kill();
+    }
   });
 
-  if (exitCode !== 0) {
-    const stderr = stderrChunks.join("").trim();
+  const stderr = stderrChunks.join("").trim();
+  // `--grep` that matches nothing ends with 1 and says nothing: an empty log, not a failure.
+  const matchedNothing = exitCode === 1 && records.length === 0 && !stderr;
+  if (!truncated && exitCode !== 0 && !matchedNothing) {
     throw new Error(stderr || `journalctl exited with code ${exitCode}.`);
   }
 
-  return records;
+  return { records, truncated };
 }
 
 async function readPhiSiteAdminLogRecordByCursor(siteKey: string, cursor: string) {
@@ -351,7 +425,7 @@ async function readPhiSiteAdminLogRecordByCursor(siteKey: string, cursor: string
     "-n",
     "1",
   ];
-  for (const unit of resolveJournalUnits()) {
+  for (const unit of await resolveJournalUnits(siteKey)) {
     args.push("-u", unit);
   }
 
@@ -384,7 +458,7 @@ async function readPhiSiteAdminLogRecordByCursor(siteKey: string, cursor: string
 }
 
 export async function readPhiSiteAdminLogs(siteKey: string, query: PhiAdminLogQuery): Promise<PhiAdminLogResponse> {
-  const records = await readPhiSiteAdminLogRecords(siteKey, query.since, query.until);
+  const { records, truncated } = await readPhiSiteAdminLogRecords(siteKey, query.since, query.until);
 
   const filteredRecords = records
     .filter((entry) => matchesServices(entry, query.services))
@@ -407,6 +481,7 @@ export async function readPhiSiteAdminLogs(siteKey: string, query: PhiAdminLogQu
     total,
     page: query.page,
     pageSize: query.pageSize,
+    summary: { truncated, recordLimit: PHI_ADMIN_LOG_RECORD_LIMIT },
   };
 }
 
@@ -428,7 +503,7 @@ export async function readPhiSiteAdminLog(siteKey: string, recordId: string) {
   if (!Number.isFinite(timestamp)) {
     return null;
   }
-  const records = await readPhiSiteAdminLogRecords(
+  const { records } = await readPhiSiteAdminLogRecords(
     siteKey,
     new Date(timestamp - 1_000).toISOString(),
     new Date(timestamp + 1_000).toISOString(),
