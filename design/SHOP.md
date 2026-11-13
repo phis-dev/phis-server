@@ -272,8 +272,19 @@ Accounting Area what a manager uses. Addresses in Public follow the collision ru
 /shop/checkout          address, destination, promotion code, summary, "pay" (Public)
 /shop/order/<number>    order page, token in the link (Public)
 /phis/shop/orders       a customer's orders (App)
+/phis/shop/cart         the cart once more (App)
+/phis/shop/checkout     the checkout for the signed-in customer (App)
+/phis/shop/order/<number>  order page, read as the customer's own, no token (App)
 /phis/shop              catalogue, destinations, promotions, orders, refunds (Accounting)
 ```
+
+Cart, checkout and order page exist in both Areas so that a purchase is finished where it began: a
+customer who opens the Basket in the App is not sent out of it to pay. An order remembers the Area it
+was placed in (`orders.area`, `public` or `app`), because the links to its page are made long after the
+request that placed it -- the payment's `returnPath`, a retry, the confirmation mail -- and each of them
+leads to the page in that Area. Only an account's order can be an App order: the App's order page reads
+the order as the caller's own (`account/orders/<number>` and its `complete` and `retry`), so no token
+stands in an App address, and a guest, who has only the token, has no way into the App.
 
 Providers and Forms, in the vocabulary of [phis-ui MODULES.md](https://github.com/phis-dev/phis-ui/blob/main/MODULES.md):
 
