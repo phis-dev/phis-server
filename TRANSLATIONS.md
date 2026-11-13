@@ -432,12 +432,21 @@ read, and the Provider contract has no field for it.
   table cells.
 - Code blocks, inline code, and link destinations are not translated. Visible link text and image alt
   text are translatable.
-- Inline emphasis and links are preserved by translation-safe HTML markup and translated with HTML tag
-  handling.
+- A unit is plain, standard HTML any provider's HTML mode handles, sent with `format=html`: `<b>`, `<i>`,
+  `<s>`, `<a href="%n">` and `<br>`, and a numbered `%n` for everything that is not prose -- inline code,
+  link addresses, pictures, and `%` with digits written in the text. The Site builds and reads it back
+  by number; the table is phis-ui's ([phis-ui TRANSLATIONS.md, "The Markdown unit format"](https://github.com/phis-dev/phis-ui/blob/main/TRANSLATIONS.md#the-markdown-unit-format)).
+  Nothing here depends on a provider's tag options: DeepL is asked with `tag_handling=html` and
+  nothing else, and an Add-on provider gets the same text.
 - Cache hits are resolved first; only misses are sent to the provider in the fewest valid batches.
-- Image alt text is translated inside the image's placeholder token; an authored image title is prose
-  too, but travels as a unit of its own. Asked for both in one string, a provider returned them merged
-  and re-split at a different point.
+- Image alt text and an authored image title are units of their own, in `text` format. Asked for alt
+  text and title in one string, a provider returned them merged and re-split at a different point.
+- **An `html` answer is checked before it is stored** (`src/lib/translation-markup.ts`): the same `%n`
+  tokens as often as in the source, `<b>`, `<i>`, `<s>` and `<a>` opened and closed in turn, and every
+  `<a href="%n">` of the source at its own `%n`. An answer that fails is a provider failure for that
+  unit alone: its source text stands in, the request is `provisional`, nothing is stored, and
+  `translation.answer_rejected` is logged with the defect. Kept, it would be what every later render
+  reads, and the Site could not put the text back together.
 
 When an external Markdown or HTML source is attached, its source language is detected once and stored as
 plain `sourceLocale` in Widget config. Builder may overwrite that value. Ordinary fetches and renders do

@@ -289,6 +289,61 @@ describe("a provider's answer for the global store", () => {
 });
 
 /*
+ * A structured-document unit is read back by its `%n` tokens and inline tags. An answer that broke them
+ * is a provider failure for that unit: its source text stands in, and nothing is stored that every later
+ * render would read.
+ */
+describe("a provider's answer to an HTML unit", () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    mocks.getTranslations.mockResolvedValue(new Map());
+    mocks.getSiteTranslations.mockResolvedValue(new Map());
+    mocks.ensureSiteMessageId.mockImplementation(async (_siteId: number, msg: string) => msg.startsWith("%1") ? 1 : 2);
+    mocks.requestPhisTranslationUnit.mockImplementation(async () => ({
+      translations: ['%1 liest eine <a href="%2">Seite</a>', "<b>Speicher</b> und Dienste"],
+      succeeded: true,
+      outcome: "translated",
+      detectedSourceLocales: [],
+    }));
+  });
+  const msgs = ['%1 reads a <a href="%2">Page</a>', "<b>Storage</b> and %1"];
+
+  it("is kept where it keeps its tokens, and stands in with the source where it lost one", async () => {
+    const { value, standIn } = await trackTranslationStandIns(() => translateSiteBatchWithCache({
+      siteId: 1, locale: "de", sourceLocale: "en", msgs, ctx: "", format: "html",
+    }));
+
+    expect(value).toEqual(['%1 liest eine <a href="%2">Seite</a>', "<b>Storage</b> and %1"]);
+    expect(standIn).toBe(true);
+    expect(mocks.upsertSiteTranslations).toHaveBeenCalledWith([
+      { msgId: 1, locale: "de", translation: '%1 liest eine <a href="%2">Seite</a>' },
+    ]);
+    expect(mocks.logRuntimeEvent).toHaveBeenCalledWith(
+      "warn",
+      "translation.answer_rejected",
+      expect.objectContaining({ meta: expect.objectContaining({ defect: "tokens" }) }),
+    );
+  });
+
+  it("is not stored in the global store either", async () => {
+    await expect(translateBatchWithCache({
+      locale: "de", sourceLocale: "en", msgs, ctx: "", write: "extend", format: "html",
+    })).resolves.toEqual(['%1 liest eine <a href="%2">Seite</a>', "<b>Storage</b> and %1"]);
+
+    expect(mocks.upsertTranslation.mock.calls.map((call) => call[1])).toEqual(['%1 reads a <a href="%2">Page</a>']);
+  });
+
+  it("is not checked for a text unit", async () => {
+    mocks.requestPhisTranslationUnit.mockImplementation(async () => ({
+      translations: ["Nimm 50 Prozent"], succeeded: true, outcome: "translated", detectedSourceLocales: [],
+    }));
+    await expect(translateBatchWithCache({
+      locale: "de", sourceLocale: "en", msgs: ["Take %1"], ctx: "", write: "extend", format: "text",
+    })).resolves.toEqual(["Nimm 50 Prozent"]);
+  });
+});
+
+/*
  * A reworded message whose opening matches the stored one is one key to the catalogue. Reading the store
  * used to throw for the whole request, so a renamed Widget description took the Builder's labels down.
  */

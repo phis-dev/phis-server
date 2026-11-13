@@ -33,6 +33,7 @@ import {
   resolvePhiLocaleCapability,
 } from "@/lib/locale";
 import { logRuntimeEvent, normalizeLogThrowable } from "@/lib/log";
+import { readHtmlTranslationAnswerDefect } from "@/lib/translation-markup";
 import {
   buildTranslationContext,
   getProviderTranslationContext,
@@ -274,7 +275,29 @@ async function requestConfiguredTranslationsOrFallback(input: {
   if (result.outcome === "failed") {
     recordTranslationStandIn();
   }
-  return { translations: result.translations, succeeded: result.succeeded };
+  const translations = input.msgs.map((msg, index) => result.translations[index] ?? msg);
+  /*
+   * Whether each answer may be kept. An `html` answer that cannot be read back -- a `%n` lost or
+   * doubled, a tag left open, a link moved to another address -- is a provider failure for that unit
+   * alone: its source text stands in and nothing is stored, so the next request asks again instead of
+   * every render reading broken markup for good.
+   */
+  const accepted = translations.map(() => result.succeeded);
+  if (result.succeeded && input.format === "html") {
+    translations.forEach((answer, index) => {
+      const source = input.msgs[index]!;
+      const defect = readHtmlTranslationAnswerDefect(source, answer);
+      if (!defect) return;
+      accepted[index] = false;
+      translations[index] = source;
+      recordTranslationStandIn();
+      logRuntimeEvent("warn", "translation.answer_rejected", {
+        message: "A provider's answer to an HTML unit does not keep its tokens or tags. Falling back to source text for it.",
+        meta: { defect, locale: input.locale, msgLength: source.length, msgPrefix: source.slice(0, 80) },
+      });
+    });
+  }
+  return { translations, succeeded: result.succeeded, accepted };
 }
 
 function sameLocale(left: string, right: string) {
@@ -375,9 +398,9 @@ async function translateCanonicalGlobalBatch(input: Required<Pick<BatchTranslati
        * Stored whenever the provider answered, also where the answer reads like the source: "Dashboard"
        * is German for "Dashboard". Leaving those out left them missing for good, and a message the store
        * does not hold is asked of the provider again on every render -- paid for each time, to learn the
-       * same thing. A stand-in never gets here: it arrives as `succeeded: false`.
+       * same thing. A stand-in never gets here: it arrives as not `accepted`.
        */
-      if (fresh.succeeded) {
+      if (fresh.accepted[index]) {
         // The translation itself is in hand; failing to cache it is not a reason to withhold it.
         await withMessageIsolation(
           () => upsertTranslation(input.locale, entry.msg, cacheContext, value, entry.hash),
@@ -457,6 +480,7 @@ async function translateExternalGlobalBatch(input: Required<Pick<BatchTranslatio
     });
     if (canonical.succeeded) {
       await Promise.all(pending.map(async (entry, index) => {
+        if (!canonical.accepted[index]) return;
         const canonicalMsg = canonical.translations[index] ?? entry.source;
         const msgId = await withMessageIsolation(
           () => ensureGlobalExternalTranslationUnit({
@@ -513,7 +537,7 @@ async function translateExternalGlobalBatch(input: Required<Pick<BatchTranslatio
     });
     await Promise.all(targetPending.map(async (entry, index) => {
       const value = fresh.translations[index] ?? entry.source;
-      if (fresh.succeeded) {
+      if (fresh.accepted[index]) {
         await withMessageIsolation(
           () => upsertTranslation(input.locale, entry.canonicalMsg, cacheContext, value, entry.hash),
           { stage: "upsertTranslation", locale: input.locale, ctx: cacheContext, msg: entry.canonicalMsg },
@@ -617,15 +641,14 @@ async function translateCanonicalSiteBatch(input: Required<Pick<SiteBatchTransla
       sourceLocale: input.sourceLocale,
       format: input.format,
     });
-    if (fresh.succeeded) {
+    const kept = pending.flatMap((entry, index) => fresh.accepted[index]
+      ? [{ msgId: entry.msgId, locale: input.locale, translation: fresh.translations[index] ?? entry.msg }]
+      : []);
+    if (kept.length > 0) {
       // Same rule as everywhere else here: the translations are in hand, and failing to cache them is
       // not a reason to hand back source text instead.
       await withMessageIsolation(
-        () => upsertSiteTranslations(pending.map((entry, index) => ({
-          msgId: entry.msgId,
-          locale: input.locale,
-          translation: fresh.translations[index] ?? entry.msg,
-        }))),
+        () => upsertSiteTranslations(kept),
         { stage: "upsertSiteTranslations", locale: input.locale, ctx: cacheContext, siteId: input.siteId, msg: pending[0]?.msg ?? "" },
       );
     }
@@ -685,6 +708,7 @@ async function translateExternalSiteBatch(input: Required<Pick<SiteBatchTranslat
     });
     if (canonical.succeeded) {
       await Promise.all(pending.map(async (entry, index) => {
+        if (!canonical.accepted[index]) return;
         const canonicalMsg = canonical.translations[index] ?? entry.source;
         const msgId = await withMessageIsolation(
           () => ensureSiteExternalTranslationUnit({
@@ -723,15 +747,14 @@ async function translateExternalSiteBatch(input: Required<Pick<SiteBatchTranslat
       sourceLocale: input.canonicalLocale,
       format: input.format,
     });
-    if (fresh.succeeded) {
-      await upsertSiteTranslations(targetPending.map((entry, index) => ({
-        msgId: entry.msgId,
-        locale: input.locale,
-        translation: fresh.translations[index] ?? entry.canonicalMsg,
-      })));
+    const kept = targetPending.flatMap((entry, index) => fresh.accepted[index]
+      ? [{ msgId: entry.msgId, locale: input.locale, translation: fresh.translations[index] ?? entry.canonicalMsg }]
+      : []);
+    if (kept.length > 0) {
+      await upsertSiteTranslations(kept);
     }
     targetPending.forEach((entry, index) => {
-      resolved.set(entry.source, fresh.succeeded
+      resolved.set(entry.source, fresh.accepted[index]
         ? fresh.translations[index] ?? entry.canonicalMsg
         : entry.source);
     });
