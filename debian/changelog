@@ -1,3 +1,32 @@
+phis (0.3.0-1) unstable; urgency=medium
+
+  * Install without hand edits: phis install (browser or full, every step
+    skips what exists), the setup as a time window (phis setup
+    enable|disable|status, bootstrap.enabledUntil, at most 4 h, opened by
+    postinst on a fresh install), phis config init-keys, phis db bootstrap
+    --local, phis proxy config apache|nginx and phis proxy tls.
+  * Removal without hand cleanup: phis stage remove takes a stage's service,
+    database and roles, recorded web server files, Apache modules and
+    certificate, and directory away and lists what it did not make; phis db
+    drop; postrm removes /var/lib/phis and lists what purge leaves.
+  * Storage administration: a Site's Space Profiles and per-Space quotas,
+    disabled Profiles keep delivering and refuse writes, an S3 Profile
+    without a public endpoint uploads through the Server, upload sessions
+    carry a heartbeat and can be continued.
+  * The Media management projection carries focalRect and font instead of
+    meta; released together with @phis/ui 0.5.0, which reads them.
+  * A Site Page that was never published resolves to no path outside a
+    preview.
+  * An html translation answer is stored only if its slots and tags come
+    back.
+  * New columns media_upload_sessions.heartbeat_at and
+    site_media_config.default_user_storage_profile_id and
+    default_group_storage_profile_id: add them by hand on an existing
+    installation before starting this release (ALTER statements in
+    TODOS.md, "At the next release").
+
+ -- Phisys Ltd. <debian@phisys.com>  Sat, 14 Nov 2026 17:39:42 +0000
+
 phis (0.2.17-1) unstable; urgency=medium
 
   * A Site's admin log shows its records. The request's Site is stamped on what Core logs while serving it,

@@ -8,8 +8,8 @@ tracked here because the server contract depends on them.
 ## At the next release
 
 - **Released as `@phis/server` 0.3.0 together with `@phis/ui` 0.5.0**, both already in `package.json`; the
-  entries below are why neither works with the other's previous version. `debian/changelog` still needs its
-  `0.3.0-1` entry, which the release workflow checks against the tag. `@phis/contracts` is unchanged.
+  entries below are why neither works with the other's previous version. `@phis/contracts` is unchanged
+  (0.7.7). Tagged 14.11.2026; this section goes once every installation has the columns below.
 - **Columns added since the installed release.** Releases carry `CREATE` only, so a running installation
   needs these by hand before the new Server starts (dev has them):
   `ALTER TABLE phis.media_upload_sessions ADD COLUMN IF NOT EXISTS heartbeat_at TIMESTAMPTZ NULL;`
