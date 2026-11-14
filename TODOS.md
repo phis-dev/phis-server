@@ -224,6 +224,15 @@ processed.
 - **Post-operation verification.** After init, reconcile, update, or rollback, verify routes, dependency
   graph, build, health endpoint, active release, and proxy target; a failed verification never promotes a
   partial scaffold or leaves every Instance unavailable.
+- **Deployment snippets for the web server the stage uses.** The operator UI (`/operator?section=sites`,
+  `buildDeploymentBlocks` in `src/components/operator/operator-sites-panel.tsx`) offers the Apache config
+  only in the custom mode; docker and systemd show nginx alone. On new.phisys.com (14.11.2026, 0.3.0, systemd,
+  `phis proxy config/tls` with Apache) the snippet the operator needed was missing, though
+  `buildApacheConfig` in `src/lib/site-deployment-config.ts` is the generator `phis site config apache`
+  prints already. Show the server named by `kind` in the stage's `config/phis-proxy.json` first, else
+  whichever of apache2/nginx is installed, with the other one collapsed; when that record has `tls: true`,
+  the snippet carries the 443 host and the redirect the way `phis proxy config --tls` does for the server.
+  Until then: `phis site config apache --key <site key>`.
 - **Direct Source proxy mode** stays development-only.
 
 ## Infrastructure management belongs to phis-host
