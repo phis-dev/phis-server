@@ -248,6 +248,21 @@ processed.
   whichever of apache2/nginx is installed, with the other one collapsed; when that record has `tls: true`,
   the snippet carries the 443 host and the redirect the way `phis proxy config --tls` does for the server.
   Until then: `phis site config apache --key <site key>`.
+- **`phis install` leaves the configured directories and the sender unset.** On new.phisys.com
+  (14.11.2026, 0.3.0-1+noble, `--mode full`) it created neither `media.local.rootDir` (`/var/phis/media`)
+  nor `sites.sourcePathRoot` (`/opt/phis/sources`) nor `sites.instancePathRoot` (`/var/www/phis/sites`),
+  and left `email.from` unset. The three paths come only from the `phis-config.json` defaults; INSTALL.md
+  says "create it, owned by the service account" for the media root alone, and nothing creates the two
+  Site roots. Decided by the owner:
+  - `phis install`, in both modes and idempotently, creates all three, owned `phis:phis` with sensible
+    modes, and `phis setup status` lists each as a check.
+  - Adding a Site -- from the operator UI, `phis site add` or `phis init` -- runs the same creation and
+    check, so that path never depends on a manual `mkdir`.
+  - The default paths are settled together with this: the defaults in `src/lib/config-core.ts` are not
+    the layout this host family uses (`/srv/phis/sites`, `/srv/phis/instances`), and what install
+    creates is what `phis stage remove` takes away again.
+  - `phis install` asks for the sender (`--email-from`), and `phis setup status` warns while
+    `email.from` is unset.
 - **Direct Source proxy mode** stays development-only.
 
 ## Infrastructure management belongs to phis-host
