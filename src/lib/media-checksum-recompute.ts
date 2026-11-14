@@ -196,6 +196,13 @@ export async function recomputePhiMediaAssetChecksums(input: {
         report.duplicates.push({
           assetId: asset.id, existingAssetId: outcome.duplicateOf, spaceId: asset.spaceId,
         });
+        // One event per pair, so the log alone answers whether this happens at all, and between which
+        // Assets: the response is read once by whoever called, the log by whoever looks later.
+        logRuntimeEvent("warn", "media.checksum.duplicate_found", {
+          message: `Asset ${asset.id} holds the same bytes as Asset ${outcome.duplicateOf}.`,
+          siteKey: input.siteKey,
+          meta: { assetId: asset.id, existingAssetId: outcome.duplicateOf, spaceId: asset.spaceId },
+        });
       }
     } else if (outcome.kind === "incomparable") {
       report.incomparable += 1;

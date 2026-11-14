@@ -17,7 +17,7 @@ import {
   mediaDeliverySafetyHeaders,
   parsePhiMediaRangeRequest,
 } from "@/lib/media-delivery";
-import { createPhisMediaStorageServiceForProfile } from "@/lib/media-storage";
+import { openPhisMediaStorageForRoute } from "@/lib/media-storage-route";
 import { requireSiteFromRequest } from "@/lib/site-context";
 import { parseStrictPositiveInt } from "@/lib/helpers/request";
 
@@ -29,7 +29,9 @@ async function deliver(request: NextRequest, rawId: string) {
   if (!asset || !await canDeliverMediaAsset(request, asset)) return new NextResponse(null, { status: 404 });
   const profile = await getMediaStorageProfile(site.id, asset.storageProfileId);
   if (!profile) return NextResponse.json({ error: "Storage Profile unavailable." }, { status: 503 });
-  const storage = await createPhisMediaStorageServiceForProfile(profile, site.key)
+  const openedStorage = await openPhisMediaStorageForRoute(profile, site.key);
+  if (openedStorage.refusal) return openedStorage.refusal;
+  const storage = openedStorage.storage;
   const head = await storage.headObject(asset.storageKey);
   if (!head) return new NextResponse(null, { status: 404 });
   const contentType = head.contentType || asset.contentType;

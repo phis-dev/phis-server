@@ -119,8 +119,8 @@ All paths are relative to the root.
 
 | File | Written by | Content |
 | --- | --- | --- |
-| `config/phis-config.json` | the operator | Static configuration: `sites.*` path roots and base port, `translation`, `media`, `email`, `forms`, `bootstrap.enabled`. |
-| `config/phis-runtime.json` | the operator, `/setup`, and the CLI | Deployment values and secrets: `database.uri`, `database.migrationUri`, `api.internalToken`, `secrets.encryptionKey`, `auth.transactionEncryptionKey`, `registration.intentEncryptionKey`, `operator.sessionSecret`, `platformSuperUsers`, `sites.overrides`. Values here override `phis-config.json`. |
+| `config/phis-config.json` | the operator | Static configuration: `sites.*` path roots and base port, `translation`, `media`, `email`, `forms`. |
+| `config/phis-runtime.json` | the operator, `/setup`, and the CLI | Deployment values and secrets: `database.uri`, `database.migrationUri`, `api.internalToken`, `secrets.encryptionKey`, `auth.transactionEncryptionKey`, `registration.intentEncryptionKey`, `operator.sessionSecret`, `platformSuperUsers`, `sites.overrides`, `bootstrap.enabledUntil` (the setup window). Values here override `phis-config.json`. |
 | `config/phis-instance.json` | the CLI | The version stamp above. |
 | `config/phis-addons.json` | `addon` commands | Desired state of server Add-ons. Absent means none. |
 | `config/phis-modules.json` | `module add|del` | Desired state of Site Modules per Site. Absent means none. |
@@ -145,6 +145,59 @@ server keeps the old values for up to four hours.
 
 There is no fallback from `database.migrationUri` to `database.uri`.
 
+## install
+
+### `phis install`
+
+From a fresh package to a serving installation, in one of two modes, asked for first unless `--mode` gives
+it. Run as root. Every step looks first and skips what exists, so a second run only fills gaps. Every
+question has a flag; without a terminal, a missing required answer stops the command.
+
+- `--mode browser`: makes the missing keys, with `--local-db` or `--admin-uri` also the database, opens the
+  setup window (`--for`, default one hour), enables and restarts `phis@<stage>.service`, and prints the SSH
+  tunnel to `/setup`.
+- `--mode full`, in order:
+  1. Database, unless `database.uri` is set: `--local-db` (`phis db bootstrap --local`) or `--admin-uri`;
+     `--db-name` names the installation. Asked interactively; offered as local when `psql` is here.
+  2. Keys (`phis config init-keys`).
+  3. Schema: `phis schema apply`, then `phis schema check`.
+  4. First operator, unless one exists: `--operator-email`, `--operator-password` (asked; left empty, one is
+     generated and printed once), `--operator-name`.
+  5. First Site, unless one exists and only when asked or `--site-key` is given: `--site-hostname`,
+     `--site-support-email`, `--site-name` (default the key), `--site-public-base-url` (default
+     `https://<hostname>`), `--site-source-locale` (default `en`), `--site-default-locale` (default the
+     source locale); then `--site-admin-email` with `--site-admin-password` (generated and printed once when
+     missing) as in `phis site admin`.
+  6. Closes the setup window.
+  7. Enables and restarts `phis@<stage>.service`, so the server reads what was written (it caches the
+     configuration for hours). Only for a stage under `/srv/phis/stages/`.
+  8. Web server, with `--domain`: when Apache or nginx is installed (`--proxy` picks one where both are),
+     as `phis proxy config --write`; otherwise the file is printed. HTTPS is not a step: `phis proxy tls`.
+  9. Checks that `/operator/login` answers below 500 -- through the web server for the domain (`curl
+     --resolve`, so DNS need not point here yet), else on the loopback port.
+
+## setup
+
+The setup pages (`/setup`) are served only while a window is open: until the moment in
+`bootstrap.enabledUntil` of `phis-runtime.json`, at most four hours ahead. Missing, past, unreadable or
+further ahead than that is closed. The server reads it on every request, without the configuration cache, so
+these take effect at once. While the window is open, `/operator/login` is refused. The server logs
+`setup.window.open` and `setup.window.closed`.
+
+### `phis setup enable [--for <duration>]`
+
+Opens the window for `--for` (`30m`, `1h`, `1h30m`; a bare number is minutes), default one hour, at most
+four. A fresh Debian install opens one by itself. JSON: `{ok, action, until, path}`.
+
+### `phis setup disable`
+
+Closes it now. Finishing the setup in the browser does the same.
+
+### `phis setup status`
+
+The window and what is still missing, in the order the setup does it: database (`database.uri`), schema
+and Sites (read from the database), keys, operator. JSON: `{ok, action, window, steps}`.
+
 ## config
 
 ### `phis config`
@@ -167,7 +220,16 @@ locales must be in `translation.supportedLocales`), `forms.timeouts`, and the pr
 retired `auth.secrets` field. Exits `1` on any issue. JSON: `{ok, staticError, runtimeError, issues}`.
 
 It does not check that required values are present; a missing `database.uri` is reported by the
-first command that needs it.
+first command that needs it. `bootstrap.enabled` is reported: the setup is a window now
+([setup](#setup)).
+
+### `phis config init-keys`
+
+Makes the keys an installation generates for itself, only those that are missing: `api.internalToken`,
+`auth.transactionEncryptionKey`, `registration.intentEncryptionKey`, `operator.sessionSecret` (64 hex each)
+and `secrets.encryptionKey` (with key version 1). A key that is there is kept, because replacing one orphans
+what it protects. A fresh Debian install runs it; restart the server afterwards. JSON: `{ok, action,
+created, path}`.
 
 ## db
 
@@ -195,6 +257,12 @@ run without `--force` is refused rather than handing a running server connection
 `--admin-uri` must name a host. A local socket connection (`postgresql:///postgres?host=...`) carries none,
 and the connection strings written from it have to be ones the CLI can parse back.
 
+`--local` instead of `--admin-uri`: PostgreSQL runs on this host and its `postgres` account administers it
+over the local socket (peer authentication, the Debian default). The statements run through `psql` as
+`postgres` -- `runuser` when the CLI runs as root, which it must be, or `postgres` itself -- so no
+administrative role with a password is created. The connection strings use `127.0.0.1` and the cluster's
+port, where the two roles sign in with their passwords (Debian's `pg_hba.conf` allows that by default).
+
 Where the administrative connection is not a superuser — a managed database, typically — the command first
 grants itself the right to assume the serving role, because `CREATE DATABASE ... OWNER` requires it and
 PostgreSQL 16 separated administering a role from assuming it. A superuser is left alone.
@@ -202,6 +270,66 @@ PostgreSQL 16 separated administering a role from assuming it. A superuser is le
 The written file holds two passwords. The command does not change its mode or owner: run as root against a
 remote database, the file belongs to root, and the server runs as another account. Set mode `0600` and the
 owner the server runs as.
+
+### `phis db drop --local | --admin-uri <postgres uri> [--force]`
+
+The counterpart of `db bootstrap`: drops the database and both roles. The names are read from
+`database.uri` and `database.migrationUri`, so it removes what this stage uses; `--database`, `--role` and
+`--migration-role` name them outright for a stage whose configuration is gone. Without `--force` it connects,
+reports what is there to drop, and changes nothing. With `--force` it runs `DROP DATABASE ... WITH (FORCE)`,
+which ends the connections still open on it -- Core's schema and every Add-on schema go with the database,
+so no `schema drop` comes first -- and then drops the roles. A role that still owns something in another
+database is refused by PostgreSQL. The administrative connection is the one `db bootstrap` takes, and may not
+run as one of the roles being dropped. The connection strings stay in `phis-runtime.json`.
+
+## stage
+
+### `phis stage remove --local-db | --admin-uri <postgres uri> | --keep-database [--force]`
+
+Takes one stage off the host -- the one `--root` names, which must be `/srv/phis/stages/<stage>`. In this
+order: `--backup <file.tar.gz>` writes `config/` and `.env` (every key and both database passwords) to a new
+file of mode `0600` first; `phis@<stage>` is stopped and disabled; the database and both roles are dropped
+as `db drop` drops them (`--local-db` or `--admin-uri`, or `--keep-database` to leave them); the web server
+files `phis proxy` recorded are removed (`--keep-proxy` leaves them); and the stage directory goes last.
+
+What `phis proxy config --write`, `phis proxy tls` and `phis install` write is recorded in
+`config/phis-proxy.json`: the file and its checksum, the enabled link, the Apache modules that were off
+before (`slotmem_shm`, which `proxy_balancer` pulls in, included), the challenge directory and the
+certificate. Removal disables the site, removes the file only while it is what phis wrote (an edited one is
+kept and named), switches off those modules -- switched back on and named if the web server's check fails
+without them, because another site uses them -- checks and reloads, removes `/var/www/phis-acme`, and
+deletes the certificate with `certbot delete` unless `--keep-certificate`.
+
+What it finds and did not make is listed and left: site files that proxy to the stage's port or name its
+domain (certbot's `-le-ssl` copy, a file written by hand), and certificates for the domain other than the
+recorded one. A stage set up before the record existed has none, and its proxy files are then only listed.
+When no stage is left it says so and names `apt purge phis`, `deluser phis` and `delgroup phis`. Without
+`--force` it only lists all of this.
+
+## proxy
+
+The web server in front of the server itself. A Site's own proxy file is `phis site config nginx|apache`.
+
+### `phis proxy config apache|nginx --domain <host> [--tls] [--write]`
+
+The file for `sites-available/phis.conf`: the instance pool from the stage's `.env` (`PORT`, else 5301),
+`ServerName`/`server_name` the domain, `X-Forwarded-Proto` the scheme it is really served on, and on port 80
+`/.well-known/acme-challenge/` answered from `/var/www/phis-acme` ahead of the proxy. `--tls` adds the 443
+host with the Let's Encrypt paths and turns port 80 into a redirect. Without `--write` it prints the file.
+With `--write` (Apache or nginx installed, run as root) it writes it, runs `a2enmod` for the modules it
+needs (`proxy proxy_http proxy_balancer lbmethod_byrequests headers`, and `ssl` with `--tls`) and
+`a2ensite phis` or links it into nginx's `sites-enabled`, checks the configuration (`apache2ctl configtest`,
+`nginx -t`) and reloads; a configuration the check refuses is not reloaded. The file is written whole each
+time: change the flags, not the file.
+
+### `phis proxy tls --domain <host> [--email <email>] [--proxy apache|nginx]`
+
+Writes the plain file, obtains a certificate with `certbot certonly --webroot` (no web server plugin),
+then writes the HTTPS file and reloads. certbot renews on its own timer with a deploy hook that reloads the
+web server. Never run by `phis install`: it needs DNS to point here and is the operator's decision.
+
+Both record what they wrote in the stage's `config/phis-proxy.json`, which `phis stage remove` reads to take
+exactly that away again.
 
 ## schema
 
@@ -731,6 +859,32 @@ Profile. `--config @file` reads JSON from a file resolved against the phis root.
 builds the reference `site:<site>:addon:<provider add-on>:<name>` (or `...:core:<name>`);
 `--secret-reference` takes a full reference. Store the secret with `phis secret set` first.
 
+An S3 Profile (`@phis/storage-s3/s3`) takes:
+
+| Field | Meaning |
+| --- | --- |
+| `endpoint` | The address this Server reaches the storage at. `https`, or `http` to the local host only. |
+| `publicEndpoint` | The address a browser reaches the storage at. Optional; decides the upload path (below). |
+| `bucket`, `accessKeyId`, `region` | As the storage names them. The secret access key is the Profile's secret. |
+| `prefix` | Optional key prefix in the bucket, in front of Core's own `sites/<site key>/…`. Leave it empty unless several installations share one bucket (a dev and a prod stage with the same Site key would otherwise write the same keys). Do not put `sites/<site key>` in it: Core adds that itself. |
+| `forcePathStyle`, `uploadPlanTtlSeconds` | Path-style addressing (default `true`); how long an upload plan stays valid (60–3600 s, default 900). |
+
+**Upload path.** Whether `publicEndpoint` is set decides how an upload's body travels; there is no
+separate setting, because the two cannot disagree.
+
+- **Set:** the browser uploads straight to the storage over a presigned PUT, signed over
+  `publicEndpoint` (it may equal `endpoint`). The body never passes through the Server; the storage
+  verifies the SHA-256 the browser computed; a body above one part (16 MiB) is sent in parts and an
+  interrupted upload can be continued. The storage needs a CORS rule for the Sites' origins, which
+  `storage add`, `storage set` and `storage cors` write.
+- **Empty:** the storage is taken to be reachable from the Server only (an internal Garage, a private
+  network). Every upload streams through the Server's own upload route, as with local storage: the
+  Server computes the digest, no CORS rule is needed, but the body passes the reverse proxy's request
+  limit (`client_max_body_size` in nginx, `LimitRequestBody` in Apache), and nothing is sent in parts,
+  so an interrupted upload starts again.
+
+Delivery is unaffected either way: the Server reads every object over `endpoint`.
+
 ### `phis storage set --site <site key> --key <profile key> [--config <json|@file>] [--replace] [--secret-name|--secret-reference]`
 
 Merges `--config` into the stored configuration (`--replace` replaces it), optionally changes the
@@ -741,6 +895,26 @@ credential reference, validates, probes again and rewrites CORS rules.
 Points the Site Space (not user or group Spaces) at the Profile for new uploads. Existing Assets stay
 where they are. Fails when the Site Space does not exist yet; it is created the first time media is
 used.
+
+Refuses while a serving Instance (heartbeat within 90 seconds and ready) does not hold the Profile's
+Provider Add-on, and names those Instances: every request landing on one would be refused. With no
+serving Instance at all, for example while the Server is stopped during setup, it proceeds with a
+warning. An Instance that lacks the Provider later answers the affected media requests with 503
+`storage_provider_unavailable` and logs `media.storage.provider_unavailable`.
+
+Site administrators set the same things from the Storage panel of the Admin Media settings, among the
+Profiles created here: the Profile the Site Space writes to, the Profile new User and Group Spaces start
+on (existing ones keep theirs), the Profiles offered for that (empty offers all), and which are paused.
+Pointing a Space elsewhere moves no files.
+
+### `phis storage disable|enable --site <site key> --key <profile key>`
+
+Disabling stops new objects, not old ones. What the Profile holds keeps being delivered. Every new
+write into it is refused: a Media upload answers 409 `storage_profile_disabled`, and an Add-on's
+storage write or Asset reservation fails with a named error. Derived files of existing Assets (image
+variants, font subsets) are still written. Use it before moving Spaces to another Profile with
+`storage use`, which refuses a disabled Profile. `enable` runs the same Instance check as `use`.
+`storage list` marks a disabled Profile.
 
 ### `phis storage del --site <site key> --key <profile key>`
 
@@ -849,12 +1023,17 @@ message was last read".
 
 ## media
 
-### `phis media check [--fix]`
+### `phis media check [--fix] [--prune-staging]`
 
 For every Local Storage Profile's `rootDir`, walks the directory and reports entries not owned by the
 owner of the root directory itself (the account the server runs as). Exits `1` when there are
 findings and `--fix` is not given. `--fix` changes ownership back (`chown`), which needs a user
 allowed to do so, typically root. Missing roots are reported.
+
+It also reports staged upload bodies under `<prefix>/uploads-temp/` that no upload session names and that
+are older than the lifecycle window (one day longer than a session may live): what an S3 Profile's
+lifecycle rule removes, and a Local root has no rule for. Younger files are left alone, since their
+session may be being written. `--prune-staging` removes the reported files; without it, findings exit `1`.
 
 ## maintain
 
@@ -935,6 +1114,7 @@ Deletes rows of instances silent for longer than `--forget-after` seconds (defau
 | Reset a forgotten Site admin password | `phis site user --site <site> --email <email> --password <pw> --overwrite` |
 | Reset an operator password | `phis operator passwd --email <email> --password <pw>`, restart the server |
 | Take a server instance out of rotation | `phis instance drain --id <id>` |
+| Remove a stage | `phis stage remove --local-db --backup <file>` to see the plan, then again with `--force`; `apt purge phis` once no stage is left ([README.Debian](../debian/README.Debian)) |
 
 ## Payment profiles
 

@@ -23,7 +23,7 @@ import {
 } from "@/lib/media-content-sniffer";
 import { PhiMediaKind, resolvePhiMediaKindFromContentType } from "@/lib/constants/media";
 import { readPhiFontMetrics } from "@/lib/font-metrics";
-import { createPhisMediaStorageServiceForProfile } from "@/lib/media-storage";
+import { openPhisMediaStorageForRoute } from "@/lib/media-storage-route";
 import { logRuntimeEvent, normalizeLogThrowable } from "@/lib/log";
 import {
   isPhiMediaUploadBodyProxied,
@@ -220,7 +220,9 @@ export async function POST(
 
   const profile = await getMediaStorageProfile(site.id, session.storageProfileId);
   if (!profile) return nextMediaError("storage_profile_unavailable", "Storage Profile is unavailable.", 503);
-  const storageService = await createPhisMediaStorageServiceForProfile(profile, site.key)
+  const openedStorage = await openPhisMediaStorageForRoute(profile, site.key);
+  if (openedStorage.refusal) return openedStorage.refusal;
+  const storageService = openedStorage.storage;
 
   // Settle the staged object first: a Provider that had the Client deliver its body in pieces assembles
   // it here, and one that took it whole simply looks. What the Client brought back travels through

@@ -3,6 +3,7 @@ export const bootstrapEn = {
   title: "phis setup",
   subtitle:
     "Bootstrap mode is active. Use this flow to prepare the runtime before the main admin becomes available.",
+  windowClosesAt: "The setup closes at {time}. `phis setup enable` opens it again.",
   introEyebrow: "Bootstrap",
   stepLabel: "Step",
   statusComplete: "Complete",

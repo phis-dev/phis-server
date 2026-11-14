@@ -3,12 +3,11 @@ import "server-only";
 import {
   abortMediaUploadSessionByToken,
   findResumableMediaUploadSession,
-  updateMediaUploadSessionByToken,
+  takeOverMediaUploadSession,
 } from "@/db/media";
 import { logRuntimeEvent, normalizeLogThrowable } from "@/lib/log";
 import type { PhisMediaStorageService } from "@/lib/media-storage";
 import type { PhiMediaUploadResumption } from "@/lib/media-storage";
-import { PhiMediaUploadSessionStatus } from "@/lib/media-upload-sessions";
 
 /**
  * Taking over an upload whose page went away, instead of asking for the bytes again.
@@ -148,9 +147,10 @@ export async function findPhiMediaUploadToResume(input: {
   }
 
   /*
-   * Taken over, and marked as such in the same step. The status is what keeps two pages out of one
-   * assembly: only an interrupted session is offered, so from here a second attempt at the same file finds
-   * nothing and opens its own upload rather than writing the same part numbers.
+   * Taken over, and marked as such in the same step. The status and a fresh heartbeat are what keep two
+   * pages out of one assembly: the take is conditional on the session still being resumable, so of two
+   * attempts that found it only one continues, and from here a third finds nothing and opens its own
+   * upload rather than writing the same part numbers.
    *
    * The destination comes from this attempt rather than the first one. A person who drops the same file
    * into another Folder means that Folder; the parts are the only thing being reused.
@@ -158,8 +158,7 @@ export async function findPhiMediaUploadToResume(input: {
    * `expires_at` is untouched. The reservation's life is the session's life, and continuing an upload must
    * not be a way to hold a Space's capacity open indefinitely.
    */
-  const taken = await updateMediaUploadSessionByToken(session.token, {
-    status: PhiMediaUploadSessionStatus.Uploading,
+  const taken = await takeOverMediaUploadSession(session.token, {
     folderId: input.folderId,
     presentationFlags: input.presentationFlags,
     meta: input.meta,

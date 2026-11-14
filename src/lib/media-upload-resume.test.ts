@@ -10,7 +10,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@/db/media", () => ({
   findResumableMediaUploadSession: mocks.find,
   abortMediaUploadSessionByToken: mocks.abort,
-  updateMediaUploadSessionByToken: mocks.update,
+  takeOverMediaUploadSession: mocks.update,
 }));
 vi.mock("@/lib/log", () => ({
   logRuntimeEvent: mocks.log,
@@ -105,12 +105,9 @@ describe("finding an upload to carry on", () => {
     // is gone, and a completion has to name every part.
     expect(resumed?.uploaded).toEqual(resumption.uploaded);
     expect(resumed?.remainingParts).toBe(1);
-    // Out of "interrupted", so a second attempt at the same file finds nothing to take over and opens its
-    // own upload rather than writing the same part numbers into this one.
-    expect(mocks.update).toHaveBeenCalledWith("tok-resume", expect.objectContaining({
-      status: PhiMediaUploadSessionStatus.Uploading,
-      folderId: 9,
-    }));
+    // Taken through the conditional take-over, which moves it to Uploading with a fresh heartbeat, so a
+    // second attempt at the same file finds nothing and opens its own upload.
+    expect(mocks.update).toHaveBeenCalledWith("tok-resume", expect.objectContaining({ folderId: 9 }));
     expect(mocks.abort).not.toHaveBeenCalled();
   });
 

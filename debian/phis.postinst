@@ -84,6 +84,24 @@ case "$1" in
 
     ensure_server_actions_key "${STAGE_ENV_PATH}"
 
+    # A fresh install ("$2" is empty) makes the keys the installation needs and opens the setup window
+    # once, for its default hour; every later window is asked for with `phis setup enable`. An upgrade
+    # touches neither. Written before the chown below, which the CLI's write keeps in any case.
+    if [ "$1" = configure ] && [ -z "$2" ]; then
+      PHIS_ROOT="${STAGE_ROOT}" /usr/bin/phis config init-keys >/dev/null \
+        || echo "phis: generating the keys failed; run phis config init-keys" >&2
+      PHIS_ROOT="${STAGE_ROOT}" /usr/bin/phis setup enable >/dev/null \
+        || echo "phis: opening the setup window failed; run phis setup enable" >&2
+      cat <<'HINT'
+
+phis is installed. Next, one of:
+  phis install                   set it up here: database, schema, operator, web server
+  phis install --mode browser    start the server and finish in the browser (/setup, open for one hour;
+                                 phis setup status shows the time left, phis setup enable opens it again)
+
+HINT
+    fi
+
     chown phis:phis "${STAGE_ROOT}" "${CONFIG_DIR}" "${RUNTIME_CONFIG_PATH}" "${STAGE_ENV_PATH}"
     # Both hold secrets: the Server Actions key here, the database passwords and API tokens in the runtime
     # file. Set on every configure, so a stage an earlier version left world-readable is corrected on upgrade.

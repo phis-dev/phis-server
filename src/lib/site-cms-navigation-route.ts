@@ -46,7 +46,7 @@ export async function handleSiteCmsNavigationRead(request: NextRequest) {
       key: navigation.overlay.navKey,
       revisionId: navigation.revisionId,
       nextNodeSequence: navigation.nextNodeSequence,
-      overlay: await projectSiteNavigationOverlayTargets(context!.site!.id, navigation.overlay),
+      overlay: await projectSiteNavigationOverlayTargets(context!.site!.id, navigation.overlay, "editor"),
     });
   });
 }
@@ -72,7 +72,7 @@ export async function handleSiteCmsNavigationDraftRead(request: NextRequest) {
       key: draft.overlay.navKey,
       revisionId: draft.revisionId,
       nextNodeSequence: draft.nextNodeSequence,
-      overlay: await projectSiteNavigationOverlayTargets(context!.site!.id, draft.overlay),
+      overlay: await projectSiteNavigationOverlayTargets(context!.site!.id, draft.overlay, "editor"),
     });
   });
 }

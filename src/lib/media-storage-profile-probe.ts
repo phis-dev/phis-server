@@ -98,15 +98,23 @@ export async function ensurePhiMediaStorageProfileProbe(
   await writeMediaStorageProfileProbe(
     profile.siteId, profile.id, probe, choosePhisMediaChecksumAlgorithm(probe),
   );
-  logRuntimeEvent("info", "media.storage.probe.recorded", {
-    message: "A Storage Profile was probed on first use.",
+  const chosenAlgorithm = choosePhisMediaChecksumAlgorithm(probe);
+  /*
+   * SHA-512 is the one recorded choice under which a direct upload silently carries no digest: the Client
+   * hashes SHA-256, which this Profile cannot compare. Said once, here, rather than on every upload.
+   */
+  const sha512Only = chosenAlgorithm === "sha512";
+  logRuntimeEvent(sha512Only ? "warn" : "info", "media.storage.probe.recorded", {
+    message: sha512Only
+      ? "A Storage Profile was probed on first use; it verifies SHA-512 only, so direct uploads get no digest."
+      : "A Storage Profile was probed on first use.",
     siteKey: siteKey ?? null,
     meta: {
       storageProfileId: profile.id,
       providerId: profile.providerId,
       writable: probe.writable,
       verifiedAlgorithms: probe.verifiedAlgorithms.join(",") || "none",
-      chosenAlgorithm: choosePhisMediaChecksumAlgorithm(probe) ?? "none",
+      chosenAlgorithm: chosenAlgorithm ?? "none",
       findings: probe.findings.length,
     },
   });

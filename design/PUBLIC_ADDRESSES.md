@@ -1,6 +1,6 @@
 # Public Addresses: Planned Parts
 
-**Status: design.** Nothing in this document is implemented. What holds today: every Area but Public
+**Status: design, sections 1 and 2 built (14.11.2026).** The rest is not implemented. What holds today: every Area but Public
 places a Module's routes under its package path, `/<scope>/<package>/…`; in Public a Module whose declared
 path is taken is offered another address by the Modules workspace dialog and is not enabled without one;
 Site Page addresses follow [REFERENCES.md](../REFERENCES.md).
@@ -10,6 +10,11 @@ Site Page addresses follow [REFERENCES.md](../REFERENCES.md).
 The collision check of the path-change command looks only in `site_page_scopes`, and a Site path is
 validated against `/api`, `/_next`, `/operator`, and `/setup` alone. Site against Module is therefore
 unchecked in both directions, in Public and outside it.
+
+Built (14.11.2026), in the Builder, because only it knows which Modules answer where -- the control plane
+holds no Module metadata, so the path-change command still checks Site Pages alone. The Public dialog counts
+Site Pages as holders; activation outside Public is refused while a Site Page sits on the package path; and
+the Page dialog refuses an address an active Module answers on, or one above or beneath it.
 
 The rule is the one already in force for Modules, with a second kind of holder: whoever asks second bears
 the cost.
@@ -25,9 +30,11 @@ the cost.
 
 ## 2. What the collision dialog says
 
-The dialog does not say whether an address is already public. It knows -- the published Area revision
-routes it -- and an operator answering the question should see the difference between renaming something
-nobody has visited and moving an address that stands in an index.
+Built (14.11.2026): the dialog's Status column says whether what holds a contested address answers on it
+in the published Site -- a Site Page with a published revision, or a Module the published Public Area runs
+(the shell preset's default list where none is published) -- or only in the Builder's draft. An operator
+answering the question sees the difference between renaming something nobody has visited and moving an
+address that stands in an index.
 
 ## 3. A standing list of Public addresses
 

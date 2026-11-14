@@ -41,7 +41,24 @@ vi.mock("pg", () => ({
   },
 }));
 
-import { bootstrapPhiDatabase, resolvePhiDatabaseNames } from "./db-bootstrap.mts";
+const psql = vi.hoisted(() => ({ calls: [] as { command: string; args: string[] }[] }));
+
+/*
+ * `--local` runs every statement through `psql --csv` as postgres; the fake answers the few queries that
+ * read something the way psql would print them.
+ */
+vi.mock("node:child_process", () => ({
+  spawnSync: (command: string, args: string[]) => {
+    psql.calls.push({ command, args });
+    const sql = args[args.length - 1] ?? "";
+    if (sql.includes("current_setting('port')")) return { status: 0, stdout: "port\n5433\n", stderr: "" };
+    if (sql.includes("rolsuper")) return { status: 0, stdout: "superuser,version\nt,170011\n", stderr: "" };
+    if (sql.includes("EXISTS")) return { status: 0, stdout: "exists\nf\n", stderr: "" };
+    return { status: 0, stdout: "", stderr: "" };
+  },
+}));
+
+import { bootstrapPhiDatabase, parsePsqlCsv, resolvePhiDatabaseNames } from "./db-bootstrap.mts";
 
 /**
  * The four statements an operator used to run by hand, and the ways they must not go wrong.
@@ -290,5 +307,33 @@ describe("bootstrapping a database", () => {
     state.failOn = "CREATE DATABASE";
     await expect(bootstrapPhiDatabase({ adminUri: ADMIN, name: "prod" })).rejects.toThrow(/refused/);
     expect(state.ended).toBe(state.connected);
+  });
+});
+
+describe("bootstrapping the local cluster as postgres", () => {
+  it("runs psql as postgres and writes loopback URIs on the cluster's port", async () => {
+    psql.calls.length = 0;
+    const uid = vi.spyOn(process as unknown as { getuid: () => number }, "getuid").mockReturnValue(0);
+    try {
+      const result = await bootstrapPhiDatabase({ adminUri: "", local: true, name: "prod" });
+      expect(state.connected).toBe(0);
+      expect(psql.calls.every((call) => call.command === "runuser" && call.args.slice(0, 3).join(" ") === "-u postgres --")).toBe(true);
+      expect(psql.calls.some((call) => call.args.at(-1)?.includes("CREATE DATABASE \"phis_prod\""))).toBe(true);
+      // Parameters are written in as literals: psql -c takes none.
+      expect(psql.calls.some((call) => call.args.at(-1)?.includes("WHERE rolname = 'phis_prod_user'"))).toBe(true);
+      expect(new URL(result.uri).host).toBe("127.0.0.1:5433");
+      expect(new URL(result.migrationUri).username).toBe("phis_prod_migrator");
+    } finally {
+      uid.mockRestore();
+    }
+  });
+
+  it("takes either the local cluster or an administrative URI", async () => {
+    await expect(bootstrapPhiDatabase({ adminUri: ADMIN, local: true })).rejects.toThrow(/not both/);
+  });
+
+  it("reads psql's CSV, quoted commas and booleans included", () => {
+    expect(parsePsqlCsv('a,b,c\nt,"x, y",f\n')).toEqual([{ a: true, b: "x, y", c: false }]);
+    expect(parsePsqlCsv("")).toEqual([]);
   });
 });

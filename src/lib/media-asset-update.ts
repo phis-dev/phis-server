@@ -36,15 +36,22 @@ function flagsValue(value: unknown) {
   return Number.isInteger(parsed) && parsed >= 0 ? parsed : null;
 }
 
-function normalizedMeta(value: unknown) {
-  if (value === null || value === undefined || typeof value !== "object" || Array.isArray(value)) return null;
-  const meta = { ...(value as Record<string, unknown>) };
-  if (Object.hasOwn(meta, "focalRect")) {
-    const focalRect = meta.focalRect == null ? null : normalizeMediaFocalRect(meta.focalRect);
-    if (meta.focalRect != null && !focalRect) return null;
-    if (focalRect) meta.focalRect = focalRect;
-    else delete meta.focalRect;
+/**
+ * The stored `meta` with the focal rectangle a request named, every other entry kept.
+ *
+ * A client writes the typed `focalRect` and never `meta` itself: the response no longer carries `meta`
+ * (`serializeMediaAssetForTile`), so a client could only ever send back a part of it, and writing `meta`
+ * whole would have dropped what it did not see -- the font metrics among them. `undefined` is "invalid".
+ */
+function metaWithFocalRect(stored: Record<string, unknown> | null, value: unknown) {
+  const meta = { ...(stored ?? {}) };
+  if (value == null) {
+    delete meta.focalRect;
+    return meta;
   }
+  const normalized = normalizeMediaFocalRect(value);
+  if (!normalized) return undefined;
+  meta.focalRect = normalized;
   return meta;
 }
 
@@ -116,17 +123,18 @@ async function updateLoadedSiteMediaAsset(
   const presentationFlags = Object.hasOwn(payload, "presentationFlags")
     ? flagsValue(payload.presentationFlags)
     : undefined;
-  const meta = Object.hasOwn(payload, "meta") ? normalizedMeta(payload.meta) : undefined;
+  const writesFocalRect = Object.hasOwn(payload, "focalRect");
+  const meta = writesFocalRect ? metaWithFocalRect(asset.meta, payload.focalRect) : undefined;
   if (Object.hasOwn(payload, "presentationFlags") && presentationFlags === null) {
     throw new MediaAssetUpdateError("Invalid presentationFlags value.", 400);
   }
-  if (Object.hasOwn(payload, "meta") && meta === null) {
-    throw new MediaAssetUpdateError("Invalid meta value.", 400);
+  if (writesFocalRect && meta === undefined) {
+    throw new MediaAssetUpdateError("Invalid focalRect value.", 400);
   }
 
   const nextFocalRect = focalRect(meta ?? asset.meta);
   const focalRectChanged =
-    Object.hasOwn(payload, "meta") &&
+    writesFocalRect &&
     !equalFocalRects(focalRect(asset.meta), nextFocalRect);
   const updated = await updateMediaAsset({
     siteId,
@@ -177,16 +185,11 @@ export async function updateSiteMediaAssetMetadataFromForm(
     throw new MediaAssetUpdateError("Media asset not found.", 404);
   }
 
-  const meta = { ...(asset.meta ?? {}) };
-  if (Object.hasOwn(input, "focalRect")) {
-    meta.focalRect = input.focalRect;
-  }
-
   return updateLoadedSiteMediaAsset(asset, {
     folderId: input.folderId,
     title: input.title,
     altText: input.altText,
     presentationFlags: input.presentationFlags,
-    meta,
+    ...(Object.hasOwn(input, "focalRect") ? { focalRect: input.focalRect } : {}),
   });
 }

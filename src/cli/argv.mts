@@ -45,13 +45,36 @@ export const PHIS_COMMAND_FLAGS: Record<string, FlagSpec> = {
   "config": {},
   "config paths": {},
   "config validate": {},
+  "config init-keys": {},
+
+  "setup enable": { for: S },
+  "setup disable": {},
+  "setup status": {},
+
+  "install": {
+    mode: S, for: S, "local-db": B, "admin-uri": S, "db-name": S,
+    "operator-email": S, "operator-password": S, "operator-name": S,
+    "site-key": S, "site-name": S, "site-hostname": S, "site-public-base-url": S,
+    "site-source-locale": S, "site-default-locale": S, "site-support-email": S,
+    "site-admin-email": S, "site-admin-password": S,
+    domain: S, proxy: S,
+  },
+
+  "proxy config": { domain: S, proxy: S, tls: B, write: B },
+  "proxy tls": { domain: S, proxy: S, email: S },
 
   "schema check": {},
   "schema apply": {},
   "schema drop": { force: B },
 
+  "db drop": { "admin-uri": S, local: B, database: S, role: S, "migration-role": S, force: B },
+  "stage remove": {
+    "local-db": B, "admin-uri": S, "keep-database": B, database: S, role: S, "migration-role": S,
+    backup: S, "keep-proxy": B, "keep-certificate": B, force: B,
+  },
+
   "db bootstrap": {
-    "admin-uri": S, name: S, database: S, role: S, "migration-role": S,
+    "admin-uri": S, local: B, name: S, database: S, role: S, "migration-role": S,
     password: S, "migration-password": S, force: B,
   },
 
@@ -116,6 +139,8 @@ export const PHIS_COMMAND_FLAGS: Record<string, FlagSpec> = {
   "storage add": { site: S, key: S, provider: S, config: S, "secret-name": S, "secret-reference": S },
   "storage set": { site: S, key: S, config: S, replace: B, "secret-name": S, "secret-reference": S },
   "storage use": { site: S, key: S },
+  "storage disable": { site: S, key: S },
+  "storage enable": { site: S, key: S },
   "storage del": { site: S, key: S },
   "storage cors": {},
   "storage probe": { site: S, key: S },
@@ -136,7 +161,7 @@ export const PHIS_COMMAND_FLAGS: Record<string, FlagSpec> = {
   "operator disable": { email: S },
   "operator del": { email: S },
 
-  "media check": { fix: B },
+  "media check": { fix: B, "prune-staging": B },
   "translations usage": { "unused-for": S, site: S, examples: S },
   "maintain": { list: B, task: S, "dry-run": B },
   "licenses check": { package: S },

@@ -187,6 +187,14 @@ reference back into a raw path or silently discard it from a Navigation Draft. A
 missing target to a typed deleted diagnostic so the row remains repairable; Live navigation omits the
 unresolved link entirely.
 
+A reference to a Site Page that has never been published resolves to no path in a Live render
+(`path: null`, `deleted: false`): the Public render answers 404 for that Page, and a link that leads there
+is worse than none. Only an editor gets its path: a preview the server already authorized
+(`preview: true` on `POST /api/v1/site/references`, a Navigation read by revision) and the Builder's
+Navigation reads. Live
+navigation omits such an item, as it omits a deleted one; unlike a deleted one it reappears by itself
+once the Page is published.
+
 Deletion is a draft like every other change to a Page, and publishing is what performs it. The draft
 marks the Page deleted; `site_page_scopes.tombstoned_at` is written by the publish, so until then the Page
 resolves, stays in the sitemap and stays a valid Navigation target, and discarding the draft leaves no

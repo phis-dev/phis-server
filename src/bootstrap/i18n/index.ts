@@ -22,6 +22,8 @@ export type BootstrapMessages = {
   languageLabel: string;
   title: string;
   subtitle: string;
+  /** `{time}` is the local time the setup window closes. */
+  windowClosesAt: string;
   introEyebrow: string;
   stepLabel: string;
   statusComplete: string;

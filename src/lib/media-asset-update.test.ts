@@ -130,9 +130,9 @@ describe("updateSiteMediaAsset", () => {
     await expect(updateSiteMediaAsset({
       siteId: 7,
       assetId: 17,
-      payload: { meta: { focalRect: { x: -1, y: 0, width: 1, height: 1 } } },
+      payload: { focalRect: { x: -1, y: 0, width: 1, height: 1 } },
     })).rejects.toMatchObject({
-      message: "Invalid meta value.",
+      message: "Invalid focalRect value.",
       status: 400,
     });
 
@@ -161,16 +161,13 @@ describe("updateSiteMediaAsset", () => {
     await updateSiteMediaAsset({
       siteId: 7,
       assetId: 17,
-      payload: {
-        meta: {
-          attribution: "Example",
-          focalRect: { x: 0.2, y: 0.2, width: 0.5, height: 0.4 },
-        },
-      },
+      payload: { focalRect: { x: 0.2, y: 0.2, width: 0.5, height: 0.4 } },
     });
 
     expect(mocks.updateMediaAsset).toHaveBeenCalledWith(expect.objectContaining({
       variantVersion: 3,
+      // Written into the stored meta, every other entry kept: the client never sees `meta` to send it back.
+      meta: { attribution: "Example", focalRect: { x: 0.2, y: 0.2, width: 0.5, height: 0.4 } },
     }));
     expect(mocks.deleteImageAssetVariantsByAssetId).toHaveBeenCalledWith(17);
     expect(mocks.deleteObject).toHaveBeenCalledTimes(2);
@@ -190,12 +187,10 @@ describe("updateSiteMediaAssetMetadataFromForm", () => {
       presentationFlags: 1,
     });
 
+    // No focal rectangle named, so `meta` is not written at all and keeps what it holds.
     expect(mocks.updateMediaAsset).toHaveBeenCalledWith(expect.objectContaining({
       folderId: null,
-      meta: {
-        attribution: "Example",
-        focalRect: { x: 0.1, y: 0.2, width: 0.5, height: 0.4 },
-      },
+      meta: undefined,
     }));
     expect(mocks.deleteImageAssetVariantsByAssetId).not.toHaveBeenCalled();
   });

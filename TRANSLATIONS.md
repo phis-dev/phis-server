@@ -339,7 +339,7 @@ options read. A prefix match would make `/api/v1/tr/anything` a door as well; an
 surface countable. A query string is not part of a path and needs no allowance of its own.
 
 **What the host name must not publish** is everything else the process serves: `/operator`, `/setup`
-while `bootstrap.enabled` is true, and the internal `/api/v1` routes. Those refuse a caller without the
+while its window is open (`phis setup enable`), and the internal `/api/v1` routes. Those refuse a caller without the
 internal token, so an unfiltered mirror is surface rather than a leak -- but a second public name for the
 control plane is a second place to get it wrong, and the setup pages have no login at all, which is the
 one case where the difference is not academic.

@@ -44,8 +44,13 @@ export type PhisConfig = {
   runtime?: {
     containerized?: boolean;
   };
+  /**
+   * The setup pages' time window (`src/lib/bootstrap-window.ts`). Only ever in `phis-runtime.json`, and read
+   * from there uncached; `phis setup enable|disable` and the setup's finish step write it.
+   */
   bootstrap?: {
-    enabled?: boolean;
+    /** ISO 8601 moment the setup closes. Missing or past: closed. */
+    enabledUntil?: string;
   };
   platformSuperUsers?: PlatformSuperUser[];
   database?: {
@@ -232,9 +237,6 @@ export const DEFAULT_CONFIG: PhisConfig = {
   },
   runtime: {
     containerized: false,
-  },
-  bootstrap: {
-    enabled: false,
   },
   platformSuperUsers: [],
   email: {
@@ -558,6 +560,20 @@ export function validatePhiConfig(config: PhisConfig) {
       issues.push(`platformSuperUsers contains duplicate email ${user.email}.`);
     }
     seenEmails.add(normalizedEmail);
+  }
+
+  const bootstrap = config.bootstrap as Record<string, unknown> | undefined;
+  if (bootstrap && "enabled" in bootstrap) {
+    issues.push(
+      "bootstrap.enabled is gone: the setup opens for a time with `phis setup enable` (bootstrap.enabledUntil). "
+        + "Remove the key.",
+    );
+  }
+  if (
+    bootstrap?.enabledUntil !== undefined
+    && (typeof bootstrap.enabledUntil !== "string" || Number.isNaN(new Date(bootstrap.enabledUntil).getTime()))
+  ) {
+    issues.push("bootstrap.enabledUntil must be an ISO 8601 moment.");
   }
 
   if (

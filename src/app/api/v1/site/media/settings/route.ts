@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { ensureSiteMediaConfig, listAddonMediaSpaces } from "@/db/media-spaces";
+import { readSiteMediaStorageSettings } from "@/db/media-storage-settings";
 import { PhiSiteMediaFlags } from "@/lib/constants/media";
 import { createJsonResponse } from "@/lib/api-response";
 import { guardApiV1 } from "@/lib/api-v1-guard";
@@ -32,8 +33,13 @@ export async function GET(request: Request) {
    * to learn that a store exists, what it is costing, or which Add-on to name when sizing one. What is
    * in them stays the Add-on's business; what they cost is the Site's.
    */
-  const addonSpaces = await listAddonMediaSpaces(site.id);
+  const [addonSpaces, storage] = await Promise.all([
+    listAddonMediaSpaces(site.id),
+    // Where the Spaces write, for the storage form's initial values; written on /api/site/admin/media/storage.
+    readSiteMediaStorageSettings(site.id),
+  ]);
   return createJsonResponse(request, {
+    storage,
     addonSpaces: addonSpaces.map(({ addonId, space }) => ({
       addonId,
       spaceId: space.id,

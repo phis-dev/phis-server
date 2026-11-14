@@ -325,4 +325,31 @@ describe("where an Add-on's bytes go", () => {
       [ADDON_ID, site.id],
     );
   });
+
+  it("keeps delivering from a disabled Profile and takes nothing new into it", async () => {
+    const pool = await requirePhiTestDatabase();
+    const store = storage();
+    await store.put({ key: "kept.txt", ...sending(new TextEncoder().encode("kept")), contentType: "text/plain" });
+    const setDisabled = (on: boolean) => pool.query(
+      `UPDATE phis.media_storage_profiles p
+          SET flags = CASE WHEN $2 THEN p.flags | 1 ELSE p.flags & ~1 END
+         FROM phis.media_spaces s
+        WHERE s.site_id = $1 AND s.user_id IS NULL AND s.group_id IS NULL
+          AND p.id = s.default_storage_profile_id`,
+      [site.id, on],
+    );
+    await setDisabled(true);
+    try {
+      await expect(store.put({
+        key: "new.txt",
+        ...sending(new Uint8Array([1])),
+        contentType: "text/plain",
+      })).rejects.toThrow(/disabled and takes no new objects/);
+      const read = await store.get("kept.txt");
+      expect(new TextDecoder().decode(await collect(read!.body))).toBe("kept");
+      expect(await store.head("new.txt")).toBeNull();
+    } finally {
+      await setDisabled(false);
+    }
+  });
 });

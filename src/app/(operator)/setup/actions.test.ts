@@ -23,6 +23,7 @@ vi.mock("@/lib/config-files", () => ({
   writePhiRuntimeConfigSync: mocks.write,
 }));
 vi.mock("@/lib/config", () => ({ resetPhisConfigCache: vi.fn() }));
+vi.mock("@/lib/log", () => ({ logRuntimeEvent: vi.fn() }));
 vi.mock("@/lib/password-core", () => ({ hashPassword: async () => "hash" }));
 vi.mock("@/db/bootstrap", () => ({
   applyPhiBootstrapSchema: mocks.schema,
@@ -137,9 +138,20 @@ describe("finishing the setup", () => {
     mocks.read.mockReturnValue({
       platformSuperUsers: [{ email: "op@example.test", passwordHash: "h", enabled: true }],
       database: { uri: "postgresql://db/phis" },
+      bootstrap: { enabledUntil: new Date(Date.now() + 60_000).toISOString() },
     });
     mocks.sitesList.mockResolvedValue([{ key: "site" }]);
     await expect(finish()).rejects.toThrow("redirect:/operator");
-    expect(mocks.write).toHaveBeenCalledWith(expect.objectContaining({ bootstrap: { enabled: false } }));
+    const written = mocks.write.mock.calls[0]?.[0];
+    expect(written.bootstrap).toBeUndefined();
+    for (const key of [
+      written.api.internalToken,
+      written.auth.transactionEncryptionKey,
+      written.registration.intentEncryptionKey,
+      written.operator.sessionSecret,
+      written.secrets.encryptionKey,
+    ]) {
+      expect(key).toMatch(/^[a-f0-9]{64}$/);
+    }
   });
 });

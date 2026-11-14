@@ -15,12 +15,13 @@ import {
   resolveAuthorizedMediaSpace,
   resolveMediaSpaceContentKinds,
 } from "@/db/media-spaces";
-import { getMediaStorageProfile } from "@/db/media-spaces";
+import { getMediaStorageProfile, isMediaStorageProfileWritable } from "@/db/media-spaces";
 import { nextMediaSpaceError } from "@/lib/media-response";
-import { createPhisMediaStorageServiceForProfile } from "@/lib/media-storage";
+import { openPhisMediaStorageForRoute } from "@/lib/media-storage-route";
 import { logRuntimeEvent, normalizeLogThrowable } from "@/lib/log";
 import {
   createPhiMediaUploadSessionToken,
+  PHI_MEDIA_UPLOAD_HEARTBEAT_INTERVAL_MS,
   PhiMediaUploadSessionStatus,
   resolvePhiMediaUploadPlanKind,
   resolvePhiMediaUploadSessionKind,
@@ -102,6 +103,11 @@ function refuseUpload(
     meta: { reason: refusal.reason, ...refusal.meta },
   });
   return nextMediaError(refusal.reason, refusal.message, refusal.status);
+}
+
+/** Where and how often a page sending parts says it still is (`uploads/[token]/heartbeat`). */
+function buildUploadHeartbeat(token: string) {
+  return { url: `/api/site/media/uploads/${token}/heartbeat`, intervalMs: PHI_MEDIA_UPLOAD_HEARTBEAT_INTERVAL_MS };
 }
 
 export async function POST(request: NextRequest) {
@@ -252,6 +258,15 @@ export async function POST(request: NextRequest) {
       meta: { spaceId: space.id, storageProfileId: space.defaultStorageProfileId },
     });
   }
+  if (!isMediaStorageProfileWritable(profile)) {
+    // Disabled stops new bytes only; what the Profile holds is still delivered (PhiMediaStorageProfileFlags).
+    return refuseUpload(request, actor, {
+      reason: "storage_profile_disabled",
+      message: "Uploads into this Media Space are paused: its Storage Profile is disabled.",
+      status: 409,
+      meta: { spaceId: space.id, storageProfileId: profile.id },
+    });
+  }
   if (folderId != null && !await getMediaFolderBySiteAndId(site.id, space.id, folderId)) {
     return refuseUpload(request, actor, {
       reason: "folder_not_found",
@@ -278,7 +293,9 @@ export async function POST(request: NextRequest) {
    * no longer anybody's.
    */
   const released = await releaseExpiredMediaUploadSessions(space.id);
-  const storageService = await createPhisMediaStorageServiceForProfile(profile, site.key)
+  const openedStorage = await openPhisMediaStorageForRoute(profile, site.key);
+  if (openedStorage.refusal) return openedStorage.refusal;
+  const storageService = openedStorage.storage;
   const kind = resolvePhiMediaUploadSessionKind(contentType);
   /*
    * The expired sessions' remains, cleaned up once this response is out.
@@ -395,6 +412,7 @@ export async function POST(request: NextRequest) {
       resumed: true,
       finalizeUrl: `/api/site/media/uploads/${resumed.token}/finalize`,
       reportUrl: `/api/site/media/uploads/${resumed.token}/report`,
+      heartbeat: buildUploadHeartbeat(resumed.token),
       expiresAt: resumed.expiresAt,
       session: {
         token: resumed.token,
@@ -516,6 +534,8 @@ export async function POST(request: NextRequest) {
       finalizeUrl: `/api/site/media/uploads/${token}/finalize`,
       // And the other end of it: a plan the Client delivers elsewhere can fail where no server sees it.
       reportUrl: `/api/site/media/uploads/${token}/report`,
+      // Only an assembly can be continued, so only an assembly is asked to say it is still being sent.
+      ...(plan.kind === "multipart-put" ? { heartbeat: buildUploadHeartbeat(token) } : {}),
       expiresAt,
       session: {
         token,

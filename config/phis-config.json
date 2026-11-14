@@ -2,9 +2,6 @@
   "runtime": {
     "containerized": false
   },
-  "bootstrap": {
-    "enabled": true
-  },
   "sites": {
     "sourcePathRoot": "/opt/phis/sources",
     "instancePathRoot": "/var/www/phis/sites",

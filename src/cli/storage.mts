@@ -7,6 +7,8 @@ import { choosePhisMediaChecksumAlgorithm, PHI_LOCAL_MEDIA_STORAGE_PROVIDER_ID }
 import type { PhisMediaStorageAdapter, PhisMediaStorageProbe } from "@phis/contracts/addon";
 
 import { loadInstalledAddonRuntime, readAddonDesiredState } from "./addons.mts";
+import { checkPhisStorageProviderReadiness } from "../lib/media-storage-readiness.ts";
+import { PhiMediaStorageProfileFlags } from "../lib/constants/media.ts";
 import { PHIS_SERVICE_KINDS } from "../lib/addons/core-services.ts";
 import {
   reconcilePhiMediaStoragePoliciesWith,
@@ -38,6 +40,8 @@ export type StorageProfileRecord = {
   providerId: string;
   config: Record<string, unknown>;
   secretReference: string | null;
+  /** `PhiMediaStorageProfileFlags.Disabled`: delivered from, never written into. */
+  disabled: boolean;
 };
 
 function getOptionalFlag(flags: FlagMap, key: string) {
@@ -69,9 +73,9 @@ async function requireSite(pool: Pool, siteKeyInput: string) {
 async function readProfiles(pool: Pool, siteId: number) {
   const { rows } = await pool.query<{
     id: number; site_id: number; key: string; provider_id: string;
-    config: Record<string, unknown>; secret_reference: string | null;
+    config: Record<string, unknown>; secret_reference: string | null; flags: number;
   }>(
-    `SELECT id, site_id, key, provider_id, config, secret_reference
+    `SELECT id, site_id, key, provider_id, config, secret_reference, flags
      FROM phis.media_storage_profiles WHERE site_id = $1 ORDER BY key`,
     [siteId],
   );
@@ -82,6 +86,7 @@ async function readProfiles(pool: Pool, siteId: number) {
     providerId: row.provider_id,
     config: row.config ?? {},
     secretReference: row.secret_reference,
+    disabled: (row.flags & PhiMediaStorageProfileFlags.Disabled) !== 0,
   }));
 }
 
@@ -588,6 +593,11 @@ export async function useStorageProfile(pool: Pool, flags: FlagMap) {
   if (!profile) {
     throw new Error(`Site ${site.key} has no Storage Profile "${key}".`);
   }
+  if (profile.disabled) {
+    throw new Error(`Storage Profile "${key}" is disabled. Enable it first (phis storage enable).`);
+  }
+
+  const readiness = await checkPhisStorageProviderReadiness(pool, profile.providerId);
 
   // The Site Space only. A Space belonging to a user or a group is that person's or that group's, and
   // pointing it somewhere else is Site administration rather than an operator's business.
@@ -610,5 +620,49 @@ export async function useStorageProfile(pool: Pool, flags: FlagMap) {
     key,
     profileId: profile.id,
     note: "Existing Assets keep the Profile they were written to; only new uploads follow this.",
+    ...(readiness.servingInstances === 0
+      ? { warning: "No serving Instance reported in; it could not be checked that one holds the Provider." }
+      : {}),
   };
 }
+
+/**
+ * `phis storage disable` and `enable`: whether new objects may be written into a Profile.
+ *
+ * Disabling stops uploads into every Space that writes there -- a Media upload is refused with
+ * `storage_profile_disabled`, an Add-on's write with a named error -- and keeps delivering what the Profile
+ * holds. It is the step before moving Spaces elsewhere (`phis storage use`), not a way to take bytes
+ * offline. Enabling is checked like `use`, because it puts the Provider back on the write path.
+ */
+export async function setStorageProfileEnabled(pool: Pool, flags: FlagMap, enabled: boolean) {
+  const site = await requireSite(pool, getRequiredFlag(flags, "site"));
+  const key = getRequiredFlag(flags, "key");
+  const profile = (await readProfiles(pool, site.id)).find((entry) => entry.key === key);
+  if (!profile) {
+    throw new Error(`Site ${site.key} has no Storage Profile "${key}".`);
+  }
+  if (enabled) {
+    await checkPhisStorageProviderReadiness(pool, profile.providerId);
+  }
+  await pool.query(
+    enabled
+      ? `UPDATE phis.media_storage_profiles SET flags = flags & ~$3::int, updated_at = NOW() WHERE site_id = $1 AND id = $2`
+      : `UPDATE phis.media_storage_profiles SET flags = flags | $3::int, updated_at = NOW() WHERE site_id = $1 AND id = $2`,
+    [site.id, profile.id, PhiMediaStorageProfileFlags.Disabled],
+  );
+  const { rows } = await pool.query<{ count: string }>(
+    `SELECT count(*)::text AS count FROM phis.media_spaces WHERE site_id = $1 AND default_storage_profile_id = $2`,
+    [site.id, profile.id],
+  );
+  const spaces = Number(rows[0]?.count ?? 0);
+  const base = { ok: true, site: site.key, key, spaces };
+  return enabled
+    ? { ...base, action: "storage.enable" as const, note: "New uploads into this Profile are accepted again." }
+    : {
+        ...base,
+        action: "storage.disable" as const,
+        note: `Existing objects are still delivered. ${spaces} Space(s) write here and now refuse uploads; `
+          + "point them at another Profile with phis storage use.",
+      };
+}
+

@@ -69,7 +69,32 @@ Installing, upgrading, removing
   changed since or is enabled; those stay and purge says so. It leaves
   the `phis` account and `/srv/phis` in place: they hold each stage's
   configuration, secrets and Local media, which are the installation's data,
-  not the package's. Remove them by hand when the data is no longer needed.
+  not the package's. Purge lists by name what it finds left.
+
+Taking phis off a host, in this order:
+
+1. Per stage, first as a dry run, then with `--force`:
+     phis stage remove --root /srv/phis/stages/<stage> --local-db \
+       --backup /root/phis-<stage>.tar.gz
+   It stops and disables `phis@<stage>`, drops the database and both roles
+   (`--admin-uri <uri>` for a remote one, `--keep-database` to leave them),
+   removes the web server files, Apache modules, challenge directory and
+   certificate that `phis proxy` recorded, and the stage directory. It lists
+   what it finds and did not make -- certbot's `-le-ssl` copy of a site, a file
+   written by hand -- and leaves that.
+2. `apt purge phis`, once no stage is left.
+3. What remains, by hand: whatever step 1 listed, `deluser phis` and
+   `delgroup phis`, and Local media outside the stage directory.
+
+Without `phis stage remove` -- a stage set up before it existed has no record
+of its proxy files -- the full list is: the enabled sites `phis.conf` and any
+`-le-ssl` copy in `sites-available` and `sites-enabled`; the Apache modules
+`proxy_balancer`, `lbmethod_byrequests` and `slotmem_shm` if nothing else uses
+them; the Let's Encrypt certificate and its renewal (`certbot delete
+--cert-name <domain>`); the site's Apache logs; the database (`DROP DATABASE`
+removes `pg_trgm` with it) and the roles `phis_<stage>_user` and
+`phis_<stage>_migrator`; `/srv/phis/stages/<stage>` with `.env` and `config/`,
+which hold every secret; `/var/www/phis-acme`; and the `phis` account.
 
 Server Actions encryption key
 -----------------------------
@@ -121,23 +146,39 @@ port other than 80 or 443 nginx's `$host` drops the port that the browser's
 The nginx template holds a `map` and an `upstream`, which nginx allows only in
 the `http` context -- which is where Debian includes `sites-enabled/*`.
 
+First install
+-------------
+
+A fresh install generates the stage's keys (`phis config init-keys`) and opens
+the setup window for one hour (`phis setup enable`); an upgrade does neither.
+The service is not started. Continue with one of:
+
+    phis install                  # everything here: database, schema,
+                                  # operator, optional Site and web server
+    phis install --mode browser   # start the server, finish at /setup
+
+`phis setup status` shows the time left and what is still missing;
+`phis setup enable [--for 30m]` opens the window again (at most four hours).
+
 Database bootstrap
 ------------------
 
-This package does not create PostgreSQL roles or databases automatically.
+The package does not create PostgreSQL roles or databases on its own.
+`phis db bootstrap --local` (as root, PostgreSQL on this host) creates the
+database `phis_prod` with the roles `phis_prod_user` and `phis_prod_migrator`
+as `postgres` over the local socket and writes both connection strings;
+`--admin-uri` does the same through an administrative connection elsewhere.
+`phis install` runs it when the stage has no database yet.
 
-Recommended local naming for the default stage:
+Web server and HTTPS
+--------------------
 
-- database: `phis_prod`
-- user: `phis_prod_user`
-
-The package-created setup UI can write `config/phis-runtime.json` and apply the
-application schema to an existing database connection, but it does not create
-the PostgreSQL role or database itself.
-
-If a local PostgreSQL instance is used, create the role and database before
-completing the setup UI or use `phis-host` later for explicit stage/database
-bootstrap.
+`phis proxy config apache|nginx --domain <host> --write` writes
+`sites-available/phis.conf` for the domain, enables the modules and the site,
+checks the configuration and reloads the web server. `phis proxy tls --domain
+<host> --email <you>` then obtains a certificate with certbot (webroot, no
+plugin) and writes the HTTPS file with `X-Forwarded-Proto "https"`. Neither
+runs on its own; `phis install --domain <host>` runs the first.
 
 Host integration
 ----------------

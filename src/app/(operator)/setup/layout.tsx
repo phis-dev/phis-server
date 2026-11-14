@@ -1,4 +1,5 @@
 import { SetupLayoutShell } from "@/components/bootstrap/setup-layout-shell";
+import { readPhiBootstrapWindowSync } from "@/lib/config";
 import { requirePhisOperatorSurface } from "@/lib/operator-surfaces";
 
 /*
@@ -14,6 +15,11 @@ export default function SetupLayout({
   children: React.ReactNode;
 }>) {
   requirePhisOperatorSurface("setup");
+  const setupWindow = readPhiBootstrapWindowSync();
 
-  return <SetupLayoutShell>{children}</SetupLayoutShell>;
+  return (
+    <SetupLayoutShell closesAt={setupWindow.state === "open" ? setupWindow.until.toISOString() : null}>
+      {children}
+    </SetupLayoutShell>
+  );
 }

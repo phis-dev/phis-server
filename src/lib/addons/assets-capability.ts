@@ -15,6 +15,7 @@ import {
   ensureAddonMediaSpace,
   ensureSiteMediaConfig,
   getMediaStorageProfile,
+  isMediaStorageProfileWritable,
   releaseMediaSpaceReservation,
   reserveMediaSpaceQuota,
   resolveEffectiveMediaQuotaBytes,
@@ -211,6 +212,10 @@ export function buildPhisAddonAssetsCapability(input: {
     const profile = await getMediaStorageProfile(siteId, space.defaultStorageProfileId);
     if (!profile) {
       throw new PhisAddonAssetError("This Site has no default Storage Profile.");
+    }
+    // Only reservations come through here, and a disabled Profile takes no new objects.
+    if (!isMediaStorageProfileWritable(profile)) {
+      throw new PhisAddonAssetError("This Site's Storage Profile is disabled and takes no new uploads.");
     }
     return {
       space,

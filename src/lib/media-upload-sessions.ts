@@ -86,17 +86,36 @@ export function isPhiMediaUploadBodyProxied(planKind: number) {
 }
 
 /**
+ * How often a page delivering an assembly says it still is (`heartbeat_at`), and how long a silence has to
+ * last before the session counts as abandoned: three missed beats, so one slow request is not a crash.
+ */
+export const PHI_MEDIA_UPLOAD_HEARTBEAT_INTERVAL_MS = 20_000;
+export const PHI_MEDIA_UPLOAD_HEARTBEAT_LAPSE_MS = 3 * PHI_MEDIA_UPLOAD_HEARTBEAT_INTERVAL_MS;
+
+/**
  * Whether what is left of this session could be carried on rather than started again.
  *
  * Both halves are needed and neither implies the other. Only an assembly leaves anything a second page
  * could build on -- a single `PUT` that stopped halfway wrote bytes nobody attested and nobody can name.
- * And only a session that *said* it stopped may be taken over: one still at `Pending` or `Uploading` may
- * have a page sending into it right now, and two pages writing the same part numbers would leave whichever
- * finalized second holding a session that is already gone.
+ * And only a session nobody is writing into may be taken over: two pages writing the same part numbers
+ * would leave whichever finalized second holding a session that is already gone. A session says so by
+ * reporting it stopped (`Interrupted`), or -- where its page crashed and could report nothing -- by a
+ * heartbeat that has lapsed. One still at `Pending` or `Uploading` with a current heartbeat, or with none
+ * at all, may have a page sending into it right now.
+ *
+ * `findResumableMediaUploadSession` and `takeOverMediaUploadSession` state the same rule in SQL.
  */
-export function isPhiMediaUploadResumable(planKind: number, status: number) {
-  return isPhiMediaUploadAssembledFromParts(planKind)
-    && status === PhiMediaUploadSessionStatus.Interrupted;
+export function isPhiMediaUploadResumable(
+  planKind: number,
+  status: number,
+  heartbeatAt: string | null = null,
+  now = Date.now(),
+) {
+  if (!isPhiMediaUploadAssembledFromParts(planKind)) return false;
+  if (status === PhiMediaUploadSessionStatus.Interrupted) return true;
+  const delivering = status === PhiMediaUploadSessionStatus.Pending || status === PhiMediaUploadSessionStatus.Uploading;
+  return delivering && heartbeatAt !== null
+    && Date.parse(heartbeatAt) < now - PHI_MEDIA_UPLOAD_HEARTBEAT_LAPSE_MS;
 }
 
 export function createPhiMediaUploadSessionToken() {

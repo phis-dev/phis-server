@@ -107,9 +107,18 @@ export type SiteNavigationOverlay = {
   tombstones: PhiCmsInstanceId[];
 };
 
+/**
+ * Gives each custom item that links a Site Page the path it currently has.
+ *
+ * `audience` is whose eyes the answer is for. A visitor gets no path for a Page that has never been
+ * published -- the Public render would answer 404 for it, and a link that leads there is worse than none.
+ * An editor (the Builder's reads, a preview by revision) gets it, because they are about to publish both
+ * and need to see where the link will go.
+ */
 export async function projectSiteNavigationOverlayTargets(
   siteId: number,
   overlay: SiteNavigationOverlay,
+  audience: "visitor" | "editor",
 ): Promise<SiteNavigationOverlay> {
   const areaKey = overlay.navKey.slice(0, overlay.navKey.indexOf(":"));
   if (!isPhisCmsAreaKey(areaKey)) return overlay;
@@ -132,11 +141,12 @@ export async function projectSiteNavigationOverlayTargets(
       if (!reference || reference.target.kind !== "site") return item;
       const scope = scopesById.get(reference.target.pageScopeId);
       const deleted = !scope || scope.tombstoned || !scope.path;
+      const hidden = !deleted && audience === "visitor" && !scope.published;
       return {
         ...item,
         target: {
           ...item.target,
-          resolvedPath: deleted ? null : scope.path,
+          resolvedPath: deleted || hidden ? null : scope.path,
           deleted,
         },
       };

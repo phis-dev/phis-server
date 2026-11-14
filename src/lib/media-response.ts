@@ -12,18 +12,63 @@ import {
 import { PhiImageAssetVariantKey, resolvePhiMediaKindFromContentType } from "@/lib/constants/media";
 import { isPhiFontSubsetKey, type PhiFontCoverage, type PhiFontMetrics, type PhiMediaSpaceKind } from "@phis/contracts/media";
 
-type PublicMediaAssetProjection = Omit<MediaAssetRecord, "storageProfileId" | "storageKey"> & {
-  deliveryUrl: string;
+/**
+ * What a Media-role viewer is told about an Asset, one entry per field.
+ *
+ * A list and not the record minus what must not leave: subtracting meant every column added to
+ * `media_assets` was published the day it was added, `meta` wholesale and the checksum with it. Here a field
+ * travels only once somebody wrote its line, and adding one is exactly that -- a line, with the type
+ * following from it. Left out on purpose: the storage location (`storageKey`, `storageProfileId`), the
+ * checksum (an identity for duplicate detection, not something a page acts on), `ownerUserId` (who may act on
+ * the Asset is the server's to decide, per request), and `meta` itself, whose entries a client reads as the
+ * typed fields below.
+ */
+const PHI_MEDIA_ASSET_MANAGEMENT_FIELDS = {
+  id: (asset: MediaAssetRecord) => asset.id,
+  siteId: (asset: MediaAssetRecord) => asset.siteId,
+  spaceId: (asset: MediaAssetRecord) => asset.spaceId,
+  folderId: (asset: MediaAssetRecord) => asset.folderId,
+  createdByUserId: (asset: MediaAssetRecord) => asset.createdByUserId,
+  updatedByUserId: (asset: MediaAssetRecord) => asset.updatedByUserId,
+  originalName: (asset: MediaAssetRecord) => asset.originalName,
+  contentType: (asset: MediaAssetRecord) => asset.contentType,
+  kind: (asset: MediaAssetRecord) => resolvePhiMediaKindFromContentType(asset.contentType),
+  variantVersion: (asset: MediaAssetRecord) => asset.variantVersion,
+  bytes: (asset: MediaAssetRecord) => asset.bytes,
+  width: (asset: MediaAssetRecord) => asset.width,
+  height: (asset: MediaAssetRecord) => asset.height,
+  blurDataUrl: (asset: MediaAssetRecord) => asset.blurDataUrl,
+  title: (asset: MediaAssetRecord) => asset.title,
+  altText: (asset: MediaAssetRecord) => asset.altText,
+  lifecycleStatus: (asset: MediaAssetRecord) => asset.lifecycleStatus,
+  deliveryPolicy: (asset: MediaAssetRecord) => asset.deliveryPolicy,
+  deliveryRevision: (asset: MediaAssetRecord) => asset.deliveryRevision,
+  presentationFlags: (asset: MediaAssetRecord) => asset.presentationFlags,
+  createdAt: (asset: MediaAssetRecord) => asset.createdAt,
+  updatedAt: (asset: MediaAssetRecord) => asset.updatedAt,
+  deliveryUrl: (asset: MediaAssetRecord) => resolvePhiMediaDeliveryUrl(asset),
+  thumbnailUrl: (asset: MediaAssetRecord) => resolveThumbnailUrl(asset),
+  focalRect: (asset: MediaAssetRecord) => projectFocalRect(asset.meta),
+  font: (asset: MediaAssetRecord) => projectFontMetrics(asset.meta),
 };
 
-export type PhiMediaAssetTileResponse = PublicMediaAssetProjection & {
-  kind: ReturnType<typeof resolvePhiMediaKindFromContentType>;
-  thumbnailUrl: string | null;
+type PhiMediaAssetManagementFields = typeof PHI_MEDIA_ASSET_MANAGEMENT_FIELDS;
+
+export type PhiMediaAssetTileResponse = {
+  [Field in keyof PhiMediaAssetManagementFields]: ReturnType<PhiMediaAssetManagementFields[Field]>;
 };
 
 export type PhiMediaAssetDetailResponse = PhiMediaAssetTileResponse & {
   previewUrl: string | null;
 };
+
+function projectMediaAssetManagementFields(asset: MediaAssetRecord): PhiMediaAssetTileResponse {
+  const projection: Record<string, unknown> = {};
+  for (const [field, read] of Object.entries(PHI_MEDIA_ASSET_MANAGEMENT_FIELDS)) {
+    projection[field] = read(asset);
+  }
+  return projection as PhiMediaAssetTileResponse;
+}
 
 function isImageAsset(contentType: string) {
   return contentType.trim().toLowerCase().startsWith("image/");
@@ -70,13 +115,6 @@ function resolvePreviewUrl(asset: MediaAssetRecord) {
   return (
     `/api/site/media/${asset.id}/variants/${PhiImageAssetVariantKey.Preview}?r=${asset.deliveryRevision}&v=${asset.variantVersion ?? 0}`
   );
-}
-
-function projectPublicMediaAsset(asset: MediaAssetRecord) {
-  const projection = { ...asset } as Partial<MediaAssetRecord>;
-  delete projection.storageKey;
-  delete projection.storageProfileId;
-  return projection as Omit<MediaAssetRecord, "storageProfileId" | "storageKey">;
 }
 
 export type PhiMediaFocalRectProjection = { x: number; y: number; width: number; height: number };
@@ -212,22 +250,11 @@ export function serializeMediaAssetForPublicReference(
 }
 
 export function serializeMediaAssetForTile(asset: MediaAssetRecord): PhiMediaAssetTileResponse {
-  return {
-    ...projectPublicMediaAsset(asset),
-    deliveryUrl: resolvePhiMediaDeliveryUrl(asset),
-    kind: resolvePhiMediaKindFromContentType(asset.contentType),
-    thumbnailUrl: resolveThumbnailUrl(asset),
-  };
+  return projectMediaAssetManagementFields(asset);
 }
 
 export function serializeMediaAssetForDetail(asset: MediaAssetRecord): PhiMediaAssetDetailResponse {
-  return {
-    ...projectPublicMediaAsset(asset),
-    deliveryUrl: resolvePhiMediaDeliveryUrl(asset),
-    kind: resolvePhiMediaKindFromContentType(asset.contentType),
-    thumbnailUrl: resolveThumbnailUrl(asset),
-    previewUrl: resolvePreviewUrl(asset),
-  };
+  return { ...projectMediaAssetManagementFields(asset), previewUrl: resolvePreviewUrl(asset) };
 }
 
 

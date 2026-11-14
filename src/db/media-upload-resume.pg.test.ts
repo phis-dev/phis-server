@@ -8,7 +8,7 @@ import {
   requirePhiTestDatabase,
   type PhiTestSite,
 } from "../../test/pg/harness";
-import { findResumableMediaUploadSession } from "./media";
+import { findResumableMediaUploadSession, renewMediaUploadSessionHeartbeat, takeOverMediaUploadSession } from "./media";
 import { PhiMediaUploadSessionStatus } from "@/lib/media-upload-sessions";
 
 /**
@@ -127,6 +127,38 @@ describe("finding the upload an attempt may carry on", () => {
       await insertSession({ status });
       expect(await look()).toBeNull();
     }
+  });
+
+  /*
+   * A crashed page reports nothing, so its session sits where it was. Only a heartbeat that has lapsed says
+   * nobody is writing into it any more.
+   */
+  it("offers a session still being delivered once its page has fallen silent", async () => {
+    const pool = await requirePhiTestDatabase();
+    const token = await insertSession({ status: PhiMediaUploadSessionStatus.Pending });
+    await pool.query(
+      `UPDATE phis.media_upload_sessions SET heartbeat_at = NOW() - INTERVAL '5 minutes' WHERE token = $1`,
+      [token],
+    );
+    expect((await look())?.token).toBe(token);
+  });
+
+  it("does not offer one whose page is still beating", async () => {
+    const token = await insertSession({ status: PhiMediaUploadSessionStatus.Uploading });
+    expect(await renewMediaUploadSessionHeartbeat(token, site.id, actorUserId)).toBe(true);
+    expect(await look()).toBeNull();
+    // Nobody else may keep it alive: the beat is the actor's own.
+    expect(await renewMediaUploadSessionHeartbeat(token, site.id, strangerUserId)).toBe(false);
+  });
+
+  it("lets only one of two attempts take over the same session", async () => {
+    const token = await insertSession();
+    const take = () => takeOverMediaUploadSession(token, { folderId: null, presentationFlags: 0, meta: null });
+    const [first, second] = await Promise.all([take(), take()]);
+    expect([first, second].filter(Boolean)).toHaveLength(1);
+    expect((first ?? second)?.status).toBe(PhiMediaUploadSessionStatus.Uploading);
+    // Taken with a fresh beat, so a third attempt finds nothing while the winner delivers.
+    expect(await look()).toBeNull();
   });
 
   it("does not offer a body that was never divided", async () => {

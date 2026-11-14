@@ -19,7 +19,11 @@ vi.mock("@/db/site-pages", () => ({
     const rows = ((await mocks.scopes(siteId, areaMask, ids)) ?? []) as SitePageScopeCatalogRecord[];
     return new Map(rows
       .filter((row) => ids.includes(row.id))
-      .map((row) => [row.id, { path: row.path, tombstoned: row.tombstonedAt != null }]));
+      .map((row) => [row.id, {
+        path: row.path,
+        tombstoned: row.tombstonedAt != null,
+        published: row.publishedRevisionId != null,
+      }]));
   },
 }));
 vi.mock("@/db/media", () => ({ listPublicSiteSpaceMediaAssetsByIds: mocks.assets }));
@@ -106,6 +110,16 @@ describe("Resolving internal references", () => {
     const { body } = await resolve({ area: "public", references: [pageUri(18)] });
     // The path is still reserved on the row, and precisely that must not be rendered as a live link.
     expect(body.resolved[0]).toMatchObject({ path: null, deleted: true });
+  });
+
+  it("hands out no path for a Page that was never published, unless the render is a preview", async () => {
+    mocks.scopes.mockResolvedValue([scope({ id: 18, path: "/neu", publishedRevisionId: null })]);
+    mocks.assets.mockResolvedValue([]);
+    const live = await resolve({ area: "public", references: [pageUri(18)] });
+    // Not deleted: the Page exists and will have this path once it is published.
+    expect(live.body.resolved[0]).toMatchObject({ path: null, deleted: false, targetKind: "site" });
+    const preview = await resolve({ area: "public", references: [pageUri(18)], preview: true });
+    expect(preview.body.resolved[0]).toMatchObject({ path: "/neu", deleted: false });
   });
 
   it("reports a Scope that no longer exists as deleted rather than failing the render", async () => {

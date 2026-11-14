@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 
 import type { MediaAssetRecord } from "@/db/media";
-import { serializeMediaAssetForPublicReference } from "@/lib/media-response";
+import {
+  serializeMediaAssetForDetail,
+  serializeMediaAssetForPublicReference,
+  serializeMediaAssetForTile,
+} from "@/lib/media-response";
 
 const asset: MediaAssetRecord = {
   id: 7,
@@ -165,5 +169,35 @@ describe("public Asset reference projection", () => {
     expect(document.kind).toBe("pdf");
     expect(document.thumbnailUrl).toBeNull();
     expect(document.previewUrl).toBeNull();
+  });
+});
+
+/*
+ * What a Media-role viewer is told is a list, not the record minus storage: a column added to the table is
+ * not published by being added.
+ */
+describe("management Asset projection", () => {
+  const withChecksum: MediaAssetRecord = { ...asset, checksumAlgorithm: "sha256", checksumValue: "ab".repeat(32) };
+
+  it("names no storage location, checksum, owner or raw meta", () => {
+    for (const projected of [serializeMediaAssetForTile(withChecksum), serializeMediaAssetForDetail(withChecksum)]) {
+      const record = projected as Record<string, unknown>;
+      for (const field of ["storageKey", "storageProfileId", "checksumAlgorithm", "checksumValue", "ownerUserId", "meta"]) {
+        expect(record).not.toHaveProperty(field);
+      }
+      expect(JSON.stringify(projected)).not.toContain("secretNote");
+    }
+  });
+
+  it("carries the entries of meta a client acts on as typed fields", () => {
+    const tile = serializeMediaAssetForTile(asset);
+    expect(tile.focalRect).toEqual({ x: 0.25, y: 0.5, width: 0.5, height: 0.5 });
+    expect(tile.font).toBeNull();
+    expect(tile).toMatchObject({ id: 7, bytes: 812_345, lifecycleStatus: 2, kind: "image", deliveryUrl: expect.any(String) });
+  });
+
+  it("adds the preview address on the detail only", () => {
+    expect(serializeMediaAssetForTile(asset)).not.toHaveProperty("previewUrl");
+    expect(serializeMediaAssetForDetail(asset).previewUrl).toEqual(expect.any(String));
   });
 });

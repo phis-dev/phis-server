@@ -42,8 +42,9 @@ describe("readSitePageScopeTargets against PostgreSQL", () => {
   it("answers the named scopes of the Area and nothing else", async () => {
     const targets = await readSitePageScopeTargets(site.id, 1, [live, gone, elsewhere, 999_999_999]);
 
-    expect(targets.get(live)).toEqual({ path: "/kontakt", tombstoned: false });
-    expect(targets.get(gone)).toEqual({ path: "/alt", tombstoned: true });
+    // Neither was ever published: the test scopes carry no revision, which a Live render reads as no path.
+    expect(targets.get(live)).toEqual({ path: "/kontakt", tombstoned: false, published: false });
+    expect(targets.get(gone)).toEqual({ path: "/alt", tombstoned: true, published: false });
     expect(targets.has(elsewhere)).toBe(false);
     expect(targets.size).toBe(2);
   });

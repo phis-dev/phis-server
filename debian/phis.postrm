@@ -4,7 +4,7 @@ set -e
 # Purge removes what the package wired into systemd and the proxy templates it copied, and nothing of a
 # stage. The `phis` account and
 # /srv/phis hold the stages' configuration, secrets and Local media: they are an installation's data,
-# not the package's, and are left for the operator to remove (README.Debian, "Removing the package").
+# not the package's, and are left for the operator to remove (README.Debian, "Installing, upgrading, removing").
 COPIED_TEMPLATES="/var/lib/phis/package/copied-templates.sha256"
 
 # A proxy template postinst copied into sites-available goes with the package, but only as it was copied:
@@ -27,11 +27,58 @@ remove_copied_templates() {
   done < "${COPIED_TEMPLATES}"
   rm -f "${COPIED_TEMPLATES}"
   rmdir "$(dirname "${COPIED_TEMPLATES}")" 2>/dev/null || true
+  # The parent too, once nothing else is in it: it is the package's and was left empty behind.
+  rmdir /var/lib/phis 2>/dev/null || true
+}
+
+# What purge leaves, said by name rather than in a sentence about data: a teardown that read only
+# "keeping ... it is enabled" went on to find seven more things by hand. Read-only; nothing here is removed.
+# `phis stage remove` takes a stage's own share away before purge, and names what it did not make.
+list_leftovers() {
+  found=""
+  note() { found="${found}  $1
+"; }
+  if [ -d /srv/phis/stages ]; then
+    for stage in /srv/phis/stages/*/; do
+      [ -d "${stage}" ] || continue
+      note "stage ${stage%/} (configuration, secrets; phis stage remove was not run for it)"
+      runtime="${stage}config/phis-runtime.json"
+      if [ -r "${runtime}" ]; then
+        database="$(sed -n 's#.*"uri"[[:space:]]*:[[:space:]]*"postgres[a-z]*://[^/"]*/\([A-Za-z0-9_]*\).*#\1#p' "${runtime}" | head -n 1)"
+        [ -n "${database}" ] && note "database ${database} and its roles, named in ${runtime}"
+      fi
+      [ -f "${stage}config/phis-proxy.json" ] && note "web server files recorded in ${stage}config/phis-proxy.json"
+    done
+  fi
+  for enabled in /etc/apache2/sites-enabled/*phis* /etc/nginx/sites-enabled/*phis*; do
+    [ -e "${enabled}" ] || [ -L "${enabled}" ] || continue
+    note "enabled web server site ${enabled} (its name mentions phis; check whether it served a stage)"
+  done
+  for module in proxy_balancer lbmethod_byrequests slotmem_shm; do
+    [ -e "/etc/apache2/mods-enabled/${module}.load" ] && note "Apache module ${module} (a2dismod if nothing else uses it)"
+  done
+  [ -d /var/www/phis-acme ] && note "/var/www/phis-acme, the certificate challenge directory"
+  if [ -d /etc/letsencrypt/renewal ] && [ -d /srv/phis/stages ]; then
+    for proxy in /srv/phis/stages/*/config/phis-proxy.json; do
+      [ -r "${proxy}" ] || continue
+      certificate="$(sed -n 's#.*"certificate"[[:space:]]*:[[:space:]]*"\([^"]*\)".*#\1#p' "${proxy}" | head -n 1)"
+      [ -n "${certificate}" ] && [ -f "/etc/letsencrypt/renewal/${certificate}.conf" ] \
+        && note "certificate ${certificate} (certbot delete --cert-name ${certificate})"
+    done
+  fi
+  getent passwd phis >/dev/null 2>&1 && note "the phis account and group (deluser phis; delgroup phis)"
+  if [ -n "${found}" ]; then
+    echo "phis: purged; left in place, as the installation's and not the package's:" >&2
+    printf '%s' "${found}" >&2
+    echo "phis: see /usr/share/doc/phis/README.Debian, \"Installing, upgrading, removing\"" >&2
+  fi
+  return 0
 }
 
 case "$1" in
   purge)
     remove_copied_templates
+    list_leftovers
     rm -f /etc/systemd/system/multi-user.target.wants/phis@*.service
     if [ -d /run/systemd/system ]; then
       systemctl daemon-reload >/dev/null 2>&1 || true

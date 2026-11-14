@@ -8,7 +8,7 @@ import {
 } from "@/db/media";
 import { getSessionFromRequest } from "@/db/user-sessions";
 import { getMediaStorageProfile } from "@/db/media-spaces";
-import { createPhisMediaStorageServiceForProfile } from "@/lib/media-storage";
+import { openPhisMediaStorageForRoute } from "@/lib/media-storage-route";
 import { logRuntimeEvent, normalizeLogThrowable } from "@/lib/log";
 import {
   isPhiMediaUploadBodyProxied,
@@ -111,7 +111,9 @@ export async function PUT(
 
   const profile = await getMediaStorageProfile(site.id, session.storageProfileId);
   if (!profile) return nextMediaError("storage_profile_unavailable", "Storage Profile is unavailable.", 503);
-  const storageService = await createPhisMediaStorageServiceForProfile(profile, site.key);
+  const openedStorage = await openPhisMediaStorageForRoute(profile, site.key);
+  if (openedStorage.refusal) return openedStorage.refusal;
+  const storageService = openedStorage.storage;
 
   /*
    * From here the body is watched, because `expires_at` is the wrong instrument for this.

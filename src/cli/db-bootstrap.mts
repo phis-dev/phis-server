@@ -1,4 +1,6 @@
+import { spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
+import process from "node:process";
 
 import { Client } from "pg";
 
@@ -20,10 +22,19 @@ import { quotePhiIdentifier } from "../lib/addons/schema-ddl.ts";
  * serving role, which is why an installation bootstrapped from there has no migration role and finds out at
  * its first Add-on.
  *
- * The administrative connection is asked for and never assumed. A bootstrap that reached for local peer
- * authentication would work on exactly one kind of host -- the one where PostgreSQL runs beside the server
- * and the operator is root -- and would quietly be the wrong tool everywhere else, which is most places.
+ * The administrative connection is asked for and never assumed: either `--admin-uri`, or `--local`, which
+ * says outright that PostgreSQL runs on this host and its `postgres` account administers it over the local
+ * socket (peer authentication, the Debian default). `--local` runs the statements through `psql` as
+ * `postgres` -- `runuser` when the CLI runs as root -- so no temporary administrative role with a password
+ * has to be created and dropped again. The connection strings it writes name `127.0.0.1` and the cluster's
+ * port, which the serving and migration roles reach with their passwords.
  */
+
+/** What the bootstrap runs its statements through: a `pg` client, or `psql` as `postgres` for `--local`. */
+type PhiAdminConnection = {
+  query<T>(sql: string, params?: readonly string[]): Promise<{ rows: T[] }>;
+  end(): Promise<void>;
+};
 
 /** `CREATE DATABASE` cannot run inside a transaction, so nothing here pretends to be atomic. */
 export type PhiDatabaseBootstrapResult = {
@@ -102,7 +113,10 @@ function generatePassword() {
 }
 
 export async function bootstrapPhiDatabase(input: {
+  /** The administrative connection; empty with `local`. */
   adminUri: string;
+  /** Administer the local cluster as `postgres` over its socket instead of `adminUri`. */
+  local?: boolean;
   name?: string | null;
   database?: string | null;
   servingRole?: string | null;
@@ -111,8 +125,11 @@ export async function bootstrapPhiDatabase(input: {
   password?: string | null;
   migrationPassword?: string | null;
 }): Promise<PhiDatabaseBootstrapResult> {
-  if (!input.adminUri.trim()) {
-    throw new Error("Missing --admin-uri, the connection this bootstrap runs as.");
+  if (input.local && input.adminUri.trim()) {
+    throw new Error("Give either --admin-uri or --local, not both.");
+  }
+  if (!input.local && !input.adminUri.trim()) {
+    throw new Error("Missing --admin-uri, the connection this bootstrap runs as (or --local on the database host).");
   }
   /*
    * Refused here, before anything is created, because the alternative is worse than the restriction.
@@ -128,7 +145,7 @@ export async function bootstrapPhiDatabase(input: {
    * It costs little: the server connects with a password in any case, since it does not run as either of
    * these roles, so peer authentication over a socket was never going to serve it.
    */
-  const adminHost = safeUriHost(input.adminUri);
+  const adminHost = input.local ? "local" : safeUriHost(input.adminUri);
   if (!adminHost) {
     throw new Error(
       "--admin-uri must name a host, as postgres://user@host:5432/postgres. A socket connection carries no "
@@ -150,9 +167,13 @@ export async function bootstrapPhiDatabase(input: {
   const servingPassword = input.password?.trim() || generatePassword();
   const migrationPassword = input.migrationPassword?.trim() || generatePassword();
 
-  const client = new Client({ connectionString: input.adminUri });
-  await client.connect();
+  const client: PhiAdminConnection = input.local ? createLocalPsqlConnection() : await connectAdminClient(input.adminUri);
   try {
+    /*
+     * What the written connection strings are built on: the given one, or for the local cluster loopback TCP
+     * on the cluster's own port, where the two roles authenticate with the passwords set here.
+     */
+    const baseUri = input.local ? `postgresql://127.0.0.1:${await readClusterPort(client)}/postgres` : input.adminUri;
     const existing = {
       database: await databaseExists(client, names.databaseName),
       servingRole: await roleExists(client, names.servingRole),
@@ -186,9 +207,9 @@ export async function bootstrapPhiDatabase(input: {
     return {
       ...names,
       existing,
-      uri: buildDatabaseUri(input.adminUri, names.databaseName, names.servingRole, servingPassword),
+      uri: buildDatabaseUri(baseUri, names.databaseName, names.servingRole, servingPassword),
       migrationUri: buildDatabaseUri(
-        input.adminUri,
+        baseUri,
         names.databaseName,
         names.migrationRole,
         migrationPassword,
@@ -212,7 +233,7 @@ export async function bootstrapPhiDatabase(input: {
  * acquire a membership it never needed. Where the grant is made it stays: the connection that administers
  * these roles is the one that will be used to administer them again.
  */
-async function allowCurrentUserToAssume(client: Client, role: string) {
+async function allowCurrentUserToAssume(client: PhiAdminConnection, role: string) {
   const { rows } = await client.query<{ superuser: boolean; version: string }>(
     `SELECT rolsuper AS superuser, current_setting('server_version_num') AS version
        FROM pg_roles WHERE rolname = CURRENT_USER`,
@@ -225,7 +246,7 @@ async function allowCurrentUserToAssume(client: Client, role: string) {
   await client.query(`GRANT ${quotePhiIdentifier(role)} TO CURRENT_USER${withSet}`);
 }
 
-async function roleExists(client: Client, role: string) {
+async function roleExists(client: PhiAdminConnection, role: string) {
   const { rows } = await client.query<{ exists: boolean }>(
     "SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = $1) AS exists",
     [role],
@@ -233,7 +254,7 @@ async function roleExists(client: Client, role: string) {
   return rows[0]?.exists === true;
 }
 
-async function databaseExists(client: Client, databaseName: string) {
+async function databaseExists(client: PhiAdminConnection, databaseName: string) {
   const { rows } = await client.query<{ exists: boolean }>(
     "SELECT EXISTS (SELECT 1 FROM pg_database WHERE datname = $1) AS exists",
     [databaseName],
@@ -249,7 +270,7 @@ async function databaseExists(client: Client, databaseName: string) {
  * the deliberate half of the behaviour, and it is why `--force` guards the whole command at the caller: a
  * bootstrap run twice by accident must not change the password a running server is using.
  */
-async function ensureRole(client: Client, role: string, password: string) {
+async function ensureRole(client: PhiAdminConnection, role: string, password: string) {
   await client.query(
     `DO $$
 BEGIN
@@ -285,5 +306,184 @@ function safeUriHost(value: string) {
     return new URL(value.trim()).host;
   } catch {
     throw new Error(`"${value.trim()}" is not a usable PostgreSQL connection URI.`);
+  }
+}
+
+async function connectAdminClient(adminUri: string): Promise<PhiAdminConnection> {
+  const client = new Client({ connectionString: adminUri });
+  await client.connect();
+  return {
+    query: async <T,>(sql: string, params?: readonly string[]) => {
+      const result = await client.query(sql, params ? [...params] : undefined);
+      return { rows: result.rows as T[] };
+    },
+    end: () => client.end(),
+  };
+}
+
+async function readClusterPort(client: PhiAdminConnection) {
+  const { rows } = await client.query<{ port: string }>("SELECT current_setting('port') AS port");
+  const port = Number(rows[0]?.port);
+  if (!Number.isInteger(port) || port <= 0) {
+    throw new Error("Could not read the local cluster's port.");
+  }
+  return port;
+}
+
+/**
+ * `psql` as `postgres` over the local socket, one statement per call.
+ *
+ * Parameters are written into the statement as quoted literals: every value here is a name this module
+ * checked or a password it generated, and `psql -c` takes no bind parameters. Rows come back as CSV with a
+ * header; `t` and `f` are read as booleans, the only other type these queries return being text.
+ */
+function createLocalPsqlConnection(): PhiAdminConnection {
+  const asRoot = process.getuid?.() === 0;
+  const isPostgres = !asRoot && (process.env.USER === "postgres" || process.env.LOGNAME === "postgres");
+  if (!asRoot && !isPostgres) {
+    throw new Error("--local runs psql as the postgres account: run it as root or as postgres.");
+  }
+  return {
+    query: async <T,>(sql: string, params?: readonly string[]) => {
+      const statement = (params ?? []).reduceRight(
+        (text, value, index) => text.replaceAll(`$${index + 1}`, quoteLiteral(value)),
+        sql,
+      );
+      const psql = ["psql", "-X", "-q", "-v", "ON_ERROR_STOP=1", "--csv", "-d", "postgres", "-c", statement];
+      const result = asRoot
+        ? spawnSync("runuser", ["-u", "postgres", "--", ...psql], { encoding: "utf8", cwd: "/" })
+        : spawnSync(psql[0]!, psql.slice(1), { encoding: "utf8", cwd: "/" });
+      if (result.error) {
+        throw new Error(`psql could not be started: ${result.error.message}`);
+      }
+      if (result.status !== 0) {
+        throw new Error(`psql as postgres failed: ${(result.stderr || result.stdout).trim()}`);
+      }
+      return { rows: parsePsqlCsv(result.stdout) as T[] };
+    },
+    end: async () => undefined,
+  };
+}
+
+/** psql's `--csv` output: a header line, then one line per row; quoted fields may hold commas. */
+export function parsePsqlCsv(output: string): Record<string, string | boolean>[] {
+  const lines = output.split(/\r?\n/u).filter((line) => line.length > 0);
+  if (lines.length === 0) return [];
+  const split = (line: string) => {
+    const fields: string[] = [];
+    let current = "";
+    let quoted = false;
+    for (let index = 0; index < line.length; index += 1) {
+      const char = line[index]!;
+      if (quoted) {
+        if (char === '"' && line[index + 1] === '"') { current += '"'; index += 1; }
+        else if (char === '"') quoted = false;
+        else current += char;
+      } else if (char === '"') quoted = true;
+      else if (char === ",") { fields.push(current); current = ""; }
+      else current += char;
+    }
+    fields.push(current);
+    return fields;
+  };
+  const header = split(lines[0]!);
+  return lines.slice(1).map((line) => {
+    const values = split(line);
+    return Object.fromEntries(header.map((name, index) => {
+      const value = values[index] ?? "";
+      return [name, value === "t" ? true : value === "f" ? false : value];
+    }));
+  });
+}
+
+/**
+ * The names a stage's two connection strings point at: the database and both roles.
+ *
+ * Read from `database.uri` and `database.migrationUri` so that `db drop` removes what this stage uses and
+ * not what its `--name` would have derived -- a bootstrap with `--database` or `--role` given outright
+ * names something no derivation finds. `null` where a string is missing or cannot be parsed.
+ */
+export function readPhiDatabaseNamesFromUris(uri: string | null | undefined, migrationUri: string | null | undefined) {
+  const read = (value: string | null | undefined) => {
+    if (!value?.trim()) return null;
+    try {
+      const url = new URL(value.trim());
+      return {
+        database: decodeURIComponent(url.pathname.replace(/^\/+/u, "")) || null,
+        role: decodeURIComponent(url.username) || null,
+      };
+    } catch {
+      return null;
+    }
+  };
+  const serving = read(uri);
+  const migration = read(migrationUri);
+  return {
+    databaseName: serving?.database ?? migration?.database ?? null,
+    servingRole: serving?.role ?? null,
+    migrationRole: migration?.role ?? null,
+  };
+}
+
+export type PhiDatabaseDropResult = {
+  databaseName: string;
+  roles: string[];
+  /** What was there to drop; on a dry run, what would be. */
+  found: { database: boolean; roles: string[] };
+  dropped: boolean;
+};
+
+/**
+ * The counterpart of `bootstrapPhiDatabase`: the database and the roles that owned it, gone.
+ *
+ * `DROP DATABASE ... WITH (FORCE)` ends the connections still open on it, which is why the stage's service
+ * is stopped first by `stage remove` and why a running server here only loses its pool. The schemas inside,
+ * Core's and every Add-on's, go with the database, so no `schema drop` has to come first. The roles are
+ * dropped after it; one that still owns something in another database is refused by PostgreSQL, which is
+ * the right answer for a role somebody else also uses.
+ *
+ * Without `confirmed` it only reads and reports what it would drop.
+ */
+export async function dropPhiDatabase(input: {
+  adminUri: string;
+  local?: boolean;
+  databaseName: string;
+  roles: readonly string[];
+  confirmed: boolean;
+}): Promise<PhiDatabaseDropResult> {
+  if (input.local && input.adminUri.trim()) {
+    throw new Error("Give either --admin-uri or --local, not both.");
+  }
+  if (!input.local && !input.adminUri.trim()) {
+    throw new Error("Missing --admin-uri, the connection this drop runs as (or --local on the database host).");
+  }
+  assertUsableIdentifier("database", input.databaseName);
+  const roles = [...new Set(input.roles)];
+  for (const role of roles) assertUsableIdentifier("role", role);
+
+  const client: PhiAdminConnection = input.local ? createLocalPsqlConnection() : await connectAdminClient(input.adminUri);
+  try {
+    const { rows } = await client.query<{ name: string }>("SELECT CURRENT_USER AS name");
+    const admin = rows[0]?.name;
+    if (admin && roles.includes(admin)) {
+      throw new Error(`The administrative connection runs as ${admin}, one of the roles to drop; use another.`);
+    }
+    const found = {
+      database: await databaseExists(client, input.databaseName),
+      roles: (await Promise.all(roles.map(async (role) => (await roleExists(client, role)) ? role : null)))
+        .filter((role): role is string => role !== null),
+    };
+    if (!input.confirmed) {
+      return { databaseName: input.databaseName, roles, found, dropped: false };
+    }
+    if (found.database) {
+      await client.query(`DROP DATABASE ${quotePhiIdentifier(input.databaseName)} WITH (FORCE)`);
+    }
+    for (const role of found.roles) {
+      await client.query(`DROP ROLE ${quotePhiIdentifier(role)}`);
+    }
+    return { databaseName: input.databaseName, roles, found, dropped: true };
+  } finally {
+    await client.end();
   }
 }

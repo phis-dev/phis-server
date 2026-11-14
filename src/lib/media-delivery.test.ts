@@ -187,7 +187,8 @@ describe("Who may be delivered a Media Asset", () => {
     // Storage is only reached once delivery is allowed: a refused request must not even reveal whether
     // the object exists, and must not cost a provider round trip.
     expect(route.indexOf("canDeliverMediaAsset(request, asset)"))
-      .toBeLessThan(route.indexOf("createPhisMediaStorageServiceForProfile(profile"));
+      .toBeLessThan(route.indexOf("openPhisMediaStorageForRoute(profile"));
+    expect(route.indexOf("openPhisMediaStorageForRoute(profile")).toBeGreaterThan(-1);
   });
 });
 

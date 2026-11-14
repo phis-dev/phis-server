@@ -1020,20 +1020,25 @@ export async function readSitePageScopeTargets(
   siteId: number,
   areaMask: number,
   scopeIds: readonly number[],
-): Promise<Map<number, { path: string | null; tombstoned: boolean }>> {
+): Promise<Map<number, { path: string | null; tombstoned: boolean; published: boolean }>> {
   const ids = Array.from(new Set(scopeIds.filter((id) => Number.isSafeInteger(id) && id > 0)));
   if (!Number.isInteger(siteId) || siteId <= 0 || !Number.isInteger(areaMask) || areaMask <= 0 || ids.length === 0) {
     return new Map();
   }
-  const { rows } = await getPool().query<{ id: number; path: string | null; tombstoned_at: Date | string | null }>(phiPrepared(
-    `SELECT id, path, tombstoned_at
+  const { rows } = await getPool().query<{
+    id: number; path: string | null; tombstoned_at: Date | string | null; published: boolean;
+  }>(phiPrepared(
+    `SELECT id, path, tombstoned_at, published_revision_id IS NOT NULL AS published
      FROM phis.site_page_scopes
      WHERE site_id = $1
        AND area_id = $2
        AND id = ANY($3::int[])`,
     [siteId, areaMask, ids],
   ));
-  return new Map(rows.map((row) => [row.id, { path: row.path, tombstoned: row.tombstoned_at != null }]));
+  return new Map(rows.map((row) => [
+    row.id,
+    { path: row.path, tombstoned: row.tombstoned_at != null, published: row.published },
+  ]));
 }
 
 export async function listSitePageScopes(siteId: number, areaMask: number): Promise<SitePageScopeCatalogRecord[]> {

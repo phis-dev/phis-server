@@ -5,6 +5,21 @@ must not be used to infer that an item is already available in `phis-cli` or at 
 several items live in [design/](./design/README.md). Items marked `phis-ui` are carried out there but
 tracked here because the server contract depends on them.
 
+## At the next release
+
+- **Released as `@phis/server` 0.3.0 together with `@phis/ui` 0.5.0**, both already in `package.json`; the
+  entries below are why neither works with the other's previous version. `debian/changelog` still needs its
+  `0.3.0-1` entry, which the release workflow checks against the tag. `@phis/contracts` is unchanged.
+- **Columns added since the installed release.** Releases carry `CREATE` only, so a running installation
+  needs these by hand before the new Server starts (dev has them):
+  `ALTER TABLE phis.media_upload_sessions ADD COLUMN IF NOT EXISTS heartbeat_at TIMESTAMPTZ NULL;`
+  `ALTER TABLE phis.site_media_config ADD COLUMN IF NOT EXISTS default_user_storage_profile_id INT NULL REFERENCES phis.media_storage_profiles(id) ON DELETE SET NULL;`
+  `ALTER TABLE phis.site_media_config ADD COLUMN IF NOT EXISTS default_group_storage_profile_id INT NULL REFERENCES phis.media_storage_profiles(id) ON DELETE SET NULL;`
+- **Server and `phis-ui` go out together.** The Media management projection no longer carries `meta`
+  (`focalRect` and `font` instead) and the Asset PATCH takes `focalRect` instead of `meta`; an older
+  `phis-ui` would lose focal rectangles and font metrics in the editor. The references endpoint's `preview`
+  flag and the upload `heartbeat` are additive.
+
 ## Payments
 
 - **Pricing policies in the sandbox.** PAYMENTS.md section 12 and the Stripe mapping of PAYMENTS_STRIPE.md
@@ -33,86 +48,28 @@ processed.
 
 ## Shop
 
-- **The Module half of `@phis/shop`** (design/SHOP.md section 8): storefront pages, the product
-  Providers, the checkout Form and its state machine, the order page with the token, the customer's
-  orders in App, and the management surface in Accounting. The Add-on half is built; the checkout
-  machine is the second consumer of phis-ui's state-machine binding and may need Foundation work first
-  (SHOP.md section 10).
-- **The Shop's public address.** A Site reaches the Shop through its `/api/addons` and `/api/hooks`
-  routes, which the current Site skeleton has; a Site generated from an older skeleton lacks them and has
-  to be regenerated. Until then the Shop's routes are reached against Core directly.
 - **A sandbox checkout through the Shop** on `stripe-sandbox`: a manager creates a destination for `CH`
   (`net`/`provider`) and a product, then `POST /api/addons/phis/shop/orders` and the hosted page.
-- **Product pictures in the catalogue answer**: the `image` slot exists; the hook does not yet list the
-  files a product carries.
-- **The lockfile of `@phis/shop`** has to record its `@phis/contracts`, `esbuild` and `vitest`
-  dependencies (`pnpm install`).
 
 ## Page addresses and references
 
-- **Site Page against Module addresses.** The path-change collision check looks only in
-  `site_page_scopes`; Site against Module is unchecked in both directions. Implement
-  [PUBLIC_ADDRESSES.md](./design/PUBLIC_ADDRESSES.md) section 1.
-- **Collision dialog** (`phis-ui`): say whether a taken Public address is already published
-  ([PUBLIC_ADDRESSES.md](./design/PUBLIC_ADDRESSES.md) section 2).
 - **Standing list of Public addresses**, editable while every Module stays enabled, and the update command
   reporting a Module deactivated by a colliding Public path before rollout
   ([PUBLIC_ADDRESSES.md](./design/PUBLIC_ADDRESSES.md) section 3).
 - **Durable redirects** for published Site Page paths that move
   ([PUBLIC_ADDRESSES.md](./design/PUBLIC_ADDRESSES.md) section 4).
-- **Page references ignore publication.** `POST /api/v1/site/references` and
-  `projectSiteNavigationOverlayTargets` answer a path for any Scope that is not tombstoned, published or
-  not. Undecided; collect the cases before changing it. Folder addresses check publication themselves.
-- **Pending path display** (`phis-ui`): the Builder shows a pending path only in the rename message, not in
-  the Page catalog, the Page settings, or the navigation target pickers, where
-  [REFERENCES.md](./REFERENCES.md) requires it.
-- **Breadcrumb segment links** (`phis-ui`): the breadcrumb Widget shows Site, Area, and the whole path as
-  one unlinked segment. A folder segment should link exactly when its folder address resolves to a Page.
-- **Sitemap split** (`phis-ui`): a Site with more than 50,000 URLs needs several sitemap files.
 
 ## Media and storage
 
-- **Provider disable and restore.** `media_storage_profiles.flags` is carried through reads and never
-  interpreted; the only fail-closed path is an unregistered provider id. Decide what happens to Assets
-  bound to a disabled profile, give the operator a surface for it, then enforce and test it.
-- **`site_media_config.allowed_storage_profile_ids` is not read anywhere.** Enforce it together with
-  per-Space profile selection.
-- **Profile selection on the Site side.** `phis storage use` sets the Site Space only. Which profile a
-  User or Group Space uses, the allowed list, and per-user User Space quota overrides need a Site
-  administration surface over Core services, with no S3-specific UI or endpoint. A Site surface that
-  writes a profile reconciles the bucket's CORS and lifecycle rules through
-  `reconcilePhiMediaStoragePoliciesWith`, as the CLI does.
-- **Presigned PUT versus proxied stream** has no setting; the S3 Provider always issues `presigned-put`.
+- **Profile configuration from the Site side.** A surface that edits a Storage Profile's own configuration
+  would reconcile the bucket's CORS and lifecycle rules through `reconcilePhiMediaStoragePoliciesWith`, as
+  the CLI does. The Admin Media settings point Spaces at Profiles (the Site Space, the defaults for new User
+  and Group Spaces, each existing Space with its own quota, built 14.11.2026) but edit none.
 - **`max_object_bytes` does not know which path an object takes.** One Site number bounds a proxied
   body and a presigned PUT alike, although the two carry wildly different sizes. Making it
   Profile-aware means moving the size check in `uploads/init` after the Space resolution
   ([GROUPS_AND_STORAGE_PLANNED.md](./design/GROUPS_AND_STORAGE_PLANNED.md) section 6).
-- **Abandoned staging objects and unfinished assemblies are cleaned up by the storage now, and what is left
-  is the Local Provider.** The storage contract has `applyLifecyclePolicy` beside `applyCorsPolicy`, and the
-  same occasion writes both: an abort rule for uploads nobody completed and an expiry rule for staged bodies,
-  reconciled whenever a Profile is written. Measured against Garage v2.3.0, and the rules are read back from
-  the bucket in the live suite. Expiry waits one day longer than an upload session may live, because a
-  lifecycle rule takes whole days and is evaluated asynchronously.
-
-  **The expiry sweep cleans up too, now that it can.** `releaseExpiredMediaUploadSessions` returns each
-  released session's Profile, staging key and the Provider's name for an unfinished assembly instead of only a
-  count -- the row being the only record of those, and deleting it being what frees the reservation. `init`
-  removes them after its response, over the Provider it already opened for that Space, and leaves sessions on
-  another Profile to that storage's rule. So the two layers divide the work: the sweep clears up while there
-  is traffic, the rule catches what no request ever comes back for.
-
-  Two things still open here:
-
-  - **The Local Provider needs no rule but still has a gap of its own.** It answers `applyLifecyclePolicy`
-    as a no-op, rightly: its files are Core's own and a lifecycle rule is for a storage Core cannot see into.
-    The expiry sweep now removes what it left, so the ordinary case is covered -- what is not is a staged file
-    whose session row was deleted before the sweep learned to return it, or one whose removal failed. Those
-    stay in `/var/phis/media`, and `phis media check --fix` is about ownership rather than about this.
-  - **A Provider that refuses the rule keeps its objects.** The reconciliation reports the two halves apart
-    and does not fail on the lifecycle one, which is right -- a storage without object lifecycle still has a
-    CORS rule worth writing -- but nothing then tells an operator that this particular storage will go on
-    accumulating. It is a line in `phis storage cors` output and nothing more.
-- **An upload sent in parts survives the page it was started from, and what is left is the crash.** A body
+- **An upload sent in parts survives the page it was started from, a crash included.** A body
   above one part leaves its parts at the Provider, and until now a reload threw them away: the Client
   reported `cancelled` on `pagehide`, which is the teardown. It reports `interrupted` instead where the plan
   was an assembly, the session keeps its row, its reservation and its parts at status `Interrupted`, and the
@@ -122,16 +79,12 @@ processed.
   tally that could disagree with the storage. Identity is the `sha256-composite` and nothing weaker, and the
   `expires_at` is never moved, so continuing is not a way to hold a Space's capacity open. Verified against
   Garage v2.3.0, including that the assembled object carries the same digest a single run would have
-  produced.
+  produced. A crashed page, which reports nothing, is covered by a heartbeat (`heartbeat_at`, renewed every
+  20 s while parts are sent): a session whose beat lapsed for 60 s is offered like an interrupted one, and the
+  take-over is one conditional update, so two attempts cannot both continue it.
 
   What is left:
 
-  - **A browser that crashes reports nothing, so its parts are not offered.** `pagehide` covers a reload, a
-    closed tab and a navigation away, which is the ordinary case; a killed process, a power cut or a crashed
-    tab sends no beacon at all, and that session sits at `Pending` until the sweep removes it and aborts its
-    assembly. Offering those too would mean treating a session that may have a page sending into it right
-    now as resumable, and two pages writing the same part numbers is worse than one re-upload. It would take
-    something a page renews while it is delivering -- a heartbeat on the session -- to tell the two apart.
   - **Continuing is only ever offered for a file the person picks again.** A `File` handle cannot survive a
     reload, so nothing can restart by itself; what the digest buys is that re-picking the same file is
     recognised as the same bytes rather than merely the same name. A person who renames the file before
@@ -158,12 +111,10 @@ processed.
 
   What is left:
 
-  - **The part-size rule is frozen now that objects can exist under it.** `resolvePhiMediaUploadPartSizeBytes`
-    and `PHIS_MEDIA_UPLOAD_MAX_PART_COUNT` decide what a `sha256-composite` value means, and the value
-    names the division so a changed rule is a non-match rather than a false match. Changing either is a
-    decision about every object already stored, not a tuning knob, and there is nothing in the build that
-    would stop somebody editing them.
-  - **Assets stored before this can be given a digest, by an operator.**
+  - **The part-size rule is frozen**: `src/lib/media-upload-digest.test.ts` pins
+    `resolvePhiMediaUploadPartSizeBytes` and `PHIS_MEDIA_UPLOAD_MAX_PART_COUNT`; changing them is a decision
+    about every stored object.
+  - **Duplicates found by the digest recompute have no surface.** Recomputing is built:
     `POST /api/v1/media/checksums/recompute?site=<key>&limit=<n>` reads each object back and records the digest
     a Provider would report for it -- a plain SHA-256 where the object arrived whole, the composite where its
     ETag says it was assembled, and nothing where the divisions are not this system's. Bounded by `limit`,
@@ -172,12 +123,8 @@ processed.
 
     What it cannot do is decide about what it finds. A digest that turns out to name another Asset in the same
     Space is recorded and reported, because which of two Assets holding the same bytes should go is a decision
-    with owners, Folders and references behind it. There is no surface that shows an operator those reports
-    other than the response and the log.
-  - **A Profile recording SHA-512 gets no digest for a direct upload.** These are SHA-256 digests and a
-    SHA-512 Profile cannot compare them, so the claim is dropped. Garage verifies a declared `SHA256` but
-    accepts a wrong `SHA512`, so in practice no probed endpoint here chooses SHA-512 -- but a Profile could
-    still be recorded that way, and then its large objects silently carry nothing.
+    with owners, Folders and references behind it. Decided (14.11.2026): log only for now, to see whether it
+    occurs at all -- each pair is logged as `media.checksum.duplicate_found`. A surface follows only if it does.
   - **The 2 GB ceiling is per request, so multipart clears it after all.** `nginx` caps a body at 2 GB on
     `phis.dev` and on `s3.phis.dev` alike, so no single PUT passes it whatever S3 would allow -- but a part
     is its own request of 16 MiB, so an assembled object is bounded by part size times
@@ -188,18 +135,6 @@ processed.
     So multipart is in effect for bodies between 16 and 128 MiB until an operator raises the figure in the
     Admin media settings -- which is where the entry above about that figure not knowing which transport
     carries it becomes practical rather than theoretical.
-- **An S3 Profile whose endpoint is `http://` is unusable from an `https://` Site, and the error says
-  nothing.** The browser blocks the presigned PUT as mixed content and the page sees `TypeError: Failed to
-  fetch` -- not a CORS message, not a status, nothing naming the cause. `publicEndpoint` is what solves it
-  (the address a browser resolves, signed for, while Core keeps talking to the internal one), so the fix is
-  to require it: a Profile whose `endpoint` is `http` and whose `publicEndpoint` is unset cannot serve a
-  browser on any Site that is served over TLS, and neither `storage add` nor the probe says so. Measured
-  from a real browser against the dev Garage.
-- **Object key prefix ownership.** Core writes `sites/<key>/…` and an S3 profile may add its own bucket
-  prefix, so a profile configured with `sites/<key>` stores under `sites/<key>/sites/<key>/…`. Decide the
-  owner, and have a profile form state what Core prepends.
-- **Provider readiness across instances.** Before a Site profile becomes available, prove that every
-  serving instance carries the same provider manifest and can resolve the profile's secrets.
 - **Custody and audience.** `canDeliverMediaAsset` still requires a `User` Asset to sit in its owner's User
   Space. Change it together with the first Asset transfer, which waits for a Module handler context as its
   first caller ([GROUPS_AND_STORAGE_PLANNED.md](./design/GROUPS_AND_STORAGE_PLANNED.md) sections 1-2).
@@ -211,18 +146,6 @@ processed.
   ([GROUPS_AND_STORAGE_PLANNED.md](./design/GROUPS_AND_STORAGE_PLANNED.md) section 5), plus provider health
   and capacity diagnostics, optional scanning or quarantine integration, and a CDN projection. Prefix
   listing stays a maintenance tool and never replaces the Asset catalog.
-- **Explicit Media response projection.** `serializeMediaAssetForTile` and `…Detail` expose the full
-  management record minus storage fields (`projectPublicMediaAsset` in `src/lib/media-response.ts`),
-  including `meta`, the checksum, and audit ids, to any Media-role viewer. Replace the subtraction with an
-  explicit field list, as the public reference projection has.
-- **Variant requests for non-image Assets.** DB.md says they return a fixed SVG preview icon;
-  `src/app/api/site/media/[id]/variants/[variantKey]/route.ts` answers 404, and no client requests such a
-  URL because `thumbnailUrl` is null for non-images. Implement the icon or amend DB.md.
-- **Fonts without coverage.** A font uploaded before `meta.font.coverage` existed has `coverage: null` and
-  is delivered whole. Re-read its metrics in a `phis maintain` task or leave re-upload to the operator.
-- **Font licences** (`phis-ui`): subsetting modifies the file, which some commercial webfont licences
-  forbid; say so where a font is uploaded.
-
 ## Groups and directories
 
 - **Provider-ready group projections.** Add authority metadata and per-operation capabilities to the
@@ -233,8 +156,8 @@ processed.
 - **Directory Add-ons** after v1: a first reference Add-on against
   [DIRECTORY_PROVIDERS.md](./design/DIRECTORY_PROVIDERS.md), then LDAP, Active Directory, SCIM, or Entra
   packages as separate Add-ons.
-- **Group regressions.** Add PostgreSQL tests for self and group membership administration and the Core
-  role matrix on `/api/v1/groups` and `/api/site/groups`.
+- **Group regressions.** The database layer has PostgreSQL tests (`src/db/site-group-*.pg.test.ts`); the
+  routes `/api/v1/groups` and `/api/site/groups` and the Core role matrix on them have none.
 
 ## Navigation and the Account surface
 
@@ -276,9 +199,10 @@ processed.
   the tarball `pnpm package:dist` assembles has never been installed. Publishing is a step added back to
   `release.yml` (npm trusted publishing needs the package to exist first, so the first publish is by hand)
   once it is decided what a registry install is for.
-- **One first-install flow.** A new Site needs `phis site add` before `phis init`. Provide one documented,
-  transactional CLI flow that registers and validates the Site and then materializes its scaffold, leaving
-  neither a partially registered Site nor a partial source tree on failure.
+- **One first-install flow.** `phis install` registers a first Site and its administrator, but does not run
+  `phis init`, and nothing is rolled back on failure. Provide one transactional flow that registers and
+  validates the Site and then materializes its scaffold, leaving neither a partially registered Site nor a
+  partial source tree on failure.
 - **Release-resolved scaffold dependencies.** `src/lib/site-scaffold.mts` hard-codes dependency and
   package-manager versions. Resolve the exact compatible set from the installed `phis` release and the
   selected package manager, verify availability, and record it in the scaffold manifest and the sole
@@ -288,8 +212,9 @@ processed.
   Site in one operation with consistent install, typecheck, build, artifact, and cleanup behaviour.
 - **End-to-end scaffold test.** Create a Site in an empty temporary directory, install, typecheck, build
   for production, and verify the generated route families, without a `phis-site-skeleton` checkout.
-- **Complete release artifact.** Record the lockfile, scaffold manifest, Module projection, and bound
-  Add-on capability requirements in one immutable versioned artifact. Production Instances deploy that
+- **Complete release artifact.** `release.json` (`buildPhiSiteReleaseArtifact`) records the release id,
+  scaffold version, build id and app directory; add the lockfile, scaffold manifest, Module projection, and
+  bound Add-on capability requirements, so it is one immutable versioned artifact. Production Instances deploy that
   artifact and never build independently.
 - **Replace an Instance on one host without dropping a request.** Health-check the candidate before
   promoting it, take the old Instance out of routing before replacing it, and stop on failure with the
@@ -372,8 +297,9 @@ front of is infrastructure work, and belongs with
 
 ## Code hygiene
 
-- **Add-on capability execution under `src/db/`.** `scripts/validate-db-sql-boundary.mjs` still reports
-  the call sites in `src/lib/addons/data-capability.ts`, `assets-capability.ts`, and `capabilities.ts`.
+- **Add-on capability execution under `src/db/`.** `scripts/validate-db-sql-boundary.mjs` passes only because
+  the call sites in `src/lib/addons/data-capability.ts` and `capabilities.ts` carry `db-boundary-exempt`
+  markers (14a5a99); the execution itself never moved.
   They execute statements Core derived from an Add-on's manifest. Move the execution into typed functions
   under `src/db/`. The guarantee that an Add-on never receives a database handle is pinned by
   `src/lib/addons/data-capability-handle.test.ts` and must stay so.
@@ -398,11 +324,12 @@ front of is infrastructure work, and belongs with
 - **Test placement.** Most tests are co-located as `src/**/*.test.ts`, while `test/` still holds
   `config-core.test.ts`, `html.test.ts`, `locale.test.ts`, `translation-context.test.ts`, and fixtures.
   Pick one convention.
-- **CMS route prologues.** The CMS read and write route helpers in `src/lib/site-cms-*.ts` repeat near
-  identical guard and parameter prologues; one context builder would serve them.
-- **Server-side logging in `phis-ui`.** `gateway/tr.ts`, `navigation-descriptor-resolver.server.ts`,
-  `server-helpers/runtime.ts`, `server-helpers/cms-request.ts`, `gateway/navigation-target-route.ts`, and
-  `plugins/runtime-modules/resolver.ts` write through `console.*` instead of `net/log.ts`, so journald
+- **CMS route prologues.** Shared readers exist (`requireSite*ApiContext`, `readSiteCmsRequestSearchParam`),
+  but each handler in `src/lib/site-cms-*.ts` still repeats the guard and parameter prologue; one context
+  builder would serve them.
+- **Server-side logging in `phis-ui`.** `navigation-descriptor-resolver.server.ts`,
+  `gateway/navigation-target-route.ts`, and `plugins/runtime-modules/resolver.ts` still write through
+  `console.*` instead of `net/log.ts`, so journald
   receives more than one format. Keep `net/log.ts` field-identical with `src/lib/log.ts`.
 
 ## Post-v1: Core schema evolution
@@ -411,7 +338,8 @@ Not v1 work. Until v1 the development database is recreated or adjusted by hand,
 [DB.md](./DB.md) states and what every schema change in this repository has relied on.
 
 What ends that arrangement is the first installation nobody may drop. Two things are missing before
-then, and both are `phis-cli`:
+then, and both are `phis-cli`. Who alters is settled: the serving role owns the Core schema `phis` and
+`schema apply` runs as it (`src/cli/schema.mts`); the migration role owns only Add-on schemas.
 
 - **`schema check` compares table names only.** It reads `CREATE TABLE` lines and asks `pg_tables`, so a
   database missing a column a release added is reported as current. The command's own comment already
@@ -420,15 +348,6 @@ then, and both are `phis-cli`:
 - **`schema apply` can only create.** There is no `ALTER TABLE` anywhere in `src/cli/` or `src/db/` for
   the Core schema, so applying a changed script to a live database is a no-op for every table that
   already exists.
-- **The migration role may not be able to alter.** The CLI takes its connection from
-  `database.migrationUri` and says why -- migration authority is meant to be separate from the runtime
-  role. On the development database every table in `phis` is nevertheless owned by the runtime role,
-  and the migration role is in no group that would lend it ownership, so `ALTER TABLE` is refused with
-  `must be owner of table`. Creating hides this, because `CREATE TABLE` needs a privilege on the schema
-  rather than on a table and makes its creator the owner; it surfaces the first time something changes
-  instead of creating. Whichever way it is settled -- the migrator owns the tables, is granted what it
-  needs, or `migrationUri` means something narrower than its name -- it has to be settled before an
-  alter path is written, or that path will be written against a role that cannot run it.
 
 Whatever is built for it reports what it found before it changes anything, and is idempotent. No silent
 backfill and no scheduler, on the same terms as the section below.

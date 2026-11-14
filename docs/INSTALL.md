@@ -17,6 +17,30 @@ The examples use:
 Run `phis` with `--root /srv/phis/stages/prod`, or export `PHIS_ROOT=/srv/phis/stages/prod` once; the
 examples below assume the variable is exported.
 
+### The short way: `phis install`
+
+On a host with the Debian package, one command does steps 2 to 4 and the server's web server:
+
+```sh
+sudo apt install phis              # makes the keys and opens the setup window for an hour
+sudo phis install                  # asks: in the browser, or completely here
+```
+
+`phis install --mode full` creates the database on the local PostgreSQL as `postgres` (or through
+`--admin-uri`), applies the schema, creates the first operator (a password left empty is generated and shown
+once), optionally a first Site with its administrator, and with `--domain <host>` writes and enables the
+proxy file when Apache or nginx is installed. It leaves the setup closed, starts `phis@prod.service` and
+checks `/operator/login` through the proxy. Every step looks first and skips what exists, so running it
+again only fills gaps; every question has a flag ([CLI.md](./CLI.md#phis-install)), so it also runs
+unattended. HTTPS is a separate, deliberate step once DNS points at the host:
+`phis proxy tls --domain <host> --email <you>` ([section 8](#the-servers-own-web-server)).
+
+`phis install --mode browser` does only what the browser cannot -- the keys, and the database with
+`--local-db` or `--admin-uri` -- opens the setup window, starts the service and prints the SSH tunnel to
+reach `/setup` ([the setup pages](#alternative-the-setup-pages)).
+
+The sections below are the same installation step by step, and what a host without the package follows.
+
 1. [Prerequisites](#1-prerequisites)
 2. [Install the server and configure the phis root](#2-install-the-server-and-configure-the-phis-root)
 3. [Create the database schema](#3-create-the-database-schema)
@@ -60,8 +84,12 @@ migration role owns the schemas of server Add-ons. Both need `CREATE` on the dat
 `phis db bootstrap` does this, once the server is installed — step 2 below, after which:
 
 ```sh
+phis db bootstrap --local --name prod          # PostgreSQL on this host, run as root
 phis db bootstrap --admin-uri postgres://<admin>@<host>:5432/postgres --name prod
 ```
+
+`--local` runs the statements through `psql` as `postgres` over the local socket, so no administrative
+role with a password is needed; the connection strings it writes use `127.0.0.1` and the cluster's port.
 
 It creates `phis_prod`, `phis_prod_user` and `phis_prod_migrator`, generates a password for each, and writes
 both connection strings into `config/phis-runtime.json`, so step 2's table does not ask for them again
@@ -185,10 +213,10 @@ In `phis-config.json`, check at least:
 | `sites.sourcePathRoot`, `sites.instancePathRoot`, `sites.basePort` | Default Site source path, instance path and port (`basePort + site id`). |
 | `media.local.rootDir` | Where the Local Storage Profile writes media; create it, owned by the service account. |
 | `email.from`, `email.fromName`, `email.smtp.targets` | Outbound mail. |
-| `bootstrap.enabled` | `true` serves the setup pages at `/setup` (step 4); `false` hides them. |
 
-In `phis-runtime.json`, set the values the server needs. Generate each 64-character hex value with
-`openssl rand -hex 32`:
+In `phis-runtime.json`, set the values the server needs. `phis db bootstrap` writes the two connection
+strings and `phis config init-keys` every key below that is missing (a fresh Debian install has already run
+it); by hand, generate each 64-character hex value with `openssl rand -hex 32`:
 
 ```json
 {
@@ -212,17 +240,20 @@ The example file validates as it is but holds placeholders, and it leaves out th
 (`auth.transactionEncryptionKey`, `registration.intentEncryptionKey`), because a placeholder there
 would not validate; add them as above.
 
-Then write the secret store key and validate:
+Then make the keys that are still missing and validate:
 
 ```sh
-phis secret init-key          # writes secrets.encryptionKey; every instance needs the same file
+phis config init-keys         # api.internalToken, auth.transactionEncryptionKey,
+                              # registration.intentEncryptionKey, operator.sessionSecret,
+                              # secrets.encryptionKey -- only the missing ones; every instance
+                              # needs the same file
 phis config validate
 ```
 
-`api.internalToken` is what Sites authenticate with. The `/setup` finish step generates one if it is
-missing; `phis init` (step 6) copies it into the Site and refuses to run while it is unset.
-`operator.sessionSecret` signs the operator session cookies and is written by the same finish step, or
-by `phis operator add`; it is deliberately not the internal token, which every Site holds.
+`api.internalToken` is what Sites authenticate with; `phis init` (step 6) copies it into the Site and
+refuses to run while it is unset. `operator.sessionSecret` signs the operator session cookies; it is
+deliberately not the internal token, which every Site holds. The `/setup` finish step makes every key that is
+still missing, too.
 
 In production the server also needs the environment variable `NEXT_SERVER_ACTIONS_ENCRYPTION_KEY`
 (base64 of 32 bytes: `head -c 32 /dev/urandom | base64`) and refuses to start without it. Instances
@@ -273,13 +304,23 @@ init-key`), and for editing the file by hand.
 
 ### Alternative: the setup pages
 
-With `bootstrap.enabled: true`, the server serves `/setup`, a guided flow: runtime checks, first
+While the setup window is open, the server serves `/setup`, a guided flow: runtime checks, first
 operator (only while none exists), translation mode, database connection (writes `database.uri`),
-schema (the same script as `phis schema apply`), an optional first Site, and finish, which writes `api.internalToken` if missing and sets
-`bootstrap.enabled: false` in `phis-runtime.json`. The setup pages have no login; while
-`bootstrap.enabled` is `true`, keep the server reachable only by the operator (loopback bind, SSH
-tunnel). They do not write `database.migrationUri`, `secrets.encryptionKey`,
-`auth.transactionEncryptionKey` or `registration.intentEncryptionKey`; set those as in step 2. A Site
+schema (the same script as `phis schema apply`), an optional first Site, and finish, which makes every
+missing key and closes the window. While the window is open, `/operator/login` is refused.
+
+The window is a moment in `bootstrap.enabledUntil` of `phis-runtime.json`, at most four hours ahead, which
+the server reads on every request, without its cache:
+
+```sh
+phis setup enable [--for 30m]   # default one hour; a fresh Debian install opens one by itself
+phis setup status               # time left, and what is still missing
+phis setup disable              # closes it at once
+```
+
+The setup pages have no login: keep the server reachable only by the operator while the window is open
+(loopback bind, SSH tunnel: `ssh -L 5301:127.0.0.1:5301 <host>`, then `http://127.0.0.1:5301/setup`).
+They do not write `database.migrationUri`; `phis db bootstrap` does (step 1). A Site
 created there gets no `sites.overrides.<key>.sourceLocale` (its source locale is
 `translation.sourceLocale`) and no administrator; continue with `phis site admin` in step 5.
 
@@ -450,6 +491,25 @@ package runs — `phis@prod.service` on `127.0.0.1:5301` and a commented line fo
 instance of the same stage as a further line in that pool. Another stage is another installation with
 its own database: give it its own `upstream` and `server` block, never a line in this one. The Apache
 template is a `balancer://phis` with `ttl=4` per member, which is the same rule on that side.
+
+### The server's own web server
+
+The proxy in front of the server itself (the operator UI, and the host name Sites call) is written for its
+domain rather than edited from the template:
+
+```sh
+phis proxy config apache --domain api.example.com            # prints the file
+phis proxy config apache --domain api.example.com --write    # writes sites-available/phis.conf, runs
+                                                              # a2enmod/a2ensite (nginx: links it),
+                                                              # checks the configuration, reloads
+phis proxy tls --domain api.example.com --email ops@example.com
+```
+
+`proxy tls` obtains a certificate with certbot's webroot challenge -- the file answers
+`/.well-known/acme-challenge/` from `/var/www/phis-acme` on port 80, so no certbot plugin is needed -- and
+then writes the HTTPS file: port 80 redirects, port 443 proxies with `X-Forwarded-Proto "https"`. certbot
+renews on its own timer and reloads the web server. It runs only when called; `phis install` never does.
+Both commands write the whole file again: change their flags rather than the file.
 
 ### A translation mirror
 

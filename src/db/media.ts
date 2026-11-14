@@ -6,6 +6,7 @@ import { getPool, withTransaction } from "@/lib/db";
 import { isPhisMediaIdentityChecksum } from "@phis/contracts/addon";
 import { PhiMediaFolderFlags } from "@phis/contracts/media";
 import {
+  PHI_MEDIA_UPLOAD_HEARTBEAT_LAPSE_MS,
   PhiMediaUploadPlanKind,
   PhiMediaUploadPurpose,
   PhiMediaUploadSessionStatus,
@@ -874,8 +875,10 @@ export async function createMediaUploadSession(input: {
        storage_profile_id, status, filename, content_type, size_bytes, kind, upload_plan_kind,
        checksum_algorithm, checksum_value, meta, presentation_flags, staging_storage_key, final_storage_key,
        provider_upload_id, expires_at,
-       uploaded_at, finalized_at, purpose, purpose_ref)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15::jsonb,$16,$17,$18,$19,$20,$21,$22,$23,$24::jsonb)
+       uploaded_at, finalized_at, purpose, purpose_ref, heartbeat_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15::jsonb,$16,$17,$18,$19,$20,$21,$22,$23,$24::jsonb,
+       -- An assembly starts with a beat, so a page that crashes before its first renewal still lapses.
+       CASE WHEN $12::smallint = ${PhiMediaUploadPlanKind.MultipartPut} THEN NOW() END)
      RETURNING ${UPLOAD_COLUMNS}`,
     [input.token,input.siteId,input.actorUserId,input.spaceId,input.folderId??null,input.storageProfileId,input.status,
       input.filename,input.contentType,input.sizeBytes,input.kind,input.uploadPlanKind,
@@ -907,8 +910,9 @@ export async function getMediaUploadSessionByToken(token: string) {
  *   Handing somebody another person's parts would be handing them another person's bytes.
  * - The filename, because the Asset takes its name from the session: the same bytes offered under another
  *   name are a different Asset, and quietly giving it the old name is worse than uploading again.
- * - `status` and the plan kind through `isPhiMediaUploadResumable`'s rule -- only an assembly leaves parts,
- *   and only a session that reported it stopped may be taken over.
+ * - `status`, the heartbeat and the plan kind through `isPhiMediaUploadResumable`'s rule -- only an
+ *   assembly leaves parts, and only a session that reported it stopped or whose page fell silent may be
+ *   taken over.
  * - The purpose, because it decides what the finished object becomes. A Media upload taking over a session
  *   reserved for an Add-on's row would finalize somebody else's slot into a Media Asset. Unreachable today,
  *   since `assets:v1` never asks for an assembly, and stated anyway: this is the condition whose absence
@@ -929,7 +933,7 @@ export async function findResumableMediaUploadSession(input: {
   const { rows } = await getPool().query<UploadRow>(
     `SELECT ${UPLOAD_COLUMNS} FROM phis.media_upload_sessions
       WHERE site_id = $1 AND space_id = $2 AND actor_user_id = $3
-        AND upload_plan_kind = $4 AND status = $5 AND expires_at > NOW()
+        AND upload_plan_kind = $4 AND ${resumableStatusCondition(5)} AND expires_at > NOW()
         AND filename = $6 AND size_bytes = $7
         AND checksum_algorithm = $8 AND checksum_value = $9
         AND purpose = $10
@@ -937,11 +941,60 @@ export async function findResumableMediaUploadSession(input: {
       ORDER BY created_at DESC
       LIMIT 1`,
     [input.siteId, input.spaceId, input.actorUserId,
-      PhiMediaUploadPlanKind.MultipartPut, PhiMediaUploadSessionStatus.Interrupted,
+      PhiMediaUploadPlanKind.MultipartPut, PHI_MEDIA_UPLOAD_HEARTBEAT_LAPSE_MS,
       input.filename, input.sizeBytes, input.checksumAlgorithm, input.checksumValue,
       PhiMediaUploadPurpose.Media],
   );
   return rows[0] ? mapUpload(rows[0]) : null;
+}
+
+/** `isPhiMediaUploadResumable` in SQL, with the lapse in milliseconds as parameter `lapseParam`. */
+function resumableStatusCondition(lapseParam: number) {
+  return `(status = ${PhiMediaUploadSessionStatus.Interrupted}
+  OR (status IN (${PhiMediaUploadSessionStatus.Pending}, ${PhiMediaUploadSessionStatus.Uploading})
+      AND heartbeat_at < NOW() - MAKE_INTERVAL(secs => $${lapseParam}::float8 / 1000)))`;
+}
+
+/**
+ * Takes over a resumable session, or answers null when somebody else got there first.
+ *
+ * Conditional on the same rule that found it, in the one statement that changes it: two attempts at the
+ * same file that both found the session cannot both continue it. The winner gets a fresh heartbeat, which
+ * is what keeps a third attempt from finding it while this page delivers.
+ */
+export async function takeOverMediaUploadSession(token: string, input: {
+  folderId: number | null; presentationFlags: number; meta: Record<string, unknown> | null;
+}) {
+  const { rows } = await getPool().query<UploadRow>(
+    `UPDATE phis.media_upload_sessions
+        SET status = ${PhiMediaUploadSessionStatus.Uploading}, heartbeat_at = NOW(), updated_at = NOW(),
+            folder_id = $2, presentation_flags = $3, meta = $4::jsonb
+      WHERE token = $1 AND upload_plan_kind = ${PhiMediaUploadPlanKind.MultipartPut}
+        AND ${resumableStatusCondition(5)}
+        AND expires_at > NOW()
+      RETURNING ${UPLOAD_COLUMNS}`,
+    [token.trim(), input.folderId, input.presentationFlags, jsonbOrNull(input.meta),
+      PHI_MEDIA_UPLOAD_HEARTBEAT_LAPSE_MS],
+  );
+  return rows[0] ? mapUpload(rows[0]) : null;
+}
+
+/**
+ * Says the page delivering this assembly still is. Only its own actor's, only while it is being delivered.
+ *
+ * Answers whether there was such a session, so a page that lost it (finalized elsewhere, expired, swept)
+ * can stop beating instead of renewing nothing for the rest of the upload.
+ */
+export async function renewMediaUploadSessionHeartbeat(token: string, siteId: number, actorUserId: number) {
+  const result = await getPool().query(
+    `UPDATE phis.media_upload_sessions SET heartbeat_at = NOW()
+      WHERE token = $1 AND site_id = $2 AND actor_user_id = $3
+        AND upload_plan_kind = ${PhiMediaUploadPlanKind.MultipartPut}
+        AND status IN (${PhiMediaUploadSessionStatus.Pending}, ${PhiMediaUploadSessionStatus.Uploading})
+        AND expires_at > NOW()`,
+    [token.trim(), siteId, actorUserId],
+  );
+  return (result.rowCount ?? 0) > 0;
 }
 
 export async function updateMediaUploadSessionByToken(token: string, input: {

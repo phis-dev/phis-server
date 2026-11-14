@@ -3,7 +3,7 @@ import "server-only";
 import type { PoolClient } from "pg";
 
 import { getPhisConfigSync } from "@/lib/config";
-import { PhiSiteMediaFlags, resolvePhiMediaKindFromContentType } from "@/lib/constants/media";
+import { PhiMediaStorageProfileFlags, PhiSiteMediaFlags, resolvePhiMediaKindFromContentType } from "@/lib/constants/media";
 import { PhisMediaSpaceKind, type PhisMediaSpaceKindValue } from "@/lib/constants/media-space-kinds";
 import { PhiGroupMembershipFlags } from "@/lib/constants/site-groups";
 import { getSiteGroupById, readEffectiveGroupMembershipFlags } from "@/db/site-groups";
@@ -54,6 +54,11 @@ export type MediaSpaceRecord = {
   reservedBytes: number;
   flags: number;
 };
+
+/** Whether new objects may be written into this Profile (`PhiMediaStorageProfileFlags.Disabled`). */
+export function isMediaStorageProfileWritable(profile: Pick<MediaStorageProfileRecord, "flags">) {
+  return !hasPhiFlag(profile.flags, PhiMediaStorageProfileFlags.Disabled);
+}
 
 function asNumber(value: number | string | null) {
   return value == null ? null : typeof value === "number" ? value : Number.parseInt(value, 10);
@@ -117,6 +122,27 @@ function mapSpace(row: SpaceRow): MediaSpaceRecord {
  * still empty is backfilled once so an installation that predates this keeps resolving the same
  * directory. Afterwards the row is authoritative and configuration is never consulted again.
  */
+/**
+ * The Profile a User or Group Space made now starts on: the Site's administered default for that kind
+ * (`site_media_config.default_*_storage_profile_id`), or its Local Profile where none is set. Existing
+ * Spaces are never re-pointed by this; it decides only at birth.
+ */
+async function resolveNewSpaceStorageProfileIdWithDb(
+  db: MediaSpaceDbQueryable,
+  siteId: number,
+  kind: typeof PhisMediaSpaceKind.User | typeof PhisMediaSpaceKind.Group,
+) {
+  const column = kind === PhisMediaSpaceKind.User ? "default_user_storage_profile_id" : "default_group_storage_profile_id";
+  const { rows } = await db.query<{ profile_id: number | null }>(
+    `SELECT c.${column} AS profile_id
+       FROM phis.site_media_config c
+       JOIN phis.media_storage_profiles p ON p.id = c.${column} AND p.site_id = c.site_id
+      WHERE c.site_id = $1`,
+    [siteId],
+  );
+  return rows[0]?.profile_id ?? (await ensureLocalStorageProfileWithDb(db, siteId)).id;
+}
+
 async function ensureLocalStorageProfileWithDb(db: MediaSpaceDbQueryable, siteId: number) {
   const media = getPhisConfigSync().media ?? {};
   const seed: Record<string, unknown> = {};
@@ -644,7 +670,7 @@ export async function ensureGroupMediaSpace(siteId: number, groupId: number) {
   if (existing) return existing;
 
   return withTransaction(async (client) => {
-    const profile = await ensureLocalStorageProfileWithDb(client, siteId);
+    const profileId = await resolveNewSpaceStorageProfileIdWithDb(client, siteId, PhisMediaSpaceKind.Group);
     const { rows } = await client.query<{
       id: number; site_id: number; kind: number; user_id: number | null; group_id: number | null;
       default_storage_profile_id: number; quota_bytes: number | string | null; used_bytes: number | string;
@@ -658,7 +684,7 @@ export async function ensureGroupMediaSpace(siteId: number, groupId: number) {
        DO UPDATE SET updated_at = NOW()
        RETURNING id, site_id, kind, user_id, group_id, default_storage_profile_id,
                  quota_bytes, used_bytes, reserved_bytes, flags`,
-      [siteId, PhisMediaSpaceKind.Group, groupId, profile.id],
+      [siteId, PhisMediaSpaceKind.Group, groupId, profileId],
     );
     // No row means the group does not exist on this Site or is retired; the caller reports that.
     return rows[0] ? mapSpace(rows[0]) : null;
@@ -1009,7 +1035,7 @@ export async function ensureUserMediaSpace(siteId: number, userId: number) {
   if (existing.rows[0]) return mapSpace(existing.rows[0]);
 
   return withTransaction(async (client) => {
-    const profile = await ensureLocalStorageProfileWithDb(client, siteId);
+    const profileId = await resolveNewSpaceStorageProfileIdWithDb(client, siteId, PhisMediaSpaceKind.User);
     const { rows } = await client.query<{
       id: number; site_id: number; kind: number; user_id: number | null; group_id: number | null;
       default_storage_profile_id: number; quota_bytes: number | string | null; used_bytes: number | string;
@@ -1021,7 +1047,7 @@ export async function ensureUserMediaSpace(siteId: number, userId: number) {
        DO UPDATE SET updated_at = NOW()
        RETURNING id, site_id, kind, user_id, group_id, default_storage_profile_id,
                  quota_bytes, used_bytes, reserved_bytes, flags`,
-      [siteId, PhisMediaSpaceKind.User, userId, profile.id],
+      [siteId, PhisMediaSpaceKind.User, userId, profileId],
     );
     return mapSpace(rows[0]!);
   });

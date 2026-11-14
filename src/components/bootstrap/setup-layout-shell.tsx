@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { useSearchParams } from "next/navigation";
 import packageJson from "../../../package.json";
 
@@ -12,13 +12,29 @@ import {
 import { getBootstrapStep } from "@/bootstrap/setup-flow";
 import { SetupLanguageMenu } from "@/components/bootstrap/setup-language-menu";
 
-export function SetupLayoutShell({ children }: { children: React.ReactNode }) {
+function subscribeToNothing() {
+  return () => undefined;
+}
+
+export function SetupLayoutShell({
+  children,
+  closesAt,
+}: {
+  children: React.ReactNode;
+  /** When the setup window closes (ISO), shown in the reader's own time once the page is in the browser. */
+  closesAt: string | null;
+}) {
   const searchParams = useSearchParams();
   const headerRef = useRef<HTMLDivElement | null>(null);
   const [headerHeight, setHeaderHeight] = useState(0);
   const locale = getBootstrapLocale(searchParams.get("lang") ?? undefined);
   const step = getBootstrapStep(searchParams.get("step") ?? undefined);
   const messages = getBootstrapMessages(locale);
+  // In the browser only: the server's clock zone is not the reader's, and the server render shows nothing.
+  const inBrowser = useSyncExternalStore(subscribeToNothing, () => true, () => false);
+  const closesAtText = inBrowser && closesAt
+    ? new Date(closesAt).toLocaleTimeString(locale, { hour: "2-digit", minute: "2-digit" })
+    : null;
 
   useEffect(() => {
     const element = headerRef.current;
@@ -76,6 +92,9 @@ export function SetupLayoutShell({ children }: { children: React.ReactNode }) {
               />
             </div>
             <p className="ui_page_subtitle">{messages.subtitle}</p>
+            {closesAtText ? (
+              <p className="ui_page_subtitle">{messages.windowClosesAt.replace("{time}", closesAtText)}</p>
+            ) : null}
           </section>
         </div>
         {children}

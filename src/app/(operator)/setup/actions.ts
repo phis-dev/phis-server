@@ -1,7 +1,5 @@
 "use server";
 
-import { randomBytes } from "node:crypto";
-
 import { redirect } from "next/navigation";
 
 import type { BootstrapLocale } from "@/bootstrap/i18n";
@@ -18,6 +16,8 @@ import {
   writePhiRuntimeConfigSync,
 } from "@/lib/config-files";
 import { resetPhisConfigCache } from "@/lib/config";
+import { logRuntimeEvent } from "@/lib/log";
+import { fillPhiRuntimeKeys } from "@/lib/runtime-keys";
 import { requirePhisOperatorSurface } from "@/lib/operator-surfaces";
 import { hashPassword } from "@/lib/password-core";
 import { slugifyPhiSiteKey } from "@/lib/helpers/normalize";
@@ -498,23 +498,18 @@ export async function completeBootstrapSetup(
     redirect(buildFinishStepHref(locale, "Create at least one Site before finishing the setup."));
   }
 
-  const internalToken = runtimeConfig.api?.internalToken?.trim() || randomBytes(32).toString("hex");
-  // The operator surface signs with a key of its own, never with the token the Sites hold.
-  const sessionSecret = runtimeConfig.operator?.sessionSecret?.trim() || randomBytes(32).toString("hex");
-  writePhiRuntimeConfigSync({
-    ...runtimeConfig,
-    api: {
-      ...runtimeConfig.api,
-      internalToken,
-    },
-    operator: {
-      ...runtimeConfig.operator,
-      sessionSecret,
-    },
-    bootstrap: {
-      ...runtimeConfig.bootstrap,
-      enabled: false,
-    },
+  /*
+   * Every key the installation makes for itself is made here at the latest, so a setup finished in the
+   * browser leaves nothing to generate by hand. The operator surface signs with a key of its own, never with
+   * the token the Sites hold. Finishing also closes the setup window at once rather than at its end.
+   */
+  const { config: withKeys, created } = fillPhiRuntimeKeys(runtimeConfig);
+  const { bootstrap: _window, ...closed } = withKeys;
+  writePhiRuntimeConfigSync(closed);
+  logRuntimeEvent("info", "setup.finished", {
+    message: "The setup was finished and its window closed.",
+    area: "setup",
+    meta: { createdKeys: created },
   });
   resetPhisConfigCache();
 

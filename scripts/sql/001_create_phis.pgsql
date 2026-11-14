@@ -343,7 +343,12 @@ CREATE TABLE IF NOT EXISTS phis.site_media_config (
   -- what a Site publishes includes binaries offered for download.
   user_space_content_kinds VARCHAR(32)[] NOT NULL DEFAULT ARRAY[]::VARCHAR(32)[],
   group_space_content_kinds VARCHAR(32)[] NOT NULL DEFAULT ARRAY[]::VARCHAR(32)[],
+  -- The Storage Profiles a Site administrator may point Spaces at. Empty offers every Profile of the Site.
   allowed_storage_profile_ids INT[] NOT NULL DEFAULT ARRAY[]::INT[],
+  -- Where a User or Group Space made from now on writes. NULL is the Site's Local Profile, which is what
+  -- every Space was born on before this was administered. Existing Spaces keep theirs.
+  default_user_storage_profile_id INT NULL REFERENCES phis.media_storage_profiles(id) ON DELETE SET NULL,
+  default_group_storage_profile_id INT NULL REFERENCES phis.media_storage_profiles(id) ON DELETE SET NULL,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   CONSTRAINT site_media_config_quota_check CHECK (
     (default_user_quota_bytes IS NULL OR default_user_quota_bytes >= 0) AND
@@ -578,6 +583,14 @@ CREATE TABLE IF NOT EXISTS phis.media_upload_sessions (
    */
   provider_upload_id VARCHAR(512) NULL,
   expires_at TIMESTAMPTZ NOT NULL,
+  /*
+   * When the page delivering an assembly last said it still is.
+   *
+   * Renewed while parts are being sent, and only then. A session at `Pending` or `Uploading` whose page
+   * fell silent -- a crashed tab, a killed browser, a power cut, none of which sends a beacon -- is told
+   * apart by this from one with a page writing into it right now, and only the first may be continued.
+   */
+  heartbeat_at TIMESTAMPTZ NULL,
   uploaded_at TIMESTAMPTZ NULL,
   finalized_at TIMESTAMPTZ NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),

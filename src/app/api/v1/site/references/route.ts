@@ -18,6 +18,10 @@ const MAX_REFERENCES_PER_REQUEST = 256;
  * they are one contract. The endpoint is internal-token only and therefore has no mode that returns a
  * management record: Assets are projected through the public rendering projection, and an id outside
  * the Site Space, not Ready, or not publicly deliverable is simply absent from the result.
+ *
+ * A Site Page that has never been published resolves to no path (`path: null`, `deleted: false`), because
+ * the Public render answers 404 for it. `preview: true` lifts that, for a render the caller has already had
+ * authorized as a preview; the token is the caller's, so the flag says what the render is, not who may.
  */
 export async function POST(request: NextRequest) {
   const guardError = await guardApiV1(request, { requireInternalToken: true });
@@ -29,7 +33,9 @@ export async function POST(request: NextRequest) {
     area?: unknown;
     references?: unknown;
     assets?: unknown;
+    preview?: unknown;
   } | null;
+  const preview = body?.preview === true;
   const area = typeof body?.area === "string" ? body.area.trim().toLowerCase() : "";
   const requestedReferences = body?.references === undefined ? [] : body.references;
   const requestedAssets = body?.assets === undefined ? [] : body.assets;
@@ -59,7 +65,7 @@ export async function POST(request: NextRequest) {
   // Page targets and Assets are independent reads.
   const [byId, publicAssets] = await Promise.all([
     scopeIds.length === 0
-      ? new Map<number, { path: string | null; tombstoned: boolean }>()
+      ? new Map<number, { path: string | null; tombstoned: boolean; published: boolean }>()
       : readSitePageScopeTargets(site.id, resolvePhisCmsAreaMask(area), scopeIds),
     listPublicSiteSpaceMediaAssetsByIds(site.id, requestedAssets as number[]),
   ]);
@@ -70,9 +76,10 @@ export async function POST(request: NextRequest) {
     }
     const scope = byId.get(reference.target.pageScopeId);
     const deleted = !scope || scope.tombstoned || !scope.path;
+    const hidden = !deleted && !preview && !scope.published;
     return {
       reference: reference.reference,
-      path: deleted ? null : scope.path,
+      path: deleted || hidden ? null : scope.path,
       deleted,
       targetKind: "site" as const,
     };

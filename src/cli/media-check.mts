@@ -1,4 +1,4 @@
-import { chownSync, existsSync, lstatSync, readdirSync, statSync } from "node:fs";
+import { chownSync, existsSync, lstatSync, readdirSync, rmSync, statSync } from "node:fs";
 import path from "node:path";
 
 import type { Pool } from "pg";
@@ -107,5 +107,81 @@ export async function checkPhiMediaOwnership(
     });
   }
 
+  return results;
+}
+
+export type PhiMediaOrphanedStaging = {
+  rootDir: string;
+  /** Staged files with no upload session that names them, older than the lifecycle window. */
+  orphans: { path: string; key: string; ageDays: number }[];
+  /** Staged files with no session that are still younger than the window: a session may yet be written. */
+  young: number;
+  removed: number;
+};
+
+/**
+ * Staged bodies a Local Profile is left holding: no upload session names them any more.
+ *
+ * For an S3 Profile this is the bucket's lifecycle rule; a Local root has none, and the expiry sweep only
+ * removes what a session row still points at. A row deleted before the sweep learned to return its key,
+ * or a removal that failed, leaves a file under `<prefix>/uploads-temp/<site>/` that nothing will ever
+ * find. This is the deliberate operator command the maintenance contract names for that (AGENTS.md).
+ *
+ * Only files older than `minAgeDays` count: a file younger than an upload session may live can belong to
+ * an upload whose row is being written right now. Removed only with `prune`.
+ */
+export async function findPhiMediaOrphanedLocalStaging(
+  pool: Pool,
+  options: { minAgeDays: number; prune?: boolean; now?: number },
+): Promise<PhiMediaOrphanedStaging[]> {
+  const { rows } = await pool.query<{ config: Record<string, unknown> }>(
+    `SELECT config FROM phis.media_storage_profiles WHERE provider_id = $1`,
+    [PHI_LOCAL_MEDIA_STORAGE_PROVIDER_ID],
+  );
+  const roots = new Set<string>();
+  for (const row of rows) {
+    const rootDir = typeof row.config?.rootDir === "string" ? row.config.rootDir.trim() : "";
+    if (rootDir && existsSync(rootDir)) roots.add(rootDir);
+  }
+
+  const now = options.now ?? Date.now();
+  const results: PhiMediaOrphanedStaging[] = [];
+  for (const rootDir of roots) {
+    const staged: { path: string; key: string; mtimeMs: number }[] = [];
+    walk(rootDir, (entryPath) => {
+      const key = path.relative(rootDir, entryPath).split(path.sep).join("/");
+      if (!/(^|\/)uploads-temp\//u.test(key)) return;
+      const entry = lstatSync(entryPath);
+      if (entry.isFile()) staged.push({ path: entryPath, key, mtimeMs: entry.mtimeMs });
+    });
+
+    const known = new Set<string>();
+    if (staged.length > 0) {
+      const { rows: sessions } = await pool.query<{ key: string }>(
+        `SELECT staging_storage_key AS key FROM phis.media_upload_sessions
+          WHERE staging_storage_key = ANY($1::text[])`,
+        [staged.map((entry) => entry.key)],
+      );
+      for (const session of sessions) known.add(session.key);
+    }
+
+    const result: PhiMediaOrphanedStaging = { rootDir, orphans: [], young: 0, removed: 0 };
+    for (const entry of staged) {
+      if (known.has(entry.key)) continue;
+      const ageDays = (now - entry.mtimeMs) / 86_400_000;
+      if (ageDays < options.minAgeDays) {
+        result.young += 1;
+        continue;
+      }
+      result.orphans.push({ path: entry.path, key: entry.key, ageDays: Math.floor(ageDays) });
+    }
+    if (options.prune) {
+      for (const orphan of result.orphans) {
+        rmSync(orphan.path, { force: true });
+        result.removed += 1;
+      }
+    }
+    results.push(result);
+  }
   return results;
 }

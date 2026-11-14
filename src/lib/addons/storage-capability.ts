@@ -1,7 +1,7 @@
 import "server-only";
 
 import type { PhisStorageCapabilityV1 } from "./contract.ts";
-import { ensureSiteMediaSpace, getMediaStorageProfile } from "@/db/media-spaces";
+import { ensureSiteMediaSpace, getMediaStorageProfile, isMediaStorageProfileWritable } from "@/db/media-spaces";
 import { createPhisMediaStorageServiceForProfile } from "@/lib/media-storage";
 import { isPhisAddonStorageKeyUnder, phisAddonStoragePrefix } from "./schema-name.ts";
 import {
@@ -85,13 +85,17 @@ function requireKey(key: string) {
   return normalized;
 }
 
-async function resolveStorage(siteId: number, siteKey: string, addonId: string) {
+async function resolveStorage(siteId: number, siteKey: string, addonId: string, intent: "read" | "write" = "read") {
   // The Site Space carries the default Storage Profile, which is what "where this Site's bytes live"
   // means. An Add-on does not choose a Profile: that is the operator's decision for the whole Site.
   const { space } = await ensureSiteMediaSpace(siteId);
   const profile = await getMediaStorageProfile(siteId, space.defaultStorageProfileId);
   if (!profile) {
     throw new PhisAddonStorageError("This Site has no default Storage Profile.");
+  }
+  // A disabled Profile keeps answering reads and removals of what it holds; it takes nothing new.
+  if (intent === "write" && !isMediaStorageProfileWritable(profile)) {
+    throw new PhisAddonStorageError("This Site's Storage Profile is disabled and takes no new objects.");
   }
   const service = await createPhisMediaStorageServiceForProfile(profile, siteKey);
   return { service, prefix: phisAddonStoragePrefix(addonId, siteKey) };
@@ -118,7 +122,7 @@ export function buildPhisAddonStorageCapability(input: {
           `Object is ${byteSize} bytes; this Site allows ${maxObjectBytes}.`,
         );
       }
-      const { service, prefix } = await resolveStorage(siteId, siteKey, addonId);
+      const { service, prefix } = await resolveStorage(siteId, siteKey, addonId, "write");
       const storageKey = `${prefix}/${relative}`;
 
       /*

@@ -82,7 +82,38 @@ import {
   checkPhiCoreSchema,
   readPhiMigrationRoleName,
 } from "./schema.mts";
-import { bootstrapPhiDatabase } from "./db-bootstrap.mts";
+import { bootstrapPhiDatabase, dropPhiDatabase, readPhiDatabaseNamesFromUris } from "./db-bootstrap.mts";
+import { runPhiInstall } from "./install.mts";
+import {
+  applyAndRecordPhiServerProxyConfig,
+  assertPhiProxyDomain,
+  detectPhiProxyKind,
+  isPhiProxyInstalled,
+  obtainPhiCertificate,
+  planPhiServerProxyRemoval,
+  readPhiProxyKind,
+  readPhiServerProxyRecord,
+  readPhiStagePorts,
+  removePhiServerProxyConfig,
+  renderPhiServerProxyConfig,
+  requiredApacheModules,
+  resolvePhiStageUnit,
+} from "./proxy.mts";
+import {
+  archivePhiStageConfig,
+  findPhiStageProxyLeftovers,
+  listPhiOtherStages,
+  removePhiStageDirectory,
+  resolvePhiStageName,
+  stopPhiStageUnit,
+} from "./stage.mts";
+import {
+  closePhiSetupWindow,
+  formatPhiDuration,
+  initPhiRuntimeKeys,
+  openPhiSetupWindow,
+  readPhiSetupStatus,
+} from "./setup.mts";
 import {
   inspectSiteModulePackage,
   type PhiSiteModulePackageReport,
@@ -122,7 +153,7 @@ import { sweepPhisAddonAssets } from "./storage-sweep.mts";
 import { PHI_MAINTENANCE_TASKS, runPhiMaintenance } from "./maintain.mts";
 import { runPhisPaymentProfileCommand, recoverPhisPayments } from "./payments.mts";
 import { checkPhiDependencyLicenses } from "./licenses.mts";
-import { checkPhiMediaOwnership } from "./media-check.mts";
+import { checkPhiMediaOwnership, findPhiMediaOrphanedLocalStaging } from "./media-check.mts";
 import { parsePhiUsageDays, readPhiTranslationUsage } from "./translations-usage.mts";
 import {
   addStorageProfile,
@@ -133,6 +164,7 @@ import {
   resolvePhiStorageObjectAdapter,
   setStorageProfile,
   useStorageProfile,
+  setStorageProfileEnabled,
 } from "./storage.mts";
 import { PHI_MEDIA_STORAGE_LIFECYCLE_DAYS } from "../lib/media-storage-policies-core.ts";
 import { restoreFirstPartyAuthPreset } from "../db/auth-preset.mts";
@@ -210,6 +242,22 @@ function logCliError(event: string, message: string, meta?: Record<string, unkno
   );
 }
 
+/**
+ * What a refused lifecycle rule means, said where the operator is looking.
+ *
+ * The reconciliation rightly does not fail on it -- a storage without object lifecycle still has a CORS rule
+ * worth writing -- but a bare "FAILED" line read as a detail. Without the rule, nothing removes an upload
+ * nobody finished or a staged body nobody claimed except the expiry sweep, which only runs while there is
+ * upload traffic for that Space.
+ */
+function printLifecycleRefusedWarning(identity: string) {
+  console.log(
+    `  WARNING: ${identity} refused the lifecycle rule. Unfinished uploads and unclaimed staging objects there `
+      + "are removed only by the upload expiry sweep, which runs with upload traffic; anything it misses "
+      + "stays and is paid for. Add an equivalent rule at the storage by hand.",
+  );
+}
+
 function printUsage() {
   console.log(`phis-cli ${packageJson.version}
 
@@ -227,13 +275,37 @@ Usage:
   Environment: PHIS_ROOT, PHIS_APP_ROOT, PHIS_INSTANCE_ID, PHIS_SKIP_VERSION_CHECK=1.
   Reference: docs/CLI.md; installed from the Debian package, /usr/share/doc/phis/CLI.md.gz.
 
+  phis install [--mode browser|full] [--local-db | --admin-uri <postgres uri>] [--db-name <installation>]
+               [--for <duration>] [--operator-email <email>] [--operator-password <pw>] [--operator-name <name>]
+               [--site-key <key> --site-hostname <host> --site-support-email <email> [--site-name <name>]
+                [--site-public-base-url <url>] [--site-source-locale <l>] [--site-default-locale <l>]
+                [--site-admin-email <email>] [--site-admin-password <pw>]]
+               [--domain <host> [--proxy apache|nginx]]
+                         Asks for what a flag does not give, when run in a terminal. Every step skips what exists.
+
+  phis setup enable [--for <duration, e.g. 30m, 1h; at most 4h>]
+  phis setup disable
+  phis setup status
+
   phis config
   phis config paths
   phis config validate
+  phis config init-keys
 
-  phis db bootstrap --admin-uri <postgres uri> [--name <installation>] [--database <name>]
+  phis proxy config apache|nginx --domain <host> [--tls] [--write]
+  phis proxy tls --domain <host> [--email <email>] [--proxy apache|nginx]
+
+  phis db bootstrap --local | --admin-uri <postgres uri> [--name <installation>] [--database <name>]
                     [--role <name>] [--migration-role <name>]
                     [--password <pw>] [--migration-password <pw>] [--force]
+
+  phis db drop --local | --admin-uri <postgres uri> [--database <name>] [--role <name>]
+               [--migration-role <name>] [--force]
+                         Without --force only says what it would drop: the stage's database and both roles.
+
+  phis stage remove --local-db | --admin-uri <postgres uri> | --keep-database
+                    [--backup <file.tar.gz>] [--keep-proxy] [--keep-certificate] [--force]
+                         Without --force only lists what it would remove and what it finds but did not make.
 
   phis schema check
   phis schema apply
@@ -304,6 +376,8 @@ Usage:
   phis storage set   --site <site key> --key <profile key>
                      [--config <json|@file>] [--replace] [--secret-name <name>|--secret-reference <ref>]
   phis storage use   --site <site key> --key <profile key>
+  phis storage disable --site <site key> --key <profile key>
+  phis storage enable  --site <site key> --key <profile key>
   phis storage del   --site <site key> --key <profile key>
   phis storage cors
   phis storage probe --site <site key> [--key <profile key>]
@@ -332,7 +406,7 @@ Usage:
   phis operator del --email|-e <email>
   phis operator secret
 
-  phis media check [--fix]
+  phis media check [--fix] [--prune-staging]
   phis translations usage [--unused-for <days, e.g. 90d>] [--site <site key>] [--examples <n>]
   phis maintain [--list] [--task <id>] [--dry-run]
   phis mail drain [--limit <rows>] --api-base-url <url>
@@ -1562,8 +1636,10 @@ async function runDatabaseBootstrapCommand(flags: FlagMap, json: boolean) {
     );
   }
 
+  // Both are handed on as given: the bootstrap refuses neither and both, before it connects anywhere.
   const result = await bootstrapPhiDatabase({
-    adminUri: getRequiredFlag(flags, "admin-uri"),
+    adminUri: getOptionalFlag(flags, "admin-uri") ?? "",
+    local: flags.get("local") === true,
     name: getOptionalFlag(flags, "name"),
     database: getOptionalFlag(flags, "database"),
     servingRole: getOptionalFlag(flags, "role"),
@@ -1614,6 +1690,199 @@ async function runDatabaseBootstrapCommand(flags: FlagMap, json: boolean) {
     "It holds two passwords: check that it is mode 0600 and owned by the account the server runs as.",
   );
   console.log("Next: phis schema apply");
+}
+
+/**
+ * The database and both roles this stage's configuration names, as `db bootstrap` made them.
+ *
+ * Names come from `database.uri` and `database.migrationUri` and may be given outright for a stage whose
+ * configuration is gone. The connection strings stay in the file: a dropped database is a fact about the
+ * cluster, and the file is the stage's, which `stage remove` takes away as a whole.
+ */
+function resolveStageDatabaseNames(flags: FlagMap) {
+  const runtime = readPhiRuntimeConfigSync(configRoot);
+  const recorded = readPhiDatabaseNamesFromUris(runtime.database?.uri, runtime.database?.migrationUri);
+  const databaseName = getOptionalFlag(flags, "database") ?? recorded.databaseName;
+  const roles = [
+    getOptionalFlag(flags, "role") ?? recorded.servingRole,
+    getOptionalFlag(flags, "migration-role") ?? recorded.migrationRole,
+  ].filter((role): role is string => Boolean(role));
+  if (!databaseName) {
+    throw new Error(`${getConfigPaths().runtime} names no database; give it with --database.`);
+  }
+  return { databaseName, roles };
+}
+
+async function runDatabaseDropCommand(flags: FlagMap, json: boolean) {
+  const names = resolveStageDatabaseNames(flags);
+  const result = await dropPhiDatabase({
+    adminUri: getOptionalFlag(flags, "admin-uri") ?? "",
+    local: flags.get("local") === true,
+    ...names,
+    confirmed: flags.get("force") === true,
+  });
+  if (json) {
+    printJson({ ok: true, action: "db.drop", ...result });
+    return;
+  }
+  printDatabaseDrop(result);
+  if (!result.dropped) {
+    console.log("Nothing was dropped. Pass --force to carry it out.");
+  }
+}
+
+function printDatabaseDrop(result: Awaited<ReturnType<typeof dropPhiDatabase>>) {
+  const verb = result.dropped ? "Dropped" : "Would drop";
+  console.log(result.found.database
+    ? `${verb} database ${result.databaseName}, every schema in it included.`
+    : `Database ${result.databaseName} does not exist.`);
+  for (const role of result.roles) {
+    console.log(result.found.roles.includes(role) ? `${verb} role ${role}.` : `Role ${role} does not exist.`);
+  }
+}
+
+/**
+ * One stage off this host: its service, database and roles, recorded proxy and certificate, and directory.
+ *
+ * In that order, because each step leaves the next something to work with: the service stops before its
+ * database goes, the database is dropped while its names can still be read from the configuration, and the
+ * directory, which holds that configuration and every secret, goes last -- after `--backup` has written them
+ * away, if asked. What phis did not make is listed and left. Without `--force` nothing is changed.
+ */
+async function runStageRemoveCommand(flags: FlagMap, json: boolean) {
+  const stage = resolvePhiStageName(configRoot);
+  const unit = resolvePhiStageUnit(configRoot);
+  if (!stage || !unit) {
+    throw new Error(`${configRoot} is not a stage under /srv/phis/stages; pass --root /srv/phis/stages/<stage>.`);
+  }
+  const confirmed = flags.get("force") === true;
+  const keepDatabase = flags.get("keep-database") === true;
+  const local = flags.get("local-db") === true;
+  const adminUri = getOptionalFlag(flags, "admin-uri") ?? "";
+  if (!keepDatabase && !local && !adminUri) {
+    throw new Error("Say how to reach the database to drop: --local-db, --admin-uri <uri>, or --keep-database.");
+  }
+  const keepProxy = flags.get("keep-proxy") === true;
+  const backup = getOptionalFlag(flags, "backup") ?? null;
+
+  const record = readPhiServerProxyRecord(configRoot);
+  const proxyPlan = record && !keepProxy ? planPhiServerProxyRemoval(record) : null;
+  const leftovers = findPhiStageProxyLeftovers({
+    root: configRoot,
+    recordedPaths: record ? [record.path] : [],
+    domain: record?.domain ?? null,
+    recordedCertificate: record?.certificate ?? null,
+  });
+  const database = keepDatabase ? null : await dropPhiDatabase({
+    adminUri,
+    local,
+    ...resolveStageDatabaseNames(flags),
+    confirmed: false,
+  });
+  const otherStages = listPhiOtherStages(stage);
+
+  const report = {
+    stage,
+    unit,
+    root: configRoot,
+    backup,
+    database: database ? { name: database.databaseName, roles: database.roles, found: database.found } : null,
+    proxy: proxyPlan
+      ? {
+          path: proxyPlan.record.path,
+          file: proxyPlan.fileState,
+          enabled: proxyPlan.enabled,
+          modules: proxyPlan.modules,
+          acmeWebroot: proxyPlan.acmeWebroot,
+          certificate: proxyPlan.certificate,
+        }
+      : null,
+    proxyRecorded: record !== null,
+    leftovers,
+    otherStages,
+  };
+
+  if (!confirmed) {
+    if (json) {
+      printJson({ ok: true, action: "stage.remove", removed: false, ...report });
+      return;
+    }
+    console.log(`Would remove stage ${stage}:`);
+    if (backup) console.log(`  back up config/ and .env of ${configRoot} to ${backup}`);
+    console.log(`  stop and disable ${unit}`);
+    if (database) {
+      console.log(`  drop database ${database.databaseName}${database.found.database ? "" : " (not there)"}`);
+      console.log(`  drop roles ${database.roles.join(", ") || "(none named)"}`);
+    } else {
+      console.log("  keep the database (--keep-database)");
+    }
+    if (proxyPlan) {
+      if (proxyPlan.enabled) console.log(`  disable ${proxyPlan.record.enabledPath}`);
+      console.log(proxyPlan.fileState === "changed"
+        ? `  keep ${proxyPlan.record.path}, changed since phis wrote it`
+        : proxyPlan.fileState === "unchanged" ? `  remove ${proxyPlan.record.path}` : `  ${proxyPlan.record.path} is gone already`);
+      if (proxyPlan.modules.length) console.log(`  switch off ${proxyPlan.modules.join(" ")}, which phis switched on`);
+      if (proxyPlan.acmeWebroot) console.log(`  remove ${proxyPlan.acmeWebroot}`);
+      if (proxyPlan.certificate) {
+        console.log(flags.get("keep-certificate") === true
+          ? `  keep certificate ${proxyPlan.certificate} (--keep-certificate)`
+          : `  delete certificate ${proxyPlan.certificate} and its renewal`);
+      }
+    } else if (keepProxy) {
+      console.log("  keep the web server configuration (--keep-proxy)");
+    } else {
+      console.log("  no proxy record in this stage: phis proxy wrote nothing here that it knows of");
+    }
+    console.log(`  remove ${configRoot}`);
+    printStageLeftovers(leftovers, otherStages);
+    console.log("Nothing was changed. Pass --force to carry it out.");
+    return;
+  }
+
+  const done: string[] = [];
+  if (backup) {
+    const archive = archivePhiStageConfig(configRoot, backup);
+    done.push(`backed up ${archive.entries.join(" and ")} to ${archive.path}`);
+  }
+  const unitState = stopPhiStageUnit(unit);
+  done.push(unitState.active || unitState.enabled
+    ? `${[unitState.active ? "stopped" : null, unitState.enabled ? "disabled" : null].filter(Boolean).join(" and ")} ${unit}`
+    : `${unit} was neither running nor enabled`);
+  if (database) {
+    const dropped = await dropPhiDatabase({ adminUri, local, ...resolveStageDatabaseNames(flags), confirmed: true });
+    if (dropped.found.database) done.push(`dropped database ${dropped.databaseName}`);
+    if (dropped.found.roles.length) done.push(`dropped roles ${dropped.found.roles.join(", ")}`);
+  }
+  const proxySteps = proxyPlan
+    ? removePhiServerProxyConfig(proxyPlan, { keepCertificate: flags.get("keep-certificate") === true })
+    : [];
+  removePhiStageDirectory(configRoot);
+  done.push(`removed ${configRoot}`);
+
+  if (json) {
+    printJson({ ok: true, action: "stage.remove", removed: true, ...report, done, proxySteps });
+    return;
+  }
+  for (const line of done.slice(0, -1)) console.log(line);
+  for (const entry of proxySteps) console.log(entry.note ? `${entry.action} (${entry.note})` : entry.action);
+  console.log(done.at(-1));
+  printStageLeftovers(leftovers, otherStages);
+}
+
+function printStageLeftovers(
+  leftovers: ReturnType<typeof findPhiStageProxyLeftovers>,
+  otherStages: readonly string[],
+) {
+  if (leftovers.files.length || leftovers.certificates.length) {
+    console.log("Found, not made by phis, and left in place -- remove them if they were this stage's:");
+    for (const file of leftovers.files) console.log(`  ${file}`);
+    for (const certificate of leftovers.certificates) console.log(`  certificate ${certificate} (certbot delete --cert-name ${certificate})`);
+  }
+  if (otherStages.length) {
+    console.log(`Other stages on this host: ${otherStages.join(", ")}.`);
+  } else {
+    console.log("No stage is left on this host. To remove phis entirely: apt purge phis, then deluser phis and delgroup phis.");
+  }
 }
 
 /**
@@ -2359,6 +2628,141 @@ async function main() {
     return;
   }
 
+  if (group === "install" && !command) {
+    await runPhiInstall(configRoot, flags, {
+      bootstrapDatabase: async ({ local, adminUri, name }) => {
+        const bootstrapFlags: FlagMap = new Map<string, string | boolean>();
+        if (local) bootstrapFlags.set("local", true);
+        if (adminUri) bootstrapFlags.set("admin-uri", adminUri);
+        if (name) bootstrapFlags.set("name", name);
+        await runDatabaseBootstrapCommand(bootstrapFlags, false);
+      },
+      applySchema: async () => {
+        await runCoreSchemaCommand("apply", false);
+        await runCoreSchemaCommand("check", false);
+      },
+      addOperator: async ({ email, password, name }) => {
+        const operatorFlags: FlagMap = new Map<string, string | boolean>([["email", email], ["password", password]]);
+        if (name) operatorFlags.set("name", name);
+        await addSuperUser(operatorFlags, false);
+      },
+      countSites: async () => (await listSites()).length,
+      createSite: (siteFlags) => createSite(siteFlags, false),
+      grantSiteAdmin: (adminFlags) => grantSiteAdmin(adminFlags, false),
+    });
+    return;
+  }
+
+  if (group === "setup" && command === "enable") {
+    const { until, path: runtimePath } = openPhiSetupWindow(configRoot, getOptionalFlag(flags, "for") ?? null);
+    if (json) {
+      printJson({ ok: true, action: "setup.enable", until: until.toISOString(), path: runtimePath });
+    } else {
+      console.log(`The setup is open until ${until.toISOString()} (${formatPhiDuration(until.getTime() - Date.now())}).`);
+      console.log("It takes effect at once; while it is open, /operator/login is refused. phis setup disable closes it.");
+    }
+    return;
+  }
+
+  if (group === "setup" && command === "disable") {
+    const { wasOpen } = closePhiSetupWindow(configRoot);
+    if (json) {
+      printJson({ ok: true, action: "setup.disable", wasOpen });
+    } else {
+      console.log(wasOpen ? "The setup is closed." : "The setup was not open.");
+    }
+    return;
+  }
+
+  if (group === "setup" && command === "status") {
+    const status = await readPhiSetupStatus(configRoot);
+    if (json) {
+      printJson({
+        ok: true,
+        action: "setup.status",
+        window: status.window.state === "open"
+          ? { state: "open", until: status.window.until.toISOString(), remainingMs: status.window.remainingMs }
+          : { state: "closed", reason: status.window.reason, until: status.window.until?.toISOString() ?? null },
+        steps: status.steps,
+      });
+      return;
+    }
+    console.log(status.window.state === "open"
+      ? `Setup: open until ${status.window.until.toISOString()} (${formatPhiDuration(status.window.remainingMs)} left)`
+      : `Setup: closed (${status.window.reason})`);
+    for (const entry of status.steps) {
+      console.log(`  [${entry.done ? "x" : " "}] ${entry.key.padEnd(9)} ${entry.detail}`);
+    }
+    return;
+  }
+
+  if (group === "config" && command === "init-keys") {
+    const { created, path: runtimePath } = initPhiRuntimeKeys(configRoot);
+    if (json) {
+      printJson({ ok: true, action: "config.init-keys", created, path: runtimePath });
+    } else if (created.length === 0) {
+      console.log("Every key is already there; nothing was changed.");
+    } else {
+      console.log(`Wrote ${created.join(", ")} to ${runtimePath}.`);
+      console.log("Restart the server so it reads them (it caches the configuration for up to four hours).");
+    }
+    return;
+  }
+
+  if (group === "proxy" && command === "config") {
+    const kind = readPhiProxyKind(remaining[0] ?? getOptionalFlag(flags, "proxy"));
+    const input = {
+      kind,
+      domain: assertPhiProxyDomain(getRequiredFlag(flags, "domain")),
+      tls: flags.get("tls") === true,
+      ports: readPhiStagePorts(configRoot),
+    };
+    if (flags.get("write") !== true) {
+      console.log(renderPhiServerProxyConfig(input));
+      return;
+    }
+    if (!isPhiProxyInstalled(kind)) {
+      throw new Error(`${kind} is not installed on this host; without --write the file is printed instead.`);
+    }
+    const result = applyAndRecordPhiServerProxyConfig(configRoot, input);
+    if (json) {
+      printJson({
+        ok: true,
+        action: "proxy.config",
+        path: result.path,
+        record: result.recordPath,
+        steps: result.steps.map((entry) => entry.command),
+      });
+    } else {
+      for (const entry of result.steps) console.log(entry.command);
+      console.log(`Wrote ${result.path}${kind === "apache" ? ` (modules: ${requiredApacheModules(input.tls).join(" ")})` : ""}.`);
+    }
+    return;
+  }
+
+  if (group === "proxy" && command === "tls") {
+    const kind = detectPhiProxyKind(getOptionalFlag(flags, "proxy") ?? null);
+    if (!kind || !isPhiProxyInstalled(kind)) {
+      throw new Error("Neither Apache nor nginx is installed here; phis proxy tls needs the one in front of phis.");
+    }
+    const domain = assertPhiProxyDomain(getRequiredFlag(flags, "domain"));
+    const ports = readPhiStagePorts(configRoot);
+    // The plain-HTTP file first: it answers the challenge certbot is about to ask for.
+    const steps = [...applyAndRecordPhiServerProxyConfig(configRoot, { kind, domain, tls: false, ports }).steps];
+    steps.push(obtainPhiCertificate({ kind, domain, email: getOptionalFlag(flags, "email") ?? null }));
+    // certbot names the certificate after the domain, which is what `stage remove` deletes.
+    const result = applyAndRecordPhiServerProxyConfig(configRoot, { kind, domain, tls: true, ports }, { certificate: domain });
+    steps.push(...result.steps);
+    if (json) {
+      printJson({ ok: true, action: "proxy.tls", domain, path: result.path, steps: steps.map((entry) => entry.command) });
+    } else {
+      for (const entry of steps) console.log(entry.command);
+      console.log(`https://${domain} is served with its certificate; ${result.path} sends X-Forwarded-Proto https.`);
+      console.log("certbot renews it on its own timer and reloads the web server afterwards.");
+    }
+    return;
+  }
+
   if (group === "config" && command === "paths") {
     printConfigPaths(json);
     return;
@@ -2842,14 +3246,45 @@ async function main() {
 
   if (group === "media" && command === "check") {
     const fix = Boolean(flags.get("fix"));
+    const pruneStaging = Boolean(flags.get("prune-staging"));
     const roots = await checkPhiMediaOwnership(getPool(), { fix });
     const findings = roots.reduce((total, root) => total + root.findings.length, 0);
+    const staging = await findPhiMediaOrphanedLocalStaging(getPool(), {
+      minAgeDays: PHI_MEDIA_STORAGE_LIFECYCLE_DAYS,
+      prune: pruneStaging,
+    });
+    const orphans = staging.reduce((total, root) => total + root.orphans.length, 0);
     if (json) {
-      printJson({ ok: findings === 0 || fix, action: "media.check", fix, roots });
-      if (findings > 0 && !fix) {
+      printJson({
+        ok: (findings === 0 || fix) && (orphans === 0 || pruneStaging),
+        action: "media.check",
+        fix,
+        roots,
+        staging,
+      });
+      if ((findings > 0 && !fix) || (orphans > 0 && !pruneStaging)) {
         process.exitCode = 1;
       }
       return;
+    }
+    for (const root of staging) {
+      if (root.orphans.length === 0) continue;
+      console.log(
+        pruneStaging
+          ? `${root.rootDir}: removed ${root.removed} staged file(s) no upload session names.`
+          : `${root.rootDir}: ${root.orphans.length} staged file(s) older than ${PHI_MEDIA_STORAGE_LIFECYCLE_DAYS} `
+            + "day(s) that no upload session names.",
+      );
+      for (const orphan of root.orphans.slice(0, 5)) {
+        console.log(`  ${orphan.key}  (${orphan.ageDays} d)`);
+      }
+      if (root.orphans.length > 5) {
+        console.log(`  ... and ${root.orphans.length - 5} more`);
+      }
+    }
+    if (orphans > 0 && !pruneStaging) {
+      console.log("Run `phis media check --prune-staging` to remove them.");
+      process.exitCode = 1;
     }
     for (const root of roots) {
       if (root.missing) {
@@ -2932,6 +3367,8 @@ async function main() {
       add: () => addStorageProfile(configRoot, getPool(), flags, readStorageSecret),
       set: () => setStorageProfile(configRoot, getPool(), flags, readStorageSecret),
       use: () => useStorageProfile(getPool(), flags),
+      disable: () => setStorageProfileEnabled(getPool(), flags, false),
+      enable: () => setStorageProfileEnabled(getPool(), flags, true),
       del: () => removeStorageProfile(getPool(), flags),
       cors: async () => ({
         ok: true,
@@ -2942,7 +3379,7 @@ async function main() {
     } as const;
     const handler = handlers[command as keyof typeof handlers];
     if (!handler) {
-      throw new Error("Unknown storage command. Use: list, add, set, use, del, cors, probe");
+      throw new Error("Unknown storage command. Use: list, add, set, use, disable, enable, del, cors, probe");
     }
     const result = await handler();
     if (json) {
@@ -2953,6 +3390,7 @@ async function main() {
       for (const profile of result.profiles) {
         console.log(
           `${profile.key}  #${profile.id}  ${profile.providerId}` +
+          `${profile.disabled ? "  DISABLED (delivers, takes no uploads)" : ""}` +
           `${profile.secretReference ? `  secret=${profile.secretReference}` : ""}`,
         );
         console.log(`  ${JSON.stringify(profile.config)}`);
@@ -2962,6 +3400,10 @@ async function main() {
       }
     } else if (result.action === "storage.use") {
       console.log(`Site Space of ${result.site} now writes new uploads to "${result.key}".`);
+      console.log(result.note);
+      if (result.warning) console.log(`WARNING: ${result.warning}`);
+    } else if (result.action === "storage.disable" || result.action === "storage.enable") {
+      console.log(`Storage Profile "${result.key}" on ${result.site} is ${result.action === "storage.enable" ? "enabled" : "disabled"}.`);
       console.log(result.note);
     } else if (result.action === "storage.cors") {
       for (const storage of result.storages) {
@@ -2978,6 +3420,9 @@ async function main() {
               `${storage.stagingKeyPrefixes.join(" ") || "(nothing)"}`
             : `  lifecycle: FAILED ${storage.lifecycleError}`,
         );
+        if (!storage.lifecycleApplied) {
+          printLifecycleRefusedWarning(storage.identity);
+        }
       }
     } else if (result.action === "storage.del") {
       console.log(`Removed Storage Profile "${result.key}" from ${result.site}.`);
@@ -2993,6 +3438,13 @@ async function main() {
         );
         for (const finding of profile.findings) {
           console.log(`  ${finding}`);
+        }
+        if (profile.probed && profile.chosenAlgorithm === "sha512") {
+          // The one choice under which a direct upload carries nothing: the Client's digests are SHA-256.
+          console.log(
+            "  WARNING: this storage verifies SHA-512 only. Bodies uploaded straight to it get no digest, so "
+              + "duplicate detection never sees them.",
+          );
         }
       }
     } else {
@@ -3013,6 +3465,9 @@ async function main() {
               `${storage.stagingKeyPrefixes.join(" ") || "(nothing)"}`
             : `  lifecycle ${storage.identity}: FAILED ${storage.lifecycleError}`,
         );
+        if (!storage.lifecycleApplied) {
+          printLifecycleRefusedWarning(storage.identity);
+        }
       }
     }
     return;
@@ -3128,6 +3583,16 @@ async function main() {
 
   if (group === "db" && command === "bootstrap") {
     await runDatabaseBootstrapCommand(flags, json);
+    return;
+  }
+
+  if (group === "db" && command === "drop") {
+    await runDatabaseDropCommand(flags, json);
+    return;
+  }
+
+  if (group === "stage" && command === "remove") {
+    await runStageRemoveCommand(flags, json);
     return;
   }
 

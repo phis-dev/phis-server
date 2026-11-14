@@ -5,7 +5,7 @@ import { getMediaAssetBySiteAndId } from "@/db/media";
 import { getMediaStorageProfile } from "@/db/media-spaces";
 import { ensureFontAssetSubset } from "@/lib/font-subsets";
 import { canDeliverMediaAsset, mediaDeliveryCacheControl, mediaDeliverySafetyHeaders } from "@/lib/media-delivery";
-import { createPhisMediaStorageServiceForProfile } from "@/lib/media-storage";
+import { openPhisMediaStorageForRoute } from "@/lib/media-storage-route";
 import { requireSiteFromRequest } from "@/lib/site-context";
 
 /**
@@ -31,7 +31,9 @@ async function deliver(request: NextRequest, rawId: string, rawSubsetKey: string
   if (!subset) return new NextResponse(null, { status: 404 });
   const profile = await getMediaStorageProfile(site.id, subset.storageProfileId);
   if (!profile) return NextResponse.json({ error: "Storage Profile unavailable." }, { status: 503 });
-  const storage = await createPhisMediaStorageServiceForProfile(profile);
+  const openedStorage = await openPhisMediaStorageForRoute(profile);
+  if (openedStorage.refusal) return openedStorage.refusal;
+  const storage = openedStorage.storage;
   const head = await storage.headObject(subset.storageKey);
   if (!head) return new NextResponse(null, { status: 404 });
   const contentType = "font/woff2";

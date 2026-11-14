@@ -54,6 +54,7 @@ export async function GET(request: NextRequest) {
 
   return createJsonResponse(request, {
     key,
-    overlay: await projectSiteNavigationOverlayTargets(site.id, overlay),
+    // A revision asked for by id passed the preview check above; only that sees unpublished targets.
+    overlay: await projectSiteNavigationOverlayTargets(site.id, overlay, hasRevision ? "editor" : "visitor"),
   });
 }

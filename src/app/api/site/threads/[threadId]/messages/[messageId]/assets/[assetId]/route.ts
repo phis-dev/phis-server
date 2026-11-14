@@ -4,7 +4,7 @@ import { getMediaAssetBySiteAndId } from "@/db/media";
 import { getMediaStorageProfile } from "@/db/media-spaces";
 import { readThreadMessageAsset } from "@/db/threads";
 import { requireSiteAuthenticatedApiContext } from "@/lib/guards/site-admin-api";
-import { createPhisMediaStorageServiceForProfile } from "@/lib/media-storage";
+import { openPhisMediaStorageForRoute } from "@/lib/media-storage-route";
 import { parseStrictPositiveInt } from "@/lib/helpers/request";
 
 export const dynamic = "force-dynamic";
@@ -70,7 +70,9 @@ export async function GET(
   if (!profile) {
     return new NextResponse(null, { status: 404 });
   }
-  const storage = await createPhisMediaStorageServiceForProfile(profile, site.key);
+  const openedStorage = await openPhisMediaStorageForRoute(profile, site.key);
+  if (openedStorage.refusal) return openedStorage.refusal;
+  const storage = openedStorage.storage;
   const head = await storage.headObject(asset.storageKey);
   const body = head ? await storage.getObjectStream(asset.storageKey) : null;
   if (!head || !body) {

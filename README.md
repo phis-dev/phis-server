@@ -94,7 +94,7 @@ not a property of the repository, so they are untracked and an absent one reads 
 | `translation.allowPublicReads`, `translation.allowPublicWrites` | Whether a public-token request may read from `/api/v1/tr` and `/api/v1/locales`, and whether it may write translations through `/api/v1/tr`. A write reaches messages the catalogue already holds; adding new ones needs the window below. |
 | `translation.allowPublicWritesUntil` | When the window for adding new global messages closes, as an ISO timestamp. Absent is closed. Opened from the operator UI for ten minutes at a time, by an application naming itself in `x-phis-app` ([TRANSLATIONS.md](./TRANSLATIONS.md)). |
 | `platformSuperUsers` | Platform operators, written by `phis operator`. |
-| `bootstrap.enabled` | Serves the setup pages; completing setup sets it to `false`. |
+| `bootstrap.enabledUntil` | Until when the setup pages are served, as an ISO timestamp, at most four hours ahead. Absent or past is closed. Written by `phis setup enable` (and once by a fresh Debian install), removed by `phis setup disable` and by finishing the setup; read uncached. |
 | `runtime.containerized` | The operator overview reports the deployment as a container. Default `false`. |
 | `forms.timeouts.minSubmitMs`, `forms.timeouts.maxSubmitMs` | Minimum and maximum submit age for form guard checks. |
 | `email.from`, `email.fromName` | Default sender. |
@@ -181,7 +181,7 @@ logged. CLI commands print human-readable text, or JSON with `--json`.
 
 | Path | Purpose |
 | --- | --- |
-| `/setup` | First setup: runtime check, platform operator, translations, database, schema, first Sites. Served only while `bootstrap.enabled` is `true`; otherwise `404`. |
+| `/setup` | First setup: runtime check, platform operator, translations, database, schema, first Sites. Served only while the setup window is open (`bootstrap.enabledUntil`); otherwise `404`. |
 | `/operator/login`, `/operator` | Operator session and control plane: overview, Sites, translations, operators, infrastructure. |
 | `/recovery` | Shown to a signed-in operator while the database is unreachable. |
 

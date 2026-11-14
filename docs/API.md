@@ -8,13 +8,13 @@ public or internal token, and `session` is the visitor's Site session with the a
 passes (see [AUTHORIZATION.md](../AUTHORIZATION.md)). A route with no access entry performs its own checks
 or none; read its source. Request and response shapes are not listed; the source is linked per route.
 
-163 routes.
+167 routes.
 
 ## Contents
 
 - [`/api/operator`](#apioperator) (5)
 - [`/api/setup`](#apisetup) (2)
-- [`/api/site`](#apisite) (84)
+- [`/api/site`](#apisite) (88)
 - [`/api/v1/addons`](#apiv1addons) (2)
 - [`/api/v1/admin`](#apiv1admin) (1)
 - [`/api/v1/auth`](#apiv1auth) (29)
@@ -67,6 +67,10 @@ Site administration, CMS, media and support API. A Site's `/api/site` proxy forw
 | GET | [`/api/site/admin/logs/detail`](../src/app/api/site/admin/logs/detail/route.ts) | session, `developer-tools` (requireSiteDeveloperApiContext) |  |
 | GET | [`/api/site/admin/media`](../src/app/api/site/admin/media/route.ts) | session, `developer-tools` (requireSiteDeveloperApiContext) |  |
 | PATCH | [`/api/site/admin/media`](../src/app/api/site/admin/media/route.ts) | session, `developer-tools` (requireSiteDeveloperApiContext) |  |
+| GET | [`/api/site/admin/media/spaces`](../src/app/api/site/admin/media/spaces/route.ts) | session, `developer-tools` (requireSiteDeveloperApiContext) |  |
+| PATCH | [`/api/site/admin/media/spaces/{id}`](../src/app/api/site/admin/media/spaces/[id]/route.ts) | session, `developer-tools` (requireSiteDeveloperApiContext) |  |
+| GET | [`/api/site/admin/media/storage`](../src/app/api/site/admin/media/storage/route.ts) | session, `developer-tools` (requireSiteDeveloperApiContext) |  |
+| PATCH | [`/api/site/admin/media/storage`](../src/app/api/site/admin/media/storage/route.ts) | session, `developer-tools` (requireSiteDeveloperApiContext) |  |
 | GET | [`/api/site/admin/settings`](../src/app/api/site/admin/settings/route.ts) | session, `site-admin` (requireSiteAdminOnlyApiContext) |  |
 | PATCH | [`/api/site/admin/settings`](../src/app/api/site/admin/settings/route.ts) | session, `site-admin` (requireSiteAdminOnlyApiContext) |  |
 | GET | [`/api/site/admin/users`](../src/app/api/site/admin/users/route.ts) | session, `site-admin` (requireSiteAdminOnlyApiContext) |  |
@@ -154,6 +158,7 @@ Site administration, CMS, media and support API. A Site's `/api/site` proxy forw
 | PATCH | [`/api/site/media/spaces/{address}`](../src/app/api/site/media/spaces/[address]/route.ts) | session, `authenticated` (requireSiteAuthenticatedApiContext) |  |
 | PUT | [`/api/site/media/uploads/{token}`](../src/app/api/site/media/uploads/[token]/route.ts) | Site session, checked in the handler; session (requireMediaSpaceWriteContext) |  |
 | POST | [`/api/site/media/uploads/{token}/finalize`](../src/app/api/site/media/uploads/[token]/finalize/route.ts) | session (requireMediaSpaceWriteContext) |  |
+| POST | [`/api/site/media/uploads/{token}/heartbeat`](../src/app/api/site/media/uploads/[token]/heartbeat/route.ts) | session (requireMediaSpaceWriteContext) |  |
 | POST | [`/api/site/media/uploads/{token}/report`](../src/app/api/site/media/uploads/[token]/report/route.ts) | Site session, checked in the handler; session (requireMediaSpaceWriteContext) |  |
 | POST | [`/api/site/media/uploads/init`](../src/app/api/site/media/uploads/init/route.ts) | session (requireMediaSpaceWriteContext) |  |
 | GET | [`/api/site/support/forward`](../src/app/api/site/support/forward/route.ts) | session, `support` (requireSiteSupportApiContext) | Where this Site's tickets may be forwarded right now. |
