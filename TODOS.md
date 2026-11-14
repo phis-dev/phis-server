@@ -20,6 +20,12 @@ tracked here because the server contract depends on them.
   `phis-ui` would lose focal rectangles and font metrics in the editor. The references endpoint's `preview`
   flag and the upload `heartbeat` are additive.
 
+- **0.3.1 changes three defaults.** `media.local.rootDir`, `sites.sourcePathRoot` and
+  `sites.instancePathRoot` now default to `/srv/phis/media`, `/srv/phis/sites` and `/srv/phis/instances`.
+  An installation that relied on the old defaults (`/var/phis/media`, `/opt/phis/sources`,
+  `/var/www/phis/sites`) sets them in `config/phis-runtime.json` before upgrading; prod and dev on
+  phi-systems.ch name all three already. No schema change since 0.3.0.
+
 ## Payments
 
 - **Pricing policies in the sandbox.** PAYMENTS.md section 12 and the Stripe mapping of PAYMENTS_STRIPE.md

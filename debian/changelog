@@ -1,3 +1,23 @@
+phis (0.3.1-1) unstable; urgency=medium
+
+  * Translating through a file: phis translations status, export and
+    import, for the global store or one Site's; an import takes an entry
+    only while its source still reads as exported and refuses broken
+    placeholders and tags.
+  * phis email test --to [--site] sends by the configured path and reports
+    every SMTP target's outcome; the operator's Infrastructure gets an
+    Email card, phis install offers the test, phis setup status shows the
+    last one.
+  * The operator's Sites panel shows nginx and Apache in every mode, the
+    stage's web server first, with the 443 host when it serves TLS;
+    phis site config nginx|apache --tls.
+  * phis install creates the media, sources and instances directories and
+    takes --email-from; setup status checks them and the sender; site add
+    and init create them too. Their defaults are /srv/phis/media,
+    /srv/phis/sites and /srv/phis/instances.
+
+ -- Phisys Ltd. <debian@phisys.com>  Sat, 14 Nov 2026 22:01:07 +0000
+
 phis (0.3.0-1) unstable; urgency=medium
 
   * Install without hand edits: phis install (browser or full, every step
