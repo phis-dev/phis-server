@@ -224,6 +224,21 @@ processed.
 - **Post-operation verification.** After init, reconcile, update, or rollback, verify routes, dependency
   graph, build, health endpoint, active release, and proxy target; a failed verification never promotes a
   partial scaffold or leaves every Instance unavailable.
+- **Remove a Site from the host, not only from the database.** `phis site del` deletes the Site's rows and
+  its `sites.overrides` entry and nothing else. Removing twoofhearts (14.11.2026) left the systemd unit
+  `phis-site-<key>`, the nginx server block in `sites-available`/`sites-enabled`, the Let's Encrypt
+  certificate, the Instance symlink under `/srv/phis/instances`, and the source tree with every release
+  under `/srv/phis/sites/<key>` -- all of which `phis` generated or built, and all removed by hand. Give it
+  the shape of `phis stage remove`: without `--force` it only lists what it would remove and what it finds
+  but did not make; stop and disable the unit before the rows go; `--backup <file.tar.gz>`,
+  `--keep-certificate`, `--keep-source`; reload the proxy only after its configuration tests clean.
+- **Release retention.** `phis update` writes a new release under `<site>/.phis/releases/` every run and
+  never removes one: on 14.11.2026 phis held 50 (6.8 GB) and phisys 62 (8.5 GB), about 140 MB each, beside a
+  2.3 GB `.next/cache` in the source tree. Keep the active release and a configurable number of previous
+  ones for rollback (never the one an Instance symlink points at), prune the rest after a successful
+  promotion, and offer `phis release prune --site <key> [--keep <n>]` for what is already there. Whether the
+  build cache stays between updates is part of the same decision: it speeds up the next build and is most of
+  the source tree's size.
 - **Deployment snippets for the web server the stage uses.** The operator UI (`/operator?section=sites`,
   `buildDeploymentBlocks` in `src/components/operator/operator-sites-panel.tsx`) offers the Apache config
   only in the custom mode; docker and systemd show nginx alone. On new.phisys.com (14.11.2026, 0.3.0, systemd,
