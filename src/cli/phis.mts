@@ -156,6 +156,12 @@ import { checkPhiDependencyLicenses } from "./licenses.mts";
 import { checkPhiMediaOwnership, findPhiMediaOrphanedLocalStaging } from "./media-check.mts";
 import { parsePhiUsageDays, readPhiTranslationUsage } from "./translations-usage.mts";
 import {
+  exportPhiTranslations,
+  importPhiTranslations,
+  readPhiTranslationExchangeFile,
+  readPhiTranslationStatus,
+} from "./translations-exchange.mts";
+import {
   addStorageProfile,
   listStorageProfiles,
   reconcileStoragePolicies,
@@ -408,6 +414,9 @@ Usage:
 
   phis media check [--fix] [--prune-staging]
   phis translations usage [--unused-for <days, e.g. 90d>] [--site <site key>] [--examples <n>]
+  phis translations status [--site <site key>] [--locale <code>[,<code>...]]
+  phis translations export --locale <code> [--site <site key>] [--missing] [--out <file.json>]
+  phis translations import --file <file.json> [--site <site key>] [--overwrite] [--dry-run]
   phis maintain [--list] [--task <id>] [--dry-run]
   phis mail drain [--limit <rows>] --api-base-url <url>
   phis licenses check [--package <directory>]
@@ -3207,6 +3216,65 @@ async function main() {
     if (failed.length > 0) {
       process.exitCode = 1;
     }
+    return;
+  }
+
+  if (group === "translations" && command === "status") {
+    // Reads only: how far each locale covers the store (TRANSLATIONS.md, "Translating through a file").
+    const locales = (getOptionalFlag(flags, "locale") ?? "").split(",").map((entry) => entry.trim()).filter(Boolean);
+    const status = await readPhiTranslationStatus(getPool(), { siteKey: getOptionalFlag(flags, "site") ?? null, locales });
+    if (json) {
+      printJson({ ok: true, action: "translations.status", ...status });
+      return;
+    }
+    console.log(`${status.store}: ${status.messages} messages.`);
+    for (const row of status.locales) {
+      console.log(`  ${row.locale}: ${row.translated} translated, ${row.missing} missing.`);
+    }
+    return;
+  }
+
+  if (group === "translations" && command === "export") {
+    const file = await exportPhiTranslations(getPool(), {
+      locale: getRequiredFlag(flags, "locale"),
+      siteKey: getOptionalFlag(flags, "site") ?? null,
+      missing: flags.has("missing"),
+    });
+    const content = `${JSON.stringify(file, null, 2)}\n`;
+    const out = getOptionalFlag(flags, "out");
+    if (!out) {
+      process.stdout.write(content);
+      return;
+    }
+    // A new file only: an export never replaces a file somebody may be translating.
+    writeFileSync(out, content, { encoding: "utf8", flag: "wx" });
+    if (json) {
+      printJson({ ok: true, action: "translations.export", path: out, store: file.store, locale: file.locale, entries: file.entries.length });
+      return;
+    }
+    console.log(`Wrote ${file.entries.length} messages of ${file.store} for ${file.locale} to ${out}.`);
+    return;
+  }
+
+  if (group === "translations" && command === "import") {
+    const filePath = getRequiredFlag(flags, "file");
+    const file = readPhiTranslationExchangeFile(readFileSync(filePath, "utf8"));
+    const result = await importPhiTranslations(getPool(), file, {
+      siteKey: getOptionalFlag(flags, "site") ?? null,
+      overwrite: flags.has("overwrite"),
+      dryRun: flags.has("dry-run"),
+    });
+    if (json) {
+      printJson({ ok: result.counts.refused === 0, action: "translations.import", ...result });
+    } else {
+      const c = result.counts;
+      console.log(
+        `${result.dryRun ? "Would write" : "Wrote"} ${result.store} ${result.locale}: ${c.written} new, ${c.replaced} replaced, `
+          + `${c.unchanged} unchanged, ${c.kept} kept (already translated; --overwrite replaces them), ${c.refused} refused.`,
+      );
+      for (const entry of result.refused) console.log(`  refused [${entry.ctx}] ${entry.msg}: ${entry.reason}`);
+    }
+    if (result.counts.refused > 0) process.exitCode = 1;
     return;
   }
 

@@ -138,7 +138,7 @@ server keeps the old values for up to four hours.
 | --- | --- |
 | An administrative database connection, passed in | `db bootstrap` — it creates what every row below already expects to exist |
 | Configuration files only | `config`, `operator`, `secret init-key`, `module list`, `addon list|check|install|upgrade|enable|disable|remove|forget`, `site config set|add|del` (also read the Site row, so a database), `licenses check` |
-| `database.uri` (serving role) | `schema check|apply`, all `site` commands except `config set|add|del`, `init|reconcile|update`, `module add|del|sync|check`, `addon reconcile|site|config|role|owner|storage|job`, `storage`, `secret set|check|list|del`, `auth`, `media check`, `translations usage`, `maintain`, `payment profile`, `instance` |
+| `database.uri` (serving role) | `schema check|apply`, all `site` commands except `config set|add|del`, `init|reconcile|update`, `module add|del|sync|check`, `addon reconcile|site|config|role|owner|storage|job`, `storage`, `secret set|check|list|del`, `auth`, `media check`, `translations usage|status|export|import`, `maintain`, `payment profile`, `instance` |
 | `database.migrationUri` (migration role) | `schema drop --force`, `addon migrate`, `addon purge` |
 | `secrets.encryptionKey` | `secret set|check`, `auth import-secrets`, `storage` commands that reach a Provider credential, `addon purge` and `addon storage --sweep|--recount` on a Site with an external store, `payment profile probe|enable` and `maintain --task payments` (they reach the Provider's credential) |
 | `api.internalToken` | `init` (copied into the Site), `site check` (running Site), `addon job` and `mail drain` (running server) |
@@ -1020,6 +1020,30 @@ how many were not and how many characters they make, since when the store is tra
 `--examples` (5) of the unread ones. A message counts as unread when its last read, or its creation if it
 was never read, lies further back. It changes nothing. Needs `database.uri`. TRANSLATIONS.md, "When a
 message was last read".
+
+### `phis translations status [--site <site key>] [--locale <code>[,<code>...]]`
+
+How far each locale covers a store: the number of messages, and per locale how many hold a translation and
+how many do not. The global store without `--site`, one Site's with it. A locale named in `--locale` is
+listed even where it holds nothing yet. Reads only. Needs `database.uri`.
+
+### `phis translations export --locale <code> [--site <site key>] [--missing] [--out <file.json>]`
+
+Writes the store's messages with what each holds for `--locale` as a JSON file (version 1: `store`,
+`locale`, `exportedAt`, `entries` of `hash`, `ctx`, `msg`, `translation` or null); `--missing` keeps only
+those without a translation. To stdout, or to `--out`, which must be a new file. `extern` units (a source
+in a language other than the canonical one) are left out. Reads only. Needs `database.uri`.
+
+### `phis translations import --file <file.json> [--site <site key>] [--overwrite] [--dry-run]`
+
+Writes a file's translations into the store it was exported from (the file names it; `--site` must say
+the same). An entry with `translation: null` is skipped. Refused, each with its reason, and exit `1`: a
+message the store no longer holds, a source that changed since the export (the hash and the text are
+compared), an empty translation, one whose placeholders (`%n`, `%1`, `{name}`) differ from the source's,
+and for an `html` unit one whose tags differ. A translation the store already holds is kept unless
+`--overwrite`. One transaction; `--dry-run` rolls it back and reports what it would write. It is an
+editor's write, so the change markers move and every Site reads the new texts. Needs `database.uri`.
+TRANSLATIONS.md, "Translating through a file".
 
 ## media
 

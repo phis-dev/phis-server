@@ -163,6 +163,9 @@ export const PHIS_COMMAND_FLAGS: Record<string, FlagSpec> = {
 
   "media check": { fix: B, "prune-staging": B },
   "translations usage": { "unused-for": S, site: S, examples: S },
+  "translations status": { site: S, locale: S },
+  "translations export": { locale: S, site: S, missing: B, out: S },
+  "translations import": { file: S, site: S, overwrite: B, "dry-run": B },
   "maintain": { list: B, task: S, "dry-run": B },
   "licenses check": { package: S },
 

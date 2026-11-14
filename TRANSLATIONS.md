@@ -559,6 +559,27 @@ Core notes the day it last answered a request for a message from a translation, 
 - A store tracked for fewer days than the question asks about reads as unread; the command says since when
   each store is tracked.
 
+## Translating through a file
+
+A store can be translated without a provider: `phis translations export --locale fr --missing --out
+fr.json` writes what it lacks, somebody -- a person, an agent, another service -- fills in `translation`,
+and `phis translations import --file fr.json [--dry-run]` writes it back (CLI.md, `translations`). The
+global store without `--site`, a Site's with it; `phis translations status` says how far each locale is.
+
+- An entry is matched by its key (hash and context) and taken only while the message still reads as
+  exported. A source reworded in between is refused rather than given a translation of its old wording.
+- Placeholders and, for an `html` unit, tags must be the source's: a translation that drops `%n` or a
+  tag would render broken text wherever the message is read.
+- What the store holds is kept unless `--overwrite`, so an import never replaces an editor's
+  translation by accident.
+- An import is an editor's write, not a fill: it moves the change markers like any edit, and every Site
+  reads the new texts.
+- `extern` units are not exchanged; their key is a source in another language and they belong to the
+  request that made them.
+
+French and Spanish of the global store were filled this way on 14.11.2026, while the DeepL quota was
+spent.
+
 ## Content revisions and deletion
 
 Site content keeps stable content identity but immutable version text links:

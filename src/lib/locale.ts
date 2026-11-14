@@ -1,4 +1,4 @@
-import config from "../../config/phis-config.json";
+import config from "../../config/phis-config.json" with { type: "json" };
 
 export { PHI_CANONICAL_SOURCE_LOCALE } from "@phis/contracts/locale";
 import { PHI_CANONICAL_SOURCE_LOCALE } from "@phis/contracts/locale";
