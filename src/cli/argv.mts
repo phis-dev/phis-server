@@ -57,7 +57,7 @@ export const PHIS_COMMAND_FLAGS: Record<string, FlagSpec> = {
     "site-key": S, "site-name": S, "site-hostname": S, "site-public-base-url": S,
     "site-source-locale": S, "site-default-locale": S, "site-support-email": S,
     "site-admin-email": S, "site-admin-password": S,
-    domain: S, proxy: S,
+    "email-from": S, domain: S, proxy: S,
   },
 
   "proxy config": { domain: S, proxy: S, tls: B, write: B },
@@ -94,8 +94,8 @@ export const PHIS_COMMAND_FLAGS: Record<string, FlagSpec> = {
   "site config set source": { key: S, "source-host": S, "source-port": S, "source-path": S },
   "site config add": { key: S, "instance-host": S, "instance-port": S, "instance-path": S },
   "site config del": { key: S, "instance-host": S },
-  "site config nginx": { key: S, source: B },
-  "site config apache": { key: S },
+  "site config nginx": { key: S, source: B, tls: B },
+  "site config apache": { key: S, tls: B },
   "site config systemd": { key: S, instance: S },
   "site config docker-compose": { key: S },
   "site config runtime": { key: S },
@@ -134,6 +134,7 @@ export const PHIS_COMMAND_FLAGS: Record<string, FlagSpec> = {
   "addon jobs": { addon: S, site: S, limit: S },
 
   "mail drain": { limit: S, "api-base-url": S },
+  "email test": { to: S, site: S },
 
   "storage list": { site: S },
   "storage add": { site: S, key: S, provider: S, config: S, "secret-name": S, "secret-reference": S },

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 
 import { Button } from "@/components/ui/button";
 
@@ -29,6 +29,8 @@ type OperatorInfrastructurePanelProps = {
     staticConfigNote: string;
     runtimeConfigNote: string;
   };
+  /** Further cards, after the paths: the email settings and their test. */
+  children?: ReactNode;
   snapshot: {
     appRoot: string;
     workingDirectory: string;
@@ -50,6 +52,7 @@ type OpenDialog = "static" | "runtime" | null;
 export function OperatorInfrastructurePanel({
   labels,
   snapshot,
+  children,
 }: OperatorInfrastructurePanelProps) {
   const [openDialog, setOpenDialog] = useState<OpenDialog>(null);
 
@@ -107,6 +110,8 @@ export function OperatorInfrastructurePanel({
         <p className="ui_section_body">{labels.staticConfigNote}</p>
         <p className="ui_section_body">{labels.runtimeConfigNote}</p>
       </section>
+
+      {children}
 
       <section className="ui_card">
         <p className="ui_section_eyebrow">{labels.configFilesTitle}</p>

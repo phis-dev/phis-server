@@ -227,4 +227,21 @@ export const OPERATOR_INFRASTRUCTURE_LABELS = {
     "phis-config.json should be treated as read-only here. It may be replaced or overwritten by deployment and system-managed flows.",
   runtimeConfigNote:
     "If operator-managed settings need to be adjusted, change phis-runtime.json rather than phis-config.json.",
+  emailTitle: "Email",
+  emailIntro:
+    "Outgoing mail goes to the SMTP targets in order, the first that accepts it wins. A test message takes exactly that path.",
+  emailFrom: "Sender",
+  emailTargets: "SMTP targets",
+  emailTargetsNone: "none configured",
+  emailTls: "TLS",
+  emailTestRecipient: "Send test to",
+  emailTestSite: "Sender of Site",
+  emailTestSiteNone: "email.from (no Site)",
+  emailTestSend: "Send test email",
+  emailTestPending: "Sending...",
+  emailTestAccepted: "accepted",
+  emailTestFailed: "failed",
+  emailTestNoneAccepted: "No SMTP target accepted the message.",
+  emailTestLast: "Last successful test",
+  emailTestNever: "none sent yet",
 } as const;

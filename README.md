@@ -97,11 +97,11 @@ not a property of the repository, so they are untracked and an absent one reads 
 | `bootstrap.enabledUntil` | Until when the setup pages are served, as an ISO timestamp, at most four hours ahead. Absent or past is closed. Written by `phis setup enable` (and once by a fresh Debian install), removed by `phis setup disable` and by finishing the setup; read uncached. |
 | `runtime.containerized` | The operator overview reports the deployment as a container. Default `false`. |
 | `forms.timeouts.minSubmitMs`, `forms.timeouts.maxSubmitMs` | Minimum and maximum submit age for form guard checks. |
-| `email.from`, `email.fromName` | Default sender. |
+| `email.from`, `email.fromName` | Default sender. `email.from` has no default; `phis install --email-from` sets it, and `phis setup status` warns while it is unset. |
 | `email.smtp.targets`, `.secure`, `.ignoreTls`, `.tlsRejectUnauthorized` | Outbound relays (`host:port`), tried in order. |
-| `media.storageKeyPrefix`, `media.local.rootDir` | Seed of a Site's Local Storage Profile; the root defaults to `<PHIS_APP_ROOT>/storage/media`. Storage Providers bind per Site in `media_storage_profiles` ([GROUPS_AND_STORAGE.md](./GROUPS_AND_STORAGE.md)). |
+| `media.storageKeyPrefix`, `media.local.rootDir` | Seed of a Site's Local Storage Profile; the root defaults to `/srv/phis/media`, which `phis install` creates. Storage Providers bind per Site in `media_storage_profiles` ([GROUPS_AND_STORAGE.md](./GROUPS_AND_STORAGE.md)). |
 | `media.defaults.userQuotaBytes`, `media.defaults.groupQuotaBytes` | Applied once when a Site's `site_media_config` row is materialized. |
-| `sites.sourcePathRoot`, `sites.instancePathRoot`, `sites.basePort` | Defaults for Site source and instance locations used by `phis site config`. |
+| `sites.sourcePathRoot`, `sites.instancePathRoot`, `sites.basePort` | Defaults for Site source and instance locations used by `phis site config`; the roots default to `/srv/phis/sites` and `/srv/phis/instances`, which `phis install` creates. |
 | `sites.overrides.<siteKey>.sourceLocale` | The immutable Site source locale, written by `phis site add`. |
 | `sites.overrides.<siteKey>.source`, `.instances` | `host`, `port`, `path` of the Site source and its instances, written by `phis site config`. |
 

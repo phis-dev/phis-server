@@ -1,5 +1,7 @@
 "use server";
 
+import path from "node:path";
+
 import { PHIS_SERVICE_KINDS } from "@/lib/addons/core-services";
 import { listPhisServiceProviders } from "@/lib/addons/services";
 import { revalidatePath } from "next/cache";
@@ -9,6 +11,13 @@ import { createSite, deleteSite, listSites, updateSiteSettings } from "@/db/site
 import { deleteSiteTranslatedVariantsForLocale } from "@/db/translations";
 import { isBootstrapEnabled } from "@/lib/config";
 import {
+  describePhiConfiguredDirectoryProblems,
+  ensurePhiConfiguredDirectories,
+  listPhiConfiguredDirectories,
+  resolvePhiServiceAccount,
+} from "@/lib/configured-directories";
+import {
+  getPhiRuntimeConfigPath,
   readMergedPhiConfigSync,
   readPhiRuntimeConfigSync,
   writePhiRuntimeConfigSync,
@@ -231,6 +240,25 @@ export async function createOperatorSite(formData: FormData) {
     const message =
       error instanceof Error && error.message ? error.message : "Site creation failed.";
     redirect(buildSitesHref({ error: message, action: "create" }));
+  }
+
+  // What `phis site add` does as well: the roots a Site's sources, releases and media land under, made
+  // when missing. The server runs as the service account and cannot hand a directory to anybody, so what
+  // it cannot make is reported -- the Site is created either way.
+  let directoryProblems: string[];
+  try {
+    directoryProblems = describePhiConfiguredDirectoryProblems(ensurePhiConfiguredDirectories(
+      listPhiConfiguredDirectories(readMergedPhiConfigSync()),
+      resolvePhiServiceAccount(path.dirname(getPhiRuntimeConfigPath())),
+    ));
+  } catch (error) {
+    directoryProblems = [error instanceof Error ? error.message : "The configured directories could not be checked."];
+  }
+  if (directoryProblems.length > 0) {
+    redirect(buildSitesHref({
+      notice: `Site ${key} was created, but: ${directoryProblems.join("; ")}. Run phis install as root to fix it.`,
+      noticeMode: "warning",
+    }));
   }
 
   redirect(buildSitesHref());

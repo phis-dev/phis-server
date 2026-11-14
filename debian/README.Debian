@@ -26,6 +26,10 @@ Install layout
   or `--root` names another stage
 - Default stage root: `/srv/phis/stages/prod`
 - Optional stage environment file: `/srv/phis/stages/<stage>/.env`
+- Shared by the stages, created by `phis install` for the `phis` account:
+  `/srv/phis/media` (`media.local.rootDir`, mode 0750), `/srv/phis/sites`
+  (`sites.sourcePathRoot`) and `/srv/phis/instances` (`sites.instancePathRoot`,
+  both 0755). `phis site add` and `phis init` create them as well when missing.
 
 The packaged `systemd` template keeps the application working directory under
 `/usr/lib/phis/server` and reads the mutable stage configuration through
@@ -81,10 +85,12 @@ Taking phis off a host, in this order:
    removes the web server files, Apache modules, challenge directory and
    certificate that `phis proxy` recorded, and the stage directory. It lists
    what it finds and did not make -- certbot's `-le-ssl` copy of a site, a file
-   written by hand -- and leaves that.
+   written by hand -- and leaves that. The media and Site roots `phis install`
+   created are listed too and never removed: every stage shares them.
 2. `apt purge phis`, once no stage is left.
 3. What remains, by hand: whatever step 1 listed, `deluser phis` and
-   `delgroup phis`, and Local media outside the stage directory.
+   `delgroup phis`, and the shared roots `/srv/phis/media`, `/srv/phis/sites`
+   and `/srv/phis/instances` (or the paths the stages named instead).
 
 Without `phis stage remove` -- a stage set up before it existed has no record
 of its proxy files -- the full list is: the enabled sites `phis.conf` and any
@@ -94,7 +100,8 @@ them; the Let's Encrypt certificate and its renewal (`certbot delete
 --cert-name <domain>`); the site's Apache logs; the database (`DROP DATABASE`
 removes `pg_trgm` with it) and the roles `phis_<stage>_user` and
 `phis_<stage>_migrator`; `/srv/phis/stages/<stage>` with `.env` and `config/`,
-which hold every secret; `/var/www/phis-acme`; and the `phis` account.
+which hold every secret; `/var/www/phis-acme`; `/srv/phis/media`,
+`/srv/phis/sites` and `/srv/phis/instances`; and the `phis` account.
 
 Server Actions encryption key
 -----------------------------
@@ -153,8 +160,9 @@ A fresh install generates the stage's keys (`phis config init-keys`) and opens
 the setup window for one hour (`phis setup enable`); an upgrade does neither.
 The service is not started. Continue with one of:
 
-    phis install                  # everything here: database, schema,
-                                  # operator, optional Site and web server
+    phis install                  # everything here: database, directories,
+                                  # sender, schema, operator, optional
+                                  # Site and web server
     phis install --mode browser   # start the server, finish at /setup
 
 `phis setup status` shows the time left and what is still missing;

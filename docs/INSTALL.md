@@ -11,8 +11,8 @@ The examples use:
 | phis root (stage) | `/srv/phis/stages/prod` |
 | server address | `http://127.0.0.1:5301` (the Debian package's port; use yours) |
 | Site key | `acme` |
-| Site source path | `/opt/phis/sources/acme` |
-| Site instance path | `/var/www/phis/sites/acme` |
+| Site source path | `/srv/phis/sites/acme` |
+| Site instance path | `/srv/phis/instances/acme` |
 
 Run `phis` with `--root /srv/phis/stages/prod`, or export `PHIS_ROOT=/srv/phis/stages/prod` once; the
 examples below assume the variable is exported.
@@ -27,16 +27,19 @@ sudo phis install                  # asks: in the browser, or completely here
 ```
 
 `phis install --mode full` creates the database on the local PostgreSQL as `postgres` (or through
-`--admin-uri`), applies the schema, creates the first operator (a password left empty is generated and shown
+`--admin-uri`), creates the media root `/srv/phis/media` and the Site roots `/srv/phis/sites` and
+`/srv/phis/instances` for the `phis` account (what `media.local.rootDir`, `sites.sourcePathRoot` and
+`sites.instancePathRoot` name), asks for the sender (`--email-from`, written to `email.from`), applies the
+schema, creates the first operator (a password left empty is generated and shown
 once), optionally a first Site with its administrator, and with `--domain <host>` writes and enables the
 proxy file when Apache or nginx is installed. It leaves the setup closed, starts `phis@prod.service` and
-checks `/operator/login` through the proxy. Every step looks first and skips what exists, so running it
+checks `/operator/login` through the proxy. Once a sender is set it offers a test email (`phis email test`). Every step looks first and skips what exists, so running it
 again only fills gaps; every question has a flag ([CLI.md](./CLI.md#phis-install)), so it also runs
 unattended. HTTPS is a separate, deliberate step once DNS points at the host:
 `phis proxy tls --domain <host> --email <you>` ([section 8](#the-servers-own-web-server)).
 
-`phis install --mode browser` does only what the browser cannot -- the keys, and the database with
-`--local-db` or `--admin-uri` -- opens the setup window, starts the service and prints the SSH tunnel to
+`phis install --mode browser` does only what the browser cannot -- the keys, the same three directories,
+the database with `--local-db` or `--admin-uri` and the sender with `--email-from` -- opens the setup window, starts the service and prints the SSH tunnel to
 reach `/setup` ([the setup pages](#alternative-the-setup-pages)).
 
 The sections below are the same installation step by step, and what a host without the package follows.
@@ -75,7 +78,7 @@ The sections below are the same installation step by step, and what a host witho
   package). `pg_trgm` is a trusted extension, so a role with `CREATE` on the database can install it.
 - A **reverse proxy** (nginx or Apache) for TLS and public host names.
 - A system account the services run as, e.g. `phis`, owning the phis root, the Local media root and
-  the Site instance directories.
+  the two Site roots. `phis install` creates the three for the owner of the stage's `config/`.
 - Outbound SMTP relay reachable from the server (`email.smtp.targets`), if the Sites send mail.
 
 Create the two database roles and the database. The serving role owns the Core schema `phis`; the
@@ -211,8 +214,19 @@ In `phis-config.json`, check at least:
 | --- | --- |
 | `translation.supportedLocales`, `translation.sourceLocale` | `phis site add` accepts only supported locales. |
 | `sites.sourcePathRoot`, `sites.instancePathRoot`, `sites.basePort` | Default Site source path, instance path and port (`basePort + site id`). |
-| `media.local.rootDir` | Where the Local Storage Profile writes media; create it, owned by the service account. |
-| `email.from`, `email.fromName`, `email.smtp.targets` | Outbound mail. |
+| `media.local.rootDir` | Where the Local Storage Profile writes media; default `/srv/phis/media`. |
+| `email.from`, `email.fromName`, `email.smtp.targets` | Outbound mail. `email.from` has no default, and nothing can be mailed until it is set; `phis setup status` warns. `phis email test --to <you>` (or "Send test email" under Infrastructure in the operator console) sends one message by exactly that path and prints each target's outcome. |
+
+The defaults of the three directories are this layout: `/srv/phis/media`, `/srv/phis/sites` and
+`/srv/phis/instances`, shared by every stage of a host. An installation set up with the earlier defaults
+(`/var/phis/media`, `/opt/phis/sources`, `/var/www/phis/sites`) names its paths in `phis-runtime.json`.
+`phis install`, `phis site add` and `phis init` create a missing one for the owner of `config/` (mode
+`0750` for media, `0755` for the Site roots); without them, as root:
+
+```sh
+install -d -o phis -g phis -m 0750 /srv/phis/media
+install -d -o phis -g phis -m 0755 /srv/phis/sites /srv/phis/instances
+```
 
 In `phis-runtime.json`, set the values the server needs. `phis db bootstrap` writes the two connection
 strings and `phis config init-keys` every key below that is missing (a fresh Debian install has already run
@@ -354,7 +368,7 @@ Without `--password` the account gets an unknown random password; set one with
 ## 6. Scaffold the Site
 
 ```sh
-phis init acme --path /opt/phis/sources/acme --api-base-url http://127.0.0.1:5301
+phis init acme --path /srv/phis/sites/acme --api-base-url http://127.0.0.1:5301
 ```
 
 - The Site row must exist, and the target must not exist or be an empty directory; otherwise use
@@ -408,19 +422,19 @@ Commit the repository.
 ## 7. Install, build and run the Site
 
 ```sh
-phis update acme --path /opt/phis/sources/acme
+phis update acme --path /srv/phis/sites/acme
 ```
 
 `update` reconciles the scaffold, runs the Site's package manager (install, `typecheck`, `build`),
 and copies the standalone build with `.next/static` and `public/` into
-`/opt/phis/sources/acme/.phis/releases/<release id>/`. The printed release id is the directory name.
+`/srv/phis/sites/acme/.phis/releases/<release id>/`. The printed release id is the directory name.
 Next nests the app inside `.next/standalone` when the Site is built inside a workspace; `update` finds
 it there and writes a `server.js` at the top of the release that starts it, so every release starts
 the same way. Equivalent by hand: `npm install && npm run typecheck && npm run build` in the Site
 directory, without the release copy.
 
 The release holds no copy of `config/site-runtime.json` and so no internal token. Its
-`config/site-runtime.json` is a relative link to `/opt/phis/sources/acme/config/site-runtime.json`,
+`config/site-runtime.json` is a relative link to `/srv/phis/sites/acme/config/site-runtime.json`,
 which the release reads when it starts. A release copied to another host needs that host's own file
 in place of the link.
 
@@ -430,14 +444,14 @@ workspace.
 Run the release from the instance path:
 
 ```sh
-ln -sfn /opt/phis/sources/acme/.phis/releases/<release id> /var/www/phis/sites/acme
-cd /var/www/phis/sites/acme
+ln -sfn /srv/phis/sites/acme/.phis/releases/<release id> /srv/phis/instances/acme
+cd /srv/phis/instances/acme
 NODE_ENV=production HOSTNAME=127.0.0.1 PORT=52001 node server.js
 ```
 
 - The port is `sites.basePort + site id` (`phis site config runtime --key acme` prints it).
 - The Site reads `config/site-runtime.json` once per process, through the release's link from
-  `/opt/phis/sources/acme/config/`. After changing the file, restart the Site; no new release is
+  `/srv/phis/sites/acme/config/`. After changing the file, restart the Site; no new release is
   needed.
 - Rendered Public Area pages are kept in the process's memory, 128 MB per process by default. Set
   `PHIS_RENDER_CACHE_MB` to change it and size the host's memory for all Site processes (see
@@ -449,7 +463,9 @@ For development, `npm run dev` in the Site directory runs `next dev`.
 
 ## 8. Web server and service units
 
-`phis site config` prints snippets; it writes nothing ([CLI.md](./CLI.md#phis-site-config)).
+`phis site config` prints snippets; it writes nothing ([CLI.md](./CLI.md#phis-site-config)). The
+operator UI (`/operator?section=sites`, a Site's deployment action) shows the same snippets, Apache and
+nginx both, the stage's web server first; over HTTPS when `phis proxy tls` set the stage up for it.
 
 ```sh
 phis site config systemd --key acme > /etc/systemd/system/phis-site-acme.service
@@ -559,15 +575,15 @@ reasoning and what an edge cache in front would have to respect.
 A Site Module is a package the Site build includes.
 
 ```sh
-phis module add --site acme --package @phis/marketplace --spec 0.1.0 --path /opt/phis/sources/acme
-phis update acme --path /opt/phis/sources/acme
+phis module add --site acme --package @phis/marketplace --spec 0.1.0 --path /srv/phis/sites/acme
+phis update acme --path /srv/phis/sites/acme
 ```
 
 `module add` records the Module in `config/phis-modules.json`, adds the dependency when `--spec` is
 given, and rewrites `src/generated/site-modules*.ts` — including `site-modules-fonts.ts`, which lists
 the installed packages that export `./fonts`, and `site-module-packages.json`, which `next.config.ts`
 reads so Next compiles every installed Module package. A package added before it is installed is not yet
-readable, so run `phis module sync --site acme --path /opt/phis/sources/acme` after the install to
+readable, so run `phis module sync --site acme --path /srv/phis/sites/acme` after the install to
 pick up the typefaces it ships. `update` installs and builds a new release;
 deploy it (step 7) and restart the Site service. Then activate the Module for an Area in the Builder.
 `phis module check --site acme` inspects the installed packages
@@ -627,7 +643,7 @@ From source, restart the server instances one by one (`phis instance drain` firs
 ### Site
 
 ```sh
-phis update acme --path /opt/phis/sources/acme
+phis update acme --path /srv/phis/sites/acme
 ```
 
 `update` runs `reconcile` first, which:

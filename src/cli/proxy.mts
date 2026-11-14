@@ -3,6 +3,29 @@ import { createHash } from "node:crypto";
 import { existsSync, lstatSync, mkdirSync, readFileSync, readlinkSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
+import {
+  PHI_ACME_WEBROOT,
+  type PhiProxyKind,
+  renderApacheAcmeChallenge,
+  renderApacheHttpsRedirect,
+  renderApacheSslLines,
+  renderNginxAcmeChallenge,
+  renderNginxHttpsRedirect,
+  renderNginxSslLines,
+} from "../lib/proxy-tls-blocks.ts";
+import {
+  type PhiServerProxyRecord,
+  readPhiServerProxyRecord,
+  resolvePhiProxyRecordPath,
+} from "../lib/server-proxy-record.ts";
+
+export { certificatePaths, PHI_ACME_WEBROOT, type PhiProxyKind } from "../lib/proxy-tls-blocks.ts";
+export {
+  type PhiServerProxyRecord,
+  readPhiServerProxyRecord,
+  resolvePhiProxyRecordPath,
+} from "../lib/server-proxy-record.ts";
+
 /**
  * The web server in front of the server itself: `phis proxy config` and `phis proxy tls`.
  *
@@ -15,8 +38,6 @@ import path from "node:path";
  * A Site's own proxy configuration is `phis site config nginx|apache`; this is only the server's.
  */
 
-export type PhiProxyKind = "apache" | "nginx";
-
 export type PhiServerProxyInput = {
   kind: PhiProxyKind;
   domain: string;
@@ -26,12 +47,6 @@ export type PhiServerProxyInput = {
 };
 
 const APACHE_SITE = "/etc/apache2/sites-available/phis.conf";
-/**
- * Where certbot's webroot challenge is answered from. Served by the web server itself on port 80, ahead of
- * the proxy and of the HTTPS redirect, so issuing and renewing need neither a certbot plugin nor an edit of
- * this file.
- */
-export const PHI_ACME_WEBROOT = "/var/www/phis-acme";
 const NGINX_SITE = "/etc/nginx/sites-available/phis.conf";
 const NGINX_ENABLED = "/etc/nginx/sites-enabled/phis.conf";
 
@@ -47,11 +62,6 @@ export function assertPhiProxyDomain(domain: string) {
     throw new Error(`"${domain}" is not a host name, as api.example.com.`);
   }
   return value;
-}
-
-export function certificatePaths(domain: string) {
-  const live = `/etc/letsencrypt/live/${domain}`;
-  return { fullchain: `${live}/fullchain.pem`, privkey: `${live}/privkey.pem` };
 }
 
 /** The modules the Apache file needs, in the order `a2enmod` takes them. */
@@ -70,11 +80,7 @@ const HEADER = (input: PhiServerProxyInput, tool: string) => `# Written by \`phi
 
 function renderApache(input: PhiServerProxyInput) {
   const members = input.ports.map((port) => `  BalancerMember http://127.0.0.1:${port} ttl=4`).join("\n");
-  const challenge = `  # certbot's webroot challenge (\`phis proxy tls\`), answered here rather than by phis.
-  Alias /.well-known/acme-challenge/ ${PHI_ACME_WEBROOT}/.well-known/acme-challenge/
-  <Directory ${PHI_ACME_WEBROOT}/.well-known/acme-challenge/>
-    Require all granted
-  </Directory>`;
+  const challenge = renderApacheAcmeChallenge("phis proxy tls");
   const proxy = (scheme: "http" | "https") => `  # The original Host reaches the runtime with its port, which the form relay compares against the
   # browser's Referer.
   ProxyPreserveHost On
@@ -101,7 +107,6 @@ ${proxy("http")}
 </VirtualHost>
 `;
   }
-  const cert = certificatePaths(input.domain);
   return `${HEADER(input, "tls")}# Modules: a2enmod ${requiredApacheModules(true).join(" ")}
 
 ${pool}
@@ -110,16 +115,13 @@ ${pool}
 
 ${challenge}
 
-  # Everything but the challenge goes to HTTPS.
-  RedirectMatch permanent "^/(?!\\.well-known/acme-challenge/)(.*)$" "https://${input.domain}/$1"
+${renderApacheHttpsRedirect(input.domain)}
 </VirtualHost>
 
 <VirtualHost *:443>
   ServerName ${input.domain}
 
-  SSLEngine on
-  SSLCertificateFile ${cert.fullchain}
-  SSLCertificateKeyFile ${cert.privkey}
+${renderApacheSslLines(input.domain)}
 
 ${proxy("https")}
 </VirtualHost>
@@ -140,10 +142,7 @@ function renderNginx(input: PhiServerProxyInput) {
     proxy_set_header X-Forwarded-Proto $scheme;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
   }`;
-  const challenge = `  # certbot's webroot challenge (\`phis proxy tls\`), answered here rather than by phis.
-  location ^~ /.well-known/acme-challenge/ {
-    root ${PHI_ACME_WEBROOT};
-  }`;
+  const challenge = renderNginxAcmeChallenge("phis proxy tls");
   const head = `${HEADER(input, input.tls ? "tls" : "config")}# In nginx's http context (Debian's sites-enabled/*), where \`map\` and \`upstream\` are allowed.
 
 map $http_upgrade $phis_connection {
@@ -170,7 +169,6 @@ ${location}
 }
 `;
   }
-  const cert = certificatePaths(input.domain);
   return `${head}
 server {
   listen 80;
@@ -178,17 +176,11 @@ server {
 
 ${challenge}
 
-  location / {
-    return 301 https://$host$request_uri;
-  }
+${renderNginxHttpsRedirect()}
 }
 
 server {
-  listen 443 ssl;
-  server_name ${input.domain};
-
-  ssl_certificate ${cert.fullchain};
-  ssl_certificate_key ${cert.privkey};
+${renderNginxSslLines(input.domain)}
 
 ${location}
 }
@@ -287,46 +279,6 @@ export function applyPhiServerProxyConfig(input: PhiServerProxyInput): PhiServer
   steps.push(runPhiSystemCommand("nginx", ["-t"]));
   steps.push(runPhiSystemCommand("systemctl", ["reload-or-restart", "nginx"]));
   return { path: NGINX_SITE, steps, content, enabledModules: [] };
-}
-
-/**
- * What `phis proxy config --write` and `phis proxy tls` put on this host, kept in the stage they serve.
- *
- * Removal takes exactly this and nothing else: the file as it was written (an edited one is the operator's
- * and stays), the modules that were off before phis switched them on, the challenge directory, and the
- * certificate `proxy tls` obtained. Kept beside the stage's own configuration in
- * `config/phis-proxy.json`, because the proxy serves that stage's ports and goes when it goes. A host where
- * the file was written by hand, or by a release before this record existed, has none, and removal then
- * lists rather than guesses.
- */
-export type PhiServerProxyRecord = {
-  version: 1;
-  kind: PhiProxyKind;
-  domain: string;
-  tls: boolean;
-  path: string;
-  /** The enabled link `proxy config` made (nginx) or `a2ensite` made (Apache). */
-  enabledPath: string;
-  sha256: string;
-  enabledModules: string[];
-  acmeWebroot: string;
-  /** certbot's certificate name, which `proxy tls` makes the domain. */
-  certificate: string | null;
-  writtenAt: string;
-};
-
-export function resolvePhiProxyRecordPath(root: string) {
-  return path.join(root, "config", "phis-proxy.json");
-}
-
-export function readPhiServerProxyRecord(root: string): PhiServerProxyRecord | null {
-  const file = resolvePhiProxyRecordPath(root);
-  if (!existsSync(file)) return null;
-  const value = JSON.parse(readFileSync(file, "utf8")) as Partial<PhiServerProxyRecord>;
-  if (value.version !== 1 || (value.kind !== "apache" && value.kind !== "nginx") || typeof value.path !== "string") {
-    throw new Error(`${file} is not a proxy record this release reads.`);
-  }
-  return value as PhiServerProxyRecord;
 }
 
 function sha256(content: string | Buffer) {

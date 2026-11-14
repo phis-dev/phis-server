@@ -3,6 +3,13 @@ import path from "node:path";
 
 export const PHIS_ROOT_ENV = "PHIS_ROOT";
 export const PHIS_DEFAULT_STAGE_ROOT = "/srv/phis/stages/prod";
+import {
+  PHIS_DEFAULT_MEDIA_ROOT,
+  PHIS_DEFAULT_SITE_INSTANCE_ROOT,
+  PHIS_DEFAULT_SITE_SOURCE_ROOT,
+} from "./host-layout.ts";
+
+export { PHIS_DEFAULT_MEDIA_ROOT, PHIS_DEFAULT_SITE_INSTANCE_ROOT, PHIS_DEFAULT_SITE_SOURCE_ROOT };
 
 export type PlatformSuperUser = {
   email: string;
@@ -231,8 +238,8 @@ export type PhiConfigPaths = {
 
 export const DEFAULT_CONFIG: PhisConfig = {
   sites: {
-    sourcePathRoot: "/opt/phis/sources",
-    instancePathRoot: "/var/www/phis/sites",
+    sourcePathRoot: PHIS_DEFAULT_SITE_SOURCE_ROOT,
+    instancePathRoot: PHIS_DEFAULT_SITE_INSTANCE_ROOT,
     basePort: 52000,
   },
   runtime: {
@@ -249,7 +256,9 @@ export const DEFAULT_CONFIG: PhisConfig = {
   },
   media: {
     storageKeyPrefix: "sites",
-    local: {},
+    local: {
+      rootDir: PHIS_DEFAULT_MEDIA_ROOT,
+    },
     // Capacity only. Whether a Space kind exists at all is not configured here: it follows from the
     // Modules a Site activates, so a Site that activates none has no User or Group Space.
     defaults: {

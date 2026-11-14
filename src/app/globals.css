@@ -1825,6 +1825,20 @@ a {
   gap: var(--phi-2);
 }
 
+/* The web server this stage does not run: a full-width row below the open snippets, so a closed card
+   does not stretch to their height. */
+.operator-deployment-collapsed {
+  grid-column: 1 / -1;
+}
+
+.operator-deployment-collapsed > summary {
+  cursor: pointer;
+}
+
+.operator-deployment-collapsed[open] > summary {
+  margin-bottom: var(--phi-2);
+}
+
 .ui_code_block {
   overflow: auto;
   height: 100%;

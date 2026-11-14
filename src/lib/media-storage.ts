@@ -7,7 +7,7 @@ import path from "node:path";
 import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 
-import { resolvePhiAppPath } from "./app-paths";
+import { PHIS_DEFAULT_MEDIA_ROOT } from "./config-core";
 import { readMergedPhiConfigSync } from "./config-files";
 import { buildPhiMediaUploadStagingKeyPrefix } from "./media-storage-policies-core";
 import { resolvePhiSecret } from "./secrets/resolver";
@@ -164,7 +164,7 @@ export function resolvePhisMediaStorageConfig(
     rootDir:
       overrides?.rootDir?.trim() ||
       media.local?.rootDir?.trim() ||
-      resolvePhiAppPath("storage", "media"),
+      PHIS_DEFAULT_MEDIA_ROOT,
   };
 }
 

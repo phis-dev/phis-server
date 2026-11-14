@@ -2,6 +2,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
+import type { PhiConfiguredDirectory } from "../lib/configured-directories.ts";
 import { readPhiStagePorts } from "./proxy.mts";
 
 /**
@@ -14,6 +15,11 @@ import { readPhiStagePorts } from "./proxy.mts";
  * This removes what phis itself made for the stage -- the database and roles its configuration names, the
  * proxy files `phis proxy` recorded, the certificate `phis proxy tls` obtained, the stage directory -- and
  * lists what it finds and did not make, rather than guessing whose it is.
+ *
+ * The media root and the two Site roots are the exception to "what phis made, it removes": `phis install`
+ * creates them, but by default every stage of a host names the same three (`/srv/phis/media`,
+ * `/srv/phis/sites`, `/srv/phis/instances`), and they hold the Sites and their uploads rather than anything
+ * of the stage's. So they are listed as left in place, never removed, whether or not another stage is left.
  */
 
 export const PHI_STAGES_ROOT = "/srv/phis/stages";
@@ -122,6 +128,25 @@ export function stopPhiStageUnit(unit: string) {
     }
   }
   return before;
+}
+
+/**
+ * The configured directories that exist, each with whether it is empty -- what `phis stage remove` names as
+ * left behind. Inside the stage directory none of them is listed: that goes with the stage anyway.
+ */
+export function listPhiStageSharedDirectories(directories: readonly PhiConfiguredDirectory[], stageRoot?: string) {
+  const inside = stageRoot ? `${path.resolve(stageRoot)}${path.sep}` : null;
+  return directories
+    .filter((directory) => existsSync(directory.path) && !(inside && directory.path.startsWith(inside)))
+    .map((directory) => {
+      let empty = false;
+      try {
+        empty = readdirSync(directory.path).length === 0;
+      } catch {
+        // Not readable by whoever runs this: then it cannot be called empty either.
+      }
+      return { path: directory.path, setting: directory.setting, empty };
+    });
 }
 
 export function removePhiStageDirectory(root: string) {

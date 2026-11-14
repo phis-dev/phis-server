@@ -162,6 +162,18 @@ export async function getPhiCliSiteByKey(pool: Pool, siteKey: string) {
   return rows[0] ? mapSiteRow(rows[0]) : null;
 }
 
+/**
+ * The sender a Site's mail goes out with, as `src/lib/notifications/deliver.ts` reads it: `mail_from` and
+ * `mail_from_name` of its row. For `phis email test --site`.
+ */
+export async function getPhiCliSiteMailSender(pool: Pool, siteKey: string) {
+  const { rows } = await pool.query<{ mail_from: string; mail_from_name: string }>(
+    "SELECT mail_from, mail_from_name FROM phis.sites WHERE key = $1 LIMIT 1",
+    [siteKey],
+  );
+  return rows[0] ? { mailFrom: rows[0].mail_from, mailFromName: rows[0].mail_from_name } : null;
+}
+
 export async function updatePhiCliSite(pool: Pool, input: {
   siteKey: string;
   name?: string;

@@ -10,14 +10,9 @@ import {
 } from "@/app/(operator)/operator/actions";
 import type { SiteListRecord } from "@/db/sites";
 import type { OperationalMode } from "@/lib/operator-runtime";
-import {
-  buildApacheConfig,
-  buildCustomRuntimeNote,
-  buildDockerCompose,
-  buildNginxConfig,
-  buildSystemdUnit,
-  type SiteDeploymentSettings,
-} from "@/lib/site-deployment-config";
+import type { PhiStageWebServer } from "@/lib/server-proxy-record";
+import type { SiteDeploymentSettings } from "@/lib/site-deployment-config";
+import { buildDeploymentBlocks } from "@/components/operator/deployment-blocks";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { MultiSelectMenu } from "@/components/ui/multi-select-menu";
@@ -114,33 +109,6 @@ function FieldLabelWithHelp({
 
 function formatLocales(site: SiteListRecord) {
   return site.availableLocales.map((entry) => entry.code.toUpperCase()).join(", ");
-}
-
-function buildDeploymentBlocks(
-  site: SiteListRecord,
-  mode: OperationalMode,
-  labels: OperatorSitesLabels,
-  siteSettings: SiteDeploymentSettings,
-) {
-  if (mode === "docker") {
-    return [
-      { title: labels.dockerCompose, code: buildDockerCompose(site, siteSettings) },
-      { title: labels.nginxConfig, code: buildNginxConfig(site, siteSettings) },
-    ];
-  }
-
-  if (mode === "systemd") {
-    return [
-      { title: labels.systemdUnit, code: buildSystemdUnit(site, siteSettings) },
-      { title: labels.nginxConfig, code: buildNginxConfig(site, siteSettings) },
-    ];
-  }
-
-  return [
-    { title: labels.customRuntime, code: buildCustomRuntimeNote(site, siteSettings) },
-    { title: labels.nginxConfig, code: buildNginxConfig(site, siteSettings) },
-    { title: labels.apacheConfig, code: buildApacheConfig(site, siteSettings) },
-  ];
 }
 
 function SiteEditorModal({
@@ -343,16 +311,18 @@ function DeploymentModal({
   site,
   labels,
   mode,
+  webServer,
   siteSettings,
   onClose,
 }: {
   site: SiteListRecord;
   labels: OperatorSitesLabels;
   mode: OperationalMode;
+  webServer: PhiStageWebServer;
   siteSettings: SiteDeploymentSettings;
   onClose: () => void;
 }) {
-  const blocks = buildDeploymentBlocks(site, mode, labels, siteSettings);
+  const blocks = buildDeploymentBlocks(site, mode, labels, siteSettings, webServer);
 
   return (
     <div className="ui_overlay" role="presentation" onClick={onClose}>
@@ -383,14 +353,23 @@ function DeploymentModal({
 
         <p className="ui_section_body ui_dialog_subtitle">{site.publicBaseUrl}</p>
         <div className="operator-deployment-grid">
-          {blocks.map((block) => (
-            <article key={block.title} className="ui_card ui_card_fill">
-              <p className="ui_section_eyebrow">{block.title}</p>
-              <pre className="ui_code_block">
-                <code>{block.code}</code>
-              </pre>
-            </article>
-          ))}
+          {blocks.map((block) =>
+            block.collapsed ? (
+              <details key={block.title} className="ui_card operator-deployment-collapsed">
+                <summary className="ui_section_eyebrow">{block.title}</summary>
+                <pre className="ui_code_block">
+                  <code>{block.code}</code>
+                </pre>
+              </details>
+            ) : (
+              <article key={block.title} className="ui_card ui_card_fill">
+                <p className="ui_section_eyebrow">{block.title}</p>
+                <pre className="ui_code_block">
+                  <code>{block.code}</code>
+                </pre>
+              </article>
+            ),
+          )}
         </div>
       </div>
     </div>
@@ -499,6 +478,7 @@ export function OperatorSitesPanel({
   labels,
   sites,
   mode,
+  webServer,
   allowedLocales,
   siteSettings,
   error,
@@ -512,6 +492,7 @@ export function OperatorSitesPanel({
   labels: OperatorSitesLabels;
   sites: SiteListRecord[];
   mode: OperationalMode;
+  webServer: PhiStageWebServer;
   allowedLocales: string[];
   siteSettings: SiteDeploymentSettings;
   error: string | null;
@@ -680,6 +661,7 @@ export function OperatorSitesPanel({
           site={selectedSite}
           labels={labels}
           mode={mode}
+          webServer={webServer}
           siteSettings={siteSettings}
           onClose={() => setDeploymentSiteId(null)}
         />

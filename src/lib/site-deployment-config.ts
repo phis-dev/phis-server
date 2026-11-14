@@ -1,6 +1,15 @@
+import { PHIS_DEFAULT_SITE_INSTANCE_ROOT, PHIS_DEFAULT_SITE_SOURCE_ROOT } from "./host-layout.ts";
+import {
+  PHI_ACME_WEBROOT,
+  renderApacheAcmeChallenge,
+  renderApacheHttpsRedirect,
+  renderApacheSslLines,
+  renderNginxAcmeChallenge,
+  renderNginxHttpsRedirect,
+  renderNginxSslLines,
+} from "./proxy-tls-blocks.ts";
+
 const DEFAULT_LOCAL_HOST = "localhost";
-const DEFAULT_SOURCE_PATH_ROOT = "/opt/phis/sources";
-const DEFAULT_INSTANCE_PATH_ROOT = "/var/www/phis/sites";
 const DEFAULT_INSTANCE_PORT_BASE = 52000;
 const DEFAULT_NGINX_CLIENT_MAX_BODY_SIZE = "2g";
 
@@ -75,7 +84,21 @@ export type SiteRenderOptions = {
   useSource?: boolean;
   /** Which instance a systemd unit is for, as `phis site config runtime` numbers them. */
   instanceIndex?: number;
+  /**
+   * nginx and Apache: serve the Site on 443 and redirect port 80 there, the way `phis proxy tls` serves
+   * the server. Set when the stage's proxy record says `tls: true`, so a Site behind that web server
+   * matches it.
+   */
+  tls?: boolean;
 };
+
+/**
+ * The certificate command for a Site's host. The web server answers the challenge from the same webroot
+ * `phis proxy tls` uses, so certbot needs no plugin and the snippet stays as written.
+ */
+function siteCertbotCommand(site: SiteDeploymentRecord) {
+  return `certbot certonly --webroot -w ${PHI_ACME_WEBROOT} -d ${site.hostname}`;
+}
 
 function normalizeHost(host: string | undefined, fallback = DEFAULT_LOCAL_HOST) {
   const value = host?.trim();
@@ -110,7 +133,7 @@ export function resolveSiteSource(
   const override = resolveSiteOverride(site, settings)?.source;
   const path =
     override?.path?.trim() ||
-    `${normalizePathRoot(settings?.sourcePathRoot, DEFAULT_SOURCE_PATH_ROOT)}/${site.key}`;
+    `${normalizePathRoot(settings?.sourcePathRoot, PHIS_DEFAULT_SITE_SOURCE_ROOT)}/${site.key}`;
   const port =
     override?.port && Number.isInteger(override.port) && override.port > 0
       ? override.port
@@ -133,7 +156,7 @@ function buildDefaultInstance(site: SiteDeploymentRecord, settings?: SiteDeploym
   return {
     host: DEFAULT_LOCAL_HOST,
     port: portBase + site.id,
-    path: `${normalizePathRoot(settings?.instancePathRoot, DEFAULT_INSTANCE_PATH_ROOT)}/${site.key}`,
+    path: `${normalizePathRoot(settings?.instancePathRoot, PHIS_DEFAULT_SITE_INSTANCE_ROOT)}/${site.key}`,
   };
 }
 
@@ -319,6 +342,33 @@ ${buildProxyHeaderLines(connection, [`proxy_set_header Origin http://${servers[0
 `
     : "";
 
+  const location = `
+  location / {
+    proxy_pass http://${name};
+${buildProxyHeaderLines(connection)}
+  }`;
+  const serverBlocks = options?.tls
+    ? `server {
+  listen 80;
+  server_name ${site.hostname};
+
+${renderNginxAcmeChallenge(siteCertbotCommand(site))}
+
+${renderNginxHttpsRedirect()}
+}
+
+server {
+${renderNginxSslLines(site.hostname)}
+  client_max_body_size ${DEFAULT_NGINX_CLIENT_MAX_BODY_SIZE};
+${hmrLocation}${location}
+}`
+    : `server {
+  listen 80;
+  server_name ${site.hostname};
+  client_max_body_size ${DEFAULT_NGINX_CLIENT_MAX_BODY_SIZE};
+${hmrLocation}${location}
+}`;
+
   return `# Include in nginx's http context (on Debian: /etc/nginx/sites-available/, linked from sites-enabled/).
 map $http_upgrade $${connection} {
   default upgrade;
@@ -332,21 +382,43 @@ ${servers.map((server) => `  server ${server};`).join("\n")}
   keepalive_timeout 4s;
 }
 
-server {
-  listen 80;
-  server_name ${site.hostname};
-  client_max_body_size ${DEFAULT_NGINX_CLIENT_MAX_BODY_SIZE};
-${hmrLocation}
-  location / {
-    proxy_pass http://${name};
-${buildProxyHeaderLines(connection)}
-  }
-}`;
+${serverBlocks}`;
 }
 
-export function buildApacheConfig(site: SiteDeploymentRecord, settings?: SiteDeploymentSettings) {
+/**
+ * The Apache virtual host for a Site, proxying to its primary instance.
+ *
+ * With `tls`, port 80 answers only certbot's challenge and redirects the rest, and 443 tells the runtime
+ * the request came in encrypted (`X-Forwarded-Proto`, which needs `headers` and `ssl` as `phis proxy tls`
+ * enables them).
+ */
+export function buildApacheConfig(
+  site: SiteDeploymentRecord,
+  settings?: SiteDeploymentSettings,
+  options?: SiteRenderOptions,
+) {
   const instance = resolvePrimaryInstance(site, settings);
   const port = requireInstancePort(instance, "apache");
+  if (options?.tls) {
+    return `<VirtualHost *:80>
+  ServerName ${site.hostname}
+
+${renderApacheAcmeChallenge(siteCertbotCommand(site))}
+
+${renderApacheHttpsRedirect(site.hostname)}
+</VirtualHost>
+
+<VirtualHost *:443>
+  ServerName ${site.hostname}
+
+${renderApacheSslLines(site.hostname)}
+
+  ProxyPreserveHost On
+  ProxyPass / http://127.0.0.1:${port}/
+  ProxyPassReverse / http://127.0.0.1:${port}/
+  RequestHeader set X-Forwarded-Proto "https"
+</VirtualHost>`;
+  }
   return `<VirtualHost *:80>
   ServerName ${site.hostname}
 
@@ -430,7 +502,7 @@ export function renderSiteConfig(
     case "nginx":
       return buildNginxConfig(site, settings, options);
     case "apache":
-      return buildApacheConfig(site, settings);
+      return buildApacheConfig(site, settings, options);
     case "systemd":
       return buildSystemdUnit(site, settings, options);
     case "docker-compose":

@@ -37,6 +37,7 @@ import {
   createPhiCliSite,
   deletePhiCliSiteByKey,
   getPhiCliSiteByKey,
+  getPhiCliSiteMailSender,
   listPhiCliSites,
   setPhiCliSiteEnabled,
   updatePhiCliSite,
@@ -84,6 +85,7 @@ import {
 } from "./schema.mts";
 import { bootstrapPhiDatabase, dropPhiDatabase, readPhiDatabaseNamesFromUris } from "./db-bootstrap.mts";
 import { runPhiInstall } from "./install.mts";
+import { printPhiEmailTestResult, runPhiEmailTest } from "./email-test.mts";
 import {
   applyAndRecordPhiServerProxyConfig,
   assertPhiProxyDomain,
@@ -103,17 +105,23 @@ import {
   archivePhiStageConfig,
   findPhiStageProxyLeftovers,
   listPhiOtherStages,
+  listPhiStageSharedDirectories,
   removePhiStageDirectory,
   resolvePhiStageName,
   stopPhiStageUnit,
 } from "./stage.mts";
 import {
   closePhiSetupWindow,
+  ensurePhiStageDirectories,
   formatPhiDuration,
   initPhiRuntimeKeys,
   openPhiSetupWindow,
   readPhiSetupStatus,
 } from "./setup.mts";
+import {
+  describePhiConfiguredDirectoryProblems,
+  listPhiConfiguredDirectories,
+} from "../lib/configured-directories.ts";
 import {
   inspectSiteModulePackage,
   type PhiSiteModulePackageReport,
@@ -286,8 +294,9 @@ Usage:
                [--site-key <key> --site-hostname <host> --site-support-email <email> [--site-name <name>]
                 [--site-public-base-url <url>] [--site-source-locale <l>] [--site-default-locale <l>]
                 [--site-admin-email <email>] [--site-admin-password <pw>]]
-               [--domain <host> [--proxy apache|nginx]]
+               [--email-from <address>] [--domain <host> [--proxy apache|nginx]]
                          Asks for what a flag does not give, when run in a terminal. Every step skips what exists.
+                         Creates media.local.rootDir, sites.sourcePathRoot and sites.instancePathRoot when missing.
 
   phis setup enable [--for <duration, e.g. 30m, 1h; at most 4h>]
   phis setup disable
@@ -312,6 +321,7 @@ Usage:
   phis stage remove --local-db | --admin-uri <postgres uri> | --keep-database
                     [--backup <file.tar.gz>] [--keep-proxy] [--keep-certificate] [--force]
                          Without --force only lists what it would remove and what it finds but did not make.
+                         The shared media and Site roots are listed, never removed.
 
   phis schema check
   phis schema apply
@@ -334,8 +344,8 @@ Usage:
   phis site config set source --key|-k <site key> [--source-host <host> --source-port <port> --source-path <path>]
   phis site config add --key|-k <site key> --instance-host <host> [--instance-port <port>] --instance-path <path>
   phis site config del --key|-k <site key> --instance-host <host>
-  phis site config nginx --key|-k <site key> [--source]
-  phis site config apache --key|-k <site key>
+  phis site config nginx --key|-k <site key> [--source] [--tls]
+  phis site config apache --key|-k <site key> [--tls]
   phis site config systemd --key|-k <site key> [--instance <n>]
   phis site config docker-compose --key|-k <site key>
   phis site config runtime --key|-k <site key>
@@ -419,6 +429,9 @@ Usage:
   phis translations import --file <file.json> [--site <site key>] [--overwrite] [--dry-run]
   phis maintain [--list] [--task <id>] [--dry-run]
   phis mail drain [--limit <rows>] --api-base-url <url>
+  phis email test --to <address> [--site <site key>]
+                         Sends a short test message through email.smtp.targets in order and prints each
+                         target's outcome; exit 1 when none accepted it.
   phis licenses check [--package <directory>]
 
   phis instance list [--stale-after <seconds>]
@@ -970,10 +983,16 @@ async function createSite(flags: FlagMap, json: boolean) {
     throw error;
   }
 
+  // The Site's sources, releases and media land under these; a Site is never the reason to mkdir by hand.
+  // A directory that cannot be made is a warning, not a failure: the Site exists either way, and
+  // `phis setup status` keeps listing what is wrong.
+  const directoryProblems = describePhiConfiguredDirectoryProblems(ensurePhiStageDirectories(configRoot));
+
   if (json) {
     printJson({
       ok: true,
       action: "site.add",
+      directoryProblems,
       key: created.key,
       name: created.name,
       hostname: created.hostname,
@@ -987,6 +1006,12 @@ async function createSite(flags: FlagMap, json: boolean) {
   }
 
   console.log(`Created site ${created.key}.`);
+  printDirectoryProblems(directoryProblems);
+}
+
+/** Lines for the configured directories that are missing or wrong, after `ensurePhiStageDirectories`. */
+function printDirectoryProblems(problems: readonly string[]) {
+  for (const problem of problems) console.log(`  warning: ${problem}`);
 }
 
 async function deleteSiteByKey(flags: FlagMap, json: boolean) {
@@ -1789,6 +1814,11 @@ async function runStageRemoveCommand(flags: FlagMap, json: boolean) {
     confirmed: false,
   });
   const otherStages = listPhiOtherStages(stage);
+  // Read now: the configuration that names them goes with the stage directory.
+  const sharedDirectories = listPhiStageSharedDirectories(
+    listPhiConfiguredDirectories(readCliMergedConfig()),
+    configRoot,
+  );
 
   const report = {
     stage,
@@ -1809,6 +1839,7 @@ async function runStageRemoveCommand(flags: FlagMap, json: boolean) {
     proxyRecorded: record !== null,
     leftovers,
     otherStages,
+    sharedDirectories,
   };
 
   if (!confirmed) {
@@ -1843,7 +1874,7 @@ async function runStageRemoveCommand(flags: FlagMap, json: boolean) {
       console.log("  no proxy record in this stage: phis proxy wrote nothing here that it knows of");
     }
     console.log(`  remove ${configRoot}`);
-    printStageLeftovers(leftovers, otherStages);
+    printStageLeftovers(leftovers, otherStages, sharedDirectories);
     console.log("Nothing was changed. Pass --force to carry it out.");
     return;
   }
@@ -1875,13 +1906,23 @@ async function runStageRemoveCommand(flags: FlagMap, json: boolean) {
   for (const line of done.slice(0, -1)) console.log(line);
   for (const entry of proxySteps) console.log(entry.note ? `${entry.action} (${entry.note})` : entry.action);
   console.log(done.at(-1));
-  printStageLeftovers(leftovers, otherStages);
+  printStageLeftovers(leftovers, otherStages, sharedDirectories);
 }
 
 function printStageLeftovers(
   leftovers: ReturnType<typeof findPhiStageProxyLeftovers>,
   otherStages: readonly string[],
+  sharedDirectories: ReturnType<typeof listPhiStageSharedDirectories>,
 ) {
+  if (sharedDirectories.length) {
+    console.log("Made by phis install, shared by every stage that names them, and left in place:");
+    for (const directory of sharedDirectories) {
+      console.log(`  ${directory.path} (${directory.setting}, ${directory.empty ? "empty" : "not empty"})`);
+    }
+    if (!otherStages.length) {
+      console.log(`  With no stage left, remove them by hand once their content is not needed: rm -r ${sharedDirectories.map((directory) => directory.path).join(" ")}`);
+    }
+  }
   if (leftovers.files.length || leftovers.certificates.length) {
     console.log("Found, not made by phis, and left in place -- remove them if they were this stage's:");
     for (const file of leftovers.files) console.log(`  ${file}`);
@@ -2025,6 +2066,10 @@ async function runSiteScaffoldCommand(
   const mergedConfig = readCliMergedConfig();
   const root = getOptionalFlag(flags, "path") ?? resolveSiteSource(site, mergedConfig.sites).path;
   let runtime: PhiSiteScaffoldRuntime | undefined;
+  // Before the scaffold, which writes under sites.sourcePathRoot unless --path names somewhere else.
+  const directoryProblems = mode === "init"
+    ? describePhiConfiguredDirectoryProblems(ensurePhiStageDirectories(configRoot))
+    : [];
   if (mode === "init") {
     const apiBaseUrl = readApiBaseUrlFlag(flags, "init");
     const internalToken = mergedConfig.api?.internalToken?.trim() ?? "";
@@ -2055,11 +2100,12 @@ async function runSiteScaffoldCommand(
   // The release links to this file rather than carrying it, so a release built without it starts and fails.
   const runtimeConfigMissing = mode === "update" && !existsSync(path.join(result.root, "config", "site-runtime.json"));
   if (json) {
-    printJson({ ok: true, action: `site.${mode}`, installed: shouldInstall, built: mode === "update", release, runtimeConfigMissing, ...result });
+    printJson({ ok: true, action: `site.${mode}`, installed: shouldInstall, built: mode === "update", release, runtimeConfigMissing, directoryProblems, ...result });
     return;
   }
   const changed = result.changes.filter((entry) => entry.action !== "unchanged");
   console.log(`${mode === "init" ? "Initialized" : mode === "update" ? `Updated and built release ${release?.releaseId}` : "Reconciled"} ${site.key} at ${result.root} with ${manager}; ${changed.length} file(s) changed.`);
+  printDirectoryProblems(directoryProblems);
   if (runtimeConfigMissing) {
     console.log(
       `  note: ${path.join(result.root, "config", "site-runtime.json")} does not exist. The release reads it from ` +
@@ -2123,9 +2169,12 @@ async function printSiteConfig(targetInput: string, flags: FlagMap, json: boolea
     throw new Error(`--instance takes an instance number as phis site config runtime lists them, not "${instanceFlag}".`);
   }
 
+  // `--tls`: the 443 host and the redirect, for a host whose certificate `phis proxy tls` (or certbot) holds.
+  const tls = (target === "nginx" || target === "apache") && flags.get("tls") === true;
   const config = renderSiteConfig(target, site, siteSettings, {
     useSource,
     instanceIndex,
+    tls,
   });
 
   if (json) {
@@ -2693,6 +2742,8 @@ async function main() {
           ? { state: "open", until: status.window.until.toISOString(), remainingMs: status.window.remainingMs }
           : { state: "closed", reason: status.window.reason, until: status.window.until?.toISOString() ?? null },
         steps: status.steps,
+        warnings: status.warnings,
+        emailTest: status.emailTest.record,
       });
       return;
     }
@@ -2702,6 +2753,8 @@ async function main() {
     for (const entry of status.steps) {
       console.log(`  [${entry.done ? "x" : " "}] ${entry.key.padEnd(9)} ${entry.detail}`);
     }
+    console.log(`  [${status.emailTest.record ? "x" : " "}] ${"email".padEnd(9)} ${status.emailTest.detail}`);
+    for (const warning of status.warnings) console.log(`  warning: ${warning}`);
     return;
   }
 
@@ -3892,6 +3945,33 @@ async function main() {
       console.error(`Job ${jobId} did not run${where}: ${outcome.error ?? response.status}`);
     }
     if (!response.ok) {
+      process.exitCode = 1;
+    }
+    return;
+  }
+
+  if (group === "email" && command === "test") {
+    const siteKey = getOptionalFlag(flags, "site");
+    const result = await runPhiEmailTest(
+      configRoot,
+      { to: getRequiredFlag(flags, "to"), siteKey: siteKey ? normalizePhiSiteKey(siteKey) : null },
+      (key) => getPhiCliSiteMailSender(getPool(), key),
+    );
+    if (json) {
+      printJson({
+        ok: result.report.accepted !== null,
+        action: "email.test",
+        siteKey: result.siteKey,
+        from: result.report.from,
+        to: result.report.to,
+        accepted: result.report.accepted,
+        attempts: result.report.attempts,
+        recordPath: result.recordPath,
+      });
+    } else {
+      printPhiEmailTestResult(result);
+    }
+    if (!result.report.accepted) {
       process.exitCode = 1;
     }
     return;

@@ -3,8 +3,8 @@
     "containerized": false
   },
   "sites": {
-    "sourcePathRoot": "/opt/phis/sources",
-    "instancePathRoot": "/var/www/phis/sites",
+    "sourcePathRoot": "/srv/phis/sites",
+    "instancePathRoot": "/srv/phis/instances",
     "basePort": 52000
   },
   "forms": {
@@ -26,7 +26,7 @@
   "media": {
     "storageKeyPrefix": "sites",
     "local": {
-      "rootDir": "/var/phis/media"
+      "rootDir": "/srv/phis/media"
     },
     "defaults": {
       "userQuotaBytes": null,

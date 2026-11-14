@@ -5,7 +5,8 @@ import os from "node:os";
 import packageJson from "../../package.json";
 
 import { getPhiAppRoot } from "@/lib/app-paths";
-import { readMergedPhiConfigSync } from "@/lib/config-files";
+import { getDefaultServerPhiRoot, readMergedPhiConfigSync } from "@/lib/config-files";
+import { type PhiStageWebServer, resolvePhiStageWebServer } from "@/lib/server-proxy-record";
 
 export type OperationalMode = "docker" | "systemd" | "custom";
 
@@ -54,6 +55,14 @@ export function resolveOperationalMode(): OperationalMode {
   }
 
   return "custom";
+}
+
+/**
+ * The web server in front of this stage, for the order and the TLS form of a Site's snippets. Read here,
+ * on the server, because the record and `/etc` are this host's and the Sites panel renders in the browser.
+ */
+export function resolveStageWebServer(): PhiStageWebServer {
+  return resolvePhiStageWebServer(getDefaultServerPhiRoot());
 }
 
 export function readOperatorOverviewSnapshot(): OperatorOverviewSnapshot {

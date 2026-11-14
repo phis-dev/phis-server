@@ -86,7 +86,7 @@ Output and exit codes:
   `--json` stderr also carries `{"ok": false, "error": "<message>"}`.
 - Some commands finish without throwing but still exit `1` because they found a problem; each is
   noted below (`config validate`, `schema check`, `site check`, `module add|check`, `addon list|check`,
-  `addon job`, `secret check`, `media check`, `maintain`, `mail drain`, `licenses check`, and
+  `addon job`, `secret check`, `media check`, `maintain`, `mail drain`, `email test`, `licenses check`, and
   `instance list` when the instances have not converged on one release and one Add-on set).
 
 ## Environment variables
@@ -124,11 +124,12 @@ All paths are relative to the root.
 | `config/phis-instance.json` | the CLI | The version stamp above. |
 | `config/phis-addons.json` | `addon` commands | Desired state of server Add-ons. Absent means none. |
 | `config/phis-modules.json` | `module add|del` | Desired state of Site Modules per Site. Absent means none. |
+| `config/phis-email-test.json` | `email test`, the operator's "Send test email" | The last test email a target accepted: when, to whom, from which sender, which target, its answer and queue id. Read by `setup status`. Absent means none was sent. |
 | `addons/<scope>/<name>/<version>/addon.mjs` | `addon install|upgrade` | Installed Add-on artifacts. |
 
 The CLI writes `phis-runtime.json` through a temporary file and a rename. A running server caches the
 merged configuration for up to four hours; restart it after a CLI command that changes
-`phis-runtime.json` (`db bootstrap`, `operator add|passwd|enable|disable|del`, `site add|del` and `site
+`phis-runtime.json` (`db bootstrap`, `install --email-from`, `operator add|passwd|enable|disable|del`, `site add|del` and `site
 config set|add|del` for `sites.overrides`, `secret init-key`, `auth import-secrets`), or the running
 server keeps the old values for up to four hours.
 
@@ -153,29 +154,44 @@ From a fresh package to a serving installation, in one of two modes, asked for f
 it. Run as root. Every step looks first and skips what exists, so a second run only fills gaps. Every
 question has a flag; without a terminal, a missing required answer stops the command.
 
-- `--mode browser`: makes the missing keys, with `--local-db` or `--admin-uri` also the database, opens the
-  setup window (`--for`, default one hour), enables and restarts `phis@<stage>.service`, and prints the SSH
-  tunnel to `/setup`.
+- `--mode browser`: makes the missing keys and the configured directories (below), with `--local-db` or
+  `--admin-uri` also the database and with `--email-from` the sender, opens the setup window (`--for`,
+  default one hour), enables and restarts `phis@<stage>.service`, and prints the SSH tunnel to `/setup`.
 - `--mode full`, in order:
   1. Database, unless `database.uri` is set: `--local-db` (`phis db bootstrap --local`) or `--admin-uri`;
      `--db-name` names the installation. Asked interactively; offered as local when `psql` is here.
   2. Keys (`phis config init-keys`).
-  3. Schema: `phis schema apply`, then `phis schema check`.
-  4. First operator, unless one exists: `--operator-email`, `--operator-password` (asked; left empty, one is
+  3. Directories (below).
+  4. Sender, unless `email.from` is set: `--email-from <address>`, asked interactively (empty skips it),
+     written to `email.from` in `phis-runtime.json`. A given `--email-from` replaces a set one.
+  5. Schema: `phis schema apply`, then `phis schema check`.
+  6. First operator, unless one exists: `--operator-email`, `--operator-password` (asked; left empty, one is
      generated and printed once), `--operator-name`.
-  5. First Site, unless one exists and only when asked or `--site-key` is given: `--site-hostname`,
+  7. First Site, unless one exists and only when asked or `--site-key` is given: `--site-hostname`,
      `--site-support-email`, `--site-name` (default the key), `--site-public-base-url` (default
      `https://<hostname>`), `--site-source-locale` (default `en`), `--site-default-locale` (default the
      source locale); then `--site-admin-email` with `--site-admin-password` (generated and printed once when
      missing) as in `phis site admin`.
-  6. Closes the setup window.
-  7. Enables and restarts `phis@<stage>.service`, so the server reads what was written (it caches the
+  8. Closes the setup window.
+  9. Enables and restarts `phis@<stage>.service`, so the server reads what was written (it caches the
      configuration for hours). Only for a stage under `/srv/phis/stages/`.
-  8. Web server, with `--domain`: when Apache or nginx is installed (`--proxy` picks one where both are),
+  10. Web server, with `--domain`: when Apache or nginx is installed (`--proxy` picks one where both are),
      as `phis proxy config --write`; otherwise the file is printed. HTTPS is not a step: `phis proxy tls`.
-  9. Checks that `/operator/login` answers below 500 -- through the web server for the domain (`curl
+  11. Checks that `/operator/login` answers below 500 -- through the web server for the domain (`curl
      --resolve`, so DNS need not point here yet), else on the loopback port.
+  12. Test email, once `email.from` is set: in a terminal it asks whether to send one now and to which
+     address (default the operator's), sends it as `phis email test` does and prints each target's
+     outcome; a failed test is printed and does not stop the command. Without a terminal the command to
+     run is printed. The browser mode prints the command too.
 
+The directories are the three the configuration names and the server writes into: `media.local.rootDir`
+(default `/srv/phis/media`), `sites.sourcePathRoot` (`/srv/phis/sites`) and `sites.instancePathRoot`
+(`/srv/phis/instances`). A missing one is created and handed to the stage's service account -- the owner of
+its `config/` directory, `phis:phis` from the package -- with mode `0750` for the media root (uploads,
+served only through phis) and `0755` for the Site roots (checkouts and release links, read by the
+operator's login and the Sites' processes). One that exists is left as it is; what is wrong with it is
+printed and does not stop the command. `phis site add`, `phis init` and adding a Site in the operator UI
+do the same.
 ## setup
 
 The setup pages (`/setup`) are served only while a window is open: until the moment in
@@ -196,7 +212,13 @@ Closes it now. Finishing the setup in the browser does the same.
 ### `phis setup status`
 
 The window and what is still missing, in the order the setup does it: database (`database.uri`), schema
-and Sites (read from the database), keys, operator. JSON: `{ok, action, window, steps}`.
+and Sites (read from the database), keys, operator; then the three configured directories (`media`,
+`sources`, `instances`), each done when it exists, is a directory, belongs to the stage's service account
+(the owner of `config/`) and is writable by it -- otherwise the line says what is wrong and how to fix it.
+Then `email`: the last test email a target accepted (`phis email test`, or "Send test email" in the
+operator console) -- when, to whom, which target and queue id -- or that none was sent yet. A warning
+follows while `email.from` is unset. JSON: `{ok, action, window, steps, warnings, emailTest}`, `emailTest`
+being the record of `config/phis-email-test.json` or `null`.
 
 ## config
 
@@ -306,6 +328,11 @@ recorded one. A stage set up before the record existed has none, and its proxy f
 When no stage is left it says so and names `apt purge phis`, `deluser phis` and `delgroup phis`. Without
 `--force` it only lists all of this.
 
+The configured media and Site roots, which `phis install` creates, are listed as left in place and never
+removed, with whether each is empty: by default every stage of a host names the same three, and they hold
+the Sites and their uploads rather than anything of the stage's. With no stage left, the list ends with the
+`rm -r` that takes them away. One inside the stage directory goes with it and is not listed.
+
 ## proxy
 
 The web server in front of the server itself. A Site's own proxy file is `phis site config nginx|apache`.
@@ -330,6 +357,10 @@ web server. Never run by `phis install`: it needs DNS to point here and is the o
 
 Both record what they wrote in the stage's `config/phis-proxy.json`, which `phis stage remove` reads to take
 exactly that away again.
+The operator's Sites panel reads the same record: a Site's deployment snippets put the web server it names
+first and the other collapsed, and with `tls: true` that server's snippet serves the Site on 443 and
+redirects port 80, answering certbot's challenge from the same webroot. Without a record the panel takes
+whichever of `/etc/apache2` and `/etc/nginx` exists.
 
 ## schema
 
@@ -400,7 +431,8 @@ Side effects: writes `sites.overrides.<key>.sourceLocale` to `phis-runtime.json`
 the `phis.sites` row (mail sender `no-reply@<hostname>`, contact recipient = support email, a random
 form guard secret) and an empty `phis.site_auth_config` row in one transaction. If the insert fails,
 the runtime file is restored. Refuses when an override with a `sourceLocale` already exists for the
-key.
+key. Then creates the configured directories that are missing, as `phis install` does; one that cannot
+be made or is wrong is a warning (JSON `directoryProblems`), and the Site stays created.
 
 ### `phis site set --key <site key> [--name] [--hostname] [--public-base-url] [--support-email] [--time-zone]`
 
@@ -460,8 +492,8 @@ Instance locations are derived from `phis-config.json` unless overridden in
 
 | Value | Default |
 | --- | --- |
-| Source path | `<sites.sourcePathRoot>/<key>`, `sites.sourcePathRoot` defaults to `/opt/phis/sources` |
-| Instance path | `<sites.instancePathRoot>/<key>`, default root `/var/www/phis/sites` |
+| Source path | `<sites.sourcePathRoot>/<key>`, `sites.sourcePathRoot` defaults to `/srv/phis/sites` |
+| Instance path | `<sites.instancePathRoot>/<key>`, default root `/srv/phis/instances` |
 | Port | `<sites.basePort> + <site id>`, `sites.basePort` defaults to `52000` |
 | Host | `localhost` |
 
@@ -484,11 +516,15 @@ Removes every listed instance on that host.
 #### `phis site config nginx|apache|systemd|docker-compose|runtime --key <site key>`
 
 ```text
-phis site config nginx   --key <site key> [--source]
+phis site config nginx   --key <site key> [--source] [--tls]
+phis site config apache  --key <site key> [--tls]
 phis site config systemd --key <site key> [--instance <n>]
 ```
 
-Prints a configuration snippet to stdout. Nothing is written or installed. With `--json` the
+Prints a configuration snippet to stdout. Nothing is written or installed. `--tls` (nginx and Apache)
+serves the Site on 443 with the certificate under `/etc/letsencrypt/live/<site host>/` and keeps port 80
+for certbot's challenge and the redirect, the way `phis proxy tls` serves the server; the operator's
+Sites panel shows that form when the stage's proxy record says `tls: true`. With `--json` the
 snippet is in `config` next to the Site record; `runtime --json` prints the structured summary.
 
 - `nginx`: one file for nginx's `http` context (on Debian, `/etc/nginx/sites-available/<key>.conf`
@@ -555,7 +591,9 @@ and `packageManager` is set to `<manager>@<version>` when it named a different m
 Creates a new Site repository. Fails when the target exists and is not an empty directory
 (`Site target ... already exists; use phis reconcile`), when `--api-base-url` is missing or not an
 http(s) URL, and when `api.internalToken` is not set in the phis root. Writes every scaffold file and
-`.phis/scaffold-manifest.json` (scaffold version, site key, SHA-256 of every file written). See
+`.phis/scaffold-manifest.json` (scaffold version, site key, SHA-256 of every file written). Before that it
+creates the configured directories that are missing, as `phis install` does, and warns about one that is
+wrong (JSON `directoryProblems`). See
 [INSTALL.md](./INSTALL.md#6-scaffold-the-site) for the file list.
 
 `config/site-runtime.json` gets `site.key`, `site.publicUrl` (the Site's public base URL, else
@@ -1093,6 +1131,28 @@ and the transport are.
 when it is not given and never more than 1000. The command prints how many rows it claimed, sent,
 dropped and failed, or the server's JSON answer with `--json`. It exits `1` when the server refuses or
 fails the request. Requires `api.internalToken` and a running server.
+
+## email
+
+### `phis email test --to <address> [--site <site key>]`
+
+Sends a short test message by exactly the path every server message takes: `email.from` and
+`email.fromName` as the sender, `email.smtp.targets` tried in order with `email.smtp.secure`, `ignoreTls`
+and `tlsRejectUnauthorized`, the first target that accepts it winning. With `--site` the sender is that
+Site's own (`mail_from_name <mail_from>` of its row, as the notification outbox sends it); the transport
+is the same, since the server holds no per-Site SMTP settings or credentials. The configuration is read
+from the stage's files, not from a running server, so a change to `phis-runtime.json` is tested before the
+server is restarted.
+
+It prints, per target tried, either `accepted` with the server's answer and the queue id read from it
+(`queued as …`, `id=…`), or where it failed: `connect`, `tls`, `auth`, `sender` (MAIL FROM refused),
+`recipient` (RCPT TO refused), `data` or `other`, with the server's answer. A target that accepted is
+written to `config/phis-email-test.json` (atomically, owned like `config/`), which `phis setup status`
+shows. Exits `1` when no target accepted the message. JSON:
+`{ok, action, siteKey, from, to, accepted, attempts, recordPath}`.
+
+The operator console has the same as "Send test email" under Infrastructure, to the signed-in
+operator's address by default; it uses the configuration the server has cached.
 
 ## licenses
 

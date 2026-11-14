@@ -8,6 +8,7 @@ import {
   OPERATOR_SITES_LABELS,
   OPERATOR_TRANSLATIONS_LABELS,
 } from "@/components/operator/label-sets";
+import { OperatorEmailTestCard } from "@/components/operator/operator-email-test-card";
 import { OperatorInfrastructurePanel } from "@/components/operator/operator-infrastructure-panel";
 import { OperatorSitesPanel } from "@/components/operator/operator-sites-panel";
 import { OperatorTranslationsPanel } from "@/components/operator/operator-translations-panel";
@@ -15,7 +16,11 @@ import { getPhisConfigSync, isBootstrapEnabled } from "@/lib/config";
 import { listSites } from "@/db/sites";
 import { trGlobalLabelSet } from "@/lib/landing-tr";
 import { getOperatorSession } from "@/lib/operator-auth";
-import { readOperatorOverviewSnapshot, resolveOperationalMode } from "@/lib/operator-runtime";
+import {
+  readOperatorOverviewSnapshot,
+  resolveOperationalMode,
+  resolveStageWebServer,
+} from "@/lib/operator-runtime";
 import {
   getConfiguredCdnBaseUrlSync,
   getConfiguredTranslationSupportedLocalesSync,
@@ -24,8 +29,24 @@ import {
 } from "@/lib/translation-locale-options";
 import { OperatorOverviewDashboard } from "@/components/operator/operator-overview-dashboard";
 import { readOperatorInfrastructureSnapshot } from "@/lib/operator-infrastructure";
+import { getDefaultServerPhiRoot } from "@/lib/config-files";
+import { readPhiEmailTestRecord } from "@/lib/email-test-record";
+import {
+  buildPhiMailFromHeader,
+  formatPhiSmtpTarget,
+  resolvePhiSmtpTargets,
+} from "@/lib/email-transport";
 
 const WEB_UI_LABEL_CONTEXT = "Web UI label";
+
+/** The last accepted test email; a record this release cannot read shows as none rather than a 500. */
+function readPhiEmailTestStatus() {
+  try {
+    return readPhiEmailTestRecord(getDefaultServerPhiRoot());
+  } catch {
+    return null;
+  }
+}
 
 function buildLocaleLabel(code: string) {
   try {
@@ -132,6 +153,7 @@ export default async function OperatorPage({
         labels={sitesLabels}
         sites={sites}
         mode={resolveOperationalMode()}
+        webServer={resolveStageWebServer()}
         allowedLocales={getConfiguredTranslationSupportedLocalesSync()}
         siteSettings={config.sites ?? {}}
         error={siteError}
@@ -207,11 +229,27 @@ export default async function OperatorPage({
       WEB_UI_LABEL_CONTEXT,
     );
 
+    const emailConfig = getPhisConfigSync().email;
+    const sites = await listSites();
+
     return (
       <OperatorInfrastructurePanel
         labels={infrastructureLabels}
         snapshot={readOperatorInfrastructureSnapshot()}
-      />
+      >
+        <OperatorEmailTestCard
+          labels={infrastructureLabels}
+          email={{
+            from: buildPhiMailFromHeader(emailConfig),
+            targets: resolvePhiSmtpTargets(emailConfig).map(formatPhiSmtpTarget),
+            secure: emailConfig?.smtp?.secure === true,
+            ignoreTls: emailConfig?.smtp?.ignoreTls === true,
+          }}
+          operatorEmail={session.email}
+          sites={sites.map((site) => ({ key: site.key, name: site.name }))}
+          lastTest={readPhiEmailTestStatus()}
+        />
+      </OperatorInfrastructurePanel>
     );
   }
 

@@ -3,8 +3,16 @@ import { randomBytes } from "node:crypto";
 import process from "node:process";
 import { createInterface } from "node:readline/promises";
 
-import { readPhiRuntimeConfigSync } from "../lib/config-files-cli.ts";
-import { formatPhiDuration, closePhiSetupWindow, initPhiRuntimeKeys, openPhiSetupWindow } from "./setup.mts";
+import { readMergedPhiConfigSync, readPhiRuntimeConfigSync } from "../lib/config-files-cli.ts";
+import { describePhiConfiguredDirectoryProblems } from "../lib/configured-directories.ts";
+import {
+  closePhiSetupWindow,
+  ensurePhiStageDirectories,
+  formatPhiDuration,
+  initPhiRuntimeKeys,
+  openPhiSetupWindow,
+  writePhiEmailFrom,
+} from "./setup.mts";
 import {
   applyAndRecordPhiServerProxyConfig,
   assertPhiProxyDomain,
@@ -18,17 +26,19 @@ import {
   runPhiSystemCommand,
   type PhiProxyKind,
 } from "./proxy.mts";
+import { printPhiEmailTestResult, runPhiEmailTest } from "./email-test.mts";
 import type { FlagMap } from "./argv.mts";
 
 /**
  * `phis install`: one command from a fresh package to a serving installation, in one of two ways.
  *
- * - `browser`: only what the browser cannot do -- the keys, and with `--local-db` or `--admin-uri` the
- *   database -- then the setup window is opened, the service started, and the setup's address printed.
+ * - `browser`: only what the browser cannot do -- the keys, the configured directories, with `--local-db`
+ *   or `--admin-uri` the database, and with `--email-from` the sender -- then the setup window is opened,
+ *   the service started, and the setup's address printed.
  * - `full`: everything on the command line, asked for interactively where a flag is missing: database,
- *   keys, schema, first operator, optionally a first Site and its administrator, optionally the web server
- *   for a domain; the setup stays closed, the service runs, and `/operator/login` is checked through the
- *   proxy.
+ *   keys, the configured directories, the sender, schema, first operator, optionally a first Site and its
+ *   administrator, optionally the web server for a domain; the setup stays closed, the service runs, and
+ *   `/operator/login` is checked through the proxy.
  *
  * Every step looks first and skips what is there, so the command can be run again on an installation that
  * exists -- it then only fills gaps. Certificates are not a step: `phis proxy tls` is run by the operator,
@@ -149,6 +159,76 @@ function keysStep(configRoot: string) {
     skip("all keys are present");
   } else {
     console.log(`   created ${created.join(", ")}`);
+  }
+}
+
+/**
+ * The media root and the two Site roots the configuration names, created for the stage's service account
+ * (`src/lib/configured-directories.ts`). A directory that is there is only checked; what is wrong with one
+ * is printed and does not stop the install -- `phis setup status` keeps saying so.
+ */
+function directoriesStep(configRoot: string) {
+  step("Directories");
+  const results = ensurePhiStageDirectories(configRoot);
+  for (const result of results) {
+    if (result.created) console.log(`   created ${result.path} (${result.setting}, mode ${result.mode.toString(8)})`);
+  }
+  const problems = describePhiConfiguredDirectoryProblems(results);
+  for (const problem of problems) console.log(`   problem: ${problem}`);
+  if (results.every((result) => !result.created) && problems.length === 0) {
+    skip(`${results.map((result) => result.path).join(", ")} are in place`);
+  }
+}
+
+/**
+ * `email.from`, the sender of every message the server sends. Without it nothing can be mailed -- not even a
+ * password reset -- so the full mode asks for it; the browser mode writes it only when it is given.
+ */
+async function emailStep(configRoot: string, flags: FlagMap, prompter: Prompter, ask: boolean) {
+  step("Sender");
+  let address = flag(flags, "email-from");
+  const current = readMergedPhiConfigSync(configRoot).email?.from?.trim() ?? "";
+  if (!address && current) {
+    skip(`email.from is ${current}`);
+    return;
+  }
+  if (!address && ask && prompter.interactive) {
+    address = (await prompter.ask("Sender address for outgoing mail, email.from (empty to skip)", "")) || null;
+  }
+  if (!address) {
+    skip("no --email-from; no mail can be sent until email.from is set (phis setup status warns)");
+    return;
+  }
+  const { from, changed } = writePhiEmailFrom(configRoot, address);
+  console.log(changed ? `   email.from set to ${from}` : `   email.from is ${from} already`);
+}
+
+/**
+ * A test email, once there is a sender: sent here when the full mode runs in a terminal and the operator
+ * says so, otherwise the command that sends one is printed. It goes out by the configured path exactly
+ * (`phis email test`), so a refused sender or an unreachable relay shows now and not at the first
+ * password reset.
+ */
+async function emailTestStep(configRoot: string, flags: FlagMap, prompter: Prompter, offer: boolean) {
+  step("Test email");
+  const config = readMergedPhiConfigSync(configRoot);
+  if (!config.email?.from?.trim()) {
+    skip("no sender (email.from) yet");
+    return;
+  }
+  const suggested = flag(flags, "operator-email")
+    ?? (config.platformSuperUsers ?? []).find((user) => user.enabled !== false)?.email?.trim()
+    ?? "";
+  if (!offer || !prompter.interactive || !await prompter.confirm("Send a test email now?", true)) {
+    console.log(`   to check outgoing mail:  phis email test --to ${suggested || "<address>"}`);
+    return;
+  }
+  const to = await prompter.ask("Send it to", suggested || undefined);
+  try {
+    const result = await runPhiEmailTest(configRoot, { to, siteKey: null }, async () => null);
+    printPhiEmailTestResult(result, "   ");
+  } catch (error) {
+    console.log(`   not sent: ${(error as Error).message}`);
   }
 }
 
@@ -303,11 +383,14 @@ export async function runPhiInstall(configRoot: string, flags: FlagMap, operatio
 
     if (mode === "browser") {
       keysStep(configRoot);
+      directoriesStep(configRoot);
+      await emailStep(configRoot, flags, prompter, false);
       await databaseStep(configRoot, flags, prompter, operations, false);
       step("Setup window");
       const { until } = openPhiSetupWindow(configRoot, flag(flags, "for"));
       console.log(`   open until ${until.toISOString()} (${formatPhiDuration(until.getTime() - Date.now())})`);
       serviceStep(configRoot);
+      await emailTestStep(configRoot, flags, prompter, false);
       console.log(`
 The setup listens on the loopback only. From your machine:
   ssh -L ${port}:127.0.0.1:${port} <user>@<this host>
@@ -317,6 +400,8 @@ then open http://127.0.0.1:${port}/setup -- before the window closes (phis setup
 
     await databaseStep(configRoot, flags, prompter, operations, true);
     keysStep(configRoot);
+    directoriesStep(configRoot);
+    await emailStep(configRoot, flags, prompter, true);
     step("Schema");
     await operations.applySchema();
     await operatorStep(configRoot, flags, prompter, operations);
@@ -330,12 +415,13 @@ then open http://127.0.0.1:${port}/setup -- before the window closes (phis setup
     step("Check");
     if (!unit) {
       skip("the service was not started here");
-      return;
+    } else {
+      const target = `${publicBase ?? `http://127.0.0.1:${port}`}/operator/login`;
+      const status = await waitForOk(target);
+      console.log(`   ${target} answered ${status}`);
     }
-    const target = `${publicBase ?? `http://127.0.0.1:${port}`}/operator/login`;
-    const status = await waitForOk(target);
-    console.log(`   ${target} answered ${status}`);
-    console.log("\nDone. Sign in at /operator with the operator account.");
+    await emailTestStep(configRoot, flags, prompter, true);
+    if (unit) console.log("\nDone. Sign in at /operator with the operator account.");
   } finally {
     prompter.close();
   }

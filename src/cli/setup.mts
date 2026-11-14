@@ -7,8 +7,26 @@ import {
   resolvePhiBootstrapWindowEnd,
   type PhiBootstrapWindow,
 } from "../lib/bootstrap-window.ts";
-import { readPhiRuntimeConfigSync, resolvePhiConfigPaths, writePhiRuntimeConfigSync } from "../lib/config-files-cli.ts";
+import path from "node:path";
+
+import {
+  readMergedPhiConfigSync,
+  readPhiRuntimeConfigSync,
+  resolvePhiConfigPaths,
+  writePhiRuntimeConfigSync,
+} from "../lib/config-files-cli.ts";
 import type { PhisConfig } from "../lib/config-core.ts";
+import {
+  checkPhiConfiguredDirectory,
+  ensurePhiConfiguredDirectories,
+  listPhiConfiguredDirectories,
+  resolvePhiServiceAccount,
+} from "../lib/configured-directories.ts";
+import {
+  describePhiEmailTestRecord,
+  readPhiEmailTestRecord,
+  type PhiEmailTestRecord,
+} from "../lib/email-test-record.ts";
 import { fillPhiRuntimeKeys, listMissingPhiRuntimeKeys, type PhiRuntimeKeyName } from "../lib/runtime-keys.ts";
 
 /**
@@ -91,9 +109,88 @@ export async function readPhiSetupSteps(runtime: PhisConfig): Promise<PhiSetupSt
   return steps;
 }
 
-export async function readPhiSetupStatus(configRoot: string): Promise<{ window: PhiBootstrapWindow; steps: PhiSetupStep[] }> {
+/** The stage's service account, as the owner of its `config/` directory (`resolvePhiServiceAccount`). */
+function readPhiStageServiceAccount(configRoot: string) {
+  return resolvePhiServiceAccount(path.dirname(resolvePhiConfigPaths(configRoot).runtime));
+}
+
+/**
+ * Creates the configured media and Site roots that are missing, for the stage's service account, and
+ * checks all three. `phis install`, `phis site add` and `phis init` call it; it changes nothing that is
+ * there.
+ */
+export function ensurePhiStageDirectories(configRoot: string) {
+  return ensurePhiConfiguredDirectories(
+    listPhiConfiguredDirectories(readMergedPhiConfigSync(configRoot)),
+    readPhiStageServiceAccount(configRoot),
+  );
+}
+
+/** The three directories as setup steps: there, a directory, the service account's and writable by it. */
+export function readPhiDirectorySteps(configRoot: string): PhiSetupStep[] {
+  const account = readPhiStageServiceAccount(configRoot);
+  return listPhiConfiguredDirectories(readMergedPhiConfigSync(configRoot)).map((directory) => {
+    const check = checkPhiConfiguredDirectory(directory, account);
+    return { key: directory.key, done: check.ok, detail: check.detail };
+  });
+}
+
+/**
+ * What works but should not stay as it is. `email.from` unset is one: every message the server sends
+ * -- password resets, notifications -- fails until it names a sender.
+ */
+export function readPhiSetupWarnings(config: PhisConfig) {
+  const warnings: string[] = [];
+  if (!config.email?.from?.trim()) {
+    warnings.push("email.from is unset: no mail can be sent (phis install --email-from <address>)");
+  }
+  return warnings;
+}
+
+/**
+ * The last test email a target accepted (`phis email test`, the operator's "Send test email"), from
+ * `config/phis-email-test.json`. A record this release cannot read is reported as such, not thrown: the
+ * status is what the operator runs when something is off.
+ */
+export function readPhiEmailTestStatus(configRoot: string): { record: PhiEmailTestRecord | null; detail: string } {
+  try {
+    const record = readPhiEmailTestRecord(configRoot);
+    return { record, detail: describePhiEmailTestRecord(record) };
+  } catch (error) {
+    return { record: null, detail: (error as Error).message };
+  }
+}
+
+export async function readPhiSetupStatus(configRoot: string): Promise<{
+  window: PhiBootstrapWindow;
+  steps: PhiSetupStep[];
+  warnings: string[];
+  emailTest: { record: PhiEmailTestRecord | null; detail: string };
+}> {
   const runtime = readPhiRuntimeConfigSync(configRoot);
-  return { window: describePhiBootstrapWindow(runtime), steps: await readPhiSetupSteps(runtime) };
+  return {
+    window: describePhiBootstrapWindow(runtime),
+    steps: [...await readPhiSetupSteps(runtime), ...readPhiDirectorySteps(configRoot)],
+    warnings: readPhiSetupWarnings(readMergedPhiConfigSync(configRoot)),
+    emailTest: readPhiEmailTestStatus(configRoot),
+  };
+}
+
+/**
+ * Sets `email.from` in the runtime file. Only the address is checked here, for the one thing a sender
+ * needs and a typo most often loses: an `@` with something on both sides.
+ */
+export function writePhiEmailFrom(configRoot: string, address: string) {
+  const from = address.trim();
+  if (!/^[^\s@]+@[^\s@]+$/u.test(from)) {
+    throw new Error(`"${address}" is no email address for email.from.`);
+  }
+  const runtime = readPhiRuntimeConfigSync(configRoot);
+  const changed = runtime.email?.from !== from;
+  if (changed) {
+    writePhiRuntimeConfigSync({ ...runtime, email: { ...runtime.email, from } }, configRoot);
+  }
+  return { from, changed, path: resolvePhiConfigPaths(configRoot).runtime };
 }
 
 export function initPhiRuntimeKeys(configRoot: string): { created: PhiRuntimeKeyName[]; path: string } {
