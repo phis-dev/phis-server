@@ -263,6 +263,17 @@ processed.
     creates is what `phis stage remove` takes away again.
   - `phis install` asks for the sender (`--email-from`), and `phis setup status` warns while
     `email.from` is unset.
+- **A test email through phis.** Nothing verifies that outgoing mail works: on new.phisys.com (14.11.2026,
+  `email.from` noreply@phisys.com, `smtp.targets` 127.0.0.1:25 to a local Postfix) the first password
+  reset would be the first test. Proposed by the owner:
+  - `phis email test --to <address> [--site <site key>]` sends a short message by exactly the configured
+    path -- `email.from`/`fromName`, `smtp.targets` in order, `secure`/`ignoreTls`, and with `--site` that
+    Site's own sender and SMTP secret -- and prints which target accepted it with the SMTP response and
+    queue id, or per target what failed (connect, TLS, auth, sender or recipient refused).
+  - The operator UI gets the same as "Send test email" in its email settings, to the signed-in
+    operator's address by default.
+  - `phis install --email-from` offers it at the end, and `phis setup status` shows the last successful
+    test.
 - **Direct Source proxy mode** stays development-only.
 
 ## Infrastructure management belongs to phis-host
