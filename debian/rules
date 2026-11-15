@@ -88,6 +88,10 @@ override_dh_auto_install:
 		ln -s "$$argon2_target" argon2 && \
 		pg_target=$$(printf '%s\n' .pnpm/pg@*/node_modules/pg) && \
 		ln -s "$$pg_target" pg
+# The CLI is loaded once from where it is installed: an import the package does not carry fails here and
+# not on the operator's first command (0.3.1 shipped one). `--version` reads no stage, but every static
+# import of the bundle runs first.
+	PHIS_ROOT=$$(mktemp -d) node debian/phis/usr/lib/phis/server/dist/phis.mjs --version
 
 override_dh_auto_test:
 	:

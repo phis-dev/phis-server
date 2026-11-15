@@ -1,3 +1,15 @@
+phis (0.3.2-1) unstable; urgency=medium
+
+  * The CLI carries nodemailer itself: 0.3.1 imported it from a node_modules
+    the package does not ship, and every phis command failed. The package
+    build now loads the installed CLI once.
+  * 0.3.1 moved three defaults (media.local.rootDir, sites.sourcePathRoot,
+    sites.instancePathRoot) to /srv/phis/media, /srv/phis/sites and
+    /srv/phis/instances. A stage that relied on the old ones sets them in
+    config/phis-runtime.json; phis setup status reports a missing directory.
+
+ -- Marius Schumacher <marius.schumacher@phisys.com>  Sun, 15 Nov 2026 10:03:51 +0000
+
 phis (0.3.1-1) unstable; urgency=medium
 
   * Translating through a file: phis translations status, export and
