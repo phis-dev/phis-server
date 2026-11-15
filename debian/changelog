@@ -1,3 +1,11 @@
+phis (0.3.4-1) unstable; urgency=medium
+
+  * The currency exponent table (ISO 4217 minor units) comes from
+    @phis/contracts 0.7.9, where phis-ui and the Modules read it too.
+    No change in behaviour.
+
+ -- Marius Schumacher <marius.schumacher@phisys.com>  Sun, 15 Nov 2026 23:09:41 +0000
+
 phis (0.3.3-1) unstable; urgency=medium
 
   * entitlements:v1: Core records who is entitled to what. Kinds are
