@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chownSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
 /**
@@ -44,8 +44,19 @@ export function readPhiInstanceStamp(root: string): PhiInstanceStamp | null {
   }
 }
 
-/** Best effort: a read-only root must not turn a working command into a failure. */
-export function writePhiInstanceStamp(root: string, phisVersion: string) {
+/**
+ * Best effort: a read-only root must not turn a working command into a failure. It says so, though,
+ * once, with the path and the cause: a stamp that silently stays behind makes every later command report
+ * the old version again, and nothing would say why.
+ *
+ * Written as root, the stamp is handed to whoever owns the config directory, so the service account's
+ * next command can still rewrite it.
+ */
+export function writePhiInstanceStamp(
+  root: string,
+  phisVersion: string,
+  warn: (message: string) => void = (message) => console.error(message),
+) {
   if (!isPhiRoot(root)) return;
 
   const stampPath = resolvePhiInstanceStampPath(root);
@@ -53,8 +64,13 @@ export function writePhiInstanceStamp(root: string, phisVersion: string) {
     mkdirSync(path.dirname(stampPath), { recursive: true });
     const stamp: PhiInstanceStamp = { formatVersion: 1, phisVersion };
     writeFileSync(stampPath, `${JSON.stringify(stamp, null, 2)}\n`, "utf8");
-  } catch {
-    // ignored
+    if (process.getuid?.() === 0) {
+      const owner = statSync(path.dirname(stampPath));
+      if (owner.uid !== 0) chownSync(stampPath, owner.uid, owner.gid);
+    }
+  } catch (error) {
+    const cause = error instanceof Error ? error.message : String(error);
+    warn(`Note: could not record phis ${phisVersion} in ${stampPath}: ${cause}`);
   }
 }
 

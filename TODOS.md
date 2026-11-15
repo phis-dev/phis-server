@@ -246,15 +246,6 @@ processed.
   build cache stays between updates is part of the same decision: it speeds up the next build and is most of
   the source tree's size.
 - **Direct Source proxy mode** stays development-only.
-- **The instance stamp stays behind, silently (reported by srv, 15.11.2026).** `phis install` run as root
-  leaves `config/phis-instance.json` as root:root 0644; every later command as the phis user fails in
-  `writePhiInstanceStamp`, swallows the error (`src/lib/instance-version-cli.ts`), and prints
-  "last operated by phis 0.3.0, this is 0.3.2" again. The postinst gives `phis-instance.json`,
-  `phis-proxy.json` and `phis-email-test.json` to phis:phis on configure, as it does `phis-runtime.json`, and
-  a stamp that cannot be written warns once with its path and the cause.
-- **`phis setup status` names the service account by number.** Its hint for a missing directory reads
-  `install -d -o 126 -g 134`; it says `-o phis -g phis` (the account's names, looked up from the uid and gid
-  it compares against).
 - **Area and Page configs from the CLI.** Owner's decision (2026-11-15): agents change Area and Page
   trees through typed CLI commands, never through SQL. The CLI has no Area or Page command today, so a
   config change on prod was a hand-written `site_area_revisions` row (site 1, Area revision #51,

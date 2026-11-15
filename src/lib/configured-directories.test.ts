@@ -12,6 +12,7 @@ import {
   listPhiConfiguredDirectories,
   PHI_MEDIA_ROOT_MODE,
   PHI_SITE_ROOT_MODE,
+  readPhiAccountName,
   resolvePhiServiceAccount,
 } from "./configured-directories.ts";
 import {
@@ -112,5 +113,22 @@ describe("the configured directories", () => {
     const root = scratch();
     mkdirSync(path.join(root, "config"));
     expect(resolvePhiServiceAccount(path.join(root, "config"))).toEqual(self);
+  });
+});
+
+describe("readPhiAccountName", () => {
+  const passwd = "root:x:0:0:root:/root:/bin/bash\nphis:x:126:134::/nonexistent:/usr/sbin/nologin\n";
+  const read = (() => passwd) as unknown as typeof import("node:fs").readFileSync;
+
+  it("names the account an id belongs to, so a hint reads -o phis", () => {
+    expect(readPhiAccountName("/etc/passwd", 126, read)).toBe("phis");
+  });
+
+  it("keeps the number where the file names no such account, or cannot be read", () => {
+    expect(readPhiAccountName("/etc/passwd", 999, read)).toBe("999");
+    const missing = (() => {
+      throw new Error("ENOENT");
+    }) as unknown as typeof import("node:fs").readFileSync;
+    expect(readPhiAccountName("/etc/group", 134, missing)).toBe("134");
   });
 });

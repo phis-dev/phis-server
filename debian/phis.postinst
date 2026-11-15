@@ -111,6 +111,13 @@ HINT
     elif [ -e "${STATIC_CONFIG_LINK}" ]; then
       chown phis:phis "${STATIC_CONFIG_LINK}"
     fi
+    # Files the CLI writes beside the runtime file. A command run as root (`phis install`, say) leaves them
+    # root's, and every later command as phis then cannot rewrite them; given back on every configure.
+    for written in phis-instance.json phis-proxy.json phis-email-test.json; do
+      if [ -f "${CONFIG_DIR}/${written}" ] && [ ! -L "${CONFIG_DIR}/${written}" ]; then
+        chown phis:phis "${CONFIG_DIR}/${written}"
+      fi
+    done
 
     if [ -d /etc/nginx/sites-available ] && [ ! -e "${NGINX_SITE}" ]; then
       install -m 0644 "${TEMPLATE_ROOT}/nginx/phis.conf" "${NGINX_SITE}"

@@ -1,4 +1,4 @@
-import { accessSync, chmodSync, chownSync, constants, mkdirSync, statSync, type Stats } from "node:fs";
+import { accessSync, chmodSync, chownSync, constants, mkdirSync, readFileSync, statSync, type Stats } from "node:fs";
 import path from "node:path";
 import process from "node:process";
 
@@ -122,6 +122,23 @@ function isWritableBy(target: string, stats: Stats, account: PhiServiceAccount) 
   return (stats.mode & 0o003) === 0o003;
 }
 
+/**
+ * The name `/etc/passwd` or `/etc/group` gives an id, or the id itself where neither file names it (an
+ * account from a directory service, or a container without them). Read only to word a hint, so an
+ * operator copies `-o phis` rather than a number that means nothing on the next host.
+ */
+export function readPhiAccountName(file: "/etc/passwd" | "/etc/group", id: number, read = readFileSync) {
+  try {
+    for (const line of String(read(file, "utf8")).split("\n")) {
+      const [name, , entryId] = line.split(":");
+      if (name && Number(entryId) === id) return name;
+    }
+  } catch {
+    // no such file: the number stands
+  }
+  return String(id);
+}
+
 function formatOwner(stats: Stats) {
   return `${stats.uid}:${stats.gid}`;
 }
@@ -131,7 +148,7 @@ export function checkPhiConfiguredDirectory(
   account: PhiServiceAccount,
 ): PhiConfiguredDirectoryCheck {
   const stats = statOrNull(directory.path);
-  const fix = `install -d -o ${account.uid} -g ${account.gid} -m ${directory.mode.toString(8).padStart(4, "0")} ${directory.path}`;
+  const fix = `install -d -o ${readPhiAccountName("/etc/passwd", account.uid)} -g ${readPhiAccountName("/etc/group", account.gid)} -m ${directory.mode.toString(8).padStart(4, "0")} ${directory.path}`;
   if (!stats) {
     return {
       ...directory, ok: false, exists: false, isDirectory: false, owner: null, writable: false,
