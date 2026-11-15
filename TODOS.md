@@ -255,6 +255,15 @@ processed.
 - **`phis setup status` names the service account by number.** Its hint for a missing directory reads
   `install -d -o 126 -g 134`; it says `-o phis -g phis` (the account's names, looked up from the uid and gid
   it compares against).
+- **Area and Page configs from the CLI.** Owner's decision (2026-11-15): agents change Area and Page
+  trees through typed CLI commands, never through SQL. The CLI has no Area or Page command today, so a
+  config change on prod was a hand-written `site_area_revisions` row (site 1, Area revision #51,
+  `header_main` padding), past the strict config readers and the Builder's publish path. Wanted:
+  `phis area show --site <key> --area <area>` (the published tree as JSON), `phis area set … --node <id>
+  --config <json>` (validated as a Builder save is, written as a new published revision with
+  `source_revision_id`), `phis area revert --revision <id>` (the way back), and the same for a Page.
+  Before code: the command vocabulary, whether a set publishes or leaves a draft, and how a Page
+  override of a preset is told apart from the preset itself.
 
 ## Infrastructure management belongs to phis-host
 
