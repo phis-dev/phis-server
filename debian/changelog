@@ -1,3 +1,23 @@
+phis (0.3.3-1) unstable; urgency=medium
+
+  * entitlements:v1: Core records who is entitled to what. Kinds are
+    declared by Add-ons (entitlementKinds), sources write their own
+    entries, Core emits entitlement.changed, expires entries on a job,
+    and phis entitlement lists, grants and revokes them by hand. Needs
+    @phis/contracts 0.7.8. Existing databases replace the subject check
+    of phis.addon_event_outbox by hand (TODOS.md, "At the next release");
+    phis schema apply creates the three new tables.
+  * An Add-on reference into a Site-scoped table may use onDelete
+    "setNull": Core clears the column alone (SET NULL (column)) and keeps
+    the Site column. Before, it refused the descriptor.
+  * The instance stamp stays the service account's when root writes it,
+    is given back to phis on configure with phis-proxy.json and
+    phis-email-test.json, and says once when it cannot be written.
+  * phis setup status names the service account (-o phis -g phis), not
+    its numbers.
+
+ -- Marius Schumacher <marius.schumacher@phisys.com>  Sun, 15 Nov 2026 16:40:51 +0000
+
 phis (0.3.2-1) unstable; urgency=medium
 
   * The CLI carries nodemailer itself: 0.3.1 imported it from a node_modules
