@@ -1093,6 +1093,11 @@ pair needs, and requires both tables to be Site-scoped. The Site filter guards w
 does not guard what a value *points at*, and an insert naming another Site's row by id is an ordinary
 write that no declaration would show.
 
+Such a reference may use either delete rule. `cascade` takes the referencing rows along; `setNull`
+clears the referencing column alone (`ON DELETE SET NULL (column)`, PostgreSQL 15 and later), because the
+key covers the Site column too and a plain `SET NULL` would clear that as well. A product whose category
+is deleted keeps its Site and loses only its category. A `core.group` reference keeps `cascade` only.
+
 `groupLevel` names the level instead of returning the bits. The numeric ladder stays Core's, so no
 installed Add-on can come to depend on a value, and `hasSiteAccess` takes a symbolic access name rather
 than a role flag for the same reason.

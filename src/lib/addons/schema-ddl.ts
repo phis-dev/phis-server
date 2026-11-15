@@ -160,8 +160,9 @@ function coreSiteBoundForeignKey(
  * because the two rows are the Add-on's own and a query would happily read across the boundary Core
  * puts into every statement.
  *
- * `ON DELETE CASCADE` and no choice, as with the group: the constraint covers the Site column, and
- * `SET NULL` would clear that one too.
+ * The constraint covers the Site column, so a plain `SET NULL` would clear that one too. `setNull`
+ * therefore names the referencing column alone (`SET NULL (column)`, PostgreSQL 15 and later): the row
+ * stays in its Site and only loses what it pointed at.
  */
 function siteBoundForeignKey(
   schemaName: string,
@@ -169,13 +170,15 @@ function siteBoundForeignKey(
   columnName: string,
   targetTable: string,
   targetKey: string,
+  onDelete: "cascade" | "setNull",
 ) {
   return (
     `ALTER TABLE ${qualify(schemaName, tableName)} ADD CONSTRAINT ` +
     `${quotePhiIdentifier(composePhisAddonObjectName(tableName, columnName, "fk"))} ` +
     `FOREIGN KEY (${quotePhiIdentifier(columnName)}, ${quotePhiIdentifier(PHIS_ADDON_SITE_COLUMN)}) ` +
     `REFERENCES ${qualify(schemaName, targetTable)}` +
-    `(${quotePhiIdentifier(targetKey)}, ${quotePhiIdentifier(PHIS_ADDON_SITE_COLUMN)}) ON DELETE CASCADE`
+    `(${quotePhiIdentifier(targetKey)}, ${quotePhiIdentifier(PHIS_ADDON_SITE_COLUMN)}) ` +
+    (onDelete === "cascade" ? "ON DELETE CASCADE" : `ON DELETE SET NULL (${quotePhiIdentifier(columnName)})`)
   );
 }
 
@@ -553,6 +556,7 @@ export function buildPhisAddonSchemaStatements(
             column.name,
             column.references.table,
             tablesByName.get(column.references.table)!.primaryKey[0]!,
+            column.onDelete,
           ),
         });
         continue;

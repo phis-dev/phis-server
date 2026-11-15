@@ -98,6 +98,20 @@ describe("schema DDL generation", () => {
       .toContain("ON DELETE CASCADE");
   });
 
+  it("clears only the referencing column when such a reference uses setNull", () => {
+    // The key covers the Site column as well; a plain `SET NULL` would clear it and break the row's Site.
+    const descriptor = structuredClone(incidentSchemaDescriptor) as unknown as PhisAddonSchemaDescriptor;
+    const column = descriptor.tables[1]!.columns.find((entry) => entry.name === "incident_id")! as {
+      onDelete: string; nullable?: boolean;
+    };
+    column.onDelete = "setNull";
+    column.nullable = true;
+    const sql = buildPhisAddonSchemaStatements("phis_addon_acme_incidents", descriptor)
+      .find((entry) => entry.summary === "point incident_note.incident_id at incident within its Site")!.sql;
+    expect(sql).toContain('ON DELETE SET NULL ("incident_id")');
+    expect(sql).not.toContain("CASCADE");
+  });
+
   it("carries the Site into a reference between two Site-scoped tables", () => {
     /*
      * The id alone would let a note of one Site name an incident of another, and nothing about the

@@ -694,12 +694,8 @@ export function validatePhisAddonSchemaDescriptor(
           "without one has no Site to bind it to.",
         );
       }
-      if (column.onDelete !== "cascade") {
-        issues.push(
-          `${field} table "${table.name}" column "${column.name}" references Site-scoped "${target.name}" ` +
-          "and must use onDelete \"cascade\": Core binds it together with the Site column, which cannot be nulled.",
-        );
-      }
+      // `setNull` is allowed: Core clears only the referencing column (`SET NULL (column)`), never the
+      // Site column the key shares with it.
     }
   }
 

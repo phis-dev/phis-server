@@ -138,14 +138,14 @@ describe("schema descriptor validation", () => {
     expect(validate(copy).issues.join("\n")).toMatch(/must be siteScoped too/);
   });
 
-  it("refuses setNull on such a reference, which would clear the Site column too", () => {
+  it("accepts setNull on such a reference: Core clears the column alone, not the Site column", () => {
     const copy = structuredClone(incidentSchemaDescriptor) as unknown as {
       tables: { columns: Record<string, unknown>[] }[];
     };
     const column = copy.tables[1]!.columns.find((entry) => entry.name === "incident_id")!;
     column.onDelete = "setNull";
     column.nullable = true;
-    expect(validate(copy).issues.join("\n")).toMatch(/must use onDelete "cascade"/);
+    expect(validate(copy).issues).toEqual([]);
   });
 
   it("refuses a group reference on a table that is not Site-scoped", () => {
