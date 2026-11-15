@@ -661,6 +661,32 @@ export function validatePhisAddonManifest(
   }
   assertUnique(settingNames, "settings", issues);
 
+  // The kinds of entitlement this Add-on uses: a key in the kind grammar, a title, and whether it counts.
+  const entitlementKinds = Array.isArray(value.entitlementKinds) ? value.entitlementKinds : [];
+  if (value.entitlementKinds !== undefined && !Array.isArray(value.entitlementKinds)) {
+    issues.push("entitlementKinds must be an array when it is stated at all.");
+  }
+  const entitlementKindKeys: string[] = [];
+  for (const [index, kind] of entitlementKinds.entries()) {
+    if (!isPhiRecord(kind)) {
+      issues.push(`entitlementKinds[${index}] must be an object.`);
+      continue;
+    }
+    const key = readString(kind.key, `entitlementKinds[${index}].key`, issues);
+    if (key && !/^[a-z][a-z0-9.-]{0,63}$/.test(key)) {
+      issues.push(`entitlementKinds[${index}].key is invalid.`);
+    }
+    if (key) entitlementKindKeys.push(key);
+    readString(kind.title, `entitlementKinds[${index}].title`, issues);
+    if (kind.description !== undefined && typeof kind.description !== "string") {
+      issues.push(`entitlementKinds[${index}].description must be a string when it is stated at all.`);
+    }
+    if (kind.counted !== undefined && typeof kind.counted !== "boolean") {
+      issues.push(`entitlementKinds[${index}].counted must be a boolean when it is stated at all.`);
+    }
+  }
+  assertUnique(entitlementKindKeys, "entitlementKinds", issues);
+
   const roles = Array.isArray(value.roles) ? value.roles : [];
   if (value.roles !== undefined && !Array.isArray(value.roles)) {
     issues.push("roles must be an array when it is stated at all.");

@@ -33,6 +33,7 @@ describe("core capability deliverability", () => {
     expect(isPhisAddonCapabilityDeliverable(PHIS_CORE_CAPABILITIES.threads)).toBe(true);
     expect(isPhisAddonCapabilityDeliverable(PHIS_CORE_CAPABILITIES.resourceLinks)).toBe(true);
     expect(isPhisAddonCapabilityDeliverable(PHIS_CORE_CAPABILITIES.support)).toBe(true);
+    expect(isPhisAddonCapabilityDeliverable(PHIS_CORE_CAPABILITIES.entitlements)).toBe(true);
     /*
      * Named and reserved, handed to nobody: the case this gate exists for. A Site Module asks whether
      * this server performs authentication and is told yes; an Add-on asking to be handed an object

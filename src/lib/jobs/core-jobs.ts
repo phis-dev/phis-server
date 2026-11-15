@@ -4,7 +4,10 @@ import type { PhisAddonJobSchedule } from "@phis/contracts/addon";
 
 import { getPhisAddonInstalledManifest } from "@/lib/addons/installed";
 import { drainPhisAddonEventsForSite } from "@/lib/addons/event-delivery";
+import { listPhisEntitlementListeners } from "@/lib/addons/entitlements-capability";
+import { schedulePhisAddonEventDelivery } from "@/lib/addons/event-trigger";
 import { listPhisAddonEventSiteIds } from "@/db/addon-events";
+import { announceEndedEntitlements } from "@/db/entitlements.mts";
 import { prunePhiJobRuns } from "@/db/job-runs.mts";
 import { deleteExpiredAuthTransactions } from "@/db/site-auth";
 import { deleteExpiredUserSessions } from "@/db/user-sessions";
@@ -56,6 +59,17 @@ export const PHI_CORE_JOBS: readonly PhiCoreJob[] = Object.freeze([
       for (const siteId of await listPhisAddonEventSiteIds()) {
         if (signal.aborted) return;
         await drainPhisAddonEventsForSite(siteId);
+      }
+    },
+  },
+  {
+    id: "entitlements.expire",
+    schedule: { every: "5m" },
+    summary: "Announces the entitlements that ended since the last run, once each, to the Add-ons that listen.",
+    async run() {
+      // An ending is the one change nobody writes; the outbox rows it owes are delivered like any other.
+      for (const siteId of await announceEndedEntitlements(getPool(), listPhisEntitlementListeners())) {
+        schedulePhisAddonEventDelivery(siteId);
       }
     },
   },

@@ -31,6 +31,7 @@ For a first installation, read [INSTALL.md](./INSTALL.md) instead; it runs these
 - [instance](#instance)
 - [Common tasks](#common-tasks)
 - [Payment profiles](#payment-profiles)
+- [Entitlements](#entitlements)
 
 ## Running the CLI
 
@@ -857,8 +858,8 @@ url>/api/v1/addons/jobs` with the internal token. Core runs a job with a `schedu
 ([SERVER_ADDONS.md](../SERVER_ADDONS.md#jobs)); this command is for a job without one, or for a run
 the operator wants now. The run goes through the scheduler's ledger, so `phis addon jobs` shows it, and
 it is refused while a run of the same job is still going. With `--addon @phis/server` and no `--site`
-it runs one of Core's own jobs (`addon-events.deliver`, `notifications.deliver`, `auth.prune`,
-`job-runs.prune`).
+it runs one of Core's own jobs (`addon-events.deliver`, `entitlements.expire`, `notifications.deliver`,
+`auth.prune`, `job-runs.prune`).
 `--api-base-url` is required, the server's address as reached from where the CLI runs (Debian package:
 `http://127.0.0.1:5301`); there is no default. Exits `1` when the server refuses. Requires
 `api.internalToken` and a running server.
@@ -1264,3 +1265,33 @@ Stripe endpoint signing secret and validate real notification delivery before re
 The maintenance task selects at most 100 unresolved payments, reconciles stored remote commands and
 reports unavailable/concurrent claims. Dry-run changes nothing and makes no Provider calls. Retries
 never switch Provider/account or generate replacement financial commands. No polling timer is added.
+
+## Entitlements
+
+Core keeps who is entitled to what ([`entitlements:v1`](../SERVER_ADDONS.md#entitlementsv1)). `phis
+entitlement` reads the kinds the installed Add-ons declare, manages which sources the Site allows to write
+a kind, and writes entries by hand with the source `@phis/server`. `--site <site key>` is required on every
+subcommand. The CLI writes the database rows, including the `entitlement.changed` outbox rows; the running
+server delivers them.
+
+```bash
+phis entitlement kinds --site demo
+phis entitlement source list --site demo
+phis entitlement source allow --site demo --kind @acme/licenses:pro --source @acme/shop
+phis entitlement source deny --site demo --kind @acme/licenses:pro --source @acme/shop
+phis entitlement list --site demo --user 42 [--kind @acme/licenses:pro]
+phis entitlement grant --site demo --user 42 --kind @acme/licenses:pro --reference support-case-17 \
+  [--ends 2027-01-01T00:00:00Z] [--quantity 3]
+phis entitlement revoke --site demo --kind @acme/licenses:pro --reference support-case-17
+```
+
+- `kinds` lists the kinds of the enabled Add-ons: id, title, whether counted, and the declaring Add-on.
+- `source allow` refuses a kind no enabled Add-on declares and a source that is not an installed Add-on id;
+  the row records no granting user (the operator). `source deny` takes the leave back; entries the source
+  wrote stay.
+- `list` shows one user's entries on the Site, every source's: source, reference, start and end, quantity,
+  flags and whether the entry is valid now.
+- `grant` writes an entry with the source `@phis/server`. The user must be an active member of the Site, the
+  kind must be declared by an enabled Add-on, `--quantity` is required exactly when the kind is counted,
+  and `--ends` must be an ISO instant in the future. Granting the same `--reference` again answers the
+  first entry and writes nothing. `revoke` revokes the `@phis/server` entry of that kind and reference.

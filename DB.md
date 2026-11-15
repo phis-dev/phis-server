@@ -32,6 +32,9 @@ The target PostgreSQL schema for `phis` is:
 
 ### Smallint / flag contracts
 
+- `phis.entitlements.flags INT`
+  - `1 << 0 = revoked`
+  - `1 << 1 = suspended`
 - `phis.registration_intents.status SMALLINT`
   - `0 = pending`
   - `1 = verified`
@@ -1464,7 +1467,7 @@ Contract:
 - `updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
 - `UNIQUE (site_id, provider_id, reference)`
 - `CHECK (amount > 0 AND consumed >= 0 AND consumed <= amount)`
-- `CHECK (provider_id ~ '^@[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._-]*$')`
+- `CHECK (provider_id ~ '^@[a-z0-9][a-z0-9._-]*/[a-z0-9][a-z0-9._-]*$')`
 - `FOREIGN KEY (type_id, site_id) REFERENCES phis.support_ticket_types (id, site_id)`
 
 Contract:
@@ -1479,6 +1482,69 @@ Contract:
 - Who writes it is by design not Support: whether a customer paid for more lives in whatever sold it to them. `support:v1` carries `allowance`, `grant` and `revokeGrant`. See `design/SUPPORT.md` section 5.
 - `retired_at` replaces deleting a queue, as `site_groups` does it: nothing routes to a retired queue, and the tickets standing in it are still in it.
 - A Site's entry queue and its group arrive from a Module's declared seed, created by key on publish and never rewritten afterwards. See `design/SUPPORT.md` section 4.
+
+### `phis.entitlement_subjects`
+
+- `id SERIAL PRIMARY KEY`
+- `site_id SMALLINT NOT NULL REFERENCES phis.sites(id) ON DELETE CASCADE`
+- `user_id INT NOT NULL REFERENCES phis.user_accounts(id) ON DELETE CASCADE`
+- `reference VARCHAR(40) NOT NULL`
+- `created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
+- `UNIQUE (site_id, user_id)`
+- `UNIQUE (reference)`
+- `CHECK (reference ~ '^sub_[a-z0-9]{24}$')`
+
+Contract:
+- The reference Core hands an Add-on in place of a user id (`entitlements:v1`, SERVER_ADDONS.md): one per person and Site, issued on first asking and the same ever after. A person on two Sites has two subjects.
+- `reference` is random and unique across Sites; a reference is looked up with its `site_id`, so one of another Site is nobody.
+- Deleting the user deletes the subject and, through `entitlements.subject_id`, its entries.
+- See `design/ENTITLEMENTS.md`.
+
+### `phis.entitlements`
+
+- `id SERIAL PRIMARY KEY`
+- `site_id SMALLINT NOT NULL REFERENCES phis.sites(id) ON DELETE CASCADE`
+- `subject_id INT NOT NULL REFERENCES phis.entitlement_subjects(id) ON DELETE CASCADE`
+- `kind VARCHAR(255) NOT NULL`
+- `source VARCHAR(255) NOT NULL`
+- `reference VARCHAR(190) NOT NULL`
+- `starts_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
+- `ends_at TIMESTAMPTZ NULL`
+- `quantity INT NULL`
+- `flags INT NOT NULL DEFAULT 0`
+- `ended_event_at TIMESTAMPTZ NULL`
+- `created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
+- `updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
+- `UNIQUE (site_id, source, kind, reference)`
+- `CHECK (kind ~ '^@[a-z0-9][a-z0-9._-]*/[a-z0-9][a-z0-9._-]*:[a-z][a-z0-9.-]*$')`
+- `CHECK (source ~ '^@[a-z0-9][a-z0-9._-]*/[a-z0-9][a-z0-9._-]*$')`
+- `CHECK (reference <> '')`, `CHECK (ends_at IS NULL OR ends_at > starts_at)`, `CHECK (quantity IS NULL OR quantity > 0)`
+- index `entitlements_subject_kind_idx` on `(subject_id, kind)`
+- partial index `entitlements_ending_idx` on `(ends_at) WHERE ends_at IS NOT NULL AND ended_event_at IS NULL`
+
+Contract:
+- One source's statement that a subject is entitled to a kind. `source` is the writing Add-on's id, or `@phis/server` for an entry the operator wrote by hand (`phis entitlement grant|revoke`).
+- `reference` is the source's own name for it (an order number) and makes writing idempotent: a second grant on `(site_id, source, kind, reference)` answers the first entry and writes and emits nothing.
+- `kind` is text and no foreign key: the installed manifests are the catalogue (`entitlementKinds`), and an entry whose kind no enabled Add-on declares is kept and does not count.
+- `flags` are `PhisEntitlementFlag`: `1 = Revoked`, `2 = Suspended`.
+- There is no status column. An entry is valid while `flags & 3 = 0 AND starts_at <= NOW() AND (ends_at IS NULL OR ends_at > NOW())`, judged by the database's clock on every read, so an entry that ends needs no write to stop counting.
+- `quantity` is set exactly where the kind is `counted`; the answer for a counted kind is the sum over the valid entries. Core counts no use.
+- A revoked entry is over: an update does not change it.
+- `ended_event_at` records that the entry's ending was announced as `entitlement.changed`. Core's job `entitlements.expire` sets it for each ended, unrevoked entry once and enqueues one event per subject and kind in the same transaction. Moving `ends_at` clears it, so the new ending is announced again.
+
+### `phis.entitlement_kind_sources`
+
+- `site_id SMALLINT NOT NULL REFERENCES phis.sites(id) ON DELETE CASCADE`
+- `kind VARCHAR(255) NOT NULL`
+- `source VARCHAR(255) NOT NULL`
+- `granted_by_user_id INT NULL REFERENCES phis.user_accounts(id) ON DELETE SET NULL`
+- `granted_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
+- `PRIMARY KEY (site_id, kind, source)`
+
+Contract:
+- The Site admin allowing a source to write a kind. The Add-on that declared a kind needs no row for its own; every other source needs one for `grant` and `update`. `revoke` needs none.
+- `granted_by_user_id` is NULL where the operator allowed it from the CLI or the granting user is gone.
+- Removing a row does not remove the entries the source wrote: they are statements about the past.
 
 ### `phis.threads`
 
@@ -2233,7 +2299,7 @@ COMMIT;
 - `addon_id VARCHAR(255) NOT NULL REFERENCES phis.server_addons(addon_id) ON DELETE CASCADE`
 - `event VARCHAR(120) NOT NULL` (CHECK `<> ''`)
 - `thread_id INT NULL REFERENCES phis.threads(id) ON DELETE CASCADE`
-- `subject_kind VARCHAR(16) NOT NULL DEFAULT 'thread'`
+- `subject_kind VARCHAR(16) NOT NULL DEFAULT 'thread'` (`thread`, `payment`, `subscription`, `emitted` or `entitlement`)
 - `payment_id UUID NULL REFERENCES phis.payments(id) ON DELETE RESTRICT`
 - `payload JSONB NOT NULL DEFAULT '{}'::jsonb`
 - `emitter VARCHAR(255) NULL REFERENCES phis.server_addons(addon_id) ON DELETE CASCADE`
@@ -2247,8 +2313,15 @@ COMMIT;
 - partial unique index `addon_event_outbox_dedupe_unique` on `(site_id, addon_id, event, dedupe_key)
   WHERE dedupe_key IS NOT NULL`
 - `addon_event_outbox_subject_check`: a thread subject has exactly `thread_id`, a bare thread event and
-  no emitter; a payment subject has exactly `payment_id`, `payment.changed` and no emitter; an emitted
-  subject has an `emitter`, an event of the shape `@scope/name:event`, and neither thread nor payment.
+  no emitter and is neither `payment.changed` nor `entitlement.changed`; a payment subject has exactly `payment_id`, `payment.changed` and no emitter; an emitted
+  subject has an `emitter`, an event of the shape `@scope/name:event`, and neither thread nor payment;
+  an entitlement subject has no thread, payment, subscription or emitter, the event `entitlement.changed`, and
+  `payload = { subject, entitlementKind }`.
+
+Entitlement events (SERVER_ADDONS.md, `entitlements:v1`): Core writes one row per Add-on of the Site that is
+requested-enabled, `ready` and declares an `entitlement.changed` handler, with `subject_kind = 'entitlement'`
+and `payload = { subject, entitlementKind }`, in the transaction of the change or of the `entitlements.expire`
+job. The same ordered drain delivers it.
 
 Emitted events (SERVER_ADDONS.md, Events): an Add-on emits through the `events:v1` capability, and Core
 writes one row per listener -- every Add-on of the Site that is requested-enabled, `ready`, and

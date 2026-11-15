@@ -160,6 +160,7 @@ import {
 import { sweepPhisAddonAssets } from "./storage-sweep.mts";
 import { PHI_MAINTENANCE_TASKS, runPhiMaintenance } from "./maintain.mts";
 import { runPhisPaymentProfileCommand, recoverPhisPayments } from "./payments.mts";
+import { runPhisEntitlementCommand } from "./entitlements.mts";
 import { checkPhiDependencyLicenses } from "./licenses.mts";
 import { checkPhiMediaOwnership, findPhiMediaOrphanedLocalStaging } from "./media-check.mts";
 import { parsePhiUsageDays, readPhiTranslationUsage } from "./translations-usage.mts";
@@ -404,6 +405,15 @@ Usage:
   phis payment profile probe  --site <site key> --key <profile key> [--currency CHF]
   phis payment profile enable --site <site key> --key <profile key> [--currency CHF]
   phis payment profile retire --site <site key> --key <profile key>
+
+  phis entitlement kinds       --site <site key>
+  phis entitlement source list --site <site key>
+  phis entitlement source allow --site <site key> --kind <kind id> --source <@scope/name>
+  phis entitlement source deny  --site <site key> --kind <kind id> --source <@scope/name>
+  phis entitlement list   --site <site key> --user <user id> [--kind <kind id>]
+  phis entitlement grant  --site <site key> --user <user id> --kind <kind id> --reference <text>
+                          [--ends <ISO instant>] [--quantity <n>]
+  phis entitlement revoke --site <site key> --kind <kind id> --reference <text>
 
   phis secret init-key
   phis secret set   --name <name> [--site <site key>] [--addon <@scope/name>] [--value <value>]   (value from stdin without --value)
@@ -3474,6 +3484,13 @@ async function main() {
       reference => readPhisSecretWithDb(getPool(), reference, requireSecretEncryptionKey()));
     if (json) printJson({ ok: true, action: `payment.profile.${remaining[0]}`, ...result });
     else console.log(JSON.stringify(result, null, 2));
+    return;
+  }
+
+  if (group === "entitlement") {
+    const result = await runPhisEntitlementCommand(configRoot, getPool(), [command ?? "", ...remaining], flags);
+    if (json) printJson({ ok: true, action: `entitlement.${[command, ...remaining].filter(Boolean).join(".")}`, ...result.data });
+    else for (const line of result.lines) console.log(line);
     return;
   }
 

@@ -285,7 +285,7 @@ Every Add-on exports a server-only manifest, `PhisAddonManifestV1` from `@phis/c
 - `jobs`
 - `schema`: the schema descriptor, or `null` when the Add-on owns no tables, and `migrationVersion`
 - `queries`: the declared query catalog
-- optional `settings`, `roles`, `groups`, `groupWriter`, `occasions`, and `modules`
+- optional `settings`, `roles`, `groups`, `groupWriter`, `occasions`, `entitlementKinds`, and `modules`
 
 The manifest digest is the SHA-256 of the manifest's canonical JSON and therefore covers every field. The
 manifest never contains runtime secrets.
@@ -699,7 +699,9 @@ ledger are in [DB.md](./DB.md#phisjob_runs):
   skipped.
 
 Core's own owed work runs on the same clock as Core jobs owned by `@phis/server`: `addon-events.deliver`
-and `notifications.deliver` every five minutes, the retries behind the two outboxes, `auth.prune` hourly
+and `notifications.deliver` every five minutes, the retries behind the two outboxes, `entitlements.expire`
+every five minutes (it announces the entitlements that ended, see [`entitlements:v1`](#entitlementsv1)),
+`auth.prune` hourly
 for expired sessions and finished sign-in transactions, and `job-runs.prune` daily. `phis mail drain`
 remains for a retry the operator wants now.
 
@@ -769,7 +771,7 @@ telling.
 
 An Add-on declares `eventHandlers: [{ id, event, handler }]`, where `event` is one of Core's own,
 `thread.message.created`, `thread.message.updated`, `thread.status.changed`, `thread.link.removed`,
-`payment.changed`, or an event an Add-on emits, named `@scope/name:what.happened`, and `handler` names
+`payment.changed`, `entitlement.changed`, or an event an Add-on emits, named `@scope/name:what.happened`, and `handler` names
 an entry in `eventHandlers` on the runtime. One handler per event: two would need an order Core does not
 define, and an Add-on wanting two things to happen can do both in one function where the order is
 visible.
@@ -827,6 +829,10 @@ An event context carries `addonId`, `event`, `deliveryId` (the outbox key, stabl
 `site`, a discriminated `subject`, `capabilities`, and `signal`. Current thread events use
 `subject: { kind: "thread", threadId, messageId }`. Like a job, it runs with no
 actor and system authority: Core is telling the Add-on about a thread it is already allowed to reach.
+
+**Entitlement events:** `entitlement.changed` carries a `kind: "entitlement"` subject with the subject
+reference and the entitlement kind, and no state. It is routed to every enabled Add-on of the Site that
+declares a handler for it; see [`entitlements:v1`](#entitlementsv1).
 
 **Payment events:** `PhisAddonEventContext` also describes
 `payment.changed` with a `kind: "payment"` subject containing payment/reference/version and nullable
@@ -1054,6 +1060,7 @@ dispatch, by the job runner, and when its service factory is resolved.
 | `@phis/server/payment-notifications:v1` | yes -- see [PAYMENTS.md](./PAYMENTS.md) §7 and [External hooks](#external-hooks) |
 | `@phis/server/notifications:v1` | yes -- see [`notifications:v1`](#notificationsv1) |
 | `@phis/server/events:v1` | yes -- see [Events an Add-on emits](#events-an-add-on-emits) |
+| `@phis/server/entitlements:v1` | yes -- see [`entitlements:v1`](#entitlementsv1) |
 
 Core descriptors are generated from the running release and reconciled into the registry. They are not
 editable Site settings and cannot be disabled per Site.
@@ -1520,6 +1527,59 @@ none.
 Support work depends on the type's close policy and on the other tasks -- which an integration cannot
 see all of. A type and a queue are named by key rather than by id, because an id means nothing in an
 Add-on's configuration; a key that names nothing is refused rather than quietly routed elsewhere.
+
+### `entitlements:v1`
+
+Who is entitled to what, from when until when. The vocabulary is neutral on purpose; licence keys,
+devices, seats, prices and products are not Core's words.
+
+- **Kind.** What somebody can be entitled to, `@scope/name:key`. The Add-on that uses it declares it in
+  its manifest under `entitlementKinds: [{ key, title, description?, counted? }]` (`key` matches
+  `^[a-z][a-z0-9.-]*$`, keys unique per manifest; `counted` says entries carry a quantity that adds up).
+  Core keeps no table of kinds: the manifests of the enabled Add-ons are the catalogue, and an entry
+  whose kind nobody declares any more is kept and does not count.
+- **Subject.** Who is entitled: a reference Core issues (`sub_` and 24 characters), one per user and
+  Site, never a user id. Two Add-ons of one Site hold the same reference for the same person. A
+  reference of another Site is nobody here.
+- **Source.** The Add-on that wrote an entry, or `@phis/server` for an entry the operator wrote by hand
+  with `phis entitlement grant` and `phis entitlement revoke` ([CLI.md](docs/CLI.md#entitlements)).
+- **Entry.** One source's statement: subject, kind, source, the source's own reference, start, end or
+  none, quantity or none, and the flags `Revoked` (1) and `Suspended` (2).
+- **Entitled.** At least one entry of the subject and kind is valid: neither flag set, started, not
+  ended, judged by the database's clock. Nothing is stored for that, so an entry that ends needs no
+  write to stop counting. On a counted kind `quantity` is the sum over the valid entries; Core counts no
+  use. `until` is the latest end among the valid entries, null when one has none or nobody is entitled.
+
+The capability: `kinds`, `subject`, `check`, `list`, `grant`, `update`, `revoke`.
+
+**Reads are open** to every Add-on that requires the capability, and cover the entries of every source.
+`check` for a kind no enabled Add-on declares answers not entitled without reading entries. `subject()`
+and a call without a subject act for the acting user; with nobody acting there is no subject, and
+`list` answers nothing.
+
+**Writing.** `grant` and `update` are refused (the call throws) unless the kind is declared by an
+enabled Add-on and the calling Add-on either declared it itself or has a row in
+`entitlement_kind_sources` for it, which the Site's admin gives and takes back. `grant` is idempotent on
+`(kind, reference)`: a second call answers the first entry unchanged and emits nothing, so a payment
+handler delivered twice entitles once. A counted kind needs a whole quantity of at least 1 and an
+uncounted one takes none; `endsAt` must be after the start. The source is the calling Add-on and is not
+a parameter: `update` and `revoke` find only the caller's own entries, and another source's entry is not
+found (`null`), not refused. `revoke` needs no leave, so a source whose leave was withdrawn can still
+take back what it stated. A revoked entry stays revoked: `update` does not touch it.
+
+**An unverified hook reaches nothing**, reads included: every call from a hook that declares no way to
+believe its caller throws, as with `support:v1`.
+
+**The event.** Core emits `entitlement.changed` when an entry is written, changed or revoked, and when
+one ends. The subject is typed, `{ kind: "entitlement", subject, entitlementKind }`, and carries no
+state; the handler reads the current answer through the capability. It goes to every enabled,
+configured Add-on of the Site that declares a handler for it; delivery is the existing outbox, at least
+once. An ending is the one change nobody writes: the Core job `entitlements.expire`, every five minutes,
+marks each ended entry once and enqueues one event per subject and kind.
+
+**Not in it.** Signing a desktop app in, licence keys, devices and seats, reconciling store purchases,
+using a quantity up, and an access policy in `@phis/ui` are not part of this service; see
+[design/ENTITLEMENTS.md](./design/ENTITLEMENTS.md) sections 7 and 9.
 
 ### `settings:v1`
 

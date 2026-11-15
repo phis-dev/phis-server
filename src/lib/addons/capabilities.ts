@@ -30,6 +30,7 @@ import { buildPhisAddonSupportCapability } from "./support-capability.ts";
 import { buildPhisAddonThreadsCapability } from "./threads-capability.ts";
 import { buildPhisAddonSecretsCapability } from "./secrets-capability.ts";
 import { buildPhisAddonSettingsCapability } from "./settings-capability.ts";
+import { buildPhisAddonEntitlementsCapability } from "./entitlements-capability.ts";
 import { buildPhisAddonEventsCapability } from "./events-capability.ts";
 import { buildPhisAddonNotificationsCapability } from "./notifications-capability.ts";
 import { buildPhisAddonStorageCapability } from "./storage-capability.ts";
@@ -357,6 +358,18 @@ export function buildPhisAddonCapabilities(input: {
       // An unsigned hook may change nothing, and an outbox row is a change.
       unauthenticated: input.unauthenticated === true && input.systemAuthority !== true,
       hop: input.eventHop ?? 0,
+    });
+  }
+  if (required.includes(PHIS_CORE_CAPABILITIES.entitlements)) {
+    /*
+     * Bound to the acting user for "am I entitled", and to the Add-on as the source of what it writes.
+     * A job or an event handler has no user: it names the subject it stored.
+     */
+    capabilities.entitlements = buildPhisAddonEntitlementsCapability({
+      addonId: input.manifest.addonId,
+      siteId,
+      actorUserId: input.actorUserId,
+      unauthenticated: input.unauthenticated === true && input.systemAuthority !== true,
     });
   }
   if (required.includes(PHIS_CORE_CAPABILITIES.threads)) {

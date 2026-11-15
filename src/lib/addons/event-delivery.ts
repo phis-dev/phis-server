@@ -86,6 +86,11 @@ async function invokeEventHandler(input: {
         operationId: typeof input.row.payload.operationId === "string" ? input.row.payload.operationId : null,
         refundId: typeof input.row.payload.refundId === "string" ? input.row.payload.refundId : null,
       } }));
+    } else if (input.event === "entitlement.changed") {
+      // No state travels: the handler reads the current answer through `entitlements:v1`.
+      const { subject, entitlementKind } = input.row.payload;
+      if (input.row.subjectKind !== "entitlement" || typeof subject !== "string" || typeof entitlementKind !== "string" || !entitlementKind.startsWith("@")) throw new Error("Invalid entitlement outbox subject.");
+      await timed(input.handler({ ...common, event: input.event, subject: { kind: "entitlement", subject, entitlementKind: entitlementKind as `@${string}/${string}:${string}` } }));
     } else if (input.row.subjectKind === "emitted") {
       /*
        * What another Add-on said (SERVER_ADDONS.md, Events). The envelope is the row: who emitted it,

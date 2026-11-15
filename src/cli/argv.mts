@@ -146,6 +146,14 @@ export const PHIS_COMMAND_FLAGS: Record<string, FlagSpec> = {
   "storage cors": {},
   "storage probe": { site: S, key: S },
 
+  "entitlement kinds": { site: S },
+  "entitlement source list": { site: S },
+  "entitlement source allow": { site: S, kind: S, source: S },
+  "entitlement source deny": { site: S, kind: S, source: S },
+  "entitlement list": { site: S, user: S, kind: S },
+  "entitlement grant": { site: S, user: S, kind: S, reference: S, ends: S, quantity: S },
+  "entitlement revoke": { site: S, kind: S, reference: S },
+
   "secret init-key": {},
   "secret set": { name: S, site: S, addon: S, value: S },
   "secret check": { name: S, site: S, addon: S },
