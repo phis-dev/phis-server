@@ -4,9 +4,10 @@ import type {
   PhisPaymentPricing, PhisPaymentPricingFeatures, PhisPaymentPricingSelector, PhisPaymentProfileDraft, PhisPaymentProviderObservation,
   PhisPaymentProviderProbe, PhisPaymentProviderStoredMethod, PhisPaymentStoredFeatures, PhisPaymentTotals,
 } from "@phis/contracts/payments";
+import { PHIS_PAYMENT_CURRENCY_EXPONENTS } from "@phis/contracts/payments";
 import type { PhisAddonManifestV1 } from "@phis/contracts/addon";
 import {
-  PHIS_PAYMENT_CURRENCY_EXPONENTS, PHIS_PAYMENT_MAX_ADDITIONS, PHIS_PAYMENT_MAX_DISCOUNTS, PHIS_PAYMENT_MAX_LINE_ITEMS,
+  PHIS_PAYMENT_MAX_ADDITIONS, PHIS_PAYMENT_MAX_DISCOUNTS, PHIS_PAYMENT_MAX_LINE_ITEMS,
   PHIS_PAYMENT_MAX_LINE_QUANTITY, PHIS_PAYMENT_MAX_PROVIDER_TAX_CODES, PHIS_PAYMENT_MAX_REFUNDS, PHIS_PAYMENT_MAX_TAX_IDS,
   PHIS_PAYMENT_TAX_CATEGORIES, PHIS_PAYMENT_TEXT_LENGTH,
 } from "../constants/payments.ts";
