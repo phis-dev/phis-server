@@ -57,11 +57,11 @@ Two tables in `phis`, `CREATE` only, each row gone with its Site:
 
 ```
 site_module_media          site_id (-> sites, CASCADE), package_name, key,
-                           asset_id NULL, source_checksum, bound_by_user_id NULL, created_at, updated_at
+                           asset_id NULL, source_checksum, flags INT, created_at, updated_at
                            PRIMARY KEY (site_id, package_name, key)
                            FOREIGN KEY (asset_id, site_id) -> media_assets (id, site_id) ON DELETE SET NULL (asset_id)
 site_module_media_folders  site_id (-> sites, CASCADE), package_name, key,
-                           folder_id NULL (-> media_folders, SET NULL), bound_by_user_id NULL,
+                           folder_id NULL (-> media_folders, SET NULL), flags INT,
                            created_at, updated_at
                            PRIMARY KEY (site_id, package_name, key)
 ```
@@ -84,14 +84,25 @@ layer: it knows Spaces, folders and Assets, and nothing of packages; what a pack
 by the layer that knows packages.
 
 `source_checksum` is the SHA-256 of the package file the Asset was last written from.
-`bound_by_user_id` is set when an operator pointed the name at another Asset by hand; the import then
-leaves the row alone. `media_assets` and `media_folders` gain no column. An imported Asset carries
+`flags` carries `Bound`: an operator pointed the name at an Asset or folder by hand, and the import then
+leaves the row alone. A flag and not a "bound by" user column, because the CLI binds without an acting
+user and an empty column would read as "not bound"; who did it can be added when an admin page binds. `media_assets` and `media_folders` gain no column. An imported Asset carries
 `meta.source = "module"` with the package and key, as provenance for a reader -- nothing looks it up.
 
 ## 5. The import
 
-A step `phis module media sync --site <site key>`, which `phis update <site key>` runs as well: only
-there do the package's files and Core's database meet. For every declared folder, then every file:
+The running Core does the import; the CLI only starts it. Writing an object goes through Core's storage
+service -- key, content check, quota, the Site Space's Storage Profile -- and that service lives in the
+server process: a CLI process cannot load it, and for Local storage on another host could not reach the
+files at all.
+
+`phis module media sync --site <site key>`, which `phis update <site key>` runs as well, reads the
+manifests of the Site's installed packages and posts each folder and file to an internal route of Core
+(`/api/v1/...`, the internal token, as `phis addon job` does). The Core it talks to is the one in the
+Site's own `config/site-runtime.json` (`phis.apiBaseUrl`, `phis.internalToken`): the Core the Site is
+served by, whatever stage root the command was started from. The command needs no database. Core takes
+one file per request, never a path, and holds a lock per Site so two runs do not write the same name
+twice. For every declared folder, then every file:
 
 1. Row present, Asset (folder) present: leave it. For a file whose checksum differs from
    `source_checksum`, see section 9, point 2.
@@ -109,6 +120,8 @@ files, and on a Site moved to another Core it creates the Module's pictures afre
 
 ## 6. Handing the ids to the Module
 
+- The Site reads it once and keeps it; it reads it again after a restart and after a short time, so a
+  hand binding reaches a running Site without one.
 - Core answers the mapping of a Site over a read route of the Site API (package, key -> Asset id or
   folder id). It is public knowledge of the Site, not a secret; it changes only on `sync` or a rebind.
 - `@phis/ui` loads it with the Site's other runtime facts and hands the preset builders a resolver:
