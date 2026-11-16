@@ -266,8 +266,9 @@ Accounting Area what a manager uses. Addresses in Public follow the collision ru
 [PUBLIC_ADDRESSES.md](./PUBLIC_ADDRESSES.md); the defaults are:
 
 ```text
-/shop                   catalogue (Public)
-/shop/p/<slug>          product page, bound to the product record Provider (Public)
+/shop/products          catalogue (Public); `/shop` is a folder and leads nowhere
+/shop/products/<slug>   product page, bound to the product record Provider (Public)
+/shop/categories/<slug> one category's products (Public)
 /shop/cart              the cart (Public)
 /shop/checkout          address, destination, promotion code, summary, "pay" (Public)
 /shop/order/<number>    order page, token in the link (Public)
@@ -277,6 +278,10 @@ Accounting Area what a manager uses. Addresses in Public follow the collision ru
 /phis/shop/order/<number>  order page, read as the customer's own, no token (App)
 /phis/shop              catalogue, destinations, promotions, orders, refunds (Accounting)
 ```
+
+A Page is never a folder (REFERENCES.md, "A Page is never a folder"): the catalogue stands beside the cart,
+checkout and order Pages rather than above them, its products directly beneath it as a list's entries. The
+header's "Shop" entry is a link to the catalogue, so `/shop` answers 404.
 
 Cart, checkout and order page exist in both Areas so that a purchase is finished where it began: a
 customer who opens the Basket in the App is not sent out of it to pay. An order remembers the Area it
