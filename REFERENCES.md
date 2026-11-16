@@ -68,6 +68,15 @@ lock (`pg_advisory_xact_lock` in `src/db/site-pages.ts`) before the check, which
 guarantee rather than advice. The answers are `409 path_collision` for an address another Page holds and
 `409 path_nested` for one that would put a Page beneath another, with `{ error, message }`.
 
+The rule is the Area's, not only this store's. It holds for Module routes as well, which this server
+never sees: a Module declares no route beneath another of its own in the same Area, and an overview
+stands beside the Pages it introduces (`/faq/overview` next to `/faq/hosting`), with the container
+naming it as its folder's target. One nesting is allowed there: a list's entries directly beneath the
+list, `/blog/:slug` under `/blog`, because one route answers every entry and no Navigation links the
+family. phis-ui checks Module routes at verify time (`checkPhiRouteAddresses`, phis-ui
+THIRD_PARTY_MODULES.md, "Addresses and folders"); the Builder refuses a Site Page on, above or beneath
+an address an active Module answers on.
+
 ## Creating a Page
 
 `POST /api/site/cms/page/create` creates a Site Page and only creates. When a Scope already holds the
@@ -112,6 +121,10 @@ published Navigation rather than from a store of its own.
 - *At the Site* the lookup sits on the miss path only: the Site asks it where no Page answers and turns a
   reference into a 307, as it does for a forwarding Area root. The locale prefix stays outside, since paths
   are locale-neutral.
+- *A Module's own target.* A Module container may name its folder's target in its descriptor
+  (`folderTarget`, phis-ui). That never reaches this store: the Site answers it where this lookup finds no
+  target, so a Site's own choice wins and a Module's forward needs no publish. A stored target of "none"
+  reads as no target here, so it does not switch a Module's forward off.
 - *Sitemap:* a folder address is a redirect and is not listed; the Pages behind it already are.
 
 ## Reference identities and resolution
