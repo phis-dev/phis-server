@@ -13,7 +13,7 @@ import {
   isPhiSignalValueType,
 } from "@phis/contracts/signals";
 
-import type { PhiCmsInstanceId } from "@/lib/cms/instance-id";
+import { readPhiCmsInstanceIdDescriptor, type PhiCmsInstanceId } from "@/lib/cms/instance-id";
 import { isPhiRecord } from "@/lib/helpers/record";
 
 
@@ -23,6 +23,11 @@ import { isPhiRecord } from "@/lib/helpers/record";
  * The vocabularies come from `@phis/contracts/signals` and the value schema is checked for its shape
  * only -- `isPhiSignalValueSchemaShape`. Which schemas exist is the UI's to know: refusing one because
  * phi-server had never heard of the package would refuse every third party's.
+ *
+ * A receiver naming a CMS instance outside the stored tree is accepted when the id is of preset origin
+ * and refused when it is of draft origin. An Overlay a Module's preset declares stays the Module's and
+ * is laid over the stored Page or Area when it is shown (phis-ui OVERLAYS.md), so the stored tree's own
+ * nodes may signal to it, and the id says where it comes from.
  */
 export function collectCmsSignalRouteErrors(
   value: unknown,
@@ -99,7 +104,11 @@ export function collectCmsSignalRouteErrors(
         errors.push(`${routeLabel} ${scopeProblem}.`);
       }
       const cmsInstanceId = receiver === "broadcast" ? null : readPhiCmsSignalAddressInstanceId(receiver);
-      if (cmsInstanceId && !activeIds.has(cmsInstanceId)) {
+      if (
+        cmsInstanceId
+        && !activeIds.has(cmsInstanceId)
+        && readPhiCmsInstanceIdDescriptor(cmsInstanceId)?.origin !== "preset"
+      ) {
         errors.push(`${routeLabel} targets an unknown CMS instance.`);
       }
     });

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { createPhiPresetCmsInstanceId } from "./instance-id";
+import { createPhiDraftCmsInstanceId, createPhiPresetCmsInstanceId } from "./instance-id";
 import { validateCmsPageWriteInput } from "./write-validation";
 
 const createTestId = (nodeKey: string) => createPhiPresetCmsInstanceId({
@@ -373,6 +373,29 @@ describe("CMS Controller settings write validation", () => {
     }
   });
 
+  it("accepts a Controller route to a preset Overlay the tree does not hold", () => {
+    const result = validateCmsPageWriteInput(withSettings([{
+      type: CONTROLLER_TYPE,
+      instanceKey: "default",
+      mountScope: "page",
+      config: openRoute(`cms:${createTestId("overlay/from-module-preset")}`),
+    }]));
+    expect(result.ok).toBe(true);
+  });
+
+  it("accepts a node route to a preset Overlay the tree does not hold", () => {
+    const payload = buildPagePayload();
+    const [overlay] = payload.overlays;
+    const result = validateCmsPageWriteInput({
+      ...payload,
+      overlays: [{
+        ...overlay,
+        config: { ...overlay.config, ...openRoute(`cms:${createTestId("overlay/from-module-preset")}`) },
+      }],
+    });
+    expect(result.ok).toBe(true);
+  });
+
   it("refuses a tree that leaves the field out", () => {
     const payload: Record<string, unknown> = buildPagePayload();
     delete payload.controllerSettings;
@@ -389,7 +412,7 @@ describe("CMS Controller settings write validation", () => {
         type: CONTROLLER_TYPE,
         instanceKey: "other",
         mountScope: "page",
-        config: openRoute(`cms:${createTestId("overlay/gone")}`),
+        config: openRoute(`cms:${createPhiDraftCmsInstanceId({ domain: "page", draftRevisionId: 1, sequence: 999 })}`),
       },
     ]));
     expect(result.ok).toBe(false);
