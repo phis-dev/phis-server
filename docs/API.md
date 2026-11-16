@@ -8,7 +8,7 @@ public or internal token, and `session` is the visitor's Site session with the a
 passes (see [AUTHORIZATION.md](../AUTHORIZATION.md)). A route with no access entry performs its own checks
 or none; read its source. Request and response shapes are not listed; the source is linked per route.
 
-167 routes.
+172 routes.
 
 ## Contents
 
@@ -25,8 +25,9 @@ or none; read its source. Request and response shapes are not listed; the source
 - [`/api/v1/hooks`](#apiv1hooks) (1)
 - [`/api/v1/locales`](#apiv1locales) (1)
 - [`/api/v1/media`](#apiv1media) (2)
+- [`/api/v1/module-media`](#apiv1modulemedia) (4)
 - [`/api/v1/notifications`](#apiv1notifications) (2)
-- [`/api/v1/site`](#apiv1site) (19)
+- [`/api/v1/site`](#apiv1site) (20)
 - [`/api/v1/tr`](#apiv1tr) (1)
 
 ## `/api/operator`
@@ -332,6 +333,17 @@ Versioned API a Site calls server-to-server with its token (`x-phis-token`), and
 | POST | [`/api/v1/media/checksums/recompute`](../src/app/api/v1/media/checksums/recompute/route.ts) | internal token | Gives Assets stored before this a digest duplicate detection can compare. |
 | POST | [`/api/v1/media/storage-policies/reconcile`](../src/app/api/v1/media/storage-policies/reconcile/route.ts) | internal token | Writes every storage's rules from the Site registry: who may write to it, and what it is to clean up. |
 
+## `/api/v1/module-media`
+
+Versioned API a Site calls server-to-server with its token (`x-phis-token`), and the public endpoints under it.
+
+| Method | Address | Access | Description |
+|---|---|---|---|
+| GET | [`/api/v1/module-media`](../src/app/api/v1/module-media/route.ts) | internal token | Every Module media row of the Site, with the digest each file was written from. |
+| POST | [`/api/v1/module-media/bind`](../src/app/api/v1/module-media/bind/route.ts) | internal token | Pointing a declared name at an Asset or Folder of the Site by hand, or taking that back. |
+| POST | [`/api/v1/module-media/file`](../src/app/api/v1/module-media/file/route.ts) | internal token | Importing one declared file of a Module package into the Site Space, as an ordinary Asset. |
+| POST | [`/api/v1/module-media/folder`](../src/app/api/v1/module-media/folder/route.ts) | internal token | Importing one declared Media Folder of a Module package into the Site Space. |
+
 ## `/api/v1/notifications`
 
 Versioned API a Site calls server-to-server with its token (`x-phis-token`), and the public endpoints under it.
@@ -357,6 +369,7 @@ Versioned API a Site calls server-to-server with its token (`x-phis-token`), and
 | GET | [`/api/v1/site/locale`](../src/app/api/v1/site/locale/route.ts) | internal token |  |
 | GET | [`/api/v1/site/media/folder-images`](../src/app/api/v1/site/media/folder-images/route.ts) | internal token | The public pictures of a Media Folder, for a page that shows a Folder rather than named Assets. |
 | GET | [`/api/v1/site/media/settings`](../src/app/api/v1/site/media/settings/route.ts) | internal token | Internal read of the Site's Media configuration for server-side composition (the Admin Media Settings page loads its Form initial values here). Mutations stay on the session-guarded /api/site/admin/media route; this endpoint is internal-token read-only. |
+| GET | [`/api/v1/site/module-media`](../src/app/api/v1/site/module-media/route.ts) | internal token | Which Asset or Media Folder stands for each name a Module package declares, for the Site's runtime. |
 | GET | [`/api/v1/site/nav`](../src/app/api/v1/site/nav/route.ts) | internal token; session (requireSiteCmsPreviewApiContext) |  |
 | GET | [`/api/v1/site/nav/folder`](../src/app/api/v1/site/nav/folder/route.ts) | internal token | Where a folder address of an Area leads, as a Page reference, for the Site to answer a request that found no Page with a 307. Asked on the miss path only; 404 when the address leads nowhere. |
 | GET | [`/api/v1/site/nav/scopes`](../src/app/api/v1/site/nav/scopes/route.ts) | internal token |  |

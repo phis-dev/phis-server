@@ -422,8 +422,12 @@ export async function isEffectiveMediaGroupMember(siteId: number, groupId: numbe
  * bytes is the business of the statement that also removes their rows, and doing it here would free
  * them twice. An expired session cannot finalize, so nothing discounted here can ever be committed.
  */
-export async function reserveMediaSpaceQuota(input: { spaceId: number; bytes: number }) {
-  const { rows } = await getPool().query<{ id: number }>(
+export async function reserveMediaSpaceQuota(
+  input: { spaceId: number; bytes: number },
+  /** A caller's open transaction, for a write that books the bytes in the same one (Module media import). */
+  db?: Pick<PoolClient, "query">,
+) {
+  const { rows } = await (db ?? getPool()).query<{ id: number }>(
     `WITH effective AS (
        SELECT s.id,
               COALESCE(

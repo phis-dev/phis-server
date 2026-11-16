@@ -48,3 +48,13 @@ export {
   resolvePhiMediaKindFromContentType,
 } from "@phis/contracts/media";
 export type { PhiImageAssetVariantSpec } from "@phis/contracts/media";
+
+/**
+ * The bits of `site_module_media.flags` and `site_module_media_folders.flags` (design/MODULE_MEDIA.md).
+ *
+ * `Bound`: an operator pointed the name at an Asset or Folder of the Site by hand, and the import leaves
+ * the row alone. A flag and not a "bound by" column, because the CLI binds without an acting user.
+ */
+export const PhisSiteModuleMediaFlag = {
+  Bound: 1 << 0,
+} as const;

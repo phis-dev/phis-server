@@ -1,6 +1,12 @@
 # Module media
 
-A design, not a contract. Nothing of it is built. It describes how a Site Module (an npm package with
+A design, not a contract. Built (Core, 2026-11-16): sections 3, 4, 5, 7 and the read route of section 6 -- the
+`phis.media` declaration and its validation, the tables `site_module_media` and `site_module_media_folders`
+(DB.md), the import in the running Core (`/api/v1/module-media`) with `phis module media sync|list|bind`, the
+step in `phis update`, and `GET /api/v1/site/module-media` (see docs/CLI.md). Core has no way to replace an
+Asset's content under its id, so a changed package file is a new Asset with the name moved to it (section 9,
+point 2). Not built: everything of section 8, and section 10's steps 2 and 3 (the `@phis/ui` resolver and Page
+check, the `@phis/phisys` package files). It describes how a Site Module (an npm package with
 presets) brings its own pictures -- an app icon, screenshots, later fonts -- so that they stand in the
 Site's Media library and the Module's presets can name them. Section 9 holds what the operator decided.
 

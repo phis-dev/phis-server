@@ -32,6 +32,8 @@ The target PostgreSQL schema for `phis` is:
 
 ### Smallint / flag contracts
 
+- `phis.site_module_media.flags INT`, `phis.site_module_media_folders.flags INT`
+  - `1 << 0 = bound` (`PhisSiteModuleMediaFlag.Bound`)
 - `phis.entitlements.flags INT`
   - `1 << 0 = revoked`
   - `1 << 1 = suspended`
@@ -385,6 +387,41 @@ Contract:
 - The list response should expose `pagination.total` so previewers and pagers can render accurate counts without loading the whole library.
 - Deleting a media asset must remove its owned `site_content(type=asset)` wrapper rows, but must be rejected while any widget/layout/page/area/navigation tree or the Site Theme still references that content or asset.
 - The delete guard reads the maintained `site_cms_references` index rather than scanning revision JSON. It therefore protects exactly what that index records, which is why the reference forms in [REFERENCES.md](./REFERENCES.md) are normative rather than conventional.
+
+### `phis.site_module_media`
+
+- `site_id SMALLINT NOT NULL REFERENCES phis.sites(id) ON DELETE CASCADE`
+- `package_name VARCHAR(255) NOT NULL`
+- `key VARCHAR(64) NOT NULL`
+- `asset_id INT NULL`
+- `source_checksum CHAR(64) NULL`
+- `flags INT NOT NULL DEFAULT 0`
+- `created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
+- `updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
+- `PRIMARY KEY (site_id, package_name, key)`
+- `FOREIGN KEY (asset_id, site_id) REFERENCES phis.media_assets (id, site_id) ON DELETE SET NULL (asset_id)`
+- `CHECK (package_name <> '')`, `CHECK (key ~ '^[a-z0-9][a-z0-9-]*$')`
+
+### `phis.site_module_media_folders`
+
+- `site_id SMALLINT NOT NULL REFERENCES phis.sites(id) ON DELETE CASCADE`
+- `package_name VARCHAR(255) NOT NULL`
+- `key VARCHAR(64) NOT NULL`
+- `folder_id INT NULL REFERENCES phis.media_folders(id) ON DELETE SET NULL`
+- `flags INT NOT NULL DEFAULT 0`
+- `created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
+- `updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
+- `PRIMARY KEY (site_id, package_name, key)`
+- `CHECK (package_name <> '')`, `CHECK (key ~ '^[a-z0-9][a-z0-9-]*$')`
+
+Contract (design/MODULE_MEDIA.md):
+- Which Asset or Media Folder of a Site stands for a name a Module package declares in its `package.json` (`phis.media`). A relation, not a stamp on the Asset or Folder: `media_assets` and `media_folders` gain no column, and an operator may point a name at an Asset or Folder of their own. The row outlives its target: deleting the Asset or Folder sets `asset_id` / `folder_id` to `NULL`, which reads as "gone", and the next `phis module media sync` makes it again. Two tables because a Folder has no digest and its own reference column; a package's keys are one namespace across both, which the manifest parser and `bind` keep.
+- `package_name` and `key` are the package's own names; no foreign key reaches them, the installed packages are the catalogue. A row whose key the package no longer declares is kept and listed as `no longer declared`. `key` is lowercase letters, digits and hyphens.
+- `asset_id` is the Asset of the Site Space of the same Site (the composite foreign key keeps it on the Site; that it lies in the Site Space is checked when a binding is written). `folder_id` carries no Site column of its own; Core writes it only with a Folder of the Site Space.
+- `source_checksum` is the SHA-256 (lowercase hex) of the package file the Asset was last written from, `NULL` while the name is bound by hand. A changed package file follows the package only while the Asset's `checksum_value` (algorithm `sha256`) still equals it, that is while nobody changed the Asset. Core cannot replace an Asset's content under its id, so following means a new Asset and the row moved to it; the old Asset stays in the library.
+- `flags` are `PhisSiteModuleMediaFlag`: `1 = Bound`. A bound row is one an operator pointed at an Asset or Folder by hand (`phis module media bind`); the import leaves it alone, even when its target is gone. There is no "bound by" column: the CLI binds without an acting user. `--reset` deletes the row of a bound name.
+- Written only by Core's Module media routes (`/api/v1/module-media`), under a per-Site advisory lock (`pg_advisory_xact_lock` on `phis.site_module_media:<site id>`), in the transaction that also writes the Asset and books its bytes against the Site Space. Read by the Site's runtime through `GET /api/v1/site/module-media` (ids only).
+- Added before v1 in place, like the entitlement tables: no schema version is raised. An existing database receives the two tables by hand, the `CREATE TABLE IF NOT EXISTS phis.site_module_media (...)` and `CREATE TABLE IF NOT EXISTS phis.site_module_media_folders (...)` statements of `scripts/sql/001_create_phis.pgsql` and nothing else (added 2026-11-16; the development database `phi_server_dev` received them so).
 
 ### `phis.media_upload_sessions`
 

@@ -139,11 +139,12 @@ server keeps the old values for up to four hours.
 | Needs | Commands |
 | --- | --- |
 | An administrative database connection, passed in | `db bootstrap` — it creates what every row below already expects to exist |
-| Configuration files only | `config`, `operator`, `secret init-key`, `module list`, `addon list|check|install|upgrade|enable|disable|remove|forget`, `site config set|add|del` (also read the Site row, so a database), `licenses check` |
-| `database.uri` (serving role) | `schema check|apply`, all `site` commands except `config set|add|del`, `init|reconcile|update`, `module add|del|sync|check`, `addon reconcile|site|config|role|owner|storage|job`, `storage`, `secret set|check|list|del`, `auth`, `media check`, `translations usage|status|export|import`, `maintain`, `payment profile`, `instance` |
+| Configuration files only | `config`, `operator`, `secret init-key`, `module list`, `module media sync|list|bind` with `--path` (the Site's files and a running Core, no database), `addon list|check|install|upgrade|enable|disable|remove|forget`, `site config set|add|del` (also read the Site row, so a database), `licenses check` |
+| `database.uri` (serving role) | `schema check|apply`, all `site` commands except `config set|add|del`, `init|reconcile|update`, `module add|del|sync|check`, `module media sync|list|bind` without `--path` (only to find the Site's directory), `addon reconcile|site|config|role|owner|storage|job`, `storage`, `secret set|check|list|del`, `auth`, `media check`, `translations usage|status|export|import`, `maintain`, `payment profile`, `instance` |
 | `database.migrationUri` (migration role) | `schema drop --force`, `addon migrate`, `addon purge` |
 | `secrets.encryptionKey` | `secret set|check`, `auth import-secrets`, `storage` commands that reach a Provider credential, `addon purge` and `addon storage --sweep|--recount` on a Site with an external store, `payment profile probe|enable` and `maintain --task payments` (they reach the Provider's credential) |
 | `api.internalToken` | `init` (copied into the Site), `site check` (running Site), `addon job` and `mail drain` (running server) |
+| The Site's `config/site-runtime.json` (`phis.apiBaseUrl`, `phis.internalToken`) and a running Core | `module media sync|list|bind`, and `update` when an installed package declares media |
 
 There is no fallback from `database.migrationUri` to `database.uri`.
 
@@ -633,7 +634,10 @@ Review `kept` entries by hand; a kept route file can collide with its new locati
 
 `reconcile` (with the same `package.json` rule: versions are kept), then in the Site directory:
 install (`pnpm install --no-frozen-lockfile`, `npm install`, `yarn install`, `bun install`),
-`run typecheck`, `run build`, and then packages a release into `.phis/releases/<release id>/`.
+the Module media import (`phis module media sync`, below; skipped when no installed package declares
+media), `run typecheck`, `run build`, and then packages a release into `.phis/releases/<release id>/`.
+A refused media item, an invalid declaration or a Core that cannot be reached stops `update` before the
+build.
 `update` does not raise dependency versions; change them in the Site first (e.g. `npm install @phis/ui@<version>`),
 then run `update`.
 
@@ -716,6 +720,63 @@ arrived with the install reaches `site-modules-fonts.ts` here. Rebuild afterward
 
 Inspects the installed Module packages in the Site's `node_modules` against the Module contract.
 Fails when the path has no `package.json`; exits `1` when a package has issues.
+
+### `phis module media sync|list|bind`
+
+A Module package can bring its own pictures: it declares them under `phis.media` in its `package.json`
+(design/MODULE_MEDIA.md, section 3) and Core puts each into the Site's Media library once, as an ordinary
+Asset in the Site Space, remembering which Asset stands for which declared name on this Site. The running
+Core writes the files; the CLI reads the packages and posts to Core's internal routes
+(`/api/v1/module-media`, the Site's own `config/site-runtime.json` for `phis.apiBaseUrl` and
+`phis.internalToken`, the Site named by `x-phis-site-key`). It needs no database when `--path` names the
+Site's directory; without `--path` the directory is resolved as the other `module` commands do, which reads
+the Site's row and the stage settings. The packages are the Site's installed Modules
+(`config/phis-modules.json`), read from its `node_modules`; nothing of a package is run.
+
+```json
+"phis": { "media": {
+  "folders": [{ "key": "acme", "name": "Acme" }, { "key": "acme-shots", "name": "Screenshots", "parent": "acme" }],
+  "files":   [{ "key": "acme-icon", "file": "dist/media/icon.png", "folder": "acme", "alt": "Acme app icon" }]
+} }
+```
+
+`key` is lowercase letters, digits and hyphens (at most 64), unique across the package's folders and files,
+and never changes once published. `file` is relative, inside the package after every symlink is resolved,
+and an existing regular file. `alt` is required (at most 255 characters), `title` optional. Every violation
+is reported with the package and the key, and stops the command before any request.
+
+#### `phis module media sync --site <site key> [--path <dir>]`
+
+Reads the mapping from Core and posts, folders first (parents before children), only what is missing: a name
+without a row or whose Asset or Folder is gone, and a file whose SHA-256 differs from the one its row
+recorded. Core applies the rules itself and answers per item `unchanged`, `created`, `repaired`,
+`replaced`, `bound-left` or `refused` (with the reason):
+
+- a row with `Bound` (see `bind`) is left alone;
+- a row whose target is there stands; a changed file follows the package only while the Asset still carries
+  the digest the import wrote. Core cannot replace an Asset's content under its id, so a changed file is a
+  new Asset, the name moved to it, and the old Asset left in the library (`replaced`; a stored Page keeps the
+  old picture);
+- a missing target is made again, so the step repairs a restore that lost files. An existing Folder of the
+  same name under the same parent is bound instead of duplicated;
+- a file is written into the Storage Profile the Site Space writes new uploads to, with an upload's content
+  checks (what the bytes are, SVG rules, image size) and quota, under a lock per Site.
+
+Nothing is ever deleted: removing a package leaves its Assets and rows. Exits `1` when an item is refused,
+the declaration is invalid or Core cannot be reached.
+
+#### `phis module media list --site <site key> [--path <dir>]`
+
+Every declared name and every stored row: kind, package, key, Asset or Folder id, and the state `package
+file`, `hand binding`, `missing` or `no longer declared`. Exits `1` when a declaration is invalid.
+
+#### `phis module media bind --site <site key> --package <name> --key <key> (--asset <id> | --folder <id> | --reset)`
+
+Points a declared name at an Asset (`--asset`) or Folder (`--folder`) of the Site Space of the Site, for
+example the pictures that already lie in the library as uploads. Core validates the target; the name must be
+one the package declares. It sets `Bound`, so `sync` leaves the name alone and the Site follows the binding.
+`--reset` ends a binding by removing its row, so the next `sync` writes the package's file again; it refuses a
+name that is not bound.
 
 ## addon (server Add-ons)
 

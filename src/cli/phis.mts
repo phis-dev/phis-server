@@ -161,6 +161,12 @@ import { sweepPhisAddonAssets } from "./storage-sweep.mts";
 import { PHI_MAINTENANCE_TASKS, runPhiMaintenance } from "./maintain.mts";
 import { runPhisPaymentProfileCommand, recoverPhisPayments } from "./payments.mts";
 import { runPhisEntitlementCommand } from "./entitlements.mts";
+import {
+  bindModuleMedia,
+  describeModuleMediaOutcome,
+  listModuleMedia,
+  syncModuleMedia,
+} from "./module-media.mts";
 import { checkPhiDependencyLicenses } from "./licenses.mts";
 import { checkPhiMediaOwnership, findPhiMediaOrphanedLocalStaging } from "./media-check.mts";
 import { parsePhiUsageDays, readPhiTranslationUsage } from "./translations-usage.mts";
@@ -362,6 +368,9 @@ Usage:
   phis module del   --site <site key> --package <@scope/name> [--force] [--path <site source path>]
   phis module sync  --site <site key> [--path <site source path>]
   phis module check --site <site key> [--package <@scope/name>] [--path <site source path>]
+  phis module media sync --site <site key> [--path <site source path>]
+  phis module media list --site <site key> [--path <site source path>]
+  phis module media bind --site <site key> --package <name> --key <key> (--asset <id> | --folder <id> | --reset)
 
   phis addon list
   phis addon check
@@ -1345,7 +1354,95 @@ function reportSiteModulePackageUsage(areas: readonly PhiSiteModuleAreaUsage[]) 
   }
 }
 
-async function runSiteModuleCommand(command: string, flags: FlagMap, json: boolean) {
+/**
+ * `phis module media sync|list|bind`: HTTP to the running Core and files of the Site, never the database.
+ *
+ * The Site's directory is `--path` when given, and then nothing here touches the database at all. Without
+ * it the directory is resolved as the other `module` commands resolve it, which reads the Site's row and
+ * the stage's `sites` settings -- the only part of these commands that needs the database.
+ */
+async function runSiteModuleMediaCommand(subcommand: string | undefined, flags: FlagMap, json: boolean) {
+  if (subcommand !== "sync" && subcommand !== "list" && subcommand !== "bind") {
+    throw new Error("Use phis module media sync, list or bind.");
+  }
+  const siteKey = getRequiredFlag(flags, "site").toLowerCase();
+  const explicitPath = getOptionalFlag(flags, "path");
+  const siteRoot = explicitPath
+    ?? resolveSiteSource(await getSiteByKey(siteKey), readCliMergedConfig().sites).path;
+  if (!existsSync(path.join(siteRoot, "package.json"))) {
+    throw new Error(`No Site at ${siteRoot} (no package.json). Pass --path if the Site lives elsewhere.`);
+  }
+  const packageNames = (readSiteModuleDesiredState(configRoot).sites[siteKey]?.modules ?? []).map((entry) => entry.packageName);
+
+  if (subcommand === "sync") {
+    const report = await syncModuleMedia({ siteKey, siteRoot, packageNames });
+    if (json) {
+      printJson({ ok: report.refused.length === 0, action: "module.media.sync", ...report });
+    } else if (report.declared === 0) {
+      console.log(`No installed package of ${siteKey} declares media.`);
+    } else {
+      for (const item of report.items) console.log(`  ${describeModuleMediaOutcome(item)}`);
+    }
+    if (report.refused.length > 0) {
+      throw new Error(`${report.refused.length} Module media item(s) were refused by Core.`);
+    }
+    return;
+  }
+
+  if (subcommand === "list") {
+    const { rows, issues } = await listModuleMedia({ siteKey, siteRoot, packageNames });
+    if (json) {
+      printJson({ ok: issues.length === 0, action: "module.media.list", site: siteKey, rows, issues });
+    } else {
+      if (rows.length === 0) console.log(`No Module media declared or stored for ${siteKey}.`);
+      for (const row of rows) {
+        console.log(`  ${row.kind.padEnd(6)} ${row.packageName} ${row.key}  ${row.id ?? "-"}  ${row.state}`);
+      }
+      for (const issue of issues) console.error(`  invalid: ${issue}`);
+    }
+    if (issues.length > 0) process.exitCode = 1;
+    return;
+  }
+
+  const packageName = getRequiredFlag(flags, "package");
+  const key = getRequiredFlag(flags, "key");
+  const asset = getOptionalFlag(flags, "asset");
+  const folder = getOptionalFlag(flags, "folder");
+  const reset = flags.get("reset") === true;
+  if ([asset, folder, reset ? "reset" : undefined].filter((value) => value !== undefined).length !== 1) {
+    throw new Error("Give exactly one of --asset <id>, --folder <id> or --reset.");
+  }
+  const toId = (value: string, name: string) => {
+    if (!/^\d+$/.test(value) || !Number.isSafeInteger(Number(value)) || Number(value) <= 0) {
+      throw new Error(`--${name} must be an id.`);
+    }
+    return Number(value);
+  };
+  const result = await bindModuleMedia({
+    siteKey,
+    siteRoot,
+    packageNames,
+    request: asset !== undefined
+      ? { packageName, key, asset: toId(asset, "asset") }
+      : folder !== undefined
+        ? { packageName, key, folder: toId(folder, "folder") }
+        : { packageName, key, reset: true },
+  });
+  if (json) {
+    printJson({ ...result, action: "module.media.bind", site: siteKey, packageName, key });
+  } else if (result.ok) {
+    console.log(`${result.action === "bound" ? "Bound" : "Reset"} ${result.kind} ${key} of ${packageName} for ${siteKey}.`);
+  }
+  if (!result.ok) {
+    throw new Error(result.detail);
+  }
+}
+
+async function runSiteModuleCommand(command: string, remaining: readonly string[], flags: FlagMap, json: boolean) {
+  if (command === "media") {
+    await runSiteModuleMediaCommand(remaining[0], flags, json);
+    return;
+  }
   const requireFlag = (key: string) => {
     const value = getOptionalFlag(flags, key);
     if (!value) {
@@ -2102,6 +2199,30 @@ async function runSiteScaffoldCommand(
   if (shouldInstall) {
     await runPhiSitePackageCommand(result.root, manager, resolvePhiSiteInstallArgs(manager, false));
   }
+  /*
+   * Between the install and the build: the packages are in `node_modules`, so what they declare can be read,
+   * and the build that follows may already name the pictures. Core does the writing; a refused item or an
+   * unreachable Core stops the update here, before a release is built that would lack them.
+   */
+  let moduleMedia: Awaited<ReturnType<typeof syncModuleMedia>> | null = null;
+  if (mode === "update") {
+    moduleMedia = await syncModuleMedia({
+      siteKey: site.key,
+      siteRoot: result.root,
+      packageNames: (readSiteModuleDesiredState(configRoot).sites[site.key]?.modules ?? []).map((entry) => entry.packageName),
+    });
+    if (!json) {
+      for (const item of moduleMedia.items.filter((entry) => entry.status !== "unchanged")) {
+        console.log(`  module media: ${describeModuleMediaOutcome(item)}`);
+      }
+    }
+    if (moduleMedia.refused.length > 0) {
+      throw new Error(
+        `phis update stopped: Core refused ${moduleMedia.refused.length} Module media item(s):\n` +
+        moduleMedia.refused.map((item) => `  ${describeModuleMediaOutcome(item)}`).join("\n"),
+      );
+    }
+  }
   if (mode === "update") {
     await runPhiSitePackageCommand(result.root, manager, ["run", "typecheck"]);
     await runPhiSitePackageCommand(result.root, manager, ["run", "build"]);
@@ -2110,7 +2231,7 @@ async function runSiteScaffoldCommand(
   // The release links to this file rather than carrying it, so a release built without it starts and fails.
   const runtimeConfigMissing = mode === "update" && !existsSync(path.join(result.root, "config", "site-runtime.json"));
   if (json) {
-    printJson({ ok: true, action: `site.${mode}`, installed: shouldInstall, built: mode === "update", release, runtimeConfigMissing, directoryProblems, ...result });
+    printJson({ ok: true, action: `site.${mode}`, installed: shouldInstall, built: mode === "update", moduleMedia, release, runtimeConfigMissing, directoryProblems, ...result });
     return;
   }
   const changed = result.changes.filter((entry) => entry.action !== "unchanged");
@@ -3612,7 +3733,7 @@ async function main() {
   }
 
   if (group === "module") {
-    await runSiteModuleCommand(command, flags, json);
+    await runSiteModuleCommand(command, remaining, flags, json);
     return;
   }
 

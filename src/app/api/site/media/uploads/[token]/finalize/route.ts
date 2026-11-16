@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-import sharp from "sharp";
 
 import {
   abortMediaUploadSessionByToken,
@@ -12,15 +11,20 @@ import {
   ensureSiteMediaConfig,
   getMediaSpaceById,
   getMediaStorageProfile,
-  isPhiMediaContentAllowedInSpace,
   PhiMediaLifecycleStatus,
 } from "@/db/media-spaces";
 import { clearSiteConfigCache } from "@/db/site-config";
 import {
-  PHI_MEDIA_SNIFF_HEAD_BYTES,
-  resolvePhiMediaStoredContentType,
-  sniffPhiMediaContentType,
-} from "@/lib/media-content-sniffer";
+  PHI_IMAGE_DECODE_LIMIT_BYTES,
+  PHI_IMAGE_MAX_EDGE_PX,
+  PHI_SVG_SCAN_LIMIT_BYTES,
+  isPhiImageTooLarge,
+  isSvgContentType,
+  judgePhiMediaContent,
+  readImageMetadata,
+  validateSvgUpload,
+} from "@/lib/media-content-check";
+import { PHI_MEDIA_SNIFF_HEAD_BYTES } from "@/lib/media-content-sniffer";
 import { PhiMediaKind, resolvePhiMediaKindFromContentType } from "@/lib/constants/media";
 import { readPhiFontMetrics } from "@/lib/font-metrics";
 import { openPhisMediaStorageForRoute } from "@/lib/media-storage-route";
@@ -34,127 +38,19 @@ import { requireMediaSpaceWriteContext } from "@/lib/guards/site-media-api";
 import { nextMediaError } from "../../_helpers";
 import { readPhisMediaRequestArea } from "@/lib/media-request-area";
 
-/** The largest edge an Asset can record: `media_assets.width`/`height` are SMALLINT. */
-const PHI_IMAGE_MAX_EDGE_PX = 32_767;
 export const dynamic = "force-dynamic";
 
-const SVG_MIN_DISPLAY_DIMENSION = 48;
-
 /*
- * How much of an object `finalize` is willing to hold at once, stated rather than implied.
- *
- * It used to hold all of it, three times over: the SVG scan, the image decode, and a re-upload of the
- * whole body onto the final key. For a Provider that stores remotely that is a download plus an upload
- * of every byte -- impossible for a multipart object. The settle is a copy now, and these two are what
- * remains, each bounded on purpose.
- *
- * The SVG limit is a refusal, not a truncation. The scan looks for a script element anywhere in the
- * document, so reading a prefix would let one past by putting it late: an SVG too large to check is
- * not accepted rather than half-checked.
- *
- * The image limit is a skip. Dimensions and the blur placeholder are conveniences; an Asset without
- * them is complete, so past the ceiling they are simply absent rather than worth a decode of that size.
+ * How much of an object `finalize` is willing to hold at once is stated beside the checks themselves, in
+ * `media-content-check.ts`: the SVG scan limit (a refusal) and the image decode limit (a skip). It used to
+ * hold all of it, three times over; the settle is a copy now.
  */
-const PHI_SVG_SCAN_LIMIT_BYTES = 2 * 1024 * 1024;
-const PHI_IMAGE_DECODE_LIMIT_BYTES = 64 * 1024 * 1024;
 /*
  * A whole font in hand, which is what reading its tables needs -- a woff2 keeps them behind one Brotli
  * stream, so there is no prefix that answers. Generous for a format where a full family is well under a
  * megabyte, and a ceiling all the same.
  */
 const PHI_FONT_READ_LIMIT_BYTES = 16 * 1024 * 1024;
-
-function isSvgContentType(contentType: string) {
-  return contentType.trim().toLowerCase().split(";", 1)[0] === "image/svg+xml";
-}
-
-function normalizeSvgMetadataDimensions(width: number | null, height: number | null) {
-  if (!width || !height) {
-    return {
-      width: SVG_MIN_DISPLAY_DIMENSION,
-      height: SVG_MIN_DISPLAY_DIMENSION,
-    };
-  }
-
-  const shortestSide = Math.min(width, height);
-  if (shortestSide >= SVG_MIN_DISPLAY_DIMENSION) {
-    return { width, height };
-  }
-
-  const scale = SVG_MIN_DISPLAY_DIMENSION / shortestSide;
-  return {
-    width: Math.max(SVG_MIN_DISPLAY_DIMENSION, Math.round(width * scale)),
-    height: Math.max(SVG_MIN_DISPLAY_DIMENSION, Math.round(height * scale)),
-  };
-}
-
-async function readImageMetadata(body: Buffer, contentType: string) {
-  if (!contentType.trim().toLowerCase().startsWith("image/")) {
-    return {
-      width: null as number | null,
-      height: null as number | null,
-      blurDataUrl: null as string | null,
-    };
-  }
-
-  try {
-    const image = sharp(body, { failOn: "none" }).rotate();
-    const metadata = await image.metadata();
-    const rawWidth = metadata.width ?? null;
-    const rawHeight = metadata.height ?? null;
-    const { width, height } = isSvgContentType(contentType)
-      ? normalizeSvgMetadataDimensions(rawWidth, rawHeight)
-      : { width: rawWidth, height: rawHeight };
-
-    let blurDataUrl: string | null = null;
-    if (rawWidth && rawHeight) {
-      const blurBuffer = await image
-        .clone()
-        .resize(16, 16, { fit: "inside", withoutEnlargement: true })
-        .webp({ quality: 60 })
-        .toBuffer();
-      blurDataUrl = `data:image/webp;base64,${blurBuffer.toString("base64")}`;
-    }
-
-    return {
-      width,
-      height,
-      blurDataUrl,
-    };
-  } catch {
-    return {
-      width: null as number | null,
-      height: null as number | null,
-      blurDataUrl: null as string | null,
-    };
-  }
-}
-
-function validateSvgUpload(body: Buffer, contentType: string) {
-  if (contentType.trim().toLowerCase() !== "image/svg+xml") {
-    return null;
-  }
-
-  const source = body.toString("utf8");
-  const normalized = source.toLowerCase();
-  if (!normalized.includes("<svg")) {
-    return "SVG upload does not contain an SVG root.";
-  }
-  if (/<script[\s>]/i.test(source)) {
-    return "SVG uploads must not contain script elements.";
-  }
-  if (/<foreignobject[\s>]/i.test(source)) {
-    return "SVG uploads must not contain foreignObject elements.";
-  }
-  if (/\son[a-z]+\s*=/i.test(source)) {
-    return "SVG uploads must not contain event handler attributes.";
-  }
-  if (/\s(?:href|xlink:href)\s*=\s*["']\s*(?:https?:|data:|javascript:)/i.test(source)) {
-    return "SVG uploads must not contain external or executable references.";
-  }
-
-  return null;
-}
 
 /**
  * The completion report the plan's issuer asked the Client to bring back.
@@ -255,11 +151,16 @@ export async function POST(
    * not belong here", which is the only part a person can act on.
    */
   const head = await storageService.readObjectHead(session.stagingStorageKey, PHI_MEDIA_SNIFF_HEAD_BYTES);
-  const sniffed = sniffPhiMediaContentType(head ?? Buffer.alloc(0), session.contentType);
-  const contentType = resolvePhiMediaStoredContentType(sniffed);
   const targetSpace = await getMediaSpaceById(site.id, session.spaceId);
   const mediaConfig = await ensureSiteMediaConfig(site.id);
-  if (targetSpace && !isPhiMediaContentAllowedInSpace(contentType, targetSpace, mediaConfig)) {
+  const judged = judgePhiMediaContent(
+    head ?? Buffer.alloc(0),
+    session.contentType,
+    targetSpace,
+    mediaConfig,
+  );
+  const { contentType, sniffed } = judged;
+  if (!judged.allowed) {
     await storageService.deleteObject(session.stagingStorageKey).catch(() => {});
     await abortMediaUploadSessionByToken(token);
     logRuntimeEvent("warn", "media.upload.content_refused", {
@@ -420,7 +321,7 @@ export async function POST(
    * it is refused here, with a reason, instead of failing the insert below -- that failure was a 500,
    * and its cleanup deleted the upload the person had just sent.
    */
-  if ((imageMeta.width ?? 0) > PHI_IMAGE_MAX_EDGE_PX || (imageMeta.height ?? 0) > PHI_IMAGE_MAX_EDGE_PX) {
+  if (isPhiImageTooLarge(imageMeta)) {
     await storageService.deleteObject(session.stagingStorageKey).catch(() => {});
     await abortMediaUploadSessionByToken(token);
     return nextMediaError(

@@ -48,7 +48,7 @@ function jsonbOrNull(value: Record<string, unknown> | null | undefined) {
   return value == null ? null : JSON.stringify(value);
 }
 
-function normalizeFolderPathSegment(value: string) {
+export function normalizeFolderPathSegment(value: string) {
   return value.replace(/[\r\n]+/gu, " ").replace(/\s+/gu, " ").trim();
 }
 

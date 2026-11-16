@@ -109,6 +109,9 @@ export const PHIS_COMMAND_FLAGS: Record<string, FlagSpec> = {
   "module del": { site: S, package: S, force: B, path: S },
   "module sync": { site: S, path: S },
   "module check": { site: S, package: S, path: S },
+  "module media sync": { site: S, path: S },
+  "module media list": { site: S, path: S },
+  "module media bind": { site: S, path: S, package: S, key: S, asset: S, folder: S, reset: B },
 
   "addon list": {},
   "addon check": {},

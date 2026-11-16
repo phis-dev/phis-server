@@ -532,6 +532,47 @@ CREATE INDEX IF NOT EXISTS media_assets_space_checksum_idx
 CREATE INDEX IF NOT EXISTS media_assets_space_owner_idx
   ON phis.media_assets (space_id, owner_user_id) WHERE owner_user_id IS NOT NULL;
 
+-- Module media (design/MODULE_MEDIA.md): which Asset or Media Folder of a Site stands for a name a Module
+-- package declares in its `package.json` (`phis.media`). A relation, not a stamp on the Asset: an
+-- operator may point a name at an Asset of their own, and a row outlives what it pointed at and says
+-- that it is gone (`asset_id` / `folder_id` NULL). `package_name` and `key` are the package's own names;
+-- no foreign key reaches them, the installed packages are the catalogue.
+-- flags: 1 = Bound (an operator pointed the name by hand; the import leaves the row alone).
+-- `source_checksum` is the SHA-256 (lowercase hex) of the package file the Asset was last written
+-- from, NULL while the name is bound by hand.
+CREATE TABLE IF NOT EXISTS phis.site_module_media (
+  site_id SMALLINT NOT NULL REFERENCES phis.sites(id) ON DELETE CASCADE,
+  package_name VARCHAR(255) NOT NULL,
+  key VARCHAR(64) NOT NULL,
+  asset_id INT NULL,
+  source_checksum CHAR(64) NULL,
+  flags INT NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (site_id, package_name, key),
+  -- The composite reference keeps the Asset on the same Site, as `media_assets.folder_id` does for the
+  -- Space; only the Asset column is cleared when the Asset is deleted, the Site column is the key's.
+  CONSTRAINT site_module_media_asset_site_fk
+    FOREIGN KEY (asset_id, site_id)
+    REFERENCES phis.media_assets (id, site_id)
+    ON DELETE SET NULL (asset_id),
+  CONSTRAINT site_module_media_package_check CHECK (package_name <> ''),
+  CONSTRAINT site_module_media_key_check CHECK (key ~ '^[a-z0-9][a-z0-9-]*$')
+);
+
+CREATE TABLE IF NOT EXISTS phis.site_module_media_folders (
+  site_id SMALLINT NOT NULL REFERENCES phis.sites(id) ON DELETE CASCADE,
+  package_name VARCHAR(255) NOT NULL,
+  key VARCHAR(64) NOT NULL,
+  folder_id INT NULL REFERENCES phis.media_folders(id) ON DELETE SET NULL,
+  flags INT NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (site_id, package_name, key),
+  CONSTRAINT site_module_media_folders_package_check CHECK (package_name <> ''),
+  CONSTRAINT site_module_media_folders_key_check CHECK (key ~ '^[a-z0-9][a-z0-9-]*$')
+);
+
 CREATE TABLE IF NOT EXISTS phis.media_upload_sessions (
   token VARCHAR(128) PRIMARY KEY,
   site_id SMALLINT NOT NULL REFERENCES phis.sites(id) ON DELETE CASCADE,
