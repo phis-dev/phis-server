@@ -1,3 +1,12 @@
+phis (0.3.7-1) unstable; urgency=medium
+
+  * "phis page list" shows the Pages a Site has stored itself; "phis page
+    reset" takes a Module's Page back to its preset, the Builder's "Reset
+    to preset" from the command line. It runs the same deletion as the
+    route; without --force it only reports what would go.
+
+ -- Marius Schumacher <marius.schumacher@phisys.com>  Mon, 16 Nov 2026 22:40:00 +0000
+
 phis (0.3.6-1) unstable; urgency=medium
 
   * Module media: a Site package declares its pictures and folders under
