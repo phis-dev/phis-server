@@ -1,3 +1,16 @@
+phis (0.3.6-1) unstable; urgency=medium
+
+  * Module media: a Site package declares its pictures and folders under
+    phis.media in its package.json; "phis module media sync", which
+    "phis update" runs as well, has the running Core put them into the
+    Site's Media library and keep which Asset stands for which name
+    (site_module_media, site_module_media_folders). "phis module media
+    list|bind" show and re-point a name. The Site reads the mapping from
+    /api/v1/site/module-media.
+  * An existing database needs the two tables by hand (DB.md).
+
+ -- Marius Schumacher <marius.schumacher@phisys.com>  Mon, 16 Nov 2026 18:20:00 +0000
+
 phis (0.3.5-1) unstable; urgency=medium
 
   * A stored signal route may name a CMS instance of preset origin that the
