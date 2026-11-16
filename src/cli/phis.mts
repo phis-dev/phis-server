@@ -169,6 +169,7 @@ import {
 } from "./module-media.mts";
 import { checkPhiDependencyLicenses } from "./licenses.mts";
 import { checkPhiMediaOwnership, findPhiMediaOrphanedLocalStaging } from "./media-check.mts";
+import { listPhiStoredPages, resetPhiPageToPreset } from "./page.mts";
 import { parsePhiUsageDays, readPhiTranslationUsage } from "./translations-usage.mts";
 import {
   exportPhiTranslations,
@@ -442,6 +443,8 @@ Usage:
   phis operator secret
 
   phis media check [--fix] [--prune-staging]
+  phis page list --site <site key> [--area <area>]
+  phis page reset --site <site key> --area <area> (--preset <preset key> [--module <module id>] | --path <path>) [--force] [--dry-run]
   phis translations usage [--unused-for <days, e.g. 90d>] [--site <site key>] [--examples <n>]
   phis translations status [--site <site key>] [--locale <code>[,<code>...]]
   phis translations export --locale <code> [--site <site key>] [--missing] [--out <file.json>]
@@ -3399,6 +3402,53 @@ async function main() {
     }
     if (failed.length > 0) {
       process.exitCode = 1;
+    }
+    return;
+  }
+
+  if (group === "page" && command === "list") {
+    // Reads only: the Pages the Site itself stores (CONTENT.md, Reset).
+    const siteKey = getRequiredFlag(flags, "site");
+    const pages = await listPhiStoredPages(getPool(), { siteKey, area: getOptionalFlag(flags, "area") ?? null });
+    if (json) {
+      printJson({ ok: true, action: "page.list", site: siteKey, pages });
+      return;
+    }
+    if (pages.length === 0) console.log(`${siteKey} stores no Page.`);
+    for (const page of pages) {
+      const what = page.ownerModuleId ? `preset ${page.presetKey} of ${page.ownerModuleId}` : (page.path ?? "-");
+      console.log(
+        `${page.area}  ${what}  published ${page.publishedRevisionId ?? "-"}  draft ${page.workingDraftRevisionId ?? "-"}`
+          + `${page.tombstoned ? "  tombstoned" : ""}  updated ${page.updatedAt}`,
+      );
+    }
+    return;
+  }
+
+  if (group === "page" && command === "reset") {
+    // An editor's write: what the Builder's "Reset to preset" does (CONTENT.md, Reset). Without --force it
+    // reports what would go and changes nothing, as `schema drop` and `db drop` do.
+    const result = await resetPhiPageToPreset(getPool(), {
+      siteKey: getRequiredFlag(flags, "site"),
+      area: getRequiredFlag(flags, "area"),
+      presetKey: getOptionalFlag(flags, "preset") ?? null,
+      moduleId: getOptionalFlag(flags, "module") ?? null,
+      path: getOptionalFlag(flags, "path") ?? null,
+      confirmed: flags.get("force") === true,
+      dryRun: flags.get("dry-run") === true,
+    });
+    if (json) {
+      printJson({ ok: true, action: "page.reset", ...result });
+      return;
+    }
+    const { page } = result;
+    const label = `${page.ownerModuleId} preset ${page.presetKey} in Area ${page.area} of ${result.site}`;
+    const detail = `scope ${page.scopeId}, ${result.revisions} revision(s), published ${page.publishedRevisionId ?? "-"}, draft ${page.workingDraftRevisionId ?? "-"}`;
+    if (result.dryRun) {
+      console.log(`Would delete the Site's own version of ${label} (${detail}); the preset would answer again.`);
+      if (flags.get("dry-run") !== true) console.log("Nothing was changed. Pass --force to delete it.");
+    } else {
+      console.log(`Deleted the Site's own version of ${label} (${detail}); the preset answers again.`);
     }
     return;
   }

@@ -4,10 +4,13 @@ import type { PoolClient } from "pg";
 
 import {
   PhiCmsReferenceSourceKind,
-  pruneSiteCmsReferencesToLiveRevisionsWithDb,
   replaceSiteCmsReferencesWithDb,
   type SiteCmsReferenceWrite,
 } from "@/db/site-cms-references";
+import {
+  pruneSiteRevisionScopeReferencesWithDb,
+  setSiteRevisionScopePointersWithDb,
+} from "@/db/site-revision-pointers.mts";
 import { hasPhiFlag } from "@/lib/helpers/flags";
 import { isPhiRecord, toPhiRecord } from "@/lib/helpers/record";
 import { PhiCmsRevisionFlags } from "@phis/contracts/cms";
@@ -20,6 +23,8 @@ import { phiPrepared } from "@/lib/db-prepared";
  * stored, pointed at and published; that part lives here once, and each kind names its tables through
  * a descriptor instead of carrying its own copy of the same queries.
  */
+
+export { pruneSiteRevisionScopeReferencesWithDb, setSiteRevisionScopePointersWithDb };
 
 type DbQueryable = Pick<PoolClient, "query">;
 
@@ -326,43 +331,6 @@ export async function updateSiteDraftRevisionWithDb<TTable extends SiteRevisionT
     throw new SiteCmsDraftConflictError(`Working Draft revision #${revisionId} no longer exists.`);
   }
   return mapSiteRevisionRow(table, row);
-}
-
-/**
- * Moves a scope's published and Working Draft pointers, then drops the reference rows of revisions no
- * pointer names any more. An Area's Module draft pointer is not touched here; the Area moves that one
- * in its own statement, because only its scope row has it.
- */
-export async function setSiteRevisionScopePointersWithDb(
-  db: DbQueryable,
-  table: SiteRevisionTable,
-  scopeId: number,
-  input: {
-    publishedRevisionId: number | null;
-    workingDraftRevisionId: number | null;
-  },
-) {
-  await db.query(
-    `UPDATE phis.${table.scopeTable}
-     SET published_revision_id = $2,
-         working_draft_revision_id = $3,
-         updated_at = NOW()
-     WHERE id = $1`,
-    [scopeId, input.publishedRevisionId, input.workingDraftRevisionId],
-  );
-  await pruneSiteRevisionScopeReferencesWithDb(db, table, scopeId);
-}
-
-/** After a revision stopped being live or was deleted: its reference rows go with it. */
-export async function pruneSiteRevisionScopeReferencesWithDb(
-  db: DbQueryable,
-  table: SiteRevisionTable,
-  scopeId: number,
-) {
-  await pruneSiteCmsReferencesToLiveRevisionsWithDb(db, {
-    sourceKind: table.referenceSourceKind,
-    sourceScopeId: scopeId,
-  });
 }
 
 /** Indexes what one revision of the scope references, replacing that revision's earlier rows. */

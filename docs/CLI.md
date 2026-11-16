@@ -23,6 +23,7 @@ For a first installation, read [INSTALL.md](./INSTALL.md) instead; it runs these
 - [secret](#secret)
 - [auth](#auth)
 - [operator](#operator)
+- [page](#page)
 - [translations](#translations)
 - [media](#media)
 - [maintain](#maintain)
@@ -140,7 +141,7 @@ server keeps the old values for up to four hours.
 | --- | --- |
 | An administrative database connection, passed in | `db bootstrap` — it creates what every row below already expects to exist |
 | Configuration files only | `config`, `operator`, `secret init-key`, `module list`, `module media sync|list|bind` with `--path` (the Site's files and a running Core, no database), `addon list|check|install|upgrade|enable|disable|remove|forget`, `site config set|add|del` (also read the Site row, so a database), `licenses check` |
-| `database.uri` (serving role) | `schema check|apply`, all `site` commands except `config set|add|del`, `init|reconcile|update`, `module add|del|sync|check`, `module media sync|list|bind` without `--path` (only to find the Site's directory), `addon reconcile|site|config|role|owner|storage|job`, `storage`, `secret set|check|list|del`, `auth`, `media check`, `translations usage|status|export|import`, `maintain`, `payment profile`, `instance` |
+| `database.uri` (serving role) | `schema check|apply`, all `site` commands except `config set|add|del`, `init|reconcile|update`, `module add|del|sync|check`, `module media sync|list|bind` without `--path` (only to find the Site's directory), `addon reconcile|site|config|role|owner|storage|job`, `storage`, `secret set|check|list|del`, `auth`, `media check`, `page list|reset`, `translations usage|status|export|import`, `maintain`, `payment profile`, `instance` |
 | `database.migrationUri` (migration role) | `schema drop --force`, `addon migrate`, `addon purge` |
 | `secrets.encryptionKey` | `secret set|check`, `auth import-secrets`, `storage` commands that reach a Provider credential, `addon purge` and `addon storage --sweep|--recount` on a Site with an external store, `payment profile probe|enable` and `maintain --task payments` (they reach the Provider's credential) |
 | `api.internalToken` | `init` (copied into the Site), `site check` (running Site), `addon job` and `mail drain` (running server) |
@@ -1109,6 +1110,41 @@ way, on their next request.
 
 Passwords given on the command line are visible in the process list and shell history. A password
 that starts with `-` is passed as it is (`--password -x1` or `--password=-x1`).
+
+## page
+
+### `phis page list --site <site key> [--area <area>]`
+
+Lists every Page the Site itself has stored (the rows of `phis.site_page_scopes`), in one Area or in all of
+them: the Area, the path (a Site's own Page) or the owner Module and preset key (a Module's Page), the
+published revision id, the Working Draft revision id (`-` where there is none), whether it is tombstoned,
+and when it was updated. A Module's Page the Site never changed is not listed: the preset answers for it and
+nothing is stored. With `--json`, `{"ok": true, "action": "page.list", "site", "pages": [...]}`. Reads only.
+Needs `database.uri`.
+
+The Area is named by its key (`public`, `app`, `admin`, `builder`, `editor`, `accounting`), as the Builder's
+routes and the Site's `area` parameter name it; an id is not accepted.
+
+### `phis page reset --site <site key> --area <area> (--preset <preset key> [--module <module id>] | --path <path>) [--force] [--dry-run]`
+
+Takes a Module's Page back to its preset: deletes the Site's own version of it with all its revisions, which
+is what the Builder's "Reset to preset" does (CONTENT.md, Reset). It runs the same database function as the
+Builder's route (`DELETE /api/site/cms/page/override`), in one transaction, so the Content sweep, the
+reference rows and the change markers are that function's: what is live changes at once, and the preset
+answers again with the same instance ids, content written for its nodes still bound to them. Widgets the
+Site added to the preset go with the override.
+
+It is an editor's write, like `translations import`: the Site reads the change at once. Needs `database.uri`.
+
+Without `--force` it changes nothing: it reports the scope, the number of revisions and the published and
+draft revision ids that would go, as `schema drop` and `db drop` do. `--dry-run` asks for that explicitly and
+also wins over `--force`. With `--force` it deletes. `--preset` names the Page by its preset key; if two
+Modules have a stored Page with that key, `--module <module id>` says which. `--path` is accepted only to
+refuse with a clear message the Page a Site made itself, which has no preset to go back to and is never
+deleted by this command. Exit `1`, with the reason, when the Site or Area is unknown, when nothing is stored
+for the address (`Nothing stored for ...; the preset is already live.`), when the stored Page is a Site's own,
+and when more than one Page matches. With `--json`, `{"ok": true, "action": "page.reset", "site", "page",
+"revisions", "dryRun", "deleted"}`.
 
 ## translations
 

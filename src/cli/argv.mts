@@ -174,6 +174,8 @@ export const PHIS_COMMAND_FLAGS: Record<string, FlagSpec> = {
   "operator del": { email: S },
 
   "media check": { fix: B, "prune-staging": B },
+  "page list": { site: S, area: S },
+  "page reset": { site: S, area: S, preset: S, module: S, path: S, force: B, "dry-run": B },
   "translations usage": { "unused-for": S, site: S, examples: S },
   "translations status": { site: S, locale: S },
   "translations export": { locale: S, site: S, missing: B, out: S },

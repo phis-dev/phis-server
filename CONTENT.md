@@ -157,7 +157,8 @@ and pointers (`DELETE /api/site/cms/page/override`, `/api/site/cms/area/override
 published, and nothing has to be: with no override left, the preset answers at once. Because that changes
 what is live, it is the Publisher's act, and it is offered in Revisions only, beside the history it
 discards. Content bound to the preset's own nodes stays and is shown by the preset; Widgets the Site
-added go with the override.
+added go with the override. An operator resets a Module's Page from the command line with `phis page reset`
+([CLI.md](./docs/CLI.md#page)), which runs the same database function.
 
 A Builder's toolbar never resets. Its command discards the open Working Draft and shows what is
 published again. A Module selection has no reset at all: its draft is changed or published.
