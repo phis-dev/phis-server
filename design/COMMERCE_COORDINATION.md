@@ -391,20 +391,15 @@ Not in this design, and not blocked by it:
 12. An unpaid subscription period: the entitlement lasts at most 14 more days; the number is a setting.
 13. A third party's product is released by the Site operator. Once released, the third party delivers
     updates for it without another release.
+14. Product and entitlement kind are one: an entry says that an account holds a product, and the Shop
+    keeps no mapping from products to kinds.
+15. Who may write acquisitions is allowed per seller and Site -- for every product, or for the products
+    of named suppliers -- not per product.
 
 ## 14. Open, the operator's to decide
 
-1. **Product and entitlement kind are one.** Recommended; the body assumes it. What it means: today there
-   are two lists -- what one can be entitled to, declared in an Add-on's manifest, and what the Shop
-   sells -- and a hand-kept mapping from the second to the first. With one concept the entry says "this
-   account holds this product", the mapping is gone, and a supplier makes a new product at runtime. What
-   the mapping used to allow is kept by other means: several ways to sell one product are listings,
-   one sale that gives several things is a bundle.
-2. **Who may write acquisitions.** An entry says that an account owns something, so an Add-on that may
-   write entries can give goods away. Today the operator allows it per kind and source. Recommended: the
-   operator allows a seller once for the Site -- for every product, or only for the products of named
-   suppliers -- in place of one row per product (section 5, point 6).
-3. **What a publisher may change on a released product without a new release** (section 4, assumed).
+1. **What a publisher may change on a released product without a new release** (section 4, assumed: a
+   change of `sale`, `free` or `parts` needs the release again; title, summary and picture do not).
 
 ## 15. Sequence
 
