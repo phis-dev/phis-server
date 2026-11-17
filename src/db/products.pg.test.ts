@@ -7,9 +7,11 @@ import type { PhisProductDraft, PhisProductId } from "@phis/contracts/products";
 import {
   activatePhiTestAddonForSite,
   closePhiTestPool,
+  createPhiTestAddonSpace,
   createPhiTestAsset,
   createPhiTestSite,
   createPhiTestUser,
+  createPhiTestUserSpace,
   dropPhiTestSites,
   enablePhiTestAddonForSite,
   requirePhiTestDatabase,
@@ -19,6 +21,7 @@ import { normalizePhisProductDraft } from "../lib/addons/product-draft.ts";
 import { ensureEntitlementSubject, findEntitlementSubject, grantEntitlement } from "./entitlements.mts";
 import {
   annotateProduct,
+  listProductIdsWithImage,
   listProducts,
   moveProductsAsOperator,
   readProduct,
@@ -346,7 +349,7 @@ describe.skipIf(!configured)("products", () => {
   });
 
   it("accepts an Asset of the Site as the picture, refuses another Site's, and drops it with the Asset", async () => {
-    const asset = await createPhiTestAsset(site, "product-image");
+    const asset = await createPhiTestAsset(site, "product-image", { lifecycleStatus: 2 });
     const withImage = await register("img", { imageAssetId: asset });
     expect(withImage.product).toMatchObject({ imageAssetId: asset, imageRevision: 1 });
     // The address follows the asset's cache revision, read at the moment it is used.
@@ -354,10 +357,33 @@ describe.skipIf(!configured)("products", () => {
     expect((await get(id(SUPPLIER, "img")))!.imageRevision).toBe(2);
     await expect(register("img", { imageAssetId: 2_000_000_000 })).rejects.toThrow(/not an Asset of this Site/);
     const elsewhere = await createPhiTestSite("products-elsewhere");
-    const foreign = await createPhiTestAsset(elsewhere, "foreign-image");
+    const foreign = await createPhiTestAsset(elsewhere, "foreign-image", { lifecycleStatus: 2 });
     await expect(register("img", { imageAssetId: foreign })).rejects.toThrow(/not an Asset of this Site/);
+    expect(await listProductIdsWithImage(pool, site.id, asset)).toEqual([id(SUPPLIER, "img")]);
+    expect(await listProductIdsWithImage(pool, elsewhere.id, asset)).toEqual([]);
     await pool.query(`DELETE FROM phis.media_assets WHERE id = $1`, [asset]);
+    expect(await listProductIdsWithImage(pool, site.id, asset)).toEqual([]);
     expect((await get(id(SUPPLIER, "img")))).toMatchObject({ imageAssetId: null, imageRevision: null });
+  });
+
+  it("refuses a picture a visitor would not be served, and takes the supplier's own Add-on Space", async () => {
+    const ready = { lifecycleStatus: 2 } as const;
+    const space = (addonId: string) => createPhiTestAddonSpace(site, addonId);
+    const own = await createPhiTestAsset(site, "own-cover", { ...ready, spaceId: await space(SUPPLIER) });
+    expect((await register("pic", { imageAssetId: own })).product.imageAssetId).toBe(own);
+
+    const pending = await createPhiTestAsset(site, "pending-image");
+    const archived = await createPhiTestAsset(site, "archived-image", { lifecycleStatus: 3 });
+    const authenticated = await createPhiTestAsset(site, "authenticated-image", { ...ready, deliveryPolicy: 2 });
+    const others = await createPhiTestAsset(site, "other-addon-image", { ...ready, spaceId: await space(OTHER) });
+    const userSpace = await createPhiTestAsset(site, "user-image", { ...ready, spaceId: await createPhiTestUserSpace(site) });
+    for (const refused of [pending, archived, authenticated, others, userSpace]) {
+      await expect(register("pic", { imageAssetId: refused })).rejects.toThrow(/cannot be a product's picture/);
+    }
+    expect((await get(id(SUPPLIER, "pic")))!.imageAssetId).toBe(own);
+    // The other Add-on may use its own file, and the supplier's file is not another's.
+    expect((await register("pic-other", { imageAssetId: others }, OTHER)).product.imageAssetId).toBe(others);
+    await expect(register("pic-other", { imageAssetId: own }, OTHER)).rejects.toThrow(/cannot be a product's picture/);
   });
 
   it("lists active products unless states are asked for, by supplier, publisher and release, in pages", async () => {
@@ -490,6 +516,32 @@ describe.skipIf(!configured)("products", () => {
     // A declaration that breaks a rule is reported and does not stop the others.
     const mixed = await sync([entry("m-ok"), entry("m-bad", { parts: [id(supplier, "nowhere")] })]);
     expect(Object.fromEntries(mixed.map((a) => [a.key, a.action]))).toMatchObject({ "m-ok": "created", "m-bad": "refused" });
+  });
+
+  it("leaves a picture set on a declared product alone: the manifest never names one", async () => {
+    const supplier = "@pgtest/prod-manifest-image";
+    await activatePhiTestAddonForSite(site, supplier);
+    await switchSupplier(supplier, true);
+    const sync = (title: string, recipients: readonly string[] = []) => syncManifestProducts(pool, {
+      siteId: site.id, supplier, listeners: recipients,
+      declared: [normalizePhisProductDraft({ key: "shop", type: "addon", title, summary: "S" }, id(supplier, "shop"))],
+    });
+    expect((await sync("Shop"))[0]!.action).toBe("created");
+    expect((await get(id(supplier, "shop")))!.imageAssetId).toBeNull();
+    const cover = await createPhiTestAsset(site, "manifest-cover", { lifecycleStatus: 2 });
+    await registerProduct(pool, { siteId: site.id, supplier, draft: draft("shop", { type: "addon", title: "Shop", summary: "S", imageAssetId: cover }), listeners: [] });
+    const before = (await get(id(supplier, "shop")))!;
+    expect(before.imageAssetId).toBe(cover);
+
+    // No change: the picture stays, the version stays, nothing is owed.
+    await clearOutbox();
+    expect((await sync("Shop", listeners))[0]!.action).toBe("unchanged");
+    expect(await outbox()).toHaveLength(0);
+    expect((await get(id(supplier, "shop")))).toMatchObject({ imageAssetId: cover, version: before.version });
+    // The manifest is the statement of the title; the picture still stays.
+    expect((await sync("Renamed", listeners))[0]!.action).toBe("updated");
+    expect((await get(id(supplier, "shop")))).toMatchObject({ title: "Renamed", imageAssetId: cover, version: before.version + 1 });
+    expect(await outbox()).toHaveLength(1);
   });
 
   it("owes product.changed to the ready listeners for each kind of change, and for nothing that changed nothing", async () => {

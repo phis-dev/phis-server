@@ -96,13 +96,6 @@ processed.
   would reconcile the bucket's CORS and lifecycle rules through `reconcilePhiMediaStoragePoliciesWith`, as
   the CLI does. The Admin Media settings point Spaces at Profiles (the Site Space, the defaults for new User
   and Group Spaces, each existing Space with its own quota, built 14.11.2026) but edit none.
-- **The Theme's Signet is not resolved as its Logo is.** A saved Theme carries the Signet as
-  `theme.brand.signet`, an Asset like the Logo (phis-ui, 17.11.2026). The runtime config resolves each
-  Asset-bound Logo to its delivered address with the Asset's revision (`src/db/sites.ts`, the brand read)
-  and passes the Signet through untouched. So the Site cannot name a revision in the favicon's address --
-  a replaced Signet reaches a browser tab only after its cache of an hour runs out -- and it does not know
-  the picture's type and size when it writes the page head, which is what an Apple touch icon needs.
-  Resolving `brand.signet` beside the Logo, with revision, media type and pixel size, closes both.
 - **`max_object_bytes` does not know which path an object takes.** One Site number bounds a proxied
   body and a presigned PUT alike, although the two carry wildly different sizes. Making it
   Profile-aware means moving the size check in `uploads/init` after the Space resolution
@@ -335,13 +328,6 @@ front of is infrastructure work, and belongs with
 
 ## Server Add-ons
 
-- **A supplier cannot bring its products' pictures (found 2026-11-17; drafted in
-  [COMMERCE_COORDINATION.md](./design/COMMERCE_COORDINATION.md), section 14).** Four things, one release:
-  `assets:v1` takes bytes under the Add-on's own authority, without an actor; the manifest sync
-  (`syncManifestProducts`) keeps an `image_asset_id` the manifest does not speak of -- today every
-  `addon reconcile` sets it to NULL and bumps the product; the Media delete guard knows the Assets a product
-  wears and the ones in an Add-on's Space; `products.register` refuses an Asset that is not delivered
-  publicly from the Site's Space.
 - **An Add-on's schema cannot be compared with its descriptor, or brought to it, without a version step
   (found 2026-11-17, rolling out @phis/shop 0.7.0).** Before v1 a schema is changed in place and its
   version stays, so `phis addon migrate` answers "already at schema version" and changes nothing -- and,

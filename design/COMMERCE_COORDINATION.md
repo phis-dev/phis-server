@@ -420,35 +420,42 @@ Not in this design, and not blocked by it:
 
 Nothing at present.
 
-### Drafted, not built: a supplier's own pictures (2026-11-17)
+### Built: a supplier's own pictures (2026-11-17)
 
 A product has one picture in Core, and a supplier's package -- a licence Add-on that ships its plans --
-has to be able to bring it. Today it cannot. The only way into an Add-on's Space is `assets:v1`
-`begin`/`finalize`, which is a browser's upload: it wants a signed-in actor, and its body is sent with
-that actor's session. An Add-on that is enabled, runs a job or answers an event has no actor, and a
-manifest product may not name a picture at all. What a handler set afterwards is taken away again by the
-manifest sync, which writes the declared product whole on every `addon site --enable` and every
-`addon reconcile`.
+has to be able to bring it. Until now it could not: the only way into an Add-on's Space was `assets:v1`
+`begin`/`finalize`, which is a browser's upload and wants a signed-in actor, and the manifest sync wrote a
+declared product whole on every `addon site --enable` and `addon reconcile`, taking away what a handler
+had set.
 
 The operator's direction: the Space is the Add-on's, its quota bounds it, and the slot's own rules -- media
 types, size, sniffing, `delivery` -- apply whoever sends the bytes. So an Add-on puts a picture there
-itself and then names it on its product, which `register` already allows.
+itself and then names it on its product, which `register` allows. Four things were built, and what each
+does is the contract:
 
-- **`assets:v1` gains a call that takes bytes**: table, owner row, slot, media type, the bytes. It runs
-  under the Add-on's own authority, with or without an actor, counts against the Add-on's Space, and
-  records the Add-on as what made the Asset. Where the bytes come from is the Add-on's business; a package
-  carries its pictures in its artifact. Fetching from somebody else's address is a separate question -- an
-  Add-on has no outbound client in its context.
+- **`assets:v1` `put` takes bytes** (`SERVER_ADDONS.md`, `assets:v1`). Table, owner row, slot, media type,
+  the bytes, an optional file name. It runs under the Add-on's own authority with or without an actor (the
+  row's authority where there is an actor, the Add-on's system authority where Core runs it on its own
+  account), applies the slot's checks as `finalize` does, counts against the Add-on's Space, and records no
+  user as creator -- the Asset's `meta` names the Add-on. The same bytes in the same slot of the same row
+  answer with the file that is there (a package may put its picture on every enable); the same bytes for
+  another row or slot are refused naming the Asset, as `finalize` does. At most 8 MiB per call
+  (`PHIS_ASSET_PUT_MAX_BYTES`), within the slot's and the Site's ceilings. Where the bytes come from is the
+  Add-on's business; fetching from somebody else's address is a separate question -- an Add-on has no
+  outbound client in its context, and `put` takes bytes only.
 - **The manifest sync keeps a picture the manifest does not speak of.** A declared product names no
-  picture, so the sync has nothing to say about one. Whether it should also keep a title a handler
-  changed is the same question and is answered with it.
-- **Deleting an Asset a product wears is refused or warned about.** `products.image_asset_id` goes to NULL
-  when its Asset is deleted, the delete guard knows Pages, Navigation, content, Areas and the Theme and no
-  product, and an Asset in an Add-on's Space is not browsable but is deletable by its id.
-- **`register` refuses a picture a visitor would not be served.** It checks that the Asset exists and is
-  the Site's. An Asset from a User's or a Group's Space, or one not delivered publicly, passes, and the
-  catalogue then shows a broken picture. A seller's own check is impossible: no capability reads an Asset
-  of the Media library.
+  picture, so the sync neither sets nor clears one. The manifest is the statement of title, summary and the
+  other declared fields, and the sync reconciles those: a title a handler changed is put back to the
+  manifest's. A sync that changes nothing raises no version and owes no event.
+- **Deleting an Asset a product wears is refused.** The Media delete guard reports a product as a reference
+  of scope `product` (its id as the label) and the route answers `media_asset_in_use` as for a Page; the
+  foreign key's `SET NULL` stays as the last safeguard. An Asset in an Add-on's Space that still hangs on an
+  Add-on row stays deletable by its id, because `SERVER_ADDONS.md` says so on purpose: deleting the file
+  takes the link and the parent row survives, which is the answer to somebody uploading rubbish.
+- **`register` refuses a picture a visitor would not be served.** The Asset has to be ready, delivered
+  publicly, and lie in the Site's Space or in the registering supplier's own Add-on Space (its slot files:
+  the shop's cover). An Asset of a User's or a Group's Space, or of another Add-on's, is refused with the
+  reason and without saying whether one exists elsewhere.
 
 The gallery stays where section 8 put it, on the seller's listing. Several pictures on a product would be a
 change to `products:v1`, to be decided when a marketplace needs a supplier to bring them.

@@ -2,9 +2,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { MediaAssetRecord } from "@/db/media";
 
-const mocks = vi.hoisted(() => ({ getPool: vi.fn() }));
+const mocks = vi.hoisted(() => ({ getPool: vi.fn(), productIds: vi.fn() }));
 
 vi.mock("@/lib/db", () => ({ getPool: mocks.getPool }));
+vi.mock("@/db/products.mts", () => ({ listProductIdsWithImage: mocks.productIds }));
 
 import { collectMediaAssetDeleteReferences } from "./media-delete-guard";
 
@@ -47,6 +48,7 @@ const asset = (overrides: Partial<MediaAssetRecord> = {}) =>
 
 beforeEach(() => {
   mocks.getPool.mockReset();
+  mocks.productIds.mockReset().mockResolvedValue([]);
 });
 
 /*
@@ -116,5 +118,22 @@ describe("The Asset delete guard", () => {
       matchType: "assetId",
       matchedValue: "9",
     });
+  });
+
+  it("names a product that wears the Asset as its picture, by the product's id", async () => {
+    pool([row({ source_kind: 1 })]);
+    mocks.productIds.mockResolvedValue(["@phis/shop:cover-shop"]);
+    const references = await collectMediaAssetDeleteReferences(31, asset());
+    expect(mocks.productIds).toHaveBeenCalledWith(expect.anything(), 31, 9);
+    expect(references.map((entry) => entry.scope)).toEqual(["page", "product"]);
+    expect(references[1]).toMatchObject({
+      scope: "product", fieldPath: "@phis/shop:cover-shop", matchType: "assetId", matchedValue: "9", pageId: null, contentId: null,
+    });
+  });
+
+  it("asks no one for an Asset of another Site", async () => {
+    pool();
+    await collectMediaAssetDeleteReferences(31, asset({ siteId: 32 }));
+    expect(mocks.productIds).not.toHaveBeenCalled();
   });
 });

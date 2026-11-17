@@ -22,6 +22,9 @@ import { readPhisMediaRequestArea } from "@/lib/media-request-area";
 export const dynamic = "force-dynamic";
 
 function describeMediaAssetReference(reference: Awaited<ReturnType<typeof collectMediaAssetDeleteReferences>>[number]) {
+  if (reference.scope === "product") {
+    return `product=${reference.fieldPath}`;
+  }
   const parts: string[] = [];
   if (reference.areaMask != null) {
     parts.push(`area=${resolvePhisCmsAreaKey(reference.areaMask)}`);

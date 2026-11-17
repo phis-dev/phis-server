@@ -6,6 +6,9 @@ import type { MediaAssetRecord } from "@/db/media";
 const mocks = vi.hoisted(() => ({
   mediaContext: vi.fn(),
   update: vi.fn(),
+  getAsset: vi.fn(),
+  references: vi.fn(),
+  remove: vi.fn(),
 }));
 
 // The route is guarded per Asset now: Site Media authority still passes, and so does an Author acting
@@ -15,12 +18,17 @@ vi.mock("@/lib/guards/site-media-api", () => ({
   requireMediaAssetContext: mocks.mediaContext,
 }));
 vi.mock("@/db/media", () => ({
-  getMediaAssetBySiteAndId: vi.fn(),
+  getMediaAssetBySiteAndId: mocks.getAsset,
+  hasLockedMediaFolder: vi.fn(async () => false),
   pruneEmptyMediaFolderBranch: vi.fn(),
 }));
 vi.mock("@/db/site-config", () => ({ clearSiteConfigCache: vi.fn() }));
 vi.mock("@/db/user-sessions", () => ({ getSessionFromRequest: vi.fn() }));
-vi.mock("@/lib/media-delete-guard", () => ({ collectMediaAssetDeleteReferences: vi.fn() }));
+vi.mock("@/lib/media-delete-guard", () => ({ collectMediaAssetDeleteReferences: mocks.references }));
+vi.mock("@/lib/media-asset-delete", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/media-asset-delete")>()),
+  deleteStoredPhiMediaAsset: mocks.remove,
+}));
 vi.mock("@/lib/media-storage", () => ({ PhisMediaStorageService: vi.fn() }));
 vi.mock("@/lib/log", () => ({ logRuntimeEvent: vi.fn() }));
 vi.mock("@/lib/media-asset-update", async (importOriginal) => ({
@@ -29,7 +37,7 @@ vi.mock("@/lib/media-asset-update", async (importOriginal) => ({
 }));
 
 import { MediaAssetUpdateError } from "@/lib/media-asset-update";
-import { PATCH } from "./route";
+import { DELETE, PATCH } from "./route";
 
 function asset(): MediaAssetRecord {
   return {
@@ -71,6 +79,9 @@ beforeEach(() => {
     error: null,
   });
   mocks.update.mockResolvedValue(asset());
+  mocks.getAsset.mockResolvedValue(asset());
+  mocks.references.mockResolvedValue([]);
+  mocks.remove.mockResolvedValue(true);
 });
 
 describe("PATCH /api/site/media/:id", () => {
@@ -110,5 +121,30 @@ describe("PATCH /api/site/media/:id", () => {
 
     expect(response.status).toBe(400);
     expect(await response.json()).toEqual({ error: "Invalid meta value." });
+  });
+});
+
+describe("DELETE /api/site/media/:id", () => {
+  const remove = () => DELETE(
+    new NextRequest("https://server.test/api/site/media/17", { method: "DELETE" }),
+    { params: Promise.resolve({ id: "17" }) },
+  );
+
+  it("refuses an Asset a product wears like any other reference, naming the product", async () => {
+    mocks.references.mockResolvedValue([{ scope: "product", fieldPath: "@phis/shop:cover-shop", areaMask: null, pagePath: null, regionKey: null, widgetType: null, widgetId: null, layoutNodeId: null, contentId: null, contentSlug: null }]);
+    const response = await remove();
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({
+      error: "media_asset_in_use",
+      message: "Media asset is still referenced by: product=@phis/shop:cover-shop.",
+      references: [expect.objectContaining({ scope: "product" })],
+    });
+    expect(mocks.remove).not.toHaveBeenCalled();
+  });
+
+  it("deletes an Asset nothing names", async () => {
+    const response = await remove();
+    expect(await response.json()).toEqual({ ok: true });
+    expect(mocks.remove).toHaveBeenCalled();
   });
 });

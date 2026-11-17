@@ -199,6 +199,16 @@ describe.skipIf(!configured)("phis product and phis entitlement", () => {
     await expect(entitlement(["kinds"])).rejects.toThrow(/phis product list/);
   });
 
+  it("names a user nobody holds instead of surfacing the foreign key, for list and grant", async () => {
+    await make("known-pass", { active: true });
+    const nobody = "2000000000";
+    await expect(entitlement(["list"], { user: nobody })).rejects.toThrow("No such user at " + site.key + ".");
+    await expect(entitlement(["grant"], { user: nobody, product: id("known-pass"), reference: "ghost" })).rejects.toThrow("No such user at " + site.key + ".");
+    // Neither left a subject behind for the user nobody holds.
+    const { rows } = await pool.query(`SELECT 1 FROM phis.entitlement_subjects WHERE user_id = $1`, [Number(nobody)]);
+    expect(rows).toHaveLength(0);
+  });
+
   it("shows the subscription an entry follows, and the operator's grant takes none", async () => {
     await make("subbed", { active: true });
     const subscriptionId = "5f0c0000-0000-4000-8000-0000000000aa";

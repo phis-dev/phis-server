@@ -1,14 +1,17 @@
 import "server-only";
 
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 
-import type {
-  PhisAddonAssetSlotDescriptor,
+import {
+  PHIS_ASSET_PUT_MAX_BYTES,
+  type PhisAddonAssetSlotDescriptor,
   PhisAddonAssetView,
   PhisAddonSchemaDescriptor,
   PhisAssetsCapabilityV1,
   PhisRowIntent,
 } from "./contract.ts";
+import { inspectPhiMediaObject } from "@/lib/media-content-check";
+import { commitMediaSpaceBytes } from "@/db/site-module-media";
 import {
   PhiMediaDeliveryPolicy,
   PhisMediaSpaceKind,
@@ -47,6 +50,7 @@ import { sniffPhiMediaContentType } from "@/lib/media-content-sniffer";
 import { derivePhisAddonSchemaName } from "./schema-name.ts";
 import {
   linkPhisAddonAsset,
+  lockAndFindPhisAddonSpaceAssetByDigest,
   writePhisAddonAssetMirror,
   readPhisAddonAsset,
   readPhisAddonAssets,
@@ -591,6 +595,166 @@ export function buildPhisAddonAssetsCapability(input: {
         throw new PhisAddonAssetError(`Asset ${linked.id} vanished between writing and reading it.`);
       }
       return view(row);
+    },
+
+    async put({ table, ownerId, slot, contentType, bytes, fileName }) {
+      const location = requireTable(table);
+      const declared = requireSlot(table, slot);
+      if (!(bytes instanceof Uint8Array)) {
+        throw new PhisAddonAssetError("put takes the file as bytes (a Uint8Array).");
+      }
+      const size = bytes.byteLength;
+      if (size === 0) {
+        throw new PhisAddonAssetError("A file must have at least one byte.");
+      }
+      // The bytes are in memory already, which is what the hard ceiling is for; the other two are the
+      // ones `begin` holds a reservation to.
+      if (size > PHIS_ASSET_PUT_MAX_BYTES) {
+        throw new PhisAddonAssetError(
+          `put takes at most ${PHIS_ASSET_PUT_MAX_BYTES} bytes; this is ${size}. Use begin and finalize for a larger file.`,
+        );
+      }
+      if (size > declared.maxBytes) {
+        throw new PhisAddonAssetError(`Slot "${slot}" takes at most ${declared.maxBytes} bytes; this is ${size}.`);
+      }
+      const maxObjectBytes = (await ensureSiteMediaConfig(siteId)).maxObjectBytes;
+      if (size > maxObjectBytes) {
+        throw new PhisAddonAssetError(`Object is ${size} bytes; this Site allows ${maxObjectBytes}.`);
+      }
+      if (!declared.contentTypes.includes(contentType)) {
+        throw new PhisAddonAssetError(
+          `Slot "${slot}" takes ${declared.contentTypes.join(", ")}; this is "${contentType}".`,
+        );
+      }
+      // The row's authority where there is an actor, the Add-on's own where Core runs it on its own
+      // account; an unsigned hook holds neither and is refused here.
+      await requireSlotAuthority(table, [declared], ownerId, "update");
+
+      const body = Buffer.from(bytes.buffer, bytes.byteOffset, size);
+      const sha256 = createHash("sha256").update(body).digest("hex");
+      const { space, profile, service } = await resolveSpace();
+      const mediaConfig = await ensureSiteMediaConfig(siteId);
+      const inspection = await inspectPhiMediaObject({
+        body, declaredContentType: contentType, space, mediaConfig,
+      });
+      if (!inspection.ok) {
+        throw new PhisAddonAssetError(inspection.message);
+      }
+      if (inspection.contentType !== contentType) {
+        throw new PhisAddonAssetError(
+          `put was told "${contentType}" and the bytes are a "${inspection.contentType}".`,
+        );
+      }
+
+      /*
+       * What is already stored under this digest, and where it hangs. The same bytes in this very slot of
+       * this very row are the file that is wanted: answered, nothing written. Anywhere else the answer
+       * is `finalize`'s -- named and refused -- so there is one rule for a duplicate and not two.
+       */
+      const answerForExisting = async (existingId: number) => {
+        const here = (await readPhisAddonAssets(getPool(), location, { siteId, ownerId, slot }))
+          .find((row) => row.mediaAssetId === existingId);
+        if (here) {
+          return view(here);
+        }
+        throw new PhisAddonAssetError(
+          `These bytes are already stored in this Add-on's Space as Asset ${existingId}, for another row or slot.`,
+        );
+      };
+      const earlier = await getMediaAssetBySiteAndChecksum(siteId, space.id, { algorithm: "sha256", value: sha256 });
+      if (earlier) {
+        return answerForExisting(earlier.id);
+      }
+
+      const originalName = (fileName?.trim() || `${slot}-${randomUUID()}`).slice(0, 255);
+      const storageKey = service.createStorageKey({ siteKey });
+      let written = false;
+      try {
+        const outcome = await withTransaction(async (client) => {
+          const raced = await lockAndFindPhisAddonSpaceAssetByDigest(client, { siteId, spaceId: space.id, sha256 });
+          if (raced !== null) {
+            return { raced };
+          }
+          // Booked in this transaction, so a failure anywhere below gives the room back with the rest.
+          if (!await reserveMediaSpaceQuota({ spaceId: space.id, bytes: size }, client)) {
+            throw new PhisAddonAssetError(
+              "This Add-on's store on this Site has no room for a file of that size.",
+            );
+          }
+          const stored = await service.putObject({
+            storageKey,
+            body,
+            contentType,
+            metadata: { siteKey, filename: originalName },
+          });
+          written = true;
+          const asset = await createMediaAsset({
+            siteId,
+            spaceId: space.id,
+            spaceKind: PhisMediaSpaceKind.Addon,
+            // The Add-on made it, with an actor in the request or without one. `created_by_user_id` names
+            // a user, so it stays empty and the Add-on is named in `meta`.
+            createdByUserId: null,
+            storageProfileId: profile.id,
+            storageKey: stored.storageKey,
+            originalName,
+            contentType,
+            bytes: stored.byteSize,
+            checksumAlgorithm: "sha256",
+            checksumValue: sha256,
+            width: inspection.width,
+            height: inspection.height,
+            blurDataUrl: inspection.blurDataUrl,
+            meta: { source: "addon", addonId },
+            deliveryPolicy: DELIVERY_POLICIES[declared.delivery ?? "public"],
+          }, client);
+          if (!asset) {
+            throw new PhisAddonAssetError("The Media Asset could not be created.");
+          }
+          await commitMediaSpaceBytes(client, { spaceId: space.id, bytes: stored.byteSize });
+          const link = await linkPhisAddonAsset(client, {
+            location, siteId, ownerId, slot,
+            mediaAssetId: asset.id,
+            single: declared.cardinality === "one",
+            announceTo: input.announcesChanges ? addonId : undefined,
+          });
+          if (declared.mirrorColumn) {
+            await writePhisAddonAssetMirror(client, location, {
+              siteId,
+              ownerId,
+              keyColumn: ownerKeyColumn(table),
+              column: declared.mirrorColumn,
+              path: resolvePhiMediaDeliveryUrl({ id: asset.id, deliveryRevision: asset.deliveryRevision }),
+            });
+          }
+          return { link };
+        }).catch((error: unknown) => {
+          // A row that is not there, or an id the key's type cannot hold, is the caller's mistake.
+          const code = (error as { code?: unknown } | null)?.code;
+          if (code === "23503" || code === "22P02" || code === "22003") {
+            throw new PhisAddonAssetError(`Row ${String(ownerId)} of "${table}" does not exist.`);
+          }
+          throw error;
+        });
+        if ("raced" in outcome) {
+          return answerForExisting(outcome.raced!);
+        }
+        // The displaced file, removed after the row that pointed at it is gone, as `finalize` does.
+        if (outcome.link.supersededMediaAssetId != null) {
+          await release(space.id, outcome.link.supersededMediaAssetId);
+        }
+        const row = await readPhisAddonAsset(getPool(), location, { siteId, id: outcome.link.id });
+        if (!row) {
+          throw new PhisAddonAssetError(`Asset ${outcome.link.id} vanished between writing and reading it.`);
+        }
+        return view(row);
+      } catch (error) {
+        // The object is written inside the transaction and outlives its failure; nothing points at it.
+        if (written) {
+          await service.deleteObject(storageKey).catch(() => {});
+        }
+        throw error;
+      }
     },
 
     async abandon({ table, token }) {

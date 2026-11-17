@@ -9,8 +9,11 @@ import type {
   PhisProductState,
 } from "@phis/contracts/products";
 
+import { PhiMediaDeliveryPolicy, PhiMediaLifecycleStatus } from "@phis/contracts/media";
+
 import { PHIS_PRODUCT_FLAG } from "../lib/constants/products.ts";
 import { PHI_SITE_SERVER_ADDON_FLAG_REQUESTED_ENABLED, PHIS_ADDON_FLAG_GLOBALLY_ENABLED } from "../lib/constants/server-addons.ts";
+import { PhisMediaSpaceKind } from "../lib/constants/media-space-kinds.ts";
 import { withPoolTransaction } from "../lib/db-transaction.ts";
 import { splitPhisProductId, type PhisNormalizedProductDraft } from "../lib/addons/product-draft.ts";
 
@@ -254,6 +257,39 @@ const sameTerms = (a: PhisProductReleasedTerms, b: PhisProductReleasedTerms) =>
   && a.accountRequired === b.accountRequired
   && a.parts.length === b.parts.length && a.parts.every((part, index) => part === b.parts[index]);
 
+/** The ids of the Site's products that wear the Asset as their picture; the Media delete guard names them. */
+export async function listProductIdsWithImage(db: DbQueryable, siteId: number, assetId: number): Promise<PhisProductId[]> {
+  const { rows } = await db.query<{ supplier_addon_id: string; key: string }>(
+    `SELECT supplier_addon_id, key FROM phis.products WHERE site_id = $1 AND image_asset_id = $2 ORDER BY supplier_addon_id, key`,
+    [siteId, assetId],
+  );
+  return rows.map((row) => `${row.supplier_addon_id}:${row.key}` as PhisProductId);
+}
+
+/**
+ * Whether a visitor would be served the Asset as a product's picture: it is ready, delivered publicly,
+ * and lies in the Site's Space or in the registering supplier's own Add-on Space (its slot files, the
+ * shop's cover, say). An Asset of a User or Group Space, or of another Add-on's Space, is refused. An
+ * Asset of another Site, or none, gets the same answer as before, so the message tells nothing about
+ * what exists elsewhere.
+ */
+async function assertProductImage(db: DbQueryable, siteId: number, supplier: string, assetId: number) {
+  const { rows } = await db.query<{ lifecycle_status: number; delivery_policy: number; kind: number; addon_id: string | null }>(
+    `SELECT a.lifecycle_status, a.delivery_policy, s.kind, s.addon_id
+     FROM phis.media_assets a JOIN phis.media_spaces s ON s.id = a.space_id AND s.site_id = a.site_id
+     WHERE a.id = $1 AND a.site_id = $2`,
+    [assetId, siteId],
+  );
+  const asset = rows[0];
+  if (!asset) throw new PhisProductRuleError(`Asset ${assetId} is not an Asset of this Site.`);
+  const inReach = asset.kind === PhisMediaSpaceKind.Site || (asset.kind === PhisMediaSpaceKind.Addon && asset.addon_id === supplier);
+  if (asset.lifecycle_status !== PhiMediaLifecycleStatus.Ready || asset.delivery_policy !== PhiMediaDeliveryPolicy.Public || !inReach) {
+    throw new PhisProductRuleError(
+      `Asset ${assetId} cannot be a product's picture: a visitor is served only an Asset that is ready, delivered publicly, and in the Site's Space or the supplier's own Add-on Space.`,
+    );
+  }
+}
+
 export type RegisterOutcome = "created" | "updated" | "unchanged";
 
 /**
@@ -276,11 +312,10 @@ export async function registerProduct(pool: Pool, input: {
   const { siteId, supplier, draft } = input;
   const id = `${supplier}:${draft.key}` as PhisProductId;
   return withPoolTransaction(pool, async (client) => {
-    if (draft.imageAssetId !== null) {
-      const { rowCount } = await client.query(`SELECT 1 FROM phis.media_assets WHERE id = $1 AND site_id = $2`, [draft.imageAssetId, siteId]);
-      if ((rowCount ?? 0) === 0) throw new PhisProductRuleError(`Asset ${draft.imageAssetId} is not an Asset of this Site.`);
-    }
+    // A manifest does not speak of the picture, so a manifest sync neither sets nor clears it.
+    if (!input.declared && draft.imageAssetId !== null) await assertProductImage(client, siteId, supplier, draft.imageAssetId);
     let row = await selectRow(client, siteId, id, true);
+    const pickImage = (current: number | null) => (input.declared ? current : draft.imageAssetId);
     if (!row) {
       await assertParts(client, siteId, id, draft.parts);
       const flags = (draft.counted ? FLAG.Counted : 0) | (draft.free ? FLAG.Free : 0) | (draft.accountRequired ? FLAG.AccountRequired : 0)
@@ -290,7 +325,7 @@ export async function registerProduct(pool: Pool, input: {
            sale, referral_url, state, flags, parts)
          VALUES ($1::smallint, $2, $3, $4, $5, $6, $7, $8::int, $9, $10, $11, $12::int, $13::text[])
          ON CONFLICT (site_id, supplier_addon_id, key) DO NOTHING`,
-        [siteId, supplier, draft.key, draft.publisher, draft.type, draft.title, draft.summary, draft.imageAssetId,
+        [siteId, supplier, draft.key, draft.publisher, draft.type, draft.title, draft.summary, pickImage(null),
           draft.sale, draft.referralUrl, input.declared ? "active" : "draft", flags, draft.parts],
       );
       if ((inserted.rowCount ?? 0) > 0) {
@@ -321,7 +356,7 @@ export async function registerProduct(pool: Pool, input: {
       | (draft.counted ? FLAG.Counted : 0) | (terms.free ? FLAG.Free : 0) | (terms.accountRequired ? FLAG.AccountRequired : 0)
       | ((row.flags & FLAG.Declared) !== 0 || input.declared ? FLAG.Declared : 0);
     const unchanged = row.type === draft.type && row.title === draft.title && row.summary === draft.summary
-      && row.image_asset_id === draft.imageAssetId && flags === row.flags && sameTerms(terms, current)
+      && row.image_asset_id === pickImage(row.image_asset_id) && flags === row.flags && sameTerms(terms, current)
       && (pending === null ? row.pending_terms === null : row.pending_terms !== null && sameTerms(pending, row.pending_terms));
     if (unchanged) return { product: (await readProduct(client, siteId, id))!, outcome: "unchanged" as const };
 
@@ -330,7 +365,7 @@ export async function registerProduct(pool: Pool, input: {
        SET type = $2, title = $3, summary = $4, image_asset_id = $5::int, sale = $6, referral_url = $7,
            flags = $8::int, parts = $9::text[], pending_terms = $10::jsonb, version = version + 1, updated_at = NOW()
        WHERE id = $1`,
-      [row.id, draft.type, draft.title, draft.summary, draft.imageAssetId, terms.sale, terms.referralUrl, flags,
+      [row.id, draft.type, draft.title, draft.summary, pickImage(row.image_asset_id), terms.sale, terms.referralUrl, flags,
         terms.parts, pending ? JSON.stringify(pending) : null],
     );
     await enqueueProductChanged(client, { siteId, recipients: input.listeners, productId: id });

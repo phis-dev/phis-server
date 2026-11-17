@@ -213,7 +213,7 @@ describe the tables.
 There is no global Storage switch, no per-Asset provider, bucket, or public URL column, and no
 `flags`-based Asset visibility.
 
-- `sites.theme.brand.logo.light` and `.dark` are the brand logos. A logo with `sourceKind: "asset"` references the Asset by `assetId`; its `url` is a delivery projection and never the source of truth. `sourceKind: "url"` carries an external `sourceUrl`.
+- `sites.theme.brand.logo.light` and `.dark` are the brand logos. A logo with `sourceKind: "asset"` references the Asset by `assetId`; its `url` is a delivery projection and never the source of truth. `sourceKind: "url"` carries an external `sourceUrl`. `sites.theme.brand.signet` has the same two shapes; the runtime configuration resolves an Asset-bound Signet like a Logo (`url` with the `?r=` revision) and adds the Asset's `contentType` and, where it records them, `width` and `height`.
 - The binary payload lives in the object store selected by the Asset's concrete Storage Profile; the database stores metadata, ownership, quota accounting, and storage keys only.
 - Ownership, lifecycle, delivery, and presentation are four separate closed contracts. No single `flags` column expresses access any more.
 
@@ -1583,7 +1583,7 @@ Contract:
 - `state`: `draft`, `active`, `withdrawn`, `locked`. `locked` is the operator's; `phis product unlock` takes the product to `withdrawn`, because the state before the lock is not kept.
 - `version` rises with every change, attribute changes included, and not with a write that changes nothing.
 - A product that was ever named by an `entitlements` row is never deleted; `entitlements.product` is no foreign key, so removal is decided by looking.
-- `image_asset_id` is a picture of the Site's Media library; deleting the Asset sets it to NULL.
+- `image_asset_id` is a picture of the Site's Media library; deleting the Asset sets it to NULL. `register` accepts only an Asset that is ready, delivered publicly, and in the Site's Space or the supplier's own Add-on Space; the Media delete route refuses an Asset a product wears (`media_asset_in_use`, scope `product`) before the foreign key would null it, and a manifest sync of the declared products never writes the column.
 
 ### `phis.product_attributes`
 

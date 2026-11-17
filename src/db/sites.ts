@@ -661,38 +661,60 @@ export async function getSiteRuntimeConfig(siteId: number) {
       : null;
 
   /*
-   * The Logo is one picture per mode. Each Asset-bound mode gets its delivered address with the
-   * revision, and the first alt text an Asset carries stands in where the Brand states none.
+   * The Logo is one picture per mode, and the Signet is one square for the tab and the home screen. Each
+   * Asset-bound one gets its delivered address with the revision, and the first alt text an Asset carries
+   * stands in where the Brand states none. The Signet also carries what the Asset records of itself --
+   * its media type and its pixel size -- so the head can say them without fetching the picture; a value
+   * the Asset does not hold is left out, never guessed.
    */
   const logos = brand && typeof brand.logo === "object" && brand.logo !== null
     ? { ...(brand.logo as Record<string, unknown>) }
     : null;
-  if (brand && logos) {
-    const assetIdOf = (logo: unknown) => {
-      if (!logo || typeof logo !== "object") return null;
-      const { sourceKind, assetId } = logo as { sourceKind?: unknown; assetId?: unknown };
+  const signet = brand && typeof brand.signet === "object" && brand.signet !== null
+    ? { ...(brand.signet as Record<string, unknown>) }
+    : null;
+  if (brand && (logos || signet)) {
+    const assetIdOf = (picture: unknown) => {
+      if (!picture || typeof picture !== "object") return null;
+      const { sourceKind, assetId } = picture as { sourceKind?: unknown; assetId?: unknown };
       return sourceKind === "asset" && typeof assetId === "number" && Number.isInteger(assetId) ? assetId : null;
     };
-    // Both modes in one statement -- and often one row, since light and dark tend to share a picture.
+    // Every picture in one statement -- and often one row, since light and dark tend to share a picture.
     const assets = await getMediaAssetsByIds(
       siteId,
-      (["light", "dark"] as const).flatMap((mode) => assetIdOf(logos[mode]) ?? []),
+      [
+        ...(logos ? (["light", "dark"] as const).flatMap((mode) => assetIdOf(logos[mode]) ?? []) : []),
+        ...[assetIdOf(signet)].flatMap((id) => id ?? []),
+      ],
     );
-    for (const mode of ["light", "dark"] as const) {
-      const logo = logos[mode];
-      const assetId = assetIdOf(logo);
-      if (assetId == null) continue;
-      const asset = assets.get(assetId);
-      if (!asset) continue;
-      logos[mode] = {
-        ...(logo as Record<string, unknown>),
-        url: `/api/site/media/${asset.id}/content?r=${asset.deliveryRevision}`,
-      };
-      if (!brand.logoAlt && asset.altText) {
-        brand.logoAlt = asset.altText;
+    const addressOf = (asset: { id: number; deliveryRevision: number }) =>
+      `/api/site/media/${asset.id}/content?r=${asset.deliveryRevision}`;
+    if (logos) {
+      for (const mode of ["light", "dark"] as const) {
+        const logo = logos[mode];
+        const assetId = assetIdOf(logo);
+        if (assetId == null) continue;
+        const asset = assets.get(assetId);
+        if (!asset) continue;
+        logos[mode] = { ...(logo as Record<string, unknown>), url: addressOf(asset) };
+        if (!brand.logoAlt && asset.altText) {
+          brand.logoAlt = asset.altText;
+        }
       }
+      brand.logo = logos;
     }
-    brand.logo = logos;
+    const signetAssetId = assetIdOf(signet);
+    const signetAsset = signetAssetId == null ? null : assets.get(signetAssetId);
+    if (signet && signetAsset) {
+      brand.signet = {
+        ...signet,
+        url: addressOf(signetAsset),
+        contentType: signetAsset.contentType,
+        ...(signetAsset.width != null && signetAsset.height != null
+          ? { width: signetAsset.width, height: signetAsset.height }
+          : {}),
+      };
+    }
   }
 
   return {

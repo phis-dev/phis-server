@@ -167,14 +167,20 @@ export async function createPhiTestThemeScope(site: PhiTestSite, key = "pgtest")
   return rows[0]!.id;
 }
 
-export async function createPhiTestAsset(site: PhiTestSite, storageKey: string): Promise<number> {
+export async function createPhiTestAsset(
+  site: PhiTestSite,
+  storageKey: string,
+  options: { spaceId?: number; lifecycleStatus?: number; deliveryPolicy?: number } = {},
+): Promise<number> {
   const pool = await requirePhiTestDatabase();
   const { rows } = await pool.query<{ id: number }>(
     `INSERT INTO phis.media_assets (
-       site_id, space_id, storage_profile_id, storage_key, original_name, content_type
-     ) VALUES ($1, $2, $3, $4, $5, 'image/png')
+       site_id, space_id, storage_profile_id, storage_key, original_name, content_type,
+       lifecycle_status, delivery_policy
+     ) VALUES ($1, $2, $3, $4, $5, 'image/png', COALESCE($6::smallint, 1), COALESCE($7::smallint, 1))
      RETURNING id`,
-    [site.id, site.siteSpaceId, site.storageProfileId, storageKey, `${storageKey}.png`],
+    [site.id, options.spaceId ?? site.siteSpaceId, site.storageProfileId, storageKey, `${storageKey}.png`,
+      options.lifecycleStatus ?? null, options.deliveryPolicy ?? null],
   );
   return rows[0]!.id;
 }
@@ -354,6 +360,18 @@ export async function createPhiTestSpaceForGroup(
   quotaBytes?: number | null,
 ): Promise<number> {
   return insertPhiTestSpace(site, 3, null, groupId, quotaBytes ?? null);
+}
+
+/** An Add-on's own Media Space (kind 4) on the Site. */
+export async function createPhiTestAddonSpace(site: PhiTestSite, addonId: string): Promise<number> {
+  const pool = await requirePhiTestDatabase();
+  const { rows } = await pool.query<{ id: number }>(
+    `INSERT INTO phis.media_spaces (site_id, kind, addon_id, default_storage_profile_id)
+     VALUES ($1, 4, $2, $3)
+     RETURNING id`,
+    [site.id, addonId, site.storageProfileId],
+  );
+  return rows[0]!.id;
 }
 
 export async function createPhiTestUserSpace(

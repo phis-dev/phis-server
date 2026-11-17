@@ -1269,18 +1269,20 @@ there.
 begin(table, ownerId, slot, contentType, sizeBytes, sha256?, filename?)
                                  -> a reservation token and a delivery plan
 finalize(table, token, completion?) -> the finished file
+put(table, ownerId, slot, contentType, bytes, fileName?)
+                                 -> the finished file, from bytes the Add-on holds
 abandon(table, token)               -> gives an unredeemed reservation up
 list(table, ownerId, slot?)         -> the files of a row
 remove(table, id)                   -> takes a file out of its slot, and the file with it
 usage()                             -> what the Space holds, reserves, and is allowed
 ```
 
-**The event.** When a file has finally arrived in a slot (`finalize`) or has been removed from it (`remove`),
+**The event.** When a file has finally arrived in a slot (`finalize`, `put`) or has been removed from it (`remove`),
 Core owes the owning Add-on `asset.changed` with the subject `{ kind: "asset", table, ownerId, slot }` (see
 [Events](#events)), written in the same transaction as the link, so a change that rolls back announces
 nothing. Replacing the file of a `one` slot is one event, not a removal and an arrival. Both ways a file
 reaches a slot go through the same two functions (`linkPhisAddonAsset` and `unlinkPhisAddonAsset`): the Add-on's
-own `finalize` and `remove`. A Site's upload widget only delivers the bytes to the staged reservation (Core's
+own `finalize` and `remove`, and `put` (which links through the first of the two). A Site's upload widget only delivers the bytes to the staged reservation (Core's
 upload route); the Media `finalize` route does not finish an Add-on reservation, so the Add-on's `finalize` is
 the one place a file becomes part of a slot. A row's files that go with the row when the Add-on deletes it are
 not announced.
@@ -1312,6 +1314,39 @@ row carries is no secret, and a catalogue showing a product's pictures to a visi
 `begin` and `remove` keep the role, a slot with another `delivery` keeps it for `list` too, and a `list`
 without a slot still takes the role of every slot that is not public. The row's own authority is asked as
 before.
+
+**`put` takes bytes the Add-on holds.** `begin` and `finalize` are for a client that will send the file.
+An Add-on that carries its pictures in its own package, or a job or event handler that produced one, has
+the bytes already, and one call puts them into the slot of its own row: `put({ table, ownerId, slot,
+contentType, bytes, fileName? })` answers the finished file as `finalize` does. Nothing is fetched from an
+address -- an Add-on has no outbound client in its context, and `put` takes bytes only.
+
+- *The same checks as an upload.* The slot is declared; the type is one the slot's `contentTypes` takes; the
+  size is within the **least** of the slot's `maxBytes`, the Site's object ceiling and
+  `PHIS_ASSET_PUT_MAX_BYTES` (8 MiB, because the bytes are in memory twice; a larger file goes through
+  `begin` and `finalize`); the bytes must be what the type says (a signature that names another type
+  refuses the file, an SVG with a script is refused); a `one` slot is replaced in the same transaction, a
+  `many` slot accumulates; a `mirrorColumn` is written with the link. The file is stored in the Add-on's own
+  Space through the Site's default Storage Profile, local or external, with the Provider's own write, and
+  **counts against that Space's quota**: a `put` past it is refused and leaves neither a charge nor an
+  object.
+- *The authority is the Add-on's own over its own tables, with or without an actor.* Where an actor is
+  present (a request) the row's authority applies as for `begin`, so a request cannot reach a row it may not
+  change. Where Core runs the Add-on on its own account -- a job, an event handler, `phis addon site --enable`
+  -- there is no actor and the system authority of the Add-on over its own rows applies, as it does to
+  `data:v1` there. An unsigned hook holds neither and is refused. A row that is not there is refused.
+- *Who made it.* `media_assets.created_by_user_id` and `owner_user_id` name users; neither is set, with an
+  actor as without one (the Add-on made the file, not the person whose request it ran under), and the Asset's
+  `meta` says `{ "source": "addon", "addonId": ... }`. No schema column was added for it. Width, height and the
+  blur preview of an image are recorded, as for an import.
+- *`asset.changed`* is owed to the Add-on as for an upload, in the same transaction -- and only when
+  something changed.
+- *Idempotent.* The same bytes (SHA-256) already in the same slot of the same row answer with the file that is
+  there: no new Asset, no charge, no event. That lets a package put its picture on every enable. The same
+  bytes already in the Add-on's Space for **another row, slot or table** are refused naming the Asset, exactly
+  as `finalize` refuses a duplicate in the Space: a second row pointing at a file the first holds is a
+  decision about custody, and there is one rule for it. Two concurrent `put`s of the same bytes are
+  serialised on the digest and the second finds the first.
 
 **The space is charged when the place is made, not when it is used.** A ceiling decided at the end would
 bound the bookkeeping and not the store: ten clients could each write a gigabyte and have five of them
@@ -1563,7 +1598,11 @@ The design is [design/COMMERCE_COORDINATION.md](./design/COMMERCE_COORDINATION.m
   Core; `null` is the Site's own), `type` (the supplier's own word), `title`, `summary`, `imageAssetId` (an
   Media Asset of the Site -- what `assets:v1` answers as `mediaAssetId` for a file in a slot of the supplier, or one
   of the Site's Media library -- set to `null` when the Asset is deleted; `register` refuses an Asset that is
-  unknown or of another Site), `imagePath` (the Site-relative address the picture is served from, built at read
+  unknown or of another Site, and one a visitor would not be served: it has to be **ready**, delivered
+  **publicly**, and lie in the Site's Space or in the registering supplier's own Add-on Space -- an Asset of a
+  User's or a Group's Space or of another Add-on's is refused, with a message that says why and does not say
+  whether an Asset of another Site or Add-on exists. A slot file of the supplier's with `delivery: "public"`
+  is the intended case), `imagePath` (the Site-relative address the picture is served from, built at read
   time from the Asset and its cache revision like `contentPath` of `assets:v1`, never stored; the Asset's own
   delivery policy still applies to what that address answers), `counted`, `sale` (`own`,
   `referral` or `payout`), `referralUrl` (required, https, exactly for `referral`), `free`, `accountRequired` (can only be acquired with an account; Core does not enforce it, an entitlement entry always has a subject with an account), `parts` (the
@@ -1617,7 +1656,11 @@ terms awaiting release) is not. `entitlements:v1` stays closed to it entirely.
 a picture are not declared; keys unique per manifest). When the Add-on is switched on for a Site
 (`phis addon site --enable`) and when a release is reconciled (`phis addon reconcile`), Core registers
 them at the Site: a new one as `active`, because the operator switched the Add-on on and the product is
-the Site's own; an existing one has its details compared and its state left alone. A product that
+the Site's own; an existing one has its details compared and its state left alone. **What the manifest does
+not speak of, the sync does not touch:** it names no picture, so `imageAssetId` is neither set nor cleared by
+it -- a cover a handler put on a declared product stays through every enable and reconcile. Title, summary
+and the other declared fields are the manifest's statement and are reconciled to it. A sync that changes
+nothing raises no `version` and owes no `product.changed`. A product that
 came from a manifest and is no longer declared is withdrawn, never removed. A declared product that
 breaks a rule (a part that does not exist) is reported and does not stop the others. What an Add-on makes
 at runtime it registers through `register`.
@@ -2236,7 +2279,10 @@ The link is bound to the Site and cascades **both ways**, which is worth reading
   is not the Add-on's to delete, and `--sweep` collects the ones nothing points at any more.
 - Removing the file in the Media view takes the link. **The parent row survives and simply has nothing
   to deliver for that slot.** That is deliberate: it makes deleting a file a usable answer to somebody
-  uploading rubbish, without destroying the record it was attached to.
+  uploading rubbish, without destroying the record it was attached to. The one reference the delete guard
+  does name is a **product's picture**: an Asset that a product of the Site wears as `imageAssetId` is refused
+  with `media_asset_in_use` and a reference of scope `product` (the product's id in `fieldPath`), like a
+  Page's. The foreign key's `SET NULL` stays as the last safeguard.
 
 Every row in that table is a finished file, so the rule for a single-valued slot is a plain unique index.
 A transfer in flight is recorded in Core's upload session, never in this table.

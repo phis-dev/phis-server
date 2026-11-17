@@ -252,3 +252,25 @@ export async function unlinkPhisAddonAsset(
   }
   return rows[0]?.media_asset_id ?? null;
 }
+
+/**
+ * The Asset in an Add-on's Space that already holds these bytes, asked under a lock on the digest.
+ *
+ * `put` writes a file and its link in one transaction, and two of them with the same bytes would each
+ * find nothing and each write one. The advisory lock lives to the end of the transaction, so the second
+ * one waits for the first and then finds it. Only `sha256`, the digest `put` computes itself, is
+ * compared.
+ */
+export async function lockAndFindPhisAddonSpaceAssetByDigest(
+  client: PoolClient,
+  input: { siteId: number; spaceId: number; sha256: string },
+): Promise<number | null> {
+  await client.query(`SELECT pg_advisory_xact_lock($1::int, hashtext($2))`, [input.spaceId, input.sha256]);
+  const { rows } = await client.query<{ id: number }>(
+    `SELECT id FROM phis.media_assets
+      WHERE site_id = $1 AND space_id = $2 AND checksum_algorithm = 'sha256' AND checksum_value = $3
+      ORDER BY id LIMIT 1`,
+    [input.siteId, input.spaceId, input.sha256],
+  );
+  return rows[0]?.id ?? null;
+}

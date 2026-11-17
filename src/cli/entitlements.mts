@@ -40,6 +40,15 @@ function userId(flags: Flags) {
   return id;
 }
 
+/**
+ * Refuses a user id nobody holds, in words, before a foreign key does it in the database's. An account
+ * is global; the message names the Site because that is where the operator was asking.
+ */
+async function requireUserAccount(pool: Pool, siteKey: string, id: number) {
+  const { rows } = await pool.query(`SELECT 1 FROM phis.user_accounts WHERE id = $1`, [id]);
+  if (rows.length === 0) throw new Error(`No such user at ${siteKey}.`);
+}
+
 function productId(flags: Flags) {
   const value = flag(flags, "product");
   if (!isPhisProductId(value)) throw new Error("--product must be a product id such as @scope/name:key.");
@@ -104,6 +113,7 @@ export async function runPhisEntitlementCommand(root: string, pool: Pool, words:
     const id = userId(flags);
     const productFlag = optionalFlag(flags, "product");
     if (productFlag !== undefined && !isPhisProductId(productFlag)) throw new Error("--product must be a product id such as @scope/name:key.");
+    await requireUserAccount(pool, selectedSite.key, id);
     const subject = await ensureEntitlementSubject(pool, selectedSite.id, id);
     const subjectId = (await findEntitlementSubject(pool, selectedSite.id, subject))!.id;
     const found = await listEntitlements(pool, { siteId: selectedSite.id, subjectId, product: productFlag ?? null });
@@ -127,6 +137,7 @@ export async function runPhisEntitlementCommand(root: string, pool: Pool, words:
     const id = userId(flags);
     const held = await readProduct(pool, selectedSite.id, product);
     if (!held) throw new Error(`${selectedSite.key} has no product ${product}; phis product list shows what it has.`);
+    await requireUserAccount(pool, selectedSite.key, id);
     if (!await isPhiSiteMember(pool, selectedSite.id, id)) throw new Error(`User ${id} is not an active member of ${selectedSite.key}.`);
     const quantityFlag = optionalFlag(flags, "quantity");
     let quantity: number | null = null;

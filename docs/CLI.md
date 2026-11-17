@@ -1422,7 +1422,8 @@ phis product withdraw --site demo (--product @acme/licenses:pro | --supplier @ac
 - Core also moves products by itself: when `phis addon site --enable` or `phis addon reconcile` registers
   the products a manifest declares (`active`, withdrawing what a manifest stopped declaring), and when a
   supplier is switched off or removed (its active products are withdrawn) or back on (exactly those return).
-  Both commands list what they did.
+  Both commands list what they did. A sync leaves a product's picture alone (the manifest names none) and
+  changes nothing, not even `version`, where the declaration is the same as the stored product.
 
 ## Entitlements
 
@@ -1449,8 +1450,11 @@ phis entitlement revoke --site demo --product @acme/licenses:pro --reference sup
   row for its own `free` product.
 - `list` shows one user's entries on the Site, every source's: product, source, reference, start and end
   (for an entry bound to a subscription, the end of its latest paid period, and the subscription's id),
-  quantity, flags and whether the entry is valid now (it is not while its product is locked or gone).
-- `grant` writes an entry with the source `@phis/server`. The user must be an active member of the Site, the
+  quantity, flags and whether the entry is valid now (it is not while its product is locked or gone). A
+  user id that names no account is refused with `No such user at <site>.` (exit code 1, like the other
+  not-found answers), and `list` leaves no subject behind for it.
+- `grant` writes an entry with the source `@phis/server`. The user must exist (else `No such user at <site>.`)
+  and be an active member of the Site, the
   product must exist and be `active`, `--quantity` is required exactly when the product is counted, and
   `--ends` must be an ISO instant in the future. The operator's entry is never bound to a subscription; that is a source's own. Granting the same `--reference` again answers the first
   entry and writes nothing. `revoke` revokes the `@phis/server` entry of that product and reference.
