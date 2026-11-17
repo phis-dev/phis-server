@@ -2260,9 +2260,9 @@ there is no product purge command. Fixture teardown in database tests is not an 
 - `record JSONB NOT NULL`: `PhisPayment`; identity matches `id`, the base minor amount is positive and
   bounded, `pricing` is an object, captured amount cannot exceed the validated total when `totals` is
   present and the base amount otherwise, and successful refunds cannot exceed captured funds.
-- `generation BIGINT NOT NULL DEFAULT 0`, `lease_token UUID NULL`, `lease_until TIMESTAMPTZ NULL`:
+- `generation SMALLINT NOT NULL DEFAULT 0`, `lease_token UUID NULL`, `lease_until TIMESTAMPTZ NULL`:
   a bounded execution/observation claim. Token/time are either both present or both absent.
-- `notified_generation BIGINT NULL`: a verified Provider notification arrived while another call held the
+- `notified_generation SMALLINT NULL`: a verified Provider notification arrived while another call held the
   lease; the value is the generation it met. A notification is only a knock, so Core remembers it here and
   answers the Provider that it was taken. The holder looks at it under the row lock when it applies its
   result and observes once more (a bounded number of times) when it was told during its own claim; the

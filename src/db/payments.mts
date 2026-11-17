@@ -13,7 +13,7 @@ type Db = Pick<PoolClient, "query">;
 type PaymentRow = {
   site_id: number; consumer_addon_id: string; provider_key: string; merchant_identity: string;
   profile_revision: number; currency_exponent: number; binding: PhisStoredPayment["binding"];
-  method_features: PhisStoredPayment["features"]; record: PhisStoredPayment["record"]; generation: string; lease_token: string | null; lease_until: Date | null; notified_generation: string | null;
+  method_features: PhisStoredPayment["features"]; record: PhisStoredPayment["record"]; generation: number; lease_token: string | null; lease_until: Date | null; notified_generation: number | null;
 };
 function paymentFromRow(row: PaymentRow): PhisStoredPayment {
   return { siteId: row.site_id, consumerAddonId: row.consumer_addon_id, providerKey: row.provider_key,
@@ -149,7 +149,7 @@ export async function writePhisPaymentRefund(db: Db, refund: PhisStoredPaymentRe
 
 /** Called under the payment lock. A lease protects ordering; it never authorizes an external replay. */
 export async function claimPhisPayment(db: Db, payment: PhisStoredPayment): Promise<boolean> {
-  const result = await db.query<{ generation: string; lease_token: string; lease_until: Date }>(`UPDATE phis.payments
+  const result = await db.query<{ generation: number; lease_token: string; lease_until: Date }>(`UPDATE phis.payments
     SET generation = generation + 1, lease_token = $2, lease_until = NOW() + make_interval(secs => $3)
     WHERE id = $1 AND (lease_until IS NULL OR lease_until <= NOW()) RETURNING generation, lease_token, lease_until`,
     [payment.record.id, randomUUID(), PHIS_PAYMENT_LEASE_SECONDS]);
