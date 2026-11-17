@@ -147,6 +147,19 @@ export function buildPhisPaymentNotificationsCapability(input: {
       requirePhisPaymentReference(profileKey);
       const profile = await readPhisPaymentProfile(getPool(), input.scope.siteId, profileKey);
       if (!profile || profile.providerAddonId !== input.scope.consumerAddonId || !profile.merchantIdentity) throw new PhisPaymentError("invalid_input");
+      /*
+       * A notification Core does not take is answered as a refusal the Provider acts on -- it sends the
+       * delivery again, or gives up -- and until now left no line here: a 503 in the Site's log and nothing
+       * in Core's said which of four reasons it was. Each is named, with what the delivery was about.
+       */
+      const refused = (code: "invalid_input" | "provider_unavailable", reason: string, meta: Record<string, unknown> = {}) => {
+        logRuntimeEvent("warn", "payment.notification.refused", {
+          message: `A payment notification was refused: ${reason}.`,
+          siteKey: input.scope.siteKey,
+          meta: { reason, code, profileKey: profile.key, ...meta },
+        });
+        return new PhisPaymentError(code);
+      };
       let verified;
       let adapter;
       try {
@@ -161,8 +174,8 @@ export function buildPhisPaymentNotificationsCapability(input: {
         });
         throw new PhisPaymentError("provider_unavailable");
       }
-      if (verified.outcome === "rejected") throw new PhisPaymentError("invalid_input");
-      if (verified.outcome === "unavailable") throw new PhisPaymentError("provider_unavailable");
+      if (verified.outcome === "rejected") throw refused("invalid_input", "the Provider rejected its signature or shape");
+      if (verified.outcome === "unavailable") throw refused("provider_unavailable", "the Provider could not verify it now");
       if (verified.outcome === "irrelevant") return { outcome: "ignored" as const };
       requirePhisPaymentReference(verified.reference);
       if (verified.subject === "stored-method") {
@@ -181,7 +194,7 @@ export function buildPhisPaymentNotificationsCapability(input: {
         return { outcome: "processed" as const };
       }
       const payment = await findPhisPaymentForNotification(getPool(), profile.siteId, profileKey, verified.reference);
-      if (!payment) throw new PhisPaymentError("provider_unavailable");
+      if (!payment) throw refused("provider_unavailable", "no payment of this profile has the reference it names", { reference: verified.reference, subject: verified.subject });
       let receipt;
       if (verified.outcome === "verified") {
         requirePhisPaymentReference(verified.deliveryId);
@@ -190,7 +203,7 @@ export function buildPhisPaymentNotificationsCapability(input: {
           schedulePhisAddonEventDelivery(profile.siteId);
           return { outcome: "duplicate" as const };
         }
-        if (claim === "busy") throw new PhisPaymentError("provider_unavailable");
+        if (claim === "busy") throw refused("provider_unavailable", "the same delivery is being processed by another call", { reference: verified.reference, deliveryId: verified.deliveryId });
         receipt = claim;
       }
       const engine = new PhisPaymentEngine({ providerFailed: logPhisPaymentProviderFailure, entitlementListeners: listPhisEntitlementListeners, pool: getPool(), scope: { ...input.scope, consumerAddonId: payment.consumerAddonId }, signal: input.signal,

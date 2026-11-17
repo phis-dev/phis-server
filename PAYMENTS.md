@@ -789,6 +789,12 @@ services or Provider reads are retryable failures, not successful ignored delive
 may yield `irrelevant` only after they are safely identified as outside this payment contract. The first
 implementation specifies exact HTTP status mapping and Provider retry behaviour.
 
+Every refusal leaves a line in Core's log, `payment.notification.refused` at `warn`, with its reason and
+what the delivery named: the Provider rejected its signature or shape; the Provider could not verify it
+now; no payment of this profile has the reference it names (`reference`, `subject`); the same delivery is
+being processed by another call (`reference`, `deliveryId`). A Provider Add-on answers these as 400 or 503,
+and without the line the status in the Site's log was all there was to go by.
+
 Implemented delivery uses the existing after-commit outbox trigger: successful mutating capability
 calls and committed notification reconciliation schedule an owner-event drain. An already processed
 notification schedules another drain of any still-owed events before returning `duplicate`, covering
