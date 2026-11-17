@@ -209,7 +209,32 @@ export function buildPhisPaymentNotificationsCapability(input: {
       const engine = new PhisPaymentEngine({ providerFailed: logPhisPaymentProviderFailure, entitlementListeners: listPhisEntitlementListeners, pool: getPool(), scope: { ...input.scope, consumerAddonId: payment.consumerAddonId }, signal: input.signal,
         publicBaseUrl: async () => { throw new PhisPaymentError("forbidden"); }, resolveProvider: async () => adapter!, merchantAuthorized: async () => false });
       try { await engine.reconcile(payment, profile, receipt); }
-      catch (error) { if (receipt) await releasePhisPaymentReceipt(getPool(), profile.siteId, receipt).catch(() => {}); throw error; }
+      catch (error) {
+        if (receipt) await releasePhisPaymentReceipt(getPool(), profile.siteId, receipt).catch(() => {});
+        /*
+         * The refusal the first four lines above did not cover, and the one an ordinary payment meets: the
+         * payment is held by another reconciliation -- the payer's return, a refresh -- and this delivery
+         * arrives beside it. It is answered as a retryable refusal; what it would have told Core, the
+         * call holding the payment reads from the Provider itself.
+         */
+        if (error instanceof PhisPaymentError) {
+          logRuntimeEvent("warn", "payment.notification.refused", {
+            message: "A payment notification was refused: the payment could not be reconciled now.",
+            siteKey: input.scope.siteKey,
+            meta: {
+              reason: error.code === "provider_unavailable"
+                ? "the payment is held by another reconciliation, or the Provider did not answer"
+                : "the reconciliation refused it",
+              code: error.code,
+              profileKey: profile.key,
+              reference: verified.reference,
+              paymentId: payment.record.id,
+              ...(verified.outcome === "verified" ? { deliveryId: verified.deliveryId } : {}),
+            },
+          });
+        }
+        throw error;
+      }
       schedulePhisAddonEventDelivery(profile.siteId);
       return { outcome: "processed" as const };
     },
