@@ -320,6 +320,18 @@ front of is infrastructure work, and belongs with
 
 ## Server Add-ons
 
+- **An Add-on's schema cannot be compared with its descriptor, or brought to it, without a version step
+  (found 2026-11-17, rolling out @phis/shop 0.7.0).** Before v1 a schema is changed in place and its
+  version stays, so `phis addon migrate` answers "already at schema version" and changes nothing -- and,
+  because `server_addon_migrations` keeps the checksum of the descriptor it was created from, refuses the
+  changed descriptor with "descriptor changed without changing its version" from then on, for every later
+  `phis addon migrate` including the one over all Add-ons. The operator is left to call the generator
+  (`buildPhisAddonSchemaStatements`) from a script, pick the statements out by hand, repeat the grants
+  `migrate` would have made, run them as the migrator role, and set the checksum. Wanted: a command that
+  prints what a database's Add-on schema lacks against an artifact's descriptor (tables, columns,
+  constraints, indexes, asset tables, grants) and what it has too much of, and one that, on the operator's
+  word, records the descriptor's checksum after the schema was brought to it by hand.
+
 - **One invalid Add-on desired state answers 500 on every viewer resolution.**
   `buildPhisCapabilitySnapshot` validates the whole of `config/phis-addons.json` and throws when any entry
   fails, so `GET /api/v1/site/capabilities` and `GET /api/v1/auth/me` answer 500 and a Site stops rendering
