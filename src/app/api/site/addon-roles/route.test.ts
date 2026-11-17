@@ -21,9 +21,9 @@ vi.mock("@/db/server-addons", () => ({ isPhisAddonEnabledForSite: mocks.enabled 
 vi.mock("@/db/user-site-memberships", () => ({
   getUserSiteMembership: mocks.membership,
   // The actor is a Site Admin unless a case says otherwise.
-  getEffectiveUserSiteAuthorization: async () => ({
+  getEffectiveUserSiteAuthorization: async (userId: number) => ({
     enabled: true,
-    roleClaims: mocks.actorClaims(),
+    roleClaims: mocks.actorClaims(userId),
     groupClaims: [],
   }),
 }));
@@ -38,7 +38,7 @@ vi.mock("@/lib/db", () => ({ getPool: () => ({}) }));
 vi.mock("@/lib/log", () => ({ logRuntimeEvent: vi.fn() }));
 vi.mock("@/lib/authorization", async () => {
   const actual = await vi.importActual<typeof import("@/lib/authorization")>("@/lib/authorization");
-  return { ...actual, canPhiViewerAccess: () => mocks.actorClaims().length > 0 };
+  return { ...actual, canPhiViewerAccess: (viewer: { roleClaims: unknown[] }) => viewer.roleClaims.length > 0 };
 });
 
 import { GET, POST, PUT } from "./route";
@@ -160,6 +160,8 @@ describe("the Add-on role catalog", () => {
     const body = await (await get("?userId=42")).json();
     expect(body.userId).toBe(42);
     expect(body.held).toHaveLength(1);
+    // The target (42) is the same stand-in claim set as the caller here: a Site Admin.
+    expect(body.holdsAll).toBe(true);
 
     mocks.actorClaims.mockReturnValue([]);
     mocks.actorRoles.mockResolvedValue([]);
@@ -194,7 +196,24 @@ describe("setting the roles one person holds in an Add-on", () => {
       addonId: ADDON, siteId: 7, userId: 42, grant: ["auditor"], revoke: ["vendor"], grantedByUserId: 1,
     });
     const body = await response.json();
-    expect(Object.keys(body).sort()).toEqual(["addons", "held", "userId"]);
+    expect(Object.keys(body).sort()).toEqual(["addons", "held", "holdsAll", "userId"]);
+  });
+
+  it("says whether the person holds every role, and keeps the stored list as it is", async () => {
+    // Caller 1 is a Site Admin; person 42 is not.
+    mocks.actorClaims.mockImplementation((userId: number) => (userId === 1 ? ADMIN_CLAIMS : []));
+    const plain = await (await get("?userId=42")).json();
+    expect(plain.holdsAll).toBe(false);
+    expect(plain.held).toHaveLength(3);
+
+    // 42 is a Site Admin: nothing is refused or changed for it; held is still the stored list.
+    mocks.actorClaims.mockReturnValue(ADMIN_CLAIMS);
+    const response = await put({ userId: 42, addonId: ADDON, roles: [] });
+    expect(response.status).toBe(200);
+    expect(mocks.replace.mock.calls[0]![1]).toMatchObject({ grant: [], revoke: ["vendor"] });
+    const body = await response.json();
+    expect(body.holdsAll).toBe(true);
+    expect(body.held).toHaveLength(3);
   });
 
   it("refuses all of it when one role of the difference is beyond the caller", async () => {

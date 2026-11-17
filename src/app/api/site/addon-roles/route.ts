@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 
 import { requireSiteAuthenticatedApiContext } from "@/lib/guards/site-admin-api";
+import { holdsEveryPhisAddonRole } from "@/lib/addons/held-roles";
 import {
   mayGrantPhisAddonRole,
   readPhisAddonDeclaredRoles,
@@ -46,7 +47,10 @@ function readBody(body: Body | null) {
 
 /**
  * Every role of every Add-on enabled here, each marked with whether the caller may grant it, and
- * optionally what one person already holds.
+ * optionally what one person already holds, and whether that is every role.
+ *
+ * `held` is the stored assignments; `holdsAll` is true when the person is Site Admin, who holds every
+ * declared role whatever is stored.
  *
  * Reading somebody else's grants needs the standing to change at least one of them -- otherwise this
  * would be a way for any signed-in user to enumerate who staffs the Site.
@@ -78,7 +82,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "Not permitted." }, { status: 403 });
   }
   const held = await readPhiSiteUserAddonRoles(getPool(), { siteId: context.site.id, userId });
-  return NextResponse.json({ addons, userId, held });
+  return NextResponse.json({ addons, userId, held, holdsAll: await holdsEveryPhisAddonRole(context.site.id, userId) });
 }
 
 /**
@@ -172,6 +176,7 @@ export async function PUT(request: NextRequest) {
     addons,
     userId,
     held: await readPhiSiteUserAddonRoles(getPool(), { siteId: context.site.id, userId }),
+    holdsAll: await holdsEveryPhisAddonRole(context.site.id, userId),
   });
 }
 

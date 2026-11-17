@@ -34,6 +34,23 @@ export function expandPhisAddonHeldRoles(
 }
 
 /**
+ * The one rule for what somebody holds of an Add-on's roles: a Site Admin holds every declared role,
+ * whether or not an assignment is stored; anybody else holds what was granted and what it includes.
+ *
+ * Every "does the actor hold this role" answer -- `roles:v1`, `requiresRole` and `alsoAllowedByRole`,
+ * a slot's `requiresRole`, the viewer's `addonRoleClaims` -- ends here. "Hold" is not "stored": the
+ * stored assignments stay what user administration shows and what a recipient list reads, because an
+ * assignment that triggers something (mail to everybody who is a clerk) must not start at the admin.
+ */
+export function resolvePhisAddonHeldRoles(
+  declared: readonly PhisAddonRoleDescriptor[],
+  granted: Iterable<string>,
+  siteAdmin: boolean,
+): string[] {
+  return siteAdmin ? declared.map((role) => role.name) : expandPhisAddonHeldRoles(declared, granted);
+}
+
+/**
  * The declared roles whose holder holds `role`: the role itself and every role that includes it,
  * followed through. Which stored grants make somebody a holder of `role`, by the same expansion every
  * `has()` uses.

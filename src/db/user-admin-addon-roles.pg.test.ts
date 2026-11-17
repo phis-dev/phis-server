@@ -6,6 +6,9 @@ import {
   replacePhisAddonUserRoles,
 } from "./server-addon-roles.mts";
 import { listAdminUsersForSite } from "./user-admin";
+import { PHI_CORE_ROLE_PROVIDER_ID } from "@/lib/authorization";
+import { PhiBaseRole } from "@/lib/constants/phi-base-roles";
+import { USER_SITE_FLAG_DISABLED } from "@/lib/user-site-flags";
 import {
   closePhiTestPool,
   createPhiTestSite,
@@ -111,6 +114,41 @@ describe("Add-on roles in user administration", () => {
     const filtered = await listAdminUsersForSite(site.id, { addonRoles: { addonId: ADDON, roles: ["clerk"] } });
     expect(filtered.total).toBe(1);
     expect(filtered.siteTotal).toBe(4);
+  });
+
+  describe("a Site Admin holds every role", () => {
+    const makeAdmin = async (siteId: number, userId: number) => (await requirePhiTestDatabase()).query(
+      `INSERT INTO phis.user_site_role_claims (user_id, site_id, provider_id, role_flags) VALUES ($1, $2, $3, $4)`,
+      [userId, siteId, PHI_CORE_ROLE_PROVIDER_ID, PhiBaseRole.Admin],
+    );
+
+    it("appears under the Add-on and under each role it names, stored or not; others unchanged; empty roles matches nobody", async () => {
+      const siteAdmin = await createPhiTestUser(site);
+      await makeAdmin(site.id, siteAdmin);
+      const otherAdmin = await createPhiTestUser(otherSite);
+      await makeAdmin(otherSite.id, otherAdmin);
+
+      expect(await listIds({ addonId: ADDON, roles: ["manager", "clerk"] })).toContain(siteAdmin);
+      expect(await listIds({ addonId: ADDON, roles: ["manager"] })).toContain(siteAdmin);
+      expect(await listIds({ addonId: "@pgtest/nonstored", roles: ["anything"] })).toContain(siteAdmin);
+      expect((await listIds({ addonId: ADDON, roles: ["manager"] })).sort()).toEqual([manager, siteAdmin].sort());
+      // No declared role (unknown or unavailable Add-on, undeclared role): nobody, the admin included.
+      expect(await listIds({ addonId: ADDON, roles: [] })).toEqual([]);
+      // Admin of another Site is not listed here and does not turn up in this Site's filter.
+      expect(await listIds({ addonId: ADDON, roles: ["manager"] })).not.toContain(otherAdmin);
+      // The stored grants of the page are untouched.
+      expect((await readPhiSiteUsersAddonRoles(await requirePhiTestDatabase(), { siteId: site.id, userIds: [siteAdmin] })).size)
+        .toBe(0);
+    });
+
+    it("does not count a disabled Site Admin", async () => {
+      const disabled = await createPhiTestUser(site);
+      await makeAdmin(site.id, disabled);
+      await (await requirePhiTestDatabase()).query(
+        `UPDATE phis.user_site_memberships SET user_site_flags = $3 WHERE site_id = $1 AND user_id = $2`,
+        [site.id, disabled, USER_SITE_FLAG_DISABLED]);
+      expect(await listIds({ addonId: ADDON, roles: ["manager"] })).not.toContain(disabled);
+    });
   });
 
   describe("replacing the roles of one Add-on", () => {

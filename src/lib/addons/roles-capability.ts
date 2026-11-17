@@ -1,9 +1,7 @@
 import "server-only";
 
 import type { PhisAddonRoleDescriptor, PhisRolesCapabilityV1 } from "./contract.ts";
-import { readPhisAddonUserRoles } from "@/db/server-addon-roles.mts";
-import { expandPhisAddonHeldRoles } from "./role-inclusion.ts";
-import { getPool } from "@/lib/db";
+import { holdsEveryPhisAddonRole, readPhisAddonHeldRoles } from "./held-roles.ts";
 
 /**
  * Whether the acting user holds one of this Add-on's own roles.
@@ -12,6 +10,9 @@ import { getPool } from "@/lib/db";
  * release no longer declares is not handed over, the same bargain `settings:v1` strikes with a stored key
  * nobody declared. An Add-on therefore reads exactly the vocabulary it shipped with, whatever has
  * accumulated across versions.
+ *
+ * A Site Admin holds every declared role without a stored assignment (`resolvePhisAddonHeldRoles`); the
+ * stored assignments stay what they are and are what a Site Admin gets back once they stop being one.
  *
  * There is no writer here, for the reason `settings:v1` and `secrets:v1` have none: an Add-on able to
  * grant its own roles could grant itself whatever those roles guard. Granting goes through Core, which
@@ -29,14 +30,17 @@ export function buildPhisAddonRolesCapability(input: {
   const { addonId, siteId, actorUserId, declared } = input;
   const declaredNames = declared.map((role) => role.name);
 
+  // Asked once per capability, which is built per request: `has()` runs once per guarded query.
+  let siteAdmin: Promise<boolean> | undefined;
+
   async function held() {
     if (actorUserId == null) {
       return [] as string[];
     }
-    const stored = await readPhisAddonUserRoles(getPool(), { addonId, siteId, userId: actorUserId });
+    siteAdmin ??= holdsEveryPhisAddonRole(siteId, actorUserId);
     // Granted and implied, in declaration order, not storage order: what the Add-on listed is what it
     // reads back.
-    return expandPhisAddonHeldRoles(declared, stored);
+    return readPhisAddonHeldRoles({ addonId, siteId, userId: actorUserId, declared, siteAdmin: await siteAdmin });
   }
 
   return Object.freeze({

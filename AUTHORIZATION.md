@@ -219,6 +219,10 @@ roles: [
 - At least one role must be grantable by a Site access; a set in which every role is granted by another
   role is refused at validation.
 - A Site Admin may always grant and revoke any role of any Add-on.
+- A Site Admin also **holds** every declared role of every Add-on enabled for the Site, with no stored
+  assignment, for as long as they are Site Admin there (an enabled membership with the Core `admin` role;
+  an admin of another Site holds nothing here). Taking a role from a Site Admin makes no sense, so none is
+  needed.
 - `includes` names other roles of the same Add-on that holding this one implies, followed transitively.
   Every check below answers yes for an implied role. Only the granted role is stored; an inclusion may
   not name the role itself or form a cycle.
@@ -228,30 +232,44 @@ Assignments are stored in `phis.site_addon_user_roles` (`site_id`, `addon_id`, `
 is evaluated against the acting user, and by `phis addon role --grant`/`--revoke` for the operator.
 Add-ons never write this table.
 
+*Holding* and *stored* are two things. Every check that asks whether the actor holds a role -- `roles:v1`,
+`requiresRole`/`alsoAllowedByRole` on a query, a slot's `requiresRole`, the viewer's `addonRoleClaims` -- is
+answered by one rule (`resolvePhisAddonHeldRoles`, `src/lib/addons/role-inclusion.ts`): a Site Admin holds all
+declared roles, anybody else the stored ones and what they include. The stored assignments stay what they are:
+user administration shows them as stored, and writing one for a Site Admin is allowed and takes effect once
+that person is no longer Site Admin. Whatever *resolves recipients* -- "everybody who holds role X" -- must
+read the stored assignments, not the rule, so that a Site Admin is not addressed by every role's mail or
+assignment. Core resolves no such list today; the only reads of everybody with a role are the user-list
+filter (below, which answers "who holds") and `phis addon role --user` (which prints what is stored).
+
 User administration reads and writes them through three calls, all Site-scoped:
 
 - `GET /api/site/addon-roles` answers `{ addons: [{ addonId, title, roles: [{ name, description?,
   grantableBy, includes?, grantable }] }] }`: every declared role of every Add-on enabled for the Site, and
   per role whether the caller may grant it (the evaluation that decides the write). `title` is the Add-on id
-  until the manifest carries a display name. With `?userId=N` it adds `userId` and `held` (the stored
-  assignments of that user across Add-ons); that needs at least one grantable role, else 403.
+  until the manifest carries a display name. With `?userId=N` it adds `userId`, `held` (the stored
+  assignments of that user across Add-ons) and `holdsAll` (true when that user is Site Admin and so holds every
+  role whatever is stored); that needs at least one grantable role, else 403.
 - `PUT /api/site/addon-roles` with `{ userId, addonId, roles }` sets the stored roles of that user for that
   Add-on to exactly `roles`. Core takes the difference to what is held, checks the caller's standing for each
   role to give and each role to take back, and writes all of it or nothing; one refusal answers 403
   `{ error: "not_permitted", role }`. The authorization revision of the membership moves once. A stored role the
-  manifest no longer declares is left untouched. The answer has the shape of `GET ?userId=`.
+  manifest no longer declares is left untouched. The answer has the shape of `GET ?userId=`. Nothing is refused or altered because the person is Site
+  Admin: the stored roles are written as asked, `held` shows them and `holdsAll` stays true.
 - `GET /api/site/admin/users` (Site Admin) lists per user `addonRoles: [{ addonId, role }]`, the stored
   assignments, not those implied through `includes`, for Add-ons that are installed, enabled and available
   on the Site and whose current manifest still declares the role (the rule behind the viewer's
-  `addonRoleClaims`). `?addonId=` keeps users with at least one such stored role of that Add-on;
-  `?addonId=&addonRole=` keeps users who hold the role stored or through `includes` of a stored role. An
+  `addonRoleClaims`). `?addonId=` keeps users with at least one such stored role of that Add-on, and
+  every enabled Site Admin; `?addonId=&addonRole=` keeps users who hold the role stored or through `includes`
+  of a stored role, and every enabled Site Admin (when the Add-on declares the role). A row shows a Site
+  Admin as `roleTags` containing `"admin"` (with `enabled`); its `addonRoles` stay the stored ones. An
   unknown or unavailable Add-on or an undeclared role gives an empty list; a malformed value 400.
 
 Core does not forbid giving or taking an Add-on role from oneself (the caller's standing is the only
 check); only the Core roles of one's own membership are refused in `PUT /api/site/admin/users`.
 
 Add-on roles are checked in three places, all against the roles the current manifest declares, granted
-or implied through `includes`:
+or implied through `includes`, and held by every Site Admin:
 
 - the handler, through `roles:v1` (`has(role)`, `all()`);
 - a declared query stating `requiresRole` or `alsoAllowedByRole`;

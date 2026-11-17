@@ -6,7 +6,7 @@ const mocks = vi.hoisted(() => ({ role: vi.fn() }));
 vi.mock("@/db/user-site-memberships", () => ({ getEffectiveUserSiteAuthorization: mocks.role }));
 
 import { PHIS_SITE_ACCESS } from "./contract.ts";
-import { holdsPhisSiteAccess, PHIS_SITE_ACCESS_POLICIES } from "./site-access";
+import { holdsPhisSiteAccess, phisSiteAccessHeldBy, PHIS_SITE_ACCESS_POLICIES } from "./site-access";
 import { PHI_CORE_ROLE_PROVIDER_ID } from "@/lib/authorization";
 import { PhiBaseRole } from "@/lib/constants/phi-base-roles";
 
@@ -34,5 +34,12 @@ describe("an Add-on's Site access question", () => {
     expect(await holdsPhisSiteAccess(7, 41, "invented")).toBe(false);
     mocks.role.mockResolvedValue({ enabled: false, roleClaims: [], groupClaims: [] });
     expect(await holdsPhisSiteAccess(7, 41, PHIS_SITE_ACCESS.siteAdmin)).toBe(false);
+  });
+
+  it("answers from a snapshot already read, as the Site viewer has one", () => {
+    const claims = [{ providerId: PHI_CORE_ROLE_PROVIDER_ID, flags: PhiBaseRole.Admin }];
+    expect(phisSiteAccessHeldBy({ enabled: true, roleClaims: claims, groupClaims: [] }, PHIS_SITE_ACCESS.siteAdmin)).toBe(true);
+    expect(phisSiteAccessHeldBy({ enabled: false, roleClaims: claims, groupClaims: [] }, PHIS_SITE_ACCESS.siteAdmin)).toBe(false);
+    expect(phisSiteAccessHeldBy({ enabled: true, roleClaims: [], groupClaims: [] }, PHIS_SITE_ACCESS.siteAdmin)).toBe(false);
   });
 });

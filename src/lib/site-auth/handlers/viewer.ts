@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { readPhiViewerAddonRoleClaims } from "@/lib/addons/viewer-roles";
+import { PHIS_SITE_ACCESS } from "@/lib/addons/contract";
+import { phisSiteAccessHeldBy } from "@/lib/addons/site-access";
 import { readSiteLocaleCodes } from "@/db/sites";
 import { getUserProfileByUserId } from "@/db/user-profiles";
 import { getSiteRequestActorFromRequest } from "@/db/site-request-actor";
@@ -51,7 +53,12 @@ export async function GET(request: NextRequest) {
     readSiteLocaleCodes(site.id),
     touchSession(session),
     getUserProfileByUserId(user.id),
-    readPhiViewerAddonRoleClaims(site.id, user.id, siteRole.availableProviderIds),
+    readPhiViewerAddonRoleClaims(
+      site.id,
+      user.id,
+      siteRole.availableProviderIds,
+      phisSiteAccessHeldBy(siteRole, PHIS_SITE_ACCESS.siteAdmin),
+    ),
   ]);
 
   let name = user.emailNormalized;

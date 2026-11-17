@@ -4,6 +4,8 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { applyPhisAddonSchema, dropPhisAddonSchema } from "./server-addon-schema.mts";
 import { grantPhisAddonUserRole, revokePhisAddonUserRole } from "./server-addon-roles.mts";
 import { getPhisConfigSync } from "@/lib/config";
+import { PHI_CORE_ROLE_PROVIDER_ID } from "@/lib/authorization";
+import { PhiBaseRole } from "@/lib/constants/phi-base-roles";
 import { buildPhisAddonCapabilities } from "@/lib/addons/capabilities";
 import {
   closePhiTestPool,
@@ -258,6 +260,27 @@ describe("a query that requires a role", () => {
       .toBe(true);
 
     expect(await data(curator).delete("drop_review", { id })).toMatchObject({ body: "moderated" });
+  });
+
+  it("lets a Site Admin through every role guard with no stored role, and not a Site Admin of another Site", async () => {
+    const pool = await requirePhiTestDatabase();
+    const siteAdmin = await createPhiTestUser(site);
+    await pool.query(
+      `INSERT INTO phis.user_site_role_claims (user_id, site_id, provider_id, role_flags) VALUES ($1, $2, $3, $4)`,
+      [siteAdmin, site.id, PHI_CORE_ROLE_PROVIDER_ID, PhiBaseRole.Admin],
+    );
+    const added = await data(siteAdmin).insert("add", { label: "admin-made" });
+    expect(added).toMatchObject({ label: "admin-made" });
+    expect(await data(siteAdmin).update("rename", { id: String(added!.id), label: "admin-renamed" }))
+      .toMatchObject({ label: "admin-renamed" });
+
+    const otherSite = await createPhiTestSite("addon-query-roles-other");
+    const stranger = await createPhiTestUser(otherSite);
+    await pool.query(
+      `INSERT INTO phis.user_site_role_claims (user_id, site_id, provider_id, role_flags) VALUES ($1, $2, $3, $4)`,
+      [stranger, otherSite.id, PHI_CORE_ROLE_PROVIDER_ID, PhiBaseRole.Admin],
+    );
+    await expect(data(stranger).insert("add", { label: "no" })).rejects.toThrow(/requires the role "vendor"/);
   });
 
   it("stops the moment the role is taken away", async () => {

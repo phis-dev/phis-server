@@ -168,7 +168,7 @@ async function sendPasswordResetMail(input: {
 }
 
 /**
- * The Site's users, one page, each with the Core roles and the stored Add-on roles they hold; filterable by account type, enabled state, `addonId` and `addonRole`.
+ * The Site's users, one page, each with the Core roles and the stored Add-on roles they were given (a Site Admin holds every role besides); filterable by account type, enabled state, `addonId` and `addonRole`.
  */
 export async function GET(request: NextRequest) {
   const { context, error } = await requireSiteAdminOnlyApiContext(request);
@@ -252,7 +252,8 @@ export async function GET(request: NextRequest) {
     availableProviderIds = await readAvailablePhisProviderIds(site.id);
     const entry = getPhisAddonInstalledManifest()[addonIdFilter];
     const declared = entry?.enabled && availableProviderIds.has(addonIdFilter) ? (entry.manifest.roles ?? []) : [];
-    // A named role is held stored or through a role that includes it, as `roles:v1` has() answers.
+    // A named role is held stored or through a role that includes it, as `roles:v1` has() answers; the
+    // query adds the enabled Site Admins, who hold every declared role.
     addonRoles = {
       addonId: addonIdFilter,
       roles: addonRoleFilter === null
@@ -272,7 +273,8 @@ export async function GET(request: NextRequest) {
   });
 
   // The page's stored grants in one read, narrowed to the ones that count on this Site -- the rule the
-  // viewer's `addonRoleClaims` apply -- but not expanded through `includes`: what was granted is shown.
+  // viewer's `addonRoleClaims` apply -- but not expanded through `includes` and not widened for a Site
+  // Admin: what was granted is shown. The UI recognises a Site Admin by `roleTags` containing "admin".
   const grants = await readPhiSiteUsersAddonRoles(getPool(), {
     siteId: site.id,
     userIds: result.rows.map((row) => row.id),

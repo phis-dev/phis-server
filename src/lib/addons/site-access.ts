@@ -13,6 +13,8 @@ import {
   PHI_ACCESS_STRUCTURE_AUTHORING,
   PHI_ACCESS_SUPPORT,
   type PhiViewerAccessPolicy,
+  type PhiViewerGroupClaim,
+  type PhiViewerRoleClaim,
 } from "@/lib/authorization";
 
 /**
@@ -35,16 +37,19 @@ export const PHIS_SITE_ACCESS_POLICIES: Readonly<Record<PhisSiteAccess, PhiViewe
 };
 
 /**
- * Whether a person holds one of those accesses on a Site. An access the table does not name is no, and
- * so is a disabled membership, exactly as the Site guards treat it.
+ * Whether an authorization snapshot holds one of those accesses. The pure half of `holdsPhisSiteAccess`,
+ * for a caller that already read the snapshot (the Site viewer) and must not read it twice.
  */
-export async function holdsPhisSiteAccess(siteId: number, userId: number, access: string) {
+export function phisSiteAccessHeldBy(
+  role: {
+    enabled: boolean;
+    roleClaims: readonly PhiViewerRoleClaim[];
+    groupClaims: readonly PhiViewerGroupClaim[];
+  },
+  access: string,
+) {
   const policy = (PHIS_SITE_ACCESS_POLICIES as Readonly<Record<string, PhiViewerAccessPolicy>>)[access];
-  if (!policy) {
-    return false;
-  }
-  const role = await getEffectiveUserSiteAuthorization(userId, siteId);
-  if (!role.enabled) {
+  if (!policy || !role.enabled) {
     return false;
   }
   return canPhiViewerAccess({
@@ -52,4 +57,15 @@ export async function holdsPhisSiteAccess(siteId: number, userId: number, access
     roleClaims: role.roleClaims,
     groupClaims: role.groupClaims,
   }, policy);
+}
+
+/**
+ * Whether a person holds one of those accesses on a Site. An access the table does not name is no, and
+ * so is a disabled membership, exactly as the Site guards treat it.
+ */
+export async function holdsPhisSiteAccess(siteId: number, userId: number, access: string) {
+  if (!(PHIS_SITE_ACCESS_POLICIES as Readonly<Record<string, PhiViewerAccessPolicy>>)[access]) {
+    return false;
+  }
+  return phisSiteAccessHeldBy(await getEffectiveUserSiteAuthorization(userId, siteId), access);
 }

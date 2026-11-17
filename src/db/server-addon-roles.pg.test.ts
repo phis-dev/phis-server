@@ -10,6 +10,8 @@ import { buildPhisAddonRolesCapability } from "@/lib/addons/roles-capability";
 import { PhiUserAccountFlag } from "@/lib/constants/user-account-flags";
 import { USER_SITE_FLAG_DISABLED } from "@/lib/user-site-flags";
 import { mayGrantPhisAddonRole } from "@/lib/addons/role-granting";
+import { PHI_CORE_ROLE_PROVIDER_ID } from "@/lib/authorization";
+import { PhiBaseRole } from "@/lib/constants/phi-base-roles";
 import {
   closePhiTestPool,
   createPhiTestSite,
@@ -130,6 +132,57 @@ describe("Add-on roles", () => {
     expect(await capabilityFor(admin).has("vendor")).toBe(false);
     expect(await capabilityFor(null).has("vendor")).toBe(false);
     expect(await capabilityFor(null).all()).toEqual([]);
+  });
+
+  describe("for a Site Admin", () => {
+    const makeAdmin = async (siteId: number, userId: number) => (await requirePhiTestDatabase()).query(
+      `INSERT INTO phis.user_site_role_claims (user_id, site_id, provider_id, role_flags)
+       VALUES ($1, $2, $3, $4)`,
+      [userId, siteId, PHI_CORE_ROLE_PROVIDER_ID, PhiBaseRole.Admin],
+    );
+
+    it("holds every declared role with no stored assignment, and the stored rows stay empty", async () => {
+      const siteAdmin = await createPhiTestUser(site);
+      await makeAdmin(site.id, siteAdmin);
+
+      expect(await capabilityFor(siteAdmin).has("vendor")).toBe(true);
+      expect(await capabilityFor(siteAdmin).has("market-admin")).toBe(true);
+      expect(await capabilityFor(siteAdmin).has("invented")).toBe(false);
+      expect(await capabilityFor(siteAdmin).all()).toEqual(["market-admin", "vendor"]);
+      expect(await readPhiSiteUserAddonRoles(await requirePhiTestDatabase(), { siteId: site.id, userId: siteAdmin }))
+        .toEqual([]);
+    });
+
+    it("stops holding them when the Site Admin claim goes, and when the membership is disabled", async () => {
+      const pool = await requirePhiTestDatabase();
+      const siteAdmin = await createPhiTestUser(site);
+      await makeAdmin(site.id, siteAdmin);
+      await grantPhisAddonUserRole(pool, {
+        addonId: ADDON, siteId: site.id, userId: siteAdmin, role: "vendor", grantedByUserId: null,
+      });
+      await pool.query(`UPDATE phis.user_site_memberships SET user_site_flags = $3 WHERE site_id = $1 AND user_id = $2`,
+        [site.id, siteAdmin, USER_SITE_FLAG_DISABLED]);
+      expect(await capabilityFor(siteAdmin).all()).toEqual([]);
+      await pool.query(`UPDATE phis.user_site_memberships SET user_site_flags = 0 WHERE site_id = $1 AND user_id = $2`,
+        [site.id, siteAdmin]);
+      expect(await capabilityFor(siteAdmin).all()).toEqual(["market-admin", "vendor"]);
+
+      // The stored assignment waits underneath: without the claim the person holds just that.
+      await pool.query(`DELETE FROM phis.user_site_role_claims WHERE site_id = $1 AND user_id = $2`, [site.id, siteAdmin]);
+      expect(await capabilityFor(siteAdmin).all()).toEqual(["vendor"]);
+    });
+
+    it("holds nothing on a Site where the person is not Site Admin", async () => {
+      const otherSite = await createPhiTestSite("addon-roles-other");
+      const siteAdmin = await createPhiTestUser(otherSite);
+      await makeAdmin(otherSite.id, siteAdmin);
+      // Admin of the other Site; not a member here at all.
+      expect(await capabilityFor(siteAdmin).all()).toEqual([]);
+      // A plain member here, Site Admin there: still nothing here.
+      await (await requirePhiTestDatabase()).query(
+        `INSERT INTO phis.user_site_memberships (user_id, site_id) VALUES ($1, $2)`, [siteAdmin, site.id]);
+      expect(await capabilityFor(siteAdmin).has("vendor")).toBe(false);
+    });
   });
 
   it("does not hand over a role the manifest no longer declares", async () => {

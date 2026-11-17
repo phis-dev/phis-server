@@ -2,7 +2,7 @@ import "server-only";
 
 import type { PhiViewerAddonRoleClaim } from "@/lib/authorization";
 import { getPhisAddonInstalledManifest } from "./installed.ts";
-import { expandPhisAddonHeldRoles } from "./role-inclusion.ts";
+import { resolvePhisAddonHeldRoles } from "./role-inclusion.ts";
 import { readPhiSiteUserAddonRoles } from "@/db/server-addon-roles.mts";
 import { getPool } from "@/lib/db";
 
@@ -17,6 +17,8 @@ import { getPool } from "@/lib/db";
  * Whether an Add-on is enabled for this Site is the capability snapshot's `available`, read once per
  * request by `getEffectiveUserSiteAuthorization` and handed in. Asking the registry here again cost two
  * statements per Add-on with a grant, one after the other, on every signed-in page view.
+ *
+ * A Site Admin holds every declared role of every such Add-on, stored or not (`resolvePhisAddonHeldRoles`).
  *
  * These travel to the browser with the rest of the viewer. That is not a leak: they are the viewer's own
  * roles, and the client uses them to decide what to show. Whether the request behind the link is allowed
@@ -51,7 +53,18 @@ export async function readPhiViewerAddonRoleClaims(
   siteId: number,
   userId: number,
   availableProviderIds: ReadonlySet<string>,
+  /** Whether the viewer is Site Admin (`phisSiteAccessHeldBy`): they hold every declared role. */
+  siteAdmin = false,
 ): Promise<PhiViewerAddonRoleClaim[]> {
+  if (siteAdmin) {
+    // Every Add-on that counts here (installed, enabled, available), every role it declares now.
+    return Object.entries(getPhisAddonInstalledManifest()).flatMap(([addonId, entry]) => {
+      const roles = resolvePhisAddonHeldRoles(entry.manifest.roles ?? [], [], true);
+      return entry.enabled && availableProviderIds.has(addonId) && roles.length > 0
+        ? [{ providerId: addonId as PhiViewerAddonRoleClaim["providerId"], roles }]
+        : [];
+    });
+  }
   const grants = await readPhiSiteUserAddonRoles(getPool(), { siteId, userId });
   if (grants.length === 0) {
     return [];
@@ -61,7 +74,7 @@ export async function readPhiViewerAddonRoleClaims(
   // Granted and implied: a viewer holding `manager` is shown what a `clerk` sees, as the server answers.
   const byAddon = new Map<string, string[]>();
   for (const [addonId, granted] of selectPhiCountingAddonRoles(grants, availableProviderIds)) {
-    const held = expandPhisAddonHeldRoles(installed[addonId]!.manifest.roles ?? [], granted);
+    const held = resolvePhisAddonHeldRoles(installed[addonId]!.manifest.roles ?? [], granted, false);
     if (held.length > 0) {
       byAddon.set(addonId, held);
     }

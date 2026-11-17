@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { validatePhisAddonManifest } from "./manifest.ts";
-import { expandPhisAddonHeldRoles, findPhisAddonRoleInclusionCycle, listPhisAddonRolesImplying } from "./role-inclusion.ts";
+import { expandPhisAddonHeldRoles, findPhisAddonRoleInclusionCycle, listPhisAddonRolesImplying, resolvePhisAddonHeldRoles } from "./role-inclusion.ts";
 
 /**
  * A role that includes another: holding the upper rung answers yes for the lower ones, followed
@@ -90,5 +90,18 @@ describe("the roles whose holder holds a given one", () => {
 
   it("is empty for a role nobody declared", () => {
     expect(listPhisAddonRolesImplying(declared, "nonesuch")).toEqual([]);
+  });
+});
+
+describe("what a Site Admin holds", () => {
+  it("is every declared role with nothing stored, in declaration order", () => {
+    expect(resolvePhisAddonHeldRoles(declared, [], true)).toEqual(["owner", "manager", "clerk", "auditor"]);
+    // Stored names, declared or not, change nothing for an admin.
+    expect(resolvePhisAddonHeldRoles(declared, ["retired"], true)).toEqual(["owner", "manager", "clerk", "auditor"]);
+  });
+
+  it("leaves everybody else with the granted roles and what they include", () => {
+    expect(resolvePhisAddonHeldRoles(declared, ["manager"], false)).toEqual(["manager", "clerk"]);
+    expect(resolvePhisAddonHeldRoles(declared, [], false)).toEqual([]);
   });
 });

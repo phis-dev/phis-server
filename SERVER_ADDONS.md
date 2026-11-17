@@ -1936,6 +1936,13 @@ them.
 `roles:v1` answers `has(role)` and `all()`, bound to the acting user of the request. No user id leaves
 Core: the Add-on learns whether, never who. Without an actor both answer no.
 
+A Site Admin holds every declared role of the Add-on without a stored assignment: `has()` is true for each
+declared role and `all()` returns them all, for as long as the actor is Site Admin on the Site. The same
+rule answers `requiresRole`/`alsoAllowedByRole`, a slot's `requiresRole` and the viewer's `addonRoleClaims`
+(`resolvePhisAddonHeldRoles`). Holding is not storage: the stored assignments are unchanged, and a recipient
+list built from "who has this role" must read them, not `roles:v1`, so an admin is not addressed by every
+role.
+
 Results are filtered against the roles the **current** manifest declares, the same way a stored setting
 nobody declared is ignored rather than handed over. An Add-on never sees a role it does not know.
 
@@ -1968,7 +1975,7 @@ A role reaches the browser too, so a Module can leave out a link somebody would 
 The held names travel with the viewer as `addonRoleClaims` (`/api/v1/auth/me`, reached through a Site's `/api/auth/me`), filtered to what the current
 manifest declares and to Add-ons enabled globally and for this Site (`src/lib/addons/viewer-roles.ts`). A
 viewer that carries no `addonRoleClaims` is denied. A Site Admin passes, as for every role and group
-policy. A Module may name only its own Add-on's roles (`isPhiAccessPolicyProviderOwned`).
+policy, and carries every declared role of every enabled Add-on as claims. A Module may name only its own Add-on's roles (`isPhiAccessPolicyProviderOwned`).
 
 The evaluator is `canPhiAccessSubjectReach` in `@phis/contracts/access`, compiled once and used by both
 `@phis/server` and `@phis/ui`.
@@ -1990,7 +1997,7 @@ back, written all together or not at all.
 
 `GET /api/site/addon-roles` answers `{ addons }`, every declared role of every Add-on enabled on the Site,
 each marked `grantable` or not for the caller, and with `?userId=` also what that person holds
-(`userId`, `held`) -- the latter only for a caller who may grant at least one role. One screen therefore
+(`userId`, `held` stored, `holdsAll` true for a Site Admin) -- the latter only for a caller who may grant at least one role. One screen therefore
 serves an operator and a `market-admin` alike. `AUTHORIZATION.md` section 5 has the exact shapes.
 
 An Add-on's own surface renders the screen and calls these routes; it never decides the answer, so

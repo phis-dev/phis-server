@@ -5,6 +5,7 @@ import { userDisplayNameSql } from "@/db/user-profiles";
 import { getPool } from "@/lib/db";
 import { USER_SITE_FLAG_DISABLED, isUserSiteEnabled } from "@/lib/user-site-flags";
 import { PHI_CORE_ROLE_PROVIDER_ID } from "@/lib/authorization";
+import { PhiBaseRole } from "@/lib/constants/phi-base-roles";
 
 export type AdminUserAccountType = "customer" | "roles" | "auth";
 export type AdminUserSortKey = "name" | "email" | "accountType" | "enabled" | "createdAt" | "lastLoginAt";
@@ -14,7 +15,10 @@ export type ListAdminUsersOptions = {
   search?: string;
   accountType?: AdminUserAccountType | "all";
   enabled?: "all" | "enabled" | "disabled";
-  /** Only users with a stored grant of one of `roles` in this Add-on; an empty list matches nobody. */
+  /**
+   * Only users who hold one of `roles` in this Add-on: a stored grant of one of them, or being an enabled
+   * Site Admin, who holds every declared role (`resolvePhisAddonHeldRoles`). An empty list matches nobody.
+   */
   addonRoles?: { addonId: string; roles: readonly string[] };
   sortKey?: AdminUserSortKey | string;
   sortOrder?: AdminUserSortOrder | string;
@@ -119,13 +123,17 @@ export async function listAdminUsersForSite(siteId: number, options: ListAdminUs
   if (options.addonRoles) {
     params.push(options.addonRoles.addonId, [...options.addonRoles.roles]);
     conditions.push(
-      `EXISTS (
+      `(EXISTS (
         SELECT 1 FROM phis.site_addon_user_roles addon_role
         WHERE addon_role.site_id = $1
           AND addon_role.user_id = ua.id
           AND addon_role.addon_id = $${params.length - 1}
           AND addon_role.role = ANY($${params.length}::text[])
-      )`,
+      ) OR (
+        cardinality($${params.length}::text[]) > 0
+        AND (COALESCE(core_claim.role_flags, 0) & ${PhiBaseRole.Admin}) <> 0
+        AND (usr.user_site_flags & ${USER_SITE_FLAG_DISABLED}) = 0
+      ))`,
     );
   }
 

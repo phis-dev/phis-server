@@ -16,6 +16,10 @@ phis (0.4.1-1) unstable; urgency=medium
     /api/site/addon-roles answers every declared role and whether the
     caller may grant it (the grantable list is gone); PUT sets a user's
     roles of one Add-on in one call.
+  * A Site Admin holds every Add-on role without a stored assignment:
+    roles:v1, requiresRole, the viewer's addonRoleClaims and the user
+    list's addonId/addonRole filter; GET /api/site/addon-roles?userId
+    adds holdsAll. Stored assignments are unchanged.
   * phis entitlement list and grant say "No such user" instead of a
     database error.
   * No schema change. Needs @phis/contracts 0.7.11.
