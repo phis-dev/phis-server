@@ -1,3 +1,23 @@
+phis (0.4.2-1) unstable; urgency=medium
+
+  * A notification that meets a held payment is remembered instead of
+    refused. The knock is kept on the payment, the holder observes once
+    more before it lets go, and the maintenance run finds what a crashed
+    holder left. A Provider's second webhook in the same second is
+    answered with 200.
+  * By hand on an existing database before this release starts:
+    ALTER TABLE phis.payments ALTER COLUMN generation TYPE SMALLINT;
+    ALTER TABLE phis.payments ADD COLUMN IF NOT EXISTS
+    notified_generation SMALLINT NULL;
+  * PUT /api/site/admin/users takes an optional addonRoles, a flat list
+    of "<addonId>:<role>" strings, and writes the user, the Core roles
+    and the Add-on roles in one transaction. GET ?userId= answers the
+    same list.
+  * A taken address met between the check and the write of a user save
+    answers 409 instead of 500.
+
+ -- Marius Schumacher <marius.schumacher@phisys.com>  Tue, 17 Nov 2026 21:50:00 +0000
+
 phis (0.4.1-1) unstable; urgency=medium
 
   * A refused payment notification says why: payment.notification.refused
