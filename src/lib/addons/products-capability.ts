@@ -24,8 +24,12 @@ import { annotateProduct, type PhisStoredProduct, listProducts, readProduct, reg
  * Reading is open to whoever requires the capability. A supplier writes its own products and nobody
  * else's: the calling Add-on is closed over, never passed in, so another supplier's product is simply
  * not found. Any Add-on writes its own attributes entry and no one else's. Releasing, locking and
- * withdrawing another's product are the operator's and are not here. An unverified hook reaches none of
- * it, reads included.
+ * withdrawing another's product are the operator's and are not here.
+ *
+ * An unverified hook -- a public read point, nobody signed in -- reads the catalogue and nothing else: only
+ * `active` products, whatever `states` or `ids` ask for, without `pendingTerms`; a product that is not (or
+ * no longer) active is not found. A catalogue is public; what is not yet or no longer in it is not.
+ * Attributes are part of a product and so are public. Every write is refused to it.
  */
 
 export class PhisAddonProductsError extends Error {}
@@ -34,13 +38,16 @@ const LIST_LIMIT_DEFAULT = 50;
 const LIST_LIMIT_MAX = 200;
 const STATES: readonly PhisProductState[] = ["draft", "active", "withdrawn", "locked"];
 /** The picture's Site-relative address, as Core addresses its own Media (assets:v1 `contentPath`), read now. */
-function present(product: PhisStoredProduct): PhisProduct;
-function present(product: PhisStoredProduct | null): PhisProduct | null;
-function present(product: PhisStoredProduct | null): PhisProduct | null {
+function present(product: PhisStoredProduct, publicView?: false): PhisProduct;
+function present(product: PhisStoredProduct | null, publicView?: boolean): PhisProduct | null;
+function present(product: PhisStoredProduct | null, publicView = false): PhisProduct | null {
   if (!product) return null;
   const { imageRevision, ...rest } = product;
+  // What is not in the catalogue yet is not public: a product shown to everybody has no pending terms.
+  if (publicView && product.state !== "active") return null;
   return {
     ...rest,
+    ...(publicView ? { pendingTerms: null } : {}),
     imagePath: product.imageAssetId !== null && imageRevision !== null
       ? resolvePhiMediaDeliveryUrl({ id: product.imageAssetId, deliveryRevision: imageRevision })
       : null,
@@ -87,13 +94,14 @@ export function buildPhisAddonProductsCapability(input: {
 
   return {
     async list(request: PhisProductListInput = {}) {
-      requireBelievableCaller("list");
+      const publicView = input.unauthenticated === true;
       const ids = request.ids;
       if (ids !== undefined && (!Array.isArray(ids) || ids.length > LIST_LIMIT_MAX || !ids.every(isPhisProductId))) {
         throw new PhisAddonProductsError(`ids is a list of at most ${LIST_LIMIT_MAX} product ids.`);
       }
       // Named products are asked for whatever state they are in, unless states says otherwise.
-      const states = request.states === undefined ? (ids === undefined ? ["active" as const] : [...STATES]) : request.states;
+      const states = publicView ? ["active" as const]
+        : request.states === undefined ? (ids === undefined ? ["active" as const] : [...STATES]) : request.states;
       if (!Array.isArray(states) || states.length === 0 || !states.every((state) => STATES.includes(state))) {
         throw new PhisAddonProductsError("states is a non-empty list of draft, active, withdrawn or locked.");
       }
@@ -107,14 +115,13 @@ export function buildPhisAddonProductsCapability(input: {
       if (request.released !== undefined && typeof request.released !== "boolean") throw new PhisAddonProductsError("released is a boolean.");
       const page = await listProducts(getPool(), {
         siteId, states, limit, cursor: request.cursor ?? null, ids,
-        supplier: request.supplier, publisher: request.publisher, type: request.type, released: request.released,
+        supplier: request.supplier, publisher: request.publisher, type: request.type, released: publicView ? undefined : request.released,
       });
-      return { products: page.products.map((product) => present(product)), nextCursor: page.nextCursor };
+      return { products: page.products.map((product) => present(product, publicView)!), nextCursor: page.nextCursor };
     },
 
     async get({ id }) {
-      requireBelievableCaller("get");
-      return present(await readProduct(getPool(), siteId, readId(id)));
+      return present(await readProduct(getPool(), siteId, readId(id)), input.unauthenticated === true);
     },
 
     async register(draft: PhisProductDraft) {

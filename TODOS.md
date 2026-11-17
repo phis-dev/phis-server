@@ -23,7 +23,7 @@ tracked here because the server contract depends on them.
   `ALTER TABLE phis.entitlements RENAME COLUMN kind TO product;`
   `ALTER TABLE phis.entitlements RENAME CONSTRAINT entitlements_kind_check TO entitlements_product_check;`
   `DROP INDEX IF EXISTS phis.entitlements_subject_kind_idx;` and the two `entitlements_*product_idx` indexes
-  of the script, `DROP TABLE IF EXISTS phis.entitlement_kind_sources;`, and the outbox check below. Pending
+  of the script, `DROP TABLE IF EXISTS phis.entitlement_kind_sources;`, `ALTER TABLE phis.sites ADD COLUMN IF NOT EXISTS entitlement_grace_days ...`, `ALTER TABLE phis.entitlements ADD COLUMN IF NOT EXISTS subscription_id ...` with its check and index (the statements are in the script), and the outbox check below. Pending
   outbox rows of `entitlement.changed` carry `product` where they carried `entitlementKind`
   (`UPDATE phis.addon_event_outbox SET payload = jsonb_build_object('subject', payload->'subject', 'product',
   payload->'entitlementKind') WHERE event = 'entitlement.changed' AND payload ? 'entitlementKind';`).

@@ -91,6 +91,11 @@ async function invokeEventHandler(input: {
       const { subject, product } = input.row.payload;
       if (input.row.subjectKind !== "entitlement" || typeof subject !== "string" || typeof product !== "string" || !product.startsWith("@")) throw new Error("Invalid entitlement outbox subject.");
       await timed(input.handler({ ...common, event: input.event, subject: { kind: "entitlement", subject, product: product as `@${string}/${string}:${string}` } }));
+    } else if (input.event === "asset.changed") {
+      // No state travels: the handler reads the slot through `assets:v1`.
+      const { table, ownerId, slot } = input.row.payload;
+      if (input.row.subjectKind !== "asset" || typeof table !== "string" || typeof ownerId !== "string" || typeof slot !== "string") throw new Error("Invalid asset outbox subject.");
+      await timed(input.handler({ ...common, event: input.event, subject: { kind: "asset", table, ownerId, slot } }));
     } else if (input.event === "product.changed") {
       // No state travels: the handler reads the product through `products:v1`.
       const { productId } = input.row.payload;

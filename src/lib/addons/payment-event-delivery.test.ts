@@ -20,7 +20,7 @@ describe("owner Payment outbox delivery", () => {
   beforeEach(() => {
     const manifest: PhisAddonManifestV1 = { manifestVersion: 1, addonId: "@test/consumer", packageName: "@test/consumer", packageVersion: "0.1.0", serverAbi: "^1",
       capabilities: [], serviceProviders: [], requiredCoreCapabilities: ["@phis/server/payments:v1"], apiRoutes: [], hooks: [], jobs: [], schema: null, migrationVersion: 0,
-      eventHandlers: [{ id: "payment", event: "payment.changed", handler: "changed" }, { id: "thread", event: "thread.status.changed", handler: "changed" }] };
+      eventHandlers: [{ id: "payment", event: "payment.changed", handler: "changed" }, { id: "thread", event: "thread.status.changed", handler: "changed" }, { id: "asset", event: "asset.changed", handler: "changed" }] };
     state.entry = { enabled: true, manifest, manifestDigest: digestPhisAddonManifest(manifest), load: async () => ({ phisAddon: { manifest, eventHandlers: { changed: state.handler } } }) };
     state.pending = [{ id: "receipt-1", siteId: 1, addonId: manifest.addonId, event: "payment.changed", subjectKind: "payment", paymentId: "payment-1", threadId: null,
       payload: { reference: "order-1", version: 3, operationId: "operation-1", refundId: null }, attempts: 0 }];
@@ -47,6 +47,18 @@ describe("owner Payment outbox delivery", () => {
     await deliverPhisAddonEvents({ addonId: "@test/consumer", siteId: 1 }); expect(state.handler).toHaveBeenCalledOnce();
     state.active = true;
     expect(await deliverPhisAddonEvents({ addonId: "@test/consumer", siteId: 1 })).toEqual({ delivered: 1, failed: 0 });
+  });
+  it("delivers asset.changed with its typed subject, to a handler that runs verified and without an actor", async () => {
+    state.pending = [{ id: "asset-receipt", event: "asset.changed", subjectKind: "asset", paymentId: null, threadId: null,
+      payload: { table: "offering", ownerId: "7", slot: "package" }, attempts: 0 }];
+    expect(await deliverPhisAddonEvents({ addonId: "@test/consumer", siteId: 1 })).toEqual({ delivered: 1, failed: 0 });
+    const context = state.handler.mock.calls[0]![0] as PhisAddonEventContext;
+    expect(context.subject).toEqual({ kind: "asset", table: "offering", ownerId: "7", slot: "package" });
+    // The capabilities are built as for any event: system authority, no actor, and never as an unverified hook.
+    expect(state.build).toHaveBeenCalledWith(expect.objectContaining({ actorUserId: null, systemAuthority: true }));
+    expect((state.build.mock.calls[0] as unknown[])[0]).not.toHaveProperty("unauthenticated", true);
+    state.pending = [{ id: "bad", event: "asset.changed", subjectKind: "thread", paymentId: null, threadId: null, payload: {}, attempts: 0 }];
+    expect((await deliverPhisAddonEvents({ addonId: "@test/consumer", siteId: 1 })).failed).toBe(1);
   });
   it("keeps thread events on the thread subject", async () => {
     state.pending = [{ id: "thread-receipt", event: "thread.status.changed", subjectKind: "thread", paymentId: null, threadId: 42, payload: {}, attempts: 0 }];

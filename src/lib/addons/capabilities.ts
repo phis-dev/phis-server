@@ -6,6 +6,7 @@ import { buildPhisPaymentsCapability, buildPhisPaymentNotificationsCapability } 
 import type { PoolClient } from "pg";
 
 import {
+  PHIS_ADDON_EVENTS,
   PHIS_CORE_CAPABILITIES,
   type PhisAddonCapabilities,
   type PhisAuthorizationCapabilityV1,
@@ -476,6 +477,7 @@ export function buildPhisAddonCapabilities(input: {
         // Core's own upload route, because an Add-on asset is an upload like any other. There is one
         // lifecycle and therefore one address it can be delivered to.
         proxyUploadUrl: ({ token }) => `/api/site/media/uploads/${token}`,
+        announcesChanges: (input.manifest.eventHandlers ?? []).some((handler) => handler.event === PHIS_ADDON_EVENTS.assetChanged),
       });
     }
     if (required.includes(PHIS_CORE_CAPABILITIES.secrets)) {

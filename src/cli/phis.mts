@@ -343,6 +343,7 @@ Usage:
                 --source-locale <locale> --default-locale <locale> [--available-locales <csv>]
                 --support-email|-e <email> [--time-zone <iana zone>]
   phis site set --key|-k <site key> [--name|-n <site name>] [--hostname|-h <hostname>] [--public-base-url|-u <url>] [--support-email|-e <email>] [--time-zone <iana zone>]
+                 [--entitlement-grace-days <0-14>]
   phis site enable --key|-k <site key>
   phis site disable --key|-k <site key>
   phis site del --key|-k <site key>
@@ -2279,7 +2280,7 @@ async function printSites(flags: FlagMap, json: boolean) {
 
   for (const site of sites) {
     console.log(
-      `${site.key}  enabled=${site.enabled ? "true" : "false"}  hostname=${site.hostname}  name=${site.name}`,
+      `${site.key}  enabled=${site.enabled ? "true" : "false"}  hostname=${site.hostname}  entitlement-grace-days=${site.entitlementGraceDays}  name=${site.name}`,
     );
   }
 }
@@ -2382,9 +2383,15 @@ async function updateSiteFields(flags: FlagMap, json: boolean) {
 
   const timeZone = readTimeZoneFlag(flags);
 
-  if (!name && !supportEmail && !hostname && !publicBaseUrl && !timeZone) {
+  const graceFlag = getOptionalFlag(flags, "entitlement-grace-days");
+  if (graceFlag !== undefined && (!/^\d{1,2}$/.test(graceFlag) || Number(graceFlag) > 14)) {
+    throw new Error("--entitlement-grace-days is a whole number of days from 0 to 14.");
+  }
+  const entitlementGraceDays = graceFlag === undefined ? undefined : Number(graceFlag);
+
+  if (!name && !supportEmail && !hostname && !publicBaseUrl && !timeZone && entitlementGraceDays === undefined) {
     throw new Error(
-      "Nothing to set. Provide at least --name, --hostname, --public-base-url, --support-email, or --time-zone.",
+      "Nothing to set. Provide at least --name, --hostname, --public-base-url, --support-email, --time-zone, or --entitlement-grace-days.",
     );
   }
 
@@ -2404,6 +2411,7 @@ async function updateSiteFields(flags: FlagMap, json: boolean) {
     publicBaseUrl,
     supportEmail,
     timeZone,
+    entitlementGraceDays,
     mailFrom: `no-reply@${mailHost}`,
     mailFromName: name ?? current.name,
     contactRecipient: nextSupportEmail,
@@ -2422,6 +2430,7 @@ async function updateSiteFields(flags: FlagMap, json: boolean) {
       publicBaseUrl: updated.publicBaseUrl,
       supportEmail: updated.supportEmail,
       timeZone: updated.timeZone,
+      entitlementGraceDays: updated.entitlementGraceDays,
     });
     return;
   }

@@ -51,6 +51,12 @@ type Options = {
   unauthenticated?: boolean;
   afterCommit?: () => Promise<unknown>;
   /**
+   * The Add-ons that listen for `entitlement.changed`, asked only when an entry follows a subscription that
+   * moved. Injected for the reason `providerFailed` is: the installed manifests are `server-only` and the CLI
+   * loads this module too, where nobody is told (the expiry job still announces an ending).
+   */
+  entitlementListeners?: () => readonly string[];
+  /**
    * Told what a Provider threw. The engine itself answers `provider_unavailable` or an unknown outcome,
    * which is right for the caller and said nothing to the operator; whoever constructs the engine
    * writes the failure where it logs. Not the engine, because the CLI loads this module too and the
@@ -69,6 +75,7 @@ export type PhisPaymentProviderFailure = {
 export class PhisPaymentEngine implements PhisPaymentsCapabilityV1 {
   private readonly options: Options;
   constructor(options: Options) { this.options = options; }
+  private readonly entitlementListeners = () => this.options.entitlementListeners?.() ?? [];
   private get pool() { return this.options.pool; }
   private get scope() { return this.options.scope; }
   private signal() { return AbortSignal.any([this.options.signal, AbortSignal.timeout(PHIS_PAYMENT_CALL_TIMEOUT_MS)]); }
@@ -288,7 +295,7 @@ export class PhisPaymentEngine implements PhisPaymentsCapabilityV1 {
       if (method && (!method.features.stored || !phisPaymentMethodSupports(method.features.stored.pricing, phisPaymentPricingSelector(recurring.pricing)))) throw new PhisPaymentError("unsupported_operation");
       if (isDeepStrictEqual(current.record.recurring, recurring)) return current.record;
       current.record.recurring = recurring; current.record.version += 1;
-      await writePhisPaymentSubscription(db, current, null);
+      await writePhisPaymentSubscription(db, current, null, this.entitlementListeners);
       return current.record;
     });
     await this.options.afterCommit?.().catch(() => {});
@@ -335,7 +342,7 @@ export class PhisPaymentEngine implements PhisPaymentsCapabilityV1 {
       for (const superseded of await revokeSupersededPhisPaymentStoredMethods(db, method)) {
         for (const subscription of await listPhisPaymentSubscriptionsOnMethod(db, superseded)) {
           subscription.record.storedMethodId = method.record.id; subscription.record.version += 1;
-          await writePhisPaymentSubscription(db, subscription, null);
+          await writePhisPaymentSubscription(db, subscription, null, this.entitlementListeners);
         }
       }
     }
@@ -617,7 +624,7 @@ export class PhisPaymentEngine implements PhisPaymentsCapabilityV1 {
       const found = await findPhisPaymentSubscriptionIdempotency(db, this.scope, input.idempotencyKey);
       if (found) { if (!isDeepStrictEqual(found.request, request)) throw new PhisPaymentError("idempotency_conflict"); return found; }
       if (!await insertPhisPaymentSubscription(db, subscription, input.idempotencyKey)) throw new PhisPaymentError("active_attempt_exists");
-      await writePhisPaymentSubscription(db, subscription, null);
+      await writePhisPaymentSubscription(db, subscription, null, this.entitlementListeners);
       return null;
     });
     const id = raced?.record.id ?? subscription.record.id;
@@ -642,7 +649,7 @@ export class PhisPaymentEngine implements PhisPaymentsCapabilityV1 {
     if (open && open.record.status === "open") { open.record.status = "void"; await writePhisPaymentSubscriptionPeriod(db, open); }
     Object.assign(subscription.record, { status: "canceled", endedAt: at.toISOString(), nextChargeAt: null, customerActionRequired: false, cancelAtPeriodEnd: false });
     subscription.record.version += 1;
-    await writePhisPaymentSubscription(db, subscription, open ? openIndex : null);
+    await writePhisPaymentSubscription(db, subscription, open ? openIndex : null, this.entitlementListeners);
   }
 
   /**
@@ -666,7 +673,7 @@ export class PhisPaymentEngine implements PhisPaymentsCapabilityV1 {
       if (input.at === "period-end" && paidAhead) {
         if (!current.record.cancelAtPeriodEnd) {
           current.record.cancelAtPeriodEnd = true; current.record.version += 1;
-          await writePhisPaymentSubscription(db, current, null);
+          await writePhisPaymentSubscription(db, current, null, this.entitlementListeners);
         }
       } else await this.endSubscription(db, current, new Date());
       return current.record;
@@ -681,7 +688,7 @@ export class PhisPaymentEngine implements PhisPaymentsCapabilityV1 {
       const current = (await readPhisPaymentSubscription(db, this.scope.siteId, subscriptionId, this.scope.consumerAddonId, true))!;
       if (current.record.status !== "active" || !current.record.cancelAtPeriodEnd) throw new PhisPaymentError("invalid_state");
       current.record.cancelAtPeriodEnd = false; current.record.version += 1;
-      await writePhisPaymentSubscription(db, current, null);
+      await writePhisPaymentSubscription(db, current, null, this.entitlementListeners);
       return current.record;
     });
     await this.options.afterCommit?.().catch(() => {});
@@ -724,7 +731,7 @@ export class PhisPaymentEngine implements PhisPaymentsCapabilityV1 {
         current.record.customerActionRequired = false; current.record.nextChargeAt = new Date().toISOString();
       }
       current.record.version += 1;
-      await writePhisPaymentSubscription(db, current, null);
+      await writePhisPaymentSubscription(db, current, null, this.entitlementListeners);
       return current.record;
     });
     await this.options.afterCommit?.().catch(() => {});
@@ -757,7 +764,7 @@ export class PhisPaymentEngine implements PhisPaymentsCapabilityV1 {
         Object.assign(record, { status: "canceled", endedAt: now.toISOString(), nextChargeAt: null });
       } else return;
       record.version += 1;
-      await writePhisPaymentSubscription(db, subscription, 0);
+      await writePhisPaymentSubscription(db, subscription, 0, this.entitlementListeners);
       return;
     }
 
@@ -783,7 +790,7 @@ export class PhisPaymentEngine implements PhisPaymentsCapabilityV1 {
       }
     } else return;
     record.version += 1;
-    await writePhisPaymentSubscription(db, subscription, index);
+    await writePhisPaymentSubscription(db, subscription, index, this.entitlementListeners);
   }
 
   /**
@@ -833,7 +840,7 @@ export class PhisPaymentEngine implements PhisPaymentsCapabilityV1 {
       if (deadline <= now) { await this.exhaustSubscriptionPeriod(db, subscription, index, now); return; }
       Object.assign(subscription.record, { status: "past_due", customerActionRequired: true, nextChargeAt: deadline.toISOString() });
       subscription.record.version += 1;
-      await writePhisPaymentSubscription(db, subscription, index);
+      await writePhisPaymentSubscription(db, subscription, index, this.entitlementListeners);
     });
     try {
       if (!record.storedMethodId) throw new PhisPaymentError("stored_method_unavailable");
@@ -864,7 +871,7 @@ export class PhisPaymentEngine implements PhisPaymentsCapabilityV1 {
     if (subscription.record.dunning.onExhausted === "cancel") { await this.endSubscription(db, subscription, now); return; }
     Object.assign(subscription.record, { status: "unpaid", nextChargeAt: null });
     subscription.record.version += 1;
-    await writePhisPaymentSubscription(db, subscription, index);
+    await writePhisPaymentSubscription(db, subscription, index, this.entitlementListeners);
   }
 
   private async checkProfileRevision(db: PoolClient, expected: PhisPaymentProfile, action: PhisPaymentGrantedOperation) {

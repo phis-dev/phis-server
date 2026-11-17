@@ -56,6 +56,7 @@ function reference(flags: Flags) {
 
 function describeEntry(entry: PhisEntitlement) {
   return `${entry.product}  ${entry.source}  ${entry.reference}  ${entry.startsAt} .. ${entry.endsAt ?? "open"}`
+    + (entry.subscriptionId ? `  subscription ${entry.subscriptionId}` : "")
     + `  quantity ${entry.quantity ?? "-"}  flags ${entry.flags}  ${entry.valid ? "valid" : "not valid"}`;
 }
 

@@ -121,6 +121,8 @@ export function buildPhisAddonAssetsCapability(input: {
   hasRole: (role: string) => Promise<boolean>;
   /** Where Core receives a body for a Provider that cannot take one directly. */
   proxyUploadUrl: (input: { token: string }) => string;
+  /** Whether the Add-on declares a handler for `asset.changed`: only then is it told of a change to its slots. */
+  announcesChanges: boolean;
 }): PhisAssetsCapabilityV1 {
   const { addonId, siteId, siteKey, schema } = input;
   const schemaName = derivePhisAddonSchemaName(addonId);
@@ -551,6 +553,7 @@ export function buildPhisAddonAssetsCapability(input: {
           location, siteId, ownerId: ref.ownerId, slot: ref.slot,
           mediaAssetId: asset.id,
           single: declared.cardinality === "one",
+          announceTo: input.announcesChanges ? addonId : undefined,
         });
         if (declared.mirrorColumn) {
           // In the same transaction as the link, because they say the same thing. The path carries the
@@ -653,7 +656,9 @@ export function buildPhisAddonAssetsCapability(input: {
       await requireSlotAuthority(table, [requireSlot(table, existing.slot)], existing.ownerId, "update");
       // The link first, the file second: a failure there leaves a file nobody points at, which is
       // findable, rather than a row pointing at nothing, which is not.
-      const mediaAssetId = await unlinkPhisAddonAsset(getPool(), location, { siteId, id });
+      const mediaAssetId = await withTransaction((client) => unlinkPhisAddonAsset(client, location, {
+        siteId, id, announceTo: input.announcesChanges ? addonId : undefined,
+      }));
       if (mediaAssetId == null) {
         return false;
       }

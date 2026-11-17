@@ -17,6 +17,9 @@ CREATE TABLE IF NOT EXISTS phis.sites (
   available_locales VARCHAR(8)[] NOT NULL DEFAULT ARRAY['en']::VARCHAR(8)[],
   -- The IANA zone every date and time of the Site is shown in, on the server and in the browser alike.
   time_zone VARCHAR(64) NOT NULL DEFAULT 'UTC',
+  -- How many whole days an entitlement bound to a subscription goes on counting after its paid period, as
+  -- long as the subscription has not ended (entitlements:v1). 0 ends it with the period.
+  entitlement_grace_days SMALLINT NOT NULL DEFAULT 14 CHECK (entitlement_grace_days BETWEEN 0 AND 14),
   flags INT NOT NULL DEFAULT 0,
   theme JSONB NOT NULL DEFAULT '{}'::jsonb,
   public_base_url VARCHAR(512) NOT NULL,
@@ -2636,8 +2639,9 @@ CREATE TABLE IF NOT EXISTS phis.addon_event_outbox (
   CONSTRAINT addon_event_outbox_event_check CHECK (event <> ''),
   CONSTRAINT addon_event_outbox_hop_check CHECK (hop >= 0),
   CONSTRAINT addon_event_outbox_subject_check CHECK (
-    (subject_kind = 'thread' AND thread_id IS NOT NULL AND payment_id IS NULL AND subscription_id IS NULL AND emitter IS NULL AND event NOT IN ('payment.changed', 'entitlement.changed', 'product.changed') AND event NOT LIKE '@%') OR
+    (subject_kind = 'thread' AND thread_id IS NOT NULL AND payment_id IS NULL AND subscription_id IS NULL AND emitter IS NULL AND event NOT IN ('payment.changed', 'entitlement.changed', 'product.changed', 'asset.changed') AND event NOT LIKE '@%') OR
     (subject_kind = 'entitlement' AND thread_id IS NULL AND payment_id IS NULL AND subscription_id IS NULL AND emitter IS NULL AND event = 'entitlement.changed') OR
+    (subject_kind = 'asset' AND thread_id IS NULL AND payment_id IS NULL AND subscription_id IS NULL AND emitter IS NULL AND event = 'asset.changed') OR
     (subject_kind = 'product' AND thread_id IS NULL AND payment_id IS NULL AND subscription_id IS NULL AND emitter IS NULL AND event = 'product.changed') OR
     (subject_kind = 'payment' AND thread_id IS NULL AND payment_id IS NOT NULL AND subscription_id IS NULL AND emitter IS NULL AND event = 'payment.changed') OR
     (subject_kind = 'subscription' AND thread_id IS NULL AND payment_id IS NULL AND subscription_id IS NOT NULL AND emitter IS NULL AND event = 'payment.changed') OR
@@ -2750,6 +2754,10 @@ CREATE TABLE IF NOT EXISTS phis.entitlements (
   ends_at TIMESTAMPTZ NULL,
   quantity INT NULL,
   flags INT NOT NULL DEFAULT 0,
+  -- The subscription of payments:v1 the entry follows, or NULL. A bound entry has no written end: it counts
+  -- while the subscription's latest paid period lasts and, until the subscription ends, for the Site's grace
+  -- days after it, derived on every read.
+  subscription_id UUID NULL REFERENCES phis.payment_subscriptions(id) ON DELETE RESTRICT,
   ended_event_at TIMESTAMPTZ NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -2758,7 +2766,8 @@ CREATE TABLE IF NOT EXISTS phis.entitlements (
   CONSTRAINT entitlements_source_check CHECK (source ~ '^@[a-z0-9][a-z0-9._-]*/[a-z0-9][a-z0-9._-]*$'),
   CONSTRAINT entitlements_reference_check CHECK (reference <> ''),
   CONSTRAINT entitlements_period_check CHECK (ends_at IS NULL OR ends_at > starts_at),
-  CONSTRAINT entitlements_quantity_check CHECK (quantity IS NULL OR quantity > 0)
+  CONSTRAINT entitlements_quantity_check CHECK (quantity IS NULL OR quantity > 0),
+  CONSTRAINT entitlements_end_or_subscription_check CHECK (subscription_id IS NULL OR ends_at IS NULL)
 );
 
 -- "Does this subject hold this product": every answer reads here. A product's removal and its
@@ -2767,6 +2776,11 @@ CREATE INDEX IF NOT EXISTS entitlements_subject_product_idx
   ON phis.entitlements (subject_id, product);
 CREATE INDEX IF NOT EXISTS entitlements_product_idx
   ON phis.entitlements (site_id, product);
+
+-- A subscription's change finds the entries that follow it; the expiry job finds the bound ones.
+CREATE INDEX IF NOT EXISTS entitlements_subscription_idx
+  ON phis.entitlements (subscription_id)
+  WHERE subscription_id IS NOT NULL;
 
 -- The job that owes an ending its event reads only what has an end and was not announced.
 CREATE INDEX IF NOT EXISTS entitlements_ending_idx

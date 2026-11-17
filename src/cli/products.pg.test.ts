@@ -199,6 +199,27 @@ describe.skipIf(!configured)("phis product and phis entitlement", () => {
     await expect(entitlement(["kinds"])).rejects.toThrow(/phis product list/);
   });
 
+  it("shows the subscription an entry follows, and the operator's grant takes none", async () => {
+    await make("subbed", { active: true });
+    const subscriptionId = "5f0c0000-0000-4000-8000-0000000000aa";
+    await pool.query(`INSERT INTO phis.server_addons (addon_id, package_name, package_version, server_abi, manifest_digest, release_build_id)
+      VALUES ($1, $1, '0.1.0', '^1', repeat('0', 64), 'pgtest') ON CONFLICT (addon_id) DO NOTHING`, [SHOP]);
+    await pool.query(`INSERT INTO phis.payment_profiles (site_id, key, provider_addon_id, draft) VALUES ($1, 'sub', $2, '{}'::jsonb)`, [site.id, SHOP]);
+    await pool.query(`INSERT INTO phis.payment_subscriptions (id, site_id, consumer_addon_id, profile_key, idempotency_key, request, record)
+      VALUES ($1::uuid, $2, $3, 'sub', 'k', '{}'::jsonb, $4::jsonb)`, [subscriptionId, site.id, SHOP, JSON.stringify({ id: subscriptionId, status: "active", period: null, endedAt: null })]);
+    const subject = await pool.query<{ id: number }>(`SELECT s.id FROM phis.entitlement_subjects s WHERE s.site_id = $1 AND s.user_id = $2`, [site.id, userId]);
+    await pool.query(`INSERT INTO phis.entitlements (site_id, subject_id, product, source, reference, subscription_id) VALUES ($1, $2, $3, $4, 'bound', $5::uuid)`,
+      [site.id, subject.rows[0]!.id, id("subbed"), SHOP, subscriptionId]);
+    const listed = await entitlement(["list"], { user: String(userId), product: id("subbed") });
+    expect(listed.lines[0]).toContain(`subscription ${subscriptionId}`);
+    expect(listed.lines[0]).toContain("not valid");
+    // The hand grant has no flag for it (the argument parser refuses one), and the entries it writes are not bound.
+    expect((await entitlement(["grant"], { user: String(userId), product: id("subbed"), reference: "h" })).lines[0]).not.toContain("subscription");
+    await pool.query(`DELETE FROM phis.entitlements WHERE site_id = $1`, [site.id]);
+    await pool.query(`DELETE FROM phis.payment_subscriptions WHERE site_id = $1`, [site.id]);
+    await pool.query(`DELETE FROM phis.payment_profiles WHERE site_id = $1`, [site.id]);
+  });
+
   it("registers the declared products where an Add-on is switched on, and follows its supplier", async () => {
     const supplier = "@pgtest/cli-declared";
     await enablePhiTestAddonForSite(site, supplier);

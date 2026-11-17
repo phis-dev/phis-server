@@ -17,6 +17,7 @@ import {
   findEntitlementSubject,
   grantEntitlement,
   isEntitlementSourceAllowed,
+  isSubscriptionOfAddon,
   listEntitlements,
   readEntitlementState,
   updateEntitlement,
@@ -144,12 +145,21 @@ export function buildPhisAddonEntitlementsCapability(input: {
       return row ? listEntitlements(getPool(), { siteId, subjectId: row.id, product: product ?? null }) : [];
     },
 
-    async grant({ subject, product, reference, startsAt, endsAt, quantity }) {
+    async grant({ subject, product, reference, startsAt, endsAt, subscriptionId, quantity }) {
       requireBelievableCaller("grant");
       const id = readProductId("grant", product);
       const found = await readProduct(getPool(), siteId, id);
       if (!found) throw new PhisAddonEntitlementsError(`${addonId} called entitlements.grant for product "${id}", which this Site does not have.`);
       await requireWritable("grant", id, found);
+      if (subscriptionId !== undefined) {
+        if (endsAt !== undefined && endsAt !== null) {
+          throw new PhisAddonEntitlementsError("An entry bound to a subscription has no written end; leave endsAt out.");
+        }
+        // A subscription belongs to the Add-on that created it: another's, or one this Site does not have, is refused alike.
+        if (typeof subscriptionId !== "string" || !await isSubscriptionOfAddon(getPool(), siteId, subscriptionId, addonId)) {
+          throw new PhisAddonEntitlementsError(`${addonId} called entitlements.grant with a subscription it did not create on this Site.`);
+        }
+      }
       const row = typeof subject === "string" ? await findEntitlementSubject(getPool(), siteId, subject) : null;
       if (!row) {
         throw new PhisAddonEntitlementsError(`${addonId} called entitlements.grant for a subject this Site does not have.`);
@@ -161,7 +171,7 @@ export function buildPhisAddonEntitlementsCapability(input: {
       }
       const entry = await grantEntitlement(getPool(), {
         siteId, subjectId: row.id, product: id, source: addonId, reference: readReference(reference),
-        startsAt: starts, endsAt: ends, quantity: readQuantity(quantity, found), counted: found.counted,
+        startsAt: starts, endsAt: ends, quantity: readQuantity(quantity, found), counted: found.counted, subscriptionId: subscriptionId ?? null,
         listeners: listPhisEntitlementListeners(),
       });
       if (!entry) throw new PhisAddonEntitlementsError(`${addonId} called entitlements.grant for product "${id}", which is not active; a new entry needs an active product.`);
@@ -171,6 +181,7 @@ export function buildPhisAddonEntitlementsCapability(input: {
     async update({ product, reference, endsAt, quantity, suspended }) {
       requireBelievableCaller("update");
       const id = readProductId("update", product);
+      // Whether the entry is bound is the entry's to say; the write refuses an end on a bound one.
       // An entry is changed whatever became of its product; the product is read for its quantity rule only.
       const found = await readProduct(getPool(), siteId, id);
       await requireWritable("update", id, found);

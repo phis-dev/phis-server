@@ -438,9 +438,12 @@ the runtime file is restored. Refuses when an override with a `sourceLocale` alr
 key. Then creates the configured directories that are missing, as `phis install` does; one that cannot
 be made or is wrong is a warning (JSON `directoryProblems`), and the Site stays created.
 
-### `phis site set --key <site key> [--name] [--hostname] [--public-base-url] [--support-email] [--time-zone]`
+### `phis site set --key <site key> [--name] [--hostname] [--public-base-url] [--support-email] [--time-zone] [--entitlement-grace-days]`
 
-Updates the given fields; at least one is required. Also rewrites the mail sender
+Updates the given fields; at least one is required. `--entitlement-grace-days <0-14>` is the number of whole days
+an entitlement entry bound to a subscription ([`entitlements:v1`](../SERVER_ADDONS.md#entitlementsv1)) goes on
+counting after its paid period while the subscription has not ended (default 14, 0 ends it with the period);
+`phis site list` shows it as `entitlement-grace-days`. Also rewrites the mail sender
 (`no-reply@<hostname>`), the sender name and the contact recipient from the resulting values.
 
 ### `phis site enable|disable --key <site key>`
@@ -1444,9 +1447,10 @@ phis entitlement revoke --site demo --product @acme/licenses:pro --reference sup
   allowed for that source before; the row records no granting user (the operator). `source deny` takes the
   leave back; entries the source wrote stay. `source list` shows one line per source. A supplier needs no
   row for its own `free` product.
-- `list` shows one user's entries on the Site, every source's: product, source, reference, start and end,
+- `list` shows one user's entries on the Site, every source's: product, source, reference, start and end
+  (for an entry bound to a subscription, the end of its latest paid period, and the subscription's id),
   quantity, flags and whether the entry is valid now (it is not while its product is locked or gone).
 - `grant` writes an entry with the source `@phis/server`. The user must be an active member of the Site, the
   product must exist and be `active`, `--quantity` is required exactly when the product is counted, and
-  `--ends` must be an ISO instant in the future. Granting the same `--reference` again answers the first
+  `--ends` must be an ISO instant in the future. The operator's entry is never bound to a subscription; that is a source's own. Granting the same `--reference` again answers the first
   entry and writes nothing. `revoke` revokes the `@phis/server` entry of that product and reference.

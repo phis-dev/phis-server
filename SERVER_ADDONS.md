@@ -771,7 +771,7 @@ telling.
 
 An Add-on declares `eventHandlers: [{ id, event, handler }]`, where `event` is one of Core's own,
 `thread.message.created`, `thread.message.updated`, `thread.status.changed`, `thread.link.removed`,
-`payment.changed`, `entitlement.changed`, `product.changed`, or an event an Add-on emits, named `@scope/name:what.happened`, and `handler` names
+`payment.changed`, `entitlement.changed`, `product.changed`, `asset.changed`, or an event an Add-on emits, named `@scope/name:what.happened`, and `handler` names
 an entry in `eventHandlers` on the runtime. One handler per event: two would need an order Core does not
 define, and an Add-on wanting two things to happen can do both in one function where the order is
 visible.
@@ -833,6 +833,13 @@ actor and system authority: Core is telling the Add-on about a thread it is alre
 **Entitlement events:** `entitlement.changed` carries a `kind: "entitlement"` subject with the subject
 reference and the product id, and no state. It is routed to every enabled Add-on of the Site that
 declares a handler for it; see [`entitlements:v1`](#entitlementsv1).
+
+**Asset events:** `asset.changed` carries a `kind: "asset"` subject `{ table, ownerId, slot }` (`ownerId` as a
+string) and no state: the handler reads the slot through [`assets:v1`](#assetsv1). Like the Payment event it is
+owner-directed and not broadcast: it reaches only the Add-on whose schema declares the slot, and only when
+that Add-on declares a handler for it; without one no outbox row is written. It runs as any event handler
+does -- with system authority and no actor, as a verified caller, never as an unverified hook -- so the handler
+may use `assets:v1` (reads) and `products:v1` (register its own products) like a `payment.changed` handler.
 
 **Product events:** `product.changed` carries a `kind: "product"` subject with the product id, and no
 state. It is routed like the entitlement event; see [`products:v1`](#productsv1).
@@ -1268,6 +1275,16 @@ remove(table, id)                   -> takes a file out of its slot, and the fil
 usage()                             -> what the Space holds, reserves, and is allowed
 ```
 
+**The event.** When a file has finally arrived in a slot (`finalize`) or has been removed from it (`remove`),
+Core owes the owning Add-on `asset.changed` with the subject `{ kind: "asset", table, ownerId, slot }` (see
+[Events](#events)), written in the same transaction as the link, so a change that rolls back announces
+nothing. Replacing the file of a `one` slot is one event, not a removal and an arrival. Both ways a file
+reaches a slot go through the same two functions (`linkPhisAddonAsset` and `unlinkPhisAddonAsset`): the Add-on's
+own `finalize` and `remove`. A Site's upload widget only delivers the bytes to the staged reservation (Core's
+upload route); the Media `finalize` route does not finish an Add-on reservation, so the Add-on's `finalize` is
+the one place a file becomes part of a slot. A row's files that go with the row when the Add-on deletes it are
+not announced.
+
 **This is not a second upload lifecycle.** Core reserves, receives, measures and hashes without knowing
 who asked; the purpose stated at `begin` is read back at the last step, where the finished object becomes
 a Media Asset and a link row. The reservation is an ordinary Media upload session, delivered to the
@@ -1587,8 +1604,13 @@ entitlement entry ever named and that is no other product's part; otherwise it a
 writes the calling Add-on's own entry of `attributes`, whole, `null` takes it away; an entry is a JSON
 object of at most 8 KiB serialized, and it is display and filtering data, never authority.
 
-**An unverified hook reaches nothing**, reads included: every call from a hook that declares no way to
-believe its caller throws, as with `entitlements:v1`.
+**An unverified hook reads the catalogue and nothing else.** A hook that declares no way to believe its
+caller -- a public read point, nobody signed in -- may `list` and `get`, and it sees only `active`
+products: `list` answers `active` whatever `states` or `ids` ask for (and ignores `released`), `get` answers
+`null` for a product that is not active, and `pendingTerms` is `null` in both. `attributes` are part of a
+product and are public with it. `register`, `setState`, `remove` and `annotate` throw. The reason is that a
+catalogue is public, while what is not yet or no longer in it (drafts, withdrawn and locked products,
+terms awaiting release) is not. `entitlements:v1` stays closed to it entirely.
 
 **Manifest products.** An Add-on declares the products its package carries under
 `products: [{ key, type, title, summary, counted?, sale?, referralUrl?, free?, accountRequired?, parts? }]` (a publisher and
@@ -1630,13 +1652,28 @@ supplier.
 - **Source.** The Add-on that wrote an entry, or `@phis/server` for an entry the operator wrote by hand
   with `phis entitlement grant` and `phis entitlement revoke` ([CLI.md](docs/CLI.md#entitlements)).
 - **Entry.** One source's statement: subject, product, source, the source's own reference, start, end or
-  none, quantity or none, and the flags `Revoked` (1) and `Suspended` (2).
+  none, the subscription it follows or none, quantity or none, and the flags `Revoked` (1) and `Suspended` (2).
 - **Entitled.** At least one entry of the subject and product is valid: neither flag set, started, not
   ended, judged by the database's clock, and its product exists and is not `locked`. Nothing is stored
   for that, so an entry that ends needs no write to stop counting. Whether quantities add up is the
   product's `counted`: then `quantity` is the sum over the valid entries; Core counts no use. `until` is
   the latest end among the valid entries, null when one has none or nobody is entitled. An entry whose
   product does not exist (any more) is kept and does not count.
+- **Bound to a subscription.** `grant({ subscriptionId })` binds the entry to a subscription of
+  [`payments:v1`](./PAYMENTS.md): it has either a subscription or a written `endsAt`, never both. The
+  subscription has to be one the calling Add-on created on this Site (a subscription belongs to its consumer;
+  another's, or an unknown one, is refused alike), and `endsAt` is left out. The entry's validity is derived on
+  every read from the subscription's record, never written: without a paid period (status `pending`, `period`
+  null) it counts for nothing; otherwise it counts until the end of the latest paid period and -- as long as
+  the subscription has not ended (no `endedAt`, status not `canceled`) -- for the Site's grace time after it;
+  an ended subscription counts to the paid period's end and no longer. A renewal therefore needs no call, a late
+  payment does not switch anything off at once, and a period that stays unpaid ends the entitlement by itself.
+  The entry's `endsAt` in an answer is the end of the latest paid period, without the grace, and `state.until`
+  follows it. `update` refuses to set `endsAt` on a bound entry (`suspended` and `quantity` stay possible).
+  Revoked, suspended and a locked product act as for any entry. The grace time is a Site setting of Core,
+  `phis.sites.entitlement_grace_days`, whole days from 0 to 14, default 14, set with `phis site set
+  --entitlement-grace-days`; 0 ends the entitlement with the period. A seller that runs its own
+  subscriptions writes `endsAt` instead, and its grace is its own.
 
 The capability: `subject`, `check`, `list`, `grant`, `update`, `revoke`.
 
@@ -1667,11 +1704,15 @@ one ends. The subject is typed, `{ kind: "entitlement", subject, product }`, and
 state; the handler reads the current answer through the capability. It goes to every enabled,
 configured Add-on of the Site that declares a handler for it; delivery is the existing outbox, at least
 once. An ending is the one change nobody writes: the Core job `entitlements.expire`, every five minutes,
-marks each ended entry once and enqueues one event per subject and product. A product that is locked or
+marks each ended entry once and enqueues one event per subject and product. For a bound entry the job
+announces the expiry -- the period's end plus the grace, or the period's end for an ended subscription --
+once per expiry (a renewal that later runs out is owed again), and payments' own writes announce the two other
+changes: when a paid period is booked and when the subscription ends. Those two ride on the one place where
+payments writes a subscription (`writePhisPaymentSubscription`) and change nothing of what payments does. A product that is locked or
 unlocked changes the answer without an entry changing; that is announced as `product.changed`.
 
 **Not in it.** Signing a desktop app in, licence keys, devices and seats, reconciling store purchases,
-using a quantity up, an access policy in `@phis/ui`, the binding of an entry to a subscription, delivery
+using a quantity up, an access policy in `@phis/ui`, delivery
 state and the resolving of bundles are not part of this service; see
 [design/ENTITLEMENTS.md](./design/ENTITLEMENTS.md) sections 7 and 9 and
 [design/COMMERCE_COORDINATION.md](./design/COMMERCE_COORDINATION.md) section 5.

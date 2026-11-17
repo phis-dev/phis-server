@@ -181,6 +181,7 @@ The target PostgreSQL schema for `phis` is:
 - `hostname VARCHAR(255) NOT NULL UNIQUE`
 - `default_locale VARCHAR(8) NOT NULL DEFAULT 'en'`
 - `available_locales VARCHAR(8)[] NOT NULL DEFAULT ARRAY['en']::VARCHAR(8)[]`
+- `entitlement_grace_days SMALLINT NOT NULL DEFAULT 14` (`CHECK BETWEEN 0 AND 14`) -- whole days an entitlement entry bound to a subscription goes on counting after its paid period while the subscription has not ended (`phis site set --entitlement-grace-days`; existing databases received `ALTER TABLE phis.sites ADD COLUMN IF NOT EXISTS entitlement_grace_days SMALLINT NOT NULL DEFAULT 14 CHECK (entitlement_grace_days BETWEEN 0 AND 14)` by hand).
 - `time_zone VARCHAR(64) NOT NULL DEFAULT 'UTC'` -- the IANA zone the Site's dates and times are shown in, server render and browser alike (`phis site set --time-zone`). Added 2026-11-09; existing databases received `ALTER TABLE phis.sites ADD COLUMN IF NOT EXISTS time_zone VARCHAR(64) NOT NULL DEFAULT 'UTC'` by hand.
 - `flags INT NOT NULL DEFAULT 0`
 - `theme JSONB NOT NULL DEFAULT '{}'::jsonb`
@@ -1608,6 +1609,7 @@ Contract:
 - `ends_at TIMESTAMPTZ NULL`
 - `quantity INT NULL`
 - `flags INT NOT NULL DEFAULT 0`
+- `subscription_id UUID NULL REFERENCES phis.payment_subscriptions(id) ON DELETE RESTRICT`
 - `ended_event_at TIMESTAMPTZ NULL`
 - `created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
 - `updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
@@ -1615,6 +1617,8 @@ Contract:
 - `CHECK (product ~ '^@[a-z0-9][a-z0-9._-]*/[a-z0-9][a-z0-9._-]*:[a-z][a-z0-9.-]*$')`
 - `CHECK (source ~ '^@[a-z0-9][a-z0-9._-]*/[a-z0-9][a-z0-9._-]*$')`
 - `CHECK (reference <> '')`, `CHECK (ends_at IS NULL OR ends_at > starts_at)`, `CHECK (quantity IS NULL OR quantity > 0)`
+- `CHECK (subscription_id IS NULL OR ends_at IS NULL)` (`entitlements_end_or_subscription_check`): a subscription or a written end, never both
+- index `entitlements_subscription_idx` on `(subscription_id) WHERE subscription_id IS NOT NULL`
 - index `entitlements_subject_product_idx` on `(subject_id, product)`, index `entitlements_product_idx` on `(site_id, product)`
 - partial index `entitlements_ending_idx` on `(ends_at) WHERE ends_at IS NOT NULL AND ended_event_at IS NULL`
 
@@ -1624,10 +1628,11 @@ Contract:
 - `product` is a product id (`phis.products`) and no foreign key: an entry whose product does not exist (any more) is kept and does not count.
 - `flags` are `PhisEntitlementFlag`: `1 = Revoked`, `2 = Suspended`.
 - There is no status column. An entry is valid while `flags & 3 = 0 AND starts_at <= NOW() AND (ends_at IS NULL OR ends_at > NOW())` and its product exists and is not `locked`, judged by the database's clock on every read, so an entry that ends needs no write to stop counting. The product row is found by splitting `product` at its last colon into `supplier_addon_id` and `key`.
+- `subscription_id` binds the entry to a subscription of `payments:v1` (`payment_subscriptions`, whose `consumer_addon_id` is the entry's `source`; checked when the entry is written). A bound entry has no written `ends_at`; its validity is derived on every read from the subscription's `record`: no `record->'period'` (nothing paid yet) counts for nothing, otherwise it counts until `record->'period'->>'endsAt'` plus `sites.entitlement_grace_days` days, or plus 0 once the subscription has ended (`record->>'status' = 'canceled'` or `record->>'endedAt'` set). The `endsAt` shown is the period's end without the grace.
 - `quantity` is set exactly where the product is `counted`; the answer for a counted product is the sum over the valid entries. Core counts no use.
 - A new row is written only for a product that exists and is `active`, under a share lock on the product row (so `products.remove` and a state move cannot slip in between).
 - A revoked entry is over: an update does not change it.
-- `ended_event_at` records that the entry's ending was announced as `entitlement.changed`. Core's job `entitlements.expire` sets it for each ended, unrevoked entry once and enqueues one event per subject and product in the same transaction. Moving `ends_at` clears it, so the new ending is announced again.
+- `ended_event_at` records that the entry's ending was announced as `entitlement.changed`. Core's job `entitlements.expire` sets it for each ended, unrevoked entry once and enqueues one event per subject and product in the same transaction. Moving `ends_at` clears it, so the new ending is announced again. For a bound entry the job announces when the instant it counts until has passed and `ended_event_at` is NULL or older than that instant, so a renewal that later runs out is announced again.
 
 ### `phis.entitlement_sources`
 
@@ -2399,7 +2404,7 @@ COMMIT;
 - `addon_id VARCHAR(255) NOT NULL REFERENCES phis.server_addons(addon_id) ON DELETE CASCADE`
 - `event VARCHAR(120) NOT NULL` (CHECK `<> ''`)
 - `thread_id INT NULL REFERENCES phis.threads(id) ON DELETE CASCADE`
-- `subject_kind VARCHAR(16) NOT NULL DEFAULT 'thread'` (`thread`, `payment`, `subscription`, `emitted`, `entitlement` or `product`)
+- `subject_kind VARCHAR(16) NOT NULL DEFAULT 'thread'` (`thread`, `payment`, `subscription`, `emitted`, `entitlement`, `product` or `asset`)
 - `payment_id UUID NULL REFERENCES phis.payments(id) ON DELETE RESTRICT`
 - `payload JSONB NOT NULL DEFAULT '{}'::jsonb`
 - `emitter VARCHAR(255) NULL REFERENCES phis.server_addons(addon_id) ON DELETE CASCADE`
@@ -2413,16 +2418,21 @@ COMMIT;
 - partial unique index `addon_event_outbox_dedupe_unique` on `(site_id, addon_id, event, dedupe_key)
   WHERE dedupe_key IS NOT NULL`
 - `addon_event_outbox_subject_check`: a thread subject has exactly `thread_id`, a bare thread event and
-  no emitter and is none of `payment.changed`, `entitlement.changed` and `product.changed`; a payment subject has exactly `payment_id`, `payment.changed` and no emitter; an emitted
+  no emitter and is none of `payment.changed`, `entitlement.changed`, `product.changed` and `asset.changed`; a payment subject has exactly `payment_id`, `payment.changed` and no emitter; an emitted
   subject has an `emitter`, an event of the shape `@scope/name:event`, and neither thread nor payment;
   an entitlement subject has no thread, payment, subscription or emitter, the event `entitlement.changed`, and
   `payload = { subject, product }`; a product subject has the same absences, the event `product.changed`, and
-  `payload = { productId }`.
+  `payload = { productId }`; an asset subject has the same absences, the event `asset.changed`, and
+  `payload = { table, ownerId, slot }`.
 
 Entitlement events (SERVER_ADDONS.md, `entitlements:v1`): Core writes one row per Add-on of the Site that is
 requested-enabled, `ready` and declares an `entitlement.changed` handler, with `subject_kind = 'entitlement'`
 and `payload = { subject, product }`, in the transaction of the change or of the `entitlements.expire`
 job. The same ordered drain delivers it.
+
+Asset events (SERVER_ADDONS.md, `assets:v1`): one row for the Add-on that owns the slot -- and for nobody else --
+when it is requested-enabled, `ready` and declares an `asset.changed` handler, with `subject_kind = 'asset'` and
+`payload = { table, ownerId, slot }`, in the transaction that links or unlinks the file.
 
 Product events (SERVER_ADDONS.md, `products:v1`): the same listeners, with `subject_kind = 'product'` and
 `payload = { productId }`, in the transaction of the change -- a registration, a change, a release, a move,

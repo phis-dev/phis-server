@@ -1,4 +1,5 @@
 import "server-only";
+import { listPhisEntitlementListeners } from "@/lib/addons/entitlements-capability";
 import type { PhisAddonManifestV1 } from "@phis/contracts/addon";
 import type { PhisPaymentNotificationsCapabilityV1 } from "@phis/contracts/payments";
 import { getPool } from "../db";
@@ -56,7 +57,7 @@ export function buildPhisPaymentsCapability(input: {
   const { scope, manifest, authority } = input;
   const roles = buildPhisAddonRolesCapability({ addonId: scope.consumerAddonId, siteId: scope.siteId,
     actorUserId: authority.kind === "request" ? authority.actorUserId : null, declared: manifest.roles ?? [] });
-  const engine = new PhisPaymentEngine({ providerFailed: logPhisPaymentProviderFailure,
+  const engine = new PhisPaymentEngine({ providerFailed: logPhisPaymentProviderFailure, entitlementListeners: listPhisEntitlementListeners,
     pool: getPool(), scope, signal: input.signal,
     publicBaseUrl: async () => { const site = await getSiteByKey(scope.siteKey); if (!site) throw new PhisPaymentError("not_found"); return site.publicBaseUrl; },
     resolveProvider: profile => provider(profile, scope.siteKey),
@@ -106,7 +107,7 @@ export async function runDuePhisPaymentSubscriptions(limit = 50, signal: AbortSi
     if (signal.aborted) break;
     const scope = { siteId: subscription.siteId, siteKey: subscription.siteKey, consumerAddonId: subscription.consumerAddonId };
     try {
-      const engine = new PhisPaymentEngine({ providerFailed: logPhisPaymentProviderFailure, pool, scope, signal,
+      const engine = new PhisPaymentEngine({ providerFailed: logPhisPaymentProviderFailure, entitlementListeners: listPhisEntitlementListeners, pool, scope, signal,
         publicBaseUrl: async () => { const site = await getSiteByKey(scope.siteKey); if (!site) throw new PhisPaymentError("not_found"); return site.publicBaseUrl; },
         resolveProvider: profile => provider(profile, scope.siteKey), merchantAuthorized: async () => false });
       const outcome = await engine.advanceSubscription(subscription.record.id);
@@ -173,7 +174,7 @@ export function buildPhisPaymentNotificationsCapability(input: {
         const methods = await findPhisPaymentStoredMethodsForNotification(getPool(), profile.siteId, profileKey, verified.reference);
         if (methods.length === 0) return { outcome: "ignored" as const };
         for (const method of methods) {
-          const engine = new PhisPaymentEngine({ providerFailed: logPhisPaymentProviderFailure, pool: getPool(), scope: { ...input.scope, consumerAddonId: method.consumerAddonId }, signal: input.signal,
+          const engine = new PhisPaymentEngine({ providerFailed: logPhisPaymentProviderFailure, entitlementListeners: listPhisEntitlementListeners, pool: getPool(), scope: { ...input.scope, consumerAddonId: method.consumerAddonId }, signal: input.signal,
             publicBaseUrl: async () => { throw new PhisPaymentError("forbidden"); }, resolveProvider: async () => adapter!, merchantAuthorized: async () => false });
           await engine.reconcileStoredMethod(method, profile);
         }
@@ -192,7 +193,7 @@ export function buildPhisPaymentNotificationsCapability(input: {
         if (claim === "busy") throw new PhisPaymentError("provider_unavailable");
         receipt = claim;
       }
-      const engine = new PhisPaymentEngine({ providerFailed: logPhisPaymentProviderFailure, pool: getPool(), scope: { ...input.scope, consumerAddonId: payment.consumerAddonId }, signal: input.signal,
+      const engine = new PhisPaymentEngine({ providerFailed: logPhisPaymentProviderFailure, entitlementListeners: listPhisEntitlementListeners, pool: getPool(), scope: { ...input.scope, consumerAddonId: payment.consumerAddonId }, signal: input.signal,
         publicBaseUrl: async () => { throw new PhisPaymentError("forbidden"); }, resolveProvider: async () => adapter!, merchantAuthorized: async () => false });
       try { await engine.reconcile(payment, profile, receipt); }
       catch (error) { if (receipt) await releasePhisPaymentReceipt(getPool(), profile.siteId, receipt).catch(() => {}); throw error; }

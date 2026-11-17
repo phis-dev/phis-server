@@ -14,6 +14,7 @@ const state = vi.hoisted(() => ({
   list: vi.fn(async () => []),
   readState: vi.fn(async (input: Record<string, unknown>) => ({ product: input.product, entitled: input.subjectId !== null, quantity: null, until: null })),
   allowed: vi.fn(async () => false),
+  ownSubscription: vi.fn(async () => true),
   product: vi.fn(async (): Promise<Held | null> => null),
 }));
 vi.mock("./installed.ts", () => ({ getPhisAddonInstalledManifest: () => state.installed }));
@@ -26,6 +27,7 @@ vi.mock("@/db/entitlements.mts", () => ({
   updateEntitlement: (_pool: unknown, input: Record<string, unknown>) => state.update(input),
   listEntitlements: (_pool: unknown, ...args: unknown[]) => state.list(...(args as [])),
   readEntitlementState: (_pool: unknown, input: Record<string, unknown>) => state.readState(input),
+  isSubscriptionOfAddon: (_pool: unknown, ...args: unknown[]) => (state.ownSubscription as (...a: unknown[]) => Promise<boolean>)(...args),
   isEntitlementSourceAllowed: (_pool: unknown, ...args: unknown[]) => (state.allowed as (...a: unknown[]) => Promise<boolean>)(...args),
 }));
 vi.mock("@/db/products.mts", () => ({ readProduct: (_pool: unknown, ...args: unknown[]) => (state.product as (...a: unknown[]) => Promise<Held | null>)(...args) }));
@@ -54,6 +56,7 @@ describe("entitlements capability", () => {
       "@acme/showcase": { enabled: true, manifest: { eventHandlers: [{ event: "product.changed" }] } },
     };
     state.allowed.mockResolvedValue(false);
+    state.ownSubscription.mockResolvedValue(true);
     state.findSubject.mockResolvedValue({ id: 5, userId: 9 });
     state.product.mockImplementation(async (...args: unknown[]) => heldProducts[args[1] as string] ?? null);
   });
@@ -142,6 +145,25 @@ describe("entitlements capability", () => {
       state.product.mockResolvedValueOnce({ id: "@acme/licenses:bundle", counted: false, free: false, state: "active", parts: [LICENSE, SEATS] } as never);
       await capability().grant({ subject: "sub_x", product: "@acme/licenses:bundle", reference: "o1" });
       expect(state.grant).toHaveBeenCalledTimes(1);
+    });
+
+    it("binds an entry to the caller's own subscription and passes no end", async () => {
+      state.allowed.mockResolvedValue(true);
+      await capability().grant({ subject: "sub_x", product: LICENSE, reference: "o1", subscriptionId: "5f0c0000-0000-4000-8000-000000000001" });
+      expect(state.ownSubscription).toHaveBeenCalledWith(7, "5f0c0000-0000-4000-8000-000000000001", SHOP);
+      expect(state.grant).toHaveBeenCalledWith(expect.objectContaining({ subscriptionId: "5f0c0000-0000-4000-8000-000000000001", endsAt: null }));
+      // Without a subscription nothing is bound.
+      await capability().grant({ subject: "sub_x", product: LICENSE, reference: "o2" });
+      expect(state.grant).toHaveBeenLastCalledWith(expect.objectContaining({ subscriptionId: null }));
+    });
+
+    it("refuses a bound entry that also states an end, and a subscription the caller did not create", async () => {
+      state.allowed.mockResolvedValue(true);
+      await expect(capability().grant({ subject: "sub_x", product: LICENSE, reference: "o1", subscriptionId: "s1", endsAt: "2030-01-01T00:00:00Z" })).rejects.toThrow(/no written end/);
+      state.ownSubscription.mockResolvedValue(false);
+      await expect(capability().grant({ subject: "sub_x", product: LICENSE, reference: "o1", subscriptionId: "s1" })).rejects.toThrow(/did not create/);
+      await expect(capability().grant({ subject: "sub_x", product: LICENSE, reference: "o1", subscriptionId: 5 as never })).rejects.toThrow(/did not create/);
+      expect(state.grant).not.toHaveBeenCalled();
     });
 
     it("refuses an end that is not after the start", async () => {

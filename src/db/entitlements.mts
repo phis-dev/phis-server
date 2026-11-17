@@ -36,10 +36,24 @@ type DbQueryable = Pick<PoolClient, "query">;
 
 /** An entry counts while neither flag is set, it has started, and it has not ended. */
 const BLOCKING_FLAGS = PhisEntitlementFlag.Revoked | PhisEntitlementFlag.Suspended;
-const VALID_SQL = `((e.flags & ${BLOCKING_FLAGS}) = 0 AND e.starts_at <= NOW() AND (e.ends_at IS NULL OR e.ends_at > NOW())
+/**
+ * What an entry bound to a subscription follows, read from the subscription's record on every use.
+ * `period` is the latest paid period, null until the first payment: such an entry counts for nothing.
+ * It counts until that period's end, and -- while the subscription has not ended -- for the Site's grace
+ * days after it. The end the entry shows is the period's, without the grace.
+ */
+const PAID_END_SQL = `(SELECT (sx.record->'period'->>'endsAt')::timestamptz FROM phis.payment_subscriptions sx WHERE sx.id = e.subscription_id)`;
+const COUNTS_UNTIL_SQL = `(SELECT (sx.record->'period'->>'endsAt')::timestamptz
+  + CASE WHEN sx.record->>'status' = 'canceled' OR sx.record->>'endedAt' IS NOT NULL THEN 0
+         ELSE (SELECT g.entitlement_grace_days FROM phis.sites g WHERE g.id = e.site_id) END * INTERVAL '1 day'
+  FROM phis.payment_subscriptions sx WHERE sx.id = e.subscription_id)`;
+const SHOWN_END_SQL = `COALESCE(e.ends_at, ${PAID_END_SQL})`;
+
+const VALID_SQL = `((e.flags & ${BLOCKING_FLAGS}) = 0 AND e.starts_at <= NOW()
+  AND (CASE WHEN e.subscription_id IS NULL THEN (e.ends_at IS NULL OR e.ends_at > NOW()) ELSE COALESCE(${COUNTS_UNTIL_SQL} > NOW(), FALSE) END)
   AND EXISTS (SELECT 1 FROM phis.products vp WHERE ${ENTRY_PRODUCT_JOIN_SQL("e", "vp")} AND vp.state <> 'locked'))`;
 
-const ENTRY_COLUMNS = `e.id, e.product, s.reference AS subject, e.source, e.reference, e.starts_at, e.ends_at,
+const ENTRY_COLUMNS = `e.id, e.product, s.reference AS subject, e.source, e.reference, e.starts_at, ${SHOWN_END_SQL} AS ends_at, e.subscription_id::text AS subscription_id,
   e.quantity, e.flags, ${VALID_SQL} AS valid, e.created_at, e.updated_at`;
 
 type EntryRow = {
@@ -50,6 +64,7 @@ type EntryRow = {
   reference: string;
   starts_at: Date;
   ends_at: Date | null;
+  subscription_id: string | null;
   quantity: number | null;
   flags: number;
   valid: boolean;
@@ -66,6 +81,7 @@ function mapEntry(row: EntryRow): PhisEntitlement {
     reference: row.reference,
     startsAt: row.starts_at.toISOString(),
     endsAt: row.ends_at ? row.ends_at.toISOString() : null,
+    subscriptionId: row.subscription_id,
     quantity: row.quantity,
     flags: row.flags,
     valid: row.valid,
@@ -148,7 +164,7 @@ export async function readEntitlementState(pool: Pool, input: {
   }
   const { rows } = await pool.query<{ entries: string; quantity: string | null; open_ended: boolean; until: Date | null; counted: boolean }>(
     `SELECT COUNT(*) AS entries, SUM(e.quantity) AS quantity,
-            COALESCE(BOOL_OR(e.ends_at IS NULL), FALSE) AS open_ended, MAX(e.ends_at) AS until,
+            COALESCE(BOOL_OR(e.ends_at IS NULL AND e.subscription_id IS NULL), FALSE) AS open_ended, MAX(${SHOWN_END_SQL}) AS until,
             COALESCE(BOOL_OR((p.flags & ${PHIS_PRODUCT_FLAG.Counted}) <> 0), FALSE) AS counted
      FROM phis.entitlements e
      JOIN phis.products p ON ${ENTRY_PRODUCT_JOIN_SQL("e", "p")}
@@ -220,6 +236,8 @@ export async function grantEntitlement(pool: Pool, input: {
   endsAt: string | null;
   quantity: number | null;
   counted: boolean;
+  /** A subscription of this source, which has no written end. The caller has checked it is the source's own. */
+  subscriptionId?: string | null;
   listeners: readonly string[];
 }): Promise<PhisEntitlement | null> {
   return withPoolTransaction(pool, async (client) => {
@@ -240,11 +258,11 @@ export async function grantEntitlement(pool: Pool, input: {
       throw new Error(`${input.product} changed whether it counts while the entry was written; ask again.`);
     }
     const inserted = await client.query<{ id: number }>(
-      `INSERT INTO phis.entitlements (site_id, subject_id, product, source, reference, starts_at, ends_at, quantity)
-       VALUES ($1::smallint, $2::int, $3, $4, $5, COALESCE($6::timestamptz, NOW()), $7::timestamptz, $8::int)
+      `INSERT INTO phis.entitlements (site_id, subject_id, product, source, reference, starts_at, ends_at, quantity, subscription_id)
+       VALUES ($1::smallint, $2::int, $3, $4, $5, COALESCE($6::timestamptz, NOW()), $7::timestamptz, $8::int, $9::uuid)
        ON CONFLICT (site_id, source, product, reference) DO NOTHING
        RETURNING id`,
-      [input.siteId, input.subjectId, input.product, input.source, input.reference, input.startsAt, input.endsAt, input.quantity],
+      [input.siteId, input.subjectId, input.product, input.source, input.reference, input.startsAt, input.endsAt, input.quantity, input.subscriptionId ?? null],
     );
     if (inserted.rows[0]) {
       const entry = await readEntry(client, inserted.rows[0].id);
@@ -274,6 +292,13 @@ export async function updateEntitlement(pool: Pool, input: {
   listeners: readonly string[];
 }): Promise<PhisEntitlement | null> {
   return withPoolTransaction(pool, async (client) => {
+    if (input.endsAt !== undefined) {
+      const { rowCount } = await client.query(
+        `SELECT 1 FROM phis.entitlements WHERE site_id = $1 AND source = $2 AND product = $3 AND reference = $4 AND subscription_id IS NOT NULL`,
+        [input.siteId, input.source, input.product, input.reference],
+      );
+      if ((rowCount ?? 0) > 0) throw new Error("An entry bound to a subscription has no written end; its subscription decides.");
+    }
     const updated = await client.query<{ id: number }>(
       `UPDATE phis.entitlements e
        SET ends_at = CASE WHEN $5::boolean THEN $6::timestamptz ELSE e.ends_at END,
@@ -384,14 +409,23 @@ export async function disallowEntitlementSource(pool: Pool, input: { siteId: num
  */
 export async function announceEndedEntitlements(pool: Pool, listeners: readonly string[]): Promise<number[]> {
   return withPoolTransaction(pool, async (client) => {
+    /*
+     * A written end is announced once and a moved one again (`ended_event_at` is cleared with it). A bound
+     * entry's end moves by itself when the subscription is renewed, so it is announced when its
+     * `ended_event_at` is older than the instant it counts until: after a renewal the next expiry is later
+     * than the last announcement and is owed again, and one announcement serves one expiry.
+     */
     const { rows } = await client.query<{ site_id: number; subject: string; product: string }>(
       `UPDATE phis.entitlements e
        SET ended_event_at = NOW()
        FROM phis.entitlement_subjects s
        WHERE s.id = e.subject_id
-         AND e.ends_at IS NOT NULL AND e.ends_at <= NOW()
-         AND e.ended_event_at IS NULL
          AND (e.flags & ${PhisEntitlementFlag.Revoked}) = 0
+         AND (
+           (e.subscription_id IS NULL AND e.ends_at IS NOT NULL AND e.ends_at <= NOW() AND e.ended_event_at IS NULL)
+           OR (e.subscription_id IS NOT NULL AND ${COUNTS_UNTIL_SQL} <= NOW()
+               AND (e.ended_event_at IS NULL OR e.ended_event_at < ${COUNTS_UNTIL_SQL}))
+         )
        RETURNING e.site_id, s.reference AS subject, e.product`,
     );
     const said = new Set<string>();
@@ -404,4 +438,36 @@ export async function announceEndedEntitlements(pool: Pool, listeners: readonly 
     }
     return [...new Set(rows.map((row) => row.site_id))];
   });
+}
+
+/** Whether the subscription exists on the Site and was created by this Add-on: a subscription belongs to its consumer. */
+export async function isSubscriptionOfAddon(db: DbQueryable, siteId: number, subscriptionId: string, addonId: string) {
+  const { rowCount } = await db.query(
+    `SELECT 1 FROM phis.payment_subscriptions WHERE site_id = $1 AND id::text = $2 AND consumer_addon_id = $3`,
+    [siteId, subscriptionId, addonId],
+  );
+  return (rowCount ?? 0) > 0;
+}
+
+/**
+ * Owes `entitlement.changed`, once per subject and product, for the unrevoked entries that follow a
+ * subscription. Called inside the transaction in which payments changes the subscription; `listeners` is
+ * read only when there is something to announce.
+ */
+export async function announceSubscriptionEntitlements(db: DbQueryable, input: {
+  siteId: number;
+  subscriptionId: string;
+  listeners: () => readonly string[];
+}) {
+  const { rows } = await db.query<{ subject: string; product: string }>(
+    `SELECT DISTINCT s.reference AS subject, e.product
+     FROM phis.entitlements e JOIN phis.entitlement_subjects s ON s.id = e.subject_id
+     WHERE e.subscription_id::text = $1 AND (e.flags & ${PhisEntitlementFlag.Revoked}) = 0`,
+    [input.subscriptionId],
+  );
+  if (rows.length === 0) return;
+  const recipients = input.listeners();
+  for (const row of rows) {
+    await enqueueEntitlementChanged(db, { siteId: input.siteId, recipients, subject: row.subject, product: row.product });
+  }
 }

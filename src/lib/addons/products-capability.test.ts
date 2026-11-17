@@ -48,15 +48,48 @@ describe("products capability", () => {
     expect(listPhisProductListeners()).toEqual(["@acme/shop"]);
   });
 
-  it("refuses an unverified hook on every call, reads included", async () => {
+  it("refuses an unverified hook every write", async () => {
     const hook = capability({ unauthenticated: true });
-    await expect(hook.list()).rejects.toThrow(/unverified hook/);
-    await expect(hook.get({ id: "@acme/licenses:pro" })).rejects.toThrow(/unverified hook/);
     await expect(hook.register({ key: "pro", type: "a", title: "t", summary: "" })).rejects.toThrow(/unverified hook/);
     await expect(hook.setState({ key: "pro", state: "active" })).rejects.toThrow(/unverified hook/);
     await expect(hook.remove({ key: "pro" })).rejects.toThrow(/unverified hook/);
     await expect(hook.annotate({ id: "@acme/licenses:pro", data: {} })).rejects.toThrow(/unverified hook/);
-    for (const call of [state.list, state.read, state.register, state.setState, state.remove, state.annotate]) expect(call).not.toHaveBeenCalled();
+    for (const call of [state.register, state.setState, state.remove, state.annotate]) expect(call).not.toHaveBeenCalled();
+    expect(state.deliver).not.toHaveBeenCalled();
+  });
+
+  describe("an unverified hook reading the catalogue", () => {
+    const hook = () => capability({ unauthenticated: true });
+    const stored = (stateName: string) => ({ id: "p", state: stateName, imageAssetId: null, imageRevision: null, pendingTerms: { sale: "own" }, attributes: { "@a/b": { mark: 1 } } });
+
+    it("gets an active product without its pending terms, with its attributes, and nothing else", async () => {
+      state.read.mockResolvedValueOnce(stored("active"));
+      expect(await hook().get({ id: "@acme/licenses:pro" })).toMatchObject({ id: "p", state: "active", pendingTerms: null, attributes: { "@a/b": { mark: 1 } } });
+      for (const other of ["draft", "withdrawn", "locked"]) {
+        state.read.mockResolvedValueOnce(stored(other));
+        expect(await hook().get({ id: "@acme/licenses:pro" }), other).toBeNull();
+      }
+      state.read.mockResolvedValueOnce(null);
+      expect(await hook().get({ id: "@acme/licenses:pro" })).toBeNull();
+    });
+
+    it("lists active products only, whatever states, ids or released ask for", async () => {
+      state.list.mockResolvedValueOnce({ products: [stored("active")], nextCursor: null });
+      const page = await hook().list({ states: ["draft", "locked"], ids: ["@acme/licenses:a"], released: false, limit: 7 });
+      expect(state.list).toHaveBeenLastCalledWith(expect.objectContaining({ states: ["active"], ids: ["@acme/licenses:a"], released: undefined, limit: 7 }));
+      expect(page.products[0]).toMatchObject({ state: "active", pendingTerms: null });
+      await hook().list();
+      expect(state.list).toHaveBeenLastCalledWith(expect.objectContaining({ states: ["active"] }));
+      // The limits of the contract hold for it as well.
+      await expect(hook().list({ limit: 201 })).rejects.toThrow(/limit/);
+    });
+
+    it("sees a verified caller's pending terms in no case of its own", async () => {
+      state.list.mockResolvedValueOnce({ products: [stored("withdrawn")], nextCursor: null });
+      expect((await capability().list({ states: ["withdrawn"] })).products[0]).toMatchObject({ state: "withdrawn", pendingTerms: { sale: "own" } });
+      state.read.mockResolvedValueOnce(stored("draft"));
+      expect(await capability().get({ id: "@acme/licenses:pro" })).toMatchObject({ state: "draft", pendingTerms: { sale: "own" } });
+    });
   });
 
   describe("list", () => {

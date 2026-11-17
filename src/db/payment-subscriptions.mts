@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { PoolClient } from "pg";
 import type { PhisPaymentSubscriptionPeriod } from "@phis/contracts/payments";
 import { PHIS_PAYMENT_LEASE_SECONDS } from "../lib/constants/payments.ts";
+import { announceSubscriptionEntitlements } from "./entitlements.mts";
 import type { PhisPaymentScope, PhisStoredPaymentSubscription } from "../lib/payments/types.ts";
 
 type Db = Pick<PoolClient, "query">;
@@ -53,13 +54,29 @@ export async function readPhisPaymentSubscription(db: Db, siteId: number, id: st
  * Writes the record and says so to the consumer. The lease is left alone: it belongs to the scheduler
  * run that holds it, and a payment's outcome arriving in the middle of that run must not end it.
  */
-export async function writePhisPaymentSubscription(db: Db, subscription: PhisStoredPaymentSubscription, periodIndex: number | null) {
+export async function writePhisPaymentSubscription(
+  db: Db,
+  subscription: PhisStoredPaymentSubscription,
+  periodIndex: number | null,
+  /** The Add-ons that listen for `entitlement.changed`, read only when an entry follows this subscription. */
+  entitlementListeners: () => readonly string[] = () => [],
+) {
+  const before = (await db.query<{ record: PhisStoredPaymentSubscription["record"] }>(
+    `SELECT record FROM phis.payment_subscriptions WHERE id = $1`, [subscription.record.id])).rows[0]?.record;
   await db.query(`UPDATE phis.payment_subscriptions SET record = $2::jsonb, anchor_at = $3, next_charge_at = $4, updated_at = NOW() WHERE id = $1`,
     [subscription.record.id, JSON.stringify(subscription.record), subscription.anchorAt, subscription.record.nextChargeAt]);
   await db.query(`INSERT INTO phis.addon_event_outbox (site_id, addon_id, event, subject_kind, subscription_id, payload)
     VALUES ($1, $2, 'payment.changed', 'subscription', $3, $4::jsonb)`,
     [subscription.siteId, subscription.consumerAddonId, subscription.record.id, JSON.stringify({ subscriptionId: subscription.record.id,
       reference: subscription.record.reference, version: subscription.record.version, periodIndex })]);
+  /*
+   * What an entitlement entry that follows the subscription answers depends on its latest paid period and
+   * on whether it ended. When either moved, the entries owe their event; nothing of payments changes.
+   */
+  const ended = (record: PhisStoredPaymentSubscription["record"] | undefined) => record?.status === "canceled" || (record?.endedAt ?? null) !== null;
+  if (before?.period?.endsAt !== subscription.record.period?.endsAt || ended(before) !== ended(subscription.record)) {
+    await announceSubscriptionEntitlements(db, { siteId: subscription.siteId, subscriptionId: subscription.record.id, listeners: entitlementListeners });
+  }
 }
 
 /** Whether a subscription that has not ended is charged to this stored method. */

@@ -2,6 +2,7 @@ import type { Pool, PoolClient } from "pg";
 
 import { quotePhiIdentifier } from "@/lib/addons/schema-ddl";
 import { composePhisAddonAssetTableName } from "@/lib/addons/schema-name";
+import { PHI_SITE_SERVER_ADDON_FLAG_REQUESTED_ENABLED } from "@/lib/constants/server-addons";
 
 /**
  * The rows that say which of an Add-on's files sits in which slot on which row.
@@ -69,6 +70,27 @@ function toRow(row: RawRow): PhisAddonAssetRow {
 }
 
 /**
+ * Owes `asset.changed` to the Add-on whose schema declares the slot -- and to nobody else -- in the
+ * transaction that changed the slot. The caller says whether the Add-on declares a handler for it; the
+ * insert keeps the Add-on only where it is configured on the Site. No state travels: one event per change,
+ * so a replacement in a single-valued slot is one event.
+ */
+async function enqueueAssetChanged(
+  db: Pool | PoolClient,
+  input: { siteId: number; addonId: string; table: string; ownerId: string; slot: string },
+) {
+  await db.query(
+    `INSERT INTO phis.addon_event_outbox (site_id, addon_id, event, subject_kind, payload)
+     SELECT $1::smallint, installed.addon_id, 'asset.changed', 'asset', $3::jsonb
+     FROM phis.site_server_addons installed
+     WHERE installed.site_id = $1 AND installed.addon_id = $2
+       AND (installed.flags & ${PHI_SITE_SERVER_ADDON_FLAG_REQUESTED_ENABLED}) <> 0
+       AND installed.configuration_status = 'ready'`,
+    [input.siteId, input.addonId, JSON.stringify({ table: input.table, ownerId: input.ownerId, slot: input.slot })],
+  );
+}
+
+/**
  * Puts a finished file into a slot, and reports the file it displaced.
  *
  * A single-valued slot holds one file, so the one being replaced has to go in the same statement that
@@ -86,6 +108,8 @@ export async function linkPhisAddonAsset(
     mediaAssetId: number;
     /** True for a slot declared `one`: whatever is in it has to make way. */
     single: boolean;
+    /** The Add-on that owns the slot, when it declares a handler for `asset.changed`: it is told, in this transaction. */
+    announceTo?: string;
   },
 ): Promise<{ id: string; supersededMediaAssetId: number | null }> {
   const table = qualifyAssets(input.location);
@@ -104,6 +128,11 @@ export async function linkPhisAddonAsset(
      VALUES ($1, $2, $3, $4) RETURNING id`,
     [input.siteId, String(input.ownerId), input.slot, input.mediaAssetId],
   );
+  if (input.announceTo) {
+    await enqueueAssetChanged(client, {
+      siteId: input.siteId, addonId: input.announceTo, table: input.location.table, ownerId: String(input.ownerId), slot: input.slot,
+    });
+  }
   return { id: String(rows[0]!.id), supersededMediaAssetId: superseded };
 }
 
@@ -203,13 +232,23 @@ export async function readPhisAddonRowAssetIds(
 export async function unlinkPhisAddonAsset(
   db: Pool | PoolClient,
   location: PhisAddonAssetLocation,
-  input: { siteId: number; id: string },
+  input: {
+    siteId: number;
+    id: string;
+    /** As for `linkPhisAddonAsset`; the link and its event are one transaction where `db` is a client in one. */
+    announceTo?: string;
+  },
 ): Promise<number | null> {
-  const { rows } = await db.query<{ media_asset_id: number }>(
+  const { rows } = await db.query<{ media_asset_id: number; owner_id: string; slot: string }>(
     `DELETE FROM ${qualifyAssets(location)}
       WHERE site_id = $1 AND id = $2
-      RETURNING media_asset_id`,
+      RETURNING media_asset_id, owner_id, slot`,
     [input.siteId, input.id],
   );
+  if (rows[0] && input.announceTo) {
+    await enqueueAssetChanged(db, {
+      siteId: input.siteId, addonId: input.announceTo, table: location.table, ownerId: String(rows[0].owner_id), slot: rows[0].slot,
+    });
+  }
   return rows[0]?.media_asset_id ?? null;
 }

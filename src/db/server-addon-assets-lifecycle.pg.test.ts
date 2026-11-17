@@ -141,6 +141,8 @@ describe("putting a file on a row", () => {
     intents?: string[];
     /** The roles the actor holds. */
     roles?: string[];
+    /** Whether the Add-on declares a handler for `asset.changed`. */
+    announces?: boolean;
   }) {
     return buildPhisAddonAssetsCapability({
       addonId: ADDON,
@@ -154,6 +156,7 @@ describe("putting a file on a row", () => {
       },
       hasRole: async (role) => (options?.roles ?? []).includes(role),
       proxyUploadUrl: ({ token }) => `/api/site/media/uploads/${token}`,
+      announcesChanges: options?.announces ?? false,
     });
   }
 
@@ -794,6 +797,99 @@ describe("putting a file on a row", () => {
     await expect(assets().remove({ table: "category", id: file.id })).rejects.toThrow(/requires the role/);
     expect(await admin.remove({ table: "category", id: file.id })).toBe(true);
     expect(intents).toEqual([]);
+  });
+
+  describe("telling the Add-on that its slot changed (asset.changed)", () => {
+    const OTHER_ADDON = "@pgtest/assetlife-other";
+
+    async function events() {
+      const pool = await requirePhiTestDatabase();
+      const { rows } = await pool.query<{ addon_id: string; subject_kind: string; payload: Record<string, string> }>(
+        `SELECT addon_id, subject_kind, payload FROM phis.addon_event_outbox WHERE site_id = $1 AND event = 'asset.changed' ORDER BY id`,
+        [site.id],
+      );
+      return rows;
+    }
+
+    async function fill(options: { announces: boolean }) {
+      const reservation = await assets(options).begin({
+        table: "listing", ownerId: listingId, slot: "cover", contentType: "image/png", sizeBytes: PNG.byteLength,
+      });
+      await deliver(reservation.token, PNG, "image/png");
+      return assets(options).finalize({ table: "listing", token: reservation.token });
+    }
+
+    beforeAll(async () => {
+      const pool = await requirePhiTestDatabase();
+      await pool.query(`UPDATE phis.site_server_addons SET flags = 1, configuration_status = 'ready' WHERE site_id = $1 AND addon_id = $2`, [site.id, ADDON]);
+      await pool.query(`INSERT INTO phis.server_addons (addon_id, package_name, package_version, server_abi, manifest_digest, release_build_id)
+        VALUES ($1, $1, '0.1.0', '1', repeat('0', 64), 'pgtest') ON CONFLICT (addon_id) DO NOTHING`, [OTHER_ADDON]);
+      await pool.query(`INSERT INTO phis.site_server_addons (site_id, addon_id, flags, configuration_status) VALUES ($1, $2, 1, 'ready')
+        ON CONFLICT (site_id, addon_id) DO NOTHING`, [site.id, OTHER_ADDON]);
+    });
+
+    afterAll(async () => {
+      const pool = await requirePhiTestDatabase();
+      await pool.query(`DELETE FROM phis.addon_event_outbox WHERE site_id = $1`, [site.id]);
+      await pool.query(`DELETE FROM phis.site_server_addons WHERE addon_id = $1`, [OTHER_ADDON]);
+      await pool.query(`DELETE FROM phis.server_addons WHERE addon_id = $1`, [OTHER_ADDON]);
+    });
+
+    it("owes one event to the owner when a file arrives, replaces one, and goes", async () => {
+      const pool = await requirePhiTestDatabase();
+      await pool.query(`DELETE FROM phis.addon_event_outbox WHERE site_id = $1`, [site.id]);
+
+      const first = await fill({ announces: true });
+      expect(await events()).toEqual([{
+        addon_id: ADDON, subject_kind: "asset", payload: { table: "listing", ownerId: listingId, slot: "cover" },
+      }]);
+
+      // A replacement in a slot that holds one file is one event, not a removal and an arrival.
+      await fill({ announces: true });
+      expect(await events()).toHaveLength(2);
+
+      const [held] = await assets().list({ table: "listing", ownerId: listingId, slot: "cover" });
+      expect(held!.id).not.toBe(first.id);
+      expect(await assets({ announces: true }).remove({ table: "listing", id: held!.id })).toBe(true);
+      const all = await events();
+      expect(all).toHaveLength(3);
+      // Nothing to remove, nothing owed.
+      expect(await assets({ announces: true }).remove({ table: "listing", id: held!.id })).toBe(false);
+      expect(await events()).toHaveLength(3);
+      // Only the owner, and only the one subject.
+      expect(all.every((row) => row.addon_id === ADDON && row.payload.slot === "cover")).toBe(true);
+    });
+
+    it("writes no row for an Add-on that declares no handler, or one that is not configured on the Site", async () => {
+      const pool = await requirePhiTestDatabase();
+      await pool.query(`DELETE FROM phis.addon_event_outbox WHERE site_id = $1`, [site.id]);
+      await fill({ announces: false });
+      const [held] = await assets().list({ table: "listing", ownerId: listingId, slot: "cover" });
+      await assets({ announces: false }).remove({ table: "listing", id: held!.id });
+      expect(await events()).toHaveLength(0);
+
+      await pool.query(`UPDATE phis.site_server_addons SET flags = 0 WHERE site_id = $1 AND addon_id = $2`, [site.id, ADDON]);
+      await fill({ announces: true });
+      expect(await events()).toHaveLength(0);
+      await pool.query(`UPDATE phis.site_server_addons SET flags = 1 WHERE site_id = $1 AND addon_id = $2`, [site.id, ADDON]);
+      const [again] = await assets().list({ table: "listing", ownerId: listingId, slot: "cover" });
+      await assets().remove({ table: "listing", id: again!.id });
+    });
+
+    it("rolls the event back with the file when the finalize fails, and owes it to nobody else", async () => {
+      const pool = await requirePhiTestDatabase();
+      await pool.query(`DELETE FROM phis.addon_event_outbox WHERE site_id = $1`, [site.id]);
+      const reservation = await assets({ announces: true }).begin({
+        table: "listing", ownerId: listingId, slot: "cover", contentType: "image/png", sizeBytes: PNG.byteLength,
+      });
+      // The bytes never arrived: the finalize is refused and nothing is announced.
+      await expect(assets({ announces: true }).finalize({ table: "listing", token: reservation.token })).rejects.toThrow();
+      expect(await events()).toHaveLength(0);
+      await fill({ announces: true });
+      expect((await events()).some((row) => row.addon_id === OTHER_ADDON)).toBe(false);
+      const [held] = await assets().list({ table: "listing", ownerId: listingId, slot: "cover" });
+      await assets().remove({ table: "listing", id: held!.id });
+    });
   });
 
   it("lets only the person a reservation was made for redeem it", async () => {
