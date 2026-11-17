@@ -105,6 +105,8 @@ export type PhisProduct = {
   referralUrl: string | null;
   /** Acquired without a payment; the supplier may record the acquisition itself (section 5). */
   free: boolean;
+  /** Only with an account (a licence, a subscription), or by a guest as well. A flag, the supplier's to say. */
+  accountRequired: boolean;
   /** A bundle's parts. Acquiring the bundle acquires them. */
   parts: readonly PhisProductId[];
   state: PhisProductState;
@@ -367,6 +369,12 @@ Not in this design, and not blocked by it:
   sells in its own name or as an agent, which decides invoice, VAT and liability and is the accountant's.
 - **Checking deliverability before the sale, and statements the buyer makes at checkout** (a domain name
   for a hosting plan): supplier interfaces through block 4.
+- **A guest's acquisition.** An entry belongs to a subject, and a subject to an account. What a seller
+  delivers itself needs no entry, so a guest buys it as today. What another Add-on delivers to a guest --
+  a download -- needs a subject without an account: issued for the order, bound to its e-mail address,
+  reached through the order page's link, and taken over by an account that later proves the same
+  address. Built with the first supplier that delivers to guests; until then a seller records an
+  acquisition where the order has an account.
 - **Core counting use** of a consumable: ENTITLEMENTS.md section 9, unchanged.
 
 ## 12. What this changes in the older notes
@@ -406,6 +414,8 @@ Not in this design, and not blocked by it:
     of named suppliers -- not per product.
 16. On a released product a publisher changes title, summary and picture freely; a change of `sale`,
     `free` or `parts` needs the operator's release again.
+17. A guest can buy what needs no account. Whether a product needs one is the supplier's to say, per
+    product, kept as a flag in Core; a checkout asks for the sign-in where a product in the cart says so.
 
 ## 14. Open, the operator's to decide
 
