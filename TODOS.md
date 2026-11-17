@@ -68,6 +68,14 @@ processed.
   authorization cancellation and an external Dashboard refund. Automated Provider/Core tests cover
   these mappings and transaction boundaries; the real sandbox run so far covered automatic payment.
 - Define administrative retention/export before adding any destructive financial purge.
+- **A Provider's method says nothing about countries or currencies** (found by the Shop's destinations,
+  17.11.2026). `PhisPaymentFeatures` carries capture, checkout kinds, pricing and `stored`; `listMethods`
+  and `probe` take an amount and no country. A consumer learns a currency works only by asking with it, and
+  a country only when the payment is created. Declared regions per method -- countries, currencies, amount
+  limits -- would let a seller check a destination when it is saved. A contract change.
+- **A consumer cannot list the profiles granted to it.** There is no `listProfiles`; an unknown profile and
+  one without a grant both answer `not_found`. A consumer's form therefore takes the profile key as free
+  text.
 
 ## Shop
 
