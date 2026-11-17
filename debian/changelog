@@ -1,3 +1,27 @@
+phis (0.4.0-1) unstable; urgency=medium
+
+  * products:v1: a Site's product directory. An Add-on registers the
+    products it supplies, a seller reads them, the operator releases,
+    withdraws and locks them ("phis product ..."). A manifest may carry
+    products; a supplier that is switched off has its products withdrawn.
+  * entitlements:v1 changed its shape: an entry names a product, kinds()
+    and the manifest's entitlementKinds are gone, a source is allowed per
+    Site ("phis entitlement source ..."), and an entry may follow a
+    subscription with the Site's grace time ("phis site set
+    --entitlement-grace-days", at most 14).
+  * A public read point reads active products and nothing else.
+  * asset.changed tells an Add-on that the files of one of its own slots
+    changed.
+  * "phis translations import --add" creates the messages a store does
+    not hold yet.
+  * An existing database needs SQL by hand before this version starts:
+    the tables products, product_attributes and entitlement_sources, the
+    renamed column entitlements.product, entitlements.subscription_id,
+    sites.entitlement_grace_days and the outbox subject check (TODOS.md).
+  * Needs @phis/contracts 0.7.10.
+
+ -- Marius Schumacher <marius.schumacher@phisys.com>  Tue, 17 Nov 2026 11:35:00 +0000
+
 phis (0.3.7-1) unstable; urgency=medium
 
   * "phis page list" shows the Pages a Site has stored itself; "phis page
