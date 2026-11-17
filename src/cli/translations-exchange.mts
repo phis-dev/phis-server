@@ -1,9 +1,12 @@
-import { createHash } from "node:crypto";
-
 import type { Pool, PoolClient } from "pg";
 
-import { requirePhiTranslationLocale } from "../lib/locale.ts";
-import { hasTranslationContextFlag as readContextFlag, type TranslationContextFlag } from "../lib/translation-context.ts";
+import { computePhiMessageHash, ensurePhiGlobalMessageId, ensurePhiSiteMessageId } from "../db/translation-message.mts";
+import { PHI_CANONICAL_SOURCE_LOCALE, requirePhiTranslationLocale } from "../lib/locale.ts";
+import {
+  buildTranslationContext,
+  hasTranslationContextFlag as readContextFlag,
+  type TranslationContextFlag,
+} from "../lib/translation-context.ts";
 
 /**
  * Translations in and out of a store as a file: `phis translations status|export|import`.
@@ -16,6 +19,10 @@ import { hasTranslationContextFlag as readContextFlag, type TranslationContextFl
  * one that was exported: a message changed in between is refused, not overwritten with a translation of
  * the old wording. Its placeholders (`%n`, `%1`, `{name}`) and, for an `html` unit, its tags must be the
  * source's, because a translation that drops one renders broken text everywhere it is read.
+ *
+ * `import --add` also creates the messages the store does not hold yet, through the function the request
+ * path creates them with (`translation-message.mts`), so the key is the runtime's own. A message is
+ * always in the canonical source language here; the file carries no source language of its own.
  *
  * An import is an editor's write, not a provider fill, so it moves the change markers like any edit and
  * every Site answering from the store reads the new text. Messages a source language other than the
@@ -52,12 +59,6 @@ function hasTranslationContextFlag(ctx: string, flag: TranslationContextFlag) {
   } catch {
     return false;
   }
-}
-
-const TR_HASH_PREFIX_LENGTH = 50;
-
-function computeMessageHash(msg: string) {
-  return createHash("sha256").update(msg.slice(0, TR_HASH_PREFIX_LENGTH)).digest("hex");
 }
 
 async function resolveStore(pool: Pool | PoolClient, siteKey: string | null | undefined): Promise<Store> {
@@ -167,20 +168,28 @@ export function readPhiTranslationDefect(msg: string, ctx: string, translation: 
   return null;
 }
 
-export type PhiTranslationImportOutcome = "written" | "replaced" | "unchanged" | "kept" | "refused";
+export type PhiTranslationImportOutcome = "created" | "written" | "replaced" | "unchanged" | "kept" | "refused";
 
 export type PhiTranslationImportResult = {
   store: string;
   locale: string;
   dryRun: boolean;
   counts: Record<PhiTranslationImportOutcome, number>;
+  /** With `add`: the messages the store did not hold and the import created (or, in a dry run, would). */
+  created: Array<{ hash: string; ctx: string; msg: string }>;
   /** One line per entry not written, and why. */
   refused: Array<{ hash: string; ctx: string; msg: string; reason: string }>;
   kept: Array<{ hash: string; ctx: string; msg: string }>;
 };
 
-/** Reads and checks an exchange file; throws on a file that is not one. */
-export function readPhiTranslationExchangeFile(raw: string): PhiTranslationExchangeFile {
+/**
+ * Reads and checks an exchange file; throws on a file that is not one.
+ *
+ * For `add`, an entry may leave `hash` out -- a file written by hand has none to copy -- and it is computed
+ * from `msg`. A `hash` that is given must still be that message's. `ctx` is never defaulted (`""` is a context): it is
+ * part of the key, and a message created under another context than the one the runtime asks with is never read.
+ */
+export function readPhiTranslationExchangeFile(raw: string, options: { add?: boolean } = {}): PhiTranslationExchangeFile {
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
@@ -193,6 +202,9 @@ export function readPhiTranslationExchangeFile(raw: string): PhiTranslationExcha
     throw new Error(`The file is not a translations export of version ${PHI_TRANSLATION_EXCHANGE_VERSION}.`);
   }
   file.entries.forEach((entry, index) => {
+    if (options.add && entry && typeof entry === "object" && entry.hash === undefined && typeof entry.msg === "string") {
+      entry.hash = computePhiMessageHash(entry.msg);
+    }
     if (!entry || typeof entry.hash !== "string" || typeof entry.ctx !== "string" || typeof entry.msg !== "string"
       || !(entry.translation === null || typeof entry.translation === "string")) {
       throw new Error(`Entry ${index + 1} needs hash, ctx and msg as text and translation as text or null.`);
@@ -202,18 +214,59 @@ export function readPhiTranslationExchangeFile(raw: string): PhiTranslationExcha
 }
 
 /**
+ * What a message needs to be created, checked before anything is written. Every problem is named, so a
+ * hand-written file is corrected in one go.
+ */
+function readPhiTranslationCreationProblems(file: PhiTranslationExchangeFile) {
+  const problems: string[] = [];
+  const seen = new Map<string, string>();
+  file.entries.forEach((entry, index) => {
+    if (entry.translation == null) return;
+    const label = `Entry ${index + 1}`;
+    if (entry.msg.trim().length === 0) {
+      problems.push(`${label}: msg must be the source text, not empty.`);
+      return;
+    }
+    try {
+      if (buildTranslationContext({ context: entry.ctx }) !== entry.ctx) {
+        problems.push(`${label}: ctx "${entry.ctx}" is not in the canonical form the runtime stores.`);
+        return;
+      }
+    } catch (error) {
+      problems.push(`${label}: ctx is not a valid context: ${error instanceof Error ? error.message : String(error)}`);
+      return;
+    }
+    const key = `${entry.hash.toLowerCase()}\u0000${entry.ctx}`;
+    const earlier = seen.get(key);
+    if (earlier !== undefined && earlier !== entry.translation) {
+      problems.push(`${label}: the key of msg "${entry.msg.slice(0, 40)}" in ctx "${entry.ctx}" occurs twice with different translations.`);
+    }
+    seen.set(key, entry.translation);
+  });
+  return problems;
+}
+
+/**
  * Writes a file's translations into the store it was exported from.
  *
  * An entry with `translation: null` is skipped. A message that is gone, whose source changed, or whose
- * translation breaks a placeholder or a tag is refused. A translation the store already holds is kept
+ * translation breaks a placeholder or a tag is refused, unless `add`: then a message the store does not
+ * hold is created first, as the request path would, and filled. With `add`, an entry lacking what creation
+ * needs aborts the import before anything is written. A message in the canonical source language is not
+ * given a translation into it. A translation the store already holds is kept
  * unless `overwrite`. Everything is one transaction, and a dry run rolls it back.
  */
 export async function importPhiTranslations(pool: Pool, file: PhiTranslationExchangeFile, options: {
   siteKey?: string | null;
   overwrite?: boolean;
   dryRun?: boolean;
+  add?: boolean;
 }): Promise<PhiTranslationImportResult> {
   const locale = requirePhiTranslationLocale(file.locale);
+  if (options.add) {
+    const problems = readPhiTranslationCreationProblems(file);
+    if (problems.length > 0) throw new Error(`--add cannot create from this file; nothing was written:\n  ${problems.join("\n  ")}`);
+  }
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
@@ -226,7 +279,8 @@ export async function importPhiTranslations(pool: Pool, file: PhiTranslationExch
       store: store.name,
       locale,
       dryRun: options.dryRun === true,
-      counts: { written: 0, replaced: 0, unchanged: 0, kept: 0, refused: 0 },
+      counts: { created: 0, written: 0, replaced: 0, unchanged: 0, kept: 0, refused: 0 },
+      created: [],
       refused: [],
       kept: [],
     };
@@ -240,7 +294,7 @@ export async function importPhiTranslations(pool: Pool, file: PhiTranslationExch
         refuse(entry, "an `extern` unit is not exchanged; its key is a source in another language");
         continue;
       }
-      if (computeMessageHash(entry.msg) !== entry.hash.toLowerCase()) {
+      if (computePhiMessageHash(entry.msg) !== entry.hash.toLowerCase()) {
         refuse(entry, "its hash is not the hash of its msg");
         continue;
       }
@@ -251,14 +305,27 @@ export async function importPhiTranslations(pool: Pool, file: PhiTranslationExch
       }
       const hashParam = `$${t.params.length + 1}`;
       const ctxParam = `$${t.params.length + 2}`;
-      const { rows: [message] } = await client.query<{ id: number; msg: string }>(
+      const { rows: [found] } = await client.query<{ id: number; msg: string }>(
         `SELECT m.id, m.msg FROM ${t.msg} m
           WHERE ${t.where} AND m.msg_hash = decode(${hashParam}, 'hex') AND m.ctx = ${ctxParam}`,
         [...t.params, entry.hash.toLowerCase(), entry.ctx],
       );
+      let message = found;
+      let created = false;
       if (!message) {
-        refuse(entry, "the store holds no such message any more");
-        continue;
+        if (!options.add) {
+          refuse(entry, "the store holds no such message any more");
+          continue;
+        }
+        if (locale === PHI_CANONICAL_SOURCE_LOCALE) {
+          refuse(entry, `its source language is ${locale}, the language it would be translated into`);
+          continue;
+        }
+        const id = store.siteId == null
+          ? await ensurePhiGlobalMessageId(client, entry.msg, entry.ctx, entry.hash.toLowerCase())
+          : await ensurePhiSiteMessageId(client, store.siteId, entry.msg, entry.ctx);
+        message = { id, msg: entry.msg };
+        created = true;
       }
       if (message.msg !== entry.msg) {
         refuse(entry, "its source text changed since the export");
@@ -287,7 +354,12 @@ export async function importPhiTranslations(pool: Pool, file: PhiTranslationExch
          ON CONFLICT (msg_id, locale) DO UPDATE SET translation = EXCLUDED.translation, updated_at = now()`,
         [message.id, locale, entry.translation],
       );
-      result.counts[held ? "replaced" : "written"] += 1;
+      if (created) {
+        result.counts.created += 1;
+        result.created.push({ hash: entry.hash, ctx: entry.ctx, msg: entry.msg.slice(0, 80) });
+      } else {
+        result.counts[held ? "replaced" : "written"] += 1;
+      }
     }
     await client.query(options.dryRun ? "ROLLBACK" : "COMMIT");
     return result;

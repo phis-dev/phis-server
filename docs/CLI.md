@@ -1170,7 +1170,7 @@ Writes the store's messages with what each holds for `--locale` as a JSON file (
 those without a translation. To stdout, or to `--out`, which must be a new file. `extern` units (a source
 in a language other than the canonical one) are left out. Reads only. Needs `database.uri`.
 
-### `phis translations import --file <file.json> [--site <site key>] [--overwrite] [--dry-run]`
+### `phis translations import --file <file.json> [--site <site key>] [--add] [--overwrite] [--dry-run]`
 
 Writes a file's translations into the store it was exported from (the file names it; `--site` must say
 the same). An entry with `translation: null` is skipped. Refused, each with its reason, and exit `1`: a
@@ -1180,6 +1180,23 @@ and for an `html` unit one whose tags differ. A translation the store already ho
 `--overwrite`. One transaction; `--dry-run` rolls it back and reports what it would write. It is an
 editor's write, so the change markers move and every Site reads the new texts. Needs `database.uri`.
 TRANSLATIONS.md, "Translating through a file".
+
+`--add` also creates the messages the store does not hold yet (a text no provider has answered for, such
+as one added to a Module while the provider quota is used up), global or, with `--site`, a Site's, the
+same way. They are created by the function the request path creates them with, so the key is the one a
+runtime lookup computes. Each entry needs `msg` (the source text, in the canonical source language -- the
+file has no source language of its own), `ctx` (the stored context, exactly as the runtime asks with it,
+`""` included; an `html` unit carries `[html]` in front; it is part of the key) and `translation`;
+`hash` may be left out and is computed, and one that is given must be the message's. Without `--add` the
+file needs `hash` as before. Before anything is written the import aborts, naming every entry, when `msg`
+is empty, `ctx` is not a valid context in its canonical form, or one key occurs twice with different
+translations (twice with the same translation counts once). An `extern` unit and a translation into the
+canonical source language are refused, exit `1`, like any refused entry. The summary then reads `created`
+(new messages, each with its translation) apart from `filled` (a translation added to a message the store
+held), `replaced` and `kept`; with `--dry-run` it lists the messages it would create. A message that exists
+by then is filled as without `--add`. With `--json`, `counts.created` and `created` are added.
+Example (`fr.json`): `{"version": 1, "store": "global", "locale": "fr", "exportedAt": "-", "entries":
+[{"ctx": "Navigation", "msg": "Add to cart", "translation": "Ajouter au panier"}]}`.
 
 ## media
 

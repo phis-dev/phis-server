@@ -574,6 +574,11 @@ global store without `--site`, a Site's with it; `phis translations status` says
   translation by accident.
 - An import is an editor's write, not a fill: it moves the change markers like any edit, and every Site
   reads the new texts.
+- `--add` creates a message the store does not hold yet, in the global store or a Site's, through the
+  function the request path creates it with (same key, same columns), and fills it. The file entry needs
+  `msg`, `ctx` and `translation` (`hash` is computed when left out); nothing is written when an entry
+  lacks what creation needs. It exists because the request path stores a message only after a provider
+  answered for it, so with the quota used up a new text could not be translated at all.
 - `extern` units are not exchanged; their key is a source in another language and they belong to the
   request that made them.
 

@@ -6,6 +6,14 @@ import { requirePhiTranslationLocale } from "@/lib/locale";
 import { toPhiIsoString } from "@/lib/helpers/timestamp";
 import { phiPrepared } from "@/lib/db-prepared";
 import { notePhiTranslationUse } from "@/db/translation-usage";
+import {
+  computePhiMessageHash,
+  createPhiGlobalCollisionError,
+  createPhiSiteCollisionError,
+  ensurePhiGlobalMessageId,
+  ensurePhiSiteMessageId,
+  normalizePhiMessageHash,
+} from "@/db/translation-message.mts";
 
 type TranslationQueryClient = Pick<Pool | PoolClient, "query">;
 
@@ -27,59 +35,6 @@ async function inTranslationFill<T>(work: (client: PoolClient) => Promise<T>): P
     const result = await work(client);
     return result;
   });
-}
-
-function formatCollisionDetails(details: Record<string, unknown>) {
-  return JSON.stringify(details);
-}
-
-function createGlobalCollisionError(
-  msg: string,
-  ctx: string,
-  msgHash: string,
-  existingMsg: string,
-) {
-  return new Error(
-    `Hash collision detected for tr_msg: ${formatCollisionDetails({
-      hash: msgHash,
-      ctx,
-      msg,
-      existingMsg,
-    })}`,
-  );
-}
-
-function createSiteCollisionError(
-  siteId: number,
-  msg: string,
-  ctx: string,
-  msgHash: string,
-  existingMsg: string,
-) {
-  return new Error(
-    `Hash collision detected for tr_site_msg: ${formatCollisionDetails({
-      siteId,
-      hash: msgHash,
-      ctx,
-      msg,
-      existingMsg,
-    })}`,
-  );
-}
-
-function normalizeMessageHash(msgHash: string) {
-  if (!/^[0-9a-f]{64}$/i.test(msgHash)) {
-    throw new Error("Invalid translation message hash.");
-  }
-
-  return msgHash.toLowerCase();
-}
-
-/** The fixed prefix a message hash covers; see `TR_HASH_PREFIX_LENGTH` in `lib/translations.ts` for why it stays. */
-const TR_HASH_PREFIX_LENGTH = 50;
-
-function computeSiteMessageHash(msg: string) {
-  return createHash("sha256").update(msg.slice(0, TR_HASH_PREFIX_LENGTH)).digest("hex");
 }
 
 export function computeExternalSourceHash(msg: string) {
@@ -109,7 +64,7 @@ async function findExternalTranslationUnits(input: {
   if (input.entries.length === 0) {
     return result;
   }
-  const hashes = Array.from(new Set(input.entries.map((entry) => normalizeMessageHash(entry.sourceHash))));
+  const hashes = Array.from(new Set(input.entries.map((entry) => normalizePhiMessageHash(entry.sourceHash))));
   const pool = input.database ?? getPool();
   const { rows } = input.siteId == null
     ? await pool.query<{ msg_id: number; canonical_msg: string; source: string; source_hash: string }>(
@@ -136,7 +91,7 @@ async function findExternalTranslationUnits(input: {
   // A unit read is a message read, in the store it belongs to (db/translation-usage.ts).
   notePhiTranslationUse(input.siteId == null ? "global" : "site", rows.map((row) => row.msg_id));
   for (const entry of input.entries) {
-    const hash = normalizeMessageHash(entry.sourceHash);
+    const hash = normalizePhiMessageHash(entry.sourceHash);
     const candidates = rows.filter((row) => row.source_hash === hash);
     const exact = candidates.find((row) => row.source === entry.source);
     result.set(
@@ -203,7 +158,7 @@ export async function getTranslations(
   const normalizedEntries = entries
     .map((entry) => ({
       msg: entry.msg,
-      hash: normalizeMessageHash(entry.hash),
+      hash: normalizePhiMessageHash(entry.hash),
     }))
     .filter((entry) => entry.msg.trim());
 
@@ -237,7 +192,7 @@ export async function getTranslations(
     // A stored message that shares the requested one's opening is that message's conflict alone; thrown,
     // it took every other string of the request down with it, and a reworded Widget label broke the Builder.
     if (requestedMsg && requestedMsg !== row.msg) {
-      translationByHash.set(row.msg_hash, createGlobalCollisionError(requestedMsg, ctx, row.msg_hash, row.msg));
+      translationByHash.set(row.msg_hash, createPhiGlobalCollisionError(requestedMsg, ctx, row.msg_hash, row.msg));
       continue;
     }
 
@@ -270,7 +225,7 @@ export async function findGlobalMessageHashes(
   ctx: string,
 ) {
   const normalized = entries
-    .map((entry) => ({ msg: entry.msg, hash: normalizeMessageHash(entry.hash) }))
+    .map((entry) => ({ msg: entry.msg, hash: normalizePhiMessageHash(entry.hash) }))
     .filter((entry) => entry.msg.trim());
   if (normalized.length === 0) {
     return new Set<string>();
@@ -311,7 +266,7 @@ export async function upsertTranslation(
   translation: string,
   msgHash: string,
 ) {
-  const msgId = await ensureMessageId(msg, ctx, normalizeMessageHash(msgHash));
+  const msgId = await ensureMessageId(msg, ctx, normalizePhiMessageHash(msgHash));
   // A fill adds what was missing and nothing else. It runs past the change marker, so replacing a row
   // here -- one an editor wrote while the provider was being asked -- would change a translation every
   // Site keeps without telling any of them.
@@ -331,7 +286,7 @@ export async function ensureGlobalExternalTranslationUnit(input: {
   canonicalHash: string;
   ctx: string;
 }) {
-  const sourceHash = normalizeMessageHash(input.sourceHash);
+  const sourceHash = normalizePhiMessageHash(input.sourceHash);
   return withTransaction(async (client) => {
     await markTranslationFill(client);
     await client.query(
@@ -351,7 +306,7 @@ export async function ensureGlobalExternalTranslationUnit(input: {
     const msgId = await ensureMessageId(
       input.canonicalMsg,
       input.ctx,
-      normalizeMessageHash(input.canonicalHash),
+      normalizePhiMessageHash(input.canonicalHash),
       client,
     );
     const existing = await client.query<{ translation: string }>(
@@ -381,30 +336,7 @@ async function ensureMessageId(
   msgHash: string,
   database: TranslationQueryClient = getPool(),
 ) {
-  const pool = database;
-  const normalizedHash = normalizeMessageHash(msgHash);
-
-  await pool.query(
-    `INSERT INTO phis.tr_msg (msg, msg_hash, ctx)
-     VALUES ($1, decode($2, 'hex'), $3)
-     ON CONFLICT (msg_hash, ctx) DO NOTHING`,
-    [msg, normalizedHash, ctx],
-  );
-
-  const { rows } = await pool.query<{ id: number; msg: string }>(
-    "SELECT id, msg FROM phis.tr_msg WHERE msg_hash = decode($1, 'hex') AND ctx = $2 LIMIT 1",
-    [normalizedHash, ctx],
-  );
-
-  if (!rows[0]) {
-    throw new Error("Failed to persist translation message.");
-  }
-
-  if (rows[0].msg !== msg) {
-    throw createGlobalCollisionError(msg, ctx, normalizedHash, rows[0].msg);
-  }
-
-  return rows[0].id;
+  return ensurePhiGlobalMessageId(database, msg, ctx, msgHash);
 }
 
 export async function ensureSiteMessageId(
@@ -413,37 +345,7 @@ export async function ensureSiteMessageId(
   ctx: string,
   database: TranslationQueryClient = getPool(),
 ) {
-  const pool = database;
-  const normalizedHash = computeSiteMessageHash(msg);
-
-  await pool.query(
-    `INSERT INTO phis.tr_site_msg (site_id, msg, msg_hash, ctx)
-     VALUES ($1, $2, decode($3, 'hex'), $4)
-     ON CONFLICT (site_id, msg_hash, ctx) DO NOTHING`,
-    [siteId, msg, normalizedHash, ctx],
-  );
-
-  const { rows: insertedRows } = await pool.query<{ id: number; msg: string }>(
-    `SELECT id, msg
-     FROM phis.tr_site_msg
-     WHERE site_id = $1
-       AND msg_hash = decode($2, 'hex')
-       AND ctx = $3
-     LIMIT 1`,
-    [siteId, normalizedHash, ctx],
-  );
-
-  if (!insertedRows[0] || insertedRows[0].msg !== msg) {
-    throw createSiteCollisionError(
-      siteId,
-      msg,
-      ctx,
-      normalizedHash,
-      insertedRows[0]?.msg ?? "",
-    );
-  }
-
-  return insertedRows[0].id;
+  return ensurePhiSiteMessageId(database, siteId, msg, ctx);
 }
 
 /**
@@ -461,7 +363,7 @@ export async function ensureSiteMessageIds(
   ctx: string,
   database: TranslationQueryClient = getPool(),
 ): Promise<Map<string, number | Error>> {
-  const entries = Array.from(new Set(msgs)).map((msg) => ({ msg, hash: computeSiteMessageHash(msg) }));
+  const entries = Array.from(new Set(msgs)).map((msg) => ({ msg, hash: computePhiMessageHash(msg) }));
   const result = new Map<string, number | Error>();
   if (entries.length === 0) {
     return result;
@@ -500,7 +402,7 @@ export async function ensureSiteMessageIds(
       entry.msg,
       row && row.msg === entry.msg
         ? row.id
-        : createSiteCollisionError(siteId, entry.msg, ctx, entry.hash, row?.msg ?? ""),
+        : createPhiSiteCollisionError(siteId, entry.msg, ctx, entry.hash, row?.msg ?? ""),
     );
   }
   return result;
@@ -514,7 +416,7 @@ export async function ensureSiteExternalTranslationUnit(input: {
   canonicalMsg: string;
   ctx: string;
 }) {
-  const sourceHash = normalizeMessageHash(input.sourceHash);
+  const sourceHash = normalizePhiMessageHash(input.sourceHash);
   return withTransaction(async (client) => {
     await markTranslationFill(client);
     await client.query(

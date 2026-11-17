@@ -448,7 +448,7 @@ Usage:
   phis translations usage [--unused-for <days, e.g. 90d>] [--site <site key>] [--examples <n>]
   phis translations status [--site <site key>] [--locale <code>[,<code>...]]
   phis translations export --locale <code> [--site <site key>] [--missing] [--out <file.json>]
-  phis translations import --file <file.json> [--site <site key>] [--overwrite] [--dry-run]
+  phis translations import --file <file.json> [--site <site key>] [--add] [--overwrite] [--dry-run]
   phis maintain [--list] [--task <id>] [--dry-run]
   phis mail drain [--limit <rows>] --api-base-url <url>
   phis email test --to <address> [--site <site key>]
@@ -3492,9 +3492,11 @@ async function main() {
 
   if (group === "translations" && command === "import") {
     const filePath = getRequiredFlag(flags, "file");
-    const file = readPhiTranslationExchangeFile(readFileSync(filePath, "utf8"));
+    const add = flags.has("add");
+    const file = readPhiTranslationExchangeFile(readFileSync(filePath, "utf8"), { add });
     const result = await importPhiTranslations(getPool(), file, {
       siteKey: getOptionalFlag(flags, "site") ?? null,
+      add,
       overwrite: flags.has("overwrite"),
       dryRun: flags.has("dry-run"),
     });
@@ -3503,9 +3505,11 @@ async function main() {
     } else {
       const c = result.counts;
       console.log(
-        `${result.dryRun ? "Would write" : "Wrote"} ${result.store} ${result.locale}: ${c.written} new, ${c.replaced} replaced, `
+        `${result.dryRun ? "Would write" : "Wrote"} ${result.store} ${result.locale}: `
+          + `${add ? `${c.created} created (new messages), ` : ""}${c.written} ${add ? "filled" : "new"}, ${c.replaced} replaced, `
           + `${c.unchanged} unchanged, ${c.kept} kept (already translated; --overwrite replaces them), ${c.refused} refused.`,
       );
+      if (result.dryRun) for (const entry of result.created) console.log(`  would create [${entry.ctx}] ${entry.msg}`);
       for (const entry of result.refused) console.log(`  refused [${entry.ctx}] ${entry.msg}: ${entry.reason}`);
     }
     if (result.counts.refused > 0) process.exitCode = 1;
