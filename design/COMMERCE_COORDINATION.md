@@ -420,6 +420,39 @@ Not in this design, and not blocked by it:
 
 Nothing at present.
 
+### Drafted, not built: a supplier's own pictures (2026-11-17)
+
+A product has one picture in Core, and a supplier's package -- a licence Add-on that ships its plans --
+has to be able to bring it. Today it cannot. The only way into an Add-on's Space is `assets:v1`
+`begin`/`finalize`, which is a browser's upload: it wants a signed-in actor, and its body is sent with
+that actor's session. An Add-on that is enabled, runs a job or answers an event has no actor, and a
+manifest product may not name a picture at all. What a handler set afterwards is taken away again by the
+manifest sync, which writes the declared product whole on every `addon site --enable` and every
+`addon reconcile`.
+
+The operator's direction: the Space is the Add-on's, its quota bounds it, and the slot's own rules -- media
+types, size, sniffing, `delivery` -- apply whoever sends the bytes. So an Add-on puts a picture there
+itself and then names it on its product, which `register` already allows.
+
+- **`assets:v1` gains a call that takes bytes**: table, owner row, slot, media type, the bytes. It runs
+  under the Add-on's own authority, with or without an actor, counts against the Add-on's Space, and
+  records the Add-on as what made the Asset. Where the bytes come from is the Add-on's business; a package
+  carries its pictures in its artifact. Fetching from somebody else's address is a separate question -- an
+  Add-on has no outbound client in its context.
+- **The manifest sync keeps a picture the manifest does not speak of.** A declared product names no
+  picture, so the sync has nothing to say about one. Whether it should also keep a title a handler
+  changed is the same question and is answered with it.
+- **Deleting an Asset a product wears is refused or warned about.** `products.image_asset_id` goes to NULL
+  when its Asset is deleted, the delete guard knows Pages, Navigation, content, Areas and the Theme and no
+  product, and an Asset in an Add-on's Space is not browsable but is deletable by its id.
+- **`register` refuses a picture a visitor would not be served.** It checks that the Asset exists and is
+  the Site's. An Asset from a User's or a Group's Space, or one not delivered publicly, passes, and the
+  catalogue then shows a broken picture. A seller's own check is impossible: no capability reads an Asset
+  of the Media library.
+
+The gallery stays where section 8 put it, on the seller's listing. Several pictures on a product would be a
+change to `products:v1`, to be decided when a marketplace needs a supplier to bring them.
+
 ## 15. Sequence
 
 1. `products:v1`, and the Shop moves: its supplier half registers the hand-made products, its seller half

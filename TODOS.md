@@ -335,6 +335,13 @@ front of is infrastructure work, and belongs with
 
 ## Server Add-ons
 
+- **A supplier cannot bring its products' pictures (found 2026-11-17; drafted in
+  [COMMERCE_COORDINATION.md](./design/COMMERCE_COORDINATION.md), section 14).** Four things, one release:
+  `assets:v1` takes bytes under the Add-on's own authority, without an actor; the manifest sync
+  (`syncManifestProducts`) keeps an `image_asset_id` the manifest does not speak of -- today every
+  `addon reconcile` sets it to NULL and bumps the product; the Media delete guard knows the Assets a product
+  wears and the ones in an Add-on's Space; `products.register` refuses an Asset that is not delivered
+  publicly from the Site's Space.
 - **An Add-on's schema cannot be compared with its descriptor, or brought to it, without a version step
   (found 2026-11-17, rolling out @phis/shop 0.7.0).** Before v1 a schema is changed in place and its
   version stays, so `phis addon migrate` answers "already at schema version" and changes nothing -- and,
