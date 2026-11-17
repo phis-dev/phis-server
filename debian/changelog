@@ -1,3 +1,27 @@
+phis (0.4.1-1) unstable; urgency=medium
+
+  * A refused payment notification says why: payment.notification.refused
+    in the log, with the reason, the reference and the delivery. A Stripe
+    webhook's 503 had left no line in Core.
+  * A supplier's own pictures. assets:v1 put takes bytes under the
+    Add-on's authority, with or without an actor. The manifest sync
+    leaves a picture it does not speak of; every reconcile took it away.
+    products.register refuses a picture a visitor would not be served:
+    it must be ready, delivered publicly, and in the Site's Space or the
+    supplier's own. The Media delete guard knows the Assets products wear.
+  * The runtime config resolves theme.brand.signet as it resolves the
+    Logo, with revision, media type and size.
+  * Add-on roles for a user list: GET /api/site/admin/users carries each
+    user's stored Add-on roles and filters by them; GET
+    /api/site/addon-roles answers every declared role and whether the
+    caller may grant it (the grantable list is gone); PUT sets a user's
+    roles of one Add-on in one call.
+  * phis entitlement list and grant say "No such user" instead of a
+    database error.
+  * No schema change. Needs @phis/contracts 0.7.11.
+
+ -- Marius Schumacher <marius.schumacher@phisys.com>  Tue, 17 Nov 2026 20:12:00 +0000
+
 phis (0.4.0-1) unstable; urgency=medium
 
   * products:v1: a Site's product directory. An Add-on registers the
