@@ -45,6 +45,17 @@ tracked here because the server contract depends on them.
 
 ## Payments
 
+- **For 0.4.2: a notification that meets a held payment is remembered, not refused (decided with the
+  operator 17.11.2026; the cause is being proven with a purchase the payer does not return from).** A
+  notification is a knock -- Core reads the truth from the Provider itself. When it arrives while another
+  reconciliation holds the payment (the payer's return, the order page asking), `reconcile` cannot claim
+  the payment and the Provider is answered 503, on every ordinary payment; the Provider repeats it later,
+  with growing gaps, and an endpoint that fails first every time looks broken to it. Answering "done" would
+  be wrong: the call holding the payment may have asked the Provider before the payment went through.
+  Instead the knock is recorded on the payment (the notification inbox is the place), the Provider is
+  answered that it was taken, and the reconciliation that holds the payment looks once more before it lets
+  go when a knock is recorded. No waiting, nothing lost, no refusal. Until then
+  `payment.notification.refused` names the case (built, not released).
 - **Pricing policies in the sandbox.** PAYMENTS.md section 12 and the Stripe mapping of PAYMENTS_STRIPE.md
   section 8 are implemented and unit-tested against recorded Sessions. A real test-mode run per policy is
   open: a net checkout with a Swiss tax registration, a gross (inclusive) checkout, a stated coupon, a
