@@ -792,8 +792,27 @@ implementation specifies exact HTTP status mapping and Provider retry behaviour.
 Every refusal leaves a line in Core's log, `payment.notification.refused` at `warn`, with its reason and
 what the delivery named: the Provider rejected its signature or shape; the Provider could not verify it
 now; no payment of this profile has the reference it names (`reference`, `subject`); the same delivery is
-being processed by another call (`reference`, `deliveryId`). A Provider Add-on answers these as 400 or 503,
-and without the line the status in the Site's log was all there was to go by.
+being processed by another call (`reference`, `deliveryId`); the Provider did not answer the reconciliation
+the notification started, or its answer could not be applied (`paymentId`). A Provider Add-on answers these
+as 400 or 503, and without the line the status in the Site's log was all there was to go by.
+
+A verified notification that meets a payment another call holds (the payer's return, a refresh, the order
+page asking, another notification of the same payment -- a Checkout payment brings two or three within one
+second) is not refused. It is a knock: Core reads the truth from the Provider itself, and answering "done"
+would be wrong, since the call holding the payment may have asked the Provider before the event. The knock is
+remembered on the payment (`payments.notified_generation`, the lease generation it met), the delivery's receipt
+is finished in the same transaction, and the Provider is answered `processed` -- which is true because the
+knock is owed an observation: the holder looks at the payment under the same row lock that releases its lease
+when it applies its result, and when a knock met its own claim it observes the Provider once more (up to
+`PHIS_PAYMENT_KNOCK_REPEATS`, 3, repeats; each repeat leaves the info line `payment.reconcile.repeated` with the
+payment and the count). A knock that meets a command (create, capture, refund) is answered the same way after
+the command. A reconciliation that claimed after the knock and observed the Provider clears it. If the repeats
+run out, or the holder crashes (its lease runs out unanswered), the knock stays and the bounded maintenance
+reconciliation (`maintain --task payments`) selects the payment, as does any later reconciliation; no timer or
+waiting is involved. A repeat of the same delivery finds its finished receipt and is `duplicate`. A payment
+nobody holds is reconciled at once as before, one observation. A refresh, the operator and the maintenance run
+still meet a held payment as `provider_unavailable`; only a notification is remembered. A remembered knock
+leaves the info line `payment.notification.remembered`.
 
 Implemented delivery uses the existing after-commit outbox trigger: successful mutating capability
 calls and committed notification reconciliation schedule an owner-event drain. An already processed

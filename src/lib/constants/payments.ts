@@ -7,6 +7,8 @@ export const PHIS_PAYMENT_ERROR_CODES: readonly PhisPaymentErrorCode[] = [
 ];
 
 export const PHIS_PAYMENT_LEASE_SECONDS = 60;
+/** How often a reconciliation repeats its observation because a notification arrived while it held the payment. */
+export const PHIS_PAYMENT_KNOCK_REPEATS = 3;
 export const PHIS_PAYMENT_CALL_TIMEOUT_MS = 15_000;
 export const PHIS_PAYMENT_RECOVERY_LIMIT = 100;
 export const PHIS_PAYMENT_MAX_REFUNDS = 500;

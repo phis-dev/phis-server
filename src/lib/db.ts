@@ -34,3 +34,12 @@ export function getPool() {
 export async function withTransaction<T>(body: (client: PoolClient) => Promise<T>): Promise<T> {
   return withPoolTransaction(getPool(), body);
 }
+
+/**
+ * `body` on the client of a transaction somebody else opened, or in a transaction of its own when none is
+ * given: how a write that is a transaction by itself also joins a larger one, instead of its statements
+ * running on another connection and escaping the caller's rollback.
+ */
+export async function withTransactionOn<T>(client: PoolClient | undefined, body: (client: PoolClient) => Promise<T>): Promise<T> {
+  return client ? body(client) : withTransaction(body);
+}

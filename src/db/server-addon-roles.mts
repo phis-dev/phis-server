@@ -159,12 +159,58 @@ export async function revokePhisAddonUserRole(
 }
 
 /**
- * Gives and takes several roles of one Add-on from one user, as one statement: all of it or none.
+ * Gives and takes several roles, of any number of Add-ons, from one user, as one statement: all of it or none.
  *
  * What it reports is what changed, not what was asked: a role already held is not granted again, a role
  * not held is not revoked. The membership's authorization revision moves once, and only when something
- * changed -- one save is one change to what the viewer may do.
+ * changed -- one save is one change to what the viewer may do, however many Add-ons it touched.
+ *
+ * Given a transaction's client, it joins it: user administration saves the person and the roles together.
  */
+export async function replacePhisUserAddonRoles(
+  db: Queryable,
+  input: {
+    siteId: number;
+    userId: number;
+    grant: readonly { addonId: string; role: string }[];
+    revoke: readonly { addonId: string; role: string }[];
+    grantedByUserId: number | null;
+  },
+): Promise<{ granted: { addonId: string; role: string }[]; revoked: { addonId: string; role: string }[] }> {
+  const { rows } = await db.query<{
+    granted: { addonId: string; role: string }[] | null;
+    revoked: { addonId: string; role: string }[] | null;
+  }>(
+    `WITH removed AS (
+       DELETE FROM phis.site_addon_user_roles r
+        USING unnest($3::text[], $4::text[]) AS gone(addon_id, role)
+        WHERE r.site_id = $1 AND r.user_id = $2 AND r.addon_id = gone.addon_id AND r.role = gone.role
+       RETURNING r.addon_id, r.role
+     ), added AS (
+       INSERT INTO phis.site_addon_user_roles
+         (site_id, addon_id, user_id, role, granted_by_user_id)
+       SELECT $1, wanted.addon_id, $2, wanted.role, $7 FROM unnest($5::text[], $6::text[]) AS wanted(addon_id, role)
+       ON CONFLICT (site_id, addon_id, user_id, role) DO NOTHING
+       RETURNING addon_id, role
+     ), bumped AS (
+       UPDATE phis.user_site_memberships
+          SET authorization_revision = authorization_revision + 1, updated_at = NOW()
+        WHERE site_id = $1 AND user_id = $2
+          AND (EXISTS (SELECT 1 FROM removed) OR EXISTS (SELECT 1 FROM added))
+     )
+     SELECT (SELECT json_agg(json_build_object('addonId', addon_id, 'role', role) ORDER BY addon_id, role) FROM added) AS granted,
+            (SELECT json_agg(json_build_object('addonId', addon_id, 'role', role) ORDER BY addon_id, role) FROM removed) AS revoked`,
+    [
+      input.siteId, input.userId,
+      input.revoke.map((entry) => entry.addonId), input.revoke.map((entry) => entry.role),
+      input.grant.map((entry) => entry.addonId), input.grant.map((entry) => entry.role),
+      input.grantedByUserId,
+    ],
+  );
+  return { granted: rows[0]?.granted ?? [], revoked: rows[0]?.revoked ?? [] };
+}
+
+/** One Add-on's share of `replacePhisUserAddonRoles`: what `PUT /api/site/addon-roles` writes. */
 export async function replacePhisAddonUserRoles(
   db: Queryable,
   input: {
@@ -176,28 +222,14 @@ export async function replacePhisAddonUserRoles(
     grantedByUserId: number | null;
   },
 ): Promise<{ granted: string[]; revoked: string[] }> {
-  const { rows } = await db.query<{ granted: string[] | null; revoked: string[] | null }>(
-    `WITH removed AS (
-       DELETE FROM phis.site_addon_user_roles
-        WHERE site_id = $1 AND addon_id = $2 AND user_id = $3 AND role = ANY($4::text[])
-       RETURNING role
-     ), added AS (
-       INSERT INTO phis.site_addon_user_roles
-         (site_id, addon_id, user_id, role, granted_by_user_id)
-       SELECT $1, $2, $3, wanted, $6 FROM unnest($5::text[]) AS wanted
-       ON CONFLICT (site_id, addon_id, user_id, role) DO NOTHING
-       RETURNING role
-     ), bumped AS (
-       UPDATE phis.user_site_memberships
-          SET authorization_revision = authorization_revision + 1, updated_at = NOW()
-        WHERE site_id = $1 AND user_id = $3
-          AND (EXISTS (SELECT 1 FROM removed) OR EXISTS (SELECT 1 FROM added))
-     )
-     SELECT (SELECT ARRAY_AGG(role ORDER BY role) FROM added) AS granted,
-            (SELECT ARRAY_AGG(role ORDER BY role) FROM removed) AS revoked`,
-    [input.siteId, input.addonId, input.userId, [...input.revoke], [...input.grant], input.grantedByUserId],
-  );
-  return { granted: rows[0]?.granted ?? [], revoked: rows[0]?.revoked ?? [] };
+  const changed = await replacePhisUserAddonRoles(db, {
+    siteId: input.siteId,
+    userId: input.userId,
+    grant: input.grant.map((role) => ({ addonId: input.addonId, role })),
+    revoke: input.revoke.map((role) => ({ addonId: input.addonId, role })),
+    grantedByUserId: input.grantedByUserId,
+  });
+  return { granted: changed.granted.map((entry) => entry.role), revoked: changed.revoked.map((entry) => entry.role) };
 }
 
 /**

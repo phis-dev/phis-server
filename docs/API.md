@@ -75,9 +75,9 @@ Site administration, CMS, media and support API. A Site's `/api/site` proxy forw
 | PATCH | [`/api/site/admin/media/storage`](../src/app/api/site/admin/media/storage/route.ts) | session, `developer-tools` (requireSiteDeveloperApiContext) |  |
 | GET | [`/api/site/admin/settings`](../src/app/api/site/admin/settings/route.ts) | session, `site-admin` (requireSiteAdminOnlyApiContext) |  |
 | PATCH | [`/api/site/admin/settings`](../src/app/api/site/admin/settings/route.ts) | session, `site-admin` (requireSiteAdminOnlyApiContext) |  |
-| GET | [`/api/site/admin/users`](../src/app/api/site/admin/users/route.ts) | session, `site-admin` (requireSiteAdminOnlyApiContext) | The Site's users, one page, each with the Core roles and the stored Add-on roles they were given (a Site Admin holds every role besides); filterable by account type, enabled state, `addonId` and `addonRole`. |
+| GET | [`/api/site/admin/users`](../src/app/api/site/admin/users/route.ts) | session, `site-admin` (requireSiteAdminOnlyApiContext) | The Site's users, one page, each with the Core roles and the stored Add-on roles they were given (a Site Admin holds every role besides); filterable by account type, enabled state, `addonId` and `addonRole`. `?userId=` answers the one user, with the same `addonRoles`. |
 | POST | [`/api/site/admin/users`](../src/app/api/site/admin/users/route.ts) | session, `site-admin` (requireSiteAdminOnlyApiContext) |  |
-| PUT | [`/api/site/admin/users`](../src/app/api/site/admin/users/route.ts) | session, `site-admin` (requireSiteAdminOnlyApiContext) |  |
+| PUT | [`/api/site/admin/users`](../src/app/api/site/admin/users/route.ts) | session, `site-admin` (requireSiteAdminOnlyApiContext) | Saves one user: name, address, Core roles, enabled state and, with `addonRoles`, the stored Add-on roles over every Add-on enabled for the Site, in one transaction (AUTHORIZATION.md section 5). |
 | PATCH | [`/api/site/admin/users`](../src/app/api/site/admin/users/route.ts) | session, `site-admin` (requireSiteAdminOnlyApiContext) |  |
 | DELETE | [`/api/site/admin/users`](../src/app/api/site/admin/users/route.ts) | session, `site-admin` (requireSiteAdminOnlyApiContext) |  |
 | POST | [`/api/site/cms/area`](../src/app/api/site/cms/area/route.ts) | session, `structure-authoring` (requireSiteBuilderApiContext) |  |

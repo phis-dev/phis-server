@@ -2,6 +2,8 @@ import "server-only";
 
 import { mapUserAccountRow, type UserAccountRow } from "@/db/user-accounts";
 import { userDisplayNameSql } from "@/db/user-profiles";
+import type { PoolClient } from "pg";
+
 import { getPool } from "@/lib/db";
 import { USER_SITE_FLAG_DISABLED, isUserSiteEnabled } from "@/lib/user-site-flags";
 import { PHI_CORE_ROLE_PROVIDER_ID } from "@/lib/authorization";
@@ -243,8 +245,8 @@ export async function listAdminUsersForSite(siteId: number, options: ListAdminUs
   };
 }
 
-export async function setAdminUserEnabled(userId: number, siteId: number, enabled: boolean) {
-  const pool = getPool();
+export async function setAdminUserEnabled(userId: number, siteId: number, enabled: boolean, db?: Pick<PoolClient, "query">) {
+  const pool = db ?? getPool();
   const { rows } = await pool.query<{
     id: number;
     user_site_flags: number;

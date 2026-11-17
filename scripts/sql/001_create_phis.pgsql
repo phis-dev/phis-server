@@ -2478,6 +2478,9 @@ CREATE TABLE IF NOT EXISTS phis.payments (
   generation BIGINT NOT NULL DEFAULT 0,
   lease_token UUID NULL,
   lease_until TIMESTAMPTZ NULL,
+  -- A verified notification arrived while another call held the lease: the generation it met. Cleared by the
+  -- reconciliation that claimed after it and asked the Provider; until then the maintenance run selects the payment.
+  notified_generation BIGINT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   FOREIGN KEY (site_id, profile_key) REFERENCES phis.payment_profiles(site_id, key) ON DELETE RESTRICT,

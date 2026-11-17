@@ -4,7 +4,7 @@ import type { PoolClient } from "pg";
 
 import { PhiUserEmailFlag, type PhiUserEmailSourceValue } from "@phis/contracts/access";
 
-import { getPool, withTransaction } from "@/lib/db";
+import { getPool, withTransaction, withTransactionOn } from "@/lib/db";
 import { normalizePhiEmail } from "@/lib/helpers/normalize";
 import { ensurePhiDefaultSiteMembership } from "@/db/user-site-membership-default.mts";
 import { phiPrepared } from "@/lib/db-prepared";
@@ -274,8 +274,9 @@ export async function updateUserAccountPasswordHash(
   userId: number,
   passwordHash: string,
   options?: { clearFlags?: number; setFlags?: number },
+  db?: PoolClient,
 ) {
-  await withTransaction(async (client) => {
+  await withTransactionOn(db, async (client) => {
     await upsertPasswordCredential(client, userId, passwordHash);
     await applyUserAccountFlagDelta(client, userId, options ?? {});
   });
@@ -284,8 +285,9 @@ export async function updateUserAccountPasswordHash(
 export async function updateUserAccountFlags(
   userId: number,
   options: { setFlags?: number; clearFlags?: number } = {},
+  db?: PoolClient,
 ) {
-  const updated = await applyUserAccountFlagDelta(getPool(), userId, options);
+  const updated = await applyUserAccountFlagDelta(db ?? getPool(), userId, options);
   return updated ? { id: updated.id, flags: updated.flags } : null;
 }
 
@@ -299,8 +301,9 @@ export async function updateUserAccountProfileFields(
     setFlags?: number;
     clearFlags?: number;
   } = {},
+  db?: PoolClient,
 ) {
-  return withTransaction(async (client) => {
+  return withTransactionOn(db, async (client) => {
     if (input.email) {
       if (!input.emailSource) {
         throw new Error("EMAIL_SOURCE_REQUIRED");

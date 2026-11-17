@@ -2,7 +2,7 @@ import "server-only";
 
 import type { PoolClient } from "pg";
 
-import { getPool, withTransaction } from "@/lib/db";
+import { getPool, withTransactionOn } from "@/lib/db";
 import {
   PHI_CORE_ROLE_PROVIDER_ID,
   type PhiRoleProviderId,
@@ -169,8 +169,8 @@ export async function upsertUserSiteMembership(input: {
   siteId: number;
   coreRoleFlags?: number;
   userSiteFlags?: number;
-}) {
-  return withTransaction(async (client) => {
+}, db?: PoolClient) {
+  return withTransactionOn(db, async (client) => {
     const { rows } = await client.query<UserSiteMembershipRecord>(
       `INSERT INTO phis.user_site_memberships (
          user_id, site_id, user_site_flags

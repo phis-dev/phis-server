@@ -2,6 +2,8 @@ import "server-only";
 
 import type { NextRequest } from "next/server";
 
+import type { PoolClient } from "pg";
+
 import { getPool } from "@/lib/db";
 import { USER_ACCOUNT_FLAG_DISABLED, USER_ACCOUNT_FLAG_MUST_CHANGE_PASSWORD } from "@/lib/user-flags";
 import { USER_SITE_FLAG_DISABLED } from "@/lib/user-site-flags";
@@ -472,8 +474,8 @@ export async function revokeUserSessions(
   );
 }
 
-export async function revokeUserSessionsForSite(userId: number, siteId: number) {
-  const pool = getPool();
+export async function revokeUserSessionsForSite(userId: number, siteId: number, db?: Pick<PoolClient, "query">) {
+  const pool = db ?? getPool();
   await pool.query(
     `UPDATE phis.user_sessions
      SET revoked_at = NOW()

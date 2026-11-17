@@ -27,6 +27,11 @@ export type PhisStoredPayment = {
   generation: number;
   leaseToken: string | null;
   leaseUntil: Date | null;
+  /**
+   * The lease generation a verified notification met while the payment was held, until a reconciliation that
+   * claimed after it has observed the Provider. Null when no notification waits.
+   */
+  notifiedGeneration: number | null;
 };
 
 export type PhisStoredPaymentCommand = PhisPaymentProviderCommand extends infer T

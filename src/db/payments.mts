@@ -13,7 +13,7 @@ type Db = Pick<PoolClient, "query">;
 type PaymentRow = {
   site_id: number; consumer_addon_id: string; provider_key: string; merchant_identity: string;
   profile_revision: number; currency_exponent: number; binding: PhisStoredPayment["binding"];
-  method_features: PhisStoredPayment["features"]; record: PhisStoredPayment["record"]; generation: string; lease_token: string | null; lease_until: Date | null;
+  method_features: PhisStoredPayment["features"]; record: PhisStoredPayment["record"]; generation: string; lease_token: string | null; lease_until: Date | null; notified_generation: string | null;
 };
 function paymentFromRow(row: PaymentRow): PhisStoredPayment {
   return { siteId: row.site_id, consumerAddonId: row.consumer_addon_id, providerKey: row.provider_key,
@@ -21,7 +21,8 @@ function paymentFromRow(row: PaymentRow): PhisStoredPayment {
     // A payment written before stored methods existed was started by a customer and stored nothing.
     features: row.method_features, binding: row.binding, record: { ...row.record, initiator: row.record.initiator ?? "customer", storedMethodId: row.record.storedMethodId ?? null,
       subscriptionId: row.record.subscriptionId ?? null, periodIndex: row.record.periodIndex ?? null },
-    generation: Number(row.generation), leaseToken: row.lease_token, leaseUntil: row.lease_until };
+    generation: Number(row.generation), leaseToken: row.lease_token, leaseUntil: row.lease_until,
+    notifiedGeneration: row.notified_generation === null ? null : Number(row.notified_generation) };
 }
 
 export async function readPhisPaymentProfile(db: Db, siteId: number, key: string, lock = false): Promise<PhisPaymentProfile | null> {
@@ -158,6 +159,22 @@ export async function claimPhisPayment(db: Db, payment: PhisStoredPayment): Prom
   return true;
 }
 
+/**
+ * A verified notification met a payment another call holds: remember the knock on the payment. Called under the
+ * payment lock, after `claimPhisPayment` found it held. The knock names the generation of the lease it met, so
+ * "the holder that was told" is the one whose claim is no newer; any later claim started after the knock.
+ */
+export async function rememberPhisPaymentNotification(db: Db, payment: PhisStoredPayment): Promise<boolean> {
+  const result = await db.query(`UPDATE phis.payments SET notified_generation = generation
+    WHERE id = $1 AND lease_until > NOW()`, [payment.record.id]);
+  return (result.rowCount ?? 0) > 0;
+}
+
+/** Called under the payment lock by a reconciliation that observed after the knock: its claim is newer than it. */
+export async function settlePhisPaymentNotification(db: Db, paymentId: string, claimedGeneration: number) {
+  await db.query("UPDATE phis.payments SET notified_generation = NULL WHERE id = $1 AND notified_generation < $2", [paymentId, claimedGeneration]);
+}
+
 export async function writePhisPayment(db: Db, payment: PhisStoredPayment, event: { operationId: string | null; refundId: string | null } | null) {
   await db.query(`UPDATE phis.payments SET record = $2::jsonb, binding = $3::jsonb, lease_token = NULL, lease_until = NULL, updated_at = NOW() WHERE id = $1`,
     [payment.record.id, JSON.stringify(payment.record), JSON.stringify(payment.binding)]);
@@ -266,7 +283,9 @@ export async function revokeSupersededPhisPaymentStoredMethods(db: Db, method: P
 export async function listPhisPaymentRecoveryCandidates(db: Db, limit: number) {
   return (await db.query<{ id: string; site_id: number; key: string; consumer_addon_id: string }>(`SELECT p.id, p.site_id, s.key, p.consumer_addon_id
     FROM phis.payments p JOIN phis.sites s ON s.id = p.site_id
-    WHERE (p.record->>'reconciliationRequired')::boolean OR EXISTS (
+    WHERE (p.record->>'reconciliationRequired')::boolean
+      -- A notification that met a held payment and was not yet followed by an observation of its own.
+      OR (p.notified_generation IS NOT NULL AND p.binding IS NOT NULL) OR EXISTS (
       SELECT 1 FROM phis.payment_operations o WHERE o.payment_id = p.id AND o.record->>'state' IN ('reserved','pending','indeterminate'))
     ORDER BY p.updated_at, p.id LIMIT $1`, [limit])).rows;
 }

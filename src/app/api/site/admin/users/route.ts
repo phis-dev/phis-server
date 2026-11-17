@@ -8,11 +8,9 @@ import {
   getUserAccountByEmail,
   getUserAccountById,
   removeUserAccountSiteMembership,
-  updateUserAccountFlags,
-  updateUserAccountPasswordHash,
-  updateUserAccountProfileFields,
 } from "@/db/user-accounts";
-import { readPhiSiteUsersAddonRoles } from "@/db/server-addon-roles.mts";
+import { readPhiSiteUserAddonRoles, readPhiSiteUsersAddonRoles } from "@/db/server-addon-roles.mts";
+import { saveSiteUser } from "@/db/user-admin-save";
 import { listAdminUsersForSite, setAdminUserEnabled } from "@/db/user-admin";
 import { createUserPasswordResetToken } from "@/db/user-password-reset-tokens";
 import { getUserProfileByUserId, upsertUserProfile } from "@/db/user-profiles";
@@ -20,6 +18,11 @@ import { getUserSiteMembership, upsertUserSiteMembership } from "@/db/user-site-
 import { getPhisAddonInstalledManifest } from "@/lib/addons/installed";
 import { readAvailablePhisProviderIds } from "@/lib/addons/capability-snapshot";
 import { listPhisAddonRolesImplying } from "@/lib/addons/role-inclusion";
+import {
+  mayGrantPhisAddonRole,
+  readPhisAddonDeclaredRoles,
+  readPhisSiteAddonDeclaredRoles,
+} from "@/lib/addons/role-granting";
 import { selectPhiCountingAddonRoles } from "@/lib/addons/viewer-roles";
 import { getPool } from "@/lib/db";
 import { requireSiteAdminOnlyApiContext } from "@/lib/guards/site-admin-api";
@@ -141,6 +144,59 @@ function buildBaseRoleFlagsFromSelection(value: unknown) {
   return flags;
 }
 
+type AddonRoleAssignment = { addonId: string; role: string };
+
+/**
+ * The `addonRoles` of a save: the stored Add-on roles the person is to hold afterwards, one entry per role,
+ * as the list `GET` answers per row (`{ addonId, role }`) or, the one shape a multi-select can deliver, the
+ * string `"<addonId>:<role>"` -- the value the user-management options Provider already gives each role,
+ * split at its last colon. Null is a malformed list.
+ */
+function parseAddonRolesSelection(value: unknown): AddonRoleAssignment[] | null {
+  if (!Array.isArray(value)) {
+    return null;
+  }
+  const entries: AddonRoleAssignment[] = [];
+  for (const entry of value) {
+    let addonId: unknown;
+    let role: unknown;
+    if (typeof entry === "string") {
+      const cut = entry.lastIndexOf(":");
+      addonId = cut > 0 ? entry.slice(0, cut) : undefined;
+      role = cut > 0 ? entry.slice(cut + 1) : undefined;
+    } else if (entry !== null && typeof entry === "object" && !Array.isArray(entry)) {
+      ({ addonId, role } = entry as Record<string, unknown>);
+    }
+    if (
+      typeof addonId !== "string" || typeof role !== "string" ||
+      !addonId.trim() || addonId.length > 255 || !role.trim() || role.length > 64
+    ) {
+      return null;
+    }
+    entries.push({ addonId: addonId.trim(), role: role.trim() });
+  }
+  return entries;
+}
+
+/**
+ * The stored Add-on roles that count on this Site for each of the given users, as the list shows them: one read
+ * of the grants for all of them. Narrowed to the ones that count -- the rule the viewer's `addonRoleClaims`
+ * apply -- but not expanded through `includes` and not widened for a Site Admin: what was granted is shown. The
+ * UI recognises a Site Admin by `roleTags` containing "admin".
+ */
+async function readCountingAddonRoles(
+  siteId: number,
+  userIds: readonly number[],
+  known: ReadonlySet<string> | null = null,
+) {
+  const grants = await readPhiSiteUsersAddonRoles(getPool(), { siteId, userIds });
+  const availableProviderIds = grants.size > 0 ? (known ?? await readAvailablePhisProviderIds(siteId)) : new Set<string>();
+  return (userId: number): AddonRoleAssignment[] => {
+    const counting = selectPhiCountingAddonRoles(grants.get(userId) ?? [], availableProviderIds);
+    return [...counting].flatMap(([addonId, roles]) => roles.map((role) => ({ addonId, role })));
+  };
+}
+
 async function sendPasswordResetMail(input: {
   site: AdminSite;
   userId: number;
@@ -168,7 +224,7 @@ async function sendPasswordResetMail(input: {
 }
 
 /**
- * The Site's users, one page, each with the Core roles and the stored Add-on roles they were given (a Site Admin holds every role besides); filterable by account type, enabled state, `addonId` and `addonRole`.
+ * The Site's users, one page, each with the Core roles and the stored Add-on roles they were given (a Site Admin holds every role besides); filterable by account type, enabled state, `addonId` and `addonRole`. `?userId=` answers the one user, with the same `addonRoles`.
  */
 export async function GET(request: NextRequest) {
   const { context, error } = await requireSiteAdminOnlyApiContext(request);
@@ -214,6 +270,7 @@ export async function GET(request: NextRequest) {
     if (!target || !target.siteIds.includes(site.id) || !membership) {
       return NextResponse.json({ error: "User not found." }, { status: 404 });
     }
+    const addonRolesOf = await readCountingAddonRoles(site.id, [target.id]);
     return NextResponse.json({
       user: {
         id: target.id,
@@ -225,6 +282,7 @@ export async function GET(request: NextRequest) {
         enabled: membership.enabled,
         coreRoleFlags: membership.coreRoleFlags,
         roleTags: buildRoleTags(membership.coreRoleFlags),
+        addonRoles: addonRolesOf(target.id),
         medusaCustomerId: target.medusaCustomerId,
         self: target.id === session.userId,
       },
@@ -272,20 +330,8 @@ export async function GET(request: NextRequest) {
     ...parsePhiPagination(searchParams, 20),
   });
 
-  // The page's stored grants in one read, narrowed to the ones that count on this Site -- the rule the
-  // viewer's `addonRoleClaims` apply -- but not expanded through `includes` and not widened for a Site
-  // Admin: what was granted is shown. The UI recognises a Site Admin by `roleTags` containing "admin".
-  const grants = await readPhiSiteUsersAddonRoles(getPool(), {
-    siteId: site.id,
-    userIds: result.rows.map((row) => row.id),
-  });
-  if (grants.size > 0) {
-    availableProviderIds ??= await readAvailablePhisProviderIds(site.id);
-  }
-  const addonRolesOf = (userId: number) => {
-    const counting = selectPhiCountingAddonRoles(grants.get(userId) ?? [], availableProviderIds ?? new Set());
-    return [...counting].flatMap(([addonId, roles]) => roles.map((role) => ({ addonId, role })));
-  };
+  // The page's stored grants in one read.
+  const addonRolesOf = await readCountingAddonRoles(site.id, result.rows.map((row) => row.id), availableProviderIds);
 
   const rows = result.rows.map((row) => ({
     id: row.id,
@@ -451,6 +497,9 @@ export async function POST(request: NextRequest) {
   });
 }
 
+/**
+ * Saves one user: name, address, Core roles, enabled state and, with `addonRoles`, the stored Add-on roles over every Add-on enabled for the Site, in one transaction (AUTHORIZATION.md section 5).
+ */
 export async function PUT(request: NextRequest) {
   const { context, error } = await requireSiteAdminOnlyApiContext(request);
   if (error) {
@@ -497,6 +546,13 @@ export async function PUT(request: NextRequest) {
     return NextResponse.json({ error: "Missing required fields." }, { status: 400 });
   }
 
+  // The stored Add-on roles the person is to hold afterwards, over every Add-on enabled on this Site; absent
+  // leaves them as they are, which is what every caller before this field did.
+  const wantedAddonRoles = body.addonRoles === undefined ? null : parseAddonRolesSelection(body.addonRoles);
+  if (body.addonRoles !== undefined && wantedAddonRoles === null) {
+    return NextResponse.json({ error: "addonRoles must be a list of { addonId, role } or \"<addonId>:<role>\"." }, { status: 400 });
+  }
+
   if (isSelf && body.roles !== undefined && requestedRoleFlags !== (currentMembership?.coreRoleFlags ?? 0)) {
     return NextResponse.json({ error: "Role changes are not allowed for your own account." }, { status: 403 });
   }
@@ -527,52 +583,103 @@ export async function PUT(request: NextRequest) {
     }
   }
 
-  if (ownsAccount) {
-    await updateUserAccountProfileFields(target.id, {
-      email: requestedEmail !== target.emailNormalized ? requestedEmail : null,
-      emailSource: PhiUserEmailSource.Admin,
-      // Nothing about the language here. This save is a name and an address, and it used to turn an
-      // unanswered `preferred_locale` into the Site default on its way past -- a choice made for
-      // somebody by an edit that was not about it.
-    });
-
-    await upsertUserProfile({
-      userId: target.id,
-      firstName: requestedFirstName,
-      lastName: requestedLastName,
-      displayName: requestedDisplayName,
-      companyName: requestedCompanyName,
-    });
-  }
-
-  if (!isSelf) {
-    await upsertUserSiteMembership({
-      userId: target.id,
-      siteId: site.id,
-      coreRoleFlags: requestedRoleFlags,
-    });
-  }
-
-  if (requestedEnabled !== null && requestedEnabled !== currentMembership?.enabled) {
-    await setAdminUserEnabled(target.id, site.id, requestedEnabled);
-    if (!requestedEnabled) {
-      await revokeUserSessionsForSite(target.id, site.id);
+  /*
+   * The Add-on roles are a difference to what is stored, over every Add-on enabled here. Each role to give and
+   * each role to take back needs the actor's standing, as it would one at a time through
+   * `PUT /api/site/addon-roles`, and a single refusal stores nothing -- the person included. A stored role of
+   * an Add-on this Site does not run, or one its manifest no longer declares, is not the actor's to see and is
+   * left as it is.
+   */
+  let addonRoleChange: { grant: AddonRoleAssignment[]; revoke: AddonRoleAssignment[] } | null = null;
+  if (wantedAddonRoles !== null) {
+    if (!currentMembership) {
+      return NextResponse.json({ error: "user_not_member" }, { status: 404 });
     }
+    const declaredByAddon = await readPhisSiteAddonDeclaredRoles(site.id);
+    for (const { addonId, role } of wantedAddonRoles) {
+      const declared = declaredByAddon.get(addonId) ?? await readPhisAddonDeclaredRoles(addonId, site.id);
+      if (declared === null) {
+        return NextResponse.json({ error: "addon_unknown", addonId, role }, { status: 404 });
+      }
+      if (!declared.some((descriptor) => descriptor.name === role)) {
+        return NextResponse.json({ error: "role_undeclared", addonId, role }, { status: 404 });
+      }
+    }
+    const wanted = new Set(wantedAddonRoles.map(({ addonId, role }) => `${addonId}\u0000${role}`));
+    const held = new Set((await readPhiSiteUserAddonRoles(getPool(), { siteId: site.id, userId: target.id }))
+      .map(({ addonId, role }) => `${addonId}\u0000${role}`));
+    const grant: AddonRoleAssignment[] = [];
+    const revoke: AddonRoleAssignment[] = [];
+    for (const [addonId, declared] of declaredByAddon) {
+      for (const { name: role } of declared) {
+        const key = `${addonId}\u0000${role}`;
+        if (wanted.has(key) === held.has(key)) {
+          continue;
+        }
+        const verdict = await mayGrantPhisAddonRole({
+          addonId,
+          siteId: site.id,
+          actorUserId: session.userId,
+          role,
+          declared,
+        });
+        if (!verdict.allowed) {
+          return NextResponse.json(
+            { error: verdict.reason, addonId, role },
+            { status: verdict.reason === "not_permitted" ? 403 : 404 },
+          );
+        }
+        (wanted.has(key) ? grant : revoke).push({ addonId, role });
+      }
+    }
+    addonRoleChange = { grant, revoke };
+  }
+
+  let savedAddonRoles: Awaited<ReturnType<typeof saveSiteUser>>;
+  try {
+    savedAddonRoles = await saveSiteUser({
+      siteId: site.id,
+      userId: target.id,
+      actorUserId: session.userId,
+      account: ownsAccount
+        ? {
+            newEmail: requestedEmail !== target.emailNormalized ? requestedEmail : null,
+            firstName: requestedFirstName,
+            lastName: requestedLastName,
+            displayName: requestedDisplayName,
+            companyName: requestedCompanyName,
+          }
+        : null,
+      coreRoleFlags: isSelf ? null : requestedRoleFlags,
+      enabled: requestedEnabled !== null && requestedEnabled !== currentMembership?.enabled ? requestedEnabled : null,
+      passwordReset: changePassword
+        ? { newPasswordHash: target.passwordHash ? null : await hashPassword(randomBytes(32).toString("hex")) }
+        : null,
+      addonRoles: addonRoleChange,
+    });
+  } catch (saveError) {
+    // Somebody took the address between the check above and this write; nothing of the save is stored.
+    if (saveError instanceof Error && saveError.message === "EMAIL_TAKEN") {
+      return NextResponse.json({ error: "Email already exists." }, { status: 409 });
+    }
+    throw saveError;
+  }
+  for (const { addonId, role } of savedAddonRoles.granted) {
+    logRuntimeEvent("info", "addon.role.granted", {
+      siteKey: site.key,
+      pluginKey: addonId,
+      meta: { role, userId: target.id, added: true },
+    });
+  }
+  for (const { addonId, role } of savedAddonRoles.revoked) {
+    logRuntimeEvent("info", "addon.role.revoked", {
+      siteKey: site.key,
+      pluginKey: addonId,
+      meta: { role, userId: target.id, removed: true },
+    });
   }
 
   if (changePassword) {
-    if (!target.passwordHash) {
-      await updateUserAccountPasswordHash(target.id, await hashPassword(randomBytes(32).toString("hex")), {
-        setFlags: PhiUserAccountFlag.MustChangePassword,
-      });
-    } else {
-      await updateUserAccountFlags(target.id, {
-        setFlags: PhiUserAccountFlag.MustChangePassword,
-      });
-    }
-    // Whoever is signed in as this person now is asked for the change at the next sign-in, not later.
-    await revokeUserSessionsForSite(target.id, site.id);
-
     try {
       const messageId = await sendPasswordResetMail({
         site,
@@ -621,6 +728,8 @@ export async function PUT(request: NextRequest) {
     lastName: requestedLastName,
     companyName: requestedCompanyName,
     enabled: requestedEnabled ?? currentMembership?.enabled ?? true,
+    // As `GET` lists them, read after the commit.
+    addonRoles: (await readCountingAddonRoles(site.id, [target.id]))(target.id),
   });
 }
 

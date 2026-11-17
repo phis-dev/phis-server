@@ -39,6 +39,20 @@ export async function readPhisAddonDeclaredRoles(addonId: string, siteId: number
 }
 
 /**
+ * The roles of every Add-on that declares some and is enabled for this Site, by Add-on: the set a save of one
+ * person's Add-on roles is the whole state of.
+ */
+export async function readPhisSiteAddonDeclaredRoles(siteId: number) {
+  const declared = new Map<string, readonly PhisAddonRoleDescriptor[]>();
+  for (const entry of Object.values(getPhisAddonInstalledManifest())) {
+    if (entry.manifest.roles?.length && await isPhisAddonEnabledForSite(entry.manifest.addonId, siteId)) {
+      declared.set(entry.manifest.addonId, entry.manifest.roles);
+    }
+  }
+  return declared;
+}
+
+/**
  * Whether one person meets a policy an Add-on's manifest states.
  *
  * Shared by the two things a manifest hands out under one -- a role, and the right to make a group --

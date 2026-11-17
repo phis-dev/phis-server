@@ -38,6 +38,15 @@ function afterPaymentCommit<Args extends unknown[], Result>(siteId: number, acti
 }
 
 
+/** A reconciliation that observed again because a notification arrived while it held the payment. */
+function logPhisPaymentReconcileRepeated(repeat: { siteId: number; consumerAddonId: string; paymentId: string; repeat: number; limit: number }) {
+  logRuntimeEvent("info", "payment.reconcile.repeated", {
+    message: "A payment was reconciled again because a notification arrived while it was being reconciled.",
+    pluginKey: repeat.consumerAddonId,
+    meta: { paymentId: repeat.paymentId, repeat: repeat.repeat, limit: repeat.limit },
+  });
+}
+
 /**
  * A Provider that failed, in the log: a Provider bug, a secret that ran out and a network that was down
  * all read as "reconciliation required" with no line to find them by until this was written.
@@ -57,7 +66,7 @@ export function buildPhisPaymentsCapability(input: {
   const { scope, manifest, authority } = input;
   const roles = buildPhisAddonRolesCapability({ addonId: scope.consumerAddonId, siteId: scope.siteId,
     actorUserId: authority.kind === "request" ? authority.actorUserId : null, declared: manifest.roles ?? [] });
-  const engine = new PhisPaymentEngine({ providerFailed: logPhisPaymentProviderFailure, entitlementListeners: listPhisEntitlementListeners,
+  const engine = new PhisPaymentEngine({ providerFailed: logPhisPaymentProviderFailure, reconcileRepeated: logPhisPaymentReconcileRepeated, entitlementListeners: listPhisEntitlementListeners,
     pool: getPool(), scope, signal: input.signal,
     publicBaseUrl: async () => { const site = await getSiteByKey(scope.siteKey); if (!site) throw new PhisPaymentError("not_found"); return site.publicBaseUrl; },
     resolveProvider: profile => provider(profile, scope.siteKey),
@@ -107,7 +116,7 @@ export async function runDuePhisPaymentSubscriptions(limit = 50, signal: AbortSi
     if (signal.aborted) break;
     const scope = { siteId: subscription.siteId, siteKey: subscription.siteKey, consumerAddonId: subscription.consumerAddonId };
     try {
-      const engine = new PhisPaymentEngine({ providerFailed: logPhisPaymentProviderFailure, entitlementListeners: listPhisEntitlementListeners, pool, scope, signal,
+      const engine = new PhisPaymentEngine({ providerFailed: logPhisPaymentProviderFailure, reconcileRepeated: logPhisPaymentReconcileRepeated, entitlementListeners: listPhisEntitlementListeners, pool, scope, signal,
         publicBaseUrl: async () => { const site = await getSiteByKey(scope.siteKey); if (!site) throw new PhisPaymentError("not_found"); return site.publicBaseUrl; },
         resolveProvider: profile => provider(profile, scope.siteKey), merchantAuthorized: async () => false });
       const outcome = await engine.advanceSubscription(subscription.record.id);
@@ -187,7 +196,7 @@ export function buildPhisPaymentNotificationsCapability(input: {
         const methods = await findPhisPaymentStoredMethodsForNotification(getPool(), profile.siteId, profileKey, verified.reference);
         if (methods.length === 0) return { outcome: "ignored" as const };
         for (const method of methods) {
-          const engine = new PhisPaymentEngine({ providerFailed: logPhisPaymentProviderFailure, entitlementListeners: listPhisEntitlementListeners, pool: getPool(), scope: { ...input.scope, consumerAddonId: method.consumerAddonId }, signal: input.signal,
+          const engine = new PhisPaymentEngine({ providerFailed: logPhisPaymentProviderFailure, reconcileRepeated: logPhisPaymentReconcileRepeated, entitlementListeners: listPhisEntitlementListeners, pool: getPool(), scope: { ...input.scope, consumerAddonId: method.consumerAddonId }, signal: input.signal,
             publicBaseUrl: async () => { throw new PhisPaymentError("forbidden"); }, resolveProvider: async () => adapter!, merchantAuthorized: async () => false });
           await engine.reconcileStoredMethod(method, profile);
         }
@@ -206,24 +215,21 @@ export function buildPhisPaymentNotificationsCapability(input: {
         if (claim === "busy") throw refused("provider_unavailable", "the same delivery is being processed by another call", { reference: verified.reference, deliveryId: verified.deliveryId });
         receipt = claim;
       }
-      const engine = new PhisPaymentEngine({ providerFailed: logPhisPaymentProviderFailure, entitlementListeners: listPhisEntitlementListeners, pool: getPool(), scope: { ...input.scope, consumerAddonId: payment.consumerAddonId }, signal: input.signal,
+      const engine = new PhisPaymentEngine({ providerFailed: logPhisPaymentProviderFailure, reconcileRepeated: logPhisPaymentReconcileRepeated, entitlementListeners: listPhisEntitlementListeners, pool: getPool(), scope: { ...input.scope, consumerAddonId: payment.consumerAddonId }, signal: input.signal,
         publicBaseUrl: async () => { throw new PhisPaymentError("forbidden"); }, resolveProvider: async () => adapter!, merchantAuthorized: async () => false });
-      try { await engine.reconcile(payment, profile, receipt); }
+      let reconciled;
+      try { reconciled = await engine.reconcileNotified(payment, profile, receipt); }
       catch (error) {
         if (receipt) await releasePhisPaymentReceipt(getPool(), profile.siteId, receipt).catch(() => {});
-        /*
-         * The refusal the first four lines above did not cover, and the one an ordinary payment meets: the
-         * payment is held by another reconciliation -- the payer's return, a refresh -- and this delivery
-         * arrives beside it. It is answered as a retryable refusal; what it would have told Core, the
-         * call holding the payment reads from the Provider itself.
-         */
+        // The Provider did not answer, or the reconciliation refused what it said. A payment held by another
+        // reconciliation is not among the causes: the knock is remembered and answered as taken.
         if (error instanceof PhisPaymentError) {
           logRuntimeEvent("warn", "payment.notification.refused", {
-            message: "A payment notification was refused: the payment could not be reconciled now.",
+            message: "A payment notification was refused: the payment could not be reconciled.",
             siteKey: input.scope.siteKey,
             meta: {
               reason: error.code === "provider_unavailable"
-                ? "the payment is held by another reconciliation, or the Provider did not answer"
+                ? "the Provider did not answer, or the reconciliation could not be applied"
                 : "the reconciliation refused it",
               code: error.code,
               profileKey: profile.key,
@@ -234,6 +240,14 @@ export function buildPhisPaymentNotificationsCapability(input: {
           });
         }
         throw error;
+      }
+      if (reconciled === "remembered") {
+        logRuntimeEvent("info", "payment.notification.remembered", {
+          message: "A payment notification met a payment another call holds and was remembered on it.",
+          siteKey: input.scope.siteKey,
+          meta: { profileKey: profile.key, paymentId: payment.record.id, reference: verified.reference,
+            ...(verified.outcome === "verified" ? { deliveryId: verified.deliveryId } : {}) },
+        });
       }
       schedulePhisAddonEventDelivery(profile.siteId);
       return { outcome: "processed" as const };

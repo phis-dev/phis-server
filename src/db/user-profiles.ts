@@ -1,5 +1,7 @@
 import "server-only";
 
+import type { PoolClient } from "pg";
+
 import { getPool } from "@/lib/db";
 import { phiPrepared } from "@/lib/db-prepared";
 
@@ -66,8 +68,8 @@ export async function upsertUserProfile(input: {
   lastName: string;
   displayName?: string | null;
   companyName?: string | null;
-}) {
-  const pool = getPool();
+}, db?: Pick<PoolClient, "query">) {
+  const pool = db ?? getPool();
   await pool.query(
     `INSERT INTO phis.user_profiles (
        user_id,

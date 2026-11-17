@@ -3,16 +3,19 @@ import { readFile } from "node:fs/promises";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { PhisPaymentPricing, PhisPaymentProviderCommand, PhisPaymentProviderExecution, PhisPaymentProviderObservation, PhisPaymentProviderV1 } from "@phis/contracts/payments";
 import { PhisPaymentEngine } from "@/lib/payments/engine";
+import { PHIS_PAYMENT_KNOCK_REPEATS } from "@/lib/constants/payments";
+import { logRuntimeEvent } from "@/lib/log";
 import { buildPhisPaymentNotificationsCapability } from "@/lib/payments/runtime";
 import { schedulePhisAddonEventDelivery } from "@/lib/addons/event-trigger.ts";
 import { withPoolTransaction } from "@/lib/db-transaction";
-import { claimPhisPaymentReceipt, findPhisPaymentForNotification, listPhisPaymentRefunds, readPhisPayment, readPhisPaymentProfile,
+import { claimPhisPaymentReceipt, findPhisPaymentForNotification, listPhisPaymentRecoveryCandidates, listPhisPaymentRefunds, readPhisPayment, readPhisPaymentProfile,
   recordPhisPaymentProfileProbe, setPhisPaymentProfileEnabled, writePhisPaymentProfile, claimPhisPayment } from "./payments.mts";
 import { closePhiTestPool, createPhiTestSite, dropPhiTestSites, requirePhiTestDatabase, type PhiTestSite } from "../../test/pg/harness";
 
 const providerBinding = vi.hoisted(() => ({ addonId: "@pgtest/payment-provider", factory: null as null | (() => unknown) }));
 vi.mock("@/lib/addons/services.ts", () => ({ resolvePhisServiceProvider: async () => ({ addonId: providerBinding.addonId, factory: providerBinding.factory }) }));
 vi.mock("@/lib/addons/event-trigger.ts", () => ({ schedulePhisAddonEventDelivery: vi.fn() }));
+vi.mock("@/lib/log", async importOriginal => ({ ...(await importOriginal<typeof import("@/lib/log")>()), logRuntimeEvent: vi.fn() }));
 const CONSUMER = "@pgtest/payment-consumer";
 const OTHER_CONSUMER = "@pgtest/payment-other";
 
@@ -48,11 +51,20 @@ class FakeProvider implements PhisPaymentProviderV1 {
     if (this.malformedRefusal) { this.malformedRefusal = false; return { outcome: "rejected", code: "sensitive-provider-error" } as unknown as PhisPaymentProviderExecution; }
     return { outcome: "applied", observation: structuredClone(state) };
   }
+  observeCalls = 0;
+  observePause: Promise<void> | null = null;
+  observeEntered: (() => void) | null = null;
+  onObserve: (() => Promise<void>) | null = null;
   async observe({ binding }: Parameters<PhisPaymentProviderV1["observe"]>[0]) {
     if (this.unavailable) throw new Error("Provider is unavailable");
+    this.observeCalls += 1;
     const state = this.states.get(binding.data.id!);
     if (!state) throw new Error("Missing test remote payment");
-    return structuredClone(state);
+    // What the Provider says is read when it is asked, and travels back after whatever the test holds it for.
+    const answer = structuredClone(state);
+    this.observeEntered?.(); if (this.observePause) await this.observePause;
+    await this.onObserve?.();
+    return answer;
   }
   async recover({ command }: Parameters<PhisPaymentProviderV1["recover"]>[0]): Promise<PhisPaymentProviderExecution> {
     if (this.unavailable) return { outcome: "unknown" };
@@ -287,6 +299,112 @@ describe("durable Payment execution", () => {
     await expect(hook(result.payment.id, id).receive({ profileKey: "sandbox" })).rejects.toMatchObject({ code: "provider_unavailable" });
     remote.unavailable = false;
     expect(await hook(result.payment.id, id).receive({ profileKey: "sandbox" })).toEqual({ outcome: "processed" });
+  });
+  describe("a notification that meets a held payment", () => {
+    const pool = () => requirePhiTestDatabase();
+    const row = async (id: string) => (await (await pool()).query<{ notified_generation: string | null; lease_until: Date | null }>(
+      "SELECT notified_generation, lease_until FROM phis.payments WHERE id = $1", [id])).rows[0]!;
+    const receipt = async (deliveryId: string) => (await (await pool()).query<{ processed: boolean }>(
+      "SELECT processed FROM phis.payment_notification_receipts WHERE site_id = $1 AND delivery_id = $2", [site.id, deliveryId])).rows[0];
+    const candidates = async () => (await listPhisPaymentRecoveryCandidates(await pool(), 10_000)).map(c => c.id);
+    async function awaiting() { const api = await service(); const result = await api.create(input()); return { api, id: result.payment.id }; }
+    async function holdLease(id: string) {
+      return withPoolTransaction(await pool(), async db => { const payment = (await readPhisPayment(db, site.id, id, null, true))!; await claimPhisPayment(db, payment); return payment; });
+    }
+
+    it("answers both notifications of one payment and observes after the second", async () => {
+      const { api, id } = await awaiting(); const state = remote.states.get(id)!;
+      const first = randomUUID(); const second = randomUUID();
+      let release!: () => void; remote.observePause = new Promise<void>(r => { release = r; });
+      let entered!: () => void; const asked = new Promise<void>(r => { entered = r; }); remote.observeEntered = entered;
+      const before = remote.observeCalls;
+      // The first reconciliation asks the Provider -- which says the customer has not paid yet -- and is held there.
+      const one = hook(id, first).receive({ profileKey: "sandbox" }); await asked;
+      // The payment goes through; the second notification arrives while the first holds the payment.
+      state.status = "captured"; state.capturedMinor = "1990"; state.checkout = null;
+      remote.observePause = null; remote.observeEntered = null;
+      expect(await hook(id, second).receive({ profileKey: "sandbox" })).toEqual({ outcome: "processed" });
+      expect((await row(id)).notified_generation).not.toBeNull();
+      expect((await receipt(second))?.processed).toBe(true);
+      expect((await api.get(id))!.status).toBe("awaiting_customer");
+      release(); expect(await one).toEqual({ outcome: "processed" });
+      // One observation before the second notification, one after it: the stale answer did not settle the payment.
+      expect(remote.observeCalls - before).toBe(2);
+      expect((await api.get(id))!.status).toBe("captured");
+      expect((await row(id)).notified_generation).toBeNull();
+      expect((await row(id)).lease_until).toBeNull();
+      expect((await receipt(first))?.processed).toBe(true);
+      expect(vi.mocked(logRuntimeEvent)).toHaveBeenCalledWith("info", "payment.reconcile.repeated", expect.objectContaining({ meta: expect.objectContaining({ paymentId: id, repeat: 1 }) }));
+      expect(vi.mocked(logRuntimeEvent)).toHaveBeenCalledWith("info", "payment.notification.remembered", expect.anything());
+      expect(vi.mocked(logRuntimeEvent)).not.toHaveBeenCalledWith("warn", "payment.notification.refused", expect.anything());
+    });
+
+    it("answers a repeat of either delivery as a duplicate and observes nothing", async () => {
+      const { id } = await awaiting(); const first = randomUUID(); const second = randomUUID();
+      const held = await holdLease(id);
+      expect(await hook(id, second).receive({ profileKey: "sandbox" })).toEqual({ outcome: "processed" });
+      await (await pool()).query("UPDATE phis.payments SET lease_token = NULL, lease_until = NULL WHERE id = $1", [id]);
+      expect(await hook(id, first).receive({ profileKey: "sandbox" })).toEqual({ outcome: "processed" });
+      const before = remote.observeCalls;
+      expect(await hook(id, second).receive({ profileKey: "sandbox" })).toEqual({ outcome: "duplicate" });
+      expect(await hook(id, first).receive({ profileKey: "sandbox" })).toEqual({ outcome: "duplicate" });
+      expect(remote.observeCalls).toBe(before);
+      expect(held.generation).toBeGreaterThan(0);
+    });
+
+    it("leaves a knock for the maintenance run when its holder is gone, and the next reconciliation answers it", async () => {
+      const { api, id } = await awaiting(); const state = remote.states.get(id)!;
+      const held = await holdLease(id); const before = remote.observeCalls;
+      expect(await hook(id, randomUUID()).receive({ profileKey: "sandbox" })).toEqual({ outcome: "processed" });
+      expect(remote.observeCalls).toBe(before);
+      expect((await row(id)).notified_generation).toBe(String(held.generation));
+      // The holder never comes back: its lease runs out, and the payment is selected.
+      state.status = "captured"; state.capturedMinor = "1990"; state.checkout = null;
+      await (await pool()).query("UPDATE phis.payments SET lease_until = NOW() - interval '1 second' WHERE id = $1", [id]);
+      expect(await candidates()).toContain(id);
+      const payment = (await readPhisPayment(await pool(), site.id, id))!;
+      await api.reconcile(payment, (await readPhisPaymentProfile(await pool(), site.id, "sandbox"))!);
+      expect((await api.get(id))!.status).toBe("captured");
+      expect((await row(id)).notified_generation).toBeNull();
+      expect(await candidates()).not.toContain(id);
+    });
+
+    it("repeats a bounded number of times and leaves the knock standing", async () => {
+      const { api, id } = await awaiting(); const before = remote.observeCalls;
+      // Every observation is followed by another notification before the holder lets go.
+      remote.onObserve = async () => { expect(await hook(id, randomUUID()).receive({ profileKey: "sandbox" })).toEqual({ outcome: "processed" }); };
+      await api.refresh(id);
+      remote.onObserve = null;
+      expect(remote.observeCalls - before).toBe(PHIS_PAYMENT_KNOCK_REPEATS + 1);
+      expect((await row(id)).notified_generation).not.toBeNull();
+      expect((await row(id)).lease_until).toBeNull();
+      expect(await candidates()).toContain(id);
+      const payment = (await readPhisPayment(await pool(), site.id, id))!;
+      await api.reconcile(payment, (await readPhisPaymentProfile(await pool(), site.id, "sandbox"))!);
+      expect((await row(id)).notified_generation).toBeNull();
+    });
+
+    it("keeps an unheld payment as quick as before: one observation, nothing remembered", async () => {
+      const { id } = await awaiting(); const before = remote.observeCalls;
+      expect(await hook(id).receive({ profileKey: "sandbox" })).toEqual({ outcome: "processed" });
+      expect(remote.observeCalls - before).toBe(1);
+      expect((await row(id)).notified_generation).toBeNull();
+    });
+
+    it("still refuses a refresh that meets a held payment: only a notification is remembered", async () => {
+      const { api, id } = await awaiting(); await holdLease(id);
+      await expect(api.refresh(id)).rejects.toMatchObject({ code: "provider_unavailable" });
+      expect((await row(id)).notified_generation).toBeNull();
+    });
+
+    it("still answers 503 when the Provider does not answer", async () => {
+      const { id } = await awaiting(); const delivery = randomUUID();
+      remote.unavailable = true;
+      await expect(hook(id, delivery).receive({ profileKey: "sandbox" })).rejects.toMatchObject({ code: "provider_unavailable" });
+      remote.unavailable = false;
+      expect((await receipt(delivery))?.processed).toBe(false);
+      expect(await hook(id, delivery).receive({ profileKey: "sandbox" })).toEqual({ outcome: "processed" });
+    });
   });
   it("lists only methods whose pricing features cover the requested policy", async () => {
     const api = await service(); const selector = { basis: "net" as const, tax: "provider" as const, discounts: 1, promotionCodes: "none" as const };

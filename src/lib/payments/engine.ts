@@ -16,14 +16,14 @@ import {
   addPhisPaymentIntervals, nextPhisPaymentDunningAttempt, phisPaymentDunningDeadline, validatePhisPaymentDunningPolicy, validatePhisPaymentInterval,
 } from "./schedule.ts";
 import {
-  claimPhisPayment, findPhisPaymentIdempotency, insertPhisPayment, insertPhisPaymentOperation,
+  claimPhisPayment, rememberPhisPaymentNotification, settlePhisPaymentNotification, findPhisPaymentIdempotency, insertPhisPayment, insertPhisPaymentOperation,
   listPhisPaymentOperations, listPhisPaymentRefunds, readPhisPayment, readPhisPaymentOperation, readPhisPaymentProfile,
   readPhisPaymentRefund, writePhisPayment, writePhisPaymentOperation, writePhisPaymentRefund, finishPhisPaymentReceipt,
   findPhisPaymentStoredMethodSetup, insertPhisPaymentStoredMethod, listPhisPaymentStoredMethods, readPhisPaymentStoredMethod,
   revokeSupersededPhisPaymentStoredMethods, writePhisPaymentStoredMethod, writePhisPaymentStoredMethodSetupCheckout,
 } from "../../db/payments.mts";
 import { withPoolTransaction } from "../db-transaction.ts";
-import { PHIS_PAYMENT_CALL_TIMEOUT_MS, PHIS_PAYMENT_ERROR_CODES } from "../constants/payments.ts";
+import { PHIS_PAYMENT_CALL_TIMEOUT_MS, PHIS_PAYMENT_ERROR_CODES, PHIS_PAYMENT_KNOCK_REPEATS } from "../constants/payments.ts";
 import { PhisPaymentError, copyPhisPaymentAdditions, normalizePhisPaymentTotals, phisPaymentMethodSupports, phisPaymentPricingSelector,
   phisPaymentReturnUrl, requirePhisPaymentMinor, requirePhisPaymentReference, validatePhisPaymentMoney, validatePhisPaymentObservation,
   validatePhisPaymentPricing, validatePhisPaymentPricingSelector, validatePhisPaymentProviderProbe, validatePhisPaymentProviderStoredMethod } from "./validation.ts";
@@ -63,6 +63,8 @@ type Options = {
    * server's log is `server-only`.
    */
   providerFailed?: (failure: PhisPaymentProviderFailure) => void;
+  /** Told when a reconciliation observes again because a notification arrived while it held the payment. */
+  reconcileRepeated?: (repeat: { siteId: number; consumerAddonId: string; paymentId: string; repeat: number; limit: number }) => void;
 };
 
 export type PhisPaymentProviderFailure = {
@@ -445,7 +447,7 @@ export class PhisPaymentEngine implements PhisPaymentsCapabilityV1 {
     const payment: PhisStoredPayment = {
       siteId: this.scope.siteId, consumerAddonId: this.scope.consumerAddonId, providerKey: profile.providerKey,
       merchantIdentity: profile.merchantIdentity!, profileRevision: profile.revision, currencyExponent: exponent, features: method.features,
-      binding: null, generation: 0, leaseToken: null, leaseUntil: null,
+      binding: null, generation: 0, leaseToken: null, leaseUntil: null, notifiedGeneration: null,
       record: { id, reference: input.reference, profileKey: profile.key, mode: profile.mode, amount: request.amount, pricing, totals: null, captureMode: input.captureMode,
         status: "created", authorizedMinor: "0", capturedMinor: "0", refundedMinor: "0", authorizationExpiresAt: null,
         checkout: null, reconciliationRequired: true, version: 1, lastObservedAt: null, initiator: "customer", storedMethodId: storedMethod?.record.id ?? null,
@@ -514,7 +516,7 @@ export class PhisPaymentEngine implements PhisPaymentsCapabilityV1 {
     const payment: PhisStoredPayment = {
       siteId: this.scope.siteId, consumerAddonId: this.scope.consumerAddonId, providerKey: profile.providerKey,
       merchantIdentity: profile.merchantIdentity!, profileRevision: profile.revision, currencyExponent: exponent, features: method.features,
-      binding: null, generation: 0, leaseToken: null, leaseUntil: null,
+      binding: null, generation: 0, leaseToken: null, leaseUntil: null, notifiedGeneration: null,
       record: { id, reference: input.reference, profileKey: profile.key, mode: profile.mode, amount: request.amount, pricing, totals: null, captureMode: "automatic",
         status: "created", authorizedMinor: "0", capturedMinor: "0", refundedMinor: "0", authorizationExpiresAt: null,
         checkout: null, reconciliationRequired: true, version: 1, lastObservedAt: null, initiator: input.initiator, storedMethodId: method.record.id,
@@ -966,12 +968,16 @@ export class PhisPaymentEngine implements PhisPaymentsCapabilityV1 {
       this.providerFailed(recover ? "recover" : "execute", error, { profileKey: profile.key, paymentId: payment.record.id, operationId: operation.record.id });
       result = { outcome: "unknown" };
     }
-    try { await this.apply(payment, profile, result, operation.record.id); }
+    let knocked: boolean;
+    try { knocked = await this.apply(payment, profile, result, operation.record.id); }
     catch {
       // Invalid observations after submission preserve the durable operation and its reservation.
-      await this.apply(payment, profile, { outcome: "unknown" }, operation.record.id);
+      knocked = await this.apply(payment, profile, { outcome: "unknown" }, operation.record.id);
     }
     await this.options.afterCommit?.().catch(() => {});
+    // A notification arrived while this command held the payment: observe once more, after it. What this
+    // cannot do now stays remembered for the maintenance run, and never changes the command's result.
+    if (knocked) await this.reconcile(payment, profile).catch(() => {});
     const latest = (await readPhisPayment(this.pool, this.scope.siteId, payment.record.id, this.scope.consumerAddonId))!;
     return this.result(this.pool, latest, operation.record.id);
   }
@@ -985,11 +991,44 @@ export class PhisPaymentEngine implements PhisPaymentsCapabilityV1 {
 
   /** Also used by the operator and narrow verified notification ingress, without impersonating an actor. */
   async reconcile(payment: PhisStoredPayment, profile: PhisPaymentProfile, receipt?: PhisPaymentReceipt) {
-    const claimed = await withPoolTransaction(this.pool, async db => {
-      const locked = await readPhisPayment(db, payment.siteId, payment.record.id, null, true);
-      if (!locked || !await claimPhisPayment(db, locked)) throw new PhisPaymentError("provider_unavailable");
-      return locked;
-    });
+    await this.reconcileRounds(payment, profile, receipt, false);
+  }
+
+  /**
+   * A verified notification. It is a knock: what it says Core reads from the Provider itself. When the payment is
+   * held by another call, the knock is remembered on the payment (and the delivery's receipt finished with it, in
+   * the same transaction) instead of refused, and the holder observes once more before it lets go.
+   */
+  async reconcileNotified(payment: PhisStoredPayment, profile: PhisPaymentProfile, receipt?: PhisPaymentReceipt): Promise<"reconciled" | "remembered"> {
+    return this.reconcileRounds(payment, profile, receipt, true);
+  }
+
+  private async reconcileRounds(payment: PhisStoredPayment, profile: PhisPaymentProfile, receipt: PhisPaymentReceipt | undefined, remember: boolean): Promise<"reconciled" | "remembered"> {
+    for (let repeat = 0; ; repeat += 1) {
+      const claimed = await withPoolTransaction(this.pool, async db => {
+        const locked = await readPhisPayment(db, payment.siteId, payment.record.id, null, true);
+        if (locked && await claimPhisPayment(db, locked)) return locked;
+        // After a knock the lease was let go; somebody holding it now claimed after the knock and observes after it.
+        if (repeat > 0) return null;
+        if (remember && locked && await rememberPhisPaymentNotification(db, locked)) {
+          if (receipt) await finishPhisPaymentReceipt(db, payment.siteId, receipt);
+          return "remembered" as const;
+        }
+        throw new PhisPaymentError("provider_unavailable");
+      });
+      if (claimed === "remembered") return "remembered";
+      if (!claimed) return "reconciled";
+      const knocked = await this.reconcileHeld(claimed, profile, repeat === 0 ? receipt : undefined);
+      await this.options.afterCommit?.().catch(() => {});
+      // Told during this claim: this observation may predate it. The knock stays set when the repeats run out,
+      // and the maintenance run finds the payment.
+      if (!knocked || repeat >= PHIS_PAYMENT_KNOCK_REPEATS) return "reconciled";
+      this.options.reconcileRepeated?.({ siteId: claimed.siteId, consumerAddonId: claimed.consumerAddonId, paymentId: claimed.record.id, repeat: repeat + 1, limit: PHIS_PAYMENT_KNOCK_REPEATS });
+    }
+  }
+
+  /** One observation under a claim; true when a notification was remembered during it. */
+  private async reconcileHeld(claimed: PhisStoredPayment, profile: PhisPaymentProfile, receipt?: PhisPaymentReceipt): Promise<boolean> {
     let result: PhisPaymentProviderExecution;
     let operationId: string | null = null;
     try {
@@ -1009,17 +1048,19 @@ export class PhisPaymentEngine implements PhisPaymentsCapabilityV1 {
       await this.apply(claimed, profile, { outcome: "unknown" }, operationId);
       throw new PhisPaymentError("provider_unavailable");
     }
-    try { await this.apply(claimed, profile, result, operationId, receipt); }
+    try { return await this.apply(claimed, profile, result, operationId, receipt, true); }
     catch (error) { await this.apply(claimed, profile, { outcome: "unknown" }, operationId); throw error; }
-    await this.options.afterCommit?.().catch(() => {});
   }
 
-  private async apply(claimed: PhisStoredPayment, profile: PhisPaymentProfile, result: PhisPaymentProviderExecution, operationId: string | null, receipt?: PhisPaymentReceipt) {
+  private async apply(claimed: PhisStoredPayment, profile: PhisPaymentProfile, result: PhisPaymentProviderExecution, operationId: string | null, receipt?: PhisPaymentReceipt, observing = false): Promise<boolean> {
     if (!result || !["applied", "pending", "rejected", "unknown"].includes(result.outcome)
       || (result.outcome === "rejected" && !PHIS_PAYMENT_ERROR_CODES.includes(result.code))) throw new PhisPaymentError("provider_unavailable");
-    await withPoolTransaction(this.pool, async db => {
+    return withPoolTransaction(this.pool, async db => {
       const payment = (await readPhisPayment(db, claimed.siteId, claimed.record.id, null, true))!;
       if (!payment || payment.generation !== claimed.generation || payment.leaseToken !== claimed.leaseToken) throw new PhisPaymentError("provider_unavailable");
+      // Read under the row lock that also releases the lease below: a notification either is remembered here
+      // already, or finds the payment unheld and reconciles it itself.
+      const knocked = payment.notifiedGeneration !== null && payment.notifiedGeneration >= claimed.generation;
       const operations = await listPhisPaymentOperations(db, payment.record.id);
       const beforeOperations = structuredClone(operations.map(o => o.record));
       const refunds = await listPhisPaymentRefunds(db, payment.record.id);
@@ -1065,6 +1106,11 @@ export class PhisPaymentEngine implements PhisPaymentsCapabilityV1 {
       // In the payment's own transaction: the period is paid exactly when the payment says it is.
       if (payment.record.subscriptionId) await this.settleSubscriptionPayment(db, payment, operation?.record.errorCode ?? null);
       if (receipt) await finishPhisPaymentReceipt(db, payment.siteId, receipt);
+      // This claim is newer than the knock it found and has now asked the Provider: the knock is answered.
+      if (observing && (result.outcome === "applied" || result.outcome === "pending") && payment.notifiedGeneration !== null && !knocked) {
+        await settlePhisPaymentNotification(db, payment.record.id, claimed.generation);
+      }
+      return knocked;
     });
   }
 
