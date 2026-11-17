@@ -1,3 +1,27 @@
+phis (0.4.3-1) unstable; urgency=medium
+
+  * Maintenance runs as Core jobs; the operator installs no timer. The
+    housekeeping steps of phis maintain and the reconciliation of
+    unresolved payments (payments.recover, hourly) are jobs on the
+    scheduler. phis maintain stays as the same steps by hand and keeps
+    addon-storage.
+  * Settled queue rows are forgotten past their window: sent mails and
+    processed payment receipts after 90 days, delivered Add-on events
+    after 30. A row that is still owed stays however old it is.
+  * Schema: hashes and ciphertext are BYTEA instead of hex text
+    (sessions, auth transactions, reset tokens, registration intents,
+    second factors, link salts, server secrets). Stored values keep
+    their bytes; sessions and links stay valid.
+  * Schema: tr_lang, tr_site_lang, site_content_version_text and
+    site_search_documents are keyed by their natural key; four surplus
+    indexes are gone.
+  * By hand on an existing database, with the server stopped, before
+    this release starts: the column conversions, key changes and the
+    two partial indexes described in DB.md. The release before this one
+    cannot read the converted columns.
+
+ -- Marius Schumacher <marius.schumacher@phisys.com>  Tue, 17 Nov 2026 22:16:00 +0000
+
 phis (0.4.2-1) unstable; urgency=medium
 
   * A notification that meets a held payment is remembered instead of
