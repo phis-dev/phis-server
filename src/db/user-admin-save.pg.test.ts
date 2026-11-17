@@ -132,8 +132,7 @@ describe("Saving a user with Add-on roles", () => {
     const before = await revision(userId);
 
     const response = await put(await form(userId, {
-      // One object, one string: the two shapes of an entry.
-      addonRoles: [{ addonId: SHOP, role: "manager" }, `${BLOG}:editor`],
+      addonRoles: [`${SHOP}:manager`, `${BLOG}:editor`],
     }));
 
     expect(response.status).toBe(200);
@@ -141,15 +140,9 @@ describe("Saving a user with Add-on roles", () => {
     expect(await held(userId)).toEqual([`${BLOG}:editor`, `${OFF}:x`, `${SHOP}:manager`, `${SHOP}:retired`]);
     expect(await revision(userId)).toBe(before + 1);
     // The answer is the row as GET lists it: the stored roles that count here (no `x`: its Add-on is not available).
-    expect((await response.json()).addonRoles).toEqual([
-      { addonId: BLOG, role: "editor" },
-      { addonId: SHOP, role: "manager" },
-    ]);
+    expect((await response.json()).addonRoles).toEqual([`${BLOG}:editor`, `${SHOP}:manager`]);
     const single = await GET(new NextRequest(`https://server.test/api/site/admin/users?userId=${userId}`));
-    expect((await single.json()).user.addonRoles).toEqual([
-      { addonId: BLOG, role: "editor" },
-      { addonId: SHOP, role: "manager" },
-    ]);
+    expect((await single.json()).user.addonRoles).toEqual([`${BLOG}:editor`, `${SHOP}:manager`]);
   });
 
   it("empties every role of every Add-on the Site runs with an empty list", async () => {
@@ -168,7 +161,7 @@ describe("Saving a user with Add-on roles", () => {
     const before = await revision(userId);
 
     for (const [entry, error] of [
-      [{ addonId: OFF, role: "x" }, "addon_unknown"],
+      [`${OFF}:x`, "addon_unknown"],
       [`@pgtest/nonesuch:x`, "addon_unknown"],
       [`${SHOP}:nonesuch`, "role_undeclared"],
     ] as const) {
@@ -177,6 +170,7 @@ describe("Saving a user with Add-on roles", () => {
       expect(await response.json()).toMatchObject({ error });
     }
     expect((await put(await form(userId, { addonRoles: "not a list" }))).status).toBe(400);
+    expect((await put(await form(userId, { addonRoles: [{ addonId: SHOP, role: "manager" }] }))).status).toBe(400);
 
     expect(await nameOf(userId)).toBe("Before");
     expect(await held(userId)).toEqual([`${SHOP}:clerk`]);

@@ -302,7 +302,7 @@ describe("durable Payment execution", () => {
   });
   describe("a notification that meets a held payment", () => {
     const pool = () => requirePhiTestDatabase();
-    const row = async (id: string) => (await (await pool()).query<{ notified_generation: string | null; lease_until: Date | null }>(
+    const row = async (id: string) => (await (await pool()).query<{ notified_generation: number | null; lease_until: Date | null }>(
       "SELECT notified_generation, lease_until FROM phis.payments WHERE id = $1", [id])).rows[0]!;
     const receipt = async (deliveryId: string) => (await (await pool()).query<{ processed: boolean }>(
       "SELECT processed FROM phis.payment_notification_receipts WHERE site_id = $1 AND delivery_id = $2", [site.id, deliveryId])).rows[0];
@@ -357,7 +357,7 @@ describe("durable Payment execution", () => {
       const held = await holdLease(id); const before = remote.observeCalls;
       expect(await hook(id, randomUUID()).receive({ profileKey: "sandbox" })).toEqual({ outcome: "processed" });
       expect(remote.observeCalls).toBe(before);
-      expect((await row(id)).notified_generation).toBe(String(held.generation));
+      expect((await row(id)).notified_generation).toBe(held.generation);
       // The holder never comes back: its lease runs out, and the payment is selected.
       state.status = "captured"; state.capturedMinor = "1990"; state.checkout = null;
       await (await pool()).query("UPDATE phis.payments SET lease_until = NOW() - interval '1 second' WHERE id = $1", [id]);

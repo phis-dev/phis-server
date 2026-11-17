@@ -147,10 +147,9 @@ function buildBaseRoleFlagsFromSelection(value: unknown) {
 type AddonRoleAssignment = { addonId: string; role: string };
 
 /**
- * The `addonRoles` of a save: the stored Add-on roles the person is to hold afterwards, one entry per role,
- * as the list `GET` answers per row (`{ addonId, role }`) or, the one shape a multi-select can deliver, the
- * string `"<addonId>:<role>"` -- the value the user-management options Provider already gives each role,
- * split at its last colon. Null is a malformed list.
+ * The `addonRoles` of a save: the stored Add-on roles the person is to hold afterwards, one string
+ * `"<addonId>:<role>"` per role (the value the user-management options Provider gives each role), split at its
+ * last colon; one Add-on may appear several times. Anything but a list of such strings is null, a malformed list.
  */
 function parseAddonRolesSelection(value: unknown): AddonRoleAssignment[] | null {
   if (!Array.isArray(value)) {
@@ -158,17 +157,14 @@ function parseAddonRolesSelection(value: unknown): AddonRoleAssignment[] | null 
   }
   const entries: AddonRoleAssignment[] = [];
   for (const entry of value) {
-    let addonId: unknown;
-    let role: unknown;
-    if (typeof entry === "string") {
-      const cut = entry.lastIndexOf(":");
-      addonId = cut > 0 ? entry.slice(0, cut) : undefined;
-      role = cut > 0 ? entry.slice(cut + 1) : undefined;
-    } else if (entry !== null && typeof entry === "object" && !Array.isArray(entry)) {
-      ({ addonId, role } = entry as Record<string, unknown>);
+    if (typeof entry !== "string") {
+      return null;
     }
+    const cut = entry.lastIndexOf(":");
+    const addonId = cut > 0 ? entry.slice(0, cut) : undefined;
+    const role = cut > 0 ? entry.slice(cut + 1) : undefined;
     if (
-      typeof addonId !== "string" || typeof role !== "string" ||
+      addonId === undefined || role === undefined ||
       !addonId.trim() || addonId.length > 255 || !role.trim() || role.length > 64
     ) {
       return null;
@@ -224,7 +220,7 @@ async function sendPasswordResetMail(input: {
 }
 
 /**
- * The Site's users, one page, each with the Core roles and the stored Add-on roles they were given (a Site Admin holds every role besides); filterable by account type, enabled state, `addonId` and `addonRole`. `?userId=` answers the one user, with the same `addonRoles`.
+ * The Site's users, one page, each with the Core roles and the stored Add-on roles they were given (a Site Admin holds every role besides); filterable by account type, enabled state, `addonId` and `addonRole`. `?userId=` answers the one user, with `addonRoles` as a list of `"<addonId>:<role>"` strings, one per role.
  */
 export async function GET(request: NextRequest) {
   const { context, error } = await requireSiteAdminOnlyApiContext(request);
@@ -282,7 +278,7 @@ export async function GET(request: NextRequest) {
         enabled: membership.enabled,
         coreRoleFlags: membership.coreRoleFlags,
         roleTags: buildRoleTags(membership.coreRoleFlags),
-        addonRoles: addonRolesOf(target.id),
+        addonRoles: addonRolesOf(target.id).map(({ addonId, role }) => `${addonId}:${role}`),
         medusaCustomerId: target.medusaCustomerId,
         self: target.id === session.userId,
       },
@@ -498,7 +494,7 @@ export async function POST(request: NextRequest) {
 }
 
 /**
- * Saves one user: name, address, Core roles, enabled state and, with `addonRoles`, the stored Add-on roles over every Add-on enabled for the Site, in one transaction (AUTHORIZATION.md section 5).
+ * Saves one user: name, address, Core roles, enabled state and, with `addonRoles`, the stored Add-on roles over every Add-on enabled for the Site, in one transaction (AUTHORIZATION.md section 5). `addonRoles` is a flat list of `"<addonId>:<role>"` strings, one per role; the answer carries it in the same form.
  */
 export async function PUT(request: NextRequest) {
   const { context, error } = await requireSiteAdminOnlyApiContext(request);
@@ -550,7 +546,7 @@ export async function PUT(request: NextRequest) {
   // leaves them as they are, which is what every caller before this field did.
   const wantedAddonRoles = body.addonRoles === undefined ? null : parseAddonRolesSelection(body.addonRoles);
   if (body.addonRoles !== undefined && wantedAddonRoles === null) {
-    return NextResponse.json({ error: "addonRoles must be a list of { addonId, role } or \"<addonId>:<role>\"." }, { status: 400 });
+    return NextResponse.json({ error: "addonRoles must be a list of \"<addonId>:<role>\" strings." }, { status: 400 });
   }
 
   if (isSelf && body.roles !== undefined && requestedRoleFlags !== (currentMembership?.coreRoleFlags ?? 0)) {
@@ -728,8 +724,8 @@ export async function PUT(request: NextRequest) {
     lastName: requestedLastName,
     companyName: requestedCompanyName,
     enabled: requestedEnabled ?? currentMembership?.enabled ?? true,
-    // As `GET` lists them, read after the commit.
-    addonRoles: (await readCountingAddonRoles(site.id, [target.id]))(target.id),
+    // As `GET ?userId=` answers them (`"<addonId>:<role>"` strings), read after the commit.
+    addonRoles: (await readCountingAddonRoles(site.id, [target.id]))(target.id).map(({ addonId, role }) => `${addonId}:${role}`),
   });
 }
 

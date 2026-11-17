@@ -262,9 +262,9 @@ describe("PUT /api/site/admin/users with Add-on roles", () => {
     expect(mocks.mayGrant).not.toHaveBeenCalled();
   });
 
-  it("takes the difference over every Add-on of the Site, from objects and from \"<addonId>:<role>\" strings", async () => {
+  it("takes the difference over every Add-on of the Site, from \"<addonId>:<role>\" strings", async () => {
     // Wanted: shop manager (new), blog editor (kept). Not wanted any more: shop clerk.
-    const response = await put([{ addonId: SHOP_ADDON, role: "manager" }, `${BLOG_ADDON}:editor`]);
+    const response = await put([`${SHOP_ADDON}:manager`, `${BLOG_ADDON}:editor`]);
 
     expect(response.status).toBe(200);
     expect(mocks.save).toHaveBeenCalledWith(expect.objectContaining({
@@ -276,6 +276,13 @@ describe("PUT /api/site/admin/users with Add-on roles", () => {
     }));
   });
 
+  it("rejects the object form { addonId, role } with 400 and stores nothing", async () => {
+    const response = await put([{ addonId: SHOP_ADDON, role: "manager" }]);
+
+    expect(response.status).toBe(400);
+    expect(mocks.save).not.toHaveBeenCalled();
+  });
+
   it("takes every role of an Add-on back that the list no longer names, and none of an unlisted-but-undeclared one", async () => {
     await put([]);
 
@@ -285,7 +292,7 @@ describe("PUT /api/site/admin/users with Add-on roles", () => {
   });
 
   it("checks the standing for every role it gives or takes, with the declared roles of its Add-on", async () => {
-    await put([{ addonId: SHOP_ADDON, role: "manager" }]);
+    await put([`${SHOP_ADDON}:manager`]);
 
     expect(mocks.mayGrant).toHaveBeenCalledTimes(3);
     expect(mocks.mayGrant).toHaveBeenCalledWith(expect.objectContaining({
@@ -298,7 +305,7 @@ describe("PUT /api/site/admin/users with Add-on roles", () => {
     mocks.mayGrant.mockImplementation(async (input: { role: string }) =>
       input.role === "editor" ? { allowed: false, reason: "not_permitted" } : { allowed: true });
 
-    const response = await put([{ addonId: SHOP_ADDON, role: "manager" }]);
+    const response = await put([`${SHOP_ADDON}:manager`]);
 
     expect(response.status).toBe(403);
     expect(await response.json()).toEqual({ error: "not_permitted", addonId: BLOG_ADDON, role: "editor" });
@@ -306,7 +313,7 @@ describe("PUT /api/site/admin/users with Add-on roles", () => {
   });
 
   it("answers 404 addon_unknown for an Add-on this Site does not run, naming the role", async () => {
-    const response = await put([{ addonId: "@acme/off", role: "x" }]);
+    const response = await put(["@acme/off:x"]);
 
     expect(response.status).toBe(404);
     expect(await response.json()).toEqual({ error: "addon_unknown", addonId: "@acme/off", role: "x" });
@@ -350,7 +357,7 @@ describe("PUT /api/site/admin/users with Add-on roles", () => {
     mocks.getById.mockResolvedValue({ ...account([7]), id: 3 });
     mocks.getMembership.mockResolvedValue({ coreRoleFlags: 8, enabled: true });
 
-    const response = await put([{ addonId: SHOP_ADDON, role: "clerk" }, { addonId: BLOG_ADDON, role: "editor" }]);
+    const response = await put([`${SHOP_ADDON}:clerk`, `${BLOG_ADDON}:editor`]);
 
     expect(response.status).toBe(200);
     expect(mocks.save).toHaveBeenCalledWith(expect.objectContaining({ coreRoleFlags: null, addonRoles: { grant: [], revoke: [] } }));
@@ -361,9 +368,9 @@ describe("PUT /api/site/admin/users with Add-on roles", () => {
     mocks.installed.mockReturnValue({ [SHOP_ADDON]: { enabled: true, manifest: { addonId: SHOP_ADDON, roles: shopRoles } } });
     mocks.grants.mockResolvedValue(new Map([[41, [{ addonId: SHOP_ADDON, role: "manager" }, { addonId: BLOG_ADDON, role: "editor" }]]]));
 
-    const response = await put([{ addonId: SHOP_ADDON, role: "manager" }]);
+    const response = await put([`${SHOP_ADDON}:manager`]);
 
-    expect(await response.json()).toMatchObject({ userId: 41, addonRoles: [{ addonId: SHOP_ADDON, role: "manager" }] });
+    expect(await response.json()).toMatchObject({ userId: 41, addonRoles: [`${SHOP_ADDON}:manager`] });
   });
 
   it("answers 409 when the address was taken between the check and the write", async () => {
@@ -423,7 +430,7 @@ describe("GET /api/site/admin/users?userId with Add-on roles", () => {
 
     const response = await GET(request("GET", undefined, "?userId=41"));
 
-    expect((await response.json()).user.addonRoles).toEqual([{ addonId: "@acme/shop", role: "clerk" }]);
+    expect((await response.json()).user.addonRoles).toEqual(["@acme/shop:clerk"]);
     expect(mocks.grants.mock.calls[0]![1]).toEqual({ siteId: 7, userIds: [41] });
   });
 });

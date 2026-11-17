@@ -264,11 +264,13 @@ User administration reads and writes them through four calls, all Site-scoped:
   of a stored role, and every enabled Site Admin (when the Add-on declares the role). A row shows a Site
   Admin as `roleTags` containing `"admin"` (with `enabled`); its `addonRoles` stay the stored ones. An
   unknown or unavailable Add-on or an undeclared role gives an empty list; a malformed value 400.
-  `?userId=N` (the one-user read a dialog pre-fills from) carries the same `addonRoles` in its `user`.
+  `?userId=N` (the one-user read a dialog pre-fills from) carries `addonRoles` in its `user` as a flat list of
+  `"<addonId>:<role>"` strings, one per role.
 - `PUT /api/site/admin/users` (Site Admin) takes an optional `addonRoles`: the stored Add-on roles the person
-  is to hold afterwards, over every Add-on enabled for the Site, as one flat list of `{ addonId, role }` (the
-  entry `GET` lists per row) or of `"<addonId>:<role>"` strings (what a multi-select delivers: the value the
-  user-management options Provider already gives each role; split at the last colon). Absent leaves the Add-on
+  is to hold afterwards, over every Add-on enabled for the Site, as one flat list of `"<addonId>:<role>"`
+  strings, one entry per role (the value the user-management options Provider gives each role; split at the
+  last colon; one Add-on may appear several times, e.g. `["@phis/shop:manager", "@phis/shop:editor"]`). The
+  object form `{ addonId, role }` is not accepted: an entry that is not a string is a 400. Absent leaves the Add-on
   roles as they are; `[]` takes every role of every enabled Add-on back. Core takes the difference per Add-on
   to the stored roles, checks the caller's standing for each role to give and each role to take back (the
   evaluation `PUT /api/site/addon-roles` uses), and writes the person and the roles in one transaction: any
@@ -276,7 +278,7 @@ User administration reads and writes them through four calls, all Site-scoped:
   (not installed or not enabled for the Site), 404 `role_undeclared`, 404 `user_not_member`, 403
   `not_permitted`; a malformed list is 400. Stored roles of an Add-on the Site does not run, or that the
   manifest no longer declares, are left as they are. The authorization revision moves once for the Add-on
-  roles of one save. The answer carries `addonRoles` as `GET` lists them.
+  roles of one save. The answer carries `addonRoles` in the same string form.
 
 Core does not forbid giving or taking an Add-on role from oneself (the caller's standing is the only
 check, and a Site Admin may set their own Add-on roles through either call); only the Core roles of one's
