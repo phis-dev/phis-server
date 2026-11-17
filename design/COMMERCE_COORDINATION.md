@@ -76,7 +76,6 @@ export type PhisProductId = `@${string}/${string}:${string}`;
 export type PhisProductState = "draft" | "active" | "withdrawn" | "locked";
 /** Who sells: the Site itself, the publisher at an address of their own, or the Site with a payout. */
 export type PhisProductSale = "own" | "referral" | "payout";
-export type PhisProductTerm = "once" | "recurring" | "consumable";
 
 export type PhisProduct = {
   id: PhisProductId;
@@ -90,7 +89,8 @@ export type PhisProduct = {
   summary: string;
   /** A Media Asset of the Site, or none. */
   image: string | null;
-  term: PhisProductTerm;
+  /** The quantity of an acquisition counts (seats, hours); otherwise holding it is yes or no. */
+  counted: boolean;
   sale: PhisProductSale;
   /** Where the publisher sells it, for `referral`. */
   referralUrl: string | null;
@@ -107,6 +107,14 @@ export type PhisProduct = {
 
 Deliberately absent: price, currency, tax, stock, category, long description, gallery, files, versions,
 keys. The first group is the seller's, the second the supplier's.
+
+Also absent: whether it is paid once or as a subscription, and for how long it is held. A product is
+*what somebody holds*; how it is sold is a **listing**, and a seller may keep several for one product --
+"PhiDossier Pro" by the month, by the year, and once for good. The acquisition carries the difference: an
+end, a subscription, or neither. What takes several products to say is a bundle.
+
+Title, summary and picture are in Core so that a product can still be named when its supplier is
+switched off (operator, 2026-11-17).
 
 `type` is free text of the supplier and `attributes` is open, so a new kind of product (an Add-on package,
 a course) and a new mark on one (`signed`, a rating) need no Core release. Core reads neither. An
@@ -136,9 +144,14 @@ type and state and is paged.
 | State | Can be acquired | Holders keep access | Set by |
 |---|---|---|---|
 | `draft` | no | -- | supplier |
-| `active` | yes | yes | supplier; for a publisher's product after the operator released it |
+| `active` | yes | yes | supplier; a publisher's product only after the Site operator released it |
 | `withdrawn` | no | yes, as it was | supplier, operator, Core |
 | `locked` | no | no | operator only |
+
+The release is given once per product. After it the publisher delivers updates -- new versions, new
+files -- without another release (operator, 2026-11-17); that is delivery, and the directory does not
+see it. Assumed, not decided: a change of what the release was given for (`sale`, `free`, `parts`) needs
+it again, a change of title, summary or picture does not.
 
 A product that was ever acquired is never deleted. Its row stays so that an order page, a licence page
 and a download page can go on naming it. Deletion is possible only while no entitlement entry refers to
@@ -158,8 +171,11 @@ declares a handler. A seller takes a withdrawn product out of sale on it.
    One word instead of two, and a new product needs no new package.
 2. **An entry's end is a date or a subscription.** `grant` takes an optional `subscriptionId` of
    `payments:v1`. The entry is then valid while that subscription's paid period lasts, derived, not
-   written: a renewal needs no call and an unpaid period ends the entitlement by itself. A seller that
-   runs its own subscriptions (Medusa) writes `endsAt` and extends it, as today. Both ways stay.
+   written: a renewal needs no call. When a period stays unpaid the entry goes on counting for a grace
+   time after the paid period's end and then stops by itself. The grace is a Site setting of Core, in
+   days, at most 14 (operator, 2026-11-17); assumed default 14, and 0 ends it with the period. A seller
+   that runs its own subscriptions (Medusa) writes `endsAt` and extends it, as today, and its grace is
+   its own. Both ways stay.
 3. **Delivery state.** The supplier of the entry's product -- and nobody else -- reports per entry
    `pending`, `delivered` or `failed`, with an optional link: a Site path and a label ("Show licence").
    The seller's order page shows it without knowing who delivered. `entitlement.changed` is emitted on
@@ -259,8 +275,8 @@ tables.** It reads products through `products:v1` and learns of delivery through
 would for a foreign supplier. The supplier half becomes its own Add-on when goods with stock and shipping
 arrive, or when a second seller is to sell the same hand-made products; nothing else has to move then.
 
-The Shop's `products` table is split accordingly: identity (key, title, summary, picture, term) goes to
-the directory, the listing stays. Before v1 the test data is re-entered, not migrated.
+The Shop's `products` table is split accordingly: identity (key, title, summary, picture) goes to the
+directory; the listing stays and gains what was the product's: whether it is sold once or recurring. Before v1 the test data is re-entered, not migrated.
 
 ## 9. The flows
 
@@ -279,8 +295,8 @@ Nothing reaches a catalogue by itself.
 6. The supplier delivers and reports `delivered` with its link.
 7. `entitlement.changed` again; the order page shows the link.
 
-**Subscription.** Nothing is written on a renewal. An unpaid period ends the entitlement; the supplier
-learns of it through the event Core's expiry job already emits.
+**Subscription.** Nothing is written on a renewal. An unpaid period ends the entitlement after the Site's
+grace time; the supplier learns of it through the event Core's expiry job already emits.
 
 **Refund.** The seller revokes its entry; the supplier learns of it and takes back what it delivered.
 
@@ -368,19 +384,27 @@ Not in this design, and not blocked by it:
 6. How signing works is decided later; the design must allow it without a Core change.
 7. Two separate shops on one Site are Medusa's; first a usable shop system that Core coordinates.
 8. The Shop stays one package with a seller half and a supplier half.
+9. Title, summary and one picture of a product are in Core, so that a product can be named when its
+   supplier is switched off.
+10. Bundles are kept in Core.
+11. `withdrawn` and `locked` are two states.
+12. An unpaid subscription period: the entitlement lasts at most 14 more days; the number is a setting.
+13. A third party's product is released by the Site operator. Once released, the third party delivers
+    updates for it without another release.
 
 ## 14. Open, the operator's to decide
 
-1. **Product and entitlement kind are one.** Recommended; the body assumes it.
-2. **Title, summary and one picture in Core.** Recommended, so that every Add-on can name a product;
-   long description and gallery stay with the seller.
-3. **Bundles in Core.** Recommended; otherwise every seller has to know what a product consists of.
-4. **`withdrawn` and `locked` as two states.** Recommended.
-5. **An unpaid subscription period:** does the entitlement end with the paid period (assumed), or after
-   the dunning Core still runs?
-6. **A publisher's product becomes `active` only after the operator released it.** Assumed.
-7. **Who may write acquisitions:** a source per Site, optionally limited to suppliers (section 5,
-   point 6), in place of the row per kind.
+1. **Product and entitlement kind are one.** Recommended; the body assumes it. What it means: today there
+   are two lists -- what one can be entitled to, declared in an Add-on's manifest, and what the Shop
+   sells -- and a hand-kept mapping from the second to the first. With one concept the entry says "this
+   account holds this product", the mapping is gone, and a supplier makes a new product at runtime. What
+   the mapping used to allow is kept by other means: several ways to sell one product are listings,
+   one sale that gives several things is a bundle.
+2. **Who may write acquisitions.** An entry says that an account owns something, so an Add-on that may
+   write entries can give goods away. Today the operator allows it per kind and source. Recommended: the
+   operator allows a seller once for the Site -- for every product, or only for the products of named
+   suppliers -- in place of one row per product (section 5, point 6).
+3. **What a publisher may change on a released product without a new release** (section 4, assumed).
 
 ## 15. Sequence
 
