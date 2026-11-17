@@ -88,9 +88,14 @@ async function invokeEventHandler(input: {
       } }));
     } else if (input.event === "entitlement.changed") {
       // No state travels: the handler reads the current answer through `entitlements:v1`.
-      const { subject, entitlementKind } = input.row.payload;
-      if (input.row.subjectKind !== "entitlement" || typeof subject !== "string" || typeof entitlementKind !== "string" || !entitlementKind.startsWith("@")) throw new Error("Invalid entitlement outbox subject.");
-      await timed(input.handler({ ...common, event: input.event, subject: { kind: "entitlement", subject, entitlementKind: entitlementKind as `@${string}/${string}:${string}` } }));
+      const { subject, product } = input.row.payload;
+      if (input.row.subjectKind !== "entitlement" || typeof subject !== "string" || typeof product !== "string" || !product.startsWith("@")) throw new Error("Invalid entitlement outbox subject.");
+      await timed(input.handler({ ...common, event: input.event, subject: { kind: "entitlement", subject, product: product as `@${string}/${string}:${string}` } }));
+    } else if (input.event === "product.changed") {
+      // No state travels: the handler reads the product through `products:v1`.
+      const { productId } = input.row.payload;
+      if (input.row.subjectKind !== "product" || typeof productId !== "string" || !productId.startsWith("@")) throw new Error("Invalid product outbox subject.");
+      await timed(input.handler({ ...common, event: input.event, subject: { kind: "product", productId: productId as `@${string}/${string}:${string}` } }));
     } else if (input.row.subjectKind === "emitted") {
       /*
        * What another Add-on said (SERVER_ADDONS.md, Events). The envelope is the row: who emitted it,

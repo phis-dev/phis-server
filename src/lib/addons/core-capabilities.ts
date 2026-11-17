@@ -56,6 +56,7 @@ const DELIVERABLE_CAPABILITY_ID_SET = new Set<string>([
   CORE_CAPABILITY_IDS.notifications,
   CORE_CAPABILITY_IDS.events,
   CORE_CAPABILITY_IDS.entitlements,
+  CORE_CAPABILITY_IDS.products,
 ]);
 
 /**

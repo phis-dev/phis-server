@@ -31,6 +31,7 @@ import { buildPhisAddonThreadsCapability } from "./threads-capability.ts";
 import { buildPhisAddonSecretsCapability } from "./secrets-capability.ts";
 import { buildPhisAddonSettingsCapability } from "./settings-capability.ts";
 import { buildPhisAddonEntitlementsCapability } from "./entitlements-capability.ts";
+import { buildPhisAddonProductsCapability } from "./products-capability.ts";
 import { buildPhisAddonEventsCapability } from "./events-capability.ts";
 import { buildPhisAddonNotificationsCapability } from "./notifications-capability.ts";
 import { buildPhisAddonStorageCapability } from "./storage-capability.ts";
@@ -369,6 +370,14 @@ export function buildPhisAddonCapabilities(input: {
       addonId: input.manifest.addonId,
       siteId,
       actorUserId: input.actorUserId,
+      unauthenticated: input.unauthenticated === true && input.systemAuthority !== true,
+    });
+  }
+  if (required.includes(PHIS_CORE_CAPABILITIES.products)) {
+    // Bound to the Site and to the Add-on, which is the supplier of what it registers and the author of what it annotates.
+    capabilities.products = buildPhisAddonProductsCapability({
+      addonId: input.manifest.addonId,
+      siteId,
       unauthenticated: input.unauthenticated === true && input.systemAuthority !== true,
     });
   }

@@ -30,6 +30,7 @@ import {
 } from "../lib/addons/core-capabilities.ts";
 import { phisAddonUnindexedSearches } from "../lib/addons/query-descriptor.ts";
 import { ensurePhisAddonSiteGroups } from "../db/server-addon-groups.mts";
+import { reconcileProductSupplyAfterChange, syncAddonProductsAtSite } from "./product-sync.mts";
 import {
   isPhiSiteMember,
   transferPhisAddonOwnership,
@@ -763,12 +764,40 @@ export async function reconcileAddons(
     }
   }
 
+  /*
+   * The product directory is caught up the same way, and for the same reason: a release can declare a
+   * product its predecessor did not, or stop declaring one, on Sites that already run it. Then the
+   * products follow whether their supplier runs at all -- an Add-on disabled or removed withdraws its
+   * products, one switched on again gets them back. Nothing is removed.
+   */
+  const productEntries = Object.fromEntries(
+    loaded.map(({ desired, manifest }) => [desired.addonId, { enabled: desired.enabled, manifest }]),
+  );
+  const products: Array<{ addonId: string; siteId: number; key: string; action: string; message?: string }> = [];
+  for (const { desired, manifest } of loaded) {
+    if (!desired.enabled) {
+      continue;
+    }
+    for (const siteId of await readPhisAddonEnabledSiteIds(pool, desired.addonId)) {
+      const applied = await syncAddonProductsAtSite(pool, {
+        addonId: desired.addonId,
+        siteId,
+        declared: manifest.products ?? [],
+        entries: productEntries,
+      });
+      products.push(...applied.map((entry) => ({ addonId: desired.addonId, siteId, ...entry })));
+    }
+  }
+  const productSupply = await reconcileProductSupplyAfterChange(pool, productEntries);
+
   return {
     ok: true,
     action: "addon.reconcile",
     releaseBuildId,
     addons: loaded.map(({ desired }) => desired),
     groups,
+    products,
+    productSupply,
     coreCapabilities: PHIS_CORE_CAPABILITIES,
   };
 }

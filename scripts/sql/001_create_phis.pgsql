@@ -2636,8 +2636,9 @@ CREATE TABLE IF NOT EXISTS phis.addon_event_outbox (
   CONSTRAINT addon_event_outbox_event_check CHECK (event <> ''),
   CONSTRAINT addon_event_outbox_hop_check CHECK (hop >= 0),
   CONSTRAINT addon_event_outbox_subject_check CHECK (
-    (subject_kind = 'thread' AND thread_id IS NOT NULL AND payment_id IS NULL AND subscription_id IS NULL AND emitter IS NULL AND event NOT IN ('payment.changed', 'entitlement.changed') AND event NOT LIKE '@%') OR
+    (subject_kind = 'thread' AND thread_id IS NOT NULL AND payment_id IS NULL AND subscription_id IS NULL AND emitter IS NULL AND event NOT IN ('payment.changed', 'entitlement.changed', 'product.changed') AND event NOT LIKE '@%') OR
     (subject_kind = 'entitlement' AND thread_id IS NULL AND payment_id IS NULL AND subscription_id IS NULL AND emitter IS NULL AND event = 'entitlement.changed') OR
+    (subject_kind = 'product' AND thread_id IS NULL AND payment_id IS NULL AND subscription_id IS NULL AND emitter IS NULL AND event = 'product.changed') OR
     (subject_kind = 'payment' AND thread_id IS NULL AND payment_id IS NOT NULL AND subscription_id IS NULL AND emitter IS NULL AND event = 'payment.changed') OR
     (subject_kind = 'subscription' AND thread_id IS NULL AND payment_id IS NULL AND subscription_id IS NOT NULL AND emitter IS NULL AND event = 'payment.changed') OR
     (subject_kind = 'emitted' AND thread_id IS NULL AND payment_id IS NULL AND subscription_id IS NULL AND emitter IS NOT NULL AND event LIKE '@%/%:%')
@@ -2657,7 +2658,67 @@ CREATE INDEX IF NOT EXISTS addon_event_outbox_pending_idx
   ON phis.addon_event_outbox (addon_id, site_id, id)
   WHERE delivered_at IS NULL;
 
--- Entitlements: who is entitled to what, from when until when (SERVER_ADDONS.md, entitlements:v1).
+-- Products: what a Site has that somebody can hold (SERVER_ADDONS.md, products:v1;
+-- design/COMMERCE_COORDINATION.md section 4). An identity, not a listing: the id a client sees is
+-- `supplier_addon_id || ':' || key`. `publisher` is NULL for the Site's own product. A product somebody
+-- ever acquired is never deleted; no foreign key points at it from `entitlements`, which keeps an entry
+-- whose product is gone.
+-- flags: 1 = counted, 2 = free, 4 = released, 8 = withdrawn because the supplier was switched off,
+-- 16 = declared by the supplier's manifest. `sale`, `referral_url`, `free` and `parts` are the terms in
+-- force; what a publisher asked to change of them on a released product waits in `pending_terms`
+-- ({ sale, referralUrl, free, parts }) until the operator releases it. `image_asset_id` goes to NULL when
+-- the Asset is deleted.
+CREATE TABLE IF NOT EXISTS phis.products (
+  id SERIAL PRIMARY KEY,
+  site_id SMALLINT NOT NULL REFERENCES phis.sites(id) ON DELETE CASCADE,
+  supplier_addon_id VARCHAR(255) NOT NULL,
+  key VARCHAR(96) NOT NULL,
+  publisher VARCHAR(255) NULL,
+  type VARCHAR(64) NOT NULL,
+  title VARCHAR(200) NOT NULL,
+  summary VARCHAR(1000) NOT NULL,
+  image_asset_id INT NULL,
+  sale VARCHAR(8) NOT NULL DEFAULT 'own',
+  referral_url VARCHAR(2000) NULL,
+  state VARCHAR(10) NOT NULL DEFAULT 'draft',
+  flags INT NOT NULL DEFAULT 0,
+  parts TEXT[] NOT NULL DEFAULT '{}',
+  pending_terms JSONB NULL,
+  version INT NOT NULL DEFAULT 1,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT products_identity_unique UNIQUE (site_id, supplier_addon_id, key),
+  CONSTRAINT products_id_site_unique UNIQUE (id, site_id),
+  CONSTRAINT products_supplier_check CHECK (supplier_addon_id ~ '^@[a-z0-9][a-z0-9._-]*/[a-z0-9][a-z0-9._-]*$'),
+  CONSTRAINT products_key_check CHECK (key ~ '^[a-z][a-z0-9.-]*$'),
+  CONSTRAINT products_publisher_check CHECK (publisher IS NULL OR publisher <> ''),
+  CONSTRAINT products_sale_check CHECK (sale IN ('own', 'referral', 'payout')),
+  CONSTRAINT products_referral_check CHECK ((sale = 'referral') = (referral_url IS NOT NULL)),
+  CONSTRAINT products_state_check CHECK (state IN ('draft', 'active', 'withdrawn', 'locked')),
+  CONSTRAINT products_pending_check CHECK (pending_terms IS NULL OR jsonb_typeof(pending_terms) = 'object'),
+  CONSTRAINT products_image_asset_site_fk
+    FOREIGN KEY (image_asset_id, site_id)
+    REFERENCES phis.media_assets (id, site_id)
+    ON DELETE SET NULL (image_asset_id)
+);
+
+-- The operator's list asks by supplier and by publisher.
+CREATE INDEX IF NOT EXISTS products_publisher_idx
+  ON phis.products (site_id, publisher)
+  WHERE publisher IS NOT NULL;
+
+-- What other Add-ons attached to a product: one JSON object per product and Add-on, written whole by
+-- that Add-on and nobody else. Display and filtering data, never authority.
+CREATE TABLE IF NOT EXISTS phis.product_attributes (
+  product_id INT NOT NULL REFERENCES phis.products(id) ON DELETE CASCADE,
+  addon_id VARCHAR(255) NOT NULL,
+  data JSONB NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (product_id, addon_id),
+  CONSTRAINT product_attributes_data_check CHECK (jsonb_typeof(data) = 'object')
+);
+
+-- Entitlements: who holds which product, from when until when (SERVER_ADDONS.md, entitlements:v1).
 --
 -- A subject is the reference Core hands an Add-on in place of a user id: one per person and Site, so a
 -- purchase one Add-on records and a right another one reads are about the same reference.
@@ -2672,17 +2733,17 @@ CREATE TABLE IF NOT EXISTS phis.entitlement_subjects (
   CONSTRAINT entitlement_subjects_reference_check CHECK (reference ~ '^sub_[a-z0-9]{24}$')
 );
 
--- One source's statement that a subject is entitled to a kind. `source` is the Add-on that wrote it, or
+-- One source's statement that a subject holds a product. `source` is the Add-on that wrote it, or
 -- '@phis/server' for an entry the operator wrote by hand; `reference` is the source's own name for it,
--- which is what makes stating it twice harmless. `kind` is text and no foreign key: the installed
--- manifests are the catalogue, and an entry of a kind nobody declares any more is kept and does not count.
+-- which is what makes stating it twice harmless. `product` is a product id (`phis.products`) and no
+-- foreign key: an entry whose product is gone is kept and does not count.
 -- flags: 1 = revoked, 2 = suspended. Whether an entry counts is derived from the flags and the two
 -- instants, never stored; `ended_event_at` only records that its ending was announced.
 CREATE TABLE IF NOT EXISTS phis.entitlements (
   id SERIAL PRIMARY KEY,
   site_id SMALLINT NOT NULL REFERENCES phis.sites(id) ON DELETE CASCADE,
   subject_id INT NOT NULL REFERENCES phis.entitlement_subjects(id) ON DELETE CASCADE,
-  kind VARCHAR(255) NOT NULL,
+  product VARCHAR(255) NOT NULL,
   source VARCHAR(255) NOT NULL,
   reference VARCHAR(190) NOT NULL,
   starts_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -2692,32 +2753,40 @@ CREATE TABLE IF NOT EXISTS phis.entitlements (
   ended_event_at TIMESTAMPTZ NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  CONSTRAINT entitlements_reference_unique UNIQUE (site_id, source, kind, reference),
-  CONSTRAINT entitlements_kind_check CHECK (kind ~ '^@[a-z0-9][a-z0-9._-]*/[a-z0-9][a-z0-9._-]*:[a-z][a-z0-9.-]*$'),
+  CONSTRAINT entitlements_reference_unique UNIQUE (site_id, source, product, reference),
+  CONSTRAINT entitlements_product_check CHECK (product ~ '^@[a-z0-9][a-z0-9._-]*/[a-z0-9][a-z0-9._-]*:[a-z][a-z0-9.-]*$'),
   CONSTRAINT entitlements_source_check CHECK (source ~ '^@[a-z0-9][a-z0-9._-]*/[a-z0-9][a-z0-9._-]*$'),
   CONSTRAINT entitlements_reference_check CHECK (reference <> ''),
   CONSTRAINT entitlements_period_check CHECK (ends_at IS NULL OR ends_at > starts_at),
   CONSTRAINT entitlements_quantity_check CHECK (quantity IS NULL OR quantity > 0)
 );
 
--- "Is this subject entitled to this kind": every answer reads here.
-CREATE INDEX IF NOT EXISTS entitlements_subject_kind_idx
-  ON phis.entitlements (subject_id, kind);
+-- "Does this subject hold this product": every answer reads here. A product's removal and its
+-- counted bit ask whether any entry names it.
+CREATE INDEX IF NOT EXISTS entitlements_subject_product_idx
+  ON phis.entitlements (subject_id, product);
+CREATE INDEX IF NOT EXISTS entitlements_product_idx
+  ON phis.entitlements (site_id, product);
 
 -- The job that owes an ending its event reads only what has an end and was not announced.
 CREATE INDEX IF NOT EXISTS entitlements_ending_idx
   ON phis.entitlements (ends_at)
   WHERE ends_at IS NOT NULL AND ended_event_at IS NULL;
 
--- The Site admin allowing a source to write a kind. The Add-on that declared a kind needs no row for its
--- own; every other source does.
-CREATE TABLE IF NOT EXISTS phis.entitlement_kind_sources (
+-- The Site operator allowing a source to write entitlements: for every product (flag 1) or for the
+-- products of the suppliers named. One row per source and Site. A supplier needs no row for its own
+-- `free` product.
+CREATE TABLE IF NOT EXISTS phis.entitlement_sources (
   site_id SMALLINT NOT NULL REFERENCES phis.sites(id) ON DELETE CASCADE,
-  kind VARCHAR(255) NOT NULL,
   source VARCHAR(255) NOT NULL,
+  flags INT NOT NULL DEFAULT 0,
+  suppliers TEXT[] NOT NULL DEFAULT '{}',
   granted_by_user_id INT NULL REFERENCES phis.user_accounts(id) ON DELETE SET NULL,
   granted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  PRIMARY KEY (site_id, kind, source)
+  PRIMARY KEY (site_id, source),
+  CONSTRAINT entitlement_sources_scope_check CHECK (
+    ((flags & 1) <> 0 AND cardinality(suppliers) = 0) OR ((flags & 1) = 0 AND cardinality(suppliers) > 0)
+  )
 );
 
 -- Every secret the server holds, encrypted, so more than one instance can read them.

@@ -3,7 +3,10 @@
 A design, not a contract. Built: the Core service `entitlements:v1` (the capability, the three tables, the
 event `entitlement.changed` and the Core job `entitlements.expire`) and the `phis entitlement` operator
 CLI (kinds, kind sources, entries by hand); see SERVER_ADDONS.md, DB.md and docs/CLI.md. Not built: an
-admin HTTP route or UI for kind sources, the Shop as a source, and the `@phis/ui` access policy. It describes a Core service `entitlements:v1` -- who is
+admin HTTP route or UI for kind sources, the Shop as a source, and the `@phis/ui` access policy. The kind and the
+catalogue of kinds described below are replaced by the product directory of
+[COMMERCE_COORDINATION.md](./COMMERCE_COORDINATION.md): an entry names a product, there is no `kinds()`, and the
+per-kind source is an allowance per source. It describes a Core service `entitlements:v1` -- who is
 entitled to what, from when until when -- on the pattern of `support:v1` and `payments:v1`: Core owns the
 tables and the rules, Add-ons talk only to Core. A later licence Add-on, downloads, courses and an App
 Store reconciliation are meant to stand on it. The questions in section 8 are the operator's to decide

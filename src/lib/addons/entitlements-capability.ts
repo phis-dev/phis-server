@@ -2,15 +2,15 @@ import "server-only";
 
 import {
   PHIS_ENTITLEMENT_CORE_SOURCE,
-  type PhisEntitlementKind,
-  type PhisEntitlementKindId,
   type PhisEntitlementSubject,
   type PhisEntitlementsCapabilityV1,
 } from "@phis/contracts/addon";
+import type { PhisProduct, PhisProductId } from "@phis/contracts/addon";
 
 import { schedulePhisAddonEventDelivery } from "./event-trigger.ts";
-import { isPhisEntitlementKindId, listEntitlementKindsOf, listEntitlementListenersOf } from "./entitlement-catalogue.ts";
+import { listEntitlementListenersOf } from "./commerce-listeners.ts";
 import { getPhisAddonInstalledManifest } from "./installed.ts";
+import { isPhisProductId, splitPhisProductId } from "./product-draft.ts";
 import { getPool } from "@/lib/db";
 import {
   ensureEntitlementSubject,
@@ -21,24 +21,23 @@ import {
   readEntitlementState,
   updateEntitlement,
 } from "@/db/entitlements.mts";
+import { readProduct } from "@/db/products.mts";
 
 /**
  * `entitlements:v1` for one request (SERVER_ADDONS.md, entitlements:v1).
  *
- * Reading is open to whoever requires the capability. Writing is a source's, and a source is believed for
- * a kind in two cases: it declared the kind itself, or the Site's admin allowed it. Every write is the
- * calling Add-on's own -- the source is closed over, not passed in -- so another source's entry is simply
- * not found. An unverified hook reaches none of it, reads included: whether somebody is entitled is not
- * for whoever found an unsigned address.
+ * Reading is open to whoever requires the capability. Writing is a source's, and a source is believed in
+ * two cases: the Site's operator allowed it -- for every product or for the products of the supplier --
+ * or it supplies the product itself and the product is `free`. Every write is the calling Add-on's own --
+ * the source is closed over, not passed in -- so another source's entry is simply not found. An
+ * unverified hook reaches none of it, reads included: whether somebody holds a product is not for
+ * whoever found an unsigned address.
  */
 
 export class PhisAddonEntitlementsError extends Error {}
 
 const REFERENCE_MAX_LENGTH = 190;
 const QUANTITY_MAX = 2_000_000_000;
-
-/** The kinds the enabled Add-ons declare: the installed manifests are the catalogue. */
-export const listPhisEntitlementKinds = (): PhisEntitlementKind[] => listEntitlementKindsOf(getPhisAddonInstalledManifest());
 
 /** The enabled Add-ons that declare a handler for `entitlement.changed`. */
 export const listPhisEntitlementListeners = (): string[] => listEntitlementListenersOf(getPhisAddonInstalledManifest());
@@ -51,15 +50,15 @@ function readInstant(value: string | null | undefined, name: string): string | n
   return new Date(value).toISOString();
 }
 
-function readQuantity(value: number | null | undefined, kind: PhisEntitlementKind): number | null {
-  if (!kind.counted) {
+function readQuantity(value: number | null | undefined, product: Pick<PhisProduct, "counted"> & { id: string }): number | null {
+  if (!product.counted) {
     if (value !== undefined && value !== null) {
-      throw new PhisAddonEntitlementsError(`Kind "${kind.id}" does not count; an entry of it carries no quantity.`);
+      throw new PhisAddonEntitlementsError(`Product "${product.id}" does not count; an entry of it carries no quantity.`);
     }
     return null;
   }
   if (typeof value !== "number" || !Number.isInteger(value) || value < 1 || value > QUANTITY_MAX) {
-    throw new PhisAddonEntitlementsError(`Kind "${kind.id}" counts; an entry of it carries a whole quantity of at least 1.`);
+    throw new PhisAddonEntitlementsError(`Product "${product.id}" counts; an entry of it carries a whole quantity of at least 1.`);
   }
   return value;
 }
@@ -91,19 +90,25 @@ export function buildPhisAddonEntitlementsCapability(input: {
     return findEntitlementSubject(getPool(), siteId, await ensureEntitlementSubject(getPool(), siteId, actorUserId));
   };
 
-  const declaredKind = (kind: PhisEntitlementKindId) => listPhisEntitlementKinds().find((candidate) => candidate.id === kind) ?? null;
+  const readProductId = (call: string, product: PhisProductId) => {
+    if (!isPhisProductId(product)) {
+      throw new PhisAddonEntitlementsError(`${addonId} called entitlements.${call} for "${String(product)}", which is not a product id.`);
+    }
+    return product;
+  };
 
-  /** The kind a write names, if this source may write it. */
-  const requireWritableKind = async (call: string, kind: PhisEntitlementKindId) => {
+  /**
+   * Whether this source may write for the product: the operator allowed it for every product or for the
+   * product's supplier, or it is the supplier and the product is `free`. The supplier is read from the
+   * id, so an entry whose product is gone can still be changed by whoever was allowed.
+   */
+  const requireWritable = async (call: string, id: PhisProductId, product: Pick<PhisProduct, "free"> | null) => {
     requireBelievableCaller(call);
-    const declared = isPhisEntitlementKindId(kind) ? declaredKind(kind) : null;
-    if (!declared) {
-      throw new PhisAddonEntitlementsError(`${addonId} called entitlements.${call} for "${String(kind)}", which no enabled Add-on declares.`);
+    const { supplier } = splitPhisProductId(readProductId(call, id));
+    const ownFree = supplier === addonId && product?.free === true;
+    if (!ownFree && !await isEntitlementSourceAllowed(getPool(), siteId, supplier, addonId)) {
+      throw new PhisAddonEntitlementsError(`${addonId} may not write entitlements for product "${id}" on this Site.`);
     }
-    if (declared.addonId !== addonId && !await isEntitlementSourceAllowed(getPool(), siteId, declared.id, addonId)) {
-      throw new PhisAddonEntitlementsError(`${addonId} may not write entitlements of kind "${declared.id}" on this Site.`);
-    }
-    return declared;
   };
 
   const readReference = (reference: string) => {
@@ -120,33 +125,31 @@ export function buildPhisAddonEntitlementsCapability(input: {
   };
 
   return {
-    async kinds() {
-      requireBelievableCaller("kinds");
-      return listPhisEntitlementKinds();
-    },
-
     async subject() {
       requireBelievableCaller("subject");
       return actorUserId == null ? null : ensureEntitlementSubject(getPool(), siteId, actorUserId);
     },
 
-    async check({ kind, subject }) {
+    async check({ product, subject }) {
       requireBelievableCaller("check");
-      // A kind nobody declares entitles nobody: its entries are kept and do not count.
-      const declared = isPhisEntitlementKindId(kind) ? declaredKind(kind) : null;
-      const row = declared ? await resolveSubject(subject) : null;
-      return readEntitlementState(getPool(), { siteId, subjectId: row?.id ?? null, kind, counted: declared?.counted === true });
+      // A product nobody registered entitles nobody: its entries are kept and do not count.
+      const row = isPhisProductId(product) ? await resolveSubject(subject) : null;
+      return readEntitlementState(getPool(), { siteId, subjectId: row?.id ?? null, product });
     },
 
-    async list({ subject, kind }) {
+    async list({ subject, product }) {
       requireBelievableCaller("list");
       // Without a subject and without anybody acting there is nobody to list for; a Site-wide read is not offered.
       const row = await resolveSubject(subject);
-      return row ? listEntitlements(getPool(), { siteId, subjectId: row.id, kind: kind ?? null }) : [];
+      return row ? listEntitlements(getPool(), { siteId, subjectId: row.id, product: product ?? null }) : [];
     },
 
-    async grant({ subject, kind, reference, startsAt, endsAt, quantity }) {
-      const declared = await requireWritableKind("grant", kind);
+    async grant({ subject, product, reference, startsAt, endsAt, quantity }) {
+      requireBelievableCaller("grant");
+      const id = readProductId("grant", product);
+      const found = await readProduct(getPool(), siteId, id);
+      if (!found) throw new PhisAddonEntitlementsError(`${addonId} called entitlements.grant for product "${id}", which this Site does not have.`);
+      await requireWritable("grant", id, found);
       const row = typeof subject === "string" ? await findEntitlementSubject(getPool(), siteId, subject) : null;
       if (!row) {
         throw new PhisAddonEntitlementsError(`${addonId} called entitlements.grant for a subject this Site does not have.`);
@@ -156,37 +159,47 @@ export function buildPhisAddonEntitlementsCapability(input: {
       if (ends && Date.parse(ends) <= Date.parse(starts ?? new Date().toISOString())) {
         throw new PhisAddonEntitlementsError("endsAt must be after the start.");
       }
-      return written(await grantEntitlement(getPool(), {
-        siteId, subjectId: row.id, kind: declared.id, source: addonId, reference: readReference(reference),
-        startsAt: starts, endsAt: ends, quantity: readQuantity(quantity, declared), listeners: listPhisEntitlementListeners(),
-      }));
+      const entry = await grantEntitlement(getPool(), {
+        siteId, subjectId: row.id, product: id, source: addonId, reference: readReference(reference),
+        startsAt: starts, endsAt: ends, quantity: readQuantity(quantity, found), counted: found.counted,
+        listeners: listPhisEntitlementListeners(),
+      });
+      if (!entry) throw new PhisAddonEntitlementsError(`${addonId} called entitlements.grant for product "${id}", which is not active; a new entry needs an active product.`);
+      return written(entry);
     },
 
-    async update({ kind, reference, endsAt, quantity, suspended }) {
-      const declared = await requireWritableKind("update", kind);
+    async update({ product, reference, endsAt, quantity, suspended }) {
+      requireBelievableCaller("update");
+      const id = readProductId("update", product);
+      // An entry is changed whatever became of its product; the product is read for its quantity rule only.
+      const found = await readProduct(getPool(), siteId, id);
+      await requireWritable("update", id, found);
+      if (quantity !== undefined && !found) {
+        throw new PhisAddonEntitlementsError(`${addonId} called entitlements.update with a quantity for product "${id}", which this Site no longer has.`);
+      }
       return written(await updateEntitlement(getPool(), {
-        siteId, source: addonId, kind: declared.id, reference: readReference(reference),
+        siteId, source: addonId, product: id, reference: readReference(reference),
         ...(endsAt !== undefined ? { endsAt: readInstant(endsAt, "endsAt") } : {}),
-        ...(quantity !== undefined ? { quantity: readQuantity(quantity, declared) } : {}),
+        ...(quantity !== undefined ? { quantity: readQuantity(quantity, found!) } : {}),
         ...(suspended !== undefined ? { suspended: suspended === true } : {}),
         listeners: listPhisEntitlementListeners(),
       }));
     },
 
-    async revoke({ kind, reference }) {
+    async revoke({ product, reference }) {
       /*
-       * Taking back needs no leave. A source whose leave the admin withdrew must still be able to say
-       * that what it stated no longer holds -- a refund after the shop was switched to another kind --
-       * and it reaches its own entries only.
+       * Taking back needs no leave. A source whose leave the operator withdrew must still be able to say
+       * that what it stated no longer holds -- a refund after the shop was switched to another -- and it
+       * reaches its own entries only. Nor does it need the product to be there.
        */
       requireBelievableCaller("revoke");
-      if (!isPhisEntitlementKindId(kind)) return null;
+      if (!isPhisProductId(product)) return null;
       return written(await updateEntitlement(getPool(), {
-        siteId, source: addonId, kind, reference: readReference(reference), revoke: true, listeners: listPhisEntitlementListeners(),
+        siteId, source: addonId, product, reference: readReference(reference), revoke: true, listeners: listPhisEntitlementListeners(),
       }));
     },
   } satisfies PhisEntitlementsCapabilityV1;
 }
 
 /** The source name of an entry the operator wrote by hand. */
-export { PHIS_ENTITLEMENT_CORE_SOURCE, isPhisEntitlementKindId };
+export { PHIS_ENTITLEMENT_CORE_SOURCE };

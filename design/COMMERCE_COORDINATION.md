@@ -1,8 +1,17 @@
 # Commerce Coordination: Products, Acquisitions, Sellers and Suppliers
 
-**Status: design, 2026-11-17. Nothing in this document is built.** It was written as a new design on the
-operator's word, not as a reading of the notes that exist; where it differs from
-[ENTITLEMENTS.md](./ENTITLEMENTS.md), [SHOP.md](./SHOP.md) or
+**Status: design, 2026-11-17; the first step is built, 2026-11-17.** Built, as the sequence of section 15
+step 1 begins: the product directory `products:v1` (section 4: the tables `products` and
+`product_attributes`, the capability, the manifest field `products` and its registration per Site, the event
+`product.changed`, the withdrawal and the return of a supplier's products, the operator's `phis product`),
+and in `entitlements:v1` the entry's kind as a product, the operator's allowance per source (section 5
+points 1 and 6) and the removal of `kinds()` and `entitlementKinds`. Not built: the subscription binding
+and the grace time (section 5 point 2), delivery state (point 3), the resolving of bundles (point 4: a
+grant on a bundle writes its one entry), the two fields on payment line items (section 6), the questions
+between Add-ons and the seller interface (section 7), the Shop's split (section 8) and everything after
+step 1. The state before a lock is not kept: `phis product unlock` takes a product to `withdrawn`. It was
+written as a new design on the operator's word, not as a reading of the notes that exist; where it differs
+from [ENTITLEMENTS.md](./ENTITLEMENTS.md), [SHOP.md](./SHOP.md) or
 [COMMERCE_AND_PAYMENTS.md](./COMMERCE_AND_PAYMENTS.md), section 12 names the difference and the older
 text stays right about what is built until this one is. Section 13 lists what the operator decided,
 section 14 what is still theirs to decide; the body follows the recommendation where a decision is open

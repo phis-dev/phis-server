@@ -37,6 +37,14 @@ The target PostgreSQL schema for `phis` is:
 - `phis.entitlements.flags INT`
   - `1 << 0 = revoked`
   - `1 << 1 = suspended`
+- `phis.products.flags INT` (`PHIS_PRODUCT_FLAG`)
+  - `1 << 0 = counted`
+  - `1 << 1 = free`
+  - `1 << 2 = released`
+  - `1 << 3 = withdrawn because the supplier was switched off`
+  - `1 << 4 = declared by the supplier's manifest`
+- `phis.entitlement_sources.flags INT`
+  - `1 << 0 = allowed for every product`
 - `phis.registration_intents.status SMALLINT`
   - `0 = pending`
   - `1 = verified`
@@ -1537,12 +1545,62 @@ Contract:
 - Deleting the user deletes the subject and, through `entitlements.subject_id`, its entries.
 - See `design/ENTITLEMENTS.md`.
 
+### `phis.products`
+
+- `id SERIAL PRIMARY KEY`
+- `site_id SMALLINT NOT NULL REFERENCES phis.sites(id) ON DELETE CASCADE`
+- `supplier_addon_id VARCHAR(255) NOT NULL`
+- `key VARCHAR(96) NOT NULL`
+- `publisher VARCHAR(255) NULL`
+- `type VARCHAR(64) NOT NULL`
+- `title VARCHAR(200) NOT NULL`
+- `summary VARCHAR(1000) NOT NULL`
+- `image_asset_id INT NULL`
+- `sale VARCHAR(8) NOT NULL DEFAULT 'own'`
+- `referral_url VARCHAR(2000) NULL`
+- `state VARCHAR(10) NOT NULL DEFAULT 'draft'`
+- `flags INT NOT NULL DEFAULT 0`
+- `parts TEXT[] NOT NULL DEFAULT '{}'`
+- `pending_terms JSONB NULL`
+- `version INT NOT NULL DEFAULT 1`
+- `created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
+- `updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
+- `UNIQUE (site_id, supplier_addon_id, key)` (`products_identity_unique`), `UNIQUE (id, site_id)`
+- `FOREIGN KEY (image_asset_id, site_id) REFERENCES phis.media_assets (id, site_id) ON DELETE SET NULL (image_asset_id)`
+- `CHECK (supplier_addon_id ~ '^@[a-z0-9][a-z0-9._-]*/[a-z0-9][a-z0-9._-]*$')`, `CHECK (key ~ '^[a-z][a-z0-9.-]*$')`
+- `CHECK (sale IN ('own', 'referral', 'payout'))`, `CHECK ((sale = 'referral') = (referral_url IS NOT NULL))`
+- `CHECK (state IN ('draft', 'active', 'withdrawn', 'locked'))`, `CHECK (publisher IS NULL OR publisher <> '')`
+- `CHECK (pending_terms IS NULL OR jsonb_typeof(pending_terms) = 'object')`
+- partial index `products_publisher_idx` on `(site_id, publisher) WHERE publisher IS NOT NULL`
+
+Contract:
+- What a Site has that somebody can hold (`products:v1`, SERVER_ADDONS.md; `design/COMMERCE_COORDINATION.md` section 4). An identity and nothing about how it is sold or delivered. The id an Add-on sees is `supplier_addon_id || ':' || key`; the supplier is the Add-on that registered it and delivers it, and no foreign key points at `server_addons`, because a product stays when its supplier is removed.
+- `publisher` is the supplier's own reference for whose product it is, NULL for the Site's own, and does not change after the row was written. A product with a publisher is released by the operator (flag `released`); the Site's own is derived as released whatever the bit says (it is set at creation).
+- `sale`, `referral_url`, the `free` flag and `parts` are the terms in force. What a publisher asked to change of them on a released product waits in `pending_terms` (`{ sale, referralUrl, free, parts }`) until the operator releases it, which moves them into the columns and clears it. `parts` are product ids of the same Site; no cycle, counting `pending_terms.parts`; a bundle is not `counted`.
+- `flags` are `PHIS_PRODUCT_FLAG`: `1 = counted` (fixed once an entitlement names the product), `2 = free`, `4 = released`, `8 = withdrawn because the supplier was switched off` (cleared by any explicit move; Core restores exactly the products that carry it when the supplier is on again), `16 = declared by the supplier's manifest` (what lets Core withdraw it when a later manifest stops declaring it).
+- `state`: `draft`, `active`, `withdrawn`, `locked`. `locked` is the operator's; `phis product unlock` takes the product to `withdrawn`, because the state before the lock is not kept.
+- `version` rises with every change, attribute changes included, and not with a write that changes nothing.
+- A product that was ever named by an `entitlements` row is never deleted; `entitlements.product` is no foreign key, so removal is decided by looking.
+- `image_asset_id` is a picture of the Site's Media library; deleting the Asset sets it to NULL.
+
+### `phis.product_attributes`
+
+- `product_id INT NOT NULL REFERENCES phis.products(id) ON DELETE CASCADE`
+- `addon_id VARCHAR(255) NOT NULL`
+- `data JSONB NOT NULL`
+- `updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
+- `PRIMARY KEY (product_id, addon_id)`
+- `CHECK (jsonb_typeof(data) = 'object')`
+
+Contract:
+- What one other Add-on attached to a product: one JSON object per product and Add-on, written whole by that Add-on through `products.annotate` and read by all as `attributes[addonId]`. At most 8 KiB serialized, enforced by the capability. Display and filtering data, never authority.
+
 ### `phis.entitlements`
 
 - `id SERIAL PRIMARY KEY`
 - `site_id SMALLINT NOT NULL REFERENCES phis.sites(id) ON DELETE CASCADE`
 - `subject_id INT NOT NULL REFERENCES phis.entitlement_subjects(id) ON DELETE CASCADE`
-- `kind VARCHAR(255) NOT NULL`
+- `product VARCHAR(255) NOT NULL`
 - `source VARCHAR(255) NOT NULL`
 - `reference VARCHAR(190) NOT NULL`
 - `starts_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
@@ -1552,34 +1610,38 @@ Contract:
 - `ended_event_at TIMESTAMPTZ NULL`
 - `created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
 - `updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
-- `UNIQUE (site_id, source, kind, reference)`
-- `CHECK (kind ~ '^@[a-z0-9][a-z0-9._-]*/[a-z0-9][a-z0-9._-]*:[a-z][a-z0-9.-]*$')`
+- `UNIQUE (site_id, source, product, reference)`
+- `CHECK (product ~ '^@[a-z0-9][a-z0-9._-]*/[a-z0-9][a-z0-9._-]*:[a-z][a-z0-9.-]*$')`
 - `CHECK (source ~ '^@[a-z0-9][a-z0-9._-]*/[a-z0-9][a-z0-9._-]*$')`
 - `CHECK (reference <> '')`, `CHECK (ends_at IS NULL OR ends_at > starts_at)`, `CHECK (quantity IS NULL OR quantity > 0)`
-- index `entitlements_subject_kind_idx` on `(subject_id, kind)`
+- index `entitlements_subject_product_idx` on `(subject_id, product)`, index `entitlements_product_idx` on `(site_id, product)`
 - partial index `entitlements_ending_idx` on `(ends_at) WHERE ends_at IS NOT NULL AND ended_event_at IS NULL`
 
 Contract:
-- One source's statement that a subject is entitled to a kind. `source` is the writing Add-on's id, or `@phis/server` for an entry the operator wrote by hand (`phis entitlement grant|revoke`).
-- `reference` is the source's own name for it (an order number) and makes writing idempotent: a second grant on `(site_id, source, kind, reference)` answers the first entry and writes and emits nothing.
-- `kind` is text and no foreign key: the installed manifests are the catalogue (`entitlementKinds`), and an entry whose kind no enabled Add-on declares is kept and does not count.
+- One source's statement that a subject holds a product. `source` is the writing Add-on's id, or `@phis/server` for an entry the operator wrote by hand (`phis entitlement grant|revoke`).
+- `reference` is the source's own name for it (an order number) and makes writing idempotent: a second grant on `(site_id, source, product, reference)` answers the first entry and writes and emits nothing.
+- `product` is a product id (`phis.products`) and no foreign key: an entry whose product does not exist (any more) is kept and does not count.
 - `flags` are `PhisEntitlementFlag`: `1 = Revoked`, `2 = Suspended`.
-- There is no status column. An entry is valid while `flags & 3 = 0 AND starts_at <= NOW() AND (ends_at IS NULL OR ends_at > NOW())`, judged by the database's clock on every read, so an entry that ends needs no write to stop counting.
-- `quantity` is set exactly where the kind is `counted`; the answer for a counted kind is the sum over the valid entries. Core counts no use.
+- There is no status column. An entry is valid while `flags & 3 = 0 AND starts_at <= NOW() AND (ends_at IS NULL OR ends_at > NOW())` and its product exists and is not `locked`, judged by the database's clock on every read, so an entry that ends needs no write to stop counting. The product row is found by splitting `product` at its last colon into `supplier_addon_id` and `key`.
+- `quantity` is set exactly where the product is `counted`; the answer for a counted product is the sum over the valid entries. Core counts no use.
+- A new row is written only for a product that exists and is `active`, under a share lock on the product row (so `products.remove` and a state move cannot slip in between).
 - A revoked entry is over: an update does not change it.
-- `ended_event_at` records that the entry's ending was announced as `entitlement.changed`. Core's job `entitlements.expire` sets it for each ended, unrevoked entry once and enqueues one event per subject and kind in the same transaction. Moving `ends_at` clears it, so the new ending is announced again.
+- `ended_event_at` records that the entry's ending was announced as `entitlement.changed`. Core's job `entitlements.expire` sets it for each ended, unrevoked entry once and enqueues one event per subject and product in the same transaction. Moving `ends_at` clears it, so the new ending is announced again.
 
-### `phis.entitlement_kind_sources`
+### `phis.entitlement_sources`
 
 - `site_id SMALLINT NOT NULL REFERENCES phis.sites(id) ON DELETE CASCADE`
-- `kind VARCHAR(255) NOT NULL`
 - `source VARCHAR(255) NOT NULL`
+- `flags INT NOT NULL DEFAULT 0`
+- `suppliers TEXT[] NOT NULL DEFAULT '{}'`
 - `granted_by_user_id INT NULL REFERENCES phis.user_accounts(id) ON DELETE SET NULL`
 - `granted_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
-- `PRIMARY KEY (site_id, kind, source)`
+- `PRIMARY KEY (site_id, source)`
+- `CHECK (((flags & 1) <> 0 AND cardinality(suppliers) = 0) OR ((flags & 1) = 0 AND cardinality(suppliers) > 0))`
 
 Contract:
-- The Site admin allowing a source to write a kind. The Add-on that declared a kind needs no row for its own; every other source needs one for `grant` and `update`. `revoke` needs none.
+- The Site operator allowing a source to write entitlements: for every product (flag `1`) or for the products of exactly the suppliers named. One row per source and Site; allowing again replaces the row. A supplier needs no row for its own `free` product. Replaces `entitlement_kind_sources`.
+- `grant` and `update` need the row to cover the product's supplier (or the free-own case); `revoke` needs none.
 - `granted_by_user_id` is NULL where the operator allowed it from the CLI or the granting user is gone.
 - Removing a row does not remove the entries the source wrote: they are statements about the past.
 
@@ -2336,7 +2398,7 @@ COMMIT;
 - `addon_id VARCHAR(255) NOT NULL REFERENCES phis.server_addons(addon_id) ON DELETE CASCADE`
 - `event VARCHAR(120) NOT NULL` (CHECK `<> ''`)
 - `thread_id INT NULL REFERENCES phis.threads(id) ON DELETE CASCADE`
-- `subject_kind VARCHAR(16) NOT NULL DEFAULT 'thread'` (`thread`, `payment`, `subscription`, `emitted` or `entitlement`)
+- `subject_kind VARCHAR(16) NOT NULL DEFAULT 'thread'` (`thread`, `payment`, `subscription`, `emitted`, `entitlement` or `product`)
 - `payment_id UUID NULL REFERENCES phis.payments(id) ON DELETE RESTRICT`
 - `payload JSONB NOT NULL DEFAULT '{}'::jsonb`
 - `emitter VARCHAR(255) NULL REFERENCES phis.server_addons(addon_id) ON DELETE CASCADE`
@@ -2350,15 +2412,20 @@ COMMIT;
 - partial unique index `addon_event_outbox_dedupe_unique` on `(site_id, addon_id, event, dedupe_key)
   WHERE dedupe_key IS NOT NULL`
 - `addon_event_outbox_subject_check`: a thread subject has exactly `thread_id`, a bare thread event and
-  no emitter and is neither `payment.changed` nor `entitlement.changed`; a payment subject has exactly `payment_id`, `payment.changed` and no emitter; an emitted
+  no emitter and is none of `payment.changed`, `entitlement.changed` and `product.changed`; a payment subject has exactly `payment_id`, `payment.changed` and no emitter; an emitted
   subject has an `emitter`, an event of the shape `@scope/name:event`, and neither thread nor payment;
   an entitlement subject has no thread, payment, subscription or emitter, the event `entitlement.changed`, and
-  `payload = { subject, entitlementKind }`.
+  `payload = { subject, product }`; a product subject has the same absences, the event `product.changed`, and
+  `payload = { productId }`.
 
 Entitlement events (SERVER_ADDONS.md, `entitlements:v1`): Core writes one row per Add-on of the Site that is
 requested-enabled, `ready` and declares an `entitlement.changed` handler, with `subject_kind = 'entitlement'`
-and `payload = { subject, entitlementKind }`, in the transaction of the change or of the `entitlements.expire`
+and `payload = { subject, product }`, in the transaction of the change or of the `entitlements.expire`
 job. The same ordered drain delivers it.
+
+Product events (SERVER_ADDONS.md, `products:v1`): the same listeners, with `subject_kind = 'product'` and
+`payload = { productId }`, in the transaction of the change -- a registration, a change, a release, a move,
+a supplier lost or regained, an attribute written.
 
 Emitted events (SERVER_ADDONS.md, Events): an Add-on emits through the `events:v1` capability, and Core
 writes one row per listener -- every Add-on of the Site that is requested-enabled, `ready`, and

@@ -2,16 +2,19 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
 
+type Held = { id: string; counted: boolean; free: boolean; state: string };
+
 const state = vi.hoisted(() => ({
   deliver: vi.fn(),
-  installed: {} as Record<string, { enabled: boolean; manifest: { entitlementKinds?: unknown[]; eventHandlers?: { event: string }[] } }>,
+  installed: {} as Record<string, { enabled: boolean; manifest: { eventHandlers?: { event: string }[] } }>,
   ensureSubject: vi.fn(async () => "sub_actor"),
   findSubject: vi.fn(async (): Promise<{ id: number; userId: number } | null> => ({ id: 5, userId: 9 })),
-  grant: vi.fn(async (input: Record<string, unknown>) => ({ ...input, id: 1 })),
+  grant: vi.fn(async (input: Record<string, unknown>): Promise<unknown> => ({ ...input, id: 1 })),
   update: vi.fn(async (input: Record<string, unknown>): Promise<unknown> => ({ ...input, id: 1 })),
   list: vi.fn(async () => []),
-  readState: vi.fn(async (input: Record<string, unknown>) => ({ kind: input.kind, entitled: input.subjectId !== null, quantity: null, until: null })),
+  readState: vi.fn(async (input: Record<string, unknown>) => ({ product: input.product, entitled: input.subjectId !== null, quantity: null, until: null })),
   allowed: vi.fn(async () => false),
+  product: vi.fn(async (): Promise<Held | null> => null),
 }));
 vi.mock("./installed.ts", () => ({ getPhisAddonInstalledManifest: () => state.installed }));
 vi.mock("./event-trigger.ts", () => ({ schedulePhisAddonEventDelivery: (...args: unknown[]) => state.deliver(...args) }));
@@ -23,15 +26,20 @@ vi.mock("@/db/entitlements.mts", () => ({
   updateEntitlement: (_pool: unknown, input: Record<string, unknown>) => state.update(input),
   listEntitlements: (_pool: unknown, ...args: unknown[]) => state.list(...(args as [])),
   readEntitlementState: (_pool: unknown, input: Record<string, unknown>) => state.readState(input),
-  isEntitlementSourceAllowed: (_pool: unknown, ...args: unknown[]) => state.allowed(...(args as [])),
+  isEntitlementSourceAllowed: (_pool: unknown, ...args: unknown[]) => (state.allowed as (...a: unknown[]) => Promise<boolean>)(...args),
 }));
+vi.mock("@/db/products.mts", () => ({ readProduct: (_pool: unknown, ...args: unknown[]) => (state.product as (...a: unknown[]) => Promise<Held | null>)(...args) }));
 
-
-import { buildPhisAddonEntitlementsCapability, listPhisEntitlementKinds, listPhisEntitlementListeners } from "./entitlements-capability.ts";
+import { buildPhisAddonEntitlementsCapability, listPhisEntitlementListeners } from "./entitlements-capability.ts";
 
 const LICENSE = "@acme/licenses:pro";
 const SEATS = "@acme/licenses:seats";
 const SHOP = "@acme/shop";
+const heldProducts: Record<string, Held> = {
+  [LICENSE]: { id: LICENSE, counted: false, free: false, state: "active" },
+  [SEATS]: { id: SEATS, counted: true, free: false, state: "active" },
+  "@acme/licenses:gratis": { id: "@acme/licenses:gratis", counted: false, free: true, state: "active" },
+};
 
 function capability(overrides: Partial<Parameters<typeof buildPhisAddonEntitlementsCapability>[0]> = {}) {
   return buildPhisAddonEntitlementsCapability({ addonId: SHOP, siteId: 7, actorUserId: 9, unauthenticated: false, ...overrides });
@@ -40,25 +48,18 @@ function capability(overrides: Partial<Parameters<typeof buildPhisAddonEntitleme
 describe("entitlements capability", () => {
   beforeEach(() => {
     state.installed = {
-      "@acme/licenses": {
-        enabled: true,
-        manifest: {
-          entitlementKinds: [{ key: "pro", title: "Pro" }, { key: "seats", title: "Seats", description: "Per seat", counted: true }],
-          eventHandlers: [{ event: "entitlement.changed" }],
-        },
-      },
+      "@acme/licenses": { enabled: true, manifest: { eventHandlers: [{ event: "entitlement.changed" }] } },
       "@acme/shop": { enabled: true, manifest: {} },
-      "@acme/off": { enabled: false, manifest: { entitlementKinds: [{ key: "hidden", title: "Hidden" }], eventHandlers: [{ event: "entitlement.changed" }] } },
+      "@acme/off": { enabled: false, manifest: { eventHandlers: [{ event: "entitlement.changed" }] } },
+      "@acme/showcase": { enabled: true, manifest: { eventHandlers: [{ event: "product.changed" }] } },
     };
     state.allowed.mockResolvedValue(false);
     state.findSubject.mockResolvedValue({ id: 5, userId: 9 });
+    state.product.mockImplementation(async (...args: unknown[]) => heldProducts[args[1] as string] ?? null);
   });
 
-  it("takes the kinds from enabled manifests only", async () => {
-    expect(listPhisEntitlementKinds().map((kind) => kind.id)).toEqual([LICENSE, SEATS]);
-    expect(listPhisEntitlementKinds()[1]).toMatchObject({ addonId: "@acme/licenses", counted: true, description: "Per seat" });
-    expect(listPhisEntitlementKinds()[0]).toMatchObject({ counted: false, description: null });
-    expect((await capability().kinds()).length).toBe(2);
+  it("has no kinds any more: the catalogue is the product directory", () => {
+    expect("kinds" in capability()).toBe(false);
   });
 
   it("lists as listeners the enabled Add-ons that declare the event", () => {
@@ -67,101 +68,133 @@ describe("entitlements capability", () => {
 
   it("refuses an unverified hook on every call", async () => {
     const hook = capability({ unauthenticated: true });
-    await expect(hook.kinds()).rejects.toThrow(/unverified hook/);
     await expect(hook.subject()).rejects.toThrow(/unverified hook/);
-    await expect(hook.check({ kind: LICENSE })).rejects.toThrow(/unverified hook/);
+    await expect(hook.check({ product: LICENSE })).rejects.toThrow(/unverified hook/);
     await expect(hook.list({})).rejects.toThrow(/unverified hook/);
-    await expect(hook.grant({ subject: "sub_x", kind: LICENSE, reference: "o1" })).rejects.toThrow(/unverified hook/);
-    await expect(hook.update({ kind: LICENSE, reference: "o1" })).rejects.toThrow(/unverified hook/);
-    await expect(hook.revoke({ kind: LICENSE, reference: "o1" })).rejects.toThrow(/unverified hook/);
+    await expect(hook.grant({ subject: "sub_x", product: LICENSE, reference: "o1" })).rejects.toThrow(/unverified hook/);
+    await expect(hook.update({ product: LICENSE, reference: "o1" })).rejects.toThrow(/unverified hook/);
+    await expect(hook.revoke({ product: LICENSE, reference: "o1" })).rejects.toThrow(/unverified hook/);
     expect(state.grant).not.toHaveBeenCalled();
     expect(state.update).not.toHaveBeenCalled();
     expect(state.readState).not.toHaveBeenCalled();
   });
 
   describe("grant", () => {
-    it("is refused for an undeclared kind", async () => {
-      await expect(capability().grant({ subject: "sub_x", kind: "@acme/licenses:nope", reference: "o1" })).rejects.toThrow(/no enabled Add-on declares/);
-      await expect(capability().grant({ subject: "sub_x", kind: "@acme/off:hidden", reference: "o1" })).rejects.toThrow(/no enabled Add-on declares/);
+    it("is refused for a product this Site does not have", async () => {
+      await expect(capability().grant({ subject: "sub_x", product: "@acme/licenses:nope", reference: "o1" })).rejects.toThrow(/does not have/);
+      await expect(capability().grant({ subject: "sub_x", product: "licenses" as never, reference: "o1" })).rejects.toThrow(/not a product id/);
       expect(state.grant).not.toHaveBeenCalled();
     });
 
-    it("is refused for a source without leave and writes nothing", async () => {
-      await expect(capability().grant({ subject: "sub_x", kind: LICENSE, reference: "o1" })).rejects.toThrow(/may not write/);
-      expect(state.allowed).toHaveBeenCalledWith(7, LICENSE, SHOP);
+    it("is refused for a source the operator did not allow and writes nothing", async () => {
+      await expect(capability().grant({ subject: "sub_x", product: LICENSE, reference: "o1" })).rejects.toThrow(/may not write/);
+      // The operator's allowance is asked for the product's supplier.
+      expect(state.allowed).toHaveBeenCalledWith(7, "@acme/licenses", SHOP);
       expect(state.grant).not.toHaveBeenCalled();
     });
 
-    it("writes for a source the admin allowed, as that source, and asks for delivery", async () => {
+    it("writes for a source the operator allowed, as that source, and asks for delivery", async () => {
       state.allowed.mockResolvedValue(true);
-      await capability().grant({ subject: "sub_x", kind: LICENSE, reference: "o1", endsAt: "2030-01-01T00:00:00Z" });
+      await capability().grant({ subject: "sub_x", product: LICENSE, reference: "o1", endsAt: "2030-01-01T00:00:00Z" });
       expect(state.grant).toHaveBeenCalledWith(expect.objectContaining({
-        siteId: 7, subjectId: 5, kind: LICENSE, source: SHOP, reference: "o1",
-        endsAt: "2030-01-01T00:00:00.000Z", quantity: null, listeners: ["@acme/licenses"],
+        siteId: 7, subjectId: 5, product: LICENSE, source: SHOP, reference: "o1",
+        endsAt: "2030-01-01T00:00:00.000Z", quantity: null, counted: false, listeners: ["@acme/licenses"],
       }));
       expect(state.deliver).toHaveBeenCalledWith(7);
     });
 
-    it("needs no leave for the declaring Add-on", async () => {
-      await capability({ addonId: "@acme/licenses" }).grant({ subject: "sub_x", kind: LICENSE, reference: "o1" });
+    it("lets a supplier write its own free product without leave, and no other of its products", async () => {
+      const supplier = capability({ addonId: "@acme/licenses" });
+      await supplier.grant({ subject: "sub_x", product: "@acme/licenses:gratis", reference: "o1" });
       expect(state.allowed).not.toHaveBeenCalled();
       expect(state.grant).toHaveBeenCalledWith(expect.objectContaining({ source: "@acme/licenses" }));
+      await expect(supplier.grant({ subject: "sub_x", product: LICENSE, reference: "o2" })).rejects.toThrow(/may not write/);
+    });
+
+    it("is refused for a product that is not active, which the write itself judges", async () => {
+      state.allowed.mockResolvedValue(true);
+      state.grant.mockResolvedValueOnce(null);
+      await expect(capability().grant({ subject: "sub_x", product: LICENSE, reference: "o1" })).rejects.toThrow(/not active/);
+      expect(state.deliver).not.toHaveBeenCalled();
     });
 
     it("is refused for a subject this Site does not have", async () => {
+      state.allowed.mockResolvedValue(true);
       state.findSubject.mockResolvedValue(null);
-      await expect(capability({ addonId: "@acme/licenses" }).grant({ subject: "sub_other", kind: LICENSE, reference: "o1" })).rejects.toThrow(/subject this Site does not have/);
+      await expect(capability().grant({ subject: "sub_other", product: LICENSE, reference: "o1" })).rejects.toThrow(/subject this Site does not have/);
       expect(state.grant).not.toHaveBeenCalled();
     });
 
-    it("refuses a quantity on an uncounted kind and a missing one on a counted kind", async () => {
-      const owner = capability({ addonId: "@acme/licenses" });
-      await expect(owner.grant({ subject: "sub_x", kind: LICENSE, reference: "o1", quantity: 2 })).rejects.toThrow(/does not count/);
-      await expect(owner.grant({ subject: "sub_x", kind: SEATS, reference: "o1" })).rejects.toThrow(/counts/);
-      await expect(owner.grant({ subject: "sub_x", kind: SEATS, reference: "o1", quantity: 0 })).rejects.toThrow(/counts/);
-      await expect(owner.grant({ subject: "sub_x", kind: SEATS, reference: "o1", quantity: 1.5 })).rejects.toThrow(/counts/);
+    it("takes whether to count from the product", async () => {
+      state.allowed.mockResolvedValue(true);
+      const source = capability();
+      await expect(source.grant({ subject: "sub_x", product: LICENSE, reference: "o1", quantity: 2 })).rejects.toThrow(/does not count/);
+      await expect(source.grant({ subject: "sub_x", product: SEATS, reference: "o1" })).rejects.toThrow(/counts/);
+      await expect(source.grant({ subject: "sub_x", product: SEATS, reference: "o1", quantity: 0 })).rejects.toThrow(/counts/);
+      await expect(source.grant({ subject: "sub_x", product: SEATS, reference: "o1", quantity: 1.5 })).rejects.toThrow(/counts/);
       expect(state.grant).not.toHaveBeenCalled();
-      await owner.grant({ subject: "sub_x", kind: SEATS, reference: "o1", quantity: 3 });
-      expect(state.grant).toHaveBeenCalledWith(expect.objectContaining({ quantity: 3 }));
+      await source.grant({ subject: "sub_x", product: SEATS, reference: "o1", quantity: 3 });
+      expect(state.grant).toHaveBeenCalledWith(expect.objectContaining({ quantity: 3, counted: true }));
+    });
+
+    it("writes one entry for a bundle and resolves nothing", async () => {
+      state.allowed.mockResolvedValue(true);
+      state.product.mockResolvedValueOnce({ id: "@acme/licenses:bundle", counted: false, free: false, state: "active", parts: [LICENSE, SEATS] } as never);
+      await capability().grant({ subject: "sub_x", product: "@acme/licenses:bundle", reference: "o1" });
+      expect(state.grant).toHaveBeenCalledTimes(1);
     });
 
     it("refuses an end that is not after the start", async () => {
-      const owner = capability({ addonId: "@acme/licenses" });
-      await expect(owner.grant({ subject: "sub_x", kind: LICENSE, reference: "o1", startsAt: "2030-01-02T00:00:00Z", endsAt: "2030-01-01T00:00:00Z" })).rejects.toThrow(/after the start/);
+      state.allowed.mockResolvedValue(true);
+      await expect(capability().grant({ subject: "sub_x", product: LICENSE, reference: "o1", startsAt: "2030-01-02T00:00:00Z", endsAt: "2030-01-01T00:00:00Z" })).rejects.toThrow(/after the start/);
     });
   });
 
   describe("revoke and update", () => {
-    it("revoke needs no leave and reaches only the caller's own entries", async () => {
+    it("revoke needs no leave and no product, and reaches only the caller's own entries", async () => {
       state.update.mockResolvedValueOnce(null);
-      expect(await capability().revoke({ kind: LICENSE, reference: "o1" })).toBeNull();
+      expect(await capability().revoke({ product: "@acme/licenses:gone", reference: "o1" })).toBeNull();
       expect(state.allowed).not.toHaveBeenCalled();
-      expect(state.update).toHaveBeenCalledWith(expect.objectContaining({ siteId: 7, source: SHOP, kind: LICENSE, reference: "o1", revoke: true }));
+      expect(state.product).not.toHaveBeenCalled();
+      expect(state.update).toHaveBeenCalledWith(expect.objectContaining({ siteId: 7, source: SHOP, product: "@acme/licenses:gone", reference: "o1", revoke: true }));
       expect(state.deliver).toHaveBeenCalledWith(7);
     });
 
     it("update is refused without leave", async () => {
-      await expect(capability().update({ kind: LICENSE, reference: "o1", suspended: true })).rejects.toThrow(/may not write/);
+      await expect(capability().update({ product: LICENSE, reference: "o1", suspended: true })).rejects.toThrow(/may not write/);
       expect(state.update).not.toHaveBeenCalled();
     });
 
-    it("update passes only what was stated", async () => {
+    it("update goes through whatever the product's state, and passes only what was stated", async () => {
       state.allowed.mockResolvedValue(true);
-      await capability().update({ kind: LICENSE, reference: "o1", endsAt: null });
+      state.product.mockResolvedValueOnce({ id: LICENSE, counted: false, free: false, state: "withdrawn" });
+      await capability().update({ product: LICENSE, reference: "o1", endsAt: null });
       const input = state.update.mock.calls[0]![0]!;
       expect(input).toMatchObject({ source: SHOP, endsAt: null });
       expect("quantity" in input).toBe(false);
       expect("suspended" in input).toBe(false);
     });
+
+    it("update of an entry whose product is gone works for the allowed source, except a quantity", async () => {
+      state.allowed.mockResolvedValue(true);
+      await capability().update({ product: "@acme/licenses:gone", reference: "o1", suspended: true });
+      expect(state.update).toHaveBeenCalledTimes(1);
+      await expect(capability().update({ product: "@acme/licenses:gone", reference: "o1", quantity: 2 })).rejects.toThrow(/no longer has/);
+    });
   });
 
   describe("check", () => {
-    it("answers not entitled for an undeclared kind without reading entries", async () => {
-      const answer = await capability().check({ kind: "@acme/licenses:nope" });
-      expect(answer).toEqual({ kind: "@acme/licenses:nope", entitled: false, quantity: null, until: null });
+    it("answers not entitled for something that is no product id without reading entries", async () => {
+      const answer = await capability().check({ product: "nonsense" as never });
+      expect(answer).toEqual({ product: "nonsense", entitled: false, quantity: null, until: null });
       expect(state.readState).toHaveBeenCalledWith(expect.objectContaining({ subjectId: null }));
       expect(state.findSubject).not.toHaveBeenCalled();
       expect(state.ensureSubject).not.toHaveBeenCalled();
+    });
+
+    it("asks the entries about a product id and leaves counting to them", async () => {
+      await capability().check({ product: LICENSE });
+      expect(state.readState).toHaveBeenCalledWith({ siteId: 7, subjectId: 5, product: LICENSE });
     });
   });
 });

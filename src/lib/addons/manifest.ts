@@ -16,8 +16,10 @@ import {
   type PhisAddonHookDescriptor,
   type PhisAddonManifestV1,
   type PhisAddonSchemaDescriptor,
+  type PhisProductDraft,
 } from "./contract.ts";
 import { isPhiRecord } from "../helpers/record.ts";
+import { normalizePhisProductDraft } from "./product-draft.ts";
 
 /**
  * An Add-on id is an npm package name in which neither `_` nor `.` occurs. Both would have to map to `_` in the derived schema name, and three characters collapsing
@@ -661,31 +663,31 @@ export function validatePhisAddonManifest(
   }
   assertUnique(settingNames, "settings", issues);
 
-  // The kinds of entitlement this Add-on uses: a key in the kind grammar, a title, and whether it counts.
-  const entitlementKinds = Array.isArray(value.entitlementKinds) ? value.entitlementKinds : [];
-  if (value.entitlementKinds !== undefined && !Array.isArray(value.entitlementKinds)) {
-    issues.push("entitlementKinds must be an array when it is stated at all.");
+  // The products this package carries: the draft a supplier would register, less what only a runtime
+  // knows (a publisher, a picture). The rules that need other rows -- a part exists -- are checked
+  // where the product is registered at a Site.
+  const products = Array.isArray(value.products) ? value.products : [];
+  if (value.products !== undefined && !Array.isArray(value.products)) {
+    issues.push("products must be an array when it is stated at all.");
   }
-  const entitlementKindKeys: string[] = [];
-  for (const [index, kind] of entitlementKinds.entries()) {
-    if (!isPhiRecord(kind)) {
-      issues.push(`entitlementKinds[${index}] must be an object.`);
+  const productKeys: string[] = [];
+  for (const [index, product] of products.entries()) {
+    if (!isPhiRecord(product)) {
+      issues.push(`products[${index}] must be an object.`);
       continue;
     }
-    const key = readString(kind.key, `entitlementKinds[${index}].key`, issues);
-    if (key && !/^[a-z][a-z0-9.-]{0,63}$/.test(key)) {
-      issues.push(`entitlementKinds[${index}].key is invalid.`);
+    for (const field of ["publisher", "imageAssetId"]) {
+      if (product[field] !== undefined) issues.push(`products[${index}].${field} is not declared in a manifest.`);
     }
-    if (key) entitlementKindKeys.push(key);
-    readString(kind.title, `entitlementKinds[${index}].title`, issues);
-    if (kind.description !== undefined && typeof kind.description !== "string") {
-      issues.push(`entitlementKinds[${index}].description must be a string when it is stated at all.`);
-    }
-    if (kind.counted !== undefined && typeof kind.counted !== "boolean") {
-      issues.push(`entitlementKinds[${index}].counted must be a boolean when it is stated at all.`);
+    if (typeof product.key === "string") productKeys.push(product.key);
+    try {
+      const own = typeof product.key === "string" ? `${String(value.addonId)}:${product.key}` as `@${string}/${string}:${string}` : undefined;
+      normalizePhisProductDraft(product as unknown as PhisProductDraft, own);
+    } catch (error) {
+      issues.push(`products[${index}]: ${error instanceof Error ? error.message : "is invalid."}`);
     }
   }
-  assertUnique(entitlementKindKeys, "entitlementKinds", issues);
+  assertUnique(productKeys, "products", issues);
 
   const roles = Array.isArray(value.roles) ? value.roles : [];
   if (value.roles !== undefined && !Array.isArray(value.roles)) {

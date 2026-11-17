@@ -32,6 +32,7 @@ For a first installation, read [INSTALL.md](./INSTALL.md) instead; it runs these
 - [instance](#instance)
 - [Common tasks](#common-tasks)
 - [Payment profiles](#payment-profiles)
+- [Products](#products)
 - [Entitlements](#entitlements)
 
 ## Running the CLI
@@ -827,7 +828,10 @@ Changes `enabled` in the desired state only. Takes effect after `phis addon reco
 
 Writes the desired state into the registry for this release, records each Add-on's effective status
 on the Sites that requested it (`available` or `disabled`), and creates groups a manifest declares for
-Sites that have the Add-on enabled. Groups are never retired here. Needs the database.
+Sites that have the Add-on enabled. Groups are never retired here. It also registers the products a manifest
+declares on those Sites, withdraws those a manifest stopped declaring, and brings the products in step with
+whether their supplier runs: an Add-on that is disabled or removed has its active products withdrawn, one
+switched on again gets exactly those back ([`phis product`](#products)). Needs the database.
 
 ### `phis addon remove --addon <@scope/name>`
 
@@ -859,9 +863,11 @@ phis addon site --addon <@scope/name> --site <site key> --disable
 - `--enable`: requests the Add-on for the Site, computes the configuration status from its declared
   settings, and creates the groups it declares. If the Add-on has a Module half (the same package
   name) that the Site does not have in `phis-modules.json`, it refuses; run `phis module add` and
-  rebuild first, or pass `--without-module` to enable only the server half.
-- `--disable`: withdraws the request and retires the Add-on's groups on that Site. Refuses when the
-  Add-on was never activated there.
+  rebuild first, or pass `--without-module` to enable only the server half. It also registers the
+  products the manifest declares at the Site (new ones `active`), and puts back the products Core
+  withdrew when the Add-on was switched off.
+- `--disable`: withdraws the request, retires the Add-on's groups on that Site and withdraws its active
+  products there (products and entitlement entries stay). Refuses when the Add-on was never activated there.
 
 ### `phis addon config --addon <@scope/name> --site <site key> [--name <setting> [--value <value>]]`
 
@@ -1380,32 +1386,67 @@ The maintenance task selects at most 100 unresolved payments, reconciles stored 
 reports unavailable/concurrent claims. Dry-run changes nothing and makes no Provider calls. Retries
 never switch Provider/account or generate replacement financial commands. No polling timer is added.
 
-## Entitlements
+## Products
 
-Core keeps who is entitled to what ([`entitlements:v1`](../SERVER_ADDONS.md#entitlementsv1)). `phis
-entitlement` reads the kinds the installed Add-ons declare, manages which sources the Site allows to write
-a kind, and writes entries by hand with the source `@phis/server`. `--site <site key>` is required on every
-subcommand. The CLI writes the database rows, including the `entitlement.changed` outbox rows; the running
-server delivers them.
+Core keeps the Site's product directory ([`products:v1`](../SERVER_ADDONS.md#productsv1)): what a Site has
+that somebody can hold, who supplies it, and in what state it is. Suppliers register their products; `phis
+product` is the operator's side: reading them, releasing a publisher's product, locking, unlocking and
+withdrawing. `--site <site key>` is required on every subcommand. The CLI writes the database rows,
+including the `product.changed` outbox rows; the running server delivers them.
 
 ```bash
-phis entitlement kinds --site demo
-phis entitlement source list --site demo
-phis entitlement source allow --site demo --kind @acme/licenses:pro --source @acme/shop
-phis entitlement source deny --site demo --kind @acme/licenses:pro --source @acme/shop
-phis entitlement list --site demo --user 42 [--kind @acme/licenses:pro]
-phis entitlement grant --site demo --user 42 --kind @acme/licenses:pro --reference support-case-17 \
-  [--ends 2027-01-01T00:00:00Z] [--quantity 3]
-phis entitlement revoke --site demo --kind @acme/licenses:pro --reference support-case-17
+phis product list --site demo [--supplier @acme/licenses] [--publisher <reference>] \
+  [--state active[,withdrawn,...]] [--unreleased]
+phis product show --site demo --product @acme/licenses:pro
+phis product release --site demo --product @acme/licenses:pro
+phis product lock --site demo --product @acme/licenses:pro
+phis product unlock --site demo --product @acme/licenses:pro
+phis product withdraw --site demo (--product @acme/licenses:pro | --supplier @acme/licenses | --publisher <reference>)
 ```
 
-- `kinds` lists the kinds of the enabled Add-ons: id, title, whether counted, and the declaring Add-on.
-- `source allow` refuses a kind no enabled Add-on declares and a source that is not an installed Add-on id;
-  the row records no granting user (the operator). `source deny` takes the leave back; entries the source
-  wrote stay.
-- `list` shows one user's entries on the Site, every source's: source, reference, start and end, quantity,
-  flags and whether the entry is valid now.
+- `list` shows every product of the Site in every state, one line each: id, state, type, title, publisher,
+  and whether it is released, has terms pending release, or has a supplier that is switched off. `--state`
+  takes one or several of `draft`, `active`, `withdrawn`, `locked`. `--unreleased` shows what waits for the
+  operator: publisher's products not yet released, and released ones with pending terms.
+- `show` prints one product with its terms, pending terms and which Add-ons attached attributes.
+- `release` releases a publisher's product, or applies the pending terms of a released one; the Site's own
+  product needs none and the command says so. A product cannot be `active` before it is released.
+- `lock` stops every entitlement entry for the product from counting while it is locked, and refuses the
+  supplier every move. `unlock` takes it to `withdrawn`: the state before the lock is not kept, and the
+  supplier can move it on.
+- `withdraw` takes one product, or every active product of a supplier or of a publisher, out of sale; holders
+  keep what they have. A single product may be in `draft` or `active`; a locked one is unlocked first.
+- Core also moves products by itself: when `phis addon site --enable` or `phis addon reconcile` registers
+  the products a manifest declares (`active`, withdrawing what a manifest stopped declaring), and when a
+  supplier is switched off or removed (its active products are withdrawn) or back on (exactly those return).
+  Both commands list what they did.
+
+## Entitlements
+
+Core keeps who holds which product ([`entitlements:v1`](../SERVER_ADDONS.md#entitlementsv1)). `phis
+entitlement` manages which sources the Site allows to write, and writes entries by hand with the source
+`@phis/server`. What can be held is the product directory: `phis product list`. `--site <site key>` is
+required on every subcommand. The CLI writes the database rows, including the `entitlement.changed` outbox
+rows; the running server delivers them.
+
+```bash
+phis entitlement source list --site demo
+phis entitlement source allow --site demo --source @acme/shop (--all-products | --suppliers @acme/licenses[,...])
+phis entitlement source deny --site demo --source @acme/shop
+phis entitlement list --site demo --user 42 [--product @acme/licenses:pro]
+phis entitlement grant --site demo --user 42 --product @acme/licenses:pro --reference support-case-17 \
+  [--ends 2027-01-01T00:00:00Z] [--quantity 3]
+phis entitlement revoke --site demo --product @acme/licenses:pro --reference support-case-17
+```
+
+- `source allow` allows an installed Add-on to write entitlements, for every product (`--all-products`) or
+  for the products of exactly the suppliers named (`--suppliers`, comma-separated), and replaces what was
+  allowed for that source before; the row records no granting user (the operator). `source deny` takes the
+  leave back; entries the source wrote stay. `source list` shows one line per source. A supplier needs no
+  row for its own `free` product.
+- `list` shows one user's entries on the Site, every source's: product, source, reference, start and end,
+  quantity, flags and whether the entry is valid now (it is not while its product is locked or gone).
 - `grant` writes an entry with the source `@phis/server`. The user must be an active member of the Site, the
-  kind must be declared by an enabled Add-on, `--quantity` is required exactly when the kind is counted,
-  and `--ends` must be an ISO instant in the future. Granting the same `--reference` again answers the
-  first entry and writes nothing. `revoke` revokes the `@phis/server` entry of that kind and reference.
+  product must exist and be `active`, `--quantity` is required exactly when the product is counted, and
+  `--ends` must be an ISO instant in the future. Granting the same `--reference` again answers the first
+  entry and writes nothing. `revoke` revokes the `@phis/server` entry of that product and reference.

@@ -15,21 +15,23 @@ tracked here because the server contract depends on them.
   `ALTER TABLE phis.media_upload_sessions ADD COLUMN IF NOT EXISTS heartbeat_at TIMESTAMPTZ NULL;`
   `ALTER TABLE phis.site_media_config ADD COLUMN IF NOT EXISTS default_user_storage_profile_id INT NULL REFERENCES phis.media_storage_profiles(id) ON DELETE SET NULL;`
   `ALTER TABLE phis.site_media_config ADD COLUMN IF NOT EXISTS default_group_storage_profile_id INT NULL REFERENCES phis.media_storage_profiles(id) ON DELETE SET NULL;`
-- **Entitlements (`entitlements:v1`).** The three tables `phis.entitlement_subjects`, `phis.entitlements` and
-  `phis.entitlement_kind_sources` and their two indexes are `CREATE ... IF NOT EXISTS` statements in
-  `scripts/sql/001_create_phis.pgsql`, and `phis schema apply` runs that whole script, so it creates them
-  where they are missing (it creates missing objects only and alters nothing that exists). What it cannot do
-  is change `phis.addon_event_outbox`, which exists: the subject check gains the `entitlement` shape and
-  must be replaced by hand, with the new definition copied verbatim from the script:
-  `ALTER TABLE phis.addon_event_outbox DROP CONSTRAINT addon_event_outbox_subject_check;`
-  `ALTER TABLE phis.addon_event_outbox ADD CONSTRAINT addon_event_outbox_subject_check CHECK (`
-  `  (subject_kind = 'thread' AND thread_id IS NOT NULL AND payment_id IS NULL AND subscription_id IS NULL AND emitter IS NULL AND event NOT IN ('payment.changed', 'entitlement.changed') AND event NOT LIKE '@%') OR`
-  `  (subject_kind = 'entitlement' AND thread_id IS NULL AND payment_id IS NULL AND subscription_id IS NULL AND emitter IS NULL AND event = 'entitlement.changed') OR`
-  `  (subject_kind = 'payment' AND thread_id IS NULL AND payment_id IS NOT NULL AND subscription_id IS NULL AND emitter IS NULL AND event = 'payment.changed') OR`
-  `  (subject_kind = 'subscription' AND thread_id IS NULL AND payment_id IS NULL AND subscription_id IS NOT NULL AND emitter IS NULL AND event = 'payment.changed') OR`
-  `  (subject_kind = 'emitted' AND thread_id IS NULL AND payment_id IS NULL AND subscription_id IS NULL AND emitter IS NOT NULL AND event LIKE '@%/%:%')`
-  `);`
-  Without it, the first `entitlement.changed` row is refused by the old check.
+- **Entitlements and products (`entitlements:v1`, `products:v1`).** The tables `phis.entitlement_subjects`,
+  `phis.entitlements`, `phis.entitlement_sources`, `phis.products` and `phis.product_attributes` and their
+  indexes are `CREATE ... IF NOT EXISTS` statements in `scripts/sql/001_create_phis.pgsql`, and `phis schema
+  apply` runs that whole script, so it creates them where they are missing (it creates missing objects only
+  and alters nothing that exists). A database that already has the earlier entitlement tables needs by hand:
+  `ALTER TABLE phis.entitlements RENAME COLUMN kind TO product;`
+  `ALTER TABLE phis.entitlements RENAME CONSTRAINT entitlements_kind_check TO entitlements_product_check;`
+  `DROP INDEX IF EXISTS phis.entitlements_subject_kind_idx;` and the two `entitlements_*product_idx` indexes
+  of the script, `DROP TABLE IF EXISTS phis.entitlement_kind_sources;`, and the outbox check below. Pending
+  outbox rows of `entitlement.changed` carry `product` where they carried `entitlementKind`
+  (`UPDATE phis.addon_event_outbox SET payload = jsonb_build_object('subject', payload->'subject', 'product',
+  payload->'entitlementKind') WHERE event = 'entitlement.changed' AND payload ? 'entitlementKind';`).
+  `phis.addon_event_outbox` exists, so its subject check, which gains the `entitlement` and `product` shapes,
+  must be replaced by hand, with the new definition copied verbatim from the script
+  (`addon_event_outbox_subject_check`): `ALTER TABLE phis.addon_event_outbox DROP CONSTRAINT
+  addon_event_outbox_subject_check;` and `ADD CONSTRAINT ... CHECK (...)`. Without it, the first
+  `entitlement.changed` or `product.changed` row is refused by the old check.
 - **Server and `phis-ui` go out together.** The Media management projection no longer carries `meta`
   (`focalRect` and `font` instead) and the Asset PATCH takes `focalRect` instead of `meta`; an older
   `phis-ui` would lose focal rectangles and font metrics in the editor. The references endpoint's `preview`

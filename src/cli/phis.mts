@@ -61,6 +61,7 @@ import {
   readInstalledAddonGroups,
   readInstalledAddonModules,
   readInstalledAddonPackageName,
+  readAddonDesiredState,
   readInstalledAddonSettings,
   removeAddon,
   setAddonEnabled,
@@ -161,6 +162,8 @@ import { sweepPhisAddonAssets } from "./storage-sweep.mts";
 import { PHI_MAINTENANCE_TASKS, runPhiMaintenance } from "./maintain.mts";
 import { runPhisPaymentProfileCommand, recoverPhisPayments } from "./payments.mts";
 import { runPhisEntitlementCommand } from "./entitlements.mts";
+import { runPhisProductCommand } from "./products.mts";
+import { reconcileProductSupplyAfterChange, syncAddonProductsAtSite } from "./product-sync.mts";
 import {
   bindModuleMedia,
   describeModuleMediaOutcome,
@@ -416,14 +419,21 @@ Usage:
   phis payment profile enable --site <site key> --key <profile key> [--currency CHF]
   phis payment profile retire --site <site key> --key <profile key>
 
-  phis entitlement kinds       --site <site key>
+  phis product list   --site <site key> [--supplier <@scope/name>] [--publisher <reference>]
+                      [--state <draft|active|withdrawn|locked>[,...]] [--unreleased]
+  phis product show   --site <site key> --product <product id>
+  phis product release --site <site key> --product <product id>
+  phis product lock   --site <site key> --product <product id>
+  phis product unlock --site <site key> --product <product id>
+  phis product withdraw --site <site key> (--product <product id> | --supplier <@scope/name> | --publisher <reference>)
+
   phis entitlement source list --site <site key>
-  phis entitlement source allow --site <site key> --kind <kind id> --source <@scope/name>
-  phis entitlement source deny  --site <site key> --kind <kind id> --source <@scope/name>
-  phis entitlement list   --site <site key> --user <user id> [--kind <kind id>]
-  phis entitlement grant  --site <site key> --user <user id> --kind <kind id> --reference <text>
+  phis entitlement source allow --site <site key> --source <@scope/name> (--all-products | --suppliers <@scope/name,...>)
+  phis entitlement source deny  --site <site key> --source <@scope/name>
+  phis entitlement list   --site <site key> --user <user id> [--product <product id>]   (what can be held: phis product list)
+  phis entitlement grant  --site <site key> --user <user id> --product <product id> --reference <text>
                           [--ends <ISO instant>] [--quantity <n>]
-  phis entitlement revoke --site <site key> --kind <kind id> --reference <text>
+  phis entitlement revoke --site <site key> --product <product id> --reference <text>
 
   phis secret init-key
   phis secret set   --name <name> [--site <site key>] [--addon <@scope/name>] [--value <value>]   (value from stdin without --value)
@@ -3662,6 +3672,13 @@ async function main() {
     return;
   }
 
+  if (group === "product") {
+    const result = await runPhisProductCommand(configRoot, getPool(), [command ?? "", ...remaining], flags);
+    if (json) printJson({ ok: true, action: `product.${[command, ...remaining].filter(Boolean).join(".")}`, ...result.data });
+    else for (const line of result.lines) console.log(line);
+    return;
+  }
+
   if (group === "entitlement") {
     const result = await runPhisEntitlementCommand(configRoot, getPool(), [command ?? "", ...remaining], flags);
     if (json) printJson({ ok: true, action: `entitlement.${[command, ...remaining].filter(Boolean).join(".")}`, ...result.data });
@@ -4407,14 +4424,34 @@ async function main() {
         declared: readInstalledAddonGroups(configRoot, addonId),
       })
       : await retirePhisAddonSiteGroups(getPool(), { addonId, siteId: site.id });
+    /*
+     * The product directory follows the Add-on: its declared products are registered for the Site, and
+     * its products are withdrawn when it goes and come back when it does (COMMERCE_COORDINATION.md
+     * section 9). Read from the desired state, as the groups are.
+     */
+    const productEntries = Object.fromEntries(
+      readAddonDesiredState(configRoot).addons.map((entry) => [entry.addonId, { enabled: entry.enabled, manifest: entry.manifest }]),
+    );
+    const products = wantsEnable
+      ? await syncAddonProductsAtSite(getPool(), {
+        addonId, siteId: site.id, declared: productEntries[addonId]?.manifest.products ?? [], entries: productEntries,
+      })
+      : [];
+    const productSupply = await reconcileProductSupplyAfterChange(getPool(), productEntries, site.id);
     if (json) {
-      printJson({ ok: true, addon: addonId, site: site.key, state, groups });
+      printJson({ ok: true, addon: addonId, site: site.key, state, groups, products, productSupply });
     } else {
       console.log(
         `${addonId} is now ${wantsEnable ? "requested" : "withdrawn"} for ${site.key}.`,
       );
       for (const entry of groups) {
         console.log(`  group ${entry.key} ${entry.action}`);
+      }
+      for (const entry of products) {
+        console.log(`  product ${entry.key} ${entry.action}${entry.message ? `: ${entry.message}` : ""}`);
+      }
+      for (const entry of productSupply) {
+        console.log(`  product ${entry.id} ${entry.to === "withdrawn" ? "withdrawn, its supplier is off" : "active again, its supplier is back"}`);
       }
       if (wantsEnable && declaredModules.length > 0 && !moduleInstalled) {
         console.log(`  warning: the Module half ${modulePackage} is not installed here.`);

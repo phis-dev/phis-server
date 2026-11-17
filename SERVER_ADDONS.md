@@ -285,7 +285,7 @@ Every Add-on exports a server-only manifest, `PhisAddonManifestV1` from `@phis/c
 - `jobs`
 - `schema`: the schema descriptor, or `null` when the Add-on owns no tables, and `migrationVersion`
 - `queries`: the declared query catalog
-- optional `settings`, `roles`, `groups`, `groupWriter`, `occasions`, `entitlementKinds`, and `modules`
+- optional `settings`, `roles`, `groups`, `groupWriter`, `occasions`, `products`, and `modules`
 
 The manifest digest is the SHA-256 of the manifest's canonical JSON and therefore covers every field. The
 manifest never contains runtime secrets.
@@ -771,7 +771,7 @@ telling.
 
 An Add-on declares `eventHandlers: [{ id, event, handler }]`, where `event` is one of Core's own,
 `thread.message.created`, `thread.message.updated`, `thread.status.changed`, `thread.link.removed`,
-`payment.changed`, `entitlement.changed`, or an event an Add-on emits, named `@scope/name:what.happened`, and `handler` names
+`payment.changed`, `entitlement.changed`, `product.changed`, or an event an Add-on emits, named `@scope/name:what.happened`, and `handler` names
 an entry in `eventHandlers` on the runtime. One handler per event: two would need an order Core does not
 define, and an Add-on wanting two things to happen can do both in one function where the order is
 visible.
@@ -831,8 +831,11 @@ An event context carries `addonId`, `event`, `deliveryId` (the outbox key, stabl
 actor and system authority: Core is telling the Add-on about a thread it is already allowed to reach.
 
 **Entitlement events:** `entitlement.changed` carries a `kind: "entitlement"` subject with the subject
-reference and the entitlement kind, and no state. It is routed to every enabled Add-on of the Site that
+reference and the product id, and no state. It is routed to every enabled Add-on of the Site that
 declares a handler for it; see [`entitlements:v1`](#entitlementsv1).
+
+**Product events:** `product.changed` carries a `kind: "product"` subject with the product id, and no
+state. It is routed like the entitlement event; see [`products:v1`](#productsv1).
 
 **Payment events:** `PhisAddonEventContext` also describes
 `payment.changed` with a `kind: "payment"` subject containing payment/reference/version and nullable
@@ -1061,6 +1064,7 @@ dispatch, by the job runner, and when its service factory is resolved.
 | `@phis/server/notifications:v1` | yes -- see [`notifications:v1`](#notificationsv1) |
 | `@phis/server/events:v1` | yes -- see [Events an Add-on emits](#events-an-add-on-emits) |
 | `@phis/server/entitlements:v1` | yes -- see [`entitlements:v1`](#entitlementsv1) |
+| `@phis/server/products:v1` | yes -- see [`products:v1`](#productsv1) |
 
 Core descriptors are generated from the running release and reconciled into the registry. They are not
 editable Site settings and cannot be disabled per Site.
@@ -1528,58 +1532,149 @@ Support work depends on the type's close policy and on the other tasks -- which 
 see all of. A type and a queue are named by key rather than by id, because an id means nothing in an
 Add-on's configuration; a key that names nothing is refused rather than quietly routed elsewhere.
 
+### `products:v1`
+
+What a Site has that somebody can hold. A product in Core is an identity -- who supplies it, what it is
+called, whether it can be acquired -- and nothing about how it is sold (a price, a period, a category:
+the seller's listing) or delivered (a key, a file: the supplier's). The thing an entitlement entry names.
+The design is [design/COMMERCE_COORDINATION.md](./design/COMMERCE_COORDINATION.md) section 4.
+
+- **Id.** `@scope/name:key`: the supplier's Add-on id and its own key (`^[a-z][a-z0-9.-]*$`, at most 96
+  characters), so two Add-ons cannot name the same product. A product exists once per Site.
+- **Fields.** `supplier`, `supplied` (whether that Add-on is switched on for the Site and globally; where
+  it is not, nobody delivers), `publisher` (the supplier's reference for whose product it is, opaque to
+  Core; `null` is the Site's own), `type` (the supplier's own word), `title`, `summary`, `imageAssetId` (an
+  Media Asset of the Site -- what `assets:v1` answers as `mediaAssetId` for a file in a slot of the supplier, or one
+  of the Site's Media library -- set to `null` when the Asset is deleted; `register` refuses an Asset that is
+  unknown or of another Site), `imagePath` (the Site-relative address the picture is served from, built at read
+  time from the Asset and its cache revision like `contentPath` of `assets:v1`, never stored; the Asset's own
+  delivery policy still applies to what that address answers), `counted`, `sale` (`own`,
+  `referral` or `payout`), `referralUrl` (required, https, exactly for `referral`), `free`, `parts` (the
+  ids of a bundle's parts), `state`, `released`, `pendingTerms`, `attributes`, `version`, the two
+  timestamps. Title and summary are in the Site's source language. Core reads neither `type` nor
+  `attributes`.
+- **States.** `draft` and `active` and `withdrawn` are the supplier's to set; `locked` is the operator's
+  alone. Only `active` can be acquired. A withdrawn product is held as it was; a locked one is held by
+  nobody -- no entry for it counts while it is locked.
+- **Release.** A product with a `publisher` is `released` only after the Site operator released it
+  (`phis product release`); until then it cannot be `active`, and every field of it changes at once. The
+  Site's own product (`publisher` null) needs none and is always `released`. Once released, a change of
+  `sale`, `referralUrl`, `free` or `parts` is held as `pendingTerms` and the terms in force stay until the
+  operator releases it again; title, summary, picture and `type` change at once. Asking for the terms in
+  force again takes a pending change back. A product's publisher does not change after it was registered:
+  turning a released publisher's product into the Site's own would skip the release.
+
+The capability: `list`, `get`, `register`, `setState`, `remove`, `annotate`.
+
+**Reads are open** to every Add-on that requires the capability. `list({ ids?, supplier?, publisher?, type?,
+states?, released?, cursor?, limit? })` answers `active` products only unless `states` is given; `ids` asks for
+exactly those products (at most 200, more is refused; unknown ids are missing from the answer) in every state
+unless `states` says otherwise; `limit` is
+at most 200 and 50 by default; the `cursor` is opaque and is passed back. `released: false` is the
+operator's release list: products not released, and released ones with pending terms. `get` answers
+`null` for a product the Site does not have.
+
+**Writing.** The supplier is the calling Add-on and is not a parameter, so a supplier writes its own
+products and another's is simply not found (`null`, `false`), not refused. `register` is idempotent on
+the key: the same draft twice changes nothing and does not raise `version`; the draft is the whole
+statement, and what it leaves out takes its default (`sale` `own`, no parts, not free, not counted, no
+picture). A new product starts as `draft`. `counted` is fixed once an entitlement entry names the product.
+`parts` are products that exist on the Site (of any supplier), none is the product itself, and nothing
+reaches the product again through its parts, pending parts included; a bundle is not `counted`.
+`setState` moves between `draft`, `active` and `withdrawn`; `active` is refused for a publisher's product
+that is not released, and every move on a locked product is refused. `remove` removes a product that no
+entitlement entry ever named and that is no other product's part; otherwise it answers `false`. `annotate`
+writes the calling Add-on's own entry of `attributes`, whole, `null` takes it away; an entry is a JSON
+object of at most 8 KiB serialized, and it is display and filtering data, never authority.
+
+**An unverified hook reaches nothing**, reads included: every call from a hook that declares no way to
+believe its caller throws, as with `entitlements:v1`.
+
+**Manifest products.** An Add-on declares the products its package carries under
+`products: [{ key, type, title, summary, counted?, sale?, referralUrl?, free?, parts? }]` (a publisher and
+a picture are not declared; keys unique per manifest). When the Add-on is switched on for a Site
+(`phis addon site --enable`) and when a release is reconciled (`phis addon reconcile`), Core registers
+them at the Site: a new one as `active`, because the operator switched the Add-on on and the product is
+the Site's own; an existing one has its details compared and its state left alone. A product that
+came from a manifest and is no longer declared is withdrawn, never removed. A declared product that
+breaks a rule (a part that does not exist) is reported and does not stop the others. What an Add-on makes
+at runtime it registers through `register`.
+
+**A supplier that is switched off or removed.** Its `active` products go to `withdrawn` and are marked as
+withdrawn for that reason; when the Add-on is switched on again, exactly those return to `active`. Products
+and entries stay. A product the supplier left in `draft`, or the operator moved, is not touched. This runs
+in `phis addon site` and `phis addon reconcile`, the commands that switch an Add-on on and off.
+
+**The event.** Core emits `product.changed` when a product is registered, changed, released, moved to
+another state, loses or regains its supplier, or has its attributes changed (not when a call changes
+nothing, and not when a product is removed). The subject is typed, `{ kind: "product", productId }`, and
+carries no state; the handler reads the product through the capability. It goes to every enabled,
+configured Add-on of the Site that declares a handler for it, through the existing outbox, at least once.
+
+**Not in it.** Prices, listings, stock and categories, delivery state, the subscription binding of an
+entitlement, resolving a bundle into entries, and a question one Add-on asks another through Core are not
+part of this service; see the design's sections 5 to 7.
+
 ### `entitlements:v1`
 
-Who is entitled to what, from when until when. The vocabulary is neutral on purpose; licence keys,
-devices, seats, prices and products are not Core's words.
+Who holds which product, from when until when. The vocabulary is neutral on purpose; licence keys,
+devices, seats and prices are not Core's words. What holding a product *means* is the business of its
+supplier.
 
-- **Kind.** What somebody can be entitled to, `@scope/name:key`. The Add-on that uses it declares it in
-  its manifest under `entitlementKinds: [{ key, title, description?, counted? }]` (`key` matches
-  `^[a-z][a-z0-9.-]*$`, keys unique per manifest; `counted` says entries carry a quantity that adds up).
-  Core keeps no table of kinds: the manifests of the enabled Add-ons are the catalogue, and an entry
-  whose kind nobody declares any more is kept and does not count.
-- **Subject.** Who is entitled: a reference Core issues (`sub_` and 24 characters), one per user and
+- **Product.** What somebody can hold: a product id `@scope/name:key` of the Site's directory
+  ([`products:v1`](#productsv1)). There are no kinds any more; the manifests are no catalogue, and there is
+  no `kinds()`.
+- **Subject.** Who holds it: a reference Core issues (`sub_` and 24 characters), one per user and
   Site, never a user id. Two Add-ons of one Site hold the same reference for the same person. A
   reference of another Site is nobody here.
 - **Source.** The Add-on that wrote an entry, or `@phis/server` for an entry the operator wrote by hand
   with `phis entitlement grant` and `phis entitlement revoke` ([CLI.md](docs/CLI.md#entitlements)).
-- **Entry.** One source's statement: subject, kind, source, the source's own reference, start, end or
+- **Entry.** One source's statement: subject, product, source, the source's own reference, start, end or
   none, quantity or none, and the flags `Revoked` (1) and `Suspended` (2).
-- **Entitled.** At least one entry of the subject and kind is valid: neither flag set, started, not
-  ended, judged by the database's clock. Nothing is stored for that, so an entry that ends needs no
-  write to stop counting. On a counted kind `quantity` is the sum over the valid entries; Core counts no
-  use. `until` is the latest end among the valid entries, null when one has none or nobody is entitled.
+- **Entitled.** At least one entry of the subject and product is valid: neither flag set, started, not
+  ended, judged by the database's clock, and its product exists and is not `locked`. Nothing is stored
+  for that, so an entry that ends needs no write to stop counting. Whether quantities add up is the
+  product's `counted`: then `quantity` is the sum over the valid entries; Core counts no use. `until` is
+  the latest end among the valid entries, null when one has none or nobody is entitled. An entry whose
+  product does not exist (any more) is kept and does not count.
 
-The capability: `kinds`, `subject`, `check`, `list`, `grant`, `update`, `revoke`.
+The capability: `subject`, `check`, `list`, `grant`, `update`, `revoke`.
 
 **Reads are open** to every Add-on that requires the capability, and cover the entries of every source.
-`check` for a kind no enabled Add-on declares answers not entitled without reading entries. `subject()`
-and a call without a subject act for the acting user; with nobody acting there is no subject, and
-`list` answers nothing.
+`subject()` and a call without a subject act for the acting user; with nobody acting there is no subject,
+and `list` answers nothing.
 
-**Writing.** `grant` and `update` are refused (the call throws) unless the kind is declared by an
-enabled Add-on and the calling Add-on either declared it itself or has a row in
-`entitlement_kind_sources` for it, which the Site's admin gives and takes back. `grant` is idempotent on
-`(kind, reference)`: a second call answers the first entry unchanged and emits nothing, so a payment
-handler delivered twice entitles once. A counted kind needs a whole quantity of at least 1 and an
-uncounted one takes none; `endsAt` must be after the start. The source is the calling Add-on and is not
-a parameter: `update` and `revoke` find only the caller's own entries, and another source's entry is not
-found (`null`), not refused. `revoke` needs no leave, so a source whose leave was withdrawn can still
-take back what it stated. A revoked entry stays revoked: `update` does not touch it.
+**Writing.** `grant` and `update` are refused (the call throws) unless the calling Add-on may write for
+the product: the Site's operator allowed it, for every product or for the products of the product's
+supplier (`phis entitlement source allow`, one row per source and Site in `entitlement_sources`), or the
+caller is the product's supplier and the product is `free`. `grant` is also refused for a new entry when
+the product does not exist or is not `active`; the check is made under a lock on the product, so it cannot
+be removed or moved in between. `grant` is idempotent on `(product, reference)`: a second call answers the
+first entry unchanged, emits nothing and is not refused for the product's state, so a payment handler
+delivered twice entitles once, also after the product was withdrawn. A counted product needs a whole
+quantity of at least 1 and an uncounted one takes none; `endsAt` must be after the start. A bundle is
+written as the one entry; its parts are not resolved. The source is the calling Add-on and is not a
+parameter: `update` and `revoke` find only the caller's own entries, and another source's entry is not
+found (`null`), not refused. `update` and `revoke` of an existing entry go through whatever became of the
+product; `revoke` needs no leave, so a source whose leave was withdrawn can still take back what it
+stated. A revoked entry stays revoked: `update` does not touch it.
 
 **An unverified hook reaches nothing**, reads included: every call from a hook that declares no way to
 believe its caller throws, as with `support:v1`.
 
 **The event.** Core emits `entitlement.changed` when an entry is written, changed or revoked, and when
-one ends. The subject is typed, `{ kind: "entitlement", subject, entitlementKind }`, and carries no
+one ends. The subject is typed, `{ kind: "entitlement", subject, product }`, and carries no
 state; the handler reads the current answer through the capability. It goes to every enabled,
 configured Add-on of the Site that declares a handler for it; delivery is the existing outbox, at least
 once. An ending is the one change nobody writes: the Core job `entitlements.expire`, every five minutes,
-marks each ended entry once and enqueues one event per subject and kind.
+marks each ended entry once and enqueues one event per subject and product. A product that is locked or
+unlocked changes the answer without an entry changing; that is announced as `product.changed`.
 
 **Not in it.** Signing a desktop app in, licence keys, devices and seats, reconciling store purchases,
-using a quantity up, and an access policy in `@phis/ui` are not part of this service; see
-[design/ENTITLEMENTS.md](./design/ENTITLEMENTS.md) sections 7 and 9.
+using a quantity up, an access policy in `@phis/ui`, the binding of an entry to a subscription, delivery
+state and the resolving of bundles are not part of this service; see
+[design/ENTITLEMENTS.md](./design/ENTITLEMENTS.md) sections 7 and 9 and
+[design/COMMERCE_COORDINATION.md](./design/COMMERCE_COORDINATION.md) section 5.
 
 ### `settings:v1`
 
