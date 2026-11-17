@@ -1408,7 +1408,7 @@ phis product withdraw --site demo (--product @acme/licenses:pro | --supplier @ac
   and whether it is released, has terms pending release, or has a supplier that is switched off. `--state`
   takes one or several of `draft`, `active`, `withdrawn`, `locked`. `--unreleased` shows what waits for the
   operator: publisher's products not yet released, and released ones with pending terms.
-- `show` prints one product with its terms, pending terms and which Add-ons attached attributes.
+- `show` prints one product with its terms (sale, free, whether an account is required, parts), pending terms and which Add-ons attached attributes.
 - `release` releases a publisher's product, or applies the pending terms of a released one; the Site's own
   product needs none and the command says so. A product cannot be `active` before it is released.
 - `lock` stops every entitlement entry for the product from counting while it is locked, and refuses the

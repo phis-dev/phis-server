@@ -101,6 +101,7 @@ function mapProduct(row: ProductRow, attributes: Record<string, Record<string, u
     sale: row.sale,
     referralUrl: row.referral_url,
     free: (row.flags & FLAG.Free) !== 0,
+    accountRequired: (row.flags & FLAG.AccountRequired) !== 0,
     parts: row.parts as PhisProductId[],
     state: row.state,
     released: row.publisher === null || (row.flags & FLAG.Released) !== 0,
@@ -250,6 +251,7 @@ async function isNamedByEntitlement(db: DbQueryable, siteId: number, id: PhisPro
 
 const sameTerms = (a: PhisProductReleasedTerms, b: PhisProductReleasedTerms) =>
   a.sale === b.sale && a.referralUrl === b.referralUrl && a.free === b.free
+  && a.accountRequired === b.accountRequired
   && a.parts.length === b.parts.length && a.parts.every((part, index) => part === b.parts[index]);
 
 export type RegisterOutcome = "created" | "updated" | "unchanged";
@@ -260,7 +262,7 @@ export type RegisterOutcome = "created" | "updated" | "unchanged";
  *
  * A new product is `draft`, or `active` where its manifest declared it (`declared`): the operator who
  * switched the Add-on on chose it, and it belongs to the Site. On a publisher's product that is already
- * released, changed `sale`, `referralUrl`, `free` or `parts` wait in `pending_terms`; before the first
+ * released, changed `sale`, `referralUrl`, `free`, `accountRequired` or `parts` wait in `pending_terms`; before the first
  * release every field changes at once. A publisher is fixed: changing it would turn a released product
  * into the Site's own, which needs no release.
  */
@@ -281,7 +283,7 @@ export async function registerProduct(pool: Pool, input: {
     let row = await selectRow(client, siteId, id, true);
     if (!row) {
       await assertParts(client, siteId, id, draft.parts);
-      const flags = (draft.counted ? FLAG.Counted : 0) | (draft.free ? FLAG.Free : 0)
+      const flags = (draft.counted ? FLAG.Counted : 0) | (draft.free ? FLAG.Free : 0) | (draft.accountRequired ? FLAG.AccountRequired : 0)
         | (draft.publisher === null ? FLAG.Released : 0) | (input.declared ? FLAG.Declared : 0);
       const inserted = await client.query(
         `INSERT INTO phis.products (site_id, supplier_addon_id, key, publisher, type, title, summary, image_asset_id,
@@ -306,16 +308,17 @@ export async function registerProduct(pool: Pool, input: {
       throw new PhisProductRuleError(`${id} is named by an entitlement; whether it counts is fixed.`);
     }
     const current: PhisProductReleasedTerms = {
-      sale: row.sale, referralUrl: row.referral_url, free: (row.flags & FLAG.Free) !== 0, parts: row.parts as PhisProductId[],
+      sale: row.sale, referralUrl: row.referral_url, free: (row.flags & FLAG.Free) !== 0,
+      accountRequired: (row.flags & FLAG.AccountRequired) !== 0, parts: row.parts as PhisProductId[],
     };
-    const asked: PhisProductReleasedTerms = { sale: draft.sale, referralUrl: draft.referralUrl, free: draft.free, parts: draft.parts };
+    const asked: PhisProductReleasedTerms = { sale: draft.sale, referralUrl: draft.referralUrl, free: draft.free, accountRequired: draft.accountRequired, parts: draft.parts };
     const holdsBack = row.publisher !== null && (row.flags & FLAG.Released) !== 0;
     const terms = holdsBack ? current : asked;
     const pending = holdsBack && !sameTerms(asked, current) ? asked : null;
     if (!sameTerms(asked, current)) await assertParts(client, siteId, id, draft.parts);
 
-    const flags = (row.flags & ~(FLAG.Counted | FLAG.Free | FLAG.Declared))
-      | (draft.counted ? FLAG.Counted : 0) | (terms.free ? FLAG.Free : 0)
+    const flags = (row.flags & ~(FLAG.Counted | FLAG.Free | FLAG.AccountRequired | FLAG.Declared))
+      | (draft.counted ? FLAG.Counted : 0) | (terms.free ? FLAG.Free : 0) | (terms.accountRequired ? FLAG.AccountRequired : 0)
       | ((row.flags & FLAG.Declared) !== 0 || input.declared ? FLAG.Declared : 0);
     const unchanged = row.type === draft.type && row.title === draft.title && row.summary === draft.summary
       && row.image_asset_id === draft.imageAssetId && flags === row.flags && sameTerms(terms, current)
@@ -448,9 +451,11 @@ export async function releaseProduct(pool: Pool, input: {
     if (released && !pending) return { product: (await readProduct(client, input.siteId, input.productId))!, outcome: "unchanged" as const };
     if (pending) await assertParts(client, input.siteId, input.productId, pending.parts);
     const terms: PhisProductReleasedTerms = pending ?? {
-      sale: row.sale, referralUrl: row.referral_url, free: (row.flags & FLAG.Free) !== 0, parts: row.parts as PhisProductId[],
+      sale: row.sale, referralUrl: row.referral_url, free: (row.flags & FLAG.Free) !== 0,
+      accountRequired: (row.flags & FLAG.AccountRequired) !== 0, parts: row.parts as PhisProductId[],
     };
-    const flags = (row.flags | FLAG.Released) & ~FLAG.Free | (terms.free ? FLAG.Free : 0);
+    const flags = ((row.flags | FLAG.Released) & ~(FLAG.Free | FLAG.AccountRequired))
+      | (terms.free ? FLAG.Free : 0) | (terms.accountRequired ? FLAG.AccountRequired : 0);
     await client.query(
       `UPDATE phis.products
        SET sale = $2, referral_url = $3, parts = $4::text[], flags = $5::int, pending_terms = NULL,

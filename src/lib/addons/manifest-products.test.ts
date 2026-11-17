@@ -30,6 +30,7 @@ describe("products in a manifest", () => {
     expect(issuesOf([
       { key: "pro", type: "addon", title: "Pro", summary: "" },
       { key: "seats.team-1", type: "plan", title: "Seats", summary: "Per seat", counted: true, free: true },
+      { key: "acct", type: "plan", title: "Acct", summary: "", accountRequired: true },
       { key: "bundle", type: "plan", title: "Bundle", summary: "", parts: ["@acme/licenses:pro"] },
       { key: "ext", type: "addon", title: "Ext", summary: "", sale: "referral", referralUrl: "https://acme.example/ext" },
     ])).toEqual([]);
@@ -49,6 +50,7 @@ describe("products in a manifest", () => {
     expect(issuesOf(["pro"])).toContain("products[0] must be an object.");
     expect(issuesOf([{ ...entry, publisher: "acme" }])).toContain("products[0].publisher is not declared in a manifest.");
     expect(issuesOf([{ ...entry, imageAssetId: 3 }])).toContain("products[0].imageAssetId is not declared in a manifest.");
+    expect(issuesOf([{ ...entry, accountRequired: "yes" }]).join("\n")).toMatch(/accountRequired is a boolean/);
     expect(issuesOf([{ ...entry, counted: "yes" }]).join("\n")).toMatch(/counted is a boolean/);
     expect(issuesOf([{ ...entry, sale: "referral" }]).join("\n")).toMatch(/referralUrl/);
     expect(issuesOf([{ ...entry, counted: true, parts: ["@acme/licenses:x"] }]).join("\n")).toMatch(/not counted/);

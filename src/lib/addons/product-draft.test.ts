@@ -25,7 +25,7 @@ describe("a product's id and key", () => {
 describe("a product draft", () => {
   it("fills the defaults in", () => {
     expect(normalizePhisProductDraft(base)).toEqual({
-      ...base, publisher: null, imageAssetId: null, counted: false, sale: "own", referralUrl: null, free: false, parts: [],
+      ...base, publisher: null, imageAssetId: null, counted: false, sale: "own", referralUrl: null, free: false, accountRequired: false, parts: [],
     });
   });
 
@@ -45,6 +45,12 @@ describe("a product draft", () => {
     expect(() => normalizePhisProductDraft({ ...base, parts: ["part"] as never })).toThrow(/parts/);
     expect(() => normalizePhisProductDraft({ ...base, parts: ["@acme/licenses:pro"] }, "@acme/licenses:pro")).toThrow(/part of itself/);
     expect(() => normalizePhisProductDraft({ ...base, counted: true, parts: [part] })).toThrow(/not counted/);
+  });
+
+  it("takes whether an account is required, false when absent", () => {
+    expect(normalizePhisProductDraft({ ...base, accountRequired: true }).accountRequired).toBe(true);
+    expect(normalizePhisProductDraft({ ...base, accountRequired: false }).accountRequired).toBe(false);
+    expect(() => normalizePhisProductDraft({ ...base, accountRequired: "yes" as never })).toThrow(/accountRequired/);
   });
 
   it("refuses the wrong shapes", () => {

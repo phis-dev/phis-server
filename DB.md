@@ -43,6 +43,7 @@ The target PostgreSQL schema for `phis` is:
   - `1 << 2 = released`
   - `1 << 3 = withdrawn because the supplier was switched off`
   - `1 << 4 = declared by the supplier's manifest`
+  - `1 << 5 = can only be acquired with an account`
 - `phis.entitlement_sources.flags INT`
   - `1 << 0 = allowed for every product`
 - `phis.registration_intents.status SMALLINT`
@@ -1576,8 +1577,8 @@ Contract:
 Contract:
 - What a Site has that somebody can hold (`products:v1`, SERVER_ADDONS.md; `design/COMMERCE_COORDINATION.md` section 4). An identity and nothing about how it is sold or delivered. The id an Add-on sees is `supplier_addon_id || ':' || key`; the supplier is the Add-on that registered it and delivers it, and no foreign key points at `server_addons`, because a product stays when its supplier is removed.
 - `publisher` is the supplier's own reference for whose product it is, NULL for the Site's own, and does not change after the row was written. A product with a publisher is released by the operator (flag `released`); the Site's own is derived as released whatever the bit says (it is set at creation).
-- `sale`, `referral_url`, the `free` flag and `parts` are the terms in force. What a publisher asked to change of them on a released product waits in `pending_terms` (`{ sale, referralUrl, free, parts }`) until the operator releases it, which moves them into the columns and clears it. `parts` are product ids of the same Site; no cycle, counting `pending_terms.parts`; a bundle is not `counted`.
-- `flags` are `PHIS_PRODUCT_FLAG`: `1 = counted` (fixed once an entitlement names the product), `2 = free`, `4 = released`, `8 = withdrawn because the supplier was switched off` (cleared by any explicit move; Core restores exactly the products that carry it when the supplier is on again), `16 = declared by the supplier's manifest` (what lets Core withdraw it when a later manifest stops declaring it).
+- `sale`, `referral_url`, the `free` and `account required` flags and `parts` are the terms in force. What a publisher asked to change of them on a released product waits in `pending_terms` (`{ sale, referralUrl, free, accountRequired, parts }`) until the operator releases it, which moves them into the columns and clears it. `parts` are product ids of the same Site; no cycle, counting `pending_terms.parts`; a bundle is not `counted`.
+- `flags` are `PHIS_PRODUCT_FLAG`: `1 = counted` (fixed once an entitlement names the product), `2 = free`, `4 = released`, `8 = withdrawn because the supplier was switched off` (cleared by any explicit move; Core restores exactly the products that carry it when the supplier is on again), `16 = declared by the supplier's manifest` (what lets Core withdraw it when a later manifest stops declaring it), `32 = account required` (Core does not enforce it: an entitlement entry always has a subject with an account).
 - `state`: `draft`, `active`, `withdrawn`, `locked`. `locked` is the operator's; `phis product unlock` takes the product to `withdrawn`, because the state before the lock is not kept.
 - `version` rises with every change, attribute changes included, and not with a write that changes nothing.
 - A product that was ever named by an `entitlements` row is never deleted; `entitlements.product` is no foreign key, so removal is decided by looking.

@@ -1549,7 +1549,7 @@ The design is [design/COMMERCE_COORDINATION.md](./design/COMMERCE_COORDINATION.m
   unknown or of another Site), `imagePath` (the Site-relative address the picture is served from, built at read
   time from the Asset and its cache revision like `contentPath` of `assets:v1`, never stored; the Asset's own
   delivery policy still applies to what that address answers), `counted`, `sale` (`own`,
-  `referral` or `payout`), `referralUrl` (required, https, exactly for `referral`), `free`, `parts` (the
+  `referral` or `payout`), `referralUrl` (required, https, exactly for `referral`), `free`, `accountRequired` (can only be acquired with an account; Core does not enforce it, an entitlement entry always has a subject with an account), `parts` (the
   ids of a bundle's parts), `state`, `released`, `pendingTerms`, `attributes`, `version`, the two
   timestamps. Title and summary are in the Site's source language. Core reads neither `type` nor
   `attributes`.
@@ -1559,7 +1559,7 @@ The design is [design/COMMERCE_COORDINATION.md](./design/COMMERCE_COORDINATION.m
 - **Release.** A product with a `publisher` is `released` only after the Site operator released it
   (`phis product release`); until then it cannot be `active`, and every field of it changes at once. The
   Site's own product (`publisher` null) needs none and is always `released`. Once released, a change of
-  `sale`, `referralUrl`, `free` or `parts` is held as `pendingTerms` and the terms in force stay until the
+  `sale`, `referralUrl`, `free`, `accountRequired` or `parts` is held as `pendingTerms` and the terms in force stay until the
   operator releases it again; title, summary, picture and `type` change at once. Asking for the terms in
   force again takes a pending change back. A product's publisher does not change after it was registered:
   turning a released publisher's product into the Site's own would skip the release.
@@ -1591,7 +1591,7 @@ object of at most 8 KiB serialized, and it is display and filtering data, never 
 believe its caller throws, as with `entitlements:v1`.
 
 **Manifest products.** An Add-on declares the products its package carries under
-`products: [{ key, type, title, summary, counted?, sale?, referralUrl?, free?, parts? }]` (a publisher and
+`products: [{ key, type, title, summary, counted?, sale?, referralUrl?, free?, accountRequired?, parts? }]` (a publisher and
 a picture are not declared; keys unique per manifest). When the Add-on is switched on for a Site
 (`phis addon site --enable`) and when a release is reconciled (`phis addon reconcile`), Core registers
 them at the Site: a new one as `active`, because the operator switched the Add-on on and the product is

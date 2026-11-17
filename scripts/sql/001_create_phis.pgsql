@@ -2664,9 +2664,9 @@ CREATE INDEX IF NOT EXISTS addon_event_outbox_pending_idx
 -- ever acquired is never deleted; no foreign key points at it from `entitlements`, which keeps an entry
 -- whose product is gone.
 -- flags: 1 = counted, 2 = free, 4 = released, 8 = withdrawn because the supplier was switched off,
--- 16 = declared by the supplier's manifest. `sale`, `referral_url`, `free` and `parts` are the terms in
--- force; what a publisher asked to change of them on a released product waits in `pending_terms`
--- ({ sale, referralUrl, free, parts }) until the operator releases it. `image_asset_id` goes to NULL when
+-- 16 = declared by the supplier's manifest, 32 = account required. `sale`, `referral_url`, `free`,
+-- `account required` and `parts` are the terms in force; what a publisher asked to change of them on a
+-- released product waits in `pending_terms` ({ sale, referralUrl, free, accountRequired, parts }) until the operator releases it. `image_asset_id` goes to NULL when
 -- the Asset is deleted.
 CREATE TABLE IF NOT EXISTS phis.products (
   id SERIAL PRIMARY KEY,

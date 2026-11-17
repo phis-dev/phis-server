@@ -44,8 +44,8 @@ function describeProduct(product: PhisProduct) {
   return `${product.id}  ${product.state}  ${product.type}  "${product.title}"  publisher ${product.publisher ?? "-"}  ${notes.join(", ")}`;
 }
 
-function describeTerms(terms: { sale: string; referralUrl: string | null; free: boolean; parts: readonly string[] }) {
-  return `sale ${terms.sale}${terms.referralUrl ? ` (${terms.referralUrl})` : ""}, ${terms.free ? "free" : "not free"}, `
+function describeTerms(terms: { sale: string; referralUrl: string | null; free: boolean; accountRequired: boolean; parts: readonly string[] }) {
+  return `sale ${terms.sale}${terms.referralUrl ? ` (${terms.referralUrl})` : ""}, ${terms.free ? "free" : "not free"}, ${terms.accountRequired ? "account required" : "no account required"}, `
     + `parts ${terms.parts.length === 0 ? "-" : terms.parts.join(" ")}`;
 }
 

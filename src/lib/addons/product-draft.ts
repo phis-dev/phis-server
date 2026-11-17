@@ -47,6 +47,7 @@ export type PhisNormalizedProductDraft = {
   sale: PhisProductSale;
   referralUrl: string | null;
   free: boolean;
+  accountRequired: boolean;
   parts: PhisProductId[];
 };
 
@@ -91,6 +92,7 @@ export function normalizePhisProductDraft(draft: PhisProductDraft, ownId?: PhisP
   if (ownId && parts.includes(ownId)) throw new PhisProductDraftError("A product is not a part of itself.");
   const counted = draft.counted === true;
   if (draft.counted !== undefined && typeof draft.counted !== "boolean") throw new PhisProductDraftError("counted is a boolean.");
+  if (draft.accountRequired !== undefined && typeof draft.accountRequired !== "boolean") throw new PhisProductDraftError("accountRequired is a boolean.");
   if (draft.free !== undefined && typeof draft.free !== "boolean") throw new PhisProductDraftError("free is a boolean.");
   if (counted && parts.length > 0) throw new PhisProductDraftError("A bundle is not counted.");
   const imageAssetId = draft.imageAssetId ?? null;
@@ -108,6 +110,7 @@ export function normalizePhisProductDraft(draft: PhisProductDraft, ownId?: PhisP
     sale,
     referralUrl,
     free: draft.free === true,
+    accountRequired: draft.accountRequired === true,
     parts: [...parts] as PhisProductId[],
   };
 }

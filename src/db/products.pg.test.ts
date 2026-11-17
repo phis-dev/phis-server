@@ -178,6 +178,21 @@ describe.skipIf(!configured)("products", () => {
     expect((await releaseProduct(pool, { siteId: site.id, productId: id(SUPPLIER, "rel"), listeners }))!.outcome).toBe("unchanged");
   });
 
+  it("keeps whether an account is required with the terms: at once before the release, pending after it", async () => {
+    expect((await register("acct-own")).product.accountRequired).toBe(false);
+    expect((await register("acct-own", { accountRequired: true })).product.accountRequired).toBe(true);
+    expect((await register("acct-own", { accountRequired: true })).outcome).toBe("unchanged");
+
+    await register("acct-pub", { publisher: "acme" });
+    expect((await register("acct-pub", { publisher: "acme", accountRequired: true })).product).toMatchObject({ accountRequired: true, pendingTerms: null });
+    await releaseProduct(pool, { siteId: site.id, productId: id(SUPPLIER, "acct-pub"), listeners: [] });
+    const asked = await register("acct-pub", { publisher: "acme", accountRequired: false });
+    expect(asked.product).toMatchObject({ accountRequired: true, pendingTerms: { accountRequired: false } });
+    expect((await register("acct-pub", { publisher: "acme", accountRequired: false })).outcome).toBe("unchanged");
+    const applied = await releaseProduct(pool, { siteId: site.id, productId: id(SUPPLIER, "acct-pub"), listeners: [] });
+    expect(applied!.product).toMatchObject({ accountRequired: false, pendingTerms: null });
+  });
+
   it("needs no release for the Site's own product, and says so", async () => {
     await register("own-rel");
     await expect(releaseProduct(pool, { siteId: site.id, productId: id(SUPPLIER, "own-rel"), listeners: [] })).rejects.toThrow(/needs no release/);
@@ -459,7 +474,9 @@ describe.skipIf(!configured)("products", () => {
       "m-bundle": "unchanged", "m-part": "updated", "m-new": "created", "m-gone": "withdrawn",
     });
     expect((await get(id(supplier, "m-part")))).toMatchObject({ title: "Renamed", state: "withdrawn" });
-    expect((await get(id(supplier, "m-new")))).toMatchObject({ state: "active", free: true });
+    expect((await get(id(supplier, "m-new")))).toMatchObject({ state: "active", free: true, accountRequired: false });
+    await sync([entry("m-bundle", { parts: [id(supplier, "m-part")] }), entry("m-part", { title: "Renamed" }), entry("m-new", { free: true, accountRequired: true })]);
+    expect((await get(id(supplier, "m-new")))!.accountRequired).toBe(true);
     // Withdrawn, not removed.
     expect((await get(id(supplier, "m-gone")))).toMatchObject({ state: "withdrawn" });
 
