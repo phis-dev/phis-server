@@ -798,7 +798,8 @@ facts?, dedupeKey? })`, from a job, a verified hook or a request handler. The ru
   the emitter's tables is a fact it cannot read; hand it the value.
 - **A key makes a repeat safe.** `dedupeKey`, unique within the Site and the event, meets a partial
   unique index: a second emit with the same key writes nothing for a listener already owed the first.
-  A job that is run again after a lost lease therefore emits once.
+  A job that is run again after a lost lease therefore emits once. The key is remembered until the
+  delivered row is removed, 30 days after delivery (`phis maintain`, `queue-retention`).
 - **A chain ends.** The outbox row carries a hop count: zero for Core's events, the incoming hop plus
   one for an emit from inside an event handler. At `PHIS_ADDON_EVENT_MAX_HOPS` (4) the emit is refused
   and logged (`addon.event.hop_limit`), which is what stops two handlers answering each other forever.
@@ -1816,7 +1817,8 @@ Core turns into an absolute link on the Site's public address in the recipient's
 cannot put another host into a Site's outgoing mail. A call must bring exactly the declared parameters.
 
 `dedupeKey` is unique within the Site for this Add-on; a second call with the same key writes nothing and
-answers `notificationId: null`, which is what makes a repeated job run safe. The request that wrote the
+answers `notificationId: null`, which is what makes a repeated job run safe. The key is remembered until the
+sent row is removed, 90 days after the send (`phis maintain`, `queue-retention`). The request that wrote the
 row attempts the send once itself, as Core's own messages do; what that attempt leaves behind,
 `phis maintain` drains. An unverified hook may not call `notify`: a message written down is a change, and
 a request with no actor may change nothing.

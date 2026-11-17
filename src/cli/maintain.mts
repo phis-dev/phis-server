@@ -341,6 +341,103 @@ const supportRequesterWindow: PhiMaintenanceTask = {
   },
 };
 
+/**
+ * How long a settled row of the three queues stays, counted from the moment it settled.
+ *
+ * Only a row that reached an end state is ever a candidate; what is still owed stays however old it is.
+ * The end states are the ones the writers set themselves: `notification_outbox.sent_at`,
+ * `payment_notification_receipts.processed` with `processed_at`, and `addon_event_outbox.delivered_at`.
+ * A mail dropped because consent was withdrawn (`flags & 2`) or given up after its attempts ran out, and
+ * an event that keeps failing, are not in that list and are left for an operator to look at.
+ *
+ * What an old row still does is remember a key: a `dedupeKey` of the same Site, or a Provider's delivery
+ * id, is only recognised while its row exists. A sender retries for days, and a job repeats within
+ * minutes; the windows are far past both.
+ */
+const PHI_NOTIFICATION_SENT_RETENTION_DAYS = 90;
+const PHI_PAYMENT_RECEIPT_RETENTION_DAYS = 90;
+const PHI_ADDON_EVENT_DELIVERED_RETENTION_DAYS = 30;
+
+/** Rows removed per statement, and statements per table per run: 50 000 rows, then the next run goes on. */
+const PHI_RETENTION_BATCH_ROWS = 1000;
+const PHI_RETENTION_MAX_BATCHES = 50;
+
+type PhiRetentionTarget = {
+  table: string;
+  days: number;
+  /** The key columns, so a batch can name its rows. */
+  key: string;
+  /** The rows that are settled and past the window, with `$1` as the window in days. */
+  expired: string;
+  order: string;
+};
+
+const PHI_RETENTION_TARGETS: readonly PhiRetentionTarget[] = [
+  {
+    table: "notification_outbox",
+    days: PHI_NOTIFICATION_SENT_RETENTION_DAYS,
+    key: "id",
+    expired: "sent_at IS NOT NULL AND sent_at < NOW() - make_interval(days => $1::int)",
+    order: "sent_at",
+  },
+  {
+    table: "payment_notification_receipts",
+    days: PHI_PAYMENT_RECEIPT_RETENTION_DAYS,
+    key: "site_id, profile_key, delivery_id",
+    expired: "processed AND processed_at IS NOT NULL AND processed_at < NOW() - make_interval(days => $1::int)",
+    order: "processed_at",
+  },
+  {
+    table: "addon_event_outbox",
+    days: PHI_ADDON_EVENT_DELIVERED_RETENTION_DAYS,
+    key: "id",
+    expired: "delivered_at IS NOT NULL AND delivered_at < NOW() - make_interval(days => $1::int)",
+    order: "delivered_at",
+  },
+];
+
+const settledQueueRows: PhiMaintenanceTask = {
+  id: "queue-retention",
+  summary: "Forget sent mails, processed payment receipts and delivered Add-on events past their window.",
+  async run(pool, { dryRun }) {
+    const parts: string[] = [];
+    let total = 0;
+    let more = false;
+    for (const target of PHI_RETENTION_TARGETS) {
+      let count = 0;
+      if (dryRun) {
+        const { rows } = await pool.query<{ count: string }>(
+          `SELECT COUNT(*)::text AS count FROM phis.${target.table} WHERE ${target.expired}`,
+          [target.days],
+        );
+        count = Number(rows[0]?.count ?? "0");
+      } else {
+        // `SKIP LOCKED` so two runs at once take different rows instead of waiting on each other.
+        const statement = `DELETE FROM phis.${target.table}
+          WHERE (${target.key}) IN (
+            SELECT ${target.key} FROM phis.${target.table}
+             WHERE ${target.expired}
+             ORDER BY ${target.order}
+             LIMIT $2::int
+               FOR UPDATE SKIP LOCKED)`;
+        for (let batch = 0; batch < PHI_RETENTION_MAX_BATCHES; batch += 1) {
+          const { rowCount } = await pool.query(statement, [target.days, PHI_RETENTION_BATCH_ROWS]);
+          const removed = rowCount ?? 0;
+          count += removed;
+          if (removed < PHI_RETENTION_BATCH_ROWS) break;
+          if (batch === PHI_RETENTION_MAX_BATCHES - 1) more = true;
+        }
+      }
+      total += count;
+      parts.push(`${target.table} ${count} (older than ${target.days} day(s))`);
+    }
+    return {
+      cleared: total,
+      detail: `${dryRun ? "Would forget" : "Forgot"} ${parts.join(", ")}${more ? "; more may be due, run again" : ""}.`,
+    };
+  },
+};
+
 /** Ordered as they run. A task must not depend on an earlier one having run first. */
 export const PHI_MAINTENANCE_TASKS: readonly PhiMaintenanceTask[] = Object.freeze([
   { id: "payments", summary: "Reconcile up to 100 unresolved Payment operations without replaying financial commands.",
@@ -352,6 +449,7 @@ export const PHI_MAINTENANCE_TASKS: readonly PhiMaintenanceTask[] = Object.freez
   expiredUploadSessions,
   orphanedAddonAssets,
   settledHookDeliveries,
+  settledQueueRows,
   addonStorageCounters,
   supportRequesterWindow,
 ]);

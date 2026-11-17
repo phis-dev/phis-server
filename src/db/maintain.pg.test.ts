@@ -168,6 +168,110 @@ describe("maintenance", () => {
     expect(rows[0]).toEqual({ storage_used_bytes: "10", storage_used_objects: 1 });
   });
 
+  describe("queue-retention", () => {
+    /** One mail row per state: what the window decides, and what it must never decide. */
+    async function mail(state: string, sentDaysAgo: number | null, flags = 0, attempts = 0) {
+      const pool = await requirePhiTestDatabase();
+      await pool.query(
+        `INSERT INTO phis.notification_outbox
+           (site_id, occasion, flags, recipient_address, locale, attempts, created_at, sent_at, last_error)
+         VALUES ($1, $2, $3, 'who@example.invalid', 'en', $4, NOW() - interval '400 days',
+                 CASE WHEN $5::int IS NULL THEN NULL ELSE NOW() - make_interval(days => $5::int) END, 'x')`,
+        [site.id, `pgtest.${state}`, flags, attempts, sentDaysAgo],
+      );
+    }
+
+    async function event(state: string, deliveredDaysAgo: number | null) {
+      const pool = await requirePhiTestDatabase();
+      await pool.query(
+        `INSERT INTO phis.addon_event_outbox
+           (site_id, addon_id, event, subject_kind, payload, created_at, delivered_at, last_error)
+         VALUES ($1, $2, 'asset.changed', 'asset', $3::jsonb, NOW() - interval '400 days',
+                 CASE WHEN $4::int IS NULL THEN NULL ELSE NOW() - make_interval(days => $4::int) END, 'x')`,
+        [site.id, ADDON, JSON.stringify({ table: "t", ownerId: state, slot: "s" }), deliveredDaysAgo],
+      );
+    }
+
+    it("removes expired rows, keeps fresh ones, and never removes what is still owed", async () => {
+      const pool = await requirePhiTestDatabase();
+      await mail("expired", 91);
+      await mail("fresh", 89);
+      await mail("open-old", null);
+      await mail("exhausted-old", null, 0, 32);
+      await mail("dropped-old", null, 2);
+      await event("expired", 31);
+      await event("fresh", 29);
+      await event("open-old", null);
+
+      const dry = await runPhiMaintenance(pool, { only: "queue-retention", dryRun: true });
+      expect(dry[0]!.error).toBeNull();
+      expect(dry[0]!.cleared).toBeGreaterThanOrEqual(2);
+      const before = await pool.query(`SELECT 1 FROM phis.notification_outbox WHERE site_id = $1`, [site.id]);
+      expect(before.rowCount).toBe(5);
+
+      const [report] = await runPhiMaintenance(pool, { only: "queue-retention" });
+      expect(report!.error).toBeNull();
+      expect(report!.cleared).toBeGreaterThanOrEqual(2);
+      expect(report!.detail).toMatch(/notification_outbox \d+ .*addon_event_outbox \d+/);
+
+      const mails = await pool.query<{ occasion: string }>(
+        `SELECT occasion FROM phis.notification_outbox WHERE site_id = $1 ORDER BY occasion`, [site.id],
+      );
+      expect(mails.rows.map((row) => row.occasion)).toEqual(
+        ["pgtest.dropped-old", "pgtest.exhausted-old", "pgtest.fresh", "pgtest.open-old"],
+      );
+      const events = await pool.query<{ owner: string }>(
+        `SELECT payload->>'ownerId' AS owner FROM phis.addon_event_outbox
+          WHERE site_id = $1 ORDER BY 1`, [site.id],
+      );
+      expect(events.rows.map((row) => row.owner)).toEqual(["fresh", "open-old"]);
+    });
+
+    it("removes processed receipts past their window and keeps fresh, unprocessed and held ones", async () => {
+      const pool = await requirePhiTestDatabase();
+      const paymentId = crypto.randomUUID();
+      await pool.query(
+        `INSERT INTO phis.payment_profiles (site_id, key, provider_addon_id, draft)
+         VALUES ($1, 'retention', $2, '{}'::jsonb)`, [site.id, ADDON],
+      );
+      try {
+        await pool.query(
+          `INSERT INTO phis.payments
+             (id, site_id, consumer_addon_id, profile_key, provider_key, merchant_identity, profile_revision,
+              currency_exponent, method_features, record)
+           VALUES ($1, $2, $3, 'retention', 'p', 'm', 1, 2, '{}'::jsonb, $4::jsonb)`,
+          [paymentId, site.id, ADDON, JSON.stringify({
+            id: paymentId, status: "created", amount: { minor: "100" }, pricing: {}, capturedMinor: "0", refundedMinor: "0",
+          })],
+        );
+        const receipt = (id: string, processed: boolean, daysAgo: number | null, claimDays: number) => pool.query(
+          `INSERT INTO phis.payment_notification_receipts
+             (site_id, profile_key, delivery_id, payment_id, processed, claim_token, claim_until, processed_at)
+           VALUES ($1, 'retention', $2, $3, $4, $5, NOW() - make_interval(days => $6::int),
+                   CASE WHEN $7::int IS NULL THEN NULL ELSE NOW() - make_interval(days => $7::int) END)`,
+          [site.id, id, paymentId, processed, crypto.randomUUID(), claimDays, daysAgo],
+        );
+        await receipt("expired", true, 91, 91);
+        await receipt("fresh", true, 89, 89);
+        await receipt("unprocessed-old", false, null, 400);
+        await receipt("held-claim", false, null, -1);
+
+        const [report] = await runPhiMaintenance(pool, { only: "queue-retention" });
+        expect(report!.error).toBeNull();
+        expect(report!.cleared).toBeGreaterThanOrEqual(1);
+        const { rows } = await pool.query<{ delivery_id: string }>(
+          `SELECT delivery_id FROM phis.payment_notification_receipts WHERE site_id = $1 ORDER BY delivery_id`,
+          [site.id],
+        );
+        expect(rows.map((row) => row.delivery_id)).toEqual(["fresh", "held-claim", "unprocessed-old"]);
+      } finally {
+        await pool.query(`DELETE FROM phis.payment_notification_receipts WHERE site_id = $1`, [site.id]);
+        await pool.query(`DELETE FROM phis.payments WHERE site_id = $1`, [site.id]);
+        await pool.query(`DELETE FROM phis.payment_profiles WHERE site_id = $1`, [site.id]);
+      }
+    });
+  });
+
   it("refuses a task it does not have rather than doing nothing quietly", async () => {
     const pool = await requirePhiTestDatabase();
     await expect(runPhiMaintenance(pool, { only: "tidy-everything" }))

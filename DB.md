@@ -2393,6 +2393,7 @@ COMMIT;
 - `payment_id UUID REFERENCES phis.payments ON DELETE RESTRICT`; composite profile FK `ON DELETE RESTRICT`.
 - `processed BOOLEAN NOT NULL DEFAULT FALSE`, `claim_token UUID NOT NULL`, `claim_until TIMESTAMPTZ NOT NULL`.
 - `processed_at TIMESTAMPTZ NULL`.
+- Retention: `phis maintain` (`queue-retention`) deletes rows with `processed AND processed_at IS NOT NULL AND processed_at < NOW() - 90 days`, in batches of 1000 (at most 50 per run). Unprocessed and claimed rows stay however old. A Provider's repeat of a delivery id is recognised as a duplicate for 90 days after it was processed, far past any Provider's retry window. No extra index: the table holds one row per Provider notification.
 - Only authenticated Provider delivery ids enter this inbox. A live competing claim is unavailable,
   never a completed duplicate; an expired claim can be reacquired. Final commit requires the receipt
   token and atomically writes payment/refunds/operations, owner outbox and processed receipt. Failure
@@ -2417,6 +2418,8 @@ COMMIT;
 - `created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
 - `delivered_at TIMESTAMPTZ NULL`
 - partial index `(addon_id, site_id, id) WHERE delivered_at IS NULL`
+- partial index `addon_event_outbox_delivered_idx` on `(delivered_at) WHERE delivered_at IS NOT NULL`, for the retention delete
+- Retention: `phis maintain` (`queue-retention`) deletes rows with `delivered_at IS NOT NULL AND delivered_at < NOW() - 30 days`, in batches of 1000 (at most 50 per run). Undelivered rows stay however old, failing ones included. An emitter's `dedupe_key` is therefore only recognised for 30 days after delivery.
 - partial unique index `addon_event_outbox_dedupe_unique` on `(site_id, addon_id, event, dedupe_key)
   WHERE dedupe_key IS NOT NULL`
 - `addon_event_outbox_subject_check`: a thread subject has exactly `thread_id`, a bare thread event and
@@ -2593,6 +2596,8 @@ Contract:
   `ON DELETE CASCADE`
 - partial index `(site_id, next_attempt_at, id) WHERE sent_at IS NULL AND (flags & 2) = 0`
 - partial unique index `(site_id, dedupe_key) WHERE dedupe_key IS NOT NULL`
+- partial index `notification_outbox_sent_idx` on `(sent_at) WHERE sent_at IS NOT NULL`, for the retention delete
+- Retention: `phis maintain` (`queue-retention`) deletes rows with `sent_at IS NOT NULL AND sent_at < NOW() - 90 days`, in batches of 1000 (at most 50 per run). Unsent rows stay however old, including rows dropped without sending (`flags & 2`) and rows whose attempts ran out. A `dedupe_key` is therefore only recognised for 90 days after the send.
 
 Contract:
 - Every message Core sends is written here first, and nothing sends without a row. There is one path:

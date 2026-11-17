@@ -2649,6 +2649,11 @@ CREATE INDEX IF NOT EXISTS addon_event_outbox_pending_idx
   ON phis.addon_event_outbox (addon_id, site_id, id)
   WHERE delivered_at IS NULL;
 
+-- `phis maintain` (queue-retention) removes delivered rows past their window, oldest first.
+CREATE INDEX IF NOT EXISTS addon_event_outbox_delivered_idx
+  ON phis.addon_event_outbox (delivered_at)
+  WHERE delivered_at IS NOT NULL;
+
 -- Products: what a Site has that somebody can hold (SERVER_ADDONS.md, products:v1;
 -- design/COMMERCE_COORDINATION.md section 4). An identity, not a listing: the id a client sees is
 -- `supplier_addon_id || ':' || key`. `publisher` is NULL for the Site's own product. A product somebody
@@ -2991,6 +2996,11 @@ CREATE TABLE IF NOT EXISTS phis.notification_outbox (
 CREATE INDEX IF NOT EXISTS notification_outbox_pending_idx
   ON phis.notification_outbox (site_id, next_attempt_at, id)
   WHERE sent_at IS NULL AND (flags & 2) = 0;
+
+-- `phis maintain` (queue-retention) removes sent rows past their window, oldest first.
+CREATE INDEX IF NOT EXISTS notification_outbox_sent_idx
+  ON phis.notification_outbox (sent_at)
+  WHERE sent_at IS NOT NULL;
 
 -- What makes a repeated run write nothing the first one already wrote.
 CREATE UNIQUE INDEX IF NOT EXISTS notification_outbox_dedupe_idx
