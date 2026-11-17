@@ -52,7 +52,7 @@
     "@phis/contracts": "^0.7.10",
     "argon2": "^0.45.1",
     "harfbuzzjs": "^1.6.1",
-    "next": "^16.4.2",
+    "next": "^16.4.6",
     "nodemailer": "^9.0.3",
     "openid-client": "^6.8.8",
     "pg": "^8.23.0",
