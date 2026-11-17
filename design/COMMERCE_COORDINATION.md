@@ -149,9 +149,9 @@ type and state and is paged.
 | `locked` | no | no | operator only |
 
 The release is given once per product. After it the publisher delivers updates -- new versions, new
-files -- without another release (operator, 2026-11-17); that is delivery, and the directory does not
-see it. Assumed, not decided: a change of what the release was given for (`sale`, `free`, `parts`) needs
-it again, a change of title, summary or picture does not.
+files -- without another release; that is delivery, and the directory does not see it. A change of what
+the release was given for (`sale`, `free`, `parts`) needs it again; a change of title, summary or picture
+does not (operator, 2026-11-17).
 
 A product that was ever acquired is never deleted. Its row stays so that an order page, a licence page
 and a download page can go on naming it. Deletion is possible only while no entitlement entry refers to
@@ -395,11 +395,12 @@ Not in this design, and not blocked by it:
     keeps no mapping from products to kinds.
 15. Who may write acquisitions is allowed per seller and Site -- for every product, or for the products
     of named suppliers -- not per product.
+16. On a released product a publisher changes title, summary and picture freely; a change of `sale`,
+    `free` or `parts` needs the operator's release again.
 
 ## 14. Open, the operator's to decide
 
-1. **What a publisher may change on a released product without a new release** (section 4, assumed: a
-   change of `sale`, `free` or `parts` needs the release again; title, summary and picture do not).
+Nothing at present.
 
 ## 15. Sequence
 
