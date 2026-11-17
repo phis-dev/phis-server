@@ -513,11 +513,11 @@ export type AuthTransactionRecord = {
   userId: number | null;
   methodKey: string;
   stage: PhiAuthStage;
-  stateHash: string;
-  nonceHash: string | null;
-  payloadCiphertext: string;
-  payloadIv: string;
-  payloadAuthTag: string;
+  stateHash: Buffer;
+  nonceHash: Buffer | null;
+  payloadCiphertext: Buffer;
+  payloadIv: Buffer;
+  payloadAuthTag: Buffer;
   nextPath: string;
   expiresAt: string;
   consumedAt: string | null;
@@ -530,11 +530,11 @@ type AuthTransactionRow = {
   user_id: number | null;
   method_key: string;
   stage: string;
-  state_hash: string;
-  nonce_hash: string | null;
-  payload_ciphertext: string;
-  payload_iv: string;
-  payload_auth_tag: string;
+  state_hash: Buffer;
+  nonce_hash: Buffer | null;
+  payload_ciphertext: Buffer;
+  payload_iv: Buffer;
+  payload_auth_tag: Buffer;
   next_path: string;
   expires_at: string;
   consumed_at: string | null;
@@ -589,7 +589,7 @@ export async function createAuthTransaction(input: AuthTransactionRecord) {
   );
 }
 
-export async function consumeAuthTransaction(siteId: number, stateHash: string) {
+export async function consumeAuthTransaction(siteId: number, stateHash: Buffer) {
   const pool = getPool();
   const { rows } = await pool.query<AuthTransactionRow>(
     `UPDATE phis.auth_transactions

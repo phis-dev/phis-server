@@ -6,6 +6,7 @@ import {
   readPhisSecretWithDb,
   writePhisSecretWithDb,
 } from "./server-secrets-store.mts";
+import { encryptPhiSecret } from "@/lib/secrets/crypto";
 import { buildPhiSecretReference } from "@/lib/secrets/reference";
 import {
   closePhiTestPool,
@@ -170,5 +171,40 @@ describe("server secret store", () => {
 
     expect(await deletePhisSecretWithDb(pool, reference)).toBe(true);
     expect(await deletePhisSecretWithDb(pool, reference)).toBe(false);
+  });
+
+  it("stores the 12-byte IV and 16-byte tag as bytes", async () => {
+    const pool = await requirePhiTestDatabase();
+    const reference = buildPhiSecretReference({
+      owner: { kind: "core" },
+      siteKey: site.key,
+      name: "sizes",
+    });
+    await writePhisSecretWithDb(pool, { reference, value: "sized", key, siteId: site.id });
+    const { rows } = await pool.query<{ iv: number; tag: number; ct: number }>(
+      `SELECT octet_length(iv) AS iv, octet_length(auth_tag) AS tag, octet_length(ciphertext) AS ct
+       FROM phis.server_secrets WHERE reference = $1`,
+      [reference],
+    );
+    expect(rows[0]).toEqual({ iv: 12, tag: 16, ct: Buffer.byteLength("sized") });
+  });
+
+  it("reads a secret that was stored as hex text before the conversion", async () => {
+    const pool = await requirePhiTestDatabase();
+    const reference = buildPhiSecretReference({
+      owner: { kind: "core" },
+      siteKey: site.key,
+      name: "legacy",
+    });
+    const record = encryptPhiSecret("legacy-value", key);
+    await pool.query(
+      `INSERT INTO phis.server_secrets (reference, site_id, key_version, ciphertext, iv, auth_tag)
+       VALUES ($1, $2, $3, decode($4, 'hex'), decode($5, 'hex'), decode($6, 'hex'))`,
+      [
+        reference, site.id, record.keyVersion,
+        record.ciphertext.toString("hex"), record.iv.toString("hex"), record.authTag.toString("hex"),
+      ],
+    );
+    expect(await readPhisSecretWithDb(pool, reference, key)).toBe("legacy-value");
   });
 });

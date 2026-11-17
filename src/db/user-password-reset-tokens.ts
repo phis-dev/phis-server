@@ -4,8 +4,8 @@ import { createHash, randomBytes } from "node:crypto";
 
 import { getPool } from "@/lib/db";
 
-function sha256Hex(value: string) {
-  return createHash("sha256").update(value).digest("hex");
+function sha256(value: string) {
+  return createHash("sha256").update(value).digest();
 }
 
 export async function createUserPasswordResetToken(input: {
@@ -15,7 +15,7 @@ export async function createUserPasswordResetToken(input: {
 }) {
   const ttlSeconds = Math.max(60, Math.trunc(input.ttlSeconds ?? 2 * 60 * 60));
   const token = randomBytes(32).toString("hex");
-  const tokenHash = sha256Hex(token);
+  const tokenHash = sha256(token);
   const pool = getPool();
 
   // The newest link is the only one that works. Earlier ones stayed valid for their two hours, so a
@@ -44,7 +44,7 @@ export async function createUserPasswordResetToken(input: {
 }
 
 export async function getUserPasswordResetTokenByRawToken(siteId: number, rawToken: string) {
-  const tokenHash = sha256Hex(rawToken);
+  const tokenHash = sha256(rawToken);
   const pool = getPool();
   const { rows } = await pool.query<{
     id: number;

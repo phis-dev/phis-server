@@ -174,4 +174,33 @@ describe("the notification outbox against PostgreSQL", () => {
     // A membership nobody has is not an error to be dressed up as success.
     expect(await readPhiNotificationLinkSalt(userId + 99_000, site.id)).toBeNull();
   });
+
+  it("keeps the salt as 16 bytes and hands back the hex text a link is signed under", async () => {
+    const userId = await createPhiTestUser(site);
+    const salt = "0123456789abcdef0123456789abcdef";
+    expect(await ensurePhiNotificationLinkSalt(userId, site.id, salt)).toBe(salt);
+
+    const { rows } = await pool.query<{ link_salt: Buffer }>(
+      `SELECT link_salt FROM phis.notification_link_salts WHERE user_id = $1 AND site_id = $2`,
+      [userId, site.id],
+    );
+    expect(rows[0]!.link_salt).toEqual(Buffer.from(salt, "hex"));
+    expect(rows[0]!.link_salt).toHaveLength(16);
+  });
+
+  it("reads a salt that was stored as hex text before the conversion as the same text", async () => {
+    const userId = await createPhiTestUser(site);
+    const salt = "fedcba9876543210fedcba9876543210";
+    await pool.query(
+      `INSERT INTO phis.notification_link_salts (user_id, site_id, link_salt)
+       VALUES ($1, $2, decode($3, 'hex'))`,
+      [userId, site.id, salt],
+    );
+    expect(await readPhiNotificationLinkSalt(userId, site.id)).toBe(salt);
+  });
+
+  it("refuses a salt that is not 16 bytes", async () => {
+    const userId = await createPhiTestUser(site);
+    await expect(ensurePhiNotificationLinkSalt(userId, site.id, "abcd")).rejects.toMatchObject({ code: "23514" });
+  });
 });

@@ -275,17 +275,21 @@ export async function markPhiNotificationFailed(id: string, error: string) {
  * way: the link has to be renderable for every circular, not only the first. The conflict branch updates
  * nothing -- it exists so the statement answers with the row that is already there instead of needing a
  * second read.
+ *
+ * The column holds the salt's 16 bytes, the library handles it as the 32 lowercase hex characters it is
+ * signed under: a link already sitting in a mailbox carries a signature over that text, so the text has to
+ * come back exactly as it was minted.
  */
 export async function ensurePhiNotificationLinkSalt(userId: number, siteId: number, salt: string) {
-  const { rows } = await getPool().query<{ link_salt: string }>(
+  const { rows } = await getPool().query<{ link_salt: Buffer }>(
     `INSERT INTO phis.notification_link_salts (user_id, site_id, link_salt)
-     VALUES ($1, $2, $3)
+     VALUES ($1, $2, decode($3, 'hex'))
      ON CONFLICT (user_id, site_id) DO UPDATE SET user_id = EXCLUDED.user_id
      RETURNING link_salt`,
     [userId, siteId, salt],
   );
 
-  return rows[0]?.link_salt.trim() ?? null;
+  return rows[0]?.link_salt.toString("hex") ?? null;
 }
 
 /**
@@ -297,7 +301,7 @@ export async function ensurePhiNotificationLinkSalt(userId: number, siteId: numb
  * the caller reports rather than dressing up as success.
  */
 export async function readPhiNotificationLinkSalt(userId: number, siteId: number) {
-  const { rows } = await getPool().query<{ link_salt: string }>(
+  const { rows } = await getPool().query<{ link_salt: Buffer }>(
     `SELECT link_salt
      FROM phis.notification_link_salts
      WHERE user_id = $1 AND site_id = $2
@@ -305,7 +309,7 @@ export async function readPhiNotificationLinkSalt(userId: number, siteId: number
     [userId, siteId],
   );
 
-  return rows[0]?.link_salt.trim() ?? null;
+  return rows[0]?.link_salt.toString("hex") ?? null;
 }
 
 /**

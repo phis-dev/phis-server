@@ -12,7 +12,7 @@ import {
   linkExternalIdentity,
 } from "@/db/site-auth";
 import { getEffectiveUserSiteAuthorization, upsertUserSiteMembership } from "@/db/user-site-memberships";
-import { randomToken, sha256Hex } from "@/lib/auth";
+import { randomToken, sha256Bytes } from "@/lib/auth";
 import { verifyPasswordHash } from "@/lib/password";
 import { normalizeAuthNextPath } from "@/lib/site-auth/contracts";
 import {
@@ -83,11 +83,11 @@ export async function createExternalIdentityLinkChallenge(input: {
     userId: input.userId,
     methodKey: input.methodKey,
     stage: "step-up",
-    stateHash: sha256Hex(token),
+    stateHash: sha256Bytes(token),
     nonceHash: null,
-    payloadCiphertext: encrypted.ciphertextHex,
-    payloadIv: encrypted.ivHex,
-    payloadAuthTag: encrypted.authTagHex,
+    payloadCiphertext: encrypted.ciphertext,
+    payloadIv: encrypted.iv,
+    payloadAuthTag: encrypted.authTag,
     nextPath: normalizeAuthNextPath(input.nextPath),
     expiresAt: expiresAt.toISOString(),
     consumedAt: null,
@@ -100,7 +100,7 @@ export async function confirmExternalIdentityLink(input: {
   token: string;
   password: string;
 }) {
-  const transaction = await consumeAuthTransaction(input.siteId, sha256Hex(input.token));
+  const transaction = await consumeAuthTransaction(input.siteId, sha256Bytes(input.token));
   if (
     !transaction ||
     transaction.stage !== "step-up" ||
@@ -110,9 +110,9 @@ export async function confirmExternalIdentityLink(input: {
     throw new Error("AUTH_LINK_TRANSACTION_INVALID");
   }
   const payload = readLinkPayload(decryptAuthTransactionPayload({
-    ciphertextHex: transaction.payloadCiphertext,
-    ivHex: transaction.payloadIv,
-    authTagHex: transaction.payloadAuthTag,
+    ciphertext: transaction.payloadCiphertext,
+    iv: transaction.payloadIv,
+    authTag: transaction.payloadAuthTag,
   }));
   const { identity } = payload;
   if (

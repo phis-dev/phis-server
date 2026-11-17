@@ -824,9 +824,9 @@ CREATE TABLE IF NOT EXISTS phis.user_auth_factors (
   factor_type SMALLINT NOT NULL,
   factor_key BYTEA NULL,
   factor_data JSONB NOT NULL DEFAULT '{}'::jsonb,
-  secret_ciphertext TEXT NULL,
-  secret_iv CHAR(24) NULL,
-  secret_auth_tag CHAR(32) NULL,
+  secret_ciphertext BYTEA NULL,
+  secret_iv BYTEA NULL,
+  secret_auth_tag BYTEA NULL,
   label VARCHAR(128) NULL,
   confirmed_at TIMESTAMPTZ NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -854,6 +854,10 @@ CREATE TABLE IF NOT EXISTS phis.user_auth_factors (
       AND secret_iv IS NULL
       AND secret_auth_tag IS NULL)
   ),
+  -- AES-256-GCM as `transaction-crypto.ts` writes it: a 12-byte initialization vector, a 16-byte tag.
+  CONSTRAINT user_auth_factors_secret_size_check CHECK (
+    octet_length(secret_iv) = 12 AND octet_length(secret_auth_tag) = 16
+  ),
   CONSTRAINT user_auth_factors_user_site_type_key_unique
     UNIQUE (user_id, site_id, factor_type, factor_key)
 );
@@ -872,17 +876,25 @@ CREATE TABLE IF NOT EXISTS phis.auth_transactions (
   user_id INT NULL REFERENCES phis.user_accounts(id) ON DELETE CASCADE,
   method_key VARCHAR(64) NOT NULL,
   stage VARCHAR(32) NOT NULL,
-  state_hash CHAR(64) NOT NULL UNIQUE,
-  nonce_hash CHAR(64) NULL,
-  payload_ciphertext TEXT NOT NULL,
-  payload_iv CHAR(24) NOT NULL,
-  payload_auth_tag CHAR(32) NOT NULL,
+  state_hash BYTEA NOT NULL UNIQUE,
+  nonce_hash BYTEA NULL,
+  payload_ciphertext BYTEA NOT NULL,
+  payload_iv BYTEA NOT NULL,
+  payload_auth_tag BYTEA NOT NULL,
   next_path VARCHAR(1024) NOT NULL,
   expires_at TIMESTAMPTZ NOT NULL,
   consumed_at TIMESTAMPTZ NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   CONSTRAINT auth_transactions_stage_check
-    CHECK (stage IN ('primary', 'second-factor', 'step-up', 'recovery'))
+    CHECK (stage IN ('primary', 'second-factor', 'step-up', 'recovery')),
+  -- SHA-256 digests, and AES-256-GCM as `transaction-crypto.ts` writes it: a 12-byte initialization
+  -- vector, a 16-byte tag.
+  CONSTRAINT auth_transactions_hash_check CHECK (
+    octet_length(state_hash) = 32 AND (nonce_hash IS NULL OR octet_length(nonce_hash) = 32)
+  ),
+  CONSTRAINT auth_transactions_payload_size_check CHECK (
+    octet_length(payload_iv) = 12 AND octet_length(payload_auth_tag) = 16
+  )
 );
 
 CREATE INDEX IF NOT EXISTS auth_transactions_expires_at_idx
@@ -892,7 +904,7 @@ CREATE TABLE IF NOT EXISTS phis.user_sessions (
   id UUID PRIMARY KEY,
   user_id INT NOT NULL,
   site_id SMALLINT NOT NULL,
-  session_secret_hash CHAR(64) NOT NULL,
+  session_secret_hash BYTEA NOT NULL,
   authenticated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   assurance_level SMALLINT NOT NULL DEFAULT 1,
   auth_state SMALLINT NOT NULL DEFAULT 3,
@@ -909,6 +921,8 @@ CREATE TABLE IF NOT EXISTS phis.user_sessions (
     FOREIGN KEY (user_id, site_id)
     REFERENCES phis.user_site_memberships (user_id, site_id)
     ON DELETE CASCADE,
+  -- The SHA-256 of the secret half of the session cookie.
+  CONSTRAINT user_sessions_secret_hash_check CHECK (octet_length(session_secret_hash) = 32),
   CONSTRAINT user_sessions_assurance_level_check CHECK (assurance_level >= 0),
   CONSTRAINT user_sessions_auth_state_check CHECK (auth_state IN (1, 2, 3)),
   -- `0` is "evaluated under nothing": a Core role change sets it, so the next read reevaluates the
@@ -929,14 +943,16 @@ CREATE TABLE IF NOT EXISTS phis.user_password_reset_tokens (
   id SERIAL PRIMARY KEY,
   user_id INT NOT NULL,
   site_id SMALLINT NOT NULL,
-  token_hash CHAR(64) NOT NULL UNIQUE,
+  token_hash BYTEA NOT NULL UNIQUE,
   expires_at TIMESTAMPTZ NOT NULL,
   consumed_at TIMESTAMPTZ NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   CONSTRAINT user_password_reset_tokens_membership_fk
     FOREIGN KEY (user_id, site_id)
     REFERENCES phis.user_site_memberships (user_id, site_id)
-    ON DELETE CASCADE
+    ON DELETE CASCADE,
+  -- The SHA-256 of the token in the mailed link.
+  CONSTRAINT user_password_reset_tokens_token_hash_check CHECK (octet_length(token_hash) = 32)
 );
 
 CREATE INDEX IF NOT EXISTS user_password_reset_tokens_user_id_idx
@@ -953,19 +969,26 @@ CREATE TABLE IF NOT EXISTS phis.registration_intents (
   first_name VARCHAR(128) NULL,
   last_name VARCHAR(128) NULL,
   company_name VARCHAR(256) NULL,
-  password_ciphertext TEXT NULL,
-  password_iv CHAR(24) NULL,
-  password_auth_tag CHAR(32) NULL,
+  password_ciphertext BYTEA NULL,
+  password_iv BYTEA NULL,
+  password_auth_tag BYTEA NULL,
   locale VARCHAR(8) NOT NULL,
   flags INT NOT NULL DEFAULT 0,
   status SMALLINT NOT NULL DEFAULT 0,
-  verification_token_hash CHAR(64) NOT NULL,
+  verification_token_hash BYTEA NOT NULL,
   verification_token_expires_at TIMESTAMPTZ NOT NULL,
   verified_at TIMESTAMPTZ NULL,
   consumed_at TIMESTAMPTZ NULL,
   meta JSONB NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  -- The SHA-256 of the token in the mailed link.
+  CONSTRAINT registration_intents_verification_token_hash_check
+    CHECK (octet_length(verification_token_hash) = 32),
+  -- AES-256-GCM as `registration-secret.ts` writes it: a 12-byte initialization vector, a 16-byte tag.
+  CONSTRAINT registration_intents_password_size_check CHECK (
+    octet_length(password_iv) = 12 AND octet_length(password_auth_tag) = 16
+  )
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS registration_intents_verification_token_hash_unique
@@ -2808,18 +2831,18 @@ CREATE TABLE IF NOT EXISTS phis.server_secrets (
   site_id SMALLINT NULL REFERENCES phis.sites(id) ON DELETE CASCADE,
   addon_id VARCHAR(255) NULL REFERENCES phis.server_addons(addon_id) ON DELETE CASCADE,
   key_version SMALLINT NOT NULL DEFAULT 1,
-  ciphertext TEXT NOT NULL,
-  iv CHAR(24) NOT NULL,
-  auth_tag CHAR(32) NOT NULL,
+  ciphertext BYTEA NOT NULL,
+  iv BYTEA NOT NULL,
+  auth_tag BYTEA NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   CONSTRAINT server_secrets_key_version_check CHECK (key_version > 0),
   CONSTRAINT server_secrets_addon_id_check CHECK (
     addon_id IS NULL OR addon_id ~ '^@[^/]+/[^/]+(?:/[^/]+)*$'
   ),
-  CONSTRAINT server_secrets_iv_check CHECK (iv ~ '^[0-9a-f]{24}$'),
-  CONSTRAINT server_secrets_auth_tag_check CHECK (auth_tag ~ '^[0-9a-f]{32}$'),
-  CONSTRAINT server_secrets_ciphertext_check CHECK (ciphertext ~ '^[0-9a-f]+$')
+  CONSTRAINT server_secrets_iv_check CHECK (octet_length(iv) = 12),
+  CONSTRAINT server_secrets_auth_tag_check CHECK (octet_length(auth_tag) = 16),
+  CONSTRAINT server_secrets_ciphertext_check CHECK (octet_length(ciphertext) > 0)
 );
 
 CREATE INDEX IF NOT EXISTS server_secrets_site_idx
@@ -3028,10 +3051,12 @@ CREATE UNIQUE INDEX IF NOT EXISTS notification_outbox_dedupe_idx
 CREATE TABLE IF NOT EXISTS phis.notification_link_salts (
   user_id INT NOT NULL,
   site_id SMALLINT NOT NULL,
-  link_salt CHAR(32) NOT NULL,
+  link_salt BYTEA NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   last_used_at TIMESTAMPTZ NULL,
   CONSTRAINT notification_link_salts_pkey PRIMARY KEY (user_id, site_id),
+  -- Sixteen random bytes; the link signs their 32-character lowercase hex form.
+  CONSTRAINT notification_link_salts_link_salt_check CHECK (octet_length(link_salt) = 16),
   CONSTRAINT notification_link_salts_membership_fk
     FOREIGN KEY (user_id, site_id)
     REFERENCES phis.user_site_memberships (user_id, site_id)

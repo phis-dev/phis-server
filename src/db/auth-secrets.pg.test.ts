@@ -60,12 +60,12 @@ describe("authentication provider secrets", () => {
     expect(await readSiteAuthSecret(reference)).toBe("s3cr3t");
 
     const pool = await requirePhiTestDatabase();
-    const { rows } = await pool.query<{ ciphertext: string; site_id: number }>(
+    const { rows } = await pool.query<{ ciphertext: Buffer; site_id: number }>(
       `SELECT ciphertext, site_id FROM phis.server_secrets WHERE reference = $1`,
       [reference],
     );
     expect(rows[0].site_id).toBe(site.id);
-    expect(rows[0].ciphertext).not.toContain("s3cr3t");
+    expect(rows[0].ciphertext.toString("latin1")).not.toContain("s3cr3t");
   });
 
   it("answers existence for many references in one question", async () => {

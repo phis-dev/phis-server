@@ -193,9 +193,9 @@ export async function POST(request: Request) {
     }
 
     const password = decryptRegistrationPassword({
-      ciphertextHex: intent.passwordCiphertext,
-      ivHex: intent.passwordIv,
-      authTagHex: intent.passwordAuthTag,
+      ciphertext: intent.passwordCiphertext,
+      iv: intent.passwordIv,
+      authTag: intent.passwordAuthTag,
     });
     const passwordHash = await hashPassword(password);
 

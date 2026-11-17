@@ -24,9 +24,9 @@ type SecretRow = {
   site_id: number | null;
   addon_id: string | null;
   key_version: number;
-  ciphertext: string;
-  iv: string;
-  auth_tag: string;
+  ciphertext: Buffer;
+  iv: Buffer;
+  auth_tag: Buffer;
   created_at: Date | string;
   updated_at: Date | string;
 };
@@ -48,11 +48,9 @@ function toRecord(row: SecretRow): PhisSecretRecord {
 
 function toCipher(row: SecretRow): PhiSecretCipherRecord {
   return {
-    // CHAR(24)/CHAR(32) come back space-padded when a value is ever written short; the check
-    // constraints make that impossible, but reading is not the place to rely on it.
-    ciphertext: row.ciphertext.trim(),
-    iv: row.iv.trim(),
-    authTag: row.auth_tag.trim(),
+    ciphertext: row.ciphertext,
+    iv: row.iv,
+    authTag: row.auth_tag,
     keyVersion: row.key_version,
   };
 }

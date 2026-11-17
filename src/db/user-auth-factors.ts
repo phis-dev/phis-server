@@ -21,9 +21,9 @@ type FactorRow = {
   id: string;
   factor_type: number;
   label: string | null;
-  secret_ciphertext: string | null;
-  secret_iv: string | null;
-  secret_auth_tag: string | null;
+  secret_ciphertext: Buffer | null;
+  secret_iv: Buffer | null;
+  secret_auth_tag: Buffer | null;
   confirmed_at: string | Date | null;
   created_at: string | Date;
   last_used_at: string | Date | null;
@@ -34,9 +34,9 @@ function readSecret(row: FactorRow) {
     throw new Error("AUTH_FACTOR_SECRET_MISSING");
   }
   const payload = decryptAuthTransactionPayload({
-    ciphertextHex: row.secret_ciphertext,
-    ivHex: row.secret_iv,
-    authTagHex: row.secret_auth_tag,
+    ciphertext: row.secret_ciphertext,
+    iv: row.secret_iv,
+    authTag: row.secret_auth_tag,
   });
   if (typeof payload.secretHex !== "string" || !/^[a-f0-9]{40}$/i.test(payload.secretHex)) {
     throw new Error("AUTH_FACTOR_SECRET_INVALID");
@@ -97,9 +97,9 @@ export async function createPendingTotpFactor(input: {
       input.userId,
       input.siteId,
       PHI_AUTH_FACTOR_TYPES.totp,
-      encrypted.ciphertextHex,
-      encrypted.ivHex,
-      encrypted.authTagHex,
+      encrypted.ciphertext,
+      encrypted.iv,
+      encrypted.authTag,
       input.label?.trim() || "Authenticator app",
     ],
   );

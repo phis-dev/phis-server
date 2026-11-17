@@ -19,7 +19,7 @@ import {
   createSessionSecret,
   parseSessionCookieValue,
   SESSION_COOKIE_NAME,
-  sha256Hex,
+  sha256Bytes,
   verifySecretHash,
 } from "@/lib/auth";
 import { toPhiIsoString } from "@/lib/helpers/timestamp";
@@ -29,7 +29,7 @@ export type UserSessionRecord = {
   id: string;
   user_id: number;
   site_id: number;
-  session_secret_hash: string;
+  session_secret_hash: Buffer;
   authenticated_at: string | Date;
   assurance_level: number;
   auth_state: number;
@@ -119,7 +119,7 @@ export async function createUserSession(input: {
       sessionId,
       input.userId,
       input.siteId,
-      sha256Hex(sessionSecret),
+      sha256Bytes(sessionSecret),
       input.assuranceLevel ?? 1,
       input.authState ?? PHI_AUTH_SESSION_STATES.complete,
       input.authPolicyRevision ?? 1,

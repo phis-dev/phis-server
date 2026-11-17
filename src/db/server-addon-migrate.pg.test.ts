@@ -178,8 +178,8 @@ describe("Add-on migration runner", () => {
     const pool = await requirePhiTestDatabase();
     await pool.query(
       `INSERT INTO phis.server_secrets (reference, addon_id, ciphertext, iv, auth_tag)
-       VALUES ($1, $2, 'ab', $3, $4)`,
-      [`addon:${ADDON_ID}:token`, ADDON_ID, "0".repeat(24), "0".repeat(32)],
+       VALUES ($1, $2, $3, $4, $5)`,
+      [`addon:${ADDON_ID}:token`, ADDON_ID, Buffer.from("ab", "hex"), Buffer.alloc(12), Buffer.alloc(16)],
     );
 
     /*

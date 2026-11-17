@@ -10,7 +10,7 @@ import {
   getSiteAuthMethod,
   type AuthProviderInstallation,
 } from "@/db/site-auth";
-import { sha256Hex } from "@/lib/auth";
+import { sha256Bytes } from "@/lib/auth";
 import {
   PHI_GITHUB_IDENTITY_ISSUER,
   PHI_MICROSOFT_CONSUMER_TENANT_ID,
@@ -152,11 +152,11 @@ export async function startProviderAuthentication(input: {
     userId: null,
     methodKey: input.methodKey,
     stage: "primary",
-    stateHash: sha256Hex(state),
-    nonceHash: sha256Hex(nonce),
-    payloadCiphertext: encrypted.ciphertextHex,
-    payloadIv: encrypted.ivHex,
-    payloadAuthTag: encrypted.authTagHex,
+    stateHash: sha256Bytes(state),
+    nonceHash: sha256Bytes(nonce),
+    payloadCiphertext: encrypted.ciphertext,
+    payloadIv: encrypted.iv,
+    payloadAuthTag: encrypted.authTag,
     nextPath,
     expiresAt: expiresAt.toISOString(),
     consumedAt: null,
@@ -281,16 +281,16 @@ export async function completeProviderAuthentication(input: {
   if (!state) {
     throw new Error("AUTH_STATE_MISSING");
   }
-  const transaction = await consumeAuthTransaction(input.siteId, sha256Hex(state));
+  const transaction = await consumeAuthTransaction(input.siteId, sha256Bytes(state));
   if (!transaction || transaction.methodKey !== input.methodKey || transaction.stage !== "primary") {
     throw new Error("AUTH_TRANSACTION_INVALID");
   }
   const payload = readTransactionPayload(decryptAuthTransactionPayload({
-    ciphertextHex: transaction.payloadCiphertext,
-    ivHex: transaction.payloadIv,
-    authTagHex: transaction.payloadAuthTag,
+    ciphertext: transaction.payloadCiphertext,
+    iv: transaction.payloadIv,
+    authTag: transaction.payloadAuthTag,
   }));
-  if (payload.state !== state || transaction.nonceHash !== sha256Hex(payload.nonce)) {
+  if (payload.state !== state || !transaction.nonceHash?.equals(sha256Bytes(payload.nonce))) {
     throw new Error("AUTH_TRANSACTION_MISMATCH");
   }
 

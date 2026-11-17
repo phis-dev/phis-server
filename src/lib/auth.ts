@@ -45,6 +45,13 @@ export function sha256Hex(value: string) {
   return createHash("sha256").update(value).digest("hex");
 }
 
+/**
+ * The same SHA-256 as `sha256Hex`, as the 32 bytes the hash columns store (`BYTEA`).
+ */
+export function sha256Bytes(value: string) {
+  return createHash("sha256").update(value).digest();
+}
+
 export function randomToken(byteLength = 32) {
   return randomBytes(byteLength).toString("hex");
 }
@@ -101,15 +108,14 @@ export function parseSessionCookieValue(value?: string | null) {
   return { sessionId, sessionSecret };
 }
 
-export function verifySecretHash(secret: string, expectedHash: string) {
-  const actual = Buffer.from(sha256Hex(secret), "utf8");
-  const expected = Buffer.from(expectedHash, "utf8");
+export function verifySecretHash(secret: string, expectedHash: Buffer) {
+  const actual = sha256Bytes(secret);
 
-  if (actual.length !== expected.length) {
+  if (actual.length !== expectedHash.length) {
     return false;
   }
 
-  return timingSafeEqual(actual, expected);
+  return timingSafeEqual(actual, expectedHash);
 }
 
 export function buildSessionExpiresAt() {

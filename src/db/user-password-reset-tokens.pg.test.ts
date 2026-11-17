@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import {
@@ -77,5 +79,33 @@ describe("password reset tokens against PostgreSQL", () => {
     await createUserPasswordResetToken({ userId: one, siteId: site.id });
 
     expect((await getUserPasswordResetTokenByRawToken(site.id, kept.token))?.consumedAt).toBeNull();
+  });
+
+  it("keeps only the SHA-256 of the token, in 32 bytes", async () => {
+    const userId = await createPhiTestUser(site);
+    const { token } = await createUserPasswordResetToken({ userId, siteId: site.id });
+    const pool = await requirePhiTestDatabase();
+    const { rows } = await pool.query<{ token_hash: Buffer }>(
+      `SELECT token_hash FROM phis.user_password_reset_tokens WHERE user_id = $1 AND site_id = $2`,
+      [userId, site.id],
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.token_hash).toEqual(createHash("sha256").update(token).digest());
+    expect(rows[0]!.token_hash).toHaveLength(32);
+  });
+
+  it("still finds a link whose hash was stored as hex text before the conversion", async () => {
+    const userId = await createPhiTestUser(site);
+    const token = "ab".repeat(32);
+    const pool = await requirePhiTestDatabase();
+    const hexHash = createHash("sha256").update(token).digest("hex");
+    await pool.query(
+      `INSERT INTO phis.user_password_reset_tokens (user_id, site_id, token_hash, expires_at)
+       VALUES ($1, $2, decode($3, 'hex'), NOW() + INTERVAL '1 hour')`,
+      [userId, site.id, hexHash],
+    );
+    const row = await getUserPasswordResetTokenByRawToken(site.id, token);
+    expect(row?.userId).toBe(userId);
+    expect(await claimUserPasswordResetToken(row!.id)).toBe(true);
   });
 });

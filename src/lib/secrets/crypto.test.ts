@@ -18,8 +18,8 @@ describe("encryptPhiSecret", () => {
   it("produces a fresh initialization vector every time", () => {
     const first = encryptPhiSecret("same", key);
     const second = encryptPhiSecret("same", key);
-    expect(first.iv).not.toBe(second.iv);
-    expect(first.ciphertext).not.toBe(second.ciphertext);
+    expect(first.iv.equals(second.iv)).toBe(false);
+    expect(first.ciphertext.equals(second.ciphertext)).toBe(false);
   });
 
   it("records the key version it used", () => {
@@ -28,9 +28,9 @@ describe("encryptPhiSecret", () => {
 
   it("stores the parts the column widths expect", () => {
     const record = encryptPhiSecret("x", key);
-    expect(record.iv).toMatch(/^[0-9a-f]{24}$/u);
-    expect(record.authTag).toMatch(/^[0-9a-f]{32}$/u);
-    expect(record.ciphertext).toMatch(/^[0-9a-f]+$/u);
+    expect(record.iv).toHaveLength(12);
+    expect(record.authTag).toHaveLength(16);
+    expect(record.ciphertext.length).toBeGreaterThan(0);
   });
 });
 
@@ -47,13 +47,14 @@ describe("decryptPhiSecret", () => {
 
   it("refuses a tampered ciphertext", () => {
     const record = encryptPhiSecret("original", key);
-    const flipped = record.ciphertext.slice(0, -2) + (record.ciphertext.endsWith("00") ? "11" : "00");
+    const flipped = Buffer.from(record.ciphertext);
+    flipped[flipped.length - 1] = flipped[flipped.length - 1]! ^ 0xff;
     expect(() => decryptPhiSecret({ ...record, ciphertext: flipped }, key)).toThrow();
   });
 
   it("refuses a tampered authentication tag", () => {
     const record = encryptPhiSecret("original", key);
-    expect(() => decryptPhiSecret({ ...record, authTag: "0".repeat(32) }, key)).toThrow();
+    expect(() => decryptPhiSecret({ ...record, authTag: Buffer.alloc(16) }, key)).toThrow();
   });
 });
 

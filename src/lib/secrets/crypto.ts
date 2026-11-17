@@ -16,9 +16,9 @@ const KEY_PATTERN = /^[a-f0-9]{64}$/i;
 export const PHI_SECRET_INITIAL_KEY_VERSION = 1;
 
 export type PhiSecretCipherRecord = {
-  ciphertext: string;
-  iv: string;
-  authTag: string;
+  ciphertext: Buffer;
+  iv: Buffer;
+  authTag: Buffer;
   keyVersion: number;
 };
 
@@ -48,9 +48,9 @@ export function encryptPhiSecret(value: string, key: PhiSecretEncryptionKey): Ph
   );
   const ciphertext = Buffer.concat([cipher.update(value, "utf8"), cipher.final()]);
   return {
-    ciphertext: ciphertext.toString("hex"),
-    iv: iv.toString("hex"),
-    authTag: cipher.getAuthTag().toString("hex"),
+    ciphertext,
+    iv,
+    authTag: cipher.getAuthTag(),
     keyVersion: key.version,
   };
 }
@@ -70,11 +70,11 @@ export function decryptPhiSecret(record: PhiSecretCipherRecord, key: PhiSecretEn
   const decipher = createDecipheriv(
     ALGORITHM,
     parsePhiSecretEncryptionKey(key.keyHex, "A secret encryption key"),
-    Buffer.from(record.iv, "hex"),
+    record.iv,
   );
-  decipher.setAuthTag(Buffer.from(record.authTag, "hex"));
+  decipher.setAuthTag(record.authTag);
   return Buffer.concat([
-    decipher.update(Buffer.from(record.ciphertext, "hex")),
+    decipher.update(record.ciphertext),
     decipher.final(),
   ]).toString("utf8");
 }

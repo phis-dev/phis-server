@@ -60,9 +60,9 @@ export type RegistrationIntentVerificationRecord = {
   verificationTokenExpiresAt: string;
   verifiedAt: string | null;
   consumedAt: string | null;
-  passwordCiphertext: string | null;
-  passwordIv: string | null;
-  passwordAuthTag: string | null;
+  passwordCiphertext: Buffer | null;
+  passwordIv: Buffer | null;
+  passwordAuthTag: Buffer | null;
 };
 
 export type RegistrationIntentProfileRecord = {
@@ -82,8 +82,8 @@ export type RegistrationIntentProfileRecord = {
 
 export type RegistrationIntentProfileSearchRecord = RegistrationIntentProfileRecord;
 
-function sha256Hex(value: string) {
-  return createHash("sha256").update(value).digest("hex");
+function sha256(value: string) {
+  return createHash("sha256").update(value).digest();
 }
 
 function buildFullName(firstName: string | null, lastName: string | null) {
@@ -109,9 +109,9 @@ function mapVerificationRow(
     verification_token_expires_at: string;
     verified_at: string | null;
     consumed_at: string | null;
-    password_ciphertext: string | null;
-    password_iv: string | null;
-    password_auth_tag: string | null;
+    password_ciphertext: Buffer | null;
+    password_iv: Buffer | null;
+    password_auth_tag: Buffer | null;
   },
 ): RegistrationIntentVerificationRecord {
   return {
@@ -139,7 +139,7 @@ export async function createRegistrationIntent(
   input: CreateRegistrationIntentInput,
 ): Promise<RegistrationIntentRecord> {
   const verificationToken = randomBytes(32).toString("hex");
-  const verificationTokenHash = sha256Hex(verificationToken);
+  const verificationTokenHash = sha256(verificationToken);
   const encryptedPassword = input.password?.trim()
     ? encryptRegistrationPassword(input.password)
     : null;
@@ -233,9 +233,9 @@ export async function createRegistrationIntent(
         input.firstName ?? null,
         input.lastName ?? null,
         input.companyName ?? null,
-        encryptedPassword?.ciphertextHex ?? null,
-        encryptedPassword?.ivHex ?? null,
-        encryptedPassword?.authTagHex ?? null,
+        encryptedPassword?.ciphertext ?? null,
+        encryptedPassword?.iv ?? null,
+        encryptedPassword?.authTag ?? null,
         input.locale,
         flags,
         verificationTokenHash,
@@ -260,7 +260,7 @@ export async function createRegistrationIntent(
 
 export async function getRegistrationIntentByVerificationToken(siteId: number, token: string) {
   const pool = getPool();
-  const tokenHash = sha256Hex(token);
+  const tokenHash = sha256(token);
   const { rows } = await pool.query<{
     id: number;
     site_id: number;
@@ -275,9 +275,9 @@ export async function getRegistrationIntentByVerificationToken(siteId: number, t
     verification_token_expires_at: string;
     verified_at: string | null;
     consumed_at: string | null;
-    password_ciphertext: string | null;
-    password_iv: string | null;
-    password_auth_tag: string | null;
+    password_ciphertext: Buffer | null;
+    password_iv: Buffer | null;
+    password_auth_tag: Buffer | null;
   }>(
     `SELECT id, site_id, user_id, email, first_name, last_name, company_name, locale, flags, status,
             verification_token_expires_at, verified_at, consumed_at,

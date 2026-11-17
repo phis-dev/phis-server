@@ -17,17 +17,20 @@ describe("Auth transaction encryption", () => {
     };
     const encrypted = encryptAuthTransactionPayloadWithKey(payload, key);
 
-    expect(encrypted.ciphertextHex).not.toContain("state-value");
+    expect(encrypted.ciphertext.toString("utf8")).not.toContain("state-value");
+    expect(encrypted.iv).toHaveLength(12);
+    expect(encrypted.authTag).toHaveLength(16);
     expect(decryptAuthTransactionPayloadWithKey(encrypted, key)).toEqual(payload);
   });
 
   it("rejects tampered ciphertext", () => {
     const encrypted = encryptAuthTransactionPayloadWithKey({ state: "state-value" }, key);
-    const firstByte = encrypted.ciphertextHex.slice(0, 2) === "00" ? "01" : "00";
+    const tampered = Buffer.from(encrypted.ciphertext);
+    tampered[0] = tampered[0]! ^ 0xff;
 
     expect(() => decryptAuthTransactionPayloadWithKey({
       ...encrypted,
-      ciphertextHex: firstByte + encrypted.ciphertextHex.slice(2),
+      ciphertext: tampered,
     }, key)).toThrow();
   });
 

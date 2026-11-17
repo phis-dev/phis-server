@@ -10,10 +10,17 @@ import {
 } from "../../test/pg/harness";
 import type { Pool } from "pg";
 
-import { createUserSession, revokeUserSessions, updateUserSessionAuthState } from "./user-sessions";
+import {
+  acceptSession,
+  createUserSession,
+  getSessionById,
+  revokeUserSessions,
+  updateUserSessionAuthState,
+} from "./user-sessions";
 import { upsertUserSiteMembership } from "./user-site-memberships";
 import { PhiBaseRole } from "@/lib/constants/phi-base-roles";
 import { PHI_AUTH_SESSION_STATES } from "@/lib/site-auth/contracts";
+import { sha256Hex } from "@/lib/auth";
 
 // One pool for the file: the harness does not reopen one it has closed.
 afterAll(async () => {
@@ -208,5 +215,66 @@ describe("entering the factor challenge against PostgreSQL", () => {
     });
 
     expect(await authenticatedAt(id)).toBe(before);
+  });
+});
+
+/**
+ * The secret half of the session cookie is stored as its SHA-256 in 32 bytes. A session stays valid if
+ * its hash was written as hex text before the column became `bytea` -- `decode(hex, 'hex')` is those
+ * same bytes -- and the check on the column refuses a value that is not a SHA-256.
+ */
+describe("the session secret hash against PostgreSQL", () => {
+  let pool: Pool;
+  let site: PhiTestSite;
+  let userId: number;
+
+  beforeAll(async () => {
+    pool = await requirePhiTestDatabase();
+    await dropPhiTestSites();
+    site = await createPhiTestSite("session-hash");
+    userId = await createPhiTestUser(site);
+    // The session reader joins the Site's auth configuration.
+    await pool.query(`INSERT INTO phis.site_auth_config (site_id) VALUES ($1)`, [site.id]);
+  });
+
+  afterAll(async () => {
+    await dropPhiTestSites();
+  });
+
+  it("accepts the secret it issued and no other", async () => {
+    const created = await createUserSession({ userId, siteId: site.id, authMethodKeys: ["password"] });
+    const parsed = { sessionId: created.id, sessionSecret: created.secret };
+
+    expect(await acceptSession(await getSessionById(created.id), parsed, site.id, {})).not.toBeNull();
+    expect(await acceptSession(
+      await getSessionById(created.id), { ...parsed, sessionSecret: `${created.secret}0` }, site.id, {},
+    )).toBeNull();
+
+    const { rows } = await pool.query<{ size: number }>(
+      `SELECT octet_length(session_secret_hash) AS size FROM phis.user_sessions WHERE id = $1`,
+      [created.id],
+    );
+    expect(rows[0]!.size).toBe(32);
+  });
+
+  it("accepts a session whose hash was stored as hex text before the conversion", async () => {
+    const id = "00000000-0000-4000-8000-0000000000a1";
+    const secret = "f".repeat(64);
+    await pool.query(
+      `INSERT INTO phis.user_sessions (id, user_id, site_id, session_secret_hash, expires_at)
+       VALUES ($1, $2, $3, decode($4, 'hex'), NOW() + INTERVAL '1 day')`,
+      [id, userId, site.id, sha256Hex(secret)],
+    );
+    expect(await acceptSession(
+      await getSessionById(id), { sessionId: id, sessionSecret: secret }, site.id, {},
+    )).not.toBeNull();
+  });
+
+  it("refuses a hash that is not 32 bytes", async () => {
+    await expect(pool.query(
+      `INSERT INTO phis.user_sessions (id, user_id, site_id, session_secret_hash, expires_at)
+       VALUES ($1, $2, $3, $4, NOW() + INTERVAL '1 day')`,
+      ["00000000-0000-4000-8000-0000000000a2", userId, site.id, Buffer.alloc(31)],
+    )).rejects.toMatchObject({ code: "23514" });
   });
 });

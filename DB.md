@@ -26,6 +26,22 @@ That is a pre-v1 arrangement and ends with v1: the CLI has to learn to compare c
 alter path before an installation exists that cannot be recreated. See
 [TODOS.md](./TODOS.md), "Post-v1: Core schema evolution".
 
+**Hashes and sealed secrets are `BYTEA`, not hex text.** A SHA-256 is 32 bytes, an AES-256-GCM
+initialization vector 12 and its tag 16, a notification link salt 16; each column carries an
+`octet_length` CHECK, and the code passes `Buffer` values to and from the driver. This covers
+`user_sessions.session_secret_hash`, `auth_transactions` (`state_hash`, `nonce_hash`, `payload_*`),
+`user_password_reset_tokens.token_hash`, `registration_intents` (`verification_token_hash`, `password_*`),
+`user_auth_factors.secret_*`, `notification_link_salts.link_salt` and `server_secrets`
+(`ciphertext`, `iv`, `auth_tag`). Cryptography is unchanged: a value stored before the conversion means
+exactly the bytes `decode(hex, 'hex')` gives. Added 2026-11-17 in place, with no schema version raised; an
+existing database converts each column with
+`ALTER TABLE ... ALTER COLUMN ... TYPE BYTEA USING decode(rtrim(column), 'hex')` and receives the CHECKs
+(the development database `phi_server_dev` received it so). Left as text on purpose, because they are
+compared as text with manifests, files or API values or carry no hex guarantee: `sites.form_guard_secret`,
+`site_module_media.source_checksum`, `server_addons.manifest_digest`,
+`server_capabilities.interface_digest`, `server_instances.addon_manifest_digest`,
+`server_addon_migrations.checksum`, the media `checksum_value` columns and `user_password_credentials.password_hash`.
+
 ## Target phis schema
 
 The target PostgreSQL schema for `phis` is:
@@ -758,9 +774,9 @@ Contract:
 - `factor_type SMALLINT NOT NULL` (CHECK `IN (1, 2, 3)`)
 - `factor_key BYTEA NULL`
 - `factor_data JSONB NOT NULL DEFAULT '{}'::jsonb`
-- `secret_ciphertext TEXT NULL`
-- `secret_iv CHAR(24) NULL`
-- `secret_auth_tag CHAR(32) NULL`
+- `secret_ciphertext BYTEA NULL` -- the AES-256-GCM ciphertext of the TOTP seed (`transaction-crypto.ts`)
+- `secret_iv BYTEA NULL` -- the 12-byte initialization vector (CHECK `octet_length = 12`)
+- `secret_auth_tag BYTEA NULL` -- the 16-byte GCM tag (CHECK `octet_length = 16`)
 - `label VARCHAR(128) NULL`
 - `confirmed_at TIMESTAMPTZ NULL`
 - `created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
@@ -790,11 +806,11 @@ Contract:
 - `user_id INT NULL REFERENCES phis.user_accounts(id) ON DELETE CASCADE`
 - `method_key VARCHAR(64) NOT NULL`
 - `stage VARCHAR(32) NOT NULL` (CHECK `IN ('primary', 'second-factor', 'step-up', 'recovery')`)
-- `state_hash CHAR(64) NOT NULL UNIQUE`
-- `nonce_hash CHAR(64) NULL`
-- `payload_ciphertext TEXT NOT NULL`
-- `payload_iv CHAR(24) NOT NULL`
-- `payload_auth_tag CHAR(32) NOT NULL`
+- `state_hash BYTEA NOT NULL UNIQUE` -- the SHA-256 of the state, 32 bytes (CHECK `octet_length = 32`)
+- `nonce_hash BYTEA NULL` -- the SHA-256 of the nonce, 32 bytes when present
+- `payload_ciphertext BYTEA NOT NULL` -- the AES-256-GCM ciphertext of the payload
+- `payload_iv BYTEA NOT NULL` -- the 12-byte initialization vector (CHECK `octet_length = 12`)
+- `payload_auth_tag BYTEA NOT NULL` -- the 16-byte GCM tag (CHECK `octet_length = 16`)
 - `next_path VARCHAR(1024) NOT NULL`
 - `expires_at TIMESTAMPTZ NOT NULL`
 - `consumed_at TIMESTAMPTZ NULL`
@@ -815,7 +831,7 @@ Contract:
 - `id UUID PRIMARY KEY`
 - `user_id INT NOT NULL`
 - `site_id SMALLINT NOT NULL`
-- `session_secret_hash CHAR(64) NOT NULL`
+- `session_secret_hash BYTEA NOT NULL` -- the SHA-256 of the secret half of the session cookie, 32 bytes (CHECK `octet_length = 32`); compared in constant time
 - `authenticated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
 - `assurance_level SMALLINT NOT NULL DEFAULT 1` (CHECK `>= 0`)
 - `auth_state SMALLINT NOT NULL DEFAULT 3` (CHECK `IN (1, 2, 3)`)
@@ -853,7 +869,7 @@ Contract:
 - `id SERIAL PRIMARY KEY`
 - `user_id INT NOT NULL`
 - `site_id SMALLINT NOT NULL`
-- `token_hash CHAR(64) NOT NULL UNIQUE`
+- `token_hash BYTEA NOT NULL UNIQUE` -- the SHA-256 of the token, 32 bytes (CHECK `octet_length = 32`)
 - `expires_at TIMESTAMPTZ NOT NULL`
 - `consumed_at TIMESTAMPTZ NULL`
 - `created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
@@ -862,7 +878,7 @@ Contract:
 
 Contract:
 - A reset token is Site-scoped through the membership it belongs to.
-- Only the SHA-256 hex digest of the token is stored; the token itself is sent to the user once.
+- Only the SHA-256 digest of the token is stored, as 32 bytes; the token itself is sent to the user once.
 - The lifetime defaults to two hours and is never shorter than 60 seconds.
 - Consuming a token sets `consumed_at` once; a consumed or expired token is not accepted.
 
@@ -898,13 +914,13 @@ Contract:
 - `first_name VARCHAR(128) NULL`
 - `last_name VARCHAR(128) NULL`
 - `company_name VARCHAR(256) NULL`
-- `password_ciphertext TEXT NULL`
-- `password_iv CHAR(24) NULL`
-- `password_auth_tag CHAR(32) NULL`
+- `password_ciphertext BYTEA NULL` -- the AES-256-GCM ciphertext of the password (`registration-secret.ts`)
+- `password_iv BYTEA NULL` -- the 12-byte initialization vector (CHECK `octet_length = 12`)
+- `password_auth_tag BYTEA NULL` -- the 16-byte GCM tag (CHECK `octet_length = 16`)
 - `locale VARCHAR(8) NOT NULL`
 - `flags INT NOT NULL DEFAULT 0`
 - `status SMALLINT NOT NULL DEFAULT 0`
-- `verification_token_hash CHAR(64) NOT NULL`
+- `verification_token_hash BYTEA NOT NULL` -- the SHA-256 of the link token, 32 bytes (CHECK `octet_length = 32`)
 - `verification_token_expires_at TIMESTAMPTZ NOT NULL`
 - `verified_at TIMESTAMPTZ NULL`
 - `consumed_at TIMESTAMPTZ NULL`
@@ -2536,9 +2552,9 @@ Contract:
 - `site_id SMALLINT NULL REFERENCES phis.sites(id) ON DELETE CASCADE`
 - `addon_id VARCHAR(255) NULL REFERENCES phis.server_addons(addon_id) ON DELETE CASCADE`
 - `key_version SMALLINT NOT NULL DEFAULT 1` (CHECK `> 0`)
-- `ciphertext TEXT NOT NULL` (hex)
-- `iv CHAR(24) NOT NULL` (hex)
-- `auth_tag CHAR(32) NOT NULL` (hex)
+- `ciphertext BYTEA NOT NULL` (CHECK `octet_length > 0`)
+- `iv BYTEA NOT NULL` -- the 12-byte AES-256-GCM initialization vector (CHECK `octet_length = 12`)
+- `auth_tag BYTEA NOT NULL` -- the 16-byte GCM tag (CHECK `octet_length = 16`)
 - `created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
 - `updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
 - partial indexes on `site_id` and on `addon_id`
@@ -2644,7 +2660,7 @@ Contract:
 
 - `user_id INT NOT NULL`
 - `site_id SMALLINT NOT NULL`
-- `link_salt CHAR(32) NOT NULL`
+- `link_salt BYTEA NOT NULL` -- sixteen random bytes (CHECK `octet_length = 16`); the link signs their 32-character lowercase hex form, which is what the code reads the column as
 - `created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
 - `last_used_at TIMESTAMPTZ NULL`
 - PRIMARY KEY `(user_id, site_id)`

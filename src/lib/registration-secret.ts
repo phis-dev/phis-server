@@ -34,23 +34,23 @@ export function encryptRegistrationPassword(password: string) {
   const authTag = cipher.getAuthTag();
 
   return {
-    ivHex: iv.toString("hex"),
-    ciphertextHex: ciphertext.toString("hex"),
-    authTagHex: authTag.toString("hex"),
+    iv,
+    ciphertext,
+    authTag,
   };
 }
 
 export function decryptRegistrationPassword(input: {
-  ivHex: string;
-  ciphertextHex: string;
-  authTagHex: string;
+  iv: Buffer;
+  ciphertext: Buffer;
+  authTag: Buffer;
 }) {
   const key = readKey();
-  const decipher = createDecipheriv(ALGORITHM, key, Buffer.from(input.ivHex, "hex"));
-  decipher.setAuthTag(Buffer.from(input.authTagHex, "hex"));
+  const decipher = createDecipheriv(ALGORITHM, key, input.iv);
+  decipher.setAuthTag(input.authTag);
 
   const plaintext = Buffer.concat([
-    decipher.update(Buffer.from(input.ciphertextHex, "hex")),
+    decipher.update(input.ciphertext),
     decipher.final(),
   ]);
 

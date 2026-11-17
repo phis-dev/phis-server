@@ -34,7 +34,7 @@ vi.mock("@/db/user-site-memberships", () => ({
 }));
 vi.mock("@/lib/auth", () => ({
   randomToken: () => "link-token",
-  sha256Hex: (value: string) => `hash:${value}`,
+  sha256Bytes: (value: string) => Buffer.from(`hash:${value}`),
 }));
 vi.mock("@/lib/password", () => ({ verifyPasswordHash: mocks.verifyPassword }));
 vi.mock("@/lib/site-auth/transaction-crypto", () => ({
@@ -58,9 +58,9 @@ const identity = {
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.encrypt.mockReturnValue({
-    ciphertextHex: "ciphertext",
-    ivHex: "iv",
-    authTagHex: "tag",
+    ciphertext: Buffer.from("ciphertext"),
+    iv: Buffer.from("iv"),
+    authTag: Buffer.from("tag"),
   });
 });
 
@@ -83,7 +83,7 @@ describe("external identity link confirmation", () => {
       methodKey: "google",
       providerInstallationKey: "google",
       stage: "step-up",
-      stateHash: "hash:link-token",
+      stateHash: Buffer.from("hash:link-token"),
       nextPath: "/admin",
     }));
   });
@@ -94,9 +94,9 @@ describe("external identity link confirmation", () => {
       methodKey: "google",
       providerInstallationKey: "google",
       stage: "step-up",
-      payloadCiphertext: "ciphertext",
-      payloadIv: "iv",
-      payloadAuthTag: "tag",
+      payloadCiphertext: Buffer.from("ciphertext"),
+      payloadIv: Buffer.from("iv"),
+      payloadAuthTag: Buffer.from("tag"),
       nextPath: "/admin",
     });
     mocks.decrypt.mockReturnValue({ version: 1, identity });
@@ -121,7 +121,7 @@ describe("external identity link confirmation", () => {
       password: "valid-password",
     });
 
-    expect(mocks.consumeTransaction).toHaveBeenCalledWith(7, "hash:link-token");
+    expect(mocks.consumeTransaction).toHaveBeenCalledWith(7, Buffer.from("hash:link-token"));
     expect(mocks.verifyPassword).toHaveBeenCalledWith("password-hash", "valid-password");
     expect(mocks.linkIdentity).toHaveBeenCalledWith({
       userId: 42,
@@ -138,9 +138,9 @@ describe("external identity link confirmation", () => {
       methodKey: "google",
       providerInstallationKey: "google",
       stage: "step-up",
-      payloadCiphertext: "ciphertext",
-      payloadIv: "iv",
-      payloadAuthTag: "tag",
+      payloadCiphertext: Buffer.from("ciphertext"),
+      payloadIv: Buffer.from("iv"),
+      payloadAuthTag: Buffer.from("tag"),
       nextPath: "/admin",
     });
     mocks.decrypt.mockReturnValue({ version: 1, identity });
@@ -172,9 +172,9 @@ describe("external identity link confirmation", () => {
       methodKey: "google",
       providerInstallationKey: installationKey,
       stage: "step-up",
-      payloadCiphertext: "ciphertext",
-      payloadIv: "iv",
-      payloadAuthTag: "tag",
+      payloadCiphertext: Buffer.from("ciphertext"),
+      payloadIv: Buffer.from("iv"),
+      payloadAuthTag: Buffer.from("tag"),
       nextPath: "/",
     });
     mocks.decrypt.mockReturnValue({ version: 1, identity });

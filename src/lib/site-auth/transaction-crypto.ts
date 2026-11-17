@@ -32,20 +32,20 @@ export function encryptAuthTransactionPayloadWithKey(
     cipher.final(),
   ]);
   return {
-    ciphertextHex: ciphertext.toString("hex"),
-    ivHex: iv.toString("hex"),
-    authTagHex: cipher.getAuthTag().toString("hex"),
+    ciphertext,
+    iv,
+    authTag: cipher.getAuthTag(),
   };
 }
 
 export function decryptAuthTransactionPayloadWithKey(
-  input: { ciphertextHex: string; ivHex: string; authTagHex: string },
+  input: { ciphertext: Buffer; iv: Buffer; authTag: Buffer },
   keyHex: string,
 ) {
-  const decipher = createDecipheriv(ALGORITHM, parseKey(keyHex), Buffer.from(input.ivHex, "hex"));
-  decipher.setAuthTag(Buffer.from(input.authTagHex, "hex"));
+  const decipher = createDecipheriv(ALGORITHM, parseKey(keyHex), input.iv);
+  decipher.setAuthTag(input.authTag);
   const plaintext = Buffer.concat([
-    decipher.update(Buffer.from(input.ciphertextHex, "hex")),
+    decipher.update(input.ciphertext),
     decipher.final(),
   ]).toString("utf8");
   const value: unknown = JSON.parse(plaintext);
@@ -64,16 +64,16 @@ export function encryptAuthTransactionPayload(payload: Record<string, unknown>) 
     cipher.final(),
   ]);
   return {
-    ciphertextHex: ciphertext.toString("hex"),
-    ivHex: iv.toString("hex"),
-    authTagHex: cipher.getAuthTag().toString("hex"),
+    ciphertext,
+    iv,
+    authTag: cipher.getAuthTag(),
   };
 }
 
 export function decryptAuthTransactionPayload(input: {
-  ciphertextHex: string;
-  ivHex: string;
-  authTagHex: string;
+  ciphertext: Buffer;
+  iv: Buffer;
+  authTag: Buffer;
 }) {
   const keyHex = readConfiguredKey().toString("hex");
   return decryptAuthTransactionPayloadWithKey(input, keyHex);
