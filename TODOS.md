@@ -88,6 +88,13 @@ processed.
   would reconcile the bucket's CORS and lifecycle rules through `reconcilePhiMediaStoragePoliciesWith`, as
   the CLI does. The Admin Media settings point Spaces at Profiles (the Site Space, the defaults for new User
   and Group Spaces, each existing Space with its own quota, built 14.11.2026) but edit none.
+- **The Theme's Signet is not resolved as its Logo is.** A saved Theme carries the Signet as
+  `theme.brand.signet`, an Asset like the Logo (phis-ui, 17.11.2026). The runtime config resolves each
+  Asset-bound Logo to its delivered address with the Asset's revision (`src/db/sites.ts`, the brand read)
+  and passes the Signet through untouched. So the Site cannot name a revision in the favicon's address --
+  a replaced Signet reaches a browser tab only after its cache of an hour runs out -- and it does not know
+  the picture's type and size when it writes the page head, which is what an Apple touch icon needs.
+  Resolving `brand.signet` beside the Logo, with revision, media type and pixel size, closes both.
 - **`max_object_bytes` does not know which path an object takes.** One Site number bounds a proxied
   body and a presigned PUT alike, although the two carry wildly different sizes. Making it
   Profile-aware means moving the size check in `uploads/init` after the Space resolution
