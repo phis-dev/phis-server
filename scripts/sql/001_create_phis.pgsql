@@ -2448,7 +2448,7 @@ CREATE INDEX IF NOT EXISTS addon_hook_deliveries_received_at_idx
 -- Telling an integration in the request that produced the change would tie a person's reply to a third
 -- party's availability, and a delivery attempted before the commit would announce something that may
 -- still roll back. The row is written with the change and dispatched after it; what fails waits for the
--- next `phis addon job run`, which is the same reasoning that keeps Core without a scheduler.
+-- run of Core's job `addon-events.deliver`, which the scheduler starts every five minutes.
 --
 -- `thread_id` is not payload. It is what bounds the delivery: a row exists only for an Add-on holding a
 -- synced link to that thread, so the outbox cannot become a Site-wide feed of every conversation

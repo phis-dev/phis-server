@@ -617,9 +617,15 @@ Secrets the Add-on declares are stored with `phis secret set --addon @acme/statu
 Core keeps its own clock. An Add-on's job runs at the moments its `schedule` names, the notification
 outbox and the Add-on event outbox are retried every five minutes, and one instance runs each moment
 however many serve the stage ([SERVER_ADDONS.md](../SERVER_ADDONS.md#jobs)); `phis addon jobs` shows
-what ran. Nothing to install for that. What still wants a timer of the operator's is `phis maintain`,
-Core's cleanup tasks, which run in the CLI process against the database: on a systemd host, a one-shot
-service and a timer ([SERVER_ADDONS.md](../SERVER_ADDONS.md#maintenance-from-a-timer) has the pair).
+what ran. Nothing to install for that.
+
+Core's cleanup runs on the same clock, as jobs of its own: sent mail and delivered events past their
+window, expired upload reservations, settled webhook records, unreferenced Add-on files, resolved
+support tickets past their requester window, and the reconciliation of unclear payments
+([SERVER_ADDONS.md](../SERVER_ADDONS.md#maintenance-without-a-timer) lists them). You need no timer, no
+systemd service and no cron entry for it; a host that used to carry a `phis-maintain` timer can drop it.
+`phis maintain` stays as the same steps run by hand, and as the one place for the recount of the Add-on
+stores (`phis maintain --task addon-storage`), which is too heavy for the server process.
 
 ## 11. Updating later
 

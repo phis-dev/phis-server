@@ -86,23 +86,24 @@
 - Cleanup belongs to the request that needs its result. State that only harms its own scope is repaired
   by the next request that touches that scope, inside the transaction already open there: an expired
   upload reservation is released when the same Media Space is next reserved against, and an index row a
-  discarded Working Draft left behind is disregarded by the reader that would otherwise act on it. No
-  background timer, no in-process scheduler, no lock election between Instances.
+  discarded Working Draft left behind is disregarded by the reader that would otherwise act on it.
 - A reader repairs nothing and trusts no counter it can derive. Where a stale row would inflate a
   reported number, the read discounts it in its own query and leaves the write to the writer. Reader and
   writer use the same predicate, so what is reported free is what the next request will actually grant.
-- What no request can reach is not maintenance. A staging object left behind by an abandoned upload is a
-  bucket lifecycle rule for S3 and a deliberate operator command for Local; neither may be simulated
-  with an in-process timer.
-- Explicit maintenance operations remain a legitimate category and this contract does not close the door
-  on them: rebuilding a search index, verifying links, reporting drift, or repairing an installation
-  after an upgrade are operator-invoked, bounded, reporting operations, and `phis` is their home. What is
-  forbidden is using such an operation -- or a scheduler -- as a substitute for state that could have
-  been correct at the moment it was written or read.
-- Those operations live in one registry, `src/cli/maintain.mts`, reached by `phis maintain`. A task there
-  states its id and a summary, answers `--dry-run` without changing anything, and is safe to run twice
-  and from two Instances at once. Adding one is adding an entry; a cleanup that does not fit those rules
-  does not belong in the registry, and almost always belongs to the request that needs its result.
+- Maintenance that no request waits for runs as a Core job on the scheduler that already exists
+  (`src/lib/jobs/core-jobs.ts`, SERVER_ADDONS.md, Jobs): bounded per run, safe to run twice, and recorded
+  in `phis.job_runs` like every other job. The operator installs no timer for it. A job that loops looks
+  at the scheduler's abort signal. There is no second clock: no timer of its own beside the scheduler,
+  and no lock election between Instances, because the ledger already admits one run per moment.
+- A job is not a substitute for state that could have been correct at the moment it was written or read;
+  that is the request's work. Nor does it reach what no request and no process of Core can: a staging
+  object left behind by an abandoned upload is a bucket lifecycle rule for S3 and a deliberate operator
+  command for Local, and neither is simulated with a timer.
+- `phis maintain` is the same steps started by hand, with `--dry-run`, and the home of the steps that
+  are too heavy for the server process (`addon-storage` lists every store in full). A task there states
+  its id and a summary, answers `--dry-run` without changing anything, and is safe to run twice and from
+  two Instances at once. A step the clock also runs is one function that the job and the task both call,
+  so there is one window and one bound, never two copies.
 
 ## API Routing Contract
 

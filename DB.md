@@ -1890,7 +1890,7 @@ Contract:
 - `status` moves on the ladder of `PhisSupportTicketStatus`, and part of the ladder moves by itself (`src/db/support-ticket-ladder.ts`): taking a `New` or `Triaged` ticket makes it `Assigned`, putting an `Assigned` one down makes it `Triaged` again, a move to another queue sends an `Assigned` or `InProgress` ticket back to `Triaged`, the first answer to the requester makes an `Assigned` ticket `InProgress`, and the requester answering a `WaitingCustomer` or `Resolved` ticket makes it `InProgress` (from `Resolved` recorded as a reopening). A status somebody sets wins over all of these.
 - `resolved_at` and `closed_at` are written by the status move and never by a caller. Arriving at `Resolved` stamps `resolved_at` afresh, leaving it for anything short of `Closed` clears it, and `closed_at` is set only while the ticket is `Closed`.
 - `last_public_message_at` and `last_internal_message_at` are set by the message write in the ticket's thread: a person's message the requester can read, and an `Internal` note, respectively. An integration's message sets neither.
-- A `Resolved` ticket with a requester closes after the requester window passes in silence: the type's `requester_window_days`, else the Site's (`site_thread_config`), counted from `resolved_at`. A Site at `0` switches this off for every type, a type at `0` waits for a Supporter, and a ticket without a requester always does. The close needs nobody to run anything: every read derives it from one expression (`src/db/support-requester-window.mts`) and shows the ticket `Closed` as of the window's end, and every write that locks the ticket records it first -- so an answer after the window answers a closed ticket. `phis maintain` (`support-requester-window`) writes it down for tickets nobody touches again, at most 500 a run.
+- A `Resolved` ticket with a requester closes after the requester window passes in silence: the type's `requester_window_days`, else the Site's (`site_thread_config`), counted from `resolved_at`. A Site at `0` switches this off for every type, a type at `0` waits for a Supporter, and a ticket without a requester always does. The close needs nobody to run anything: every read derives it from one expression (`src/db/support-requester-window.mts`) and shows the ticket `Closed` as of the window's end, and every write that locks the ticket records it first -- so an answer after the window answers a closed ticket. The Core job `support-tickets.close` (daily; `phis maintain`, `support-requester-window`, runs the same step by hand) writes it down for tickets nobody touches again, at most 500 a run.
 
 ### `phis.support_ticket_tasks`
 
@@ -2217,7 +2217,7 @@ Contract:
   inserts, which is the primary key's answer and not a read followed by a write.
 - Only a hook whose descriptor states `verification.deliveryIdHeader` produces rows. No Site column: a
   delivery id is the sender's and is unique in their system, not per Site.
-- `phis maintain` (`hook-deliveries`) drops rows older than 30 days -- far past any sender's retry
+- The Core job `hook-deliveries.prune` (daily; by hand `phis maintain`, `hook-deliveries`) drops rows older than 30 days (batches of 1000, at most 50 per run) -- far past any sender's retry
   window, because the cost of holding one too long is a row and the cost of dropping one too early is a
   duplicate that will look like the Add-on's fault.
 
@@ -2409,7 +2409,7 @@ COMMIT;
 - `payment_id UUID REFERENCES phis.payments ON DELETE RESTRICT`; composite profile FK `ON DELETE RESTRICT`.
 - `processed BOOLEAN NOT NULL DEFAULT FALSE`, `claim_token UUID NOT NULL`, `claim_until TIMESTAMPTZ NOT NULL`.
 - `processed_at TIMESTAMPTZ NULL`.
-- Retention: `phis maintain` (`queue-retention`) deletes rows with `processed AND processed_at IS NOT NULL AND processed_at < NOW() - 90 days`, in batches of 1000 (at most 50 per run). Unprocessed and claimed rows stay however old. A Provider's repeat of a delivery id is recognised as a duplicate for 90 days after it was processed, far past any Provider's retry window. No extra index: the table holds one row per Provider notification.
+- Retention: the Core job `queues.prune` (daily; by hand `phis maintain`, `queue-retention`) deletes rows with `processed AND processed_at IS NOT NULL AND processed_at < NOW() - 90 days`, in batches of 1000 (at most 50 per run). Unprocessed and claimed rows stay however old. A Provider's repeat of a delivery id is recognised as a duplicate for 90 days after it was processed, far past any Provider's retry window. No extra index: the table holds one row per Provider notification.
 - Only authenticated Provider delivery ids enter this inbox. A live competing claim is unavailable,
   never a completed duplicate; an expired claim can be reacquired. Final commit requires the receipt
   token and atomically writes payment/refunds/operations, owner outbox and processed receipt. Failure
@@ -2435,7 +2435,7 @@ COMMIT;
 - `delivered_at TIMESTAMPTZ NULL`
 - partial index `(addon_id, site_id, id) WHERE delivered_at IS NULL`
 - partial index `addon_event_outbox_delivered_idx` on `(delivered_at) WHERE delivered_at IS NOT NULL`, for the retention delete
-- Retention: `phis maintain` (`queue-retention`) deletes rows with `delivered_at IS NOT NULL AND delivered_at < NOW() - 30 days`, in batches of 1000 (at most 50 per run). Undelivered rows stay however old, failing ones included. An emitter's `dedupe_key` is therefore only recognised for 30 days after delivery.
+- Retention: the Core job `queues.prune` (daily; by hand `phis maintain`, `queue-retention`) deletes rows with `delivered_at IS NOT NULL AND delivered_at < NOW() - 30 days`, in batches of 1000 (at most 50 per run). Undelivered rows stay however old, failing ones included. An emitter's `dedupe_key` is therefore only recognised for 30 days after delivery.
 - partial unique index `addon_event_outbox_dedupe_unique` on `(site_id, addon_id, event, dedupe_key)
   WHERE dedupe_key IS NOT NULL`
 - `addon_event_outbox_subject_check`: a thread subject has exactly `thread_id`, a bare thread event and
@@ -2613,13 +2613,13 @@ Contract:
 - partial index `(site_id, next_attempt_at, id) WHERE sent_at IS NULL AND (flags & 2) = 0`
 - partial unique index `(site_id, dedupe_key) WHERE dedupe_key IS NOT NULL`
 - partial index `notification_outbox_sent_idx` on `(sent_at) WHERE sent_at IS NOT NULL`, for the retention delete
-- Retention: `phis maintain` (`queue-retention`) deletes rows with `sent_at IS NOT NULL AND sent_at < NOW() - 90 days`, in batches of 1000 (at most 50 per run). Unsent rows stay however old, including rows dropped without sending (`flags & 2`) and rows whose attempts ran out. A `dedupe_key` is therefore only recognised for 90 days after the send.
+- Retention: the Core job `queues.prune` (daily; by hand `phis maintain`, `queue-retention`) deletes rows with `sent_at IS NOT NULL AND sent_at < NOW() - 90 days`, in batches of 1000 (at most 50 per run). Unsent rows stay however old, including rows dropped without sending (`flags & 2`) and rows whose attempts ran out. A `dedupe_key` is therefore only recognised for 90 days after the send.
 
 Contract:
 - Every message Core sends is written here first, and nothing sends without a row. There is one path:
   a password reset goes through it exactly as a circular does, which is what gives the reset the retry
-  it never had. The request that wrote the row attempts it once itself; `phis maintain` drains what that
-  attempt left. The division is `addon_event_outbox`'s and so is the reason -- telling somebody from
+  it never had. The request that wrote the row attempts it once itself; the Core job `notifications.deliver` drains what that
+  attempt left (every five minutes; `phis mail drain` by hand). The division is `addon_event_outbox`'s and so is the reason -- telling somebody from
   inside the request ties the answer to a transport being reachable.
 - **The recipient is an id wherever one exists**, and the address is resolved at drain time. A corrected
   address is therefore used, and a membership that is gone sends nothing instead of writing to a stale

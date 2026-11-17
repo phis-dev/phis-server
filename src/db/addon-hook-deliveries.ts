@@ -28,9 +28,9 @@ export async function claimPhisAddonHookDelivery(addonId: string, deliveryId: st
 }
 
 /*
- * What removes these rows is `phis maintain`, not anything here.
+ * What removes these rows is the Core job `hook-deliveries.prune`, not anything here.
  *
- * Cleanup nobody is waiting for is the operator's, and the task states its own retention window beside
- * the other ones an operator reads in a single report. A prune function here would be the second place
- * that window is written down.
+ * Cleanup nobody is waiting for is the scheduler's, and the one function behind that job -- and behind
+ * the same step of `phis maintain`, run by hand -- states the retention window (`src/db/maintenance.mts`).
+ * A prune function here would be the second place that window is written down.
  */

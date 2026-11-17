@@ -8,6 +8,13 @@ import { listPhisEntitlementListeners } from "@/lib/addons/entitlements-capabili
 import { schedulePhisAddonEventDelivery } from "@/lib/addons/event-trigger";
 import { listPhisAddonEventSiteIds } from "@/db/addon-events";
 import { announceEndedEntitlements } from "@/db/entitlements.mts";
+import {
+  closePhisSupportTicketsPastRequesterWindow,
+  collectOrphanedPhisAddonAssets,
+  forgetSettledPhisHookDeliveries,
+  forgetSettledPhisQueueRows,
+  releaseExpiredPhisUploadSessions,
+} from "@/db/maintenance.mts";
 import { prunePhiJobRuns } from "@/db/job-runs.mts";
 import { deleteExpiredAuthTransactions } from "@/db/site-auth";
 import { deleteExpiredUserSessions } from "@/db/user-sessions";
@@ -18,7 +25,7 @@ import {
 } from "@/lib/constants/jobs";
 import { getPool } from "@/lib/db";
 import { drainPhiNotifications } from "@/lib/notifications/deliver";
-import { runDuePhisPaymentSubscriptions } from "@/lib/payments/runtime";
+import { reconcileUnresolvedPhisPayments, runDuePhisPaymentSubscriptions } from "@/lib/payments/runtime";
 import { isPhiJobStepSubHourly } from "./slots";
 
 /**
@@ -28,6 +35,13 @@ import { isPhiJobStepSubHourly } from "./slots";
  * without the timer sent no mail twice and delivered no event twice. They run for the stage, not for a
  * Site, because each walks every Site that owes something. The two drains are the retry: the request
  * that wrote a row already tried once, so five minutes is how late a retry is at most.
+ *
+ * The housekeeping steps (`queues.prune`, `hook-deliveries.prune`, `upload-sessions.prune`,
+ * `addon-assets.collect`, `support-tickets.close`, `payments.recover`) were `phis maintain` tasks that an
+ * operator's timer had to call. They run here now, and `phis maintain` stays as the same steps started by
+ * hand: job and task call one function (`src/db/maintenance.mts`, `reconcilePhisPayments`), so neither
+ * has a window or a bound of its own. Each is bounded per run and looks at the signal where it loops.
+ * `addon-storage` is not among them: it lists every store in full and stays in `phis maintain`.
  */
 export type PhiCoreJob = {
   id: string;
@@ -104,6 +118,56 @@ export const PHI_CORE_JOBS: readonly PhiCoreJob[] = Object.freeze([
        */
       await deleteExpiredUserSessions();
       await deleteExpiredAuthTransactions();
+    },
+  },
+  {
+    id: "payments.recover",
+    schedule: { every: "hourly" },
+    summary: "Asks the Provider for the state of the payments with an unresolved operation, without replaying a command.",
+    async run(signal: AbortSignal) {
+      // At most PHIS_PAYMENT_RECOVERY_LIMIT payments a run; what is left is offered again next hour.
+      await reconcileUnresolvedPhisPayments(signal);
+    },
+  },
+  {
+    id: "upload-sessions.prune",
+    schedule: { every: "hourly" },
+    summary: "Releases the reservations of upload sessions that ran out.",
+    async run(signal: AbortSignal) {
+      await releaseExpiredPhisUploadSessions(getPool(), { signal });
+    },
+  },
+  {
+    id: "queues.prune",
+    schedule: { every: "daily", at: "02:10" },
+    summary: "Forgets sent mails, processed payment receipts and delivered Add-on events past their window.",
+    async run(signal: AbortSignal) {
+      await forgetSettledPhisQueueRows(getPool(), { signal });
+    },
+  },
+  {
+    id: "hook-deliveries.prune",
+    schedule: { every: "daily", at: "02:25" },
+    summary: "Forgets webhook deliveries nobody will retry.",
+    async run(signal: AbortSignal) {
+      await forgetSettledPhisHookDeliveries(getPool(), { signal });
+    },
+  },
+  {
+    id: "addon-assets.collect",
+    schedule: { every: "daily", at: "02:40" },
+    summary: "Collects the files of an Add-on that nothing links to any more.",
+    async run(signal: AbortSignal) {
+      await collectOrphanedPhisAddonAssets(getPool(), { signal });
+    },
+  },
+  {
+    id: "support-tickets.close",
+    schedule: { every: "daily", at: "02:55" },
+    summary: "Writes down as closed the resolved tickets whose requester did not answer within the window.",
+    async run() {
+      // At most 500 tickets a run, oldest resolution first.
+      await closePhisSupportTicketsPastRequesterWindow(getPool());
     },
   },
   {

@@ -362,6 +362,14 @@ front of is infrastructure work, and belongs with
   the capability already does for the Site. Contract change in `@phis/contracts` (manifest type and
   validator); the hook `verification.secret` would name one of the declared entries.
 
+- **Jobs: Anzeige.** Step two of the in-process maintenance (step one: the housekeeping runs as Core jobs, see
+  [SERVER_ADDONS.md](./SERVER_ADDONS.md#maintenance-without-a-timer)) is a display of the jobs and nothing
+  else: which jobs exist, the last run and whether it failed. Server-wide for the operator, and per Site in
+  the Admin. The schedule of an Add-on's job lives in its manifest and only there; the Admin does not make
+  it adjustable (owner's decision, 2026-11-17). The display is read-only: pausing and starting by hand stay
+  operator commands on the command line (`phis addon job`, `--pause` and `--resume`, `phis maintain`) and do
+  not move into the interface (owner's decision, 2026-11-17).
+
 ## Code hygiene
 
 - **Add-on capability execution under `src/db/`.** `scripts/validate-db-sql-boundary.mjs` passes only because

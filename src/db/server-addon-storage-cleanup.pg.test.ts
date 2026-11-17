@@ -10,7 +10,7 @@ import {
   removePhisAddonStorage,
   type PhisAddonStorageSite,
 } from "../cli/storage-purge.mts";
-import { sweepPhisAddonAssets } from "../cli/storage-sweep.mts";
+import { sweepPhisAddonAssets } from "./server-addon-asset-sweep.mts";
 import { ensureAddonMediaSpace } from "./media-spaces";
 import { readPhisAddonStorageUsage } from "./server-addon-storage-usage.mts";
 import {

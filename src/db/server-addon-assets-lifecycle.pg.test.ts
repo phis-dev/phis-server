@@ -18,7 +18,7 @@ import { PhisSiteThreadKindFlag, PhisThreadKind } from "@phis/contracts/threads"
 import { PhiSiteGroupFlags } from "@/lib/constants/site-groups";
 import { buildPhisAddonRowAssets } from "@/lib/addons/row-assets";
 import { withTransaction } from "@/lib/db";
-import { sweepPhisAddonAssets } from "../cli/storage-sweep.mts";
+import { sweepPhisAddonAssets } from "./server-addon-asset-sweep.mts";
 import { createThread } from "./threads";
 import {
   closePhiTestPool,

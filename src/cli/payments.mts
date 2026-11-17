@@ -9,12 +9,12 @@ import { readAddonDesiredState, loadInstalledAddonRuntime } from "./addons.mts";
 import { digestPhisAddonManifest } from "../lib/addons/manifest.ts";
 import { createPhisPaymentProvider } from "../lib/payments/provider.ts";
 import { validatePhisPaymentProfileDraft, validatePhisPaymentProviderProbe, validatePhisPaymentMoney, PhisPaymentError } from "../lib/payments/validation.ts";
-import { PhisPaymentEngine } from "../lib/payments/engine.ts";
-import { PHIS_PAYMENT_CALL_TIMEOUT_MS, PHIS_PAYMENT_RECOVERY_LIMIT, PHIS_PAYMENT_INSTANCE_STALE_SECONDS } from "../lib/constants/payments.ts";
+import { reconcilePhisPayments } from "../lib/payments/recovery.ts";
+import { PHIS_PAYMENT_CALL_TIMEOUT_MS, PHIS_PAYMENT_INSTANCE_STALE_SECONDS } from "../lib/constants/payments.ts";
 import { PHIS_ADDON_FLAG_GLOBALLY_ENABLED, PHI_SITE_SERVER_ADDON_FLAG_REQUESTED_ENABLED } from "../lib/constants/server-addons.ts";
 import {
   listPhisPaymentProfiles, readPhisPaymentProfile, writePhisPaymentProfile, recordPhisPaymentProfileProbe,
-  setPhisPaymentProfileEnabled, listPhisPaymentRecoveryCandidates, readPhisPayment,
+  setPhisPaymentProfileEnabled,
 } from "../db/payments.mts";
 import type { PhisPaymentProfile } from "../lib/payments/types.ts";
 
@@ -89,20 +89,10 @@ export async function runPhisPaymentProfileCommand(root: string, pool: Pool, com
   return { profile: await readPhisPaymentProfile(pool, selectedSite.id, key), methods: probe.methods };
 }
 
+/** `phis maintain --task payments`: the shared reconciliation, reaching the Provider the way this process can. */
 export async function recoverPhisPayments(root: string, pool: Pool, readSecret: SecretReader, dryRun: boolean) {
-  const candidates = await listPhisPaymentRecoveryCandidates(pool, PHIS_PAYMENT_RECOVERY_LIMIT);
-  if (dryRun) return { cleared: 0, detail: `${candidates.length} payment(s) selected for bounded reconciliation; no Provider calls made.` };
-  let reconciled = 0; let unavailable = 0;
-  for (const candidate of candidates) {
-    try {
-      const payment = (await readPhisPayment(pool, candidate.site_id, candidate.id))!;
-      const profile = (await readPhisPaymentProfile(pool, candidate.site_id, payment.record.profileKey))!;
-      if (!profile) throw new PhisPaymentError("profile_unavailable");
-      const engine = new PhisPaymentEngine({ pool, scope: { siteId: candidate.site_id, siteKey: candidate.key, consumerAddonId: candidate.consumer_addon_id },
-        signal: AbortSignal.timeout(PHIS_PAYMENT_CALL_TIMEOUT_MS), publicBaseUrl: async () => { throw new PhisPaymentError("forbidden"); },
-        resolveProvider: profile => resolvePaymentProvider(root, pool, profile, candidate.key, readSecret), merchantAuthorized: async () => false });
-      await engine.reconcile(payment, profile); reconciled += 1;
-    } catch { unavailable += 1; }
-  }
-  return { cleared: reconciled, detail: `${reconciled} reconciled; ${unavailable} unavailable or concurrently claimed (limit ${PHIS_PAYMENT_RECOVERY_LIMIT}).` };
+  const { cleared, detail } = await reconcilePhisPayments({
+    pool, dryRun, resolveProvider: (profile, siteKey) => resolvePaymentProvider(root, pool, profile, siteKey, readSecret),
+  });
+  return { cleared, detail };
 }

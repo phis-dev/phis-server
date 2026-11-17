@@ -158,7 +158,7 @@ import {
   recountPhisAddonStorage,
   removePhisAddonStorage,
 } from "./storage-purge.mts";
-import { sweepPhisAddonAssets } from "./storage-sweep.mts";
+import { sweepPhisAddonAssets } from "../db/server-addon-asset-sweep.mts";
 import { PHI_MAINTENANCE_TASKS, runPhiMaintenance } from "./maintain.mts";
 import { runPhisPaymentProfileCommand, recoverPhisPayments } from "./payments.mts";
 import { runPhisEntitlementCommand } from "./entitlements.mts";

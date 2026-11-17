@@ -702,8 +702,9 @@ Core's own owed work runs on the same clock as Core jobs owned by `@phis/server`
 and `notifications.deliver` every five minutes, the retries behind the two outboxes, `entitlements.expire`
 every five minutes (it announces the entitlements that ended, see [`entitlements:v1`](#entitlementsv1)),
 `auth.prune` hourly
-for expired sessions and finished sign-in transactions, and `job-runs.prune` daily. `phis mail drain`
-remains for a retry the operator wants now.
+for expired sessions and finished sign-in transactions, and `job-runs.prune` daily. The housekeeping that
+used to be `phis maintain` runs there too (see Maintenance without a timer). `phis mail drain` remains for
+a retry the operator wants now.
 
 **A job has no actor.** It is the Add-on acting on its own data, not a person acting through it, so the
 row-level ladder has nobody to apply and `data:v1` writes with system authority. A job context carries
@@ -725,44 +726,32 @@ The job runs in the serving process rather than in the CLI, against the release 
 serves. The CLI stays a caller instead of becoming a second runtime that would have to reproduce the
 loader, the pool, and the capability bindings.
 
-#### Maintenance from a timer
+#### Maintenance without a timer
 
-`phis maintain`, Core's bounded cleanup tasks, runs in the CLI process against the database and is the
-one thing left that wants a timer of the operator's. On a host that runs the Debian package that is a
-systemd one-shot service and a timer, run as `phis`, because `config/phis-runtime.json` is readable by
-that account alone; `/usr/bin/phis` operates on `/srv/phis/stages/prod` unless `PHIS_ROOT` names
-another stage.
+The cleanup that no request waits for is Core's own work on this clock. The operator installs no timer
+and no systemd unit for it; an installation that has run only the server process has been doing it all
+along. Each step is a Core job owned by `@phis/server`, run once per moment for the stage across every
+Site, bounded per run, and recorded in the ledger like any other job:
 
-```ini
-# /etc/systemd/system/phis-maintain.service
-[Unit]
-Description=phis: maintenance tasks
-After=phis@prod.service
+| Job | Step | When (UTC) |
+| --- | --- | --- |
+| `payments.recover` | asks the Provider for the state of the payments with an unresolved operation, at most 100 a run; it replays no command and skips a payment another reconciliation holds | hourly |
+| `upload-sessions.prune` | releases the reservations of upload sessions that ran out | hourly |
+| `queues.prune` | forgets sent mails, processed payment receipts and delivered Add-on events past their window | daily 02:10 |
+| `hook-deliveries.prune` | forgets webhook deliveries older than 30 days | daily 02:25 |
+| `addon-assets.collect` | collects the files of an Add-on that nothing links to any more | daily 02:40 |
+| `support-tickets.close` | writes down as closed the resolved tickets whose requester stayed silent for the window | daily 02:55 |
 
-[Service]
-Type=oneshot
-User=phis
-Group=phis
-ExecStart=/usr/bin/phis maintain
-```
+A step that has more to do than one run allows is finished by the next one. The nights are staggered
+and stay clear of `job-runs.prune` at 03:30.
 
-```ini
-# /etc/systemd/system/phis-maintain.timer
-[Unit]
-Description=Run phis maintenance daily
-
-[Timer]
-OnCalendar=*-*-* 03:45:00 UTC
-Persistent=true
-
-[Install]
-WantedBy=timers.target
-```
-
-```sh
-systemctl daemon-reload
-systemctl enable --now phis-maintain.timer
-```
+`phis maintain` is the same steps started by hand: `phis maintain [--task <id>] [--dry-run]` runs the
+tasks `queue-retention`, `hook-deliveries`, `upload-sessions`, `addon-assets`,
+`support-requester-window` and `payments`, each of which calls the very function its job calls, and
+`--dry-run` reports what a run would do without changing anything. One task is not a job:
+`addon-storage` lists every Add-on store in full and costs what the stores hold, which is too heavy for
+the server process, so it stays in `phis maintain` and an operator runs it when they want the counters
+recounted.
 
 ### Events
 
@@ -799,7 +788,7 @@ facts?, dedupeKey? })`, from a job, a verified hook or a request handler. The ru
 - **A key makes a repeat safe.** `dedupeKey`, unique within the Site and the event, meets a partial
   unique index: a second emit with the same key writes nothing for a listener already owed the first.
   A job that is run again after a lost lease therefore emits once. The key is remembered until the
-  delivered row is removed, 30 days after delivery (`phis maintain`, `queue-retention`).
+  delivered row is removed, 30 days after delivery (the job `queues.prune`).
 - **A chain ends.** The outbox row carries a hop count: zero for Core's events, the incoming hop plus
   one for an emit from inside an event handler. At `PHIS_ADDON_EVENT_MAX_HOPS` (4) the emit is refused
   and logged (`addon.event.hop_limit`), which is what stops two handlers answering each other forever.
@@ -1236,7 +1225,7 @@ accepted after Core had given the booking back. A ceiling reached by drift refus
 that is free, and the error mentions the ceiling rather than the reason. It is a command rather than a
 background pass because it costs a full listing of the prefix.
 
-`phis maintain` (task `addon-storage`) runs the same recount for every Add-on store the operator's
+`phis maintain` (task `addon-storage`, which is not a Core job) runs the same recount for every Add-on store the operator's
 process can reach, and names the ones it cannot. It is the answer to the one drift `put` itself causes:
 two writes of one new key at the same moment -- a retried request, an event delivered twice, a job on two
 instances -- both find the key absent and both book an object. Preventing that would cost every write a
@@ -1414,7 +1403,7 @@ dies before the object does leaves a file that nothing can name. So the key is *
 transaction** -- `phis.media_discarded_objects` -- and the removal that follows clears the note. What
 stays there is a retry list, read by an index, drained a few at a time by whatever deletes next.
 
-`phis maintain` (task `addon-assets`) asks the other question: which Assets in an Add-on's Space does no link name. The
+The Core job `addon-assets.collect` (and `phis maintain`, task `addon-assets`) asks the other question: which Assets in an Add-on's Space does no link name. The
 note says what Core meant to remove; the join says what is actually unreferenced, and it is the only
 thing that catches what no note was ever written for -- a restored backup, a schema dropped by hand, an
 Add-on removed with its tables. It is the audit, not the mechanism.
@@ -1818,9 +1807,9 @@ cannot put another host into a Site's outgoing mail. A call must bring exactly t
 
 `dedupeKey` is unique within the Site for this Add-on; a second call with the same key writes nothing and
 answers `notificationId: null`, which is what makes a repeated job run safe. The key is remembered until the
-sent row is removed, 90 days after the send (`phis maintain`, `queue-retention`). The request that wrote the
+sent row is removed, 90 days after the send (the job `queues.prune`). The request that wrote the
 row attempts the send once itself, as Core's own messages do; what that attempt leaves behind,
-`phis maintain` drains. An unverified hook may not call `notify`: a message written down is a change, and
+the job `notifications.deliver` drains. An unverified hook may not call `notify`: a message written down is a change, and
 a request with no actor may change nothing.
 
 An occasion is rendered from the manifest installed at the moment of sending, so a reconciled manifest

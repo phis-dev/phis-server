@@ -1225,20 +1225,28 @@ session may be being written. `--prune-staging` removes the reported files; with
 
 ### `phis maintain [--list] [--task <id>] [--dry-run]`
 
-Runs bounded, idempotent cleanup tasks, in the order below. `--list` prints them. Tasks:
+Runs the cleanup tasks by hand, now, in the order below. `--list` prints them.
+
+The server does this on its own: every task except `addon-storage` is also a Core job that the server's
+clock runs (`payments.recover` and `upload-sessions.prune` hourly; `queues.prune`, `hook-deliveries.prune`,
+`addon-assets.collect` and `support-tickets.close` nightly, see
+[SERVER_ADDONS.md](../SERVER_ADDONS.md#maintenance-without-a-timer)). **You need no timer for it.** The
+job and the task call one function, so this command does what the job does -- it is for running a step
+out of turn, for `--dry-run`, and for `addon-storage`, which lists every store in full and so is the one
+step left out of the clock. Tasks are bounded and idempotent:
 
 | Id | Effect |
 | --- | --- |
 | `payments` | Reconciles up to 100 Payments that are marked as needing reconciliation or have an operation still `reserved`, `pending` or `indeterminate`: it asks the Payment Provider for the current state and records it, and never replays a financial command. Needs `secrets.encryptionKey` to reach the Provider's credential. With `--dry-run` it only counts the candidates and makes no Provider call. |
-| `upload-sessions` | Deletes expired upload sessions and gives their reserved bytes back to their Media Spaces. |
+| `upload-sessions` | Deletes expired upload sessions and gives their reserved bytes back to their Media Spaces. Up to 1000 sessions per statement and 50 statements per run (the next run continues). |
 | `addon-assets` | Deletes the rows of Media Assets in Add-on Spaces that nothing links to any more. The stored objects are not removed; `phis addon storage --sweep` removes them per Add-on and Site. With `--dry-run` it only reports how many Spaces it would examine. |
-| `hook-deliveries` | Deletes the records of verified hook deliveries (`phis.addon_hook_deliveries`, used to recognise a retried webhook) older than 30 days, far past any sender's retry window. |
+| `hook-deliveries` | Deletes the records of verified hook deliveries (`phis.addon_hook_deliveries`, used to recognise a retried webhook) older than 30 days, far past any sender's retry window. Up to 1000 rows per statement and 50 statements per run. |
 | `queue-retention` | Deletes settled rows of three queues: `phis.notification_outbox` rows with `sent_at` older than 90 days, `phis.payment_notification_receipts` rows that are `processed` with `processed_at` older than 90 days, and `phis.addon_event_outbox` rows with `delivered_at` older than 30 days. Rows still owed are never deleted, however old; neither are mails dropped without sending or given up after their attempts. Removes up to 1000 rows per statement and 50 statements per table per run (the next run continues), and reports one line with the counts per table. With `--dry-run` it only counts. |
 | `addon-storage` | Lists every Add-on store of every Site and rewrites its byte and object counters from what is really stored, the same as `phis addon storage --recount` for all of them. Costs a full listing per store; stores this process cannot reach are named and skipped. With `--dry-run` it only reports how many stores it would list. |
 | `support-requester-window` | Closes resolved support tickets whose requester did not answer within the window (the ticket type's, else the Site's; `0` switches it off), recording a close event. At most 500 per run, oldest resolution first; tickets locked by another writer are left to the next run. Reads already show such tickets as closed, so this only brings the stored row in line. |
 
 `--task` runs one, `--dry-run` reports without changing anything. A failing task is reported and the
-others still run; the exit code is `1` when any task failed. Safe to run from a timer.
+others still run; the exit code is `1` when any task failed. Safe to run twice, and from two instances at once.
 
 ## mail
 

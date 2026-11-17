@@ -19,6 +19,7 @@ import { logRuntimeEvent, normalizeLogThrowable } from "../log";
 import { PHIS_SERVICE_KINDS, PHIS_SITE_ACCESS } from "@phis/contracts/addon";
 import { PhisPaymentEngine, type PhisPaymentProviderFailure } from "./engine.ts";
 import { createPhisPaymentProvider } from "./provider.ts";
+import { reconcilePhisPayments } from "./recovery.ts";
 import { PhisPaymentError, requirePhisPaymentReference } from "./validation.ts";
 import type { PhisPaymentAuthority, PhisPaymentProfile, PhisPaymentScope } from "./types.ts";
 
@@ -144,6 +145,25 @@ export async function runDuePhisPaymentSubscriptions(limit = 50, signal: AbortSi
   }
   for (const siteId of sites) schedulePhisAddonEventDelivery(siteId);
   return due.length;
+}
+
+/**
+ * The schedule's reconciliation: every payment with an unresolved operation, asked of its Provider.
+ *
+ * It reaches the Provider the way the subscription schedule does -- through the installed Add-on, with
+ * the secrets this process already holds -- and shares everything else with `phis maintain --task
+ * payments` (`reconcilePhisPayments`). It acts as nobody, replays no command, and skips a payment
+ * another reconciliation holds, so a run that overlaps another, on this instance or on one of its
+ * siblings, changes nothing the other did not.
+ */
+export async function reconcileUnresolvedPhisPayments(signal: AbortSignal = new AbortController().signal) {
+  const result = await reconcilePhisPayments({
+    pool: getPool(), dryRun: false, signal,
+    resolveProvider: (profile, siteKey) => provider(profile, siteKey),
+    engine: { providerFailed: logPhisPaymentProviderFailure, reconcileRepeated: logPhisPaymentReconcileRepeated, entitlementListeners: listPhisEntitlementListeners },
+  });
+  for (const siteId of result.siteIds) schedulePhisAddonEventDelivery(siteId);
+  return { cleared: result.cleared, detail: result.detail };
 }
 
 /** Available only for a dispatcher-bound hook. Successful verification grants no ambient authority. */
