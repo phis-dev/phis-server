@@ -1984,10 +1984,14 @@ acting user (`src/lib/addons/role-granting.ts`): a Site access through the ordin
 through `site_addon_user_roles`, and Site Admin always. Taking a role back needs the standing to have
 given it. An unknown Add-on or undeclared role answers 404, a refusal on standing 403.
 
-`GET /api/site/addon-roles` answers with every role of every installed Add-on the caller may grant, and
-with `?userId=` also what that person holds -- the latter only for a caller who may grant at least one
-role. One screen therefore serves an operator and a `market-admin` alike, because it shows what the
-viewer could grant rather than what exists.
+`PUT /api/site/addon-roles` with `{ userId, addonId, roles }` sets the roles that person holds in that
+Add-on to exactly `roles`: the same checks as `POST`/`DELETE` for each role to give and each role to take
+back, written all together or not at all.
+
+`GET /api/site/addon-roles` answers `{ addons }`, every declared role of every Add-on enabled on the Site,
+each marked `grantable` or not for the caller, and with `?userId=` also what that person holds
+(`userId`, `held`) -- the latter only for a caller who may grant at least one role. One screen therefore
+serves an operator and a `market-admin` alike. `AUTHORIZATION.md` section 5 has the exact shapes.
 
 An Add-on's own surface renders the screen and calls these routes; it never decides the answer, so
 somebody who reaches the screen without the standing is refused here rather than there. Finding the

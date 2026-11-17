@@ -14,6 +14,8 @@ export type ListAdminUsersOptions = {
   search?: string;
   accountType?: AdminUserAccountType | "all";
   enabled?: "all" | "enabled" | "disabled";
+  /** Only users with a stored grant of one of `roles` in this Add-on; an empty list matches nobody. */
+  addonRoles?: { addonId: string; roles: readonly string[] };
   sortKey?: AdminUserSortKey | string;
   sortOrder?: AdminUserSortOrder | string;
   page?: number;
@@ -112,6 +114,19 @@ export async function listAdminUsersForSite(siteId: number, options: ListAdminUs
   } else if (enabled === "disabled") {
     conditions.push(`COALESCE(usr.user_site_flags, 0) & $${params.length + 1} <> 0`);
     params.push(USER_SITE_FLAG_DISABLED);
+  }
+
+  if (options.addonRoles) {
+    params.push(options.addonRoles.addonId, [...options.addonRoles.roles]);
+    conditions.push(
+      `EXISTS (
+        SELECT 1 FROM phis.site_addon_user_roles addon_role
+        WHERE addon_role.site_id = $1
+          AND addon_role.user_id = ua.id
+          AND addon_role.addon_id = $${params.length - 1}
+          AND addon_role.role = ANY($${params.length}::text[])
+      )`,
+    );
   }
 
   const pageSize = Math.max(1, Math.min(200, Math.trunc(options.pageSize ?? 20) || 20));

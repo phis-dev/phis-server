@@ -20,6 +20,9 @@ const mocks = vi.hoisted(() => ({
   createResetToken: vi.fn(),
   notify: vi.fn(),
   revokeSessions: vi.fn(),
+  grants: vi.fn(),
+  available: vi.fn(),
+  installed: vi.fn(),
 }));
 
 vi.mock("@/lib/guards/site-admin-api", () => ({
@@ -35,6 +38,13 @@ vi.mock("@/db/user-accounts", () => ({
   updateUserAccountPasswordHash: mocks.updatePasswordHash,
   updateUserAccountProfileFields: mocks.updateProfileFields,
 }));
+vi.mock("@/db/server-addon-roles.mts", () => ({
+  readPhiSiteUsersAddonRoles: mocks.grants,
+  readPhiSiteUserAddonRoles: vi.fn(),
+}));
+vi.mock("@/lib/addons/capability-snapshot", () => ({ readAvailablePhisProviderIds: mocks.available }));
+vi.mock("@/lib/addons/installed", () => ({ getPhisAddonInstalledManifest: mocks.installed }));
+vi.mock("@/lib/db", () => ({ getPool: () => ({}) }));
 vi.mock("@/db/user-admin", () => ({ listAdminUsersForSite: vi.fn(), setAdminUserEnabled: vi.fn() }));
 vi.mock("@/db/user-password-reset-tokens", () => ({
   createUserPasswordResetToken: mocks.createResetToken,
@@ -59,6 +69,8 @@ vi.mock("@/lib/log", () => ({
   normalizeLogThrowable: (error: unknown) => error,
 }));
 vi.mock("@/lib/password", () => ({ hashPassword: async () => "hash" }));
+
+import { listAdminUsersForSite } from "@/db/user-admin";
 
 import { DELETE, GET, POST, PUT } from "./route";
 
@@ -227,5 +239,103 @@ describe("GET /api/site/admin/users", () => {
     const response = await GET(request("GET"));
 
     expect(response.status).toBe(403);
+  });
+});
+
+const SHOP = "@acme/shop";
+const SHOP_ROLES = [
+  { name: "manager", grantableBy: { siteAccess: "site-admin" }, includes: ["clerk"] },
+  { name: "clerk", grantableBy: { role: "manager" } },
+];
+
+function listRow(id: number) {
+  return {
+    id, displayName: `User ${id}`, emailNormalized: `u${id}@example.test`, accountType: "roles", enabled: true,
+    flags: 0, siteFlags: 0, coreRoleFlags: 0, lastLoginAt: null, createdAt: "x", companyName: null,
+    customerNumber: null, medusaCustomerId: null, firstName: null, lastName: null,
+  };
+}
+
+describe("GET /api/site/admin/users with Add-on roles", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.guard.mockResolvedValue({ context: { site: SITE, session: { userId: 1 } }, error: null });
+    vi.mocked(listAdminUsersForSite).mockResolvedValue(
+      { rows: [listRow(10), listRow(11), listRow(12)], total: 3, siteTotal: 3, page: 1, pageSize: 20 } as never,
+    );
+    mocks.available.mockResolvedValue(new Set([SHOP]));
+    mocks.installed.mockReturnValue({
+      [SHOP]: { enabled: true, manifest: { addonId: SHOP, roles: SHOP_ROLES } },
+      "@acme/off": { enabled: true, manifest: { addonId: "@acme/off", roles: [{ name: "x" }] } },
+    });
+    mocks.grants.mockResolvedValue(new Map([
+      [10, [{ addonId: SHOP, role: "manager" }, { addonId: "@acme/off", role: "x" }, { addonId: SHOP, role: "retired" }]],
+      [11, [{ addonId: SHOP, role: "clerk" }]],
+    ]));
+  });
+
+  async function list(query = "") {
+    const response = await GET(request("GET", undefined, query));
+    return { response, body: await response.clone().json() };
+  }
+
+  it("shows each user's stored roles of Add-ons this Site runs, in one read for the page", async () => {
+    const { body } = await list();
+
+    expect(body.rows.map((row: { addonRoles: unknown }) => row.addonRoles)).toEqual([
+      // `clerk` is implied by `manager` and not listed; the Add-on not available here and the dropped role are out.
+      [{ addonId: SHOP, role: "manager" }],
+      [{ addonId: SHOP, role: "clerk" }],
+      [],
+    ]);
+    expect(mocks.grants).toHaveBeenCalledOnce();
+    expect(mocks.grants.mock.calls[0]![1]).toEqual({ siteId: 7, userIds: [10, 11, 12] });
+  });
+
+  it("shows no roles of an Add-on that is not available on the Site", async () => {
+    mocks.available.mockResolvedValue(new Set());
+
+    const { body } = await list();
+
+    expect(body.rows.map((row: { addonRoles: unknown[] }) => row.addonRoles.length)).toEqual([0, 0, 0]);
+  });
+
+  it("filters by Add-on to every declared role, stored", async () => {
+    await list(`?addonId=${encodeURIComponent(SHOP)}`);
+
+    expect(vi.mocked(listAdminUsersForSite).mock.calls[0]![1]).toMatchObject({
+      addonRoles: { addonId: SHOP, roles: ["manager", "clerk"] },
+    });
+  });
+
+  it("filters by role to the stored holders and those through `includes`", async () => {
+    await list(`?addonId=${encodeURIComponent(SHOP)}&addonRole=clerk`);
+    expect(vi.mocked(listAdminUsersForSite).mock.calls[0]![1]).toMatchObject({
+      addonRoles: { addonId: SHOP, roles: ["manager", "clerk"] },
+    });
+
+    await list(`?addonId=${encodeURIComponent(SHOP)}&addonRole=manager`);
+    expect(vi.mocked(listAdminUsersForSite).mock.calls[1]![1]).toMatchObject({
+      addonRoles: { addonId: SHOP, roles: ["manager"] },
+    });
+  });
+
+  it("matches nobody for an unknown Add-on, an undeclared role or an Add-on not available here", async () => {
+    await list("?addonId=%40nobody%2Fnone");
+    await list(`?addonId=${encodeURIComponent(SHOP)}&addonRole=nonesuch`);
+    mocks.available.mockResolvedValue(new Set());
+    await list(`?addonId=${encodeURIComponent(SHOP)}`);
+
+    expect(vi.mocked(listAdminUsersForSite).mock.calls).toHaveLength(3);
+    for (const call of vi.mocked(listAdminUsersForSite).mock.calls) {
+      expect(call[1]?.addonRoles?.roles).toEqual([]);
+    }
+  });
+
+  it("refuses malformed filters with 400 and does not query", async () => {
+    for (const query of ["?addonId=", "?addonRole=clerk", `?addonId=${encodeURIComponent(SHOP)}&addonRole=Bad%20Role`]) {
+      expect((await GET(request("GET", undefined, query))).status).toBe(400);
+    }
+    expect(listAdminUsersForSite).not.toHaveBeenCalled();
   });
 });

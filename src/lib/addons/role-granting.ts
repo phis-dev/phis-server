@@ -108,18 +108,35 @@ export async function mayGrantPhisAddonRole(input: {
     : { allowed: false, reason: "not_permitted" };
 }
 
+export type PhisAddonRoleCatalogEntry = {
+  addonId: string;
+  /**
+   * What the Add-on is called on a screen. The manifest carries no display name, so this is the Add-on
+   * id until it does.
+   */
+  title: string;
+  roles: {
+    name: string;
+    description?: string;
+    grantableBy: PhisAddonRoleGrantPolicy;
+    includes?: string[];
+    /** Whether the acting person may hand this role out -- the decision `mayGrantPhisAddonRole` makes. */
+    grantable: boolean;
+  }[];
+};
+
 /**
- * Every role of every Add-on enabled here that this person may hand out.
+ * Every role of every Add-on enabled here, and for each whether this person may hand it out.
  *
- * What user administration renders. One screen serves an operator and a `market-admin` alike, because it
- * shows what the viewer could grant and not what exists -- and the same evaluation decides the write.
+ * What user administration renders. One screen serves an operator and a `market-admin` alike: it lists
+ * what exists and marks what the viewer could grant, and the same evaluation decides the write.
  */
-export async function readPhisAddonGrantableRoles(input: {
+export async function readPhisAddonRoleCatalog(input: {
   siteId: number;
   actorUserId: number;
-}) {
+}): Promise<PhisAddonRoleCatalogEntry[]> {
   const installed = getPhisAddonInstalledManifest();
-  const grantable: { addonId: string; role: PhisAddonRoleDescriptor }[] = [];
+  const catalog: PhisAddonRoleCatalogEntry[] = [];
   /*
    * The same decision `mayGrantPhisAddonRole` makes, asked of the database once per question rather
    * than once per role: the Site Admin floor is one answer for every role, a Site-access policy is one
@@ -148,14 +165,20 @@ export async function readPhisAddonGrantableRoles(input: {
         siteId: input.siteId,
         userId: input.actorUserId,
       }));
+    const roles: PhisAddonRoleCatalogEntry["roles"] = [];
     for (const role of entry.manifest.roles) {
       const policy = role.grantableBy;
-      const allowed = siteAdmin
+      const grantable = siteAdmin
         || ("siteAccess" in policy ? await holdsSiteAccess(policy.siteAccess) : (held ?? []).includes(policy.role));
-      if (allowed) {
-        grantable.push({ addonId: entry.manifest.addonId, role });
-      }
+      roles.push({
+        name: role.name,
+        ...(role.description === undefined ? {} : { description: role.description }),
+        grantableBy: policy,
+        ...(role.includes === undefined ? {} : { includes: [...role.includes] }),
+        grantable,
+      });
     }
+    catalog.push({ addonId: entry.manifest.addonId, title: entry.manifest.addonId, roles });
   }
-  return grantable;
+  return catalog;
 }

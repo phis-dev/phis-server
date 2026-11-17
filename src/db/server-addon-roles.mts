@@ -74,6 +74,35 @@ export async function readPhiSiteUserAddonRoles(
 }
 
 /**
+ * What a set of users hold on one Site, across Add-ons, in one statement.
+ *
+ * The stored grants as they are, with no regard to what is enabled or declared and none to a disabled
+ * membership: user administration shows them either way, and the caller decides which count.
+ */
+export async function readPhiSiteUsersAddonRoles(
+  db: Queryable,
+  input: { siteId: number; userIds: readonly number[] },
+): Promise<Map<number, { addonId: string; role: string }[]>> {
+  const byUser = new Map<number, { addonId: string; role: string }[]>();
+  if (input.userIds.length === 0) {
+    return byUser;
+  }
+  const { rows } = await db.query<{ user_id: number; addon_id: string; role: string }>(
+    `SELECT user_id, addon_id, role
+       FROM phis.site_addon_user_roles
+      WHERE site_id = $1 AND user_id = ANY($2::int[])
+      ORDER BY user_id, addon_id, role`,
+    [input.siteId, [...input.userIds]],
+  );
+  for (const row of rows) {
+    const list = byUser.get(row.user_id) ?? [];
+    list.push({ addonId: row.addon_id, role: row.role });
+    byUser.set(row.user_id, list);
+  }
+  return byUser;
+}
+
+/**
  * Grants one role, idempotently.
  *
  * Re-granting keeps the first grant rather than restamping it: who first let this person in is the more
@@ -127,6 +156,48 @@ export async function revokePhisAddonUserRole(
     [input.siteId, input.addonId, input.userId, input.role],
   );
   return (rows[0]?.changed ?? 0) > 0;
+}
+
+/**
+ * Gives and takes several roles of one Add-on from one user, as one statement: all of it or none.
+ *
+ * What it reports is what changed, not what was asked: a role already held is not granted again, a role
+ * not held is not revoked. The membership's authorization revision moves once, and only when something
+ * changed -- one save is one change to what the viewer may do.
+ */
+export async function replacePhisAddonUserRoles(
+  db: Queryable,
+  input: {
+    addonId: string;
+    siteId: number;
+    userId: number;
+    grant: readonly string[];
+    revoke: readonly string[];
+    grantedByUserId: number | null;
+  },
+): Promise<{ granted: string[]; revoked: string[] }> {
+  const { rows } = await db.query<{ granted: string[] | null; revoked: string[] | null }>(
+    `WITH removed AS (
+       DELETE FROM phis.site_addon_user_roles
+        WHERE site_id = $1 AND addon_id = $2 AND user_id = $3 AND role = ANY($4::text[])
+       RETURNING role
+     ), added AS (
+       INSERT INTO phis.site_addon_user_roles
+         (site_id, addon_id, user_id, role, granted_by_user_id)
+       SELECT $1, $2, $3, wanted, $6 FROM unnest($5::text[]) AS wanted
+       ON CONFLICT (site_id, addon_id, user_id, role) DO NOTHING
+       RETURNING role
+     ), bumped AS (
+       UPDATE phis.user_site_memberships
+          SET authorization_revision = authorization_revision + 1, updated_at = NOW()
+        WHERE site_id = $1 AND user_id = $3
+          AND (EXISTS (SELECT 1 FROM removed) OR EXISTS (SELECT 1 FROM added))
+     )
+     SELECT (SELECT ARRAY_AGG(role ORDER BY role) FROM added) AS granted,
+            (SELECT ARRAY_AGG(role ORDER BY role) FROM removed) AS revoked`,
+    [input.siteId, input.addonId, input.userId, [...input.revoke], [...input.grant], input.grantedByUserId],
+  );
+  return { granted: rows[0]?.granted ?? [], revoked: rows[0]?.revoked ?? [] };
 }
 
 /**

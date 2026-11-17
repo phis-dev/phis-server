@@ -58,7 +58,8 @@ Site administration, CMS, media and support API. A Site's `/api/site` proxy forw
 | GET | [`/api/site/account/avatar`](../src/app/api/site/account/avatar/route.ts) | session, `authenticated` (requireSiteAuthenticatedApiContext) |  |
 | PUT | [`/api/site/account/avatar`](../src/app/api/site/account/avatar/route.ts) | session, `authenticated` (requireSiteAuthenticatedApiContext) |  |
 | DELETE | [`/api/site/account/avatar`](../src/app/api/site/account/avatar/route.ts) | session, `authenticated` (requireSiteAuthenticatedApiContext) |  |
-| GET | [`/api/site/addon-roles`](../src/app/api/site/addon-roles/route.ts) | session, `authenticated` (requireSiteAuthenticatedApiContext) | What the caller may grant, and optionally what one person already holds. |
+| GET | [`/api/site/addon-roles`](../src/app/api/site/addon-roles/route.ts) | session, `authenticated` (requireSiteAuthenticatedApiContext) | Every role of every Add-on enabled here, each marked with whether the caller may grant it, and optionally what one person already holds. |
+| PUT | [`/api/site/addon-roles`](../src/app/api/site/addon-roles/route.ts) | session, `authenticated` (requireSiteAuthenticatedApiContext) | Sets the roles one person holds in one Add-on to exactly the ones named, in one call. |
 | POST | [`/api/site/addon-roles`](../src/app/api/site/addon-roles/route.ts) | session, `authenticated` (requireSiteAuthenticatedApiContext) |  |
 | DELETE | [`/api/site/addon-roles`](../src/app/api/site/addon-roles/route.ts) | session, `authenticated` (requireSiteAuthenticatedApiContext) |  |
 | GET | [`/api/site/admin/locales`](../src/app/api/site/admin/locales/route.ts) | session, `site-admin` (requireSiteAdminOnlyApiContext) |  |
@@ -74,7 +75,7 @@ Site administration, CMS, media and support API. A Site's `/api/site` proxy forw
 | PATCH | [`/api/site/admin/media/storage`](../src/app/api/site/admin/media/storage/route.ts) | session, `developer-tools` (requireSiteDeveloperApiContext) |  |
 | GET | [`/api/site/admin/settings`](../src/app/api/site/admin/settings/route.ts) | session, `site-admin` (requireSiteAdminOnlyApiContext) |  |
 | PATCH | [`/api/site/admin/settings`](../src/app/api/site/admin/settings/route.ts) | session, `site-admin` (requireSiteAdminOnlyApiContext) |  |
-| GET | [`/api/site/admin/users`](../src/app/api/site/admin/users/route.ts) | session, `site-admin` (requireSiteAdminOnlyApiContext) |  |
+| GET | [`/api/site/admin/users`](../src/app/api/site/admin/users/route.ts) | session, `site-admin` (requireSiteAdminOnlyApiContext) | The Site's users, one page, each with the Core roles and the stored Add-on roles they hold; filterable by account type, enabled state, `addonId` and `addonRole`. |
 | POST | [`/api/site/admin/users`](../src/app/api/site/admin/users/route.ts) | session, `site-admin` (requireSiteAdminOnlyApiContext) |  |
 | PUT | [`/api/site/admin/users`](../src/app/api/site/admin/users/route.ts) | session, `site-admin` (requireSiteAdminOnlyApiContext) |  |
 | PATCH | [`/api/site/admin/users`](../src/app/api/site/admin/users/route.ts) | session, `site-admin` (requireSiteAdminOnlyApiContext) |  |

@@ -22,6 +22,31 @@ import { getPool } from "@/lib/db";
  * roles, and the client uses them to decide what to show. Whether the request behind the link is allowed
  * is decided again on the server, which is the only decision that counts.
  */
+/**
+ * The stored grants that count here, by Add-on: those of an Add-on enabled in the installed state and
+ * available on the Site -- the answer dispatch, jobs and event delivery ask for
+ * (`verifyPhisAddonRegistryState`), taken from the snapshot -- naming a role its current manifest declares. Stored, not implied -- the viewer
+ * expands them, user administration shows them as they are.
+ */
+export function selectPhiCountingAddonRoles<G extends { addonId: string; role: string }>(
+  grants: readonly G[],
+  availableProviderIds: ReadonlySet<string>,
+): Map<string, string[]> {
+  const installed = getPhisAddonInstalledManifest();
+  const byAddon = new Map<string, string[]>();
+  for (const grant of grants) {
+    const entry = installed[grant.addonId];
+    if (!entry?.enabled || !availableProviderIds.has(grant.addonId)) {
+      continue;
+    }
+    if (!(entry.manifest.roles ?? []).some((declared) => declared.name === grant.role)) {
+      continue;
+    }
+    byAddon.set(grant.addonId, [...(byAddon.get(grant.addonId) ?? []), grant.role]);
+  }
+  return byAddon;
+}
+
 export async function readPhiViewerAddonRoleClaims(
   siteId: number,
   userId: number,
@@ -33,31 +58,17 @@ export async function readPhiViewerAddonRoleClaims(
   }
 
   const installed = getPhisAddonInstalledManifest();
-  const grantedByAddon = new Map<string, string[]>();
-  for (const grant of grants) {
-    if (!installed[grant.addonId]?.enabled) {
-      continue;
-    }
-    grantedByAddon.set(grant.addonId, [...(grantedByAddon.get(grant.addonId) ?? []), grant.role]);
-  }
   // Granted and implied: a viewer holding `manager` is shown what a `clerk` sees, as the server answers.
   const byAddon = new Map<string, string[]>();
-  for (const [addonId, granted] of grantedByAddon) {
+  for (const [addonId, granted] of selectPhiCountingAddonRoles(grants, availableProviderIds)) {
     const held = expandPhisAddonHeldRoles(installed[addonId]!.manifest.roles ?? [], granted);
     if (held.length > 0) {
       byAddon.set(addonId, held);
     }
   }
 
-  const claims: PhiViewerAddonRoleClaim[] = [];
-  for (const [addonId, roles] of byAddon) {
-    // The same answer dispatch, jobs and event delivery ask for (`verifyPhisAddonRegistryState`), taken
-    // from the snapshot: switched off in the registry, off for this Site, or a build the registry does
-    // not describe, its roles open nothing here either.
-    if (!availableProviderIds.has(addonId)) {
-      continue;
-    }
-    claims.push({ providerId: addonId as PhiViewerAddonRoleClaim["providerId"], roles });
-  }
-  return claims;
+  return [...byAddon].map(([addonId, roles]) => ({
+    providerId: addonId as PhiViewerAddonRoleClaim["providerId"],
+    roles,
+  }));
 }

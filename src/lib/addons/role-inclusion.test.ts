@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { validatePhisAddonManifest } from "./manifest.ts";
-import { expandPhisAddonHeldRoles, findPhisAddonRoleInclusionCycle } from "./role-inclusion.ts";
+import { expandPhisAddonHeldRoles, findPhisAddonRoleInclusionCycle, listPhisAddonRolesImplying } from "./role-inclusion.ts";
 
 /**
  * A role that includes another: holding the upper rung answers yes for the lower ones, followed
@@ -78,5 +78,17 @@ describe("declaring inclusions", () => {
   it("refuses includes that is not a list of names", () => {
     expect(validatePhisAddonManifest(manifest([{ ...auditor, includes: "clerk" }])).issues.join("\n"))
       .toMatch(/includes must be an array of role names/);
+  });
+});
+
+describe("the roles whose holder holds a given one", () => {
+  it("is the role itself and everything that includes it, followed through", () => {
+    expect(listPhisAddonRolesImplying(declared, "clerk")).toEqual(["owner", "manager", "clerk"]);
+    expect(listPhisAddonRolesImplying(declared, "manager")).toEqual(["owner", "manager"]);
+    expect(listPhisAddonRolesImplying(declared, "auditor")).toEqual(["auditor"]);
+  });
+
+  it("is empty for a role nobody declared", () => {
+    expect(listPhisAddonRolesImplying(declared, "nonesuch")).toEqual([]);
   });
 });

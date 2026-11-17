@@ -12,10 +12,16 @@ import {
   updateUserAccountPasswordHash,
   updateUserAccountProfileFields,
 } from "@/db/user-accounts";
+import { readPhiSiteUsersAddonRoles } from "@/db/server-addon-roles.mts";
 import { listAdminUsersForSite, setAdminUserEnabled } from "@/db/user-admin";
 import { createUserPasswordResetToken } from "@/db/user-password-reset-tokens";
 import { getUserProfileByUserId, upsertUserProfile } from "@/db/user-profiles";
 import { getUserSiteMembership, upsertUserSiteMembership } from "@/db/user-site-memberships";
+import { getPhisAddonInstalledManifest } from "@/lib/addons/installed";
+import { readAvailablePhisProviderIds } from "@/lib/addons/capability-snapshot";
+import { listPhisAddonRolesImplying } from "@/lib/addons/role-inclusion";
+import { selectPhiCountingAddonRoles } from "@/lib/addons/viewer-roles";
+import { getPool } from "@/lib/db";
 import { requireSiteAdminOnlyApiContext } from "@/lib/guards/site-admin-api";
 import { PHI_BASE_ROLE_OPTIONS } from "@/lib/constants/phi-base-role-metadata";
 import { PhiUserAccountFlag } from "@/lib/constants/user-account-flags";
@@ -161,6 +167,9 @@ async function sendPasswordResetMail(input: {
   });
 }
 
+/**
+ * The Site's users, one page, each with the Core roles and the stored Add-on roles they hold; filterable by account type, enabled state, `addonId` and `addonRole`.
+ */
 export async function GET(request: NextRequest) {
   const { context, error } = await requireSiteAdminOnlyApiContext(request);
   if (error) {
@@ -222,7 +231,38 @@ export async function GET(request: NextRequest) {
     });
   }
 
+  // An Add-on role filter. A malformed value is the caller's mistake; a well-formed one naming an Add-on
+  // this Site does not run, or a role it does not declare, matches nobody.
+  const addonIdParam = searchParams.get("addonId");
+  const addonRoleParam = searchParams.get("addonRole");
+  const addonIdFilter = addonIdParam === null ? null : addonIdParam.trim();
+  const addonRoleFilter = addonRoleParam === null ? null : addonRoleParam.trim();
+  if (addonIdFilter !== null && (!addonIdFilter || addonIdFilter.length > 255)) {
+    return NextResponse.json({ error: "Invalid addonId." }, { status: 400 });
+  }
+  if (addonRoleFilter !== null && addonIdFilter === null) {
+    return NextResponse.json({ error: "addonRole requires addonId." }, { status: 400 });
+  }
+  if (addonRoleFilter !== null && !/^[a-z][a-z0-9-]{0,63}$/.test(addonRoleFilter)) {
+    return NextResponse.json({ error: "Invalid addonRole." }, { status: 400 });
+  }
+  let addonRoles: { addonId: string; roles: string[] } | undefined;
+  let availableProviderIds: ReadonlySet<string> | null = null;
+  if (addonIdFilter !== null) {
+    availableProviderIds = await readAvailablePhisProviderIds(site.id);
+    const entry = getPhisAddonInstalledManifest()[addonIdFilter];
+    const declared = entry?.enabled && availableProviderIds.has(addonIdFilter) ? (entry.manifest.roles ?? []) : [];
+    // A named role is held stored or through a role that includes it, as `roles:v1` has() answers.
+    addonRoles = {
+      addonId: addonIdFilter,
+      roles: addonRoleFilter === null
+        ? declared.map((role) => role.name)
+        : listPhisAddonRolesImplying(declared, addonRoleFilter),
+    };
+  }
+
   const result = await listAdminUsersForSite(site.id, {
+    addonRoles,
     search: normalize(searchParams.get("search")) || normalize(searchParams.get("q")),
     accountType: parseAccountType(searchParams.get("accountType")),
     enabled: parseEnabledFilter(searchParams.get("enabled")),
@@ -230,6 +270,20 @@ export async function GET(request: NextRequest) {
     sortOrder: normalize(searchParams.get("sortOrder")).toLowerCase() as "ascend" | "descend" | "",
     ...parsePhiPagination(searchParams, 20),
   });
+
+  // The page's stored grants in one read, narrowed to the ones that count on this Site -- the rule the
+  // viewer's `addonRoleClaims` apply -- but not expanded through `includes`: what was granted is shown.
+  const grants = await readPhiSiteUsersAddonRoles(getPool(), {
+    siteId: site.id,
+    userIds: result.rows.map((row) => row.id),
+  });
+  if (grants.size > 0) {
+    availableProviderIds ??= await readAvailablePhisProviderIds(site.id);
+  }
+  const addonRolesOf = (userId: number) => {
+    const counting = selectPhiCountingAddonRoles(grants.get(userId) ?? [], availableProviderIds ?? new Set());
+    return [...counting].flatMap(([addonId, roles]) => roles.map((role) => ({ addonId, role })));
+  };
 
   const rows = result.rows.map((row) => ({
     id: row.id,
@@ -240,6 +294,7 @@ export async function GET(request: NextRequest) {
     userFlagTags: resolveUserAccountFlagTags(row.flags),
     siteFlagTags: buildUserSiteFlagTags(row.siteFlags),
     roleTags: buildRoleTags(row.coreRoleFlags),
+    addonRoles: addonRolesOf(row.id),
     coreRoleFlags: row.coreRoleFlags,
     lastLoginAt: row.lastLoginAt,
     createdAt: row.createdAt,

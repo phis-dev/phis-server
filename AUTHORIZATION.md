@@ -228,6 +228,28 @@ Assignments are stored in `phis.site_addon_user_roles` (`site_id`, `addon_id`, `
 is evaluated against the acting user, and by `phis addon role --grant`/`--revoke` for the operator.
 Add-ons never write this table.
 
+User administration reads and writes them through three calls, all Site-scoped:
+
+- `GET /api/site/addon-roles` answers `{ addons: [{ addonId, title, roles: [{ name, description?,
+  grantableBy, includes?, grantable }] }] }`: every declared role of every Add-on enabled for the Site, and
+  per role whether the caller may grant it (the evaluation that decides the write). `title` is the Add-on id
+  until the manifest carries a display name. With `?userId=N` it adds `userId` and `held` (the stored
+  assignments of that user across Add-ons); that needs at least one grantable role, else 403.
+- `PUT /api/site/addon-roles` with `{ userId, addonId, roles }` sets the stored roles of that user for that
+  Add-on to exactly `roles`. Core takes the difference to what is held, checks the caller's standing for each
+  role to give and each role to take back, and writes all of it or nothing; one refusal answers 403
+  `{ error: "not_permitted", role }`. The authorization revision of the membership moves once. A stored role the
+  manifest no longer declares is left untouched. The answer has the shape of `GET ?userId=`.
+- `GET /api/site/admin/users` (Site Admin) lists per user `addonRoles: [{ addonId, role }]`, the stored
+  assignments, not those implied through `includes`, for Add-ons that are installed, enabled and available
+  on the Site and whose current manifest still declares the role (the rule behind the viewer's
+  `addonRoleClaims`). `?addonId=` keeps users with at least one such stored role of that Add-on;
+  `?addonId=&addonRole=` keeps users who hold the role stored or through `includes` of a stored role. An
+  unknown or unavailable Add-on or an undeclared role gives an empty list; a malformed value 400.
+
+Core does not forbid giving or taking an Add-on role from oneself (the caller's standing is the only
+check); only the Core roles of one's own membership are refused in `PUT /api/site/admin/users`.
+
 Add-on roles are checked in three places, all against the roles the current manifest declares, granted
 or implied through `includes`:
 

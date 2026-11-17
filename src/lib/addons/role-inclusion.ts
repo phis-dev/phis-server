@@ -34,6 +34,20 @@ export function expandPhisAddonHeldRoles(
 }
 
 /**
+ * The declared roles whose holder holds `role`: the role itself and every role that includes it,
+ * followed through. Which stored grants make somebody a holder of `role`, by the same expansion every
+ * `has()` uses.
+ */
+export function listPhisAddonRolesImplying(
+  declared: readonly PhisAddonRoleDescriptor[],
+  role: string,
+): string[] {
+  return declared
+    .map((candidate) => candidate.name)
+    .filter((name) => expandPhisAddonHeldRoles(declared, [name]).includes(role));
+}
+
+/**
  * The first cycle among the inclusions, as the names along it, or null when there is none.
  *
  * Two roles that imply each other are one role under two names; the validator refuses that rather than
