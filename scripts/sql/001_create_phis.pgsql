@@ -1457,9 +1457,6 @@ CREATE INDEX IF NOT EXISTS support_tickets_site_assignee_status_updated_idx
 CREATE INDEX IF NOT EXISTS support_tickets_site_queue_status_updated_idx
   ON phis.support_tickets (site_id, queue_id, status, updated_at DESC, id DESC);
 
-CREATE INDEX IF NOT EXISTS support_tickets_site_requester_email_idx
-  ON phis.support_tickets (site_id, requester_email);
-
 CREATE INDEX IF NOT EXISTS support_tickets_site_created_at_idx
   ON phis.support_tickets (site_id, created_at DESC, id DESC);
 
@@ -1576,13 +1573,12 @@ CREATE TABLE IF NOT EXISTS phis.tr_msg (
 );
 
 CREATE TABLE IF NOT EXISTS phis.tr_lang (
-  id SERIAL PRIMARY KEY,
   msg_id INT NOT NULL REFERENCES phis.tr_msg(id) ON DELETE CASCADE,
   locale VARCHAR(8) NOT NULL,
   translation TEXT NOT NULL,
   source_hash BYTEA NULL,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  CONSTRAINT tr_lang_msg_locale_unique UNIQUE (msg_id, locale)
+  CONSTRAINT tr_lang_pkey PRIMARY KEY (msg_id, locale)
 );
 
 CREATE INDEX IF NOT EXISTS tr_lang_external_source_idx
@@ -1600,13 +1596,12 @@ CREATE TABLE IF NOT EXISTS phis.tr_site_msg (
 );
 
 CREATE TABLE IF NOT EXISTS phis.tr_site_lang (
-  id SERIAL PRIMARY KEY,
   msg_id INT NOT NULL REFERENCES phis.tr_site_msg(id) ON DELETE CASCADE,
   locale VARCHAR(8) NOT NULL,
   translation TEXT NOT NULL,
   source_hash BYTEA NULL,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  CONSTRAINT tr_site_lang_msg_locale_unique UNIQUE (msg_id, locale)
+  CONSTRAINT tr_site_lang_pkey PRIMARY KEY (msg_id, locale)
 );
 
 CREATE INDEX IF NOT EXISTS tr_site_lang_external_source_idx
@@ -1851,9 +1846,6 @@ CREATE TABLE IF NOT EXISTS phis.site_area_scopes (
   CONSTRAINT site_area_scopes_site_area_unique UNIQUE (site_id, area_id)
 );
 
-CREATE INDEX IF NOT EXISTS site_area_scopes_site_area_idx
-  ON phis.site_area_scopes (site_id, area_id);
-
 CREATE TABLE IF NOT EXISTS phis.site_page_scopes (
   id SERIAL PRIMARY KEY,
   site_id SMALLINT NOT NULL REFERENCES phis.sites(id) ON DELETE CASCADE,
@@ -1949,11 +1941,10 @@ CREATE INDEX IF NOT EXISTS site_content_versions_asset_idx
   WHERE asset_id IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS phis.site_content_version_text (
-  id SERIAL PRIMARY KEY,
   version_id INT NOT NULL REFERENCES phis.site_content_versions(id) ON DELETE CASCADE,
   field_name VARCHAR(64) NOT NULL,
   msg_id INT NOT NULL REFERENCES phis.tr_site_msg(id) ON DELETE CASCADE,
-  CONSTRAINT site_content_version_text_version_field_unique UNIQUE (version_id, field_name)
+  CONSTRAINT site_content_version_text_pkey PRIMARY KEY (version_id, field_name)
 );
 
 CREATE TABLE IF NOT EXISTS phis.site_nav_scopes (
@@ -1968,9 +1959,6 @@ CREATE TABLE IF NOT EXISTS phis.site_nav_scopes (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   CONSTRAINT site_nav_scopes_site_key_unique UNIQUE (site_id, key)
 );
-
-CREATE INDEX IF NOT EXISTS site_nav_scopes_site_id_idx
-  ON phis.site_nav_scopes (site_id);
 
 CREATE TABLE IF NOT EXISTS phis.site_nav_revisions (
   id SERIAL PRIMARY KEY,
@@ -2038,9 +2026,6 @@ CREATE TABLE IF NOT EXISTS phis.site_theme_scopes (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   CONSTRAINT site_theme_scopes_site_key_unique UNIQUE (site_id, key)
 );
-
-CREATE INDEX IF NOT EXISTS site_theme_scopes_site_id_idx
-  ON phis.site_theme_scopes (site_id);
 
 CREATE TABLE IF NOT EXISTS phis.site_theme_revisions (
   id SERIAL PRIMARY KEY,
@@ -2237,7 +2222,6 @@ CREATE TABLE IF NOT EXISTS phis.site_search_sets (
 );
 
 CREATE TABLE IF NOT EXISTS phis.site_search_documents (
-  id BIGSERIAL PRIMARY KEY,
   site_id SMALLINT NOT NULL,
   area_id SMALLINT NOT NULL,
   locale VARCHAR(8) NOT NULL,
@@ -2252,7 +2236,7 @@ CREATE TABLE IF NOT EXISTS phis.site_search_documents (
   ) STORED,
   CONSTRAINT site_search_documents_set_fk FOREIGN KEY (site_id, area_id, locale)
     REFERENCES phis.site_search_sets (site_id, area_id, locale) ON DELETE CASCADE,
-  CONSTRAINT site_search_documents_path_unique UNIQUE (site_id, area_id, locale, path)
+  CONSTRAINT site_search_documents_pkey PRIMARY KEY (site_id, area_id, locale, path)
 );
 
 CREATE INDEX IF NOT EXISTS site_search_documents_vector_idx

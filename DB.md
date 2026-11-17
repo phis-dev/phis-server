@@ -1255,11 +1255,10 @@ Contract:
 
 ### `phis.site_content_version_text`
 
-- `id SERIAL PRIMARY KEY`
 - `version_id INT NOT NULL REFERENCES phis.site_content_versions(id) ON DELETE CASCADE`
 - `field_name VARCHAR(64) NOT NULL`
 - `msg_id INT NOT NULL REFERENCES phis.tr_site_msg(id) ON DELETE CASCADE`
-- `UNIQUE (version_id, field_name)`
+- `PRIMARY KEY (version_id, field_name)`
 
 ### `phis.site_nav_scopes`
 
@@ -1975,13 +1974,12 @@ Contract:
 
 ### `phis.tr_lang`
 
-- `id SERIAL PRIMARY KEY`
 - `msg_id INT NOT NULL REFERENCES phis.tr_msg(id) ON DELETE CASCADE`
 - `locale VARCHAR(8) NOT NULL`
 - `translation TEXT NOT NULL`
 - `source_hash BYTEA NULL`
 - `updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
-- `UNIQUE (msg_id, locale)`
+- `PRIMARY KEY (msg_id, locale)`
 - partial index `(locale, source_hash) WHERE source_hash IS NOT NULL`
 
 ### `phis.tr_site_msg`
@@ -1996,13 +1994,12 @@ Contract:
 
 ### `phis.tr_site_lang`
 
-- `id SERIAL PRIMARY KEY`
 - `msg_id INT NOT NULL REFERENCES phis.tr_site_msg(id) ON DELETE CASCADE`
 - `locale VARCHAR(8) NOT NULL`
 - `translation TEXT NOT NULL`
 - `source_hash BYTEA NULL`
 - `updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
-- `UNIQUE (msg_id, locale)`
+- `PRIMARY KEY (msg_id, locale)`
 - partial index `(locale, source_hash) WHERE source_hash IS NOT NULL`
 
 ### `phis.tr_msg_usage` and `phis.tr_site_msg_usage`
@@ -2058,10 +2055,9 @@ Contract:
 
 ### `phis.site_search_documents`
 
-- `id BIGSERIAL PRIMARY KEY`
 - `site_id`, `area_id`, `locale`: the set, `FOREIGN KEY ... REFERENCES phis.site_search_sets ON DELETE
   CASCADE`
-- `path VARCHAR(512) NOT NULL`: the Page's address within its Area; unique per set
+- `path VARCHAR(512) NOT NULL`: the Page's address within its Area; `PRIMARY KEY (site_id, area_id, locale, path)`, so unique per set
 - `title VARCHAR(512)`, `description VARCHAR(2048)`, `body TEXT`, each `NOT NULL DEFAULT ''`
 - `search_vector TSVECTOR GENERATED ALWAYS AS (...) STORED`: `simple` configuration, title weighted `A`,
   description `B`, body `C`; GIN index `site_search_documents_vector_idx`

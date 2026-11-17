@@ -81,8 +81,8 @@ describe("translation change markers through /api/v1/tr and /api/v1/site", () =>
 
   async function storedTranslation(msg: string) {
     const pool = await requirePhiTestDatabase();
-    const { rows } = await pool.query<{ id: number; msg_id: number; translation: string }>(
-      `SELECT lang.id, lang.msg_id, lang.translation
+    const { rows } = await pool.query<{ msg_id: number; translation: string }>(
+      `SELECT lang.msg_id, lang.translation
        FROM phis.tr_site_lang lang
        JOIN phis.tr_site_msg msg ON msg.id = lang.msg_id
        WHERE msg.site_id = $1 AND msg.msg = $2 AND lang.locale = 'de'`,
@@ -145,7 +145,7 @@ describe("translation change markers through /api/v1/tr and /api/v1/site", () =>
     const before = await markers();
 
     const pool = await requirePhiTestDatabase();
-    await pool.query("UPDATE phis.tr_site_lang SET translation = 'Von Hand' WHERE id = $1", [stored!.id]);
+    await pool.query("UPDATE phis.tr_site_lang SET translation = 'Von Hand' WHERE msg_id = $1 AND locale = 'de'", [stored!.msg_id]);
 
     const after = await markers();
     expect(after.site).not.toBe(before.site);
