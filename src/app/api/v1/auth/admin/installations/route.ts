@@ -13,6 +13,7 @@ import {
   findAuthProviderCatalogEntry,
   listSerializedAuthInstallations,
   normalizeAuthInstallationKey,
+  normalizeAuthInstallationSecret,
 } from "@/lib/site-auth/installation-catalog";
 import { applyAuthInstallationPatch } from "@/lib/site-auth/admin-installations";
 import {
@@ -107,8 +108,12 @@ export async function POST(request: NextRequest) {
   let secretReference: string | null = null;
   const clientSecret = normalizeString(body.clientSecret);
   if (clientSecret) {
+    const secret = normalizeAuthInstallationSecret(catalogEntry, clientSecret);
+    if ("error" in secret) {
+      return NextResponse.json({ error: secret.error }, { status: 400 });
+    }
     secretReference = buildSiteAuthSecretReference(context.siteKey, installationKey);
-    await writeSiteAuthSecret(secretReference, clientSecret, context.siteId);
+    await writeSiteAuthSecret(secretReference, secret.secret, context.siteId);
   }
 
   await upsertAuthProviderInstallation({

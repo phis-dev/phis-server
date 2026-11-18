@@ -14,6 +14,11 @@ import {
   readPhiAuthConfigList,
   readStoredPhiAuthConfigList,
 } from "@/lib/site-auth/contracts";
+import {
+  buildAppleClientSecret,
+  isAppleDeveloperId,
+  normalizeAppleSigningKey,
+} from "@/lib/site-auth/apple-client-secret";
 import { hasSiteAuthSecrets, readSiteAuthSecret } from "@/lib/site-auth/secret-store";
 import { normalizeString } from "@/lib/helpers/request";
 
@@ -28,8 +33,14 @@ import { normalizeString } from "@/lib/helpers/request";
  * narrows through its tenant instead, so neither takes one -- and a restriction stored under a name
  * nobody reads is worse than none, because it reads like a closed door that is open.
  *
- * `promptMode` is whether the authorization request carries an OAuth `prompt`. The OIDC providers pass
- * it through; GitHub's authorize endpoint has no such parameter.
+ * `promptMode` is whether the authorization request carries an OAuth `prompt`. Google and Microsoft pass
+ * it through; GitHub's authorize endpoint has no such parameter, and Apple's documents none.
+ *
+ * `signingKeyMode` is whether the stored secret is a key the client secret is signed with rather than
+ * the secret itself. Apple issues no client secret: the installation stores the `.p8` key with its Team
+ * ID and Key ID, and every token request signs a fresh one (`apple-client-secret.ts`). The same answer
+ * decides that Apple's callback arrives as a form post (`response_mode=form_post`), which Apple insists
+ * on as soon as the email scope is asked for.
  */
 export const PHI_AUTH_PROVIDER_CATALOG = [
   {
@@ -39,6 +50,7 @@ export const PHI_AUTH_PROVIDER_CATALOG = [
     testCapability: "discovery",
     restrictionKey: "hostedDomains",
     promptMode: true,
+    signingKeyMode: false,
   },
   {
     providerKey: "apple",
@@ -46,7 +58,8 @@ export const PHI_AUTH_PROVIDER_CATALOG = [
     tenantMode: false,
     testCapability: "discovery",
     restrictionKey: null,
-    promptMode: true,
+    promptMode: false,
+    signingKeyMode: true,
   },
   {
     providerKey: "github",
@@ -55,6 +68,7 @@ export const PHI_AUTH_PROVIDER_CATALOG = [
     testCapability: "none",
     restrictionKey: "allowedOrganizations",
     promptMode: false,
+    signingKeyMode: false,
   },
   {
     providerKey: "microsoft",
@@ -63,6 +77,7 @@ export const PHI_AUTH_PROVIDER_CATALOG = [
     testCapability: "roundtrip",
     restrictionKey: null,
     promptMode: true,
+    signingKeyMode: false,
   },
 ] as const;
 
@@ -181,7 +196,79 @@ export function buildAuthInstallationConfig(
     config.trustedEmailLink = body.trustedEmailLink;
   }
 
+  /*
+   * What signs Apple's client secret beside the key: the developer team and the key's own id, both as
+   * the Developer account shows them. Required for the login to work, but not to save: an operator
+   * may enter the key first and the ids afterwards, and the Test says what is still missing.
+   */
+  if (body.teamId !== undefined) {
+    const teamId = normalizeString(body.teamId).toUpperCase();
+    if (!catalogEntry.signingKeyMode) {
+      if (teamId) {
+        return { error: `${catalogEntry.label} installations take no Team ID.` };
+      }
+    } else if (!teamId) {
+      delete config.teamId;
+    } else if (!isAppleDeveloperId(teamId)) {
+      return { error: "teamId must be the ten letters and digits of the Apple Team ID." };
+    } else {
+      config.teamId = teamId;
+    }
+  }
+  if (body.keyId !== undefined) {
+    const keyId = normalizeString(body.keyId).toUpperCase();
+    if (!catalogEntry.signingKeyMode) {
+      if (keyId) {
+        return { error: `${catalogEntry.label} installations take no Key ID.` };
+      }
+    } else if (!keyId) {
+      delete config.keyId;
+    } else if (!isAppleDeveloperId(keyId)) {
+      return { error: "keyId must be the ten letters and digits of the Apple Key ID." };
+    } else {
+      config.keyId = keyId;
+    }
+  }
+
   return { config };
+}
+
+/**
+ * The secret as it is stored, out of what the Form sent. A provider with a client secret stores it as
+ * typed. Apple's is the `.p8` signing key, which a password field hands over without its line breaks,
+ * so it is read and stored as a proper PEM -- and a paste that is no such key is refused here rather
+ * than at the first login.
+ */
+export function normalizeAuthInstallationSecret(
+  catalogEntry: PhiAuthProviderCatalogEntry,
+  value: string,
+): { secret: string } | { error: string } {
+  if (!catalogEntry.signingKeyMode) {
+    return { secret: value };
+  }
+  const key = normalizeAppleSigningKey(value);
+  return key
+    ? { secret: key }
+    : { error: "The Apple key must be the contents of the .p8 file from Keys in the Apple Developer account." };
+}
+
+/**
+ * The client secret a token request sends: the stored secret itself, or for Apple one signed with the
+ * stored key just now.
+ */
+export function resolveAuthInstallationClientSecret(
+  installation: Pick<AuthProviderInstallation, "providerKey" | "clientId" | "config">,
+  storedSecret: string,
+) {
+  if (!findAuthProviderCatalogEntry(installation.providerKey)?.signingKeyMode) {
+    return storedSecret;
+  }
+  return buildAppleClientSecret({
+    teamId: typeof installation.config.teamId === "string" ? installation.config.teamId : "",
+    keyId: typeof installation.config.keyId === "string" ? installation.config.keyId : "",
+    clientId: installation.clientId,
+    signingKey: storedSecret,
+  });
 }
 
 /**
@@ -220,6 +307,8 @@ export function serializeAuthInstallation(
     clientId: installation.clientId,
     enabled: installation.enabled,
     tenant: typeof installation.config.tenant === "string" ? installation.config.tenant : null,
+    teamId: typeof installation.config.teamId === "string" ? installation.config.teamId : null,
+    keyId: typeof installation.config.keyId === "string" ? installation.config.keyId : null,
     /*
      * The config, in the shape the Admin Form edits it in: one field per setting, a list as the words
      * an operator typed. Serialized for every provider, `null` where the provider has no such setting,
@@ -323,9 +412,18 @@ export async function testAuthInstallation(
   if (!catalogEntry || catalogEntry.testCapability === "none") {
     return { status: "not-testable", detail: null };
   }
-  const clientSecret = await readSiteAuthSecret(installation.secretReference);
-  if (!clientSecret) {
+  const storedSecret = await readSiteAuthSecret(installation.secretReference);
+  if (!storedSecret) {
     return { status: "failed", detail: "Client secret is not configured." };
+  }
+  let clientSecret: string;
+  try {
+    clientSecret = resolveAuthInstallationClientSecret(installation, storedSecret);
+  } catch {
+    return {
+      status: "failed",
+      detail: "The client secret cannot be signed: Team ID, Key ID and the .p8 key are all needed.",
+    };
   }
 
   try {

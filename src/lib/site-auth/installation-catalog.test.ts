@@ -10,9 +10,14 @@ vi.mock("@/lib/site-auth/secret-store", () => ({
   readSiteAuthSecret: vi.fn(),
 }));
 
-const { buildAuthInstallationConfig, findAuthProviderCatalogEntry } =
-  await import("./installation-catalog");
+const {
+  buildAuthInstallationConfig,
+  findAuthProviderCatalogEntry,
+  normalizeAuthInstallationSecret,
+  resolveAuthInstallationClientSecret,
+} = await import("./installation-catalog");
 
+const apple = findAuthProviderCatalogEntry("apple")!;
 const github = findAuthProviderCatalogEntry("github")!;
 const google = findAuthProviderCatalogEntry("google")!;
 const microsoft = findAuthProviderCatalogEntry("microsoft")!;
@@ -100,5 +105,66 @@ describe("the config a provider installation is given", () => {
   it("leaves a key the body did not mention where it was", () => {
     const base = { scopes: ["read:user"], allowedOrganizations: ["example-org"], trustedEmailLink: true };
     expect(config(buildAuthInstallationConfig(github, base, { }))).toEqual(base);
+  });
+});
+
+/*
+ * Apple issues no client secret. The installation keeps the `.p8` signing key as its secret and the
+ * Team ID and Key ID in its config, and a client secret is signed from the three for each token request.
+ */
+describe("an Apple installation", () => {
+  it("stores the Team ID and Key ID it is signed with", () => {
+    expect(config(buildAuthInstallationConfig(apple, {}, { teamId: "ab12cd34ef", keyId: "ZY98XW76VU" })))
+      .toEqual({ teamId: "AB12CD34EF", keyId: "ZY98XW76VU" });
+  });
+
+  it("refuses an id that is not Apple's ten letters and digits", () => {
+    expect(buildAuthInstallationConfig(apple, {}, { teamId: "AB12" }))
+      .toEqual({ error: "teamId must be the ten letters and digits of the Apple Team ID." });
+    expect(buildAuthInstallationConfig(apple, {}, { keyId: "ZY98XW76VU-1" }))
+      .toEqual({ error: "keyId must be the ten letters and digits of the Apple Key ID." });
+  });
+
+  it("is the only provider that takes them", () => {
+    expect(buildAuthInstallationConfig(google, {}, { teamId: "AB12CD34EF" }))
+      .toEqual({ error: "Google installations take no Team ID." });
+    expect(buildAuthInstallationConfig(microsoft, {}, { keyId: "ZY98XW76VU" }))
+      .toEqual({ error: "Microsoft installations take no Key ID." });
+    expect(config(buildAuthInstallationConfig(github, {}, { teamId: "", keyId: "" }))).toEqual({});
+  });
+
+  it("takes no prompt, which Apple's authorize endpoint does not know", () => {
+    expect(buildAuthInstallationConfig(apple, {}, { prompt: "consent" }))
+      .toEqual({ error: "Apple installations take no prompt." });
+  });
+
+  it("stores the key as a PEM even when the password field dropped its line breaks", async () => {
+    const { generateKeyPairSync } = await import("node:crypto");
+    const { privateKey } = generateKeyPairSync("ec", { namedCurve: "prime256v1" });
+    const pem = privateKey.export({ format: "pem", type: "pkcs8" }).toString();
+    const pasted = pem.replace(/\n/g, "");
+    const stored = normalizeAuthInstallationSecret(apple, pasted);
+    expect(stored).toEqual({ secret: pem });
+  });
+
+  it("refuses a paste that is no signing key", () => {
+    expect(normalizeAuthInstallationSecret(apple, "a-client-secret"))
+      .toEqual({ error: "The Apple key must be the contents of the .p8 file from Keys in the Apple Developer account." });
+    // Every other provider stores the secret as typed.
+    expect(normalizeAuthInstallationSecret(google, "a-client-secret")).toEqual({ secret: "a-client-secret" });
+  });
+
+  it("signs a client secret only with both ids", async () => {
+    const { generateKeyPairSync } = await import("node:crypto");
+    const { privateKey } = generateKeyPairSync("ec", { namedCurve: "prime256v1" });
+    const pem = privateKey.export({ format: "pem", type: "pkcs8" }).toString();
+    const installation = { providerKey: "apple", clientId: "com.example.web", config: { teamId: "AB12CD34EF" } };
+    expect(() => resolveAuthInstallationClientSecret(installation, pem)).toThrow("AUTH_PROVIDER_SECRET_INVALID");
+    const secret = resolveAuthInstallationClientSecret(
+      { ...installation, config: { teamId: "AB12CD34EF", keyId: "ZY98XW76VU" } },
+      pem,
+    );
+    expect(secret.split(".")).toHaveLength(3);
+    expect(resolveAuthInstallationClientSecret({ ...installation, providerKey: "google" }, "kept")).toBe("kept");
   });
 });

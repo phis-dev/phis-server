@@ -72,7 +72,10 @@ vi.mock("@/lib/auth", () => ({
 
 import { GET as getManifest } from "./manifest/route";
 import { POST as passwordLogin } from "./password/login/route";
-import { GET as providerCallback } from "./providers/[provider]/callback/route";
+import {
+  GET as providerCallback,
+  POST as providerFormPostCallback,
+} from "./providers/[provider]/callback/route";
 import { POST as confirmProviderLink } from "./providers/link/confirm/route";
 import { POST as providerStart } from "./providers/[provider]/start/route";
 
@@ -162,6 +165,46 @@ describe("canonical Auth endpoints", () => {
     });
     // The state travels in a cookie as well: the callback answers only the browser that started here.
     expect(mocks.setAuthFlowCookie).toHaveBeenCalledWith(expect.anything(), "opaque", expiresAt);
+  });
+
+  it("turns Apple's form-post callback into the GET that checks the browser", async () => {
+    // Apple posts from its own site, so the SameSite=Lax flow cookie is not on this request at all.
+    const request = new NextRequest(
+      "https://server.test/api/v1/auth/providers/apple/callback?site=example",
+      {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          code: "code",
+          state: "state",
+          id_token: "not-carried",
+          user: JSON.stringify({ name: { firstName: "Ada" } }),
+        }).toString(),
+      },
+    );
+    const response = await providerFormPostCallback(request, {
+      params: Promise.resolve({ provider: "apple" }),
+    });
+
+    expect(response.status).toBe(303);
+    expect(response.headers.get("location")).toBe("/api/auth/providers/apple/callback?code=code&state=state");
+    expect(mocks.complete).not.toHaveBeenCalled();
+  });
+
+  it("answers a form post only for a provider that calls back with one", async () => {
+    const request = new NextRequest(
+      "https://server.test/api/v1/auth/providers/google/callback?site=example",
+      {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        body: "code=code&state=state",
+      },
+    );
+    const response = await providerFormPostCallback(request, {
+      params: Promise.resolve({ provider: "google" }),
+    });
+
+    expect(response.status).toBe(405);
   });
 
   it("refuses a provider callback from a browser that did not start the flow", async () => {

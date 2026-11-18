@@ -22,6 +22,7 @@ import { resolveUserThemeModeName } from "@/lib/user-flags";
 import { guardApiV1 } from "@/lib/api-v1-guard";
 import { logRuntimeEvent } from "@/lib/log";
 import { normalizeProviderKey } from "@/lib/site-auth/contracts";
+import { findAuthProviderCatalogEntry } from "@/lib/site-auth/installation-catalog";
 import { PHI_AUTH_SESSION_STATES } from "@/lib/site-auth/contracts";
 import { beginSiteAuthenticationSession } from "@/lib/site-auth/assurance";
 import { resolveExternalLogin } from "@/lib/site-auth/external-login";
@@ -40,6 +41,50 @@ function failureRedirect(publicUrl: string, code: string) {
   const response = NextResponse.redirect(url);
   clearAuthFlowCookie(response);
   return response;
+}
+
+/** What a form-post callback carries on to the GET below: the answer, never the ID token or the name. */
+const FORM_POST_CALLBACK_PARAMETERS = ["code", "state", "error"] as const;
+
+/**
+ * Apple's callback, which arrives as a form post (`response_mode=form_post`) from Apple's own page.
+ *
+ * It is not answered here but turned into the GET every other provider arrives with. The flow cookie
+ * that binds the state to this browser is SameSite=Lax, and a browser leaves it off a POST from another
+ * site -- so this request cannot tell who is standing here, and nothing is redeemed on it. The browser
+ * follows the 303 as a top-level GET, which carries the cookie, and the GET checks it exactly as for
+ * Google. The redirect is relative: the browser posted to the registered callback URL, and its own
+ * origin is the one the transaction was started for.
+ */
+export async function POST(request: NextRequest, context: Context) {
+  const guardError = await guardApiV1(request, { requireInternalToken: true });
+  if (guardError) {
+    return guardError;
+  }
+  const methodKey = normalizeProviderKey((await context.params).provider);
+  if (!methodKey || !findAuthProviderCatalogEntry(methodKey)?.signingKeyMode) {
+    return NextResponse.json({ error: "Method not allowed." }, { status: 405 });
+  }
+  let form: FormData;
+  try {
+    form = await request.formData();
+  } catch {
+    return NextResponse.json({ error: "Invalid callback form." }, { status: 400 });
+  }
+  const query = new URLSearchParams();
+  for (const key of FORM_POST_CALLBACK_PARAMETERS) {
+    const value = form.get(key);
+    if (typeof value === "string" && value) {
+      query.set(key, value);
+    }
+  }
+  return new NextResponse(null, {
+    status: 303,
+    headers: {
+      location: `/api/auth/providers/${encodeURIComponent(methodKey)}/callback?${query.toString()}`,
+      "cache-control": "no-store",
+    },
+  });
 }
 
 export async function GET(request: NextRequest, context: Context) {

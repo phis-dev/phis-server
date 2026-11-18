@@ -170,14 +170,29 @@ Microsoft name and an explicit `common`, `organizations`, `consumers`, or concre
 An installation's provider settings are written in one place, `buildAuthInstallationConfig`
 (`src/lib/site-auth/installation-catalog.ts`), which both the create and the update route go through
 and which the Admin Form reaches through those routes. The settings are the requested `scopes`, the
-login `restrictions`, the OAuth `prompt`, the Microsoft `tenant`, and `trustedEmailLink`, the
-per-installation half of verified-email auto-linking. A restriction is stored under the name its
+login `restrictions`, the OAuth `prompt` (Google and Microsoft), the Microsoft `tenant`, Apple's
+`teamId` and `keyId`, and `trustedEmailLink`, the per-installation half of verified-email auto-linking. A restriction is stored under the name its
 provider is narrowed by, declared as `restrictionKey` in the provider catalog: Google is narrowed by
 hosted domain against the `hd` claim, GitHub by active membership of an organization. Apple and
 Microsoft declare none, and a setting a provider has no use for is refused rather than stored. Empty
 clears a setting, and the provider flow then asks for its own default scope -- `read:user user:email`
-at GitHub, `openid email profile` at an OIDC provider. A GitHub organization restriction also needs
-`read:org` among the scopes, because the membership is read with the login's own token.
+at GitHub, `openid email` at Apple, `openid email profile` at the other OIDC providers. A GitHub
+organization restriction also needs `read:org` among the scopes, because the membership is read with the
+login's own token.
+
+Apple issues no client secret. An Apple installation stores the `.p8` signing key from the Apple
+Developer account as its secret, normalized to a PKCS #8 PEM on write (a password field drops the line
+breaks, and a paste that is no P-256 key is refused), and its Team ID and Key ID as settings. Every
+token request signs a client secret from the three: an ES256 JWT with the Key ID as `kid`, the Team ID
+as issuer, the Services ID (the installation's client id) as subject, `https://appleid.apple.com` as
+audience, valid five minutes (`src/lib/site-auth/apple-client-secret.ts`). The provider catalog marks
+this as `signingKeyMode`, and the Test reports a key or id that cannot sign.
+
+Apple returns a login that asks for the email scope only as a form post (`response_mode=form_post`) from
+its own page. The flow cookie is SameSite=Lax and is not sent on that cross-site POST, so
+`POST providers/apple/callback` redeems nothing: it answers `303` to the same callback path with `code`,
+`state` and `error` in the query, and the browser's top-level GET carries the cookie and is checked like
+every other callback. The ID token and the name Apple posts on a first login are not carried on.
 `scripts/validate-auth-installation-config-keys.mjs` holds both halves of that: every setting the
 provider flow reads is written there, and nothing is written that nothing reads.
 
@@ -359,7 +374,8 @@ The `/api/v1/auth/*` operations are:
 
 - `GET manifest`, `GET me`, `GET csrf`;
 - `POST password/login`, `POST password/reset/request`, `POST password/reset/confirm`;
-- `POST providers/:provider/start`, `GET providers/:provider/callback`, `POST providers/link/confirm`;
+- `POST providers/:provider/start`, `GET providers/:provider/callback`, `POST providers/:provider/callback`
+  (form-post providers only, answered with a `303` to the GET), `POST providers/link/confirm`;
 - `GET workflow`, `POST workflow/verify`, `POST workflow/totp/enroll`, `POST workflow/totp/confirm`;
 - `POST logout`;
 - `GET account/security`, `DELETE account/factors/:factorId`, `DELETE account/sessions/:sessionId`;

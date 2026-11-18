@@ -15,6 +15,7 @@ import {
   deriveAuthInstallationIssuer,
   findAuthProviderCatalogEntry,
   listSerializedAuthInstallations,
+  normalizeAuthInstallationSecret,
   siteWouldRetainPrimaryLogin,
 } from "@/lib/site-auth/installation-catalog";
 import type { AuthAdminSectionContext } from "@/lib/site-auth/admin-sections";
@@ -113,10 +114,17 @@ export async function applyAuthInstallationPatch(
 
   let secretReference = existing.secretReference;
   const clientSecret = normalizeString(body.clientSecret);
-  const configChanged = issuer !== existing.issuer || clientId !== existing.clientId;
+  // The signing ids are credentials too: a changed Team ID or Key ID is a different client secret.
+  const configChanged = issuer !== existing.issuer ||
+    clientId !== existing.clientId ||
+    ["teamId", "keyId"].some((key) => config[key] !== existing.config[key]);
   if (clientSecret) {
+    const secret = normalizeAuthInstallationSecret(catalogEntry, clientSecret);
+    if ("error" in secret) {
+      return NextResponse.json({ error: secret.error }, { status: 400 });
+    }
     secretReference = buildSiteAuthSecretReference(context.siteKey, installationKey);
-    await writeSiteAuthSecret(secretReference, clientSecret, context.siteId);
+    await writeSiteAuthSecret(secretReference, secret.secret, context.siteId);
   }
 
   await upsertAuthProviderInstallation({

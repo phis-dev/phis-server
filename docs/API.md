@@ -256,6 +256,7 @@ Versioned API a Site calls server-to-server with its token (`x-phis-token`), and
 | PATCH | [`/api/v1/auth/profile/newsletter`](../src/app/api/v1/auth/profile/newsletter/route.ts) | internal token |  |
 | PATCH | [`/api/v1/auth/profile/password`](../src/app/api/v1/auth/profile/password/route.ts) | internal token |  |
 | PATCH | [`/api/v1/auth/profile/theme`](../src/app/api/v1/auth/profile/theme/route.ts) | internal token |  |
+| POST | [`/api/v1/auth/providers/{provider}/callback`](../src/app/api/v1/auth/providers/[provider]/callback/route.ts) | internal token | Apple's callback, which arrives as a form post (`response_mode=form_post`) from Apple's own page. |
 | GET | [`/api/v1/auth/providers/{provider}/callback`](../src/app/api/v1/auth/providers/[provider]/callback/route.ts) | internal token |  |
 | POST | [`/api/v1/auth/providers/{provider}/start`](../src/app/api/v1/auth/providers/[provider]/start/route.ts) | CSRF token; internal token |  |
 | POST | [`/api/v1/auth/providers/link/confirm`](../src/app/api/v1/auth/providers/link/confirm/route.ts) | CSRF token; internal token |  |

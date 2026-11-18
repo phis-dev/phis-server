@@ -20,6 +20,10 @@ import {
   normalizeAuthNextPath,
   readStoredPhiAuthConfigList,
 } from "@/lib/site-auth/contracts";
+import {
+  findAuthProviderCatalogEntry,
+  resolveAuthInstallationClientSecret,
+} from "@/lib/site-auth/installation-catalog";
 import { readSiteAuthSecret } from "@/lib/site-auth/secret-store";
 import {
   decryptAuthTransactionPayload,
@@ -104,7 +108,17 @@ function validateMicrosoftClaims(
   return tenant === "common";
 }
 
-async function buildOidcConfiguration(installation: AuthProviderInstallation, clientSecret: string) {
+/*
+ * What a login asks for when the installation names no scopes. Apple knows `name` and `email` beside
+ * `openid` and no `profile`; its name arrives only once, in the first callback's form body, so it is
+ * not asked for.
+ */
+function defaultOidcScope(methodKey: string) {
+  return methodKey === "apple" ? "openid email" : "openid email profile";
+}
+
+async function buildOidcConfiguration(installation: AuthProviderInstallation, storedSecret: string) {
+  const clientSecret = resolveAuthInstallationClientSecret(installation, storedSecret);
   return oidc.discovery(
     new URL(installation.issuer),
     installation.clientId,
@@ -174,8 +188,10 @@ export async function startProviderAuthentication(input: {
     return { redirectUrl: url.toString(), nextPath, state, expiresAt };
   }
 
+  const catalogEntry = findAuthProviderCatalogEntry(installation.providerKey);
   const config = await buildOidcConfiguration(installation, clientSecret);
-  const scope = readStoredPhiAuthConfigList(installation.config, "scopes").join(" ") || "openid email profile";
+  const scope = readStoredPhiAuthConfigList(installation.config, "scopes").join(" ") ||
+    defaultOidcScope(input.methodKey);
   const authorizationUrl = oidc.buildAuthorizationUrl(config, {
     redirect_uri: callbackUrl,
     scope,
@@ -183,7 +199,9 @@ export async function startProviderAuthentication(input: {
     nonce,
     code_challenge: pkceChallenge,
     code_challenge_method: "S256",
-    ...(typeof installation.config.prompt === "string"
+    // Apple answers a login that asks for the address only by posting a form back to the callback.
+    ...(catalogEntry?.signingKeyMode ? { response_mode: "form_post" } : {}),
+    ...(catalogEntry?.promptMode && typeof installation.config.prompt === "string"
       ? { prompt: installation.config.prompt }
       : {}),
   });

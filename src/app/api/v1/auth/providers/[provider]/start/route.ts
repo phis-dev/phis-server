@@ -56,7 +56,8 @@ export async function POST(request: NextRequest, context: Context) {
     const code = error instanceof Error ? error.message : "AUTH_PROVIDER_START_FAILED";
     const unavailable = code === "AUTH_METHOD_DISABLED" ||
       code === "AUTH_PROVIDER_UNAVAILABLE" ||
-      code === "AUTH_PROVIDER_SECRET_MISSING";
+      code === "AUTH_PROVIDER_SECRET_MISSING" ||
+      code === "AUTH_PROVIDER_SECRET_INVALID";
     return NextResponse.json(
       { error: unavailable ? "Authentication provider unavailable." : "Authentication could not be started." },
       { status: unavailable ? 404 : 502 },
