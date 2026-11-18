@@ -21,6 +21,9 @@ design is built, its settled parts move into the owning contract and leave this 
 - [GROUPS_AND_STORAGE_PLANNED.md](./GROUPS_AND_STORAGE_PLANNED.md) -- custody and audience, Asset transfer
   between Spaces, audience validation at publish, signed delivery URLs, the Storage migration job, and
   a ceiling that knows which path an object takes.
+- [IDENTITY_PROVIDERS.md](./IDENTITY_PROVIDERS.md) -- further login providers from Add-ons through the
+  service kind `@phis/server/service/identity-provider`, with Core keeping transaction, issuer namespace
+  and sessions.
 - [NEWS.md](./NEWS.md) -- News as a Core content type whose read path is built and whose write path is
   not: who may draft and publish one, the first-party Module that contributes only the address and the
   page, and why scheduling and expiry need no scheduler.
