@@ -10,6 +10,7 @@ import {
   createPhiTestUser,
   dropPhiTestSites,
   requirePhiTestDatabase,
+  setPhiTestMediaConfig,
   type PhiTestSite,
 } from "../../test/pg/harness";
 import {
@@ -23,6 +24,7 @@ import {
   updateSupportQueue,
   updateSupportTicketType,
 } from "./support";
+import { PhisThreadAttachmentError, getThreadDetail } from "./threads";
 
 const configured = process.env.PHIS_PG_TEST === "1";
 
@@ -49,7 +51,30 @@ describe.skipIf(!configured)("support requests", () => {
     );
     groupId = await createPhiTestGroup(site, "pgtest-support-request");
     requester = await createPhiTestUser(site);
+    await setPhiTestMediaConfig(site, {});
   });
+
+  /** A file in this user's own User Space, which is where a requester's attachment has to come from. */
+  async function uploadInto(userId: number, name: string) {
+    const pool = await requirePhiTestDatabase();
+    await pool.query(
+      `INSERT INTO phis.media_spaces (site_id, kind, user_id, default_storage_profile_id)
+       VALUES ($1, 2, $2, $3)
+       ON CONFLICT DO NOTHING`,
+      [site.id, userId, site.storageProfileId],
+    );
+    const { rows } = await pool.query<{ id: number }>(
+      `INSERT INTO phis.media_assets
+         (site_id, space_id, storage_profile_id, storage_key, original_name, content_type,
+          bytes, lifecycle_status, delivery_policy, owner_user_id, created_by_user_id)
+       SELECT $1, space.id, space.default_storage_profile_id, $3, $4, 'text/plain', 12, 2, 1, $2, $2
+       FROM phis.media_spaces space
+       WHERE space.site_id = $1 AND space.kind = 2 AND space.user_id = $2
+       RETURNING id`,
+      [site.id, userId, `k/${name}`, name],
+    );
+    return rows[0]!.id;
+  }
 
   afterAll(async () => {
     await dropPhiTestSites();
@@ -164,5 +189,50 @@ describe.skipIf(!configured)("support requests", () => {
     await expect(updateSupportQueue({
       siteId: site.id, queueId: rows[0]!.id, retired: true,
     })).rejects.toThrow(/entry queue cannot be retired/);
+  });
+  it("hangs what the requester attaches on the message that opens the request", async () => {
+    const type = await getRequestableSupportTicketType(site.id, "bug");
+    const log = await uploadInto(requester, "export.log");
+    const created = await createSupportTicket({
+      siteId: site.id,
+      typeId: type!.id,
+      subject: "The export fails with a log",
+      message: "The log is attached.",
+      channel: SUPPORT_TICKET_CHANNEL_PORTAL,
+      requesterUserId: requester,
+      createdByUserId: requester,
+      requesterExternalConsent: true,
+      enforceRequesterAllowance: true,
+      assetIds: [log],
+    });
+
+    const detail = await getThreadDetail(site.id, { kind: "user", userId: requester }, created!.ticket.threadId);
+    expect(detail!.messages[0]!.assets.map((asset) => asset.assetId)).toEqual([log]);
+  });
+
+  it("opens nothing when a file is not the requester's own", async () => {
+    const type = await getRequestableSupportTicketType(site.id, "bug");
+    const somebodyElse = await createPhiTestUser(site);
+    const theirs = await uploadInto(somebodyElse, "theirs.log");
+    await expect(createSupportTicket({
+      siteId: site.id,
+      typeId: type!.id,
+      subject: "Borrowed evidence",
+      message: "Not mine to attach.",
+      channel: SUPPORT_TICKET_CHANNEL_PORTAL,
+      requesterUserId: requester,
+      createdByUserId: requester,
+      requesterExternalConsent: true,
+      enforceRequesterAllowance: true,
+      assetIds: [theirs],
+    })).rejects.toThrow(PhisThreadAttachmentError);
+
+    // The refusal is the transaction's: no ticket, and no thread behind one.
+    const pool = await requirePhiTestDatabase();
+    const { rows } = await pool.query<{ count: string }>(
+      `SELECT count(*)::text AS count FROM phis.support_tickets WHERE site_id = $1 AND subject = 'Borrowed evidence'`,
+      [site.id],
+    );
+    expect(rows[0]!.count).toBe("0");
   });
 });

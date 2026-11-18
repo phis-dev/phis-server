@@ -7,9 +7,10 @@ import {
   hasSupportEntryQueue,
 } from "@/db/support";
 import { SupportAllowanceExhaustedError } from "@/db/support-allowance";
+import { PhisThreadError } from "@/db/threads";
 import { requireSiteAuthenticatedApiContext } from "@/lib/guards/site-admin-api";
 import { logRuntimeEvent } from "@/lib/log";
-import { normalizeString, readRequestBody } from "@/lib/helpers/request";
+import { normalizePositiveIdArray, normalizeString, readRequestBody } from "@/lib/helpers/request";
 
 export const dynamic = "force-dynamic";
 
@@ -19,7 +20,7 @@ export const dynamic = "force-dynamic";
  * Not `POST /api/site/support/tickets` with a softer guard. That route is a Supporter opening a ticket
  * on somebody's behalf and takes the queue, the priority, the assignee and the severity -- answers about
  * how the work will be run. Letting the person asking write them would let them jump their own ticket,
- * so this route takes a subject, a first message, a type, and nothing else.
+ * so this route takes a subject, a first message, a type, and what the person attaches to it.
  *
  * It names no queue either. `PhisSupportQueueFlag.Entry` has already decided that, and a Site that has
  * not marked one refuses the ticket rather than dropping it wherever the first row happens to be -- the
@@ -114,8 +115,16 @@ export async function POST(request: NextRequest) {
        * neither can be stopped by it. See `src/db/support-allowance.ts`.
        */
       enforceRequesterAllowance: true,
+      /*
+       * What they attach, from their own User Space and nowhere else: the thread write refuses anybody
+       * else's file, and refusing it rolls back the ticket and the allowance it would have spent.
+       */
+      assetIds: normalizePositiveIdArray(body.assetIds),
     });
   } catch (cause) {
+    if (cause instanceof PhisThreadError) {
+      return NextResponse.json({ error: cause.message }, { status: 400 });
+    }
     if (cause instanceof SupportAllowanceExhaustedError) {
       /*
        * 429 and the numbers, because this is the one refusal the person can act on.

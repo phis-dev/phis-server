@@ -1,14 +1,15 @@
 # Support: Planned Design
 
-**Status: the way in exists; what a requester may bring with it does not.** `support_tickets`,
+**Status: the way in exists, and what a requester brings with it; custody transfer does not.** `support_tickets`,
 `support_ticket_types`, `support_queues`, `support_ticket_tasks` and their events are in the schema; the
 routes under `/api/site/support` open, read, assign and work tickets; `@phis/support` reads the Core
 threads of [THREADS.md](./THREADS.md). The declared seed of section 4 is built: a Site that publishes an
 Area running `@phis/support` now gets its group, its entry queue and one ticket type; section 4's routes
 administer both from there; and section 2's requester route and type listing are the way in. Section 5's
 allowance is built too: a Site can say how many requests one person gets per period, and `support:v1`
-lets another Add-on hand somebody more. What is described here and is **not** built is attachments on a
-submission and the custody transfer that follows one.
+lets another Add-on hand somebody more. Attachments on a submission are built: both opening routes take
+`assetIds` from the opener's own User Space and hang them on the first message. What is described here
+and is **not** built is the custody transfer that follows one.
 
 This document is Support's half. The conversation is not in it: a ticket's messages are a Core thread,
 and who reads them, what an attachment is, and how it is delivered are settled in
@@ -267,20 +268,26 @@ they have one left and then turned away.
    requestable flag in the contract.~~ Built, apart from a surface in `@phis/support` to drive it.
 2. ~~The types listing and the requester route, with the `External` notice.~~ Built.
 3. ~~The allowance, and the three calls on `support:v1` that let somebody else hand over more.~~ Built.
-4. Attachments on a submission. [THREADS.md](./THREADS.md) section 5 is built, so nothing stands in
-   front of this any more: what it needs is the requester route taking a file and the User Space of
-   section 3 to take it into.
+4. ~~Attachments on a submission.~~ Built. `POST /api/site/support/request` and
+   `POST /api/site/support/tickets` take `assetIds`, the opener's own uploads, and hang them on the
+   message that opens the thread. A file that is not the opener's refuses the whole opening, so a
+   refused attachment never spends an allowance. `@phis/support`'s request Form and its Supporter Form
+   offer the upload field with the kinds of section 3.
 5. Custody transfer on acceptance into a queue.
 
 Step 1 was first because both of the others fail without it, and its seeded half is what turns a Site
 with the Module switched on into a Site that can answer anybody at all. Step 3 could come before the
 attachments because it is about who may ask rather than about what they may bring.
 
-What remains is steps 4 and 5, and they no longer wait on the same thing. Step 4 waited on
-[THREADS.md](./THREADS.md) section 5 and that is built -- a message carries files, the delivery route
-exists, and the composer offers one -- so step 4 is work nobody is blocking. Step 5 waits on
+What remains is step 5. It waits on
 [GROUPS_AND_STORAGE_PLANNED.md](./GROUPS_AND_STORAGE_PLANNED.md) section 2, which is a mechanism Support
-is the first caller of rather than something Support can build for itself.
+is the first caller of rather than something Support can build for itself. Until then an attachment
+stays on its uploader's quota, which is what section 3 says that state means.
+
+A Supporter opening a ticket has a surface too: the inbox's `+` in `@phis/support` opens a dialog over
+`POST /api/site/support/tickets` with the whole catalogue, the queue, attachments, and an optional
+`forwardTarget` that hands the work on once the ticket is committed. A forward that fails there leaves
+the ticket opened and says so in `forward.error` rather than in the status, so nobody opens it twice.
 
 Nothing in any of this has a surface. Setting a limit, handing somebody a stock and seeing what one has
 left are all HTTP, as the queue and type administration is: `@phis/support` still has no administration

@@ -308,6 +308,14 @@ export type CreateSupportTicketInput = {
   externalRef?: string | null;
   /** The requester acknowledged that a ticket of this type is mirrored outside. */
   requesterExternalConsent?: boolean;
+  /**
+   * Files to hang on the opening message, the opener's own.
+   *
+   * Custody follows the uploader, so each has to sit in the opener's User Space (or the opening Add-on's
+   * own Space); the thread write refuses anything else, and the refusal rolls the ticket back with it --
+   * including a requester's spent allowance. See design/THREADS.md section 5.
+   */
+  assetIds?: readonly number[];
 };
 
 export type UpdateSupportTicketInput = {
@@ -1133,6 +1141,7 @@ export async function createSupportTicket(input: CreateSupportTicketInput) {
       ownerProviderId: input.ownerProviderId ?? null,
       externalRef: input.externalRef ?? null,
       requesterExternalConsent: input.requesterExternalConsent ?? false,
+      assetIds: input.assetIds ?? [],
     });
 
     const { rows } = await client.query<{ id: number }>(
