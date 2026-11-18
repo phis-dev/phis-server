@@ -24,6 +24,9 @@ design is built, its settled parts move into the owning contract and leave this 
 - [NEWS.md](./NEWS.md) -- News as a Core content type whose read path is built and whose write path is
   not: who may draft and publish one, the first-party Module that contributes only the address and the
   page, and why scheduling and expiry need no scheduler.
+- [MEDIA_SOURCES.md](./MEDIA_SOURCES.md) -- a stock archive or a DAM in the Media picker: the service
+  kind an Add-on implements, the one list contract it shares with a Module's source, and why what is
+  chosen is imported as an Asset and never kept as a reference.
 - [NOTIFICATIONS.md](./NOTIFICATIONS.md) -- a Core notification service an Add-on may ask for without
   holding an address, who owns the words of an occasion, the outbox that replaces sending inside a
   request, and the unsubscribe link Core owes every circular.

@@ -8,13 +8,13 @@ public or internal token, and `session` is the visitor's Site session with the a
 passes (see [AUTHORIZATION.md](../AUTHORIZATION.md)). A route with no access entry performs its own checks
 or none; read its source. Request and response shapes are not listed; the source is linked per route.
 
-172 routes.
+175 routes.
 
 ## Contents
 
 - [`/api/operator`](#apioperator) (5)
 - [`/api/setup`](#apisetup) (2)
-- [`/api/site`](#apisite) (88)
+- [`/api/site`](#apisite) (91)
 - [`/api/v1/addons`](#apiv1addons) (2)
 - [`/api/v1/admin`](#apiv1admin) (1)
 - [`/api/v1/auth`](#apiv1auth) (29)
@@ -157,6 +157,9 @@ Site administration, CMS, media and support API. A Site's `/api/site` proxy forw
 | GET | [`/api/site/media/folders/{id}`](../src/app/api/site/media/folders/[id]/route.ts) | session (requireMediaManagementSiteContext) |  |
 | PATCH | [`/api/site/media/folders/{id}`](../src/app/api/site/media/folders/[id]/route.ts) | session (requireMediaManagementSiteContext) |  |
 | DELETE | [`/api/site/media/folders/{id}`](../src/app/api/site/media/folders/[id]/route.ts) | session (requireMediaManagementSiteContext) |  |
+| GET | [`/api/site/media/sources`](../src/app/api/site/media/sources/route.ts) | session (requireMediaManagementSiteContext) | The media sources this Site is offered right now (design/MEDIA_SOURCES.md, section 4). |
+| POST | [`/api/site/media/sources/import`](../src/app/api/site/media/sources/import/route.ts) | session (requireMediaSpaceWriteContext) | Takes one item of a media source into the Site Space: `{ source, itemId, folderId? }`. |
+| GET | [`/api/site/media/sources/items`](../src/app/api/site/media/sources/items/route.ts) | session (requireMediaManagementSiteContext) | One page of one media source: `?source=&q=&kind=&cursor=&limit=&locale=`. |
 | PATCH | [`/api/site/media/spaces/{address}`](../src/app/api/site/media/spaces/[address]/route.ts) | session, `authenticated` (requireSiteAuthenticatedApiContext) |  |
 | PUT | [`/api/site/media/uploads/{token}`](../src/app/api/site/media/uploads/[token]/route.ts) | Site session, checked in the handler; session (requireMediaSpaceWriteContext) |  |
 | POST | [`/api/site/media/uploads/{token}/finalize`](../src/app/api/site/media/uploads/[token]/finalize/route.ts) | session (requireMediaSpaceWriteContext) |  |
@@ -176,7 +179,7 @@ Site administration, CMS, media and support API. A Site's `/api/site` proxy forw
 | POST | [`/api/site/support/ticket-types`](../src/app/api/site/support/ticket-types/route.ts) | session, `developer-tools` (requireSiteDeveloperApiContext) | Adds a ticket type. |
 | PATCH | [`/api/site/support/ticket-types/{typeId}`](../src/app/api/site/support/ticket-types/[typeId]/route.ts) | session, `developer-tools` (requireSiteDeveloperApiContext) | Edits one ticket type, and is where a Site decides who may ask for it. |
 | GET | [`/api/site/support/tickets`](../src/app/api/site/support/tickets/route.ts) | session, `support` (requireSiteSupportApiContext) |  |
-| POST | [`/api/site/support/tickets`](../src/app/api/site/support/tickets/route.ts) | session, `support` (requireSiteSupportApiContext) |  |
+| POST | [`/api/site/support/tickets`](../src/app/api/site/support/tickets/route.ts) | session, `support` (requireSiteSupportApiContext) | A Supporter opening a ticket, on somebody's behalf or for work Staff found themselves. |
 | GET | [`/api/site/support/tickets/{ticketId}`](../src/app/api/site/support/tickets/[ticketId]/route.ts) | session, `support` (requireSiteSupportApiContext) |  |
 | PATCH | [`/api/site/support/tickets/{ticketId}`](../src/app/api/site/support/tickets/[ticketId]/route.ts) | session, `support` (requireSiteSupportApiContext) |  |
 | POST | [`/api/site/support/tickets/{ticketId}/assignment`](../src/app/api/site/support/tickets/[ticketId]/assignment/route.ts) | session, `support` (requireSiteSupportApiContext) |  |

@@ -621,7 +621,8 @@ An Add-on may implement a Core-owned in-process service kind through the same in
 activation boundary. This is the only extension path for infrastructure implementations such as an
 S3-compatible Media Storage Provider, a future LDAP/SCIM/Entra Directory Provider, a translation
 unit ([TRANSLATIONS.md](./TRANSLATIONS.md)), or a place a Support ticket's work is forwarded to
-(`@phis/server/service/support-forwarding`, [design/THREADS.md](./design/THREADS.md) section 12); a
+(`@phis/server/service/support-forwarding`, [design/THREADS.md](./design/THREADS.md) section 12), or a
+place the Media picker can take files from (`@phis/server/service/media-source`); a
 private loopback HTTP route, dynamic import, or Module-owned adapter is not an alternative.
 
 Each manifest descriptor declares:
@@ -655,6 +656,17 @@ removing a Provider preserves that binding and fails closed; Core must not reint
 fallback Provider. Storage-specific profile, upload, delivery, and migration rules are normative in
 [GROUPS_AND_STORAGE.md](./GROUPS_AND_STORAGE.md). User/group Directory bindings, scoped synchronization,
 and assertion provenance are designed in [DIRECTORY_PROVIDERS.md](./design/DIRECTORY_PROVIDERS.md).
+
+A Media Source (`@phis/server/service/media-source`, `PhisMediaSourceAdapterV1` in
+`@phis/contracts/media-source`) is a stock archive, a DAM or a brand portal that the Media picker
+searches beside the Site's own library. Like Support Forwarding, nothing is configured in Core: every
+implementation that resolves for the Site and probes `usable` is offered, each source addressed as
+`<providerKey>#<key>`, and the factory is called with `(null, context)`. Core asks it to `list` a page
+and, when an item is chosen, to `take` it: the Add-on hands over bytes, never an address for Core to
+fetch, and Core imports them as an ordinary Asset of the Site Space. Nothing stores a reference into a
+source. Every call carries Core's deadline as an `AbortSignal` (probe 5 s, list 15 s, take 60 s), and an
+answer that does not hold the contract is logged and shown as "the source did not answer". The routes,
+the checks and the import rules are in [design/MEDIA_SOURCES.md](./design/MEDIA_SOURCES.md).
 
 Payments use the same Provider installation/factory boundary. Their implemented service kind,
 consumer capability, bound credentials and merchant profiles are normative in

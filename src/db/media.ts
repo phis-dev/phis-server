@@ -588,6 +588,25 @@ export async function getMediaAssetBySiteAndChecksum(
   ); return rows[0] ? mapAsset(rows[0]) : null;
 }
 
+/**
+ * Serialises imports of one file into one Space until the transaction ends.
+ *
+ * An import looks for the same bytes, and writes them if they are not there; two of them for one file
+ * would each find nothing and write twice. The lock is per Space and digest, so imports of different
+ * files never wait for each other, and it ends with the transaction.
+ */
+export async function withMediaSourceImportLock<T>(
+  input: { spaceId: number; checksum: string },
+  body: (db: PoolClient) => Promise<T>,
+) {
+  return withTransaction(async (client) => {
+    await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [
+      `phis.media_source_import:${input.spaceId}:${input.checksum}`,
+    ]);
+    return body(client);
+  });
+}
+
 /** An Asset whose digest cannot answer "is this the same file", and where its bytes are. */
 export type PhiMediaAssetWithoutIdentityChecksum = {
   id: number;
