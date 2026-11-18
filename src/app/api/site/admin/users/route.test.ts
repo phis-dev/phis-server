@@ -26,8 +26,6 @@ const mocks = vi.hoisted(() => ({
   save: vi.fn(),
   held: vi.fn(),
   mayGrant: vi.fn(),
-  declaredFor: vi.fn(),
-  siteDeclared: vi.fn(),
 }));
 
 vi.mock("@/lib/guards/site-admin-api", () => ({
@@ -48,11 +46,7 @@ vi.mock("@/db/server-addon-roles.mts", () => ({
   readPhiSiteUserAddonRoles: mocks.held,
 }));
 vi.mock("@/db/user-admin-save", () => ({ saveSiteUser: mocks.save }));
-vi.mock("@/lib/addons/role-granting", () => ({
-  mayGrantPhisAddonRole: mocks.mayGrant,
-  readPhisAddonDeclaredRoles: mocks.declaredFor,
-  readPhisSiteAddonDeclaredRoles: mocks.siteDeclared,
-}));
+vi.mock("@/lib/addons/role-granting", () => ({ mayGrantPhisAddonRole: mocks.mayGrant }));
 vi.mock("@/lib/addons/capability-snapshot", () => ({ readAvailablePhisProviderIds: mocks.available }));
 vi.mock("@/lib/addons/installed", () => ({ getPhisAddonInstalledManifest: mocks.installed }));
 vi.mock("@/lib/db", () => ({ getPool: () => ({}) }));
@@ -130,8 +124,7 @@ beforeEach(() => {
   mocks.grants.mockResolvedValue(new Map());
   mocks.available.mockResolvedValue(new Set());
   mocks.held.mockResolvedValue([]);
-  mocks.siteDeclared.mockResolvedValue(new Map());
-  mocks.declaredFor.mockResolvedValue(null);
+  mocks.installed.mockReturnValue({});
   mocks.mayGrant.mockResolvedValue({ allowed: true });
 });
 
@@ -239,13 +232,17 @@ describe("PUT /api/site/admin/users with Add-on roles", () => {
   beforeEach(() => {
     mocks.getById.mockResolvedValue(account([7]));
     mocks.getByEmail.mockResolvedValue(null);
-    mocks.siteDeclared.mockResolvedValue(new Map([[SHOP_ADDON, shopRoles], [BLOG_ADDON, blogRoles]]));
-    mocks.declaredFor.mockImplementation(async (addonId: string) =>
-      addonId === SHOP_ADDON ? shopRoles : addonId === BLOG_ADDON ? blogRoles : null);
+    // `@acme/off` is installed and enabled, but not available on the Site: its roles do not count here.
+    mocks.installed.mockReturnValue({
+      [SHOP_ADDON]: { enabled: true, manifest: { addonId: SHOP_ADDON, roles: shopRoles } },
+      [BLOG_ADDON]: { enabled: true, manifest: { addonId: BLOG_ADDON, roles: blogRoles } },
+      "@acme/off": { enabled: true, manifest: { addonId: "@acme/off", roles: [{ name: "x" }] } },
+    });
+    mocks.available.mockResolvedValue(new Set([SHOP_ADDON, BLOG_ADDON]));
     mocks.held.mockResolvedValue([
       { addonId: SHOP_ADDON, role: "clerk" },
       { addonId: BLOG_ADDON, role: "editor" },
-      // Not declared any more, and an Add-on this Site does not run: neither is touched.
+      // Not declared any more, and an Add-on that does not count here: neither is touched.
       { addonId: SHOP_ADDON, role: "retired" },
       { addonId: "@acme/off", role: "x" },
     ]);
@@ -312,12 +309,38 @@ describe("PUT /api/site/admin/users with Add-on roles", () => {
     expect(mocks.save).not.toHaveBeenCalled();
   });
 
-  it("answers 404 addon_unknown for an Add-on this Site does not run, naming the role", async () => {
-    const response = await put(["@acme/off:x"]);
+  it("answers 404 addon_unknown for an Add-on that does not count here, naming the role", async () => {
+    for (const addonId of ["@acme/off", "@acme/nonesuch"]) {
+      const response = await put([`${addonId}:x`]);
+
+      expect(response.status).toBe(404);
+      expect(await response.json()).toEqual({ error: "addon_unknown", addonId, role: "x" });
+    }
+    expect(mocks.save).not.toHaveBeenCalled();
+  });
+
+  it("answers 404 role_undeclared for an Add-on that counts but declares no roles", async () => {
+    mocks.installed.mockReturnValue({ "@acme/plain": { enabled: true, manifest: { addonId: "@acme/plain" } } });
+    mocks.available.mockResolvedValue(new Set(["@acme/plain"]));
+
+    const response = await put(["@acme/plain:x"]);
 
     expect(response.status).toBe(404);
-    expect(await response.json()).toEqual({ error: "addon_unknown", addonId: "@acme/off", role: "x" });
-    expect(mocks.save).not.toHaveBeenCalled();
+    expect(await response.json()).toEqual({ error: "role_undeclared", addonId: "@acme/plain", role: "x" });
+  });
+
+  it("leaves a stored role of an Add-on enabled but not available as it is, when the list sent is what GET showed", async () => {
+    mocks.grants.mockResolvedValue(new Map([[41, [
+      { addonId: SHOP_ADDON, role: "clerk" }, { addonId: BLOG_ADDON, role: "editor" }, { addonId: "@acme/off", role: "x" },
+    ]]]));
+    const shown = (await (await GET(request("GET", undefined, "?userId=41"))).json()).user.addonRoles;
+    expect(shown).toEqual([`${SHOP_ADDON}:clerk`, `${BLOG_ADDON}:editor`]);
+
+    const response = await put(shown);
+
+    expect(response.status).toBe(200);
+    expect(mocks.save).toHaveBeenCalledWith(expect.objectContaining({ addonRoles: { grant: [], revoke: [] } }));
+    expect(mocks.mayGrant).not.toHaveBeenCalled();
   });
 
   it("answers 404 role_undeclared for a role the Add-on does not declare", async () => {

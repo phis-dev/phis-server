@@ -17,6 +17,8 @@ import {
 const SHOP = "@pgtest/save-shop";
 const BLOG = "@pgtest/save-blog";
 const OFF = "@pgtest/save-off";
+// Enabled for the Site, but not available on it (the snapshot below leaves it out): its roles do not count.
+const DOWN = "@pgtest/save-down";
 
 const state = vi.hoisted(() => ({ site: null as unknown, actor: 0 }));
 vi.mock("@/lib/guards/site-admin-api", () => ({
@@ -37,6 +39,10 @@ vi.mock("@/lib/addons/installed", () => ({
     ] } },
     "@pgtest/save-off": { enabled: true, manifest: { addonId: "@pgtest/save-off", roles: [
       { name: "x", grantableBy: { siteAccess: "site-admin" } },
+    ] } },
+    "@pgtest/save-down": { enabled: true, manifest: { addonId: "@pgtest/save-down", roles: [
+      { name: "x", grantableBy: { siteAccess: "site-admin" } },
+      { name: "y", grantableBy: { siteAccess: "site-admin" } },
     ] } },
   }),
 }));
@@ -100,14 +106,15 @@ describe("Saving a user with Add-on roles", () => {
     await enablePhiTestAddonForSite(site, BLOG);
     // Installed, but not switched on for this Site.
     await activatePhiTestAddonForSite(site, OFF);
+    await enablePhiTestAddonForSite(site, DOWN);
   });
   beforeEach(() => { state.actor = admin; });
 
   afterAll(async () => {
     const pool = await requirePhiTestDatabase();
-    await pool.query(`DELETE FROM phis.site_addon_user_roles WHERE addon_id = ANY($1::text[])`, [[SHOP, BLOG, OFF]]);
+    await pool.query(`DELETE FROM phis.site_addon_user_roles WHERE addon_id = ANY($1::text[])`, [[SHOP, BLOG, OFF, DOWN]]);
     await dropPhiTestSites();
-    await pool.query(`DELETE FROM phis.server_addons WHERE addon_id = ANY($1::text[])`, [[SHOP, BLOG, OFF]]);
+    await pool.query(`DELETE FROM phis.server_addons WHERE addon_id = ANY($1::text[])`, [[SHOP, BLOG, OFF, DOWN]]);
     await closePhiTestPool();
   });
 
@@ -143,6 +150,38 @@ describe("Saving a user with Add-on roles", () => {
     expect((await response.json()).addonRoles).toEqual([`${BLOG}:editor`, `${SHOP}:manager`]);
     const single = await GET(new NextRequest(`https://server.test/api/site/admin/users?userId=${userId}`));
     expect((await single.json()).user.addonRoles).toEqual([`${BLOG}:editor`, `${SHOP}:manager`]);
+  });
+
+  it("leaves the stored roles of an Add-on enabled but not available as they are, through every save", async () => {
+    const userId = await person();
+    await grantRow(userId, SHOP, "clerk");
+    await grantRow(userId, DOWN, "x");
+    const before = await revision(userId);
+
+    // What a client is shown, sent back unchanged: nothing moves.
+    const single = await GET(new NextRequest(`https://server.test/api/site/admin/users?userId=${userId}`));
+    const shown = (await single.json()).user.addonRoles;
+    expect(shown).toEqual([`${SHOP}:clerk`]);
+    const unchanged = await put(await form(userId, { addonRoles: shown }));
+    expect(unchanged.status).toBe(200);
+    expect(await held(userId)).toEqual([`${DOWN}:x`, `${SHOP}:clerk`]);
+    expect(await revision(userId)).toBe(before);
+
+    // Giving and taking back what counts still works, around the role that does not.
+    const changed = await put(await form(userId, { addonRoles: [`${SHOP}:manager`] }));
+    expect(changed.status).toBe(200);
+    expect((await changed.json()).addonRoles).toEqual([`${SHOP}:manager`]);
+    expect(await held(userId)).toEqual([`${DOWN}:x`, `${SHOP}:manager`]);
+    expect(await revision(userId)).toBe(before + 1);
+
+    expect((await put(await form(userId, { addonRoles: [] }))).status).toBe(200);
+    expect(await held(userId)).toEqual([`${DOWN}:x`]);
+
+    // Naming one of its roles is refused like an Add-on the Site does not run, and stores nothing.
+    const refused = await put(await form(userId, { addonRoles: [`${SHOP}:clerk`, `${DOWN}:y`] }));
+    expect(refused.status).toBe(404);
+    expect(await refused.json()).toEqual({ error: "addon_unknown", addonId: DOWN, role: "y" });
+    expect(await held(userId)).toEqual([`${DOWN}:x`]);
   });
 
   it("empties every role of every Add-on the Site runs with an empty list", async () => {

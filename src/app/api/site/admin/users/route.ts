@@ -15,15 +15,10 @@ import { listAdminUsersForSite, setAdminUserEnabled } from "@/db/user-admin";
 import { createUserPasswordResetToken } from "@/db/user-password-reset-tokens";
 import { getUserProfileByUserId, upsertUserProfile } from "@/db/user-profiles";
 import { getUserSiteMembership, upsertUserSiteMembership } from "@/db/user-site-memberships";
-import { getPhisAddonInstalledManifest } from "@/lib/addons/installed";
 import { readAvailablePhisProviderIds } from "@/lib/addons/capability-snapshot";
 import { listPhisAddonRolesImplying } from "@/lib/addons/role-inclusion";
-import {
-  mayGrantPhisAddonRole,
-  readPhisAddonDeclaredRoles,
-  readPhisSiteAddonDeclaredRoles,
-} from "@/lib/addons/role-granting";
-import { selectPhiCountingAddonRoles } from "@/lib/addons/viewer-roles";
+import { mayGrantPhisAddonRole } from "@/lib/addons/role-granting";
+import { listPhiCountingAddonDeclaredRoles, selectPhiCountingAddonRoles } from "@/lib/addons/viewer-roles";
 import { getPool } from "@/lib/db";
 import { requireSiteAdminOnlyApiContext } from "@/lib/guards/site-admin-api";
 import { PHI_BASE_ROLE_OPTIONS } from "@/lib/constants/phi-base-role-metadata";
@@ -304,8 +299,7 @@ export async function GET(request: NextRequest) {
   let availableProviderIds: ReadonlySet<string> | null = null;
   if (addonIdFilter !== null) {
     availableProviderIds = await readAvailablePhisProviderIds(site.id);
-    const entry = getPhisAddonInstalledManifest()[addonIdFilter];
-    const declared = entry?.enabled && availableProviderIds.has(addonIdFilter) ? (entry.manifest.roles ?? []) : [];
+    const declared = listPhiCountingAddonDeclaredRoles(availableProviderIds).get(addonIdFilter) ?? [];
     // A named role is held stored or through a role that includes it, as `roles:v1` has() answers; the
     // query adds the enabled Site Admins, who hold every declared role.
     addonRoles = {
@@ -494,7 +488,7 @@ export async function POST(request: NextRequest) {
 }
 
 /**
- * Saves one user: name, address, Core roles, enabled state and, with `addonRoles`, the stored Add-on roles over every Add-on enabled for the Site, in one transaction (AUTHORIZATION.md section 5). `addonRoles` is a flat list of `"<addonId>:<role>"` strings, one per role; the answer carries it in the same form.
+ * Saves one user: name, address, Core roles, enabled state and, with `addonRoles`, the stored Add-on roles over every Add-on that counts on the Site (enabled and available, the set `GET` shows), in one transaction (AUTHORIZATION.md section 5). `addonRoles` is a flat list of `"<addonId>:<role>"` strings, one per role; the answer carries it in the same form.
  */
 export async function PUT(request: NextRequest) {
   const { context, error } = await requireSiteAdminOnlyApiContext(request);
@@ -542,8 +536,8 @@ export async function PUT(request: NextRequest) {
     return NextResponse.json({ error: "Missing required fields." }, { status: 400 });
   }
 
-  // The stored Add-on roles the person is to hold afterwards, over every Add-on enabled on this Site; absent
-  // leaves them as they are, which is what every caller before this field did.
+  // The stored Add-on roles the person is to hold afterwards, over every Add-on that counts on this Site;
+  // absent leaves them as they are, which is what every caller before this field did.
   const wantedAddonRoles = body.addonRoles === undefined ? null : parseAddonRolesSelection(body.addonRoles);
   if (body.addonRoles !== undefined && wantedAddonRoles === null) {
     return NextResponse.json({ error: "addonRoles must be a list of \"<addonId>:<role>\" strings." }, { status: 400 });
@@ -580,21 +574,25 @@ export async function PUT(request: NextRequest) {
   }
 
   /*
-   * The Add-on roles are a difference to what is stored, over every Add-on enabled here. Each role to give and
-   * each role to take back needs the actor's standing, as it would one at a time through
-   * `PUT /api/site/addon-roles`, and a single refusal stores nothing -- the person included. A stored role of
-   * an Add-on this Site does not run, or one its manifest no longer declares, is not the actor's to see and is
-   * left as it is.
+   * The Add-on roles are a difference to what is stored, over the Add-ons that count here
+   * (`listPhiCountingAddonDeclaredRoles`: enabled and available) -- the set `GET` reads them from, so a save
+   * that sends back what it was shown changes nothing. Each role to give and each role to take back needs the
+   * actor's standing, as it would one at a time through `PUT /api/site/addon-roles`, and a single refusal
+   * stores nothing -- the person included. A stored role of an Add-on outside that set (not enabled here, or
+   * enabled but not available), or one its manifest no longer declares, is not shown and is left as it is;
+   * naming a role of such an Add-on is refused as `addon_unknown`.
    */
   let addonRoleChange: { grant: AddonRoleAssignment[]; revoke: AddonRoleAssignment[] } | null = null;
+  let availableProviderIds: ReadonlySet<string> | null = null;
   if (wantedAddonRoles !== null) {
     if (!currentMembership) {
       return NextResponse.json({ error: "user_not_member" }, { status: 404 });
     }
-    const declaredByAddon = await readPhisSiteAddonDeclaredRoles(site.id);
+    availableProviderIds = await readAvailablePhisProviderIds(site.id);
+    const declaredByAddon = listPhiCountingAddonDeclaredRoles(availableProviderIds);
     for (const { addonId, role } of wantedAddonRoles) {
-      const declared = declaredByAddon.get(addonId) ?? await readPhisAddonDeclaredRoles(addonId, site.id);
-      if (declared === null) {
+      const declared = declaredByAddon.get(addonId);
+      if (declared === undefined) {
         return NextResponse.json({ error: "addon_unknown", addonId, role }, { status: 404 });
       }
       if (!declared.some((descriptor) => descriptor.name === role)) {
@@ -725,7 +723,7 @@ export async function PUT(request: NextRequest) {
     companyName: requestedCompanyName,
     enabled: requestedEnabled ?? currentMembership?.enabled ?? true,
     // As `GET ?userId=` answers them (`"<addonId>:<role>"` strings), read after the commit.
-    addonRoles: (await readCountingAddonRoles(site.id, [target.id]))(target.id).map(({ addonId, role }) => `${addonId}:${role}`),
+    addonRoles: (await readCountingAddonRoles(site.id, [target.id], availableProviderIds))(target.id).map(({ addonId, role }) => `${addonId}:${role}`),
   });
 }
 

@@ -267,18 +267,20 @@ User administration reads and writes them through four calls, all Site-scoped:
   `?userId=N` (the one-user read a dialog pre-fills from) carries `addonRoles` in its `user` as a flat list of
   `"<addonId>:<role>"` strings, one per role.
 - `PUT /api/site/admin/users` (Site Admin) takes an optional `addonRoles`: the stored Add-on roles the person
-  is to hold afterwards, over every Add-on enabled for the Site, as one flat list of `"<addonId>:<role>"`
-  strings, one entry per role (the value the user-management options Provider gives each role; split at the
+  is to hold afterwards, over the Add-ons whose roles count on the Site -- installed, enabled and available,
+  the same set `GET` reads `addonRoles` from (`listPhiCountingAddonDeclaredRoles`) -- as one flat list of
+  `"<addonId>:<role>"` strings, one entry per role (the value the user-management options Provider gives each role; split at the
   last colon; one Add-on may appear several times, e.g. `["@phis/shop:manager", "@phis/shop:editor"]`). The
   object form `{ addonId, role }` is not accepted: an entry that is not a string is a 400. Absent leaves the Add-on
-  roles as they are; `[]` takes every role of every enabled Add-on back. Core takes the difference per Add-on
+  roles as they are; `[]` takes every role of every such Add-on back. Core takes the difference per Add-on
   to the stored roles, checks the caller's standing for each role to give and each role to take back (the
   evaluation `PUT /api/site/addon-roles` uses), and writes the person and the roles in one transaction: any
   refusal or failure stores nothing of the save. Refusals are `{ error, addonId, role }`: 404 `addon_unknown`
-  (not installed or not enabled for the Site), 404 `role_undeclared`, 404 `user_not_member`, 403
-  `not_permitted`; a malformed list is 400. Stored roles of an Add-on the Site does not run, or that the
-  manifest no longer declares, are left as they are. The authorization revision moves once for the Add-on
-  roles of one save. The answer carries `addonRoles` in the same string form.
+  (not installed, not enabled for the Site, or enabled but not available on it), 404 `role_undeclared`, 404
+  `user_not_member`, 403 `not_permitted`; a malformed list is 400. Stored roles of an Add-on outside that set,
+  or that the manifest no longer declares, are neither shown nor granted nor taken back: they are left as
+  they are, so a save that sends back the list `GET` answered changes nothing. The authorization revision
+  moves once for the Add-on roles of one save. The answer carries `addonRoles` in the same string form.
 
 Core does not forbid giving or taking an Add-on role from oneself (the caller's standing is the only
 check, and a Site Admin may set their own Add-on roles through either call); only the Core roles of one's

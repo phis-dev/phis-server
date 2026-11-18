@@ -1,10 +1,51 @@
 import "server-only";
 
 import type { PhiViewerAddonRoleClaim } from "@/lib/authorization";
+import type { PhisAddonRoleDescriptor } from "./contract.ts";
 import { getPhisAddonInstalledManifest } from "./installed.ts";
 import { resolvePhisAddonHeldRoles } from "./role-inclusion.ts";
 import { readPhiSiteUserAddonRoles } from "@/db/server-addon-roles.mts";
 import { getPool } from "@/lib/db";
+
+/**
+ * The Add-ons whose roles count on this Site, each with the roles its current manifest declares: enabled in
+ * the installed state and available on the Site -- the answer dispatch, jobs and event delivery ask for
+ * (`verifyPhisAddonRegistryState`), taken from the snapshot.
+ *
+ * The one definition of "counting". The viewer's claims, user administration's read and its save all ask
+ * it, so what a client is shown and what a save of that view may change are the same set of Add-ons.
+ */
+export function listPhiCountingAddonDeclaredRoles(
+  availableProviderIds: ReadonlySet<string>,
+): Map<string, readonly PhisAddonRoleDescriptor[]> {
+  const counting = new Map<string, readonly PhisAddonRoleDescriptor[]>();
+  for (const [addonId, entry] of Object.entries(getPhisAddonInstalledManifest())) {
+    if (entry.enabled && availableProviderIds.has(addonId)) {
+      counting.set(addonId, entry.manifest.roles ?? []);
+    }
+  }
+  return counting;
+}
+
+/**
+ * The stored grants that count here, by Add-on: those of an Add-on that counts
+ * (`listPhiCountingAddonDeclaredRoles`) naming a role its current manifest declares. Stored, not implied --
+ * the viewer expands them, user administration shows them as they are.
+ */
+export function selectPhiCountingAddonRoles<G extends { addonId: string; role: string }>(
+  grants: readonly G[],
+  availableProviderIds: ReadonlySet<string>,
+): Map<string, string[]> {
+  const counting = listPhiCountingAddonDeclaredRoles(availableProviderIds);
+  const byAddon = new Map<string, string[]>();
+  for (const grant of grants) {
+    if (!(counting.get(grant.addonId) ?? []).some((declared) => declared.name === grant.role)) {
+      continue;
+    }
+    byAddon.set(grant.addonId, [...(byAddon.get(grant.addonId) ?? []), grant.role]);
+  }
+  return byAddon;
+}
 
 /**
  * The Add-on roles this viewer holds, in the shape an access policy names.
@@ -24,31 +65,6 @@ import { getPool } from "@/lib/db";
  * roles, and the client uses them to decide what to show. Whether the request behind the link is allowed
  * is decided again on the server, which is the only decision that counts.
  */
-/**
- * The stored grants that count here, by Add-on: those of an Add-on enabled in the installed state and
- * available on the Site -- the answer dispatch, jobs and event delivery ask for
- * (`verifyPhisAddonRegistryState`), taken from the snapshot -- naming a role its current manifest declares. Stored, not implied -- the viewer
- * expands them, user administration shows them as they are.
- */
-export function selectPhiCountingAddonRoles<G extends { addonId: string; role: string }>(
-  grants: readonly G[],
-  availableProviderIds: ReadonlySet<string>,
-): Map<string, string[]> {
-  const installed = getPhisAddonInstalledManifest();
-  const byAddon = new Map<string, string[]>();
-  for (const grant of grants) {
-    const entry = installed[grant.addonId];
-    if (!entry?.enabled || !availableProviderIds.has(grant.addonId)) {
-      continue;
-    }
-    if (!(entry.manifest.roles ?? []).some((declared) => declared.name === grant.role)) {
-      continue;
-    }
-    byAddon.set(grant.addonId, [...(byAddon.get(grant.addonId) ?? []), grant.role]);
-  }
-  return byAddon;
-}
-
 export async function readPhiViewerAddonRoleClaims(
   siteId: number,
   userId: number,
@@ -58,11 +74,9 @@ export async function readPhiViewerAddonRoleClaims(
 ): Promise<PhiViewerAddonRoleClaim[]> {
   if (siteAdmin) {
     // Every Add-on that counts here (installed, enabled, available), every role it declares now.
-    return Object.entries(getPhisAddonInstalledManifest()).flatMap(([addonId, entry]) => {
-      const roles = resolvePhisAddonHeldRoles(entry.manifest.roles ?? [], [], true);
-      return entry.enabled && availableProviderIds.has(addonId) && roles.length > 0
-        ? [{ providerId: addonId as PhiViewerAddonRoleClaim["providerId"], roles }]
-        : [];
+    return [...listPhiCountingAddonDeclaredRoles(availableProviderIds)].flatMap(([addonId, declared]) => {
+      const roles = resolvePhisAddonHeldRoles(declared, [], true);
+      return roles.length > 0 ? [{ providerId: addonId as PhiViewerAddonRoleClaim["providerId"], roles }] : [];
     });
   }
   const grants = await readPhiSiteUserAddonRoles(getPool(), { siteId, userId });
