@@ -1,3 +1,20 @@
+phis (0.4.6-1) unstable; urgency=medium
+
+  * Sign in with Apple: an Apple installation stores the .p8 signing key
+    from the Apple Developer account as its secret (checked and stored
+    as a PEM) and takes a Team ID and a Key ID. Every token request signs
+    a client secret valid five minutes; nobody renews one by hand.
+  * Apple is asked for openid email by default, with response_mode
+    form_post. POST /api/v1/auth/providers/apple/callback answers 303 to
+    the GET callback, which checks the browser's flow cookie as before.
+    Apple installations take no prompt.
+  * The installation list carries teamId and keyId, the provider catalog
+    signingKeyMode. Other providers refuse a Team ID or Key ID.
+  * Design: login providers from Add-ons (design/IDENTITY_PROVIDERS.md).
+  * No schema change.
+
+ -- Marius Schumacher <marius.schumacher@phisys.com>  Wed, 18 Nov 2026 20:20:00 +0000
+
 phis (0.4.5-1) unstable; urgency=medium
 
   * Add-on roles are read, listed and saved over the same Add-ons: those
