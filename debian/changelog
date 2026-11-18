@@ -1,3 +1,24 @@
+phis (0.4.4-1) unstable; urgency=medium
+
+  * Media sources: the service kind @phis/server/service/media-source.
+    An Add-on lists what a stock archive or a DAM offers and hands over
+    the bytes of what somebody chose; Core checks every answer and
+    imports the file into the Site's library as an ordinary Asset.
+    Nothing is configured: every implementation that resolves for the
+    Site and probes usable is offered. Routes under
+    /api/site/media/sources (design/MEDIA_SOURCES.md). Needs
+    @phis/contracts 0.7.12.
+  * A Support ticket takes attachments when it is opened: both opening
+    routes take assetIds from the opener's own User Space and hang them
+    on the first message. A file that is not the opener's refuses the
+    whole opening.
+  * Opening a Support ticket forwards nothing. Handing the work to
+    another system stays the ticket row's own step, so an opening cannot
+    half succeed.
+  * No schema change.
+
+ -- Marius Schumacher <marius.schumacher@phisys.com>  Wed, 18 Nov 2026 10:53:00 +0000
+
 phis (0.4.3-1) unstable; urgency=medium
 
   * Maintenance runs as Core jobs; the operator installs no timer. The
