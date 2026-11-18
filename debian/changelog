@@ -1,3 +1,16 @@
+phis (0.4.5-1) unstable; urgency=medium
+
+  * Add-on roles are read, listed and saved over the same Add-ons: those
+    enabled for the Site and available on it. Saving a user no longer
+    takes back the roles of an Add-on that is enabled but not available
+    at the moment; they stay as stored. Naming such an Add-on in a save or
+    in /api/site/addon-roles answers 404 addon_unknown.
+  * GET /api/site/addon-roles lists only those Add-ons, and its held
+    roles likewise. The answer's shape is unchanged.
+  * No schema change.
+
+ -- Marius Schumacher <marius.schumacher@phisys.com>  Wed, 18 Nov 2026 18:20:00 +0000
+
 phis (0.4.4-1) unstable; urgency=medium
 
   * Media sources: the service kind @phis/server/service/media-source.
