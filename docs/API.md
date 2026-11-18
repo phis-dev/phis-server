@@ -58,7 +58,7 @@ Site administration, CMS, media and support API. A Site's `/api/site` proxy forw
 | GET | [`/api/site/account/avatar`](../src/app/api/site/account/avatar/route.ts) | session, `authenticated` (requireSiteAuthenticatedApiContext) |  |
 | PUT | [`/api/site/account/avatar`](../src/app/api/site/account/avatar/route.ts) | session, `authenticated` (requireSiteAuthenticatedApiContext) |  |
 | DELETE | [`/api/site/account/avatar`](../src/app/api/site/account/avatar/route.ts) | session, `authenticated` (requireSiteAuthenticatedApiContext) |  |
-| GET | [`/api/site/addon-roles`](../src/app/api/site/addon-roles/route.ts) | session, `authenticated` (requireSiteAuthenticatedApiContext) | Every role of every Add-on enabled here, each marked with whether the caller may grant it, and optionally what one person already holds, and whether that is every role. |
+| GET | [`/api/site/addon-roles`](../src/app/api/site/addon-roles/route.ts) | session, `authenticated` (requireSiteAuthenticatedApiContext) | Every role of every Add-on that counts here, each marked with whether the caller may grant it, and optionally what one person already holds, and whether that is every role. |
 | PUT | [`/api/site/addon-roles`](../src/app/api/site/addon-roles/route.ts) | session, `authenticated` (requireSiteAuthenticatedApiContext) | Sets the roles one person holds in one Add-on to exactly the ones named, in one call. |
 | POST | [`/api/site/addon-roles`](../src/app/api/site/addon-roles/route.ts) | session, `authenticated` (requireSiteAuthenticatedApiContext) |  |
 | DELETE | [`/api/site/addon-roles`](../src/app/api/site/addon-roles/route.ts) | session, `authenticated` (requireSiteAuthenticatedApiContext) |  |

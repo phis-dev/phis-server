@@ -1,12 +1,10 @@
 import { NextResponse, type NextRequest } from "next/server";
 
 import { requireSiteAuthenticatedApiContext } from "@/lib/guards/site-admin-api";
+import { readAvailablePhisProviderIds } from "@/lib/addons/capability-snapshot";
 import { holdsEveryPhisAddonRole } from "@/lib/addons/held-roles";
-import {
-  mayGrantPhisAddonRole,
-  readPhisAddonDeclaredRoles,
-  readPhisAddonRoleCatalog,
-} from "@/lib/addons/role-granting";
+import { mayGrantPhisAddonRole, readPhisAddonRoleCatalog } from "@/lib/addons/role-granting";
+import { filterPhiCountingAddonGrants, listPhiCountingAddonDeclaredRoles } from "@/lib/addons/viewer-roles";
 import {
   grantPhisAddonUserRole,
   readPhiSiteUserAddonRoles,
@@ -29,9 +27,19 @@ export const dynamic = "force-dynamic";
  *
  * Which role may be granted by whom is the manifest's declaration, evaluated per request against the
  * acting user. A Site Admin may always grant.
+ *
+ * Every call here sees and writes the roles of the Add-ons that count on the Site -- enabled and available
+ * (`listPhiCountingAddonDeclaredRoles`), the set user administration reads and saves. A role of an Add-on
+ * outside it guards nothing here and would silently start to count the day the Add-on is back, so naming one
+ * is `addon_unknown`, and what is stored for it is neither shown nor touched.
  */
 
 type Body = { addonId?: unknown; role?: unknown; userId?: unknown };
+
+/** The roles an Add-on that counts here declares, or null for any other Add-on. */
+function readCountingDeclaredRoles(addonId: string, availableProviderIds: ReadonlySet<string>) {
+  return listPhiCountingAddonDeclaredRoles(availableProviderIds).get(addonId) ?? null;
+}
 
 function readBody(body: Body | null) {
   if (
@@ -46,11 +54,11 @@ function readBody(body: Body | null) {
 }
 
 /**
- * Every role of every Add-on enabled here, each marked with whether the caller may grant it, and
+ * Every role of every Add-on that counts here, each marked with whether the caller may grant it, and
  * optionally what one person already holds, and whether that is every role.
  *
- * `held` is the stored assignments; `holdsAll` is true when the person is Site Admin, who holds every
- * declared role whatever is stored.
+ * `held` is the stored assignments that count, as `GET /api/site/admin/users` lists them; `holdsAll` is true
+ * when the person is Site Admin, who holds every declared role whatever is stored.
  *
  * Reading somebody else's grants needs the standing to change at least one of them -- otherwise this
  * would be a way for any signed-in user to enumerate who staffs the Site.
@@ -71,9 +79,11 @@ export async function GET(request: NextRequest) {
     }
   }
 
+  const availableProviderIds = await readAvailablePhisProviderIds(context.site.id);
   const addons = await readPhisAddonRoleCatalog({
     siteId: context.site.id,
     actorUserId: context.session.userId,
+    availableProviderIds,
   });
   if (userId === null) {
     return NextResponse.json({ addons });
@@ -81,7 +91,10 @@ export async function GET(request: NextRequest) {
   if (!addons.some((addon) => addon.roles.some((role) => role.grantable))) {
     return NextResponse.json({ error: "Not permitted." }, { status: 403 });
   }
-  const held = await readPhiSiteUserAddonRoles(getPool(), { siteId: context.site.id, userId });
+  const held = filterPhiCountingAddonGrants(
+    await readPhiSiteUserAddonRoles(getPool(), { siteId: context.site.id, userId }),
+    availableProviderIds,
+  );
   return NextResponse.json({ addons, userId, held, holdsAll: await holdsEveryPhisAddonRole(context.site.id, userId) });
 }
 
@@ -90,7 +103,8 @@ export async function GET(request: NextRequest) {
  *
  * The difference to what is held is what changes: every role to give and every role to take back needs
  * the caller's standing, as it would one at a time, and a single refusal writes nothing. A role stored
- * that the manifest no longer declares is left as it is -- it is not the caller's to see or to decide.
+ * that the manifest no longer declares is left as it is -- it is not the caller's to see or to decide. An
+ * Add-on that does not count here is `addon_unknown`.
  */
 export async function PUT(request: NextRequest) {
   const { context, error } = await requireSiteAuthenticatedApiContext(request);
@@ -113,7 +127,8 @@ export async function PUT(request: NextRequest) {
   const userId = body.userId as number;
   const wanted = new Set(body.roles as string[]);
 
-  const declared = await readPhisAddonDeclaredRoles(addonId, context.site.id);
+  const availableProviderIds = await readAvailablePhisProviderIds(context.site.id);
+  const declared = readCountingDeclaredRoles(addonId, availableProviderIds);
   if (declared === null) {
     return NextResponse.json({ error: "addon_unknown" }, { status: 404 });
   }
@@ -171,11 +186,15 @@ export async function PUT(request: NextRequest) {
   const addons = await readPhisAddonRoleCatalog({
     siteId: context.site.id,
     actorUserId: context.session.userId,
+    availableProviderIds,
   });
   return NextResponse.json({
     addons,
     userId,
-    held: await readPhiSiteUserAddonRoles(getPool(), { siteId: context.site.id, userId }),
+    held: filterPhiCountingAddonGrants(
+      await readPhiSiteUserAddonRoles(getPool(), { siteId: context.site.id, userId }),
+      availableProviderIds,
+    ),
     holdsAll: await holdsEveryPhisAddonRole(context.site.id, userId),
   });
 }
@@ -196,7 +215,7 @@ export async function POST(request: NextRequest) {
     siteId: context.site.id,
     actorUserId: context.session.userId,
     role: input.role,
-    declared: await readPhisAddonDeclaredRoles(input.addonId, context.site.id),
+    declared: readCountingDeclaredRoles(input.addonId, await readAvailablePhisProviderIds(context.site.id)),
   });
   if (!verdict.allowed) {
     // An unknown Add-on and an undeclared role are the caller's mistake and say so; a refusal on
@@ -245,7 +264,7 @@ export async function DELETE(request: NextRequest) {
     siteId: context.site.id,
     actorUserId: context.session.userId,
     role: input.role,
-    declared: await readPhisAddonDeclaredRoles(input.addonId, context.site.id),
+    declared: readCountingDeclaredRoles(input.addonId, await readAvailablePhisProviderIds(context.site.id)),
   });
   if (!verdict.allowed) {
     const status = verdict.reason === "not_permitted" ? 403 : 404;

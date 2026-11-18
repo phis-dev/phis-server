@@ -21,12 +21,10 @@ const OFF = "@pgtest/save-off";
 const DOWN = "@pgtest/save-down";
 
 const state = vi.hoisted(() => ({ site: null as unknown, actor: 0 }));
-vi.mock("@/lib/guards/site-admin-api", () => ({
-  requireSiteAdminOnlyApiContext: async () => ({
-    context: { site: state.site, session: { userId: state.actor } },
-    error: null,
-  }),
-}));
+vi.mock("@/lib/guards/site-admin-api", () => {
+  const context = async () => ({ context: { site: state.site, session: { userId: state.actor } }, error: null });
+  return { requireSiteAdminOnlyApiContext: context, requireSiteAuthenticatedApiContext: context };
+});
 vi.mock("@/lib/addons/installed", () => ({
   getPhisAddonInstalledManifest: () => ({
     "@pgtest/save-shop": { enabled: true, manifest: { addonId: "@pgtest/save-shop", roles: [
@@ -51,6 +49,7 @@ vi.mock("@/lib/addons/capability-snapshot", () => ({
 }));
 
 import { PUT, GET } from "@/app/api/site/admin/users/route";
+import { GET as getAddonRoles, PUT as putAddonRoles } from "@/app/api/site/addon-roles/route";
 import { saveSiteUser } from "./user-admin-save";
 
 /**
@@ -182,6 +181,26 @@ describe("Saving a user with Add-on roles", () => {
     expect(refused.status).toBe(404);
     expect(await refused.json()).toEqual({ error: "addon_unknown", addonId: DOWN, role: "y" });
     expect(await held(userId)).toEqual([`${DOWN}:x`]);
+  });
+
+  it("lists and sets one Add-on's roles through /api/site/addon-roles over the same Add-ons", async () => {
+    const userId = await person();
+    await grantRow(userId, SHOP, "clerk");
+    await grantRow(userId, DOWN, "x");
+
+    const read = await (await getAddonRoles(new NextRequest(`https://server.test/api/site/addon-roles?userId=${userId}`))).json();
+    expect(read.addons.map((addon: { addonId: string }) => addon.addonId).sort()).toEqual([BLOG, SHOP]);
+    expect(read.held.map((grant: { addonId: string; role: string }) => `${grant.addonId}:${grant.role}`)).toEqual([`${SHOP}:clerk`]);
+
+    const setRoles = (addonId: string, roles: string[]) => putAddonRoles(new NextRequest("https://server.test/api/site/addon-roles", {
+      method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ userId, addonId, roles }),
+    }));
+    const refused = await setRoles(DOWN, []);
+    expect(refused.status).toBe(404);
+    expect(await refused.json()).toEqual({ error: "addon_unknown" });
+
+    expect((await setRoles(SHOP, ["manager"])).status).toBe(200);
+    expect(await held(userId)).toEqual([`${DOWN}:x`, `${SHOP}:manager`]);
   });
 
   it("empties every role of every Add-on the Site runs with an empty list", async () => {

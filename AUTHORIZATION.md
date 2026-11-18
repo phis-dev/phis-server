@@ -219,7 +219,7 @@ roles: [
 - At least one role must be grantable by a Site access; a set in which every role is granted by another
   role is refused at validation.
 - A Site Admin may always grant and revoke any role of any Add-on.
-- A Site Admin also **holds** every declared role of every Add-on enabled for the Site, with no stored
+- A Site Admin also **holds** every declared role of every Add-on that counts on the Site (below), with no stored
   assignment, for as long as they are Site Admin there (an enabled membership with the Core `admin` role;
   an admin of another Site holds nothing here). Taking a role from a Site Admin makes no sense, so none is
   needed.
@@ -242,13 +242,20 @@ read the stored assignments, not the rule, so that a Site Admin is not addressed
 assignment. Core resolves no such list today; the only reads of everybody with a role are the user-list
 filter (below, which answers "who holds") and `phis addon role --user` (which prints what is stored).
 
-User administration reads and writes them through four calls, all Site-scoped:
+User administration reads and writes them through four calls, all Site-scoped, and every one of them sees
+and changes only the roles of the Add-ons that *count* on the Site: installed, enabled and available
+(`listPhiCountingAddonDeclaredRoles`, `src/lib/addons/viewer-roles.ts`, the rule behind the viewer's
+`addonRoleClaims`). A role of any other Add-on guards nothing here and would quietly start to count the day
+the Add-on is back, so a call naming one is refused with 404 `addon_unknown` (the single
+`POST`/`DELETE /api/site/addon-roles` included), and what is stored for it is neither shown nor granted nor
+taken back:
 
 - `GET /api/site/addon-roles` answers `{ addons: [{ addonId, title, roles: [{ name, description?,
-  grantableBy, includes?, grantable }] }] }`: every declared role of every Add-on enabled for the Site, and
+  grantableBy, includes?, grantable }] }] }`: every declared role of every Add-on that counts on the Site, and
   per role whether the caller may grant it (the evaluation that decides the write). `title` is the Add-on id
   until the manifest carries a display name. With `?userId=N` it adds `userId`, `held` (the stored
-  assignments of that user across Add-ons) and `holdsAll` (true when that user is Site Admin and so holds every
+  assignments of that user across the Add-ons that count, with roles the manifest still declares -- the
+  ones `GET /api/site/admin/users` lists, not implied and not widened for a Site Admin) and `holdsAll` (true when that user is Site Admin and so holds every
   role whatever is stored); that needs at least one grantable role, else 403.
 - `PUT /api/site/addon-roles` with `{ userId, addonId, roles }` sets the stored roles of that user for that
   Add-on to exactly `roles`. Core takes the difference to what is held, checks the caller's standing for each

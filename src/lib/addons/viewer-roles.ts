@@ -12,8 +12,9 @@ import { getPool } from "@/lib/db";
  * the installed state and available on the Site -- the answer dispatch, jobs and event delivery ask for
  * (`verifyPhisAddonRegistryState`), taken from the snapshot.
  *
- * The one definition of "counting". The viewer's claims, user administration's read and its save all ask
- * it, so what a client is shown and what a save of that view may change are the same set of Add-ons.
+ * The one definition of "counting". The viewer's claims, user administration's reads and saves and the
+ * Add-on role catalog all ask it, so what a client is shown and what a save of that view may change are the
+ * same set of Add-ons.
  */
 export function listPhiCountingAddonDeclaredRoles(
   availableProviderIds: ReadonlySet<string>,
@@ -28,20 +29,26 @@ export function listPhiCountingAddonDeclaredRoles(
 }
 
 /**
- * The stored grants that count here, by Add-on: those of an Add-on that counts
- * (`listPhiCountingAddonDeclaredRoles`) naming a role its current manifest declares. Stored, not implied --
- * the viewer expands them, user administration shows them as they are.
+ * The stored grants that count here, as they are stored: those of an Add-on that counts
+ * (`listPhiCountingAddonDeclaredRoles`) naming a role its current manifest declares. Not implied and not
+ * widened for a Site Admin -- the viewer expands them, user administration shows them as they are.
  */
+export function filterPhiCountingAddonGrants<G extends { addonId: string; role: string }>(
+  grants: readonly G[],
+  availableProviderIds: ReadonlySet<string>,
+): G[] {
+  const counting = listPhiCountingAddonDeclaredRoles(availableProviderIds);
+  return grants.filter((grant) =>
+    (counting.get(grant.addonId) ?? []).some((declared) => declared.name === grant.role));
+}
+
+/** `filterPhiCountingAddonGrants`, by Add-on. */
 export function selectPhiCountingAddonRoles<G extends { addonId: string; role: string }>(
   grants: readonly G[],
   availableProviderIds: ReadonlySet<string>,
 ): Map<string, string[]> {
-  const counting = listPhiCountingAddonDeclaredRoles(availableProviderIds);
   const byAddon = new Map<string, string[]>();
-  for (const grant of grants) {
-    if (!(counting.get(grant.addonId) ?? []).some((declared) => declared.name === grant.role)) {
-      continue;
-    }
+  for (const grant of filterPhiCountingAddonGrants(grants, availableProviderIds)) {
     byAddon.set(grant.addonId, [...(byAddon.get(grant.addonId) ?? []), grant.role]);
   }
   return byAddon;

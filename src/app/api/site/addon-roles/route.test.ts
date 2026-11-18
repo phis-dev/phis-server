@@ -4,7 +4,7 @@ import { NextRequest } from "next/server";
 const mocks = vi.hoisted(() => ({
   context: vi.fn(),
   installed: vi.fn(),
-  enabled: vi.fn(),
+  available: vi.fn(),
   membership: vi.fn(),
   grant: vi.fn(),
   revoke: vi.fn(),
@@ -17,7 +17,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/guards/site-admin-api", () => ({ requireSiteAuthenticatedApiContext: mocks.context }));
 vi.mock("@/lib/addons/installed.ts", () => ({ getPhisAddonInstalledManifest: mocks.installed }));
-vi.mock("@/db/server-addons", () => ({ isPhisAddonEnabledForSite: mocks.enabled }));
+vi.mock("@/lib/addons/capability-snapshot", () => ({ readAvailablePhisProviderIds: mocks.available }));
 vi.mock("@/db/user-site-memberships", () => ({
   getUserSiteMembership: mocks.membership,
   // The actor is a Site Admin unless a case says otherwise.
@@ -60,9 +60,9 @@ describe("granting an Add-on role", () => {
     vi.clearAllMocks();
     mocks.context.mockResolvedValue({ context: { site: { id: 7, key: "site" }, session: { userId: 1 } }, error: null });
     mocks.installed.mockReturnValue({
-      [ADDON]: { manifest: { addonId: ADDON, roles: [{ name: "vendor", grantableBy: { siteAccess: "site-admin" } }] } },
+      [ADDON]: { enabled: true, manifest: { addonId: ADDON, roles: [{ name: "vendor", grantableBy: { siteAccess: "site-admin" } }] } },
     });
-    mocks.enabled.mockResolvedValue(true);
+    mocks.available.mockResolvedValue(new Set([ADDON]));
     mocks.membership.mockResolvedValue({ userId: 42, siteId: 7 });
     mocks.grant.mockResolvedValue(true);
     mocks.actorClaims.mockReturnValue(ADMIN_CLAIMS);
@@ -85,8 +85,8 @@ describe("granting an Add-on role", () => {
     expect(mocks.grant).not.toHaveBeenCalled();
   });
 
-  it("refuses a role of an Add-on this Site does not run", async () => {
-    mocks.enabled.mockResolvedValue(false);
+  it("refuses a role of an Add-on that does not count here: not enabled, or enabled but not available", async () => {
+    mocks.available.mockResolvedValue(new Set());
 
     const response = await post({ addonId: ADDON, role: "vendor", userId: 42 });
 
@@ -121,16 +121,17 @@ describe("the Add-on role catalog", () => {
     vi.clearAllMocks();
     mocks.context.mockResolvedValue({ context: { site: { id: 7, key: "site" }, session: { userId: 1 } }, error: null });
     mocks.installed.mockReturnValue({
-      [ADDON]: { manifest: { addonId: ADDON, roles: LADDER } },
-      "@test/off": { manifest: { addonId: "@test/off", roles: [{ name: "x", grantableBy: { siteAccess: "site-admin" } }] } },
+      [ADDON]: { enabled: true, manifest: { addonId: ADDON, roles: LADDER } },
+      // Enabled, but not available on the Site: its roles do not count here.
+      "@test/off": { enabled: true, manifest: { addonId: "@test/off", roles: [{ name: "x", grantableBy: { siteAccess: "site-admin" } }] } },
     });
-    mocks.enabled.mockImplementation(async (addonId: string) => addonId === ADDON);
+    mocks.available.mockResolvedValue(new Set([ADDON]));
     mocks.actorClaims.mockReturnValue(ADMIN_CLAIMS);
     mocks.actorRoles.mockResolvedValue([]);
     mocks.held.mockResolvedValue([]);
   });
 
-  it("lists every declared role of the enabled Add-ons, each marked grantable for a Site Admin", async () => {
+  it("lists every declared role of the Add-ons that count here, each marked grantable for a Site Admin", async () => {
     const body = await (await get()).json();
 
     expect(body).toEqual({
@@ -156,10 +157,16 @@ describe("the Add-on role catalog", () => {
   });
 
   it("adds what one person holds, and refuses that to a caller who may grant nothing", async () => {
-    mocks.held.mockResolvedValue([{ addonId: ADDON, role: "vendor", grantedAt: "2026-01-01T00:00:00.000Z", grantedByUserId: 1 }]);
+    const vendor = { addonId: ADDON, role: "vendor", grantedAt: "2026-01-01T00:00:00.000Z", grantedByUserId: 1 };
+    mocks.held.mockResolvedValue([
+      vendor,
+      // Stored, but not counting here -- a role the manifest dropped, an Add-on not available: not shown.
+      { ...vendor, role: "retired" },
+      { ...vendor, addonId: "@test/off", role: "x" },
+    ]);
     const body = await (await get("?userId=42")).json();
     expect(body.userId).toBe(42);
-    expect(body.held).toHaveLength(1);
+    expect(body.held).toEqual([vendor]);
     // The target (42) is the same stand-in claim set as the caller here: a Site Admin.
     expect(body.holdsAll).toBe(true);
 
@@ -174,8 +181,11 @@ describe("setting the roles one person holds in an Add-on", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.context.mockResolvedValue({ context: { site: { id: 7, key: "site" }, session: { userId: 1 } }, error: null });
-    mocks.installed.mockReturnValue({ [ADDON]: { manifest: { addonId: ADDON, roles: LADDER } } });
-    mocks.enabled.mockResolvedValue(true);
+    mocks.installed.mockReturnValue({
+      [ADDON]: { enabled: true, manifest: { addonId: ADDON, roles: LADDER } },
+      "@test/off": { enabled: true, manifest: { addonId: "@test/off", roles: [{ name: "x", grantableBy: { siteAccess: "site-admin" } }] } },
+    });
+    mocks.available.mockResolvedValue(new Set([ADDON]));
     mocks.membership.mockResolvedValue({ userId: 42, siteId: 7 });
     mocks.actorClaims.mockReturnValue(ADMIN_CLAIMS);
     mocks.actorRoles.mockResolvedValue([]);
@@ -204,7 +214,8 @@ describe("setting the roles one person holds in an Add-on", () => {
     mocks.actorClaims.mockImplementation((userId: number) => (userId === 1 ? ADMIN_CLAIMS : []));
     const plain = await (await get("?userId=42")).json();
     expect(plain.holdsAll).toBe(false);
-    expect(plain.held).toHaveLength(3);
+    // The stored roles that count: not `retired` (dropped), not another Add-on's that is not installed.
+    expect(plain.held.map((grant: { role: string }) => grant.role)).toEqual(["vendor"]);
 
     // 42 is a Site Admin: nothing is refused or changed for it; held is still the stored list.
     mocks.actorClaims.mockReturnValue(ADMIN_CLAIMS);
@@ -213,7 +224,7 @@ describe("setting the roles one person holds in an Add-on", () => {
     expect(mocks.replace.mock.calls[0]![1]).toMatchObject({ grant: [], revoke: ["vendor"] });
     const body = await response.json();
     expect(body.holdsAll).toBe(true);
-    expect(body.held).toHaveLength(3);
+    expect(body.held).toHaveLength(1);
   });
 
   it("refuses all of it when one role of the difference is beyond the caller", async () => {
@@ -237,9 +248,12 @@ describe("setting the roles one person holds in an Add-on", () => {
   });
 
   it("answers like the single calls: unknown Add-on, undeclared role, stranger, malformed body", async () => {
-    mocks.enabled.mockResolvedValue(false);
+    const unknown = await put({ userId: 42, addonId: "@test/off", roles: [] });
+    expect(unknown.status).toBe(404);
+    expect(await unknown.json()).toEqual({ error: "addon_unknown" });
+    mocks.available.mockResolvedValue(new Set());
     expect((await put({ userId: 42, addonId: ADDON, roles: [] })).status).toBe(404);
-    mocks.enabled.mockResolvedValue(true);
+    mocks.available.mockResolvedValue(new Set([ADDON]));
 
     const undeclared = await put({ userId: 42, addonId: ADDON, roles: ["nonesuch"] });
     expect(undeclared.status).toBe(404);

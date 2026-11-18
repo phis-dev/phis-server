@@ -2,11 +2,10 @@ import "server-only";
 
 import type { PhisAddonRoleDescriptor, PhisAddonRoleGrantPolicy } from "./contract.ts";
 import { PHIS_SITE_ACCESS } from "./contract.ts";
-import { getPhisAddonInstalledManifest } from "./installed.ts";
+import { listPhiCountingAddonDeclaredRoles } from "./viewer-roles.ts";
 import { expandPhisAddonHeldRoles } from "./role-inclusion.ts";
 import { readPhisAddonUserRoles } from "@/db/server-addon-roles.mts";
 import { getPool } from "@/lib/db";
-import { isPhisAddonEnabledForSite } from "@/db/server-addons";
 import { holdsPhisSiteAccess } from "./site-access.ts";
 
 /**
@@ -23,20 +22,6 @@ import { holdsPhisSiteAccess } from "./site-access.ts";
 export type PhisAddonRoleGrantVerdict =
   | { allowed: true; descriptor: PhisAddonRoleDescriptor }
   | { allowed: false; reason: "addon_unknown" | "role_undeclared" | "not_permitted" };
-
-/**
- * The roles an Add-on declares, or null when it is not installed or not enabled on this Site.
- *
- * A role of an Add-on the Site does not run guards nothing here, and handing it out would leave a grant
- * that silently starts to count the day somebody enables the Add-on.
- */
-export async function readPhisAddonDeclaredRoles(addonId: string, siteId: number) {
-  const entry = getPhisAddonInstalledManifest()[addonId];
-  if (!entry || !await isPhisAddonEnabledForSite(addonId, siteId)) {
-    return null;
-  }
-  return entry.manifest.roles ?? [];
-}
 
 /**
  * Whether one person meets a policy an Add-on's manifest states.
@@ -126,16 +111,19 @@ export type PhisAddonRoleCatalogEntry = {
 };
 
 /**
- * Every role of every Add-on enabled here, and for each whether this person may hand it out.
+ * Every role of every Add-on that counts here (`listPhiCountingAddonDeclaredRoles`: enabled and available),
+ * and for each whether this person may hand it out.
  *
  * What user administration renders. One screen serves an operator and a `market-admin` alike: it lists
- * what exists and marks what the viewer could grant, and the same evaluation decides the write.
+ * what exists and marks what the viewer could grant, and the same evaluation decides the write. A role of an
+ * Add-on outside that set guards nothing here, so it is neither offered nor written.
  */
 export async function readPhisAddonRoleCatalog(input: {
   siteId: number;
   actorUserId: number;
+  /** The snapshot's available providers, read once by the caller (`readAvailablePhisProviderIds`). */
+  availableProviderIds: ReadonlySet<string>;
 }): Promise<PhisAddonRoleCatalogEntry[]> {
-  const installed = getPhisAddonInstalledManifest();
   const catalog: PhisAddonRoleCatalogEntry[] = [];
   /*
    * The same decision `mayGrantPhisAddonRole` makes, asked of the database once per question rather
@@ -154,19 +142,19 @@ export async function readPhisAddonRoleCatalog(input: {
     }
     return held;
   };
-  for (const entry of Object.values(installed)) {
-    if (!entry.manifest.roles?.length || !await isPhisAddonEnabledForSite(entry.manifest.addonId, input.siteId)) {
+  for (const [addonId, declared] of listPhiCountingAddonDeclaredRoles(input.availableProviderIds)) {
+    if (declared.length === 0) {
       continue;
     }
     const held = siteAdmin
       ? null
-      : expandPhisAddonHeldRoles(entry.manifest.roles, await readPhisAddonUserRoles(getPool(), {
-        addonId: entry.manifest.addonId,
+      : expandPhisAddonHeldRoles(declared, await readPhisAddonUserRoles(getPool(), {
+        addonId,
         siteId: input.siteId,
         userId: input.actorUserId,
       }));
     const roles: PhisAddonRoleCatalogEntry["roles"] = [];
-    for (const role of entry.manifest.roles) {
+    for (const role of declared) {
       const policy = role.grantableBy;
       const grantable = siteAdmin
         || ("siteAccess" in policy ? await holdsSiteAccess(policy.siteAccess) : (held ?? []).includes(policy.role));
@@ -178,7 +166,7 @@ export async function readPhisAddonRoleCatalog(input: {
         grantable,
       });
     }
-    catalog.push({ addonId: entry.manifest.addonId, title: entry.manifest.addonId, roles });
+    catalog.push({ addonId, title: addonId, roles });
   }
   return catalog;
 }
