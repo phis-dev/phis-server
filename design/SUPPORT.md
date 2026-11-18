@@ -285,9 +285,9 @@ is the first caller of rather than something Support can build for itself. Until
 stays on its uploader's quota, which is what section 3 says that state means.
 
 A Supporter opening a ticket has a surface too: the inbox's `+` in `@phis/support` opens a dialog over
-`POST /api/site/support/tickets` with the whole catalogue, the queue, attachments, and an optional
-`forwardTarget` that hands the work on once the ticket is committed. A forward that fails there leaves
-the ticket opened and says so in `forward.error` rather than in the status, so nobody opens it twice.
+`POST /api/site/support/tickets` with the whole catalogue, the queue and attachments. Handing the work
+on is not part of it. Forwarding reaches another system outside the opening transaction, so a combined
+step could only half succeed; it stays the row's own Forward, which succeeds or fails as itself.
 
 Nothing in any of this has a surface. Setting a limit, handing somebody a stock and seeing what one has
 left are all HTTP, as the queue and type administration is: `@phis/support` still has no administration

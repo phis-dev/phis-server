@@ -9,7 +9,6 @@ import {
 } from "@/db/support";
 import { PhisThreadError } from "@/db/threads";
 import { requireSiteSupportApiContext } from "@/lib/guards/site-admin-api";
-import { forwardSupportTicket, SupportForwardError } from "@/lib/support-forwarding";
 import { readSupportTicketReach } from "@/lib/support-reach";
 import { logRuntimeEvent } from "@/lib/log";
 import {
@@ -60,14 +59,10 @@ export async function GET(request: NextRequest) {
 /**
  * A Supporter opening a ticket, on somebody's behalf or for work Staff found themselves.
  *
- * Beside the ticket's own fields it takes two things a person opening one in the App reaches for in the
- * same moment: `assetIds`, the opener's own uploads hung on the first message, and `forwardTarget`, a
- * target as `GET /api/site/support/forward` names it, to hand the work on at once.
- *
- * The forward runs after the ticket is committed, because it calls another system and cannot be part
- * of the transaction. A forward that fails therefore leaves the ticket opened, and says so in the answer
- * (`forward.error`) rather than as the status: refusing the request would invite opening it a second
- * time, and the ticket is in the inbox, where Forward can run again.
+ * Beside the ticket's own fields it takes `assetIds`, the opener's own uploads hung on the first
+ * message. Handing the work to another system is not part of this call: it reaches a system outside
+ * the transaction, so it is its own step (`POST /api/site/support/forward`), which succeeds or fails as
+ * itself rather than half of this one.
  */
 export async function POST(request: NextRequest) {
   const { context, error } = await requireSiteSupportApiContext(request);
@@ -94,12 +89,6 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "message is required." }, { status: 400 });
   }
 
-  const forwardTarget = normalizeString(body.forwardTarget);
-  const actorUserId = context.session?.userId ?? null;
-  if (forwardTarget && actorUserId == null) {
-    return NextResponse.json({ error: "Authentication required." }, { status: 401 });
-  }
-
   let ticket: Awaited<ReturnType<typeof createSupportTicket>>;
   try {
     ticket = await createSupportTicket({
@@ -120,7 +109,7 @@ export async function POST(request: NextRequest) {
       meta: toPhiRecord(body.meta),
       firstResponseDueAt: normalizeNullableString(body.firstResponseDueAt),
       resolutionDueAt: normalizeNullableString(body.resolutionDueAt),
-      createdByUserId: actorUserId,
+      createdByUserId: context.session?.userId ?? null,
       assetIds: normalizePositiveIdArray(body.assetIds),
     });
   } catch (cause) {
@@ -142,33 +131,5 @@ export async function POST(request: NextRequest) {
     },
   });
 
-  if (!forwardTarget || !ticket || actorUserId == null) {
-    return NextResponse.json({ ticket }, { status: 201 });
-  }
-
-  try {
-    const forwarded = await forwardSupportTicket({
-      site: { id: site.id, key: site.key },
-      ticketId: ticket.ticket.id,
-      target: forwardTarget,
-      title: null,
-      actorUserId,
-    });
-    return NextResponse.json({ ticket: forwarded ?? ticket, forward: { ok: true } }, { status: 201 });
-  } catch (cause) {
-    if (!(cause instanceof SupportForwardError)) {
-      throw cause;
-    }
-    logRuntimeEvent("warn", "site.support.ticket.forward_failed", {
-      area: "support",
-      message: "Support ticket created, forwarding it failed.",
-      siteKey: site.key,
-      userId: actorUserId,
-      meta: { ticketId: ticket.ticket.id, code: cause.code },
-    });
-    return NextResponse.json(
-      { ticket, forward: { ok: false, code: cause.code, error: cause.message } },
-      { status: 201 },
-    );
-  }
+  return NextResponse.json({ ticket }, { status: 201 });
 }
