@@ -1,3 +1,27 @@
+phis (0.4.7-1) unstable; urgency=medium
+
+  * A Site's CDN: one bucket of files published once and served from a host
+    of their own. A Storage Profile flagged Cdn (phis storage add --cdn)
+    holds it; no Space writes to it and no CORS or lifecycle rule is
+    written into it. New tables phis.site_cdns and phis.site_cdn_files.
+  * phis cdn attach|detach|publish|list|withdraw|check|nginx|tls. publish
+    uploads straight to the storage over the Provider's presigned plan, in
+    parts above 16 MiB with each part's SHA-256 signed in, carries an
+    interrupted upload on, and records the file. A key
+    <name>/<version>/<file> is written once. HTML, SVG, XML and JavaScript
+    are refused; the host serves attachment and nosniff.
+  * Add-on capability @phis/server/cdn:v1: the catalogue, read-only.
+  * phis storage add --create-bucket [--website]: the Provider creates its
+    storage (provisionStorage). Garage gives such a bucket a key-local
+    name its website does not serve; create CDN buckets there with garage.
+  * phis addon migrate extends an existing Add-on schema with new tables,
+    columns that may be empty or have a default, indexes and foreign keys,
+    and refuses everything else with the purge advice.
+  * Schema: CREATE TABLE phis.site_cdns and phis.site_cdn_files (by hand
+    on existing databases).
+
+ -- Marius Schumacher <marius.schumacher@phisys.com>  Thu, 19 Nov 2026 20:45:00 +0000
+
 phis (0.4.6-1) unstable; urgency=medium
 
   * Sign in with Apple: an Apple installation stores the .p8 signing key
