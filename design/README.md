@@ -9,6 +9,8 @@ design is built, its settled parts move into the owning contract and leave this 
   sidecar Add-ons, Add-on desired state in the database, and delegated installation.
 - [AUTHENTICATION_PLANNED.md](./AUTHENTICATION_PLANNED.md) -- passkeys, email and SMS one-time codes, the
   first-Admin setup token, and CLI emergency recovery.
+- [CDN_PLANNED.md](./CDN_PLANNED.md) -- a Site's CDN bucket as a Storage Profile, the catalogue Core
+  writes when `phis cdn publish` uploads, and the read-only `cdn:v1` capability Add-ons count and link with.
 - [COMMERCE_AND_PAYMENTS.md](./COMMERCE_AND_PAYMENTS.md) -- a small optional Shop, Payment Provider
   Add-ons behind a minimal Core service, and an independent Medusa Bridge with its own Site Modules.
 - [COMMERCE_COORDINATION.md](./COMMERCE_COORDINATION.md) -- products as a Core directory, the acquisition
