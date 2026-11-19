@@ -254,10 +254,42 @@ Contract:
 - One profile is one concrete, operator-configured Storage target for one Site.
 - `provider_id` is a namespaced service-provider id such as `@phis/server/storage-local` and is validated against the manifest-declared provider registry; an unavailable provider fails closed.
 - `secret_reference` names a secret in the server secret store (`phis.server_secrets`), for example `site:acme:addon:@phis/storage-s3:secret-access-key`. Credentials never live in this row, in Site administration, or in any browser payload.
-- `flags` has no assigned bit.
+- `flags`: `1` Disabled (delivered from, never written into), `2` Cdn (a Site's CDN bucket, set by `phis storage add --cdn`; no Space may use it, Site administration does not list it, no CORS or lifecycle rule is written into it).
 - `probe` is what `phis storage probe` (or the first upload that needs it) found the endpoint can do, as `PhisMediaStorageProbe` from `@phis/contracts`: whether it is writable, which digests it verifies against the bytes it stores, and whether a digest survives a multipart object. It is an observation, not configuration, and every probe replaces the previous one. `probed_at` is `NULL` when nothing was recorded; a Local Profile is answered without a recorded probe.
 - `checksum_algorithm` is the digest this Profile records, chosen once from the probe. Every Asset, variant, and font cut stored through the Profile records its digest under this algorithm, so digests within one Profile stay comparable.
 - Every Asset and every generated variant binds to a concrete profile. There is no global Storage switch and no persisted canonical public URL.
+
+### `phis.site_cdns`
+
+- `site_id SMALLINT PRIMARY KEY REFERENCES phis.sites(id) ON DELETE CASCADE`
+- `storage_profile_id INT NOT NULL`
+- `public_base_url VARCHAR(512) NOT NULL`
+- `flags INT NOT NULL DEFAULT 0`
+- `created_at`, `updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
+- FK `(storage_profile_id, site_id)` to `media_storage_profiles(id, site_id)`, NO ACTION: removing the Site removes both, removing the Profile alone is refused
+- CHECK: `public_base_url` is `https://host[/path]` without a trailing slash, query or fragment
+
+Contract:
+- A Site's CDN (GROUPS_AND_STORAGE.md, "A Site's CDN"): at most one per Site, written by `phis cdn attach`, removed by `phis cdn detach`. The Profile carries the Cdn flag.
+- `flags` has no assigned bit.
+
+### `phis.site_cdn_files`
+
+- `id BIGSERIAL PRIMARY KEY`
+- `site_id SMALLINT NOT NULL REFERENCES phis.site_cdns(site_id) ON DELETE CASCADE`
+- `object_key VARCHAR(620) NOT NULL`, `UNIQUE (site_id, object_key)`
+- `name`, `version`, `file_name VARCHAR(200) NOT NULL`
+- `size_bytes BIGINT NOT NULL`, `sha256 CHAR(64) NOT NULL`, `content_type VARCHAR(255) NOT NULL`
+- `flags INT NOT NULL DEFAULT 0`
+- `published_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
+- CHECK: `object_key = name || '/' || version || '/' || file_name`; `size_bytes >= 0`; `sha256` is lowercase hex
+- Index `(site_id, name, published_at DESC)`
+
+Contract:
+- The catalogue of the Site's CDN, written only by `phis cdn publish` and `phis cdn check --adopt` after the object is in the bucket, read by `@phis/server/cdn:v1`.
+- A key is written once: a row is never deleted while the CDN stays attached, so a withdrawn key stays taken.
+- `flags`: `1` Withdrawn (not offered, read as null by `cdn:v1`; the bytes may or may not still be in the bucket).
+- `sha256` is the whole file's, computed by the publisher; the storage verified it where the Profile records SHA-256.
 
 ### `phis.media_spaces`
 

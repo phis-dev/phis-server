@@ -111,12 +111,13 @@ export async function planPhisAddonSchemaExtension(
   target: PhisAddonSchemaTarget,
 ): Promise<PhisAddonSchemaExtensionPlan> {
   const { schemaName, descriptor } = target;
-  const [tableRows, columnRows, constraintRows, indexRows, keyRows] = await Promise.all([
-    client.query<{ table_name: string }>(
+  // One after the other: a client runs one query at a time, and pg@9 refuses a second one in flight.
+  const [tableRows, columnRows, constraintRows, indexRows, keyRows] = [
+    await client.query<{ table_name: string }>(
       `SELECT table_name FROM information_schema.tables WHERE table_schema = $1 AND table_type = 'BASE TABLE'`,
       [schemaName],
     ),
-    client.query<{ table_name: string; column_name: string; catalog_type: string; not_null: boolean }>(
+    await client.query<{ table_name: string; column_name: string; catalog_type: string; not_null: boolean }>(
       `SELECT c.relname AS table_name, a.attname AS column_name,
               format_type(a.atttypid, a.atttypmod) AS catalog_type, a.attnotnull AS not_null
          FROM pg_attribute a
@@ -125,7 +126,7 @@ export async function planPhisAddonSchemaExtension(
         WHERE n.nspname = $1 AND c.relkind = 'r' AND a.attnum > 0 AND NOT a.attisdropped`,
       [schemaName],
     ),
-    client.query<{ table_name: string; name: string; type: string; definition: string }>(
+    await client.query<{ table_name: string; name: string; type: string; definition: string }>(
       `SELECT c.relname AS table_name, con.conname AS name, con.contype AS type,
               pg_get_constraintdef(con.oid) AS definition
          FROM pg_constraint con
@@ -134,8 +135,8 @@ export async function planPhisAddonSchemaExtension(
         WHERE n.nspname = $1`,
       [schemaName],
     ),
-    client.query<{ name: string }>(`SELECT indexname AS name FROM pg_indexes WHERE schemaname = $1`, [schemaName]),
-    client.query<{ table_name: string; column_name: string; position: number }>(
+    await client.query<{ name: string }>(`SELECT indexname AS name FROM pg_indexes WHERE schemaname = $1`, [schemaName]),
+    await client.query<{ table_name: string; column_name: string; position: number }>(
       `SELECT c.relname AS table_name, a.attname AS column_name, k.ord AS position
          FROM pg_index i
          JOIN pg_class c ON c.oid = i.indrelid
@@ -146,7 +147,7 @@ export async function planPhisAddonSchemaExtension(
         ORDER BY c.relname, k.ord`,
       [schemaName],
     ),
-  ]);
+  ];
 
   const present = new Set(tableRows.rows.map((row) => row.table_name));
   const columnsOf = new Map<string, Map<string, { catalogType: string; nullable: boolean }>>();
