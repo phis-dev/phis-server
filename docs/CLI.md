@@ -961,13 +961,22 @@ Add-ons. See [GROUPS_AND_STORAGE.md](../GROUPS_AND_STORAGE.md).
 
 Lists the Site's Profiles and which Profile each Media Space writes new uploads to.
 
-### `phis storage add --site <site key> --key <profile key> --provider <provider id> [--config <json|@file>] [--secret-name <name>|--secret-reference <ref>]`
+### `phis storage add --site <site key> --key <profile key> --provider <provider id> [--config <json|@file>] [--secret-name <name>|--secret-reference <ref>] [--cdn] [--create-bucket [--website]]`
 
 Validates the configuration with the Provider's own factory (for Local: `rootDir` absolute,
 `storageKeyPrefix` relative), inserts the Profile, probes it, and writes the CORS rules of every
 Profile. `--config @file` reads JSON from a file resolved against the phis root. `--secret-name`
 builds the reference `site:<site>:addon:<provider add-on>:<name>` (or `...:core:<name>`);
 `--secret-reference` takes a full reference. Store the secret with `phis secret set` first.
+
+`--cdn` makes the Profile a Site's CDN bucket (`PhiMediaStorageProfileFlags.Cdn`, set only here): no Space
+may write to it, Site administration does not list it, and no CORS or lifecycle rule is written into it.
+See `phis cdn` below. `--create-bucket` has the Provider create the bucket before the Profile is written
+(`provisionStorage`, through the storage's own API; a bucket this key already owns is accepted), and
+`--website` also has it serve the bucket as a website. An endpoint that offers no website is reported, not
+failed. The key needs the right to create buckets. On Garage the result is a bucket only that key can name
+(a local alias), which its website endpoint does not serve; create a CDN bucket there with
+`garage bucket create` instead ([GROUPS_AND_STORAGE.md](../GROUPS_AND_STORAGE.md#a-sites-cdn)).
 
 An S3 Profile (`@phis/storage-s3/s3`) takes:
 
@@ -1039,6 +1048,68 @@ Run it after changing a Site's public base URL.
 
 Tests each external Profile (writability, verified checksum algorithms) and records the result and the
 checksum algorithm on the Profile. The Local Provider is not probed.
+
+## cdn
+
+A Site's CDN: a bucket of files published once and served from a host of their own. The contract is
+[GROUPS_AND_STORAGE.md](../GROUPS_AND_STORAGE.md#a-sites-cdn).
+
+### `phis cdn attach --site <site key> --profile <profile key> --public-base-url <https://host[/path]>`
+
+Binds the Site to a `--cdn` Profile and the address its files are served from (https, no query, no trailing
+slash). Moving an attached CDN to another Profile is refused while it offers files. Afterwards a probe
+object is written, fetched through the public address and removed. A host that does not deliver yet (no DNS
+record, no certificate) is a warning, so the CDN can be attached before its host exists.
+
+### `phis cdn detach --site <site key>`
+
+Removes the binding, with the rows of withdrawn files. Refused while a file is offered.
+
+### `phis cdn publish --site <site key> --name <name> --version <version> --file <path> [--as <file name>] [--content-type <type>]`
+
+Uploads one file to `<name>/<version>/<file>` (the file name is `--as`, else the file's own) and records it.
+The bytes go from the file straight to the storage over the Provider's presigned plan, in 16 MiB parts above
+one part, with each part's SHA-256 signed in where the Profile verifies SHA-256. A key that is taken, in the
+catalogue or in the bucket, is refused: publish a new version instead. A failed run of a multipart upload is
+carried on by running the same command again, which sends only the missing parts.
+
+The content type is `--content-type`, else the extension's, else `application/octet-stream`. HTML, SVG, XML
+and JavaScript are refused under any extension or type. The Profile needs a `publicEndpoint` (it may equal
+`endpoint`), or its Provider offers no direct upload.
+
+Progress goes to stderr; the result prints the key, size, SHA-256 and public URL.
+
+### `phis cdn list --site <site key> [--name <name>] [--withdrawn]`
+
+The catalogue, by name and newest first. `--withdrawn` includes withdrawn files, marked.
+
+### `phis cdn withdraw --site <site key> --key <name/version/file> [--delete]`
+
+Takes a file out of the offer. Its key stays taken and a link already handed out keeps working; `--delete`
+removes the bytes from the bucket as well. A cache in front of the host may serve them until it expires.
+
+### `phis cdn check --site <site key> [--adopt]`
+
+Lists the bucket and compares it with the catalogue: objects nobody recorded (written with another tool),
+offered files whose bytes are gone, and sizes that disagree. `--adopt` records the unrecorded objects whose
+keys and types are publishable, hashing each once. The result says `ok: false` when something is missing
+or disagrees.
+
+### `phis cdn nginx --site <site key> --upstream <origin> [--tls] [--write]`
+
+The server block for the CDN's host, which is taken from the public base URL and must have no path. It allows
+GET only, proxies to `--upstream` with the visitor's `Host` (Garage serves the website bucket named after the
+host it is asked for), and adds `Cache-Control: public, max-age=31536000, immutable`, `Content-Disposition:
+attachment` and `X-Content-Type-Options: nosniff`. Port 80 answers certbot's challenge from
+`/var/www/phis-acme`. `--tls` adds the 443 host with the Let's Encrypt paths and turns port 80 into a
+redirect. Without `--write` the file is printed; with it, it is written to
+`/etc/nginx/sites-available/<host>.conf`, linked, checked with `nginx -t` and reloaded. It is not recorded in
+`phis-proxy.json`, so `phis stage remove` leaves it.
+
+### `phis cdn tls --site <site key> --upstream <origin> [--email <email>]`
+
+`phis cdn nginx --write` for the plain host, a certificate with `certbot certonly --webroot`, then the HTTPS
+file. DNS must point here first.
 
 ## secret
 

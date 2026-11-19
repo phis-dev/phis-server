@@ -191,6 +191,7 @@ import {
   useStorageProfile,
   setStorageProfileEnabled,
 } from "./storage.mts";
+import { runPhisCdnCommand } from "./cdn.mts";
 import { PHI_MEDIA_STORAGE_LIFECYCLE_DAYS } from "../lib/media-storage-policies-core.ts";
 import { restoreFirstPartyAuthPreset } from "../db/auth-preset.mts";
 import { importPhiAuthSecrets } from "../db/auth-secret-import.mts";
@@ -275,6 +276,68 @@ function logCliError(event: string, message: string, meta?: Record<string, unkno
  * nobody finished or a staged body nobody claimed except the expiry sweep, which only runs while there is
  * upload traffic for that Space.
  */
+function formatBytes(bytes: number) {
+  const units = ["B", "KiB", "MiB", "GiB", "TiB"];
+  let value = bytes;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit++;
+  }
+  return `${unit === 0 ? value : value.toFixed(1)} ${units[unit]}`;
+}
+
+function printCdnResult(result: Awaited<ReturnType<typeof runPhisCdnCommand>>) {
+  switch (result.action) {
+    case "cdn.attach":
+      console.log(`The CDN of ${result.site} is Storage Profile "${result.profile}", served from ${result.publicBaseUrl}.`);
+      console.log(result.delivery.delivers
+        ? "  Delivery checked: a probe object came back through the public address."
+        : `  WARNING: delivery not confirmed. ${result.delivery.finding}`);
+      return;
+    case "cdn.detach":
+      console.log(`Detached the CDN of ${result.site}.`);
+      return;
+    case "cdn.publish":
+      console.log(`Published ${result.file.key} on ${result.site} (${formatBytes(result.file.sizeBytes)}, ${result.file.contentType}).`);
+      console.log(`  sha256 ${result.file.sha256}${result.verified ? " (verified by the storage)" : ""}`);
+      console.log(`  ${result.file.url}`);
+      return;
+    case "cdn.list":
+      console.log(`CDN of ${result.site}: ${result.publicBaseUrl} (Profile "${result.profile ?? "?"}")`);
+      for (const file of result.files) {
+        console.log(`${file.key}  ${formatBytes(file.sizeBytes)}  ${file.publishedAt}${file.withdrawn ? "  WITHDRAWN" : ""}`);
+      }
+      if (result.files.length === 0) console.log("(no files)");
+      return;
+    case "cdn.withdraw":
+      console.log(result.alreadyWithdrawn ? `${result.key} was already withdrawn.` : `Withdrew ${result.key} on ${result.site}.`);
+      if (result.deleted) console.log("  The object was removed from the bucket.");
+      console.log(`  ${result.note}`);
+      return;
+    case "cdn.check":
+      console.log(`${result.site}: ${result.objects} object(s) in the bucket, ${result.recorded} recorded.`);
+      for (const key of result.adopted) console.log(`  adopted ${key}`);
+      for (const entry of result.unrecorded) {
+        console.log(`  unrecorded ${entry.key} (${formatBytes(entry.sizeBytes)})${entry.adoptable ? " -- adopt with --adopt" : `: ${entry.reason}`}`);
+      }
+      for (const key of result.missing) console.log(`  MISSING ${key}: recorded and offered, but not in the bucket`);
+      for (const entry of result.sizeMismatch) console.log(`  SIZE ${entry.key}: recorded ${entry.recorded}, stored ${entry.stored}`);
+      if (result.ok && result.unrecorded.length === 0) console.log("  Bucket and catalogue agree.");
+      return;
+    case "cdn.nginx":
+      if (!result.written) {
+        process.stdout.write(result.content);
+        return;
+      }
+      console.log(`Wrote ${result.written.path} for ${result.host} and reloaded nginx.`);
+      return;
+    case "cdn.tls":
+      console.log(`Obtained a certificate for ${result.host} and wrote ${result.written.path}.`);
+      return;
+  }
+}
+
 function printLifecycleRefusedWarning(identity: string) {
   console.log(
     `  WARNING: ${identity} refused the lifecycle rule. Unfinished uploads and unclaimed staging objects there `
@@ -404,6 +467,7 @@ Usage:
   phis storage list  --site <site key>
   phis storage add   --site <site key> --key <profile key> --provider <provider id>
                      [--config <json|@file>] [--secret-name <name>|--secret-reference <ref>]
+                     [--cdn] [--create-bucket [--website]]
   phis storage set   --site <site key> --key <profile key>
                      [--config <json|@file>] [--replace] [--secret-name <name>|--secret-reference <ref>]
   phis storage use   --site <site key> --key <profile key>
@@ -412,6 +476,16 @@ Usage:
   phis storage del   --site <site key> --key <profile key>
   phis storage cors
   phis storage probe --site <site key> [--key <profile key>]
+
+  phis cdn attach   --site <site key> --profile <profile key> --public-base-url <https://host>
+  phis cdn detach   --site <site key>
+  phis cdn publish  --site <site key> --name <name> --version <version> --file <path>
+                    [--as <file name>] [--content-type <type>]
+  phis cdn list     --site <site key> [--name <name>] [--withdrawn]
+  phis cdn withdraw --site <site key> --key <name/version/file> [--delete]
+  phis cdn check    --site <site key> [--adopt]
+  phis cdn nginx    --site <site key> --upstream <origin> [--tls] [--write]
+  phis cdn tls      --site <site key> --upstream <origin> [--email <email>]
 
   phis payment profile list   --site <site key>
   phis payment profile add    --site <site key> --file <profile.json>
@@ -3695,6 +3769,18 @@ async function main() {
     return;
   }
 
+  if (group === "cdn") {
+    const readStorageSecret = (reference: string) =>
+      readPhisSecretWithDb(getPool(), reference, requireSecretEncryptionKey());
+    const result = await runPhisCdnCommand({ root: configRoot, pool: getPool(), readSecret: readStorageSecret }, command, flags);
+    if (json) {
+      printJson(result);
+      return;
+    }
+    printCdnResult(result);
+    return;
+  }
+
   if (group === "storage") {
     // The CLI already holds the encryption key; `secret check` decrypts with the same call. A Provider
     // that has to write a bucket rule needs its credential, and there is no reason to reach for the
@@ -3791,6 +3877,13 @@ async function main() {
         `${result.action === "storage.add" ? "Added" : "Updated"} Storage Profile ` +
         `"${result.profile.key}" (#${result.profile.id}) on ${result.site}.`,
       );
+      if (result.action === "storage.add") {
+        if (result.provision) {
+          console.log(`  bucket ${result.provision.created ? "created" : "already there"}, website ${result.provision.website}`);
+          for (const finding of result.provision.findings) console.log(`  ${finding}`);
+        }
+        if (result.cdn) console.log("  A CDN Profile: attach it with phis cdn attach. No Space can write to it.");
+      }
       for (const storage of result.policies) {
         console.log(
           storage.applied

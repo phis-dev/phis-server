@@ -1074,6 +1074,7 @@ dispatch, by the job runner, and when its service factory is resolved.
 | `@phis/server/events:v1` | yes -- see [Events an Add-on emits](#events-an-add-on-emits) |
 | `@phis/server/entitlements:v1` | yes -- see [`entitlements:v1`](#entitlementsv1) |
 | `@phis/server/products:v1` | yes -- see [`products:v1`](#productsv1) |
+| `@phis/server/cdn:v1` | yes -- see [`cdn:v1`](#cdnv1) |
 
 Core descriptors are generated from the running release and reconciled into the registry. They are not
 editable Site settings and cannot be disabled per Site.
@@ -1761,6 +1762,20 @@ using a quantity up, an access policy in `@phis/ui`, delivery
 state and the resolving of bundles are not part of this service; see
 [design/ENTITLEMENTS.md](./design/ENTITLEMENTS.md) sections 7 and 9 and
 [design/COMMERCE_COORDINATION.md](./design/COMMERCE_COORDINATION.md) section 5.
+
+### `cdn:v1`
+
+The Site's CDN catalogue, read-only: `configured()`, `file(key)` and `files({ name?, limit? })`, each file as
+`PhisCdnFileV1` with its key, name, version, file name, size, SHA-256, content type, publication time and
+public `url`. Bound to the Site of the call; nothing in it depends on who asks, so a public hook may read it.
+
+A Site without a CDN is not an error: `configured()` is false and the reads answer empty, so an Add-on can
+offer CDN files wherever the operator set one up. A withdrawn file is not listed and reads as null. `files`
+is ordered by name, newest first within a name, and capped at 500.
+
+There is no writer. Files are published with `phis cdn publish`, and an Add-on that could publish could put
+bytes on a public host under the Site's name. What a CDN is and how it is run is
+[GROUPS_AND_STORAGE.md](./GROUPS_AND_STORAGE.md#a-sites-cdn).
 
 ### `settings:v1`
 

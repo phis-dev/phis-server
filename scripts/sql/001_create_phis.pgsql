@@ -315,6 +315,43 @@ CREATE TABLE IF NOT EXISTS phis.media_storage_profiles (
   CONSTRAINT media_storage_profiles_id_site_unique UNIQUE (id, site_id)
 );
 
+-- A Site's CDN: one bucket (a Storage Profile flagged Cdn) whose files are served from a host of their
+-- own. Files are published with `phis cdn publish`, which writes the catalogue below; a key is
+-- <name>/<version>/<file> and is never written twice. See GROUPS_AND_STORAGE.md, "A Site's CDN".
+CREATE TABLE IF NOT EXISTS phis.site_cdns (
+  site_id SMALLINT PRIMARY KEY REFERENCES phis.sites(id) ON DELETE CASCADE,
+  storage_profile_id INT NOT NULL,
+  public_base_url VARCHAR(512) NOT NULL,
+  flags INT NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  -- NO ACTION, not RESTRICT: removing the Site removes both in one statement, and only removing the
+  -- Profile on its own is refused.
+  CONSTRAINT site_cdns_profile_fk FOREIGN KEY (storage_profile_id, site_id)
+    REFERENCES phis.media_storage_profiles(id, site_id),
+  CONSTRAINT site_cdns_public_base_url_check CHECK (public_base_url ~ '^https://[^/?#]+(/[^?#]*[^/?#])?$')
+);
+
+CREATE TABLE IF NOT EXISTS phis.site_cdn_files (
+  id BIGSERIAL PRIMARY KEY,
+  site_id SMALLINT NOT NULL REFERENCES phis.site_cdns(site_id) ON DELETE CASCADE,
+  object_key VARCHAR(620) NOT NULL,
+  name VARCHAR(200) NOT NULL,
+  version VARCHAR(200) NOT NULL,
+  file_name VARCHAR(200) NOT NULL,
+  size_bytes BIGINT NOT NULL,
+  sha256 CHAR(64) NOT NULL,
+  content_type VARCHAR(255) NOT NULL,
+  flags INT NOT NULL DEFAULT 0,
+  published_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT site_cdn_files_key_unique UNIQUE (site_id, object_key),
+  CONSTRAINT site_cdn_files_key_check CHECK (object_key = name || '/' || version || '/' || file_name),
+  CONSTRAINT site_cdn_files_size_check CHECK (size_bytes >= 0),
+  CONSTRAINT site_cdn_files_sha256_check CHECK (sha256 ~ '^[0-9a-f]{64}$')
+);
+
+CREATE INDEX IF NOT EXISTS site_cdn_files_name_idx ON phis.site_cdn_files (site_id, name, published_at DESC);
+
 -- What this endpoint turned out to be able to do, established by `phis storage probe` rather than
 -- declared by an operator. One adapter serves AWS, MinIO and Garage alike, and they do not agree on
 -- everything -- so this is an observation with a date on it, not configuration, and it lives beside

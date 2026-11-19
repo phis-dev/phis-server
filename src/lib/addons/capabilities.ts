@@ -31,6 +31,7 @@ import { buildPhisAddonSupportCapability } from "./support-capability.ts";
 import { buildPhisAddonThreadsCapability } from "./threads-capability.ts";
 import { buildPhisAddonSecretsCapability } from "./secrets-capability.ts";
 import { buildPhisAddonSettingsCapability } from "./settings-capability.ts";
+import { buildPhisAddonCdnCapability } from "./cdn-capability.ts";
 import { buildPhisAddonEntitlementsCapability } from "./entitlements-capability.ts";
 import { buildPhisAddonProductsCapability } from "./products-capability.ts";
 import { buildPhisAddonEventsCapability } from "./events-capability.ts";
@@ -381,6 +382,10 @@ export function buildPhisAddonCapabilities(input: {
       siteId,
       unauthenticated: input.unauthenticated === true && input.systemAuthority !== true,
     });
+  }
+  if (required.includes(PHIS_CORE_CAPABILITIES.cdn)) {
+    // Read-only and the Site's own; nothing in it depends on who is asking.
+    capabilities.cdn = buildPhisAddonCdnCapability({ siteId });
   }
   if (required.includes(PHIS_CORE_CAPABILITIES.threads)) {
     /*

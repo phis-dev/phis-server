@@ -29,6 +29,12 @@ export const PhiSiteMediaFlags = {
  */
 export const PhiMediaStorageProfileFlags = {
   Disabled: 1 << 0,
+  /**
+   * The Profile holds a Site's CDN (`phis cdn`), not media. Set once, by `phis storage add --cdn`. No
+   * Space may write to it, Site administration neither lists nor offers it, and Core writes no CORS or
+   * lifecycle rule into it: nobody uploads to a CDN from a browser, and nothing is staged there.
+   */
+  Cdn: 1 << 1,
 } as const;
 
 /*

@@ -878,7 +878,9 @@ only approved object operations:
 - apply a CORS policy;
 - apply a lifecycle policy -- which unfinished uploads the storage may abort, and how long a staged body may
   sit under the staging prefixes, because neither is visible to anything that could sweep them;
-- probe capabilities and report a storage identity.
+- probe capabilities and report a storage identity;
+- optionally, create its storage (`provisionStorage`): the bucket and, where asked for, its website, through
+  the storage's own API, for `phis storage add --create-bucket [--website]`.
 
 `listPrefix` is a maintenance and reconciliation operation, never the normal Asset catalog. Database
 records remain the authoritative catalog.
@@ -886,6 +888,95 @@ records remain the authoritative catalog.
 Provider unavailability never falls back to Local. Existing profile and Asset rows remain intact, new
 writes are blocked, reads fail closed with a typed diagnostic, and reactivation restores the same
 binding. A profile change does not reinterpret existing Assets.
+
+### A Site's CDN
+
+A CDN here is one bucket of files that are published once and never change, served from a host of their own
+(`cdn.phis.dev`) and never through a serving process: model weights, installers, archives. It is not media.
+There is no Space, no Asset and no audience; nobody uploads to it from a browser, and every file is public
+from the moment it is published. A Site has at most one CDN, and two Sites never share a bucket.
+
+**The bucket is a Storage Profile** flagged `PhiMediaStorageProfileFlags.Cdn`, set once by
+`phis storage add --cdn`. No Space may write to such a Profile (`storage use` refuses it), Site
+administration neither lists nor offers it, and Core writes no CORS or lifecycle rule into it. Its
+`publicEndpoint` is the address the CLI reaches the storage at, which on one host may equal `endpoint`:
+with it set the Provider issues presigned and multipart plans, and those are how `phis cdn publish` uploads.
+Its secret is the one key for the bucket, and only Core holds it. No Add-on reads the bucket.
+
+```text
+site_cdns                      site_cdn_files
+├── site_id  (PK)              ├── id
+├── storage_profile_id         ├── site_id → site_cdns
+├── public_base_url            ├── object_key   unique per Site, <name>/<version>/<file>
+├── flags                      ├── name, version, file_name
+├── created_at                 ├── size_bytes, sha256 (the whole file), content_type
+└── updated_at                 ├── flags        PhisCdnFileFlags.Withdrawn
+                               └── published_at
+```
+
+**A key is written once.** It is `<name>/<version>/<file>`, each segment matching
+`PHIS_CDN_KEY_SEGMENT_PATTERN` from `@phis/contracts`, and the first segment `api` is reserved, because
+the host may share its name with a translation mirror whose doors are under `/api/v1/`. A key that has been
+used stays taken, withdrawn or not, so a URL that delivered a file once never delivers other bytes and the
+host may cache everything as `immutable`.
+
+**The catalogue is written by the command that uploads.** `phis cdn publish` reads the file once to get its
+size, its SHA-256 and, above one part (16 MiB), each part's SHA-256. It refuses a key that is taken in the
+catalogue or occupied in the bucket, asks the Provider for an upload plan, and sends the body or its parts
+to the presigned addresses itself, with each digest signed into its request where the Profile's probe found
+the storage verifies SHA-256. It then completes the upload, compares the size the storage reports, and only
+then writes the row. An interrupted multipart upload is carried on by the next run through
+`resumeUploadPlan`. The storage's name for the assembly is kept in `<phis root>/cdn-uploads/` because
+nothing else outlives the command, and the parts are the storage's to report. No serving process sees a
+byte, and nothing polls the bucket to learn what it holds.
+
+**Content types.** The type is the one stated, else the extension's, else `application/octet-stream`.
+Nothing looks at the bytes: the publisher is the operator, and the formats a CDN carries are ones a sniffer
+does not recognise anyway. What sniffing guards against in media, a file that turns out to be a page, is
+refused outright: HTML, SVG, XML and JavaScript are not published under any extension or stated type. The
+host is usually a subdomain of the Site's own, close enough to set cookies the Site reads. For the same
+reason `phis cdn nginx` serves every file with `Content-Disposition: attachment` and
+`X-Content-Type-Options: nosniff`; an embedded `<video>` or `<img>` still plays.
+
+**Withdrawing** marks a file `Withdrawn`. It is no longer listed and reads as null through `cdn:v1`, and
+its key stays taken. A link already handed out keeps working until `--delete` removes the bytes too. A
+cache in front of the host may serve them until it expires.
+
+**Bucket and catalogue can drift** only by hand: an object written with another tool, bytes deleted in the
+storage. `phis cdn check` lists the bucket and names both, and `--adopt` catalogues the objects that are
+valid CDN keys, hashing each once. It is a command and not a job, for the reason
+`phis addon storage --recount` is one.
+
+**What reaches an Add-on** is `@phis/server/cdn:v1` ([SERVER_ADDONS.md](./SERVER_ADDONS.md#cdnv1)):
+the catalogue, read-only and bound to the Site, with each file's public address. Publishing is the
+operator's alone, for the reason there is no secret writer.
+
+Creating the keys is outside phis. No common storage API makes one, and Garage, MinIO and AWS each have
+their own admin interface for it. The operator creates one key per CDN bucket with read and write rights on
+it, and stores it with `phis secret set`.
+
+`phis storage add --create-bucket [--website]` creates the bucket through the S3 API, which is the step for
+endpoints where `CreateBucket` makes a bucket that is known by its name: AWS, MinIO, Ceph. Garage does not.
+It names a bucket created that way only for the key that created it (a local alias), and its website
+endpoint looks buckets up by their global names, so the CDN host would not find it (measured on Garage
+2.3.0). On Garage the bucket is therefore created with Garage's own tool:
+
+```text
+garage bucket create cdn.phis.dev
+garage bucket website --allow cdn.phis.dev
+garage key create cdn-phis
+garage bucket allow --read --write cdn.phis.dev --key cdn-phis
+phis secret set --site phis --addon @phis/storage-s3 --name cdn-secret     # the key's secret, from stdin
+phis storage add --site phis --key cdn --provider @phis/storage-s3/s3 --cdn \
+  --config '{"endpoint":"http://127.0.0.1:3910","publicEndpoint":"http://127.0.0.1:3910","bucket":"cdn.phis.dev","region":"garage","accessKeyId":"GK..."}' \
+  --secret-name cdn-secret
+phis cdn attach --site phis --profile cdn --public-base-url https://cdn.phis.dev
+phis cdn tls --site phis --upstream http://127.0.0.1:3912        # Garage's website port
+```
+
+Garage serves a website bucket under the host name it is asked for, so a bucket named after the CDN's host
+needs nothing else. Publishing from another machine is not part of this: the CLI publishes from a host that
+reaches the database, and a file built elsewhere is copied there first.
 
 ## 9. Add-on service-provider boundary
 

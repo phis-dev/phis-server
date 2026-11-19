@@ -140,7 +140,10 @@ export const PHIS_COMMAND_FLAGS: Record<string, FlagSpec> = {
   "email test": { to: S, site: S },
 
   "storage list": { site: S },
-  "storage add": { site: S, key: S, provider: S, config: S, "secret-name": S, "secret-reference": S },
+  "storage add": {
+    site: S, key: S, provider: S, config: S, "secret-name": S, "secret-reference": S,
+    cdn: B, "create-bucket": B, website: B,
+  },
   "storage set": { site: S, key: S, config: S, replace: B, "secret-name": S, "secret-reference": S },
   "storage use": { site: S, key: S },
   "storage disable": { site: S, key: S },
@@ -148,6 +151,15 @@ export const PHIS_COMMAND_FLAGS: Record<string, FlagSpec> = {
   "storage del": { site: S, key: S },
   "storage cors": {},
   "storage probe": { site: S, key: S },
+
+  "cdn attach": { site: S, profile: S, "public-base-url": S },
+  "cdn detach": { site: S },
+  "cdn publish": { site: S, name: S, version: S, file: S, as: S, "content-type": S },
+  "cdn list": { site: S, name: S, withdrawn: B },
+  "cdn withdraw": { site: S, key: S, delete: B },
+  "cdn check": { site: S, adopt: B },
+  "cdn nginx": { site: S, upstream: S, tls: B, write: B },
+  "cdn tls": { site: S, upstream: S, email: S },
 
   "product list": { site: S, supplier: S, publisher: S, state: S, unreleased: B },
   "product show": { site: S, product: S },

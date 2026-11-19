@@ -4,7 +4,7 @@ import path from "node:path";
 import type { Pool } from "pg";
 
 import { choosePhisMediaChecksumAlgorithm, PHI_LOCAL_MEDIA_STORAGE_PROVIDER_ID } from "@phis/contracts/addon";
-import type { PhisMediaStorageAdapter, PhisMediaStorageProbe } from "@phis/contracts/addon";
+import type { PhisMediaStorageAdapter, PhisMediaStorageProbe, PhisMediaStorageProvision } from "@phis/contracts/addon";
 
 import { loadInstalledAddonRuntime, readAddonDesiredState } from "./addons.mts";
 import { checkPhisStorageProviderReadiness } from "../lib/media-storage-readiness.ts";
@@ -42,6 +42,8 @@ export type StorageProfileRecord = {
   secretReference: string | null;
   /** `PhiMediaStorageProfileFlags.Disabled`: delivered from, never written into. */
   disabled: boolean;
+  /** `PhiMediaStorageProfileFlags.Cdn`: a Site's CDN bucket, never a Space's. */
+  cdn: boolean;
 };
 
 function getOptionalFlag(flags: FlagMap, key: string) {
@@ -87,6 +89,7 @@ async function readProfiles(pool: Pool, siteId: number) {
     config: row.config ?? {},
     secretReference: row.secret_reference,
     disabled: (row.flags & PhiMediaStorageProfileFlags.Disabled) !== 0,
+    cdn: (row.flags & PhiMediaStorageProfileFlags.Cdn) !== 0,
   }));
 }
 
@@ -254,6 +257,40 @@ export async function resolvePhiStorageObjectAdapter(
   } | null;
 }
 
+/**
+ * `phis storage add --create-bucket [--website]`: the Provider makes what the Profile names.
+ *
+ * The Provider's step, through its own storage API, so nothing here knows what a bucket is. A Provider
+ * without the step is refused by name rather than assumed to have a bucket already.
+ */
+async function provisionStorage(
+  root: string,
+  providerId: string,
+  config: Record<string, unknown>,
+  secretReference: string | null,
+  readSecret: StorageSecretReader,
+  website: boolean,
+): Promise<PhisMediaStorageProvision> {
+  const adapter = await resolveProviderAdapter(root, providerId, config, secretReference, readSecret) as
+    Partial<Pick<PhisMediaStorageAdapter, "provisionStorage">> | null;
+  if (!adapter || typeof adapter.provisionStorage !== "function") {
+    throw new Error(`${providerId} cannot create its storage. Create it with the storage's own tools and leave out --create-bucket.`);
+  }
+  return await adapter.provisionStorage({ website });
+}
+
+/** The whole adapter, for `phis cdn`, which uploads, lists, reads and removes. Null for Local. */
+export async function resolvePhiStorageAdapter(
+  root: string,
+  providerId: string,
+  config: Record<string, unknown>,
+  secretReference: string | null,
+  readSecret: StorageSecretReader,
+): Promise<PhisMediaStorageAdapter | null> {
+  return await resolveProviderAdapter(root, providerId, config, secretReference, readSecret) as unknown as
+    PhisMediaStorageAdapter | null;
+}
+
 /** The same construction as above, for the one call a probe makes. Local has no adapter to build. */
 async function resolveProbeAdapter(
   root: string,
@@ -316,7 +353,10 @@ async function readStoragePolicyProfiles(
             s.key AS site_key, s.public_base_url
      FROM phis.media_storage_profiles p
      JOIN phis.sites s ON s.id = p.site_id
+     WHERE (p.flags & $1::int) = 0
      ORDER BY p.id`,
+    // As the Server reads it: a CDN bucket takes no browser upload and stages nothing.
+    [PhiMediaStorageProfileFlags.Cdn],
   );
   // Read the same way the Server reads it, from the merged configuration rather than from a second default.
   const storageKeyPrefix = readMergedPhiConfigSync(root).media?.storageKeyPrefix ?? "sites";
@@ -482,10 +522,21 @@ export async function addStorageProfile(
 
   await validateProfileConfig(root, providerId, config);
 
+  const cdn = flags.get("cdn") === true;
+  const createBucket = flags.get("create-bucket") === true;
+  const website = flags.get("website") === true;
+  if (website && !createBucket) {
+    throw new Error("--website is part of --create-bucket.");
+  }
+  // Before the row: a Profile naming a bucket that could not be made is not a Profile to keep.
+  const provision = createBucket
+    ? await provisionStorage(root, providerId, config, secretReference, readSecret, website)
+    : null;
+
   const { rows } = await pool.query<{ id: number }>(
-    `INSERT INTO phis.media_storage_profiles (site_id, key, provider_id, config, secret_reference)
-     VALUES ($1, $2, $3, $4::jsonb, $5) RETURNING id`,
-    [site.id, key, providerId, JSON.stringify(config), secretReference],
+    `INSERT INTO phis.media_storage_profiles (site_id, key, provider_id, config, secret_reference, flags)
+     VALUES ($1, $2, $3, $4::jsonb, $5, $6) RETURNING id`,
+    [site.id, key, providerId, JSON.stringify(config), secretReference, cdn ? PhiMediaStorageProfileFlags.Cdn : 0],
   );
 
   const profile = { id: rows[0]!.id, key, providerId, config, secretReference };
@@ -494,6 +545,8 @@ export async function addStorageProfile(
     action: "storage.add" as const,
     site: site.key,
     profile,
+    cdn,
+    ...(provision ? { provision } : {}),
     // Measured now, while the operator is here to read the finding. A Profile that goes into service
     // with nothing recorded cannot be given the upload plan that depends on the endpoint checking a
     // digest, and the operator would find that out as somebody else's failed upload.
@@ -571,6 +624,13 @@ export async function removeStorageProfile(pool: Pool, flags: FlagMap) {
     `SELECT count(*)::text FROM phis.media_assets WHERE storage_profile_id = $1`,
     [existing.id],
   );
+  const { rows: usedByCdn } = await pool.query(
+    `SELECT 1 FROM phis.site_cdns WHERE site_id = $1 AND storage_profile_id = $2`,
+    [site.id, existing.id],
+  );
+  if (usedByCdn.length > 0) {
+    throw new Error(`Storage Profile "${key}" holds the CDN of ${site.key}. Detach it first (phis cdn detach).`);
+  }
   if (Number(usedBySpaces[0]?.count ?? 0) > 0 || Number(usedByAssets[0]?.count ?? 0) > 0) {
     throw new Error(
       `Storage Profile "${key}" is still used by ${usedBySpaces[0]?.count ?? 0} Space(s) and ` +
@@ -595,6 +655,9 @@ export async function useStorageProfile(pool: Pool, flags: FlagMap) {
   }
   if (profile.disabled) {
     throw new Error(`Storage Profile "${key}" is disabled. Enable it first (phis storage enable).`);
+  }
+  if (profile.cdn) {
+    throw new Error(`Storage Profile "${key}" holds the Site's CDN, not media. A Space cannot write to it.`);
   }
 
   const readiness = await checkPhisStorageProviderReadiness(pool, profile.providerId);

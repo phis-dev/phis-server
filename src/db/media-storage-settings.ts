@@ -55,9 +55,10 @@ export async function readSiteMediaStorageSettings(siteId: number): Promise<Site
               (SELECT count(*) FROM phis.media_spaces s
                 WHERE s.site_id = p.site_id AND s.default_storage_profile_id = p.id)::text AS spaces
          FROM phis.media_storage_profiles p
-        WHERE p.site_id = $1
+        WHERE p.site_id = $1 AND (p.flags & $2::int) = 0
         ORDER BY p.key`,
-      [siteId],
+      // A CDN Profile is the operator's and holds no media, so it is neither listed nor offered here.
+      [siteId, PhiMediaStorageProfileFlags.Cdn],
     ),
     pool.query<{
       default_user_storage_profile_id: number | null;
@@ -124,9 +125,9 @@ export async function updateSiteMediaStorageSettings(siteId: number, update: Sit
         `UPDATE phis.media_storage_profiles
             SET flags = CASE WHEN id = ANY($2::int[]) THEN flags | $3::int ELSE flags & ~$3::int END,
                 updated_at = NOW()
-          WHERE site_id = $1
+          WHERE site_id = $1 AND (flags & $4::int) = 0
             AND ((flags & $3::int) <> 0) IS DISTINCT FROM (id = ANY($2::int[]))`,
-        [siteId, update.disabledProfileIds, PhiMediaStorageProfileFlags.Disabled],
+        [siteId, update.disabledProfileIds, PhiMediaStorageProfileFlags.Disabled, PhiMediaStorageProfileFlags.Cdn],
       );
     }
   });

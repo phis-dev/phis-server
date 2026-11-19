@@ -1,6 +1,7 @@
 import "server-only";
 
 import { getPool } from "@/lib/db";
+import { PhiMediaStorageProfileFlags } from "@/lib/constants/media";
 import { resolvePhisMediaStorageConfig } from "@/lib/media-storage";
 import type { PhiMediaStoragePolicyProfile } from "@/lib/media-storage-policies-core";
 
@@ -24,7 +25,10 @@ export async function readPhiMediaStoragePolicyProfiles(): Promise<PhiMediaStora
             s.key AS site_key, s.public_base_url
      FROM phis.media_storage_profiles p
      JOIN phis.sites s ON s.id = p.site_id
+     WHERE (p.flags & $1::int) = 0
      ORDER BY p.id`,
+    // A CDN bucket takes no browser upload and stages nothing, so neither rule is written into it.
+    [PhiMediaStorageProfileFlags.Cdn],
   );
   // Core's key prefix is one installation-wide setting, so it is read once rather than per row.
   const { storageKeyPrefix } = resolvePhisMediaStorageConfig();

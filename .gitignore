@@ -61,3 +61,4 @@ next-env.d.ts
 
 # Add-on install root: deployment state, never part of a build
 /addons
+/cdn-uploads
