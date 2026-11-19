@@ -22,9 +22,8 @@ import {
 /**
  * The runner end to end: a manifest arrives, a schema exists, and the catalog says so afterwards.
  *
- * The refusals matter more than the success here. Before v1 the only comparison this executes is the one
- * against nothing, and both ways of asking for anything else have to end with an instruction rather than
- * an attempt.
+ * The refusals matter as much as the success here: a schema that exists is only ever added to, and
+ * every difference adding cannot reach has to end with an instruction rather than an attempt.
  */
 
 const ADDON_ID = "@pgtest/tracker";
@@ -149,29 +148,129 @@ describe("Add-on migration runner", () => {
     expect(outcome.action).toBe("unchanged");
   });
 
-  it("refuses a changed shape that kept its version, and names the remedy", async () => {
+  it("refuses what adding cannot reach, names each difference and the remedy, and changes nothing", async () => {
     const changed = structuredClone(incidentSchemaDescriptor);
-    changed.tables[0].columns.push({ name: "resolution", type: "text", nullable: true });
+    const incident = changed.tables[0]!;
+    // A type that changed, a required column without a default, and a column that is gone.
+    incident.columns = incident.columns
+      .filter((column) => column.name !== "closed_at")
+      .map((column) => column.name === "severity" ? { ...column, type: "integer" as const } : column);
+    incident.columns.push({ name: "owner_note", type: "text" });
+    incident.constraints = incident.constraints!.filter((constraint) => constraint.name !== "closed_after_opened");
     await expect(
       migratePhisAddon(
         migrationPool,
         { manifest: manifestWith(changed), releaseBuildId: RELEASE, servingRole },
         "a".repeat(64),
       ),
-    ).rejects.toThrow(/changed without changing its version[\s\S]*addon purge/);
+    ).rejects.toThrow(
+      /cannot be brought to its new shape by adding[\s\S]*incident\.closed_at[\s\S]*incident\.severity" is smallint and declared integer[\s\S]*incident\.owner_note[\s\S]*addon purge/,
+    );
+    const pool = await requirePhiTestDatabase();
+    const { rows } = await pool.query(`SELECT checksum FROM phis.server_addon_migrations WHERE addon_id = $1`, [ADDON_ID]);
+    expect(rows).toEqual([{ checksum: digestPhisAddonSchemaDescriptor(incidentSchemaDescriptor) }]);
   });
 
-  it("refuses to step to a later version before v1", async () => {
-    const next = structuredClone(incidentSchemaDescriptor);
+  /*
+   * The case this exists for: an installation holds rows nobody may discard, and the Add-on's next
+   * release brings a table, a column and an index. Before, that cost a purge.
+   */
+  function extendedDescriptor() {
+    const extended = structuredClone(incidentSchemaDescriptor);
+    const incident = extended.tables[0]!;
+    incident.columns.push(
+      { name: "resolution", type: "text", nullable: true },
+      { name: "priority", type: "smallInteger", default: { kind: "literal", value: 3 } },
+      { name: "follows", references: { table: "incident" }, onDelete: "setNull", nullable: true },
+    );
+    incident.indexes = [...incident.indexes!, { name: "by_priority", columns: ["priority"] }];
+    extended.tables.push({
+      name: "incident_tag",
+      siteScoped: true,
+      columns: [
+        { name: "id", type: "identity" },
+        { name: "incident_id", references: { table: "incident" }, onDelete: "cascade" },
+        { name: "tag", type: "string", maxLength: 40 },
+      ],
+      primaryKey: ["id"],
+      indexes: [{ name: "by_tag", columns: ["tag"] }],
+      constraints: [{ kind: "notEmpty", name: "tag", column: "tag" }],
+    });
+    return extended;
+  }
+
+  it("extends a schema that holds rows with a table, columns, an index and a reference, and keeps the rows", async () => {
+    const pool = await requirePhiTestDatabase();
+    const site = await createPhiTestSite("addon-extend");
+    const { rows: [row] } = await pool.query<{ id: string }>(
+      `INSERT INTO "${SCHEMA}".incident (site_id, title, severity, external_ref) VALUES ($1, 'Disk full', 2, 'X-1') RETURNING id`,
+      [site.id],
+    );
+
+    const extended = extendedDescriptor();
+    const outcome = await migratePhisAddon(
+      migrationPool,
+      { manifest: manifestWith(extended), releaseBuildId: RELEASE, servingRole },
+      "a".repeat(64),
+    );
+    expect(outcome.action).toBe("extended");
+    expect(outcome.appliedVersion).toBe(1);
+    expect(outcome.statements).toEqual(expect.arrayContaining([
+      "create table incident_tag",
+      "add column incident.resolution",
+      "add column incident.priority",
+      "add column incident.follows",
+      "point incident.follows at incident within its Site",
+      "index incident by priority",
+      "index incident_tag by tag",
+    ]));
+    // A new column comes after the new tables and before the keys that point at it.
+    expect(outcome.statements.indexOf("add column incident.follows"))
+      .toBeLessThan(outcome.statements.indexOf("point incident.follows at incident within its Site"));
+
+    const { rows: kept } = await pool.query(
+      `SELECT title, resolution, priority, follows FROM "${SCHEMA}".incident WHERE id = $1`,
+      [row!.id],
+    );
+    expect(kept).toEqual([{ title: "Disk full", resolution: null, priority: 3, follows: null }]);
+    // The serving role may use what was added, as it may use what was there.
+    await pool.query(
+      `INSERT INTO "${SCHEMA}".incident_tag (site_id, incident_id, tag) VALUES ($1, $2, 'storage')`,
+      [site.id, row!.id],
+    );
+    const { rows: recorded } = await pool.query(
+      `SELECT migration_version, checksum FROM phis.server_addon_migrations WHERE addon_id = $1`,
+      [ADDON_ID],
+    );
+    expect(recorded).toEqual([{ migration_version: 1, checksum: digestPhisAddonSchemaDescriptor(extended) }]);
+
+    const again = await migratePhisAddon(
+      migrationPool,
+      { manifest: manifestWith(extended), releaseBuildId: RELEASE, servingRole },
+      "a".repeat(64),
+    );
+    expect(again.action).toBe("unchanged");
+  });
+
+  it("steps to a later version by adding, and refuses to step back", async () => {
+    const next = extendedDescriptor();
     next.version = 2;
-    next.tables[0].columns.push({ name: "resolution", type: "text", nullable: true });
+    next.tables[0]!.columns.push({ name: "acknowledged_at", type: "instant", nullable: true });
+    const outcome = await migratePhisAddon(
+      migrationPool,
+      { manifest: manifestWith(next), releaseBuildId: RELEASE, servingRole },
+      "a".repeat(64),
+    );
+    expect(outcome).toMatchObject({ action: "extended", appliedVersion: 2, statements: ["add column incident.acknowledged_at"] });
+    expect(await readCatalog()).toMatchObject({ migration_version: 2 });
+
     await expect(
       migratePhisAddon(
         migrationPool,
-        { manifest: manifestWith(next), releaseBuildId: RELEASE, servingRole },
+        { manifest: manifestWith(extendedDescriptor()), releaseBuildId: RELEASE, servingRole },
         "a".repeat(64),
       ),
-    ).rejects.toThrow(/Additive migration is not implemented before v1/);
+    ).rejects.toThrow(/below the applied 2/);
   });
 
   it("purges the schema, the records, and the Add-on's secrets", async () => {

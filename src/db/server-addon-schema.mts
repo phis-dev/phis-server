@@ -3,7 +3,9 @@ import type { PoolClient } from "pg";
 import type { PhisAddonSchemaDescriptor } from "../lib/addons/contract.ts";
 import {
   buildPhisAddonSchemaStatements,
+  describePhisAddonExpectedTables,
   quotePhiIdentifier,
+  type PhisAddonSchemaStatement,
 } from "../lib/addons/schema-ddl.ts";
 import {
   PHIS_ADDON_CREATED_BY_COLUMN,
@@ -11,7 +13,7 @@ import {
   PHIS_ADDON_OWNER_COLUMN,
   PHIS_ADDON_SITE_COLUMN,
 } from "../lib/addons/schema-descriptor.ts";
-import { composePhisAddonAssetTableName } from "../lib/addons/schema-name.ts";
+import { composePhisAddonAssetTableName, composePhisAddonObjectName } from "../lib/addons/schema-name.ts";
 
 /**
  * Creating, checking, and removing the schema an Add-on's tables live in.
@@ -79,6 +81,204 @@ export async function applyPhisAddonSchema(
   }
   await grantExistingObjects(client, target.schemaName, servingRole);
   return statements;
+}
+
+export type PhisAddonSchemaExtensionPlan = {
+  /** What is missing and can be added to tables that hold rows, in the order it has to run. */
+  statements: PhisAddonSchemaStatement[];
+  /** What differs in a way adding cannot reach: each would lose or rewrite something that exists. */
+  refusals: string[];
+};
+
+/**
+ * What it takes to bring a schema that exists to the shape its descriptor now declares, by adding.
+ *
+ * The comparison is with the database, not with the descriptor that was applied before: Core keeps only
+ * that descriptor's checksum, and the catalog is the one record of what is actually there. What may be
+ * added is what loses nothing and needs no value from anybody -- a table, a column that may be null or
+ * has a default, an index, a foreign key -- and the generator's own statements are the ones that add it,
+ * so an extended schema is the schema a fresh migration of the same descriptor would have built.
+ *
+ * Everything else is a refusal: a table, a column or a rule that is in the database and no longer
+ * declared; a column whose type or nullability changed; a new rule over rows that exist (a CHECK, a
+ * required column without a default, a uniqueness rule on a new column, a changed key); a change to the
+ * scope columns or the asset slots, which carry authority and files. Defaults and the expressions of
+ * existing CHECK constraints are not compared -- the catalog spells them its own way -- so a changed one
+ * stays as the database has it.
+ */
+export async function planPhisAddonSchemaExtension(
+  client: PoolClient,
+  target: PhisAddonSchemaTarget,
+): Promise<PhisAddonSchemaExtensionPlan> {
+  const { schemaName, descriptor } = target;
+  const [tableRows, columnRows, constraintRows, indexRows, keyRows] = await Promise.all([
+    client.query<{ table_name: string }>(
+      `SELECT table_name FROM information_schema.tables WHERE table_schema = $1 AND table_type = 'BASE TABLE'`,
+      [schemaName],
+    ),
+    client.query<{ table_name: string; column_name: string; catalog_type: string; not_null: boolean }>(
+      `SELECT c.relname AS table_name, a.attname AS column_name,
+              format_type(a.atttypid, a.atttypmod) AS catalog_type, a.attnotnull AS not_null
+         FROM pg_attribute a
+         JOIN pg_class c ON c.oid = a.attrelid
+         JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = $1 AND c.relkind = 'r' AND a.attnum > 0 AND NOT a.attisdropped`,
+      [schemaName],
+    ),
+    client.query<{ table_name: string; name: string; type: string; definition: string }>(
+      `SELECT c.relname AS table_name, con.conname AS name, con.contype AS type,
+              pg_get_constraintdef(con.oid) AS definition
+         FROM pg_constraint con
+         JOIN pg_class c ON c.oid = con.conrelid
+         JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = $1`,
+      [schemaName],
+    ),
+    client.query<{ name: string }>(`SELECT indexname AS name FROM pg_indexes WHERE schemaname = $1`, [schemaName]),
+    client.query<{ table_name: string; column_name: string; position: number }>(
+      `SELECT c.relname AS table_name, a.attname AS column_name, k.ord AS position
+         FROM pg_index i
+         JOIN pg_class c ON c.oid = i.indrelid
+         JOIN pg_namespace n ON n.oid = c.relnamespace
+         CROSS JOIN LATERAL unnest(i.indkey) WITH ORDINALITY AS k(attnum, ord)
+         JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum = k.attnum
+        WHERE n.nspname = $1 AND i.indisprimary
+        ORDER BY c.relname, k.ord`,
+      [schemaName],
+    ),
+  ]);
+
+  const present = new Set(tableRows.rows.map((row) => row.table_name));
+  const columnsOf = new Map<string, Map<string, { catalogType: string; nullable: boolean }>>();
+  for (const row of columnRows.rows) {
+    const columns = columnsOf.get(row.table_name) ?? new Map();
+    columns.set(row.column_name, { catalogType: row.catalog_type, nullable: !row.not_null });
+    columnsOf.set(row.table_name, columns);
+  }
+  const constraints = new Set(constraintRows.rows.map((row) => `${row.table_name}.${row.name}`));
+  const indexes = new Set(indexRows.rows.map((row) => row.name));
+  const keyOf = new Map<string, string[]>();
+  for (const row of keyRows.rows) keyOf.set(row.table_name, [...(keyOf.get(row.table_name) ?? []), row.column_name]);
+
+  const refusals: string[] = [];
+  const additions: PhisAddonSchemaStatement[] = [];
+  const declared = new Set(descriptor.tables.flatMap((table) => (
+    (table.assets ?? []).length > 0 ? [table.name, composePhisAddonAssetTableName(table.name)] : [table.name]
+  )));
+  for (const name of present) {
+    if (!declared.has(name)) refusals.push(`Table "${name}" is in ${schemaName} and no longer declared.`);
+  }
+
+  for (const table of describePhisAddonExpectedTables(descriptor)) {
+    if (!present.has(table.name)) continue;
+    const existing = columnsOf.get(table.name) ?? new Map();
+    const expected = new Set(table.columns.map((column) => column.name));
+    for (const name of existing.keys()) {
+      if (!expected.has(name)) refusals.push(`Column "${table.name}.${name}" is in the database and no longer declared.`);
+    }
+    for (const column of table.columns) {
+      const found = existing.get(column.name);
+      if (found) {
+        if (found.catalogType !== column.catalogType) {
+          refusals.push(`Column "${table.name}.${column.name}" is ${found.catalogType} and declared ${column.catalogType}.`);
+        }
+        if (found.nullable !== column.nullable) {
+          refusals.push(`Column "${table.name}.${column.name}" is declared ${column.nullable ? "nullable" : "required"} and is not.`);
+        }
+      } else if (column.addition === null) {
+        refusals.push(
+          `Column "${table.name}.${column.name}" is new and cannot be added to rows that exist: ` +
+          "only a column that may be null or has a default, outside the key and without a uniqueness rule, can.",
+        );
+      } else {
+        additions.push({
+          summary: `add column ${table.name}.${column.name}`,
+          creates: { kind: "table", table: table.name, name: `${table.name}.${column.name}` },
+          sql: `ALTER TABLE ${quotePhiIdentifier(schemaName)}.${quotePhiIdentifier(table.name)} ADD COLUMN ${column.addition}`,
+        });
+      }
+    }
+    if ((keyOf.get(table.name) ?? []).join(",") !== table.primaryKey.join(",")) {
+      refusals.push(`The key of "${table.name}" changed.`);
+    }
+    const checks = new Set(table.checks);
+    for (const name of checks) {
+      if (!constraints.has(`${table.name}.${name}`)) refusals.push(`Constraint "${name}" is new and would judge rows that exist.`);
+    }
+    for (const row of constraintRows.rows) {
+      if (row.table_name === table.name && row.type === "c" && !checks.has(row.name)) {
+        refusals.push(`Constraint "${row.name}" is in the database and no longer declared.`);
+      }
+    }
+  }
+
+  // The slots an asset table admits, which is its CHECK on `slot`: a slot taken away would strand files.
+  for (const table of descriptor.tables) {
+    const slots = (table.assets ?? []).map((slot) => slot.name).sort();
+    const assetTable = composePhisAddonAssetTableName(table.name);
+    if (slots.length === 0 || !present.has(assetTable)) continue;
+    const check = constraintRows.rows.find((row) => (
+      row.table_name === assetTable && row.name === composePhisAddonObjectName(assetTable, "slot", "check")
+    ));
+    const admitted = [...(check?.definition ?? "").matchAll(/'((?:[^']|'')*)'/gu)].map((match) => match[1]!.replaceAll("''", "'")).sort();
+    if (admitted.join("\u0000") !== slots.join("\u0000")) {
+      refusals.push(`The asset slots of "${table.name}" changed from ${admitted.join(", ") || "none"} to ${slots.join(", ")}.`);
+    }
+  }
+
+  /*
+   * A uniqueness rule or a foreign key that is no longer declared. Removing one would lose nothing, but
+   * an extension only adds, and a rule left behind would go on refusing writes the Add-on now means to
+   * make. Core's own asset tables are left out: their constraints are Core's shape.
+   */
+  const generated = buildPhisAddonSchemaStatements(schemaName, descriptor);
+  const expectedRules = new Set(generated
+    .filter((statement) => statement.creates.kind === "constraint")
+    .map((statement) => `${statement.creates.table}.${statement.creates.name}`));
+  for (const table of descriptor.tables) {
+    for (const column of table.columns.filter((entry) => entry.unique)) {
+      expectedRules.add(table.siteScoped
+        ? `${table.name}.${composePhisAddonObjectName(table.name, column.name, "uq")}`
+        : `${table.name}.${table.name}_${column.name}_key`);
+    }
+  }
+  const declaredTables = new Set(descriptor.tables.map((table) => table.name));
+  for (const row of constraintRows.rows) {
+    if ((row.type === "u" || row.type === "f") && declaredTables.has(row.table_name)
+      && !expectedRules.has(`${row.table_name}.${row.name}`)) {
+      refusals.push(`Constraint "${row.name}" on "${row.table_name}" is in the database and no longer declared.`);
+    }
+  }
+
+  const exists = (statement: PhisAddonSchemaStatement) => {
+    const { kind, table, name } = statement.creates;
+    return kind === "table" ? present.has(name) : kind === "index" ? indexes.has(name) : constraints.has(`${table}.${name}`);
+  };
+  // A new column goes in after the new tables are made and before anything points at it.
+  const firstNonTable = generated.findIndex((statement) => statement.creates.kind !== "table");
+  const ordered = firstNonTable < 0
+    ? [...generated, ...additions]
+    : [...generated.slice(0, firstNonTable), ...additions, ...generated.slice(firstNonTable)];
+  return {
+    statements: ordered.filter((statement) => additions.includes(statement) || !exists(statement)),
+    refusals,
+  };
+}
+
+/** Runs an extension plan into a schema that exists, with the grants the new objects need. */
+export async function extendPhisAddonSchema(
+  client: PoolClient,
+  target: PhisAddonSchemaTarget,
+  statements: readonly PhisAddonSchemaStatement[],
+  servingRole: string,
+) {
+  // The default privileges were laid down when the schema was made; stating them again costs nothing
+  // and keeps a schema made before they existed from creating tables nobody may read.
+  await prepareSchema(client, target.schemaName, servingRole);
+  for (const statement of statements) {
+    await client.query(statement.sql);
+  }
+  await grantExistingObjects(client, target.schemaName, servingRole);
 }
 
 /**

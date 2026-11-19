@@ -2423,16 +2423,34 @@ Result types are to be generated from the declared queries at the Add-on's own b
 
 ### Applying and removing a schema
 
-`phis-cli` compares the declared descriptor against the recorded one and derives the statements that
-close the difference. Before v1 it executes exactly one comparison, the one against nothing; any other
-ends with an instruction to purge and recreate. This is the licence Core takes for its own schema before
-v1, and it expires the same way. Once installations hold rows nobody may discard, `phis-cli` executes
-the differences that lose nothing -- a new table, a new nullable column, a new index -- and keeps
-refusing the ones that do unless the descriptor names them.
+`phis addon migrate` brings the Add-on's schema to the shape its descriptor declares. Against nothing it
+creates the schema. Against a schema that exists -- installations hold rows nobody may discard -- it
+executes the differences that lose nothing and refuses every other one with an instruction to purge and
+recreate.
+
+The comparison is with the database, not with the descriptor applied before: Core records only that
+descriptor's checksum, and the catalog is the one record of what is actually there. What is added:
+
+- a table, with everything the generator makes beside it (keys, indexes, an asset table);
+- a column that may be null or has a default, outside the primary key and without `unique` -- a
+  reference among them, with its foreign key;
+- an index, and a foreign key or uniqueness key the generator now derives.
+
+What is refused, each named in the error: a table, column, CHECK, uniqueness rule or foreign key that is
+in the database and no longer declared; a column whose type or nullability differs; a new column that is
+required without a default, unique, or part of the key; a new CHECK on a table that exists; a changed
+primary key; a change to the scope columns (`siteScoped`, `groupScoped`, `ownerScoped`) or to the asset
+slots of a table that exists. Defaults and the expressions of existing CHECK constraints are not
+compared, because the catalog spells them its own way: a changed one stays as the database has it.
+
+The statements an extension runs are the generator's own, so an extended schema is the schema a fresh
+migration of the same descriptor builds; the result is read back like a fresh one and planned again, and
+anything still missing fails the run. An extension may keep the descriptor's `version` or raise it; the
+applied-version row is updated or a new one recorded, and a lower version is refused.
 
 The recorded checksum covers the canonical serialization of the descriptor, not the text of anything.
-Reformatting is therefore not drift; a changed shape is. A checksum that disagrees with what was applied
-stops the run and names the remedy rather than attempting a repair.
+Reformatting is therefore not drift; a changed shape is. A descriptor whose checksum changed while
+nothing in the database had to is recorded and said so.
 
 `phis-cli` creates the schema before applying anything into it, grants the serving role usage on the
 schema and data access on its tables -- never DDL -- and arranges for objects created by later versions

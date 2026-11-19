@@ -269,6 +269,13 @@ export type PhisAddonSchemaStatement = {
   /** What this statement is for, so `phis-cli` can show an operator a plan rather than a wall of SQL. */
   summary: string;
   sql: string;
+  /**
+   * The one object the statement creates, by the name PostgreSQL will know it under.
+   *
+   * What lets the migration runner extend a schema rather than only create one: it asks the catalog which
+   * of these exist already and runs the rest (`server-addon-schema.mts`, `planPhisAddonSchemaExtension`).
+   */
+  creates: { kind: "table" | "constraint" | "index"; table: string; name: string };
 };
 
 /**
@@ -311,6 +318,7 @@ function assetTableStatements(
 
   const statements: PhisAddonSchemaStatement[] = [{
     summary: `create table ${name}`,
+    creates: { kind: "table", table: name, name },
     sql:
       `CREATE TABLE ${qualify(schemaName, name)} (\n  ` +
       [
@@ -348,6 +356,7 @@ function assetTableStatements(
   // "The files of this row", which is every read this table serves.
   statements.push({
     summary: `index ${name} by owner`,
+    creates: { kind: "index", table: name, name: composePhisAddonObjectName(name, "owner", "idx") },
     sql:
       `CREATE INDEX ${constraint("owner", "idx")} ON ${qualify(schemaName, name)} ` +
       `(${quotePhiIdentifier(PHIS_ADDON_SITE_COLUMN)}, "owner_id", "slot")`,
@@ -364,6 +373,7 @@ function assetTableStatements(
      */
     statements.push({
       summary: `hold ${name} to one file per slot`,
+      creates: { kind: "index", table: name, name: composePhisAddonObjectName(name, "one", "idx") },
       sql:
         `CREATE UNIQUE INDEX ${constraint("one", "idx")} ON ${qualify(schemaName, name)} ` +
         `(${quotePhiIdentifier(PHIS_ADDON_SITE_COLUMN)}, "owner_id", "slot") ` +
@@ -446,6 +456,7 @@ export function buildPhisAddonSchemaStatements(
     }
     statements.push({
       summary: `create table ${table.name}`,
+      creates: { kind: "table", table: table.name, name: table.name },
       sql: `CREATE TABLE ${qualify(schemaName, table.name)} (\n  ${definitions.join(",\n  ")}\n)`,
     });
   }
@@ -462,6 +473,11 @@ export function buildPhisAddonSchemaStatements(
   for (const table of descriptor.tables.filter((entry) => siteBoundTargets.has(entry.name))) {
     statements.push({
       summary: `key ${table.name} by Site for references`,
+      creates: {
+        kind: "constraint",
+        table: table.name,
+        name: composePhisAddonObjectName(table.name, PHIS_ADDON_SITE_COLUMN, "uq"),
+      },
       sql:
         `ALTER TABLE ${qualify(schemaName, table.name)} ADD CONSTRAINT ` +
         `${quotePhiIdentifier(composePhisAddonObjectName(table.name, PHIS_ADDON_SITE_COLUMN, "uq"))} ` +
@@ -480,6 +496,11 @@ export function buildPhisAddonSchemaStatements(
       const target = CORE_REFERENCE_TARGETS[PHIS_ADDON_CORE_REFERENCES.site];
       statements.push({
         summary: `bind ${table.name} to its Site`,
+        creates: {
+          kind: "constraint",
+          table: table.name,
+          name: composePhisAddonObjectName(table.name, PHIS_ADDON_SITE_COLUMN, "fk"),
+        },
         sql:
           `ALTER TABLE ${qualify(schemaName, table.name)} ADD CONSTRAINT ` +
           `${quotePhiIdentifier(composePhisAddonObjectName(table.name, PHIS_ADDON_SITE_COLUMN, "fk"))} ` +
@@ -488,6 +509,11 @@ export function buildPhisAddonSchemaStatements(
       });
       statements.push({
         summary: `index ${table.name} by Site`,
+        creates: {
+          kind: "index",
+          table: table.name,
+          name: composePhisAddonObjectName(table.name, PHIS_ADDON_SITE_COLUMN, "idx"),
+        },
         sql:
           `CREATE INDEX ${quotePhiIdentifier(composePhisAddonObjectName(table.name, PHIS_ADDON_SITE_COLUMN, "idx"))} ` +
           `ON ${qualify(schemaName, table.name)} (${quotePhiIdentifier(PHIS_ADDON_SITE_COLUMN)})`,
@@ -496,6 +522,11 @@ export function buildPhisAddonSchemaStatements(
     if (table.groupScoped) {
       statements.push({
         summary: `bind ${table.name} to its group`,
+        creates: {
+          kind: "constraint",
+          table: table.name,
+          name: composePhisAddonObjectName(table.name, PHIS_ADDON_GROUP_COLUMN, "fk"),
+        },
         sql: coreSiteBoundForeignKey(
           schemaName, table.name, PHIS_ADDON_GROUP_COLUMN,
           PHIS_ADDON_CORE_REFERENCES.group,
@@ -503,6 +534,11 @@ export function buildPhisAddonSchemaStatements(
       });
       statements.push({
         summary: `index ${table.name} by group`,
+        creates: {
+          kind: "index",
+          table: table.name,
+          name: composePhisAddonObjectName(table.name, PHIS_ADDON_GROUP_COLUMN, "idx"),
+        },
         sql:
           `CREATE INDEX ${quotePhiIdentifier(composePhisAddonObjectName(table.name, PHIS_ADDON_GROUP_COLUMN, "idx"))} ` +
           `ON ${qualify(schemaName, table.name)} (${quotePhiIdentifier(PHIS_ADDON_GROUP_COLUMN)})`,
@@ -512,6 +548,11 @@ export function buildPhisAddonSchemaStatements(
       const target = CORE_REFERENCE_TARGETS[PHIS_ADDON_CORE_REFERENCES.user];
       statements.push({
         summary: `bind ${table.name} to its owner`,
+        creates: {
+          kind: "constraint",
+          table: table.name,
+          name: composePhisAddonObjectName(table.name, PHIS_ADDON_OWNER_COLUMN, "fk"),
+        },
         sql:
           `ALTER TABLE ${qualify(schemaName, table.name)} ADD CONSTRAINT ` +
           `${quotePhiIdentifier(composePhisAddonObjectName(table.name, PHIS_ADDON_OWNER_COLUMN, "fk"))} ` +
@@ -520,6 +561,11 @@ export function buildPhisAddonSchemaStatements(
       });
       statements.push({
         summary: `keep ${table.name} attributable to its author`,
+        creates: {
+          kind: "constraint",
+          table: table.name,
+          name: composePhisAddonObjectName(table.name, PHIS_ADDON_CREATED_BY_COLUMN, "fk"),
+        },
         sql:
           `ALTER TABLE ${qualify(schemaName, table.name)} ADD CONSTRAINT ` +
           `${quotePhiIdentifier(composePhisAddonObjectName(table.name, PHIS_ADDON_CREATED_BY_COLUMN, "fk"))} ` +
@@ -529,6 +575,11 @@ export function buildPhisAddonSchemaStatements(
       // No index: nothing filters on the author. It is read off a row that was found some other way.
       statements.push({
         summary: `index ${table.name} by owner`,
+        creates: {
+          kind: "index",
+          table: table.name,
+          name: composePhisAddonObjectName(table.name, PHIS_ADDON_OWNER_COLUMN, "idx"),
+        },
         sql:
           `CREATE INDEX ${quotePhiIdentifier(composePhisAddonObjectName(table.name, PHIS_ADDON_OWNER_COLUMN, "idx"))} ` +
           `ON ${qualify(schemaName, table.name)} (${quotePhiIdentifier(PHIS_ADDON_OWNER_COLUMN)})`,
@@ -541,6 +592,11 @@ export function buildPhisAddonSchemaStatements(
       if (SITE_BOUND_CORE_REFERENCES.has(column.references as string)) {
         statements.push({
           summary: `point ${table.name}.${column.name} at ${column.references} within its Site`,
+          creates: {
+            kind: "constraint",
+            table: table.name,
+            name: composePhisAddonObjectName(table.name, column.name, "fk"),
+          },
           sql: coreSiteBoundForeignKey(
             schemaName, table.name, column.name, column.references as string,
           ),
@@ -550,6 +606,11 @@ export function buildPhisAddonSchemaStatements(
       if (typeof column.references !== "string" && tablesByName.get(column.references.table)!.siteScoped) {
         statements.push({
           summary: `point ${table.name}.${column.name} at ${column.references.table} within its Site`,
+          creates: {
+            kind: "constraint",
+            table: table.name,
+            name: composePhisAddonObjectName(table.name, column.name, "fk"),
+          },
           sql: siteBoundForeignKey(
             schemaName,
             table.name,
@@ -571,6 +632,7 @@ export function buildPhisAddonSchemaStatements(
         summary: `point ${table.name}.${column.name} at ${
           typeof column.references === "string" ? column.references : column.references.table
         }`,
+        creates: { kind: "constraint", table: table.name, name: composePhisAddonObjectName(table.name, column.name, "fk") },
         sql:
           `ALTER TABLE ${qualify(schemaName, table.name)} ADD CONSTRAINT ` +
           `${quotePhiIdentifier(composePhisAddonObjectName(table.name, column.name, "fk"))} ` +
@@ -587,9 +649,8 @@ export function buildPhisAddonSchemaStatements(
       // Site-scoped table it holds within the Site. A non-unique index is only an access path and is
       // left as the Add-on wrote it -- the Site filter Core puts into every query is what makes it
       // useful, and prepending the column there would be a guess about which order helps.
-      const name = quotePhiIdentifier(
-        composePhisAddonObjectName(table.name, index.name, "idx"),
-      );
+      const indexName = composePhisAddonObjectName(table.name, index.name, "idx");
+      const name = quotePhiIdentifier(indexName);
       if (index.kind === "text") {
         /*
          * A trigram index, which is what makes `contains` a lookup instead of a scan.
@@ -601,6 +662,7 @@ export function buildPhisAddonSchemaStatements(
          */
         statements.push({
           summary: `index ${table.name} for text search on ${index.columns[0]}`,
+          creates: { kind: "index", table: table.name, name: indexName },
           sql:
             `CREATE INDEX ${name} ON ${qualify(schemaName, table.name)} ` +
             `USING gin (${quotePhiIdentifier(index.columns[0]!)} gin_trgm_ops)`,
@@ -613,6 +675,7 @@ export function buildPhisAddonSchemaStatements(
           : index.columns;
       statements.push({
         summary: `index ${table.name} by ${columns.join(", ")}`,
+        creates: { kind: "index", table: table.name, name: indexName },
         sql:
           `CREATE ${index.unique ? "UNIQUE " : ""}INDEX ${name} ` +
           `ON ${qualify(schemaName, table.name)} ` +
@@ -622,4 +685,96 @@ export function buildPhisAddonSchemaStatements(
   }
 
   return statements;
+}
+
+/** A column as the generator writes it, in the terms PostgreSQL's catalog answers with. */
+export type PhisAddonExpectedColumn = {
+  name: string;
+  /** As `format_type` spells it: `character varying(200)`, `timestamp with time zone`. */
+  catalogType: string;
+  nullable: boolean;
+  /**
+   * The `ADD COLUMN` definition where adding the column to a table that holds rows loses nothing and
+   * needs no value from anybody: it may be null or has a default, it is not part of the key, it carries
+   * no uniqueness rule, and it is the Add-on's own rather than a scope column Core writes. Null otherwise.
+   */
+  addition: string | null;
+};
+
+export type PhisAddonExpectedTable = {
+  name: string;
+  columns: PhisAddonExpectedColumn[];
+  primaryKey: string[];
+  /** The names of the CHECK constraints the table is created with. */
+  checks: string[];
+};
+
+const CATALOG_TYPES: Record<string, string> = {
+  SMALLINT: "smallint",
+  INTEGER: "integer",
+  BIGINT: "bigint",
+  "BIGINT GENERATED ALWAYS AS IDENTITY": "bigint",
+  TEXT: "text",
+  BOOLEAN: "boolean",
+  TIMESTAMPTZ: "timestamp with time zone",
+  JSONB: "jsonb",
+  UUID: "uuid",
+  BYTEA: "bytea",
+};
+
+/**
+ * The shape the generator gives each declared table, for comparing a descriptor with a schema that
+ * exists. The asset tables Core adds are not among them: they are Core's shape, not the descriptor's.
+ */
+export function describePhisAddonExpectedTables(descriptor: PhisAddonSchemaDescriptor): PhisAddonExpectedTable[] {
+  const tablesByName = new Map(descriptor.tables.map((table) => [table.name, table]));
+  return descriptor.tables.map((table) => {
+    const scope = (name: string, reference: string, nullable: boolean): PhisAddonExpectedColumn => ({
+      name,
+      catalogType: CATALOG_TYPES[CORE_REFERENCE_TARGETS[reference]!.type]!,
+      nullable,
+      addition: null,
+    });
+    const columns: PhisAddonExpectedColumn[] = [
+      ...(table.siteScoped ? [scope(PHIS_ADDON_SITE_COLUMN, PHIS_ADDON_CORE_REFERENCES.site, false)] : []),
+      ...(table.groupScoped ? [scope(PHIS_ADDON_GROUP_COLUMN, PHIS_ADDON_CORE_REFERENCES.group, false)] : []),
+      ...(table.ownerScoped
+        ? [
+            scope(PHIS_ADDON_OWNER_COLUMN, PHIS_ADDON_CORE_REFERENCES.user, true),
+            scope(PHIS_ADDON_CREATED_BY_COLUMN, PHIS_ADDON_CORE_REFERENCES.user, true),
+          ]
+        : []),
+    ];
+    for (const column of table.columns) {
+      const type = isReferenceColumn(column)
+        ? referenceColumnType(column, tablesByName)
+        : column.type === "string"
+          ? `VARCHAR(${column.maxLength})`
+          : COLUMN_TYPE_SQL[column.type]!;
+      const catalogType = type.startsWith("VARCHAR(")
+        ? `character varying${type.slice("VARCHAR".length)}`
+        : CATALOG_TYPES[type]!;
+      const nullable = column.nullable === true;
+      const defaulted = !isReferenceColumn(column) && column.default !== undefined;
+      const identity = !isReferenceColumn(column) && column.type === "identity";
+      const addable = (nullable || defaulted) && !identity && !column.unique && !table.primaryKey.includes(column.name);
+      columns.push({
+        name: column.name,
+        catalogType,
+        nullable,
+        addition: addable ? columnDefinition(column, tablesByName, table.siteScoped === true) : null,
+      });
+    }
+    for (const slot of table.assets ?? []) {
+      if (slot.mirrorColumn) {
+        columns.push({ name: slot.mirrorColumn, catalogType: "character varying(512)", nullable: true, addition: null });
+      }
+    }
+    return {
+      name: table.name,
+      columns,
+      primaryKey: [...table.primaryKey],
+      checks: (table.constraints ?? []).map((constraint) => composePhisAddonObjectName(table.name, constraint.name, "check")),
+    };
+  });
 }

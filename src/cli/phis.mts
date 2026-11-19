@@ -3974,6 +3974,15 @@ async function main() {
           console.log(`${outcome.addonId} owns no tables.`);
         } else if (outcome.action === "unchanged") {
           console.log(`${outcome.addonId} is already at schema version ${outcome.appliedVersion}.`);
+        } else if (outcome.action === "extended") {
+          console.log(
+            outcome.statements.length === 0
+              ? `Recorded the new schema descriptor of ${outcome.addonId}; nothing in ${outcome.schemaName} had to change.`
+              : `Extended ${outcome.schemaName} of ${outcome.addonId} to schema version ${outcome.appliedVersion}:`,
+          );
+          for (const statement of outcome.statements) {
+            console.log(`  - ${statement}`);
+          }
         } else {
           console.log(
             `Applied schema version ${outcome.appliedVersion} of ${outcome.addonId} into ` +

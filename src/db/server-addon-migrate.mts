@@ -12,20 +12,23 @@ import { derivePhisAddonSchemaName } from "../lib/addons/schema-name.ts";
 import {
   applyPhisAddonSchema,
   dropPhisAddonSchema,
+  extendPhisAddonSchema,
+  planPhisAddonSchemaExtension,
   verifyPhisAddonSchema,
 } from "./server-addon-schema.mts";
 
 /**
  * Bringing an Add-on's schema to the shape its descriptor declares.
  *
- * Before v1 this executes exactly one comparison: the one against nothing. Anything else -- a descriptor
- * whose shape changed, or one that moved to a later version over an installation that already holds
- * rows -- ends with an instruction to purge and recreate. That is the licence Core takes for its own
- * schema before v1, and it expires the same way: once installations hold rows nobody may discard, this
- * executes the differences that lose nothing and keeps refusing the ones that do.
+ * Against nothing, it creates the schema. Against a schema that exists, it adds what loses nothing --
+ * a table, a column that may be null or has a default, an index, a foreign key -- and refuses every
+ * other difference with an instruction to purge and recreate (`planPhisAddonSchemaExtension` says
+ * which differences are which). Installations hold rows nobody may discard -- figures a source no
+ * longer answers, orders -- and an addition that needed a purge would cost all of them.
  *
- * The checksum covers the canonical serialization of the descriptor rather than any text, so
- * reformatting is not drift and a changed shape is.
+ * An extension may keep the descriptor's version or raise it; a lower version is refused. The checksum
+ * covers the canonical serialization of the descriptor rather than any text, so reformatting is not
+ * drift and a changed shape is.
  */
 
 export type PhisAddonMigrationInput = {
@@ -39,7 +42,8 @@ export type PhisAddonMigrationOutcome = {
   addonId: string;
   schemaName: string | null;
   appliedVersion: number;
-  action: "applied" | "unchanged" | "no-schema";
+  /** `extended`: a schema that existed was added to, and the new descriptor recorded. */
+  action: "applied" | "extended" | "unchanged" | "no-schema";
   statements: string[];
 };
 
@@ -150,18 +154,22 @@ export async function migratePhisAddon(
           statements: [],
         };
       }
-      if (current.migration_version === manifest.schema.version) {
+      if (manifest.schema.version < current.migration_version) {
         throw new Error(
-          `The schema descriptor of ${manifest.addonId} changed without changing its version. ` +
-          `Version ${current.migration_version} was applied from a different shape. ` +
+          `${manifest.addonId} declares schema version ${manifest.schema.version}, below the applied ` +
+          `${current.migration_version}. An older package cannot take a schema back. ` +
           purgeAdvice(manifest.addonId),
         );
       }
-      throw new Error(
-        `${manifest.addonId} moved from schema version ${current.migration_version} to ` +
-        `${manifest.schema.version}. Additive migration is not implemented before v1. ` +
-        purgeAdvice(manifest.addonId),
-      );
+      return await extend(client, {
+        addonId: manifest.addonId,
+        schemaName,
+        descriptor: manifest.schema,
+        checksum,
+        appliedVersion: current.migration_version,
+        releaseBuildId,
+        servingRole,
+      });
     }
 
     await client.query(
@@ -209,6 +217,69 @@ export async function migratePhisAddon(
       statements: statements.map((statement) => statement.summary),
     };
   });
+}
+
+/**
+ * A schema that exists, brought to a descriptor that changed: add what is missing, refuse the rest.
+ *
+ * The plan is made against the catalog inside the migration's transaction, run, read back like a fresh
+ * schema, and planned again -- an extension that leaves anything to add has not done what it says.
+ */
+async function extend(client: import("pg").PoolClient, input: {
+  addonId: string;
+  schemaName: string;
+  descriptor: PhisAddonSchemaDescriptor;
+  checksum: string;
+  appliedVersion: number;
+  releaseBuildId: string;
+  servingRole: string;
+}): Promise<PhisAddonMigrationOutcome> {
+  const target = { schemaName: input.schemaName, descriptor: input.descriptor };
+  const plan = await planPhisAddonSchemaExtension(client, target);
+  if (plan.refusals.length > 0) {
+    throw new Error(
+      `The schema of ${input.addonId} cannot be brought to its new shape by adding:\n- ` +
+      plan.refusals.join("\n- ") + "\n" + purgeAdvice(input.addonId),
+    );
+  }
+  await extendPhisAddonSchema(client, target, plan.statements, input.servingRole);
+  const issues = await verifyPhisAddonSchema(client, target);
+  const left = await planPhisAddonSchemaExtension(client, target);
+  if (issues.length > 0 || left.refusals.length > 0 || left.statements.length > 0) {
+    throw new Error(
+      `The extended schema of ${input.addonId} does not satisfy its descriptor:\n- ` +
+      [...issues, ...left.refusals, ...left.statements.map((statement) => `still missing: ${statement.summary}`)].join("\n- "),
+    );
+  }
+
+  const version = input.descriptor.version;
+  if (version === input.appliedVersion) {
+    await client.query(
+      `UPDATE phis.server_addon_migrations
+          SET checksum = $3, release_build_id = $4, applied_at = NOW()
+        WHERE addon_id = $1 AND migration_version = $2::int`,
+      [input.addonId, version, input.checksum, input.releaseBuildId],
+    );
+  } else {
+    await client.query(
+      `INSERT INTO phis.server_addon_migrations (
+         addon_id, migration_version, migration_id, checksum, release_build_id
+       )
+       VALUES ($1, $2::int, $3, $4, $5)`,
+      [input.addonId, version, `schema-v${version}`, input.checksum, input.releaseBuildId],
+    );
+  }
+  await client.query(
+    `UPDATE phis.server_addons SET migration_version = $2::int, updated_at = NOW() WHERE addon_id = $1`,
+    [input.addonId, version],
+  );
+  return {
+    addonId: input.addonId,
+    schemaName: input.schemaName,
+    appliedVersion: version,
+    action: "extended",
+    statements: plan.statements.map((statement) => statement.summary),
+  };
 }
 
 /**
