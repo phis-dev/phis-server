@@ -1,3 +1,25 @@
+phis (0.5.0-1) unstable; urgency=medium
+
+  * An Area's Module selection is stored apart from its structure. A
+    Modules revision (PhiCmsAreaRevisionFlags.Modules) holds only
+    config.modules and site_area_scopes.published_modules_revision_id
+    points at it. POST/DELETE /api/site/cms/area/modules,
+    GET .../modules/draft and POST .../modules/publish take no
+    sourcePreset or baseline any more; a structure write refuses
+    config.modules. Clearing an Area's structure keeps its Modules. The
+    live Area read (GET /api/v1/site/area) answers the selection beside
+    the structure, and without an identity the one structure the Area
+    stores. Needs @phis/contracts 0.8.0 and @phis/ui 0.7.0.
+  * A payment Provider probe states a Merchant of Record's reach
+    (merchantOfRecord: countries, admitted tax categories, charge or
+    reverse-charge for a business's VAT id).
+  * Schema change: site_area_scopes.published_modules_revision_id and the
+    read-marker trigger. An existing installation adds them and moves its
+    Module selections by hand before upgrading (the sweep, run with the
+    app database user); a new one gets them from the CREATE.
+
+ -- Marius Schumacher <marius.schumacher@phisys.com>  Fri, 20 Nov 2026 15:15:00 +0000
+
 phis (0.4.9-1) unstable; urgency=medium
 
   * Add-on commands: an Add-on declares commands in its manifest and
