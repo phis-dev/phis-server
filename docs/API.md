@@ -8,14 +8,14 @@ public or internal token, and `session` is the visitor's Site session with the a
 passes (see [AUTHORIZATION.md](../AUTHORIZATION.md)). A route with no access entry performs its own checks
 or none; read its source. Request and response shapes are not listed; the source is linked per route.
 
-175 routes.
+176 routes.
 
 ## Contents
 
 - [`/api/operator`](#apioperator) (5)
 - [`/api/setup`](#apisetup) (2)
 - [`/api/site`](#apisite) (91)
-- [`/api/v1/addons`](#apiv1addons) (2)
+- [`/api/v1/addons`](#apiv1addons) (3)
 - [`/api/v1/admin`](#apiv1admin) (1)
 - [`/api/v1/auth`](#apiv1auth) (29)
 - [`/api/v1/email`](#apiv1email) (1)
@@ -215,6 +215,7 @@ Versioned API a Site calls server-to-server with its token (`x-phis-token`), and
 | PATCH | [`/api/v1/addons/{scope}/{name}/{...path?}`](../src/app/api/v1/addons/[scope]/[name]/[[...path]]/route.ts) | decided per route by the Add-on dispatcher (SERVER_ADDONS.md) |  |
 | POST | [`/api/v1/addons/{scope}/{name}/{...path?}`](../src/app/api/v1/addons/[scope]/[name]/[[...path]]/route.ts) | decided per route by the Add-on dispatcher (SERVER_ADDONS.md) |  |
 | PUT | [`/api/v1/addons/{scope}/{name}/{...path?}`](../src/app/api/v1/addons/[scope]/[name]/[[...path]]/route.ts) | decided per route by the Add-on dispatcher (SERVER_ADDONS.md) |  |
+| POST | [`/api/v1/addons/commands`](../src/app/api/v1/addons/commands/route.ts) | internal token | Running one declared command now, as one member of the Site (SERVER_ADDONS.md, Commands). |
 | POST | [`/api/v1/addons/jobs`](../src/app/api/v1/addons/jobs/route.ts) | internal token | Starting one declared job now, out of turn. |
 
 ## `/api/v1/admin`
