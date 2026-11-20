@@ -185,28 +185,32 @@ describe("The Theme is a reference source of its own", () => {
 });
 
 /*
- * An Area Scope points at three revisions, not two. The Module draft is the one a Module writes when
- * somebody edits what it contributes, and a reader that only knows the other two reads every reference
- * of that draft as the residue of a discarded one.
+ * An Area Scope's Module pointers name Modules revisions, which hold `config.modules` and nothing a
+ * reference can sit in. Both readers of the index reconcile an Area against its structure pointers only.
  */
-describe("An Area's Module draft is a live source", () => {
-  it("is reconciled by both readers of the index", async () => {
-    // The Asset query the delete guard reads by, and the count behind a path change: one rule, so it
-    // has to be the same three pointers in both places.
+describe("An Area's references come from its structure", () => {
+  it("is reconciled by both readers of the index against the two structure pointers", async () => {
     const references = await read("src/db/site-cms-references.ts");
-    const clause = /area_scope\.published_revision_id, area_scope\.working_draft_revision_id,\s*area_scope\.working_module_draft_revision_id/gu;
+    const clause = /ref\.source_kind = 4 AND ref\.source_revision_id IN \(\s*area_scope\.published_revision_id, area_scope\.working_draft_revision_id\)/gu;
     expect(references.match(clause) ?? []).toHaveLength(2);
+    expect(references).not.toMatch(/working_module_draft_revision_id|published_modules_revision_id/u);
   });
 
-  it("has its references rewritten when the structure publish merges the published config back in", async () => {
+  it("indexes nothing for a Modules revision", async () => {
+    const source = await read("src/db/site-pages.ts");
+    for (const name of ["saveSiteAreaModulesDraftRevision", "publishSiteAreaModulesRevision"]) {
+      const fn = new RegExp(`export async function ${name}[\\s\\S]*?\\n\\}\\n`, "u").exec(source);
+      expect(fn, `${name} stays findable`).not.toBeNull();
+      expect(fn![0]).not.toMatch(/replaceSiteCmsReferencesWithDb/u);
+    }
+  });
+
+  it("has the structure publish index the tree that goes live, inside its transaction", async () => {
     const source = await read("src/db/site-pages.ts");
     const fn = /export async function publishSiteAreaRevision[\s\S]*?\n\}\n/u.exec(source);
     expect(fn, "the Area publish stays findable").not.toBeNull();
     const body = fn![0];
     expect(body).toMatch(/references: collectSiteCmsReferences\(materializedTree, \{ targetAreaId: input\.areaMask \}\)/u);
-    // After the merge, so the rows describe the tree that was published rather than the draft's copy.
-    expect(body.indexOf("mergePhiAreaTreeForPublish")).toBeLessThan(body.indexOf("replaceSiteCmsReferencesWithDb"));
-    // Inside the transaction body, which commits only after it returns.
     const transaction = body.indexOf("withTransaction(async (client) => {");
     expect(transaction).toBeGreaterThan(-1);
     expect(transaction).toBeLessThan(body.indexOf("replaceSiteCmsReferencesWithDb"));

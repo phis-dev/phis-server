@@ -1893,14 +1893,16 @@ CREATE TABLE IF NOT EXISTS phis.site_area_scopes (
   -- ordinal. PhiCmsVisibilityContext in @phis/contracts/cms decides the numbers -- one file both
   -- phi-server and the site UI read them from -- and nothing may write them out a second time.
   area_id SMALLINT NOT NULL DEFAULT 1,
+  -- The Area's structure: its Regions, Layouts, Widgets, Overlays and config.shell, under the
+  -- sourcePreset identity of the shell it was taken from.
   published_revision_id INT NULL,
   working_draft_revision_id INT NULL,
-  -- The Area's structure and its Module selection are edited apart and published apart, so each keeps
-  -- its own Working Draft. Both drafts are ordinary rows in site_area_revisions and both carry a whole
-  -- Area: a publish writes only the fields its draft owns into the published revision, and reads the
-  -- rest from there. That is what lets two open drafts pass each other without one undoing the other.
-  -- There is one published pointer, because a published Area is one state and not two.
+  -- The Area's Module selection, config.modules and nothing else. It is edited, published and kept apart
+  -- from the structure because the shell an Area takes depends on the Modules it runs: the selection has
+  -- to be readable before the identity a structure is stored under is known. Its revisions are rows of
+  -- site_area_revisions flagged Modules; clearing the structure leaves both of these pointers standing.
   working_module_draft_revision_id INT NULL,
+  published_modules_revision_id INT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   CONSTRAINT site_area_scopes_site_area_unique UNIQUE (site_id, area_id)
@@ -2158,6 +2160,19 @@ BEGIN
       WHERE new_rows.published_revision_id IS DISTINCT FROM old_rows.published_revision_id
          OR new_rows.path IS DISTINCT FROM old_rows.path
          OR new_rows.tombstoned_at IS DISTINCT FROM old_rows.tombstoned_at
+    ) AS touched
+    ON CONFLICT (site_id) DO UPDATE SET marker = EXCLUDED.marker;
+  ELSIF TG_TABLE_NAME = 'site_area_scopes' THEN
+    -- An Area publishes its structure and its Module selection apart, so either published pointer counts.
+    INSERT INTO phis.site_read_marker (site_id, marker)
+    SELECT touched.site_id, nextval('phis.site_read_marker_seq')
+    FROM (
+      SELECT DISTINCT new_rows.site_id
+      FROM new_rows
+      JOIN old_rows ON old_rows.id = new_rows.id
+      JOIN phis.sites AS sites ON sites.id = new_rows.site_id
+      WHERE new_rows.published_revision_id IS DISTINCT FROM old_rows.published_revision_id
+         OR new_rows.published_modules_revision_id IS DISTINCT FROM old_rows.published_modules_revision_id
     ) AS touched
     ON CONFLICT (site_id) DO UPDATE SET marker = EXCLUDED.marker;
   ELSIF TG_TABLE_NAME = 'site_content' THEN

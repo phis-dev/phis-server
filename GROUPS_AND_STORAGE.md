@@ -551,8 +551,8 @@ control plane materializes the result rather than re-deriving it:
 ```text
 PhiRuntimeModuleDefinition.mediaSpaces           { user?: { kinds }, group?: { kinds } }
 └── resolvePhiDeclaredMediaSpaces()              the Builder derives the Area's union when it saves
-    preset.config.modules.mediaSpaces            the Area preset carries it, next to runtimeModules
-    └── publishing an Area                       the control plane unions every *published* Area
+    preset.config.modules.mediaSpaces            the Area's Modules revision carries it, next to runtimeModules
+    └── publishing an Area's Modules             the control plane unions every Area's *published* selection
         site_media_config.flags                  User/Group Spaces enabled bits
         site_media_config.user_space_content_kinds
         site_media_config.group_space_content_kinds
@@ -560,7 +560,8 @@ PhiRuntimeModuleDefinition.mediaSpaces           { user?: { kinds }, group?: { k
 
 `resolvePhiDeclaredMediaSpaces` lives in `@phis/ui` (`plugins/runtime-modules/settings.ts`) and is called
 by Builder persistence. The control plane reads `tree_json #> '{preset,config,modules,mediaSpaces}'` of
-every published Area revision (`materializeSiteMediaAvailabilityWithDb` in `src/db/media-spaces.ts`).
+every Area's published Modules revision (`site_area_scopes.published_modules_revision_id`,
+`materializeSiteMediaAvailabilityWithDb` in `src/db/media-spaces.ts`).
 A Space kind is available when any published Area declares it; its content kinds are the sorted union of
 the declared `kinds`. A declared Space kind with an empty `kinds` list accepts nothing.
 

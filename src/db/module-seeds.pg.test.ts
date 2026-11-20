@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { PhiCmsAreaRevisionFlags } from "@phis/contracts/cms";
 
 import {
   closePhiTestPool,
@@ -26,7 +27,7 @@ describe.skipIf(!configured)("materializeSiteModuleSeedsWithDb", () => {
     supportTicketTypes: [{ key: "request", name: "Request" }],
   }];
 
-  /** One published Area carrying `seed` in its Module namespace, as the Builder writes it. */
+  /** One published Module selection carrying `seed`, as the Builder writes it: a Modules revision. */
   async function publishArea(target: PhiTestSite, areaId: number, seed: unknown) {
     const pool = await requirePhiTestDatabase();
     const { rows: scopes } = await pool.query<{ id: number }>(
@@ -37,11 +38,15 @@ describe.skipIf(!configured)("materializeSiteModuleSeedsWithDb", () => {
     );
     const scopeId = scopes[0]!.id;
     const { rows: revisions } = await pool.query<{ id: number }>(
-      `INSERT INTO phis.site_area_revisions (area_scope_id, tree_json) VALUES ($1, $2) RETURNING id`,
-      [scopeId, JSON.stringify({ preset: { config: { modules: { seed } } } })],
+      `INSERT INTO phis.site_area_revisions (area_scope_id, flags, tree_json) VALUES ($1, $2, $3) RETURNING id`,
+      [
+        scopeId,
+        PhiCmsAreaRevisionFlags.Published | PhiCmsAreaRevisionFlags.Modules,
+        JSON.stringify({ area: "app", preset: { config: { modules: { runtimeModules: [], seed } } } }),
+      ],
     );
     await pool.query(
-      `UPDATE phis.site_area_scopes SET published_revision_id = $2 WHERE id = $1`,
+      `UPDATE phis.site_area_scopes SET published_modules_revision_id = $2 WHERE id = $1`,
       [scopeId, revisions[0]!.id],
     );
   }

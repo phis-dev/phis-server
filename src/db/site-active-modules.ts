@@ -29,7 +29,7 @@ export async function listPhiSiteActiveModuleIdsWithDb(
   const { rows } = await db.query<{ module_ids: unknown }>(
     `SELECT revision.tree_json #> '{preset,config,modules,runtimeModules}' AS module_ids
      FROM phis.site_area_scopes scope
-     JOIN phis.site_area_revisions revision ON revision.id = scope.published_revision_id
+     JOIN phis.site_area_revisions revision ON revision.id = scope.published_modules_revision_id
      WHERE scope.site_id = $1`,
     [siteId],
   );

@@ -153,7 +153,8 @@ and submissions do not: the live Site holds nothing of a draft.
 ## Reset
 
 Resetting a Page or an Area to its Module's preset deletes the Site's override -- the scope's revisions
-and pointers (`DELETE /api/site/cms/page/override`, `/api/site/cms/area/override`). Nothing is
+and pointers (`DELETE /api/site/cms/page/override`, `/api/site/cms/area/override`); for an Area that is
+its structure only, and its Module selection stays as it is (DB.md, `site_area_scopes`). Nothing is
 published, and nothing has to be: with no override left, the preset answers at once. Because that changes
 what is live, it is the Publisher's act, and it is offered in Revisions only, beside the history it
 discards. Content bound to the preset's own nodes stays and is shown by the preset; Widgets the Site

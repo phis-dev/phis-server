@@ -1108,6 +1108,7 @@ Contract:
 - `published_revision_id INT NULL`
 - `working_draft_revision_id INT NULL`
 - `working_module_draft_revision_id INT NULL`
+- `published_modules_revision_id INT NULL`
 - `created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
 - `updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
 - `UNIQUE (site_id, area_id)`
@@ -1117,11 +1118,30 @@ Contract:
 - `area_id` is the Area's visibility-mask bit from `PhiCmsVisibilityContext` (public `1`, app `2`, admin `8`,
   editor `16`, accounting `64`, builder `256`), not an ordinal. The same holds for `site_page_scopes.area_id`
   and `site_cms_references.target_area_id`.
-- The scope stores one published revision pointer and two Working Draft pointers: `working_draft_revision_id`
-  for the Area structure and `working_module_draft_revision_id` for the Area's Module selection. Both
-  drafts are ordinary `site_area_revisions` rows carrying a whole Area; each publish writes only the
-  fields its draft owns into the published revision and reads the rest from it.
-- Published live reads resolve directly through `site_area_scopes.published_revision_id` into the area revision payload.
+- An Area is two things stored and published apart, each with a published and a Working Draft pointer:
+  - its **structure** -- Regions, Layouts, Widgets, Overlays, controller settings and `config.shell`,
+    under a `sourcePreset` identity: `published_revision_id` and `working_draft_revision_id`;
+  - its **Module selection** -- `config.modules` and nothing else: `published_modules_revision_id` and
+    `working_module_draft_revision_id`.
+- The two are apart because the shell an Area takes depends on the Modules it runs: the selection must be
+  readable before the identity a structure is stored under is known. A structure publish moves only
+  `published_revision_id` and merges nothing; a Modules publish moves only `published_modules_revision_id`
+  and runs the materializers (Media availability, thread kinds, Module seeds) in its transaction. A
+  structure publish runs none of them, because a structure decides nothing about Modules.
+- Saving or publishing Modules never creates, changes or freezes a structure revision: an Area that never
+  stored a structure keeps resolving to its code-owned shell however often its Modules are published.
+- The pointers carry no foreign key, like every other scope pointer: a revision row belongs to its scope
+  through `area_scope_id`, and the scope's writers keep the pointers on rows of that scope.
+- Published live reads resolve the structure through `published_revision_id`, only for the `sourcePreset`
+  identity the caller names (`GET /api/v1/site/area?ownerModuleId&presetKey`), and the Module selection
+  through `published_modules_revision_id` whatever identity is named, also when none is.
+- Everything that asks which Modules a Site runs reads `published_modules_revision_id`
+  (`materializeSiteMediaAvailabilityWithDb`, `materializeSiteThreadKindsWithDb`,
+  `materializeSiteModuleSeedsWithDb`, `listPhiSiteActiveModuleIdsWithDb`, `phis auth restore-preset`).
+- Clearing the structure (`DELETE /api/site/cms/area/override`) deletes the structure revisions and nulls
+  both structure pointers; it is refused when the named identity is not the one the structure stands on.
+  The Modules revisions and both Module pointers stay, and the scope row is deleted only when all four
+  pointers are null. The materializers do not run: nothing they read changed.
 - No separate materialized live shell tables should sit between the published revision pointer and runtime rendering.
 
 ### `phis.site_page_scopes`
@@ -1217,7 +1237,7 @@ Contract:
 - Because a Widget body is persisted both in the revision `tree_json` and in its `site_content` row, one authored reference legitimately produces one Page-source row and one Content-source row. The per-source breakdown keeps that visible; the sum is a location count, not a distinct-authored-reference count.
 - The Area source is the `tree_json` counterpart to the Page source, written by the Area draft save inside the same transaction. Area-owned trusted bodies reach the index through the Content source; the Area source covers references in Area widget or Region config, which carry no content binding.
 - The Theme source is the Site-wide carrier no CMS tree reaches. One Scope per Site, a key without an Area prefix, and it holds the Root background a Module's ground was taken over into plus the brand logo. A Theme row names no Area, and a Page reference in a Theme is invalid because a Site-wide Scope has no Area to resolve one in. Written by the Theme draft save and rewritten by the Theme publish, which may promote a revision other than the current draft.
-- `source_revision_id` is what makes a row's own liveness readable. Page, Navigation, Area, and Theme sources index the revision that was just written, and a draft save leaves the published revision's rows -- and an Area's Module draft rows beside its structure draft -- standing. A row naming a revision its Scope points at from none of its pointers is dead, and every pointer change, restore and history delete drops such rows in its own transaction: under `ON DELETE RESTRICT` a dead row would otherwise refuse the delete of an Asset the guard reports as unreferenced. The readers that would act on a row -- the Asset delete guard and the affected-reference count behind a path change -- still disregard one over the same Scope joins. An Area Scope has three such pointers: `published_revision_id`, `working_draft_revision_id`, and `working_module_draft_revision_id`, the Working Draft a Module writes for what it contributes. A publish that merges a tree instead of only promoting a pointer -- both Area publishes -- rewrites the set for the tree it published. Publishing promotes the draft revision rather than creating one, so a published reference keeps matching. Content sources are exempt: their revision is a content version, and the orphan collector already removes their rows when a discarded Draft leaves the content unreferenced.
+- `source_revision_id` is what makes a row's own liveness readable. Page, Navigation, Area, and Theme sources index the revision that was just written, and a draft save leaves the published revision's rows standing. A row naming a revision its Scope points at from none of its pointers is dead, and every pointer change, restore and history delete drops such rows in its own transaction: under `ON DELETE RESTRICT` a dead row would otherwise refuse the delete of an Asset the guard reports as unreferenced. The readers that would act on a row -- the Asset delete guard and the affected-reference count behind a path change -- still disregard one over the same Scope joins. An Area Scope is reconciled against its two structure pointers, `published_revision_id` and `working_draft_revision_id`: its Module pointers name Modules revisions, which index nothing. The Area structure publish rewrites the set for the tree it published, so a Draft that reached the Scope by a restore is indexed once it goes live. Publishing promotes the draft revision rather than creating one, so a published reference keeps matching. Content sources are exempt: their revision is a content version, and the orphan collector already removes their rows when a discarded Draft leaves the content unreferenced.
 
 ### CMS node identity target contract
 
@@ -1251,12 +1271,25 @@ Contract:
 - A Working Draft is one row rewritten in place, so `created_at` stays the first save. Every rewrite stamps `meta_json.saved = { at, byUserId }` (`updateSiteDraftRevisionWithDb`); the revision history answers it as `savedAt` and `savedByLabel`. A row without `saved` was never rewritten.
 - `tree_json` stores the concrete area as string field `area`.
 - `tree_json.controllerSettings` is mandatory: what the tree tells its Controllers, an array of `{ type, instanceKey, mountScope, config }` keyed by `type` and `instanceKey`, `mountScope` being the tree's own scope (`area` here, `page` on a Page). It is the same contract on a Page and on an Area; `config.signalRoutes` is checked like a node's routes against the tree's own nodes, except that a receiver `cms:<id>` outside the tree is accepted when the id is of preset origin (an Overlay a Module's preset declares is laid over the stored tree when it is shown) and refused when it is of draft origin, and there is no `enabled` (`validateCmsPageWriteInput`, `validateCmsAreaPresetWriteInput`). A tree that configures nothing stores `[]`.
-- `tree_json.sourcePreset` is mandatory and stores `ownerModuleId`, `presetKey`, and the positive `sourcePresetVersion` of the Area shell snapshot.
+- `tree_json.sourcePreset` is mandatory on a structure revision and stores `ownerModuleId`, `presetKey`, and the positive `sourcePresetVersion` of the Area shell snapshot.
+- There are two tree shapes, told apart by the `Modules` flag:
+  - a **structure revision** (no `Modules` flag): `{ area, sourcePreset, preset, regions, overlays,
+    layoutNodes, contentWidgets, controllerSettings }`; `preset.config` may hold `shell` and nothing else
+    (`validateCmsAreaPresetWriteInput`, the same rule for the write and the stored reader);
+  - a **Modules revision** (`Modules` flag): exactly `{ area, preset: { config: { modules } } }` -- no
+    `sourcePreset`, no Regions, no nodes, nothing else in `preset` -- where `modules.runtimeModules` is an
+    array of Module ids (`validateCmsAreaModulesRevisionTree`). It indexes no references in
+    `site_cms_references`: it holds nothing a reference can sit in.
 - Forking a Draft from a Published snapshot preserves that source version. A newer installed preset never rewrites an existing Draft or Published snapshot.
-- `flags` currently distinguish at least:
-  - `Draft`
-  - `Published`
-- `revision=<id>` resolves exactly one draft revision for preview when the caller is authorized.
+- `flags` are `PhiCmsAreaRevisionFlags` (`@phis/contracts/cms`): `Draft`, `Published`, `Deleted` as on every
+  revision table, and `Modules` (`1 << 3`), which marks a Modules revision. A Modules revision is
+  `Draft | Modules` while it is the Module Working Draft and `Published | Modules` once published.
+- `revision=<id>` resolves exactly one draft revision for preview when the caller is authorized, and
+  `reviewRevision=<id>` any revision for review. Either may be a structure or a Modules revision; it is
+  shown in place of its own half, and the other half is what is live.
+- Restoring a Modules revision writes a new `Draft | Modules` revision and points
+  `working_module_draft_revision_id` at it; restoring a structure revision points `working_draft_revision_id`.
+  Neither touches the other half.
 - Publish updates the scope pointer to the selected revision instead of materializing into legacy live tables.
 
 ### `phis.site_page_revisions`
@@ -2083,8 +2116,9 @@ Contract:
 Contract:
 - Maintained only by statement-level triggers (`phis.site_read_touch_markers()`): any update of the
   `sites` row; an inserted or deleted row of `site_page_scopes`, `site_area_scopes`, `site_nav_scopes` or
-  `site_theme_scopes`; an update there only when `published_revision_id` changed, and for Pages also
-  `path` or `tombstoned_at` -- all three of which only a publish writes. Draft pointers do not move it,
+  `site_theme_scopes`; an update there only when `published_revision_id` changed, for Areas also
+  `published_modules_revision_id`, and for Pages also `path` or `tombstoned_at` -- all of which only a
+  publish or a reset writes. Draft pointers do not move it,
   and neither does a draft that marks a Page deleted. An inserted or deleted `site_auth_config` row moves
   it too, and an update there when `config` changed: the auth manifest a Site keeps is read from it.
   Application code never writes it.

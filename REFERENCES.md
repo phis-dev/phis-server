@@ -232,9 +232,10 @@ has no Area to resolve one in. Path change uses the index for audit/feedback but
 reference owners because their stable identity already resolves to the new path.
 
 A Scope's set is replaced per Scope, and its rows stay readable across every revision that Scope points
-at: published, Working Draft, and — for an Area — the Module Working Draft. A publish that merges a
-tree, rather than only promoting a pointer, rewrites the set for the tree it published; a publish that
-may promote a revision other than the current draft does the same. Page and Asset deletion flows query the
+at: published and Working Draft. An Area's Module selection lives in Modules revisions of its own, which
+hold `config.modules` and nothing a reference can sit in, so they index nothing and an Area is reconciled
+against its structure pointers alone. A publish that may promote a revision other than the one its save
+indexed rewrites the set for the tree it published. Page and Asset deletion flows query the
 same index for affected-reference diagnostics; a Page deletion may retain unresolved references for the
 defined Draft diagnostic and Live omission behavior. A raw internal path is not a reference, and no live
 lookup falls back to one.

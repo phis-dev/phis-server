@@ -41,47 +41,36 @@ function errorsOf(shell: unknown) {
   return result.ok ? [] : result.details ?? [];
 }
 
-describe("reading a stored Area revision back", () => {
+describe("the namespaces a structure carries", () => {
   /*
-   * A revision on disk was written by one of the two drafts, and after a publish merge it carries both
-   * namespaces. Reading one back under the write rule refused every Module draft the moment anything
-   * looked at it again -- so a Module selection could be saved once and never read, published or
-   * saved over, and the failure surfaced as "Invalid area revision payload".
+   * A structure revision is written only by a structure write, so the write and the stored reader are
+   * one rule. The Module selection lives in Modules revisions of its own, so `config.modules` is refused
+   * in a structure on the way in and on the way back alike.
    */
-  function storedWith(config: Record<string, unknown>) {
-    return validateCmsAreaPresetWriteInput(
-      { ...buildStructurePayload(), preset: { config } },
-      { config: "stored" },
-    );
+  function structureWith(config: Record<string, unknown>) {
+    return validateCmsAreaPresetWriteInput({ ...buildStructurePayload(), preset: { config } });
   }
 
-  it("takes the namespace the Module draft owns", () => {
-    expect(storedWith({ modules: { runtimeModules: [] } }).ok).toBe(true);
+  it("refuses the Module selection's namespace", () => {
+    const result = structureWith({ modules: { runtimeModules: [] } });
+    expect(result.ok).toBe(false);
+    expect(result.ok ? [] : result.details ?? [])
+      .toContain("preset.config.modules belongs to the other draft and must not be written here.");
   });
 
-  it("takes both, which is what a published revision holds", () => {
-    expect(storedWith({
-      shell: {},
-      modules: { runtimeModules: [] },
-    }).ok).toBe(true);
+  it("refuses it beside the Shell's own namespace too", () => {
+    expect(structureWith({ shell: {}, modules: { runtimeModules: [] } }).ok).toBe(false);
   });
 
-  it("still refuses a namespace nothing can read back", () => {
-    const result = storedWith({ nonsense: {} });
+  it("refuses a namespace nothing can read back", () => {
+    const result = structureWith({ nonsense: {} });
     expect(result.ok).toBe(false);
     expect(result.ok ? [] : result.details ?? [])
       .toContain("preset.config.nonsense is not a known Area config namespace.");
   });
 
-  it("leaves a write refusing the other draft's namespace", () => {
-    // The rule that keeps two open drafts from containing each other's work stays exactly as it was.
-    const result = validateCmsAreaPresetWriteInput({
-      ...buildStructurePayload(),
-      preset: { config: { modules: { runtimeModules: [] } } },
-    });
-    expect(result.ok).toBe(false);
-    expect(result.ok ? [] : result.details ?? [])
-      .toContain("preset.config.modules belongs to the other draft and must not be written here.");
+  it("takes the Shell's namespace", () => {
+    expect(structureWith({ shell: {} }).ok).toBe(true);
   });
 });
 

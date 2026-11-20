@@ -2,10 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { PHI_SEARCH_INDEXED_AREA_MASK } from "@phis/contracts/search";
 
 import {
-  getExactSiteAreaPresetTree,
   getSiteAreaDraftRevisionPreview,
+  getSiteAreaLiveRead,
   getSiteAreaRevisionReview,
   listSitePublishedPageAddresses,
+  type SiteAreaRead,
 } from "@/db/site-pages";
 import { createJsonResponse } from "@/lib/api-response";
 import { guardApiV1 } from "@/lib/api-v1-guard";
@@ -15,13 +16,32 @@ import { resolveSiteReadLocale } from "@/lib/locale";
 import { requireSiteFromRequest } from "@/lib/site-context";
 import { readSiteCmsRevisionId } from "@/lib/helpers/site-cms-route";
 
+/** Both or neither: `undefined` when one is named without the other. */
 function resolveAreaPresetIdentity(url: URL) {
   const ownerModuleId = url.searchParams.get("ownerModuleId")?.trim() ?? "";
   const presetKey = url.searchParams.get("presetKey")?.trim() ?? "";
-  return ownerModuleId && presetKey ? { ownerModuleId, presetKey } : null;
+  if (!ownerModuleId && !presetKey) {
+    return null;
+  }
+  return ownerModuleId && presetKey ? { ownerModuleId, presetKey } : undefined;
 }
 
 const PUBLISHED_PAGES_INCLUDE = "publishedPages";
+
+/**
+ * The answer every branch gives. `modules` is the Area's Module selection -- `{ revisionId, config:
+ * { modules } }`, or null when none is stored -- whatever shell identity was named. `preset` is the
+ * stored structure, only when `ownerModuleId` and `presetKey` name the identity it is stored under,
+ * and `sourcePreset` is that structure's own identity (with its `sourcePresetVersion`), null without one.
+ */
+function buildAreaReadBody(areaMask: number, read: SiteAreaRead) {
+  return {
+    areaMask,
+    sourcePreset: read.preset?.sourcePreset ?? null,
+    preset: read.preset,
+    modules: read.modules,
+  };
+}
 
 export async function GET(request: NextRequest) {
   const guardError = await guardApiV1(request, { requireInternalToken: true });
@@ -41,10 +61,15 @@ export async function GET(request: NextRequest) {
   const reviewRevisionValue = reviewKind === "area" ? url.searchParams.get("reviewRevision") : null;
   const locale = resolveSiteReadLocale(request);
   const resolvedPath = resolveCmsPath(rawPath);
+  /*
+   * The identity is optional. The Module selection decides which shell an Area takes, so a caller reads
+   * the selection before it knows which identity to ask a structure for: without one the answer carries
+   * the selection alone, with one also the structure stored under it.
+   */
   const sourcePreset = resolveAreaPresetIdentity(url);
-  if (!sourcePreset) {
+  if (sourcePreset === undefined) {
     return NextResponse.json(
-      { error: "ownerModuleId and presetKey must be provided." },
+      { error: "ownerModuleId and presetKey must be provided together." },
       { status: 400 },
     );
   }
@@ -55,9 +80,8 @@ export async function GET(request: NextRequest) {
    * in the preset -- so one request answers both. Opt-in, because this is the live read every page
    * view pays for. Public and App only: they are the two Areas anything indexes -- a crawler the
    * first, the Site's own search (SEARCH.md) both -- and a list of the staff Areas' addresses is what
-   * the Site keeps out of its robots.txt. Live only: a sitemap never reads a draft. With the flag the
-   * read answers even while the Area has no published revision, because Pages can be published before
-   * it is -- `preset` is then null rather than the whole answer a 404.
+   * the Site keeps out of its robots.txt. Live only: a sitemap never reads a draft. Pages can be
+   * published before their Area is; `preset` is then null, as on every live read of such an Area.
    */
   const include = url.searchParams.get("include")?.trim() ?? "";
   if (include && include !== PUBLISHED_PAGES_INCLUDE) {
@@ -81,16 +105,16 @@ export async function GET(request: NextRequest) {
       return error;
     }
 
+    // The reviewed revision stands in for its own half -- a structure for the structure, a Modules
+    // revision for the selection -- and the other half is what is live.
     const review = await getSiteAreaRevisionReview(context!.site!.id, revisionId, {
       areaMask: resolvedPath.areaMask,
       sourcePreset,
     });
     if (review) {
       return createJsonResponse(request, {
-        areaMask: resolvedPath.areaMask,
+        ...buildAreaReadBody(resolvedPath.areaMask, review),
         revisionId,
-        sourcePreset: review.preset.sourcePreset,
-        preset: review.preset,
       });
     }
 
@@ -114,10 +138,8 @@ export async function GET(request: NextRequest) {
     });
     if (preview) {
       return createJsonResponse(request, {
-        areaMask: resolvedPath.areaMask,
+        ...buildAreaReadBody(resolvedPath.areaMask, preview),
         revisionId,
-        sourcePreset: preview.preset.sourcePreset,
-        preset: preview.preset,
       });
     }
     // Asked for a draft and there is none: 404, as the review branch above answers, not the published Area.
@@ -135,32 +157,17 @@ export async function GET(request: NextRequest) {
       return error;
     }
   }
-  const preset = await getExactSiteAreaPresetTree(
-    site.id,
-    resolvedPath.areaMask,
-    0,
-    locale,
-    sourcePreset,
-    stage,
-  );
+  const read = await getSiteAreaLiveRead(site.id, resolvedPath.areaMask, { locale, sourcePreset, stage });
 
   if (includePublishedPages) {
     const publishedPages = await listSitePublishedPageAddresses(site.id, resolvedPath.areaMask);
     return createJsonResponse(request, {
-      areaMask: resolvedPath.areaMask,
-      sourcePreset: preset?.sourcePreset ?? sourcePreset,
-      preset,
+      ...buildAreaReadBody(resolvedPath.areaMask, read),
       publishedPages,
     });
   }
 
-  if (!preset) {
-    return NextResponse.json({ error: "Area preset override not found." }, { status: 404 });
-  }
-
-  return createJsonResponse(request, {
-    areaMask: resolvedPath.areaMask,
-    sourcePreset: preset.sourcePreset,
-    preset,
-  });
+  // Nothing stored is an answer, not a miss: the Area runs on its code-owned shell and its default
+  // Modules, and the caller needs the selection's absence as much as its presence.
+  return createJsonResponse(request, buildAreaReadBody(resolvedPath.areaMask, read));
 }

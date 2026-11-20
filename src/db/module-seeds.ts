@@ -159,7 +159,7 @@ export async function materializeSiteModuleSeedsWithDb(db: DbQueryable, siteId: 
   const { rows } = await db.query<{ seed: unknown }>(
     `SELECT revision.tree_json #> '{preset,config,modules,seed}' AS seed
      FROM phis.site_area_scopes scope
-     JOIN phis.site_area_revisions revision ON revision.id = scope.published_revision_id
+     JOIN phis.site_area_revisions revision ON revision.id = scope.published_modules_revision_id
      WHERE scope.site_id = $1`,
     [siteId],
   );

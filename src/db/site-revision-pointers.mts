@@ -31,7 +31,9 @@ export type PhiCmsReferenceSourceKind = typeof PhiCmsReferenceSourceKind[keyof t
  * The pointers that keep a revision live, per source that has revisions.
  *
  * A scope's references are kept per revision because more than one revision is live at a time: the
- * published one, the working draft, and for an Area the Module draft beside it. The readers count rows
+ * published one and the working draft. An Area's Module selection has pointers of its own, but its
+ * revisions hold `config.modules` and nothing a reference can sit in, so they index nothing and are not
+ * listed here: the structure pointers are the ones whose revisions reference anything. The readers count rows
  * whose revision is one of these; so a write replaces its own revision's rows and leaves the others
  * standing, and a row falls when no pointer names its revision any more -- it would still hold its
  * target under the `RESTRICT` foreign keys while no reader counted it. Content has versions rather than
@@ -51,7 +53,7 @@ export const LIVE_REVISION_POINTERS: Partial<Record<PhiCmsReferenceSourceKind, {
   },
   [PhiCmsReferenceSourceKind.Area]: {
     table: "phis.site_area_scopes",
-    columns: ["published_revision_id", "working_draft_revision_id", "working_module_draft_revision_id"],
+    columns: ["published_revision_id", "working_draft_revision_id"],
   },
   [PhiCmsReferenceSourceKind.Theme]: {
     table: "phis.site_theme_scopes",
@@ -91,8 +93,8 @@ export async function pruneSiteCmsReferencesToLiveRevisionsWithDb(
 
 /**
  * Moves a scope's published and Working Draft pointers, then drops the reference rows of revisions no
- * pointer names any more. An Area's Module draft pointer is not touched here; the Area moves that one
- * in its own statement, because only its scope row has it.
+ * pointer names any more. An Area's Module pointers are not touched here; the Area moves those in its
+ * own statement, because only its scope row has them.
  */
 export async function setSiteRevisionScopePointersWithDb(
   db: DbQueryable,

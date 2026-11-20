@@ -136,16 +136,16 @@ function resolveAuthPresetAreaName(areaMask: number) {
  * Reads back what the Site now says about its Auth UI provider, one entry per effective revision.
  *
  * The control plane holds no Module metadata, so this cannot ask which Modules are Auth UI providers.
- * What it can do is read the value the Builder materialized into every Area preset, which is exactly
- * the value the runtime resolves the login surface from.
+ * What it can do is read the value the Builder materialized into every Area's Module selection (its
+ * Modules revisions), which is exactly the value the runtime resolves the login surface from.
  */
 async function observeAuthUiProviders(client: PoolClient, siteId: number) {
   const { rows: scopes } = await client.query<{
     area_id: number;
-    published_revision_id: number | null;
-    working_draft_revision_id: number | null;
+    published_modules_revision_id: number | null;
+    working_module_draft_revision_id: number | null;
   }>(
-    `SELECT area_id, published_revision_id, working_draft_revision_id
+    `SELECT area_id, published_modules_revision_id, working_module_draft_revision_id
      FROM phis.site_area_scopes
      WHERE site_id = $1`,
     [siteId],
@@ -154,8 +154,8 @@ async function observeAuthUiProviders(client: PoolClient, siteId: number) {
   const observations: AuthProviderObservation[] = [];
   for (const scope of scopes) {
     for (const [pointer, revisionId] of [
-      ["published", scope.published_revision_id],
-      ["draft", scope.working_draft_revision_id],
+      ["published", scope.published_modules_revision_id],
+      ["draft", scope.working_module_draft_revision_id],
     ] as const) {
       if (revisionId == null) continue;
       const { rows } = await client.query<{
@@ -198,43 +198,44 @@ export async function restoreFirstPartyAuthPreset(pool: Pool, siteKeyInput: stri
 
     const areas = [];
     for (const target of AUTH_PRESET_AREAS) {
+      // The selection is the Area's Modules revisions; its structure carries no Module and is untouched.
       const { rows: scopes } = await client.query<{
         id: number;
-        published_revision_id: number | null;
-        working_draft_revision_id: number | null;
+        published_modules_revision_id: number | null;
+        working_module_draft_revision_id: number | null;
       }>(
-        `SELECT id, published_revision_id, working_draft_revision_id
+        `SELECT id, published_modules_revision_id, working_module_draft_revision_id
          FROM phis.site_area_scopes
          WHERE site_id = $1 AND area_id = $2
          LIMIT 1 FOR UPDATE`,
         [site.id, target.areaMask],
       );
       const scope = scopes[0];
-      if (!scope || (!scope.published_revision_id && !scope.working_draft_revision_id)) {
+      if (!scope || (!scope.published_modules_revision_id && !scope.working_module_draft_revision_id)) {
         areas.push({
           area: target.area,
           source: "code-preset" as const,
           activated: false,
           changed: false,
           removedProviderModuleIds: [] as string[],
-          publishedRevisionId: scope?.published_revision_id ?? null,
-          workingDraftRevisionId: scope?.working_draft_revision_id ?? null,
+          publishedModulesRevisionId: scope?.published_modules_revision_id ?? null,
+          workingModuleDraftRevisionId: scope?.working_module_draft_revision_id ?? null,
         });
         continue;
       }
 
       const cloned = new Map<number, Awaited<ReturnType<typeof clonePatchedRevision>>>();
       for (const revisionId of new Set([
-        scope.published_revision_id,
-        scope.working_draft_revision_id,
+        scope.published_modules_revision_id,
+        scope.working_module_draft_revision_id,
       ].filter((value): value is number => value != null))) {
         cloned.set(revisionId, await clonePatchedRevision(client, revisionId, scope.id));
       }
-      const published = scope.published_revision_id ? cloned.get(scope.published_revision_id)! : null;
-      const draft = scope.working_draft_revision_id ? cloned.get(scope.working_draft_revision_id)! : null;
+      const published = scope.published_modules_revision_id ? cloned.get(scope.published_modules_revision_id)! : null;
+      const draft = scope.working_module_draft_revision_id ? cloned.get(scope.working_module_draft_revision_id)! : null;
       await client.query(
         `UPDATE phis.site_area_scopes
-         SET published_revision_id = $2, working_draft_revision_id = $3, updated_at = NOW()
+         SET published_modules_revision_id = $2, working_module_draft_revision_id = $3, updated_at = NOW()
          WHERE id = $1`,
         [scope.id, published?.revisionId ?? null, draft?.revisionId ?? null],
       );
@@ -247,8 +248,8 @@ export async function restoreFirstPartyAuthPreset(pool: Pool, siteKeyInput: stri
           ...(published?.removedProviderModuleIds ?? []),
           ...(draft?.removedProviderModuleIds ?? []),
         ])),
-        publishedRevisionId: published?.revisionId ?? null,
-        workingDraftRevisionId: draft?.revisionId ?? null,
+        publishedModulesRevisionId: published?.revisionId ?? null,
+        workingModuleDraftRevisionId: draft?.revisionId ?? null,
       });
     }
 

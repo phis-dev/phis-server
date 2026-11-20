@@ -4,6 +4,8 @@ import {
   PHI_FIRST_PARTY_AUTH_UI_MODULE_ID,
   restoreFirstPartyAuthPreset,
 } from "./auth-preset.mts";
+import { PhiCmsAreaRevisionFlags } from "@phis/contracts/cms";
+
 import {
   closePhiTestPool,
   createPhiTestSite,
@@ -16,14 +18,16 @@ const PUBLIC_AREA = 1;
 const BUILDER_AREA = 256;
 const FOREIGN_PROVIDER = "@acme/login";
 
-/** The Module selection lives under `config.modules`; `shell` belongs to the structure draft. */
+/**
+ * The Module selection lives in a Modules revision of the Area (`config.modules` and nothing else),
+ * apart from the structure revision that carries `config.shell`.
+ */
 async function createAreaRevision(
   site: PhiTestSite,
   areaMask: number,
   modules: Record<string, unknown>,
   shell: Record<string, unknown> | null = null,
 ) {
-  const config: Record<string, unknown> = { modules, ...(shell ? { shell } : {}) };
   const pool = await requirePhiTestDatabase();
   const { rows: scopeRows } = await pool.query<{ id: number }>(
     `INSERT INTO phis.site_area_scopes (site_id, area_id) VALUES ($1, $2) RETURNING id`,
@@ -32,25 +36,44 @@ async function createAreaRevision(
   const scopeId = scopeRows[0]!.id;
   const { rows: revisionRows } = await pool.query<{ id: number }>(
     `INSERT INTO phis.site_area_revisions (area_scope_id, flags, tree_json, message)
-     VALUES ($1, 0, $2::jsonb, 'fixture')
+     VALUES ($1, $2, $3::jsonb, 'fixture')
      RETURNING id`,
-    [scopeId, JSON.stringify({ regions: [], preset: { flags: 0, config } })],
+    [
+      scopeId,
+      PhiCmsAreaRevisionFlags.Published | PhiCmsAreaRevisionFlags.Modules,
+      JSON.stringify({ area: "public", preset: { config: { modules } } }),
+    ],
   );
   const revisionId = revisionRows[0]!.id;
+  let structureRevisionId: number | null = null;
+  if (shell) {
+    const { rows } = await pool.query<{ id: number }>(
+      `INSERT INTO phis.site_area_revisions (area_scope_id, flags, tree_json, message)
+       VALUES ($1, $2, $3::jsonb, 'fixture')
+       RETURNING id`,
+      [scopeId, PhiCmsAreaRevisionFlags.Published, JSON.stringify({ regions: [], preset: { config: { shell } } })],
+    );
+    structureRevisionId = rows[0]!.id;
+  }
   await pool.query(
-    `UPDATE phis.site_area_scopes SET published_revision_id = $2 WHERE id = $1`,
-    [scopeId, revisionId],
+    `UPDATE phis.site_area_scopes
+     SET published_modules_revision_id = $2, published_revision_id = $3
+     WHERE id = $1`,
+    [scopeId, revisionId, structureRevisionId],
   );
-  return { scopeId, revisionId };
+  return { scopeId, revisionId, structureRevisionId };
 }
 
-async function readAreaPointer(scopeId: number) {
+async function readAreaPointers(scopeId: number) {
   const pool = await requirePhiTestDatabase();
-  const { rows } = await pool.query<{ published_revision_id: number | null }>(
-    `SELECT published_revision_id FROM phis.site_area_scopes WHERE id = $1`,
+  const { rows } = await pool.query<{
+    published_revision_id: number | null;
+    published_modules_revision_id: number | null;
+  }>(
+    `SELECT published_revision_id, published_modules_revision_id FROM phis.site_area_scopes WHERE id = $1`,
     [scopeId],
   );
-  return rows[0]!.published_revision_id;
+  return rows[0]!;
 }
 
 async function readAreaConfig(revisionId: number) {
@@ -81,7 +104,7 @@ describe("restoreFirstPartyAuthPreset", () => {
 
   it("replaces a foreign provider, keeps the rest of the selection, and stays idempotent", async () => {
     const pool = await requirePhiTestDatabase();
-    const { scopeId, revisionId } = await createAreaRevision(
+    const { scopeId, revisionId, structureRevisionId } = await createAreaRevision(
       site,
       PUBLIC_AREA,
       {
@@ -97,11 +120,11 @@ describe("restoreFirstPartyAuthPreset", () => {
 
     expect(publicArea.changed).toBe(true);
     expect(publicArea.removedProviderModuleIds).toEqual([FOREIGN_PROVIDER]);
-    expect(publicArea.publishedRevisionId).not.toBe(revisionId);
+    expect(publicArea.publishedModulesRevisionId).not.toBe(revisionId);
     expect(first.publicLoginOwner).toBe("site-revision");
     expect(first.warnings).toEqual([]);
 
-    const restored = await readAreaModules(publicArea.publishedRevisionId!);
+    const restored = await readAreaModules(publicArea.publishedModulesRevisionId!);
     expect(restored.runtimeModules).toEqual([
       PHI_FIRST_PARTY_AUTH_UI_MODULE_ID,
       "@phis/ui/modules/asset",
@@ -110,16 +133,17 @@ describe("restoreFirstPartyAuthPreset", () => {
     expect(restored.authUiProviderModuleId).toBe(PHI_FIRST_PARTY_AUTH_UI_MODULE_ID);
     // Untouched keys survive: the operation restores Auth, it does not rewrite the preset.
     expect(restored.mediaSpaces).toEqual({ user: { kinds: ["image"] } });
-    // And it stays inside its own namespace -- the Shell's statements are another draft's to make.
-    expect((await readAreaConfig(publicArea.publishedRevisionId!)).shell).toEqual({
-      rootRoute: { mode: "landing" },
-    });
+    // And it stays inside the Module selection -- the structure is another draft's to make, and keeps
+    // both its pointer and its Shell statements.
+    const settled = await readAreaPointers(scopeId);
+    expect(settled.published_revision_id).toBe(structureRevisionId);
+    expect((await readAreaConfig(structureRevisionId!)).shell).toEqual({ rootRoute: { mode: "landing" } });
+    expect(Object.keys(await readAreaConfig(publicArea.publishedModulesRevisionId!))).toEqual(["modules"]);
 
-    const settled = await readAreaPointer(scopeId);
     const second = await restoreFirstPartyAuthPreset(pool, site.key);
 
     expect(second.areas.find((area) => area.area === "public")!.changed).toBe(false);
-    expect(await readAreaPointer(scopeId)).toBe(settled);
+    expect(await readAreaPointers(scopeId)).toEqual(settled);
   });
 
   it("undeletes an Auth page preset so the code preset becomes effective again", async () => {

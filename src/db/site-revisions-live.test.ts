@@ -13,11 +13,13 @@ const area = {
   publishedRevisionId: 10,
   workingDraftRevisionId: 11,
   workingModuleDraftRevisionId: 12,
+  publishedModulesRevisionId: 13,
 } satisfies ResolvedRevisionScope;
 
 describe("which revisions history may not delete", () => {
-  it("keeps an Area's Module draft, the third pointer an Area has", () => {
+  it("keeps an Area's Module draft and its published Module selection", () => {
     expect(isLiveScopeRevision(area, 12)).toBe(true);
+    expect(isLiveScopeRevision(area, 13)).toBe(true);
   });
 
   it("keeps the published revision and the working draft of every scope", () => {

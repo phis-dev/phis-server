@@ -136,24 +136,29 @@ export type CmsAreaPresetWriteInput = {
 /**
  * What a Module selection write carries, which is deliberately not an Area.
  *
- * The selection lives under `config.modules` and is published from the same revision family, but it is
- * edited on its own page and saved on its own. So the payload names the config and nothing else: a
- * caller that could also send `regions` would be able to move the structure through a route nobody
- * reviews as a structure write. `config.shell` is refused here for the mirror-image reason -- it
- * belongs to the structure draft, and a write that carries it believes it owns something it does not.
- *
- * `baseline` is the exception, and only for a Site that has never persisted this Area. There is then no
- * revision to patch, and the Area runs on the code-owned Shell preset -- which lives in `@phis/ui` and
- * is not something this process can render. The client sends the preset it is already showing, it is
- * validated exactly like an ordinary Area write, and it is used only when no revision exists.
+ * The selection lives under `config.modules` in revisions of its own, apart from the structure: the
+ * shell an Area takes depends on the Modules it runs, so the selection names no shell identity and
+ * carries no tree. The payload names the config and nothing else -- a caller that could also send
+ * `regions` would be able to move the structure through a route nobody reviews as a structure write.
+ * `config.shell` is refused here for the mirror-image reason: it belongs to the structure draft, and a
+ * write that carries it believes it owns something it does not.
  */
 export type CmsAreaModulesWriteInput = {
   area: string;
   areaMask: number;
-  sourcePreset: CmsPresetSourceInput;
   draft?: CmsDraftWriteState;
+  /** `{ modules: { runtimeModules, ... } }`, exactly as the Modules revision stores it. */
   config: JsonRecord;
-  baseline?: CmsAreaPresetWriteInput;
+};
+
+/**
+ * A stored Modules revision, read back: `{ area, preset: { config: { modules } } }` and nothing else.
+ * `config` is the same `{ modules }` record the write carried.
+ */
+export type CmsAreaModulesRevisionTree = {
+  area: string;
+  areaMask: number;
+  config: JsonRecord;
 };
 
 export type CmsPageWriteInput = {
@@ -1107,16 +1112,12 @@ function buildFailure(error: string, details: string[]): CmsValidationResult<nev
 }
 
 /**
- * The same shape, read for two different reasons.
- *
- * A *write* carries one draft's work and must not carry the other's, which is what the ownership rule
- * is for. A *stored* revision is the product of one or the other -- and after a publish merge, of both
- * -- so reading one back under the write rule refused every Module draft the moment anything tried to
- * read it again: written once, unreadable afterwards, including by its own publish.
+ * An Area structure, as a write sends it and as a structure revision stores it: the same rule for both,
+ * because a structure revision is only ever written by a structure write. `config.modules` is refused in
+ * either -- the Module selection lives in Modules revisions (`validateCmsAreaModulesRevisionTree`).
  */
 export function validateCmsAreaPresetWriteInput(
   payload: unknown,
-  options?: { config?: "structure" | "stored" },
 ): CmsValidationResult<CmsAreaPresetWriteInput> {
   if (!isPhiRecord(payload)) {
     return buildFailure("Invalid request body.", ["Body must be an object."]);
@@ -1144,7 +1145,7 @@ export function validateCmsAreaPresetWriteInput(
           errors,
           { min: 0, allowZero: true },
         ),
-        config: readAreaPresetConfig(payload.preset.config, options?.config ?? "structure", errors),
+        config: readAreaPresetConfig(payload.preset.config, "structure", errors),
       }
     : undefined;
 
@@ -1257,7 +1258,7 @@ function isAssignablePublicRoutePath(value: string) {
 
 function readAreaPresetConfig(
   value: unknown,
-  owns: "structure" | "modules" | "stored",
+  owns: "structure" | "modules",
   errors: string[],
   label = "preset.config",
 ) {
@@ -1265,10 +1266,7 @@ function readAreaPresetConfig(
   const owned = owns === "structure" ? PHI_AREA_CONFIG_SHELL_NAMESPACE : PHI_AREA_CONFIG_MODULES_NAMESPACE;
 
   for (const key of Object.keys(config)) {
-    // `stored` accepts either namespace: what is on disk was written by whichever draft owns it, and a
-    // published revision carries both because the publish merge put them together. What stays refused
-    // everywhere is a namespace nothing can read back at all.
-    if (key === owned || (owns === "stored" && isPhiAreaConfigNamespace(key))) {
+    if (key === owned) {
       continue;
     }
     errors.push(
@@ -1278,7 +1276,7 @@ function readAreaPresetConfig(
     );
   }
 
-  if (owns !== "modules" && config[PHI_AREA_CONFIG_SHELL_NAMESPACE] !== undefined) {
+  if (owns === "structure" && config[PHI_AREA_CONFIG_SHELL_NAMESPACE] !== undefined) {
     readAreaShellConfig(
       config[PHI_AREA_CONFIG_SHELL_NAMESPACE],
       errors,
@@ -1415,6 +1413,40 @@ function readAreaMetaConfig(value: unknown, errors: string[], label: string) {
   }
 }
 
+/**
+ * Reads a `{ modules }` config and checks the selection's shape. Shared by the write and by the reader of
+ * a stored Modules revision, so what one accepts the other can read back.
+ */
+function readAreaModulesConfig(value: unknown, errors: string[], label: string) {
+  if (value === undefined) {
+    errors.push(`${label} must be provided as an object.`);
+    return undefined;
+  }
+  const config = readAreaPresetConfig(value, "modules", errors, label);
+  const modules = readPhiAreaConfigNamespace(config, PHI_AREA_CONFIG_MODULES_NAMESPACE);
+  const modulesLabel = `${label}.${PHI_AREA_CONFIG_MODULES_NAMESPACE}`;
+
+  if (modules === undefined) {
+    errors.push(`${modulesLabel} must be provided as an object.`);
+    return config;
+  }
+  if (
+    !Array.isArray(modules.runtimeModules) ||
+    modules.runtimeModules.some((moduleId) => typeof moduleId !== "string" || moduleId.trim() === "")
+  ) {
+    // Which ids are allowed for this Area is the catalog's answer and is settled before the write.
+    // What is checked here is only the shape, so a malformed body fails as a bad request rather than
+    // reaching the database as a config nothing can read back.
+    errors.push(`${modulesLabel}.runtimeModules must be an array of module ids.`);
+  }
+  readAreaPublicRoutePaths(
+    modules[PHI_AREA_PUBLIC_ROUTE_PATHS_KEY],
+    errors,
+    `${modulesLabel}.${PHI_AREA_PUBLIC_ROUTE_PATHS_KEY}`,
+  );
+  return config;
+}
+
 export function validateCmsAreaModulesWriteInput(
   payload: unknown,
 ): CmsValidationResult<CmsAreaModulesWriteInput> {
@@ -1423,51 +1455,19 @@ export function validateCmsAreaModulesWriteInput(
   }
 
   const errors: string[] = [];
-  const area = normalizeCmsArea(payload.area, errors);
-  const areaMask = area ? resolveCmsAreaMaskFromArea(area, errors) : undefined;
-  const sourcePreset = readCmsPresetSource(payload.sourcePreset, "sourcePreset", errors);
-  const draft = readDraftWriteState(payload.draft, errors);
-  const config = payload.config === undefined
-    ? undefined
-    : readAreaPresetConfig(payload.config, "modules", errors, "config");
-  const modules = readPhiAreaConfigNamespace(config, PHI_AREA_CONFIG_MODULES_NAMESPACE);
-
-  if (config === undefined) {
-    errors.push("config must be provided as an object.");
-  } else if (modules === undefined) {
-    errors.push(`config.${PHI_AREA_CONFIG_MODULES_NAMESPACE} must be provided as an object.`);
-  } else if (
-    !Array.isArray(modules.runtimeModules) ||
-    modules.runtimeModules.some((moduleId) => typeof moduleId !== "string" || moduleId.trim() === "")
-  ) {
-    // Which ids are allowed for this Area is the catalog's answer and is settled before the write.
-    // What is checked here is only the shape, so a malformed body fails as a bad request rather than
-    // reaching the database as a config nothing can read back.
-    errors.push(`config.${PHI_AREA_CONFIG_MODULES_NAMESPACE}.runtimeModules must be an array of module ids.`);
-  }
-
-  if (modules !== undefined) {
-    readAreaPublicRoutePaths(
-      modules[PHI_AREA_PUBLIC_ROUTE_PATHS_KEY],
-      errors,
-      `config.${PHI_AREA_CONFIG_MODULES_NAMESPACE}.${PHI_AREA_PUBLIC_ROUTE_PATHS_KEY}`,
-    );
-  }
-
-  let baseline: CmsAreaPresetWriteInput | undefined;
-  if (payload.baseline !== undefined) {
-    const validatedBaseline = validateCmsAreaPresetWriteInput(payload.baseline);
-    if (!validatedBaseline.ok) {
-      errors.push(`baseline is not a valid Area payload. ${validatedBaseline.error}`);
-      errors.push(...(validatedBaseline.details ?? []));
-    } else if (validatedBaseline.value.areaMask !== areaMask) {
-      errors.push("baseline must describe the same Area.");
-    } else {
-      baseline = validatedBaseline.value;
+  for (const key of Object.keys(payload)) {
+    // `sourcePreset` and `baseline` belonged to the selection while it lived inside the structure tree;
+    // a client still sending them is a client built against that, and is told so.
+    if (key !== "area" && key !== "draft" && key !== "config") {
+      errors.push(`${key} is not part of an Area Module write.`);
     }
   }
+  const area = normalizeCmsArea(payload.area, errors);
+  const areaMask = area ? resolveCmsAreaMaskFromArea(area, errors) : undefined;
+  const draft = readDraftWriteState(payload.draft, errors);
+  const config = readAreaModulesConfig(payload.config, errors, "config");
 
-  if (area === undefined || areaMask === undefined || sourcePreset == null || config === undefined || errors.length > 0) {
+  if (area === undefined || areaMask === undefined || config === undefined || errors.length > 0) {
     return buildFailure("Invalid CMS Area Module payload.", errors);
   }
 
@@ -1476,12 +1476,50 @@ export function validateCmsAreaModulesWriteInput(
     value: {
       area,
       areaMask,
-      sourcePreset,
       draft,
       config,
-      baseline,
     },
   };
+}
+
+/**
+ * Reads a stored Modules revision back, exactly: `{ area, preset: { config: { modules } } }`.
+ *
+ * Strict on purpose. A Modules revision that also carried a `sourcePreset` or nodes would be a structure
+ * in disguise, and one that is read as either could be published as the other.
+ */
+export function validateCmsAreaModulesRevisionTree(
+  treeJson: unknown,
+): CmsValidationResult<CmsAreaModulesRevisionTree> {
+  if (!isPhiRecord(treeJson)) {
+    return buildFailure("Invalid Area Modules revision.", ["Tree must be an object."]);
+  }
+
+  const errors: string[] = [];
+  for (const key of Object.keys(treeJson)) {
+    if (key !== "area" && key !== "preset") {
+      errors.push(`${key} is not part of an Area Modules revision.`);
+    }
+  }
+  const area = normalizeCmsArea(treeJson.area, errors);
+  const areaMask = area ? resolveCmsAreaMaskFromArea(area, errors) : undefined;
+  let config: JsonRecord | undefined;
+  if (!isPhiRecord(treeJson.preset)) {
+    errors.push("preset must be an object.");
+  } else {
+    for (const key of Object.keys(treeJson.preset)) {
+      if (key !== "config") {
+        errors.push(`preset.${key} is not part of an Area Modules revision.`);
+      }
+    }
+    config = readAreaModulesConfig(treeJson.preset.config, errors, "preset.config");
+  }
+
+  if (area === undefined || areaMask === undefined || config === undefined || errors.length > 0) {
+    return buildFailure("Invalid Area Modules revision.", errors);
+  }
+
+  return { ok: true, value: { area, areaMask, config } };
 }
 
 export function validateCmsPageWriteInput(payload: unknown): CmsValidationResult<CmsPageWriteInput> {

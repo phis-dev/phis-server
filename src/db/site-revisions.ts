@@ -10,7 +10,7 @@ import { userDisplayNameSql } from "@/db/user-profiles";
 import { getPool, withTransaction } from "@/lib/db";
 import { hasPhiFlag } from "@/lib/helpers/flags";
 import { resolvePhisCmsAreaKey } from "@/lib/constants/cms-areas";
-import { PhiCmsRevisionFlags } from "@phis/contracts/cms";
+import { PhiCmsAreaRevisionFlags, PhiCmsRevisionFlags } from "@phis/contracts/cms";
 import { normalizeSiteCmsPath } from "@/lib/helpers/cms-path";
 import { requireSiteNavigationScopeKey } from "@/db/site-navigation";
 import { normalizeSiteThemeScopeKey } from "@/db/site-theme";
@@ -26,6 +26,7 @@ import {
   type SiteRevisionTable,
 } from "@/db/site-revision-scopes";
 import { phiPrepared } from "@/lib/db-prepared";
+import { validateCmsAreaModulesRevisionTree } from "@/lib/cms/write-validation";
 
 type DbQueryable = Pick<PoolClient, "query">;
 
@@ -71,6 +72,8 @@ export type SiteRevisionScopeSummary = {
    * every other scope kind, which has only ever had one draft to begin with.
    */
   workingModuleDraftRevisionId: number | null;
+  /** The Area's published Module selection; null for every other scope kind. */
+  publishedModulesRevisionId: number | null;
 };
 
 export type SiteRevisionHistoryRow = {
@@ -119,6 +122,7 @@ function buildScopeSummary(
     publishedRevisionId: number | null;
     workingDraftRevisionId: number | null;
     workingModuleDraftRevisionId?: number | null;
+    publishedModulesRevisionId?: number | null;
   },
 ): SiteRevisionScopeSummary {
   if (input.kind === "navigation") {
@@ -132,6 +136,7 @@ function buildScopeSummary(
       publishedRevisionId: pointers.publishedRevisionId,
       workingDraftRevisionId: pointers.workingDraftRevisionId,
       workingModuleDraftRevisionId: null,
+      publishedModulesRevisionId: null,
     };
   }
 
@@ -145,6 +150,7 @@ function buildScopeSummary(
       publishedRevisionId: pointers.publishedRevisionId,
       workingDraftRevisionId: pointers.workingDraftRevisionId,
       workingModuleDraftRevisionId: null,
+      publishedModulesRevisionId: null,
     };
   }
 
@@ -159,8 +165,9 @@ function buildScopeSummary(
     themeKey: null,
     publishedRevisionId: pointers.publishedRevisionId,
     workingDraftRevisionId: pointers.workingDraftRevisionId,
-    // Only an "area" scope ever has one: a Page has no Modules of its own to select.
+    // Only an "area" scope ever has these: a Page has no Modules of its own to select.
     workingModuleDraftRevisionId: input.kind === "area" ? pointers.workingModuleDraftRevisionId ?? null : null,
+    publishedModulesRevisionId: input.kind === "area" ? pointers.publishedModulesRevisionId ?? null : null,
   };
 }
 
@@ -182,6 +189,7 @@ function mapRevisionRows(
     publishedRevisionId: number | null;
     workingDraftRevisionId: number | null;
     workingModuleDraftRevisionId?: number | null;
+    publishedModulesRevisionId?: number | null;
   },
 ): SiteRevisionHistoryRow[] {
   return rows.map((row) => {
@@ -210,7 +218,9 @@ function mapRevisionRows(
         ? row.meta_json
         : {},
       sourceRevisionId: row.source_revision_id,
-      isPublished: scope.publishedRevisionId === row.id,
+      // An Area publishes its structure and its Module selection apart, so either pointer makes a row
+      // the published one of its half. A Modules revision carries no `sourcePreset`, so it reads null.
+      isPublished: scope.publishedRevisionId === row.id || scope.publishedModulesRevisionId === row.id,
       // An Area keeps two Working Drafts open at once -- structure and Modules -- so a row is a
       // Working Draft if it is either one, not only the first.
       isWorkingDraft:
@@ -299,14 +309,17 @@ async function getAreaScopeWithDb(
   publishedRevisionId: number | null;
   workingDraftRevisionId: number | null;
   workingModuleDraftRevisionId: number | null;
+  publishedModulesRevisionId: number | null;
 } | null> {
   const { rows } = await db.query<{
     id: number;
     published_revision_id: number | null;
     working_draft_revision_id: number | null;
     working_module_draft_revision_id: number | null;
+    published_modules_revision_id: number | null;
   }>(phiPrepared(
-    `SELECT id, published_revision_id, working_draft_revision_id, working_module_draft_revision_id
+    `SELECT id, published_revision_id, working_draft_revision_id, working_module_draft_revision_id,
+            published_modules_revision_id
      FROM phis.site_area_scopes
      WHERE site_id = $1
        AND area_id = $2
@@ -321,6 +334,7 @@ async function getAreaScopeWithDb(
         publishedRevisionId: row.published_revision_id,
         workingDraftRevisionId: row.working_draft_revision_id,
         workingModuleDraftRevisionId: row.working_module_draft_revision_id,
+        publishedModulesRevisionId: row.published_modules_revision_id,
       }
     : null;
 }
@@ -374,6 +388,7 @@ export type ResolvedRevisionScope =
       publishedRevisionId: number | null;
       workingDraftRevisionId: number | null;
       workingModuleDraftRevisionId: number | null;
+      publishedModulesRevisionId: number | null;
     }
   | {
       kind: "page";
@@ -420,6 +435,7 @@ async function resolveRevisionScopeWithDb(
       publishedRevisionId: scope?.publishedRevisionId ?? null,
       workingDraftRevisionId: scope?.workingDraftRevisionId ?? null,
       workingModuleDraftRevisionId: scope?.workingModuleDraftRevisionId ?? null,
+      publishedModulesRevisionId: scope?.publishedModulesRevisionId ?? null,
     };
   }
 
@@ -563,6 +579,7 @@ export async function listSiteRevisionHistory(
     publishedRevisionId: scope.publishedRevisionId,
     workingDraftRevisionId: scope.workingDraftRevisionId,
     workingModuleDraftRevisionId: scope.kind === "area" ? scope.workingModuleDraftRevisionId : null,
+    publishedModulesRevisionId: scope.kind === "area" ? scope.publishedModulesRevisionId : null,
   });
 
   if (!scope.scopeId) {
@@ -581,14 +598,18 @@ export async function listSiteRevisionHistory(
 
 
 /**
- * Whether a pointer of the scope still names this revision. An Area has a third one, its Module draft:
- * deleting that revision from history left the pointer hanging, and every Module save after it threw.
+ * Whether a pointer of the scope still names this revision. An Area has two more, for its Module
+ * selection: deleting one of those revisions from history would leave the pointer hanging, and every
+ * Module save or Area read after it would throw.
  */
 export function isLiveScopeRevision(scope: ResolvedRevisionScope, revisionId: number) {
   return (
     scope.publishedRevisionId === revisionId ||
     scope.workingDraftRevisionId === revisionId ||
-    (scope.kind === "area" && scope.workingModuleDraftRevisionId === revisionId)
+    (scope.kind === "area" && (
+      scope.workingModuleDraftRevisionId === revisionId ||
+      scope.publishedModulesRevisionId === revisionId
+    ))
   );
 }
 
@@ -620,13 +641,25 @@ export async function restoreSiteRevision(
 
     // Pages and Areas keep their Draft metadata in the revision; Navigations and Themes start empty.
     const keepsDraftMeta = scope.kind === "area" || scope.kind === "page";
+    // An Area's Modules revision is restored into its Module draft, a structure revision into its
+    // structure draft: each half is restored where it is edited, and never into the other.
+    const restoresModules = scope.kind === "area" && hasPhiFlag(revision.flags, PhiCmsAreaRevisionFlags.Modules);
+    if (restoresModules) {
+      const validated = validateCmsAreaModulesRevisionTree(revision.treeJson);
+      if (!validated.ok) {
+        throw new SiteRevisionConflictError(
+          `Area Modules revision #${input.revisionId} cannot be restored. ${(validated.details ?? []).join(" ")}`.trim(),
+        );
+      }
+    }
     const restored = await insertSiteRevisionWithDb(client, table, {
       scopeId: scope.scopeId,
       // A restored Page deletion stays a deletion: the Draft says what publishing it will do.
       flags: PhiCmsRevisionFlags.Draft |
         (scope.kind === "page" && hasPhiFlag(revision.flags, PhiCmsRevisionFlags.Deleted)
           ? PhiCmsRevisionFlags.Deleted
-          : 0),
+          : 0) |
+        (restoresModules ? PhiCmsAreaRevisionFlags.Modules : 0),
       nextNodeSequence: revision.nextNodeSequence,
       treeJson: revision.treeJson,
       message: `Restored from revision #${input.revisionId}`,
@@ -640,15 +673,34 @@ export async function restoreSiteRevision(
       createdByUserId: input.createdByUserId ?? null,
     });
     const newRevisionId = restored.id;
-    // The scope row is held, so the published pointer written back is the one read above.
-    await setSiteRevisionScopePointersWithDb(client, table, scope.scopeId, {
-      publishedRevisionId: scope.publishedRevisionId,
-      workingDraftRevisionId: newRevisionId,
-    });
+    if (restoresModules) {
+      // Only the Area's scope row has this pointer, so it is moved here rather than through the
+      // shared pointer statement, which knows the published and the structure draft pointers alone.
+      await client.query(
+        `UPDATE phis.site_area_scopes
+         SET working_module_draft_revision_id = $2, updated_at = NOW()
+         WHERE id = $1`,
+        [scope.scopeId, newRevisionId],
+      );
+      await pruneSiteRevisionScopeReferencesWithDb(client, table, scope.scopeId);
+    } else {
+      // The scope row is held, so the published pointer written back is the one read above.
+      await setSiteRevisionScopePointersWithDb(client, table, scope.scopeId, {
+        publishedRevisionId: scope.publishedRevisionId,
+        workingDraftRevisionId: newRevisionId,
+      });
+    }
+    const areaPointers = scope.kind === "area"
+      ? {
+          workingModuleDraftRevisionId: restoresModules ? newRevisionId : scope.workingModuleDraftRevisionId,
+          publishedModulesRevisionId: scope.publishedModulesRevisionId,
+        }
+      : {};
     return {
       scope: buildScopeSummary(input, {
         publishedRevisionId: scope.publishedRevisionId,
-        workingDraftRevisionId: newRevisionId,
+        workingDraftRevisionId: restoresModules ? scope.workingDraftRevisionId : newRevisionId,
+        ...areaPointers,
       }),
       restoredFromRevisionId: input.revisionId,
       revisionId: newRevisionId,

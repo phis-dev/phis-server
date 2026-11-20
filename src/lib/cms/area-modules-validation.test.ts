@@ -1,23 +1,22 @@
 import { describe, expect, it } from "vitest";
 
-import { validateCmsAreaModulesWriteInput } from "./write-validation";
+import {
+  validateCmsAreaModulesRevisionTree,
+  validateCmsAreaModulesWriteInput,
+} from "./write-validation";
 
 /*
  * What the Module write accepts, and what it must not.
  *
  * The route exists so a Module selection can be saved without sending an Area, so the interesting
  * cases are the ones where a caller sends something else: a structure payload, a config that is not
- * one, a namespace belonging to the other draft, or a baseline for a different Area than it claims.
+ * one, a namespace belonging to the other draft, or the shell identity and baseline the selection
+ * carried while it lived inside the structure tree.
  */
 
 function buildModulesPayload() {
   return {
     area: "app",
-    sourcePreset: {
-      ownerModuleId: "@phis/ui",
-      presetKey: "app-area-preset",
-      sourcePresetVersion: 1,
-    },
     config: {
       modules: {
         runtimeModules: ["@phis/ui/modules/avatar", "@acme/status/modules/status"],
@@ -115,45 +114,87 @@ describe("validateCmsAreaModulesWriteInput", () => {
     }
   });
 
-  it("ignores structure sent alongside it rather than storing it", () => {
+  it("refuses structure sent alongside it rather than storing or dropping it", () => {
     const result = validateCmsAreaModulesWriteInput({
       ...buildModulesPayload(),
       regions: [{ regionType: 1, rootLayoutNodeId: "whatever" }],
-      contentWidgets: [{ id: "whatever" }],
-    });
-
-    expect(result.ok).toBe(true);
-    if (result.ok) {
-      expect(result.value).not.toHaveProperty("regions");
-      expect(result.value).not.toHaveProperty("contentWidgets");
-    }
-  });
-
-  it("rejects a baseline that describes a different Area", () => {
-    const result = validateCmsAreaModulesWriteInput({
-      ...buildModulesPayload(),
-      baseline: {
-        area: "admin",
-        sourcePreset: {
-          ownerModuleId: "@phis/ui",
-          presetKey: "admin-area-preset",
-          sourcePresetVersion: 1,
-        },
-        regions: [],
-        overlays: [],
-        layoutNodes: [],
-        contentWidgets: [],
-        controllerSettings: [],
-      },
     });
 
     expect(result.ok).toBe(false);
     if (!result.ok) {
-      expect(result.details).toContain("baseline must describe the same Area.");
+      expect(result.details).toContain("regions is not part of an Area Module write.");
+    }
+  });
+
+  it("refuses the shell identity and the baseline, which a selection no longer carries", () => {
+    const result = validateCmsAreaModulesWriteInput({
+      ...buildModulesPayload(),
+      sourcePreset: { ownerModuleId: "@phis/ui", presetKey: "app-area-preset", sourcePresetVersion: 1 },
+      baseline: { area: "app" },
+    });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.details).toEqual([
+        "sourcePreset is not part of an Area Module write.",
+        "baseline is not part of an Area Module write.",
+      ]);
     }
   });
 
   it("rejects a body that is not an object", () => {
     expect(validateCmsAreaModulesWriteInput("modules").ok).toBe(false);
+  });
+});
+
+describe("validateCmsAreaModulesRevisionTree", () => {
+  const tree = {
+    area: "app",
+    preset: { config: { modules: { runtimeModules: ["@phis/ui/modules/avatar"] } } },
+  };
+
+  it("reads a Modules revision back as the config its write carried", () => {
+    const result = validateCmsAreaModulesRevisionTree(tree);
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.area).toBe("app");
+      expect(result.value.config).toEqual({ modules: { runtimeModules: ["@phis/ui/modules/avatar"] } });
+    }
+  });
+
+  it("refuses a structure, which is not a Modules revision", () => {
+    const result = validateCmsAreaModulesRevisionTree({
+      ...tree,
+      sourcePreset: { ownerModuleId: "@phis/ui", presetKey: "app-area-preset", sourcePresetVersion: 1 },
+      regions: [],
+    });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.details).toEqual([
+        "sourcePreset is not part of an Area Modules revision.",
+        "regions is not part of an Area Modules revision.",
+      ]);
+    }
+  });
+
+  it("refuses anything in the preset but its config, and the Shell's namespace in that config", () => {
+    const result = validateCmsAreaModulesRevisionTree({
+      area: "app",
+      preset: { flags: 0, config: { shell: {}, modules: { runtimeModules: [] } } },
+    });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.details).toEqual([
+        "preset.flags is not part of an Area Modules revision.",
+        "preset.config.shell belongs to the other draft and must not be written here.",
+      ]);
+    }
+  });
+
+  it("refuses a revision without a selection", () => {
+    expect(validateCmsAreaModulesRevisionTree({ area: "app", preset: { config: {} } }).ok).toBe(false);
   });
 });

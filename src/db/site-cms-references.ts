@@ -213,8 +213,7 @@ export async function replaceSiteCmsReferencesWithDb(
     }
   }
   if (LIVE_REVISION_POINTERS[input.sourceKind] && input.sourceRevisionId != null) {
-    // Only this revision's set: the published revision's rows stay while a draft is saved, and an
-    // Area's structure draft and Module draft stop erasing each other.
+    // Only this revision's set: the published revision's rows stay while a draft is saved.
     await pruneSiteCmsReferencesToLiveRevisionsWithDb(db, {
       sourceKind: input.sourceKind,
       sourceScopeId: input.sourceScopeId,
@@ -302,9 +301,8 @@ export type SiteCmsAssetReferenceRow = {
  * content version, and the orphan collector already removes their rows when a discarded Draft leaves
  * the content unreferenced.
  *
- * An Area Scope carries three pointers. Its Module draft is a Working Draft in its own right -- the one
- * a Module writes when somebody edits what the Module contributes -- and leaving it out read every
- * picture a Module had just placed as the residue of a discarded draft.
+ * An Area Scope is reconciled against its structure pointers only. Its Module pointers name Modules
+ * revisions, which hold `config.modules` and no node a reference could sit in, so they index nothing.
  */
 export async function listSiteCmsReferencesToAsset(
   siteId: number,
@@ -340,8 +338,7 @@ export async function listSiteCmsReferencesToAsset(
          OR (ref.source_kind = 2 AND ref.source_revision_id IN (
               nav_scope.published_revision_id, nav_scope.working_draft_revision_id))
          OR (ref.source_kind = 4 AND ref.source_revision_id IN (
-              area_scope.published_revision_id, area_scope.working_draft_revision_id,
-              area_scope.working_module_draft_revision_id))
+              area_scope.published_revision_id, area_scope.working_draft_revision_id))
          OR (ref.source_kind = 5 AND ref.source_revision_id IN (
               theme_scope.published_revision_id, theme_scope.working_draft_revision_id))
        )
@@ -369,7 +366,7 @@ export async function countSiteCmsReferencesToPageWithDb(
   // Counting it would report a rename as more disruptive than it is. Content sources are exempt --
   // their revision is a content version, and the orphan collector already removes their rows.
   //
-  // An Area Scope has three pointers, not two: a Module draft is a live Working Draft of its own. The
+  // An Area Scope's Module pointers are not among them: a Modules revision holds no reference. The
   // Theme source is absent here because it cannot name a Page -- it is Site wide, so it has no Area to
   // resolve one in, and the writer rejects a Page reference that names none.
   const { rows } = await db.query<{ source_kind: number; count: string }>(
@@ -390,8 +387,7 @@ export async function countSiteCmsReferencesToPageWithDb(
          OR (ref.source_kind = 2 AND ref.source_revision_id IN (
               nav_scope.published_revision_id, nav_scope.working_draft_revision_id))
          OR (ref.source_kind = 4 AND ref.source_revision_id IN (
-              area_scope.published_revision_id, area_scope.working_draft_revision_id,
-              area_scope.working_module_draft_revision_id))
+              area_scope.published_revision_id, area_scope.working_draft_revision_id))
        )
      GROUP BY ref.source_kind`,
     [siteId, pageScopeId],

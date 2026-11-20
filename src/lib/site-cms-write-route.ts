@@ -13,6 +13,7 @@ import {
   getSiteCurrentAreaDraft,
   getSiteCurrentAreaModulesDraft,
   getSiteCurrentPageDraft,
+  getSitePublishedAreaModules,
   getResolvedSitePageTree,
   publishSiteAreaModulesRevision,
   publishSiteAreaRevision,
@@ -24,7 +25,7 @@ import {
   SitePagePathChangeError,
   type SitePageScopeAddress,
 } from "@/db/site-pages";
-import { SiteCmsAreaBaselineRequiredError, SiteCmsDraftConflictError } from "@/db/site-revision-scopes";
+import { SiteCmsDraftConflictError } from "@/db/site-revision-scopes";
 import { SiteContentConflictError } from "@/db/site-widget-content";
 import { resolvePhisCmsAreaKey, resolvePhisCmsAreaMask } from "@/lib/constants/cms-areas";
 import { PhiCmsAuditEvent } from "@/lib/constants/phi-cms";
@@ -566,8 +567,11 @@ export async function handleSiteCmsAreaWrite(request: NextRequest) {
  * Saves an Area's Module selection.
  *
  * A separate route from the Area write, and deliberately not a mode of it: what arrives here can only
- * be a preset config, so this cannot be used to move structure past the checks a structure write runs.
- * It lands in the same revision family, where a reviewer sees it beside everything else about the Area.
+ * be the `{ modules }` config, so this cannot be used to move structure past the checks a structure
+ * write runs. It lands in a Modules revision of the Area, where a reviewer sees it beside everything
+ * else about the Area, and it never creates or changes a structure revision.
+ *
+ * Body: `{ area, draft?, config: { modules } }`. Answer: `{ area, revisionId, version, nextNodeSequence }`.
  */
 export async function handleSiteCmsAreaModulesWrite(request: NextRequest) {
   const { context, error } = await requireSiteBuilderApiContext(request);
@@ -617,37 +621,22 @@ export async function handleSiteCmsAreaModulesWrite(request: NextRequest) {
       revisionId: draft.revisionId,
       version: draft.draft.version,
       nextNodeSequence: draft.draft.nextNodeSequence,
-      sourcePreset: draft.sourcePreset,
     });
   } catch (error) {
     const detail = readSiteCmsErrorDetail(error);
     const message = readSiteCmsErrorMessage(error, "CMS area Module save failed.");
-    if (error instanceof SiteCmsAreaBaselineRequiredError) {
-      logRuntimeEvent("info", "cms.area_modules_write.baseline_requested", {
-        message: "CMS area Module save asked for the Shell baseline.",
-        siteKey: context!.site!.key,
-        userId: context!.session?.userId ?? null,
-        method: request.method,
-        path: request.nextUrl.pathname,
-        targetType: "cms-area-modules-draft",
-        meta: {
-          areaMask: validated.value.areaMask,
-        },
-      });
-    } else {
-      logRuntimeEvent("error", "cms.area_modules_write.failed", {
-        message: "CMS area Module write failed.",
-        siteKey: context!.site!.key,
-        userId: context!.session?.userId ?? null,
-        method: request.method,
-        path: request.nextUrl.pathname,
-        targetType: "cms-area-modules-draft",
-        error: normalizeLogThrowable(error),
-        meta: {
-          areaMask: validated.value.areaMask,
-        },
-      });
-    }
+    logRuntimeEvent("error", "cms.area_modules_write.failed", {
+      message: "CMS area Module write failed.",
+      siteKey: context!.site!.key,
+      userId: context!.session?.userId ?? null,
+      method: request.method,
+      path: request.nextUrl.pathname,
+      targetType: "cms-area-modules-draft",
+      error: normalizeLogThrowable(error),
+      meta: {
+        areaMask: validated.value.areaMask,
+      },
+    });
     return NextResponse.json(
       {
         error: message,
@@ -658,36 +647,38 @@ export async function handleSiteCmsAreaModulesWrite(request: NextRequest) {
   }
 }
 
-/** Discards the Area's Module draft, leaving its structure draft where it is. */
+/**
+ * The Area a Module route names, by its key in the query or the body. An unknown key is refused rather
+ * than resolved: the mask lookup would otherwise answer Public for it.
+ */
+function readSiteCmsAreaModulesTarget(request: NextRequest, payload: { area?: unknown } | null) {
+  const area = (
+    readSiteCmsRequestSearchParam(request, "area") ?? (typeof payload?.area === "string" ? payload.area : "")
+  ).trim().toLowerCase();
+  const areaMask = resolveAreaMask(area);
+  return area && resolvePhisCmsAreaKey(areaMask) === area ? { area, areaMask } : null;
+}
+
+/**
+ * Discards the Area's Module draft, leaving its structure draft where it is.
+ *
+ * `area` in the query or the body. Answer: `{ areaMask, deleted }`.
+ */
 export async function handleSiteCmsAreaModulesDelete(request: NextRequest) {
   const { context, error } = await requireSiteBuilderApiContext(request);
   if (error) {
     return error;
   }
 
-  const payload = (await readSiteCmsRequestJson(request)) as {
-    area?: unknown;
-    ownerModuleId?: unknown;
-    presetKey?: unknown;
-  } | null;
-  const area = readSiteCmsRequestSearchParam(request, "area") ?? (typeof payload?.area === "string" ? payload.area : null);
-  const sourcePreset = resolveCmsPresetIdentity({
-    ownerModuleId: readSiteCmsRequestSearchParam(request, "ownerModuleId") ??
-      (typeof payload?.ownerModuleId === "string" ? payload.ownerModuleId : null),
-    presetKey: readSiteCmsRequestSearchParam(request, "presetKey") ??
-      (typeof payload?.presetKey === "string" ? payload.presetKey : null),
-  });
-  if (!area || !sourcePreset) {
-    return NextResponse.json({ error: "area, ownerModuleId, and presetKey must be provided." }, { status: 400 });
+  const payload = (await readSiteCmsRequestJson(request)) as { area?: unknown } | null;
+  const target = readSiteCmsAreaModulesTarget(request, payload);
+  if (!target) {
+    return NextResponse.json({ error: "A known area must be provided." }, { status: 400 });
   }
-
-  const areaMask = resolveAreaMask(area);
+  const { area, areaMask } = target;
 
   try {
-    const result = await deleteSiteAreaModulesDraftRevision(context!.site!.id, {
-      areaMask,
-      sourcePreset,
-    });
+    const result = await deleteSiteAreaModulesDraftRevision(context!.site!.id, { areaMask });
 
     if (result.deleted) {
       logSiteCmsAuditEvent(PhiCmsAuditEvent.AreaModulesDraftDeleted, {
@@ -727,29 +718,25 @@ export async function handleSiteCmsAreaModulesDelete(request: NextRequest) {
   }
 }
 
-/** Reads the Area's open Module draft. Absence is a 404: it is a question with an answer either way. */
+/**
+ * Reads the Area's open Module draft. Absence is a 404: it is a question with an answer either way.
+ *
+ * `?area=`. Answer: `{ areaMask, revisionId, version, nextNodeSequence, config: { modules } }`.
+ */
 export async function handleSiteCmsAreaModulesDraftRead(request: NextRequest) {
   const { context, error } = await requireSiteReviewApiContext(request);
   if (error) {
     return error;
   }
 
-  const area = readSiteCmsRequestSearchParam(request, "area");
-  const sourcePreset = resolveCmsPresetIdentity({
-    ownerModuleId: readSiteCmsRequestSearchParam(request, "ownerModuleId"),
-    presetKey: readSiteCmsRequestSearchParam(request, "presetKey"),
-  });
-  if (!area || !sourcePreset) {
-    return NextResponse.json({ error: "area, ownerModuleId, and presetKey must be provided." }, { status: 400 });
+  const target = readSiteCmsAreaModulesTarget(request, null);
+  if (!target) {
+    return NextResponse.json({ error: "A known area must be provided." }, { status: 400 });
   }
-
-  const areaMask = resolveAreaMask(area);
+  const { areaMask } = target;
 
   try {
-    const draft = await getSiteCurrentAreaModulesDraft(context!.site!.id, {
-      areaMask,
-      sourcePreset,
-    });
+    const draft = await getSiteCurrentAreaModulesDraft(context!.site!.id, { areaMask });
 
     if (!draft) {
       return NextResponse.json({ error: "CMS area Module draft not found." }, { status: 404 });
@@ -760,8 +747,7 @@ export async function handleSiteCmsAreaModulesDraftRead(request: NextRequest) {
       revisionId: draft.revisionId,
       version: draft.draft.version,
       nextNodeSequence: draft.draft.nextNodeSequence,
-      sourcePreset: draft.preset.sourcePreset,
-      preset: draft.preset,
+      config: draft.config,
     });
   } catch (error) {
     const detail = readSiteCmsErrorDetail(error);
@@ -788,7 +774,12 @@ export async function handleSiteCmsAreaModulesDraftRead(request: NextRequest) {
   }
 }
 
-/** Publishes the Area's Module selection. Its structure draft, if one is open, stays open. */
+/**
+ * Publishes the Area's Module selection. Its structure, and a structure draft if one is open, stay as
+ * they are.
+ *
+ * Body (or query): `{ area, revisionId? }`. Answer: `{ areaMask, revisionId, config: { modules } }`.
+ */
 export async function handleSiteCmsAreaModulesPublish(request: NextRequest) {
   const { context, error } = await requireSitePublisherApiContext(request);
   if (error) {
@@ -797,44 +788,24 @@ export async function handleSiteCmsAreaModulesPublish(request: NextRequest) {
 
   const payload = (await readSiteCmsRequestJson(request)) as {
     area?: unknown;
-    ownerModuleId?: unknown;
-    presetKey?: unknown;
     revisionId?: unknown;
   } | null;
-  const area = readSiteCmsRequestSearchParam(request, "area") ?? (typeof payload?.area === "string" ? payload.area : null);
+  const target = readSiteCmsAreaModulesTarget(request, payload);
   const revisionIdValue =
     readSiteCmsRequestSearchParam(request, "revisionId") ??
     (typeof payload?.revisionId === "number" || typeof payload?.revisionId === "string"
       ? String(payload.revisionId)
       : null);
-  const sourcePreset = resolveCmsPresetIdentity({
-    ownerModuleId: readSiteCmsRequestSearchParam(request, "ownerModuleId") ??
-      (typeof payload?.ownerModuleId === "string" ? payload.ownerModuleId : null),
-    presetKey: readSiteCmsRequestSearchParam(request, "presetKey") ??
-      (typeof payload?.presetKey === "string" ? payload.presetKey : null),
-  });
-  if (!area || !sourcePreset) {
-    return NextResponse.json({ error: "area, ownerModuleId, and presetKey must be provided." }, { status: 400 });
+  if (!target) {
+    return NextResponse.json({ error: "A known area must be provided." }, { status: 400 });
   }
+  const { area, areaMask } = target;
 
   const revisionId =
     revisionIdValue && Number.isInteger(Number(revisionIdValue)) ? Number(revisionIdValue) : null;
-  const areaMask = resolveAreaMask(area);
-  const locale = resolveRequestLocale(request);
 
   try {
-    const result = await publishSiteAreaModulesRevision(
-      context!.site!.id,
-      {
-        areaMask,
-        sourcePreset,
-        revisionId,
-      },
-      {
-        createdByUserId: context!.session?.userId ?? null,
-        locale,
-      },
-    );
+    const result = await publishSiteAreaModulesRevision(context!.site!.id, { areaMask, revisionId });
 
     logSiteCmsAuditEvent(PhiCmsAuditEvent.AreaModulesPublished, {
       request,
@@ -845,7 +816,6 @@ export async function handleSiteCmsAreaModulesPublish(request: NextRequest) {
       targetId: area,
       meta: {
         areaMask,
-        locale,
         revisionId: result.revisionId,
       },
     });
@@ -853,7 +823,7 @@ export async function handleSiteCmsAreaModulesPublish(request: NextRequest) {
     return NextResponse.json({
       areaMask,
       revisionId: result.revisionId,
-      preset: result.preset,
+      config: result.config,
     });
   } catch (error) {
     const detail = readSiteCmsErrorDetail(error);
@@ -868,7 +838,6 @@ export async function handleSiteCmsAreaModulesPublish(request: NextRequest) {
       error: normalizeLogThrowable(error),
       meta: {
         areaMask,
-        locale,
         revisionId,
       },
     });
@@ -1086,7 +1055,8 @@ export async function handleSiteCmsAreaDelete(request: NextRequest) {
 }
 
 /**
- * Removes the Site's own Area shell, leaving the Module preset to answer for the Area again.
+ * Removes the Site's own Area structure, leaving the shell preset to answer for the Area again. The
+ * Area's Module selection stays as it is, published and drafted alike.
  *
  * Separate from the draft delete beside it because the two are different intentions: discarding a draft
  * keeps what is published, and this discards the published shell as well. A caller that wanted only the
@@ -1291,8 +1261,8 @@ export async function handleSiteCmsAreaDraftRead(request: NextRequest) {
 const AREA_STRUCTURES_READ_LIMIT = 16;
 
 /**
- * What several Areas store about their structure, in one request: per Area its open draft, else its
- * published revision, else nothing.
+ * What several Areas store, in one request: per Area its open structure draft, else its published
+ * structure, else nothing -- and beside it the Area's Module selection the same way.
  *
  * The Builder needs this for every Area on every view -- the Modules page edits all of them at once,
  * and the Area switch carries the next Area's Module selection -- and asked for it with a draft read
@@ -1301,9 +1271,12 @@ const AREA_STRUCTURES_READ_LIMIT = 16;
  * under the draft read's access, which is the stricter of the two. A read: POST only because a list of
  * preset identities does not fit a query string.
  *
- * Body: `{ areas: [{ area, ownerModuleId, presetKey }] }`. Answer: `{ areas: [{ area, draft, published }] }`
- * in request order, `draft` shaped like the draft read's answer, `published` like the published read's,
- * `published` null whenever `draft` is not, both null for an Area that stores nothing.
+ * Body: `{ areas: [{ area, ownerModuleId, presetKey }] }`. Answer:
+ * `{ areas: [{ area, draft, published, modules: { draft, published } }] }` in request order. `draft` is
+ * shaped like the draft read's answer and `published` like the published read's, `published` null
+ * whenever `draft` is not, both null for an Area that stores no structure under that identity.
+ * `modules.draft` is shaped like the Module draft read's answer and `modules.published` like the live
+ * read's `modules`, by the same rule; the selection is answered whatever identity is named.
  */
 export async function handleSiteCmsAreaStructuresRead(request: NextRequest) {
   const { context, error } = await requireSiteReviewApiContext(request);
@@ -1341,11 +1314,26 @@ export async function handleSiteCmsAreaStructuresRead(request: NextRequest) {
   const siteId = context!.site!.id;
   const locale = resolveRequestLocale(request);
   try {
-    const areas = await Promise.all(requests.map(async ({ area, areaMask, sourcePreset }) => {
+    const readModules = async (areaMask: number) => {
+      const draft = await getSiteCurrentAreaModulesDraft(siteId, { areaMask });
+      if (draft) {
+        return {
+          draft: {
+            areaMask,
+            revisionId: draft.revisionId,
+            version: draft.draft.version,
+            nextNodeSequence: draft.draft.nextNodeSequence,
+            config: draft.config,
+          },
+          published: null,
+        };
+      }
+      return { draft: null, published: await getSitePublishedAreaModules(siteId, areaMask) };
+    };
+    const readStructure = async (areaMask: number, sourcePreset: { ownerModuleId: string; presetKey: string }) => {
       const draft = await getSiteCurrentAreaDraft(siteId, { areaMask, sourcePreset });
       if (draft) {
         return {
-          area,
           draft: {
             areaMask,
             revisionId: draft.revisionId,
@@ -1359,10 +1347,16 @@ export async function handleSiteCmsAreaStructuresRead(request: NextRequest) {
       }
       const preset = await getExactSiteAreaPresetTree(siteId, areaMask, 0, locale, sourcePreset, "current");
       return {
-        area,
         draft: null,
         published: preset ? { areaMask, sourcePreset: preset.sourcePreset, preset } : null,
       };
+    };
+    const areas = await Promise.all(requests.map(async ({ area, areaMask, sourcePreset }) => {
+      const [structure, modules] = await Promise.all([
+        readStructure(areaMask, sourcePreset),
+        readModules(areaMask),
+      ]);
+      return { area, ...structure, modules };
     }));
     return NextResponse.json({ areas });
   } catch (error) {

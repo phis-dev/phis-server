@@ -59,7 +59,10 @@ export type SiteReleaseItem =
       /** Which of the Area's two Working Drafts: its structure, or its Module selection. */
       part: "structure" | "modules";
       revisionId: number;
-      /** The Shell preset the Area stands on, which its publish names. */
+      /**
+       * The Shell preset the structure draft stands on, which its publish names. Null for a Modules
+       * draft: the Module selection names no shell.
+       */
       ownerModuleId: string | null;
       presetKey: string | null;
       savedAt: string;
