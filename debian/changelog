@@ -1,4 +1,4 @@
-phis (0.4.8-1) unstable; urgency=medium
+phis (0.4.9-1) unstable; urgency=medium
 
   * Add-on commands: an Add-on declares commands in its manifest and
     exports commandHandlers. phis addon commands [--addon] lists them;
@@ -9,9 +9,10 @@ phis (0.4.8-1) unstable; urgency=medium
     row-level ladder, and answers JSON; a refusal by the Add-on is 422, one
     by Core 409. Needs @phis/contracts 0.7.15.
   * The CDN host caches only a delivered file; a miss is no-store.
-  * No schema change.
+  * No schema change. 0.4.8 was tagged but never built (API reference out
+    of date).
 
- -- Marius Schumacher <marius.schumacher@phisys.com>  Fri, 20 Nov 2026 09:46:00 +0000
+ -- Marius Schumacher <marius.schumacher@phisys.com>  Fri, 20 Nov 2026 09:58:00 +0000
 
 phis (0.4.7-1) unstable; urgency=medium
 
