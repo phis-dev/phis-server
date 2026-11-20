@@ -31,8 +31,9 @@ const PUBLISHED_PAGES_INCLUDE = "publishedPages";
 /**
  * The answer every branch gives. `modules` is the Area's Module selection -- `{ revisionId, config:
  * { modules } }`, or null when none is stored -- whatever shell identity was named. `preset` is the
- * stored structure, only when `ownerModuleId` and `presetKey` name the identity it is stored under,
- * and `sourcePreset` is that structure's own identity (with its `sourcePresetVersion`), null without one.
+ * stored structure: with `ownerModuleId` and `presetKey` only when they name the identity it is stored
+ * under, without them whatever it is stored under. `sourcePreset` is that structure's own identity (with
+ * its `sourcePresetVersion`), null without one.
  */
 function buildAreaReadBody(areaMask: number, read: SiteAreaRead) {
   return {
@@ -62,9 +63,9 @@ export async function GET(request: NextRequest) {
   const locale = resolveSiteReadLocale(request);
   const resolvedPath = resolveCmsPath(rawPath);
   /*
-   * The identity is optional. The Module selection decides which shell an Area takes, so a caller reads
-   * the selection before it knows which identity to ask a structure for: without one the answer carries
-   * the selection alone, with one also the structure stored under it.
+   * The identity is optional. The Module selection decides which shell an Area takes, so a page view
+   * reads both at once without one and drops a structure whose `sourcePreset` is not the shell its
+   * selection chose; with one the structure comes back only if it is stored under it.
    */
   const sourcePreset = resolveAreaPresetIdentity(url);
   if (sourcePreset === undefined) {

@@ -167,7 +167,7 @@ describe("an Area's Module selection against PostgreSQL", () => {
     expect(rows[0]?.user_space_content_kinds).toEqual(["image"]);
   });
 
-  it("answers the selection on the live read whatever identity is named, and the structure only under its own", async () => {
+  it("answers the selection on the live read whatever identity is named, and a named identity's structure only under its own", async () => {
     const structure = await saveSiteAreaDraftRevision(site.id, structureInput({ rootRoute: { mode: "landing" } }));
     await publishSiteAreaRevision(site.id, { areaMask: APP_AREA, sourcePreset: BASE, revisionId: structure.revisionId });
     const scope = await readScope(site.id);
@@ -180,8 +180,9 @@ describe("an Area's Module selection against PostgreSQL", () => {
     expect(underProvider.preset).toBeNull();
     expect(underProvider.modules).toEqual(underBase.modules);
 
+    // Without an identity the one stored structure comes back under its own, for the caller to compare.
     const withoutIdentity = await getSiteAreaLiveRead(site.id, APP_AREA, {});
-    expect(withoutIdentity.preset).toBeNull();
+    expect(withoutIdentity.preset?.sourcePreset).toMatchObject(BASE);
     expect(withoutIdentity.modules).toEqual(underBase.modules);
   });
 

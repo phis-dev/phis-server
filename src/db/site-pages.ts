@@ -2721,17 +2721,21 @@ export async function getSiteAreaLiveRead(
   if (!scope) {
     return { preset: null, modules: null };
   }
+  /*
+   * Without an identity the stored structure comes back whatever it is stored under, with that identity
+   * as its `sourcePreset`: an Area has one structure, and a page view learns which shell applies only from
+   * the selection in this same answer. The caller compares and drops a structure of another shell, so a
+   * page view stays one request. With an identity it is the exact read it always was.
+   */
   const [preset, modules] = await Promise.all([
-    input.sourcePreset
-      ? getExactSiteAreaPresetTreeWithDb(
-          db,
-          siteId,
-          areaMask,
-          input.locale ?? null,
-          input.sourcePreset,
-          input.stage ?? "published",
-        )
-      : null,
+    getExactSiteAreaPresetTreeWithDb(
+      db,
+      siteId,
+      areaMask,
+      input.locale ?? null,
+      input.sourcePreset ?? null,
+      input.stage ?? "published",
+    ),
     readSiteAreaModulesSelectionWithDb(db, scope, scope.publishedModulesRevisionId),
   ]);
   return { preset, modules };

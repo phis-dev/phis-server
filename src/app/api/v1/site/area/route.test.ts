@@ -53,7 +53,8 @@ beforeEach(() => {
 
 /*
  * The Module selection decides which shell an Area takes, so it is answered whatever identity is asked
- * for -- and without one -- while the structure is answered only under the identity it is stored under.
+ * for -- and without one -- while a named identity gets the structure only if it is stored under it, and
+ * no identity gets the stored structure under its own.
  */
 describe("the live Area read", () => {
   it("answers the selection beside the structure stored under the named identity", async () => {
@@ -64,13 +65,12 @@ describe("the live Area read", () => {
     expect(body).toEqual({ areaMask: 1, sourcePreset: tree.sourcePreset, preset: tree, modules });
   });
 
-  it("answers the selection alone when no identity is named", async () => {
-    mocks.live.mockResolvedValue({ preset: null, modules });
+  it("answers the stored structure under its own identity when none is named", async () => {
     const { status, body } = await read("path=/", { identity: false });
 
     expect(status).toBe(200);
     expect(mocks.live).toHaveBeenCalledWith(31, 1, expect.objectContaining({ sourcePreset: null }));
-    expect(body).toEqual({ areaMask: 1, sourcePreset: null, preset: null, modules });
+    expect(body).toEqual({ areaMask: 1, sourcePreset: tree.sourcePreset, preset: tree, modules });
   });
 
   it("answers an Area that stores nothing rather than a 404", async () => {
