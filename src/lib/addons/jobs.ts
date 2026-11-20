@@ -36,21 +36,26 @@ export type PhisAddonJobOutcome = {
 
 export class PhisAddonJobError extends Error {}
 
-function requireEntry(addonId: string): PhisAddonBuildEntry {
+/**
+ * The installed build of an Add-on, refused unless it can serve: installed, enabled, valid, and handed
+ * every Core capability it needs. Shared by jobs and commands, which both start an Add-on from the
+ * shell; `refuse` makes the error the caller reports as the operator's mistake.
+ */
+export function requirePhisAddonServableEntry(addonId: string, refuse: (message: string) => Error): PhisAddonBuildEntry {
   const entry = getPhisAddonInstalledManifest()[addonId];
   if (!entry) {
-    throw new PhisAddonJobError(`${addonId} is not installed.`);
+    throw refuse(`${addonId} is not installed.`);
   }
   if (!entry.enabled) {
-    throw new PhisAddonJobError(`${addonId} is not enabled.`);
+    throw refuse(`${addonId} is not enabled.`);
   }
   const servable = readPhisAddonServability(entry);
   if (servable === "invalid_manifest") {
-    throw new PhisAddonJobError(`${addonId} has an invalid build manifest.`);
+    throw refuse(`${addonId} has an invalid build manifest.`);
   }
   if (servable === "missing_capability") {
     const missing = entry.manifest.requiredCoreCapabilities.find((capability) => !isPhisAddonCapabilityDeliverable(capability));
-    throw new PhisAddonJobError(`${addonId} requires the missing Core capability ${missing}.`);
+    throw refuse(`${addonId} requires the missing Core capability ${missing}.`);
   }
   return entry;
 }
@@ -70,7 +75,7 @@ export async function runPhisAddonJob(input: {
 }): Promise<PhisAddonJobOutcome> {
   const { addonId, jobId, site } = input;
   const runId = randomUUID();
-  const entry = requireEntry(addonId);
+  const entry = requirePhisAddonServableEntry(addonId, (message) => new PhisAddonJobError(message));
 
   const descriptor = entry.manifest.jobs.find((job) => job.id === jobId);
   if (!descriptor) {

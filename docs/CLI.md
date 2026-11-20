@@ -89,7 +89,7 @@ Output and exit codes:
   `--json` stderr also carries `{"ok": false, "error": "<message>"}`.
 - Some commands finish without throwing but still exit `1` because they found a problem; each is
   noted below (`config validate`, `schema check`, `site check`, `module add|check`, `addon list|check`,
-  `addon job`, `secret check`, `media check`, `maintain`, `mail drain`, `email test`, `licenses check`, and
+  `addon job`, `addon command`, `secret check`, `media check`, `maintain`, `mail drain`, `email test`, `licenses check`, and
   `instance list` when the instances have not converged on one release and one Add-on set).
 
 ## Environment variables
@@ -145,7 +145,7 @@ server keeps the old values for up to four hours.
 | `database.uri` (serving role) | `schema check|apply`, all `site` commands except `config set|add|del`, `init|reconcile|update`, `module add|del|sync|check`, `module media sync|list|bind` without `--path` (only to find the Site's directory), `addon reconcile|site|config|role|owner|storage|job`, `storage`, `secret set|check|list|del`, `auth`, `media check`, `page list|reset`, `translations usage|status|export|import`, `maintain`, `payment profile`, `instance` |
 | `database.migrationUri` (migration role) | `schema drop --force`, `addon migrate`, `addon purge` |
 | `secrets.encryptionKey` | `secret set|check`, `auth import-secrets`, `storage` commands that reach a Provider credential, `addon purge` and `addon storage --sweep|--recount` on a Site with an external store, `payment profile probe|enable` and `maintain --task payments` (they reach the Provider's credential) |
-| `api.internalToken` | `init` (copied into the Site), `site check` (running Site), `addon job` and `mail drain` (running server) |
+| `api.internalToken` | `init` (copied into the Site), `site check` (running Site), `addon job`, `addon command` and `mail drain` (running server) |
 | The Site's `config/site-runtime.json` (`phis.apiBaseUrl`, `phis.internalToken`) and a running Core | `module media sync|list|bind`, and `update` when an installed package declares media |
 
 There is no fallback from `database.migrationUri` to `database.uri`.
@@ -948,6 +948,22 @@ The scheduler's ledger: for every job that ran or was paused, its last success, 
 whether it is paused, then the most recent runs (20 unless `--limit` says otherwise), each with the
 moment it was for, the instance that ran it, and `ok`, `failed`, `skipped` or `running`. Nothing is
 started. `--json` answers `{ states, runs }`.
+
+### `phis addon commands [--addon <@scope/name>]`
+
+What the installed Add-ons offer to `addon command`: each command's id, its one-line description and,
+where the Add-on states it, what the input holds. Read from the desired state, so no server needs to
+run. `--json` answers `{ addons: [{ addonId, commands: [{ id, description, input }] }] }`.
+
+### `phis addon command --addon <@scope/name> --command <command id> --site <site key> --as <email|user id> [--input <json|@file|->] --api-base-url <url>`
+
+Runs one of an Add-on's commands on the serving instance, as the member of the Site that `--as` names
+(SERVER_ADDONS.md, Commands): their roles answer and what they change carries them as its author, so
+the command can do what they could do in the browser and nothing more. `--input` is inline JSON, a file
+after `@` (resolved against the working directory) or `-` for standard input; without it the input is
+`null`. Needs `api.internalToken`. The answer is printed as JSON; `--json` prints the whole outcome with
+the run id and the actor. Exits `1` when the command was refused, by Core (`409`: not installed, not
+declared, not enabled for the Site) or by the Add-on (`422`, with its message).
 
 ## storage (Storage Profiles)
 

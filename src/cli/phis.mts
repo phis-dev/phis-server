@@ -463,6 +463,9 @@ Usage:
   phis addon job     --addon <@scope/name> --job <job id> --site <site key> --api-base-url <url>
   phis addon job     --addon <@scope/name> --job <job id> [--site <site key>] --pause | --resume
   phis addon jobs    [--addon <@scope/name>] [--site <site key>] [--limit <runs>]
+  phis addon commands [--addon <@scope/name>]
+  phis addon command --addon <@scope/name> --command <command id> --site <site key> --as <email|user id>
+                     [--input <json|@file|->] --api-base-url <url>
 
   phis storage list  --site <site key>
   phis storage add   --site <site key> --key <profile key> --provider <provider id>
@@ -1220,6 +1223,32 @@ async function readSecretValue(flags: FlagMap) {
     throw new Error("Standard input carried no secret.");
   }
   return value;
+}
+
+/**
+ * `--input '{"...":"..."}'`, `--input @path/to.json` or `--input -` for standard input; absent is null.
+ * A file is resolved against the working directory, where the operator wrote it.
+ */
+async function readCommandInputFlag(flags: FlagMap): Promise<unknown> {
+  const raw = getOptionalFlag(flags, "input");
+  if (raw === undefined) {
+    return null;
+  }
+  let text = raw;
+  if (raw === "-") {
+    const chunks: Buffer[] = [];
+    for await (const chunk of process.stdin) {
+      chunks.push(Buffer.from(chunk));
+    }
+    text = Buffer.concat(chunks).toString("utf8");
+  } else if (raw.startsWith("@")) {
+    text = readFileSync(path.resolve(raw.slice(1)), "utf8");
+  }
+  try {
+    return JSON.parse(text);
+  } catch (error) {
+    throw new Error(`--input is not valid JSON: ${error instanceof Error ? error.message : String(error)}`);
+  }
 }
 
 async function resolveSecretIdentity(flags: FlagMap) {
@@ -4162,6 +4191,75 @@ async function main() {
             : `  ${removal.siteKey}: ${removal.removed < 0 ? "store removed" : `${removal.removed} object(s) removed`}`,
         );
       }
+    }
+    return;
+  }
+
+  if (group === "addon" && command === "commands") {
+    // Read from the desired state, which holds every installed build's validated manifest: listing what
+    // an Add-on offers needs no running server, and is the help an operator reads before `addon command`.
+    const only = getOptionalFlag(flags, "addon");
+    const addons = listAddons(configRoot).addons.filter((addon) => !only || addon.addonId === only);
+    if (only && addons.length === 0) {
+      throw new Error(`${only} is not installed.`);
+    }
+    const listed = addons.map((addon) => ({
+      addonId: addon.addonId,
+      commands: (addon.manifest.commands ?? []).map(({ id, description, input }) => ({ id, description, input: input ?? null })),
+    }));
+    if (json) {
+      printJson({ ok: true, action: "addon.commands", addons: listed });
+      return;
+    }
+    for (const addon of listed.filter((entry) => !only ? entry.commands.length > 0 : true)) {
+      console.log(addon.addonId);
+      if (addon.commands.length === 0) {
+        console.log("  (no commands)");
+      }
+      for (const entry of addon.commands) {
+        console.log(`  ${entry.id}  ${entry.description}`);
+        if (entry.input) {
+          console.log(`      input: ${entry.input}`);
+        }
+      }
+    }
+    if (!only && listed.every((entry) => entry.commands.length === 0)) {
+      console.log("No installed Add-on offers commands.");
+    }
+    return;
+  }
+
+  if (group === "addon" && command === "command") {
+    const addonId = getRequiredFlag(flags, "addon");
+    const commandId = getRequiredFlag(flags, "command");
+    const site = await getSiteByKey(getRequiredFlag(flags, "site"));
+    const as = getRequiredFlag(flags, "as");
+    const input = await readCommandInputFlag(flags);
+    /*
+     * Posted to the serving instance, for the reason `addon job` is: the Add-on is loaded there. The
+     * person named with --as is who acts, with their roles, as in the browser (SERVER_ADDONS.md, Commands).
+     */
+    const mergedConfig = readCliMergedConfig();
+    const apiBaseUrl = readApiBaseUrlFlag(flags, "addon command");
+    const internalToken = mergedConfig.api?.internalToken?.trim() ?? "";
+    if (!internalToken) {
+      throw new Error("Missing api.internalToken; a command is run through the serving instance.");
+    }
+    const response = await fetch(`${apiBaseUrl}/api/v1/addons/commands`, {
+      method: "POST",
+      headers: { "content-type": "application/json", [PHIS_TOKEN_HEADER]: internalToken },
+      body: JSON.stringify({ addonId, commandId, siteKey: site.key, as, input }),
+    });
+    const outcome = await response.json().catch(() => ({ error: "The server answered unreadably." }));
+    if (json) {
+      printJson(outcome);
+    } else if (response.ok) {
+      console.log(JSON.stringify(outcome.result, null, 2));
+    } else {
+      console.error(`${commandId} did not run for ${site.key}: ${outcome.error ?? response.status}`);
+    }
+    if (!response.ok) {
+      process.exitCode = 1;
     }
     return;
   }

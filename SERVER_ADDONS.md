@@ -765,6 +765,30 @@ tasks `queue-retention`, `hook-deliveries`, `upload-sessions`, `addon-assets`,
 the server process, so it stays in `phis maintain` and an operator runs it when they want the counters
 recounted.
 
+### Commands
+
+A command is something an operator tells an Add-on to do from the shell: add a product, cancel an
+order, list the subscriptions. The manifest declares each under `commands` -- an `id` in the Add-on's
+own vocabulary (`product.add`), the `handler` its runtime exports under `commandHandlers`, a one-line
+`description`, and optionally `input`, a short note on what the input holds. `phis addon commands
+[--addon <id>]` lists them from the desired state, without a running server.
+
+`phis addon command --addon <id> --command <command id> --site <site key> --as <email|user id>
+[--input <json|@file|->] --api-base-url <url>` posts to the serving instance's internal
+`/api/v1/addons/commands` route, for the reason a job is started there. The input is one JSON value and
+the answer is one JSON value, which the CLI prints.
+
+A command has an actor, and that is the line between it and a job. `--as` names a member of the Site
+who is not disabled, and the command's capabilities are bound to that person as a `site-user` route's
+are: the roles capability answers for them, the guarded queries refuse what they may not do, and what
+they write carries them as its author. A command can therefore do nothing that person could not do in
+the browser. Naming somebody is safe because the route takes only the internal token, which only the
+operator holds; no request to an Add-on's own routes reaches it.
+
+A handler throws to refuse, and its message is what the operator reads (`422`). A command Core would
+not start -- not installed, not declared, not enabled for the Site, a build the registry does not
+describe -- is answered `409`, like a refused job.
+
 ### Events
 
 A job is the Add-on asking. An event is Core telling -- or, since Add-ons may emit, another Add-on

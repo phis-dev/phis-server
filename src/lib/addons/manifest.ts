@@ -548,6 +548,38 @@ export function validatePhisAddonManifest(
   assertUnique(jobIds, "jobs", issues);
 
   /*
+   * What an operator may tell this Add-on to do from the shell. Absent means nothing, like every field
+   * added after this manifest version was in the wild. The description is required because listing the
+   * commands is the only help an operator gets: a command nobody can tell the purpose of is not offered.
+   */
+  if (value.commands !== undefined && !Array.isArray(value.commands)) {
+    issues.push("commands must be an array when it is stated at all.");
+  }
+  const commandIds: string[] = [];
+  for (const [index, command] of (Array.isArray(value.commands) ? value.commands : []).entries()) {
+    if (!isPhiRecord(command)) {
+      issues.push(`commands[${index}] must be an object.`);
+      continue;
+    }
+    const id = readString(command.id, `commands[${index}].id`, issues);
+    const handler = readString(command.handler, `commands[${index}].handler`, issues);
+    if (id && !DESCRIPTOR_ID_PATTERN.test(id)) {
+      issues.push(`commands[${index}].id is invalid.`);
+    }
+    if (handler && !HANDLER_ID_PATTERN.test(handler)) {
+      issues.push(`commands[${index}].handler is invalid.`);
+    }
+    if (typeof command.description !== "string" || command.description.trim() === "") {
+      issues.push(`commands[${index}].description must be a non-empty string.`);
+    }
+    if (command.input !== undefined && typeof command.input !== "string") {
+      issues.push(`commands[${index}].input must be a string when it is stated at all.`);
+    }
+    commandIds.push(id);
+  }
+  assertUnique(commandIds, "commands", issues);
+
+  /*
    * The events this Add-on wants told about. Absent means none, like every field added after this
    * manifest version was in the wild.
    *

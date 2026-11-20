@@ -79,3 +79,24 @@ describe("the events an Add-on emits and listens to", () => {
       .toEqual([expect.stringContaining("eventHandlers[0].event is neither")]);
   });
 });
+
+describe("the commands an operator may give", () => {
+  it("are optional, and admit an id, a handler, a description and an input hint", () => {
+    expect(validatePhisAddonManifest(manifest()).issues).toEqual([]);
+    expect(validatePhisAddonManifest(manifest({
+      commands: [{ id: "product.add", handler: "addProduct", description: "Adds a product.", input: "{ key, title }" }],
+    })).issues).toEqual([]);
+  });
+
+  it("refuses a command without a description, a bad id and the same id twice", () => {
+    expect(validatePhisAddonManifest(manifest({ commands: [{ id: "product.add", handler: "addProduct" }] })).issues)
+      .toEqual(["commands[0].description must be a non-empty string."]);
+    expect(validatePhisAddonManifest(manifest({ commands: [{ id: "Product", handler: "addProduct", description: "x" }] })).issues)
+      .toEqual(["commands[0].id is invalid."]);
+    expect(validatePhisAddonManifest(manifest({
+      commands: [{ id: "a", handler: "a", description: "x" }, { id: "a", handler: "b", description: "y" }],
+    })).issues).toEqual([expect.stringContaining("commands")]);
+    expect(validatePhisAddonManifest(manifest({ commands: {} })).issues)
+      .toEqual(["commands must be an array when it is stated at all."]);
+  });
+});

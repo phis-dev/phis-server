@@ -135,6 +135,8 @@ export const PHIS_COMMAND_FLAGS: Record<string, FlagSpec> = {
   },
   "addon job": { addon: S, job: S, site: S, "api-base-url": S, pause: B, resume: B },
   "addon jobs": { addon: S, site: S, limit: S },
+  "addon commands": { addon: S },
+  "addon command": { addon: S, command: S, site: S, as: S, input: S, "api-base-url": S },
 
   "mail drain": { limit: S, "api-base-url": S },
   "email test": { to: S, site: S },
