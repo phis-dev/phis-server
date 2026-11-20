@@ -1099,8 +1099,9 @@ or disagrees.
 
 The server block for the CDN's host, which is taken from the public base URL and must have no path. It allows
 GET only, proxies to `--upstream` with the visitor's `Host` (Garage serves the website bucket named after the
-host it is asked for), and adds `Cache-Control: public, max-age=31536000, immutable`, `Content-Disposition:
-attachment` and `X-Content-Type-Options: nosniff`. Port 80 answers certbot's challenge from
+host it is asked for), and adds `Content-Disposition: attachment` and `X-Content-Type-Options: nosniff`.
+`Cache-Control` follows the status: `public, max-age=31536000, immutable` for 200, 206 and 304, `no-store`
+for every other answer, so a 404 does not outlive the publish that ends it. Port 80 answers certbot's challenge from
 `/var/www/phis-acme`. `--tls` adds the 443 host with the Let's Encrypt paths and turns port 80 into a
 redirect. Without `--write` the file is printed; with it, it is written to
 `/etc/nginx/sites-available/<host>.conf`, linked, checked with `nginx -t` and reloaded. It is not recorded in

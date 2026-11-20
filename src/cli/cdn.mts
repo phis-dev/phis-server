@@ -531,6 +531,8 @@ export async function checkCdn(deps: PhisCdnCommandDeps, flags: FlagMap) {
 
 /** The server block of the CDN's host: GET only, cached for good, never rendered, a proxy to the bucket. */
 export function renderPhisCdnNginxConfig(input: { host: string; upstream: string; tls: boolean }) {
+  // A map is http-wide, so its variable carries the host: two CDNs on one nginx must not clash.
+  const cacheVariable = `phis_cdn_cache_${input.host.replace(/[^A-Za-z0-9]/gu, "_")}`;
   const proxy = [
     "    location / {",
     "        limit_except GET { deny all; }",
@@ -541,8 +543,8 @@ export function renderPhisCdnNginxConfig(input: { host: string; upstream: string
     "        proxy_buffering off;",
     "        proxy_hide_header Cache-Control;",
     "        proxy_hide_header Content-Disposition;",
-    "        # A key is written once, so its bytes never change.",
-    "        add_header Cache-Control \"public, max-age=31536000, immutable\" always;",
+    "        # A key is written once, so its bytes never change; an answer without them may change.",
+    `        add_header Cache-Control $${cacheVariable} always;`,
     "        # Downloaded, never rendered: a <video> or <img> still plays, a navigation saves the file.",
     "        add_header Content-Disposition \"attachment\" always;",
     "        add_header X-Content-Type-Options \"nosniff\" always;",
@@ -556,6 +558,15 @@ export function renderPhisCdnNginxConfig(input: { host: string; upstream: string
   ];
   const lines = [
     `# The CDN of a phis Site, written by phis cdn nginx. Written whole each time: change the flags, not the file.`,
+    "",
+    "# Only a file is cached for good. A 404 must not outlive the publish that ends it.",
+    `map $status $${cacheVariable} {`,
+    "    200 \"public, max-age=31536000, immutable\";",
+    "    206 \"public, max-age=31536000, immutable\";",
+    "    304 \"public, max-age=31536000, immutable\";",
+    "    default \"no-store\";",
+    "}",
+    "",
     "server {",
     "    listen 80;",
     "    listen [::]:80;",

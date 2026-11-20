@@ -58,11 +58,14 @@ describe("CDN content types", () => {
 });
 
 describe("the CDN host's nginx file", () => {
-  it("serves GET only, cached for good, as a download, and redirects to https once TLS is on", () => {
+  it("serves GET only, files cached for good and misses never, as a download, and redirects to https once TLS is on", () => {
     const plain = renderPhisCdnNginxConfig({ host: "cdn.example.com", upstream: "http://127.0.0.1:3912", tls: false });
     expect(plain).toContain("limit_except GET { deny all; }");
     expect(plain).toContain("proxy_pass http://127.0.0.1:3912;");
-    expect(plain).toContain("immutable");
+    expect(plain).toContain("map $status $phis_cdn_cache_cdn_example_com {");
+    expect(plain).toContain("    200 \"public, max-age=31536000, immutable\";");
+    expect(plain).toContain("    default \"no-store\";");
+    expect(plain).toContain("add_header Cache-Control $phis_cdn_cache_cdn_example_com always;");
     expect(plain).toContain("Content-Disposition \"attachment\"");
     expect(plain).toContain("nosniff");
     expect(plain).toContain("/.well-known/acme-challenge/");

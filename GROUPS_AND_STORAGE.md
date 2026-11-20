@@ -918,7 +918,8 @@ site_cdns                      site_cdn_files
 `PHIS_CDN_KEY_SEGMENT_PATTERN` from `@phis/contracts`, and the first segment `api` is reserved, because
 the host may share its name with a translation mirror whose doors are under `/api/v1/`. A key that has been
 used stays taken, withdrawn or not, so a URL that delivered a file once never delivers other bytes and the
-host may cache everything as `immutable`.
+host may cache every file it delivers as `immutable`. What it does not deliver -- a 404, an error -- is
+`no-store`, because the key may be published after it was asked for.
 
 **The catalogue is written by the command that uploads.** `phis cdn publish` reads the file once to get its
 size, its SHA-256 and, above one part (16 MiB), each part's SHA-256. It refuses a key that is taken in the
