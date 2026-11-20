@@ -16,7 +16,7 @@ describe("Payment authority inputs", () => {
     for (const minor of ["0", "01", "1.2", "-1", "1e2", "10000000000000000"]) expect(() => validatePhisPaymentMoney({ currency: "CHF", minor })).toThrow();
   });
   it("copies only public method facts out of a Provider probe", () => {
-    const pricing = { bases: ["final"] as const, tax: ["none"] as const, maxDiscounts: 0, promotionCodes: "none" as const, collectsCustomerDetails: false, collectsTaxIds: false, extra: "private-provider-data" };
+    const pricing = { bases: ["final"] as const, tax: ["none"] as const, maxDiscounts: 0, promotionCodes: "none" as const, collectsCustomerDetails: false, collectsTaxIds: false, merchantOfRecord: null, extra: "private-provider-data" };
     const features = { captureModes: ["automatic"] as const, checkoutKinds: ["redirect"] as const, canPartialCapture: false, canCancel: true, canRefund: true, canPartialRefund: true, pricing, extra: "private-provider-data" };
     const probe = { merchantIdentity: "acct_test", mode: "test" as const, methods: [{ methodKey: "card", title: "Card", features, extra: "private-provider-data" }] };
     const normalized = validatePhisPaymentProviderProbe(probe, { merchantIdentity: "acct_test", mode: "test" });
@@ -25,6 +25,25 @@ describe("Payment authority inputs", () => {
     // Every Provider supports the fixed-total policy; a probe that withholds it is refused.
     const withheld = { ...probe, methods: [{ ...probe.methods[0]!, features: { ...features, pricing: { ...pricing, bases: ["net"] } } }] };
     expect(() => validatePhisPaymentProviderProbe(withheld as unknown as typeof probe, { merchantIdentity: "acct_test", mode: "test" })).toThrow();
+  });
+  it("takes a Merchant of Record's reach exactly when the method sells as one", () => {
+    const pricing = { bases: ["final", "net"] as const, tax: ["none", "merchant-of-record"] as const, maxDiscounts: 0, promotionCodes: "none" as const, collectsCustomerDetails: true, collectsTaxIds: false,
+      merchantOfRecord: { countries: ["CH", "DE", "US"], taxCategories: ["digital-goods", "digital-service"] as const, businessTaxIds: ["charge"] as const } };
+    const features = { captureModes: ["automatic"] as const, checkoutKinds: ["redirect"] as const, canPartialCapture: false, canCancel: true, canRefund: true, canPartialRefund: true, pricing };
+    const probe = (value: unknown) => validatePhisPaymentProviderProbe({ merchantIdentity: "acct_test", mode: "test", methods: [{ methodKey: "card", title: "Card", features: { ...features, pricing: value } }] } as never, { merchantIdentity: "acct_test", mode: "test" });
+    expect(probe(pricing).methods[0]!.features.pricing.merchantOfRecord).toEqual(pricing.merchantOfRecord);
+    // Stated under merchant-of-record, and only there.
+    expect(() => probe({ ...pricing, merchantOfRecord: null })).toThrow();
+    expect(() => probe({ ...pricing, tax: ["none"] })).toThrow();
+    expect(probe({ ...pricing, tax: ["none"], merchantOfRecord: null }).methods[0]!.features.pricing.merchantOfRecord).toBeNull();
+    for (const reach of [
+      { ...pricing.merchantOfRecord, countries: [] },
+      { ...pricing.merchantOfRecord, countries: ["ch"] },
+      { ...pricing.merchantOfRecord, countries: ["CH", "CH"] },
+      { ...pricing.merchantOfRecord, taxCategories: ["luxury"] },
+      { ...pricing.merchantOfRecord, businessTaxIds: [] },
+      { ...pricing.merchantOfRecord, businessTaxIds: ["exempt"] },
+    ]) expect(() => probe({ ...pricing, merchantOfRecord: reach })).toThrow();
   });
   it("normalizes a pricing policy and ties the base amount to its lines", () => {
     expect(validatePhisPaymentPricing({ basis: "final", tax: "none" }, { currency: "CHF", minor: "1990" })).toEqual({ basis: "final", tax: "none" });
@@ -41,7 +60,7 @@ describe("Payment authority inputs", () => {
     expect(() => validatePhisPaymentPricing({ ...policy, customer: { country: "ch", postalCode: null, region: null, addressSource: "billing", taxIds: [] } }, { currency: "CHF", minor: "3250" })).toThrow();
   });
   it("matches a policy against a method's pricing features", () => {
-    const features = { bases: ["final", "net"] as const, tax: ["none", "provider"] as const, maxDiscounts: 1, promotionCodes: "alone" as const, collectsCustomerDetails: true, collectsTaxIds: true };
+    const features = { bases: ["final", "net"] as const, tax: ["none", "provider"] as const, maxDiscounts: 1, promotionCodes: "alone" as const, collectsCustomerDetails: true, collectsTaxIds: true, merchantOfRecord: null };
     const selector = { basis: "net" as const, tax: "provider" as const, discounts: 1, promotionCodes: "none" as const };
     expect(phisPaymentMethodSupports(features, selector)).toBe(true);
     expect(phisPaymentMethodSupports(features, { ...selector, discounts: 0, promotionCodes: "provider" })).toBe(true);

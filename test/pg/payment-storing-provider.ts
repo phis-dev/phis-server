@@ -4,9 +4,9 @@ import type {
   PhisPaymentProviderStoredMethod, PhisPaymentProviderV1,
 } from "@phis/contracts/payments";
 
-const PRICING = { bases: ["final", "net"] as const, tax: ["none", "provider"] as const, maxDiscounts: 1, promotionCodes: "alone" as const, collectsCustomerDetails: true, collectsTaxIds: false };
+const PRICING = { bases: ["final", "net"] as const, tax: ["none", "provider"] as const, maxDiscounts: 1, promotionCodes: "alone" as const, collectsCustomerDetails: true, collectsTaxIds: false, merchantOfRecord: null };
 /** What a charge without a checkout can carry here: a final price, and nothing a hosted page would have to ask. */
-const STORED_PRICING = { bases: ["final"] as const, tax: ["none"] as const, maxDiscounts: 0, promotionCodes: "none" as const, collectsCustomerDetails: false, collectsTaxIds: false };
+const STORED_PRICING = { bases: ["final"] as const, tax: ["none"] as const, maxDiscounts: 0, promotionCodes: "none" as const, collectsCustomerDetails: false, collectsTaxIds: false, merchantOfRecord: null };
 function features(stored: PhisPaymentFeatures["stored"]): PhisPaymentFeatures {
   return { captureModes: ["automatic"], checkoutKinds: ["redirect"], canPartialCapture: false, canCancel: true, canRefund: true, canPartialRefund: true, pricing: PRICING, stored };
 }

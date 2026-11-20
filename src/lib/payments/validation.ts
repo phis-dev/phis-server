@@ -1,7 +1,7 @@
 import { isDeepStrictEqual } from "node:util";
 import type {
   PhisPayment, PhisPaymentAddition, PhisPaymentCustomerDetails, PhisPaymentErrorCode, PhisPaymentMoney, PhisPaymentObservedTotals,
-  PhisPaymentPricing, PhisPaymentPricingFeatures, PhisPaymentPricingSelector, PhisPaymentProfileDraft, PhisPaymentProviderObservation,
+  PhisPaymentMerchantOfRecordFeatures, PhisPaymentPricing, PhisPaymentPricingFeatures, PhisPaymentPricingSelector, PhisPaymentProfileDraft, PhisPaymentProviderObservation,
   PhisPaymentProviderProbe, PhisPaymentProviderStoredMethod, PhisPaymentStoredFeatures, PhisPaymentTotals,
 } from "@phis/contracts/payments";
 import { PHIS_PAYMENT_CURRENCY_EXPONENTS } from "@phis/contracts/payments";
@@ -322,8 +322,29 @@ function validatePricingFeatures(value: unknown): PhisPaymentPricingFeatures {
     || !Number.isInteger(value.maxDiscounts) || (value.maxDiscounts as number) < 0 || (value.maxDiscounts as number) > PHIS_PAYMENT_MAX_DISCOUNTS
     || typeof value.collectsCustomerDetails !== "boolean" || typeof value.collectsTaxIds !== "boolean") invalid();
   requireOneOf(value.promotionCodes, ["none", "alone", "with-discounts"]);
+  // Present exactly when the method sells as Merchant of Record: a consumer offers no more than it states.
+  const merchantOfRecord = value.tax.includes("merchant-of-record")
+    ? validateMerchantOfRecordFeatures(value.merchantOfRecord)
+    : value.merchantOfRecord === null ? null : invalid();
   return { bases: [...value.bases] as PhisPaymentPricingFeatures["bases"], tax: [...value.tax] as PhisPaymentPricingFeatures["tax"], maxDiscounts: value.maxDiscounts as number,
-    promotionCodes: value.promotionCodes, collectsCustomerDetails: value.collectsCustomerDetails, collectsTaxIds: value.collectsTaxIds };
+    promotionCodes: value.promotionCodes, collectsCustomerDetails: value.collectsCustomerDetails, collectsTaxIds: value.collectsTaxIds, merchantOfRecord };
+}
+
+/** Where and what a Provider sells as Merchant of Record: ISO countries, admitted categories, what a business's VAT id does. */
+function validateMerchantOfRecordFeatures(value: unknown): PhisPaymentMerchantOfRecordFeatures {
+  requireKeys(value, ["countries", "taxCategories", "businessTaxIds"], false);
+  requireList(value.countries, 250); requireList(value.taxCategories, PHIS_PAYMENT_TAX_CATEGORIES.length); requireList(value.businessTaxIds, 2);
+  for (const country of value.countries) if (typeof country !== "string" || !/^[A-Z]{2}$/.test(country)) invalid();
+  for (const category of value.taxCategories) requireOneOf(category, PHIS_PAYMENT_TAX_CATEGORIES);
+  for (const handling of value.businessTaxIds) requireOneOf(handling, ["charge", "reverse-charge"]);
+  if (value.countries.length === 0 || value.taxCategories.length === 0 || value.businessTaxIds.length === 0
+    || new Set(value.countries).size !== value.countries.length || new Set(value.taxCategories).size !== value.taxCategories.length
+    || new Set(value.businessTaxIds).size !== value.businessTaxIds.length) invalid();
+  return {
+    countries: [...value.countries] as string[],
+    taxCategories: [...value.taxCategories] as PhisPaymentMerchantOfRecordFeatures["taxCategories"],
+    businessTaxIds: [...value.businessTaxIds] as PhisPaymentMerchantOfRecordFeatures["businessTaxIds"],
+  };
 }
 
 function validateAddition(value: unknown): PhisPaymentAddition {

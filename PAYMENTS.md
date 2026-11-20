@@ -502,6 +502,21 @@ export type PhisPaymentPricingFeatures = {
   promotionCodes: "none" | "alone" | "with-discounts";
   collectsCustomerDetails: boolean;
   collectsTaxIds: boolean;
+  /** Present exactly when `tax` includes `merchant-of-record`, `null` otherwise. */
+  merchantOfRecord: PhisPaymentMerchantOfRecordFeatures | null;
+};
+
+/**
+ * Where and what the Provider sells as Merchant of Record: the ISO countries it owes the tax for, the
+ * categories it admits there, and what a business's VAT id does (`charge`: taxed, reclaimed as input tax;
+ * `reverse-charge`: not taxed, a tax-inclusive price reduced by its share). Each list is non-empty and
+ * free of repeats. A consumer offers no more than this; Core refuses a probe that states it under any
+ * other handling, or leaves it out under this one.
+ */
+export type PhisPaymentMerchantOfRecordFeatures = {
+  countries: readonly string[];
+  taxCategories: readonly PhisPaymentTaxCategory[];
+  businessTaxIds: readonly ("charge" | "reverse-charge")[];
 };
 
 export type PhisPaymentAdditionKind = "tax" | "shipping" | "discount";

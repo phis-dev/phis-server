@@ -357,9 +357,15 @@ implied by this implementation design.
 The policy's `basis:tax` is written into the Session's and the PaymentIntent's metadata so that an
 observation can read the Session's totals without the stored command. The adapter advertises
 `pricing: { bases: ["final", "net"], tax: ["none", "provider", "merchant-of-record"], maxDiscounts: 1,
-promotionCodes: "alone", collectsCustomerDetails: true, collectsTaxIds: true }` on every method: one
+promotionCodes: "alone", collectsCustomerDetails: true, collectsTaxIds: true, merchantOfRecord }` on every method that
+Managed Payments admits (TWINT and stored methods state `merchantOfRecord: null`): one
 Checkout Session carries one coupon, which is either the stated discount or the customer's promotion
 code, and a create that asks for both is refused with `method_unavailable` before any Stripe call.
+`merchantOfRecord` states Managed Payments' reach as Stripe documents it: the countries of its tax
+coverage (docs.stripe.com/payments/managed-payments/tax-compliance, cross-border list), the categories
+`digital-goods` and `digital-service`, and `businessTaxIds: ["charge"]` -- Managed Payments takes VAT id
+collection out of the Session and documents no reverse charge, so a business pays the price and reclaims
+the tax from Stripe's invoice.
 
 Create, line-item policy:
 

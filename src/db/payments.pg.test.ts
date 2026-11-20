@@ -29,7 +29,7 @@ class FakeProvider implements PhisPaymentProviderV1 {
   entered: (() => void) | null = null;
   async probe() { return { merchantIdentity: "acct_test", mode: "test" as const, methods: [{ methodKey: "card", title: "Test card",
     features: { captureModes: ["automatic", "manual"] as const, checkoutKinds: ["redirect"] as const, canPartialCapture: true, canCancel: true, canRefund: true, canPartialRefund: true,
-      pricing: { bases: ["final", "net"] as const, tax: ["none", "provider"] as const, maxDiscounts: 1, promotionCodes: "alone" as const, collectsCustomerDetails: true, collectsTaxIds: false } } }] }; }
+      pricing: { bases: ["final", "net"] as const, tax: ["none", "provider"] as const, maxDiscounts: 1, promotionCodes: "alone" as const, collectsCustomerDetails: true, collectsTaxIds: false, merchantOfRecord: null } } }] }; }
   async execute(command: PhisPaymentProviderCommand): Promise<PhisPaymentProviderExecution> {
     this.calls[command.action] = (this.calls[command.action] ?? 0) + 1;
     this.entered?.(); if (this.pause) await this.pause;
