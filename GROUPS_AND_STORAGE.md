@@ -482,7 +482,11 @@ a membership contributed by a Directory source is not locally editable, which me
 membership can be raised locally but never cut below what a source asserts.
 
 Asset deletion additionally requires a zero authoritative reference count. CMS reference indexing and
-delete diagnostics follow [REFERENCES.md](./REFERENCES.md).
+delete diagnostics follow [REFERENCES.md](./REFERENCES.md). The count also covers a product's picture
+and every `core.mediaAsset` column of an installed Add-on, which answer `media_asset_in_use` with a
+reference of scope `product` or `addon` ([SERVER_ADDONS.md](./SERVER_ADDONS.md#files-a-row-carries)).
+An Add-on gives up an Asset it used through `media-release:v1`, which deletes it only at a count of
+zero. A delete is final: there is no trash.
 
 Builder, Editor, and Public CMS resolution use only Site Space Assets. A User or Group Asset cannot be
 embedded into published Site content merely because its id is known. Validating an Asset's delivery

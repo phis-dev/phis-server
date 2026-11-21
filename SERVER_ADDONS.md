@@ -1078,32 +1078,37 @@ capability snapshot a Site's Modules are resolved against. Only the ones marked 
 Add-on's context (`src/lib/addons/core-capabilities.ts`); an Add-on requiring any other is refused at
 dispatch, by the job runner, and when its service factory is resolved.
 
-| Capability | Delivered to Add-ons |
-| --- | --- |
-| `@phis/server/authentication:v1` | no -- required by Core-bound Modules only |
-| `@phis/server/authorization:v1` | yes |
-| `@phis/server/data:v1` | yes |
-| `@phis/server/threads:v1` | yes |
-| `@phis/server/resource-links:v1` | yes |
-| `@phis/server/support:v1` | yes |
-| `@phis/server/groups:v1` | yes |
-| `@phis/server/storage:v1` | yes |
-| `@phis/server/assets:v1` | yes |
-| `@phis/server/secrets:v1` | yes |
-| `@phis/server/settings:v1` | yes |
-| `@phis/server/roles:v1` | yes |
-| `@phis/server/payments:v1` | yes -- see [PAYMENTS.md](./PAYMENTS.md) §4 |
-| `@phis/server/payment-notifications:v1` | yes -- see [PAYMENTS.md](./PAYMENTS.md) §7 and [External hooks](#external-hooks) |
-| `@phis/server/notifications:v1` | yes -- see [`notifications:v1`](#notificationsv1) |
-| `@phis/server/events:v1` | yes -- see [Events an Add-on emits](#events-an-add-on-emits) |
-| `@phis/server/entitlements:v1` | yes -- see [`entitlements:v1`](#entitlementsv1) |
-| `@phis/server/products:v1` | yes -- see [`products:v1`](#productsv1) |
-| `@phis/server/cdn:v1` | yes -- see [`cdn:v1`](#cdnv1) |
-| `@phis/server/media:v1` | yes -- see [`media:v1`](#mediav1) |
-| `@phis/server/media-release:v1` | yes -- see [`media-release:v1`](#media-releasev1) |
+| Capability | Delivered to Add-ons | What it is for |
+| --- | --- | --- |
+| `@phis/server/authentication:v1` | no -- required by Core-bound Modules only | who the actor is; Core signs people in |
+| `@phis/server/authorization:v1` | yes -- [`authorization:v1`](#authorizationv1) | may this actor act on a row, at a group level, on the Site |
+| `@phis/server/data:v1` | yes -- [`data:v1`](#datav1) | the declared queries against the Add-on's own tables |
+| `@phis/server/threads:v1` | yes -- [`threads:v1`](#threadsv1) | Core's conversations |
+| `@phis/server/resource-links:v1` | yes -- [`resource-links:v1`](#resource-linksv1) | links from a thread or ticket into the Add-on's own system |
+| `@phis/server/support:v1` | yes -- [`support:v1`](#supportv1) | Support tickets and their tasks |
+| `@phis/server/groups:v1` | yes -- [`groups:v1`](#groupsv1) | group facts and display names; the Add-on's own groups |
+| `@phis/server/storage:v1` | yes -- [`storage:v1`](#storagev1) | a private object store the Add-on keys itself |
+| `@phis/server/assets:v1` | yes -- [`assets:v1`](#assetsv1) | files in the slots a table declared, in the Add-on's own Space |
+| `@phis/server/secrets:v1` | yes -- [`secrets:v1`](#secretsv1) | reading what the operator set as a secret |
+| `@phis/server/settings:v1` | yes -- [`settings:v1`](#settingsv1) | reading what the operator configured for the Site |
+| `@phis/server/roles:v1` | yes -- [Add-on roles](#add-on-roles) | whether the actor holds one of the Add-on's declared roles |
+| `@phis/server/payments:v1` | yes -- [PAYMENTS.md](./PAYMENTS.md) §4 | checkout, capture, refunds, subscriptions |
+| `@phis/server/payment-notifications:v1` | yes -- [PAYMENTS.md](./PAYMENTS.md) §7 and [External hooks](#external-hooks) | a Provider's notifications, in a bound hook |
+| `@phis/server/notifications:v1` | yes -- [`notifications:v1`](#notificationsv1) | writing to a person; Core addresses and sends |
+| `@phis/server/events:v1` | yes -- [Events an Add-on emits](#events-an-add-on-emits) | announcing the Add-on's own events to the Site's Add-ons |
+| `@phis/server/entitlements:v1` | yes -- [`entitlements:v1`](#entitlementsv1) | who holds which product, from when until when |
+| `@phis/server/products:v1` | yes -- [`products:v1`](#productsv1) | the Site's product directory |
+| `@phis/server/cdn:v1` | yes -- [`cdn:v1`](#cdnv1) | the Site's CDN catalogue, read-only |
+| `@phis/server/media:v1` | yes -- [`media:v1`](#mediav1) | Media library Assets by id: `servable` and `path` |
+| `@phis/server/media-release:v1` | yes -- [`media-release:v1`](#media-releasev1) | giving up Media library Assets; Core deletes one nothing references |
 
 Core descriptors are generated from the running release and reconciled into the registry. They are not
 editable Site settings and cannot be disabled per Site.
+
+This table, the schema descriptor's references (`core.site`, `core.user`, `core.group`,
+`core.mediaAsset`) and asset slots, and Core's routes are what to check before an Add-on concludes that
+Core lacks something; [ADDON_HOWTO.md](./ADDON_HOWTO.md#before-you-call-something-missing) says where
+each is listed.
 
 ### `authorization:v1`
 
@@ -1290,7 +1295,8 @@ does not file a bug about it.
 
 This is not the Media library. What a person uploads, browses, and references belongs in a Media Space
 with its folders, quotas, and delivery policies. This is what an Add-on keeps for itself: a release
-artifact, a generated preview, an export waiting to be fetched.
+artifact, a generated preview, an export waiting to be fetched. An Asset of the Media library is kept by
+id in a `core.mediaAsset` column and read through [`media:v1`](#mediav1).
 
 ### `assets:v1`
 
@@ -1822,7 +1828,8 @@ about what exists elsewhere. `servable` is the rest of `register`'s check: ready
 where `servable` is false; read it when it is used and do not store it.
 
 An unverified hook is answered only servable Assets. Giving an Asset up is `media-release:v1`, a grant of its
-own.
+own. Whether a row's picture belongs in such a column or in a slot of `assets:v1` is
+[ADDON_HOWTO.md, *A picture for an Add-on row*](./ADDON_HOWTO.md#a-picture-for-an-add-on-row-slot-or-media-library-reference).
 
 ### `media-release:v1`
 
@@ -1838,7 +1845,10 @@ that this Add-on may delete what the Site's people uploaded, and an Add-on that 
   library's delete refuses on (Pages, Navigation, Content, Areas and Themes in a revision still pointed at,
   a product's picture, every `core.mediaAsset` column of every installed Add-on, the caller's own included)
   and a message's attachment -- and deletes only at zero. Anything left, or an Asset in a locked Folder, is
-  `kept`: nothing happens, it is not an error, and what holds the Asset is not said.
+  `kept`: nothing happens, it is not an error, and what holds the Asset is not said. The order is: read
+  the ids, delete or clear the rows naming them through `data:v1`, and call `release` once that has
+  committed -- `release` runs in transactions of its own and counts what is committed, so a call from
+  inside the `data:v1` transaction that removed the rows still finds them.
 - **One transaction per Asset** holds its row lock (`FOR UPDATE`) through the count and the delete. Every
   counted reference is a foreign key on the Asset, and writing one takes a key-share lock on that row, so it
   waits and then either was counted or fails because the Asset is gone. A reference the count does not see
@@ -1846,7 +1856,8 @@ that this Add-on may delete what the Site's people uploaded, and an Add-on that 
   Add-on keeps where no foreign key holds it is no reference Core can see, before or after.
 - The delete is the Media library's: variants, font subsets and the row in that transaction, the objects
   written down as discard notes and removed from the store after the commit, the emptied Folder branch
-  pruned, the Site configuration cache cleared.
+  pruned, the Site configuration cache cleared. **Deleted is final**: the Media library has no trash, and
+  `release` keeps nothing to restore from. An Add-on that may want a picture back does not release it.
 - Every outcome is logged as `addon.media.released` with the Add-on (`pluginKey`), the acting user where
   there is one, the Asset and the outcome. Refused to an unverified hook; a job or a verified hook may call it.
 
@@ -2258,6 +2269,12 @@ delete a user because an installed package forbids it is looking at a constraint
 may not know they have. `CASCADE` also settles the common case without asking the Add-on anything -- a
 user's rows in an Add-on table go when the user goes, whether or not the Add-on is currently enabled.
 
+The Media library's delete guard is not an exception to that. It refuses a person's delete of an Asset
+that an Add-on row names in a `core.mediaAsset` column (`409 media_asset_in_use`, a reference of scope
+`addon`; see [Files a row carries](#files-a-row-carries)), but it is Core's own question, asked before
+the delete and answered with the row it found -- the same answer a Page's reference gets. The foreign key
+underneath still only cascades or clears, wherever an Asset goes some other way.
+
 Site binding belongs to Core. A table states that it is Site-scoped; Core adds the column, the foreign
 key to `phis.sites(id)`, and the cascade, and Core is what puts the Site filter into every query that
 reads the table. The Add-on neither writes the column nor is able to forget it. User binding works the
@@ -2384,18 +2401,24 @@ The link is bound to the Site and cascades **both ways**, which is worth reading
   is not the Add-on's to delete, and `--sweep` collects the ones nothing points at any more.
 - Removing the file in the Media view takes the link. **The parent row survives and simply has nothing
   to deliver for that slot.** That is deliberate: it makes deleting a file a usable answer to somebody
-  uploading rubbish, without destroying the record it was attached to. The one reference the delete guard
-  does name is a **product's picture**: an Asset that a product of the Site wears as `imageAssetId` is refused
+  uploading rubbish, without destroying the record it was attached to. These link rows are not counted.
+  What the delete guard does count, beside the CMS references, are two kinds of row outside the CMS. A
+  **product's picture**: an Asset that a product of the Site wears as `imageAssetId` is refused
   with `media_asset_in_use` and a reference of scope `product` (the product's id in `fieldPath`), like a
-  Page's. The foreign key's `SET NULL` stays as the last safeguard. An Asset that a row of an installed
+  Page's. The foreign key's `SET NULL` stays as the last safeguard. And an Asset that a row of an installed
   Add-on -- enabled or not -- names in a column of its own declared with `references: "core.mediaAsset"` is
   refused the same way, with a reference of scope `addon`, with `addon: { addonId, packageName, table, column, rowId }` (`rowId` the
   row's primary key as text, a composite key's values joined by `,`) and `<table>.<column>` in `fieldPath`.
   Only the columns the database already holds are read, so a pending schema upgrade does not break the
-  delete. These link rows are not counted.
+  delete. An Asset id kept anywhere else -- a JSON list, a text, a plain integer column -- is not counted.
 
 Every row in that table is a finished file, so the rule for a single-valued slot is a plain unique index.
 A transfer in flight is recorded in Core's upload session, never in this table.
+
+A slot is one of two ways a row carries a picture; the other is a `core.mediaAsset` column naming an
+Asset of the Media library, read through [`media:v1`](#mediav1). Which one a row wants, and how a gallery
+of either kind is laid out, is decided in
+[ADDON_HOWTO.md, *A picture for an Add-on row*](./ADDON_HOWTO.md#a-picture-for-an-add-on-row-slot-or-media-library-reference).
 
 ### Declared queries
 
@@ -2744,7 +2767,10 @@ Core requirement:    @phis/server/resource-links:v1
   Modules must not create provider-specific import, loopback-route, or fallback paths.
 - An Add-on owns tables only inside its own schema, and the catalog is what says which are its.
 - Foreign keys point from an Add-on at Core and never the other way; an Add-on cannot refuse a Core
-  deletion.
+  deletion. The Media delete guard counting `core.mediaAsset` columns is Core's own check, which names
+  the row it found; the foreign key under it only cascades or clears.
+- A Media Asset id an Add-on keeps sits in a `core.mediaAsset` column, one per Asset. An id in JSON or
+  text has no foreign key, is not counted by the delete guard, and is invisible to `media-release:v1`.
 - A secret reference does not name a storage location, and the key that decrypts a secret never lives
   where the secret does.
 - An Add-on ships no SQL and no DDL. It describes its tables and its queries; Core derives the

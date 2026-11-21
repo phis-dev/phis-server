@@ -25,6 +25,35 @@ The path is derived from the Add-on id, never stored anywhere as a string, and n
 a request or a database value. The install root defaults to `addons/` under the stage root
 (`PHIS_ROOT`), so it is deployment state that travels with the instance rather than with the build.
 
+## Before you call something missing
+
+Most of what an Add-on needs from a Site, Core already offers. An analysis that concludes otherwise has
+usually not looked in every one of these places:
+
+| Where | What it lists |
+| --- | --- |
+| `PHIS_CORE_CAPABILITIES` in `@phis/contracts/addon`, and the table in [SERVER_ADDONS.md §13](./SERVER_ADDONS.md#13-core-capability-registry) | every capability an Add-on may require, what it is for, and its section |
+| `PHIS_ADDON_CORE_REFERENCES` and [the schema descriptor](./SERVER_ADDONS.md#the-schema-descriptor) | the Core rows a column may point at (`core.site`, `core.user`, `core.group`, `core.mediaAsset`), scopes, asset slots, mirror columns |
+| [docs/API.md](./docs/API.md) | every Core route, generated from the source |
+| [docs/CLI.md](./docs/CLI.md) | what an operator can do for an Add-on: settings, secrets, roles, storage, products, entitlements, the CDN |
+| `@phis/ui`'s [THIRD_PARTY_MODULES.md](https://github.com/phis-dev/phis-ui/blob/main/THIRD_PARTY_MODULES.md#before-you-start-what-the-foundation-already-has) and its `exports` map | the Widgets, Controls, Layouts and conditions a Module half composes from, including [what the Asset Module already does](https://github.com/phis-dev/phis-ui/blob/main/THIRD_PARTY_MODULES.md#media-what-the-asset-module-already-does) |
+
+Search by what the thing does, not by your word for it: a cover, an icon, a logo and a screenshot are all
+Media Assets. Some that are easy to miss:
+
+- An Asset of the Media library by id, with whether a visitor is served it and its address: `media:v1`.
+- Deleting a Media library Asset the Add-on no longer uses: `media-release:v1`.
+- A picture the package carries in its own bytes: `assets:v1` `put`. A product's picture: `products:v1`
+  `imageAssetId`, not a column of yours.
+- A `core.group` or `core.mediaAsset` column that is cleared rather than cascaded: `onDelete: "setNull"`.
+- A Widget shown only when the record a Page is about has a field: the `record` condition source
+  (`@phis/contracts/conditions`), not a component of your own.
+
+When you report something as missing, say what you checked: which of the places above you read, and what
+each answered. "Core has no X" without that is a guess the next reader cannot tell from a finding. What is
+then really missing is a contract question -- a new capability, a route field or an export is put to the
+operator before it is built, never added beside the existing one as a convention of your package.
+
 ## 1. What the artifact must export
 
 One export:
@@ -80,11 +109,78 @@ of the result than a first reading suggests:
   You neither write the column nor can forget it.
 - A reference column has no type of its own. `references: "core.user"` resolves to whatever Core's key
   actually is, at Core's width.
+- A reference to `core.group` or `core.mediaAsset`, or to a Site-scoped table of your own, is bound
+  together with its Site, so the table carrying it must be `siteScoped: true`; the validator refuses it
+  otherwise. Both delete rules are open to it: `cascade`, or `setNull` on a nullable column, which clears
+  that column alone (`ON DELETE SET NULL (column)`) and never the Site column.
 - Constraints are structured, not expressions. `notEmpty`, `range`, `enumeration`,
   `columnComparison`, and `nullCardinality` cover what a table may say about itself.
 
 Add columns and indexes in a later `version`; add constraints in the first one. A constraint added
-later meets the rows that are already there.
+later meets the rows that are already there. On an installation that already holds the schema,
+`phis addon migrate` adds a new table and a new column that is nullable or has a default; a new column
+that is required, unique or part of the key, and a new constraint on an existing table, are refused
+([Applying and removing a schema](./SERVER_ADDONS.md#applying-and-removing-a-schema)).
+
+### A picture for an Add-on row: slot or Media library reference?
+
+Two ways, and they answer different questions: whose file it is, and who chooses it.
+
+| | Slot ([`assets:v1`](./SERVER_ADDONS.md#assetsv1)) | Reference (`core.mediaAsset` column, [`media:v1`](./SERVER_ADDONS.md#mediav1)) |
+| --- | --- | --- |
+| Where the file lives | the Add-on's own Media Space, on its quota, not browsable in the Media library | the Site's Media library, where people upload, browse and reuse it |
+| Who puts it there | the Add-on: `begin` and `finalize` for a client's upload, `put` for bytes it holds | a person, in the Media library; the row keeps the id they chose |
+| Whose it is | the row's: one file in a `one` slot, several in a `many` slot | the Site's: any number of rows and Pages may name one Asset |
+| Showing it | `list`, or a `mirrorColumn` that brings the path with the row | `media:v1` `get`: `servable` and `path`, read when used and never stored |
+| A person deletes it in the Media view | allowed: the link goes, the row stays | refused while a row names it (`409 media_asset_in_use`, scope `addon`) |
+| When the row goes | `data:v1` `delete` takes the files with it | the row goes; the Asset stays until the Add-on calls `media-release:v1` |
+
+A slot is for a file that exists for this row alone: a vendor's logo uploaded through the Add-on's own
+form, a release artifact, a picture the package ships. A reference is for what a person picks from the
+Site's library, or one picture that serves several rows. A product's picture is neither -- it is
+`products:v1`'s `imageAssetId`.
+
+**A reference is a column of its own**, `{ name: "cover_asset_id", references: "core.mediaAsset",
+nullable: true, onDelete: "setNull" }`, on a `siteScoped` table. Where a visitor will see it, check on save
+that `media:v1` answers it `servable`.
+
+**A gallery is a table, one row per picture**, with its position:
+
+```ts
+{
+  name: "listing_pictures",
+  siteScoped: true,
+  columns: [
+    { name: "id", type: "identity" },
+    { name: "listing_id", references: { table: "listings" }, onDelete: "cascade" },
+    { name: "asset_id", references: "core.mediaAsset", onDelete: "cascade" },
+    { name: "position", type: "smallInteger" },
+  ],
+  primaryKey: ["id"],
+  indexes: [{ name: "by_listing", columns: ["listing_id", "position"] }],
+  constraints: [{ kind: "range", name: "position", column: "position", min: 0 }],
+}
+```
+
+Not a JSON list of ids in the listing. No foreign key holds an id in JSON, so the delete guard does not
+count it -- a person can delete a picture the listing still shows -- and `media-release:v1` does not see
+it either, so releasing an Asset of the list can delete it while the list still names it. A `many` slot is
+the gallery of files the Add-on owns; it has no position, so a gallery people pick and order is the table.
+
+**When the row goes**, the Add-on gives its pictures up in this order: read the Asset ids (a `delete`
+answers the removed row; a gallery's rows are selected before the parent goes, because the cascade takes
+them), delete through `data:v1`, and once that has committed call `release({ ids })` with
+`media-release:v1`. Core deletes each Asset nothing else references and answers `kept` for one a Page,
+another row or a locked Folder still holds -- not an error. Deleted is final: the Media library has no
+trash.
+
+**On an existing installation** a gallery table and a new nullable reference column arrive with
+`phis addon migrate`, as above. Core's own `phis` tables are different: before v1 a release carries only
+`CREATE`, so a column added to an existing Core table reaches an existing installation as an `ALTER` by
+hand ([DB.md](./DB.md)).
+
+The capabilities are `assets:v1` for slots; `media:v1` for references, with `media-release:v1` beside it
+only when the Add-on deletes -- a grant of its own, so an operator reads in the manifest that it can.
 
 ## 3. How to compile it
 
@@ -207,6 +303,10 @@ module scope empty.
   ask `context.capabilities.authorization.mayActOnRow({ table, id, intent })`. Rebuilding the ladder
   locally is the parallel contract the Module guide forbids, and it will drift from Core's the first
   time a level changes.
+- **No Media Asset id outside a `core.mediaAsset` column.** An id in JSON, a text or a plain integer has
+  no foreign key: the Media library's delete guard does not count it and `media-release:v1` cannot see it,
+  so the picture can be deleted while the row still shows it
+  ([A picture for an Add-on row](#a-picture-for-an-add-on-row-slot-or-media-library-reference)).
 - **No global registration and no import-side-effect registration.** Both are covered by the
   no-top-level-side-effects rule and are not extension APIs.
 - **No unbounded work.** A handler is raced against its declared `timeoutMs`, and losing that race
@@ -362,7 +462,12 @@ and enable last.
 - every descriptor's `handler` exists in the matching handler map
 - the Add-on id carries no `_` and no `.`
 - `serverAbi` matches the release you are installing into
-- constraints are in the first schema version; columns and indexes may come later
+- constraints are in the first schema version; columns and indexes may come later, and a column added
+  later is nullable or has a default
+- a table with a `core.group` or `core.mediaAsset` column is `siteScoped`
+- every Media Asset id the Add-on keeps sits in a `core.mediaAsset` column, a gallery one row per picture;
+  `media-release:v1` is called only after the rows naming the ids are gone
+- whatever you report as missing names the capability table, routes and Modules you checked
 - handlers honour `context.signal` and stop when it aborts
 - the digest of the file you hand over is the digest you tell the operator
 
