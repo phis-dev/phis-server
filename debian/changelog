@@ -1,3 +1,23 @@
+phis (0.5.1-1) unstable; urgency=medium
+
+  * Add-ons read Media library Assets by id through @phis/server/media:v1
+    (get: content type, size, alt, whether a visitor is served it and its
+    delivery path) and give them up through @phis/server/media-release:v1
+    (release, up to 200 ids): Core deletes an Asset of the Site Space that
+    nothing references any more, in one transaction under its row lock;
+    one in a locked folder is kept. Deleted is final, there is no trash.
+  * The Media library's delete guard counts the core.mediaAsset columns of
+    every installed Add-on (409 media_asset_in_use, reference scope addon).
+  * A core.group or core.mediaAsset reference column keeps its delete rule:
+    setNull clears that column alone (ON DELETE SET NULL (column)) instead
+    of cascading the row away; the schema descriptor refuses such a
+    reference on a table that is not siteScoped.
+  * The server's own address says that phis is running and answers under
+    /api, with no Site served there yet.
+  * No schema change. Needs @phis/contracts 0.8.1.
+
+ -- Marius Schumacher <marius.schumacher@phisys.com>  Sat, 21 Nov 2026 13:59:57 +0000
+
 phis (0.5.0-1) unstable; urgency=medium
 
   * An Area's Module selection is stored apart from its structure. A
