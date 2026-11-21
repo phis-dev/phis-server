@@ -1,3 +1,13 @@
+phis (0.5.2-1) unstable; urgency=medium
+
+  * @phis/server/media:v1 answers what a media tile draws: name (the
+    original file name), title, thumbnailPath and previewPath (Core's own
+    variant addresses, for a servable image only) and blurDataUrl, beside
+    the fields it answered before.
+  * No schema change. Needs @phis/contracts 0.8.2.
+
+ -- Marius Schumacher <marius.schumacher@phisys.com>  Sat, 21 Nov 2026 20:05:57 +0000
+
 phis (0.5.1-1) unstable; urgency=medium
 
   * Add-ons read Media library Assets by id through @phis/server/media:v1
