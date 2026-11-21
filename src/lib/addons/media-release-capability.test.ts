@@ -153,8 +153,8 @@ describe("media-release capability", () => {
   });
 
   it("refuses ids that are not a short list of positive integers", async () => {
-    for (const ids of [[0], [2.5], ["9"], Array.from({ length: 51 }, (_, index) => index + 1)]) {
-      await expect(capability().release({ ids: ids as number[] })).rejects.toThrow(/at most 50 positive integer/u);
+    for (const ids of [[0], [2.5], ["9"], Array.from({ length: 201 }, (_, index) => index + 1)]) {
+      await expect(capability().release({ ids: ids as number[] })).rejects.toThrow(/at most 200 positive integer/u);
     }
     expect(state.steps).toEqual([]);
   });

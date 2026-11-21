@@ -1823,7 +1823,7 @@ own.
 
 ### `media-release:v1`
 
-`release({ ids })`, at most 50 positive integer ids: the calling Add-on gives up its use of Assets of the
+`release({ ids })`, at most 200 positive integer ids: the calling Add-on gives up its use of Assets of the
 Site's Media library, and Core deletes each one nothing references any more. The answer is one
 `{ id, released }` per distinct id, in the order of its first mention, `released` being `deleted`, `kept` or
 `not-found`. A separate capability from `media:v1`, so that an operator reads in `requiredCoreCapabilities`
