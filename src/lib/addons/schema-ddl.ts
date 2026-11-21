@@ -22,6 +22,7 @@ import {
   PHIS_ADDON_CREATED_BY_COLUMN,
   PHIS_ADDON_GROUP_COLUMN,
   PHIS_ADDON_OWNER_COLUMN,
+  PHIS_ADDON_SITE_BOUND_CORE_REFERENCES,
   PHIS_ADDON_SITE_COLUMN,
 } from "./schema-descriptor.ts";
 import {
@@ -58,12 +59,6 @@ const CORE_REFERENCE_TARGETS: Record<string, { table: string; column: string; ty
     type: "INTEGER",
   },
 };
-
-/** The Core references Core binds together with the Site, because their targets live inside one. */
-const SITE_BOUND_CORE_REFERENCES = new Set<string>([
-  PHIS_ADDON_CORE_REFERENCES.group,
-  PHIS_ADDON_CORE_REFERENCES.mediaAsset,
-]);
 
 /**
  * The physical Core tables an Add-on's schema may point at.
@@ -131,24 +126,40 @@ function qualify(schemaName: string, table: string) {
 }
 
 /**
- * A group is always bound together with its Site, never by id alone.
+ * The delete rule of a key that covers the Site column as well as the referencing one.
  *
- * Core references `site_groups (id, site_id)` everywhere it points at a group, against the unique key
- * the table carries for exactly this purpose. The id alone would let a row name a group of another
- * Site, and no Add-on would see that it had done so.
+ * A plain `SET NULL` would clear both, and the Site column is `NOT NULL`: the delete would fail, or a
+ * row would lose its Site. `setNull` therefore names the referencing column alone (`SET NULL (column)`,
+ * PostgreSQL 15 and later), so the row stays in its Site and only loses what it pointed at.
+ */
+function siteBoundDeleteRule(columnName: string, onDelete: "cascade" | "setNull") {
+  return onDelete === "cascade" ? "ON DELETE CASCADE" : `ON DELETE SET NULL (${quotePhiIdentifier(columnName)})`;
+}
+
+/**
+ * A group or a Media Asset is always bound together with its Site, never by id alone.
+ *
+ * Core references `site_groups (id, site_id)` and `media_assets (id, site_id)` everywhere it points at
+ * one, against the unique key each table carries for exactly this purpose. The id alone would let a row
+ * name a group or a file of another Site, and no Add-on would see that it had done so.
+ *
+ * The column's own delete rule is kept. A cover image declared `setNull` loses its picture when the
+ * Asset goes some way the Media guard does not see; it does not take the row along.
  */
 function coreSiteBoundForeignKey(
   schemaName: string,
   tableName: string,
   columnName: string,
   reference: string,
+  onDelete: "cascade" | "setNull",
 ) {
   const target = CORE_REFERENCE_TARGETS[reference]!;
   return (
     `ALTER TABLE ${qualify(schemaName, tableName)} ADD CONSTRAINT ` +
     `${quotePhiIdentifier(composePhisAddonObjectName(tableName, columnName, "fk"))} ` +
     `FOREIGN KEY (${quotePhiIdentifier(columnName)}, ${quotePhiIdentifier(PHIS_ADDON_SITE_COLUMN)}) ` +
-    `REFERENCES ${target.table}(${target.column}, ${PHIS_ADDON_SITE_COLUMN}) ON DELETE CASCADE`
+    `REFERENCES ${target.table}(${target.column}, ${PHIS_ADDON_SITE_COLUMN}) ` +
+    siteBoundDeleteRule(columnName, onDelete)
   );
 }
 
@@ -160,9 +171,8 @@ function coreSiteBoundForeignKey(
  * because the two rows are the Add-on's own and a query would happily read across the boundary Core
  * puts into every statement.
  *
- * The constraint covers the Site column, so a plain `SET NULL` would clear that one too. `setNull`
- * therefore names the referencing column alone (`SET NULL (column)`, PostgreSQL 15 and later): the row
- * stays in its Site and only loses what it pointed at.
+ * The constraint covers the Site column, so `setNull` clears the referencing column alone (see
+ * `siteBoundDeleteRule`): the row stays in its Site and only loses what it pointed at.
  */
 function siteBoundForeignKey(
   schemaName: string,
@@ -178,7 +188,7 @@ function siteBoundForeignKey(
     `FOREIGN KEY (${quotePhiIdentifier(columnName)}, ${quotePhiIdentifier(PHIS_ADDON_SITE_COLUMN)}) ` +
     `REFERENCES ${qualify(schemaName, targetTable)}` +
     `(${quotePhiIdentifier(targetKey)}, ${quotePhiIdentifier(PHIS_ADDON_SITE_COLUMN)}) ` +
-    (onDelete === "cascade" ? "ON DELETE CASCADE" : `ON DELETE SET NULL (${quotePhiIdentifier(columnName)})`)
+    siteBoundDeleteRule(columnName, onDelete)
   );
 }
 
@@ -529,7 +539,7 @@ export function buildPhisAddonSchemaStatements(
         },
         sql: coreSiteBoundForeignKey(
           schemaName, table.name, PHIS_ADDON_GROUP_COLUMN,
-          PHIS_ADDON_CORE_REFERENCES.group,
+          PHIS_ADDON_CORE_REFERENCES.group, "cascade",
         ),
       });
       statements.push({
@@ -589,7 +599,7 @@ export function buildPhisAddonSchemaStatements(
       if (!isReferenceColumn(column)) {
         continue;
       }
-      if (SITE_BOUND_CORE_REFERENCES.has(column.references as string)) {
+      if (PHIS_ADDON_SITE_BOUND_CORE_REFERENCES.has(column.references as string)) {
         statements.push({
           summary: `point ${table.name}.${column.name} at ${column.references} within its Site`,
           creates: {
@@ -598,7 +608,7 @@ export function buildPhisAddonSchemaStatements(
             name: composePhisAddonObjectName(table.name, column.name, "fk"),
           },
           sql: coreSiteBoundForeignKey(
-            schemaName, table.name, column.name, column.references as string,
+            schemaName, table.name, column.name, column.references as string, column.onDelete,
           ),
         });
         continue;

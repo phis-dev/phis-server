@@ -1143,7 +1143,10 @@ write that no declaration would show.
 Such a reference may use either delete rule. `cascade` takes the referencing rows along; `setNull`
 clears the referencing column alone (`ON DELETE SET NULL (column)`, PostgreSQL 15 and later), because the
 key covers the Site column too and a plain `SET NULL` would clear that as well. A product whose category
-is deleted keeps its Site and loses only its category. A `core.group` reference keeps `cascade` only.
+is deleted keeps its Site and loses only its category. A `core.group` or `core.mediaAsset` reference
+column follows the same rule: either delete rule, `setNull` only on a nullable column and clearing that
+column alone. A product's cover declared `setNull` loses its picture when the Asset is deleted some way the
+Media guard does not stand in; it does not take the product along.
 
 `groupLevel` names the level instead of returning the bits. The numeric ladder stays Core's, so no
 installed Add-on can come to depend on a value, and `hasSiteAccess` takes a symbolic access name rather
@@ -2287,8 +2290,11 @@ levels then apply to that table. Group scope requires Site scope, because a grou
 a Site, and Core binds the pair `(group_id, site_id)` against the unique key `site_groups` carries for
 exactly this purpose. The group id alone would let a row name a group belonging to a different Site, and
 neither the Add-on nor the database would see that it had. A `core.group` reference column is bound the
-same way and is therefore also confined to a Site-scoped table, and to `ON DELETE CASCADE` -- `SET NULL`
-would clear the Site column along with it.
+same way and is therefore also confined to a Site-scoped table, and so is a `core.mediaAsset` column
+against `media_assets (id, site_id)`. Such a column keeps the delete rule it declares: `cascade`, or
+`setNull` on a nullable column, which Core writes as `ON DELETE SET NULL (column)` (PostgreSQL 15 and
+later) -- a plain `SET NULL` would clear the Site column along with it. `group_id` on a group-scoped
+table is not nullable and always cascades.
 
 The reason these two belong to Core and not to each Add-on is that the rule they encode -- a person may
 edit and delete what they created, and a group's members reach the group's rows by their level -- is one

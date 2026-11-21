@@ -84,6 +84,52 @@ describe("schema DDL generation", () => {
     )!.sql).toContain('FOREIGN KEY ("audience", "site_id") REFERENCES phis.site_groups(id, site_id)');
   });
 
+  it.each([
+    ["core.mediaAsset", "phis.media_assets"],
+    ["core.group", "phis.site_groups"],
+  ] as const)("keeps a %s reference's setNull, clearing only the referencing column", (reference, table) => {
+    // The key covers the Site column as well. A cascade here would take the whole row along with a
+    // picture deleted outside the Media guard, and a plain `SET NULL` would clear the row's Site.
+    const [first, ...rest] = incidentSchemaDescriptor.tables;
+    const sql = buildPhisAddonSchemaStatements(SCHEMA, {
+      ...incidentSchemaDescriptor,
+      tables: [
+        {
+          ...first!,
+          columns: [
+            ...first!.columns,
+            { name: "cover", references: reference, nullable: true, onDelete: "setNull" } as const,
+          ],
+        },
+        ...rest,
+      ],
+    }).find((entry) => entry.summary === `point incident.cover at ${reference} within its Site`)!.sql;
+    expect(sql).toContain(
+      `FOREIGN KEY ("cover", "site_id") REFERENCES ${table}(id, site_id) ON DELETE SET NULL ("cover")`,
+    );
+    expect(sql).not.toContain("CASCADE");
+  });
+
+  it("keeps cascade on a core.mediaAsset reference that asks for it", () => {
+    const [first, ...rest] = incidentSchemaDescriptor.tables;
+    const sql = buildPhisAddonSchemaStatements(SCHEMA, {
+      ...incidentSchemaDescriptor,
+      tables: [
+        {
+          ...first!,
+          columns: [
+            ...first!.columns,
+            { name: "cover", references: "core.mediaAsset", onDelete: "cascade" } as const,
+          ],
+        },
+        ...rest,
+      ],
+    }).find((entry) => entry.summary === "point incident.cover at core.mediaAsset within its Site")!.sql;
+    expect(sql).toContain(
+      'FOREIGN KEY ("cover", "site_id") REFERENCES phis.media_assets(id, site_id) ON DELETE CASCADE',
+    );
+  });
+
   it("resolves a symbolic Core reference to a table an Add-on never names", () => {
     const sql = sqlFor("point incident.reported_by at core.user");
     expect(sql).toContain("REFERENCES phis.user_accounts");

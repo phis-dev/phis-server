@@ -148,27 +148,43 @@ describe("schema descriptor validation", () => {
     expect(validate(copy).issues).toEqual([]);
   });
 
-  it("refuses a group reference on a table that is not Site-scoped", () => {
+  it.each(["core.group", "core.mediaAsset"])("refuses a %s reference on a table that is not Site-scoped", (reference) => {
     const { issues } = validate(
       withTable((table) => {
         table.siteScoped = false;
         (table.columns as Record<string, unknown>[]).push({
-          name: "audience", references: "core.group", onDelete: "cascade",
+          name: "audience", references: reference, onDelete: "cascade",
         });
       }),
     );
-    expect(issues.join("\n")).toMatch(/so the table must be siteScoped/);
+    expect(issues.join("\n")).toMatch(
+      new RegExp(`"audience" points at ${reference.replace(".", "\\.")}, so the table must be siteScoped`),
+    );
   });
 
-  it("refuses setNull on a group reference, which would clear the Site column too", () => {
+  it.each(["core.group", "core.mediaAsset"])(
+    "accepts setNull on a nullable %s reference: Core clears the column alone, not the Site column",
+    (reference) => {
+      const { issues } = validate(
+        withTable((table) => {
+          (table.columns as Record<string, unknown>[]).push({
+            name: "audience", references: reference, onDelete: "setNull", nullable: true,
+          });
+        }),
+      );
+      expect(issues).toEqual([]);
+    },
+  );
+
+  it.each(["core.group", "core.mediaAsset"])("refuses setNull on a %s reference that cannot be null", (reference) => {
     const { issues } = validate(
       withTable((table) => {
         (table.columns as Record<string, unknown>[]).push({
-          name: "audience", references: "core.group", onDelete: "setNull", nullable: true,
+          name: "audience", references: reference, onDelete: "setNull",
         });
       }),
     );
-    expect(issues.join("\n")).toMatch(/must use onDelete "cascade"/);
+    expect(issues.join("\n")).toMatch(/uses onDelete "setNull" but is not nullable/);
   });
 
   it("refuses setNull on a column that cannot be null", () => {

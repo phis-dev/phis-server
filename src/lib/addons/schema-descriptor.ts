@@ -49,6 +49,17 @@ const POSTGRES_SMALLINT_MAX = 32_767;
 /** Core writes this column for a Site-scoped table, so an Add-on must not declare it. */
 export const PHIS_ADDON_SITE_COLUMN = "site_id";
 
+/**
+ * The Core references Core binds together with the Site, because their targets live inside one.
+ *
+ * A column pointing at one of these gets a key over `(column, site_id)`, so its table must be
+ * Site-scoped; `setNull` clears the column alone and leaves the Site column as it is.
+ */
+export const PHIS_ADDON_SITE_BOUND_CORE_REFERENCES: ReadonlySet<string> = new Set<string>([
+  PHIS_ADDON_CORE_REFERENCES.group,
+  PHIS_ADDON_CORE_REFERENCES.mediaAsset,
+]);
+
 /** The same, for the two scopes that carry authority rather than a boundary. */
 export const PHIS_ADDON_OWNER_COLUMN = "owner_user_id";
 export const PHIS_ADDON_GROUP_COLUMN = "group_id";
@@ -421,21 +432,22 @@ function validateTable(
     .filter((column): column is PhisAddonColumnDescriptor => column !== null);
   const columnNames = new Set(columns.map((column) => column.name));
   assertUnique(columns.map((column) => column.name), `${field}.columns.name`, issues);
+  // A group or a Media Asset lives inside a Site, and Core binds the reference together with it. A table
+  // without a Site column has nothing to bind it to. `setNull` is allowed: Core clears the referencing
+  // column alone (`SET NULL (column)`), never the Site column the key shares with it, and the column
+  // check above already refuses it on a column that cannot be null.
   for (const column of columns) {
-    if (!isReferenceColumn(column) || column.references !== PHIS_ADDON_CORE_REFERENCES.group) {
+    if (
+      !isReferenceColumn(column) ||
+      typeof column.references !== "string" ||
+      !PHIS_ADDON_SITE_BOUND_CORE_REFERENCES.has(column.references)
+    ) {
       continue;
     }
     if (value.siteScoped !== true) {
       issues.push(
-        `${field}.columns "${column.name}" points at ${PHIS_ADDON_CORE_REFERENCES.group}, ` +
-        "so the table must be siteScoped. Core binds a group together with its Site.",
-      );
-    }
-    // The foreign key covers the Site column too, and `SET NULL` would clear that one as well.
-    if (column.onDelete !== "cascade") {
-      issues.push(
-        `${field}.columns "${column.name}" points at ${PHIS_ADDON_CORE_REFERENCES.group} ` +
-        "and must use onDelete \"cascade\": Core binds it together with the Site column, which cannot be nulled.",
+        `${field}.columns "${column.name}" points at ${column.references}, ` +
+        "so the table must be siteScoped. Core binds the reference together with its Site.",
       );
     }
   }
