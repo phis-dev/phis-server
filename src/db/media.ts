@@ -564,6 +564,51 @@ export async function listPublicSiteSpaceMediaAssetsByIds(siteId: number, ids: r
 }
 
 /**
+ * The Assets an Add-on may read by id (`media:v1`): of this Site, in the Site's Space or in the Add-on's
+ * own Add-on Space -- the reach `products:v1` allows a product's picture. The Space is part of the query,
+ * so an id out of reach is absent exactly as an unknown one is. Ready and delivery are left to the caller.
+ */
+export async function listAddonReachMediaAssetsByIds(siteId: number, addonId: string, ids: readonly number[]) {
+  const uniqueIds = [...new Set(ids.filter((id) => Number.isSafeInteger(id) && id > 0))];
+  if (uniqueIds.length === 0) return [];
+  const { rows } = await getPool().query<AssetRow>(
+    `SELECT ${ASSET_COLUMNS} FROM phis.media_assets
+     WHERE site_id = $1 AND id = ANY($2::int[])
+       AND space_id IN (
+         SELECT id FROM phis.media_spaces
+         WHERE site_id = $1 AND (kind = $3 OR (kind = $4 AND addon_id = $5))
+       )`,
+    [siteId, uniqueIds, PhisMediaSpaceKind.Site, PhisMediaSpaceKind.Addon, addonId],
+  );
+  return rows.map(mapAsset);
+}
+
+/**
+ * An Asset of the Site's Space, row-locked in the caller's transaction, and whether its Folder is locked
+ * (`media-release:v1`). Null for any other Space, another Site or no row.
+ *
+ * `FOR UPDATE` is what makes the reference count that follows hold until the delete commits: every
+ * reference Core counts is a foreign key on this row, and writing one takes a key-share lock on it, which
+ * waits for this one.
+ */
+export async function lockSiteSpaceMediaAssetForRelease(client: DbQueryable, siteId: number, assetId: number) {
+  const { rows } = await client.query<AssetRow & { folder_locked: boolean }>(
+    `SELECT ${ASSET_COLUMNS},
+            EXISTS (
+              SELECT 1 FROM phis.media_folders f
+               WHERE f.site_id = $1 AND f.id = media_assets.folder_id AND (f.flags & $4) <> 0
+            ) AS folder_locked
+       FROM phis.media_assets
+      WHERE site_id = $1 AND id = $2
+        AND space_id IN (SELECT id FROM phis.media_spaces WHERE site_id = $1 AND kind = $3)
+      FOR UPDATE OF media_assets`,
+    [siteId, assetId, PhisMediaSpaceKind.Site, PhiMediaFolderFlags.Locked],
+  );
+  const row = rows[0];
+  return row ? { asset: mapAsset(row), folderLocked: row.folder_locked === true } : null;
+}
+
+/**
  * The Asset in this Space carrying the same digest, where the digest is one that can answer that.
  *
  * Both halves of the key matter. The algorithm, because two digests are only comparable under the same

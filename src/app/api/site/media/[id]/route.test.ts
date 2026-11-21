@@ -142,6 +142,19 @@ describe("DELETE /api/site/media/:id", () => {
     expect(mocks.remove).not.toHaveBeenCalled();
   });
 
+  it("refuses an Asset a row of an Add-on names, naming the Add-on, the row and the column", async () => {
+    const addon = { addonId: "@phis/shop", packageName: "@phis/shop", table: "offerings", column: "cover_asset_id", rowId: "12" };
+    mocks.references.mockResolvedValue([{ scope: "addon", fieldPath: "offerings.cover_asset_id", areaMask: null, pagePath: null, regionKey: null, widgetType: null, widgetId: null, layoutNodeId: null, contentId: null, contentSlug: null, addon }]);
+    const response = await remove();
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({
+      error: "media_asset_in_use",
+      message: "Media asset is still referenced by: addon=@phis/shop, row=offerings#12 (cover_asset_id).",
+      references: [expect.objectContaining({ scope: "addon", addon })],
+    });
+    expect(mocks.remove).not.toHaveBeenCalled();
+  });
+
   it("deletes an Asset nothing names", async () => {
     const response = await remove();
     expect(await response.json()).toEqual({ ok: true });

@@ -32,6 +32,8 @@ import { buildPhisAddonThreadsCapability } from "./threads-capability.ts";
 import { buildPhisAddonSecretsCapability } from "./secrets-capability.ts";
 import { buildPhisAddonSettingsCapability } from "./settings-capability.ts";
 import { buildPhisAddonCdnCapability } from "./cdn-capability.ts";
+import { buildPhisAddonMediaCapability } from "./media-capability.ts";
+import { buildPhisAddonMediaReleaseCapability } from "./media-release-capability.ts";
 import { buildPhisAddonEntitlementsCapability } from "./entitlements-capability.ts";
 import { buildPhisAddonProductsCapability } from "./products-capability.ts";
 import { buildPhisAddonEventsCapability } from "./events-capability.ts";
@@ -386,6 +388,28 @@ export function buildPhisAddonCapabilities(input: {
   if (required.includes(PHIS_CORE_CAPABILITIES.cdn)) {
     // Read-only and the Site's own; nothing in it depends on who is asking.
     capabilities.cdn = buildPhisAddonCdnCapability({ siteId });
+  }
+  if (required.includes(PHIS_CORE_CAPABILITIES.media)) {
+    // Bound to the Site and to the Add-on, whose own Add-on Space is in reach beside the Site's.
+    capabilities.media = buildPhisAddonMediaCapability({
+      addonId: input.manifest.addonId,
+      siteId,
+      unauthenticated: input.unauthenticated === true && input.systemAuthority !== true,
+    });
+  }
+  if (required.includes(PHIS_CORE_CAPABILITIES.mediaRelease) && input.siteKey) {
+    /*
+     * A grant apart from reading, because it deletes what the Site's people uploaded. It needs the Site key
+     * for the store, as storage and assets do. The actor is only written down: whether to give an Asset
+     * up is the Add-on's, and Core's answer is whether anything else still needs it.
+     */
+    capabilities.mediaRelease = buildPhisAddonMediaReleaseCapability({
+      addonId: input.manifest.addonId,
+      siteId,
+      siteKey: input.siteKey,
+      actorUserId: input.actorUserId,
+      unauthenticated: input.unauthenticated === true && input.systemAuthority !== true,
+    });
   }
   if (required.includes(PHIS_CORE_CAPABILITIES.threads)) {
     /*

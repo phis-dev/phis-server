@@ -307,8 +307,10 @@ export type SiteCmsAssetReferenceRow = {
 export async function listSiteCmsReferencesToAsset(
   siteId: number,
   assetId: number,
+  /** The caller's transaction, where the answer has to hold until it commits (`media-release:v1`). */
+  db: DbQueryable = getPool(),
 ): Promise<SiteCmsAssetReferenceRow[]> {
-  const { rows } = await getPool().query<{
+  const { rows } = await db.query<{
     source_kind: number;
     source_scope_id: number;
     source_revision_id: number | null;

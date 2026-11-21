@@ -1099,6 +1099,8 @@ dispatch, by the job runner, and when its service factory is resolved.
 | `@phis/server/entitlements:v1` | yes -- see [`entitlements:v1`](#entitlementsv1) |
 | `@phis/server/products:v1` | yes -- see [`products:v1`](#productsv1) |
 | `@phis/server/cdn:v1` | yes -- see [`cdn:v1`](#cdnv1) |
+| `@phis/server/media:v1` | yes -- see [`media:v1`](#mediav1) |
+| `@phis/server/media-release:v1` | yes -- see [`media-release:v1`](#media-releasev1) |
 
 Core descriptors are generated from the running release and reconciled into the registry. They are not
 editable Site settings and cannot be disabled per Site.
@@ -1801,6 +1803,50 @@ There is no writer. Files are published with `phis cdn publish`, and an Add-on t
 bytes on a public host under the Site's name. What a CDN is and how it is run is
 [GROUPS_AND_STORAGE.md](./GROUPS_AND_STORAGE.md#a-sites-cdn).
 
+### `media:v1`
+
+Assets of the Site's Media library by id, read-only: `get({ ids })`, at most 200 positive integer ids, answers
+`PhisMediaAssetV1[]` -- `id`, `contentType`, `byteSize`, `width`, `height`, `alt`, `servable` and `path` --
+each Asset once, in the order of its first mention. It is for an Add-on that keeps Asset ids in its own
+`core.mediaAsset` columns (a cover, an icon, a gallery) and has to show them, or check on save that a
+visitor would be served one.
+
+Bound to the Site and to the calling Add-on. In reach is what `products:v1` accepts as a picture: an Asset of
+the Site's Space or of this Add-on's own Add-on Space. Anything else -- a User's or a Group's Space, another
+Add-on's, another Site, no Asset at all -- is left out of the answer, never refused, so the answer says nothing
+about what exists elsewhere. `servable` is the rest of `register`'s check: ready and delivered publicly.
+`path` is Core's Media address with its cache revision, built where `imagePath` is built, and null exactly
+where `servable` is false; read it when it is used and do not store it.
+
+An unverified hook is answered only servable Assets. Giving an Asset up is `media-release:v1`, a grant of its
+own.
+
+### `media-release:v1`
+
+`release({ ids })`, at most 50 positive integer ids: the calling Add-on gives up its use of Assets of the
+Site's Media library, and Core deletes each one nothing references any more. The answer is one
+`{ id, released }` per distinct id, in the order of its first mention, `released` being `deleted`, `kept` or
+`not-found`. A separate capability from `media:v1`, so that an operator reads in `requiredCoreCapabilities`
+that this Add-on may delete what the Site's people uploaded, and an Add-on that only shows Assets cannot.
+
+- **In reach** is an Asset of the Site's Space only. A file of the Add-on's own slots goes the `assets:v1`
+  way; any other Space, another Site, or no row answers `not-found`, the same way in every case.
+- **The Add-on clears its own references first.** Core counts every reference there is -- what the Media
+  library's delete refuses on (Pages, Navigation, Content, Areas and Themes in a revision still pointed at,
+  a product's picture, every `core.mediaAsset` column of every installed Add-on, the caller's own included)
+  and a message's attachment -- and deletes only at zero. Anything left, or an Asset in a locked Folder, is
+  `kept`: nothing happens, it is not an error, and what holds the Asset is not said.
+- **One transaction per Asset** holds its row lock (`FOR UPDATE`) through the count and the delete. Every
+  counted reference is a foreign key on the Asset, and writing one takes a key-share lock on that row, so it
+  waits and then either was counted or fails because the Asset is gone. A reference the count does not see
+  but a foreign key still holds (a stale index row) refuses the delete, and the answer is `kept`. An id an
+  Add-on keeps where no foreign key holds it is no reference Core can see, before or after.
+- The delete is the Media library's: variants, font subsets and the row in that transaction, the objects
+  written down as discard notes and removed from the store after the commit, the emptied Folder branch
+  pruned, the Site configuration cache cleared.
+- Every outcome is logged as `addon.media.released` with the Add-on (`pluginKey`), the acting user where
+  there is one, the Asset and the outcome. Refused to an unverified hook; a job or a verified hook may call it.
+
 ### `settings:v1`
 
 `read(name)` and `all()`. What an operator configured with
@@ -2335,7 +2381,12 @@ The link is bound to the Site and cascades **both ways**, which is worth reading
   uploading rubbish, without destroying the record it was attached to. The one reference the delete guard
   does name is a **product's picture**: an Asset that a product of the Site wears as `imageAssetId` is refused
   with `media_asset_in_use` and a reference of scope `product` (the product's id in `fieldPath`), like a
-  Page's. The foreign key's `SET NULL` stays as the last safeguard.
+  Page's. The foreign key's `SET NULL` stays as the last safeguard. An Asset that a row of an installed
+  Add-on -- enabled or not -- names in a column of its own declared with `references: "core.mediaAsset"` is
+  refused the same way, with a reference of scope `addon`, with `addon: { addonId, packageName, table, column, rowId }` (`rowId` the
+  row's primary key as text, a composite key's values joined by `,`) and `<table>.<column>` in `fieldPath`.
+  Only the columns the database already holds are read, so a pending schema upgrade does not break the
+  delete. These link rows are not counted.
 
 Every row in that table is a finished file, so the rule for a single-valued slot is a plain unique index.
 A transfer in flight is recorded in Core's upload session, never in this table.

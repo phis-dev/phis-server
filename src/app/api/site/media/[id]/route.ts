@@ -25,6 +25,9 @@ function describeMediaAssetReference(reference: Awaited<ReturnType<typeof collec
   if (reference.scope === "product") {
     return `product=${reference.fieldPath}`;
   }
+  if (reference.scope === "addon" && reference.addon) {
+    return `addon=${reference.addon.addonId}, row=${reference.addon.table}#${reference.addon.rowId} (${reference.addon.column})`;
+  }
   const parts: string[] = [];
   if (reference.areaMask != null) {
     parts.push(`area=${resolvePhisCmsAreaKey(reference.areaMask)}`);

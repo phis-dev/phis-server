@@ -2,10 +2,17 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { MediaAssetRecord } from "@/db/media";
 
-const mocks = vi.hoisted(() => ({ getPool: vi.fn(), productIds: vi.fn() }));
+const mocks = vi.hoisted(() => ({
+  getPool: vi.fn(),
+  productIds: vi.fn(),
+  addonRows: vi.fn(),
+  installed: {} as Record<string, { enabled: boolean; manifest: unknown }>,
+}));
 
 vi.mock("@/lib/db", () => ({ getPool: mocks.getPool }));
 vi.mock("@/db/products.mts", () => ({ listProductIdsWithImage: mocks.productIds }));
+vi.mock("@/db/server-addon-media-references.mts", () => ({ listPhisAddonRowsReferencingMediaAsset: mocks.addonRows }));
+vi.mock("@/lib/addons/installed", () => ({ getPhisAddonInstalledManifest: () => mocks.installed }));
 
 import { collectMediaAssetDeleteReferences } from "./media-delete-guard";
 
@@ -49,7 +56,62 @@ const asset = (overrides: Partial<MediaAssetRecord> = {}) =>
 beforeEach(() => {
   mocks.getPool.mockReset();
   mocks.productIds.mockReset().mockResolvedValue([]);
+  mocks.addonRows.mockReset().mockResolvedValue([]);
+  mocks.installed = {};
 });
+
+const assetReference = (name: string, onDelete: "cascade" | "setNull" = "setNull") =>
+  ({ name, references: "core.mediaAsset", nullable: true, onDelete });
+
+function installAddons() {
+  mocks.installed = {
+    "@acme/shop": {
+      enabled: true,
+      manifest: {
+        addonId: "@acme/shop",
+        packageName: "@acme/shop-addon",
+        schema: {
+          version: 1,
+          tables: [
+            {
+              name: "offerings",
+              siteScoped: true,
+              primaryKey: ["id"],
+              columns: [
+                { name: "id", type: "identity" },
+                assetReference("cover_asset_id"),
+                { name: "owner", references: "core.user", nullable: true, onDelete: "setNull" },
+                { name: "title", type: "text" },
+              ],
+              // Slots get a link table of Core's beside them; it is not a column here and is not counted.
+              assets: [{ name: "image", cardinality: "one" }],
+            },
+            {
+              name: "gallery",
+              siteScoped: true,
+              primaryKey: ["offering_id", "position"],
+              columns: [
+                { name: "offering_id", references: { table: "offerings" }, onDelete: "cascade" },
+                { name: "position", type: "integer" },
+                assetReference("asset_id", "cascade"),
+              ],
+            },
+          ],
+        },
+      },
+    },
+    // Switched off, and still holding rows that point at the Asset.
+    "@acme/off": {
+      enabled: false,
+      manifest: {
+        addonId: "@acme/off",
+        packageName: "@acme/off",
+        schema: { version: 1, tables: [{ name: "logos", siteScoped: true, primaryKey: ["id"], columns: [{ name: "id", type: "identity" }, assetReference("logo")] }] },
+      },
+    },
+    "@acme/tableless": { enabled: true, manifest: { addonId: "@acme/tableless", packageName: "@acme/tableless" } },
+  };
+}
 
 /*
  * The guard behind `media_asset_in_use`. It decides whether an Asset may go, so it must name every
@@ -132,7 +194,44 @@ describe("The Asset delete guard", () => {
 
   it("asks no one for an Asset of another Site", async () => {
     pool();
+    installAddons();
     await collectMediaAssetDeleteReferences(31, asset({ siteId: 32 }));
     expect(mocks.productIds).not.toHaveBeenCalled();
+    expect(mocks.addonRows).not.toHaveBeenCalled();
+  });
+
+  it("asks after every core.mediaAsset column of every installed Add-on, enabled or not, and no other", async () => {
+    pool();
+    installAddons();
+    await collectMediaAssetDeleteReferences(31, asset());
+    expect(mocks.addonRows).toHaveBeenCalledTimes(1);
+    const [, input] = mocks.addonRows.mock.calls[0]!;
+    expect(input).toMatchObject({ siteId: 31, assetId: 9 });
+    expect(input.columns).toEqual([
+      { addonId: "@acme/shop", packageName: "@acme/shop-addon", schemaName: "phis_addon_acme_shop", table: "offerings", column: "cover_asset_id", primaryKey: ["id"] },
+      { addonId: "@acme/shop", packageName: "@acme/shop-addon", schemaName: "phis_addon_acme_shop", table: "gallery", column: "asset_id", primaryKey: ["offering_id", "position"] },
+      { addonId: "@acme/off", packageName: "@acme/off", schemaName: "phis_addon_acme_off", table: "logos", column: "logo", primaryKey: ["id"] },
+    ]);
+  });
+
+  it("names a row of an Add-on that points at the Asset, by Add-on, table, column and key", async () => {
+    pool([row({ source_kind: 1 })]);
+    installAddons();
+    mocks.productIds.mockResolvedValue(["@acme/shop:cover-shop"]);
+    const source = { addonId: "@acme/shop", packageName: "@acme/shop-addon", schemaName: "phis_addon_acme_shop", table: "gallery", column: "asset_id", primaryKey: ["offering_id", "position"] };
+    mocks.addonRows.mockResolvedValue([{ source, rowId: "12,3" }]);
+    const references = await collectMediaAssetDeleteReferences(31, asset());
+    expect(references.map((entry) => entry.scope)).toEqual(["page", "product", "addon"]);
+    expect(references[0]!.addon).toBeNull();
+    expect(references[1]!.addon).toBeNull();
+    expect(references[2]).toMatchObject({
+      scope: "addon",
+      fieldPath: "gallery.asset_id",
+      matchType: "assetId",
+      matchedValue: "9",
+      pageId: null,
+      contentId: null,
+      addon: { addonId: "@acme/shop", packageName: "@acme/shop-addon", table: "gallery", column: "asset_id", rowId: "12,3" },
+    });
   });
 });
