@@ -41,7 +41,8 @@ usually not looked in every one of these places:
 Search by what the thing does, not by your word for it: a cover, an icon, a logo and a screenshot are all
 Media Assets. Some that are easy to miss:
 
-- An Asset of the Media library by id, with whether a visitor is served it and its address: `media:v1`.
+- An Asset of the Media library by id, with whether a visitor is served it, its address and what a media
+  tile draws (name, title, thumbnail, preview): `media:v1`.
 - Deleting a Media library Asset the Add-on no longer uses: `media-release:v1`.
 - A picture the package carries in its own bytes: `assets:v1` `put`. A product's picture: `products:v1`
   `imageAssetId`, not a column of yours.
@@ -131,7 +132,7 @@ Two ways, and they answer different questions: whose file it is, and who chooses
 | Where the file lives | the Add-on's own Media Space, on its quota, not browsable in the Media library | the Site's Media library, where people upload, browse and reuse it |
 | Who puts it there | the Add-on: `begin` and `finalize` for a client's upload, `put` for bytes it holds | a person, in the Media library; the row keeps the id they chose |
 | Whose it is | the row's: one file in a `one` slot, several in a `many` slot | the Site's: any number of rows and Pages may name one Asset |
-| Showing it | `list`, or a `mirrorColumn` that brings the path with the row | `media:v1` `get`: `servable` and `path`, read when used and never stored |
+| Showing it | `list`, or a `mirrorColumn` that brings the path with the row | `media:v1` `get`: `servable`, `path` and the thumbnail and preview paths, read when used and never stored |
 | A person deletes it in the Media view | allowed: the link goes, the row stays | refused while a row names it (`409 media_asset_in_use`, scope `addon`) |
 | When the row goes | `data:v1` `delete` takes the files with it | the row goes; the Asset stays until the Add-on calls `media-release:v1` |
 

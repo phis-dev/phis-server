@@ -1099,7 +1099,7 @@ dispatch, by the job runner, and when its service factory is resolved.
 | `@phis/server/entitlements:v1` | yes -- [`entitlements:v1`](#entitlementsv1) | who holds which product, from when until when |
 | `@phis/server/products:v1` | yes -- [`products:v1`](#productsv1) | the Site's product directory |
 | `@phis/server/cdn:v1` | yes -- [`cdn:v1`](#cdnv1) | the Site's CDN catalogue, read-only |
-| `@phis/server/media:v1` | yes -- [`media:v1`](#mediav1) | Media library Assets by id: `servable` and `path` |
+| `@phis/server/media:v1` | yes -- [`media:v1`](#mediav1) | Media library Assets by id: `servable`, `path` and what a media tile draws |
 | `@phis/server/media-release:v1` | yes -- [`media-release:v1`](#media-releasev1) | giving up Media library Assets; Core deletes one nothing references |
 
 Core descriptors are generated from the running release and reconciled into the registry. They are not
@@ -1815,10 +1815,10 @@ bytes on a public host under the Site's name. What a CDN is and how it is run is
 ### `media:v1`
 
 Assets of the Site's Media library by id, read-only: `get({ ids })`, at most 200 positive integer ids, answers
-`PhisMediaAssetV1[]` -- `id`, `contentType`, `byteSize`, `width`, `height`, `alt`, `servable` and `path` --
-each Asset once, in the order of its first mention. It is for an Add-on that keeps Asset ids in its own
-`core.mediaAsset` columns (a cover, an icon, a gallery) and has to show them, or check on save that a
-visitor would be served one.
+`PhisMediaAssetV1[]` -- `id`, `name`, `title`, `contentType`, `byteSize`, `width`, `height`, `alt`,
+`servable`, `path`, `thumbnailPath`, `previewPath` and `blurDataUrl` -- each Asset once, in the order of its
+first mention. It is for an Add-on that keeps Asset ids in its own `core.mediaAsset` columns (a cover, an
+icon, a gallery) and has to show them, or check on save that a visitor would be served one.
 
 Bound to the Site and to the calling Add-on. In reach is what `products:v1` accepts as a picture: an Asset of
 the Site's Space or of this Add-on's own Add-on Space. Anything else -- a User's or a Group's Space, another
@@ -1826,6 +1826,15 @@ Add-on's, another Site, no Asset at all -- is left out of the answer, never refu
 about what exists elsewhere. `servable` is the rest of `register`'s check: ready and delivered publicly.
 `path` is Core's Media address with its cache revision, built where `imagePath` is built, and null exactly
 where `servable` is false; read it when it is used and do not store it.
+
+The rest is what the Foundation's media tile draws. `name` is the file name the Asset was uploaded or
+imported under, `title` and `alt` are in the Site's source language or null. `thumbnailPath` and
+`previewPath` are the addresses the Media library's own listing gives as `thumbnailUrl` and `previewUrl`,
+from the same builders: `/api/site/media/<id>/variants/<key>?r=<revision>&v=<variant version>`, for an Asset
+whose content type is an image only, since Core makes these variants of images alone. Both are null for
+any other Asset and wherever `servable` is false, and like `path` they carry revisions: read when used,
+never stored. `blurDataUrl` is the small blurred `data:` URL Core keeps for an image to show while it
+loads, null without one.
 
 An unverified hook is answered only servable Assets. Giving an Asset up is `media-release:v1`, a grant of its
 own. Whether a row's picture belongs in such a column or in a slot of `assets:v1` is

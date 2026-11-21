@@ -108,6 +108,18 @@ function resolveThumbnailUrl(asset: MediaAssetRecord) {
 }
 
 function resolvePreviewUrl(asset: MediaAssetRecord) {
+  return resolvePhiMediaPreviewUrl(asset);
+}
+
+/**
+ * Where an image Asset's preview is served from, or `null` for an Asset that is no image.
+ *
+ * Exported beside the thumbnail's builder for `media:v1`, which hands both out, so the address is still
+ * built in one place.
+ */
+export function resolvePhiMediaPreviewUrl(
+  asset: Pick<MediaAssetRecord, "id" | "deliveryRevision" | "variantVersion" | "contentType">,
+) {
   if (!isImageAsset(asset.contentType)) {
     return null;
   }

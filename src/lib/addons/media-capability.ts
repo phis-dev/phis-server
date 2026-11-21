@@ -3,7 +3,7 @@ import "server-only";
 import { PHIS_MEDIA_GET_MAX_IDS, type PhisMediaAssetV1, type PhisMediaCapabilityV1 } from "./contract.ts";
 import { listAddonReachMediaAssetsByIds, type MediaAssetRecord } from "@/db/media";
 import { PhiMediaDeliveryPolicy, PhiMediaLifecycleStatus } from "@/db/media-spaces";
-import { resolvePhiMediaDeliveryUrl } from "@/lib/media-response";
+import { resolvePhiMediaDeliveryUrl, resolvePhiMediaPreviewUrl, resolvePhiMediaThumbnailUrl } from "@/lib/media-response";
 
 /**
  * `media:v1`: Assets of the Site's Media library by id, read-only (SERVER_ADDONS.md, media:v1).
@@ -11,7 +11,9 @@ import { resolvePhiMediaDeliveryUrl } from "@/lib/media-response";
  * Bound to the Site and to the calling Add-on. What is in reach is what `products:v1` takes as a
  * picture -- the Site's Space and this Add-on's own Add-on Space -- and the reader asks for exactly that,
  * so an Asset out of reach is absent rather than refused. `servable` is the rest of that check: ready and
- * delivered publicly. The path is Core's one Media address, the builder `products:v1` uses for `imagePath`.
+ * delivered publicly. The path is Core's one Media address, the builder `products:v1` uses for `imagePath`;
+ * the thumbnail and preview paths are the ones the Media library's own listing gives, from the same
+ * builders, and like `path` only for a servable Asset.
  *
  * An unverified hook is answered the servable Assets only: what a visitor is not served is not public,
  * and neither are its facts.
@@ -24,6 +26,8 @@ function present(asset: MediaAssetRecord): PhisMediaAssetV1 {
     && asset.deliveryPolicy === PhiMediaDeliveryPolicy.Public;
   return {
     id: asset.id,
+    name: asset.originalName,
+    title: asset.title,
     contentType: asset.contentType,
     byteSize: asset.bytes,
     width: asset.width,
@@ -31,6 +35,9 @@ function present(asset: MediaAssetRecord): PhisMediaAssetV1 {
     alt: asset.altText,
     servable,
     path: servable ? resolvePhiMediaDeliveryUrl(asset) : null,
+    thumbnailPath: servable ? resolvePhiMediaThumbnailUrl(asset) : null,
+    previewPath: servable ? resolvePhiMediaPreviewUrl(asset) : null,
+    blurDataUrl: asset.blurDataUrl,
   };
 }
 
