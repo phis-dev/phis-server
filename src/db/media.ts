@@ -165,7 +165,8 @@ export type MediaUploadSessionRecord = {
 
 export type ListMediaAssetsFilters = {
   spaceId: number;
-  id?: number | null;
+  /** Exactly these Assets, still within the Space and every other filter. Empty or absent: no restriction. */
+  ids?: readonly number[] | null;
   folderId?: number | null;
   folderIds?: number[] | null;
   query?: string | null;
@@ -435,7 +436,7 @@ export async function deleteMediaFolderBySite(siteId: number, spaceId: number, i
 
 function appendAssetFilters(parts: string[], values: Array<number | string | number[]>, filters: ListMediaAssetsFilters) {
   values.push(filters.spaceId); parts.push(`AND space_id = $${values.length}`);
-  if (filters.id) { values.push(filters.id); parts.push(`AND id = $${values.length}`); }
+  if (filters.ids?.length) { values.push([...filters.ids]); parts.push(`AND id = ANY($${values.length}::int[])`); }
   if (filters.folderId) { values.push(filters.folderId); parts.push(`AND folder_id = $${values.length}`); }
   if (filters.folderIds?.length) { values.push(filters.folderIds); parts.push(`AND folder_id = ANY($${values.length}::int[])`); }
   if (filters.query?.trim()) { values.push(`%${filters.query.trim().toLowerCase()}%`); parts.push(`AND (LOWER(original_name) LIKE $${values.length} OR LOWER(COALESCE(title, '')) LIKE $${values.length} OR LOWER(COALESCE(alt_text, '')) LIKE $${values.length})`); }

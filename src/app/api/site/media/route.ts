@@ -10,7 +10,7 @@ import {
   readRequestedMediaSpaceId,
   requireMediaManagementSiteContext,
 } from "@/lib/guards/site-media-api";
-import { normalizePhiMediaKind } from "@/lib/constants/media";
+import { normalizePhiMediaKind, PHI_MEDIA_LIST_MAX_IDS } from "@/lib/constants/media";
 import { logRuntimeEvent } from "@/lib/log";
 import { serializeMediaAssetForTile } from "@/lib/media-response";
 import {
@@ -51,7 +51,15 @@ export async function GET(request: NextRequest) {
     const q = url.searchParams.get("q");
     const page = parsePositiveInt(url.searchParams.get("page"));
     const pageSize = parsePositiveInt(url.searchParams.get("pageSize"));
-    const id = parsePositiveInt(url.searchParams.get("id"));
+    /*
+     * `id` may repeat (`?id=1&id=2`): the Assets a field holds, read back in the list's own shape, in
+     * one query and under the same Space and access rules as any other listing. One `id` is the case
+     * of one.
+     */
+    const requestedIds = url.searchParams.getAll("id");
+    const ids = [...new Set(requestedIds
+      .map((value) => parsePositiveInt(value))
+      .filter((value): value is number => value !== null))];
     const folderId = parsePositiveInt(url.searchParams.get("folderId"));
     /*
      * The name the list contract states in `DB.md`, and the one the site UI sends.
@@ -72,6 +80,13 @@ export async function GET(request: NextRequest) {
     if (!page || !pageSize) {
       return NextResponse.json(
         { error: "Missing pagination parameters. Use page and pageSize." },
+        { status: 400 },
+      );
+    }
+
+    if (requestedIds.length > PHI_MEDIA_LIST_MAX_IDS) {
+      return NextResponse.json(
+        { error: `Too many ids. Ask for at most ${PHI_MEDIA_LIST_MAX_IDS} per request.` },
         { status: 400 },
       );
     }
@@ -133,7 +148,7 @@ export async function GET(request: NextRequest) {
     const folders = await listMediaFolders(site.id, space.id);
     const folderIds = folderId ? await listMediaFolderDescendantIds(site.id, space.id, folderId) : null;
     const assets = await listMediaAssetsBySiteWithFilters(site.id, {
-      id,
+      ids,
       spaceId: space.id,
       folderId: folderIds && folderIds.length > 0 ? null : folderId,
       folderIds,
@@ -147,7 +162,7 @@ export async function GET(request: NextRequest) {
       offset,
     });
     const total = await countMediaAssetsBySiteWithFilters(site.id, {
-      id,
+      ids,
       spaceId: space.id,
       folderId: folderIds && folderIds.length > 0 ? null : folderId,
       folderIds,

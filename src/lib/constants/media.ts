@@ -64,3 +64,9 @@ export type { PhiImageAssetVariantSpec } from "@phis/contracts/media";
 export const PhisSiteModuleMediaFlag = {
   Bound: 1 << 0,
 } as const;
+
+/**
+ * The most `id` parameters one `GET /api/site/media` takes. Asking for Assets by id is how a field that
+ * holds several pictures shows them again; the list answers them in its usual shape, one query for all.
+ */
+export const PHI_MEDIA_LIST_MAX_IDS = 100;
