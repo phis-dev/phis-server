@@ -171,9 +171,9 @@ Who drafts, submits and publishes content -- Widget content apart from structure
 is live the moment it is written. Reading a Page list of an Area (`GET /api/site/cms/pages`) is open to
 everybody who writes for the Site -- `Developer | Builder | Author | Publisher` -- because a link is picked
 from it; changing a Page's path stays Structure authoring.
-These are also the Site accesses an Add-on names in `grantableBy` or `hasSiteAccess`: `site-admin`,
-`developer-tools`, `structure-authoring`, `content-editing`, `publishing`, `site-media`, `support`,
-`accounting`.
+These are also the Site accesses an Add-on names in `grantableBy`, `impliedBy` or `hasSiteAccess`:
+`site-admin`, `developer-tools`, `structure-authoring`, `content-editing`, `publishing`, `site-media`,
+`support`, `accounting` (`site-admin` not in `impliedBy`, section 5).
 
 Site groups are not roles and follow their own split: creating a group, putting a retired group back in
 service, and granting or revoking the Manager level are `Developer | Admin`; a group's Manager retires
@@ -226,6 +226,13 @@ roles: [
 - `includes` names other roles of the same Add-on that holding this one implies, followed transitively.
   Every check below answers yes for an implied role. Only the granted role is stored; an inclusion may
   not name the role itself or form a cycle.
+- `impliedBy: { siteAccess }` hangs the role on a Site access of section 4: whoever holds that access on
+  the Site holds the role without a grant (`accounting`: an enabled Accountant or Developer; `support`: a
+  Supporter or Developer), and what it `includes` with it. Nothing is stored; losing the access, or an
+  enabled membership, loses the role, and a grant of it stays what it was. It only widens who holds the
+  role. Validation accepts exactly `{ siteAccess }` naming a Site access other than `site-admin` (a Site
+  Admin holds every role already). Holding the role this way meets a `{ role }` grant policy naming it, as
+  holding it by grant does; it is not the standing to grant the role itself, which stays `grantableBy`.
 
 Assignments are stored in `phis.site_addon_user_roles` (`site_id`, `addon_id`, `user_id`, `role`,
 `granted_by_user_id`, `granted_at`), written by `POST`/`DELETE /api/site/addon-roles` after `grantableBy`
@@ -235,11 +242,14 @@ Add-ons never write this table.
 *Holding* and *stored* are two things. Every check that asks whether the actor holds a role -- `roles:v1`,
 `requiresRole`/`alsoAllowedByRole` on a query, a slot's `requiresRole`, the viewer's `addonRoleClaims` -- is
 answered by one rule (`resolvePhisAddonHeldRoles`, `src/lib/addons/role-inclusion.ts`): a Site Admin holds all
-declared roles, anybody else the stored ones and what they include. The stored assignments stay what they are:
+declared roles, anybody else the stored ones, the ones a Site access of theirs implies (`impliedBy`), and what
+those include. The Site accesses are answered from the actor's authorization snapshot, read once per request
+and shared with `authorization:v1` (`readPhisSiteAccessHolder`; the viewer uses the snapshot its request read
+already), never once per role check. The stored assignments stay what they are:
 user administration shows them as stored, and writing one for a Site Admin is allowed and takes effect once
 that person is no longer Site Admin. Whatever *resolves recipients* -- "everybody who holds role X" -- must
-read the stored assignments, not the rule, so that a Site Admin is not addressed by every role's mail or
-assignment. Core resolves no such list today; the only reads of everybody with a role are the user-list
+read the stored assignments, not the rule, so that a Site Admin, or everybody holding an access a role is
+implied by, is not addressed by every role's mail or assignment. Core resolves no such list today; the only reads of everybody with a role are the user-list
 filter (below, which answers "who holds") and `phis addon role --user` (which prints what is stored).
 
 User administration reads and writes them through four calls, all Site-scoped, and every one of them sees
@@ -268,7 +278,9 @@ taken back:
   on the Site and whose current manifest still declares the role (the rule behind the viewer's
   `addonRoleClaims`). `?addonId=` keeps users with at least one such stored role of that Add-on, and
   every enabled Site Admin; `?addonId=&addonRole=` keeps users who hold the role stored or through `includes`
-  of a stored role, and every enabled Site Admin (when the Add-on declares the role). A row shows a Site
+  of a stored role, and every enabled Site Admin (when the Add-on declares the role). Both also keep every
+  enabled member holding a Site access that one of those roles is `impliedBy` (by the access's Core role
+  mask, `phisSiteAccessCoreRoleFlags`); their `addonRoles` stay the stored ones too. A row shows a Site
   Admin as `roleTags` containing `"admin"` (with `enabled`); its `addonRoles` stay the stored ones. An
   unknown or unavailable Add-on or an undeclared role gives an empty list; a malformed value 400.
   `?userId=N` (the one-user read a dialog pre-fills from) carries `addonRoles` in its `user` as a flat list of
@@ -293,8 +305,8 @@ Core does not forbid giving or taking an Add-on role from oneself (the caller's 
 check, and a Site Admin may set their own Add-on roles through either call); only the Core roles of one's
 own membership are refused in `PUT /api/site/admin/users`.
 
-Add-on roles are checked in three places, all against the roles the current manifest declares, granted
-or implied through `includes`, and held by every Site Admin:
+Add-on roles are checked in three places, all against the roles the current manifest declares, granted,
+implied through `includes` or by a Site access (`impliedBy`), and held by every Site Admin:
 
 - the handler, through `roles:v1` (`has(role)`, `all()`);
 - a declared query stating `requiresRole` or `alsoAllowedByRole`;

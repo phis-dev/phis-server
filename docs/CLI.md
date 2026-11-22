@@ -890,8 +890,10 @@ phis addon role --site <site key> --addon <@scope/name> --user <user id> --grant
 phis addon role --site <site key> --addon <@scope/name> --user <user id> --revoke <role>
 ```
 
-- No `--user`: lists the roles each installed Add-on (or the one named) declares and who may grant them.
-- `--user` only: lists the Add-on roles that user holds on the Site.
+- No `--user`: lists the roles each installed Add-on (or the one named) declares, who may grant them, and
+  the Site access a role is implied by (`impliedBy siteAccess=<access>`), whose holders hold it ungranted.
+- `--user` only: lists the Add-on roles stored for that user on the Site (not those implied by `includes`,
+  a Site access, or Site Admin).
 - `--grant`/`--revoke`: grants or revokes a declared role. The operator is not subject to the
   role's `grantableBy` rule.
 

@@ -36,7 +36,8 @@ import type { PhisAddonManifestV1 } from "@/lib/addons/contract";
 const SCHEMA = "phis_addon_pgtest_queryroles";
 const ADDON = "@pgtest/queryroles";
 const DECLARED_ROLES = [
-  { name: "curator", grantableBy: { siteAccess: "site-admin" as const } },
+  // Whoever keeps the books curates too, without a grant: the role a Site access implies.
+  { name: "curator", grantableBy: { siteAccess: "site-admin" as const }, impliedBy: { siteAccess: "accounting" as const } },
   { name: "vendor", grantableBy: { role: "curator" } },
 ];
 
@@ -281,6 +282,42 @@ describe("a query that requires a role", () => {
       [stranger, otherSite.id, PHI_CORE_ROLE_PROVIDER_ID, PhiBaseRole.Admin],
     );
     await expect(data(stranger).insert("add", { label: "no" })).rejects.toThrow(/requires the role "vendor"/);
+  });
+
+  it("lets a holder of the Site access the role is implied by through both guards, and nobody beside them", async () => {
+    const pool = await requirePhiTestDatabase();
+    const accountant = await createPhiTestUser(site);
+    await pool.query(
+      `INSERT INTO phis.user_site_role_claims (user_id, site_id, provider_id, role_flags) VALUES ($1, $2, $3, $4)`,
+      [accountant, site.id, PHI_CORE_ROLE_PROVIDER_ID, PhiBaseRole.Accountant],
+    );
+    const supporter = await createPhiTestUser(site);
+    await pool.query(
+      `INSERT INTO phis.user_site_role_claims (user_id, site_id, provider_id, role_flags) VALUES ($1, $2, $3, $4)`,
+      [supporter, site.id, PHI_CORE_ROLE_PROVIDER_ID, PhiBaseRole.Supporter],
+    );
+
+    const added = await data(vendor).insert("add", { label: "ledger" });
+    const id = String(added!.id);
+    // requiresRole: curator, held through accounting.
+    expect(await data(accountant).update("rename", { id, label: "ledger-renamed" }))
+      .toMatchObject({ label: "ledger-renamed" });
+    await expect(data(supporter).update("rename", { id, label: "no" }))
+      .rejects.toThrow(/requires the role "curator"/);
+    // The implied role is curator alone: vendor is neither implied nor included.
+    await expect(data(accountant).insert("add", { label: "no" }))
+      .rejects.toThrow(/requires the role "vendor"/);
+
+    // alsoAllowedByRole: curator stands in where the ladder said no.
+    const written = await data(nobody).insert("write_review", { body: "audited" });
+    expect(await data(supporter).delete("drop_review", { id: String(written!.id) })).toBeNull();
+    expect(await data(accountant).delete("drop_review", { id: String(written!.id) }))
+      .toMatchObject({ body: "audited" });
+
+    // Losing the access loses the role: nothing was stored to keep it.
+    await pool.query(`DELETE FROM phis.user_site_role_claims WHERE site_id = $1 AND user_id = $2`, [site.id, accountant]);
+    await expect(data(accountant).update("rename", { id, label: "too late" }))
+      .rejects.toThrow(/requires the role "curator"/);
   });
 
   it("stops the moment the role is taken away", async () => {

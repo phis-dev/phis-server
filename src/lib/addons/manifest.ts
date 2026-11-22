@@ -758,6 +758,20 @@ export function validatePhisAddonManifest(
     if (role.includes !== undefined && (!Array.isArray(role.includes) || role.includes.some((entry) => typeof entry !== "string"))) {
       issues.push(`roles[${index}].includes must be an array of role names when it is stated at all.`);
     }
+    if (role.impliedBy !== undefined) {
+      // Exactly one Site access and nothing beside it: a second key would be a condition Core does not
+      // evaluate, and a role the author believed narrowed would be held by everybody with the access.
+      const impliedBy = role.impliedBy;
+      if (!isPhiRecord(impliedBy) || Object.keys(impliedBy).some((key) => key !== "siteAccess")
+        || impliedBy.siteAccess === undefined) {
+        issues.push(`roles[${index}].impliedBy states exactly { siteAccess } when it is stated at all.`);
+      } else if (!SITE_ACCESS_VALUES.has(String(impliedBy.siteAccess))) {
+        issues.push(`roles[${index}].impliedBy.siteAccess is not a Site access.`);
+      } else if (impliedBy.siteAccess === PHIS_SITE_ACCESS.siteAdmin) {
+        // A Site Admin holds every role already. Saying so again would read as if somebody else did not.
+        issues.push(`roles[${index}].impliedBy.siteAccess names site-admin, who holds every role already.`);
+      }
+    }
   }
   assertUnique(roleNames, "roles", issues);
   for (const [index, role] of roles.entries()) {

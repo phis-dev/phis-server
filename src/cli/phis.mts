@@ -2317,7 +2317,10 @@ async function runAddonRoleCommand(flags: FlagMap, json: boolean) {
       const by = "siteAccess" in role.grantableBy
         ? `siteAccess=${role.grantableBy.siteAccess}`
         : `role=${role.grantableBy.role}`;
-      console.log(`  ${role.name}  grantableBy ${by}${role.description ? `  -- ${role.description}` : ""}`);
+      // A role a Site access implies is held by everybody with that access, granted or not: the operator
+      // reading this list is about to grant it, and should see who has it already.
+      const implied = role.impliedBy ? `  impliedBy siteAccess=${role.impliedBy.siteAccess}` : "";
+      console.log(`  ${role.name}  grantableBy ${by}${implied}${role.description ? `  -- ${role.description}` : ""}`);
     }
   }
 }

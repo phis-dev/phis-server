@@ -76,6 +76,7 @@ vi.mock("@/lib/log", () => ({
 vi.mock("@/lib/password", () => ({ hashPassword: async () => "hash" }));
 
 import { listAdminUsersForSite } from "@/db/user-admin";
+import { PhiBaseRole } from "@/lib/constants/phi-base-roles";
 
 import { DELETE, GET, POST, PUT } from "./route";
 
@@ -513,12 +514,46 @@ describe("GET /api/site/admin/users with Add-on roles", () => {
   it("filters by role to the stored holders and those through `includes`", async () => {
     await list(`?addonId=${encodeURIComponent(SHOP)}&addonRole=clerk`);
     expect(vi.mocked(listAdminUsersForSite).mock.calls[0]![1]).toMatchObject({
-      addonRoles: { addonId: SHOP, roles: ["manager", "clerk"] },
+      // No role here is implied by a Site access: no Core roles beside the Site Admins.
+      addonRoles: { addonId: SHOP, roles: ["manager", "clerk"], impliedByRoleFlags: 0 },
     });
 
     await list(`?addonId=${encodeURIComponent(SHOP)}&addonRole=manager`);
     expect(vi.mocked(listAdminUsersForSite).mock.calls[1]![1]).toMatchObject({
       addonRoles: { addonId: SHOP, roles: ["manager"] },
+    });
+  });
+
+  it("adds the Core roles of a Site access a matching role is implied by", async () => {
+    mocks.installed.mockReturnValue({
+      [SHOP]: {
+        enabled: true,
+        manifest: {
+          addonId: SHOP,
+          roles: [
+            { ...SHOP_ROLES[0], impliedBy: { siteAccess: "accounting" } },
+            SHOP_ROLES[1],
+            { name: "helpdesk", grantableBy: { siteAccess: "site-admin" }, impliedBy: { siteAccess: "support" } },
+          ],
+        },
+      },
+    });
+    const accounting = PhiBaseRole.Developer | PhiBaseRole.Accountant;
+    const support = PhiBaseRole.Developer | PhiBaseRole.Supporter;
+
+    // `clerk` is held through `manager`, which accounting implies; `helpdesk` does not lead to `clerk`.
+    await list(`?addonId=${encodeURIComponent(SHOP)}&addonRole=clerk`);
+    expect(vi.mocked(listAdminUsersForSite).mock.calls[0]![1]).toMatchObject({
+      addonRoles: { addonId: SHOP, roles: ["manager", "clerk"], impliedByRoleFlags: accounting },
+    });
+    await list(`?addonId=${encodeURIComponent(SHOP)}&addonRole=helpdesk`);
+    expect(vi.mocked(listAdminUsersForSite).mock.calls[1]![1]).toMatchObject({
+      addonRoles: { addonId: SHOP, roles: ["helpdesk"], impliedByRoleFlags: support },
+    });
+    // Any role of the Add-on: every access one of them is implied by.
+    await list(`?addonId=${encodeURIComponent(SHOP)}`);
+    expect(vi.mocked(listAdminUsersForSite).mock.calls[2]![1]).toMatchObject({
+      addonRoles: { addonId: SHOP, roles: ["manager", "clerk", "helpdesk"], impliedByRoleFlags: accounting | support },
     });
   });
 

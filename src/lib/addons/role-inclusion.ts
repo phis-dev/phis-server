@@ -1,4 +1,4 @@
-import type { PhisAddonRoleDescriptor } from "./contract.ts";
+import { PHIS_SITE_ACCESS, type PhisAddonRoleDescriptor, type PhisSiteAccess } from "./contract.ts";
 
 /**
  * The roles a person holds, from the roles they were granted: each granted role, and every role it
@@ -34,20 +34,48 @@ export function expandPhisAddonHeldRoles(
 }
 
 /**
+ * Which Site accesses a person holds on the Site in question: `phisSiteAccessHeldBy` over the authorization
+ * snapshot the caller already read (`src/lib/addons/site-access.ts`). A function rather than the snapshot,
+ * so this file stays the pure rule and a caller decides once where its snapshot comes from.
+ */
+export type PhisSiteAccessHolder = (access: PhisSiteAccess) => boolean;
+
+/**
+ * The declared roles a Site access hands out without a grant: every role whose `impliedBy.siteAccess` the
+ * person holds. Not followed through `includes` here; `resolvePhisAddonHeldRoles` does that, as for a grant.
+ */
+export function listPhisAddonRolesImpliedBySiteAccess(
+  declared: readonly PhisAddonRoleDescriptor[],
+  holdsSiteAccess: PhisSiteAccessHolder,
+): string[] {
+  return declared
+    .filter((role) => role.impliedBy !== undefined && holdsSiteAccess(role.impliedBy.siteAccess))
+    .map((role) => role.name);
+}
+
+/**
  * The one rule for what somebody holds of an Add-on's roles: a Site Admin holds every declared role,
- * whether or not an assignment is stored; anybody else holds what was granted and what it includes.
+ * whether or not an assignment is stored; anybody else holds what was granted, every role whose
+ * `impliedBy` names a Site access they hold, and what all of those include.
  *
  * Every "does the actor hold this role" answer -- `roles:v1`, `requiresRole` and `alsoAllowedByRole`,
- * a slot's `requiresRole`, the viewer's `addonRoleClaims` -- ends here. "Hold" is not "stored": the
- * stored assignments stay what user administration shows and what a recipient list reads, because an
- * assignment that triggers something (mail to everybody who is a clerk) must not start at the admin.
+ * a slot's `requiresRole`, a `{ role }` grant policy, the viewer's `addonRoleClaims` -- ends here. "Hold"
+ * is not "stored": the stored assignments stay what user administration shows and what a recipient list
+ * reads, because an assignment that triggers something (mail to everybody who is a clerk) must not start
+ * at the admin, nor at every Accountant a role hangs on.
  */
 export function resolvePhisAddonHeldRoles(
   declared: readonly PhisAddonRoleDescriptor[],
   granted: Iterable<string>,
-  siteAdmin: boolean,
+  holdsSiteAccess: PhisSiteAccessHolder,
 ): string[] {
-  return siteAdmin ? declared.map((role) => role.name) : expandPhisAddonHeldRoles(declared, granted);
+  if (holdsSiteAccess(PHIS_SITE_ACCESS.siteAdmin)) {
+    return declared.map((role) => role.name);
+  }
+  return expandPhisAddonHeldRoles(declared, [
+    ...granted,
+    ...listPhisAddonRolesImpliedBySiteAccess(declared, holdsSiteAccess),
+  ]);
 }
 
 /**

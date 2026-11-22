@@ -6,7 +6,14 @@ const mocks = vi.hoisted(() => ({ role: vi.fn() }));
 vi.mock("@/db/user-site-memberships", () => ({ getEffectiveUserSiteAuthorization: mocks.role }));
 
 import { PHIS_SITE_ACCESS } from "./contract.ts";
-import { holdsPhisSiteAccess, phisSiteAccessHeldBy, PHIS_SITE_ACCESS_POLICIES } from "./site-access";
+import {
+  holdsPhisSiteAccess,
+  phisSiteAccessCoreRoleFlags,
+  phisSiteAccessHeldBy,
+  phisSiteAccessHolderOf,
+  PHIS_SITE_ACCESS_POLICIES,
+  readPhisSiteAccessHolder,
+} from "./site-access";
 import { PHI_CORE_ROLE_PROVIDER_ID } from "@/lib/authorization";
 import { PhiBaseRole } from "@/lib/constants/phi-base-roles";
 
@@ -41,5 +48,35 @@ describe("an Add-on's Site access question", () => {
     expect(phisSiteAccessHeldBy({ enabled: true, roleClaims: claims, groupClaims: [] }, PHIS_SITE_ACCESS.siteAdmin)).toBe(true);
     expect(phisSiteAccessHeldBy({ enabled: false, roleClaims: claims, groupClaims: [] }, PHIS_SITE_ACCESS.siteAdmin)).toBe(false);
     expect(phisSiteAccessHeldBy({ enabled: true, roleClaims: [], groupClaims: [] }, PHIS_SITE_ACCESS.siteAdmin)).toBe(false);
+  });
+
+  it("answers every access from one read of the snapshot", async () => {
+    mocks.role.mockResolvedValue({
+      enabled: true,
+      roleClaims: [{ providerId: PHI_CORE_ROLE_PROVIDER_ID, flags: PhiBaseRole.Accountant }],
+      groupClaims: [],
+    });
+    const holds = await readPhisSiteAccessHolder(7, 41);
+    expect(holds(PHIS_SITE_ACCESS.accounting)).toBe(true);
+    expect(holds(PHIS_SITE_ACCESS.support)).toBe(false);
+    expect(holds(PHIS_SITE_ACCESS.siteAdmin)).toBe(false);
+    expect(mocks.role).toHaveBeenCalledTimes(1);
+    expect(mocks.role).toHaveBeenCalledWith(41, 7);
+
+    const supporter = phisSiteAccessHolderOf({
+      enabled: true,
+      roleClaims: [{ providerId: PHI_CORE_ROLE_PROVIDER_ID, flags: PhiBaseRole.Supporter }],
+      groupClaims: [],
+    });
+    expect(supporter(PHIS_SITE_ACCESS.support)).toBe(true);
+    expect(supporter(PHIS_SITE_ACCESS.accounting)).toBe(false);
+  });
+
+  it("puts every access as the Core role mask its policy is, for a filter written in SQL", () => {
+    expect(phisSiteAccessCoreRoleFlags(PHIS_SITE_ACCESS.accounting)).toBe(PhiBaseRole.Developer | PhiBaseRole.Accountant);
+    expect(phisSiteAccessCoreRoleFlags(PHIS_SITE_ACCESS.support)).toBe(PhiBaseRole.Developer | PhiBaseRole.Supporter);
+    for (const access of Object.values(PHIS_SITE_ACCESS)) {
+      expect(phisSiteAccessCoreRoleFlags(access)).toBeGreaterThan(0);
+    }
   });
 });

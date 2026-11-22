@@ -43,7 +43,7 @@ describe("Add-on roles in user administration", () => {
     `SELECT authorization_revision FROM phis.user_site_memberships WHERE user_id = $1 AND site_id = $2`,
     [userId, site.id],
   )).rows[0]!.authorization_revision;
-  const listIds = async (addonRoles?: { addonId: string; roles: string[] }) =>
+  const listIds = async (addonRoles?: { addonId: string; roles: string[]; impliedByRoleFlags?: number }) =>
     (await listAdminUsersForSite(site.id, { addonRoles, pageSize: 200 })).rows.map((row) => row.id);
 
   beforeAll(async () => {
@@ -148,6 +148,43 @@ describe("Add-on roles in user administration", () => {
         `UPDATE phis.user_site_memberships SET user_site_flags = $3 WHERE site_id = $1 AND user_id = $2`,
         [site.id, disabled, USER_SITE_FLAG_DISABLED]);
       expect(await listIds({ addonId: ADDON, roles: ["manager"] })).not.toContain(disabled);
+    });
+  });
+
+  describe("a holder of a Site access holds a role it implies", () => {
+    const claimCoreRoles = async (siteId: number, userId: number, flags: number) => (await requirePhiTestDatabase()).query(
+      `INSERT INTO phis.user_site_role_claims (user_id, site_id, provider_id, role_flags) VALUES ($1, $2, $3, $4)`,
+      [userId, siteId, PHI_CORE_ROLE_PROVIDER_ID, flags],
+    );
+    // The mask the route puts for a role implied by `accounting` (`phisSiteAccessCoreRoleFlags`).
+    const accounting = PhiBaseRole.Developer | PhiBaseRole.Accountant;
+
+    it("appears under the role when the filter names the access's Core roles, and only then", async () => {
+      const accountant = await createPhiTestUser(site);
+      await claimCoreRoles(site.id, accountant, PhiBaseRole.Accountant);
+      const developer = await createPhiTestUser(site);
+      await claimCoreRoles(site.id, developer, PhiBaseRole.Developer);
+      const supporter = await createPhiTestUser(site);
+      await claimCoreRoles(site.id, supporter, PhiBaseRole.Supporter);
+      const elsewhereAccountant = await createPhiTestUser(otherSite);
+      await claimCoreRoles(otherSite.id, elsewhereAccountant, PhiBaseRole.Accountant);
+
+      const implied = await listIds({ addonId: ADDON, roles: ["clerk"], impliedByRoleFlags: accounting });
+      expect(implied).toEqual(expect.arrayContaining([clerk, accountant, developer]));
+      expect(implied).not.toContain(supporter);
+      expect(implied).not.toContain(elsewhereAccountant);
+      // No role implied by an access: the stored grants and the Site Admins, as before.
+      expect(await listIds({ addonId: ADDON, roles: ["clerk"], impliedByRoleFlags: 0 })).not.toContain(accountant);
+      expect(await listIds({ addonId: ADDON, roles: [], impliedByRoleFlags: accounting })).toEqual([]);
+    });
+
+    it("does not count a disabled holder of the access", async () => {
+      const disabled = await createPhiTestUser(site);
+      await claimCoreRoles(site.id, disabled, PhiBaseRole.Accountant);
+      await (await requirePhiTestDatabase()).query(
+        `UPDATE phis.user_site_memberships SET user_site_flags = $3 WHERE site_id = $1 AND user_id = $2`,
+        [site.id, disabled, USER_SITE_FLAG_DISABLED]);
+      expect(await listIds({ addonId: ADDON, roles: ["clerk"], impliedByRoleFlags: accounting })).not.toContain(disabled);
     });
   });
 

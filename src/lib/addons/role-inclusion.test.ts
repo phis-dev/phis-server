@@ -1,7 +1,13 @@
 import { describe, expect, it } from "vitest";
 
 import { validatePhisAddonManifest } from "./manifest.ts";
-import { expandPhisAddonHeldRoles, findPhisAddonRoleInclusionCycle, listPhisAddonRolesImplying, resolvePhisAddonHeldRoles } from "./role-inclusion.ts";
+import {
+  expandPhisAddonHeldRoles,
+  findPhisAddonRoleInclusionCycle,
+  listPhisAddonRolesImpliedBySiteAccess,
+  listPhisAddonRolesImplying,
+  resolvePhisAddonHeldRoles,
+} from "./role-inclusion.ts";
 
 /**
  * A role that includes another: holding the upper rung answers yes for the lower ones, followed
@@ -93,15 +99,55 @@ describe("the roles whose holder holds a given one", () => {
   });
 });
 
+/** Who holds which Site access, as `phisSiteAccessHolderOf` answers it from a snapshot. */
+const holding = (...accesses: string[]) => (access: string) => accesses.includes(access);
+const siteAdmin = holding("site-admin");
+const nobody = holding();
+
 describe("what a Site Admin holds", () => {
   it("is every declared role with nothing stored, in declaration order", () => {
-    expect(resolvePhisAddonHeldRoles(declared, [], true)).toEqual(["owner", "manager", "clerk", "auditor"]);
+    expect(resolvePhisAddonHeldRoles(declared, [], siteAdmin)).toEqual(["owner", "manager", "clerk", "auditor"]);
     // Stored names, declared or not, change nothing for an admin.
-    expect(resolvePhisAddonHeldRoles(declared, ["retired"], true)).toEqual(["owner", "manager", "clerk", "auditor"]);
+    expect(resolvePhisAddonHeldRoles(declared, ["retired"], siteAdmin)).toEqual(["owner", "manager", "clerk", "auditor"]);
   });
 
   it("leaves everybody else with the granted roles and what they include", () => {
-    expect(resolvePhisAddonHeldRoles(declared, ["manager"], false)).toEqual(["manager", "clerk"]);
-    expect(resolvePhisAddonHeldRoles(declared, [], false)).toEqual([]);
+    expect(resolvePhisAddonHeldRoles(declared, ["manager"], nobody)).toEqual(["manager", "clerk"]);
+    expect(resolvePhisAddonHeldRoles(declared, [], nobody)).toEqual([]);
+  });
+});
+
+/**
+ * A role that hangs on a Site access: whoever holds the access holds the role, and what it includes, as
+ * from a grant -- without one stored, and only for as long as they hold the access.
+ */
+describe("a role implied by a Site access", () => {
+  const books = { name: "books", grantableBy: { siteAccess: "site-admin" as const }, impliedBy: { siteAccess: "accounting" as const }, includes: ["clerk"] };
+  const helpdesk = { name: "helpdesk", grantableBy: { siteAccess: "site-admin" as const }, impliedBy: { siteAccess: "support" as const } };
+  const withImplied = [books, helpdesk, manager, clerk, auditor];
+
+  it("is held by a holder of the access, with what it includes, and by nobody else", () => {
+    expect(listPhisAddonRolesImpliedBySiteAccess(withImplied, holding("accounting"))).toEqual(["books"]);
+    expect(resolvePhisAddonHeldRoles(withImplied, [], holding("accounting"))).toEqual(["books", "clerk"]);
+    expect(resolvePhisAddonHeldRoles(withImplied, [], holding("support", "accounting"))).toEqual(["books", "helpdesk", "clerk"]);
+    expect(resolvePhisAddonHeldRoles(withImplied, [], holding("publishing"))).toEqual([]);
+  });
+
+  it("only widens: what is granted stays held beside it", () => {
+    expect(resolvePhisAddonHeldRoles(withImplied, ["manager", "auditor"], holding("support")))
+      .toEqual(["helpdesk", "manager", "clerk", "auditor"]);
+  });
+
+  it("goes with the access: the same grants without it hold only what they did", () => {
+    expect(resolvePhisAddonHeldRoles(withImplied, ["auditor"], nobody)).toEqual(["auditor"]);
+  });
+
+  it("follows inclusions into an implied role from above, and never upwards from it", () => {
+    // `clerk` is implied through `books`; `manager` includes `clerk` but nothing implies `manager`.
+    expect(resolvePhisAddonHeldRoles(withImplied, [], holding("accounting"))).not.toContain("manager");
+  });
+
+  it("is the roles the user list counts among the holders of the included one", () => {
+    expect(listPhisAddonRolesImplying(withImplied, "clerk")).toEqual(["books", "manager", "clerk"]);
   });
 });

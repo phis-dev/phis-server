@@ -727,6 +727,12 @@ What each part is for:
 - `notes_insert` names a role because the table has no owner and no group: without one Core would have
   nothing to judge the write by, and the validator refuses it. The role must be one the manifest
   declares.
+- A role can also hang on a Site access: `impliedBy: { siteAccess: "content-editing" }` beside
+  `grantableBy` would make every Author, Publisher and Developer of the Site an `editor` without a grant,
+  for as long as they hold that access. Nothing is stored and the role can still be granted on its own.
+  Use it where the role means a standing Core already knows ("whoever keeps the books" is `accounting`),
+  so a Site does not have to grant the same people twice. `site-admin` is refused there: a Site Admin
+  holds every role already.
 - The hook has no actor. It may read, and every write through `data:v1` is refused before it runs.
   `bodyLimitBytes`, `rateLimitClass` and `timeoutMs` are required on a hook; on a route they are
   optional.

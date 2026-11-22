@@ -18,10 +18,12 @@ export type ListAdminUsersOptions = {
   accountType?: AdminUserAccountType | "all";
   enabled?: "all" | "enabled" | "disabled";
   /**
-   * Only users who hold one of `roles` in this Add-on: a stored grant of one of them, or being an enabled
-   * Site Admin, who holds every declared role (`resolvePhisAddonHeldRoles`). An empty list matches nobody.
+   * Only users who hold one of `roles` in this Add-on: a stored grant of one of them, being an enabled
+   * Site Admin, who holds every declared role, or, with `impliedByRoleFlags`, an enabled membership with
+   * one of those Core roles -- the Site accesses one of `roles` is implied by, as masks
+   * (`phisSiteAccessCoreRoleFlags`; `resolvePhisAddonHeldRoles`). An empty list matches nobody.
    */
-  addonRoles?: { addonId: string; roles: readonly string[] };
+  addonRoles?: { addonId: string; roles: readonly string[]; impliedByRoleFlags?: number };
   sortKey?: AdminUserSortKey | string;
   sortOrder?: AdminUserSortOrder | string;
   page?: number;
@@ -123,17 +125,20 @@ export async function listAdminUsersForSite(siteId: number, options: ListAdminUs
   }
 
   if (options.addonRoles) {
-    params.push(options.addonRoles.addonId, [...options.addonRoles.roles]);
+    params.push(options.addonRoles.addonId, [...options.addonRoles.roles], options.addonRoles.impliedByRoleFlags ?? 0);
+    const addonIdParam = params.length - 2;
+    const rolesParam = params.length - 1;
+    const impliedParam = params.length;
     conditions.push(
       `(EXISTS (
         SELECT 1 FROM phis.site_addon_user_roles addon_role
         WHERE addon_role.site_id = $1
           AND addon_role.user_id = ua.id
-          AND addon_role.addon_id = $${params.length - 1}
-          AND addon_role.role = ANY($${params.length}::text[])
+          AND addon_role.addon_id = $${addonIdParam}
+          AND addon_role.role = ANY($${rolesParam}::text[])
       ) OR (
-        cardinality($${params.length}::text[]) > 0
-        AND (COALESCE(core_claim.role_flags, 0) & ${PhiBaseRole.Admin}) <> 0
+        cardinality($${rolesParam}::text[]) > 0
+        AND (COALESCE(core_claim.role_flags, 0) & (${PhiBaseRole.Admin} | $${impliedParam}::int)) <> 0
         AND (usr.user_site_flags & ${USER_SITE_FLAG_DISABLED}) = 0
       ))`,
     );

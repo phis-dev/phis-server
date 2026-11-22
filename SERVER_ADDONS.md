@@ -2033,7 +2033,7 @@ roles: [
 ]
 ```
 
-A role is `{ name, description?, grantableBy, includes? }` (`PhisAddonRoleDescriptor` in `@phis/contracts/addon`).
+A role is `{ name, description?, grantableBy, includes?, impliedBy? }` (`PhisAddonRoleDescriptor` in `@phis/contracts/addon`).
 `name` matches `^[a-z][a-z0-9-]{0,63}$` and is frozen from the first assignment: a grant is stored as
 text, and text does not follow a rename. `grantableBy` names exactly one of:
 
@@ -2061,6 +2061,31 @@ transitively and stays within the Add-on. What is stored is only what was grante
 role takes the implied ones with it, and the grant screens list grants, not implications
 (`expandPhisAddonHeldRoles` in `src/lib/addons/role-inclusion.ts`). Validation refuses an inclusion that
 names an undeclared role, the role itself, or a cycle: two roles that imply each other are one role.
+
+`impliedBy: { siteAccess }` hangs a role on a Site access, the derived rights of `PHIS_SITE_ACCESS_POLICIES`
+(`src/lib/addons/site-access.ts`):
+
+| Site access | Held by (enabled membership; a Site Admin holds every access) |
+| --- | --- |
+| `developer-tools` | Developer |
+| `structure-authoring` | Developer, Builder |
+| `content-editing` | Developer, Author, Publisher |
+| `publishing` | Developer, Publisher |
+| `site-media` | Developer, Builder, Author, Publisher |
+| `support` | Developer, Supporter |
+| `accounting` | Developer, Accountant |
+
+Whoever holds the access holds the role without a grant of it, and what the role `includes` with it, in
+every check Core makes: `roles:v1`, `requiresRole` and `alsoAllowedByRole` on a query, a slot's
+`requiresRole`, a `{ role }` grant policy (and `groupWriter.allowedBy`), the viewer's `addonRoleClaims`, and
+the user-list filter by role. It is what two Add-ons that both need "whoever keeps the books" name instead of
+asking the Site to grant the same people twice; they still do not know each other. Nothing is stored:
+losing the access loses the role, a grant of the same role stays as it was, and it only ever widens who holds
+the role. Holding a role this way is not the standing to grant it; that stays `grantableBy`. The accesses are
+answered from the actor's authorization snapshot, read once per request (`roles:v1` shares it with
+`authorization:v1`) and not once per check. Validation accepts exactly `{ siteAccess }` naming one of the
+accesses above and refuses anything else; it refuses `site-admin` too, because a Site Admin holds every role
+already and the declaration would say nothing. `phis addon role --site <key>` prints it beside `grantableBy`.
 
 #### Where assignments are stored
 
@@ -2093,7 +2118,8 @@ them.
 Core: the Add-on learns whether, never who. Without an actor both answer no.
 
 A Site Admin holds every declared role of the Add-on without a stored assignment: `has()` is true for each
-declared role and `all()` returns them all, for as long as the actor is Site Admin on the Site. The same
+declared role and `all()` returns them all, for as long as the actor is Site Admin on the Site. A holder of a
+Site access holds the roles that name it in `impliedBy`, and what they include, the same way. The same
 rule answers `requiresRole`/`alsoAllowedByRole`, a slot's `requiresRole` and the viewer's `addonRoleClaims`
 (`resolvePhisAddonHeldRoles`). Holding is not storage: the stored assignments are unchanged, and a recipient
 list built from "who has this role" must read them, not `roles:v1`, so an admin is not addressed by every
@@ -2135,7 +2161,8 @@ A role reaches the browser too, so a Module can leave out a link somebody would 
 The held names travel with the viewer as `addonRoleClaims` (`/api/v1/auth/me`, reached through a Site's `/api/auth/me`), filtered to what the current
 manifest declares and to Add-ons enabled globally and for this Site (`src/lib/addons/viewer-roles.ts`). A
 viewer that carries no `addonRoleClaims` is denied. A Site Admin passes, as for every role and group
-policy, and carries every declared role of every enabled Add-on as claims. A Module may name only its own Add-on's roles (`isPhiAccessPolicyProviderOwned`).
+policy, and carries every declared role of every enabled Add-on as claims. A holder of a Site access carries
+the roles it implies (`impliedBy`) and what they include. A Module may name only its own Add-on's roles (`isPhiAccessPolicyProviderOwned`).
 
 The evaluator is `canPhiAccessSubjectReach` in `@phis/contracts/access`, compiled once and used by both
 `@phis/server` and `@phis/ui`.
@@ -2148,7 +2175,7 @@ the page safe. The request behind the link is decided again by the handler, agai
 `POST /api/site/addon-roles` with `{ addonId, role, userId }` grants; `DELETE` with the same body
 revokes. Core resolves the descriptor from the installed manifest and evaluates `grantableBy` against the
 acting user (`src/lib/addons/role-granting.ts`): a Site access through the ordinary access policy, a role
-through `site_addon_user_roles`, and Site Admin always. Taking a role back needs the standing to have
+as held (stored in `site_addon_user_roles`, included, or implied by a Site access), and Site Admin always. Taking a role back needs the standing to have
 given it. An unknown Add-on or undeclared role answers 404, a refusal on standing 403.
 
 `PUT /api/site/addon-roles` with `{ userId, addonId, roles }` sets the roles that person holds in that

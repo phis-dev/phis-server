@@ -3,10 +3,8 @@ import "server-only";
 import type { PhisAddonRoleDescriptor, PhisAddonRoleGrantPolicy } from "./contract.ts";
 import { PHIS_SITE_ACCESS } from "./contract.ts";
 import { listPhiCountingAddonDeclaredRoles } from "./viewer-roles.ts";
-import { expandPhisAddonHeldRoles } from "./role-inclusion.ts";
-import { readPhisAddonUserRoles } from "@/db/server-addon-roles.mts";
-import { getPool } from "@/lib/db";
-import { holdsPhisSiteAccess } from "./site-access.ts";
+import { readPhisAddonHeldRoles } from "./held-roles.ts";
+import { readPhisSiteAccessHolder } from "./site-access.ts";
 
 /**
  * Whether one person may hand one of an Add-on's roles to another.
@@ -43,20 +41,24 @@ export async function satisfiesPhisAddonGrantPolicy(input: {
    */
   declared: readonly PhisAddonRoleDescriptor[];
 }) {
-  if (await holdsPhisSiteAccess(input.siteId, input.actorUserId, PHIS_SITE_ACCESS.siteAdmin)) {
+  // One read of the actor's authorization answers the floor, a Site-access policy and the roles a Site
+  // access implies alike.
+  const holdsSiteAccess = await readPhisSiteAccessHolder(input.siteId, input.actorUserId);
+  if (holdsSiteAccess(PHIS_SITE_ACCESS.siteAdmin)) {
     return true;
   }
   if ("siteAccess" in input.policy) {
-    return await holdsPhisSiteAccess(input.siteId, input.actorUserId, input.policy.siteAccess);
+    return holdsSiteAccess(input.policy.siteAccess);
   }
-  const granted = await readPhisAddonUserRoles(getPool(), {
+  // Held, not stored: whoever may grant `clerk` because they hold it may also when they hold the
+  // `manager` that includes it, or the Site access `clerk` is implied by.
+  return (await readPhisAddonHeldRoles({
     addonId: input.addonId,
     siteId: input.siteId,
     userId: input.actorUserId,
-  });
-  // Implied roles count: whoever may grant `clerk` because they hold it may also when they hold the
-  // `manager` that includes it.
-  return expandPhisAddonHeldRoles(input.declared, granted).includes(input.policy.role);
+    declared: input.declared,
+    holdsSiteAccess,
+  })).includes(input.policy.role);
 }
 
 /**
@@ -127,37 +129,24 @@ export async function readPhisAddonRoleCatalog(input: {
   const catalog: PhisAddonRoleCatalogEntry[] = [];
   /*
    * The same decision `mayGrantPhisAddonRole` makes, asked of the database once per question rather
-   * than once per role: the Site Admin floor is one answer for every role, a Site-access policy is one
-   * answer per access level, and the roles the person holds in an Add-on are one read per Add-on.
-   * User administration asks this for every Add-on's every role on every visit.
+   * than once per role: the Site Admin floor, every Site-access policy and every `impliedBy` are answered
+   * from one read of the person's authorization, and the roles they hold in an Add-on are one read per
+   * Add-on. User administration asks this for every Add-on's every role on every visit.
    */
-  const siteAdmin = await holdsPhisSiteAccess(input.siteId, input.actorUserId, PHIS_SITE_ACCESS.siteAdmin);
-  const siteAccessHeld = new Map<string, boolean>();
-  const holdsSiteAccess = async (access: Parameters<typeof holdsPhisSiteAccess>[2]) => {
-    const key = String(access);
-    let held = siteAccessHeld.get(key);
-    if (held === undefined) {
-      held = await holdsPhisSiteAccess(input.siteId, input.actorUserId, access);
-      siteAccessHeld.set(key, held);
-    }
-    return held;
-  };
+  const holdsSiteAccess = await readPhisSiteAccessHolder(input.siteId, input.actorUserId);
+  const siteAdmin = holdsSiteAccess(PHIS_SITE_ACCESS.siteAdmin);
   for (const [addonId, declared] of listPhiCountingAddonDeclaredRoles(input.availableProviderIds)) {
     if (declared.length === 0) {
       continue;
     }
     const held = siteAdmin
       ? null
-      : expandPhisAddonHeldRoles(declared, await readPhisAddonUserRoles(getPool(), {
-        addonId,
-        siteId: input.siteId,
-        userId: input.actorUserId,
-      }));
+      : await readPhisAddonHeldRoles({ addonId, siteId: input.siteId, userId: input.actorUserId, declared, holdsSiteAccess });
     const roles: PhisAddonRoleCatalogEntry["roles"] = [];
     for (const role of declared) {
       const policy = role.grantableBy;
       const grantable = siteAdmin
-        || ("siteAccess" in policy ? await holdsSiteAccess(policy.siteAccess) : (held ?? []).includes(policy.role));
+        || ("siteAccess" in policy ? holdsSiteAccess(policy.siteAccess) : (held ?? []).includes(policy.role));
       roles.push({
         name: role.name,
         ...(role.description === undefined ? {} : { description: role.description }),

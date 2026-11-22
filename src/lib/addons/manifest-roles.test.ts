@@ -105,6 +105,44 @@ describe("declaring Add-on roles", () => {
 });
 
 /**
+ * A role hung on a Site access: whoever holds the access holds the role. The policy names one access
+ * Core knows and nothing beside it, because anything else would be a condition Core does not evaluate.
+ */
+describe("declaring a role a Site access implies", () => {
+  const books = (impliedBy: unknown) => [admin, { name: "books", grantableBy: { role: "market-admin" }, impliedBy }];
+
+  it("accepts every Site access but site-admin, and a role without it, as every older manifest has", () => {
+    for (const access of ["developer-tools", "structure-authoring", "content-editing", "publishing", "site-media", "support", "accounting"]) {
+      expect(issuesFor(books({ siteAccess: access }))).toBe("");
+    }
+    expect(issuesFor([admin, vendor])).toBe("");
+  });
+
+  it("refuses site-admin, who holds every role already", () => {
+    expect(issuesFor(books({ siteAccess: "site-admin" })))
+      .toMatch(/roles\[1\]\.impliedBy\.siteAccess names site-admin, who holds every role already/);
+  });
+
+  it("refuses an access Core does not have", () => {
+    expect(issuesFor(books({ siteAccess: "postmaster" }))).toMatch(/roles\[1\]\.impliedBy\.siteAccess is not a Site access/);
+    expect(issuesFor(books({ siteAccess: 3 }))).toMatch(/roles\[1\]\.impliedBy\.siteAccess is not a Site access/);
+  });
+
+  it("refuses anything that is not exactly { siteAccess }", () => {
+    for (const impliedBy of [{}, { role: "market-admin" }, { siteAccess: "accounting", role: "market-admin" }, "accounting", ["accounting"], null]) {
+      expect(issuesFor(books(impliedBy))).toMatch(/roles\[1\]\.impliedBy states exactly \{ siteAccess \} when it is stated at all/);
+    }
+  });
+
+  it("does not make a role reachable for granting: grantableBy still needs a Site access somewhere", () => {
+    expect(issuesFor([
+      { name: "a", grantableBy: { role: "b" }, impliedBy: { siteAccess: "accounting" } },
+      { name: "b", grantableBy: { role: "a" } },
+    ])).toMatch(/roles form a cycle/);
+  });
+});
+
+/**
  * What an Add-on may declare about the groups it needs.
  *
  * It states which ones and Core creates them per Site, because a group exists only inside a Site and an

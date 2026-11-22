@@ -1,9 +1,11 @@
 import "server-only";
 
 import { PHIS_SITE_ACCESS, type PhisSiteAccess } from "./contract.ts";
+import type { PhisSiteAccessHolder } from "./role-inclusion.ts";
 import { getEffectiveUserSiteAuthorization } from "@/db/user-site-memberships";
 import {
   canPhiViewerAccess,
+  PHI_CORE_ROLE_PROVIDER_ID,
   PHI_ACCESS_ACCOUNTING,
   PHI_ACCESS_CONTENT_EDITING,
   PHI_ACCESS_DEVELOPER_TOOLS,
@@ -68,4 +70,34 @@ export async function holdsPhisSiteAccess(siteId: number, userId: number, access
     return false;
   }
   return phisSiteAccessHeldBy(await getEffectiveUserSiteAuthorization(userId, siteId), access);
+}
+
+/** `phisSiteAccessHeldBy` bound to one snapshot: every access question about that person, answered from it. */
+export function phisSiteAccessHolderOf(role: Parameters<typeof phisSiteAccessHeldBy>[0]): PhisSiteAccessHolder {
+  return (access) => phisSiteAccessHeldBy(role, access);
+}
+
+/**
+ * Every Site access of one person on one Site, from one read of their authorization snapshot.
+ *
+ * What a caller asks that has several access questions to put -- whether somebody is Site Admin, whether
+ * they meet a grant policy, which Add-on roles a Site access hands them (`impliedBy`) -- so the snapshot is
+ * read once rather than once per question.
+ */
+export async function readPhisSiteAccessHolder(siteId: number, userId: number): Promise<PhisSiteAccessHolder> {
+  return phisSiteAccessHolderOf(await getEffectiveUserSiteAuthorization(userId, siteId));
+}
+
+/**
+ * The Core role flags a Site access admits, for a filter that has to ask it in SQL (the user list's
+ * `addonRole`). Every policy in the table is a Core role mask; one that were not could not be put as a
+ * mask, and is an error here rather than a filter that silently leaves its holders out. Core Admin is not
+ * in the mask, as in the policies: the evaluator admits an Admin to every access, and so must the caller.
+ */
+export function phisSiteAccessCoreRoleFlags(access: PhisSiteAccess): number {
+  const policy: PhiViewerAccessPolicy = PHIS_SITE_ACCESS_POLICIES[access];
+  if (policy.access !== "roles" || policy.providerId !== PHI_CORE_ROLE_PROVIDER_ID) {
+    throw new Error(`The Site access "${access}" is not a Core role mask.`);
+  }
+  return policy.allowedRoleFlags;
 }

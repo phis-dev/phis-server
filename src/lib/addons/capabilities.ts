@@ -21,7 +21,8 @@ import { derivePhisAddonSchemaName } from "./schema-name.ts";
 import { quotePhiIdentifier } from "./schema-ddl.ts";
 import { readEffectiveGroupMembershipFlags } from "@/db/site-groups";
 import { PhiGroupMembershipFlags, phiGroupLevelOf } from "@/lib/constants/site-groups";
-import { holdsPhisSiteAccess } from "./site-access.ts";
+import { readPhisSiteAccessHolder } from "./site-access.ts";
+import type { PhisSiteAccessHolder } from "./role-inclusion.ts";
 import { getPool } from "@/lib/db";
 import { buildPhisAddonDataCapability } from "./data-capability.ts";
 import { buildPhisAddonRolesCapability } from "./roles-capability.ts";
@@ -212,6 +213,8 @@ function buildAuthorizationCapability(input: {
   manifest: PhisAddonManifestV1;
   siteId: number;
   actorUserId: number | null;
+  /** The actor's Site accesses, read once for the request and shared with `roles:v1`. */
+  readSiteAccess: () => Promise<PhisSiteAccessHolder>;
 }): PhisAuthorizationCapabilityV1 {
   const { manifest, siteId, actorUserId } = input;
   const mayActOnRow = buildPhisAddonRowAuthority({ manifest, siteId, actorUserId });
@@ -224,7 +227,8 @@ function buildAuthorizationCapability(input: {
       return phiGroupLevelOf(await readEffectiveGroupMembershipFlags(siteId, groupId, actorUserId));
     },
     async hasSiteAccess(access) {
-      return actorUserId != null && holdsPhisSiteAccess(siteId, actorUserId, access);
+      // An access the contract does not name is no, as `phisSiteAccessHeldBy` answers it.
+      return actorUserId != null && (await input.readSiteAccess())(access);
     },
   } satisfies PhisAuthorizationCapabilityV1);
 }
@@ -270,10 +274,26 @@ export function buildPhisAddonCapabilities(input: {
   }
   const siteId = input.siteId;
   const required = input.manifest.requiredCoreCapabilities;
+  /*
+   * The actor's authorization snapshot, read at most once for everything built here that asks a Site
+   * access: `authorization:v1`'s `hasSiteAccess`, and `roles:v1`, which needs it for the Site Admin floor
+   * and for the roles a Site access implies (`impliedBy`). Read on the first question, not before: most
+   * requests ask none.
+   */
+  const actorUserId = input.actorUserId;
+  let siteAccess: Promise<PhisSiteAccessHolder> | undefined;
+  const readSiteAccess = () => {
+    if (actorUserId == null) {
+      return Promise.resolve<PhisSiteAccessHolder>(() => false);
+    }
+    siteAccess ??= readPhisSiteAccessHolder(siteId, actorUserId);
+    return siteAccess;
+  };
   const authorization = buildAuthorizationCapability({
     manifest: input.manifest,
     siteId,
-    actorUserId: input.actorUserId,
+    actorUserId,
+    readSiteAccess,
   });
   if (required.includes(PHIS_CORE_CAPABILITIES.authorization)) {
     capabilities.authorization = authorization;
@@ -288,6 +308,7 @@ export function buildPhisAddonCapabilities(input: {
     siteId,
     actorUserId: input.actorUserId,
     declared: input.manifest.roles ?? [],
+    readSiteAccess,
   });
   /*
    * What a delete does with the row's files, built from the schema rather than from the capability list.

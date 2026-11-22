@@ -185,6 +185,80 @@ describe("Add-on roles", () => {
     });
   });
 
+  describe("for a holder of a Site access a role is implied by", () => {
+    // `bookkeeper` hangs on accounting and includes `vendor`; `ledger` is granted by whoever holds `bookkeeper`.
+    const IMPLIED = [
+      ...DECLARED,
+      { name: "bookkeeper", grantableBy: { siteAccess: "site-admin" as const }, impliedBy: { siteAccess: "accounting" as const }, includes: ["vendor"] },
+      { name: "ledger", grantableBy: { role: "bookkeeper" } },
+    ];
+    const capability = (actorUserId: number) =>
+      buildPhisAddonRolesCapability({ addonId: ADDON, siteId: site.id, actorUserId, declared: IMPLIED });
+    const claimCoreRoles = async (siteId: number, userId: number, flags: number) => (await requirePhiTestDatabase()).query(
+      `INSERT INTO phis.user_site_role_claims (user_id, site_id, provider_id, role_flags) VALUES ($1, $2, $3, $4)`,
+      [userId, siteId, PHI_CORE_ROLE_PROVIDER_ID, flags],
+    );
+
+    it("holds the role and what it includes for an Accountant and a Developer, with nothing stored", async () => {
+      for (const flags of [PhiBaseRole.Accountant, PhiBaseRole.Developer]) {
+        const holder = await createPhiTestUser(site);
+        await claimCoreRoles(site.id, holder, flags);
+        expect(await capability(holder).all()).toEqual(["vendor", "bookkeeper"]);
+        expect(await capability(holder).has("market-admin")).toBe(false);
+        expect(await readPhiSiteUserAddonRoles(await requirePhiTestDatabase(), { siteId: site.id, userId: holder }))
+          .toEqual([]);
+      }
+    });
+
+    it("holds nothing for a Supporter, and nothing on a Site where the person keeps no books", async () => {
+      const supporter = await createPhiTestUser(site);
+      await claimCoreRoles(site.id, supporter, PhiBaseRole.Supporter);
+      expect(await capability(supporter).all()).toEqual([]);
+
+      const otherSite = await createPhiTestSite("addon-roles-implied-other");
+      const accountantThere = await createPhiTestUser(otherSite);
+      await claimCoreRoles(otherSite.id, accountantThere, PhiBaseRole.Accountant);
+      await (await requirePhiTestDatabase()).query(
+        `INSERT INTO phis.user_site_memberships (user_id, site_id) VALUES ($1, $2)`, [accountantThere, site.id]);
+      expect(await capability(accountantThere).all()).toEqual([]);
+    });
+
+    it("loses the role with the access or the membership, and keeps what is stored", async () => {
+      const pool = await requirePhiTestDatabase();
+      const accountant = await createPhiTestUser(site);
+      await claimCoreRoles(site.id, accountant, PhiBaseRole.Accountant);
+      await grantPhisAddonUserRole(pool, {
+        addonId: ADDON, siteId: site.id, userId: accountant, role: "ledger", grantedByUserId: null,
+      });
+      expect(await capability(accountant).all()).toEqual(["vendor", "bookkeeper", "ledger"]);
+
+      await pool.query(`UPDATE phis.user_site_memberships SET user_site_flags = $3 WHERE site_id = $1 AND user_id = $2`,
+        [site.id, accountant, USER_SITE_FLAG_DISABLED]);
+      expect(await capability(accountant).all()).toEqual([]);
+      await pool.query(`UPDATE phis.user_site_memberships SET user_site_flags = 0 WHERE site_id = $1 AND user_id = $2`,
+        [site.id, accountant]);
+
+      await pool.query(`DELETE FROM phis.user_site_role_claims WHERE site_id = $1 AND user_id = $2`, [site.id, accountant]);
+      expect(await capability(accountant).all()).toEqual(["ledger"]);
+      // `ledger` is not in DECLARED: left stored, it would be an orphan of the tests below.
+      await revokePhisAddonUserRole(pool, { addonId: ADDON, siteId: site.id, userId: accountant, role: "ledger" });
+    });
+
+    it("meets a grant policy naming the implied role, and only for a holder of the access", async () => {
+      const accountant = await createPhiTestUser(site);
+      await claimCoreRoles(site.id, accountant, PhiBaseRole.Accountant);
+      const supporter = await createPhiTestUser(site);
+      await claimCoreRoles(site.id, supporter, PhiBaseRole.Supporter);
+      const grant = (actorUserId: number, role: string) =>
+        mayGrantPhisAddonRole({ addonId: ADDON, siteId: site.id, actorUserId, role, declared: IMPLIED });
+
+      expect((await grant(accountant, "ledger")).allowed).toBe(true);
+      expect(await grant(supporter, "ledger")).toEqual({ allowed: false, reason: "not_permitted" });
+      // Holding `bookkeeper` through the access is not the standing to hand out `bookkeeper` itself.
+      expect(await grant(accountant, "bookkeeper")).toEqual({ allowed: false, reason: "not_permitted" });
+    });
+  });
+
   it("does not hand over a role the manifest no longer declares", async () => {
     const pool = await requirePhiTestDatabase();
     await grantPhisAddonUserRole(pool, {

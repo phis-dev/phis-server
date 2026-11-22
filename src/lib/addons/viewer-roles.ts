@@ -1,9 +1,9 @@
 import "server-only";
 
 import type { PhiViewerAddonRoleClaim } from "@/lib/authorization";
-import type { PhisAddonRoleDescriptor } from "./contract.ts";
+import { PHIS_SITE_ACCESS, type PhisAddonRoleDescriptor } from "./contract.ts";
 import { getPhisAddonInstalledManifest } from "./installed.ts";
-import { resolvePhisAddonHeldRoles } from "./role-inclusion.ts";
+import { resolvePhisAddonHeldRoles, type PhisSiteAccessHolder } from "./role-inclusion.ts";
 import { readPhiSiteUserAddonRoles } from "@/db/server-addon-roles.mts";
 import { getPool } from "@/lib/db";
 
@@ -66,7 +66,9 @@ export function selectPhiCountingAddonRoles<G extends { addonId: string; role: s
  * request by `getEffectiveUserSiteAuthorization` and handed in. Asking the registry here again cost two
  * statements per Add-on with a grant, one after the other, on every signed-in page view.
  *
- * A Site Admin holds every declared role of every such Add-on, stored or not (`resolvePhisAddonHeldRoles`).
+ * A Site Admin holds every declared role of every such Add-on, stored or not, and a holder of a Site access
+ * every role an Add-on hangs on it with `impliedBy` (`resolvePhisAddonHeldRoles`). Both are answered from the
+ * authorization snapshot the caller already read, never by reading it again.
  *
  * These travel to the browser with the rest of the viewer. That is not a leak: they are the viewer's own
  * roles, and the client uses them to decide what to show. Whether the request behind the link is allowed
@@ -76,33 +78,23 @@ export async function readPhiViewerAddonRoleClaims(
   siteId: number,
   userId: number,
   availableProviderIds: ReadonlySet<string>,
-  /** Whether the viewer is Site Admin (`phisSiteAccessHeldBy`): they hold every declared role. */
-  siteAdmin = false,
+  /** The viewer's Site accesses (`phisSiteAccessHolderOf` over the snapshot the request read). */
+  holdsSiteAccess: PhisSiteAccessHolder,
 ): Promise<PhiViewerAddonRoleClaim[]> {
-  if (siteAdmin) {
-    // Every Add-on that counts here (installed, enabled, available), every role it declares now.
-    return [...listPhiCountingAddonDeclaredRoles(availableProviderIds)].flatMap(([addonId, declared]) => {
-      const roles = resolvePhisAddonHeldRoles(declared, [], true);
-      return roles.length > 0 ? [{ providerId: addonId as PhiViewerAddonRoleClaim["providerId"], roles }] : [];
-    });
-  }
-  const grants = await readPhiSiteUserAddonRoles(getPool(), { siteId, userId });
-  if (grants.length === 0) {
-    return [];
-  }
+  const counting = listPhiCountingAddonDeclaredRoles(availableProviderIds);
+  // A Site Admin holds every role whatever is stored, so nothing stored is read for one.
+  const grants = holdsSiteAccess(PHIS_SITE_ACCESS.siteAdmin)
+    ? new Map<string, string[]>()
+    : selectPhiCountingAddonRoles(await readPhiSiteUserAddonRoles(getPool(), { siteId, userId }), availableProviderIds);
 
-  const installed = getPhisAddonInstalledManifest();
-  // Granted and implied: a viewer holding `manager` is shown what a `clerk` sees, as the server answers.
-  const byAddon = new Map<string, string[]>();
-  for (const [addonId, granted] of selectPhiCountingAddonRoles(grants, availableProviderIds)) {
-    const held = resolvePhisAddonHeldRoles(installed[addonId]!.manifest.roles ?? [], granted, false);
-    if (held.length > 0) {
-      byAddon.set(addonId, held);
+  // Granted, implied by a Site access, and what those include: a viewer holding `manager` is shown what a
+  // `clerk` sees, as the server answers. In the order the Add-ons count, roles in declaration order.
+  const claims: PhiViewerAddonRoleClaim[] = [];
+  for (const [addonId, declared] of counting) {
+    const roles = resolvePhisAddonHeldRoles(declared, grants.get(addonId) ?? [], holdsSiteAccess);
+    if (roles.length > 0) {
+      claims.push({ providerId: addonId as PhiViewerAddonRoleClaim["providerId"], roles });
     }
   }
-
-  return [...byAddon].map(([addonId, roles]) => ({
-    providerId: addonId as PhiViewerAddonRoleClaim["providerId"],
-    roles,
-  }));
+  return claims;
 }

@@ -17,6 +17,7 @@ import { getUserProfileByUserId, upsertUserProfile } from "@/db/user-profiles";
 import { getUserSiteMembership, upsertUserSiteMembership } from "@/db/user-site-memberships";
 import { readAvailablePhisProviderIds } from "@/lib/addons/capability-snapshot";
 import { listPhisAddonRolesImplying } from "@/lib/addons/role-inclusion";
+import { phisSiteAccessCoreRoleFlags } from "@/lib/addons/site-access";
 import { mayGrantPhisAddonRole } from "@/lib/addons/role-granting";
 import { listPhiCountingAddonDeclaredRoles, selectPhiCountingAddonRoles } from "@/lib/addons/viewer-roles";
 import { getPool } from "@/lib/db";
@@ -295,18 +296,24 @@ export async function GET(request: NextRequest) {
   if (addonRoleFilter !== null && !/^[a-z][a-z0-9-]{0,63}$/.test(addonRoleFilter)) {
     return NextResponse.json({ error: "Invalid addonRole." }, { status: 400 });
   }
-  let addonRoles: { addonId: string; roles: string[] } | undefined;
+  let addonRoles: { addonId: string; roles: string[]; impliedByRoleFlags: number } | undefined;
   let availableProviderIds: ReadonlySet<string> | null = null;
   if (addonIdFilter !== null) {
     availableProviderIds = await readAvailablePhisProviderIds(site.id);
     const declared = listPhiCountingAddonDeclaredRoles(availableProviderIds).get(addonIdFilter) ?? [];
     // A named role is held stored or through a role that includes it, as `roles:v1` has() answers; the
-    // query adds the enabled Site Admins, who hold every declared role.
+    // query adds the enabled Site Admins, who hold every declared role, and the enabled holders of a Site
+    // access one of those roles is implied by.
+    const roles = addonRoleFilter === null
+      ? declared.map((role) => role.name)
+      : listPhisAddonRolesImplying(declared, addonRoleFilter);
     addonRoles = {
       addonId: addonIdFilter,
-      roles: addonRoleFilter === null
-        ? declared.map((role) => role.name)
-        : listPhisAddonRolesImplying(declared, addonRoleFilter),
+      roles,
+      impliedByRoleFlags: declared.reduce((flags, role) =>
+        role.impliedBy !== undefined && roles.includes(role.name)
+          ? flags | phisSiteAccessCoreRoleFlags(role.impliedBy.siteAccess)
+          : flags, 0),
     };
   }
 
