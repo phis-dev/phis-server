@@ -40,17 +40,25 @@ const BLOCKING_FLAGS = PhisEntitlementFlag.Revoked | PhisEntitlementFlag.Suspend
  * What an entry bound to a subscription follows, read from the subscription's record on every use.
  * `period` is the latest paid period, null until the first payment: such an entry counts for nothing.
  * It counts until that period's end, and -- while the subscription has not ended -- for the Site's grace
- * days after it. The end the entry shows is the period's, without the grace.
+ * days after it (`BOUND_COUNTS_UNTIL_SQL`). The end the entry shows is the period's, without the grace.
  */
 const PAID_END_SQL = `(SELECT (sx.record->'period'->>'endsAt')::timestamptz FROM phis.payment_subscriptions sx WHERE sx.id = e.subscription_id)`;
-const COUNTS_UNTIL_SQL = `(SELECT (sx.record->'period'->>'endsAt')::timestamptz
+const BOUND_COUNTS_UNTIL_SQL = `(SELECT (sx.record->'period'->>'endsAt')::timestamptz
   + CASE WHEN sx.record->>'status' = 'canceled' OR sx.record->>'endedAt' IS NOT NULL THEN 0
          ELSE (SELECT g.entitlement_grace_days FROM phis.sites g WHERE g.id = e.site_id) END * INTERVAL '1 day'
   FROM phis.payment_subscriptions sx WHERE sx.id = e.subscription_id)`;
 const SHOWN_END_SQL = `COALESCE(e.ends_at, ${PAID_END_SQL})`;
+/** An entry that never stops counting: one without a subscription and without a written end. */
+const OPEN_ENDED_SQL = `(e.subscription_id IS NULL AND e.ends_at IS NULL)`;
+/**
+ * The instant an entry stops counting, the one rule behind `valid`, the state's `until` and the expiry
+ * job: an unbound entry's written end, a bound one's `BOUND_COUNTS_UNTIL_SQL`. Null for an open-ended
+ * entry, and for a bound one without a paid period, which counts for nothing.
+ */
+const COUNTS_UNTIL_SQL = `(CASE WHEN e.subscription_id IS NULL THEN e.ends_at ELSE ${BOUND_COUNTS_UNTIL_SQL} END)`;
 
 const VALID_SQL = `((e.flags & ${BLOCKING_FLAGS}) = 0 AND e.starts_at <= NOW()
-  AND (CASE WHEN e.subscription_id IS NULL THEN (e.ends_at IS NULL OR e.ends_at > NOW()) ELSE COALESCE(${COUNTS_UNTIL_SQL} > NOW(), FALSE) END)
+  AND (${OPEN_ENDED_SQL} OR COALESCE(${COUNTS_UNTIL_SQL} > NOW(), FALSE))
   AND EXISTS (SELECT 1 FROM phis.products vp WHERE ${ENTRY_PRODUCT_JOIN_SQL("e", "vp")} AND vp.state <> 'locked'))`;
 
 const ENTRY_COLUMNS = `e.id, e.product, s.reference AS subject, e.source, e.reference, e.starts_at, ${SHOWN_END_SQL} AS ends_at, e.subscription_id::text AS subscription_id,
@@ -184,8 +192,9 @@ export async function listEntitlements(pool: Pool, input: {
  * The entries that count are the valid ones on the product and on every bundle that contains it, directly
  * or through nested bundles: a bundle's holder holds its parts. A product that does not exist or is
  * locked entitles nobody and passes nothing on, so a locked part is held through no bundle and a locked
- * bundle gives none of its parts. `until` is the latest end among those entries and null as soon as one
- * of them has none; `via` names the products whose entries they are, the product itself first. Whether
+ * bundle gives none of its parts. `until` is the latest instant at which one of those entries stops
+ * counting -- `COUNTS_UNTIL_SQL`, the rule `valid` follows, so for a bound entry its paid period's end plus
+ * the grace and not the `endsAt` it shows -- and null as soon as one of them has no end; `via` names the products whose entries they are, the product itself first. Whether
  * quantities add up is the product's own word (its `Counted` bit), and only its own entries are summed --
  * a bundle is never counted. One round trip.
  */
@@ -200,7 +209,7 @@ export async function readEntitlementState(pool: Pool, input: {
   const { rows } = await pool.query<{ entries: string; quantity: string | null; open_ended: boolean; until: Date | null; via: string[]; counted: boolean }>(
     `WITH RECURSIVE ${holdersSql("$1::smallint", "$3", true)}
      SELECT COUNT(*) AS entries, SUM(e.quantity) FILTER (WHERE e.product = $3) AS quantity,
-            COALESCE(BOOL_OR(e.ends_at IS NULL AND e.subscription_id IS NULL), FALSE) AS open_ended, MAX(${SHOWN_END_SQL}) AS until,
+            COALESCE(BOOL_OR(${OPEN_ENDED_SQL}), FALSE) AS open_ended, MAX(${COUNTS_UNTIL_SQL}) AS until,
             COALESCE(ARRAY_AGG(DISTINCT e.product), '{}') AS via,
             COALESCE((SELECT (cp.flags & ${PHIS_PRODUCT_FLAG.Counted}) <> 0 FROM phis.products cp
                       WHERE cp.site_id = $1 AND cp.supplier_addon_id = regexp_replace($3::text, ':[^:]+$', '')
@@ -469,7 +478,8 @@ export async function announceEndedEntitlements(pool: Pool, listeners: readonly 
      * A written end is announced once and a moved one again (`ended_event_at` is cleared with it). A bound
      * entry's end moves by itself when the subscription is renewed, so it is announced when its
      * `ended_event_at` is older than the instant it counts until: after a renewal the next expiry is later
-     * than the last announcement and is owed again, and one announcement serves one expiry.
+     * than the last announcement and is owed again, and one announcement serves one expiry. Both branches
+     * are `COUNTS_UNTIL_SQL` spelled out per kind, so each reaches its own partial index.
      */
     const { rows } = await client.query<{ site_id: number; subject: string; product: string }>(
       `UPDATE phis.entitlements e
@@ -479,8 +489,8 @@ export async function announceEndedEntitlements(pool: Pool, listeners: readonly 
          AND (e.flags & ${PhisEntitlementFlag.Revoked}) = 0
          AND (
            (e.subscription_id IS NULL AND e.ends_at IS NOT NULL AND e.ends_at <= NOW() AND e.ended_event_at IS NULL)
-           OR (e.subscription_id IS NOT NULL AND ${COUNTS_UNTIL_SQL} <= NOW()
-               AND (e.ended_event_at IS NULL OR e.ended_event_at < ${COUNTS_UNTIL_SQL}))
+           OR (e.subscription_id IS NOT NULL AND ${BOUND_COUNTS_UNTIL_SQL} <= NOW()
+               AND (e.ended_event_at IS NULL OR e.ended_event_at < ${BOUND_COUNTS_UNTIL_SQL}))
          )
        RETURNING e.site_id, s.reference AS subject, e.product`,
     );

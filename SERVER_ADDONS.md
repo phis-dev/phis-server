@@ -1762,8 +1762,10 @@ supplier.
 - **Entitled.** At least one entry of the subject is valid -- on the product itself or on a bundle that
   contains it. An entry is valid when neither flag is set, it has started and not ended, judged by the
   database's clock, and its product exists and is not `locked`. Nothing is stored for that, so an entry
-  that ends needs no write to stop counting. `until` is the latest end among those valid entries, null
-  when one has none or nobody is entitled. Whether quantities add up is the product's `counted`: then
+  that ends needs no write to stop counting. `until` is the moment the answer stops counting: the latest
+  instant at which one of those valid entries stops counting, by the very rule that makes it valid -- its
+  `endsAt`, or for an entry bound to a subscription the instant described below -- null when one has no end
+  or nobody is entitled. Whether quantities add up is the product's `counted`: then
   `quantity` is the sum over the valid entries on the product itself, null on a product that does not
   count or when nobody is entitled; Core counts no use. An entry whose product does not exist (any more)
   is kept and does not count.
@@ -1786,8 +1788,11 @@ supplier.
   the subscription has not ended (no `endedAt`, status not `canceled`) -- for the Site's grace time after it;
   an ended subscription counts to the paid period's end and no longer. A renewal therefore needs no call, a late
   payment does not switch anything off at once, and a period that stays unpaid ends the entitlement by itself.
-  The entry's `endsAt` in an answer is the end of the latest paid period, without the grace, and `state.until`
-  follows it. `update` refuses to set `endsAt` on a bound entry (`suspended` and `quantity` stay possible).
+  The entry's `endsAt` in an answer is the end of the latest paid period, without the grace; `state.until`
+  is the instant the entry stops counting, so the period's end plus the grace while the subscription runs
+  and the period's end once it has ended. During the grace an answer is therefore `entitled` with an
+  `until` ahead, never one in the past, and what an Add-on derives from it (a signed offline proof) lasts as
+  long as the entitlement does. `update` refuses to set `endsAt` on a bound entry (`suspended` and `quantity` stay possible).
   Revoked, suspended and a locked product act as for any entry. The grace time is a Site setting of Core,
   `phis.sites.entitlement_grace_days`, whole days from 0 to 14, default 14, set with `phis site set
   --entitlement-grace-days`; 0 ends the entitlement with the period. A seller that runs its own

@@ -40,6 +40,8 @@ const PRODUCT = `${SUPPLIER}:plan` as PhisProductId;
 const HOUR = 3_600_000;
 const DAY = 24 * HOUR;
 const at = (offsetMs: number) => new Date(Date.now() + offsetMs).toISOString();
+/** The instant a bound entry stops counting: its shown end plus the grace. */
+const plus = (iso: string, offsetMs: number) => new Date(Date.parse(iso) + offsetMs).toISOString();
 
 /**
  * An entitlement entry that follows a subscription of payments:v1: what it answers is derived from the
@@ -146,19 +148,19 @@ describe.skipIf(!configured)("entitlements bound to a subscription", () => {
     expect(state).toMatchObject({ entitled: false, until: null });
   });
 
-  it("counts until the paid period's end, shows that end, and follows a renewal without a write", async () => {
+  it("counts until the paid period's end and the grace after it, shows the period's end, and follows a renewal without a write", async () => {
     const { id, read, product } = await lone({ periodEnd: at(5 * DAY) });
     const first = await read();
     const end = first.entry.endsAt!;
     expect(first.entry.valid).toBe(true);
-    expect(first.state).toMatchObject({ entitled: true, until: end });
+    expect(first.state).toMatchObject({ entitled: true, until: plus(end, 14 * DAY) });
     expect(Math.abs(Date.parse(end) - (Date.now() + 5 * DAY))).toBeLessThan(2000);
 
     const before = (await pool.query(`SELECT updated_at, ends_at FROM phis.entitlements WHERE site_id = $1 AND product = $2`, [site.id, product])).rows[0];
     await pool.query(`UPDATE phis.payment_subscriptions SET record = jsonb_set(record, '{period,endsAt}', to_jsonb($2::text)) WHERE id = $1`, [id, at(35 * DAY)]);
     const renewed = await read();
     expect(Math.abs(Date.parse(renewed.entry.endsAt!) - (Date.now() + 35 * DAY))).toBeLessThan(2000);
-    expect(renewed.state.until).toBe(renewed.entry.endsAt);
+    expect(renewed.state.until).toBe(plus(renewed.entry.endsAt!, 14 * DAY));
     // Nothing was written to the entry.
     const after = (await pool.query(`SELECT updated_at, ends_at FROM phis.entitlements WHERE site_id = $1 AND product = $2`, [site.id, product])).rows[0];
     expect(after).toEqual(before);
@@ -174,9 +176,9 @@ describe.skipIf(!configured)("entitlements bound to a subscription", () => {
     const recent = await lateBy(13 * DAY);
     expect(recent.entry.valid).toBe(true);
     expect(recent.state.entitled).toBe(true);
-    // The end shown is the period's, without the grace.
+    // The end shown is the period's, without the grace; the answer's until is when it stops counting.
     expect(Date.parse(recent.entry.endsAt!)).toBeLessThan(Date.now());
-    expect(recent.state.until).toBe(recent.entry.endsAt);
+    expect(recent.state.until).toBe(plus(recent.entry.endsAt!, 14 * DAY));
     expect((await lateBy(15 * DAY)).entry.valid).toBe(false);
     for (const status of ["past_due", "unpaid"]) expect((await lateBy(2 * DAY, { status })).entry.valid).toBe(true);
 
@@ -299,7 +301,68 @@ describe.skipIf(!configured)("entitlements bound to a subscription", () => {
     await change(id, { status: "active", periodEnd: period });
     expect((await outbox()).map((row) => row.payload.product)).toEqual([bundle, part]);
     expect(await readEntitlementState(pool, { siteId: site.id, subjectId, product: part }))
-      .toEqual({ product: part, entitled: true, quantity: null, until: new Date(period).toISOString(), via: [bundle] });
+      .toEqual({ product: part, entitled: true, quantity: null, until: plus(period, 14 * DAY), via: [bundle] });
+  });
+
+  it("answers until as the instant the answer stops counting, by the rule valid follows", async () => {
+    // Inside the grace: entitled, until the period's end plus the grace, which lies ahead.
+    const late = await (await lone({ periodEnd: at(-2 * DAY) })).read();
+    expect(late.entry).toMatchObject({ valid: true });
+    expect(late.state.entitled).toBe(true);
+    expect(late.state.until).toBe(plus(late.entry.endsAt!, 14 * DAY));
+    expect(Date.parse(late.state.until!)).toBeGreaterThan(Date.now());
+    // With another grace, that one.
+    await setGrace(3);
+    const short = await (await lone({ periodEnd: at(-2 * DAY) })).read();
+    expect(short.state).toMatchObject({ entitled: true, until: plus(short.entry.endsAt!, 3 * DAY) });
+    // After the grace: nobody is entitled, and there is no until.
+    expect((await (await lone({ periodEnd: at(-4 * DAY) })).read()).state).toMatchObject({ entitled: false, until: null, via: [] });
+    await setGrace(14);
+
+    // An ended subscription has no grace: until is the paid period's end.
+    for (const input of [{ status: "canceled" }, { endedAt: at(-HOUR) }]) {
+      const ended = await (await lone({ ...input, periodEnd: at(3 * DAY) })).read();
+      expect(ended.state, JSON.stringify(input)).toMatchObject({ entitled: true, until: ended.entry.endsAt });
+    }
+
+    // An entry without a subscription answers its written end, as before; the latest instant wins.
+    const { product, read } = await lone({ periodEnd: at(-2 * DAY) });
+    const counts = plus((await read()).entry.endsAt!, 14 * DAY);
+    const later = at(20 * DAY);
+    await grantEntitlement(pool, {
+      siteId: site.id, subjectId, product, source: SHOP, reference: `plain-${seq}`, startsAt: null, endsAt: at(DAY), quantity: null, counted: false, listeners: [],
+    });
+    expect((await read()).state.until).toBe(counts);
+    await grantEntitlement(pool, {
+      siteId: site.id, subjectId, product, source: SHOP, reference: `plain-later-${seq}`, startsAt: null, endsAt: later, quantity: null, counted: false, listeners: [],
+    });
+    expect((await read()).state.until).toBe(later);
+    await grantEntitlement(pool, {
+      siteId: site.id, subjectId, product, source: SHOP, reference: `plain-open-${seq}`, startsAt: null, endsAt: null, quantity: null, counted: false, listeners: [],
+    });
+    expect((await read()).state.until).toBeNull();
+  });
+
+  it("answers a part held through a bundle bound to a subscription inside its grace until the grace ends", async () => {
+    seq += 1;
+    const part = `${SUPPLIER}:gpart-${seq}` as PhisProductId;
+    const bundle = `${SUPPLIER}:gbundle-${seq}` as PhisProductId;
+    for (const [key, parts] of [[`gpart-${seq}`, []], [`gbundle-${seq}`, [part]]] as const) {
+      await registerProduct(pool, { siteId: site.id, supplier: SUPPLIER, listeners: [], draft: normalizePhisProductDraft({ key, type: "plan", title: key, summary: "", parts: [...parts] }) });
+      await setProductState(pool, { siteId: site.id, supplier: SUPPLIER, key, state: "active", listeners: [] });
+    }
+    const period = at(-DAY);
+    const id = await subscription({ status: "past_due", periodEnd: period });
+    await grantEntitlement(pool, {
+      siteId: site.id, subjectId, product: bundle, source: SHOP, reference: `gbundle-${seq}`, startsAt: null, endsAt: null, quantity: null, counted: false, subscriptionId: id, listeners: [],
+    });
+    expect(await readEntitlementState(pool, { siteId: site.id, subjectId, product: part }))
+      .toEqual({ product: part, entitled: true, quantity: null, until: plus(period, 14 * DAY), via: [bundle] });
+    // Past the grace, the part goes with the bundle.
+    await setGrace(0);
+    expect(await readEntitlementState(pool, { siteId: site.id, subjectId, product: part }))
+      .toEqual({ product: part, entitled: false, quantity: null, until: null, via: [] });
+    await setGrace(14);
   });
 
   it("announces an expired bound entry once, and again after a renewal expires", async () => {
