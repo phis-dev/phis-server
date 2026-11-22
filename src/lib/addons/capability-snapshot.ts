@@ -11,7 +11,7 @@ import {
 } from "@/lib/addons/core-capabilities";
 
 export type { PhiCapabilityState } from "@phis/contracts/server-capabilities";
-import type { PhiCapabilityState } from "@phis/contracts/server-capabilities";
+import type { PhiAddonMediaLimits, PhiCapabilityState } from "@phis/contracts/server-capabilities";
 
 type PhisCapabilitySnapshotProvider = {
   providerId: string;
@@ -21,6 +21,7 @@ type PhisCapabilitySnapshotProvider = {
     id: string;
     interfaceDigest: string;
   }>;
+  media?: PhiAddonMediaLimits;
 };
 
 /**
@@ -171,6 +172,12 @@ export function composePhisCapabilitySnapshot(
       state,
       diagnosticCode,
       capabilities: entry.manifest.capabilities,
+      /*
+       * The manifest's Media limits, as the manifest reader admitted them, whatever the state: the Site
+       * learns of an Add-on only here, and a Module that is off reads none of it anyway. Left out when
+       * the manifest states none, so "no limit of the Add-on's own" is one shape and not two.
+       */
+      ...(entry.manifest.media ? { media: entry.manifest.media } : {}),
     });
   }
 

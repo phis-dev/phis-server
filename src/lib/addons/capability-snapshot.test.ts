@@ -113,3 +113,33 @@ describe("what building the snapshot costs", () => {
     expect(mocks.statements).toBe(1);
   });
 });
+
+/**
+ * The Site learns of an Add-on from the snapshot alone, so the Media limits its manifest states travel
+ * in its entry, where the Site UI applies them in the Media fields of the Add-on's Module.
+ */
+describe("an Add-on's Media limits in the snapshot", () => {
+  it("passes the manifest's media on, and states none where the manifest states none", async () => {
+    const limited = installedAddon("@acme/gallery", ["@acme/gallery:v1"]);
+    const media = { maxFileBytes: 10_485_760, kinds: ["image", "pdf"], maxPerField: 12 };
+    mocks.installed = {
+      "@acme/gallery": { ...limited, manifest: { ...limited.manifest, media } },
+      "@acme/plain": installedAddon("@acme/plain", ["@acme/plain:v1"]),
+    };
+    const snapshot = await buildPhisCapabilitySnapshot(1);
+    const byId = Object.fromEntries(snapshot.providers.map((provider) => [provider.providerId, provider]));
+
+    expect(byId["@acme/gallery"]?.media).toEqual(media);
+    expect(byId["@acme/plain"]).not.toHaveProperty("media");
+    expect(byId["@phis/server/core"]).not.toHaveProperty("media");
+  });
+
+  it("passes them on for an Add-on that is off as well, since its Module reads none of it then", async () => {
+    const limited = installedAddon("@acme/gallery", ["@acme/gallery:v1"]);
+    mocks.installed = {
+      "@acme/gallery": { ...limited, enabled: false, manifest: { ...limited.manifest, media: { maxPerField: 3 } } },
+    };
+    const snapshot = await buildPhisCapabilitySnapshot(1);
+    expect(snapshot.providers[1]).toMatchObject({ state: "disabled", media: { maxPerField: 3 } });
+  });
+});

@@ -292,6 +292,41 @@ export async function setAdminUserEnabled(userId: number, siteId: number, enable
  * answer says so, so the interface can, instead of presenting both outcomes as the same choice.
  * Membership is read the same way the effective claims are, so an expired row does not count.
  */
+/**
+ * One page of the Site's members, for a picker that names a person by user id (`GET /api/site/members`):
+ * matched on the name or any of the person's e-mail addresses, ordered by name and id, and answered with
+ * the id and the name only. The name is the one a person is shown under (`userDisplayNameSql`) and, where
+ * they have none, `#<id>` -- never an address, which the staff this answers do not see in user
+ * administration either. Every membership counts, a disabled one too: it is the membership a grant on the
+ * person's behalf asks for (`ensureMemberEntitlementSubject`).
+ */
+export async function searchSiteMembers(input: {
+  siteId: number;
+  query: string;
+  page: number;
+  pageSize: number;
+}) {
+  const query = input.query.trim();
+  const pattern = `%${query.replace(/[%_\\]/gu, (match) => `\\${match}`)}%`;
+  const { rows } = await getPool().query<{ id: number; display_name: string | null }>(
+    `SELECT ua.id, ${userDisplayNameSql("up")} AS display_name
+     FROM phis.user_site_memberships usm
+     JOIN phis.user_accounts ua ON ua.id = usm.user_id
+     LEFT JOIN phis.user_profiles up ON up.user_id = ua.id
+     WHERE usm.site_id = $1
+       AND ($2 = ''
+         OR COALESCE(${userDisplayNameSql("up")}, '') ILIKE $3 ESCAPE '\\'
+         OR EXISTS (
+           SELECT 1 FROM phis.user_emails email
+           WHERE email.user_id = ua.id AND email.email_normalized ILIKE $3 ESCAPE '\\'
+         ))
+     ORDER BY LOWER(COALESCE(${userDisplayNameSql("up")}, '')), ua.id
+     LIMIT $4 OFFSET $5`,
+    [input.siteId, query, pattern, input.pageSize, (input.page - 1) * input.pageSize],
+  );
+  return rows.map((row) => ({ userId: row.id, displayName: row.display_name ?? `#${row.id}` }));
+}
+
 export async function searchSiteGroupMemberCandidates(input: {
   siteId: number;
   query: string;

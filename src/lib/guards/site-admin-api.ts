@@ -9,6 +9,7 @@ import { PhiBaseRole } from "@/lib/constants/phi-base-roles";
 import {
   canPhiViewerAccess,
   PHI_ACCESS_ACCOUNTING,
+  PHI_ACCESS_ACCOUNTING_OR_SUPPORT,
   PHI_ACCESS_CONTENT_EDITING,
   PHI_ACCESS_SITE_MAINTENANCE,
   PHI_ACCESS_PUBLISHING,
@@ -184,6 +185,18 @@ export async function requireSiteAccountingApiContext(request: NextRequest): Pro
   return requireSiteRoleApiContext(request, {
     policy: PHI_ACCESS_ACCOUNTING,
     missingRoleMessage: "Site accountant, maintainer, or admin role required.",
+  });
+}
+
+/**
+ * Staff who act on a member's behalf: whoever holds the Site access `accounting` or `support` (Admin,
+ * Maintainer, Accountant, Supporter) -- the two accesses `entitlements:v1` `subjectForUser` asks, so the
+ * people a picker offers are offered to exactly those who may then name them in a grant.
+ */
+export async function requireSiteAccountingOrSupportApiContext(request: NextRequest): Promise<SiteAdminApiGuard> {
+  return requireSiteRoleApiContext(request, {
+    policy: PHI_ACCESS_ACCOUNTING_OR_SUPPORT,
+    missingRoleMessage: "Site accountant, supporter, maintainer, or admin role required.",
   });
 }
 

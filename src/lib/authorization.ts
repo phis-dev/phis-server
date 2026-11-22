@@ -91,3 +91,15 @@ export const PHI_ACCESS_ACCOUNTING = {
   providerId: PHI_CORE_ROLE_PROVIDER_ID,
   allowedRoleFlags: PhiBaseRole.Maintainer | PhiBaseRole.Accountant,
 } as const satisfies PhiViewerAccessPolicy;
+
+/**
+ * Staff who act on a member's behalf: whoever holds `support` or `accounting` above (Maintainer,
+ * Supporter, Accountant, and Admin through the evaluator) -- the two Site accesses `entitlements:v1`
+ * `subjectForUser` asks before it names a member to an Add-on. Not a Site access of its own: no Add-on
+ * names it, and the Site member picker (`GET /api/site/members`) is what it guards.
+ */
+export const PHI_ACCESS_ACCOUNTING_OR_SUPPORT = {
+  access: "roles",
+  providerId: PHI_CORE_ROLE_PROVIDER_ID,
+  allowedRoleFlags: PHI_ACCESS_ACCOUNTING.allowedRoleFlags | PHI_ACCESS_SUPPORT.allowedRoleFlags,
+} as const satisfies PhiViewerAccessPolicy;

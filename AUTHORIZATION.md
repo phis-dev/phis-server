@@ -163,6 +163,7 @@ Publishing           = Maintainer | Publisher
 Site Media           = Maintainer | Builder | Author | Publisher
 Support              = Maintainer | Supporter
 Accounting           = Maintainer | Accountant
+Accounting or support = Maintainer | Accountant | Supporter
 ```
 
 Core Admin is omitted from the masks because the evaluator grants the Site-admin override centrally.
@@ -172,7 +173,11 @@ is live the moment it is written. Reading a Page list of an Area (`GET /api/site
 everybody who writes for the Site -- `Maintainer | Builder | Author | Publisher` -- because a link is picked
 from it; changing a Page's path stays Structure authoring. The Site's product directory -- listing it,
 releasing a publisher's terms, locking and unlocking (`/api/site/products`) -- is Accounting: the
-operator's books, which no shop owns.
+operator's books, which no shop owns. Finding a member to act for -- the Site member picker,
+`GET /api/site/members`, which answers a member's user id and name and never an address -- is Accounting
+or support (`PHI_ACCESS_ACCOUNTING_OR_SUPPORT`): the staff `entitlements:v1` `subjectForUser` names a
+member to, so whoever may grant on a member's behalf can find them, without the Site's user list, which
+stays the Site Admin's. It is not a Site access an Add-on names.
 These are also the Site accesses an Add-on names in `grantableBy`, `impliedBy` or `hasSiteAccess`:
 `site-admin`, `site-maintenance`, `structure-authoring`, `content-editing`, `publishing`, `site-media`,
 `support`, `accounting` (`site-admin` not in `impliedBy`, section 5).

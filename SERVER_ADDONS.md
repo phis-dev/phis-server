@@ -341,10 +341,14 @@ duplicates.
 The Site UI applies it in the Media fields of the Add-on's Module (`media-asset`, `media-assets`): a field's
 own `max` may be lower, never higher, and a file too large or of another kind is refused before it is sent.
 The Add-on enforces it again where it stores a value, since a Form is not the only way in. **Core does not
-check an upload against it:** an upload goes into the Media library, addressed to no Add-on. Core does not
-yet hand the limits to the Site: the capability snapshot (`/api/v1/site/capabilities`), where the Site
-learns of an Add-on, is `PhiCapabilitySnapshot` of `@phis/contracts/server-capabilities` and has no field
-for them ([TODOS.md](./TODOS.md#at-the-next-release)).
+check an upload against it:** an upload goes into the Media library, addressed to no Add-on.
+
+The limits reach the Site through the capability snapshot (`/api/v1/site/capabilities`), where the Site
+learns of an Add-on at all: the Add-on's provider entry (`PhiCapabilityProvider` of
+`@phis/contracts/server-capabilities`) carries `media`, the manifest's object as it was admitted
+(`composePhisCapabilitySnapshot` in `src/lib/addons/capability-snapshot.ts`). It is there whatever the
+provider's state, since a Module whose provider is not `available` reads none of it, and it is absent
+where the manifest states none, and for Core.
 
 ### Adding to the manifest
 
@@ -1848,7 +1852,11 @@ by hand is the case that asked for it. It is allowed only while the acting user 
 one read of their authorization snapshot that `authorization:v1` and `roles:v1` share; it throws for anybody
 else, with nobody acting, and for a `userId` that is not a positive whole number. A user who is not a member
 of the Site answers `null` and is issued nothing. The Add-on keeps the subject and never the user id, which
-it holds only for the call; writing for the subject is `grant`'s question, as for any subject. `list({ product, resolveBundles: true })` also lists the subject's entries on
+it holds only for the call; writing for the subject is `grant`'s question, as for any subject. The user id
+comes from the Site member picker, `GET /api/site/members` (`{ items: [{ userId, displayName }] }`, searched
+by name or address, a page at a time), which is open to the same staff, so whoever may name a member here
+can find them there; the Site UI offers it to any Form's select as Core's options Provider
+`PHI_CORE_RUNTIME_DATA_PROVIDER_KEYS.siteMembers`. `list({ product, resolveBundles: true })` also lists the subject's entries on
 every bundle that contains the product, directly or through nested bundles and whatever the bundle's
 state, each entry as it is (its `product` is the bundle's id, its `valid` its own); absent or false lists
 the product's own entries only, and without `product` it changes nothing. `resolveBundles` is a boolean or
@@ -2243,7 +2251,8 @@ serves an operator and a `market-admin` alike. `AUTHORIZATION.md` section 5 has 
 An Add-on's own surface renders the screen and calls these routes; it never decides the answer, so
 somebody who reaches the screen without the standing is refused here rather than there. Finding the
 person to grant to is not part of the role routes: `GET /api/site/groups/candidates` searches a Site's
-people by name or address, but only for a caller who manages some group.
+people by name or address, but only for a caller who manages some group, and `GET /api/site/members` for
+the holders of the Site access `accounting` or `support` (AUTHORIZATION.md section 4).
 
 On the command line, `phis addon role --site <key>` lists what each installed Add-on declares
 (`--addon` narrows it), `--user <id>` shows what one person holds across Add-ons, and

@@ -8,13 +8,13 @@ public or internal token, and `session` is the visitor's Site session with the a
 passes (see [AUTHORIZATION.md](../AUTHORIZATION.md)). A route with no access entry performs its own checks
 or none; read its source. Request and response shapes are not listed; the source is linked per route.
 
-180 routes.
+181 routes.
 
 ## Contents
 
 - [`/api/operator`](#apioperator) (5)
 - [`/api/setup`](#apisetup) (2)
-- [`/api/site`](#apisite) (95)
+- [`/api/site`](#apisite) (96)
 - [`/api/v1/addons`](#apiv1addons) (3)
 - [`/api/v1/admin`](#apiv1admin) (1)
 - [`/api/v1/auth`](#apiv1auth) (29)
@@ -166,6 +166,7 @@ Site administration, CMS, media and support API. A Site's `/api/site` proxy forw
 | POST | [`/api/site/media/uploads/{token}/heartbeat`](../src/app/api/site/media/uploads/[token]/heartbeat/route.ts) | session (requireMediaSpaceWriteContext) |  |
 | POST | [`/api/site/media/uploads/{token}/report`](../src/app/api/site/media/uploads/[token]/report/route.ts) | Site session, checked in the handler; session (requireMediaSpaceWriteContext) |  |
 | POST | [`/api/site/media/uploads/init`](../src/app/api/site/media/uploads/init/route.ts) | session (requireMediaSpaceWriteContext) |  |
+| GET | [`/api/site/members`](../src/app/api/site/members/route.ts) | session, `accounting-or-support` (requireSiteAccountingOrSupportApiContext) | The Site's members, for a picker that names a person by user id (a licence granted on somebody's behalf): `q` matched on the name and the e-mail addresses, `page` and `pageSize` (at most 50). Answers `{ items }`, each `{ userId, displayName }`, ordered by name -- the name the person is shown under, or `#<id>` without one, never the address that may have been searched by. For the staff who act on a member's behalf, the holders of the Site access `accounting` or `support`, which Core asks before it names a member to an Add-on (`subjectForUser`); the Site's user list is the Site Admin's and the group candidates are a group Manager's. |
 | GET | [`/api/site/products`](../src/app/api/site/products/route.ts) | session, `accounting` (requireSiteAccountingApiContext) | The Site's product directory, a page at a time: `supplier` (an Add-on id), `state` (a comma-separated list of draft, active, withdrawn, locked; absent: every state), `pendingTerms` (true: only products waiting for the operator's release, false: only those that are not), `q` (a part of the title or the id), `page` and `pageSize`. Answers `{ rows, total, page, pageSize }`, each row the product's id, supplier, publisher, title, summary, type, state, sale, referralUrl, free, accountRequired, counted, parts, released, pendingTerms, imagePath, iconPath, imageListPath, iconListPath and version. imageListPath and iconListPath are the picture's and the icon's `icon` variant (64 x 64, fitted whole on a transparent ground) for a list that shows them small, with the delivery revision and the variant version, null without one or for an Asset that is no image. |
 | POST | [`/api/site/products/{id}/lock`](../src/app/api/site/products/[id]/lock/route.ts) | session, `accounting` (requireSiteAccountingApiContext) | Locks a product, the Site operator's alone: no entry for it counts while it is locked, as `phis product lock` does. Answers `{ outcome, product }`, `product` in the shape of a `GET /api/site/products` row, outcome `locked` or `unchanged`. The id is one path segment, percent-encoded (`@`, `/` and `:` are in every id). |
 | POST | [`/api/site/products/{id}/release`](../src/app/api/site/products/[id]/release/route.ts) | session, `accounting` (requireSiteAccountingApiContext) | Releases a publisher's product, the first time or its pending terms, as `phis product release` does. The body is empty or `{ expectedVersion }`, the version whose terms the operator read. Answers `{ outcome, product }`, `product` in the shape of a `GET /api/site/products` row, outcome `released`, `applied` or `unchanged`; `409` for the Site's own product, which needs no release, and for a product whose version is no longer `expectedVersion`. The id is one path segment, percent-encoded (`@`, `/` and `:` are in every id). |
