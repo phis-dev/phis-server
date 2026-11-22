@@ -1,3 +1,24 @@
+phis (0.5.5-1) unstable; urgency=medium
+
+  * The Core Site role Developer is Maintainer: PhiBaseRole.Maintainer (the
+    same bit), role key maintainer on the wire, and the Site access it alone
+    holds is site-maintenance (was developer-tools). No stored value changes.
+  * entitlements:v1 check answers until as the moment the answer stops
+    counting: for an entry bound to a running subscription the paid period's
+    end plus the Site's grace, so a holder inside the grace gets an until
+    ahead, not behind.
+  * User administration sees the Add-on roles a Site access implies:
+    /api/site/addon-roles carries impliedBy in its catalog and implied per
+    person; /api/site/admin/users rows carry impliedAddonRoles. Nothing
+    implied is ever stored.
+  * A declared select may offer several orderings and the caller picks one
+    (orderings, defaultOrder), with cursor paging per ordering.
+  * An image Asset has the icon variant (64 x 64, fitted on a transparent
+    ground).
+  * No schema change. Needs @phis/contracts 0.8.8.
+
+ -- Marius Schumacher <marius.schumacher@phisys.com>  Sun, 22 Nov 2026 16:49:17 +0000
+
 phis (0.5.4-1) unstable; urgency=medium
 
   * Every Add-on context names the Site's time zone: site.timeZone on a
