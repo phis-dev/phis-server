@@ -1,3 +1,30 @@
+phis (0.5.3-1) unstable; urgency=medium
+
+  * A product carries an icon beside its picture: products:v1 iconAssetId
+    and iconPath, held to the picture's rules (ready, public, in the Site
+    Space or the supplier's own Add-on Space; a manifest names none). The
+    Media library refuses to delete an Asset a product uses as its icon.
+  * GET /api/site/media takes id repeated (?id=1&id=2, at most 100) and
+    answers those Assets from one query; an id that is not a positive
+    integer is refused with 400 instead of being dropped.
+  * Payment profiles record their reach per currency (profileReach, the
+    one Payment operation a hook may call; refreshProfileReach); a checkout
+    can be given an end (expiresAt); Add-on updates add to a column and
+    carry a condition, a delete with a where is refused; a CLI flag given
+    twice is refused. phis payment profile probe|enable needs --currency.
+  * A declared Add-on query can run under the Add-on's own authority
+    (authority "addon"), listed as a bypass by addon check, install and
+    upgrade; an aggregate may group by a nullable column its where keeps
+    the nulls out of.
+  * Schema change, by hand on an existing database before this starts:
+      ALTER TABLE phis.products ADD COLUMN IF NOT EXISTS icon_asset_id INT NULL;
+      ALTER TABLE phis.products ADD CONSTRAINT products_icon_asset_site_fk
+        FOREIGN KEY (icon_asset_id, site_id) REFERENCES phis.media_assets (id, site_id)
+        ON DELETE SET NULL (icon_asset_id);
+  * Needs @phis/contracts 0.8.4.
+
+ -- Marius Schumacher <marius.schumacher@phisys.com>  Sun, 22 Nov 2026 10:17:11 +0000
+
 phis (0.5.2-1) unstable; urgency=medium
 
   * @phis/server/media:v1 answers what a media tile draws: name (the
