@@ -7,6 +7,7 @@ import {
   type PhisAddonQueryCondition,
   type PhisAddonQueryDescriptor,
   type PhisAddonQueryOrdering,
+  type PhisAddonQueryOrderingChoice,
   type PhisAddonQueryParameterType,
   type PhisAddonQueryValue,
   type PhisAddonSchemaDescriptor,
@@ -58,7 +59,20 @@ export type PhisAddonCompiledQuery = {
     ordering: PhisAddonQueryOrdering[];
     /** The Add-on's own ceiling, already capped at the hard maximum. */
     limit: number;
+    /**
+     * Every order of a select that declares `orderings`, by its key and both ways round, compiled like
+     * the default one above -- which is among them, too. Absent where the select declares none, and a
+     * call that names an order is then refused.
+     */
+    orderings?: ReadonlyMap<string, Readonly<Record<PhisAddonQueryOrderingChoice["direction"], PhisAddonCompiledOrdering>>>;
   };
+};
+
+/** One order a select can be read in: its first page's statement, the one that continues it, and what both are ordered by. */
+export type PhisAddonCompiledOrdering = {
+  ordering: PhisAddonQueryOrdering[];
+  first: { sql: string; bindings: PhisAddonQueryBinding[] };
+  next: { sql: string; bindings: PhisAddonQueryBinding[] };
 };
 
 export type PhisAddonQueryBinding =
@@ -229,19 +243,25 @@ function conditionSql(
  * `updated_at` may come back either way round, and the page boundary then falls between them
  * differently each time -- one row on two pages, another on none. The primary key is declared, so Core
  * can always finish the job, and no author has to know that they had to.
+ *
+ * `desc` turns the whole of it around, the primary key included: one of a select's `orderings` read the
+ * other way is that order exactly reversed, and still total.
  */
 export function phisAddonQueryOrdering(
   table: PhisAddonTableDescriptor,
-  descriptor: PhisAddonSelectQueryDescriptor,
+  declared: readonly PhisAddonQueryOrdering[] = [],
+  direction: PhisAddonQueryOrderingChoice["direction"] = "asc",
 ): PhisAddonQueryOrdering[] {
-  const declared = descriptor.orderBy ?? [];
   const named = new Set(declared.map((entry) => entry.column));
-  return [
+  const total = [
     ...declared,
     ...table.primaryKey
       .filter((column) => !named.has(column))
       .map((column) => ({ column, direction: "asc" as const })),
   ];
+  return direction === "asc"
+    ? total.map((entry) => ({ column: entry.column, direction: entry.direction }))
+    : total.map((entry) => ({ column: entry.column, direction: entry.direction === "asc" ? "desc" as const : "asc" as const }));
 }
 
 /**
@@ -340,11 +360,11 @@ function compileSelect(
   schemaName: string,
   table: PhisAddonTableDescriptor,
   descriptor: PhisAddonSelectQueryDescriptor,
+  ordering: PhisAddonQueryOrdering[],
   continuation: boolean,
   parameterTypes: Map<string, PhisAddonQueryParameterType>,
 ): PhisAddonCompiledQuery {
   const compiler = createCompiler(parameterTypes);
-  const ordering = phisAddonQueryOrdering(table, descriptor);
   /*
    * The ordering values come back as text, in columns of their own, and the cursor is built from those
    * rather than from the row.
@@ -612,15 +632,51 @@ export function compilePhisAddonQueries(
       ),
     );
     if (descriptor.kind === "select") {
-      const first = compileSelect(schemaName, table, descriptor, false, parameterTypes);
-      const next = compileSelect(schemaName, table, descriptor, true, parameterTypes);
+      const inOrder = (ordering: PhisAddonQueryOrdering[]): PhisAddonCompiledOrdering => {
+        const first = compileSelect(schemaName, table, descriptor, ordering, false, parameterTypes);
+        const next = compileSelect(schemaName, table, descriptor, ordering, true, parameterTypes);
+        return {
+          ordering,
+          first: { sql: first.sql, bindings: first.bindings },
+          next: { sql: next.sql, bindings: next.bindings },
+        };
+      };
+      let byDefault: PhisAddonCompiledOrdering;
+      let orderings: Map<string, Record<PhisAddonQueryOrderingChoice["direction"], PhisAddonCompiledOrdering>> | undefined;
+      if (descriptor.orderings) {
+        /*
+         * Every declared order both ways round, compiled now rather than when a call names one: the
+         * statements an Add-on can run stay a function of its manifest, and a call only picks one of them.
+         */
+        orderings = new Map(Object.entries(descriptor.orderings).map(([key, declared]) => [key, {
+          asc: inOrder(phisAddonQueryOrdering(table, declared, "asc")),
+          desc: inOrder(phisAddonQueryOrdering(table, declared, "desc")),
+        }]));
+        const choice = descriptor.defaultOrdering;
+        const chosen = choice && (choice.direction === "asc" || choice.direction === "desc")
+          ? orderings.get(choice.key)?.[choice.direction]
+          : undefined;
+        if (!chosen) {
+          // Validation has refused a select whose default names none of its orderings.
+          continue;
+        }
+        byDefault = chosen;
+      } else {
+        byDefault = inOrder(phisAddonQueryOrdering(table, descriptor.orderBy));
+      }
       compiled.set(descriptor.name, {
-        ...first,
+        name: descriptor.name,
+        kind: "select",
+        table: table.name,
+        scoped: table.ownerScoped === true || table.groupScoped === true,
+        sql: byDefault.first.sql,
+        bindings: byDefault.first.bindings,
         paging: {
-          sql: next.sql,
-          bindings: next.bindings,
-          ordering: phisAddonQueryOrdering(table, descriptor),
+          sql: byDefault.next.sql,
+          bindings: byDefault.next.bindings,
+          ordering: byDefault.ordering,
           limit: Math.min(descriptor.limit, PHIS_ADDON_QUERY_MAX_LIMIT),
+          ...(orderings ? { orderings } : {}),
         },
       });
     } else if (descriptor.kind === "aggregate") {

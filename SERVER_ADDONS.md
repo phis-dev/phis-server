@@ -1187,13 +1187,16 @@ Running the queries the manifest declared. Five operations and a unit of work, a
 query rather than describing one:
 
 ```text
-select(name, args)     -> a page of rows
-aggregate(name, args)  -> a page of counts and summaries
-insert(name, args)     -> the inserted row, scope columns included
-update(name, args)     -> the row as it now stands, or null
-delete(name, args)     -> the removed row, or null
-transaction(body)      -> whatever the body returns
+select(name, args, page?)     -> a page of rows
+aggregate(name, args, page?)  -> a page of counts and summaries
+insert(name, args)            -> the inserted row, scope columns included
+update(name, args)            -> the row as it now stands, or null
+delete(name, args)            -> the removed row, or null
+transaction(body)             -> whatever the body returns
 ```
+
+`page` is `{ limit?, cursor?, ordering? }`: a wish for the page size, the previous page's cursor, and --
+on a select that declares `orderings` -- which of them to read in (Declared queries, below).
 
 There is no method taking SQL, a table, or a condition. An Add-on that could pass one of those at
 request time would be holding a database handle with extra steps, which is what section 15 rules out.
@@ -2551,6 +2554,25 @@ The declaration form carries what a real query needs and refuses what does not s
   comparison against null ends the paging early and silently. The cursor carries a signature of the
   ordering it was made for; a query with a different one refuses it rather than paging on a foreign
   order.
+- a select may declare `orderings` in place of `orderBy`: the orders a caller may choose between, each
+  under a key of the Add-on's own and written as `orderBy` is, with `defaultOrdering` (`{ key, direction }`)
+  naming the one a call that chooses none is read in. A call names its order beside the page,
+  `select(name, args, { ordering: { key, direction }, cursor, limit })`: `asc` reads the ordering as
+  declared, `desc` turns every entry of it around, the primary key Core completes it with included, so the
+  rows come back in exactly the declared order reversed and the order stays total. A list a person sorts
+  by its columns is then one query rather than one per column and direction, each repeating the filters
+  and the limit.
+
+  Nothing is chosen at request time beyond which statement runs: every declared order is compiled both
+  ways round when the catalogue is, and an operator can read each of them from the manifest. Each order is
+  held to `orderBy`'s rules -- at least one column, every column `NOT NULL` -- and validation refuses
+  `orderBy` beside `orderings` (the default would be named twice), a `defaultOrdering` that names none of
+  them, and either on anything but a select. A call naming a key the query does not declare, a direction
+  other than `asc` or `desc`, or an order on a query that declares no `orderings` -- an aggregate among
+  them, which its grouping orders -- is refused before a statement runs. The cursor is the chosen order's:
+  read in one order, it is refused by a call naming another, as a cursor of another query is. Core asks
+  for no index behind an order, as it asks for none behind `orderBy`; an order over many rows that no
+  index serves sorts them for every page.
 - text is searched with `contains`, which takes a column and a value and is the only search the
   vocabulary offers. It is an operator rather than a pattern: Core writes the statement and escapes the
   value, so a `%` in a search term is a character to look for rather than a wildcard that quietly

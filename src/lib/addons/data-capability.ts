@@ -14,6 +14,7 @@ import type {
 import {
   compilePhisAddonQueries,
   cursorColumnName,
+  type PhisAddonCompiledOrdering,
   type PhisAddonCompiledQuery,
 } from "./query-sql.ts";
 import {
@@ -232,6 +233,50 @@ function requireQuery(bound: Bound, name: string, kind: PhisAddonCompiledQuery["
 }
 
 /**
+ * The order a select is read in: the one the call names out of the query's `orderings`, or the query's
+ * own where it names none.
+ *
+ * Asked before anything runs, and refused loudly rather than read in some other order: a page in an
+ * order the caller did not ask for looks like an answer and is not one, and a key the query does not
+ * declare is a mistake in the Add-on, not a wish to narrow. The cursor is decoded against what this
+ * answers, which is what turns away a cursor read in another of the orders.
+ */
+function chooseOrdering(
+  query: PhisAddonCompiledQuery,
+  name: string,
+  requested: PhisAddonQueryPageRequest["ordering"],
+): PhisAddonCompiledOrdering | null {
+  if (requested === undefined) {
+    return query.paging
+      ? {
+        ordering: query.paging.ordering,
+        first: { sql: query.sql, bindings: query.bindings },
+        next: { sql: query.paging.sql, bindings: query.paging.bindings },
+      }
+      : null;
+  }
+  const declared = query.paging?.orderings;
+  if (!declared) {
+    throw new PhisAddonQueryError(
+      `Query "${name}" declares no orderings, so a call cannot choose one.`,
+    );
+  }
+  if (typeof requested !== "object" || requested === null || typeof requested.key !== "string") {
+    throw new PhisAddonQueryError(`Query "${name}" was asked for an ordering without a key.`);
+  }
+  if (requested.direction !== "asc" && requested.direction !== "desc") {
+    throw new PhisAddonQueryError(
+      `Query "${name}" was asked for ordering "${requested.key}" in a direction that is neither "asc" nor "desc".`,
+    );
+  }
+  const chosen = declared.get(requested.key);
+  if (!chosen) {
+    throw new PhisAddonQueryError(`Query "${name}" declares no ordering "${requested.key}".`);
+  }
+  return chosen[requested.direction];
+}
+
+/**
  * How large a page actually is: the smallest of what was asked, what the Add-on allows, and the ceiling.
  *
  * A request that asks for nothing gets the Add-on's own limit, which is what an unpaged call used to
@@ -255,6 +300,7 @@ async function run(
 ) {
   const query = requireQuery(bound, name, kind);
   const parameters = descriptorParametersFor(bound.manifest, name);
+  const ordered = chooseOrdering(query, name, request.ordering);
 
   for (const list of parameters.lists ?? []) {
     requireList(args, list, name);
@@ -352,7 +398,7 @@ async function run(
     }
   }
 
-  if (!query.paging) {
+  if (!query.paging || !ordered) {
     // db-boundary-exempt: the Add-on brought this SQL and owns the tables it names.
     const result = await db.query(
       query.sql,
@@ -373,9 +419,10 @@ async function run(
    */
   const { paging } = query;
   const keys = request.cursor
-    ? decodePhisAddonCursor(name, paging.ordering, request.cursor)
+    ? decodePhisAddonCursor(name, ordered.ordering, request.cursor)
     : [];
   const size = pageSize(request.limit, paging.limit);
+  const statement = keys.length > 0 ? ordered.next : ordered.first;
   /*
    * Called with text and values, never with a `name`, and that is load-bearing rather than a style.
    *
@@ -390,15 +437,8 @@ async function run(
    */
   // db-boundary-exempt: the Add-on brought this SQL and owns the tables it names.
   const result = await db.query(
-    keys.length > 0 ? paging.sql : query.sql,
-    resolveBindings(
-      query,
-      keys.length > 0 ? paging.bindings : query.bindings,
-      bound,
-      args,
-      parameters,
-      { size, keys },
-    ),
+    statement.sql,
+    resolveBindings(query, statement.bindings, bound, args, parameters, { size, keys }),
   );
 
   // The extra row is read and then dropped: it was never part of the answer, only of the question
@@ -409,8 +449,8 @@ async function run(
   const cursor = more && last
     ? encodePhisAddonCursor(
       name,
-      paging.ordering,
-      paging.ordering.map((_, index) => last[cursorColumnName(index)]),
+      ordered.ordering,
+      ordered.ordering.map((_, index) => last[cursorColumnName(index)]),
     )
     : null;
   /*
@@ -420,7 +460,7 @@ async function run(
    */
   const rows = raw.map((row) => {
     const projected: Record<string, unknown> = { ...row };
-    for (let index = 0; index < paging.ordering.length; index += 1) {
+    for (let index = 0; index < ordered.ordering.length; index += 1) {
       delete projected[cursorColumnName(index)];
     }
     return projected as PhisAddonQueryRow;

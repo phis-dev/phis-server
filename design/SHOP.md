@@ -100,19 +100,28 @@ The Site's `/api/addons` proxy forwards the session cookie and attaches the inte
 
 All tables are `siteScoped`. None is `groupScoped`: nothing in a small shop is shared at different
 depths, and a group would admit a customer to everybody's rows. `orders` is `ownerScoped` for the one
-reason above. There are no joins in the query vocabulary, so every row carries what a page about it needs.
+reason above, and `order_lines` with it. There are no joins in the query vocabulary, so every row carries what a
+page about it needs.
 
 | Table | Scope | Holds |
 | --- | --- | --- |
 | `products` | site | `slug` (unique in the Site), `title`, `description`, `status` (`draft`, `published`, `retired`), `tax_category` (the closed vocabulary of PAYMENTS.md section 12), `prices` (JSON: minor units per currency), `stock` (integer, nullable: null means untracked), `sort_order`; asset slots `image` (`many`, public delivery) |
 | `destinations` | site | a shipping zone and its pricing policy: `countries` (JSON list of ISO codes, `*` for the rest of the world), `currency`, `profile_key` (the merchant profile that serves this zone), `basis`, `tax` (the policy pair of section 5), `shipping_minor`, `free_shipping_from_minor` (nullable), `import_charges_by_carrier` (boolean), `enabled` |
 | `promotions` | site | `code` (unique in the Site), `label`, `kind` (`percent` or `fixed`), `value`, `currency` (for `fixed`), `valid_from`, `valid_until`, `max_uses`, `uses`, `enabled` |
-| `orders` | site, owner | `number` (the customer-facing order number, unique in the Site), `status`, `fulfilment`, `currency`, `destination_id`, `country`, `address` (JSON), `email`, `lines` (JSON: the agreed lines with reference, title, quantity, unit price, tax category), `shipping_minor`, `discounts` (JSON: the stated discounts with their promotion codes), `base_minor`, `totals` (JSON, the payment's `totals` verbatim once bound, else null), `seller_of_record` (`merchant` or `provider`), `import_charges_by_carrier`, `access_token_hash`, `attention` (nullable text: why a person must look), `placed_at`, `paid_at`, `fulfilled_at`, `canceled_at` |
+| `orders` | site, owner | `number` (the customer-facing order number, unique in the Site), `status`, `fulfilment`, `currency`, `destination_id`, `country`, `address` (JSON), `email`, `shipping_minor`, `discounts` (JSON: the stated discounts with their promotion codes), `base_minor`, `totals` (JSON, the payment's `totals` verbatim once bound, else null), `seller_of_record` (`merchant` or `provider`), `import_charges_by_carrier`, `access_token_hash`, `attention` (nullable text: why a person must look), `flags` (bits of what was done once and of what the order holds: `PromotionsCounted`, `PaidAfterClosingNoted`, `EntitlementsGranted`, `StockHeld`), `placed_at`, `hold_until` (nullable: the end of the hold, the payment's `expiresAt`, written when it is placed holding units), `paid_at`, `fulfilled_at`, `canceled_at` |
+| `order_lines` | site, owner | one row per agreed line, written with its order in one transaction: `order_id` (cascade), `position`, `listing_id` (nullable, `setNull`: a deleted listing leaves the line), `product_id` (the Core product the entitlement names), `reference` (the listing's address when bought), `title`, `kind`, `tax_category`, `quantity`, `unit_minor`, `line_minor` (before the order's discounts), `currency`, `refunded_quantity` (default 0), `held_quantity` (default 0, at most `quantity`: the units taken for the line when the order was placed, 0 again once released or paid), `placed_at`, `paid_at`, `paid_on` (`YYYY-MM-DD` in the Site's time zone; declared, not written until Core hands an Add-on the zone) |
 | `payment_attempts` | site | `order_id` (reference to `orders`, cascade), `payment_id`, `attempt` (the idempotency suffix), `status` (the payment status last seen), `created_at` |
 | `refunds` | site | `order_id`, `refund_id`, `minor`, `reason`, `status`, `requested_by` (a `core.user` reference, `setNull`) |
 
-What is deliberately not here: a cart table (section 3), an order-lines table (an order is one record
-of agreed facts, and nothing reads lines without their order), customer records (a customer is a Site
+The lines were a JSON list on the order until 2026-11-22: nothing read them without their order, but Core can
+neither filter nor sum over a document, so "how often was this sold" could not be asked. They are rows of their
+own now, with no copy on the order; `order_lines_sold_by_listing` counts the paid units less those given back per
+listing, grouped by the nullable `listing_id` with its nulls left out. A subscription sells periods instead: it
+names the listing it was bought from (`subscriptions.listing_id`), each billing document of a paid period copies it
+(`subscription_documents.listing_id`, with `paid_on` declared beside it and not written either), and
+`documents_sold_by_listing` counts the paid periods per listing -- gross, a document knowing no refund.
+
+What is deliberately not here: a cart table (section 3), customer records (a customer is a Site
 user or an address on an order), tax rates (the Provider computes them; the Shop keeps the result), and
 anything that looks like a ledger.
 
@@ -124,8 +133,10 @@ Constraints go into the first version of the descriptor: `status`, `fulfilment`,
 - Public reads (`products.published`, `products.bySlug`, `destinations.forCountry`) have no role and run
   on the hook. `products.bySlug` is also what the Module's record Provider calls on the server, so a
   product page can answer its title and its 404 before anything is drawn.
-- Guest and customer inserts (`orders.place`, `payment_attempts.record`) have no role. Guest reads
-  (`orders.byToken`) compare the hash; customer reads (`orders.mine`) are bounded to the actor.
+- Guest and customer inserts (`orders.place`, `order_lines.place`, `payment_attempts.record`) have no role.
+  Guest reads (`orders.byToken`) compare the hash; customer reads (`orders.mine`, and the lines of a page of
+  them) are bounded to the actor. One order's lines are read by its id once the token, the owner or a role
+  opened the order; every order's lines, and the count of what was sold, are a clerk's.
 - Every `update` on `orders`, `products`, `destinations` and `promotions` declares `requiresRole`. These
   tables carry no owner or group authority except `orders`, so the role is the whole of the authority,
   which the manifest validation already demands of such tables. On `orders` the role sits in
@@ -133,6 +144,9 @@ Constraints go into the first version of the descriptor: `status`, `fulfilment`,
   though no customer-facing route offers an update, so in practice the role is what is used.
 - The `payment.changed` handler runs the same role-guarded updates with system authority, which answers
   `hasRole` with yes. That is the mechanism by which a payment can change an order and a guest cannot.
+- What a guest or a customer sets off and only the Add-on may write -- the units and the code's use an order
+  holds, and their release -- are guarded updates under the Add-on's own authority (`authority: "addon"`), each
+  doing its one thing once; `phis addon check` lists them.
 
 Two roles, declared in the manifest:
 
@@ -200,8 +214,9 @@ browser cart -> address -> destination -> priced order -> payment created -> hos
 3. **Price.** The Shop reads every product in the cart from the catalogue, refuses an unpublished one or
    one without a price in the currency, applies the promotion code, adds shipping and arrives at the
    base amount. Under `net` listing the page says the tax comes at payment.
-4. **Place.** One internal route inserts the order (`awaiting_payment`, with the agreed lines, the base
-   amount, the destination's facts and the token hash), then calls `payments.create` with
+4. **Place.** One internal route inserts the order (`awaiting_payment`, with the base amount, the
+   destination's facts and the token hash) and its agreed lines (`order_lines`) in one transaction, then
+   calls `payments.create` with
    `reference = order number`, `idempotencyKey = order number + attempt`, the policy from the
    destination, the lines with their tax categories, the shipping line, the stated discounts,
    `customer` (country, postal code, `addressSource: "shipping"`, tax ids) and a `returnPath` on the
@@ -220,11 +235,11 @@ browser cart -> address -> destination -> priced order -> payment created -> hos
 
 | Payment status | Order status | Also |
 | --- | --- | --- |
-| `captured` | `paid` | in one transaction and once (only an order still `awaiting_payment` is marked): copies `totals` verbatim, sets `seller_of_record` from the tax addition's `collectedBy`, takes the quantity from tracked stock, counts the promotion use (once per order, bit `PromotionsCounted` of `orders.flags`), sets `paid_at`; a shortfall in stock or a `totals.customer.country` that is not the order's country sets `attention` instead of undoing anything, because the money is already taken |
-| `authorized` | `paid` with `attention` | manual capture is not a Shop flow; a person captures or cancels |
-| `failed`, `expired`, `canceled` | stays `awaiting_payment` | the customer may try again from the order page, which creates a new attempt; a Site job (`orders.expire`) moves orders nobody paid after a configured number of days to `abandoned`, all of them page by page along the cursor up to 5,000 a run, each only while it is still `awaiting_payment` so an order paid meanwhile is not overwritten |
-| `captured` or `authorized` on an order already `canceled` or `abandoned` (never paid) | stays | `attention` says the payment came in after the order was closed and to refund it or fulfil the order; once, by bit `PaidAfterClosingNoted` of `orders.flags`, also where the order was closed between reading it and marking it paid |
-| refund observed | `refunded` or `partially_refunded` | from `refundedMinor` against the total |
+| `captured` | `paid` | in one transaction and once (only an order still `awaiting_payment` is marked): copies `totals` verbatim, sets `seller_of_record` from the tax addition's `collectedBy`, ends the order's hold (bit `StockHeld` of `orders.flags`: the units it holds since it was placed are its own, nothing more is taken) or -- for an order that holds none, its hold given back before or placed before holds -- takes the quantity from tracked stock, from the listing each line was bought from (`listing_id`, not its address), and counts the promotion use where placing did not (once per order, bit `PromotionsCounted`), sets `paid_at` on the order and on each of its lines; a shortfall in stock or a `totals.customer.country` that is not the order's country sets `attention` instead of undoing anything, because the money is already taken. After that transaction, never before, the entitlements are written and bit `EntitlementsGranted` set, only while the order is still paid (what was written for an order canceled or refunded meanwhile is taken back); a delivery whose writing throws is delivered again and writes them then for the order paid without the bit |
+| `authorized` | `paid` with `attention` | manual capture is not a Shop flow; a person captures, or releases the authorization from the Orders page (`manage/orders/:number/release`, `payments.cancel`), which cancels the order it paid |
+| `failed`, `expired`, `canceled` | stays `awaiting_payment` | what the order holds -- its units, its code's use -- is given back in one transaction and once; the customer may try again from the order page, which creates a new attempt that holds nothing; a Site job (`orders.expire`) moves orders nobody paid after a configured number of days to `abandoned`, all of them page by page along the cursor up to 5,000 a run, each only while it is still `awaiting_payment` so an order paid meanwhile is not overwritten |
+| `captured` or `authorized` on an order already `canceled` or `abandoned` (never paid) | stays | `attention` says the payment came in after the order was closed and to refund it or fulfil the order; once, by bit `PaidAfterClosingNoted` of `orders.flags`, also where the order was closed between reading it and marking it paid. Once that payment holds no money any more (refunded in full, authorization canceled) the sentence is taken off and the bit cleared |
+| refund observed | `refunded` or `partially_refunded` | from `refundedMinor` against the total; `refunded` gives every unit of the lines back (`refunded_quantity`) in the same transaction, a refund in part none, being an amount that names no line |
 
 `fulfilment` is a second axis (`pending`, `shipped`, `delivered`, `granted`, `not_required`) and a
 person's act: a clerk marks an order shipped from the management surface. Nothing in the Shop ships or
@@ -232,34 +247,48 @@ grants access on a payment event by itself, because "the event is not a command 
 good needs a delivery path that does not exist yet (section 10).
 
 **Cancellation and refunds** are a manager's act through routes that require the role: cancel an unpaid
-order (no payment call needed; a pending attempt is left to expire), cancel a paid order with a full
-refund, or refund part of a paid order with a reason. Each refund is one `payments.refund` with the
+order (no payment call needed; a pending attempt is left to expire; what it holds is given back with the
+cancellation), cancel a paid order with a full refund -- an authorization nobody captured is released
+(`payments.cancel`) rather than left standing, whatever the order's status -- or refund part of an order with a reason -- of any order whose payment was captured and is not
+refunded in full, a canceled or abandoned one a payment came in for after all among them; its status stays
+(a canceled order refunded in full is still `canceled`), and an order still `awaiting_payment` or without
+captured money is refused. A paid order canceled gives every unit of its lines back with the cancellation.
+Each refund is one `payments.refund` with the
 order's refund row inserted first and its id recorded after, so a refund that was issued and not
 recorded is found again through the payment's refunds rather than issued twice. Refunds are against
 captured money, which includes tax, as PAYMENTS.md section 12 says; the Shop shows the refund's
 `additions` where the Provider reports them and derives nothing from them.
 
-**Stock** is advisory: checked when the order is placed, decremented when it is paid, with no
-reservation in between. Two customers can pay for the last unit, and the second order wears `attention`.
-A small shop that cannot live with that is a shop with a warehouse, which is Medusa.
+**Stock** is what is free to sell, and an order holds what it takes. Placing an order takes the units of its
+counted lines from the listings, and the use of its promotion code, in the transaction that writes the order and
+its lines, each only while there is enough (`add` beside a `where`, SERVER_ADDONS.md) and under the Add-on's own
+authority (`authority: "addon"`), since a guest or a customer places it: of two buyers of the last unit or use one
+gets the order and the other `out_of_stock` (with `product`, the line's title, beside the code) or
+`promotion_unavailable`, with nothing written. Each line records what was taken for it (`held_quantity`), so what
+goes back is what was taken, whatever the listing's counting did since. The order holds them for the setting
+`stock-hold-minutes` (default 60, 32 to 1440, read and checked when the order is placed and only then, never moved
+into range), until `hold_until`, written on the order, and its checkout ends then too (`payments.create` with that
+instant as `expiresAt`, by a method whose `checkoutExpiry` keeps it; none, and the order is refused before anything
+is written). Paid, the hold ends and the units are the order's; what a line did not hold is taken then. Given up,
+each line's held units go back once, to a listing still counted, in one unit of work with what ends the order's
+wait: its payment failed, expired or was canceled, a manager canceled it, `orders.expire` abandoned it, its payment
+could not be created, or the job `orders.release-holds` (every 15 minutes) found its `hold_until` 5 minutes past
+with no payment in progress -- a payment confirmed later (`processing`) keeps the units. A payment that comes after
+the release takes its units at payment, as every order did before, and a shortfall then wears `attention`.
+phis-shop README.md, "An order's hold".
 
-Stock is never written as a number read earlier, only added to by the database on the row it changes
-(`add` beside a `where`, SERVER_ADDONS.md): the paid transition takes the quantity only while there is
-enough and otherwise takes what is there, so it never goes below nothing; a clerk adds or takes a delta
-(`POST manage/listings/stock`); editing a listing does not touch it. Every write of the paid transition
--- the order marked, the stock taken, the code counted -- is one unit of work, so an event delivered
-again after a failure part way does none of it twice.
-
-A reservation at placing -- the stock taken when the order is placed, given back when its payment fails
-or its checkout ends (`payments.create` with `expiresAt`), and a job releasing what was left over -- is
-decided (2026-11-22) and waits for Core: placing is a guest's or a customer's request, and Core lets
-neither run an update on a table nobody owns (`listings`), which only a declared role can (section 3).
+Stock is never written as a number read earlier, only added to by the database on the row it changes: a clerk
+adds or takes a delta, starts counting a shipped listing not counted (`where stock IS NULL`) or stops counting
+one (`POST manage/listings/stock`, one act per request); editing a listing does not touch it. Every write of the
+paid transition -- the order marked, the hold ended or the stock taken, the code counted -- is one unit of work, so
+an event delivered again after a failure part way does none of it twice.
 
 ## 7. The order page is the receipt
 
 The order page, reached by the token link or from the customer's account, shows the agreed lines, the
 discounts with their codes, shipping, the tax additions as the Provider reported them (rate,
-jurisdiction, inclusive or exclusive) and the total -- all read from the order row, never recomputed.
+jurisdiction, inclusive or exclusive) and the total -- all read from the order row and its lines, never
+recomputed.
 When the tax was collected by the Provider as seller of record, the page says so and names the Provider,
 which is the receipt wording PAYMENTS.md section 12 asks of a consumer. An export order says that
 import charges are collected by the carrier on delivery.
@@ -350,6 +379,7 @@ in the Site's Modules workspace. What is specific to the Shop:
 phis addon config --addon @phis/shop --site <key> --name listing --value gross
 phis addon config --addon @phis/shop --site <key> --name currency --value CHF
 phis addon config --addon @phis/shop --site <key> --name abandon-after-days --value 7
+phis addon config --addon @phis/shop --site <key> --name stock-hold-minutes --value 60
 phis payment profile set --site <key> --file <profile.json>
 phis addon role --site <key> --addon @phis/shop --user <user id> --grant manager
 ```
@@ -388,7 +418,8 @@ A destination whose profile the operator switched off or retired (`profileReach`
 alike, and the quote, the order and a subscription pass over it to the next destination covering the
 country (phis-shop design/MARKETS.md section 5).
 
-The job `orders.expire` is run by Core's scheduler, daily, as every scheduled Add-on job is.
+The jobs `orders.expire` (daily) and `orders.release-holds` (every 15 minutes) are run by Core's scheduler, as
+every scheduled Add-on job is.
 
 ## 10. What needs Core, or someone else, first
 

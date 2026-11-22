@@ -480,6 +480,94 @@ function checkAssignments(
   }
 }
 
+/**
+ * One order a select is read in: `orderBy`, or one of its `orderings`.
+ *
+ * The same rules for each, because each is what a cursor is made of: a column of the table, a direction,
+ * and no column that may be null.
+ */
+function checkOrdering(context: QueryContext, entries: unknown[], at: string) {
+  const { field, issues, table } = context;
+  entries.forEach((entry, index) => {
+    if (!isPhiRecord(entry)) {
+      issues.push(`${field}.${at}[${index}] must be an object.`);
+      return;
+    }
+    if (checkColumn(context, entry.column, `${at}[${index}].column`)) {
+      /*
+       * A nullable ordering column has no defined place for its nulls -- the descriptor cannot say
+       * whether they come first or last -- and the keyset comparison that continues a page cannot
+       * be written against one: a comparison with null is null, so the page would end early and
+       * quietly rather than carry on. Refused here, where the author can still choose a default.
+       */
+      if (isNullableColumn(table, entry.column as string)) {
+        issues.push(
+          `${field}.${at}[${index}].column "${entry.column}" is nullable. An ordering column ` +
+          "must be NOT NULL: paging continues by comparing against the last row's values, and " +
+          "where nulls sort is not something the descriptor can say.",
+        );
+      }
+    }
+    if (entry.direction !== "asc" && entry.direction !== "desc") {
+      issues.push(`${field}.${at}[${index}].direction must be "asc" or "desc".`);
+    }
+  });
+}
+
+/**
+ * The orders a caller may choose between, and the one a call that chooses none is read in.
+ *
+ * Each is held to `orderBy`'s rules. `orderBy` beside them is refused rather than ranked: with
+ * `orderings` the query's own order is `defaultOrdering`, and a second one would leave it to the reader
+ * which of the two a plain call gets.
+ */
+function checkOrderings(context: QueryContext, raw: Record<string, unknown>) {
+  const { field, issues } = context;
+  const orderings = raw.orderings;
+  if (orderings === undefined) {
+    if (raw.defaultOrdering !== undefined) {
+      issues.push(`${field}.defaultOrdering names one of orderings, and this query declares none.`);
+    }
+    return;
+  }
+  const keys = isPhiRecord(orderings) ? Object.keys(orderings) : [];
+  if (!isPhiRecord(orderings) || keys.length === 0) {
+    issues.push(`${field}.orderings must be an object naming at least one ordering.`);
+  } else {
+    for (const key of keys) {
+      if (!NAME_PATTERN.test(key)) {
+        issues.push(`${field}.orderings key "${key}" is invalid.`);
+      }
+      const entries = orderings[key];
+      if (!Array.isArray(entries) || entries.length === 0) {
+        issues.push(`${field}.orderings.${key} must name at least one column to order by.`);
+        continue;
+      }
+      checkOrdering(context, entries, `orderings.${key}`);
+    }
+  }
+  if (raw.orderBy !== undefined) {
+    issues.push(
+      `${field} states both orderBy and orderings. With orderings the order a call that names none ` +
+      "is read in is defaultOrdering, and orderBy beside it would be a second one.",
+    );
+  }
+  const choice = raw.defaultOrdering;
+  if (!isPhiRecord(choice)) {
+    issues.push(
+      `${field}.defaultOrdering must name one of orderings and a direction: it is the order a call ` +
+      "that names none is read in.",
+    );
+    return;
+  }
+  if (typeof choice.key !== "string" || !keys.includes(choice.key)) {
+    issues.push(`${field}.defaultOrdering.key does not name one of orderings.`);
+  }
+  if (choice.direction !== "asc" && choice.direction !== "desc") {
+    issues.push(`${field}.defaultOrdering.direction must be "asc" or "desc".`);
+  }
+}
+
 function validateQuery(
   raw: unknown,
   schema: PhisAddonSchemaDescriptor,
@@ -571,6 +659,16 @@ function validateQuery(
       "Core has no row to judge, so such a query must state requiresRole.",
     );
   }
+  /*
+   * Only a select is read in an order a call chooses. Anywhere else the declaration would be read past,
+   * and an Add-on that wrote one would believe it held.
+   */
+  if (raw.kind !== "select" && (raw.orderings !== undefined || raw.defaultOrdering !== undefined)) {
+    issues.push(
+      `${field}.orderings and defaultOrdering belong to a select: only a select is read in an order ` +
+      "a call chooses.",
+    );
+  }
   const context: QueryContext = {
     table,
     columns: readableColumns(table),
@@ -594,33 +692,11 @@ function validateQuery(
         checkCondition(context, raw.where, "where", 1);
       }
       if (Array.isArray(raw.orderBy)) {
-        raw.orderBy.forEach((entry, index) => {
-          if (!isPhiRecord(entry)) {
-            issues.push(`${field}.orderBy[${index}] must be an object.`);
-            return;
-          }
-          if (checkColumn(context, entry.column, `orderBy[${index}].column`)) {
-            /*
-             * A nullable ordering column has no defined place for its nulls -- the descriptor cannot say
-             * whether they come first or last -- and the keyset comparison that continues a page cannot
-             * be written against one: a comparison with null is null, so the page would end early and
-             * quietly rather than carry on. Refused here, where the author can still choose a default.
-             */
-            if (isNullableColumn(table, entry.column as string)) {
-              issues.push(
-                `${field}.orderBy[${index}].column "${entry.column}" is nullable. An ordering column ` +
-                "must be NOT NULL: paging continues by comparing against the last row's values, and " +
-                "where nulls sort is not something the descriptor can say.",
-              );
-            }
-          }
-          if (entry.direction !== "asc" && entry.direction !== "desc") {
-            issues.push(`${field}.orderBy[${index}].direction must be "asc" or "desc".`);
-          }
-        });
+        checkOrdering(context, raw.orderBy, "orderBy");
       } else if (raw.orderBy !== undefined) {
         issues.push(`${field}.orderBy must be an array.`);
       }
+      checkOrderings(context, raw);
       if (
         typeof raw.limit !== "number" || !Number.isInteger(raw.limit) ||
         raw.limit <= 0 || raw.limit > PHIS_ADDON_QUERY_MAX_LIMIT

@@ -64,6 +64,7 @@ const manifest = {
     parameters: {
       listing: [{ name: "kind", type: "text", nullable: true }],
       by_title: [],
+      sorted: [{ name: "kind", type: "text", nullable: true }],
     },
     queries: [
       {
@@ -91,6 +92,25 @@ const manifest = {
         name: "by_title",
         table: "offering",
         orderBy: [{ column: "title", direction: "asc" }],
+        limit: 25,
+      },
+      // A list a person sorts by its columns: one query, the order chosen per call.
+      {
+        kind: "select",
+        name: "sorted",
+        table: "offering",
+        columns: ["id", "title", "kind"],
+        where: {
+          kind: "whenPresent",
+          parameter: "kind",
+          condition: { kind: "compare", column: "kind", operator: "=", value: { kind: "parameter", name: "kind" } },
+        },
+        orderings: {
+          title: [{ column: "title", direction: "asc" }],
+          // Four rows share each kind: the primary key, turned with the rest, decides between them.
+          kind: [{ column: "kind", direction: "asc" }],
+        },
+        defaultOrdering: { key: "title", direction: "asc" },
         limit: 25,
       },
     ],
@@ -232,5 +252,53 @@ describe("paging a declared select", () => {
     const first = await data().select("by_title", {}, { limit: 2 });
     await expect(data().select("listing", { kind: null }, { cursor: first.cursor }))
       .rejects.toThrow(/different ordering/);
+  });
+
+  describe("in an order the call chooses", () => {
+    /** Two pages of four, read on with the first page's cursor in the same order; the second is the last. */
+    async function twoPages(ordering: { key: string; direction: "asc" | "desc" } | undefined, kind: string | null = null) {
+      const first = await data().select("sorted", { kind }, { limit: 4, ...(ordering ? { ordering } : {}) });
+      expect(first.cursor).not.toBeNull();
+      const second = await data().select("sorted", { kind }, { limit: 4, cursor: first.cursor, ...(ordering ? { ordering } : {}) });
+      expect(second.cursor).toBeNull();
+      return [first.rows.map((row) => row.title), second.rows.map((row) => row.title)];
+    }
+
+    it("pages over two pages in the declared order and in the same order reversed", async () => {
+      expect(await twoPages({ key: "title", direction: "asc" }))
+        .toEqual([["row-1", "row-2", "row-3", "row-4"], ["row-5", "row-6", "row-7"]]);
+      expect(await twoPages({ key: "title", direction: "desc" }))
+        .toEqual([["row-7", "row-6", "row-5", "row-4"], ["row-3", "row-2", "row-1"]]);
+    });
+
+    it("breaks the ties of a shared value by the primary key, turned around with the rest", async () => {
+      // Odd rows are "addon", even rows "module"; the rows of one kind stand in the order they were added.
+      expect(await twoPages({ key: "kind", direction: "asc" }))
+        .toEqual([["row-1", "row-3", "row-5", "row-7"], ["row-2", "row-4", "row-6"]]);
+      expect(await twoPages({ key: "kind", direction: "desc" }))
+        .toEqual([["row-6", "row-4", "row-2", "row-7"], ["row-5", "row-3", "row-1"]]);
+    });
+
+    it("reads a call that names no order in the default one", async () => {
+      expect(await twoPages(undefined)).toEqual(await twoPages({ key: "title", direction: "asc" }));
+    });
+
+    it("keeps the query's filter in every order", async () => {
+      const page = await data().select("sorted", { kind: "module" }, { limit: 25, ordering: { key: "title", direction: "desc" } });
+      expect(page.rows.map((row) => row.title)).toEqual(["row-6", "row-4", "row-2"]);
+      expect(page.cursor).toBeNull();
+    });
+
+    it("refuses a cursor read in another of the orders, and an order the query does not declare", async () => {
+      const first = await data().select("sorted", { kind: null }, { limit: 2, ordering: { key: "title", direction: "asc" } });
+      await expect(data().select("sorted", { kind: null }, { limit: 2, cursor: first.cursor, ordering: { key: "kind", direction: "asc" } }))
+        .rejects.toThrow(/different ordering/);
+      await expect(data().select("sorted", { kind: null }, { limit: 2, cursor: first.cursor, ordering: { key: "title", direction: "desc" } }))
+        .rejects.toThrow(/different ordering/);
+      await expect(data().select("sorted", { kind: null }, { ordering: { key: "updated_at", direction: "asc" } }))
+        .rejects.toThrow(/declares no ordering "updated_at"/);
+      await expect(data().select("by_title", {}, { ordering: { key: "title", direction: "asc" } }))
+        .rejects.toThrow(/declares no orderings/);
+    });
   });
 });

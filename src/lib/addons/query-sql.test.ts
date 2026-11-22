@@ -251,6 +251,46 @@ describe("paging a declared select", () => {
   });
 });
 
+describe("a select read in an order the call chooses", () => {
+  const orderings = {
+    orderings: {
+      by_kind: [{ column: "kind", direction: "asc" }],
+      by_update: [{ column: "updated_at", direction: "asc" }, { column: "kind", direction: "desc" }],
+    },
+    defaultOrdering: { key: "by_update", direction: "desc" },
+  };
+
+  it("compiles every declared order both ways round, the primary key turned with it", () => {
+    const query = paged(orderings);
+    const kind = query.paging!.orderings!.get("by_kind")!;
+    expect(kind.asc.ordering).toEqual([{ column: "kind", direction: "asc" }, { column: "id", direction: "asc" }]);
+    expect(kind.desc.ordering).toEqual([{ column: "kind", direction: "desc" }, { column: "id", direction: "desc" }]);
+    expect(kind.asc.first.sql).toContain('ORDER BY "kind" ASC, "id" ASC LIMIT');
+    expect(kind.desc.first.sql).toContain('ORDER BY "kind" DESC, "id" DESC LIMIT');
+    // A mixed order is reversed entry by entry, and continued the way it now runs.
+    const update = query.paging!.orderings!.get("by_update")!;
+    expect(update.desc.first.sql).toContain('ORDER BY "updated_at" DESC, "kind" ASC, "id" DESC LIMIT');
+    expect(update.desc.next.sql).toContain(
+      '("updated_at" < $2) OR ("updated_at" = $3 AND "kind" > $4) OR ("updated_at" = $5 AND "kind" = $6 AND "id" < $7)',
+    );
+    expect(kind.desc.next.bindings.filter((binding) => binding.from === "cursor")).toHaveLength(3);
+  });
+
+  it("reads a call that names none in its default order, which is one of the compiled ones", () => {
+    const query = paged(orderings);
+    const chosen = query.paging!.orderings!.get("by_update")!.desc;
+    expect(query.sql).toBe(chosen.first.sql);
+    expect(query.paging!.sql).toBe(chosen.next.sql);
+    expect(query.paging!.ordering).toEqual(chosen.ordering);
+  });
+
+  it("changes nothing for a select that declares a single order", () => {
+    const query = paged({ orderBy: [{ column: "updated_at", direction: "desc" }] });
+    expect(query.paging!.orderings).toBeUndefined();
+    expect(query.sql).toContain('ORDER BY "updated_at" DESC, "id" ASC');
+  });
+});
+
 describe("validating a declared query", () => {
   it("accepts the catalog above", () => {
     expect(validate(catalog).issues).toEqual([]);
@@ -573,6 +613,48 @@ describe("what paging refuses at validation", () => {
 
   it("no longer offers an offset to page with", () => {
     expect(issuesFor({ offsetParameter: "skip" }, [{ name: "skip", type: "integer" }])).toBe("");
+  });
+
+  describe("the orders a call may choose between", () => {
+    const valid = {
+      orderings: { by_kind: [{ column: "kind", direction: "asc" }], by_update: [{ column: "updated_at", direction: "asc" }] },
+      defaultOrdering: { key: "by_update", direction: "desc" },
+    };
+
+    it("accepts orders over columns that may not be null, with one of them the default", () => {
+      expect(issuesFor(valid)).toBe("");
+    });
+
+    it("holds every one of them to the rules of orderBy", () => {
+      expect(issuesFor({ ...valid, orderings: { ...valid.orderings, by_withdrawal: [{ column: "withdrawn_at", direction: "asc" }] } }))
+        .toMatch(/orderings\.by_withdrawal\[0\]\.column "withdrawn_at" is nullable/);
+      expect(issuesFor({ ...valid, orderings: { ...valid.orderings, by_secret: [{ column: "secret", direction: "asc" }] } }))
+        .toMatch(/orderings\.by_secret\[0\]\.column does not name a column/);
+      expect(issuesFor({ ...valid, orderings: { ...valid.orderings, by_kind: [{ column: "kind", direction: "up" }] } }))
+        .toMatch(/orderings\.by_kind\[0\]\.direction must be "asc" or "desc"/);
+      expect(issuesFor({ ...valid, orderings: { ...valid.orderings, by_nothing: [] } }))
+        .toMatch(/orderings\.by_nothing must name at least one column/);
+      expect(issuesFor({ ...valid, orderings: { ...valid.orderings, "By Kind": [{ column: "kind", direction: "asc" }] } }))
+        .toMatch(/orderings key "By Kind" is invalid/);
+      expect(issuesFor({ ...valid, orderings: {} })).toMatch(/orderings must be an object naming at least one ordering/);
+    });
+
+    it("refuses a default that names none of them, or none at all", () => {
+      expect(issuesFor({ ...valid, defaultOrdering: { key: "by_title", direction: "asc" } })).toMatch(/defaultOrdering\.key does not name one of orderings/);
+      expect(issuesFor({ ...valid, defaultOrdering: { key: "by_kind", direction: "sideways" } })).toMatch(/defaultOrdering\.direction must be/);
+      expect(issuesFor({ orderings: valid.orderings })).toMatch(/defaultOrdering must name one of orderings/);
+      expect(issuesFor({ defaultOrdering: valid.defaultOrdering })).toMatch(/this query declares none/);
+    });
+
+    it("refuses orderBy beside them: the default is the query's own order", () => {
+      expect(issuesFor({ ...valid, orderBy: [{ column: "kind", direction: "asc" }] })).toMatch(/states both orderBy and orderings/);
+    });
+
+    it("refuses them on anything but a select", () => {
+      expect(issuesFor({
+        kind: "aggregate", aggregates: [{ function: "count", as: "n" }], groupBy: ["kind"], limit: 50, ...valid,
+      })).toMatch(/belong to a select/);
+    });
   });
 });
 
