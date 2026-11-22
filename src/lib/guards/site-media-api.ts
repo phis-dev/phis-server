@@ -2,7 +2,7 @@ import "server-only";
 
 import { NextResponse, type NextRequest } from "next/server";
 
-import { canPhiViewerAccess, PHI_ACCESS_DEVELOPER_TOOLS, type PhiViewerGroupClaim } from "@/lib/authorization";
+import { canPhiViewerAccess, PHI_ACCESS_SITE_MAINTENANCE, type PhiViewerGroupClaim } from "@/lib/authorization";
 import {
   PHI_SITE_MEDIA_API_POLICY,
   resolveSiteRoleApiContext,
@@ -60,7 +60,7 @@ function toMediaManagementSiteContext(resolution: SiteRoleApiResolution): MediaM
     authenticated: true,
     roleClaims: context.siteRole?.roleClaims ?? [],
     groupClaims: context.siteRole?.groupClaims ?? [],
-  }, PHI_ACCESS_DEVELOPER_TOOLS);
+  }, PHI_ACCESS_SITE_MAINTENANCE);
   return { site: context.site, session: context.session, siteWide, error: null };
 }
 

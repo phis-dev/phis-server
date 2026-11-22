@@ -27,7 +27,7 @@ and a GitHub integration that has to hold a conversation open in both directions
 What stands in the way today:
 
 - **Only Support roles reach threads.** Every thread route is guarded by `PHI_ACCESS_SUPPORT`
-  (`Developer | Supporter`, widened to Admin). A Builder cannot write to a Publisher.
+  (`Maintainer | Supporter`, widened to Admin). A Builder cannot write to a Publisher.
 - **Membership is a second group system.** Thread visibility joins `support_team_members`, while
   [GROUPS_AND_STORAGE.md](../GROUPS_AND_STORAGE.md) makes `site_groups` the one membership source.
   (Settled by step 2: the table is gone and a queue references a group.)
@@ -88,7 +88,7 @@ A retired group grants nothing here either: sharing a retired group is sharing n
 
 The rule above has a consequence worth stating before somebody meets it as a bug: two Staff who share no
 group cannot start a conversation. On a Site with no groups at all nobody can; on a Site whose groups
-follow its teams, a developer and a supporter cannot, which is exactly the ad-hoc contact -- *can you
+follow its teams, a maintainer and a supporter cannot, which is exactly the ad-hoc contact -- *can you
 look at this* -- that a thread is most useful for.
 
 **This is correct and stays.** The alternative is a Site-wide Staff list, and the section above refuses
@@ -102,7 +102,7 @@ anywhere. What the threads Module deliberately does **not** do is seed one: a gr
 who holds a Core role is a Site-wide Staff list by another name, and whether to have one is the Site's
 decision rather than a Module's to take on its behalf.
 
-Two consequences follow. **Admin and Developer are the way in**, and their reach -- already settled below
+Two consequences follow. **Admin and Maintainer are the way in**, and their reach -- already settled below
 -- is what lets a Site that has just installed the Module hold its first conversation and form the group
 from there. And **the candidates route says why it is empty**: a blank list reads as a broken surface,
 where *you share no group with anyone yet* is the one sentence that leads somebody to the fix.
@@ -117,7 +117,7 @@ where *you share no group with anyone yet* is the one sentence that leads somebo
 | `Support` | any authenticated Site member | the requester and a queue's group | Site kind `Support` |
 
 Settled: opening a `Group` or `CrossGroup` thread needs `Author`; reading and replying need `Member`.
-Admin and Developer are covered below.
+Admin and Maintainer are covered below.
 
 **Archiving is for everyone, so not everyone may do it.** The status is one row, and closing a thread
 ends it for every participant. Whoever opened it, Staff, and a `Manager` of a group taking part may
@@ -125,7 +125,7 @@ archive or reopen it; any other participant is refused (403). A Support thread's
 ticket's workflow, so its requester is refused even though they opened it. Add-ons and Core itself reach a
 thread through their own rules and are not asked again.
 
-**Admin and Developer may always write.** They may open a `Direct` thread to any Staff member and add
+**Admin and Maintainer may always write.** They may open a `Direct` thread to any Staff member and add
 any Staff member or group to a thread they are in, without sharing a group. This is authority to *reach*
 someone, not to *read*: it does not open a thread they are not a participant of.
 
@@ -144,7 +144,7 @@ the way a Space kind is available or not, and what anyone may do there is still 
 They are needed because groups are also audiences -- a group of five thousand customers used for Page
 access must not become a chat room because the Site offers `Group` threads.
 
-Who sets them: Developer or Admin for Core groups, since that is who creates groups. An Add-on sets them
+Who sets them: Maintainer or Admin for Core groups, since that is who creates groups. An Add-on sets them
 for its own groups through its group writer, which is how customers in an Add-on's group come to talk to
 each other without the Site doing anything.
 

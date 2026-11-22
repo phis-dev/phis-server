@@ -2037,7 +2037,7 @@ A role is `{ name, description?, grantableBy, includes?, impliedBy? }` (`PhisAdd
 `name` matches `^[a-z][a-z0-9-]{0,63}$` and is frozen from the first assignment: a grant is stored as
 text, and text does not follow a rename. `grantableBy` names exactly one of:
 
-- `{ siteAccess }` -- one of the Site accesses in `PHIS_SITE_ACCESS`: `site-admin`, `developer-tools`,
+- `{ siteAccess }` -- one of the Site accesses in `PHIS_SITE_ACCESS`: `site-admin`, `site-maintenance`,
   `structure-authoring`, `content-editing`, `publishing`, `site-media`, `support`, `accounting`
 - `{ role }` -- another role this same Add-on declares
 
@@ -2067,13 +2067,13 @@ names an undeclared role, the role itself, or a cycle: two roles that imply each
 
 | Site access | Held by (enabled membership; a Site Admin holds every access) |
 | --- | --- |
-| `developer-tools` | Developer |
-| `structure-authoring` | Developer, Builder |
-| `content-editing` | Developer, Author, Publisher |
-| `publishing` | Developer, Publisher |
-| `site-media` | Developer, Builder, Author, Publisher |
-| `support` | Developer, Supporter |
-| `accounting` | Developer, Accountant |
+| `site-maintenance` | Maintainer |
+| `structure-authoring` | Maintainer, Builder |
+| `content-editing` | Maintainer, Author, Publisher |
+| `publishing` | Maintainer, Publisher |
+| `site-media` | Maintainer, Builder, Author, Publisher |
+| `support` | Maintainer, Supporter |
+| `accounting` | Maintainer, Accountant |
 
 Whoever holds the access holds the role without a grant of it, and what the role `includes` with it, in
 every check Core makes: `roles:v1`, `requiresRole` and `alsoAllowedByRole` on a query, a slot's

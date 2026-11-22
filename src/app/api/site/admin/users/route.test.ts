@@ -417,7 +417,7 @@ describe("DELETE /api/site/admin/users", () => {
 
 describe("GET /api/site/admin/users", () => {
   // Addresses, sign-in history and IPs are user administration, which AUTHORIZATION.md keeps to the Core
-  // Admin; a Developer resolves to the admin Area but is not one.
+  // Admin; a Maintainer resolves to the admin Area but is not one.
   it("answers with the Admin-only guard's refusal", async () => {
     mocks.guard.mockResolvedValue({
       context: null,
@@ -538,8 +538,8 @@ describe("GET /api/site/admin/users with Add-on roles", () => {
         },
       },
     });
-    const accounting = PhiBaseRole.Developer | PhiBaseRole.Accountant;
-    const support = PhiBaseRole.Developer | PhiBaseRole.Supporter;
+    const accounting = PhiBaseRole.Maintainer | PhiBaseRole.Accountant;
+    const support = PhiBaseRole.Maintainer | PhiBaseRole.Supporter;
 
     // `clerk` is held through `manager`, which accounting implies; `helpdesk` does not lead to `clerk`.
     await list(`?addonId=${encodeURIComponent(SHOP)}&addonRole=clerk`);

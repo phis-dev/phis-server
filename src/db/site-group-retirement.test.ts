@@ -65,7 +65,7 @@ describe("A retired group grants nothing", () => {
 });
 
 describe("The way back", () => {
-  it("is Developer or Admin, because the level that would allow it is gone", async () => {
+  it("is Maintainer or Admin, because the level that would allow it is gone", async () => {
     const route = await read("src/app/api/site/groups/route.ts");
     const patch = /export async function PATCH[\s\S]*?\n\}\n/u.exec(route)![0];
     expect(patch).toMatch(/if \(!retired && !guarded\.context!\.authority\.siteWide\)/u);

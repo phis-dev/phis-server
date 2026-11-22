@@ -795,12 +795,12 @@ export async function applySupportTicketAssignmentAction(input: SupportTicketAss
 
     if (input.action === "assign_to_me") {
       /*
-       * Taking a ticket asks for a seat in its queue -- except of an Admin or a Developer, who reach every
+       * Taking a ticket asks for a seat in its queue -- except of an Admin or a Maintainer, who reach every
        * queue as they reach every Staff member in a conversation (`threads.ts`, "reachesAllStaff"). They
        * are the people who step in where a queue's own members are not there.
        */
       const roleFlags = await readCoreRoleFlags(client, input.siteId, input.userId);
-      const reachesEveryQueue = (roleFlags & (PhiBaseRole.Admin | PhiBaseRole.Developer)) !== 0;
+      const reachesEveryQueue = (roleFlags & (PhiBaseRole.Admin | PhiBaseRole.Maintainer)) !== 0;
       if (existing.queue_id && !reachesEveryQueue) {
         const member = await isSupportQueueMember(input.siteId, existing.queue_id, input.userId);
         if (!member) {

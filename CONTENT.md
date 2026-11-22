@@ -126,16 +126,16 @@ newest wins among equals. A detail Page asks this once for all of its parts.
 
 | Act | Widget content (`text`, `html`, `markdown`, `asset`) | Content types (`news`, `blog`) |
 |---|---|---|
-| Read drafts | Developer, Builder, Author, Publisher | Developer, Author, Publisher |
-| Save a draft, submit | Developer, Builder, Author, Publisher | Developer, Author, Publisher |
-| Publish, withdraw | Developer, Publisher | Developer, Publisher |
+| Read drafts | Maintainer, Builder, Author, Publisher | Maintainer, Author, Publisher |
+| Save a draft, submit | Maintainer, Builder, Author, Publisher | Maintainer, Author, Publisher |
+| Publish, withdraw | Maintainer, Publisher | Maintainer, Publisher |
 
 Core Admin passes every check through the central override. Authors may write any draft, not only their
 own; the version check above keeps two writers from overwriting each other unseen. Every version
 records who wrote it.
 
 Site translations (`tr_site_lang`) are live the moment they are written, so writing them is a publish:
-`Developer | Publisher`. Global translations are the operator's.
+`Maintainer | Publisher`. Global translations are the operator's.
 
 ## Lifecycle
 

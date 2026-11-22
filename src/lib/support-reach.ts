@@ -10,7 +10,7 @@ import { PHI_CORE_ROLE_PROVIDER_ID } from "@/lib/authorization";
  * The Support routes let a Supporter in at all; this says which tickets once they are in. A Supporter works
  * the queues they sit in -- their group is the queue's group -- and a ticket of another queue is not theirs
  * to read, move or answer: listing it beside their own only offered work they could not take. An Admin or
- * a Developer reaches every queue, as they reach every Staff member in a conversation. A ticket with no
+ * a Maintainer reaches every queue, as they reach every Staff member in a conversation. A ticket with no
  * queue is in triage, and triage is everybody's until somebody routes it.
  *
  * One rule for every route that names a ticket, so the listing and the ticket behind a row cannot disagree:
@@ -26,7 +26,7 @@ export function readSupportTicketReach(context: {
   const coreFlags = context?.siteRole?.roleClaims
     .find((claim) => claim.providerId === PHI_CORE_ROLE_PROVIDER_ID)?.flags ?? 0;
   const userId = context?.session?.userId ?? null;
-  if ((coreFlags & (PhiBaseRole.Admin | PhiBaseRole.Developer)) !== 0 || userId == null) {
+  if ((coreFlags & (PhiBaseRole.Admin | PhiBaseRole.Maintainer)) !== 0 || userId == null) {
     return { all: true };
   }
   return { all: false, userId };

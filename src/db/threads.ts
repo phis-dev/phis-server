@@ -301,7 +301,7 @@ async function readerIsStaff(db: DbQueryable, siteId: number, reader: ThreadRead
 /**
  * Whether these people can be reached by this person, as design/THREADS.md settles it: every one of
  * them is Staff, and each shares a live group with the actor -- unless the actor is Admin or
- * Developer, whose reach is every Staff member. Nothing here opens a thread to anybody; it is the
+ * Maintainer, whose reach is every Staff member. Nothing here opens a thread to anybody; it is the
  * question the candidates route answers, asked again where the answer is acted on, because a list is
  * a courtesy and the route that holds people to it is this one.
  */
@@ -386,7 +386,7 @@ async function assertPersonMayOpen(
   groupIds: number[],
 ) {
   const roleFlags = await readCoreRoleFlags(db, siteId, openerId);
-  const reachesAllStaff = (roleFlags & (PhiBaseRole.Admin | PhiBaseRole.Developer)) !== 0;
+  const reachesAllStaff = (roleFlags & (PhiBaseRole.Admin | PhiBaseRole.Maintainer)) !== 0;
 
   if (kind === PhisThreadKind.Support) {
     throw new PhisThreadError("A Support thread opens with its ticket, not on its own.");
@@ -476,7 +476,7 @@ async function assertPersonMayAdd(
     );
   }
   const roleFlags = await readCoreRoleFlags(db, siteId, actorId);
-  const reachesAllStaff = (roleFlags & (PhiBaseRole.Admin | PhiBaseRole.Developer)) !== 0;
+  const reachesAllStaff = (roleFlags & (PhiBaseRole.Admin | PhiBaseRole.Maintainer)) !== 0;
   await assertUsersReachable(db, siteId, actorId, userIds, reachesAllStaff);
 }
 
@@ -1666,7 +1666,7 @@ export async function readSiteThreadKinds(siteId: number) {
  * with them, which is the same reason they can be seen at all. The Site's user list stays out of it --
  * a picker that could name anybody would be a directory, and an address is never part of the answer.
  *
- * Admin and Developer are the one widening, and it is authority to *reach* rather than to read: they
+ * Admin and Maintainer are the one widening, and it is authority to *reach* rather than to read: they
  * may open a thread with any Staff member without sharing a group, which is what makes "ask the one
  * person who knows" possible on a Site where not everybody is grouped together. It opens no thread they
  * are not in.
@@ -1675,7 +1675,7 @@ export async function listThreadCandidates(siteId: number, userId: number) {
   const pool = getPool();
 
   const actorRoleFlags = await readCoreRoleFlags(pool, siteId, userId);
-  const mayReachAllStaff = (actorRoleFlags & (PhiBaseRole.Admin | PhiBaseRole.Developer)) !== 0;
+  const mayReachAllStaff = (actorRoleFlags & (PhiBaseRole.Admin | PhiBaseRole.Maintainer)) !== 0;
 
   const { rows: groups } = await pool.query<{
     id: number;

@@ -4,11 +4,11 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { readEffectiveGroupMembershipFlags } from "@/db/site-groups";
 import { PhiGroupMembershipFlags } from "@/lib/constants/site-groups";
-import { canPhiViewerAccess, PHI_ACCESS_DEVELOPER_TOOLS } from "@/lib/authorization";
+import { canPhiViewerAccess, PHI_ACCESS_SITE_MAINTENANCE } from "@/lib/authorization";
 import { requireSiteAuthenticatedApiContext, type SiteAdminApiContext } from "@/lib/guards/site-admin-api";
 
 export type SiteGroupApiAuthority = {
-  /** Developer or Admin: authority over every group, including the Manager level itself. */
+  /** Maintainer or Admin: authority over every group, including the Manager level itself. */
   siteWide: boolean;
   /** The actor's own effective level in this group. */
   membershipFlags: number;
@@ -35,7 +35,7 @@ export async function requireSiteGroupManagerAnywhereApiContext(
     authenticated: true,
     roleClaims: context.siteRole?.roleClaims ?? [],
     groupClaims,
-  }, PHI_ACCESS_DEVELOPER_TOOLS);
+  }, PHI_ACCESS_SITE_MAINTENANCE);
   const managesSomething = siteWide || groupClaims.some((claim) =>
     (claim.flags & PhiGroupMembershipFlags.Manager) === PhiGroupMembershipFlags.Manager);
 
@@ -43,7 +43,7 @@ export async function requireSiteGroupManagerAnywhereApiContext(
     return {
       context: null,
       error: NextResponse.json(
-        { error: "Group manager, developer, or admin authority required." },
+        { error: "Group manager, maintainer, or admin authority required." },
         { status: 403 },
       ),
     };
@@ -73,7 +73,7 @@ export async function requireSiteGroupMemberApiContext(
 /**
  * Authorizes a group administration request.
  *
- * Two authorities reach the same routes and they are not the same authority. Developer and Admin
+ * Two authorities reach the same routes and they are not the same authority. Maintainer and Admin
  * administer any group, including who is a Manager. A group's own Manager administers that group and
  * nothing above their own level -- what they may write is decided per operation by the caller, because
  * only the caller knows which level a request is trying to set.
@@ -98,7 +98,7 @@ async function authorizeSiteGroupRequest(
     authenticated: true,
     roleClaims: context.siteRole?.roleClaims ?? [],
     groupClaims: context.siteRole?.groupClaims ?? [],
-  }, PHI_ACCESS_DEVELOPER_TOOLS);
+  }, PHI_ACCESS_SITE_MAINTENANCE);
 
   const membershipFlags = siteWide
     ? PhiGroupMembershipFlags.Manager
@@ -116,8 +116,8 @@ async function authorizeSiteGroupRequest(
       error: NextResponse.json(
         {
           error: requiredLevel === PhiGroupMembershipFlags.Member
-            ? "Group membership, developer, or admin authority required."
-            : "Group manager, developer, or admin authority required.",
+            ? "Group membership, maintainer, or admin authority required."
+            : "Group manager, maintainer, or admin authority required.",
         },
         { status: 403 },
       ),

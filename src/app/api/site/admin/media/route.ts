@@ -10,7 +10,7 @@ import {
 } from "@/db/media-spaces";
 import { PhiSiteMediaFlags } from "@/lib/constants/media";
 import { serializeMediaSpace } from "@/lib/media-response";
-import { requireSiteDeveloperApiContext } from "@/lib/guards/site-admin-api";
+import { requireSiteMaintainerApiContext } from "@/lib/guards/site-admin-api";
 import { logRuntimeEvent } from "@/lib/log";
 import { requireJsonObjectBody } from "@/lib/helpers/request";
 
@@ -18,7 +18,7 @@ import { requireJsonObjectBody } from "@/lib/helpers/request";
  * Administrative surface for the effective per-Site Media policy.
  *
  * Media availability, default quotas, and the per-Space quota ceiling are Site settings, so this route
- * uses the Developer policy -- which the Core Admin override widens to Developer and Admin -- rather
+ * uses the Maintainer policy -- which the Core Admin override widens to Maintainer and Admin -- rather
  * than the wider Media management policy: Builder, Author, and Publisher manage Assets, not what the
  * Site enables.
  */
@@ -61,7 +61,7 @@ function readObjectSize(value: unknown, issues: string[]) {
 }
 
 export async function GET(request: NextRequest) {
-  const { context, error } = await requireSiteDeveloperApiContext(request);
+  const { context, error } = await requireSiteMaintainerApiContext(request);
   if (error) return error;
   const site = context!.site!;
   const config = await ensureSiteMediaConfig(site.id);
@@ -84,7 +84,7 @@ export async function GET(request: NextRequest) {
 }
 
 export async function PATCH(request: NextRequest) {
-  const { context, error } = await requireSiteDeveloperApiContext(request);
+  const { context, error } = await requireSiteMaintainerApiContext(request);
   if (error) return error;
   const site = context!.site!;
 

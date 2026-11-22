@@ -5,7 +5,7 @@ import {
   listSupportTicketTypes,
   updateSupportTicketType,
 } from "@/db/support";
-import { requireSiteDeveloperApiContext } from "@/lib/guards/site-admin-api";
+import { requireSiteMaintainerApiContext } from "@/lib/guards/site-admin-api";
 import { readRequestBody } from "@/lib/helpers/request";
 import {
   readSupportAdministrationName,
@@ -31,7 +31,7 @@ export async function PATCH(
   request: NextRequest,
   { params }: { params: Promise<{ typeId: string }> },
 ) {
-  const { context, error } = await requireSiteDeveloperApiContext(request);
+  const { context, error } = await requireSiteMaintainerApiContext(request);
   if (error) {
     return error;
   }

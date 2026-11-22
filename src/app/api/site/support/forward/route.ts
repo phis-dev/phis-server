@@ -16,7 +16,7 @@ export const dynamic = "force-dynamic";
  * Where this Site's tickets may be forwarded right now.
  *
  * Every target of every installed `support-forwarding` implementation that resolves for the Site and
- * answers its probe as usable: `{ target: "<providerKey>#<key>", label }`. Behind `Developer | Supporter`,
+ * answers its probe as usable: `{ target: "<providerKey>#<key>", label }`. Behind `Maintainer | Supporter`,
  * who forward.
  */
 export async function GET(request: NextRequest) {

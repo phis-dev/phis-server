@@ -95,8 +95,8 @@ contribution.
 
 The Areas are `public`, `app`, `admin`, `builder`, `editor`, and `accounting`
 (`src/lib/constants/cms-areas.ts`). The `admin` Area is the shared Site control-plane host for Core Admin
-and Developer viewers: Core Developer resolves to `admin`, while user, role and Site administration remain
-protected by Core-Admin-only policies. Observability and developer tooling use the Core Developer policy
+and Maintainer viewers: Core Maintainer resolves to `admin`, while user, role and Site administration remain
+protected by Core-Admin-only policies. Observability and Site maintenance use the Core Maintainer policy
 and are also reachable by Core Admin through the Site-superuser override.
 
 ## 3. Shared access policy
@@ -150,33 +150,33 @@ binding.
 
 ## 4. Core role matrix
 
-Core keeps stable individual role flags (`PhiBaseRole`): Admin, Builder, Publisher, Author, Developer,
+Core keeps stable individual role flags (`PhiBaseRole`): Admin, Builder, Publisher, Author, Maintainer,
 Supporter, and Accountant. Reusable access policies are centrally declared masks in
 `src/lib/authorization.ts`, not separate permissions:
 
 ```text
 Site administration  = Admin only
-Developer tools      = Developer
-Structure authoring  = Developer | Builder
-Content editing      = Developer | Author | Publisher
-Publishing           = Developer | Publisher
-Site Media           = Developer | Builder | Author | Publisher
-Support              = Developer | Supporter
-Accounting           = Developer | Accountant
+Site maintenance     = Maintainer
+Structure authoring  = Maintainer | Builder
+Content editing      = Maintainer | Author | Publisher
+Publishing           = Maintainer | Publisher
+Site Media           = Maintainer | Builder | Author | Publisher
+Support              = Maintainer | Supporter
+Accounting           = Maintainer | Accountant
 ```
 
 Core Admin is omitted from the masks because the evaluator grants the Site-admin override centrally.
 Who drafts, submits and publishes content -- Widget content apart from structure, and the content types
 -- is set out in [CONTENT.md](./CONTENT.md#rights). Writing a Site translation is Publishing, because it
 is live the moment it is written. Reading a Page list of an Area (`GET /api/site/cms/pages`) is open to
-everybody who writes for the Site -- `Developer | Builder | Author | Publisher` -- because a link is picked
+everybody who writes for the Site -- `Maintainer | Builder | Author | Publisher` -- because a link is picked
 from it; changing a Page's path stays Structure authoring.
 These are also the Site accesses an Add-on names in `grantableBy`, `impliedBy` or `hasSiteAccess`:
-`site-admin`, `developer-tools`, `structure-authoring`, `content-editing`, `publishing`, `site-media`,
+`site-admin`, `site-maintenance`, `structure-authoring`, `content-editing`, `publishing`, `site-media`,
 `support`, `accounting` (`site-admin` not in `impliedBy`, section 5).
 
 Site groups are not roles and follow their own split: creating a group, putting a retired group back in
-service, and granting or revoking the Manager level are `Developer | Admin`; a group's Manager retires
+service, and granting or revoking the Manager level are `Maintainer | Admin`; a group's Manager retires
 their group and administers its Author, Editor and Member levels. There is no group deletion. Group
 membership never confers any Core role. The full table is in [GROUPS_AND_STORAGE.md](./GROUPS_AND_STORAGE.md).
 
@@ -227,8 +227,8 @@ roles: [
   Every check below answers yes for an implied role. Only the granted role is stored; an inclusion may
   not name the role itself or form a cycle.
 - `impliedBy: { siteAccess }` hangs the role on a Site access of section 4: whoever holds that access on
-  the Site holds the role without a grant (`accounting`: an enabled Accountant or Developer; `support`: a
-  Supporter or Developer), and what it `includes` with it. Nothing is stored; losing the access, or an
+  the Site holds the role without a grant (`accounting`: an enabled Accountant or Maintainer; `support`: a
+  Supporter or Maintainer), and what it `includes` with it. Nothing is stored; losing the access, or an
   enabled membership, loses the role, and a grant of it stays what it was. It only widens who holds the
   role. Validation accepts exactly `{ siteAccess }` naming a Site access other than `site-admin` (a Site
   Admin holds every role already). Holding the role this way meets a `{ role }` grant policy naming it, as
@@ -408,7 +408,7 @@ are resolved by the compiled `@phis/ui` Module catalog, while `@phis/server` rem
 claims and protected API operations.
 
 Role-specific convenience guards may exist, but they must delegate to the shared evaluator and must not
-reproduce independent `allowAdmin`, `allowDeveloper`, or similar decision logic.
+reproduce independent `allowAdmin`, `allowMaintainer`, or similar decision logic.
 
 ## 9. Responsive visibility
 

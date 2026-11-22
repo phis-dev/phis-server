@@ -269,7 +269,7 @@ function normalizeEntryTags(tags: readonly string[] | undefined) {
  * The roles that may be named as an entry's author: whoever may write entries (CONTENT.md). Admin is
  * named because it is a role a membership carries like any other, not because it passes every check.
  */
-const ENTRY_AUTHOR_ROLE_FLAGS = PhiBaseRole.Admin | PhiBaseRole.Developer | PhiBaseRole.Author | PhiBaseRole.Publisher;
+const ENTRY_AUTHOR_ROLE_FLAGS = PhiBaseRole.Admin | PhiBaseRole.Maintainer | PhiBaseRole.Author | PhiBaseRole.Publisher;
 
 /**
  * An entry's terms, as one JSON array per entry: category first, then the tags in the order they were

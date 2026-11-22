@@ -41,7 +41,7 @@ export function phiGroupLevelOf(flags: number): PhisGroupLevel | null {
  * the way a Media Space kind is available or not, and what anybody may then do there is still their
  * level's answer. They exist because a group is also an audience: five thousand customers grouped for
  * Page access must not become a chat room because the Site offers group threads. Creating groups is
- * Site administration, so these are Developer's and Admin's -- and an Add-on's for the groups it owns,
+ * Site administration, so these are Maintainer's and Admin's -- and an Add-on's for the groups it owns,
  * which is how customers in an Add-on's group come to talk to each other without the Site acting.
  */
 export const PhiSiteGroupFlags = {

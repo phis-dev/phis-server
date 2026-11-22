@@ -10,7 +10,7 @@ import {
 } from "@/db/media-spaces";
 import { readSiteMediaStorageSettings, setSiteMediaSpaceStorageProfile } from "@/db/media-storage-settings";
 import { getPool } from "@/lib/db";
-import { requireSiteDeveloperApiContext } from "@/lib/guards/site-admin-api";
+import { requireSiteMaintainerApiContext } from "@/lib/guards/site-admin-api";
 import { requireJsonObjectBody } from "@/lib/helpers/request";
 import { logRuntimeEvent } from "@/lib/log";
 import { checkPhisStorageProviderReadiness } from "@/lib/media-storage-readiness";
@@ -31,7 +31,7 @@ function refuse(message: string, status = 400) {
 }
 
 export async function PATCH(request: NextRequest, context: { params: Promise<{ id: string }> }) {
-  const guarded = await requireSiteDeveloperApiContext(request);
+  const guarded = await requireSiteMaintainerApiContext(request);
   if (guarded.error) return guarded.error;
   const site = guarded.context!.site!;
   const spaceId = Number.parseInt((await context.params).id, 10);

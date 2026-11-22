@@ -8,7 +8,7 @@ export const dynamic = "force-dynamic";
 /*
  * People a Manager may name as a member of their group.
  *
- * The Site's user list is Developer-only, and rightly so -- but a Manager who cannot find a colleague
+ * The Site's user list is Maintainer-only, and rightly so -- but a Manager who cannot find a colleague
  * cannot run their group, and the level would be half a level. This is the narrow middle: open to
  * anyone who manages some group, matched on name or address, capped, and answering with the name and
  * company rather than the address that may have been searched by.

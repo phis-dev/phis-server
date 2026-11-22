@@ -110,7 +110,7 @@ describe("Widget content routes", () => {
   it("publishes only for a Publisher", async () => {
     mocks.publisher.mockResolvedValue({
       context: null,
-      error: NextResponse.json({ error: "Site publisher, developer, or admin role required." }, { status: 403 }),
+      error: NextResponse.json({ error: "Site publisher, maintainer, or admin role required." }, { status: 403 }),
     });
     const response = await handleSiteEditorContentPublish(request("POST", "/api/site/editor/content/publish", {
       contentId: 3,

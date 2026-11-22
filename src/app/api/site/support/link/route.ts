@@ -14,7 +14,7 @@ export const dynamic = "force-dynamic";
  * `reference` is what the Supporter pasted -- an issue's URL, `owner/name#12` -- and whichever installed
  * `support-forwarding` implementation knows it answers. The ticket travels in the body so a declared Form
  * can relay here, as it does for a forward; the answer is the ticket as it now stands, waiting on the work.
- * Behind `Developer | Supporter`, who forward.
+ * Behind `Maintainer | Supporter`, who forward.
  */
 export async function POST(request: NextRequest) {
   const { context, error } = await requireSiteSupportApiContext(request);

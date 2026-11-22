@@ -199,8 +199,8 @@ describe("Add-on roles", () => {
       [userId, siteId, PHI_CORE_ROLE_PROVIDER_ID, flags],
     );
 
-    it("holds the role and what it includes for an Accountant and a Developer, with nothing stored", async () => {
-      for (const flags of [PhiBaseRole.Accountant, PhiBaseRole.Developer]) {
+    it("holds the role and what it includes for an Accountant and a Maintainer, with nothing stored", async () => {
+      for (const flags of [PhiBaseRole.Accountant, PhiBaseRole.Maintainer]) {
         const holder = await createPhiTestUser(site);
         await claimCoreRoles(site.id, holder, flags);
         expect(await capability(holder).all()).toEqual(["vendor", "bookkeeper"]);

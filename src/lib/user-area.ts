@@ -28,7 +28,7 @@ export function resolvePhiUserArea(input: {
     return "admin";
   }
 
-  if (hasPhiFlag(coreRoleFlags, PhiBaseRole.Developer)) {
+  if (hasPhiFlag(coreRoleFlags, PhiBaseRole.Maintainer)) {
     return "admin";
   }
 

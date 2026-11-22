@@ -157,20 +157,20 @@ describe("Add-on roles in user administration", () => {
       [userId, siteId, PHI_CORE_ROLE_PROVIDER_ID, flags],
     );
     // The mask the route puts for a role implied by `accounting` (`phisSiteAccessCoreRoleFlags`).
-    const accounting = PhiBaseRole.Developer | PhiBaseRole.Accountant;
+    const accounting = PhiBaseRole.Maintainer | PhiBaseRole.Accountant;
 
     it("appears under the role when the filter names the access's Core roles, and only then", async () => {
       const accountant = await createPhiTestUser(site);
       await claimCoreRoles(site.id, accountant, PhiBaseRole.Accountant);
-      const developer = await createPhiTestUser(site);
-      await claimCoreRoles(site.id, developer, PhiBaseRole.Developer);
+      const maintainer = await createPhiTestUser(site);
+      await claimCoreRoles(site.id, maintainer, PhiBaseRole.Maintainer);
       const supporter = await createPhiTestUser(site);
       await claimCoreRoles(site.id, supporter, PhiBaseRole.Supporter);
       const elsewhereAccountant = await createPhiTestUser(otherSite);
       await claimCoreRoles(otherSite.id, elsewhereAccountant, PhiBaseRole.Accountant);
 
       const implied = await listIds({ addonId: ADDON, roles: ["clerk"], impliedByRoleFlags: accounting });
-      expect(implied).toEqual(expect.arrayContaining([clerk, accountant, developer]));
+      expect(implied).toEqual(expect.arrayContaining([clerk, accountant, maintainer]));
       expect(implied).not.toContain(supporter);
       expect(implied).not.toContain(elsewhereAccountant);
       // No role implied by an access: the stored grants and the Site Admins, as before.

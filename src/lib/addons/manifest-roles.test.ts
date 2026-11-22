@@ -112,7 +112,7 @@ describe("declaring a role a Site access implies", () => {
   const books = (impliedBy: unknown) => [admin, { name: "books", grantableBy: { role: "market-admin" }, impliedBy }];
 
   it("accepts every Site access but site-admin, and a role without it, as every older manifest has", () => {
-    for (const access of ["developer-tools", "structure-authoring", "content-editing", "publishing", "site-media", "support", "accounting"]) {
+    for (const access of ["site-maintenance", "structure-authoring", "content-editing", "publishing", "site-media", "support", "accounting"]) {
       expect(issuesFor(books({ siteAccess: access }))).toBe("");
     }
     expect(issuesFor([admin, vendor])).toBe("");

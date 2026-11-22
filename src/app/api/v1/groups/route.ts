@@ -2,16 +2,16 @@ import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 
 import { createLocalSiteGroup, listSiteGroups } from "@/db/site-groups";
-import { requireSiteDeveloperApiContext } from "@/lib/guards/site-admin-api";
+import { requireSiteMaintainerApiContext } from "@/lib/guards/site-admin-api";
 
 /*
  * Creating a group is Site administration: a group is an authorization unit Pages, Navigation and
  * Assets refer to, so group membership must never confer the authority to create more of them. It sits
- * with Developer and Admin -- the Developer policy already means both, because the evaluator applies
+ * with Maintainer and Admin -- the Maintainer policy already means both, because the evaluator applies
  * the Core Admin override centrally.
  */
 export async function GET(request: NextRequest) {
-  const guarded = await requireSiteDeveloperApiContext(request);
+  const guarded = await requireSiteMaintainerApiContext(request);
   if (guarded.error) return guarded.error;
   return NextResponse.json({
     provider: {
@@ -24,7 +24,7 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
-  const guarded = await requireSiteDeveloperApiContext(request);
+  const guarded = await requireSiteMaintainerApiContext(request);
   if (guarded.error) return guarded.error;
   const body = await request.json().catch(() => null) as { key?: unknown; name?: unknown } | null;
   if (typeof body?.key !== "string" || typeof body?.name !== "string") {

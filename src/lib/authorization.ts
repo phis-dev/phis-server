@@ -42,28 +42,28 @@ export const PHI_ACCESS_SITE_ADMIN = {
   allowedRoleFlags: PhiBaseRole.Admin,
 } as const satisfies PhiViewerAccessPolicy;
 
-export const PHI_ACCESS_DEVELOPER_TOOLS = {
+export const PHI_ACCESS_SITE_MAINTENANCE = {
   access: "roles",
   providerId: PHI_CORE_ROLE_PROVIDER_ID,
-  allowedRoleFlags: PhiBaseRole.Developer,
+  allowedRoleFlags: PhiBaseRole.Maintainer,
 } as const satisfies PhiViewerAccessPolicy;
 
 export const PHI_ACCESS_STRUCTURE_AUTHORING = {
   access: "roles",
   providerId: PHI_CORE_ROLE_PROVIDER_ID,
-  allowedRoleFlags: PhiBaseRole.Developer | PhiBaseRole.Builder,
+  allowedRoleFlags: PhiBaseRole.Maintainer | PhiBaseRole.Builder,
 } as const satisfies PhiViewerAccessPolicy;
 
 export const PHI_ACCESS_CONTENT_EDITING = {
   access: "roles",
   providerId: PHI_CORE_ROLE_PROVIDER_ID,
-  allowedRoleFlags: PhiBaseRole.Developer | PhiBaseRole.Author | PhiBaseRole.Publisher,
+  allowedRoleFlags: PhiBaseRole.Maintainer | PhiBaseRole.Author | PhiBaseRole.Publisher,
 } as const satisfies PhiViewerAccessPolicy;
 
 export const PHI_ACCESS_PUBLISHING = {
   access: "roles",
   providerId: PHI_CORE_ROLE_PROVIDER_ID,
-  allowedRoleFlags: PhiBaseRole.Developer | PhiBaseRole.Publisher,
+  allowedRoleFlags: PhiBaseRole.Maintainer | PhiBaseRole.Publisher,
 } as const satisfies PhiViewerAccessPolicy;
 
 /**
@@ -77,17 +77,17 @@ export const PHI_ACCESS_SITE_MEDIA = {
   access: "roles",
   providerId: PHI_CORE_ROLE_PROVIDER_ID,
   allowedRoleFlags:
-    PhiBaseRole.Developer | PhiBaseRole.Builder | PhiBaseRole.Author | PhiBaseRole.Publisher,
+    PhiBaseRole.Maintainer | PhiBaseRole.Builder | PhiBaseRole.Author | PhiBaseRole.Publisher,
 } as const satisfies PhiViewerAccessPolicy;
 
 export const PHI_ACCESS_SUPPORT = {
   access: "roles",
   providerId: PHI_CORE_ROLE_PROVIDER_ID,
-  allowedRoleFlags: PhiBaseRole.Developer | PhiBaseRole.Supporter,
+  allowedRoleFlags: PhiBaseRole.Maintainer | PhiBaseRole.Supporter,
 } as const satisfies PhiViewerAccessPolicy;
 
 export const PHI_ACCESS_ACCOUNTING = {
   access: "roles",
   providerId: PHI_CORE_ROLE_PROVIDER_ID,
-  allowedRoleFlags: PhiBaseRole.Developer | PhiBaseRole.Accountant,
+  allowedRoleFlags: PhiBaseRole.Maintainer | PhiBaseRole.Accountant,
 } as const satisfies PhiViewerAccessPolicy;

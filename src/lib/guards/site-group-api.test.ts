@@ -46,7 +46,7 @@ describe("canWriteSiteGroupMembership", () => {
     expect(canWriteSiteGroupMembership(MANAGER, { current: PhiGroupMembershipFlags.Author })).toBe(true);
   });
 
-  it("lets Developer and Admin write any level", () => {
+  it("lets Maintainer and Admin write any level", () => {
     expect(canWriteSiteGroupMembership(SITE_WIDE, {
       next: PhiGroupMembershipFlags.Manager,
       current: PhiGroupMembershipFlags.Manager,

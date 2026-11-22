@@ -16,7 +16,7 @@ export const PHI_BASE_ROLE_FLAGS_BY_KEY = {
   builder: PhiBaseRole.Builder,
   publisher: PhiBaseRole.Publisher,
   author: PhiBaseRole.Author,
-  developer: PhiBaseRole.Developer,
+  maintainer: PhiBaseRole.Maintainer,
   supporter: PhiBaseRole.Supporter,
   accountant: PhiBaseRole.Accountant,
 } as const;

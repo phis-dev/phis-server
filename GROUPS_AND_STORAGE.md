@@ -159,7 +159,7 @@ group's Manager can make, so it is theirs: `site_groups.flags` carries `ShowMemb
 default, and when it is off the field is absent from the answer rather than hidden in the interface.
 
 A Manager finds people to add through `GET /api/site/groups/candidates`, not through the Site's user
-list, which stays Developer-only. It is the narrow middle: open to anyone who manages some group,
+list, which stays Maintainer-only. It is the narrow middle: open to anyone who manages some group,
 matched on name or address, capped, and answering with the name and company rather than the address
 that may have been searched by. It is deliberately not per group -- the candidates are the Site's
 members either way, and a group id would only have dressed an unchanged list as a per-group one.
@@ -185,7 +185,7 @@ the Manager knows whether their group is a place where people talk.
 The Groups Module's Admin `/groups` Page is where a Site administers them: the groups with their member
 count and Space usage, the members of whichever group is selected, the form that creates one, and the
 level of a membership edited in the cell it is read in. A membership a provider contributes is listed but
-not editable -- it is read here and changed at its source. Entry is Developer, widened to Admin by the
+not editable -- it is read here and changed at its source. Entry is Maintainer, widened to Admin by the
 Core override, because creating a group is Site administration. A group's own Manager administers their
 group on the Module's App `/groups` Page.
 
@@ -297,9 +297,9 @@ Nothing deletes a group; whether a Directory reconciliation may ever remove one 
   includes retired ones only for `?scope=site&includeRetired=1`. Administration is the one surface that
   asks: the key stays taken, so the place that reports a name collision has to be able to show what is
   holding the name.
-- **A Manager retires, Developer and Admin reactivate.** A Manager runs the team and may end it, from
+- **A Manager retires, Maintainer and Admin reactivate.** A Manager runs the team and may end it, from
   the App page they run it on. The way back cannot be theirs: retiring removes the very level that would
-  authorize it, so requiring Developer or Admin there keeps the way back open instead of making it
+  authorize it, so requiring Maintainer or Admin there keeps the way back open instead of making it
   depend on a right the operation itself took away. Reactivation is therefore only offered where retired
   groups are listed at all, which is administration.
 - **Its Media Space is not retired with it.** A Space belongs to a group that is retired; it is not
@@ -344,7 +344,7 @@ rejected rather than read loosely.
 
 A Space with no row is still listed -- with `id: null` and its `address` -- because discovery is a Member
 right that must not create it. The Core Admin override reaches every Space, so an interface that lists
-one for a Developer or Admin can also open it.
+one for a Maintainer or Admin can also open it.
 
 ## 5. Asset persistence
 
@@ -397,7 +397,7 @@ Site Space management uses one centrally declared Core Media policy:
 
 ```text
 create, use, update, and unreferenced delete
-= Builder | Author | Publisher | Developer, plus the Core Admin override
+= Builder | Author | Publisher | Maintainer, plus the Core Admin override
 ```
 
 Supporter and Accountant do not receive Site Media management authority. Public or authenticated
@@ -459,21 +459,21 @@ more of them. Administering the members of an existing group is the group's own 
 belong to Site administration either, or every membership change would queue behind an Admin.
 
 ```text
-create a group                                = Developer | Admin
-retire a group                                = that group's Manager, or Developer | Admin
-reactivate a retired group                    = Developer | Admin
-grant or revoke the Manager level             = Developer | Admin
-set the Site quota ceiling per Space kind     = Developer | Admin
-set Author, Editor and Member levels        = that group's Manager, or Developer | Admin
+create a group                                = Maintainer | Admin
+retire a group                                = that group's Manager, or Maintainer | Admin
+reactivate a retired group                    = Maintainer | Admin
+grant or revoke the Manager level             = Maintainer | Admin
+set the Site quota ceiling per Space kind     = Maintainer | Admin
+set Author, Editor and Member levels        = that group's Manager, or Maintainer | Admin
 set that group's Space quota, up to the Site ceiling
-                                              = that group's Manager, or Developer | Admin
+                                              = that group's Manager, or Maintainer | Admin
 write in the group's Media Space              = Author
 read and discover the group's Media Space     = Member
 ```
 
 A Manager's write authority ends below their own level: a membership row carrying the Manager bit is
 untouchable for them, since the levels are cumulative and both demoting and removing such a row would
-be a demotion. A group therefore cannot lose its last Manager from the inside, and only Developer or
+be a demotion. A group therefore cannot lose its last Manager from the inside, and only Maintainer or
 Admin can leave one without.
 
 A Manager admits existing Site users only. Every member needs a matching `user_site_memberships` row,
@@ -509,7 +509,7 @@ override; `NULL` inherits the Site default. Per-user administration writes the U
 does not alter global account identity.
 
 The Site configuration additionally owns a maximum per-Space override for each Space kind. A group's
-Manager may set that group's `quota_bytes` up to that ceiling; only Developer or Admin may move the
+Manager may set that group's `quota_bytes` up to that ceiling; only Maintainer or Admin may move the
 ceiling itself. Without it, delegating capacity would delegate the Site budget: an actor who can raise
 their own allowance has no allowance.
 
@@ -538,7 +538,7 @@ The Site Space is not governed by any declaration. It always exists and is gover
 role matrix in section 6. A Group Space additionally requires its group to exist, which is ordinary
 Core data rather than a second switch.
 
-A Space kind that stops being available hides its Spaces rather than deleting anything. The Assets remain, they keep counting against their quota, and Developer and
+A Space kind that stops being available hides its Spaces rather than deleting anything. The Assets remain, they keep counting against their quota, and Maintainer and
 Admin must still be able to see that they are there -- the same reasoning that keeps a group with a
 Space from being deleted.
 
@@ -666,7 +666,7 @@ user whose page shows the figure, no group Manager to notice it filling. If it d
 `default_addon_quota_bytes` it would be the one delegated Space born unlimited, and nothing would say so
 until the disk did. The ceiling `max_addon_quota_bytes` is there for the same reason as the other two --
 capacity delegated without one is not delegated capacity -- and applies wherever the override is set by
-authority short of Developer and Admin.
+authority short of Maintainer and Admin.
 
 Setting one is the ordinary Space route, `PATCH /api/site/media/spaces/<id>`, because an Add-on Space is
 a Space. What it needs beyond the others is a way to be found: it is deliberately absent from every Space
@@ -1094,7 +1094,7 @@ keeps ordinary authoring independent of the Groups Module. Anyone who needs thei
 
 Administration does not get a Space selector in the shared picker either. Another user's User Space is
 never listed; administration reaches it only by naming it as `user:<id>`, which only the Space quota route
-`PATCH /api/site/media/spaces/<address>` accepts, and only from Developer or Admin.
+`PATCH /api/site/media/spaces/<address>` accepts, and only from Maintainer or Admin.
 
 A selector offers only Spaces the server returned as accessible. The Folder filter is scoped to the
 active Space. Upload inherits only the trusted active Space and explicitly selected Folder;

@@ -28,11 +28,11 @@ import {
 } from "@/lib/guards/site-group-api";
 import {
   requireSiteAuthenticatedApiContext,
-  requireSiteDeveloperApiContext,
+  requireSiteMaintainerApiContext,
 } from "@/lib/guards/site-admin-api";
 import { parsePhiPagination, parseStrictPositiveInt } from "@/lib/helpers/request";
 import { logRuntimeEvent } from "@/lib/log";
-import { canPhiViewerAccess, PHI_ACCESS_DEVELOPER_TOOLS } from "@/lib/authorization";
+import { canPhiViewerAccess, PHI_ACCESS_SITE_MAINTENANCE } from "@/lib/authorization";
 
 export const dynamic = "force-dynamic";
 
@@ -100,19 +100,19 @@ export async function GET(request: NextRequest) {
   if (guarded.error) return guarded.error;
   const siteId = guarded.context!.site!.id;
   /*
-   * Developer and Admin administer every group, so the rows say so too -- otherwise a page would offer
+   * Maintainer and Admin administer every group, so the rows say so too -- otherwise a page would offer
    * them nothing while the routes accept everything, and the two would disagree about the same actor.
    */
   const siteWide = canPhiViewerAccess({
     authenticated: true,
     roleClaims: guarded.context!.siteRole?.roleClaims ?? [],
     groupClaims: guarded.context!.siteRole?.groupClaims ?? [],
-  }, PHI_ACCESS_DEVELOPER_TOOLS);
+  }, PHI_ACCESS_SITE_MAINTENANCE);
 
   /*
    * Which groups, not whose authority: "the ones I am in" and "all of them" are different questions
    * about the same resource, so they are one route with a scope rather than two paths. The Site-wide
-   * scope is what needs Developer or Admin; asking for one's own needs nothing but being signed in.
+   * scope is what needs Maintainer or Admin; asking for one's own needs nothing but being signed in.
    */
   const scope = request.nextUrl.searchParams.get("scope") === "site" ? "site" : "mine";
   if (scope === "site" && !siteWide) {
@@ -183,7 +183,7 @@ export async function GET(request: NextRequest) {
  * Assets refer to, so group membership must never confer the authority to create more of them.
  */
 export async function POST(request: NextRequest) {
-  const guarded = await requireSiteDeveloperApiContext(request);
+  const guarded = await requireSiteMaintainerApiContext(request);
   if (guarded.error) return guarded.error;
   const body = await request.json().catch(() => null) as { key?: unknown; name?: unknown } | null;
   if (typeof body?.key !== "string" || typeof body?.name !== "string") {
@@ -216,7 +216,7 @@ export async function POST(request: NextRequest) {
  *
  * Retiring is a Manager operation, because a Manager runs the team and may end it. Putting one back is
  * not: a retired group grants nothing, so the Manager level in it is gone the moment it is retired and
- * cannot be the authority that returns it. Requiring Developer or Admin there keeps the way back open
+ * cannot be the authority that returns it. Requiring Maintainer or Admin there keeps the way back open
  * instead of making it depend on a right the operation itself removed.
  */
 /**
@@ -273,7 +273,7 @@ export async function PATCH(request: NextRequest) {
     if (!retired && !guarded.context!.authority.siteWide) {
       return NextResponse.json({
         error: "reactivate_forbidden",
-        message: "Only a developer or admin may put a retired group back in service.",
+        message: "Only a maintainer or admin may put a retired group back in service.",
       }, { status: 403 });
     }
     const updated = await setSiteGroupRetirement({ siteId, groupId, retired });
@@ -333,7 +333,7 @@ export async function PUT(request: NextRequest) {
   if (!canWriteSiteGroupMembership(guarded.context!.authority, { next, current })) {
     return NextResponse.json({
       error: "manager_level_forbidden",
-      message: "Only a developer or admin may grant or revoke the Manager level.",
+      message: "Only a maintainer or admin may grant or revoke the Manager level.",
     }, { status: 403 });
   }
   try {
@@ -361,7 +361,7 @@ export async function DELETE(request: NextRequest) {
   if (!canWriteSiteGroupMembership(guarded.context!.authority, { current })) {
     return NextResponse.json({
       error: "manager_level_forbidden",
-      message: "Only a developer or admin may grant or revoke the Manager level.",
+      message: "Only a maintainer or admin may grant or revoke the Manager level.",
     }, { status: 403 });
   }
   return NextResponse.json({

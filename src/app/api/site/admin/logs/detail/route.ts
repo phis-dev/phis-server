@@ -1,12 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { readPhiSiteAdminLog } from "@/lib/admin-logs";
-import { requireSiteDeveloperApiContext } from "@/lib/guards/site-admin-api";
+import { requireSiteMaintainerApiContext } from "@/lib/guards/site-admin-api";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(request: NextRequest) {
-  const { context, error } = await requireSiteDeveloperApiContext(request);
+  const { context, error } = await requireSiteMaintainerApiContext(request);
   if (error) {
     return error;
   }

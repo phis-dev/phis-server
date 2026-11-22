@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 
 import { ensureSiteMediaConfig, resolveEffectiveMediaQuotaBytes, PhisMediaSpaceKind } from "@/db/media-spaces";
 import { listSiteMediaSpacesForAdmin } from "@/db/media-storage-settings";
-import { requireSiteDeveloperApiContext } from "@/lib/guards/site-admin-api";
+import { requireSiteMaintainerApiContext } from "@/lib/guards/site-admin-api";
 
 /**
  * The existing User or Group Spaces of the Site, with the Profile each writes to and its quota.
@@ -18,7 +18,7 @@ export const dynamic = "force-dynamic";
 const MAX_PAGE_SIZE = 100;
 
 export async function GET(request: NextRequest) {
-  const { context, error } = await requireSiteDeveloperApiContext(request);
+  const { context, error } = await requireSiteMaintainerApiContext(request);
   if (error) return error;
   const site = context!.site!;
   const params = request.nextUrl.searchParams;

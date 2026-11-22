@@ -136,7 +136,7 @@ an AD `managedBy`, a naming convention, an owner relation -- may assert it. Dire
 equivalent of the cumulative Member/Author/Editor/Manager ladder in the first place: LDAP and AD groups
 have members and nothing else, SCIM carries `members`. Letting a source assert Manager would also make
 the level unrevocable locally, because provider-managed assertions are not locally editable, and
-[GROUPS_AND_STORAGE.md](../GROUPS_AND_STORAGE.md) reserves granting and revoking it to Developer and
+[GROUPS_AND_STORAGE.md](../GROUPS_AND_STORAGE.md) reserves granting and revoking it to Maintainer and
 Admin. A Site whose memberships come from a Directory therefore has its Editors and Managers named
 locally, as a second source row beside the asserted one.
 

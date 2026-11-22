@@ -8,7 +8,7 @@ import {
   type SiteMediaStorageSettingsUpdate,
 } from "@/db/media-storage-settings";
 import { getPool } from "@/lib/db";
-import { requireSiteDeveloperApiContext } from "@/lib/guards/site-admin-api";
+import { requireSiteMaintainerApiContext } from "@/lib/guards/site-admin-api";
 import { requireJsonObjectBody } from "@/lib/helpers/request";
 import { logRuntimeEvent } from "@/lib/log";
 import { checkPhisStorageProviderReadiness } from "@/lib/media-storage-readiness";
@@ -16,7 +16,7 @@ import { checkPhisStorageProviderReadiness } from "@/lib/media-storage-readiness
 /**
  * Where this Site's Spaces write, among the Storage Profiles the operator created.
  *
- * The Developer policy, as on `/api/site/admin/media` beside it: storage is capacity, a Site setting, and
+ * The Maintainer policy, as on `/api/site/admin/media` beside it: storage is capacity, a Site setting, and
  * not something an author decides. Creating a Profile is not here -- it names a bucket and a secret, which
  * is the operator's (`phis storage add`). What is: the Profile the Site Space writes to, the one new User
  * and Group Spaces start on, which Profiles may be pointed at, and which ones take new objects at all.
@@ -26,7 +26,7 @@ import { checkPhisStorageProviderReadiness } from "@/lib/media-storage-readiness
 export const dynamic = "force-dynamic";
 
 export async function GET(request: NextRequest) {
-  const { context, error } = await requireSiteDeveloperApiContext(request);
+  const { context, error } = await requireSiteMaintainerApiContext(request);
   if (error) return error;
   return NextResponse.json({ storage: await readSiteMediaStorageSettings(context!.site!.id) });
 }
@@ -58,7 +58,7 @@ function readIds(value: unknown, field: string, issues: string[]) {
 }
 
 export async function PATCH(request: NextRequest) {
-  const { context, error } = await requireSiteDeveloperApiContext(request);
+  const { context, error } = await requireSiteMaintainerApiContext(request);
   if (error) return error;
   const site = context!.site!;
   const parsed = await requireJsonObjectBody(request, "Invalid Media storage settings payload.");

@@ -9,7 +9,7 @@ import { PhiBaseRole } from "@/lib/constants/phi-base-roles";
 import {
   canPhiViewerAccess,
   PHI_ACCESS_CONTENT_EDITING,
-  PHI_ACCESS_DEVELOPER_TOOLS,
+  PHI_ACCESS_SITE_MAINTENANCE,
   PHI_ACCESS_PUBLISHING,
   PHI_ACCESS_SITE_ADMIN,
   PHI_ACCESS_SITE_MEDIA,
@@ -136,24 +136,24 @@ export async function requireSiteAdminOnlyApiContext(request: NextRequest): Prom
   });
 }
 
-export async function requireSiteDeveloperApiContext(request: NextRequest): Promise<SiteAdminApiGuard> {
+export async function requireSiteMaintainerApiContext(request: NextRequest): Promise<SiteAdminApiGuard> {
   return requireSiteRoleApiContext(request, {
-    policy: PHI_ACCESS_DEVELOPER_TOOLS,
-    missingRoleMessage: "Site developer or admin role required.",
+    policy: PHI_ACCESS_SITE_MAINTENANCE,
+    missingRoleMessage: "Site maintainer or admin role required.",
   });
 }
 
 export async function requireSiteAuthorApiContext(request: NextRequest): Promise<SiteAdminApiGuard> {
   return requireSiteRoleApiContext(request, {
     policy: PHI_ACCESS_CONTENT_EDITING,
-    missingRoleMessage: "Site author, publisher, developer, or admin role required.",
+    missingRoleMessage: "Site author, publisher, maintainer, or admin role required.",
   });
 }
 
 export async function requireSiteBuilderApiContext(request: NextRequest): Promise<SiteAdminApiGuard> {
   return requireSiteRoleApiContext(request, {
     policy: PHI_ACCESS_STRUCTURE_AUTHORING,
-    missingRoleMessage: "Site builder, developer, or admin role required.",
+    missingRoleMessage: "Site builder, maintainer, or admin role required.",
   });
 }
 
@@ -164,7 +164,7 @@ export async function requireSiteBuilderApiContext(request: NextRequest): Promis
  */
 export const PHI_SITE_MEDIA_API_POLICY = {
   policy: PHI_ACCESS_SITE_MEDIA,
-  missingRoleMessage: "Site builder, author, publisher, developer, or admin role required.",
+  missingRoleMessage: "Site builder, author, publisher, maintainer, or admin role required.",
 } as const;
 
 export async function requireSiteMediaApiContext(request: NextRequest): Promise<SiteAdminApiGuard> {
@@ -174,14 +174,14 @@ export async function requireSiteMediaApiContext(request: NextRequest): Promise<
 export async function requireSiteSupportApiContext(request: NextRequest): Promise<SiteAdminApiGuard> {
   return requireSiteRoleApiContext(request, {
     policy: PHI_ACCESS_SUPPORT,
-    missingRoleMessage: "Site supporter, developer, or admin role required.",
+    missingRoleMessage: "Site supporter, maintainer, or admin role required.",
   });
 }
 
 export async function requireSitePublisherApiContext(request: NextRequest): Promise<SiteAdminApiGuard> {
   return requireSiteRoleApiContext(request, {
     policy: PHI_ACCESS_PUBLISHING,
-    missingRoleMessage: "Site publisher, developer, or admin role required.",
+    missingRoleMessage: "Site publisher, maintainer, or admin role required.",
   });
 }
 
@@ -191,12 +191,12 @@ export async function requireSiteReviewApiContext(request: NextRequest): Promise
       access: "roles",
       providerId: PHI_CORE_ROLE_PROVIDER_ID,
       allowedRoleFlags:
-        PhiBaseRole.Developer |
+        PhiBaseRole.Maintainer |
         PhiBaseRole.Builder |
         PhiBaseRole.Author |
         PhiBaseRole.Publisher,
     },
-    missingRoleMessage: "Site builder, author, publisher, developer, or admin role required.",
+    missingRoleMessage: "Site builder, author, publisher, maintainer, or admin role required.",
   });
 }
 

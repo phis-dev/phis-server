@@ -42,7 +42,7 @@ export async function GET(request: NextRequest) {
     queueId: normalizeNullableInteger(searchParams.get("queueId")),
     page,
     pageSize,
-    // The tickets of the reader's queues, or every one for an Admin or a Developer.
+    // The tickets of the reader's queues, or every one for an Admin or a Maintainer.
     reach: readSupportTicketReach(context),
   });
 

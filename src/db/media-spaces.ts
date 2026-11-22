@@ -791,7 +791,7 @@ export async function resolveAuthorizedMediaSpace(input: {
    */
   intent?: "read" | "write";
   /**
-   * Developer and Admin authority. The Core Admin override is a normative Site-superuser rule that
+   * Maintainer and Admin authority. The Core Admin override is a normative Site-superuser rule that
    * applies to every Site-scoped access decision, so it reaches a Group Space too -- a Space they can
    * see listed but not open would be a broken half of that rule.
    */

@@ -29,7 +29,7 @@ vi.mock("@/db/media-spaces", () => ({
 vi.mock("@/db/site-groups", () => ({ readEffectiveGroupMembershipFlags: mocks.flags }));
 vi.mock("@/lib/authorization", () => ({
   canPhiViewerAccess: () => false,
-  PHI_ACCESS_DEVELOPER_TOOLS: "developer-tools",
+  PHI_ACCESS_SITE_MAINTENANCE: "site-maintenance",
 }));
 
 import { PhiGroupMembershipFlags } from "@/lib/constants/site-groups";

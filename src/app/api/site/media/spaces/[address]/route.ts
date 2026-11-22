@@ -14,7 +14,7 @@ import {
   type SiteMediaConfigRecord,
 } from "@/db/media-spaces";
 import { readEffectiveGroupMembershipFlags } from "@/db/site-groups";
-import { canPhiViewerAccess, PHI_ACCESS_DEVELOPER_TOOLS } from "@/lib/authorization";
+import { canPhiViewerAccess, PHI_ACCESS_SITE_MAINTENANCE } from "@/lib/authorization";
 import { PhiGroupMembershipFlags } from "@/lib/constants/site-groups";
 import { requireSiteAuthenticatedApiContext } from "@/lib/guards/site-admin-api";
 import { parseRequestedMediaSpace } from "@/lib/guards/site-media-api";
@@ -24,7 +24,7 @@ import { serializeMediaSpace } from "@/lib/media-response";
 /**
  * The capacity override of one Media Space.
  *
- * Two authorities reach this route. Developer and Admin set any Space's override and own the ceiling
+ * Two authorities reach this route. Maintainer and Admin set any Space's override and own the ceiling
  * it is measured against; a group's Manager sets their own group's, up to that ceiling. Delegated
  * capacity without a ceiling would not be delegated capacity at all -- an actor who can raise their own
  * allowance has none -- so the ceiling is checked here, on the server, and never in an interface.
@@ -77,7 +77,7 @@ export async function PATCH(
     authenticated: true,
     roleClaims: guarded.context!.siteRole?.roleClaims ?? [],
     groupClaims: guarded.context!.siteRole?.groupClaims ?? [],
-  }, PHI_ACCESS_DEVELOPER_TOOLS);
+  }, PHI_ACCESS_SITE_MAINTENANCE);
 
   const config = await ensureSiteMediaConfig(siteId);
   let space: MediaSpaceRecord | null = null;

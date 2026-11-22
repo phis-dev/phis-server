@@ -728,7 +728,7 @@ What each part is for:
   nothing to judge the write by, and the validator refuses it. The role must be one the manifest
   declares.
 - A role can also hang on a Site access: `impliedBy: { siteAccess: "content-editing" }` beside
-  `grantableBy` would make every Author, Publisher and Developer of the Site an `editor` without a grant,
+  `grantableBy` would make every Author, Publisher and Maintainer of the Site an `editor` without a grant,
   for as long as they hold that access. Nothing is stored and the role can still be granted on its own.
   Use it where the role means a standing Core already knows ("whoever keeps the books" is `accounting`),
   so a Site does not have to grant the same people twice. `site-admin` is refused there: a Site Admin

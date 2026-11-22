@@ -17,7 +17,7 @@ function viewer(roleFlags: number) {
 
 describe("Site Media management policy", () => {
   it("admits the four content roles", () => {
-    for (const role of ["Builder", "Author", "Publisher", "Developer"] as const) {
+    for (const role of ["Builder", "Author", "Publisher", "Maintainer"] as const) {
       expect(canPhiViewerAccess(viewer(PhiBaseRole[role]), PHI_ACCESS_SITE_MEDIA), role).toBe(true);
     }
   });

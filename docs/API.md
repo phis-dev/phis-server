@@ -65,14 +65,14 @@ Site administration, CMS, media and support API. A Site's `/api/site` proxy forw
 | GET | [`/api/site/admin/locales`](../src/app/api/site/admin/locales/route.ts) | session, `site-admin` (requireSiteAdminOnlyApiContext) |  |
 | PATCH | [`/api/site/admin/locales`](../src/app/api/site/admin/locales/route.ts) | session, `site-admin` (requireSiteAdminOnlyApiContext) |  |
 | DELETE | [`/api/site/admin/locales`](../src/app/api/site/admin/locales/route.ts) | session, `site-admin` (requireSiteAdminOnlyApiContext) |  |
-| GET | [`/api/site/admin/logs`](../src/app/api/site/admin/logs/route.ts) | session, `developer-tools` (requireSiteDeveloperApiContext) |  |
-| GET | [`/api/site/admin/logs/detail`](../src/app/api/site/admin/logs/detail/route.ts) | session, `developer-tools` (requireSiteDeveloperApiContext) |  |
-| GET | [`/api/site/admin/media`](../src/app/api/site/admin/media/route.ts) | session, `developer-tools` (requireSiteDeveloperApiContext) |  |
-| PATCH | [`/api/site/admin/media`](../src/app/api/site/admin/media/route.ts) | session, `developer-tools` (requireSiteDeveloperApiContext) |  |
-| GET | [`/api/site/admin/media/spaces`](../src/app/api/site/admin/media/spaces/route.ts) | session, `developer-tools` (requireSiteDeveloperApiContext) |  |
-| PATCH | [`/api/site/admin/media/spaces/{id}`](../src/app/api/site/admin/media/spaces/[id]/route.ts) | session, `developer-tools` (requireSiteDeveloperApiContext) |  |
-| GET | [`/api/site/admin/media/storage`](../src/app/api/site/admin/media/storage/route.ts) | session, `developer-tools` (requireSiteDeveloperApiContext) |  |
-| PATCH | [`/api/site/admin/media/storage`](../src/app/api/site/admin/media/storage/route.ts) | session, `developer-tools` (requireSiteDeveloperApiContext) |  |
+| GET | [`/api/site/admin/logs`](../src/app/api/site/admin/logs/route.ts) | session, `site-maintenance` (requireSiteMaintainerApiContext) |  |
+| GET | [`/api/site/admin/logs/detail`](../src/app/api/site/admin/logs/detail/route.ts) | session, `site-maintenance` (requireSiteMaintainerApiContext) |  |
+| GET | [`/api/site/admin/media`](../src/app/api/site/admin/media/route.ts) | session, `site-maintenance` (requireSiteMaintainerApiContext) |  |
+| PATCH | [`/api/site/admin/media`](../src/app/api/site/admin/media/route.ts) | session, `site-maintenance` (requireSiteMaintainerApiContext) |  |
+| GET | [`/api/site/admin/media/spaces`](../src/app/api/site/admin/media/spaces/route.ts) | session, `site-maintenance` (requireSiteMaintainerApiContext) |  |
+| PATCH | [`/api/site/admin/media/spaces/{id}`](../src/app/api/site/admin/media/spaces/[id]/route.ts) | session, `site-maintenance` (requireSiteMaintainerApiContext) |  |
+| GET | [`/api/site/admin/media/storage`](../src/app/api/site/admin/media/storage/route.ts) | session, `site-maintenance` (requireSiteMaintainerApiContext) |  |
+| PATCH | [`/api/site/admin/media/storage`](../src/app/api/site/admin/media/storage/route.ts) | session, `site-maintenance` (requireSiteMaintainerApiContext) |  |
 | GET | [`/api/site/admin/settings`](../src/app/api/site/admin/settings/route.ts) | session, `site-admin` (requireSiteAdminOnlyApiContext) |  |
 | PATCH | [`/api/site/admin/settings`](../src/app/api/site/admin/settings/route.ts) | session, `site-admin` (requireSiteAdminOnlyApiContext) |  |
 | GET | [`/api/site/admin/users`](../src/app/api/site/admin/users/route.ts) | session, `site-admin` (requireSiteAdminOnlyApiContext) | The Site's users, one page, each with the Core roles and the stored Add-on roles they were given (a Site Admin holds every role besides); filterable by account type, enabled state, `addonId` and `addonRole`. `?userId=` answers the one user, with `addonRoles` as a list of `"<addonId>:<role>"` strings, one per role. |
@@ -136,7 +136,7 @@ Site administration, CMS, media and support API. A Site's `/api/site` proxy forw
 | PATCH | [`/api/site/editor/translations`](../src/app/api/site/editor/translations/route.ts) | session, `publishing` (requireSitePublisherApiContext) |  |
 | DELETE | [`/api/site/editor/translations`](../src/app/api/site/editor/translations/route.ts) | session, `roles` (requireSiteReviewApiContext); session, `publishing` (requireSitePublisherApiContext) |  |
 | GET | [`/api/site/groups`](../src/app/api/site/groups/route.ts) | session (requireSiteGroupMemberApiContext); session, `authenticated` (requireSiteAuthenticatedApiContext) |  |
-| POST | [`/api/site/groups`](../src/app/api/site/groups/route.ts) | session, `developer-tools` (requireSiteDeveloperApiContext) | Creating a group is Site administration: a group is an authorization unit Pages, Navigation, and Assets refer to, so group membership must never confer the authority to create more of them. |
+| POST | [`/api/site/groups`](../src/app/api/site/groups/route.ts) | session, `site-maintenance` (requireSiteMaintainerApiContext) | Creating a group is Site administration: a group is an authorization unit Pages, Navigation, and Assets refer to, so group membership must never confer the authority to create more of them. |
 | PATCH | [`/api/site/groups`](../src/app/api/site/groups/route.ts) | session (requireSiteGroupManagerApiContext) |  |
 | PUT | [`/api/site/groups`](../src/app/api/site/groups/route.ts) | session (requireSiteGroupManagerApiContext) |  |
 | DELETE | [`/api/site/groups`](../src/app/api/site/groups/route.ts) | session (requireSiteGroupManagerApiContext) |  |
@@ -170,14 +170,14 @@ Site administration, CMS, media and support API. A Site's `/api/site` proxy forw
 | POST | [`/api/site/support/forward`](../src/app/api/site/support/forward/route.ts) | session, `support` (requireSiteSupportApiContext) | Hands one ticket's work to one target: `{ ticketId, target, title? }`. |
 | POST | [`/api/site/support/link`](../src/app/api/site/support/link/route.ts) | session, `support` (requireSiteSupportApiContext) | Links a record that already exists elsewhere to one ticket: `{ ticketId, reference }`. |
 | GET | [`/api/site/support/queues`](../src/app/api/site/support/queues/route.ts) | session, `support` (requireSiteSupportApiContext) | The Site's Support queues. |
-| POST | [`/api/site/support/queues`](../src/app/api/site/support/queues/route.ts) | session, `developer-tools` (requireSiteDeveloperApiContext) | Adds a queue. |
-| PATCH | [`/api/site/support/queues/{queueId}`](../src/app/api/site/support/queues/[queueId]/route.ts) | session, `developer-tools` (requireSiteDeveloperApiContext) | Edits one queue: its name, the group it routes to, its order, and whether it is retired. |
+| POST | [`/api/site/support/queues`](../src/app/api/site/support/queues/route.ts) | session, `site-maintenance` (requireSiteMaintainerApiContext) | Adds a queue. |
+| PATCH | [`/api/site/support/queues/{queueId}`](../src/app/api/site/support/queues/[queueId]/route.ts) | session, `site-maintenance` (requireSiteMaintainerApiContext) | Edits one queue: its name, the group it routes to, its order, and whether it is retired. |
 | POST | [`/api/site/support/request`](../src/app/api/site/support/request/route.ts) | session, `authenticated` (requireSiteAuthenticatedApiContext) | The way in for the person asking. |
 | GET | [`/api/site/support/request/types`](../src/app/api/site/support/request/types/route.ts) | session, `authenticated` (requireSiteAuthenticatedApiContext) | What a person who is not Staff may ask for. |
 | GET | [`/api/site/support/ticket-types`](../src/app/api/site/support/ticket-types/route.ts) | session, `support` (requireSiteSupportApiContext) | The Site's ticket types. |
-| PATCH | [`/api/site/support/ticket-types`](../src/app/api/site/support/ticket-types/route.ts) | session, `developer-tools` (requireSiteDeveloperApiContext) | Sets what the catalogue as a whole says: `requesterWindowDays`, the window every type without its own falls back to. `0` switches automatic closing off for every type at once. |
-| POST | [`/api/site/support/ticket-types`](../src/app/api/site/support/ticket-types/route.ts) | session, `developer-tools` (requireSiteDeveloperApiContext) | Adds a ticket type. |
-| PATCH | [`/api/site/support/ticket-types/{typeId}`](../src/app/api/site/support/ticket-types/[typeId]/route.ts) | session, `developer-tools` (requireSiteDeveloperApiContext) | Edits one ticket type, and is where a Site decides who may ask for it. |
+| PATCH | [`/api/site/support/ticket-types`](../src/app/api/site/support/ticket-types/route.ts) | session, `site-maintenance` (requireSiteMaintainerApiContext) | Sets what the catalogue as a whole says: `requesterWindowDays`, the window every type without its own falls back to. `0` switches automatic closing off for every type at once. |
+| POST | [`/api/site/support/ticket-types`](../src/app/api/site/support/ticket-types/route.ts) | session, `site-maintenance` (requireSiteMaintainerApiContext) | Adds a ticket type. |
+| PATCH | [`/api/site/support/ticket-types/{typeId}`](../src/app/api/site/support/ticket-types/[typeId]/route.ts) | session, `site-maintenance` (requireSiteMaintainerApiContext) | Edits one ticket type, and is where a Site decides who may ask for it. |
 | GET | [`/api/site/support/tickets`](../src/app/api/site/support/tickets/route.ts) | session, `support` (requireSiteSupportApiContext) |  |
 | POST | [`/api/site/support/tickets`](../src/app/api/site/support/tickets/route.ts) | session, `support` (requireSiteSupportApiContext) | A Supporter opening a ticket, on somebody's behalf or for work Staff found themselves. |
 | GET | [`/api/site/support/tickets/{ticketId}`](../src/app/api/site/support/tickets/[ticketId]/route.ts) | session, `support` (requireSiteSupportApiContext) |  |
@@ -304,8 +304,8 @@ Versioned API a Site calls server-to-server with its token (`x-phis-token`), and
 
 | Method | Address | Access | Description |
 |---|---|---|---|
-| GET | [`/api/v1/groups`](../src/app/api/v1/groups/route.ts) | session, `developer-tools` (requireSiteDeveloperApiContext) |  |
-| POST | [`/api/v1/groups`](../src/app/api/v1/groups/route.ts) | session, `developer-tools` (requireSiteDeveloperApiContext) |  |
+| GET | [`/api/v1/groups`](../src/app/api/v1/groups/route.ts) | session, `site-maintenance` (requireSiteMaintainerApiContext) |  |
+| POST | [`/api/v1/groups`](../src/app/api/v1/groups/route.ts) | session, `site-maintenance` (requireSiteMaintainerApiContext) |  |
 | GET | [`/api/v1/groups/{groupId}/members`](../src/app/api/v1/groups/[groupId]/members/route.ts) | session (requireSiteGroupMemberApiContext) |  |
 | PUT | [`/api/v1/groups/{groupId}/members/{userId}`](../src/app/api/v1/groups/[groupId]/members/[userId]/route.ts) | session (requireSiteGroupManagerApiContext) |  |
 | DELETE | [`/api/v1/groups/{groupId}/members/{userId}`](../src/app/api/v1/groups/[groupId]/members/[userId]/route.ts) | session (requireSiteGroupManagerApiContext) |  |

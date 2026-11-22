@@ -87,9 +87,9 @@ Mirror the Page pattern rather than inventing one. [src/lib/site-cms-write-route
 already draws the line that fits:
 
 - **Draft** behind `requireSiteAuthorApiContext` -- `PHI_ACCESS_CONTENT_EDITING`, which is
-  `Developer | Author | Publisher` ([src/lib/authorization.ts](../src/lib/authorization.ts)).
+  `Maintainer | Author | Publisher` ([src/lib/authorization.ts](../src/lib/authorization.ts)).
 - **Publish** behind `requireSitePublisherApiContext` -- `PHI_ACCESS_PUBLISHING`, which is
-  `Developer | Publisher`.
+  `Maintainer | Publisher`.
 
 Core Admin passes both by the override in `canPhiAccessSubjectReach`. No new Core role is invented:
 [AUTHORIZATION.md](../AUTHORIZATION.md) reserves Core role flags to Admin and `phis site admin`, and a

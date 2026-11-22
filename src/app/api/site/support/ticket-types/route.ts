@@ -8,7 +8,7 @@ import {
 } from "@/db/support";
 import { readSiteThreadKinds } from "@/db/threads";
 import {
-  requireSiteDeveloperApiContext,
+  requireSiteMaintainerApiContext,
   requireSiteSupportApiContext,
 } from "@/lib/guards/site-admin-api";
 import { readRequestBody } from "@/lib/helpers/request";
@@ -50,10 +50,10 @@ export async function GET(request: NextRequest) {
  * Sets what the catalogue as a whole says: `requesterWindowDays`, the window every type without its own
  * falls back to. `0` switches automatic closing off for every type at once.
  *
- * Behind `Developer | Admin`, as adding a type is.
+ * Behind `Maintainer | Admin`, as adding a type is.
  */
 export async function PATCH(request: NextRequest) {
-  const { context, error } = await requireSiteDeveloperApiContext(request);
+  const { context, error } = await requireSiteMaintainerApiContext(request);
   if (error) {
     return error;
   }
@@ -76,11 +76,11 @@ export async function PATCH(request: NextRequest) {
 /**
  * Adds a ticket type.
  *
- * Behind `Developer | Admin`, as the queues are: a type decides what may leave the Site and what ends a
+ * Behind `Maintainer | Admin`, as the queues are: a type decides what may leave the Site and what ends a
  * ticket, which is not a decision that belongs to everyone who answers one.
  */
 export async function POST(request: NextRequest) {
-  const { context, error } = await requireSiteDeveloperApiContext(request);
+  const { context, error } = await requireSiteMaintainerApiContext(request);
   if (error) {
     return error;
   }

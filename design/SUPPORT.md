@@ -28,7 +28,7 @@ responsible for it and when it is done.
 ## 2. The way in
 
 Every route under `/api/site/support` used to be behind `requireSiteSupportApiContext`, which is
-`Developer | Supporter`, widened to Admin. `POST /api/site/support/tickets` -- the one call that opened a
+`Maintainer | Supporter`, widened to Admin. `POST /api/site/support/tickets` -- the one call that opened a
 ticket -- was among them, and it required a `typeId` that no route handed out: there was no types listing
 anywhere. A customer could not open a ticket, and if they could they would have had nothing to name.
 
@@ -132,7 +132,7 @@ What a Site needs is small and has to be exact -- one queue marked `Entry` and t
 one ticket type, not requestable -- and it is a declared seed, materialized on publish
 (`src/db/module-seeds.ts`, and the rules below). Everything past that is administration, and it is
 built: `POST`/`PATCH` under `/api/site/support/queues` and `/api/site/support/ticket-types`, behind
-`Developer | Admin` rather than the Supporter role the listings use, because a queue names a group and
+`Maintainer | Admin` rather than the Supporter role the listings use, because a queue names a group and
 creating groups is Site administration
 ([GROUPS_AND_STORAGE.md](../GROUPS_AND_STORAGE.md) section 6). There is no CLI command, and no
 administration surface in `@phis/support` yet.

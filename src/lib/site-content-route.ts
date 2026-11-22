@@ -34,7 +34,7 @@ import { logRuntimeEvent } from "@/lib/log";
 /*
  * Widget content through the Editor (CONTENT.md).
  *
- * Saving and submitting is everybody's who may read drafts -- Developer, Builder, Author, Publisher --
+ * Saving and submitting is everybody's who may read drafts -- Maintainer, Builder, Author, Publisher --
  * because nothing they write is live. Publishing and withdrawing is the Publisher's. Every write names the
  * version it builds on, and a write that does not build on the current one answers `409` and writes
  * nothing.

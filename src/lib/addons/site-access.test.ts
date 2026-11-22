@@ -73,8 +73,8 @@ describe("an Add-on's Site access question", () => {
   });
 
   it("puts every access as the Core role mask its policy is, for a filter written in SQL", () => {
-    expect(phisSiteAccessCoreRoleFlags(PHIS_SITE_ACCESS.accounting)).toBe(PhiBaseRole.Developer | PhiBaseRole.Accountant);
-    expect(phisSiteAccessCoreRoleFlags(PHIS_SITE_ACCESS.support)).toBe(PhiBaseRole.Developer | PhiBaseRole.Supporter);
+    expect(phisSiteAccessCoreRoleFlags(PHIS_SITE_ACCESS.accounting)).toBe(PhiBaseRole.Maintainer | PhiBaseRole.Accountant);
+    expect(phisSiteAccessCoreRoleFlags(PHIS_SITE_ACCESS.support)).toBe(PhiBaseRole.Maintainer | PhiBaseRole.Supporter);
     for (const access of Object.values(PHIS_SITE_ACCESS)) {
       expect(phisSiteAccessCoreRoleFlags(access)).toBeGreaterThan(0);
     }

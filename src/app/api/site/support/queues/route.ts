@@ -6,7 +6,7 @@ import {
   SupportAdministrationError,
 } from "@/db/support";
 import {
-  requireSiteDeveloperApiContext,
+  requireSiteMaintainerApiContext,
   requireSiteSupportApiContext,
 } from "@/lib/guards/site-admin-api";
 import { readRequestBody } from "@/lib/helpers/request";
@@ -39,13 +39,13 @@ export async function GET(request: NextRequest) {
 /**
  * Adds a queue.
  *
- * Behind `Developer | Admin` rather than the Supporter role the listing above uses: a queue names a
+ * Behind `Maintainer | Admin` rather than the Supporter role the listing above uses: a queue names a
  * group, and creating groups is the Site's own administration
  * ([GROUPS_AND_STORAGE.md](../../../../../../GROUPS_AND_STORAGE.md) section 6). Somebody who answers
  * tickets is not therefore somebody who decides where tickets go.
  */
 export async function POST(request: NextRequest) {
-  const { context, error } = await requireSiteDeveloperApiContext(request);
+  const { context, error } = await requireSiteMaintainerApiContext(request);
   if (error) {
     return error;
   }

@@ -8,7 +8,7 @@ export const dynamic = "force-dynamic";
 /**
  * Who this person may address, and which kinds of thread this Site offers.
  *
- * It is deliberately not the Site's user list, which stays Developer-only: the people here are the ones
+ * It is deliberately not the Site's user list, which stays Maintainer-only: the people here are the ones
  * the actor already shares a group with, and what crosses is a display name and, where the group
  * discloses it, a company. The kinds ride along because a composer has to know whether to offer a group
  * thread at all, and asking twice for one form would be two round trips for one question.

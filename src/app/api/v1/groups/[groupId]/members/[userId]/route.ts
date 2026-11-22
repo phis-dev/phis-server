@@ -19,11 +19,11 @@ function parseId(value: string) {
 
 const FORBIDDEN_MANAGER_WRITE = {
   error: "manager_level_forbidden",
-  message: "Only a developer or admin may grant or revoke the Manager level.",
+  message: "Only a maintainer or admin may grant or revoke the Manager level.",
 } as const;
 
 /*
- * Two authorities share these routes. Developer and Admin administer any group at any level; a group's
+ * Two authorities share these routes. Maintainer and Admin administer any group at any level; a group's
  * own Manager administers Author, Editor and Member in that group only. The group id is parsed before the
  * guard runs because the guard's decision depends on it.
  */
