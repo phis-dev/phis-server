@@ -433,7 +433,7 @@ Contract:
 - List consumers must not read the media library unbounded. The public `GET /api/site/media` contract is paginated and requires `page` plus `pageSize`; detail reads belong on `GET /api/site/media/:id`.
 - `pageSize` is capped at `100`.
 - The list contract may additionally filter by `id` (repeatable), `since`, `until`, `folderId`, `kind` (repeatable), `presentationFlags`, and `q`, and accepts `sort`.
-- `id` may repeat (`?id=1&id=2`, at most `100` of them; more are refused with `400`): the list then answers exactly those Assets, in its usual shape and under the same Space and access rules, from one query (`id = ANY(...)`) rather than one read per Asset. This is how a field holding several pictures reads them back. A single `id` is the case of one; an Asset outside the Space being listed is left out, never refused.
+- `id` may repeat (`?id=1&id=2`, at most `100` of them; more are refused with `400`, as is an `id` that is not a positive integer, so a list of only broken ids never answers the unfiltered page): the list then answers exactly those Assets, in its usual shape and under the same Space and access rules, from one query (`id = ANY(...)`) rather than one read per Asset. This is how a field holding several pictures reads them back. A single `id` is the case of one; an Asset outside the Space being listed is left out, never refused.
 - `sort` accepts only `created_at_desc`.
 - The canonical "last 100 images" use-case is `page=1&pageSize=100` with `sort=created_at_desc`.
 - `since` and `until` filter by `created_at` in the Space-scoped media library.

@@ -24,7 +24,7 @@ import {
   serializeMediaSpace,
   serializeUnmaterializedGroupMediaSpace,
 } from "@/lib/media-response";
-import { parsePositiveInt, PHI_MAX_PAGE_SIZE } from "@/lib/helpers/request";
+import { parsePositiveInt, parseStrictPositiveInt, PHI_MAX_PAGE_SIZE } from "@/lib/helpers/request";
 
 export const dynamic = "force-dynamic";
 
@@ -54,12 +54,12 @@ export async function GET(request: NextRequest) {
     /*
      * `id` may repeat (`?id=1&id=2`): the Assets a field holds, read back in the list's own shape, in
      * one query and under the same Space and access rules as any other listing. One `id` is the case
-     * of one.
+     * of one. An `id` that is not a positive integer is refused, not dropped: left out, a list of only
+     * such ids would answer the whole unfiltered page, and the caller would read that as its Assets.
      */
     const requestedIds = url.searchParams.getAll("id");
-    const ids = [...new Set(requestedIds
-      .map((value) => parsePositiveInt(value))
-      .filter((value): value is number => value !== null))];
+    const parsedIds = requestedIds.map((value) => parseStrictPositiveInt(value));
+    const ids = [...new Set(parsedIds.filter((value): value is number => value !== null))];
     const folderId = parsePositiveInt(url.searchParams.get("folderId"));
     /*
      * The name the list contract states in `DB.md`, and the one the site UI sends.
@@ -87,6 +87,13 @@ export async function GET(request: NextRequest) {
     if (requestedIds.length > PHI_MEDIA_LIST_MAX_IDS) {
       return NextResponse.json(
         { error: `Too many ids. Ask for at most ${PHI_MEDIA_LIST_MAX_IDS} per request.` },
+        { status: 400 },
+      );
+    }
+
+    if (parsedIds.some((value) => value === null)) {
+      return NextResponse.json(
+        { error: "Invalid id. Every id must be a positive integer." },
         { status: 400 },
       );
     }
