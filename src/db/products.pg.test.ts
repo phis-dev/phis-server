@@ -26,6 +26,7 @@ import {
   listProducts,
   moveProductsAsOperator,
   readProduct,
+  readProductDirectoryEntry,
   reconcileProductSupply,
   registerProduct,
   releaseProduct,
@@ -509,6 +510,26 @@ describe.skipIf(!configured)("products", () => {
     const beyond = await read({ page: 5, pageSize: 3 });
     expect(beyond).toEqual({ products: [], total: 4 });
     expect(await read({ supplier: "@pgtest/nobody" })).toEqual({ products: [], total: 0 });
+
+    // The picture and the icon come joined, with what an address of one of their variants is built from.
+    const picture = await createPhiTestAsset(directory, "directory-picture", { lifecycleStatus: 2 });
+    const icon = await createPhiTestAsset(directory, "directory-icon", { lifecycleStatus: 2 });
+    await add(SUPPLIER, "d-own", { title: "Studio Pro", imageAssetId: picture, iconAssetId: icon });
+    await pool.query(`UPDATE phis.media_assets SET variant_version = 3, delivery_revision = 2 WHERE id = $1`, [picture]);
+    await pool.query(`UPDATE phis.media_assets SET content_type = 'application/pdf' WHERE id = $1`, [icon]);
+    const [own] = (await read({ search: "studio pro" })).products;
+    expect(own).toMatchObject({
+      imageAssetId: picture,
+      imageMedia: { id: picture, deliveryRevision: 2, variantVersion: 3, contentType: "image/png" },
+      iconMedia: { id: icon, deliveryRevision: 1, variantVersion: null, contentType: "application/pdf" },
+    });
+    expect((await read({ states: ["locked"] })).products[0]).toMatchObject({ imageMedia: null, iconMedia: null });
+    // One product read the same way, for the answer to an act on it.
+    expect(await readProductDirectoryEntry(pool, directory.id, id(SUPPLIER, "d-own"))).toEqual(own);
+    expect(await readProductDirectoryEntry(pool, directory.id, id(SUPPLIER, "d-nope"))).toBeNull();
+    // Gone with its Asset, like the product's own reference.
+    await pool.query(`DELETE FROM phis.media_assets WHERE id = $1`, [icon]);
+    expect((await read({ search: "studio pro" })).products[0]).toMatchObject({ iconMedia: null, iconAssetId: null });
   });
 
   it("withdraws a supplier's active products when it is switched off, restores exactly those, and keeps entries", async () => {

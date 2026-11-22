@@ -85,22 +85,33 @@ export function resolvePhiMediaDeliveryUrl(asset: Pick<MediaAssetRecord, "id" | 
   return `/api/site/media/${asset.id}/content?r=${asset.deliveryRevision}`;
 }
 
+/** One of the image variant keys of `@phis/contracts/media` (`PhiImageAssetVariantKey`). */
+export type PhiImageAssetVariantKeyValue = (typeof PhiImageAssetVariantKey)[keyof typeof PhiImageAssetVariantKey];
+
 /**
- * Where an image Asset's thumbnail is served from, or `null` for an Asset that is no image.
+ * Where one image variant of an Asset is served from, or `null` for an Asset that is no image.
  *
- * Exported for the readers that hold an Asset's parts rather than its record -- a byline joins them -- so
- * the address is still built in one place.
+ * The one builder of a variant address: the delivery revision and the variant version both travel, so the
+ * address changes when the original is replaced or its variants are cut again, and a cache may keep it for as
+ * long as the delivery allows. Exported for the readers that hold an Asset's parts rather than its record --
+ * a byline, a product directory row join them -- so the address is still built in one place.
  */
-export function resolvePhiMediaThumbnailUrl(
+export function resolvePhiMediaVariantUrl(
   asset: Pick<MediaAssetRecord, "id" | "deliveryRevision" | "variantVersion" | "contentType">,
+  variantKey: PhiImageAssetVariantKeyValue,
 ) {
   if (!isImageAsset(asset.contentType)) {
     return null;
   }
 
-  return (
-    `/api/site/media/${asset.id}/variants/${PhiImageAssetVariantKey.Thumbnail}?r=${asset.deliveryRevision}&v=${asset.variantVersion ?? 0}`
-  );
+  return `/api/site/media/${asset.id}/variants/${variantKey}?r=${asset.deliveryRevision}&v=${asset.variantVersion ?? 0}`;
+}
+
+/** Where an image Asset's thumbnail is served from, or `null` for an Asset that is no image. */
+export function resolvePhiMediaThumbnailUrl(
+  asset: Pick<MediaAssetRecord, "id" | "deliveryRevision" | "variantVersion" | "contentType">,
+) {
+  return resolvePhiMediaVariantUrl(asset, PhiImageAssetVariantKey.Thumbnail);
 }
 
 function resolveThumbnailUrl(asset: MediaAssetRecord) {
@@ -114,19 +125,12 @@ function resolvePreviewUrl(asset: MediaAssetRecord) {
 /**
  * Where an image Asset's preview is served from, or `null` for an Asset that is no image.
  *
- * Exported beside the thumbnail's builder for `media:v1`, which hands both out, so the address is still
- * built in one place.
+ * Exported beside the thumbnail's builder for `media:v1`, which hands both out.
  */
 export function resolvePhiMediaPreviewUrl(
   asset: Pick<MediaAssetRecord, "id" | "deliveryRevision" | "variantVersion" | "contentType">,
 ) {
-  if (!isImageAsset(asset.contentType)) {
-    return null;
-  }
-
-  return (
-    `/api/site/media/${asset.id}/variants/${PhiImageAssetVariantKey.Preview}?r=${asset.deliveryRevision}&v=${asset.variantVersion ?? 0}`
-  );
+  return resolvePhiMediaVariantUrl(asset, PhiImageAssetVariantKey.Preview);
 }
 
 export type PhiMediaFocalRectProjection = { x: number; y: number; width: number; height: number };

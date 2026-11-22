@@ -1685,6 +1685,12 @@ The design is [design/COMMERCE_COORDINATION.md](./design/COMMERCE_COORDINATION.m
   operator releases it again; title, summary, picture and `type` change at once. Asking for the terms in
   force again takes a pending change back. A product's publisher does not change after it was registered:
   turning a released publisher's product into the Site's own would skip the release.
+- **The operator's directory.** `GET /api/site/products` (the Accounting Area's product directory, Core's
+  accounting access) lists the same products a page at a time, and each row carries, beside `imagePath` and
+  `iconPath`, `imageListPath` and `iconListPath`: the picture's and the icon's `icon` image variant (64 x 64,
+  fitted whole on a transparent ground), Site-relative with the delivery revision and the variant version,
+  null without one or for an Asset that is no image. They are the directory's and not part of `products:v1`:
+  an Add-on's own product table that wants them small would need list paths in the capability first.
 
 The capability: `list`, `get`, `register`, `setState`, `remove`, `annotate`.
 

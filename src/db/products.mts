@@ -41,6 +41,23 @@ export type PhisStoredProduct = Omit<PhisProduct, "imagePath" | "iconPath"> & {
   readonly iconRevision: number | null;
 };
 
+/**
+ * The parts of a product's picture or icon an address of one of its image variants is built from
+ * (`resolvePhiMediaVariantUrl`), `null` where the product names none or the Asset is gone.
+ */
+export type PhisProductListMedia = {
+  readonly id: number;
+  readonly deliveryRevision: number;
+  readonly variantVersion: number | null;
+  readonly contentType: string;
+};
+
+/** A row of the operator's directory: the product, and its picture's and icon's parts for a list. */
+export type PhisProductDirectoryEntry = PhisStoredProduct & {
+  readonly imageMedia: PhisProductListMedia | null;
+  readonly iconMedia: PhisProductListMedia | null;
+};
+
 /** A rule the product directory enforces; the message says which, for the Add-on or the operator. */
 export class PhisProductRuleError extends Error {}
 
@@ -224,7 +241,7 @@ export async function listProductDirectory(db: DbQueryable, input: {
   search?: string;
   page: number;
   pageSize: number;
-}): Promise<{ products: PhisStoredProduct[]; total: number }> {
+}): Promise<{ products: PhisProductDirectoryEntry[]; total: number }> {
   const search = input.search ? `%${escapeLike(input.search.toLowerCase())}%` : null;
   const where = `p.site_id = $1
        AND p.state = ANY($2::text[])
@@ -234,8 +251,9 @@ export async function listProductDirectory(db: DbQueryable, input: {
          OR lower(p.title) LIKE $5 ESCAPE '\\'
          OR lower(p.supplier_addon_id || ':' || p.key) LIKE $5 ESCAPE '\\')`;
   const filter = [input.siteId, input.states, input.supplier ?? null, input.awaitingRelease ?? null, search];
-  const { rows } = await db.query<ProductRow & { total: string }>(
-    `SELECT ${PRODUCT_COLUMNS}, COUNT(*) OVER () AS total FROM phis.products p
+  const { rows } = await db.query<DirectoryRow & { total: string }>(
+    `SELECT ${DIRECTORY_COLUMNS}, COUNT(*) OVER () AS total
+     ${DIRECTORY_FROM}
      WHERE ${where}
      ORDER BY p.supplier_addon_id ASC, p.key ASC
      LIMIT $6::int OFFSET $7::int`,
@@ -245,7 +263,55 @@ export async function listProductDirectory(db: DbQueryable, input: {
   const total = rows.length > 0 ? Number(rows[0]!.total) : input.page > 1
     ? Number((await db.query<{ total: string }>(`SELECT COUNT(*) AS total FROM phis.products p WHERE ${where}`, filter)).rows[0]!.total)
     : 0;
-  return { products: await mapProducts(db, rows), total };
+  return { products: await mapDirectoryRows(db, rows), total };
+}
+
+/** One product as the directory lists it, for the answer to an operator's act on it; `null` where the Site lacks it. */
+export async function readProductDirectoryEntry(db: DbQueryable, siteId: number, id: PhisProductId) {
+  const { supplier, key } = splitPhisProductId(id);
+  const { rows } = await db.query<DirectoryRow>(
+    `SELECT ${DIRECTORY_COLUMNS} ${DIRECTORY_FROM}
+     WHERE p.site_id = $1 AND p.supplier_addon_id = $2 AND p.key = $3`,
+    [siteId, supplier, key],
+  );
+  return (await mapDirectoryRows(db, rows))[0] ?? null;
+}
+
+/*
+ * The directory's picture and icon are joined, not read per row: a list shows them on every line, and an
+ * address of a variant needs the Asset's content type and variant version beside the revision.
+ */
+const DIRECTORY_COLUMNS = `${PRODUCT_COLUMNS},
+  image.id AS image_media_id, image.delivery_revision AS image_media_revision,
+  image.variant_version AS image_media_variant_version, image.content_type AS image_media_content_type,
+  icon.id AS icon_media_id, icon.delivery_revision AS icon_media_revision,
+  icon.variant_version AS icon_media_variant_version, icon.content_type AS icon_media_content_type`;
+const DIRECTORY_FROM = `FROM phis.products p
+  LEFT JOIN phis.media_assets image ON image.id = p.image_asset_id AND image.site_id = p.site_id
+  LEFT JOIN phis.media_assets icon ON icon.id = p.icon_asset_id AND icon.site_id = p.site_id`;
+
+type DirectoryRow = ProductRow & {
+  [Column in `${"image" | "icon"}_media_${"id" | "revision" | "variant_version"}`]: number | null;
+} & {
+  image_media_content_type: string | null;
+  icon_media_content_type: string | null;
+};
+
+async function mapDirectoryRows(db: DbQueryable, rows: readonly DirectoryRow[]): Promise<PhisProductDirectoryEntry[]> {
+  const products = await mapProducts(db, rows);
+  return products.map((product, index) => ({
+    ...product,
+    imageMedia: directoryMedia(rows[index]!, "image"),
+    iconMedia: directoryMedia(rows[index]!, "icon"),
+  }));
+}
+
+function directoryMedia(row: DirectoryRow, which: "image" | "icon"): PhisProductListMedia | null {
+  const id = row[`${which}_media_id`];
+  const revision = row[`${which}_media_revision`];
+  const contentType = row[`${which}_media_content_type`];
+  if (id === null || revision === null || contentType === null) return null;
+  return { id, deliveryRevision: revision, variantVersion: row[`${which}_media_variant_version`], contentType };
 }
 
 const CURSOR_PREFIX = "p1.";

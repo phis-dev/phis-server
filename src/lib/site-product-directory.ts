@@ -9,7 +9,10 @@ import {
   moveProductsAsOperator,
   PhisProductRuleError,
   readProduct,
+  readProductDirectoryEntry,
   releaseProduct,
+  type PhisProductDirectoryEntry,
+  type PhisProductListMedia,
 } from "@/db/products.mts";
 import { schedulePhisAddonEventDelivery } from "@/lib/addons/event-trigger";
 import { isPhisProductId } from "@/lib/addons/product-draft";
@@ -18,7 +21,9 @@ import { PHIS_ADDON_ID_PATTERN } from "@/lib/addons/schema-name";
 import { getPool } from "@/lib/db";
 import type { SiteAdminApiGuardedContext } from "@/lib/guards/site-admin-api";
 import { parsePhiPagination } from "@/lib/helpers/request";
+import { PhiImageAssetVariantKey } from "@/lib/constants/media";
 import { logRuntimeEvent } from "@/lib/log";
+import { resolvePhiMediaVariantUrl } from "@/lib/media-response";
 
 /*
  * The Site's product directory as its operator administers it (`products:v1`, SERVER_ADDONS.md).
@@ -32,14 +37,28 @@ import { logRuntimeEvent } from "@/lib/log";
 const STATES: readonly PhisProductState[] = ["draft", "active", "withdrawn", "locked"];
 const SEARCH_MAX_LENGTH = 200;
 
-/** One row of the directory: what the operator reads to decide, not the attributes other Add-ons keep. */
+/**
+ * One row of the directory: what the operator reads to decide, not the attributes other Add-ons keep.
+ *
+ * `imageListPath` and `iconListPath` are the picture's and the icon's `icon` variant (64 x 64, fitted whole on a
+ * transparent ground), for a list that shows them small; `null` without one or for an Asset that is no image.
+ * They carry the delivery revision and the variant version, so the address changes when the picture does.
+ */
 export type SiteProductDirectoryRow = Pick<
   PhisProduct,
   | "id" | "supplier" | "publisher" | "title" | "summary" | "type" | "state" | "sale" | "referralUrl" | "free"
   | "accountRequired" | "counted" | "parts" | "released" | "pendingTerms" | "imagePath" | "iconPath" | "version"
->;
+> & {
+  imageListPath: string | null;
+  iconListPath: string | null;
+};
 
-function toRow(product: PhisProduct): SiteProductDirectoryRow {
+const listPath = (media: PhisProductListMedia | null) =>
+  media ? resolvePhiMediaVariantUrl(media, PhiImageAssetVariantKey.Icon) : null;
+
+function toRow(entry: PhisProductDirectoryEntry): SiteProductDirectoryRow {
+  const { imageMedia, iconMedia, ...stored } = entry;
+  const product = presentPhisProduct(stored);
   return {
     id: product.id,
     supplier: product.supplier,
@@ -58,6 +77,8 @@ function toRow(product: PhisProduct): SiteProductDirectoryRow {
     pendingTerms: product.pendingTerms,
     imagePath: product.imagePath,
     iconPath: product.iconPath,
+    imageListPath: listPath(imageMedia),
+    iconListPath: listPath(iconMedia),
     version: product.version,
   };
 }
@@ -98,7 +119,7 @@ export async function answerSiteProductDirectory(request: NextRequest, context: 
     pageSize,
   });
   return NextResponse.json({
-    rows: result.products.map((product) => toRow(presentPhisProduct(product))),
+    rows: result.products.map(toRow),
     total: result.total,
     page,
     pageSize,
@@ -159,7 +180,7 @@ export async function answerSiteProductCommand(
       meta: { outcome },
     });
   }
-  const product = await readProduct(pool, siteId, id);
+  const product = await readProductDirectoryEntry(pool, siteId, id);
   if (!product) return refuse(404, "product_not_found");
-  return NextResponse.json({ outcome, product: toRow(presentPhisProduct(product)) });
+  return NextResponse.json({ outcome, product: toRow(product) });
 }

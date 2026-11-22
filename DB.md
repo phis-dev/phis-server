@@ -554,14 +554,19 @@ Contract:
 - `image_asset_variants` stores image-only renditions for the canonical original row in `media_assets`.
 - The original image row remains the source of truth for asset identity, ownership, and original metadata.
 - `variant_key` is a compact semantic UI contract and follows the same enum-style approach as other smallint contracts in `phis`.
-- The initial v1 variant keys are:
-  - `0 = thumbnail`
-  - `1 = preview`
-  - `2 = card`
-  - `3 = hero`
-  - `4 = avatar`
-  - `5 = logo`
-- Shared helper code should resolve these numeric keys to readable names such as `thumbnail`, `preview`, `card`, `hero`, `avatar`, and `logo`.
+- The variant keys and their sizes are `PhiImageAssetVariantKey` and `resolvePhiImageAssetVariantSpec` of `@phis/contracts/media`; the delivery route serves a key only when the contract has a spec for it:
+  - `0 = thumbnail` (256 x 256, cover)
+  - `1 = preview` (640 x 360, cover)
+  - `2 = banner` (1600 x 89, cover)
+  - `3 = header` (1920 x 144, cover)
+  - `4 = card` (960 x 640, cover)
+  - `5 = hero` (1600 x 900, cover)
+  - `6 = avatar` (100 x 100, cover)
+  - `7 = logo` (512 x 256, contain on a transparent ground)
+  - `8 = landscape` (640 x 396, cover)
+  - `9 = portrait` (396 x 640, cover)
+  - `10 = icon` (64 x 64, contain on a transparent ground: icons, logos and pictures in lists and tables, never cropped)
+- Shared helper code resolves these numeric keys to readable names (`resolvePhiImageAssetVariantKeyName`). An address of a variant is built in one place, `resolvePhiMediaVariantUrl` (`/api/site/media/<id>/variants/<key>?r=<delivery revision>&v=<variant version>`), and only for an image Asset.
 - Next.js `Image` does not define or require specific variant keys; these keys are our own CMS/rendering contract.
 - `width` and `height` on `media_assets` describe the original image dimensions.
 - `width` and `height` on `image_asset_variants` describe the concrete rendition dimensions.
@@ -1668,6 +1673,7 @@ Contract:
 - A product that was ever named by an `entitlements` row is never deleted; `entitlements.product` is no foreign key, so removal is decided by looking.
 - `image_asset_id` is a picture of the Site's Media library; deleting the Asset sets it to NULL. `register` accepts only an Asset that is ready, delivered publicly, and in the Site's Space or the supplier's own Add-on Space; the Media delete route refuses an Asset a product wears (`media_asset_in_use`, scope `product`) before the foreign key would null it, and a manifest sync of the declared products never writes the column.
 - `icon_asset_id` is the product's icon -- a small picture (a logo, an app icon) shown beside its title on its page -- under exactly the rules of `image_asset_id`: the same `register` check, the same delete guard (a product wearing the Asset as either is named), the same `SET NULL` when the Asset goes, and a manifest sync never writes it either.
+- The operator's directory (`listProductDirectory`, `GET /api/site/products`) joins both Assets in its one list query, so each row's `imageListPath` and `iconListPath` (the `icon` variant of the picture and of the icon) are built without a read per row.
 
 ### `phis.product_attributes`
 

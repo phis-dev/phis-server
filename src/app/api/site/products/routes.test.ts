@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   guard: vi.fn(),
   list: vi.fn(),
   read: vi.fn(),
+  entry: vi.fn(),
   release: vi.fn(),
   move: vi.fn(),
   schedule: vi.fn(),
@@ -21,6 +22,7 @@ vi.mock("@/db/products.mts", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/db/products.mts")>()),
   listProductDirectory: mocks.list,
   readProduct: mocks.read,
+  readProductDirectoryEntry: mocks.entry,
   releaseProduct: mocks.release,
   moveProductsAsOperator: mocks.move,
 }));
@@ -73,6 +75,14 @@ const stored = (rest: Record<string, unknown> = {}) => ({
   ...rest,
 });
 
+/** A row as the directory reads it: the product and the parts of its picture and icon, joined. */
+const listed = (rest: Record<string, unknown> = {}) => ({
+  ...stored(rest),
+  imageMedia: { id: 12, deliveryRevision: 3, variantVersion: 2, contentType: "image/png" },
+  iconMedia: null,
+  ...rest,
+});
+
 const list = (query = "") => GET(new NextRequest(`https://site.test/api/site/products${query}`));
 const command = (handler: typeof LOCK, id = ID, name = "lock") =>
   handler(
@@ -85,8 +95,9 @@ beforeEach(() => {
     error: null,
     context: { site: { id: 31, key: "skeleton" }, session: { userId: 7 } },
   });
-  mocks.list.mockResolvedValue({ products: [stored()], total: 1 });
+  mocks.list.mockResolvedValue({ products: [listed()], total: 1 });
   mocks.read.mockResolvedValue(stored());
+  mocks.entry.mockResolvedValue(listed());
 });
 
 describe("the product directory", () => {
@@ -113,8 +124,24 @@ describe("the product directory", () => {
       pendingTerms: { sale: "payout", referralUrl: null, free: true, accountRequired: true, parts: [] },
       imagePath: "/media/12",
       iconPath: null,
+      imageListPath: "/api/site/media/12/variants/10?r=3&v=2",
+      iconListPath: null,
       version: 4,
     }]);
+  });
+
+  it("addresses the picture and the icon by their icon variant, cache-safe, and not for an Asset that is no image", async () => {
+    mocks.list.mockResolvedValue({
+      products: [listed({
+        imageMedia: { id: 12, deliveryRevision: 1, variantVersion: null, contentType: "application/pdf" },
+        iconMedia: { id: 13, deliveryRevision: 5, variantVersion: 1, contentType: "image/svg+xml" },
+      })],
+      total: 1,
+    });
+    const [row] = (await (await list()).json()).rows;
+    expect(row).toMatchObject({ imageListPath: null, iconListPath: "/api/site/media/13/variants/10?r=5&v=1" });
+    expect(row).not.toHaveProperty("imageMedia");
+    expect(row).not.toHaveProperty("iconMedia");
   });
 
   it("reads every state unless asked, and passes the filters and the page on", async () => {
@@ -170,12 +197,15 @@ describe("the operator's commands on one product", () => {
 
   it("releases the pending terms and says so, with the product as it now stands", async () => {
     mocks.release.mockResolvedValue({ outcome: "applied", product: stored() });
-    mocks.read.mockResolvedValue(stored({ pendingTerms: null, free: true, version: 5 }));
+    mocks.entry.mockResolvedValue(listed({ pendingTerms: null, free: true, version: 5 }));
     const response = await command(RELEASE, ID, "release");
     expect(response.status).toBe(200);
     const body = await response.json();
     expect(body.outcome).toBe("applied");
-    expect(body.product).toMatchObject({ id: ID, pendingTerms: null, free: true, version: 5 });
+    // The product as the directory lists it, so the row can be replaced by it.
+    expect(body.product).toMatchObject({
+      id: ID, pendingTerms: null, free: true, version: 5, imageListPath: "/api/site/media/12/variants/10?r=3&v=2",
+    });
     expect(mocks.release).toHaveBeenCalledWith({}, { siteId: 31, productId: ID, listeners: ["@acme/seller"] });
     expect(mocks.schedule).toHaveBeenCalledWith(31);
     expect(mocks.log).toHaveBeenCalledWith("info", "site.products.release", expect.objectContaining({
@@ -195,7 +225,8 @@ describe("the operator's commands on one product", () => {
 
   it("locks and unlocks through the operator's move, and answers unchanged where there was nothing to move", async () => {
     mocks.move.mockResolvedValueOnce([{ id: ID, from: "active", to: "locked" }]);
-    mocks.read.mockResolvedValueOnce(stored()).mockResolvedValueOnce(stored({ state: "locked" }));
+    mocks.read.mockResolvedValueOnce(stored());
+    mocks.entry.mockResolvedValueOnce(listed({ state: "locked" }));
     const locked = await command(LOCK);
     await expect(locked.json()).resolves.toMatchObject({ outcome: "locked", product: { state: "locked" } });
     expect(mocks.move).toHaveBeenLastCalledWith({}, {

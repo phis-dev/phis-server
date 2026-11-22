@@ -7,8 +7,9 @@ export const dynamic = "force-dynamic";
 
 /**
  * Unlocks a locked product, which becomes `withdrawn` -- the state before the lock is not kept -- as `phis
- * product unlock` does. Answers `{ outcome, product }`, outcome `unlocked` or `unchanged`. The id is one
- * path segment, percent-encoded (`@`, `/` and `:` are in every id).
+ * product unlock` does. Answers `{ outcome, product }`, `product` in the shape of a `GET /api/site/products`
+ * row, outcome `unlocked` or `unchanged`. The id is one path segment, percent-encoded (`@`, `/` and `:` are
+ * in every id).
  */
 export async function POST(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { context, error } = await requireSiteAccountingApiContext(request);
