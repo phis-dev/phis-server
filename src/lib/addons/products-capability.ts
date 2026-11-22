@@ -37,12 +37,12 @@ export class PhisAddonProductsError extends Error {}
 const LIST_LIMIT_DEFAULT = 50;
 const LIST_LIMIT_MAX = 200;
 const STATES: readonly PhisProductState[] = ["draft", "active", "withdrawn", "locked"];
-/** The picture's Site-relative address, as Core addresses its own Media (assets:v1 `contentPath`), read now. */
+/** The picture's and the icon's Site-relative address, as Core addresses its own Media (assets:v1 `contentPath`), read now. */
 function present(product: PhisStoredProduct, publicView?: false): PhisProduct;
 function present(product: PhisStoredProduct | null, publicView?: boolean): PhisProduct | null;
 function present(product: PhisStoredProduct | null, publicView = false): PhisProduct | null {
   if (!product) return null;
-  const { imageRevision, ...rest } = product;
+  const { imageRevision, iconRevision, ...rest } = product;
   // What is not in the catalogue yet is not public: a product shown to everybody has no pending terms.
   if (publicView && product.state !== "active") return null;
   return {
@@ -50,6 +50,9 @@ function present(product: PhisStoredProduct | null, publicView = false): PhisPro
     ...(publicView ? { pendingTerms: null } : {}),
     imagePath: product.imageAssetId !== null && imageRevision !== null
       ? resolvePhiMediaDeliveryUrl({ id: product.imageAssetId, deliveryRevision: imageRevision })
+      : null,
+    iconPath: product.iconAssetId !== null && iconRevision !== null
+      ? resolvePhiMediaDeliveryUrl({ id: product.iconAssetId, deliveryRevision: iconRevision })
       : null,
   };
 }

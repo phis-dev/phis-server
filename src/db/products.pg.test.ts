@@ -386,6 +386,41 @@ describe.skipIf(!configured)("products", () => {
     await expect(register("pic-other", { imageAssetId: own }, OTHER)).rejects.toThrow(/cannot be a product's picture/);
   });
 
+  it("takes an icon beside the picture under the picture's rules, and drops it with its Asset", async () => {
+    const ready = { lifecycleStatus: 2 } as const;
+    // An Add-on has one Space per Site; the picture test may have made these already.
+    const space = async (addonId: string) => (await pool.query<{ id: number }>(
+      `SELECT id FROM phis.media_spaces WHERE site_id = $1 AND addon_id = $2`, [site.id, addonId],
+    )).rows[0]?.id ?? createPhiTestAddonSpace(site, addonId);
+    const picture = await createPhiTestAsset(site, "icon-picture", ready);
+    const icon = await createPhiTestAsset(site, "icon-logo", ready);
+    const own = await createPhiTestAsset(site, "icon-own", { ...ready, spaceId: await space(SUPPLIER) });
+    const withIcon = await register("ico", { imageAssetId: picture, iconAssetId: icon });
+    expect(withIcon.product).toMatchObject({ imageAssetId: picture, iconAssetId: icon, iconRevision: 1 });
+    // The same draft again changes nothing; a new icon alone is a change.
+    expect((await register("ico", { imageAssetId: picture, iconAssetId: icon })).outcome).toBe("unchanged");
+    expect((await register("ico", { imageAssetId: picture, iconAssetId: own })).product).toMatchObject({ imageAssetId: picture, iconAssetId: own });
+    await pool.query(`UPDATE phis.media_assets SET delivery_revision = 4 WHERE id = $1`, [own]);
+    expect((await get(id(SUPPLIER, "ico")))!.iconRevision).toBe(4);
+
+    const pending = await createPhiTestAsset(site, "icon-pending");
+    const others = await createPhiTestAsset(site, "icon-other-addon", { ...ready, spaceId: await space(OTHER) });
+    const userSpace = await createPhiTestAsset(site, "icon-user", { ...ready, spaceId: await createPhiTestUserSpace(site) });
+    for (const refused of [pending, others, userSpace]) {
+      await expect(register("ico", { imageAssetId: picture, iconAssetId: refused })).rejects.toThrow(/cannot be a product's icon/);
+    }
+    const elsewhere = await createPhiTestSite("products-icon-elsewhere");
+    const foreign = await createPhiTestAsset(elsewhere, "icon-foreign", ready);
+    await expect(register("ico", { iconAssetId: foreign })).rejects.toThrow(/not an Asset of this Site/);
+    expect((await get(id(SUPPLIER, "ico")))!.iconAssetId).toBe(own);
+
+    // The Media delete guard names a product that wears the Asset as its icon; deleting it clears the icon alone.
+    expect(await listProductIdsWithImage(pool, site.id, own)).toEqual([id(SUPPLIER, "ico")]);
+    await pool.query(`DELETE FROM phis.media_assets WHERE id = $1`, [own]);
+    expect(await listProductIdsWithImage(pool, site.id, own)).toEqual([]);
+    expect((await get(id(SUPPLIER, "ico")))).toMatchObject({ imageAssetId: picture, iconAssetId: null, iconRevision: null });
+  });
+
   it("lists active products unless states are asked for, by supplier, publisher and release, in pages", async () => {
     const lister = await createPhiTestSite("products-list");
     await activatePhiTestAddonForSite(lister, SUPPLIER);
@@ -518,7 +553,7 @@ describe.skipIf(!configured)("products", () => {
     expect(Object.fromEntries(mixed.map((a) => [a.key, a.action]))).toMatchObject({ "m-ok": "created", "m-bad": "refused" });
   });
 
-  it("leaves a picture set on a declared product alone: the manifest never names one", async () => {
+  it("leaves a picture and an icon set on a declared product alone: the manifest never names one", async () => {
     const supplier = "@pgtest/prod-manifest-image";
     await activatePhiTestAddonForSite(site, supplier);
     await switchSupplier(supplier, true);
@@ -529,18 +564,22 @@ describe.skipIf(!configured)("products", () => {
     expect((await sync("Shop"))[0]!.action).toBe("created");
     expect((await get(id(supplier, "shop")))!.imageAssetId).toBeNull();
     const cover = await createPhiTestAsset(site, "manifest-cover", { lifecycleStatus: 2 });
-    await registerProduct(pool, { siteId: site.id, supplier, draft: draft("shop", { type: "addon", title: "Shop", summary: "S", imageAssetId: cover }), listeners: [] });
+    const logo = await createPhiTestAsset(site, "manifest-logo", { lifecycleStatus: 2 });
+    await registerProduct(pool, {
+      siteId: site.id, supplier, listeners: [],
+      draft: draft("shop", { type: "addon", title: "Shop", summary: "S", imageAssetId: cover, iconAssetId: logo }),
+    });
     const before = (await get(id(supplier, "shop")))!;
-    expect(before.imageAssetId).toBe(cover);
+    expect(before).toMatchObject({ imageAssetId: cover, iconAssetId: logo });
 
     // No change: the picture stays, the version stays, nothing is owed.
     await clearOutbox();
     expect((await sync("Shop", listeners))[0]!.action).toBe("unchanged");
     expect(await outbox()).toHaveLength(0);
-    expect((await get(id(supplier, "shop")))).toMatchObject({ imageAssetId: cover, version: before.version });
+    expect((await get(id(supplier, "shop")))).toMatchObject({ imageAssetId: cover, iconAssetId: logo, version: before.version });
     // The manifest is the statement of the title; the picture still stays.
     expect((await sync("Renamed", listeners))[0]!.action).toBe("updated");
-    expect((await get(id(supplier, "shop")))).toMatchObject({ title: "Renamed", imageAssetId: cover, version: before.version + 1 });
+    expect((await get(id(supplier, "shop")))).toMatchObject({ title: "Renamed", imageAssetId: cover, iconAssetId: logo, version: before.version + 1 });
     expect(await outbox()).toHaveLength(1);
   });
 

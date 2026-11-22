@@ -50,6 +50,7 @@ describe("products in a manifest", () => {
     expect(issuesOf(["pro"])).toContain("products[0] must be an object.");
     expect(issuesOf([{ ...entry, publisher: "acme" }])).toContain("products[0].publisher is not declared in a manifest.");
     expect(issuesOf([{ ...entry, imageAssetId: 3 }])).toContain("products[0].imageAssetId is not declared in a manifest.");
+    expect(issuesOf([{ ...entry, iconAssetId: 3 }])).toContain("products[0].iconAssetId is not declared in a manifest.");
     expect(issuesOf([{ ...entry, accountRequired: "yes" }]).join("\n")).toMatch(/accountRequired is a boolean/);
     expect(issuesOf([{ ...entry, counted: "yes" }]).join("\n")).toMatch(/counted is a boolean/);
     expect(issuesOf([{ ...entry, sale: "referral" }]).join("\n")).toMatch(/referralUrl/);

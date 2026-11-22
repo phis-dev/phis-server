@@ -59,6 +59,7 @@ function showProduct(product: PhisProduct) {
     `  supplier   ${product.supplier} (${product.supplied ? "switched on for the Site" : "switched off"})`,
     `  publisher  ${product.publisher ?? "- (the Site's own)"}  ${product.released ? "released" : "not released"}`,
     `  image      ${product.imageAssetId === null ? "-" : `Asset ${product.imageAssetId}`}`,
+    `  icon       ${product.iconAssetId === null ? "-" : `Asset ${product.iconAssetId}`}`,
     `  terms      ${describeTerms(product)}`,
     ...(product.pendingTerms ? [`  pending    ${describeTerms(product.pendingTerms)}`] : []),
     `  attributes ${attributes.length === 0 ? "-" : attributes.join(", ")}`,

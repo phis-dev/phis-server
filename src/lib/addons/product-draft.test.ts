@@ -25,7 +25,7 @@ describe("a product's id and key", () => {
 describe("a product draft", () => {
   it("fills the defaults in", () => {
     expect(normalizePhisProductDraft(base)).toEqual({
-      ...base, publisher: null, imageAssetId: null, counted: false, sale: "own", referralUrl: null, free: false, accountRequired: false, parts: [],
+      ...base, publisher: null, imageAssetId: null, iconAssetId: null, counted: false, sale: "own", referralUrl: null, free: false, accountRequired: false, parts: [],
     });
   });
 
@@ -60,7 +60,10 @@ describe("a product draft", () => {
     expect(() => normalizePhisProductDraft({ ...base, type: "x".repeat(65) })).toThrow(/type/);
     expect(() => normalizePhisProductDraft({ ...base, counted: "yes" as never })).toThrow(/counted/);
     expect(() => normalizePhisProductDraft({ ...base, imageAssetId: 0 })).toThrow(/imageAssetId/);
+    expect(() => normalizePhisProductDraft({ ...base, iconAssetId: 1.5 })).toThrow(/iconAssetId/);
+    expect(() => normalizePhisProductDraft({ ...base, iconAssetId: -2 })).toThrow(/iconAssetId/);
     expect(() => normalizePhisProductDraft({ ...base, publisher: "" })).toThrow(/publisher/);
-    expect(normalizePhisProductDraft({ ...base, publisher: "acme", imageAssetId: 4, summary: "" })).toMatchObject({ publisher: "acme", imageAssetId: 4, summary: "" });
+    expect(normalizePhisProductDraft({ ...base, publisher: "acme", imageAssetId: 4, iconAssetId: 5, summary: "" }))
+      .toMatchObject({ publisher: "acme", imageAssetId: 4, iconAssetId: 5, summary: "" });
   });
 });

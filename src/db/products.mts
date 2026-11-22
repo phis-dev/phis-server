@@ -32,11 +32,14 @@ type DbQueryable = Pick<PoolClient, "query">;
  */
 
 /**
- * A product as the database holds it. `imagePath` is not here: Core's address of a Media Asset is built
- * where the Media delivery lives (`resolvePhiMediaDeliveryUrl`), from the asset's current cache revision
- * carried here, and never stored.
+ * A product as the database holds it. `imagePath` and `iconPath` are not here: Core's address of a Media
+ * Asset is built where the Media delivery lives (`resolvePhiMediaDeliveryUrl`), from the asset's current
+ * cache revision carried here, and never stored.
  */
-export type PhisStoredProduct = Omit<PhisProduct, "imagePath"> & { readonly imageRevision: number | null };
+export type PhisStoredProduct = Omit<PhisProduct, "imagePath" | "iconPath"> & {
+  readonly imageRevision: number | null;
+  readonly iconRevision: number | null;
+};
 
 /** A rule the product directory enforces; the message says which, for the Add-on or the operator. */
 export class PhisProductRuleError extends Error {}
@@ -44,9 +47,10 @@ export class PhisProductRuleError extends Error {}
 const FLAG = PHIS_PRODUCT_FLAG;
 
 const PRODUCT_COLUMNS = `p.id, p.supplier_addon_id, p.key, p.publisher, p.type, p.title, p.summary, p.image_asset_id,
-  p.sale, p.referral_url, p.state, p.flags, p.parts, p.pending_terms, p.version, p.created_at, p.updated_at,
+  p.icon_asset_id, p.sale, p.referral_url, p.state, p.flags, p.parts, p.pending_terms, p.version, p.created_at, p.updated_at,
   ${suppliedSql("p")} AS supplied,
-  (SELECT a.delivery_revision FROM phis.media_assets a WHERE a.id = p.image_asset_id AND a.site_id = p.site_id) AS image_revision`;
+  (SELECT a.delivery_revision FROM phis.media_assets a WHERE a.id = p.image_asset_id AND a.site_id = p.site_id) AS image_revision,
+  (SELECT a.delivery_revision FROM phis.media_assets a WHERE a.id = p.icon_asset_id AND a.site_id = p.site_id) AS icon_revision`;
 
 /**
  * Whether the supplier is switched on for the product's Site and globally. The one predicate behind
@@ -76,6 +80,7 @@ type ProductRow = {
   title: string;
   summary: string;
   image_asset_id: number | null;
+  icon_asset_id: number | null;
   sale: PhisProductSale;
   referral_url: string | null;
   state: PhisProductState;
@@ -87,6 +92,7 @@ type ProductRow = {
   updated_at: Date;
   supplied: boolean;
   image_revision: number | null;
+  icon_revision: number | null;
 };
 
 function mapProduct(row: ProductRow, attributes: Record<string, Record<string, unknown>>): PhisStoredProduct {
@@ -100,6 +106,8 @@ function mapProduct(row: ProductRow, attributes: Record<string, Record<string, u
     summary: row.summary,
     imageAssetId: row.image_asset_id,
     imageRevision: row.image_revision,
+    iconAssetId: row.icon_asset_id,
+    iconRevision: row.icon_revision,
     counted: (row.flags & FLAG.Counted) !== 0,
     sale: row.sale,
     referralUrl: row.referral_url,
@@ -257,23 +265,27 @@ const sameTerms = (a: PhisProductReleasedTerms, b: PhisProductReleasedTerms) =>
   && a.accountRequired === b.accountRequired
   && a.parts.length === b.parts.length && a.parts.every((part, index) => part === b.parts[index]);
 
-/** The ids of the Site's products that wear the Asset as their picture; the Media delete guard names them. */
+/**
+ * The ids of the Site's products that wear the Asset as their picture or their icon; the Media delete
+ * guard names them.
+ */
 export async function listProductIdsWithImage(db: DbQueryable, siteId: number, assetId: number): Promise<PhisProductId[]> {
   const { rows } = await db.query<{ supplier_addon_id: string; key: string }>(
-    `SELECT supplier_addon_id, key FROM phis.products WHERE site_id = $1 AND image_asset_id = $2 ORDER BY supplier_addon_id, key`,
+    `SELECT supplier_addon_id, key FROM phis.products
+     WHERE site_id = $1 AND (image_asset_id = $2 OR icon_asset_id = $2) ORDER BY supplier_addon_id, key`,
     [siteId, assetId],
   );
   return rows.map((row) => `${row.supplier_addon_id}:${row.key}` as PhisProductId);
 }
 
 /**
- * Whether a visitor would be served the Asset as a product's picture: it is ready, delivered publicly,
- * and lies in the Site's Space or in the registering supplier's own Add-on Space (its slot files, the
- * shop's cover, say). An Asset of a User or Group Space, or of another Add-on's Space, is refused. An
- * Asset of another Site, or none, gets the same answer as before, so the message tells nothing about
- * what exists elsewhere.
+ * Whether a visitor would be served the Asset as a product's picture or icon: it is ready, delivered
+ * publicly, and lies in the Site's Space or in the registering supplier's own Add-on Space (its slot
+ * files, the shop's cover, say). An Asset of a User or Group Space, or of another Add-on's Space, is
+ * refused. An Asset of another Site, or none, gets the same answer as before, so the message tells
+ * nothing about what exists elsewhere.
  */
-async function assertProductImage(db: DbQueryable, siteId: number, supplier: string, assetId: number) {
+async function assertProductImage(db: DbQueryable, siteId: number, supplier: string, assetId: number, use: "picture" | "icon") {
   const { rows } = await db.query<{ lifecycle_status: number; delivery_policy: number; kind: number; addon_id: string | null }>(
     `SELECT a.lifecycle_status, a.delivery_policy, s.kind, s.addon_id
      FROM phis.media_assets a JOIN phis.media_spaces s ON s.id = a.space_id AND s.site_id = a.site_id
@@ -285,7 +297,7 @@ async function assertProductImage(db: DbQueryable, siteId: number, supplier: str
   const inReach = asset.kind === PhisMediaSpaceKind.Site || (asset.kind === PhisMediaSpaceKind.Addon && asset.addon_id === supplier);
   if (asset.lifecycle_status !== PhiMediaLifecycleStatus.Ready || asset.delivery_policy !== PhiMediaDeliveryPolicy.Public || !inReach) {
     throw new PhisProductRuleError(
-      `Asset ${assetId} cannot be a product's picture: a visitor is served only an Asset that is ready, delivered publicly, and in the Site's Space or the supplier's own Add-on Space.`,
+      `Asset ${assetId} cannot be a product's ${use}: a visitor is served only an Asset that is ready, delivered publicly, and in the Site's Space or the supplier's own Add-on Space.`,
     );
   }
 }
@@ -312,20 +324,22 @@ export async function registerProduct(pool: Pool, input: {
   const { siteId, supplier, draft } = input;
   const id = `${supplier}:${draft.key}` as PhisProductId;
   return withPoolTransaction(pool, async (client) => {
-    // A manifest does not speak of the picture, so a manifest sync neither sets nor clears it.
-    if (!input.declared && draft.imageAssetId !== null) await assertProductImage(client, siteId, supplier, draft.imageAssetId);
+    // A manifest does not speak of the picture or the icon, so a manifest sync neither sets nor clears them.
+    if (!input.declared && draft.imageAssetId !== null) await assertProductImage(client, siteId, supplier, draft.imageAssetId, "picture");
+    if (!input.declared && draft.iconAssetId !== null) await assertProductImage(client, siteId, supplier, draft.iconAssetId, "icon");
     let row = await selectRow(client, siteId, id, true);
     const pickImage = (current: number | null) => (input.declared ? current : draft.imageAssetId);
+    const pickIcon = (current: number | null) => (input.declared ? current : draft.iconAssetId);
     if (!row) {
       await assertParts(client, siteId, id, draft.parts);
       const flags = (draft.counted ? FLAG.Counted : 0) | (draft.free ? FLAG.Free : 0) | (draft.accountRequired ? FLAG.AccountRequired : 0)
         | (draft.publisher === null ? FLAG.Released : 0) | (input.declared ? FLAG.Declared : 0);
       const inserted = await client.query(
         `INSERT INTO phis.products (site_id, supplier_addon_id, key, publisher, type, title, summary, image_asset_id,
-           sale, referral_url, state, flags, parts)
-         VALUES ($1::smallint, $2, $3, $4, $5, $6, $7, $8::int, $9, $10, $11, $12::int, $13::text[])
+           icon_asset_id, sale, referral_url, state, flags, parts)
+         VALUES ($1::smallint, $2, $3, $4, $5, $6, $7, $8::int, $9::int, $10, $11, $12, $13::int, $14::text[])
          ON CONFLICT (site_id, supplier_addon_id, key) DO NOTHING`,
-        [siteId, supplier, draft.key, draft.publisher, draft.type, draft.title, draft.summary, pickImage(null),
+        [siteId, supplier, draft.key, draft.publisher, draft.type, draft.title, draft.summary, pickImage(null), pickIcon(null),
           draft.sale, draft.referralUrl, input.declared ? "active" : "draft", flags, draft.parts],
       );
       if ((inserted.rowCount ?? 0) > 0) {
@@ -356,17 +370,19 @@ export async function registerProduct(pool: Pool, input: {
       | (draft.counted ? FLAG.Counted : 0) | (terms.free ? FLAG.Free : 0) | (terms.accountRequired ? FLAG.AccountRequired : 0)
       | ((row.flags & FLAG.Declared) !== 0 || input.declared ? FLAG.Declared : 0);
     const unchanged = row.type === draft.type && row.title === draft.title && row.summary === draft.summary
-      && row.image_asset_id === pickImage(row.image_asset_id) && flags === row.flags && sameTerms(terms, current)
+      && row.image_asset_id === pickImage(row.image_asset_id) && row.icon_asset_id === pickIcon(row.icon_asset_id)
+      && flags === row.flags && sameTerms(terms, current)
       && (pending === null ? row.pending_terms === null : row.pending_terms !== null && sameTerms(pending, row.pending_terms));
     if (unchanged) return { product: (await readProduct(client, siteId, id))!, outcome: "unchanged" as const };
 
     await client.query(
       `UPDATE phis.products
-       SET type = $2, title = $3, summary = $4, image_asset_id = $5::int, sale = $6, referral_url = $7,
-           flags = $8::int, parts = $9::text[], pending_terms = $10::jsonb, version = version + 1, updated_at = NOW()
+       SET type = $2, title = $3, summary = $4, image_asset_id = $5::int, icon_asset_id = $6::int, sale = $7,
+           referral_url = $8, flags = $9::int, parts = $10::text[], pending_terms = $11::jsonb, version = version + 1,
+           updated_at = NOW()
        WHERE id = $1`,
-      [row.id, draft.type, draft.title, draft.summary, pickImage(row.image_asset_id), terms.sale, terms.referralUrl, flags,
-        terms.parts, pending ? JSON.stringify(pending) : null],
+      [row.id, draft.type, draft.title, draft.summary, pickImage(row.image_asset_id), pickIcon(row.icon_asset_id), terms.sale,
+        terms.referralUrl, flags, terms.parts, pending ? JSON.stringify(pending) : null],
     );
     await enqueueProductChanged(client, { siteId, recipients: input.listeners, productId: id });
     return { product: (await readProduct(client, siteId, id))!, outcome: "updated" as const };

@@ -60,7 +60,7 @@ describe("products capability", () => {
 
   describe("an unverified hook reading the catalogue", () => {
     const hook = () => capability({ unauthenticated: true });
-    const stored = (stateName: string) => ({ id: "p", state: stateName, imageAssetId: null, imageRevision: null, pendingTerms: { sale: "own" }, attributes: { "@a/b": { mark: 1 } } });
+    const stored = (stateName: string) => ({ id: "p", state: stateName, imageAssetId: null, imageRevision: null, iconAssetId: null, iconRevision: null, pendingTerms: { sale: "own" }, attributes: { "@a/b": { mark: 1 } } });
 
     it("gets an active product without its pending terms, with its attributes, and nothing else", async () => {
       state.read.mockResolvedValueOnce(stored("active"));
@@ -126,11 +126,13 @@ describe("products capability", () => {
       await capability().list({ ids: many.slice(0, 200) as never });
     });
 
-    it("builds the picture's address from the asset's current revision and never stores it", async () => {
-      state.read.mockResolvedValueOnce({ id: "p", imageAssetId: 12, imageRevision: 3 });
-      expect(await capability().get({ id: "@acme/licenses:pro" })).toEqual({ id: "p", imageAssetId: 12, imagePath: "/api/site/media/12/content?r=3" });
-      state.read.mockResolvedValueOnce({ id: "p", imageAssetId: null, imageRevision: null });
-      expect(await capability().get({ id: "@acme/licenses:pro" })).toMatchObject({ imagePath: null });
+    it("builds the picture's and the icon's address from the asset's current revision and never stores it", async () => {
+      state.read.mockResolvedValueOnce({ id: "p", imageAssetId: 12, imageRevision: 3, iconAssetId: 14, iconRevision: 1 });
+      expect(await capability().get({ id: "@acme/licenses:pro" })).toEqual({
+        id: "p", imageAssetId: 12, imagePath: "/api/site/media/12/content?r=3", iconAssetId: 14, iconPath: "/api/site/media/14/content?r=1",
+      });
+      state.read.mockResolvedValueOnce({ id: "p", imageAssetId: null, imageRevision: null, iconAssetId: null, iconRevision: null });
+      expect(await capability().get({ id: "@acme/licenses:pro" })).toMatchObject({ imagePath: null, iconPath: null });
       state.read.mockResolvedValueOnce(null);
       expect(await capability().get({ id: "@acme/licenses:pro" })).toBeNull();
     });

@@ -1539,7 +1539,7 @@ phis product withdraw --site demo (--product @acme/licenses:pro | --supplier @ac
 - Core also moves products by itself: when `phis addon site --enable` or `phis addon reconcile` registers
   the products a manifest declares (`active`, withdrawing what a manifest stopped declaring), and when a
   supplier is switched off or removed (its active products are withdrawn) or back on (exactly those return).
-  Both commands list what they did. A sync leaves a product's picture alone (the manifest names none) and
+  Both commands list what they did. A sync leaves a product's picture and icon alone (the manifest names neither) and
   changes nothing, not even `version`, where the declaration is the same as the stored product.
 
 ## Entitlements

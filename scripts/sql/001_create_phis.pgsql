@@ -2737,8 +2737,8 @@ CREATE INDEX IF NOT EXISTS addon_event_outbox_delivered_idx
 -- flags: 1 = counted, 2 = free, 4 = released, 8 = withdrawn because the supplier was switched off,
 -- 16 = declared by the supplier's manifest, 32 = account required. `sale`, `referral_url`, `free`,
 -- `account required` and `parts` are the terms in force; what a publisher asked to change of them on a
--- released product waits in `pending_terms` ({ sale, referralUrl, free, accountRequired, parts }) until the operator releases it. `image_asset_id` goes to NULL when
--- the Asset is deleted.
+-- released product waits in `pending_terms` ({ sale, referralUrl, free, accountRequired, parts }) until the operator releases it. `image_asset_id` (the picture)
+-- and `icon_asset_id` (the small picture beside the title) each go to NULL when their Asset is deleted.
 CREATE TABLE IF NOT EXISTS phis.products (
   id SERIAL PRIMARY KEY,
   site_id SMALLINT NOT NULL REFERENCES phis.sites(id) ON DELETE CASCADE,
@@ -2749,6 +2749,7 @@ CREATE TABLE IF NOT EXISTS phis.products (
   title VARCHAR(200) NOT NULL,
   summary VARCHAR(1000) NOT NULL,
   image_asset_id INT NULL,
+  icon_asset_id INT NULL,
   sale VARCHAR(8) NOT NULL DEFAULT 'own',
   referral_url VARCHAR(2000) NULL,
   state VARCHAR(10) NOT NULL DEFAULT 'draft',
@@ -2770,7 +2771,11 @@ CREATE TABLE IF NOT EXISTS phis.products (
   CONSTRAINT products_image_asset_site_fk
     FOREIGN KEY (image_asset_id, site_id)
     REFERENCES phis.media_assets (id, site_id)
-    ON DELETE SET NULL (image_asset_id)
+    ON DELETE SET NULL (image_asset_id),
+  CONSTRAINT products_icon_asset_site_fk
+    FOREIGN KEY (icon_asset_id, site_id)
+    REFERENCES phis.media_assets (id, site_id)
+    ON DELETE SET NULL (icon_asset_id)
 );
 
 -- The operator's list asks by supplier and by publisher.

@@ -1643,7 +1643,9 @@ The design is [design/COMMERCE_COORDINATION.md](./design/COMMERCE_COORDINATION.m
   whether an Asset of another Site or Add-on exists. A slot file of the supplier's with `delivery: "public"`
   is the intended case), `imagePath` (the Site-relative address the picture is served from, built at read
   time from the Asset and its cache revision like `contentPath` of `assets:v1`, never stored; the Asset's own
-  delivery policy still applies to what that address answers), `counted`, `sale` (`own`,
+  delivery policy still applies to what that address answers), `iconAssetId` and `iconPath` (the icon: a
+  small picture -- a logo, an app icon -- shown beside the title on the product's page; accepted, refused,
+  nulled and addressed exactly as `imageAssetId` and `imagePath`), `counted`, `sale` (`own`,
   `referral` or `payout`), `referralUrl` (required, https, exactly for `referral`), `free`, `accountRequired` (can only be acquired with an account; Core does not enforce it, an entitlement entry always has a subject with an account), `parts` (the
   ids of a bundle's parts), `state`, `released`, `pendingTerms`, `attributes`, `version`, the two
   timestamps. Title and summary are in the Site's source language. Core reads neither `type` nor
@@ -1692,12 +1694,13 @@ terms awaiting release) is not. `entitlements:v1` stays closed to it entirely.
 
 **Manifest products.** An Add-on declares the products its package carries under
 `products: [{ key, type, title, summary, counted?, sale?, referralUrl?, free?, accountRequired?, parts? }]` (a publisher and
-a picture are not declared; keys unique per manifest). When the Add-on is switched on for a Site
+a picture or an icon are not declared; keys unique per manifest). When the Add-on is switched on for a Site
 (`phis addon site --enable`) and when a release is reconciled (`phis addon reconcile`), Core registers
 them at the Site: a new one as `active`, because the operator switched the Add-on on and the product is
 the Site's own; an existing one has its details compared and its state left alone. **What the manifest does
-not speak of, the sync does not touch:** it names no picture, so `imageAssetId` is neither set nor cleared by
-it -- a cover a handler put on a declared product stays through every enable and reconcile. Title, summary
+not speak of, the sync does not touch:** it names no picture and no icon, so neither `imageAssetId` nor
+`iconAssetId` is set or cleared by it -- a cover or an icon a handler put on a declared product stays
+through every enable and reconcile. Title, summary
 and the other declared fields are the manifest's statement and are reconciled to it. A sync that changes
 nothing raises no `version` and owes no `product.changed`. A product that
 came from a manifest and is no longer declared is withdrawn, never removed. A declared product that
@@ -2413,7 +2416,7 @@ The link is bound to the Site and cascades **both ways**, which is worth reading
   to deliver for that slot.** That is deliberate: it makes deleting a file a usable answer to somebody
   uploading rubbish, without destroying the record it was attached to. These link rows are not counted.
   What the delete guard does count, beside the CMS references, are two kinds of row outside the CMS. A
-  **product's picture**: an Asset that a product of the Site wears as `imageAssetId` is refused
+  **product's picture or icon**: an Asset that a product of the Site wears as `imageAssetId` or `iconAssetId` is refused
   with `media_asset_in_use` and a reference of scope `product` (the product's id in `fieldPath`), like a
   Page's. The foreign key's `SET NULL` stays as the last safeguard. And an Asset that a row of an installed
   Add-on -- enabled or not -- names in a column of its own declared with `references: "core.mediaAsset"` is

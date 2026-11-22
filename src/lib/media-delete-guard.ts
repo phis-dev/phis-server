@@ -115,8 +115,9 @@ export async function collectMediaAssetDeleteReferences(
     matchedValue: String(asset.id),
     addon: null,
   }));
-  // A product's picture is held by an ON DELETE SET NULL foreign key as the last safeguard; the refusal
-  // is the same one a CMS reference earns, so the picture is not taken from a product by accident.
+  // A product's picture and its icon are each held by an ON DELETE SET NULL foreign key as the last
+  // safeguard; the refusal is the same one a CMS reference earns, so neither is taken from a product by
+  // accident.
   for (const productId of await listProductIdsWithImage(db, siteId, asset.id)) {
     references.push({
       scope: "product",

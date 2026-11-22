@@ -1638,6 +1638,7 @@ Contract:
 - `title VARCHAR(200) NOT NULL`
 - `summary VARCHAR(1000) NOT NULL`
 - `image_asset_id INT NULL`
+- `icon_asset_id INT NULL`
 - `sale VARCHAR(8) NOT NULL DEFAULT 'own'`
 - `referral_url VARCHAR(2000) NULL`
 - `state VARCHAR(10) NOT NULL DEFAULT 'draft'`
@@ -1649,6 +1650,7 @@ Contract:
 - `updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
 - `UNIQUE (site_id, supplier_addon_id, key)` (`products_identity_unique`), `UNIQUE (id, site_id)`
 - `FOREIGN KEY (image_asset_id, site_id) REFERENCES phis.media_assets (id, site_id) ON DELETE SET NULL (image_asset_id)`
+- `FOREIGN KEY (icon_asset_id, site_id) REFERENCES phis.media_assets (id, site_id) ON DELETE SET NULL (icon_asset_id)` (`products_icon_asset_site_fk`)
 - `CHECK (supplier_addon_id ~ '^@[a-z0-9][a-z0-9._-]*/[a-z0-9][a-z0-9._-]*$')`, `CHECK (key ~ '^[a-z][a-z0-9.-]*$')`
 - `CHECK (sale IN ('own', 'referral', 'payout'))`, `CHECK ((sale = 'referral') = (referral_url IS NOT NULL))`
 - `CHECK (state IN ('draft', 'active', 'withdrawn', 'locked'))`, `CHECK (publisher IS NULL OR publisher <> '')`
@@ -1664,6 +1666,7 @@ Contract:
 - `version` rises with every change, attribute changes included, and not with a write that changes nothing.
 - A product that was ever named by an `entitlements` row is never deleted; `entitlements.product` is no foreign key, so removal is decided by looking.
 - `image_asset_id` is a picture of the Site's Media library; deleting the Asset sets it to NULL. `register` accepts only an Asset that is ready, delivered publicly, and in the Site's Space or the supplier's own Add-on Space; the Media delete route refuses an Asset a product wears (`media_asset_in_use`, scope `product`) before the foreign key would null it, and a manifest sync of the declared products never writes the column.
+- `icon_asset_id` is the product's icon -- a small picture (a logo, an app icon) shown beside its title on its page -- under exactly the rules of `image_asset_id`: the same `register` check, the same delete guard (a product wearing the Asset as either is named), the same `SET NULL` when the Asset goes, and a manifest sync never writes it either.
 
 ### `phis.product_attributes`
 

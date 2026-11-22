@@ -43,6 +43,7 @@ export type PhisNormalizedProductDraft = {
   title: string;
   summary: string;
   imageAssetId: number | null;
+  iconAssetId: number | null;
   counted: boolean;
   sale: PhisProductSale;
   referralUrl: string | null;
@@ -99,6 +100,10 @@ export function normalizePhisProductDraft(draft: PhisProductDraft, ownId?: PhisP
   if (imageAssetId !== null && (!Number.isInteger(imageAssetId) || imageAssetId <= 0)) {
     throw new PhisProductDraftError("imageAssetId is the id of an Asset of the Site, or null.");
   }
+  const iconAssetId = draft.iconAssetId ?? null;
+  if (iconAssetId !== null && (!Number.isInteger(iconAssetId) || iconAssetId <= 0)) {
+    throw new PhisProductDraftError("iconAssetId is the id of an Asset of the Site, or null.");
+  }
   return {
     key: draft.key,
     publisher,
@@ -106,6 +111,7 @@ export function normalizePhisProductDraft(draft: PhisProductDraft, ownId?: PhisP
     title: text(draft.title, "title", PHIS_PRODUCT_TITLE_MAX_LENGTH),
     summary: text(draft.summary, "summary", PHIS_PRODUCT_SUMMARY_MAX_LENGTH, true),
     imageAssetId,
+    iconAssetId,
     counted,
     sale,
     referralUrl,

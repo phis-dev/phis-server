@@ -708,7 +708,7 @@ export function validatePhisAddonManifest(
       issues.push(`products[${index}] must be an object.`);
       continue;
     }
-    for (const field of ["publisher", "imageAssetId"]) {
+    for (const field of ["publisher", "imageAssetId", "iconAssetId"]) {
       if (product[field] !== undefined) issues.push(`products[${index}].${field} is not declared in a manifest.`);
     }
     if (typeof product.key === "string") productKeys.push(product.key);
