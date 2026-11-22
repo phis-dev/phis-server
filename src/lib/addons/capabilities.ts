@@ -276,8 +276,8 @@ export function buildPhisAddonCapabilities(input: {
   const required = input.manifest.requiredCoreCapabilities;
   /*
    * The actor's authorization snapshot, read at most once for everything built here that asks a Site
-   * access: `authorization:v1`'s `hasSiteAccess`, and `roles:v1`, which needs it for the Site Admin floor
-   * and for the roles a Site access implies (`impliedBy`). Read on the first question, not before: most
+   * access: `authorization:v1`'s `hasSiteAccess`, `roles:v1`, which needs it for the Site Admin floor
+   * and for the roles a Site access implies (`impliedBy`), and `entitlements:v1`'s `subjectForUser`. Read on the first question, not before: most
    * requests ask none.
    */
   const actorUserId = input.actorUserId;
@@ -395,6 +395,7 @@ export function buildPhisAddonCapabilities(input: {
       addonId: input.manifest.addonId,
       siteId,
       actorUserId: input.actorUserId,
+      readSiteAccess,
       unauthenticated: input.unauthenticated === true && input.systemAuthority !== true,
     });
   }

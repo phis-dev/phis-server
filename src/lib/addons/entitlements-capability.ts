@@ -11,15 +11,19 @@ import { schedulePhisAddonEventDelivery } from "./event-trigger.ts";
 import { listEntitlementListenersOf } from "./commerce-listeners.ts";
 import { getPhisAddonInstalledManifest } from "./installed.ts";
 import { isPhisProductId, splitPhisProductId } from "./product-draft.ts";
+import { PHIS_SITE_ACCESS } from "./contract.ts";
+import type { PhisSiteAccessHolder } from "./role-inclusion.ts";
 import { getPool } from "@/lib/db";
 import {
   ensureEntitlementSubject,
+  ensureMemberEntitlementSubject,
   findEntitlementSubject,
   grantEntitlement,
   isEntitlementSourceAllowed,
   isSubscriptionOfAddon,
   listEntitlements,
   readEntitlementState,
+  readEntitlementStates,
   updateEntitlement,
 } from "@/db/entitlements.mts";
 import { readProduct } from "@/db/products.mts";
@@ -33,11 +37,17 @@ import { readProduct } from "@/db/products.mts";
  * the source is closed over, not passed in -- so another source's entry is simply not found. An
  * unverified hook reaches none of it, reads included: whether somebody holds a product is not for
  * whoever found an unsigned address.
+ *
+ * `subjectForUser` hands out another person's subject, which is staff acting on their behalf: it asks the
+ * acting user's Site access, `accounting` or `support`, from the request's one read of their authorization
+ * snapshot, shared with `authorization:v1` and `roles:v1`.
  */
 
 export class PhisAddonEntitlementsError extends Error {}
 
 const REFERENCE_MAX_LENGTH = 190;
+/** The most products one `checkMany` answers for (the contract's bound). */
+const CHECK_MANY_MAX = 100;
 const QUANTITY_MAX = 2_000_000_000;
 
 /** The enabled Add-ons that declare a handler for `entitlement.changed`. */
@@ -69,6 +79,8 @@ export function buildPhisAddonEntitlementsCapability(input: {
   addonId: string;
   siteId: number;
   actorUserId: number | null;
+  /** The actor's Site accesses, read once for the request (`buildPhisAddonCapabilities`). */
+  readSiteAccess: () => Promise<PhisSiteAccessHolder>;
   /** True when nobody authenticated and no signature stood in for them -- an unverified hook. */
   unauthenticated?: boolean;
 }): PhisEntitlementsCapabilityV1 {
@@ -136,6 +148,31 @@ export function buildPhisAddonEntitlementsCapability(input: {
       // A product nobody registered entitles nobody: its entries are kept and do not count.
       const row = isPhisProductId(product) ? await resolveSubject(subject) : null;
       return readEntitlementState(getPool(), { siteId, subjectId: row?.id ?? null, product });
+    },
+
+    async checkMany({ products, subject }) {
+      requireBelievableCaller("checkMany");
+      if (!Array.isArray(products) || products.length > CHECK_MANY_MAX) {
+        throw new PhisAddonEntitlementsError(`${addonId} called entitlements.checkMany with products that is not a list of at most ${CHECK_MANY_MAX} product ids.`);
+      }
+      const ids = products.map((product) => readProductId("checkMany", product));
+      if (ids.length === 0) return [];
+      const row = await resolveSubject(subject);
+      return readEntitlementStates(getPool(), { siteId, subjectId: row?.id ?? null, products: ids });
+    },
+
+    async subjectForUser({ userId }) {
+      requireBelievableCaller("subjectForUser");
+      if (!Number.isSafeInteger(userId) || userId <= 0) {
+        throw new PhisAddonEntitlementsError(`${addonId} called entitlements.subjectForUser with a userId that is not a positive whole number.`);
+      }
+      const holds = actorUserId == null ? null : await input.readSiteAccess();
+      if (!holds || !(holds(PHIS_SITE_ACCESS.accounting) || holds(PHIS_SITE_ACCESS.support))) {
+        throw new PhisAddonEntitlementsError(
+          `${addonId} called entitlements.subjectForUser for a person acting without the Site access accounting or support; another member's subject is for staff acting on their behalf.`,
+        );
+      }
+      return ensureMemberEntitlementSubject(getPool(), siteId, userId);
     },
 
     async list({ subject, product, resolveBundles }) {

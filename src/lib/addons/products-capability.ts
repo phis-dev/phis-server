@@ -15,8 +15,9 @@ import { getPhisAddonInstalledManifest } from "./installed.ts";
 import { isPhisProductId, isPhisProductKey, normalizePhisProductDraft } from "./product-draft.ts";
 import { PHIS_PRODUCT_ATTRIBUTES_MAX_BYTES } from "@/lib/constants/products";
 import { getPool } from "@/lib/db";
-import { resolvePhiMediaDeliveryUrl } from "@/lib/media-response";
-import { annotateProduct, type PhisStoredProduct, listProducts, readProduct, registerProduct, removeProduct, setProductState } from "@/db/products.mts";
+import { PhiImageAssetVariantKey } from "@/lib/constants/media";
+import { resolvePhiMediaDeliveryUrl, resolvePhiMediaVariantUrl } from "@/lib/media-response";
+import { annotateProduct, type PhisProductMedia, type PhisStoredProduct, listProducts, readProduct, registerProduct, removeProduct, setProductState } from "@/db/products.mts";
 
 /**
  * `products:v1` for one request (SERVER_ADDONS.md, products:v1).
@@ -37,29 +38,36 @@ export class PhisAddonProductsError extends Error {}
 const LIST_LIMIT_DEFAULT = 50;
 const LIST_LIMIT_MAX = 200;
 const STATES: readonly PhisProductState[] = ["draft", "active", "withdrawn", "locked"];
-/** The picture's and the icon's Site-relative address, as Core addresses its own Media (assets:v1 `contentPath`), read now. */
+/**
+ * The picture's and the icon's Site-relative addresses, as Core addresses its own Media (assets:v1
+ * `contentPath`), read now: the delivery for `imagePath` and `iconPath`, the `icon` image variant (64 x 64,
+ * fitted whole on a transparent ground) for `imageListPath` and `iconListPath`, which a list or a table
+ * shows. Both carry the Asset's revision, so the address changes when the picture does.
+ */
+const deliveryPath = (media: PhisProductMedia | null) => (media ? resolvePhiMediaDeliveryUrl(media) : null);
+const listPath = (media: PhisProductMedia | null) => (media ? resolvePhiMediaVariantUrl(media, PhiImageAssetVariantKey.Icon) : null);
+
 function present(product: PhisStoredProduct, publicView?: false): PhisProduct;
 function present(product: PhisStoredProduct | null, publicView?: boolean): PhisProduct | null;
 function present(product: PhisStoredProduct | null, publicView = false): PhisProduct | null {
   if (!product) return null;
-  const { imageRevision, iconRevision, ...rest } = product;
+  const { imageMedia, iconMedia, ...rest } = product;
   // What is not in the catalogue yet is not public: a product shown to everybody has no pending terms.
   if (publicView && product.state !== "active") return null;
   return {
     ...rest,
     ...(publicView ? { pendingTerms: null } : {}),
-    imagePath: product.imageAssetId !== null && imageRevision !== null
-      ? resolvePhiMediaDeliveryUrl({ id: product.imageAssetId, deliveryRevision: imageRevision })
-      : null,
-    iconPath: product.iconAssetId !== null && iconRevision !== null
-      ? resolvePhiMediaDeliveryUrl({ id: product.iconAssetId, deliveryRevision: iconRevision })
-      : null,
+    imagePath: deliveryPath(imageMedia),
+    iconPath: deliveryPath(iconMedia),
+    imageListPath: listPath(imageMedia),
+    iconListPath: listPath(iconMedia),
   };
 }
 
 /**
  * A product as a signed-in reader is answered it, the picture's and the icon's addresses read now: what
- * `products:v1` hands an Add-on, and what the operator's directory (`GET /api/site/products`) lists.
+ * `products:v1` hands an Add-on, and what the operator's directory (`GET /api/site/products`) lists, list
+ * paths included.
  */
 export function presentPhisProduct(product: PhisStoredProduct): PhisProduct {
   return present(product);

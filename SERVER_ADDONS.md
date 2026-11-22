@@ -285,7 +285,7 @@ Every Add-on exports a server-only manifest, `PhisAddonManifestV1` from `@phis/c
 - `jobs`
 - `schema`: the schema descriptor, or `null` when the Add-on owns no tables, and `migrationVersion`
 - `queries`: the declared query catalog
-- optional `settings`, `roles`, `groups`, `groupWriter`, `occasions`, `products`, and `modules`
+- optional `settings`, `roles`, `groups`, `groupWriter`, `occasions`, `products`, `modules`, and `media`
 
 The manifest digest is the SHA-256 of the manifest's canonical JSON and therefore covers every field. The
 manifest never contains runtime secrets.
@@ -328,6 +328,23 @@ name the same class share one budget, and a route in a class of its own has its 
 the memory of the running instance: it is not shared between the instances of a load-balanced
 installation, and it starts afresh when the process does. Callers whose address cannot be read share a
 single bucket rather than each getting their own.
+
+### Media limits
+
+`media: { maxFileBytes?, kinds?, maxPerField? }` states what the Add-on takes as Media through its own
+Forms: the largest file in bytes, the kinds of file (`PhiMediaKind` values of `@phis/contracts/media`), and
+the most Assets one multi-Asset field holds. Absent, and any limit left out, means no limit of the Add-on's
+own beyond Core's. `src/lib/addons/manifest.ts` reads it strictly when the manifest is admitted: an object
+with no other keys, the two numbers positive whole numbers, `kinds` a non-empty list of known kinds without
+duplicates.
+
+The Site UI applies it in the Media fields of the Add-on's Module (`media-asset`, `media-assets`): a field's
+own `max` may be lower, never higher, and a file too large or of another kind is refused before it is sent.
+The Add-on enforces it again where it stores a value, since a Form is not the only way in. **Core does not
+check an upload against it:** an upload goes into the Media library, addressed to no Add-on. Core does not
+yet hand the limits to the Site: the capability snapshot (`/api/v1/site/capabilities`), where the Site
+learns of an Add-on, is `PhiCapabilitySnapshot` of `@phis/contracts/server-capabilities` and has no field
+for them ([TODOS.md](./TODOS.md#at-the-next-release)).
 
 ### Adding to the manifest
 
@@ -1669,7 +1686,11 @@ The design is [design/COMMERCE_COORDINATION.md](./design/COMMERCE_COORDINATION.m
   time from the Asset and its cache revision like `contentPath` of `assets:v1`, never stored; the Asset's own
   delivery policy still applies to what that address answers), `iconAssetId` and `iconPath` (the icon: a
   small picture -- a logo, an app icon -- shown beside the title on the product's page; accepted, refused,
-  nulled and addressed exactly as `imageAssetId` and `imagePath`), `counted`, `sale` (`own`,
+  nulled and addressed exactly as `imageAssetId` and `imagePath`), `imageListPath` and `iconListPath` (the
+  picture and the icon as a list or a table shows them: the Media library's `icon` image variant, 64 x 64
+  fitted whole on a transparent ground, Site-relative with the delivery revision and the variant version so
+  the address changes when the picture does; null without one or for an Asset that is no image; built at read
+  time and never stored, as `imagePath`), `counted`, `sale` (`own`,
   `referral` or `payout`), `referralUrl` (required, https, exactly for `referral`), `free`, `accountRequired` (can only be acquired with an account; Core does not enforce it, an entitlement entry always has a subject with an account), `parts` (the
   ids of a bundle's parts), `state`, `released`, `pendingTerms`, `attributes`, `version`, the two
   timestamps. Title and summary are in the Site's source language. Core reads neither `type` nor
@@ -1686,11 +1707,12 @@ The design is [design/COMMERCE_COORDINATION.md](./design/COMMERCE_COORDINATION.m
   force again takes a pending change back. A product's publisher does not change after it was registered:
   turning a released publisher's product into the Site's own would skip the release.
 - **The operator's directory.** `GET /api/site/products` (the Accounting Area's product directory, Core's
-  accounting access) lists the same products a page at a time, and each row carries, beside `imagePath` and
-  `iconPath`, `imageListPath` and `iconListPath`: the picture's and the icon's `icon` image variant (64 x 64,
-  fitted whole on a transparent ground), Site-relative with the delivery revision and the variant version,
-  null without one or for an Asset that is no image. They are the directory's and not part of `products:v1`:
-  an Add-on's own product table that wants them small would need list paths in the capability first.
+  accounting access) lists the same products a page at a time, each row in the capability's presentation,
+  `imageListPath` and `iconListPath` included. Every read of a product, the capability's and the
+  directory's, joins its picture's and its icon's Asset in the one statement that reads the product, so a list
+  of 200 products costs no read per row. `POST /api/site/products/{id}/release` takes `{ expectedVersion }`,
+  the version whose terms the operator compared; a product that has moved on since is refused with `409`,
+  judged under the lock on its row, so terms nobody compared are never released.
 
 The capability: `list`, `get`, `register`, `setState`, `remove`, `annotate`.
 
@@ -1808,11 +1830,25 @@ supplier.
   --entitlement-grace-days`; 0 ends the entitlement with the period. A seller that runs its own
   subscriptions writes `endsAt` instead, and its grace is its own.
 
-The capability: `subject`, `check`, `list`, `grant`, `update`, `revoke`.
+The capability: `subject`, `subjectForUser`, `check`, `checkMany`, `list`, `grant`, `update`, `revoke`.
 
 **Reads are open** to every Add-on that requires the capability, and cover the entries of every source.
 `subject()` and a call without a subject act for the acting user; with nobody acting there is no subject,
-and `list` answers nothing. `list({ product, resolveBundles: true })` also lists the subject's entries on
+and `list` answers nothing. `checkMany({ products, subject? })` is `check` for several products in one
+read -- the same query, the walk to the bundles started from every product at once -- answering one state
+per product asked for, in the order asked, a product asked twice answered twice. It takes at most 100
+products and throws beyond, and throws for an entry that is not a product id (where `check` answers a
+non-id as held by nobody); an empty list answers an empty one without a read. A licence of a bundle of
+twenty parts refreshes with one call rather than twenty.
+
+**Another person's subject.** `subjectForUser({ userId })` answers the subject of a member of the Site,
+issued on first asking as `subject()` issues it, for staff acting on a person's behalf -- a licence granted
+by hand is the case that asked for it. It is allowed only while the acting user holds the Site access
+`accounting` or `support` (an Admin, an Accountant, a Supporter or a Maintainer), asked from the request's
+one read of their authorization snapshot that `authorization:v1` and `roles:v1` share; it throws for anybody
+else, with nobody acting, and for a `userId` that is not a positive whole number. A user who is not a member
+of the Site answers `null` and is issued nothing. The Add-on keeps the subject and never the user id, which
+it holds only for the call; writing for the subject is `grant`'s question, as for any subject. `list({ product, resolveBundles: true })` also lists the subject's entries on
 every bundle that contains the product, directly or through nested bundles and whatever the bundle's
 state, each entry as it is (its `product` is the bundle's id, its `valid` its own); absent or false lists
 the product's own entries only, and without `product` it changes nothing. `resolveBundles` is a boolean or

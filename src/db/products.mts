@@ -32,30 +32,25 @@ type DbQueryable = Pick<PoolClient, "query">;
  */
 
 /**
- * A product as the database holds it. `imagePath` and `iconPath` are not here: Core's address of a Media
- * Asset is built where the Media delivery lives (`resolvePhiMediaDeliveryUrl`), from the asset's current
- * cache revision carried here, and never stored.
+ * A product as the database holds it. `imagePath`, `iconPath` and their list variants are not here: Core's
+ * address of a Media Asset is built where the Media delivery lives (`resolvePhiMediaDeliveryUrl`,
+ * `resolvePhiMediaVariantUrl`), from the Asset's parts joined into every read, and never stored.
  */
-export type PhisStoredProduct = Omit<PhisProduct, "imagePath" | "iconPath"> & {
-  readonly imageRevision: number | null;
-  readonly iconRevision: number | null;
+export type PhisStoredProduct = Omit<PhisProduct, "imagePath" | "iconPath" | "imageListPath" | "iconListPath"> & {
+  readonly imageMedia: PhisProductMedia | null;
+  readonly iconMedia: PhisProductMedia | null;
 };
 
 /**
- * The parts of a product's picture or icon an address of one of its image variants is built from
- * (`resolvePhiMediaVariantUrl`), `null` where the product names none or the Asset is gone.
+ * The parts of a product's picture or icon its addresses are built from -- the delivery's
+ * (`resolvePhiMediaDeliveryUrl`) and one of its image variants' (`resolvePhiMediaVariantUrl`) -- `null` where
+ * the product names none or the Asset is gone.
  */
-export type PhisProductListMedia = {
+export type PhisProductMedia = {
   readonly id: number;
   readonly deliveryRevision: number;
   readonly variantVersion: number | null;
   readonly contentType: string;
-};
-
-/** A row of the operator's directory: the product, and its picture's and icon's parts for a list. */
-export type PhisProductDirectoryEntry = PhisStoredProduct & {
-  readonly imageMedia: PhisProductListMedia | null;
-  readonly iconMedia: PhisProductListMedia | null;
 };
 
 /** A rule the product directory enforces; the message says which, for the Add-on or the operator. */
@@ -63,11 +58,20 @@ export class PhisProductRuleError extends Error {}
 
 const FLAG = PHIS_PRODUCT_FLAG;
 
+/*
+ * The picture and the icon are joined into every read, not read per row: a list shows them on every line,
+ * and an address of a variant needs the Asset's content type and variant version beside the revision.
+ */
 const PRODUCT_COLUMNS = `p.id, p.supplier_addon_id, p.key, p.publisher, p.type, p.title, p.summary, p.image_asset_id,
   p.icon_asset_id, p.sale, p.referral_url, p.state, p.flags, p.parts, p.pending_terms, p.version, p.created_at, p.updated_at,
   ${suppliedSql("p")} AS supplied,
-  (SELECT a.delivery_revision FROM phis.media_assets a WHERE a.id = p.image_asset_id AND a.site_id = p.site_id) AS image_revision,
-  (SELECT a.delivery_revision FROM phis.media_assets a WHERE a.id = p.icon_asset_id AND a.site_id = p.site_id) AS icon_revision`;
+  image.delivery_revision AS image_media_revision, image.variant_version AS image_media_variant_version,
+  image.content_type AS image_media_content_type,
+  icon.delivery_revision AS icon_media_revision, icon.variant_version AS icon_media_variant_version,
+  icon.content_type AS icon_media_content_type`;
+const PRODUCT_FROM = `FROM phis.products p
+  LEFT JOIN phis.media_assets image ON image.id = p.image_asset_id AND image.site_id = p.site_id
+  LEFT JOIN phis.media_assets icon ON icon.id = p.icon_asset_id AND icon.site_id = p.site_id`;
 
 /**
  * Whether the supplier is switched on for the product's Site and globally. The one predicate behind
@@ -108,9 +112,20 @@ type ProductRow = {
   created_at: Date;
   updated_at: Date;
   supplied: boolean;
-  image_revision: number | null;
-  icon_revision: number | null;
+} & {
+  [Column in `${"image" | "icon"}_media_${"revision" | "variant_version"}`]: number | null;
+} & {
+  image_media_content_type: string | null;
+  icon_media_content_type: string | null;
 };
+
+function productMedia(row: ProductRow, which: "image" | "icon"): PhisProductMedia | null {
+  const id = row[`${which}_asset_id`];
+  const revision = row[`${which}_media_revision`];
+  const contentType = row[`${which}_media_content_type`];
+  if (id === null || revision === null || contentType === null) return null;
+  return { id, deliveryRevision: revision, variantVersion: row[`${which}_media_variant_version`], contentType };
+}
 
 function mapProduct(row: ProductRow, attributes: Record<string, Record<string, unknown>>): PhisStoredProduct {
   return {
@@ -122,9 +137,9 @@ function mapProduct(row: ProductRow, attributes: Record<string, Record<string, u
     title: row.title,
     summary: row.summary,
     imageAssetId: row.image_asset_id,
-    imageRevision: row.image_revision,
+    imageMedia: productMedia(row, "image"),
     iconAssetId: row.icon_asset_id,
-    iconRevision: row.icon_revision,
+    iconMedia: productMedia(row, "icon"),
     counted: (row.flags & FLAG.Counted) !== 0,
     sale: row.sale,
     referralUrl: row.referral_url,
@@ -164,7 +179,7 @@ async function mapProducts(db: DbQueryable, rows: readonly ProductRow[]) {
 async function selectRow(db: DbQueryable, siteId: number, id: PhisProductId, lock = false) {
   const { supplier, key } = splitPhisProductId(id);
   const { rows } = await db.query<ProductRow>(
-    `SELECT ${PRODUCT_COLUMNS} FROM phis.products p
+    `SELECT ${PRODUCT_COLUMNS} ${PRODUCT_FROM}
      WHERE p.site_id = $1 AND p.supplier_addon_id = $2 AND p.key = $3${lock ? " FOR UPDATE OF p" : ""}`,
     [siteId, supplier, key],
   );
@@ -198,7 +213,7 @@ export async function listProducts(db: DbQueryable, input: ProductListFilter & {
 }): Promise<{ products: PhisStoredProduct[]; nextCursor: string | null }> {
   const afterId = decodeCursor(input.cursor);
   const { rows } = await db.query<ProductRow>(
-    `SELECT ${PRODUCT_COLUMNS} FROM phis.products p
+    `SELECT ${PRODUCT_COLUMNS} ${PRODUCT_FROM}
      WHERE p.site_id = $1
        AND p.state = ANY($2::text[])
        AND ($3::text IS NULL OR p.supplier_addon_id = $3)
@@ -241,7 +256,7 @@ export async function listProductDirectory(db: DbQueryable, input: {
   search?: string;
   page: number;
   pageSize: number;
-}): Promise<{ products: PhisProductDirectoryEntry[]; total: number }> {
+}): Promise<{ products: PhisStoredProduct[]; total: number }> {
   const search = input.search ? `%${escapeLike(input.search.toLowerCase())}%` : null;
   const where = `p.site_id = $1
        AND p.state = ANY($2::text[])
@@ -251,9 +266,9 @@ export async function listProductDirectory(db: DbQueryable, input: {
          OR lower(p.title) LIKE $5 ESCAPE '\\'
          OR lower(p.supplier_addon_id || ':' || p.key) LIKE $5 ESCAPE '\\')`;
   const filter = [input.siteId, input.states, input.supplier ?? null, input.awaitingRelease ?? null, search];
-  const { rows } = await db.query<DirectoryRow & { total: string }>(
-    `SELECT ${DIRECTORY_COLUMNS}, COUNT(*) OVER () AS total
-     ${DIRECTORY_FROM}
+  const { rows } = await db.query<ProductRow & { total: string }>(
+    `SELECT ${PRODUCT_COLUMNS}, COUNT(*) OVER () AS total
+     ${PRODUCT_FROM}
      WHERE ${where}
      ORDER BY p.supplier_addon_id ASC, p.key ASC
      LIMIT $6::int OFFSET $7::int`,
@@ -263,55 +278,7 @@ export async function listProductDirectory(db: DbQueryable, input: {
   const total = rows.length > 0 ? Number(rows[0]!.total) : input.page > 1
     ? Number((await db.query<{ total: string }>(`SELECT COUNT(*) AS total FROM phis.products p WHERE ${where}`, filter)).rows[0]!.total)
     : 0;
-  return { products: await mapDirectoryRows(db, rows), total };
-}
-
-/** One product as the directory lists it, for the answer to an operator's act on it; `null` where the Site lacks it. */
-export async function readProductDirectoryEntry(db: DbQueryable, siteId: number, id: PhisProductId) {
-  const { supplier, key } = splitPhisProductId(id);
-  const { rows } = await db.query<DirectoryRow>(
-    `SELECT ${DIRECTORY_COLUMNS} ${DIRECTORY_FROM}
-     WHERE p.site_id = $1 AND p.supplier_addon_id = $2 AND p.key = $3`,
-    [siteId, supplier, key],
-  );
-  return (await mapDirectoryRows(db, rows))[0] ?? null;
-}
-
-/*
- * The directory's picture and icon are joined, not read per row: a list shows them on every line, and an
- * address of a variant needs the Asset's content type and variant version beside the revision.
- */
-const DIRECTORY_COLUMNS = `${PRODUCT_COLUMNS},
-  image.id AS image_media_id, image.delivery_revision AS image_media_revision,
-  image.variant_version AS image_media_variant_version, image.content_type AS image_media_content_type,
-  icon.id AS icon_media_id, icon.delivery_revision AS icon_media_revision,
-  icon.variant_version AS icon_media_variant_version, icon.content_type AS icon_media_content_type`;
-const DIRECTORY_FROM = `FROM phis.products p
-  LEFT JOIN phis.media_assets image ON image.id = p.image_asset_id AND image.site_id = p.site_id
-  LEFT JOIN phis.media_assets icon ON icon.id = p.icon_asset_id AND icon.site_id = p.site_id`;
-
-type DirectoryRow = ProductRow & {
-  [Column in `${"image" | "icon"}_media_${"id" | "revision" | "variant_version"}`]: number | null;
-} & {
-  image_media_content_type: string | null;
-  icon_media_content_type: string | null;
-};
-
-async function mapDirectoryRows(db: DbQueryable, rows: readonly DirectoryRow[]): Promise<PhisProductDirectoryEntry[]> {
-  const products = await mapProducts(db, rows);
-  return products.map((product, index) => ({
-    ...product,
-    imageMedia: directoryMedia(rows[index]!, "image"),
-    iconMedia: directoryMedia(rows[index]!, "icon"),
-  }));
-}
-
-function directoryMedia(row: DirectoryRow, which: "image" | "icon"): PhisProductListMedia | null {
-  const id = row[`${which}_media_id`];
-  const revision = row[`${which}_media_revision`];
-  const contentType = row[`${which}_media_content_type`];
-  if (id === null || revision === null || contentType === null) return null;
-  return { id, deliveryRevision: revision, variantVersion: row[`${which}_media_variant_version`], contentType };
+  return { products: await mapProducts(db, rows), total };
 }
 
 const CURSOR_PREFIX = "p1.";
@@ -607,15 +574,24 @@ export type ReleaseOutcome = "released" | "applied" | "unchanged";
  * The operator's release of a publisher's product: the first one, or the pending terms of a released
  * one. Null where there is no such product. The Site's own product needs none, which is refused rather
  * than answered as done.
+ *
+ * `expectedVersion` is the version whose terms the operator read; a product that has moved on since is
+ * refused, judged under the lock on its row, so terms nobody compared are never released.
  */
 export async function releaseProduct(pool: Pool, input: {
   siteId: number;
   productId: PhisProductId;
   listeners: readonly string[];
+  expectedVersion?: number;
 }): Promise<{ product: PhisStoredProduct; outcome: ReleaseOutcome } | null> {
   return withPoolTransaction(pool, async (client) => {
     const row = await selectRow(client, input.siteId, input.productId, true);
     if (!row) return null;
+    if (input.expectedVersion !== undefined && row.version !== input.expectedVersion) {
+      throw new PhisProductRuleError(
+        `${input.productId} is at version ${row.version}, not ${input.expectedVersion}: it changed since it was read; read it again before releasing.`,
+      );
+    }
     if (row.publisher === null) throw new PhisProductRuleError(`${input.productId} is the Site's own product and needs no release.`);
     const released = (row.flags & FLAG.Released) !== 0;
     const pending = row.pending_terms;
@@ -661,7 +637,7 @@ export async function moveProductsAsOperator(pool: Pool, input: {
   const { supplier, key } = input.productId ? splitPhisProductId(input.productId) : { supplier: input.supplier ?? null, key: null };
   return withPoolTransaction(pool, async (client) => {
     const { rows } = await client.query<ProductRow>(
-      `SELECT ${PRODUCT_COLUMNS} FROM phis.products p
+      `SELECT ${PRODUCT_COLUMNS} ${PRODUCT_FROM}
        WHERE p.site_id = $1 AND p.state = ANY($2::text[])
          AND ($3::text IS NULL OR p.supplier_addon_id = $3)
          AND ($4::text IS NULL OR p.key = $4)

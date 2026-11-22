@@ -9,10 +9,8 @@ import {
   moveProductsAsOperator,
   PhisProductRuleError,
   readProduct,
-  readProductDirectoryEntry,
   releaseProduct,
-  type PhisProductDirectoryEntry,
-  type PhisProductListMedia,
+  type PhisStoredProduct,
 } from "@/db/products.mts";
 import { schedulePhisAddonEventDelivery } from "@/lib/addons/event-trigger";
 import { isPhisProductId } from "@/lib/addons/product-draft";
@@ -21,9 +19,8 @@ import { PHIS_ADDON_ID_PATTERN } from "@/lib/addons/schema-name";
 import { getPool } from "@/lib/db";
 import type { SiteAdminApiGuardedContext } from "@/lib/guards/site-admin-api";
 import { parsePhiPagination } from "@/lib/helpers/request";
-import { PhiImageAssetVariantKey } from "@/lib/constants/media";
+import { isPhiRecord } from "@/lib/helpers/record";
 import { logRuntimeEvent } from "@/lib/log";
-import { resolvePhiMediaVariantUrl } from "@/lib/media-response";
 
 /*
  * The Site's product directory as its operator administers it (`products:v1`, SERVER_ADDONS.md).
@@ -41,23 +38,18 @@ const SEARCH_MAX_LENGTH = 200;
  * One row of the directory: what the operator reads to decide, not the attributes other Add-ons keep.
  *
  * `imageListPath` and `iconListPath` are the picture's and the icon's `icon` variant (64 x 64, fitted whole on a
- * transparent ground), for a list that shows them small; `null` without one or for an Asset that is no image.
- * They carry the delivery revision and the variant version, so the address changes when the picture does.
+ * transparent ground), for a list that shows them small, as `products:v1` answers them; `null` without one or
+ * for an Asset that is no image. They carry the delivery revision and the variant version, so the address
+ * changes when the picture does.
  */
 export type SiteProductDirectoryRow = Pick<
   PhisProduct,
   | "id" | "supplier" | "publisher" | "title" | "summary" | "type" | "state" | "sale" | "referralUrl" | "free"
-  | "accountRequired" | "counted" | "parts" | "released" | "pendingTerms" | "imagePath" | "iconPath" | "version"
-> & {
-  imageListPath: string | null;
-  iconListPath: string | null;
-};
+  | "accountRequired" | "counted" | "parts" | "released" | "pendingTerms" | "imagePath" | "iconPath"
+  | "imageListPath" | "iconListPath" | "version"
+>;
 
-const listPath = (media: PhisProductListMedia | null) =>
-  media ? resolvePhiMediaVariantUrl(media, PhiImageAssetVariantKey.Icon) : null;
-
-function toRow(entry: PhisProductDirectoryEntry): SiteProductDirectoryRow {
-  const { imageMedia, iconMedia, ...stored } = entry;
+function toRow(stored: PhisStoredProduct): SiteProductDirectoryRow {
   const product = presentPhisProduct(stored);
   return {
     id: product.id,
@@ -77,8 +69,8 @@ function toRow(entry: PhisProductDirectoryEntry): SiteProductDirectoryRow {
     pendingTerms: product.pendingTerms,
     imagePath: product.imagePath,
     iconPath: product.iconPath,
-    imageListPath: listPath(imageMedia),
-    iconListPath: listPath(iconMedia),
+    imageListPath: product.imageListPath,
+    iconListPath: product.iconListPath,
     version: product.version,
   };
 }
@@ -129,12 +121,41 @@ export async function answerSiteProductDirectory(request: NextRequest, context: 
 export type SiteProductCommand = "release" | "lock" | "unlock";
 
 /**
+ * The release's body: none, or `{ expectedVersion }`, the version of the product the operator read the terms
+ * of. Read strictly: anything else in it is the caller's mistake, not a field to skip.
+ */
+async function readReleaseBody(request: NextRequest): Promise<{ expectedVersion?: number } | NextResponse> {
+  const text = await request.text();
+  if (text.trim() === "") return {};
+  let body: unknown;
+  try {
+    body = JSON.parse(text);
+  } catch {
+    return refuse(400, "The body is a JSON object, or empty.");
+  }
+  if (!isPhisReleaseBody(body)) {
+    return refuse(400, "The body holds at most expectedVersion, a positive whole number.");
+  }
+  return body.expectedVersion === undefined ? {} : { expectedVersion: body.expectedVersion };
+}
+
+function isPhisReleaseBody(body: unknown): body is { expectedVersion?: number } {
+  if (!isPhiRecord(body) || Object.keys(body).some((key) => key !== "expectedVersion")) return false;
+  const version = body.expectedVersion;
+  return version === undefined || (Number.isSafeInteger(version) && (version as number) > 0);
+}
+
+/**
  * `POST /api/site/products/{id}/release|lock|unlock`: the id is one path segment, percent-encoded by
  * whoever built the address (`@`, `/` and `:` are in every id), and decoded by Next before it gets here.
  *
  * The answer is the outcome and the product as it now stands. A command that finds nothing to do --
  * a product already locked, one not locked, a release with nothing pending -- answers `unchanged`
  * rather than a refusal: the state asked for is the state there is.
+ *
+ * A release may name the version the operator read (`expectedVersion`): where the product has moved
+ * since -- the publisher changed its terms again while the dialog was open -- it is refused with `409`
+ * rather than releasing terms nobody compared.
  */
 export async function answerSiteProductCommand(
   request: NextRequest,
@@ -151,7 +172,9 @@ export async function answerSiteProductCommand(
   let outcome: string;
   try {
     if (command === "release") {
-      const result = await releaseProduct(pool, { siteId, productId: id, listeners });
+      const body = await readReleaseBody(request);
+      if (body instanceof NextResponse) return body;
+      const result = await releaseProduct(pool, { siteId, productId: id, listeners, ...body });
       if (!result) return refuse(404, "product_not_found");
       outcome = result.outcome;
     } else {
@@ -162,7 +185,8 @@ export async function answerSiteProductCommand(
       outcome = moved.length > 0 ? (command === "lock" ? "locked" : "unlocked") : "unchanged";
     }
   } catch (error) {
-    // The Site's own product needs no release; parts that would contain the product itself are refused.
+    // The Site's own product needs no release; parts that would contain the product itself are refused,
+    // and so is a release of a version that is no longer the product's.
     if (error instanceof PhisProductRuleError) return refuse(409, error.message);
     throw error;
   }
@@ -180,7 +204,7 @@ export async function answerSiteProductCommand(
       meta: { outcome },
     });
   }
-  const product = await readProductDirectoryEntry(pool, siteId, id);
+  const product = await readProduct(pool, siteId, id);
   if (!product) return refuse(404, "product_not_found");
   return NextResponse.json({ outcome, product: toRow(product) });
 }

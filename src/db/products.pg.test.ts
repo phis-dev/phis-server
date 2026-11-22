@@ -26,7 +26,6 @@ import {
   listProducts,
   moveProductsAsOperator,
   readProduct,
-  readProductDirectoryEntry,
   reconcileProductSupply,
   registerProduct,
   releaseProduct,
@@ -176,8 +175,15 @@ describe.skipIf(!configured)("products", () => {
     expect(back.product.pendingTerms).toBeNull();
     await register("rel", { publisher: "acme", sale: "payout", free: true, title: "Renamed", type: "plan" });
 
+    // A release of the version the operator read, where the product has moved on since, releases nothing.
+    const read = (await get(id(SUPPLIER, "rel")))!;
     await clearOutbox();
-    const applied = await releaseProduct(pool, { siteId: site.id, productId: id(SUPPLIER, "rel"), listeners });
+    await expect(releaseProduct(pool, { siteId: site.id, productId: id(SUPPLIER, "rel"), listeners, expectedVersion: read.version - 1 }))
+      .rejects.toThrow(new RegExp(`at version ${read.version}, not ${read.version - 1}`));
+    expect((await get(id(SUPPLIER, "rel")))).toMatchObject({ version: read.version, pendingTerms: { sale: "payout" } });
+    expect(await outbox()).toHaveLength(0);
+
+    const applied = await releaseProduct(pool, { siteId: site.id, productId: id(SUPPLIER, "rel"), listeners, expectedVersion: read.version });
     expect(applied).toMatchObject({ outcome: "applied", product: { sale: "payout", free: true, pendingTerms: null } });
     expect(await outbox()).toHaveLength(1);
     expect((await releaseProduct(pool, { siteId: site.id, productId: id(SUPPLIER, "rel"), listeners }))!.outcome).toBe("unchanged");
@@ -353,10 +359,10 @@ describe.skipIf(!configured)("products", () => {
   it("accepts an Asset of the Site as the picture, refuses another Site's, and drops it with the Asset", async () => {
     const asset = await createPhiTestAsset(site, "product-image", { lifecycleStatus: 2 });
     const withImage = await register("img", { imageAssetId: asset });
-    expect(withImage.product).toMatchObject({ imageAssetId: asset, imageRevision: 1 });
+    expect(withImage.product).toMatchObject({ imageAssetId: asset, imageMedia: { id: asset, deliveryRevision: 1 } });
     // The address follows the asset's cache revision, read at the moment it is used.
     await pool.query(`UPDATE phis.media_assets SET delivery_revision = 2 WHERE id = $1`, [asset]);
-    expect((await get(id(SUPPLIER, "img")))!.imageRevision).toBe(2);
+    expect((await get(id(SUPPLIER, "img")))!.imageMedia?.deliveryRevision).toBe(2);
     await expect(register("img", { imageAssetId: 2_000_000_000 })).rejects.toThrow(/not an Asset of this Site/);
     const elsewhere = await createPhiTestSite("products-elsewhere");
     const foreign = await createPhiTestAsset(elsewhere, "foreign-image", { lifecycleStatus: 2 });
@@ -365,7 +371,7 @@ describe.skipIf(!configured)("products", () => {
     expect(await listProductIdsWithImage(pool, elsewhere.id, asset)).toEqual([]);
     await pool.query(`DELETE FROM phis.media_assets WHERE id = $1`, [asset]);
     expect(await listProductIdsWithImage(pool, site.id, asset)).toEqual([]);
-    expect((await get(id(SUPPLIER, "img")))).toMatchObject({ imageAssetId: null, imageRevision: null });
+    expect((await get(id(SUPPLIER, "img")))).toMatchObject({ imageAssetId: null, imageMedia: null });
   });
 
   it("refuses a picture a visitor would not be served, and takes the supplier's own Add-on Space", async () => {
@@ -398,12 +404,12 @@ describe.skipIf(!configured)("products", () => {
     const icon = await createPhiTestAsset(site, "icon-logo", ready);
     const own = await createPhiTestAsset(site, "icon-own", { ...ready, spaceId: await space(SUPPLIER) });
     const withIcon = await register("ico", { imageAssetId: picture, iconAssetId: icon });
-    expect(withIcon.product).toMatchObject({ imageAssetId: picture, iconAssetId: icon, iconRevision: 1 });
+    expect(withIcon.product).toMatchObject({ imageAssetId: picture, iconAssetId: icon, iconMedia: { id: icon, deliveryRevision: 1 } });
     // The same draft again changes nothing; a new icon alone is a change.
     expect((await register("ico", { imageAssetId: picture, iconAssetId: icon })).outcome).toBe("unchanged");
     expect((await register("ico", { imageAssetId: picture, iconAssetId: own })).product).toMatchObject({ imageAssetId: picture, iconAssetId: own });
     await pool.query(`UPDATE phis.media_assets SET delivery_revision = 4 WHERE id = $1`, [own]);
-    expect((await get(id(SUPPLIER, "ico")))!.iconRevision).toBe(4);
+    expect((await get(id(SUPPLIER, "ico")))!.iconMedia?.deliveryRevision).toBe(4);
 
     const pending = await createPhiTestAsset(site, "icon-pending");
     const others = await createPhiTestAsset(site, "icon-other-addon", { ...ready, spaceId: await space(OTHER) });
@@ -420,7 +426,7 @@ describe.skipIf(!configured)("products", () => {
     expect(await listProductIdsWithImage(pool, site.id, own)).toEqual([id(SUPPLIER, "ico")]);
     await pool.query(`DELETE FROM phis.media_assets WHERE id = $1`, [own]);
     expect(await listProductIdsWithImage(pool, site.id, own)).toEqual([]);
-    expect((await get(id(SUPPLIER, "ico")))).toMatchObject({ imageAssetId: picture, iconAssetId: null, iconRevision: null });
+    expect((await get(id(SUPPLIER, "ico")))).toMatchObject({ imageAssetId: picture, iconAssetId: null, iconMedia: null });
   });
 
   it("lists active products unless states are asked for, by supplier, publisher and release, in pages", async () => {
@@ -511,7 +517,8 @@ describe.skipIf(!configured)("products", () => {
     expect(beyond).toEqual({ products: [], total: 4 });
     expect(await read({ supplier: "@pgtest/nobody" })).toEqual({ products: [], total: 0 });
 
-    // The picture and the icon come joined, with what an address of one of their variants is built from.
+    // The picture and the icon come joined, with what an address of one of their variants is built from --
+    // in the directory's list as in every read of a product.
     const picture = await createPhiTestAsset(directory, "directory-picture", { lifecycleStatus: 2 });
     const icon = await createPhiTestAsset(directory, "directory-icon", { lifecycleStatus: 2 });
     await add(SUPPLIER, "d-own", { title: "Studio Pro", imageAssetId: picture, iconAssetId: icon });
@@ -524,9 +531,9 @@ describe.skipIf(!configured)("products", () => {
       iconMedia: { id: icon, deliveryRevision: 1, variantVersion: null, contentType: "application/pdf" },
     });
     expect((await read({ states: ["locked"] })).products[0]).toMatchObject({ imageMedia: null, iconMedia: null });
-    // One product read the same way, for the answer to an act on it.
-    expect(await readProductDirectoryEntry(pool, directory.id, id(SUPPLIER, "d-own"))).toEqual(own);
-    expect(await readProductDirectoryEntry(pool, directory.id, id(SUPPLIER, "d-nope"))).toBeNull();
+    // One product read the same way, for the answer to an act on it and for products:v1.
+    expect(await readProduct(pool, directory.id, id(SUPPLIER, "d-own"))).toEqual(own);
+    expect(await readProduct(pool, directory.id, id(SUPPLIER, "d-nope"))).toBeNull();
     // Gone with its Asset, like the product's own reference.
     await pool.query(`DELETE FROM phis.media_assets WHERE id = $1`, [icon]);
     expect((await read({ search: "studio pro" })).products[0]).toMatchObject({ iconMedia: null, iconAssetId: null });

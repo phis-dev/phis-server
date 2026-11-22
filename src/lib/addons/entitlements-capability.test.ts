@@ -13,6 +13,10 @@ const state = vi.hoisted(() => ({
   update: vi.fn(async (input: Record<string, unknown>): Promise<unknown> => ({ ...input, id: 1 })),
   list: vi.fn(async (_input: Record<string, unknown>): Promise<unknown[]> => []),
   readState: vi.fn(async (input: Record<string, unknown>) => ({ product: input.product, entitled: input.subjectId !== null, quantity: null, until: null, via: [] })),
+  readStates: vi.fn(async (input: { subjectId: number | null; products: string[] }) =>
+    input.products.map((product) => ({ product, entitled: input.subjectId !== null, quantity: null, until: null, via: [] }))),
+  memberSubject: vi.fn(async (): Promise<string | null> => "sub_member"),
+  siteAccess: vi.fn((_access: string) => false),
   allowed: vi.fn(async () => false),
   ownSubscription: vi.fn(async () => true),
   product: vi.fn(async (): Promise<Held | null> => null),
@@ -27,6 +31,8 @@ vi.mock("@/db/entitlements.mts", () => ({
   updateEntitlement: (_pool: unknown, input: Record<string, unknown>) => state.update(input),
   listEntitlements: (_pool: unknown, input: Record<string, unknown>) => state.list(input),
   readEntitlementState: (_pool: unknown, input: Record<string, unknown>) => state.readState(input),
+  readEntitlementStates: (_pool: unknown, input: { subjectId: number | null; products: string[] }) => state.readStates(input),
+  ensureMemberEntitlementSubject: (_pool: unknown, ...args: unknown[]) => (state.memberSubject as (...a: unknown[]) => Promise<string | null>)(...args),
   isSubscriptionOfAddon: (_pool: unknown, ...args: unknown[]) => (state.ownSubscription as (...a: unknown[]) => Promise<boolean>)(...args),
   isEntitlementSourceAllowed: (_pool: unknown, ...args: unknown[]) => (state.allowed as (...a: unknown[]) => Promise<boolean>)(...args),
 }));
@@ -44,7 +50,9 @@ const heldProducts: Record<string, Held> = {
 };
 
 function capability(overrides: Partial<Parameters<typeof buildPhisAddonEntitlementsCapability>[0]> = {}) {
-  return buildPhisAddonEntitlementsCapability({ addonId: SHOP, siteId: 7, actorUserId: 9, unauthenticated: false, ...overrides });
+  return buildPhisAddonEntitlementsCapability({
+    addonId: SHOP, siteId: 7, actorUserId: 9, unauthenticated: false, readSiteAccess: async () => state.siteAccess, ...overrides,
+  });
 }
 
 describe("entitlements capability", () => {
@@ -58,6 +66,8 @@ describe("entitlements capability", () => {
     state.allowed.mockResolvedValue(false);
     state.ownSubscription.mockResolvedValue(true);
     state.findSubject.mockResolvedValue({ id: 5, userId: 9 });
+    state.siteAccess.mockReturnValue(false);
+    state.memberSubject.mockResolvedValue("sub_member");
     state.product.mockImplementation(async (...args: unknown[]) => heldProducts[args[1] as string] ?? null);
   });
 
@@ -73,6 +83,8 @@ describe("entitlements capability", () => {
     const hook = capability({ unauthenticated: true });
     await expect(hook.subject()).rejects.toThrow(/unverified hook/);
     await expect(hook.check({ product: LICENSE })).rejects.toThrow(/unverified hook/);
+    await expect(hook.checkMany({ products: [LICENSE] })).rejects.toThrow(/unverified hook/);
+    await expect(hook.subjectForUser({ userId: 12 })).rejects.toThrow(/unverified hook/);
     await expect(hook.list({})).rejects.toThrow(/unverified hook/);
     await expect(hook.grant({ subject: "sub_x", product: LICENSE, reference: "o1" })).rejects.toThrow(/unverified hook/);
     await expect(hook.update({ product: LICENSE, reference: "o1" })).rejects.toThrow(/unverified hook/);
@@ -80,6 +92,53 @@ describe("entitlements capability", () => {
     expect(state.grant).not.toHaveBeenCalled();
     expect(state.update).not.toHaveBeenCalled();
     expect(state.readState).not.toHaveBeenCalled();
+  });
+
+  describe("checkMany", () => {
+    it("answers every product asked for in one read, in the order asked, for the subject named or the actor", async () => {
+      const answers = await capability().checkMany({ products: [SEATS, LICENSE, SEATS] });
+      expect(answers.map((answer) => answer.product)).toEqual([SEATS, LICENSE, SEATS]);
+      expect(state.readStates).toHaveBeenCalledTimes(1);
+      expect(state.readStates).toHaveBeenLastCalledWith(expect.objectContaining({ siteId: 7, subjectId: 5, products: [SEATS, LICENSE, SEATS] }));
+      await capability().checkMany({ products: [LICENSE], subject: "sub_x" });
+      expect(state.findSubject).toHaveBeenLastCalledWith(7, "sub_x");
+      // Nobody acting and nobody named: every answer is no, from the same read.
+      await capability({ actorUserId: null }).checkMany({ products: [LICENSE] });
+      expect(state.readStates).toHaveBeenLastCalledWith(expect.objectContaining({ subjectId: null }));
+    });
+
+    it("answers an empty list with nothing, and refuses more than 100 products or one that is no product id", async () => {
+      expect(await capability().checkMany({ products: [] })).toEqual([]);
+      const many = Array.from({ length: 101 }, (_, index) => `@acme/licenses:p${index}` as const);
+      await expect(capability().checkMany({ products: many })).rejects.toThrow(/at most 100/);
+      await expect(capability().checkMany({ products: [LICENSE, "nonsense" as never] })).rejects.toThrow(/not a product id/);
+      await expect(capability().checkMany({ products: "nonsense" as never })).rejects.toThrow(/at most 100/);
+      expect(state.readStates).not.toHaveBeenCalled();
+      await capability().checkMany({ products: many.slice(0, 100) });
+      expect(state.readStates).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe("subjectForUser", () => {
+    it("hands staff holding accounting or support a member's subject, and null for a user who is no member", async () => {
+      state.siteAccess.mockImplementation((access) => access === "accounting");
+      expect(await capability().subjectForUser({ userId: 12 })).toBe("sub_member");
+      expect(state.memberSubject).toHaveBeenLastCalledWith(7, 12);
+      state.siteAccess.mockImplementation((access) => access === "support");
+      state.memberSubject.mockResolvedValueOnce(null);
+      expect(await capability().subjectForUser({ userId: 13 })).toBeNull();
+    });
+
+    it("is refused without accounting or support, with nobody acting, and for a userId that is no id", async () => {
+      state.siteAccess.mockImplementation((access) => access === "content-editing" || access === "site-media");
+      await expect(capability().subjectForUser({ userId: 12 })).rejects.toThrow(/accounting or support/);
+      state.siteAccess.mockReturnValue(true);
+      await expect(capability({ actorUserId: null }).subjectForUser({ userId: 12 })).rejects.toThrow(/accounting or support/);
+      for (const userId of [0, -1, 1.5, "12" as never]) {
+        await expect(capability().subjectForUser({ userId })).rejects.toThrow(/positive whole number/);
+      }
+      expect(state.memberSubject).not.toHaveBeenCalled();
+    });
   });
 
   describe("grant", () => {

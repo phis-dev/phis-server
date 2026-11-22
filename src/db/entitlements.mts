@@ -65,22 +65,24 @@ const ENTRY_COLUMNS = `e.id, e.product, s.reference AS subject, e.source, e.refe
   e.quantity, e.flags, ${VALID_SQL} AS valid, e.created_at, e.updated_at`;
 
 /**
- * The products whose entries speak for the product in `$product` of the Site in `$site`: the product
- * itself and every bundle that contains it through the `parts` in force, directly or through nested
- * bundles (a bundle's holder holds its parts). `passing` narrows the walk to products that pass a holding
- * on -- not locked -- for the answer; the plain walk is for listing entries, valid or not. Parts are kept
- * acyclic by the product directory, and `UNION` would end the walk regardless.
+ * The products whose entries speak for each product in `products` (a `text[]`) of the Site in `site`: the
+ * product itself and every bundle that contains it through the `parts` in force, directly or through
+ * nested bundles (a bundle's holder holds its parts), each row keeping the product it was reached from
+ * (`asked`), so one walk answers for several products. `passing` narrows the walk to products that pass a
+ * holding on -- not locked -- for the answer; the plain walk is for listing entries, valid or not. Parts are
+ * kept acyclic by the product directory, and `UNION` would end the walk regardless.
  */
-const holdersSql = (site: string, product: string, passing: boolean) => {
+const holdersSql = (site: string, products: string, passing: boolean) => {
   const unlocked = (alias: string) => (passing ? ` AND ${alias}.state <> 'locked'` : "");
   const start = passing
-    ? `SELECT ${product}::text WHERE EXISTS (SELECT 1 FROM phis.products tp WHERE tp.site_id = ${site}
-         AND tp.supplier_addon_id = regexp_replace(${product}::text, ':[^:]+$', '') AND tp.key = substring(${product}::text from '[^:]+$')${unlocked("tp")})`
-    : `SELECT ${product}::text`;
-  return `holders(product) AS (
+    ? `SELECT a.product, a.product FROM (SELECT DISTINCT unnest(${products}) AS product) a
+       WHERE EXISTS (SELECT 1 FROM phis.products tp WHERE tp.site_id = ${site}
+         AND tp.supplier_addon_id = regexp_replace(a.product, ':[^:]+$', '') AND tp.key = substring(a.product from '[^:]+$')${unlocked("tp")})`
+    : `SELECT a.product, a.product FROM (SELECT DISTINCT unnest(${products}) AS product) a`;
+  return `holders(asked, product) AS (
        ${start}
        UNION
-       SELECT b.supplier_addon_id || ':' || b.key
+       SELECT h.asked, b.supplier_addon_id || ':' || b.key
        FROM holders h
        JOIN phis.products b ON b.site_id = ${site} AND h.product = ANY(b.parts)${unlocked("b")}
      )`;
@@ -144,6 +146,26 @@ export async function ensureEntitlementSubject(db: Pool, siteId: number, userId:
   return rows[0]!.reference;
 }
 
+/**
+ * The subject of a member of the Site, issued on first asking as `ensureEntitlementSubject` issues it;
+ * null for a user who is not a member, who is issued none. For staff acting on a person's behalf
+ * (`entitlements:v1` `subjectForUser`); whether they may is the caller's question.
+ */
+export async function ensureMemberEntitlementSubject(db: Pool, siteId: number, userId: number): Promise<PhisEntitlementSubject | null> {
+  const member = `EXISTS (SELECT 1 FROM phis.user_site_memberships m WHERE m.site_id = $1 AND m.user_id = $2)`;
+  await db.query(
+    `INSERT INTO phis.entitlement_subjects (site_id, user_id, reference)
+     SELECT $1::smallint, $2::int, $3 WHERE ${member}
+     ON CONFLICT (site_id, user_id) DO NOTHING`,
+    [siteId, userId, newSubjectReference()],
+  );
+  const { rows } = await db.query<{ reference: string }>(
+    `SELECT s.reference FROM phis.entitlement_subjects s WHERE s.site_id = $1 AND s.user_id = $2 AND ${member}`,
+    [siteId, userId],
+  );
+  return rows[0]?.reference ?? null;
+}
+
 /** The row behind a reference, on this Site only: a reference of another Site is nobody here. */
 export async function findEntitlementSubject(
   db: DbQueryable,
@@ -172,7 +194,7 @@ export async function listEntitlements(pool: Pool, input: {
   const product = input.product ?? null;
   const bundles = product !== null && input.resolveBundles === true;
   const { rows } = await pool.query<EntryRow>(
-    `${bundles ? `WITH RECURSIVE ${holdersSql("$1::smallint", "$3", false)}` : ""}
+    `${bundles ? `WITH RECURSIVE ${holdersSql("$1::smallint", "ARRAY[$3::text]", false)}` : ""}
      SELECT ${ENTRY_COLUMNS}
      FROM phis.entitlements e
      JOIN phis.entitlement_subjects s ON s.id = e.subject_id
@@ -196,39 +218,68 @@ export async function listEntitlements(pool: Pool, input: {
  * counting -- `COUNTS_UNTIL_SQL`, the rule `valid` follows, so for a bound entry its paid period's end plus
  * the grace and not the `endsAt` it shows -- and null as soon as one of them has no end; `via` names the products whose entries they are, the product itself first. Whether
  * quantities add up is the product's own word (its `Counted` bit), and only its own entries are summed --
- * a bundle is never counted. One round trip.
+ * a bundle is never counted. One round trip; `readEntitlementStates` for one product.
  */
 export async function readEntitlementState(pool: Pool, input: {
   siteId: number;
   subjectId: number | null;
   product: PhisProductId;
 }): Promise<PhisEntitlementState> {
-  if (input.subjectId === null) {
-    return { product: input.product, entitled: false, quantity: null, until: null, via: [] };
+  return (await readEntitlementStates(pool, { siteId: input.siteId, subjectId: input.subjectId, products: [input.product] }))[0]!;
+}
+
+/**
+ * `readEntitlementState` for several products in one round trip: one answer per product asked for, in the
+ * order asked, a product asked twice answered twice. The walk to the bundles starts from every product
+ * asked for at once and keeps which one it started from (`holders.asked`), so each answer is the one its
+ * own read would give. The caller bounds the list (`entitlements:v1` `checkMany`, at most 100).
+ */
+export async function readEntitlementStates(pool: Pool, input: {
+  siteId: number;
+  subjectId: number | null;
+  products: readonly PhisProductId[];
+}): Promise<PhisEntitlementState[]> {
+  const nobody = (product: PhisProductId): PhisEntitlementState => ({ product, entitled: false, quantity: null, until: null, via: [] });
+  if (input.subjectId === null || input.products.length === 0) {
+    return input.products.map(nobody);
   }
-  const { rows } = await pool.query<{ entries: string; quantity: string | null; open_ended: boolean; until: Date | null; via: string[]; counted: boolean }>(
-    `WITH RECURSIVE ${holdersSql("$1::smallint", "$3", true)}
-     SELECT COUNT(*) AS entries, SUM(e.quantity) FILTER (WHERE e.product = $3) AS quantity,
-            COALESCE(BOOL_OR(${OPEN_ENDED_SQL}), FALSE) AS open_ended, MAX(${COUNTS_UNTIL_SQL}) AS until,
-            COALESCE(ARRAY_AGG(DISTINCT e.product), '{}') AS via,
-            COALESCE((SELECT (cp.flags & ${PHIS_PRODUCT_FLAG.Counted}) <> 0 FROM phis.products cp
-                      WHERE cp.site_id = $1 AND cp.supplier_addon_id = regexp_replace($3::text, ':[^:]+$', '')
-                        AND cp.key = substring($3::text from '[^:]+$')), FALSE) AS counted
-     FROM phis.entitlements e
-     WHERE e.site_id = $1 AND e.subject_id = $2 AND e.product IN (SELECT product FROM holders) AND ${VALID_SQL}`,
-    [input.siteId, input.subjectId, input.product],
+  const { rows } = await pool.query<{
+    product: string; entries: string | null; quantity: string | null; open_ended: boolean | null; until: Date | null; via: string[] | null; counted: boolean;
+  }>(
+    `WITH RECURSIVE ${holdersSql("$1::smallint", "$3::text[]", true)},
+     held AS (
+       SELECT h.asked, COUNT(*) AS entries, SUM(e.quantity) FILTER (WHERE e.product = h.asked) AS quantity,
+              BOOL_OR(${OPEN_ENDED_SQL}) AS open_ended, MAX(${COUNTS_UNTIL_SQL}) AS until,
+              ARRAY_AGG(DISTINCT e.product) AS via
+       FROM holders h
+       JOIN phis.entitlements e ON e.site_id = $1 AND e.subject_id = $2 AND e.product = h.product
+       WHERE ${VALID_SQL}
+       GROUP BY h.asked
+     )
+     SELECT a.product, held.entries, held.quantity, held.open_ended, held.until, held.via,
+            COALESCE((cp.flags & ${PHIS_PRODUCT_FLAG.Counted}) <> 0, FALSE) AS counted
+     FROM (SELECT DISTINCT unnest($3::text[]) AS product) a
+     LEFT JOIN held ON held.asked = a.product
+     LEFT JOIN phis.products cp ON cp.site_id = $1 AND cp.supplier_addon_id = regexp_replace(a.product, ':[^:]+$', '')
+       AND cp.key = substring(a.product from '[^:]+$')`,
+    [input.siteId, input.subjectId, input.products],
   );
-  const row = rows[0]!;
-  const entitled = Number(row.entries) > 0;
-  const own = row.via.includes(input.product);
-  const bundles = row.via.filter((id) => id !== input.product).sort();
-  return {
-    product: input.product,
-    entitled,
-    quantity: entitled && row.counted ? Number(row.quantity ?? 0) : null,
-    until: entitled && !row.open_ended && row.until ? row.until.toISOString() : null,
-    via: (own ? [input.product, ...bundles] : bundles) as PhisProductId[],
-  };
+  const byProduct = new Map(rows.map((row) => [row.product, row]));
+  return input.products.map((product) => {
+    const row = byProduct.get(product);
+    const entitled = row !== undefined && Number(row.entries ?? 0) > 0;
+    if (!row || !entitled) return nobody(product);
+    const via = row.via ?? [];
+    const own = via.includes(product);
+    const bundles = via.filter((id) => id !== product).sort();
+    return {
+      product,
+      entitled,
+      quantity: row.counted ? Number(row.quantity ?? 0) : null,
+      until: !row.open_ended && row.until ? row.until.toISOString() : null,
+      via: (own ? [product, ...bundles] : bundles) as PhisProductId[],
+    };
+  });
 }
 
 /**

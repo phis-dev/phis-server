@@ -9,7 +9,6 @@ const mocks = vi.hoisted(() => ({
   guard: vi.fn(),
   list: vi.fn(),
   read: vi.fn(),
-  entry: vi.fn(),
   release: vi.fn(),
   move: vi.fn(),
   schedule: vi.fn(),
@@ -22,18 +21,13 @@ vi.mock("@/db/products.mts", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/db/products.mts")>()),
   listProductDirectory: mocks.list,
   readProduct: mocks.read,
-  readProductDirectoryEntry: mocks.entry,
   releaseProduct: mocks.release,
   moveProductsAsOperator: mocks.move,
 }));
-vi.mock("@/lib/addons/products-capability", () => ({
+// The presentation stays real: the rows carry the addresses products:v1 answers, built where Core builds them.
+vi.mock("@/lib/addons/products-capability", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/addons/products-capability")>()),
   listPhisProductListeners: () => ["@acme/seller"],
-  // The addresses are built from the revision, as Core builds them; what matters here is that they arrive.
-  presentPhisProduct: ({ imageRevision, iconRevision, ...product }: Record<string, unknown>) => ({
-    ...product,
-    imagePath: imageRevision === null ? null : `/media/${String(product.imageAssetId)}`,
-    iconPath: iconRevision === null ? null : `/media/${String(product.iconAssetId)}`,
-  }),
 }));
 vi.mock("@/lib/addons/event-trigger", () => ({ schedulePhisAddonEventDelivery: mocks.schedule }));
 vi.mock("@/lib/db", () => ({ getPool: () => ({}) }));
@@ -56,9 +50,9 @@ const stored = (rest: Record<string, unknown> = {}) => ({
   title: "Pro",
   summary: "A year of Pro.",
   imageAssetId: 12,
-  imageRevision: 3,
+  imageMedia: { id: 12, deliveryRevision: 3, variantVersion: 2, contentType: "image/png" },
   iconAssetId: null,
-  iconRevision: null,
+  iconMedia: null,
   counted: false,
   sale: "payout",
   referralUrl: null,
@@ -75,18 +69,10 @@ const stored = (rest: Record<string, unknown> = {}) => ({
   ...rest,
 });
 
-/** A row as the directory reads it: the product and the parts of its picture and icon, joined. */
-const listed = (rest: Record<string, unknown> = {}) => ({
-  ...stored(rest),
-  imageMedia: { id: 12, deliveryRevision: 3, variantVersion: 2, contentType: "image/png" },
-  iconMedia: null,
-  ...rest,
-});
-
 const list = (query = "") => GET(new NextRequest(`https://site.test/api/site/products${query}`));
-const command = (handler: typeof LOCK, id = ID, name = "lock") =>
+const command = (handler: typeof LOCK, id = ID, name = "lock", body?: string) =>
   handler(
-    new NextRequest(`https://site.test/api/site/products/${encodeURIComponent(id)}/${name}`, { method: "POST" }),
+    new NextRequest(`https://site.test/api/site/products/${encodeURIComponent(id)}/${name}`, { method: "POST", body }),
     { params: Promise.resolve({ id }) },
   );
 
@@ -95,9 +81,8 @@ beforeEach(() => {
     error: null,
     context: { site: { id: 31, key: "skeleton" }, session: { userId: 7 } },
   });
-  mocks.list.mockResolvedValue({ products: [listed()], total: 1 });
+  mocks.list.mockResolvedValue({ products: [stored()], total: 1 });
   mocks.read.mockResolvedValue(stored());
-  mocks.entry.mockResolvedValue(listed());
 });
 
 describe("the product directory", () => {
@@ -122,7 +107,7 @@ describe("the product directory", () => {
       parts: [],
       released: true,
       pendingTerms: { sale: "payout", referralUrl: null, free: true, accountRequired: true, parts: [] },
-      imagePath: "/media/12",
+      imagePath: "/api/site/media/12/content?r=3",
       iconPath: null,
       imageListPath: "/api/site/media/12/variants/10?r=3&v=2",
       iconListPath: null,
@@ -132,7 +117,7 @@ describe("the product directory", () => {
 
   it("addresses the picture and the icon by their icon variant, cache-safe, and not for an Asset that is no image", async () => {
     mocks.list.mockResolvedValue({
-      products: [listed({
+      products: [stored({
         imageMedia: { id: 12, deliveryRevision: 1, variantVersion: null, contentType: "application/pdf" },
         iconMedia: { id: 13, deliveryRevision: 5, variantVersion: 1, contentType: "image/svg+xml" },
       })],
@@ -197,7 +182,7 @@ describe("the operator's commands on one product", () => {
 
   it("releases the pending terms and says so, with the product as it now stands", async () => {
     mocks.release.mockResolvedValue({ outcome: "applied", product: stored() });
-    mocks.entry.mockResolvedValue(listed({ pendingTerms: null, free: true, version: 5 }));
+    mocks.read.mockResolvedValue(stored({ pendingTerms: null, free: true, version: 5 }));
     const response = await command(RELEASE, ID, "release");
     expect(response.status).toBe(200);
     const body = await response.json();
@@ -223,10 +208,26 @@ describe("the operator's commands on one product", () => {
     expect(mocks.schedule).not.toHaveBeenCalled();
   });
 
+  it("releases the version the operator read, refuses one the product has moved on from, and a malformed body", async () => {
+    mocks.release.mockResolvedValue({ outcome: "applied", product: stored() });
+    expect((await command(RELEASE, ID, "release", JSON.stringify({ expectedVersion: 4 }))).status).toBe(200);
+    expect(mocks.release).toHaveBeenLastCalledWith({}, { siteId: 31, productId: ID, listeners: ["@acme/seller"], expectedVersion: 4 });
+
+    mocks.release.mockRejectedValueOnce(new PhisProductRuleError(`${ID} is at version 5, not 4: it changed since it was read; read it again before releasing.`));
+    const moved = await command(RELEASE, ID, "release", JSON.stringify({ expectedVersion: 4 }));
+    expect(moved.status).toBe(409);
+    await expect(moved.json()).resolves.toMatchObject({ error: expect.stringMatching(/at version 5, not 4/) });
+
+    mocks.release.mockClear();
+    for (const body of ["{", "[]", JSON.stringify({ expectedVersion: 0 }), JSON.stringify({ expectedVersion: "4" }), JSON.stringify({ version: 4 })]) {
+      expect((await command(RELEASE, ID, "release", body)).status, body).toBe(400);
+    }
+    expect(mocks.release).not.toHaveBeenCalled();
+  });
+
   it("locks and unlocks through the operator's move, and answers unchanged where there was nothing to move", async () => {
     mocks.move.mockResolvedValueOnce([{ id: ID, from: "active", to: "locked" }]);
-    mocks.read.mockResolvedValueOnce(stored());
-    mocks.entry.mockResolvedValueOnce(listed({ state: "locked" }));
+    mocks.read.mockResolvedValueOnce(stored()).mockResolvedValueOnce(stored({ state: "locked" }));
     const locked = await command(LOCK);
     await expect(locked.json()).resolves.toMatchObject({ outcome: "locked", product: { state: "locked" } });
     expect(mocks.move).toHaveBeenLastCalledWith({}, {

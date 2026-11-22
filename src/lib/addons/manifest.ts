@@ -19,6 +19,7 @@ import {
   type PhisProductDraft,
 } from "./contract.ts";
 import { isPhiRecord } from "../helpers/record.ts";
+import { PhiMediaKind } from "@phis/contracts/media";
 import { normalizePhisProductDraft } from "./product-draft.ts";
 
 /**
@@ -120,6 +121,9 @@ const OCCASION_RESERVED_PARAMETERS = new Set(["recipientName", "siteName"]);
 const OCCASION_TEXT_MAX_LENGTH = 500;
 const OCCASION_MAX_LINES = 20;
 const POSTGRES_SMALLINT_MAX = 32_767;
+/** The keys of a manifest's `media`, and the kinds it may name: the contract's `PhiMediaKind` values. */
+const MEDIA_LIMIT_KEYS = new Set(["maxFileBytes", "kinds", "maxPerField"]);
+const MEDIA_KINDS = new Set<string>(Object.values(PhiMediaKind));
 const COMPATIBLE_SERVER_ABI_PATTERNS = [
   /^1(?:\.0(?:\.0)?)?$/,
   /^\^1(?:\.0(?:\.0)?)?$/,
@@ -964,6 +968,36 @@ export function validatePhisAddonManifest(
     }
   }
   assertUnique(modules.filter((id): id is string => typeof id === "string"), "modules", issues);
+
+  /*
+   * What the Add-on takes as Media through its own Forms. Core does not check an upload against it -- an
+   * upload goes into the Media library, addressed to no Add-on -- but the Site UI applies it in the
+   * Add-on's Media fields, so a limit it cannot read is refused here rather than ignored there.
+   */
+  if (value.media !== undefined) {
+    if (!isPhiRecord(value.media)) {
+      issues.push("media must be an object when it is stated at all.");
+    } else {
+      for (const key of Object.keys(value.media)) {
+        if (!MEDIA_LIMIT_KEYS.has(key)) issues.push(`media.${key} is not a Media limit; media states maxFileBytes, kinds and maxPerField.`);
+      }
+      validatePositiveInteger(value.media.maxFileBytes, "media.maxFileBytes", issues, false);
+      validatePositiveInteger(value.media.maxPerField, "media.maxPerField", issues, false);
+      const kinds = value.media.kinds;
+      if (kinds !== undefined) {
+        if (!Array.isArray(kinds) || kinds.length === 0) {
+          issues.push("media.kinds must be a non-empty array of Media kinds when it is stated at all.");
+        } else {
+          for (const [index, kind] of kinds.entries()) {
+            if (typeof kind !== "string" || !MEDIA_KINDS.has(kind)) {
+              issues.push(`media.kinds[${index}] must be one of ${[...MEDIA_KINDS].join(", ")}.`);
+            }
+          }
+          assertUnique(kinds.filter((kind): kind is string => typeof kind === "string"), "media.kinds", issues);
+        }
+      }
+    }
+  }
 
   const groups = Array.isArray(value.groups) ? value.groups : [];
   if (value.groups !== undefined && !Array.isArray(value.groups)) {

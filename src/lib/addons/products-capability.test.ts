@@ -15,7 +15,8 @@ const state = vi.hoisted(() => ({
 vi.mock("./installed.ts", () => ({ getPhisAddonInstalledManifest: () => state.installed }));
 vi.mock("./event-trigger.ts", () => ({ schedulePhisAddonEventDelivery: (...args: unknown[]) => state.deliver(...args) }));
 vi.mock("@/lib/db", () => ({ getPool: () => ({}) }));
-vi.mock("@/lib/media-response", () => ({
+vi.mock("@/lib/media-response", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/media-response")>()),
   resolvePhiMediaDeliveryUrl: (asset: { id: number; deliveryRevision: number }) => `/api/site/media/${asset.id}/content?r=${asset.deliveryRevision}`,
 }));
 vi.mock("@/db/products.mts", () => ({
@@ -60,7 +61,7 @@ describe("products capability", () => {
 
   describe("an unverified hook reading the catalogue", () => {
     const hook = () => capability({ unauthenticated: true });
-    const stored = (stateName: string) => ({ id: "p", state: stateName, imageAssetId: null, imageRevision: null, iconAssetId: null, iconRevision: null, pendingTerms: { sale: "own" }, attributes: { "@a/b": { mark: 1 } } });
+    const stored = (stateName: string) => ({ id: "p", state: stateName, imageAssetId: null, imageMedia: null, iconAssetId: null, iconMedia: null, pendingTerms: { sale: "own" }, attributes: { "@a/b": { mark: 1 } } });
 
     it("gets an active product without its pending terms, with its attributes, and nothing else", async () => {
       state.read.mockResolvedValueOnce(stored("active"));
@@ -126,13 +127,32 @@ describe("products capability", () => {
       await capability().list({ ids: many.slice(0, 200) as never });
     });
 
-    it("builds the picture's and the icon's address from the asset's current revision and never stores it", async () => {
-      state.read.mockResolvedValueOnce({ id: "p", imageAssetId: 12, imageRevision: 3, iconAssetId: 14, iconRevision: 1 });
-      expect(await capability().get({ id: "@acme/licenses:pro" })).toEqual({
-        id: "p", imageAssetId: 12, imagePath: "/api/site/media/12/content?r=3", iconAssetId: 14, iconPath: "/api/site/media/14/content?r=1",
+    it("builds the picture's and the icon's addresses, delivered and for a list, from the asset's current revision and never stores them", async () => {
+      state.read.mockResolvedValueOnce({
+        id: "p",
+        imageAssetId: 12,
+        imageMedia: { id: 12, deliveryRevision: 3, variantVersion: 2, contentType: "image/png" },
+        iconAssetId: 14,
+        iconMedia: { id: 14, deliveryRevision: 1, variantVersion: null, contentType: "image/svg+xml" },
       });
-      state.read.mockResolvedValueOnce({ id: "p", imageAssetId: null, imageRevision: null, iconAssetId: null, iconRevision: null });
-      expect(await capability().get({ id: "@acme/licenses:pro" })).toMatchObject({ imagePath: null, iconPath: null });
+      expect(await capability().get({ id: "@acme/licenses:pro" })).toEqual({
+        id: "p",
+        imageAssetId: 12,
+        imagePath: "/api/site/media/12/content?r=3",
+        imageListPath: "/api/site/media/12/variants/10?r=3&v=2",
+        iconAssetId: 14,
+        iconPath: "/api/site/media/14/content?r=1",
+        iconListPath: "/api/site/media/14/variants/10?r=1&v=0",
+      });
+      // A picture that is no image is delivered, and has no variant for a list.
+      state.read.mockResolvedValueOnce({
+        id: "p", imageAssetId: 12, imageMedia: { id: 12, deliveryRevision: 1, variantVersion: null, contentType: "application/pdf" }, iconAssetId: null, iconMedia: null,
+      });
+      expect(await capability().get({ id: "@acme/licenses:pro" })).toMatchObject({
+        imagePath: "/api/site/media/12/content?r=1", imageListPath: null, iconPath: null, iconListPath: null,
+      });
+      state.read.mockResolvedValueOnce({ id: "p", imageAssetId: null, imageMedia: null, iconAssetId: null, iconMedia: null });
+      expect(await capability().get({ id: "@acme/licenses:pro" })).toMatchObject({ imagePath: null, iconPath: null, imageListPath: null, iconListPath: null });
       state.read.mockResolvedValueOnce(null);
       expect(await capability().get({ id: "@acme/licenses:pro" })).toBeNull();
     });

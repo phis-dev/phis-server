@@ -16,10 +16,12 @@ import {
 import {
   announceEndedEntitlements,
   ensureEntitlementSubject,
+  ensureMemberEntitlementSubject,
   findEntitlementSubject,
   grantEntitlement,
   listEntitlements,
   readEntitlementState,
+  readEntitlementStates,
   updateEntitlement,
 } from "./entitlements.mts";
 import { moveProductsAsOperator, registerProduct, setProductState } from "./products.mts";
@@ -156,6 +158,51 @@ describe.skipIf(!configured)("entitlements through bundles", () => {
     expect((await someone.state(part)).entitled).toBe(false);
     expect((await someone.state(nestedPart)).entitled).toBe(false);
     expect((await someone.state(outer)).entitled).toBe(true);
+  });
+
+  it("answers several products in one read as each one's own read answers it, in the order asked", async () => {
+    const part = await product(PARTS);
+    const seats = await product(PARTS, { counted: true });
+    const lockedPart = await product(PARTS);
+    const inner = await product(BUNDLES, { parts: [part, lockedPart] });
+    const outer = await product(BUNDLES, { parts: [inner] });
+    const unheld = await product(PARTS);
+    const someone = await person();
+    await someone.grant(outer, { endsAt: hours(4) });
+    await someone.grant(part, { endsAt: hours(2) });
+    await someone.grant(seats, { quantity: 3, counted: true });
+    await someone.grant(seats, { quantity: 2, counted: true });
+    await moveProductsAsOperator(pool, { siteId: site.id, to: "locked", productId: lockedPart, listeners: [] });
+
+    const missing = `${PARTS}:nobody` as PhisProductId;
+    const asked = [seats, part, lockedPart, inner, missing, unheld, part, outer];
+    const many = await readEntitlementStates(pool, { siteId: site.id, subjectId: someone.subjectId, products: asked });
+    expect(many).toEqual(await Promise.all(asked.map((id) => someone.state(id))));
+    expect(many.map((answer) => answer.product)).toEqual(asked);
+    expect(many[0]).toMatchObject({ entitled: true, quantity: 5 });
+    expect(many[1]).toMatchObject({ entitled: true, via: [part, outer] });
+    expect(many[2]!.entitled).toBe(false);
+    expect(many[4]!.entitled).toBe(false);
+
+    // Nobody to ask for, and nothing asked: no read, every answer no.
+    expect(await readEntitlementStates(pool, { siteId: site.id, subjectId: null, products: [part] }))
+      .toEqual([{ product: part, entitled: false, quantity: null, until: null, via: [] }]);
+    expect(await readEntitlementStates(pool, { siteId: site.id, subjectId: someone.subjectId, products: [] })).toEqual([]);
+  });
+
+  it("issues a member's subject for staff on first asking, the one the member has, and none to a non-member", async () => {
+    const member = await createPhiTestUser(site);
+    const issued = await ensureMemberEntitlementSubject(pool, site.id, member);
+    expect(issued).toMatch(/^sub_[0-9a-z]{24}$/);
+    expect(await ensureEntitlementSubject(pool, site.id, member)).toBe(issued);
+    expect(await ensureMemberEntitlementSubject(pool, site.id, member)).toBe(issued);
+
+    const elsewhere = await createPhiTestSite("entitlement-bundles-elsewhere");
+    const stranger = await createPhiTestUser(elsewhere);
+    expect(await ensureMemberEntitlementSubject(pool, site.id, stranger)).toBeNull();
+    const { rowCount } = await pool.query(`SELECT 1 FROM phis.entitlement_subjects WHERE site_id = $1 AND user_id = $2`, [site.id, stranger]);
+    expect(rowCount).toBe(0);
+    expect(await ensureMemberEntitlementSubject(pool, site.id, 2_000_000_000)).toBeNull();
   });
 
   it("answers until over the product's and its bundles' entries, null as soon as one has no end", async () => {

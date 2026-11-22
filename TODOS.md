@@ -7,6 +7,13 @@ tracked here because the server contract depends on them.
 
 ## At the next release
 
+- **An Add-on's Media limits do not reach the Site yet.** The manifest's `media` (`@phis/contracts`
+  0.8.9) is validated, but the Site UI learns of an Add-on from the capability snapshot, whose provider
+  shape (`PhiCapabilityProvider` of `@phis/contracts/server-capabilities`) has no field for it, so `phis-ui`
+  cannot apply the limits in the Module's Media fields. Needs a contract decision first -- for instance an
+  optional `media` on `PhiCapabilityProvider`, filled from the installed manifest by
+  `composePhisCapabilitySnapshot` and read strictly by `phis-ui`'s snapshot reader -- before the release
+  that says the Site UI applies them (SERVER_ADDONS.md, Media limits).
 - **Released as `@phis/server` 0.3.0 together with `@phis/ui` 0.5.0**, both already in `package.json`; the
   entries below are why neither works with the other's previous version. `@phis/contracts` is unchanged
   (0.7.7). Tagged 14.11.2026; this section goes once every installation has the columns below.
