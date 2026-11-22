@@ -3,7 +3,7 @@ import { isDeepStrictEqual } from "node:util";
 import type { Pool, PoolClient } from "pg";
 import type {
   PhisPaymentCheckoutPlan, PhisPaymentCommandResult, PhisPaymentCreateInput, PhisPaymentErrorCode, PhisPaymentGrantedOperation, PhisPaymentMerchantActionPolicy, PhisPaymentMoney,
-  PhisPaymentPricing, PhisPaymentProviderExecution, PhisPaymentProviderObservation, PhisPaymentProviderStoredMethod, PhisPaymentProviderV1,
+  PhisPaymentPricing, PhisPaymentProfileReach, PhisPaymentProviderExecution, PhisPaymentProviderObservation, PhisPaymentProviderStoredMethod, PhisPaymentProviderV1,
   PhisPaymentStoredMethod, PhisPaymentSubscription, PhisPaymentSubscriptionCreateInput, PhisPaymentSubscriptionPeriod, PhisPaymentSubscriptionResult,
   PhisPaymentSubscriptionTerms, PhisPaymentsCapabilityV1,
 } from "@phis/contracts/payments";
@@ -16,16 +16,19 @@ import {
   addPhisPaymentIntervals, nextPhisPaymentDunningAttempt, phisPaymentDunningDeadline, validatePhisPaymentDunningPolicy, validatePhisPaymentInterval,
 } from "./schedule.ts";
 import {
-  claimPhisPayment, rememberPhisPaymentNotification, settlePhisPaymentNotification, findPhisPaymentIdempotency, insertPhisPayment, insertPhisPaymentOperation,
+  claimPhisPayment, claimPhisPaymentProfileRefresh, recordPhisPaymentProfileProbe, rememberPhisPaymentNotification, settlePhisPaymentNotification, findPhisPaymentIdempotency, insertPhisPayment, insertPhisPaymentOperation,
   listPhisPaymentOperations, listPhisPaymentRefunds, readPhisPayment, readPhisPaymentOperation, readPhisPaymentProfile,
   readPhisPaymentRefund, writePhisPayment, writePhisPaymentOperation, writePhisPaymentRefund, finishPhisPaymentReceipt,
   findPhisPaymentStoredMethodSetup, insertPhisPaymentStoredMethod, listPhisPaymentStoredMethods, readPhisPaymentStoredMethod,
   revokeSupersededPhisPaymentStoredMethods, writePhisPaymentStoredMethod, writePhisPaymentStoredMethodSetupCheckout,
 } from "../../db/payments.mts";
 import { withPoolTransaction } from "../db-transaction.ts";
-import { PHIS_PAYMENT_CALL_TIMEOUT_MS, PHIS_PAYMENT_ERROR_CODES, PHIS_PAYMENT_KNOCK_REPEATS } from "../constants/payments.ts";
+import {
+  PHIS_PAYMENT_CALL_TIMEOUT_MS, PHIS_PAYMENT_ERROR_CODES, PHIS_PAYMENT_KNOCK_REPEATS, PHIS_PAYMENT_REACH_MAX_CURRENCIES, PHIS_PAYMENT_REACH_REFRESH_SECONDS,
+} from "../constants/payments.ts";
+import { phisPaymentReachOf, phisPaymentReachProbe, readPhisPaymentProfileReach } from "./reach.ts";
 import { PhisPaymentError, copyPhisPaymentAdditions, normalizePhisPaymentTotals, phisPaymentMethodSupports, phisPaymentPricingSelector,
-  phisPaymentReturnUrl, requirePhisPaymentMinor, requirePhisPaymentReference, validatePhisPaymentMoney, validatePhisPaymentObservation,
+  phisPaymentReturnUrl, requirePhisPaymentCurrency, requirePhisPaymentMinor, requirePhisPaymentReference, validatePhisPaymentExpiresAt, validatePhisPaymentMoney, validatePhisPaymentObservation,
   validatePhisPaymentPricing, validatePhisPaymentPricingSelector, validatePhisPaymentProviderProbe, validatePhisPaymentProviderStoredMethod } from "./validation.ts";
 import type {
   PhisPaymentProfile, PhisPaymentReceipt, PhisPaymentScope, PhisStoredPayment, PhisStoredPaymentCommand, PhisStoredPaymentMethod,
@@ -47,7 +50,7 @@ type Options = {
   signal: AbortSignal;
   publicBaseUrl: () => Promise<string>;
   resolveProvider: (profile: PhisPaymentProfile) => Promise<PhisPaymentProviderV1>;
-  merchantAuthorized: (action: "capture" | "cancel" | "refund" | "subscriptionEnd" | "subscriptionPrice", policy: PhisPaymentMerchantActionPolicy) => Promise<boolean>;
+  merchantAuthorized: (action: "capture" | "cancel" | "refund" | "subscriptionEnd" | "subscriptionPrice" | "profileRefresh", policy: PhisPaymentMerchantActionPolicy) => Promise<boolean>;
   unauthenticated?: boolean;
   afterCommit?: () => Promise<unknown>;
   /**
@@ -84,14 +87,23 @@ export class PhisPaymentEngine implements PhisPaymentsCapabilityV1 {
 
   private async profile(key: string, operation: PhisPaymentGrantedOperation, creating = false): Promise<PhisPaymentProfile> {
     if (this.options.unauthenticated) throw new PhisPaymentError("forbidden");
-    const profile = await readPhisPaymentProfile(this.pool, this.scope.siteId, key);
-    const grant = profile?.grants.find(g => g.consumerAddonId === this.scope.consumerAddonId);
-    if (!profile || !grant?.operations.includes(operation)) throw new PhisPaymentError("not_found");
+    const { profile, grant } = await this.granted(key, operation);
     if (creating && (!profile.enabled || profile.retired || !profile.probedAt || !profile.merchantIdentity)) throw new PhisPaymentError("profile_unavailable");
     if (operation === "capture" || operation === "cancel" || operation === "refund") {
       if (!await this.options.merchantAuthorized(operation, grant.merchantActions[operation])) throw new PhisPaymentError("forbidden");
     }
     return profile;
+  }
+
+  /**
+   * The profile and this consumer's grant on it, where the grant holds the operation; `not_found`
+   * otherwise. Who is asking is not judged here: that is `profile`'s, and `profileReach`'s own.
+   */
+  private async granted(key: string, operation: PhisPaymentGrantedOperation) {
+    const profile = await readPhisPaymentProfile(this.pool, this.scope.siteId, key);
+    const grant = profile?.grants.find(g => g.consumerAddonId === this.scope.consumerAddonId);
+    if (!profile || !grant?.operations.includes(operation)) throw new PhisPaymentError("not_found");
+    return { profile, grant };
   }
 
   private providerFailed(
@@ -383,6 +395,59 @@ export class PhisPaymentEngine implements PhisPaymentsCapabilityV1 {
     return this.methods(profile, { amount: { currency: input.amount.currency, minor: input.amount.minor }, captureMode: input.captureMode, checkoutKind: input.checkoutKind, pricing,
       ...(input.usage === "recurring" ? { usage: "recurring" as const } : {}) });
   }
+  /**
+   * What the profile sells as Merchant of Record in one currency, read from what Core recorded; no
+   * Provider is asked. The one operation a hook may call -- the ban `profile` applies to an
+   * unauthenticated caller is not applied here and nowhere else -- because its answer names what the
+   * Provider sells and nothing of a payment, a customer or the merchant's account.
+   */
+  async profileReach(input: Parameters<PhisPaymentsCapabilityV1["profileReach"]>[0]): Promise<PhisPaymentProfileReach | null> {
+    requirePhisPaymentReference(input?.profileKey);
+    const currency = requirePhisPaymentCurrency(input.currency);
+    const { profile } = await this.granted(input.profileKey, "read");
+    if (!profile.enabled || profile.retired) throw new PhisPaymentError("profile_unavailable");
+    return readPhisPaymentProfileReach(profile, currency);
+  }
+
+  /**
+   * Asks the Provider again in each currency and records every answer, as `phis payment profile probe`
+   * does. A merchant's act under `merchantActions.profileRefresh`, and at most once a minute per profile,
+   * counted from the last time Core asked it anything (`claimPhisPaymentProfileRefresh`). A currency
+   * answered before a later one fails stays recorded: it is what the Provider said.
+   */
+  async refreshProfileReach(input: Parameters<PhisPaymentsCapabilityV1["refreshProfileReach"]>[0]): Promise<readonly PhisPaymentProfileReach[]> {
+    requirePhisPaymentReference(input?.profileKey);
+    if (!Array.isArray(input.currencies) || input.currencies.length === 0 || input.currencies.length > PHIS_PAYMENT_REACH_MAX_CURRENCIES) throw new PhisPaymentError("invalid_input");
+    const currencies = input.currencies.map(requirePhisPaymentCurrency);
+    if (new Set(currencies).size !== currencies.length) throw new PhisPaymentError("invalid_input");
+    const profile = await this.profile(input.profileKey, "read");
+    const policy = profile.grants.find(g => g.consumerAddonId === this.scope.consumerAddonId)!.merchantActions.profileRefresh;
+    if (!policy || !await this.options.merchantAuthorized("profileRefresh", policy)) throw new PhisPaymentError("forbidden");
+    if (!profile.enabled || profile.retired || !profile.merchantIdentity) throw new PhisPaymentError("profile_unavailable");
+    const claim = await claimPhisPaymentProfileRefresh(this.pool, profile, PHIS_PAYMENT_REACH_REFRESH_SECONDS);
+    if (claim !== "claimed") throw new PhisPaymentError(claim === "rate_limited" ? "rate_limited" : "profile_unavailable");
+    let provider: PhisPaymentProviderV1;
+    try { provider = await this.options.resolveProvider(profile); }
+    catch (error) {
+      if (error instanceof PhisPaymentError) throw error;
+      this.providerFailed("probe", error, { profileKey: profile.key });
+      throw new PhisPaymentError("provider_unavailable");
+    }
+    const reaches: PhisPaymentProfileReach[] = [];
+    for (const currency of currencies) {
+      let probe;
+      try { probe = await provider.probe({ ...phisPaymentReachProbe(currency), signal: this.signal() }); }
+      catch (error) {
+        this.providerFailed("probe", error, { profileKey: profile.key });
+        throw new PhisPaymentError("provider_unavailable");
+      }
+      const normalized = validatePhisPaymentProviderProbe(probe, profile);
+      const probedAt = await recordPhisPaymentProfileProbe(this.pool, profile, normalized.merchantIdentity, normalized.mode, currency, normalized.methods);
+      reaches.push(phisPaymentReachOf(currency, probedAt, normalized.methods));
+    }
+    return reaches;
+  }
+
   private validateFlow(captureMode: string, checkoutKind: string) {
     if (!["automatic", "manual"].includes(captureMode) || checkoutKind !== "redirect") throw new PhisPaymentError("unsupported_operation");
   }
@@ -415,12 +480,13 @@ export class PhisPaymentEngine implements PhisPaymentsCapabilityV1 {
     const pricing = validatePhisPaymentPricing(input.pricing, input.amount);
     const store = input.store == null ? null : { payerReference: input.store.payerReference };
     if (store) requirePhisPaymentReference(store.payerReference);
+    const expiresAt = validatePhisPaymentExpiresAt(input.expiresAt);
     const profile = await this.profile(input.profileKey, "create");
     // Storing a method is a right of its own: a grant to take a payment does not include keeping the means.
     if (store) await this.profile(input.profileKey, "method-store");
     const request = { profileKey: input.profileKey, reference: input.reference, amount: { currency: input.amount.currency, minor: input.amount.minor }, pricing,
       description: input.description, captureMode: input.captureMode, methodKey: input.methodKey, checkoutKind: input.checkoutKind, returnPath: input.returnPath,
-      ...(store ? { store } : {}) };
+      ...(store ? { store } : {}), ...(expiresAt ? { expiresAt } : {}) };
     // Idempotent retries are checked before a live availability probe; completed requests do not depend on the PSP answering.
     const previous = await withPoolTransaction(this.pool, db => findPhisPaymentIdempotency(db, this.scope, "create", input.idempotencyKey));
     if (previous) {
@@ -428,6 +494,8 @@ export class PhisPaymentEngine implements PhisPaymentsCapabilityV1 {
       return this.resume(previous.record.id);
     }
     if (!profile.enabled || profile.retired || !profile.probedAt || !profile.merchantIdentity) throw new PhisPaymentError("profile_unavailable");
+    // Judged here and not with the format: a retry of a payment already made is answered after its end too.
+    if (expiresAt && Date.parse(expiresAt) <= Date.now()) throw new PhisPaymentError("invalid_input");
     const baseUrl = await this.options.publicBaseUrl();
     const id = randomUUID();
     const returnUrl = phisPaymentReturnUrl(baseUrl, input.returnPath, id);
@@ -435,6 +503,13 @@ export class PhisPaymentEngine implements PhisPaymentsCapabilityV1 {
       ...(store ? { usage: "recurring" as const } : {}) });
     const method = available.find(m => m.methodKey === input.methodKey);
     if (!method || (store && !method.features.stored?.setup.includes("with-payment"))) throw new PhisPaymentError("method_unavailable");
+    if (expiresAt) {
+      // An end the method cannot keep is refused, never moved: the consumer decided it for a reason of its own.
+      const bounds = method.features.checkoutExpiry;
+      if (!bounds) throw new PhisPaymentError("unsupported_operation");
+      const seconds = (Date.parse(expiresAt) - Date.now()) / 1000;
+      if (seconds < bounds.minSeconds || seconds > bounds.maxSeconds) throw new PhisPaymentError("invalid_input");
+    }
     // Known to the consumer from the first answer on, and `pending` until the Provider has the method.
     const storedMethod: PhisStoredPaymentMethod | null = store ? {
       siteId: this.scope.siteId, consumerAddonId: this.scope.consumerAddonId, features: method.features, binding: null,
@@ -457,7 +532,7 @@ export class PhisPaymentEngine implements PhisPaymentsCapabilityV1 {
       record: { id: operationId, paymentId: id, action: "create", state: "reserved", errorCode: null }, request,
       command: { action: "create", operationId, paymentId: id, providerIdempotencyKey: operationId, amount: request.amount, pricing,
         description: input.description, captureMode: input.captureMode, methodKey: input.methodKey, checkoutKind: input.checkoutKind, returnUrl, notificationUrl,
-        ...(store ? { store } : {}) },
+        ...(store ? { store } : {}), ...(expiresAt ? { expiresAt } : {}) },
     };
     const reservation = await withPoolTransaction(this.pool, async db => {
       const found = await findPhisPaymentIdempotency(db, this.scope, "create", input.idempotencyKey);

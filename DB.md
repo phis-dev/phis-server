@@ -2317,7 +2317,13 @@ there is no product purge command. Fixture teardown in database tests is not an 
   references and consumer grants/action policies; no secret values.
 - `merchant_identity VARCHAR(255) NULL`, `revision INT NOT NULL DEFAULT 1 CHECK (> 0)`.
 - `enabled BOOLEAN NOT NULL DEFAULT FALSE`, `retired BOOLEAN NOT NULL DEFAULT FALSE`.
-- `probed_at TIMESTAMPTZ NULL`, `methods JSONB NULL`: the last validated Provider method/features probe.
+- `probed_at TIMESTAMPTZ NULL`: the last time Core asked the Provider about the profile, in any currency
+  (a probe, or a refresh of its reach claiming its turn).
+- `methods JSONB NULL`: the last validated probe in each currency it was asked in, keyed by the uppercase
+  currency code: `{ "CHF": { "probedAt": "<ISO instant>", "methods": [<PhisPaymentProviderProbe methods>] } }`.
+  A probe in one currency replaces that currency's entry and keeps the others. `profileReach` reads it
+  without a Provider call ([PAYMENTS.md](./PAYMENTS.md#14-profile-reach)). No other shape is read: a
+  profile that still holds the earlier list is swept to `NULL` and probed again by hand.
 - Enabling requires a pinned identity, successful probe and non-retired profile. CLI enabling also
   verifies the registered/enabled Provider and matching artifacts/capabilities on ready instances.
 - Profile writes increment the revision, clear the probe/methods and disable new creation. They cannot

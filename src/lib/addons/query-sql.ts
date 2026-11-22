@@ -523,6 +523,13 @@ function compileInsert(
  * The row-level authority check happens before either statement runs, against the same id. Both halves
  * are needed: the check settles whether this actor may touch the row, the Site filter settles that the
  * row is on the Site the request belongs to.
+ *
+ * An update's own `where` comes last and in parentheses, so an `any` inside it cannot reach past the key
+ * and the Site. It is evaluated by the statement that writes, which is what makes it a guard rather than
+ * a hint: under READ COMMITTED a concurrent writer to the same row is waited for and the condition is
+ * then tested again against the row it left, so "only while there is enough stock" holds for the second
+ * of two simultaneous orders as much as for the first. The same goes for `add`, which is computed from
+ * that row and not from anything the Add-on read earlier.
  */
 function compileByIdMutation(
   schemaName: string,
@@ -533,9 +540,12 @@ function compileByIdMutation(
   const compiler = createCompiler(parameterTypes);
   const assignments = descriptor.kind === "update"
     ? descriptor.set
-      .map((assignment) =>
-        `${quotePhiIdentifier(assignment.column)} = ${valueSql(compiler, assignment.value)}`
-      )
+      .map((assignment) => {
+        const column = quotePhiIdentifier(assignment.column);
+        return assignment.add !== undefined
+          ? `${column} = ${column} + ${valueSql(compiler, assignment.add)}`
+          : `${column} = ${valueSql(compiler, assignment.value)}`;
+      })
       .join(", ")
     : "";
   const key = quotePhiIdentifier(table.primaryKey[0]!);
@@ -543,6 +553,9 @@ function compileByIdMutation(
     `${key} = ${compiler.place({ from: "id" })}`,
     ...(table.siteScoped
       ? [`${quotePhiIdentifier(PHIS_ADDON_SITE_COLUMN)} = ${compiler.place({ from: "site" })}`]
+      : []),
+    ...(descriptor.kind === "update" && descriptor.where
+      ? [`(${conditionSql(compiler, descriptor.where)})`]
       : []),
   ].join(" AND ");
   return {

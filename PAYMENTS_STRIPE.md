@@ -105,7 +105,7 @@ Provider. No API key, webhook secret or payment token is a CLI argument or profi
 values enter through the existing protected secret-write mechanism. The adapter's bound
 `readCredentials()` resolves only that profile's validated references.
 
-`read` covers `listMethods`, `get`, `getOperation` and `getRefund`. Each remaining grant names its
+`read` covers `listMethods`, `profileReach`, `refreshProfileReach`, `get`, `getOperation` and `getRefund`. Each remaining grant names its
 capability operation. Grants are checked on stored payments as well as new ones. Removing a grant
 stops the consumer's access; operator reconciliation remains possible without transferring ownership.
 There is no implicit default merchant profile and no automatic grant to an installed consumer.
@@ -120,6 +120,9 @@ For capture, cancel and refund, an operation grant is necessary but not sufficie
 | Declared consumer job | Its job id must be explicitly listed for this action |
 | Core-delivered consumer event | Its event id must be explicitly listed for this action |
 | Internal transport actor or external hook | Refused |
+
+The same table decides `profileRefresh`, asking the Provider again for a profile's reach
+([PAYMENTS.md](./PAYMENTS.md#14-profile-reach)); absent from the grant, nobody may.
 
 Empty policy lists mean operator/Site Admin only. Role names are validated against the consumer's
 manifest and evaluated through existing authorization, never against a supplied boolean or another
@@ -154,6 +157,16 @@ There is no profile delete, payment purge or live-charge smoke test in this slic
 
 Stripe's Session API supplies inline line-item pricing, payment-mode intent configuration and hosted
 redirect URLs. See [Session creation](https://docs.stripe.com/api/checkout/sessions/create).
+
+**Checkout end.** A create that carries `expiresAt` sets the Session's `expires_at`, in Unix seconds rounded
+down, so the page ends at that second or just before it and never after. Stripe takes 30 minutes to 24
+hours after it creates the Session, and leaves a Session without one open for 24 hours. Card and TWINT both
+declare `checkoutExpiry: { minSeconds: 1860, maxSeconds: 86400 }`: Core measures from the moment it accepts
+the payment, which comes before the Session by a probe and a request, so the earliest end declared is a
+minute past Stripe's. The adapter judges the distance again when it creates the Session and refuses one
+outside Stripe's window with `invalid_input`; a recovery of that create is not judged again. The end Stripe
+set comes back as the checkout's `expiresAt`, and the Session's expiry as status `expired`
+(`checkout.session.expired`).
 
 The opaque Provider binding uses the Core payment identity as its stable reference and records the
 Session id, then the associated PaymentIntent id when available. The adapter uses those identifiers

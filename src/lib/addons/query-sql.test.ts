@@ -756,3 +756,255 @@ describe("writing a json column", () => {
     })).toMatch(/writes the json parameter into "name", which is string/);
   });
 });
+
+/**
+ * Adding to a column, and an update that happens only while a condition holds.
+ *
+ * The two together are what reading, deciding and writing in a handler cannot be: one step. A stock
+ * count read in the handler and written back loses every change that came between, and an order marked
+ * paid after a separate check is marked paid twice by a second delivery of the same event.
+ */
+describe("an update that adds, and one that is guarded", () => {
+  const stockSchema: PhisAddonSchemaDescriptor = {
+    descriptorVersion: 1,
+    version: 1,
+    tables: [
+      {
+        name: "listing",
+        siteScoped: true,
+        ownerScoped: true,
+        columns: [
+          { name: "id", type: "identity" },
+          { name: "title", type: "string", maxLength: 200 },
+          { name: "stock", type: "integer", nullable: true },
+          { name: "sold", type: "bigInteger" },
+          { name: "rank", type: "smallInteger" },
+          { name: "flags", type: "integer" },
+          { name: "attributes", type: "json", nullable: true },
+          { name: "opened_at", type: "instant", nullable: true },
+        ],
+        primaryKey: ["id"],
+      },
+    ],
+  };
+
+  const reserveCatalog: PhisAddonQueryCatalog = {
+    parameters: {
+      reserve: [
+        { name: "id", type: "bigInteger" },
+        { name: "quantity", type: "integer" },
+        { name: "taken", type: "integer" },
+      ],
+      open: [{ name: "id", type: "bigInteger" }],
+    },
+    queries: [
+      {
+        kind: "update",
+        name: "reserve",
+        table: "listing",
+        set: [
+          { column: "stock", add: { kind: "parameter", name: "taken" } },
+          { column: "sold", add: { kind: "parameter", name: "quantity" } },
+        ],
+        idParameter: "id",
+        where: {
+          kind: "compare", column: "stock", operator: ">=",
+          value: { kind: "parameter", name: "quantity" },
+        },
+      },
+      {
+        kind: "update",
+        name: "open",
+        table: "listing",
+        set: [
+          { column: "flags", add: { kind: "literal", value: 4 } },
+          { column: "opened_at", value: { kind: "now" } },
+        ],
+        idParameter: "id",
+        where: { kind: "flags", column: "flags", mask: { kind: "literal", value: 4 }, match: "none" },
+      },
+    ],
+  };
+
+  function check(value: unknown) {
+    const issues: string[] = [];
+    validatePhisAddonQueryCatalog(value, stockSchema, "queries", issues, new Set());
+    return issues.join("\n");
+  }
+
+  function update(set: unknown[], parameters: unknown[] = [], extra: Record<string, unknown> = {}) {
+    return {
+      parameters: { probe: [{ name: "id", type: "bigInteger" }, ...parameters] },
+      queries: [{ kind: "update", name: "probe", table: "listing", idParameter: "id", set, ...extra }],
+    };
+  }
+
+  it("accepts adding to integer columns, with a guard beside it", () => {
+    expect(check(reserveCatalog)).toBe("");
+  });
+
+  it("adds to the column the row holds, and binds the amount", () => {
+    const query = compilePhisAddonQueries(SCHEMA, stockSchema, reserveCatalog).get("reserve")!;
+    expect(query.sql).toBe(
+      'UPDATE "phis_addon_acme_shop"."listing" SET "stock" = "stock" + $1, "sold" = "sold" + $2 ' +
+      'WHERE "id" = $3 AND "site_id" = $4 AND ("stock" >= $5) ' +
+      'RETURNING "id", "title", "stock", "sold", "rank", "flags", "attributes", "opened_at", ' +
+      '"site_id", "owner_user_id", "created_by_user_id"',
+    );
+    expect(query.bindings).toEqual([
+      { from: "parameter", name: "taken" },
+      { from: "parameter", name: "quantity" },
+      { from: "id" },
+      { from: "site" },
+      { from: "parameter", name: "quantity" },
+    ]);
+  });
+
+  it("guards a flag bit so that it is set once, and keeps a literal amount bound", () => {
+    const query = compilePhisAddonQueries(SCHEMA, stockSchema, reserveCatalog).get("open")!;
+    expect(query.sql).toContain(
+      'SET "flags" = "flags" + $1, "opened_at" = NOW() ' +
+      'WHERE "id" = $2 AND "site_id" = $3 AND (("flags" & $4) = 0) RETURNING',
+    );
+    expect(query.bindings[0]).toEqual({ from: "literal", value: 4 });
+  });
+
+  it("parenthesises the guard, so an any cannot reach past the key and the Site", () => {
+    const query = compilePhisAddonQueries(SCHEMA, stockSchema, update(
+      [{ column: "title", value: { kind: "literal", value: "x" } }],
+      [],
+      {
+        where: {
+          kind: "any",
+          conditions: [
+            { kind: "isNull", column: "stock" },
+            { kind: "compare", column: "stock", operator: ">", value: { kind: "literal", value: 0 } },
+          ],
+        },
+      },
+    ) as unknown as PhisAddonQueryCatalog).get("probe")!;
+    expect(query.sql).toContain(
+      'WHERE "id" = $2 AND "site_id" = $3 AND (("stock" IS NULL OR "stock" > $4))',
+    );
+  });
+
+  it("compiles an optional guard with its parameter typed", () => {
+    const query = compilePhisAddonQueries(SCHEMA, stockSchema, update(
+      [{ column: "title", value: { kind: "literal", value: "x" } }],
+      [{ name: "expected", type: "integer", nullable: true }],
+      {
+        where: {
+          kind: "whenPresent",
+          parameter: "expected",
+          condition: { kind: "compare", column: "rank", operator: "=", value: { kind: "parameter", name: "expected" } },
+        },
+      },
+    ) as unknown as PhisAddonQueryCatalog).get("probe")!;
+    expect(query.sql).toContain('AND (($4::INTEGER IS NULL OR "rank" = $5))');
+  });
+
+  it("leaves an update without a guard exactly as it was", () => {
+    const query = compilePhisAddonQueries(SCHEMA, stockSchema, update(
+      [{ column: "rank", add: { kind: "literal", value: -1 } }],
+    ) as unknown as PhisAddonQueryCatalog).get("probe")!;
+    expect(query.sql).toContain('SET "rank" = "rank" + $1 WHERE "id" = $2 AND "site_id" = $3 RETURNING');
+  });
+
+  it("refuses to add to a column that does not hold an integer", () => {
+    for (const column of ["title", "attributes", "opened_at"]) {
+      expect(check(update(
+        [{ column, add: { kind: "literal", value: 1 } }],
+      ))).toMatch(new RegExp(`"${column}" is not an integer column`));
+    }
+  });
+
+  it("refuses to add to the key or to a column Core writes", () => {
+    expect(check(update([{ column: "id", add: { kind: "literal", value: 1 } }])))
+      .toMatch(/"id" is not an integer column/);
+    expect(check(update([{ column: "owner_user_id", add: { kind: "literal", value: 1 } }])))
+      .toMatch(/which Core writes itself/);
+  });
+
+  it("refuses an amount that is not an integer, or that could be null", () => {
+    expect(check(update(
+      [{ column: "stock", add: { kind: "parameter", name: "amount" } }],
+      [{ name: "amount", type: "text" }],
+    ))).toMatch(/must be an integer or bigInteger parameter/);
+    expect(check(update(
+      [{ column: "stock", add: { kind: "parameter", name: "amount" } }],
+      [{ name: "amount", type: "integer", nullable: true }],
+    ))).toMatch(/nullable parameter "amount"/);
+    expect(check(update(
+      [{ column: "stock", add: { kind: "parameter", name: "amount" } }],
+      [{ name: "amount", type: "integer", list: true }],
+    ))).toMatch(/list parameter "amount"/);
+    expect(check(update([{ column: "stock", add: { kind: "literal", value: 1.5 } }])))
+      .toMatch(/must be an integer literal/);
+    expect(check(update([{ column: "stock", add: { kind: "literal", value: "1" } }])))
+      .toMatch(/must be an integer literal/);
+    expect(check(update([{ column: "stock", add: { kind: "actor" } }])))
+      .toMatch(/are not amounts/);
+    expect(check(update([{ column: "stock", add: { kind: "parameter", name: "missing" } }])))
+      .toMatch(/add names an undeclared parameter/);
+  });
+
+  it("refuses an assignment that both writes and adds, or adds to a column twice", () => {
+    expect(check(update([{
+      column: "stock",
+      value: { kind: "literal", value: 1 },
+      add: { kind: "literal", value: 1 },
+    }]))).toMatch(/states both value and add/);
+    expect(check(update([
+      { column: "stock", value: { kind: "literal", value: 1 } },
+      { column: "stock", add: { kind: "literal", value: 1 } },
+    ]))).toMatch(/sets stock more than once/);
+  });
+
+  it("refuses add in an insert, which has nothing to add to", () => {
+    expect(check({
+      parameters: { probe: [] },
+      queries: [{
+        kind: "insert", name: "probe", table: "listing",
+        values: [{ column: "stock", add: { kind: "literal", value: 1 } }],
+      }],
+    })).toMatch(/add is only meaningful in an update/);
+  });
+
+  it("refuses a where on a delete, which would delete the row whether or not it held", () => {
+    expect(check({
+      parameters: { probe: [{ name: "id", type: "bigInteger" }] },
+      queries: [{
+        kind: "delete", name: "probe", table: "listing", idParameter: "id",
+        where: { kind: "compare", column: "stock", operator: "=", value: { kind: "literal", value: 0 } },
+      }],
+    })).toMatch(/where is not part of a delete/);
+  });
+
+  it("checks the guard the way a select's where is checked", () => {
+    expect(check(update(
+      [{ column: "rank", add: { kind: "literal", value: 1 } }],
+      [],
+      { where: { kind: "compare", column: "nowhere", operator: "=", value: { kind: "literal", value: 1 } } },
+    ))).toMatch(/where.column does not name a column of listing/);
+    expect(check(update(
+      [{ column: "rank", add: { kind: "literal", value: 1 } }],
+      [{ name: "doc", type: "json" }],
+      { where: { kind: "compare", column: "rank", operator: "=", value: { kind: "parameter", name: "doc" } } },
+    ))).toMatch(/filters on the json parameter "doc"/);
+    expect(check(update(
+      [{ column: "rank", add: { kind: "literal", value: 1 } }],
+      [],
+      { where: { kind: "flags", column: "title", mask: { kind: "literal", value: 1 }, match: "none" } },
+    ))).toMatch(/"title" is not an integer column. flags/);
+    expect(check(update(
+      [{ column: "rank", add: { kind: "literal", value: 1 } }],
+      [{ name: "expected", type: "integer" }],
+      {
+        where: {
+          kind: "whenPresent", parameter: "expected",
+          condition: { kind: "compare", column: "rank", operator: "=", value: { kind: "parameter", name: "expected" } },
+        },
+      },
+    ))).toMatch(/"expected" must be nullable/);
+  });
+});

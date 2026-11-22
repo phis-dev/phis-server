@@ -49,6 +49,7 @@ type ParameterDeclarations = {
   nullable: Set<string>;
   lists: Set<string>;
   jsons: Set<string>;
+  types: Map<string, string>;
 };
 
 type QueryContext = {
@@ -58,6 +59,7 @@ type QueryContext = {
   nullableParameters: Set<string>;
   listParameters: Set<string>;
   jsonParameters: Set<string>;
+  parameterTypes: Map<string, string>;
   field: string;
   issues: string[];
 };
@@ -334,7 +336,78 @@ function checkJsonAssignment(
   }
 }
 
-function checkAssignments(context: QueryContext, raw: unknown, where: string) {
+/**
+ * `column = column + add`, checked for the three ways it can go quietly wrong.
+ *
+ * The column must hold an integer, or the sum is PostgreSQL's error at the first call -- or, for a text
+ * column, a concatenation nobody meant. The summand must be an integer that cannot be null: `NULL` added
+ * to a count makes the count `NULL`, which erases it rather than leaving it alone. And it must be a
+ * parameter or a literal; an actor id and the current instant are not amounts.
+ */
+function checkIncrement(
+  context: QueryContext,
+  column: string,
+  value: unknown,
+  at: string,
+) {
+  const declared = context.table.columns.find((entry) => entry.name === column);
+  // A reference column is a key into another table, and adding to a key is a bug, whatever its type.
+  const type = declared && !("references" in declared) ? declared.type : undefined;
+  if (!type || !NUMERIC_COLUMN_TYPES.has(type)) {
+    context.issues.push(
+      `${context.field}.${at}.column "${column}" is not an integer column. ` +
+      "add sums integers and nothing else.",
+    );
+  }
+  if (!isPhiRecord(value)) {
+    context.issues.push(`${context.field}.${at}.add must be an object.`);
+    return;
+  }
+  if (value.kind === "literal") {
+    if (typeof value.value !== "number" || !Number.isSafeInteger(value.value)) {
+      context.issues.push(`${context.field}.${at}.add must be an integer literal.`);
+    }
+    return;
+  }
+  if (value.kind !== "parameter") {
+    context.issues.push(
+      `${context.field}.${at}.add must be a parameter or a literal: an actor id and the current ` +
+      "instant are not amounts.",
+    );
+    return;
+  }
+  if (typeof value.name !== "string" || !context.parameters.has(value.name)) {
+    context.issues.push(`${context.field}.${at}.add names an undeclared parameter.`);
+    return;
+  }
+  const parameterType = context.parameterTypes.get(value.name);
+  if (parameterType !== "integer" && parameterType !== "bigInteger") {
+    context.issues.push(
+      `${context.field}.${at}.add names "${value.name}", which is ${String(parameterType)}. ` +
+      "The amount added must be an integer or bigInteger parameter.",
+    );
+  }
+  if (context.listParameters.has(value.name)) {
+    context.issues.push(`${context.field}.${at}.add names the list parameter "${value.name}".`);
+  }
+  if (context.nullableParameters.has(value.name)) {
+    context.issues.push(
+      `${context.field}.${at}.add names the nullable parameter "${value.name}". A null amount would ` +
+      "make the column null rather than leave it alone.",
+    );
+  }
+}
+
+/**
+ * @param kind An insert writes values and nothing else. `add` needs a value to add to, which only an
+ * update has.
+ */
+function checkAssignments(
+  context: QueryContext,
+  raw: unknown,
+  where: string,
+  kind: "insert" | "update",
+) {
   const assignments = Array.isArray(raw) ? raw : [];
   if (!Array.isArray(raw) || assignments.length === 0) {
     context.issues.push(`${context.field}.${where} must be a non-empty array.`);
@@ -360,11 +433,31 @@ function checkAssignments(context: QueryContext, raw: unknown, where: string) {
       );
       return;
     }
+    const adds = assignment.add !== undefined;
+    if (adds && assignment.value !== undefined) {
+      context.issues.push(
+        `${context.field}.${at} states both value and add. Writing a value and adding to the one ` +
+        "that is there are two different assignments.",
+      );
+      return;
+    }
+    if (adds && kind !== "update") {
+      context.issues.push(
+        `${context.field}.${at}.add is only meaningful in an update: an insert has nothing to add to.`,
+      );
+      return;
+    }
     if (checkColumn(context, assignment.column, `${at}.column`)) {
       seen.push(assignment.column as string);
-      checkJsonAssignment(context, assignment.column as string, assignment.value, at);
+      if (adds) {
+        checkIncrement(context, assignment.column as string, assignment.add, at);
+      } else {
+        checkJsonAssignment(context, assignment.column as string, assignment.value, at);
+      }
     }
-    checkValue(context, assignment.value, `${at}.value`, "assignment");
+    if (!adds) {
+      checkValue(context, assignment.value, `${at}.value`, "assignment");
+    }
   });
   const duplicates = seen.filter((column, index) => seen.indexOf(column) !== index);
   if (duplicates.length > 0) {
@@ -442,6 +535,7 @@ function validateQuery(
     nullableParameters: declared.nullable,
     listParameters: declared.lists,
     jsonParameters: declared.jsons,
+    parameterTypes: declared.types,
     field,
     issues,
   };
@@ -587,7 +681,7 @@ function validateQuery(
       break;
     }
     case "insert": {
-      checkAssignments(context, raw.values, "values");
+      checkAssignments(context, raw.values, "values", "insert");
       if (table.groupScoped) {
         if (typeof raw.groupParameter !== "string" || !parameters.has(raw.groupParameter)) {
           issues.push(
@@ -611,7 +705,23 @@ function validateQuery(
         issues.push(`${field}.idParameter names an undeclared parameter.`);
       }
       if (raw.kind === "update") {
-        checkAssignments(context, raw.set, "set");
+        checkAssignments(context, raw.set, "set", "update");
+        /*
+         * The same tree a select takes, checked the same way. It narrows the one row the key addresses
+         * and cannot reach another, so there is no scan to report: a `contains` here reads one row.
+         */
+        if (raw.where !== undefined) {
+          checkCondition(context, raw.where, "where", 1);
+        }
+      } else if (raw.where !== undefined) {
+        /*
+         * Refused rather than ignored. A delete has no condition beside its key, and one written after the
+         * update's pattern would otherwise delete the row whether or not it held.
+         */
+        issues.push(
+          `${field}.where is not part of a delete: it removes the row its key names, and a condition ` +
+          "written here would be ignored rather than checked.",
+        );
       }
       break;
     }
@@ -657,6 +767,7 @@ export function validatePhisAddonQueryCatalog(
     const nullable = new Set<string>();
     const lists = new Set<string>();
     const jsons = new Set<string>();
+    const types = new Map<string, string>();
     const list = Array.isArray(declared) ? declared : [];
     if (!Array.isArray(declared)) {
       issues.push(`${field}.parameters.${queryName} must be an array.`);
@@ -678,6 +789,9 @@ export function validatePhisAddonQueryCatalog(
         issues.push(`${at}.type is not a parameter type this vocabulary offers.`);
       }
       names.add(parameter.name);
+      if (typeof parameter.type === "string") {
+        types.set(parameter.name, parameter.type);
+      }
       if (parameter.nullable === true) {
         nullable.add(parameter.name);
       }
@@ -696,7 +810,7 @@ export function validatePhisAddonQueryCatalog(
         }
       }
     });
-    parametersByQuery.set(queryName, { names, nullable, lists, jsons });
+    parametersByQuery.set(queryName, { names, nullable, lists, jsons, types });
   }
 
   const rawQueries = Array.isArray(value.queries) ? value.queries : [];
@@ -712,7 +826,13 @@ export function validatePhisAddonQueryCatalog(
       query,
       schema,
       parametersByQuery.get(queryName)
-        ?? { names: new Set(), nullable: new Set(), lists: new Set(), jsons: new Set() },
+        ?? {
+          names: new Set(),
+          nullable: new Set(),
+          lists: new Set(),
+          jsons: new Set(),
+          types: new Map(),
+        },
       declaredRoles,
       `${field}.queries[${index}]`,
       issues,

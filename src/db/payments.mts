@@ -5,7 +5,7 @@ import { withPoolTransaction } from "../lib/db-transaction.ts";
 import { PHIS_PAYMENT_LEASE_SECONDS } from "../lib/constants/payments.ts";
 import { PhisPaymentError, requirePhisPaymentReference } from "../lib/payments/validation.ts";
 import type {
-  PhisPaymentProfile, PhisPaymentReceipt, PhisPaymentScope, PhisStoredPayment, PhisStoredPaymentMethod,
+  PhisPaymentProfile, PhisPaymentProfileProbeRecord, PhisPaymentReceipt, PhisPaymentScope, PhisStoredPayment, PhisStoredPaymentMethod,
   PhisStoredPaymentOperation, PhisStoredPaymentRefund,
 } from "../lib/payments/types.ts";
 
@@ -28,7 +28,7 @@ function paymentFromRow(row: PaymentRow): PhisStoredPayment {
 export async function readPhisPaymentProfile(db: Db, siteId: number, key: string, lock = false): Promise<PhisPaymentProfile | null> {
   const { rows } = await db.query<{
     draft: PhisPaymentProfileDraft; provider_addon_id: string; merchant_identity: string | null;
-    revision: number; enabled: boolean; retired: boolean; probed_at: Date | null; methods: PhisPaymentProviderProbe["methods"] | null;
+    revision: number; enabled: boolean; retired: boolean; probed_at: Date | null; methods: Record<string, PhisPaymentProfileProbeRecord> | null;
   }>(`SELECT * FROM phis.payment_profiles WHERE site_id = $1 AND key = $2 ${lock ? "FOR SHARE" : ""}`, [siteId, key]);
   const row = rows[0];
   return row ? { ...row.draft, siteId, providerAddonId: row.provider_addon_id, merchantIdentity: row.merchant_identity,
@@ -60,12 +60,47 @@ export async function writePhisPaymentProfile(pool: Pool, siteId: number, provid
   });
 }
 
-export async function recordPhisPaymentProfileProbe(db: Db, profile: PhisPaymentProfile, merchantIdentity: string, mode: "test" | "live", methods: PhisPaymentProviderProbe["methods"] = []) {
+/** Every enabled profile a Provider Add-on serves, on every Site, with the Site's key. */
+export async function listActivePhisPaymentProfilesOfProvider(db: Db, providerAddonId: string): Promise<{ siteKey: string; profile: PhisPaymentProfile }[]> {
+  const { rows } = await db.query<{ site_id: number; site_key: string; key: string }>(`SELECT p.site_id, s.key AS site_key, p.key
+    FROM phis.payment_profiles p JOIN phis.sites s ON s.id = p.site_id
+    WHERE p.provider_addon_id = $1 AND p.enabled AND NOT p.retired ORDER BY p.site_id, p.key`, [providerAddonId]);
+  const result: { siteKey: string; profile: PhisPaymentProfile }[] = [];
+  for (const row of rows) { const profile = await readPhisPaymentProfile(db, row.site_id, row.key); if (profile) result.push({ siteKey: row.site_key, profile }); }
+  return result;
+}
+
+/**
+ * Records what the Provider answered in one currency, beside what it answered in the others, and answers
+ * when. `probed_at` is the last time Core asked about the profile in any currency; each currency keeps its
+ * own `probedAt`. Not a revision: a payment being created under the profile goes on.
+ */
+export async function recordPhisPaymentProfileProbe(db: Db, profile: PhisPaymentProfile, merchantIdentity: string, mode: "test" | "live",
+  currency: string, methods: PhisPaymentProviderProbe["methods"]): Promise<string> {
   requirePhisPaymentReference(merchantIdentity);
   if (mode !== profile.mode || (profile.merchantIdentity !== null && profile.merchantIdentity !== merchantIdentity)) throw new PhisPaymentError("profile_unavailable");
-  const result = await db.query(`UPDATE phis.payment_profiles SET merchant_identity = $4, probed_at = NOW(), methods = $5::jsonb
-    WHERE site_id = $1 AND key = $2 AND revision = $3 AND NOT retired`, [profile.siteId, profile.key, profile.revision, merchantIdentity, JSON.stringify(methods)]);
+  const result = await db.query<{ probed_at: string }>(`UPDATE phis.payment_profiles SET merchant_identity = $4, probed_at = NOW(),
+      methods = COALESCE(methods, '{}'::jsonb) || jsonb_build_object($5::text, jsonb_build_object(
+        'probedAt', to_char(NOW() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'), 'methods', $6::jsonb))
+    WHERE site_id = $1 AND key = $2 AND revision = $3 AND NOT retired
+    RETURNING methods -> $5::text ->> 'probedAt' AS probed_at`,
+  [profile.siteId, profile.key, profile.revision, merchantIdentity, currency, JSON.stringify(methods)]);
   if (!result.rowCount) throw new PhisPaymentError("profile_unavailable");
+  return result.rows[0]!.probed_at;
+}
+
+/**
+ * Claims the right to ask the Provider about an enabled profile again: at most once in `seconds`,
+ * counted from the last time Core asked (`probed_at`). The claim is the asking, so of two refreshes at
+ * once one asks and the other is told too soon; a Provider that then fails has still been asked.
+ */
+export async function claimPhisPaymentProfileRefresh(db: Db, profile: PhisPaymentProfile, seconds: number): Promise<"claimed" | "rate_limited" | "unavailable"> {
+  const result = await db.query(`UPDATE phis.payment_profiles SET probed_at = NOW()
+    WHERE site_id = $1 AND key = $2 AND revision = $3 AND enabled AND NOT retired
+      AND (probed_at IS NULL OR probed_at <= NOW() - $4::int * INTERVAL '1 second')`, [profile.siteId, profile.key, profile.revision, seconds]);
+  if (result.rowCount) return "claimed";
+  const current = await readPhisPaymentProfile(db, profile.siteId, profile.key);
+  return current && current.revision === profile.revision && current.enabled && !current.retired ? "rate_limited" : "unavailable";
 }
 
 export async function setPhisPaymentProfileEnabled(db: Db, profile: PhisPaymentProfile, enabled: boolean, retire = false) {

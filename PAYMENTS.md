@@ -86,7 +86,10 @@ merchant. A browser knowing a payment id is not entitled to operate it.
 Core additionally enforces the configured merchant-action policy for capture, cancel and refund:
 Site Admin, a declared role of the consuming Add-on, or an explicitly authorized system context. A
 job or verified event may be such a context; an ordinary request labelled `internal` by a Site proxy
-is not sufficient. Unverified external hooks cannot use these consumer methods.
+is not sufficient. Unverified external hooks cannot use these consumer methods, with one exception:
+`profileReach` reads what Core recorded of a profile's Merchant of Record reach and names nothing of a
+payment, a customer or the account, so a public hook may call it (section 14). Every other operation,
+including every other one under the grant `read`, refuses a hook with `forbidden`.
 
 `complete` is the customer-flow continuation: it can only advance the previously agreed payment,
 using its stored provider binding and amount. It cannot change the amount, turn manual capture into
@@ -564,7 +567,9 @@ merchant profile may serve several currencies when the Provider supports the req
 method combination. There is no installation-wide or profile-wide single-currency restriction.
 
 `listMethods` is a current availability query, not a promise that a later creation must succeed. Core
-checks availability again when executing. `methodKey: null` means provider-managed selection; it is
+checks availability again when executing. It asks the Provider every time; what a profile sells as
+Merchant of Record is also read from Core's recording, without a Provider call, through
+`profileReach` (section 14). `methodKey: null` means provider-managed selection; it is
 valid only when returned as an available option. Its advertised features are the intersection of the
 methods the Provider can actually offer for that request. Method keys are opaque and profile-bound.
 
@@ -582,6 +587,20 @@ exceptions to a client.
 `returnPath` is a path on the Site's configured public origin. Core canonicalizes it, rejects a
 different origin, and constructs the return URL and payment correlation. Neither browser `Host` nor
 an arbitrary callback URL selects the Site. Returning or closing the checkout does not call `cancel`.
+
+**Checkout end.** `create` takes an optional `expiresAt`, an ISO 8601 instant with `Z` or an offset: until
+when the customer can complete the payment, for a consumer that holds something for them only so long
+(a Shop's stock reservation). A method states the ends its checkout can be given as
+`features.checkoutExpiry: { minSeconds, maxSeconds }`, whole seconds after Core accepts the payment;
+absent or `null`, it cannot be given one and a create with `expiresAt` answers `unsupported_operation`. An
+end that is malformed, not ahead, or outside the method's window answers `invalid_input`: Core never moves
+it, because the consumer chose it for a reason of its own. Core sends it in UTC as the create command's
+`expiresAt`; the Provider ends the checkout then or, in a coarser unit, just before, never later, and
+reports that end as `checkout.expiresAt`. When it comes, the payment becomes `expired` with
+`payment.changed`, as any checkout that ran out. A retry with the same idempotency key is answered after
+the end too, and a different `expiresAt` under the same key is an `idempotency_conflict`.
+`createSubscription`, `settleSubscription` and `setupMethod` take no end: they hold nothing for the customer
+that runs out, and gain one when a consumer needs it.
 
 Provider UI plans select a statically installed Module/adapter contribution. Parameters are explicitly
 client-safe, short-lived checkout values; no merchant or webhook secret is permitted. There is no
@@ -953,7 +972,7 @@ payment event and execution support are implemented together. The consumer capab
 its Site/Add-on/actor; its object exposes exactly the documented methods, no engine, pool or recovery
 handle. Notification ingress exists only in a bound hook context. A Provider registers its factory
 through the existing static manifest. Profile probes record merchant identity, mode and supported
-operations; enabling checks referenced credentials and the serving instances. The first end-to-end path is a redirect checkout with one Provider and one
+operations, per currency (section 14); enabling checks referenced credentials and the serving instances. The first end-to-end path is a redirect checkout with one Provider and one
 consumer; further Providers must satisfy the same contract.
 
 Before release, verify:
@@ -1132,6 +1151,64 @@ concerns. A renewal produces both, and a handler narrows on `subject.kind`.
 
 **Not built:** trials, pauses, proration, a cancellation at a chosen date, a Provider-run schedule, and
 a notice when several periods are overdue after an outage (they are charged one per run).
+
+## 14. Profile reach
+
+Part of `payments:v1`, extended in place. A consumer that sells under `merchant-of-record` offers only
+what the Provider sells so (section 12), and has to know it where no payment is being made: on a public
+page listing the countries a Shop sells to. Asking the Provider there means a probe per page view (two
+Stripe API calls) from a hook, which may not call the consumer methods at all.
+
+**The recording.** A probe Core makes is recorded per currency in `phis.payment_profiles.methods`:
+`{ "<CUR>": { probedAt, methods } }`, the methods as validated (DB.md). Core asks with 100 minor units of
+the currency, `automatic` capture, a `redirect` checkout and the pricing `final`/`none`/no
+discounts/`none`. `none` is asked rather than `merchant-of-record` because every method supports it, so the
+Provider answers every method it has, each declaring its own `pricing.merchantOfRecord`; asked for
+`merchant-of-record`, a Provider may leave out what does not sell so (Stripe leaves out TWINT) and the
+recording would be a selection. `probed_at` is the last time Core asked about the profile in any
+currency. Three things record: `phis payment profile probe|enable --currency CHF,EUR` (each named
+currency, after all were answered), `refreshProfileReach`, and `phis addon migrate|reconcile` when it
+registers a new release of the Provider Add-on (docs/CLI.md). A currency not asked keeps its recording;
+`profile set` clears all of it, as it clears the probe.
+
+```ts
+export type PhisPaymentProfileReach = {
+  currency: string;
+  /** When the Provider was last asked in this currency. */
+  probedAt: string;
+  /** Null where no method of the profile sells as Merchant of Record in this currency. */
+  merchantOfRecord: PhisPaymentMerchantOfRecordFeatures | null;
+};
+
+// Added to PhisPaymentsCapabilityV1:
+profileReach(input: { profileKey: string; currency: string }): Promise<PhisPaymentProfileReach | null>;
+refreshProfileReach(input: { profileKey: string; currencies: readonly string[] }): Promise<readonly PhisPaymentProfileReach[]>;
+
+// Added to PhisPaymentProfileGrant["merchantActions"]:
+profileRefresh?: PhisPaymentMerchantActionPolicy;
+// Added to PhisPaymentErrorCode:
+| "rate_limited";
+```
+
+**`profileReach`** reads the recording and never asks the Provider. It needs the grant `read` and an
+enabled profile that is not retired (`profile_unavailable` otherwise), and answers `null` where the
+profile was never asked in that currency. `merchantOfRecord` is the union over the recorded methods a
+payment could use as asked (automatic capture, hosted checkout): their `countries`, `taxCategories` and
+`businessTaxIds`, each value once in the order first met, `null` where none sells as Merchant of Record.
+It is the one operation a hook may call (section 3). A single payment may still be refused -- its amount,
+the merchant's account -- which `create` decides when it is made.
+
+**`refreshProfileReach`** asks the Provider again, once per currency (1 to 16, each once), validates and
+records each answer as a probe is recorded, and answers the reach of each. It is a merchant action under
+`merchantActions.profileRefresh`, authorized like capture, cancel and refund (operator, Site Admin, a listed
+role, job or event); absent means nobody, and a hook is always refused. It needs the grant `read` and an
+enabled, pinned profile. At most once a minute per profile, counted from `probed_at` and claimed in the
+same statement that moves it, so of two refreshes at once one asks; the other, and any within the
+minute, answer `rate_limited`, which names nothing and changes nothing. A Provider that fails answers
+`provider_unavailable`; a currency recorded before it stays recorded.
+
+**Before v1** the recording has no other shape. A profile probed before this section holds a list in
+`methods`; it is swept (`methods = NULL`) and probed again in its currencies, by hand.
 
 ## References
 

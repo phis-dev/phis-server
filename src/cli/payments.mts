@@ -8,12 +8,13 @@ import { PHIS_CORE_CAPABILITIES } from "../lib/addons/core-capabilities.ts";
 import { readAddonDesiredState, loadInstalledAddonRuntime } from "./addons.mts";
 import { digestPhisAddonManifest } from "../lib/addons/manifest.ts";
 import { createPhisPaymentProvider } from "../lib/payments/provider.ts";
-import { validatePhisPaymentProfileDraft, validatePhisPaymentProviderProbe, validatePhisPaymentMoney, PhisPaymentError } from "../lib/payments/validation.ts";
+import { validatePhisPaymentProfileDraft, validatePhisPaymentProviderProbe, requirePhisPaymentCurrency, PhisPaymentError } from "../lib/payments/validation.ts";
+import { phisPaymentReachProbe } from "../lib/payments/reach.ts";
 import { reconcilePhisPayments } from "../lib/payments/recovery.ts";
 import { PHIS_PAYMENT_CALL_TIMEOUT_MS, PHIS_PAYMENT_INSTANCE_STALE_SECONDS } from "../lib/constants/payments.ts";
 import { PHIS_ADDON_FLAG_GLOBALLY_ENABLED, PHI_SITE_SERVER_ADDON_FLAG_REQUESTED_ENABLED } from "../lib/constants/server-addons.ts";
 import {
-  listPhisPaymentProfiles, readPhisPaymentProfile, writePhisPaymentProfile, recordPhisPaymentProfileProbe,
+  listActivePhisPaymentProfilesOfProvider, listPhisPaymentProfiles, readPhisPaymentProfile, writePhisPaymentProfile, recordPhisPaymentProfileProbe,
   setPhisPaymentProfileEnabled,
 } from "../db/payments.mts";
 import type { PhisPaymentProfile } from "../lib/payments/types.ts";
@@ -24,6 +25,25 @@ function flag(flags: Flags, key: string) {
   const value = flags.get(key);
   if (typeof value !== "string" || !value.trim()) throw new Error(`Missing --${key}.`);
   return value.trim();
+}
+
+/**
+ * The currencies `--currency` names, comma-separated (`CHF,EUR`): at least one, each once. There is no
+ * default: a profile is recorded in the currencies it is asked in, and which those are is the operator's.
+ */
+function readCurrencies(flags: Flags) {
+  const named = flag(flags, "currency").split(",").map(entry => entry.trim());
+  for (const currency of named) {
+    try { requirePhisPaymentCurrency(currency); }
+    catch { throw new Error(`--currency names "${currency}", which is not an uppercase ISO currency a payment accepts.`); }
+  }
+  if (new Set(named).size !== named.length) throw new Error("--currency names a currency twice.");
+  return named;
+}
+
+/** What the Provider answers in one currency when Core records the profile there (`phisPaymentReachProbe`). */
+async function probeCurrency(adapter: Awaited<ReturnType<typeof resolvePaymentProvider>>, profile: PhisPaymentProfile, currency: string) {
+  return validatePhisPaymentProviderProbe(await adapter.probe({ ...phisPaymentReachProbe(currency), signal: AbortSignal.timeout(PHIS_PAYMENT_CALL_TIMEOUT_MS) }), profile);
 }
 
 async function site(pool: Pool, key: string) {
@@ -71,13 +91,18 @@ export async function runPhisPaymentProfileCommand(root: string, pool: Pool, com
     return { profile: await readPhisPaymentProfile(pool, selectedSite.id, key) };
   }
   if (command !== "probe" && command !== "enable") throw new Error("Use payment profile list, add, set, probe, enable or retire.");
+  const currencies = readCurrencies(flags);
   const adapter = await resolvePaymentProvider(root, pool, profile, selectedSite.key, readSecret);
-  const currency = typeof flags.get("currency") === "string" ? flag(flags, "currency") : "CHF";
-  validatePhisPaymentMoney({ currency, minor: "100" });
-  const probe = validatePhisPaymentProviderProbe(await adapter.probe({ amount: { currency, minor: "100" }, captureMode: "automatic", checkoutKind: "redirect",
-    pricing: { basis: "final", tax: "none", discounts: 0, promotionCodes: "none" }, signal: AbortSignal.timeout(PHIS_PAYMENT_CALL_TIMEOUT_MS) }), profile);
-  if (probe.methods.length === 0) throw new PhisPaymentError("method_unavailable");
-  await recordPhisPaymentProfileProbe(pool, profile, probe.merchantIdentity, probe.mode, probe.methods);
+  // Every currency is asked before any is recorded, so a refusal in one leaves the recording as it was.
+  const probes: { currency: string; probe: Awaited<ReturnType<typeof probeCurrency>> }[] = [];
+  for (const currency of currencies) {
+    const probe = await probeCurrency(adapter, profile, currency);
+    if (probe.methods.length === 0) throw new PhisPaymentError("method_unavailable", `The Payment Provider offers no method in ${currency}.`);
+    if (probes.some(previous => previous.probe.merchantIdentity !== probe.merchantIdentity)) throw new PhisPaymentError("profile_unavailable", "The Payment Provider answered for another merchant.");
+    probes.push({ currency, probe });
+  }
+  // Recorded beside what other currencies hold; a currency not named keeps its recording.
+  for (const { currency, probe } of probes) await recordPhisPaymentProfileProbe(pool, profile, probe.merchantIdentity, probe.mode, currency, probe.methods);
   if (command === "enable") {
     const instances = (await listPhisServerInstances(pool, PHIS_PAYMENT_INSTANCE_STALE_SECONDS)).filter(i => i.ready);
     const version = readAddonDesiredState(root).addons.find(a => a.addonId === profile.providerAddonId)!.packageVersion;
@@ -86,7 +111,67 @@ export async function runPhisPaymentProfileCommand(root: string, pool: Pool, com
       || required.some(c => i.capabilityDigests[c.id] !== c.interfaceDigest))) throw new PhisPaymentError("profile_unavailable", "Payment Provider or Core is not ready on every serving instance.");
     await setPhisPaymentProfileEnabled(pool, (await readPhisPaymentProfile(pool, selectedSite.id, key))!, true);
   }
-  return { profile: await readPhisPaymentProfile(pool, selectedSite.id, key), methods: probe.methods };
+  return { profile: await readPhisPaymentProfile(pool, selectedSite.id, key), methods: Object.fromEntries(probes.map(({ currency, probe }) => [currency, probe.methods])) };
+}
+
+function providesPayments(manifest: PhisAddonManifestV1) {
+  return manifest.serviceProviders.some(p => p.serviceKind === PHIS_SERVICE_KINDS.payments);
+}
+
+/**
+ * The manifest each installed payment Provider Add-on is registered with now. Read before a command that
+ * may register another (`addon migrate`, `addon reconcile`), and handed to `reprobeUpgradedPhisPaymentProviders`
+ * after it.
+ */
+export async function readPhisPaymentProviderRegistrations(root: string, pool: Pool): Promise<ReadonlyMap<string, string>> {
+  const ids = readAddonDesiredState(root).addons.filter(addon => providesPayments(addon.manifest)).map(addon => addon.addonId);
+  if (ids.length === 0) return new Map();
+  const { rows } = await pool.query<{ addon_id: string; manifest_digest: string }>(
+    "SELECT addon_id, manifest_digest FROM phis.server_addons WHERE addon_id = ANY($1::text[])", [ids]);
+  return new Map(rows.map(row => [row.addon_id, row.manifest_digest]));
+}
+
+export type PhisPaymentReprobe = {
+  reprobed: { site: string; profileKey: string; currency: string }[];
+  warnings: { site: string; profileKey: string; currency: string | null; message: string }[];
+};
+
+/**
+ * After a new release of a payment Provider Add-on was registered: every enabled profile it serves is
+ * asked again in each currency it was last recorded in, so what a consumer reads of its reach is what the
+ * release in place says. A profile or currency that cannot be asked keeps its recording and is reported;
+ * nothing here undoes or stops the command that registered the release, which has already happened.
+ *
+ * `before` is what `readPhisPaymentProviderRegistrations` read ahead of that command. A Provider whose
+ * registration did not change there is not asked, and neither is one registered for the first time,
+ * which has no profile yet.
+ */
+export async function reprobeUpgradedPhisPaymentProviders(root: string, pool: Pool, before: ReadonlyMap<string, string>, readSecret: SecretReader): Promise<PhisPaymentReprobe> {
+  const result: PhisPaymentReprobe = { reprobed: [], warnings: [] };
+  const upgraded = readAddonDesiredState(root).addons
+    .filter(addon => providesPayments(addon.manifest) && before.has(addon.addonId) && before.get(addon.addonId) !== addon.manifestDigest);
+  if (upgraded.length === 0) return result;
+  const now = await readPhisPaymentProviderRegistrations(root, pool);
+  const failure = (error: unknown) => error instanceof PhisPaymentError ? `${error.code}: ${error.message}` : error instanceof Error ? error.message : String(error);
+  for (const addon of upgraded) {
+    // Registered by this command, or not: one still at its previous release is asked after the command that registers it.
+    if (now.get(addon.addonId) !== addon.manifestDigest) continue;
+    for (const { siteKey, profile } of await listActivePhisPaymentProfilesOfProvider(pool, addon.addonId)) {
+      let adapter;
+      try { adapter = await resolvePaymentProvider(root, pool, profile, siteKey, readSecret); }
+      catch (error) { result.warnings.push({ site: siteKey, profileKey: profile.key, currency: null, message: failure(error) }); continue; }
+      for (const currency of Object.keys(profile.methods ?? {})) {
+        try {
+          const probe = await probeCurrency(adapter, profile, currency);
+          await recordPhisPaymentProfileProbe(pool, profile, probe.merchantIdentity, probe.mode, currency, probe.methods);
+          result.reprobed.push({ site: siteKey, profileKey: profile.key, currency });
+        } catch (error) {
+          result.warnings.push({ site: siteKey, profileKey: profile.key, currency, message: failure(error) });
+        }
+      }
+    }
+  }
+  return result;
 }
 
 /** `phis maintain --task payments`: the shared reconciliation, reaching the Provider the way this process can. */

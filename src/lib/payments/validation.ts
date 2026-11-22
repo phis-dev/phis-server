@@ -2,12 +2,12 @@ import { isDeepStrictEqual } from "node:util";
 import type {
   PhisPayment, PhisPaymentAddition, PhisPaymentCustomerDetails, PhisPaymentErrorCode, PhisPaymentMoney, PhisPaymentObservedTotals,
   PhisPaymentMerchantOfRecordFeatures, PhisPaymentPricing, PhisPaymentPricingFeatures, PhisPaymentPricingSelector, PhisPaymentProfileDraft, PhisPaymentProviderObservation,
-  PhisPaymentProviderProbe, PhisPaymentProviderStoredMethod, PhisPaymentStoredFeatures, PhisPaymentTotals,
+  PhisPaymentProviderProbe, PhisPaymentProviderStoredMethod, PhisPaymentStoredFeatures, PhisPaymentTotals, PhisPaymentCheckoutExpiryFeatures,
 } from "@phis/contracts/payments";
 import { PHIS_PAYMENT_CURRENCY_EXPONENTS } from "@phis/contracts/payments";
 import type { PhisAddonManifestV1 } from "@phis/contracts/addon";
 import {
-  PHIS_PAYMENT_MAX_ADDITIONS, PHIS_PAYMENT_MAX_DISCOUNTS, PHIS_PAYMENT_MAX_LINE_ITEMS,
+  PHIS_PAYMENT_MAX_ADDITIONS, PHIS_PAYMENT_MAX_CHECKOUT_EXPIRY_SECONDS, PHIS_PAYMENT_MAX_DISCOUNTS, PHIS_PAYMENT_MAX_LINE_ITEMS,
   PHIS_PAYMENT_MAX_LINE_QUANTITY, PHIS_PAYMENT_MAX_PROVIDER_TAX_CODES, PHIS_PAYMENT_MAX_REFUNDS, PHIS_PAYMENT_MAX_TAX_IDS,
   PHIS_PAYMENT_TAX_CATEGORIES, PHIS_PAYMENT_TEXT_LENGTH,
 } from "../constants/payments.ts";
@@ -31,6 +31,12 @@ export function requirePhisPaymentMinor(value: unknown, positive = false): asser
   if (typeof value !== "string" || !(positive ? /^[1-9][0-9]{0,15}$/ : /^(0|[1-9][0-9]{0,15})$/).test(value)) {
     throw new PhisPaymentError("invalid_input");
   }
+}
+
+/** A currency a payment accepts (`PHIS_PAYMENT_CURRENCY_EXPONENTS`), as the uppercase code it is stored under. */
+export function requirePhisPaymentCurrency(value: unknown): string {
+  if (typeof value !== "string" || !Object.hasOwn(PHIS_PAYMENT_CURRENCY_EXPONENTS, value)) throw new PhisPaymentError("invalid_input");
+  return value;
 }
 
 export function validatePhisPaymentMoney(value: PhisPaymentMoney, positive = true): number {
@@ -60,6 +66,7 @@ export function validatePhisPaymentProviderProbe(value: PhisPaymentProviderProbe
         canCancel: features.canCancel, canRefund: features.canRefund, canPartialRefund: features.canPartialRefund,
         pricing: validatePricingFeatures(features.pricing),
         stored: features.stored == null ? null : validateStoredFeatures(features.stored),
+        checkoutExpiry: features.checkoutExpiry == null ? null : validateCheckoutExpiryFeatures(features.checkoutExpiry),
       } };
     });
     return { merchantIdentity: value.merchantIdentity, mode: value.mode, methods };
@@ -79,6 +86,9 @@ export function phisPaymentReturnUrl(publicBaseUrl: string, returnPath: string, 
   result.searchParams.set("paymentId", paymentId);
   return result.href;
 }
+
+/** The merchant actions a grant may leave out; absent, nobody may take them. */
+const OPTIONAL_MERCHANT_ACTIONS = ["subscriptionEnd", "subscriptionPrice", "profileRefresh"] as const;
 
 export function validatePhisPaymentProfileDraft(
   value: unknown, siteKey: string, provider: PhisAddonManifestV1, consumers: Readonly<Record<string, PhisAddonManifestV1>>,
@@ -107,10 +117,10 @@ export function validatePhisPaymentProfileDraft(
       || !Array.isArray(grant.operations) || grant.operations.length === 0 || new Set(grant.operations).size !== grant.operations.length
       || grant.operations.some((op: string) => !["read", "create", "complete", "refresh", "capture", "cancel", "refund", "method-store", "method-read", "method-remove",
         "subscription-read", "subscription-create", "subscription-cancel"].includes(op))
-      || !grant.merchantActions || Object.keys(grant.merchantActions).some(k => !["capture", "cancel", "refund", "subscriptionEnd", "subscriptionPrice"].includes(k))) return fail();
+      || !grant.merchantActions || Object.keys(grant.merchantActions).some(k => !["capture", "cancel", "refund", ...OPTIONAL_MERCHANT_ACTIONS].includes(k))) return fail();
     owners.add(grant.consumerAddonId);
-    // The three a payment has are required; ending a subscription at once is checked where it is stated.
-    for (const action of ["capture", "cancel", "refund", ...(["subscriptionEnd", "subscriptionPrice"] as const).filter(optional => grant.merchantActions[optional] !== undefined)] as const) {
+    // The three a payment has are required; the optional ones are checked where they are stated.
+    for (const action of ["capture", "cancel", "refund", ...OPTIONAL_MERCHANT_ACTIONS.filter(optional => grant.merchantActions[optional] !== undefined)] as const) {
       const policy = grant.merchantActions[action];
       if (!policy || Object.keys(policy).some(k => !["roles", "jobs", "events"].includes(k))) return fail();
       for (const [kind, choices] of [["roles", manifest.roles?.map(r => r.name) ?? []], ["jobs", manifest.jobs.map(j => j.id)], ["events", manifest.eventHandlers?.map(e => e.event) ?? []]] as const) {
@@ -178,6 +188,8 @@ export function validatePhisPaymentObservation(payment: PhisStoredPayment, profi
 }
 
 const PRICING_BASES = ["final", "net"] as const;
+/** A date, a time to the second or finer, and `Z` or an offset: an instant, never a local time. */
+const ISO_INSTANT = /^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]{1,9})?(Z|[+-][0-9]{2}:[0-9]{2})$/;
 const PRICING_TAX = ["none", "provider", "merchant-of-record"] as const;
 const PRICING_PROMOTION_CODES = ["none", "provider"] as const;
 const ADDITION_KINDS = ["tax", "shipping", "discount"] as const;
@@ -280,6 +292,26 @@ export function validatePhisPaymentPricingSelector(value: unknown): PhisPaymentP
 export function phisPaymentMethodSupports(features: PhisPaymentPricingFeatures, selector: PhisPaymentPricingSelector): boolean {
   return features.bases.includes(selector.basis) && features.tax.includes(selector.tax) && selector.discounts <= features.maxDiscounts
     && (selector.promotionCodes === "none" || (features.promotionCodes !== "none" && (selector.discounts === 0 || features.promotionCodes === "with-discounts")));
+}
+
+/** The ends a method's checkout can be given: whole seconds, the earliest at least one, the latest within the longest Core accepts. */
+function validateCheckoutExpiryFeatures(value: unknown): PhisPaymentCheckoutExpiryFeatures {
+  requireKeys(value, ["minSeconds", "maxSeconds"], false);
+  const { minSeconds, maxSeconds } = value;
+  if (!Number.isInteger(minSeconds) || !Number.isInteger(maxSeconds) || (minSeconds as number) < 1 || (minSeconds as number) > (maxSeconds as number)
+    || (maxSeconds as number) > PHIS_PAYMENT_MAX_CHECKOUT_EXPIRY_SECONDS) invalid();
+  return { minSeconds: minSeconds as number, maxSeconds: maxSeconds as number };
+}
+
+/**
+ * The instant a consumer wants the checkout to end by, as Core stores and sends it: an ISO 8601 date and
+ * time with `Z` or an offset, normalized to UTC; `null` where none is stated. That it lies ahead, and
+ * within what the method can keep (`checkoutExpiry`), is judged when a new payment is made.
+ */
+export function validatePhisPaymentExpiresAt(value: unknown): string | null {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== "string" || value.length > 40 || !ISO_INSTANT.test(value) || !Number.isFinite(Date.parse(value))) invalid();
+  return new Date(value as string).toISOString();
 }
 
 function validateStoredFeatures(value: unknown): PhisPaymentStoredFeatures {

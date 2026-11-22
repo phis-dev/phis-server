@@ -27,11 +27,15 @@ class FakeProvider implements PhisPaymentProviderV1 {
   unavailable = false;
   pause: Promise<void> | null = null;
   entered: (() => void) | null = null;
+  checkoutExpiry: { minSeconds: number; maxSeconds: number } | null = null;
+  lastCreate: Extract<PhisPaymentProviderCommand, { action: "create" }> | null = null;
   async probe() { return { merchantIdentity: "acct_test", mode: "test" as const, methods: [{ methodKey: "card", title: "Test card",
     features: { captureModes: ["automatic", "manual"] as const, checkoutKinds: ["redirect"] as const, canPartialCapture: true, canCancel: true, canRefund: true, canPartialRefund: true,
-      pricing: { bases: ["final", "net"] as const, tax: ["none", "provider"] as const, maxDiscounts: 1, promotionCodes: "alone" as const, collectsCustomerDetails: true, collectsTaxIds: false, merchantOfRecord: null } } }] }; }
+      pricing: { bases: ["final", "net"] as const, tax: ["none", "provider"] as const, maxDiscounts: 1, promotionCodes: "alone" as const, collectsCustomerDetails: true, collectsTaxIds: false, merchantOfRecord: null },
+      checkoutExpiry: this.checkoutExpiry } }] }; }
   async execute(command: PhisPaymentProviderCommand): Promise<PhisPaymentProviderExecution> {
     this.calls[command.action] = (this.calls[command.action] ?? 0) + 1;
+    if (command.action === "create") this.lastCreate = structuredClone({ ...command, signal: undefined }) as unknown as typeof this.lastCreate;
     this.entered?.(); if (this.pause) await this.pause;
     let state = this.states.get(command.paymentId);
     if (command.action === "create") {
@@ -95,7 +99,7 @@ describe("durable Payment execution", () => {
           consumerAddonId, operations: ["read", "create", "complete", "refresh", "capture", "cancel", "refund"], merchantActions: { capture: policy, cancel: policy, refund: policy },
         })),
       }, false);
-      await recordPhisPaymentProfileProbe(pool, profile, "acct_test", "test");
+      await recordPhisPaymentProfileProbe(pool, profile, "acct_test", "test", "CHF", []);
       await setPhisPaymentProfileEnabled(pool, (await readPhisPaymentProfile(pool, selected.id, "sandbox"))!, true);
     }
   });
@@ -465,6 +469,101 @@ describe("durable Payment execution", () => {
     state.totals = null; state.status = "captured"; state.capturedMinor = "2000"; state.checkout = null;
     await expect(api.refresh(result.payment.id)).rejects.toMatchObject({ code: "provider_unavailable" });
     expect((await api.get(result.payment.id))!.status).toBe("awaiting_customer");
+  });
+  it("ends a checkout when the consumer says, within what the method declares, and refuses any other end", async () => {
+    const api = await service();
+    const at = (seconds: number) => new Date(Date.now() + seconds * 1000).toISOString();
+    // A method that declares no end cannot be given one.
+    await expect(api.create(input({ expiresAt: at(3600) }))).rejects.toMatchObject({ code: "unsupported_operation" });
+    remote.checkoutExpiry = { minSeconds: 1800, maxSeconds: 86_400 }; remote.lastCreate = null;
+    try {
+      for (const expiresAt of [at(600), at(90_000), at(-60), "tomorrow", "2026-11-22 10:00:00", "2026-11-22T10:00:00", 1_800_000_000]) {
+        await expect(api.create(input({ expiresAt }))).rejects.toMatchObject({ code: "invalid_input" });
+      }
+      expect(remote.lastCreate).toBeNull();
+      // An offset is an instant like any other; Core sends it in UTC.
+      const hour = new Date(Date.now() + 3_600_000);
+      const local = new Date(hour.getTime() + 3_600_000).toISOString().replace("Z", "+01:00");
+      const args = input({ expiresAt: local });
+      const result = await api.create(args);
+      expect(remote.lastCreate).toMatchObject({ paymentId: result.payment.id, expiresAt: hour.toISOString() });
+      expect(result.payment.status).toBe("awaiting_customer");
+      expect((await api.create(args)).operation.id).toBe(result.operation.id);
+      await expect(api.create({ ...args, expiresAt: at(7200) })).rejects.toMatchObject({ code: "idempotency_conflict" });
+      // Without an end nothing is sent, as before.
+      await api.create(input());
+      expect(remote.lastCreate).not.toHaveProperty("expiresAt");
+    } finally { remote.checkoutExpiry = null; remote.lastCreate = null; }
+  });
+  it("records each currency beside the others, reads the reach from the recording and asks again at most once a minute", async () => {
+    const pool = await requirePhiTestDatabase();
+    const policy = { roles: [], jobs: [], events: [] };
+    let profile = await writePhisPaymentProfile(pool, site.id, providerBinding.addonId, {
+      key: "reach", providerKey: "@pgtest/payment-provider/test", mode: "test", credentialReferences: {},
+      grants: [{ consumerAddonId: CONSUMER, operations: ["read"], merchantActions: { capture: policy, cancel: policy, refund: policy, profileRefresh: policy } }],
+    }, false);
+    const asked: { currency: string; tax: string; minor: string }[] = [];
+    let countries = ["CH", "DE"];
+    let failing = false;
+    const provider = { async probe(input: Parameters<PhisPaymentProviderV1["probe"]>[0]) {
+      asked.push({ currency: input.amount.currency, tax: input.pricing.tax, minor: input.amount.minor });
+      if (failing) throw new Error("Provider is unavailable");
+      return { merchantIdentity: "acct_test", mode: "test" as const, methods: [
+        { methodKey: "card", title: "Card", features: { captureModes: ["automatic"], checkoutKinds: ["redirect"], canPartialCapture: false, canCancel: true, canRefund: true, canPartialRefund: true,
+          pricing: { bases: ["final"], tax: ["none", "merchant-of-record"], maxDiscounts: 0, promotionCodes: "none", collectsCustomerDetails: true, collectsTaxIds: false,
+            merchantOfRecord: { countries, taxCategories: ["digital-goods"], businessTaxIds: ["charge"] } } } },
+        { methodKey: "local", title: "Local", features: { captureModes: ["automatic"], checkoutKinds: ["redirect"], canPartialCapture: false, canCancel: true, canRefund: true, canPartialRefund: true,
+          pricing: { bases: ["final"], tax: ["none"], maxDiscounts: 0, promotionCodes: "none", collectsCustomerDetails: false, collectsTaxIds: false, merchantOfRecord: null } } },
+      ] };
+    } } as unknown as PhisPaymentProviderV1;
+    const engine = (unauthenticated = false, merchant = true) => new PhisPaymentEngine({ pool, scope: { siteId: site.id, siteKey: site.key, consumerAddonId: CONSUMER },
+      signal: new AbortController().signal, publicBaseUrl: async () => `https://${site.key}.invalid`, resolveProvider: async () => provider,
+      merchantAuthorized: async () => merchant, unauthenticated });
+    const first = await provider.probe({ amount: { currency: "CHF", minor: "100" }, captureMode: "automatic", checkoutKind: "redirect",
+      pricing: { basis: "final", tax: "none", discounts: 0, promotionCodes: "none" }, signal: new AbortController().signal });
+    const recordedAt = await recordPhisPaymentProfileProbe(pool, profile, "acct_test", "test", "CHF", first.methods);
+    await setPhisPaymentProfileEnabled(pool, (await readPhisPaymentProfile(pool, site.id, "reach"))!, true);
+    profile = (await readPhisPaymentProfile(pool, site.id, "reach"))!;
+    expect(Object.keys(profile.methods!)).toEqual(["CHF"]);
+    expect(profile.methods!.CHF!.probedAt).toBe(recordedAt);
+    expect(new Date(recordedAt).toISOString()).toBe(recordedAt);
+
+    // A hook reads the recording and asks nobody; it may not ask again.
+    const reach = { currency: "CHF", probedAt: recordedAt, merchantOfRecord: { countries: ["CH", "DE"], taxCategories: ["digital-goods"], businessTaxIds: ["charge"] } };
+    expect(await engine(true).profileReach({ profileKey: "reach", currency: "CHF" })).toEqual(reach);
+    expect(await engine(true).profileReach({ profileKey: "reach", currency: "EUR" })).toBeNull();
+    await expect(engine(true).refreshProfileReach({ profileKey: "reach", currencies: ["CHF"] })).rejects.toMatchObject({ code: "forbidden" });
+    await expect(engine(false, false).refreshProfileReach({ profileKey: "reach", currencies: ["CHF"] })).rejects.toMatchObject({ code: "forbidden" });
+    asked.length = 0;
+
+    // Asked a moment ago (the recording above): too soon.
+    await expect(engine().refreshProfileReach({ profileKey: "reach", currencies: ["CHF"] })).rejects.toMatchObject({ code: "rate_limited" });
+    expect(asked).toEqual([]);
+
+    const ago = () => pool.query("UPDATE phis.payment_profiles SET probed_at = NOW() - INTERVAL '2 minutes' WHERE site_id = $1 AND key = 'reach'", [site.id]);
+    await ago(); countries = ["CH", "DE", "FR"];
+    const refreshed = await engine().refreshProfileReach({ profileKey: "reach", currencies: ["EUR", "CHF"] });
+    expect(asked).toEqual([{ currency: "EUR", tax: "none", minor: "100" }, { currency: "CHF", tax: "none", minor: "100" }]);
+    expect(refreshed.map(entry => [entry.currency, entry.merchantOfRecord?.countries])).toEqual([["EUR", ["CH", "DE", "FR"]], ["CHF", ["CH", "DE", "FR"]]]);
+    profile = (await readPhisPaymentProfile(pool, site.id, "reach"))!;
+    expect(Object.keys(profile.methods!).sort()).toEqual(["CHF", "EUR"]);
+    expect(profile.revision).toBe(2);
+    expect(await engine(true).profileReach({ profileKey: "reach", currency: "EUR" })).toEqual(refreshed[0]);
+    await expect(engine().refreshProfileReach({ profileKey: "reach", currencies: ["CHF"] })).rejects.toMatchObject({ code: "rate_limited" });
+
+    // Two at once ask once.
+    await ago(); asked.length = 0;
+    const both = await Promise.allSettled([engine().refreshProfileReach({ profileKey: "reach", currencies: ["CHF"] }), engine().refreshProfileReach({ profileKey: "reach", currencies: ["CHF"] })]);
+    expect(both.filter(entry => entry.status === "fulfilled")).toHaveLength(1);
+    expect(both.find(entry => entry.status === "rejected")).toMatchObject({ reason: { code: "rate_limited" } });
+    expect(asked).toHaveLength(1);
+
+    // A Provider that fails leaves what was recorded.
+    await ago(); failing = true;
+    const before = (await readPhisPaymentProfile(pool, site.id, "reach"))!.methods;
+    await expect(engine().refreshProfileReach({ profileKey: "reach", currencies: ["CHF"] })).rejects.toMatchObject({ code: "provider_unavailable" });
+    expect((await readPhisPaymentProfile(pool, site.id, "reach"))!.methods).toEqual(before);
+    await expect(engine().refreshProfileReach({ profileKey: "reach", currencies: ["CHF"] })).rejects.toMatchObject({ code: "rate_limited" });
   });
   it("retired profiles reject new payments and preserve access to existing evidence", async () => {
     const api = await service(); const args = input(); const result = await api.create(args); const pool = await requirePhiTestDatabase();

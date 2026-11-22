@@ -34,6 +34,14 @@ describe("the phis command line", () => {
     expect(() => parsePhisArgv(["site", "list", "-x"])).toThrow(/Unknown flag: -x/);
   });
 
+  it("refuses a flag given twice rather than keeping one of the two", () => {
+    expect(() => parsePhisArgv(["payment", "profile", "probe", "--key", "k", "--currency", "CHF", "--currency=EUR"]))
+      .toThrow(/phis payment profile probe takes --currency once/);
+    expect(() => parsePhisArgv(["schema", "drop", "--force", "--force"])).toThrow(/takes --force once/);
+    expect(parsePhisArgv(["payment", "profile", "probe", "--key", "k", "--currency", "CHF,EUR"]).flags.get("currency"))
+      .toBe("CHF,EUR");
+  });
+
   it("reads a flag by its command, where one name is a switch in one place and a value in another", () => {
     expect(parsePhisArgv(["site", "admin", "--site", "s", "--email", "a@b.test", "--revoke"]).flags.get("revoke"))
       .toBe(true);

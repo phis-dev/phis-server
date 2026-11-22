@@ -33,7 +33,7 @@ describe("stored payment methods and charges without the customer", () => {
         { consumerAddonId: OTHER_CONSUMER, operations: ["read", "create", "refresh"], merchantActions: { capture: policy, cancel: policy, refund: policy } },
       ],
     }, false);
-    await recordPhisPaymentProfileProbe(pool, profile, "acct_stored", "test");
+    await recordPhisPaymentProfileProbe(pool, profile, "acct_stored", "test", "CHF", []);
     await setPhisPaymentProfileEnabled(pool, (await readPhisPaymentProfile(pool, site.id, "sandbox"))!, true);
   });
   afterAll(async () => {

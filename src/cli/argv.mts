@@ -163,6 +163,14 @@ export const PHIS_COMMAND_FLAGS: Record<string, FlagSpec> = {
   "cdn nginx": { site: S, upstream: S, tls: B, write: B },
   "cdn tls": { site: S, upstream: S, email: S },
 
+  "payment profile list": { site: S },
+  "payment profile add": { site: S, file: S },
+  "payment profile set": { site: S, file: S },
+  // Several currencies are one value, comma-separated (`--currency CHF,EUR`).
+  "payment profile probe": { site: S, key: S, currency: S },
+  "payment profile enable": { site: S, key: S, currency: S },
+  "payment profile retire": { site: S, key: S },
+
   "product list": { site: S, supplier: S, publisher: S, state: S, unreleased: B },
   "product show": { site: S, product: S },
   "product release": { site: S, product: S },
@@ -308,6 +316,10 @@ export function parsePhisArgv(argv: readonly string[]): ParsedArgv & { command: 
         flags.set(token.name, true);
       }
       continue;
+    }
+    // Given twice, one of the two would win without a word: `--currency CHF --currency EUR` probes EUR alone.
+    if (flags.has(token.name)) {
+      throw new Error(`${label} takes ${token.raw.split("=")[0]} once.`);
     }
     if (kind === "boolean") {
       if (token.inline !== undefined) {

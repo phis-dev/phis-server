@@ -450,7 +450,8 @@ function buildOperations(
     },
     async update(name, args = {}) {
       // The row as it stands after the write. A refusal comes back as an empty result and so answers
-      // null, which is what a row that was never there answers too.
+      // null, which is what a row that was never there answers too -- and so does a declared `where`
+      // that did not hold, which is how a repeated change of state learns it already happened.
       return (await run(db, bound, name, "update", args)).rows[0] ?? null;
     },
     async delete(name, args = {}) {

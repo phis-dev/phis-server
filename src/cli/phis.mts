@@ -160,7 +160,10 @@ import {
 } from "./storage-purge.mts";
 import { sweepPhisAddonAssets } from "../db/server-addon-asset-sweep.mts";
 import { PHI_MAINTENANCE_TASKS, runPhiMaintenance } from "./maintain.mts";
-import { runPhisPaymentProfileCommand, recoverPhisPayments } from "./payments.mts";
+import {
+  readPhisPaymentProviderRegistrations, recoverPhisPayments, reprobeUpgradedPhisPaymentProviders, runPhisPaymentProfileCommand,
+  type PhisPaymentReprobe,
+} from "./payments.mts";
 import { runPhisEntitlementCommand } from "./entitlements.mts";
 import { runPhisProductCommand } from "./products.mts";
 import { reconcileProductSupplyAfterChange, syncAddonProductsAtSite } from "./product-sync.mts";
@@ -493,8 +496,8 @@ Usage:
   phis payment profile list   --site <site key>
   phis payment profile add    --site <site key> --file <profile.json>
   phis payment profile set    --site <site key> --file <profile.json>
-  phis payment profile probe  --site <site key> --key <profile key> [--currency CHF]
-  phis payment profile enable --site <site key> --key <profile key> [--currency CHF]
+  phis payment profile probe  --site <site key> --key <profile key> --currency <CUR>[,<CUR>...]
+  phis payment profile enable --site <site key> --key <profile key> --currency <CUR>[,<CUR>...]
   phis payment profile retire --site <site key> --key <profile key>
 
   phis product list   --site <site key> [--supplier <@scope/name>] [--publisher <reference>]
@@ -1181,6 +1184,27 @@ async function getSiteByKey(siteKeyInput: string): Promise<SiteDeploymentRecord>
  * Every stored secret is unreadable without it, so a CLI that silently generated one on demand would
  * quietly orphan everything written under the previous key.
  */
+/** A payment Provider's credential, read the way the profile commands and the reprobe after an upgrade read it. */
+function readPaymentSecret(reference: string) {
+  return readPhisSecretWithDb(getPool(), reference, requireSecretEncryptionKey());
+}
+
+/**
+ * What a migrate or reconcile that registered a new payment Provider release asked again. A profile that
+ * could not be asked keeps what was recorded before; the warning says so and the command still succeeds.
+ */
+function reportPaymentReprobe(reprobe: PhisPaymentReprobe) {
+  for (const entry of reprobe.reprobed) {
+    console.log(`Asked the payment Provider again for profile ${entry.profileKey} of ${entry.site} in ${entry.currency}.`);
+  }
+  for (const entry of reprobe.warnings) {
+    console.warn(
+      `Warning: profile ${entry.profileKey} of ${entry.site} could not be asked again${entry.currency ? ` in ${entry.currency}` : ""}` +
+      ` (${entry.message}); what was recorded before stays.`,
+    );
+  }
+}
+
 function requireSecretEncryptionKey(): PhiSecretEncryptionKey {
   const runtime = readPhiRuntimeConfigSync(configRoot);
   const keyHex = runtime.secrets?.encryptionKey?.trim() ?? "";
@@ -3777,8 +3801,7 @@ async function main() {
   }
 
   if (group === "payment" && command === "profile") {
-    const result = await runPhisPaymentProfileCommand(configRoot, getPool(), remaining[0] ?? "", flags,
-      reference => readPhisSecretWithDb(getPool(), reference, requireSecretEncryptionKey()));
+    const result = await runPhisPaymentProfileCommand(configRoot, getPool(), remaining[0] ?? "", flags, readPaymentSecret);
     if (json) printJson({ ok: true, action: `payment.profile.${remaining[0]}`, ...result });
     else console.log(JSON.stringify(result, null, 2));
     return;
@@ -4087,10 +4110,13 @@ async function main() {
   }
 
   if (group === "addon" && command === "migrate") {
+    const providers = await readPhisPaymentProviderRegistrations(configRoot, getPool());
     const result = await migrateAddons(configRoot, flags, getMigrationPool(), getServingRole());
+    const paymentReach = await reprobeUpgradedPhisPaymentProviders(configRoot, getPool(), providers, readPaymentSecret);
     if (json) {
-      printJson(result);
+      printJson({ ...result, paymentReach });
     } else {
+      reportPaymentReprobe(paymentReach);
       for (const outcome of result.outcomes) {
         if (outcome.action === "no-schema") {
           console.log(`${outcome.addonId} owns no tables.`);
@@ -4749,13 +4775,16 @@ async function main() {
   }
 
   if (group === "addon" && command === "reconcile") {
+    const providers = await readPhisPaymentProviderRegistrations(configRoot, getPool());
     const result = await reconcileAddons(configRoot, flags, getPool());
+    const paymentReach = await reprobeUpgradedPhisPaymentProviders(configRoot, getPool(), providers, readPaymentSecret);
     if (json) {
-      printJson(result);
+      printJson({ ...result, paymentReach });
     } else {
       console.log(
         `Reconciled release ${result.releaseBuildId} with ${result.addons.length} server Add-on(s).`,
       );
+      reportPaymentReprobe(paymentReach);
     }
     return;
   }

@@ -3,6 +3,15 @@ import type {
   PhisPaymentProviderCommand, PhisPaymentRefund, PhisPaymentProviderProbe, PhisPaymentStoredMethod, PhisPaymentSubscription,
 } from "@phis/contracts/payments";
 
+/**
+ * What the Provider answered when Core last asked in one currency: the methods of that probe, as
+ * validated. `phis.payment_profiles.methods`, keyed by the uppercase currency code.
+ */
+export type PhisPaymentProfileProbeRecord = {
+  probedAt: string;
+  methods: PhisPaymentProviderProbe["methods"];
+};
+
 export type PhisPaymentProfile = PhisPaymentProfileDraft & {
   siteId: number;
   providerAddonId: string;
@@ -10,8 +19,10 @@ export type PhisPaymentProfile = PhisPaymentProfileDraft & {
   revision: number;
   enabled: boolean;
   retired: boolean;
+  /** When Core last asked the Provider about this profile, in any currency. */
   probedAt: string | null;
-  methods: PhisPaymentProviderProbe["methods"] | null;
+  /** The last probe in each currency it was asked in; `null` until the first. */
+  methods: Readonly<Record<string, PhisPaymentProfileProbeRecord>> | null;
 };
 
 export type PhisStoredPayment = {

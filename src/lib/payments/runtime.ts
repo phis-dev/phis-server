@@ -84,7 +84,10 @@ export function buildPhisPaymentsCapability(input: {
     },
   });
   return Object.freeze({
-    listMethods: engine.listMethods.bind(engine), create: afterPaymentCommit(scope.siteId, engine.create.bind(engine)), get: engine.get.bind(engine),
+    listMethods: engine.listMethods.bind(engine),
+    // Reads and writes the profile's recording only: no payment changes, so there is no event to deliver.
+    profileReach: engine.profileReach.bind(engine), refreshProfileReach: engine.refreshProfileReach.bind(engine),
+    create: afterPaymentCommit(scope.siteId, engine.create.bind(engine)), get: engine.get.bind(engine),
     getOperation: engine.getOperation.bind(engine), getRefund: engine.getRefund.bind(engine), complete: afterPaymentCommit(scope.siteId, engine.complete.bind(engine)),
     refresh: afterPaymentCommit(scope.siteId, engine.refresh.bind(engine)), capture: afterPaymentCommit(scope.siteId, engine.capture.bind(engine)),
     cancel: afterPaymentCommit(scope.siteId, engine.cancel.bind(engine)), refund: afterPaymentCommit(scope.siteId, engine.refund.bind(engine)),

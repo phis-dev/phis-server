@@ -1197,7 +1197,8 @@ Three things Core does here that an Add-on cannot influence:
 - **`update` and `delete` are checked before they run.** Both address exactly one row by its primary
   key, and Core applies the same row authority `authorization:v1` answers with. A refused mutation
   answers `null`, which is also what a missing row answers: telling the two apart would report the
-  existence of a row the caller may not have.
+  existence of a row the caller may not have. An update whose declared `where` did not hold answers the
+  same `null`.
 
   Every mutation answers with the row it wrote, and `null` for that same pair of refusals -- which
   withholds exactly as much, since a row comes back only where the write actually happened. On an
@@ -2506,7 +2507,26 @@ The declaration form carries what a real query needs and refuses what does not s
   they must be `NOT NULL`. There is no ordering by an aggregated value: ranking by an average would page
   on a key that is neither unique nor known before the group is computed.
 - an `update` or `delete` addresses exactly one row by its primary key, through `idParameter`; there is
-  no `where` and no bulk form. Every mutation answers with the row it wrote.
+  no bulk form. Every mutation answers with the row it wrote.
+- an `update` may carry a `where`, joined to the key with `AND`: the same conditions a select takes,
+  `flags`, `compare` and `whenPresent` included. It narrows the one row the key addresses and never
+  reaches another; when it does not hold, nothing is written and the answer is `null`, the same as for
+  an id that is not there. That is what makes a change of state happen once. Deciding in the handler and
+  writing afterwards leaves a gap in which a second delivery of the same event decides the same and
+  writes again; here the test and the write are one statement, and under READ COMMITTED a concurrent
+  writer to the row is waited for and the condition tested again against what it left. A `delete` takes
+  no `where`: validation refuses one rather than ignoring it, since it would delete the row whether or
+  not the condition held.
+- an `update` may add to a column rather than overwrite it, with `{ column, add }` in place of
+  `{ column, value }`: `column = column + add`, negative to take away. Reading a count, doing the
+  arithmetic in the handler and writing it back loses every change that reached the row in between;
+  here the database adds to the row it is changing. Only on an integer column (`smallInteger`, `integer`,
+  `bigInteger`), only in an `update`, and the amount is an integer literal or a non-nullable `integer` or
+  `bigInteger` parameter -- a null amount would make the column null. A null column stays null. A `range`
+  constraint on the column still holds and refuses a sum outside it with an error; where falling short is
+  an expected outcome, a `where` says so and the answer is `null` instead. Together: stock is taken only
+  while there is enough with `add: -quantity` beside `compare stock >= quantity`, and a flag bit is set
+  once with `add: BIT` beside `flags none BIT`.
 - several calls run as one unit of work inside `data:v1`'s `transaction(body)`. Without it, every write
   stands alone and no invariant spanning two tables can hold.
 - there are no joins, not even between the Add-on's own tables. A join onto a Core table would fix
@@ -2515,8 +2535,8 @@ The declaration form carries what a real query needs and refuses what does not s
 
 #### Condition and value reference
 
-A `where` is a tree built from a closed set of conditions (`PhisAddonQueryCondition` in
-`@phis/contracts/addon`, `phis-contracts/src/queries.ts`). `src/lib/addons/query-descriptor.ts` validates
+A `where` -- on a select, an aggregate or an update -- is a tree built from a closed set of conditions
+(`PhisAddonQueryCondition` in `@phis/contracts/addon`, `phis-contracts/src/queries.ts`). `src/lib/addons/query-descriptor.ts` validates
 it when the manifest is admitted, and `src/lib/addons/query-sql.ts` turns it into the statement. Every
 `column` must name a column of the query's table; the tree nests at most eight levels deep.
 
@@ -2541,6 +2561,17 @@ comes from:
 | `literal` | `{ kind: "literal", value }` | A string, number or boolean fixed in the descriptor, bound like a parameter rather than written into the statement. |
 | `actor` | `{ kind: "actor" }` | The acting user's id, substituted by Core so a query cannot be aimed at somebody else. Null when nobody is acting, which matches nothing. |
 | `now` | `{ kind: "now" }` | The database's current instant (`NOW()`), not the process's. |
+
+An assignment in an insert's `values` or an update's `set` takes one of two shapes
+(`PhisAddonQueryAssignment`, `PhisAddonQueryIncrement`), never both at once, and names a column at most
+once per query:
+
+| Assignment | Shape | Statement | Rules |
+| --- | --- | --- | --- |
+| value | `{ column, value }` | `column = value` | A `json` column takes a `json` parameter and nothing else, and a `json` parameter goes nowhere else. |
+| add | `{ column, add }` | `column = column + add` | Only in an `update`. The column must be `smallInteger`, `integer` or `bigInteger`; `add` an integer literal or a non-nullable, non-list `integer` or `bigInteger` parameter. A null column stays null; a `range` constraint still refuses a sum outside it. |
+
+Core's scope columns and a slot's mirror column are never assigned.
 
 A parameter is declared per query with a `name`, a `type` (`integer`, `bigInteger`, `text`, `boolean`,
 `instant`, `uuid` or `json`), and optionally `nullable` and `list`. A `json` parameter cannot be a list.

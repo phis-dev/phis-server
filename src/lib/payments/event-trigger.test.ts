@@ -8,7 +8,7 @@ vi.mock("../db", () => ({ getPool: () => ({}) }));
 vi.mock("../addons/roles-capability.ts", () => ({ buildPhisAddonRolesCapability: () => ({}) }));
 vi.mock("../addons/event-trigger.ts", () => ({ schedulePhisAddonEventDelivery: vi.fn() }));
 vi.mock("./engine.ts", () => ({ PhisPaymentEngine: class {
-  listMethods = state.action; create = state.action; get = state.action; getOperation = state.action; getRefund = state.action;
+  listMethods = state.action; profileReach = state.action; refreshProfileReach = state.action; create = state.action; get = state.action; getOperation = state.action; getRefund = state.action;
   complete = state.action; refresh = state.action; capture = state.action; cancel = state.action; refund = state.action;
   getStoredMethod = state.action; listStoredMethods = state.action; removeStoredMethod = state.action;
   createSubscription = state.action; getSubscription = state.action; listSubscriptionPeriods = state.action; cancelSubscription = state.action;
@@ -24,7 +24,7 @@ it.each(["create", "complete", "refresh", "capture", "cancel", "refund", "remove
   expect(await (api()[method] as (...args: unknown[]) => Promise<unknown>)()).toBe("result");
   expect(state.committed).toBe(true); expect(schedulePhisAddonEventDelivery).toHaveBeenCalledWith(17);
 });
-it.each(["listMethods", "get", "getOperation", "getRefund", "getStoredMethod", "listStoredMethods", "getSubscription", "listSubscriptionPeriods"] as const)("keeps %s a read without delivery writes", async method => {
+it.each(["listMethods", "profileReach", "refreshProfileReach", "get", "getOperation", "getRefund", "getStoredMethod", "listStoredMethods", "getSubscription", "listSubscriptionPeriods"] as const)("keeps %s a read without delivery writes", async method => {
   state.action.mockResolvedValue(null); await (api()[method] as (...args: unknown[]) => Promise<unknown>)();
   expect(schedulePhisAddonEventDelivery).not.toHaveBeenCalled();
 });

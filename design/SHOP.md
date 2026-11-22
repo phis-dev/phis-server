@@ -351,14 +351,21 @@ draft already has:
   "merchantActions": {
     "capture": { "roles": [], "jobs": [], "events": [] },
     "cancel":  { "roles": ["manager"], "jobs": [], "events": [] },
-    "refund":  { "roles": ["manager"], "jobs": [], "events": [] }
+    "refund":  { "roles": ["manager"], "jobs": [], "events": [] },
+    "profileRefresh": { "roles": ["manager"], "jobs": [], "events": [] }
   }
 }]
 ```
 
+`profileRefresh` lets a manager have Core ask the Provider again for what the profile sells as Merchant of
+Record ("Refresh provider countries" on the Destinations tab); without it only the operator's `phis payment
+profile probe` does.
+
 A destination is created in the management surface by a manager and names an enabled, probed merchant
 profile; saving one whose profile's methods do not support the chosen policy (`listMethods` with the
-policy as selector answers nothing) is refused with the reason. A Swiss Site with Stripe for domestic
+policy as selector answers nothing) is refused with the reason. Under `merchant-of-record` its countries are
+checked against the profile's recorded reach in its currency (`profileReach`, PAYMENTS.md section 14), the
+same recording the public `destinations` hook reads, so what was accepted at saving is what the hook offers. A Swiss Site with Stripe for domestic
 sales and a Merchant of Record for the rest has two profiles and two destinations: `CH` on
 `stripe-ch` with `net`/`provider`, and `*` on `paddle-intl` with `net`/`merchant-of-record`. A Site that
 sells only in Switzerland has one destination and never sees the second profile.

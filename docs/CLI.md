@@ -1438,8 +1438,8 @@ stdin rather than on the command line.
 phis payment profile list --site demo
 phis payment profile add --site demo --file /protected/path/stripe-sandbox.json
 phis payment profile set --site demo --file /protected/path/stripe-sandbox.json
-phis payment profile probe --site demo --key stripe-sandbox --currency CHF
-phis payment profile enable --site demo --key stripe-sandbox --currency CHF
+phis payment profile probe --site demo --key stripe-sandbox --currency CHF,EUR
+phis payment profile enable --site demo --key stripe-sandbox --currency CHF,EUR
 phis payment profile retire --site demo --key stripe-sandbox
 phis maintain --task payments --dry-run
 phis maintain --task payments
@@ -1462,13 +1462,17 @@ Add/set file (references only; its policy names must exist in the installed cons
     "merchantActions": {
       "capture": { "roles": [], "jobs": [], "events": [] },
       "cancel": { "roles": [], "jobs": [], "events": [] },
-      "refund": { "roles": [], "jobs": [], "events": [] }
+      "refund": { "roles": [], "jobs": [], "events": [] },
+      "profileRefresh": { "roles": [], "jobs": [], "events": [] }
     }
   }]
 }
 ```
 
-The consumer must require `payments:v1` and declare `payment.changed`. Empty merchant policies permit
+The consumer must require `payments:v1` and declare `payment.changed`. `subscriptionEnd`,
+`subscriptionPrice` and `profileRefresh` are optional; absent, nobody may take that action.
+`profileRefresh` is who may make Core ask the Provider again for the profile's reach
+(`refreshProfileReach`, [PAYMENTS.md](../PAYMENTS.md#14-profile-reach)), such as a Shop's manager. Empty merchant policies permit
 only an authenticated operator or Site Admin, within that consumer/profile grant. Add starts disabled;
 set preserves the pinned merchant/provider/mode, increments the revision and disables new creation
 until reprobed/enabled. Changing provider, account or mode requires a new key. Retired keys are not
@@ -1477,10 +1481,26 @@ financial purge is offered. Grant removal hides existing records from that consu
 financial evidence.
 
 Probe is read-only against the PSP and records merchant identity/mode/method features; a changed
-merchant or mode fails closed. Enable probes again and requires every ready serving instance (the
+merchant or mode fails closed. `--currency` is required and names one or more currencies, comma-separated
+(`CHF,EUR`); there is no default. The Provider is asked once per currency and every currency is answered
+before any is recorded, so a currency in which it offers no method refuses the command
+(`method_unavailable`) and records nothing. Each currency is recorded beside the ones recorded before; a
+currency not named keeps its recording. What a consumer reads as the profile's reach in a currency
+(`profileReach`) is this recording, so a profile is probed in every currency a consumer sells in. Enable
+probes again and requires every ready serving instance (the
 existing 90-second readiness window) to carry the installed Provider version and Core Payment
 capabilities. It cannot establish that a webhook endpoint is reachable. Configure the separate
 Stripe endpoint signing secret and validate real notification delivery before relying on fulfilment.
+
+When `phis addon migrate` or `phis addon reconcile` registers a new release of a payment Provider Add-on
+(after `phis addon upgrade`), every enabled profile it serves is probed again in each currency it was last
+recorded in. A profile or currency that cannot be asked -- a missing secret, a Provider that does not
+answer, another merchant -- keeps what was recorded before and is reported as a warning (`paymentReach`
+in the JSON output); the command itself still succeeds.
+
+Before v1 the recording has one shape. A profile probed by an earlier release holds a list in `methods`:
+sweep it (`UPDATE phis.payment_profiles SET methods = NULL WHERE jsonb_typeof(methods) = 'array'`) and
+probe it again with every currency it serves.
 
 The maintenance task selects at most 100 unresolved payments, reconciles stored remote commands and
 reports unavailable/concurrent claims. Dry-run changes nothing and makes no Provider calls. Retries

@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { PhisAddonManifestV1 } from "@phis/contracts/addon";
 import { buildPhisPaymentProviderContext } from "./provider.ts";
 import { phisPaymentMethodSupports, phisPaymentPricingSelector, phisPaymentReturnUrl, validatePhisPaymentMoney, validatePhisPaymentPricing,
-  validatePhisPaymentProfileDraft, validatePhisPaymentProviderProbe } from "./validation.ts";
+  validatePhisPaymentExpiresAt, validatePhisPaymentProfileDraft, validatePhisPaymentProviderProbe } from "./validation.ts";
 import type { PhisPaymentProfile } from "./types.ts";
 
 describe("Payment authority inputs", () => {
@@ -25,6 +25,23 @@ describe("Payment authority inputs", () => {
     // Every Provider supports the fixed-total policy; a probe that withholds it is refused.
     const withheld = { ...probe, methods: [{ ...probe.methods[0]!, features: { ...features, pricing: { ...pricing, bases: ["net"] } } }] };
     expect(() => validatePhisPaymentProviderProbe(withheld as unknown as typeof probe, { merchantIdentity: "acct_test", mode: "test" })).toThrow();
+  });
+  it("takes the ends a method's checkout can be given, and a consumer's end as an instant", () => {
+    const pricing = { bases: ["final"] as const, tax: ["none"] as const, maxDiscounts: 0, promotionCodes: "none" as const, collectsCustomerDetails: false, collectsTaxIds: false, merchantOfRecord: null };
+    const features = { captureModes: ["automatic"] as const, checkoutKinds: ["redirect"] as const, canPartialCapture: false, canCancel: true, canRefund: true, canPartialRefund: true, pricing };
+    const probe = (checkoutExpiry: unknown) => validatePhisPaymentProviderProbe({ merchantIdentity: "acct_test", mode: "test", methods: [{ methodKey: "card", title: "Card", features: { ...features, checkoutExpiry } }] } as never,
+      { merchantIdentity: "acct_test", mode: "test" }).methods[0]!.features.checkoutExpiry;
+    expect(probe({ minSeconds: 1800, maxSeconds: 86_400, extra: 1 })).toEqual({ minSeconds: 1800, maxSeconds: 86_400 });
+    expect(probe(undefined)).toBeNull();
+    expect(probe(null)).toBeNull();
+    for (const bounds of [{ minSeconds: 0, maxSeconds: 60 }, { minSeconds: 120, maxSeconds: 60 }, { minSeconds: 60, maxSeconds: 32 * 86_400 }, { minSeconds: 1.5, maxSeconds: 60 }, { minSeconds: 60 }]) {
+      expect(() => probe(bounds)).toThrow();
+    }
+    expect(validatePhisPaymentExpiresAt(undefined)).toBeNull();
+    expect(validatePhisPaymentExpiresAt("2026-11-22T10:00:00+01:00")).toBe("2026-11-22T09:00:00.000Z");
+    for (const value of ["2026-11-22", "2026-11-22T10:00", "2026-11-22T10:00:00", "2026-13-40T10:00:00Z", "tomorrow", 1_800_000_000]) {
+      expect(() => validatePhisPaymentExpiresAt(value)).toThrow();
+    }
   });
   it("takes a Merchant of Record's reach exactly when the method sells as one", () => {
     const pricing = { bases: ["final", "net"] as const, tax: ["none", "merchant-of-record"] as const, maxDiscounts: 0, promotionCodes: "none" as const, collectsCustomerDetails: true, collectsTaxIds: false,
@@ -100,5 +117,13 @@ describe("Payment authority inputs", () => {
     const invalid = structuredClone(draft); invalid.grants[0]!.merchantActions.refund.roles = ["admin-of-another-addon"];
     expect(() => validatePhisPaymentProfileDraft(invalid, "demo", provider, { [consumer.addonId]: consumer })).toThrow();
     expect(() => validatePhisPaymentProfileDraft(draft, "demo", provider, { [consumer.addonId]: { ...consumer, eventHandlers: [] } })).toThrow();
+    // Who may ask the Provider again for the profile's reach: optional, checked like the others where stated.
+    const refresh = structuredClone(draft) as typeof draft & { grants: { merchantActions: Record<string, unknown> }[] };
+    refresh.grants[0]!.merchantActions.profileRefresh = { ...empty, roles: ["merchant"] };
+    expect(validatePhisPaymentProfileDraft(refresh, "demo", provider, { [consumer.addonId]: consumer })).toEqual(refresh);
+    refresh.grants[0]!.merchantActions.profileRefresh = { ...empty, roles: ["admin-of-another-addon"] };
+    expect(() => validatePhisPaymentProfileDraft(refresh, "demo", provider, { [consumer.addonId]: consumer })).toThrow();
+    refresh.grants[0]!.merchantActions.profileRefresh = { roles: [] };
+    expect(() => validatePhisPaymentProfileDraft(refresh, "demo", provider, { [consumer.addonId]: consumer })).toThrow();
   });
 });
