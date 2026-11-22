@@ -5,8 +5,10 @@ step 1 begins: the product directory `products:v1` (section 4: the tables `produ
 `product_attributes`, the capability, the manifest field `products` and its registration per Site, the event
 `product.changed`, the withdrawal and the return of a supplier's products, the operator's `phis product`),
 and in `entitlements:v1` the entry's kind as a product, the operator's allowance per source (section 5
-points 1 and 6) and the removal of `kinds()` and `entitlementKinds`. Also built: an entry's end as a subscription of `payments:v1` with the Site's grace time (section 5 point 2: `grant` takes `subscriptionId`, validity is derived on read, `phis site set --entitlement-grace-days`, the expiry job and payments' writes announce it). Not built: delivery state (point 3), the resolving of bundles (point 4: a
-grant on a bundle writes its one entry), the two fields on payment line items (section 6), the questions
+points 1 and 6) and the removal of `kinds()` and `entitlementKinds`. Also built: an entry's end as a subscription of `payments:v1` with the Site's grace time (section 5 point 2: `grant` takes `subscriptionId`, validity is derived on read, `phis site set --entitlement-grace-days`, the expiry job and payments' writes announce it). Also built, 2026-11-22: bundles (point 4), on the owner's word resolved on reading
+instead of derived entries -- a grant on a bundle writes its one entry, `check` of a part counts the entries on
+every bundle that contains it and answers `via`, `list` takes `resolveBundles`, and `entitlement.changed` is also
+emitted for each part. Not built: delivery state (point 3), the two fields on payment line items (section 6), the questions
 between Add-ons and the seller interface (section 7), the Shop's split (section 8) and everything after
 step 1. The state before a lock is not kept: `phis product unlock` takes a product to `withdrawn`. It was
 written as a new design on the operator's word, not as a reading of the notes that exist; where it differs
@@ -192,7 +194,9 @@ declares a handler. A seller takes a withdrawn product out of sale on it.
    it.
 4. **Bundles.** Granting a product with `parts` makes Core write one derived entry per part under the
    same source and reference; revoking the bundle's entry takes them back. Each part's supplier delivers
-   its own.
+   its own. *Built differently (owner, 2026-11-22): no entry is derived; the bundle's one entry is resolved
+   on every read, so whoever holds a bundle holds each part, `via` says through which, and each part is
+   owed `entitlement.changed` when the bundle's entry changes (SERVER_ADDONS.md, `entitlements:v1`).*
 5. **Free products.** A supplier may grant its own product without the operator's row where the product
    says `free`; this is decision 4 of ENTITLEMENTS.md applied to products.
 6. **Who may write.** A row per kind does not scale to a catalogue. The operator allows a source for the

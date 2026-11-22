@@ -1531,8 +1531,8 @@ phis product withdraw --site demo (--product @acme/licenses:pro | --supplier @ac
 - `show` prints one product with its terms (sale, free, whether an account is required, parts), pending terms and which Add-ons attached attributes.
 - `release` releases a publisher's product, or applies the pending terms of a released one; the Site's own
   product needs none and the command says so. A product cannot be `active` before it is released.
-- `lock` stops every entitlement entry for the product from counting while it is locked, and refuses the
-  supplier every move. `unlock` takes it to `withdrawn`: the state before the lock is not kept, and the
+- `lock` stops every entitlement entry for the product from counting while it is locked -- a locked bundle
+  gives none of its parts, a locked part is held through no bundle -- and refuses the supplier every move. `unlock` takes it to `withdrawn`: the state before the lock is not kept, and the
   supplier can move it on.
 - `withdraw` takes one product, or every active product of a supplier or of a publisher, out of sale; holders
   keep what they have. A single product may be in `draft` or `active`; a locked one is unlocked first.

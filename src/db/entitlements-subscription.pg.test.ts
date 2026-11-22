@@ -280,6 +280,28 @@ describe.skipIf(!configured)("entitlements bound to a subscription", () => {
     expect(own.length).toBeGreaterThan(0);
   });
 
+  it("owes the parts of a bundle that follows a subscription their event, and holds them through it", async () => {
+    seq += 1;
+    const part = `${SUPPLIER}:part-${seq}` as PhisProductId;
+    const bundle = `${SUPPLIER}:bundle-${seq}` as PhisProductId;
+    for (const [key, parts] of [[`part-${seq}`, []], [`bundle-${seq}`, [part]]] as const) {
+      await registerProduct(pool, { siteId: site.id, supplier: SUPPLIER, listeners: [], draft: normalizePhisProductDraft({ key, type: "plan", title: key, summary: "", parts: [...parts] }) });
+      await setProductState(pool, { siteId: site.id, supplier: SUPPLIER, key, state: "active", listeners: [] });
+    }
+    const id = await subscription({ status: "pending", periodEnd: null });
+    await grantEntitlement(pool, {
+      siteId: site.id, subjectId, product: bundle, source: SHOP, reference: `bundle-${seq}`, startsAt: null, endsAt: null, quantity: null, counted: false, subscriptionId: id, listeners: [],
+    });
+    expect((await readEntitlementState(pool, { siteId: site.id, subjectId, product: part })).entitled).toBe(false);
+    await clearOutbox();
+
+    const period = at(30 * DAY);
+    await change(id, { status: "active", periodEnd: period });
+    expect((await outbox()).map((row) => row.payload.product)).toEqual([bundle, part]);
+    expect(await readEntitlementState(pool, { siteId: site.id, subjectId, product: part }))
+      .toEqual({ product: part, entitled: true, quantity: null, until: new Date(period).toISOString(), via: [bundle] });
+  });
+
   it("announces an expired bound entry once, and again after a renewal expires", async () => {
     await setGrace(0);
     // Earlier tests' entries may be owed too; this one's rows are the ones counted.

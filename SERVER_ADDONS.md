@@ -1740,8 +1740,8 @@ carries no state; the handler reads the product through the capability. It goes 
 configured Add-on of the Site that declares a handler for it, through the existing outbox, at least once.
 
 **Not in it.** Prices, listings, stock and categories, delivery state, the subscription binding of an
-entitlement, resolving a bundle into entries, and a question one Add-on asks another through Core are not
-part of this service; see the design's sections 5 to 7.
+entitlement, resolving a bundle into its parts (which [`entitlements:v1`](#entitlementsv1) does on reading), and
+a question one Add-on asks another through Core are not part of this service; see the design's sections 5 to 7.
 
 ### `entitlements:v1`
 
@@ -1759,12 +1759,24 @@ supplier.
   with `phis entitlement grant` and `phis entitlement revoke` ([CLI.md](docs/CLI.md#entitlements)).
 - **Entry.** One source's statement: subject, product, source, the source's own reference, start, end or
   none, the subscription it follows or none, quantity or none, and the flags `Revoked` (1) and `Suspended` (2).
-- **Entitled.** At least one entry of the subject and product is valid: neither flag set, started, not
-  ended, judged by the database's clock, and its product exists and is not `locked`. Nothing is stored
-  for that, so an entry that ends needs no write to stop counting. Whether quantities add up is the
-  product's `counted`: then `quantity` is the sum over the valid entries; Core counts no use. `until` is
-  the latest end among the valid entries, null when one has none or nobody is entitled. An entry whose
-  product does not exist (any more) is kept and does not count.
+- **Entitled.** At least one entry of the subject is valid -- on the product itself or on a bundle that
+  contains it. An entry is valid when neither flag is set, it has started and not ended, judged by the
+  database's clock, and its product exists and is not `locked`. Nothing is stored for that, so an entry
+  that ends needs no write to stop counting. `until` is the latest end among those valid entries, null
+  when one has none or nobody is entitled. Whether quantities add up is the product's `counted`: then
+  `quantity` is the sum over the valid entries on the product itself, null on a product that does not
+  count or when nobody is entitled; Core counts no use. An entry whose product does not exist (any more)
+  is kept and does not count.
+- **Bundles.** Whoever holds a bundle holds each of its parts (`parts` of [`products:v1`](#productsv1), the
+  terms in force), also through a bundle inside a bundle, so a supplier asks `check` about its own product
+  and never looks for the bundles it is sold in. A bundle is written as its one entry and resolved on every
+  read; no entry is derived for a part. A locked product passes nothing on: a locked part is held through no
+  bundle, and a locked bundle -- held directly or inside another bundle -- gives none of its parts. The
+  state says through which products the subject holds the product, `via`: the product itself when it has
+  a valid entry, then every bundle with a valid entry that contains it, in id order; empty when nobody is
+  entitled. A bundle is never counted, so a counted product held through bundles only has `quantity` 0.
+  `check` is one query: the product and the bundles above it are walked in the database (a recursive
+  query over `products.parts`).
 - **Bound to a subscription.** `grant({ subscriptionId })` binds the entry to a subscription of
   [`payments:v1`](./PAYMENTS.md): it has either a subscription or a written `endsAt`, never both. The
   subscription has to be one the calling Add-on created on this Site (a subscription belongs to its consumer;
@@ -1785,7 +1797,11 @@ The capability: `subject`, `check`, `list`, `grant`, `update`, `revoke`.
 
 **Reads are open** to every Add-on that requires the capability, and cover the entries of every source.
 `subject()` and a call without a subject act for the acting user; with nobody acting there is no subject,
-and `list` answers nothing.
+and `list` answers nothing. `list({ product, resolveBundles: true })` also lists the subject's entries on
+every bundle that contains the product, directly or through nested bundles and whatever the bundle's
+state, each entry as it is (its `product` is the bundle's id, its `valid` its own); absent or false lists
+the product's own entries only, and without `product` it changes nothing. `resolveBundles` is a boolean or
+absent; anything else throws.
 
 **Writing.** `grant` and `update` are refused (the call throws) unless the calling Add-on may write for
 the product: the Site's operator allowed it, for every product or for the products of the product's
@@ -1796,7 +1812,7 @@ be removed or moved in between. `grant` is idempotent on `(product, reference)`:
 first entry unchanged, emits nothing and is not refused for the product's state, so a payment handler
 delivered twice entitles once, also after the product was withdrawn. A counted product needs a whole
 quantity of at least 1 and an uncounted one takes none; `endsAt` must be after the start. A bundle is
-written as the one entry; its parts are not resolved. The source is the calling Add-on and is not a
+written as the one entry; the reads resolve its parts (above). The source is the calling Add-on and is not a
 parameter: `update` and `revoke` find only the caller's own entries, and another source's entry is not
 found (`null`), not refused. `update` and `revoke` of an existing entry go through whatever became of the
 product; `revoke` needs no leave, so a source whose leave was withdrawn can still take back what it
@@ -1809,17 +1825,21 @@ believe its caller throws, as with `support:v1`.
 one ends. The subject is typed, `{ kind: "entitlement", subject, product }`, and carries no
 state; the handler reads the current answer through the capability. It goes to every enabled,
 configured Add-on of the Site that declares a handler for it; delivery is the existing outbox, at least
-once. An ending is the one change nobody writes: the Core job `entitlements.expire`, every five minutes,
+once. An entry on a bundle changes the answer for its parts as well, so each part -- through the `parts`
+in force, directly or through nested bundles, whatever their state, and of any supplier -- is owed the
+event too, with the part as `product`: one event per subject and product and listener, however many of the
+changed entries lead to it, the changed product first. That holds for every source of the event below. An ending is the one change nobody writes: the Core job `entitlements.expire`, every five minutes,
 marks each ended entry once and enqueues one event per subject and product. For a bound entry the job
 announces the expiry -- the period's end plus the grace, or the period's end for an ended subscription --
 once per expiry (a renewal that later runs out is owed again), and payments' own writes announce the two other
 changes: when a paid period is booked and when the subscription ends. Those two ride on the one place where
 payments writes a subscription (`writePhisPaymentSubscription`) and change nothing of what payments does. A product that is locked or
-unlocked changes the answer without an entry changing; that is announced as `product.changed`.
+unlocked changes the answer without an entry changing; that is announced as `product.changed`, for that
+product only -- also when it is a bundle whose parts it changes, and when a bundle's `parts` are released.
 
 **Not in it.** Signing a desktop app in, licence keys, devices and seats, reconciling store purchases,
-using a quantity up, an access policy in `@phis/ui`, delivery
-state and the resolving of bundles are not part of this service; see
+using a quantity up, an access policy in `@phis/ui` and delivery
+state are not part of this service; see
 [design/ENTITLEMENTS.md](./design/ENTITLEMENTS.md) sections 7 and 9 and
 [design/COMMERCE_COORDINATION.md](./design/COMMERCE_COORDINATION.md) section 5.
 

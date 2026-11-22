@@ -1713,10 +1713,11 @@ Contract:
 - `flags` are `PhisEntitlementFlag`: `1 = Revoked`, `2 = Suspended`.
 - There is no status column. An entry is valid while `flags & 3 = 0 AND starts_at <= NOW() AND (ends_at IS NULL OR ends_at > NOW())` and its product exists and is not `locked`, judged by the database's clock on every read, so an entry that ends needs no write to stop counting. The product row is found by splitting `product` at its last colon into `supplier_addon_id` and `key`.
 - `subscription_id` binds the entry to a subscription of `payments:v1` (`payment_subscriptions`, whose `consumer_addon_id` is the entry's `source`; checked when the entry is written). A bound entry has no written `ends_at`; its validity is derived on every read from the subscription's `record`: no `record->'period'` (nothing paid yet) counts for nothing, otherwise it counts until `record->'period'->>'endsAt'` plus `sites.entitlement_grace_days` days, or plus 0 once the subscription has ended (`record->>'status' = 'canceled'` or `record->>'endedAt'` set). The `endsAt` shown is the period's end without the grace.
-- `quantity` is set exactly where the product is `counted`; the answer for a counted product is the sum over the valid entries. Core counts no use.
+- `quantity` is set exactly where the product is `counted`; the answer for a counted product is the sum over the valid entries on the product itself. Core counts no use.
+- A bundle is written as its one entry and resolved on every read (`readEntitlementState`): the entries that count for a product are those on the product and on every bundle whose `products.parts` contain it, directly or through nested bundles, walked in the same query (a recursive CTE over the Site's `products`, stopping at a `locked` product; the product itself must exist and not be `locked`). The answer's `via` names the products whose valid entries these are; `until` is taken over all of them; a bundle is never counted. `listEntitlements` with `resolveBundles` walks the same containment without the lock stop and lists those entries as they are. No row is derived for a part.
 - A new row is written only for a product that exists and is `active`, under a share lock on the product row (so `products.remove` and a state move cannot slip in between).
 - A revoked entry is over: an update does not change it.
-- `ended_event_at` records that the entry's ending was announced as `entitlement.changed`. Core's job `entitlements.expire` sets it for each ended, unrevoked entry once and enqueues one event per subject and product in the same transaction. Moving `ends_at` clears it, so the new ending is announced again. For a bound entry the job announces when the instant it counts until has passed and `ended_event_at` is NULL or older than that instant, so a renewal that later runs out is announced again.
+- `ended_event_at` records that the entry's ending was announced as `entitlement.changed`. Core's job `entitlements.expire` sets it for each ended, unrevoked entry once and enqueues one event per subject and product -- the parts of a bundle among them -- in the same transaction. Moving `ends_at` clears it, so the new ending is announced again. For a bound entry the job announces when the instant it counts until has passed and `ended_event_at` is NULL or older than that instant, so a renewal that later runs out is announced again.
 
 ### `phis.entitlement_sources`
 
@@ -2525,7 +2526,9 @@ COMMIT;
 Entitlement events (SERVER_ADDONS.md, `entitlements:v1`): Core writes one row per Add-on of the Site that is
 requested-enabled, `ready` and declares an `entitlement.changed` handler, with `subject_kind = 'entitlement'`
 and `payload = { subject, product }`, in the transaction of the change or of the `entitlements.expire`
-job. The same ordered drain delivers it.
+job -- for the product whose entry changed and, in the same statement, for every part it reaches through
+`products.parts` (a recursive CTE, nested bundles included, whatever their state), each product once per
+subject and Add-on, the changed product first. The same ordered drain delivers it.
 
 Asset events (SERVER_ADDONS.md, `assets:v1`): one row for the Add-on that owns the slot -- and for nobody else --
 when it is requested-enabled, `ready` and declares an `asset.changed` handler, with `subject_kind = 'asset'` and

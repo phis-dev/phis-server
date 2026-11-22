@@ -138,11 +138,14 @@ export function buildPhisAddonEntitlementsCapability(input: {
       return readEntitlementState(getPool(), { siteId, subjectId: row?.id ?? null, product });
     },
 
-    async list({ subject, product }) {
+    async list({ subject, product, resolveBundles }) {
       requireBelievableCaller("list");
+      if (resolveBundles !== undefined && typeof resolveBundles !== "boolean") {
+        throw new PhisAddonEntitlementsError(`${addonId} called entitlements.list with resolveBundles that is not a boolean.`);
+      }
       // Without a subject and without anybody acting there is nobody to list for; a Site-wide read is not offered.
       const row = await resolveSubject(subject);
-      return row ? listEntitlements(getPool(), { siteId, subjectId: row.id, product: product ?? null }) : [];
+      return row ? listEntitlements(getPool(), { siteId, subjectId: row.id, product: product ?? null, resolveBundles: resolveBundles === true }) : [];
     },
 
     async grant({ subject, product, reference, startsAt, endsAt, subscriptionId, quantity }) {

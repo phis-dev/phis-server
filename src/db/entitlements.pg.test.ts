@@ -182,7 +182,7 @@ describe.skipIf(!configured)("entitlements", () => {
   it("does not count an entry that has ended or not yet started", async () => {
     const kind = await product("@pgtest/licenses:timed" as PhisProductId);
     await grant({ product: kind, startsAt: hours(-3), endsAt: hours(-1) });
-    expect(await stateOf(kind)).toEqual({ product: kind, entitled: false, quantity: null, until: null });
+    expect(await stateOf(kind)).toEqual({ product: kind, entitled: false, quantity: null, until: null, via: [] });
     await grant({ product: kind, startsAt: hours(1), endsAt: hours(2) });
     expect((await stateOf(kind)).entitled).toBe(false);
   });
@@ -304,7 +304,7 @@ describe.skipIf(!configured)("entitlements", () => {
     await grant({ product: locked, counted: true, quantity: 2 });
     expect(await stateOf(locked)).toMatchObject({ entitled: true, quantity: 2 });
     await moveProductsAsOperator(pool, { siteId: site.id, to: "locked", productId: locked, listeners: [] });
-    expect(await stateOf(locked)).toEqual({ product: locked, entitled: false, quantity: null, until: null });
+    expect(await stateOf(locked)).toEqual({ product: locked, entitled: false, quantity: null, until: null, via: [] });
     const [entry] = await listEntitlements(pool, { siteId: site.id, subjectId, product: locked });
     expect(entry).toMatchObject({ valid: false, flags: 0 });
     await moveProductsAsOperator(pool, { siteId: site.id, to: "unlocked", productId: locked, listeners: [] });

@@ -11,8 +11,8 @@ const state = vi.hoisted(() => ({
   findSubject: vi.fn(async (): Promise<{ id: number; userId: number } | null> => ({ id: 5, userId: 9 })),
   grant: vi.fn(async (input: Record<string, unknown>): Promise<unknown> => ({ ...input, id: 1 })),
   update: vi.fn(async (input: Record<string, unknown>): Promise<unknown> => ({ ...input, id: 1 })),
-  list: vi.fn(async () => []),
-  readState: vi.fn(async (input: Record<string, unknown>) => ({ product: input.product, entitled: input.subjectId !== null, quantity: null, until: null })),
+  list: vi.fn(async (_input: Record<string, unknown>): Promise<unknown[]> => []),
+  readState: vi.fn(async (input: Record<string, unknown>) => ({ product: input.product, entitled: input.subjectId !== null, quantity: null, until: null, via: [] })),
   allowed: vi.fn(async () => false),
   ownSubscription: vi.fn(async () => true),
   product: vi.fn(async (): Promise<Held | null> => null),
@@ -25,7 +25,7 @@ vi.mock("@/db/entitlements.mts", () => ({
   findEntitlementSubject: (_pool: unknown, ...args: unknown[]) => state.findSubject(...(args as [])),
   grantEntitlement: (_pool: unknown, input: Record<string, unknown>) => state.grant(input),
   updateEntitlement: (_pool: unknown, input: Record<string, unknown>) => state.update(input),
-  listEntitlements: (_pool: unknown, ...args: unknown[]) => state.list(...(args as [])),
+  listEntitlements: (_pool: unknown, input: Record<string, unknown>) => state.list(input),
   readEntitlementState: (_pool: unknown, input: Record<string, unknown>) => state.readState(input),
   isSubscriptionOfAddon: (_pool: unknown, ...args: unknown[]) => (state.ownSubscription as (...a: unknown[]) => Promise<boolean>)(...args),
   isEntitlementSourceAllowed: (_pool: unknown, ...args: unknown[]) => (state.allowed as (...a: unknown[]) => Promise<boolean>)(...args),
@@ -208,7 +208,7 @@ describe("entitlements capability", () => {
   describe("check", () => {
     it("answers not entitled for something that is no product id without reading entries", async () => {
       const answer = await capability().check({ product: "nonsense" as never });
-      expect(answer).toEqual({ product: "nonsense", entitled: false, quantity: null, until: null });
+      expect(answer).toEqual({ product: "nonsense", entitled: false, quantity: null, until: null, via: [] });
       expect(state.readState).toHaveBeenCalledWith(expect.objectContaining({ subjectId: null }));
       expect(state.findSubject).not.toHaveBeenCalled();
       expect(state.ensureSubject).not.toHaveBeenCalled();
@@ -217,6 +217,27 @@ describe("entitlements capability", () => {
     it("asks the entries about a product id and leaves counting to them", async () => {
       await capability().check({ product: LICENSE });
       expect(state.readState).toHaveBeenCalledWith({ siteId: 7, subjectId: 5, product: LICENSE });
+    });
+  });
+
+  describe("list", () => {
+    it("passes resolveBundles through, and false where it is left out", async () => {
+      await capability().list({ product: LICENSE, resolveBundles: true });
+      expect(state.list).toHaveBeenLastCalledWith({ siteId: 7, subjectId: 5, product: LICENSE, resolveBundles: true });
+      await capability().list({ product: LICENSE });
+      expect(state.list).toHaveBeenLastCalledWith({ siteId: 7, subjectId: 5, product: LICENSE, resolveBundles: false });
+      await capability().list({ product: LICENSE, resolveBundles: false });
+      expect(state.list).toHaveBeenLastCalledWith({ siteId: 7, subjectId: 5, product: LICENSE, resolveBundles: false });
+    });
+
+    it("refuses a resolveBundles that is not a boolean, before reading anything", async () => {
+      state.list.mockClear();
+      state.findSubject.mockClear();
+      for (const value of ["true", 1, null, {}]) {
+        await expect(capability().list({ product: LICENSE, resolveBundles: value as never })).rejects.toThrow(/resolveBundles that is not a boolean/);
+      }
+      expect(state.list).not.toHaveBeenCalled();
+      expect(state.findSubject).not.toHaveBeenCalled();
     });
   });
 });

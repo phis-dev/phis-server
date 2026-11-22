@@ -56,6 +56,28 @@ const VALID_SQL = `((e.flags & ${BLOCKING_FLAGS}) = 0 AND e.starts_at <= NOW()
 const ENTRY_COLUMNS = `e.id, e.product, s.reference AS subject, e.source, e.reference, e.starts_at, ${SHOWN_END_SQL} AS ends_at, e.subscription_id::text AS subscription_id,
   e.quantity, e.flags, ${VALID_SQL} AS valid, e.created_at, e.updated_at`;
 
+/**
+ * The products whose entries speak for the product in `$product` of the Site in `$site`: the product
+ * itself and every bundle that contains it through the `parts` in force, directly or through nested
+ * bundles (a bundle's holder holds its parts). `passing` narrows the walk to products that pass a holding
+ * on -- not locked -- for the answer; the plain walk is for listing entries, valid or not. Parts are kept
+ * acyclic by the product directory, and `UNION` would end the walk regardless.
+ */
+const holdersSql = (site: string, product: string, passing: boolean) => {
+  const unlocked = (alias: string) => (passing ? ` AND ${alias}.state <> 'locked'` : "");
+  const start = passing
+    ? `SELECT ${product}::text WHERE EXISTS (SELECT 1 FROM phis.products tp WHERE tp.site_id = ${site}
+         AND tp.supplier_addon_id = regexp_replace(${product}::text, ':[^:]+$', '') AND tp.key = substring(${product}::text from '[^:]+$')${unlocked("tp")})`
+    : `SELECT ${product}::text`;
+  return `holders(product) AS (
+       ${start}
+       UNION
+       SELECT b.supplier_addon_id || ':' || b.key
+       FROM holders h
+       JOIN phis.products b ON b.site_id = ${site} AND h.product = ANY(b.parts)${unlocked("b")}
+     )`;
+};
+
 type EntryRow = {
   id: number;
   product: string;
@@ -127,22 +149,31 @@ export async function findEntitlementSubject(
   return rows[0] ? { id: rows[0].id, userId: rows[0].user_id } : null;
 }
 
-/** The entries of a Site, narrowed to a subject, a product, or both; every source's, valid or not. */
+/**
+ * The entries of a Site, narrowed to a subject, a product, or both; every source's, valid or not.
+ *
+ * `resolveBundles` with a product also lists the entries on every bundle that contains it, directly or
+ * through nested bundles and whatever their state, each as it is. Without a product it changes nothing.
+ */
 export async function listEntitlements(pool: Pool, input: {
   siteId: number;
   subjectId?: number | null;
   product?: string | null;
+  resolveBundles?: boolean;
 }): Promise<PhisEntitlement[]> {
+  const product = input.product ?? null;
+  const bundles = product !== null && input.resolveBundles === true;
   const { rows } = await pool.query<EntryRow>(
-    `SELECT ${ENTRY_COLUMNS}
+    `${bundles ? `WITH RECURSIVE ${holdersSql("$1::smallint", "$3", false)}` : ""}
+     SELECT ${ENTRY_COLUMNS}
      FROM phis.entitlements e
      JOIN phis.entitlement_subjects s ON s.id = e.subject_id
      WHERE e.site_id = $1
        AND ($2::int IS NULL OR e.subject_id = $2)
-       AND ($3::text IS NULL OR e.product = $3)
+       AND ${bundles ? "e.product IN (SELECT product FROM holders)" : "($3::text IS NULL OR e.product = $3)"}
      ORDER BY e.id ASC
      LIMIT 500`,
-    [input.siteId, input.subjectId ?? null, input.product ?? null],
+    [input.siteId, input.subjectId ?? null, product],
   );
   return rows.map(mapEntry);
 }
@@ -150,9 +181,13 @@ export async function listEntitlements(pool: Pool, input: {
 /**
  * Whether a subject holds a product now.
  *
- * Whether quantities add up is the product's own word (its `Counted` bit). A product that does not exist
- * or is locked entitles nobody. `until` is the latest end among the valid entries and null as soon as
- * one of them has none.
+ * The entries that count are the valid ones on the product and on every bundle that contains it, directly
+ * or through nested bundles: a bundle's holder holds its parts. A product that does not exist or is
+ * locked entitles nobody and passes nothing on, so a locked part is held through no bundle and a locked
+ * bundle gives none of its parts. `until` is the latest end among those entries and null as soon as one
+ * of them has none; `via` names the products whose entries they are, the product itself first. Whether
+ * quantities add up is the product's own word (its `Counted` bit), and only its own entries are summed --
+ * a bundle is never counted. One round trip.
  */
 export async function readEntitlementState(pool: Pool, input: {
   siteId: number;
@@ -160,49 +195,70 @@ export async function readEntitlementState(pool: Pool, input: {
   product: PhisProductId;
 }): Promise<PhisEntitlementState> {
   if (input.subjectId === null) {
-    return { product: input.product, entitled: false, quantity: null, until: null };
+    return { product: input.product, entitled: false, quantity: null, until: null, via: [] };
   }
-  const { rows } = await pool.query<{ entries: string; quantity: string | null; open_ended: boolean; until: Date | null; counted: boolean }>(
-    `SELECT COUNT(*) AS entries, SUM(e.quantity) AS quantity,
+  const { rows } = await pool.query<{ entries: string; quantity: string | null; open_ended: boolean; until: Date | null; via: string[]; counted: boolean }>(
+    `WITH RECURSIVE ${holdersSql("$1::smallint", "$3", true)}
+     SELECT COUNT(*) AS entries, SUM(e.quantity) FILTER (WHERE e.product = $3) AS quantity,
             COALESCE(BOOL_OR(e.ends_at IS NULL AND e.subscription_id IS NULL), FALSE) AS open_ended, MAX(${SHOWN_END_SQL}) AS until,
-            COALESCE(BOOL_OR((p.flags & ${PHIS_PRODUCT_FLAG.Counted}) <> 0), FALSE) AS counted
+            COALESCE(ARRAY_AGG(DISTINCT e.product), '{}') AS via,
+            COALESCE((SELECT (cp.flags & ${PHIS_PRODUCT_FLAG.Counted}) <> 0 FROM phis.products cp
+                      WHERE cp.site_id = $1 AND cp.supplier_addon_id = regexp_replace($3::text, ':[^:]+$', '')
+                        AND cp.key = substring($3::text from '[^:]+$')), FALSE) AS counted
      FROM phis.entitlements e
-     JOIN phis.products p ON ${ENTRY_PRODUCT_JOIN_SQL("e", "p")}
-     WHERE e.site_id = $1 AND e.subject_id = $2 AND e.product = $3 AND ${VALID_SQL}`,
+     WHERE e.site_id = $1 AND e.subject_id = $2 AND e.product IN (SELECT product FROM holders) AND ${VALID_SQL}`,
     [input.siteId, input.subjectId, input.product],
   );
   const row = rows[0]!;
   const entitled = Number(row.entries) > 0;
+  const own = row.via.includes(input.product);
+  const bundles = row.via.filter((id) => id !== input.product).sort();
   return {
     product: input.product,
     entitled,
     quantity: entitled && row.counted ? Number(row.quantity ?? 0) : null,
     until: entitled && !row.open_ended && row.until ? row.until.toISOString() : null,
+    via: (own ? [input.product, ...bundles] : bundles) as PhisProductId[],
   };
 }
 
 /**
- * Owes `entitlement.changed` to the listeners named, for one subject and product.
+ * Owes `entitlement.changed` to the listeners named, for one subject and the products whose entries changed.
  *
- * In the transaction of the change, like every outbox row. The listeners are the caller's reading of the
- * installed manifests; the insert keeps those asked for and configured on this Site.
+ * An entry on a bundle changes the answer for its parts too, so every part -- through the `parts` in
+ * force, directly or through nested bundles, whatever their state -- is owed the event as well, once per
+ * product however many of `products` lead to it. A part may be another supplier's; the recipients are the
+ * same, every listener. In the transaction of the change, like every outbox row. The listeners are the
+ * caller's reading of the installed manifests; the insert keeps those asked for and configured on this
+ * Site.
  */
 async function enqueueEntitlementChanged(
   db: DbQueryable,
-  input: { siteId: number; recipients: readonly string[]; subject: PhisEntitlementSubject; product: string },
+  input: { siteId: number; recipients: readonly string[]; subject: PhisEntitlementSubject; products: readonly string[] },
 ) {
-  if (input.recipients.length === 0) {
+  if (input.recipients.length === 0 || input.products.length === 0) {
     return;
   }
   await db.query(
-    `INSERT INTO phis.addon_event_outbox (site_id, addon_id, event, subject_kind, payload)
-     SELECT $1::smallint, installed.addon_id, 'entitlement.changed', 'entitlement', $3::jsonb
-     FROM phis.site_server_addons installed
+    `WITH RECURSIVE reach(product) AS (
+       SELECT unnest($4::text[])
+       UNION
+       SELECT part.product
+       FROM reach r
+       JOIN phis.products b ON b.site_id = $1
+         AND b.supplier_addon_id = regexp_replace(r.product, ':[^:]+$', '') AND b.key = substring(r.product from '[^:]+$')
+       CROSS JOIN LATERAL unnest(b.parts) AS part(product)
+     )
+     INSERT INTO phis.addon_event_outbox (site_id, addon_id, event, subject_kind, payload)
+     SELECT $1::smallint, installed.addon_id, 'entitlement.changed', 'entitlement', jsonb_build_object('subject', $3::text, 'product', reach.product)
+     FROM reach
+     CROSS JOIN phis.site_server_addons installed
      WHERE installed.site_id = $1
        AND installed.addon_id = ANY($2::text[])
        AND (installed.flags & ${PHI_SITE_SERVER_ADDON_FLAG_REQUESTED_ENABLED}) <> 0
-       AND installed.configuration_status = 'ready'`,
-    [input.siteId, input.recipients, JSON.stringify({ subject: input.subject, product: input.product })],
+       AND installed.configuration_status = 'ready'
+     ORDER BY reach.product = ANY($4::text[]) DESC, reach.product COLLATE "C", installed.addon_id`,
+    [input.siteId, input.recipients, input.subject, input.products],
   );
 }
 
@@ -266,7 +322,7 @@ export async function grantEntitlement(pool: Pool, input: {
     );
     if (inserted.rows[0]) {
       const entry = await readEntry(client, inserted.rows[0].id);
-      await enqueueEntitlementChanged(client, { siteId: input.siteId, recipients: input.listeners, subject: entry.subject, product: entry.product });
+      await enqueueEntitlementChanged(client, { siteId: input.siteId, recipients: input.listeners, subject: entry.subject, products: [entry.product] });
       return entry;
     }
     return readEntry(client, (await find()).rows[0]!.id);
@@ -326,7 +382,7 @@ export async function updateEntitlement(pool: Pool, input: {
       return null;
     }
     const entry = await readEntry(client, updated.rows[0].id);
-    await enqueueEntitlementChanged(client, { siteId: input.siteId, recipients: input.listeners, subject: entry.subject, product: entry.product });
+    await enqueueEntitlementChanged(client, { siteId: input.siteId, recipients: input.listeners, subject: entry.subject, products: [entry.product] });
     return entry;
   });
 }
@@ -428,13 +484,17 @@ export async function announceEndedEntitlements(pool: Pool, listeners: readonly 
          )
        RETURNING e.site_id, s.reference AS subject, e.product`,
     );
-    const said = new Set<string>();
+    // Two entries of one subject ending together change each answer once: the products are gathered per
+    // Site and subject, and the parts they lead to are counted once among them.
+    const ended = new Map<string, { siteId: number; subject: string; products: Set<string> }>();
     for (const row of rows) {
-      // Two entries of one subject and product ending together change one answer once.
-      const key = `${row.site_id}|${row.subject}|${row.product}`;
-      if (said.has(key)) continue;
-      said.add(key);
-      await enqueueEntitlementChanged(client, { siteId: row.site_id, recipients: listeners, subject: row.subject, product: row.product });
+      const key = `${row.site_id}|${row.subject}`;
+      const group = ended.get(key) ?? { siteId: row.site_id, subject: row.subject, products: new Set<string>() };
+      group.products.add(row.product);
+      ended.set(key, group);
+    }
+    for (const group of ended.values()) {
+      await enqueueEntitlementChanged(client, { siteId: group.siteId, recipients: listeners, subject: group.subject, products: [...group.products] });
     }
     return [...new Set(rows.map((row) => row.site_id))];
   });
@@ -450,8 +510,8 @@ export async function isSubscriptionOfAddon(db: DbQueryable, siteId: number, sub
 }
 
 /**
- * Owes `entitlement.changed`, once per subject and product, for the unrevoked entries that follow a
- * subscription. Called inside the transaction in which payments changes the subscription; `listeners` is
+ * Owes `entitlement.changed`, once per subject and product -- the parts of a bundle among them -- for the
+ * unrevoked entries that follow a subscription. Called inside the transaction in which payments changes the subscription; `listeners` is
  * read only when there is something to announce.
  */
 export async function announceSubscriptionEntitlements(db: DbQueryable, input: {
@@ -467,7 +527,9 @@ export async function announceSubscriptionEntitlements(db: DbQueryable, input: {
   );
   if (rows.length === 0) return;
   const recipients = input.listeners();
-  for (const row of rows) {
-    await enqueueEntitlementChanged(db, { siteId: input.siteId, recipients, subject: row.subject, product: row.product });
+  const bySubject = new Map<string, string[]>();
+  for (const row of rows) bySubject.set(row.subject, [...bySubject.get(row.subject) ?? [], row.product]);
+  for (const [subject, products] of bySubject) {
+    await enqueueEntitlementChanged(db, { siteId: input.siteId, recipients, subject, products });
   }
 }
