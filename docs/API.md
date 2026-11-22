@@ -8,13 +8,13 @@ public or internal token, and `session` is the visitor's Site session with the a
 passes (see [AUTHORIZATION.md](../AUTHORIZATION.md)). A route with no access entry performs its own checks
 or none; read its source. Request and response shapes are not listed; the source is linked per route.
 
-176 routes.
+180 routes.
 
 ## Contents
 
 - [`/api/operator`](#apioperator) (5)
 - [`/api/setup`](#apisetup) (2)
-- [`/api/site`](#apisite) (91)
+- [`/api/site`](#apisite) (95)
 - [`/api/v1/addons`](#apiv1addons) (3)
 - [`/api/v1/admin`](#apiv1admin) (1)
 - [`/api/v1/auth`](#apiv1auth) (29)
@@ -166,6 +166,10 @@ Site administration, CMS, media and support API. A Site's `/api/site` proxy forw
 | POST | [`/api/site/media/uploads/{token}/heartbeat`](../src/app/api/site/media/uploads/[token]/heartbeat/route.ts) | session (requireMediaSpaceWriteContext) |  |
 | POST | [`/api/site/media/uploads/{token}/report`](../src/app/api/site/media/uploads/[token]/report/route.ts) | Site session, checked in the handler; session (requireMediaSpaceWriteContext) |  |
 | POST | [`/api/site/media/uploads/init`](../src/app/api/site/media/uploads/init/route.ts) | session (requireMediaSpaceWriteContext) |  |
+| GET | [`/api/site/products`](../src/app/api/site/products/route.ts) | session, `accounting` (requireSiteAccountingApiContext) | The Site's product directory, a page at a time: `supplier` (an Add-on id), `state` (a comma-separated list of draft, active, withdrawn, locked; absent: every state), `pendingTerms` (true: only products waiting for the operator's release, false: only those that are not), `q` (a part of the title or the id), `page` and `pageSize`. Answers `{ rows, total, page, pageSize }`, each row the product's id, supplier, publisher, title, summary, type, state, sale, referralUrl, free, accountRequired, counted, parts, released, pendingTerms, imagePath, iconPath and version. |
+| POST | [`/api/site/products/{id}/lock`](../src/app/api/site/products/[id]/lock/route.ts) | session, `accounting` (requireSiteAccountingApiContext) | Locks a product, the Site operator's alone: no entry for it counts while it is locked, as `phis product lock` does. Answers `{ outcome, product }`, outcome `locked` or `unchanged`. The id is one path segment, percent-encoded (`@`, `/` and `:` are in every id). |
+| POST | [`/api/site/products/{id}/release`](../src/app/api/site/products/[id]/release/route.ts) | session, `accounting` (requireSiteAccountingApiContext) | Releases a publisher's product, the first time or its pending terms, as `phis product release` does. Answers `{ outcome, product }`, outcome `released`, `applied` or `unchanged`; `409` for the Site's own product, which needs no release. The id is one path segment, percent-encoded (`@`, `/` and `:` are in every id). |
+| POST | [`/api/site/products/{id}/unlock`](../src/app/api/site/products/[id]/unlock/route.ts) | session, `accounting` (requireSiteAccountingApiContext) | Unlocks a locked product, which becomes `withdrawn` -- the state before the lock is not kept -- as `phis product unlock` does. Answers `{ outcome, product }`, outcome `unlocked` or `unchanged`. The id is one path segment, percent-encoded (`@`, `/` and `:` are in every id). |
 | GET | [`/api/site/support/forward`](../src/app/api/site/support/forward/route.ts) | session, `support` (requireSiteSupportApiContext) | Where this Site's tickets may be forwarded right now. |
 | POST | [`/api/site/support/forward`](../src/app/api/site/support/forward/route.ts) | session, `support` (requireSiteSupportApiContext) | Hands one ticket's work to one target: `{ ticketId, target, title? }`. |
 | POST | [`/api/site/support/link`](../src/app/api/site/support/link/route.ts) | session, `support` (requireSiteSupportApiContext) | Links a record that already exists elsewhere to one ticket: `{ ticketId, reference }`. |

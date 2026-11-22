@@ -1675,11 +1675,12 @@ The design is [design/COMMERCE_COORDINATION.md](./design/COMMERCE_COORDINATION.m
   timestamps. Title and summary are in the Site's source language. Core reads neither `type` nor
   `attributes`.
 - **States.** `draft` and `active` and `withdrawn` are the supplier's to set; `locked` is the operator's
-  alone. Only `active` can be acquired. A withdrawn product is held as it was; a locked one is held by
-  nobody -- no entry for it counts while it is locked.
+  alone (`phis product lock|unlock`, or `POST /api/site/products/{id}/lock|unlock`). Only `active` can be
+  acquired. A withdrawn product is held as it was; a locked one is held by nobody -- no entry for it counts
+  while it is locked.
 - **Release.** A product with a `publisher` is `released` only after the Site operator released it
-  (`phis product release`); until then it cannot be `active`, and every field of it changes at once. The
-  Site's own product (`publisher` null) needs none and is always `released`. Once released, a change of
+  (`phis product release`, or `POST /api/site/products/{id}/release` from the Accounting Area); until then
+  it cannot be `active`, and every field of it changes at once. The Site's own product (`publisher` null) needs none and is always `released`. Once released, a change of
   `sale`, `referralUrl`, `free`, `accountRequired` or `parts` is held as `pendingTerms` and the terms in force stay until the
   operator releases it again; title, summary, picture and `type` change at once. Asking for the terms in
   force again takes a pending change back. A product's publisher does not change after it was registered:

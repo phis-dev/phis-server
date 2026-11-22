@@ -57,6 +57,14 @@ function present(product: PhisStoredProduct | null, publicView = false): PhisPro
   };
 }
 
+/**
+ * A product as a signed-in reader is answered it, the picture's and the icon's addresses read now: what
+ * `products:v1` hands an Add-on, and what the operator's directory (`GET /api/site/products`) lists.
+ */
+export function presentPhisProduct(product: PhisStoredProduct): PhisProduct {
+  return present(product);
+}
+
 const MOVABLE_STATES = new Set<string>(["draft", "active", "withdrawn"]);
 
 /** The enabled Add-ons that declare a handler for `product.changed`. */

@@ -8,6 +8,7 @@ import { getApiV1TokenMode, guardApiV1 } from "@/lib/api-v1-guard";
 import { PhiBaseRole } from "@/lib/constants/phi-base-roles";
 import {
   canPhiViewerAccess,
+  PHI_ACCESS_ACCOUNTING,
   PHI_ACCESS_CONTENT_EDITING,
   PHI_ACCESS_SITE_MAINTENANCE,
   PHI_ACCESS_PUBLISHING,
@@ -175,6 +176,14 @@ export async function requireSiteSupportApiContext(request: NextRequest): Promis
   return requireSiteRoleApiContext(request, {
     policy: PHI_ACCESS_SUPPORT,
     missingRoleMessage: "Site supporter, maintainer, or admin role required.",
+  });
+}
+
+/** The Site's books: the product directory the operator administers, whichever shop sells from it. */
+export async function requireSiteAccountingApiContext(request: NextRequest): Promise<SiteAdminApiGuard> {
+  return requireSiteRoleApiContext(request, {
+    policy: PHI_ACCESS_ACCOUNTING,
+    missingRoleMessage: "Site accountant, maintainer, or admin role required.",
   });
 }
 

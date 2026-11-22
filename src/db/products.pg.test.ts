@@ -21,6 +21,7 @@ import { normalizePhisProductDraft } from "../lib/addons/product-draft.ts";
 import { ensureEntitlementSubject, findEntitlementSubject, grantEntitlement } from "./entitlements.mts";
 import {
   annotateProduct,
+  listProductDirectory,
   listProductIdsWithImage,
   listProducts,
   moveProductsAsOperator,
@@ -459,6 +460,55 @@ describe.skipIf(!configured)("products", () => {
     // Named products, in any state; an unknown id is simply missing.
     const named = await listProducts(pool, { ...base, states: [...all, "locked"], ids: [id(SUPPLIER, "l4"), id(SUPPLIER, "l1"), id(SUPPLIER, "nope")] });
     expect(keys(named)).toEqual(["l1", "l4"]);
+  });
+
+  it("pages the operator's directory by number, in every state, by supplier, release and a search, counted", async () => {
+    const directory = await createPhiTestSite("products-directory");
+    await activatePhiTestAddonForSite(directory, SUPPLIER);
+    await activatePhiTestAddonForSite(directory, OTHER);
+    const add = (supplier: string, key: string, rest: Partial<PhisProductDraft> = {}) =>
+      registerProduct(pool, { siteId: directory.id, supplier, draft: draft(key, rest), listeners: [] });
+    await add(SUPPLIER, "d-own", { title: "Studio Pro" });
+    await add(SUPPLIER, "d-new", { publisher: "p1", title: "Plain 100%_off" });
+    await add(SUPPLIER, "d-pending", { publisher: "p1" });
+    await releaseProduct(pool, { siteId: directory.id, productId: id(SUPPLIER, "d-pending"), listeners: [] });
+    await add(SUPPLIER, "d-pending", { publisher: "p1", free: true });
+    await add(OTHER, "d-locked");
+    await moveProductsAsOperator(pool, { siteId: directory.id, to: "locked", productId: id(OTHER, "d-locked"), listeners: [] });
+
+    const every: ("draft" | "active" | "withdrawn" | "locked")[] = ["draft", "active", "withdrawn", "locked"];
+    const read = (rest: Partial<Parameters<typeof listProductDirectory>[1]> = {}) =>
+      listProductDirectory(pool, { siteId: directory.id, states: every, page: 1, pageSize: 25, ...rest });
+    const ids = (result: { products: { id: string }[] }) => result.products.map((product) => product.id);
+
+    // Ordered by supplier and key, not by when they came.
+    expect(ids(await read())).toEqual([
+      id(OTHER, "d-locked"), id(SUPPLIER, "d-new"), id(SUPPLIER, "d-own"), id(SUPPLIER, "d-pending"),
+    ]);
+    expect((await read()).total).toBe(4);
+    expect(ids(await read({ states: ["locked"] }))).toEqual([id(OTHER, "d-locked")]);
+    expect(ids(await read({ supplier: OTHER }))).toEqual([id(OTHER, "d-locked")]);
+
+    // Waiting for a release: never released, or released with terms pending -- the same rows as `released: false`.
+    expect(ids(await read({ awaitingRelease: true }))).toEqual([id(SUPPLIER, "d-new"), id(SUPPLIER, "d-pending")]);
+    expect(ids(await read({ awaitingRelease: false }))).toEqual([id(OTHER, "d-locked"), id(SUPPLIER, "d-own")]);
+    const released = await listProducts(pool, { siteId: directory.id, states: every, cursor: null, limit: 50, released: false });
+    expect(ids(released).sort()).toEqual(ids(await read({ awaitingRelease: true })).sort());
+    expect((await read({ awaitingRelease: true })).products[1]!.pendingTerms).toMatchObject({ free: true });
+
+    // The search reads the title and the id, any case, and takes `%` and `_` as themselves.
+    expect(ids(await read({ search: "studio pro" }))).toEqual([id(SUPPLIER, "d-own")]);
+    expect(ids(await read({ search: `${OTHER}:d-` }))).toEqual([id(OTHER, "d-locked")]);
+    expect(ids(await read({ search: "100%_" }))).toEqual([id(SUPPLIER, "d-new")]);
+    expect(ids(await read({ search: "%" }))).toEqual([id(SUPPLIER, "d-new")]);
+
+    // Pages by number, the count beside every page and past the last one too.
+    const second = await read({ page: 2, pageSize: 3 });
+    expect(ids(second)).toEqual([id(SUPPLIER, "d-pending")]);
+    expect(second.total).toBe(4);
+    const beyond = await read({ page: 5, pageSize: 3 });
+    expect(beyond).toEqual({ products: [], total: 4 });
+    expect(await read({ supplier: "@pgtest/nobody" })).toEqual({ products: [], total: 0 });
   });
 
   it("withdraws a supplier's active products when it is switched off, restores exactly those, and keeps entries", async () => {

@@ -159,6 +159,14 @@ export async function readProduct(db: DbQueryable, siteId: number, id: PhisProdu
   return row ? (await mapProducts(db, [row]))[0]! : null;
 }
 
+/**
+ * Whether a product waits for the operator's release: a publisher's product never released, or a
+ * released one with pending terms. One predicate for `released: false` of `products:v1` and the
+ * directory's `awaitingRelease`, so the release list and the directory cannot disagree.
+ */
+const AWAITING_RELEASE_SQL = (alias: string) =>
+  `((${alias}.publisher IS NOT NULL AND (${alias}.flags & ${FLAG.Released}) = 0) OR ${alias}.pending_terms IS NOT NULL)`;
+
 export type ProductListFilter = Pick<PhisProductListInput, "supplier" | "publisher" | "type" | "states" | "released" | "ids">;
 
 /**
@@ -181,7 +189,7 @@ export async function listProducts(db: DbQueryable, input: ProductListFilter & {
        AND ($5::text IS NULL OR p.type = $5)
        AND ($6::boolean IS NULL
          OR ($6 AND (p.publisher IS NULL OR (p.flags & ${FLAG.Released}) <> 0))
-         OR (NOT $6 AND ((p.publisher IS NOT NULL AND (p.flags & ${FLAG.Released}) = 0) OR p.pending_terms IS NOT NULL)))
+         OR (NOT $6 AND ${AWAITING_RELEASE_SQL("p")}))
        AND ($9::text[] IS NULL OR p.supplier_addon_id || ':' || p.key = ANY($9::text[]))
        AND p.id > $7::int
      ORDER BY p.id ASC
@@ -192,6 +200,52 @@ export async function listProducts(db: DbQueryable, input: ProductListFilter & {
   const page = rows.slice(0, input.limit);
   const products = await mapProducts(db, page);
   return { products, nextCursor: rows.length > input.limit ? encodeCursor(page[page.length - 1]!.id) : null };
+}
+
+/** `%` and `_` are a LIKE's own; a search names them literally. */
+function escapeLike(value: string) {
+  return value.replace(/[\\%_]/g, "\\$&");
+}
+
+/**
+ * One page of the Site's product directory as its operator administers it (`GET /api/site/products`):
+ * every state unless `states` narrows it, by supplier, by whether it waits for a release, and by a
+ * search in the title and the id, ordered by supplier and key and counted, because the operator's
+ * Table pages by number. `listProducts` is the capability's reading, by cursor; this one is the
+ * operator's.
+ */
+export async function listProductDirectory(db: DbQueryable, input: {
+  siteId: number;
+  states: readonly PhisProductState[];
+  supplier?: string;
+  /** True: only those waiting for a release; false: only those that are not; absent: both. */
+  awaitingRelease?: boolean;
+  /** A part of the title or of the id, any case. */
+  search?: string;
+  page: number;
+  pageSize: number;
+}): Promise<{ products: PhisStoredProduct[]; total: number }> {
+  const search = input.search ? `%${escapeLike(input.search.toLowerCase())}%` : null;
+  const where = `p.site_id = $1
+       AND p.state = ANY($2::text[])
+       AND ($3::text IS NULL OR p.supplier_addon_id = $3)
+       AND ($4::boolean IS NULL OR ${AWAITING_RELEASE_SQL("p")} = $4)
+       AND ($5::text IS NULL
+         OR lower(p.title) LIKE $5 ESCAPE '\\'
+         OR lower(p.supplier_addon_id || ':' || p.key) LIKE $5 ESCAPE '\\')`;
+  const filter = [input.siteId, input.states, input.supplier ?? null, input.awaitingRelease ?? null, search];
+  const { rows } = await db.query<ProductRow & { total: string }>(
+    `SELECT ${PRODUCT_COLUMNS}, COUNT(*) OVER () AS total FROM phis.products p
+     WHERE ${where}
+     ORDER BY p.supplier_addon_id ASC, p.key ASC
+     LIMIT $6::int OFFSET $7::int`,
+    [...filter, input.pageSize, (input.page - 1) * input.pageSize],
+  );
+  // Past the last page the window has no row to carry the count, so it is asked for on its own.
+  const total = rows.length > 0 ? Number(rows[0]!.total) : input.page > 1
+    ? Number((await db.query<{ total: string }>(`SELECT COUNT(*) AS total FROM phis.products p WHERE ${where}`, filter)).rows[0]!.total)
+    : 0;
+  return { products: await mapProducts(db, rows), total };
 }
 
 const CURSOR_PREFIX = "p1.";
