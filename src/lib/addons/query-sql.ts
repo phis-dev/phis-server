@@ -45,7 +45,8 @@ export type PhisAddonCompiledQuery = {
    * Whether the table carries row authority at all: an owner, a group, or both.
    *
    * False means Core has no row to judge, and `mayActOnRow` answers no to everything -- correct for a
-   * row that should belong to somebody, and the reason such a table's writes must state a role instead.
+   * row that should belong to somebody, and the reason such a table's writes must state a role instead,
+   * or the Add-on's own authority.
    */
   scoped: boolean;
   /** Present on a select, and only there. */

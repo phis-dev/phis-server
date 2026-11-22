@@ -109,6 +109,21 @@ function isNullableColumn(table: PhisAddonTableDescriptor, column: string) {
   return table.columns.find((entry) => entry.name === column)?.nullable === true;
 }
 
+/**
+ * Whether a condition leaves out every row whose `column` is null: an `isNull` negated on it, alone or as
+ * one of an `all`. An `any` or a `whenPresent` does not, since either may hold without it.
+ */
+function excludesNullOf(condition: unknown, column: string): boolean {
+  if (!isPhiRecord(condition)) {
+    return false;
+  }
+  if (condition.kind === "isNull") {
+    return condition.column === column && condition.negated === true;
+  }
+  return condition.kind === "all" && Array.isArray(condition.conditions) &&
+    condition.conditions.some((entry) => excludesNullOf(entry, column));
+}
+
 function checkColumn(context: QueryContext, column: unknown, where: string) {
   if (typeof column !== "string" || !context.columns.has(column)) {
     context.issues.push(
@@ -486,6 +501,31 @@ function validateQuery(
     return null;
   }
   const parameters = declared.names;
+  if (raw.authority !== undefined && raw.authority !== "caller" && raw.authority !== "addon") {
+    issues.push(`${field}.authority must be "caller" or "addon".`);
+  }
+  /*
+   * The Add-on's own authority, declared on this one query. A role guards the caller's authority --
+   * narrowing it or widening it -- and a query that does not run on the caller's authority has nothing
+   * for a role to act on, so stating one beside it is a contradiction rather than a refinement.
+   *
+   * What it does not lift is checked where it always is: the scope columns are refused in every
+   * insert's values below, this one's included, and an update or delete still addresses one row by its
+   * key.
+   */
+  const addonAuthority = raw.authority === "addon";
+  if (addonAuthority && raw.requiresRole !== undefined) {
+    issues.push(
+      `${field} states both authority "addon" and requiresRole. A role guards the caller's ` +
+      "authority, and this query does not run on it.",
+    );
+  }
+  if (addonAuthority && raw.alsoAllowedByRole !== undefined) {
+    issues.push(
+      `${field} states both authority "addon" and alsoAllowedByRole. A role widens the caller's ` +
+      "authority, and this query does not run on it.",
+    );
+  }
   if (raw.requiresRole !== undefined) {
     if (typeof raw.requiresRole !== "string" || !declaredRoles.has(raw.requiresRole)) {
       issues.push(`${field}.requiresRole does not name a role this Add-on declares.`);
@@ -517,11 +557,14 @@ function validateQuery(
    * A table with no owner and no group has no row-level authority, so Core answers no to every update
    * and delete against it. A declared role is the only thing that can stand in for that -- and it has
    * to be declared here rather than checked in a handler, or the guarantee is somebody's memory.
+   *
+   * The Add-on's own authority is the other declaration that does: such a query runs as the Add-on,
+   * and the Add-on vouches for it in the descriptor, which is where an operator reads it.
    */
   if (
     (raw.kind === "update" || raw.kind === "delete") &&
     table.ownerScoped !== true && table.groupScoped !== true &&
-    raw.requiresRole === undefined
+    raw.requiresRole === undefined && !addonAuthority
   ) {
     issues.push(
       `${field} changes rows of "${table.name}", which is neither ownerScoped nor groupScoped. ` +
@@ -655,11 +698,13 @@ function validateQuery(
         }
         // The grouping columns are the ordering, and an ordering column must be NOT NULL for the same
         // reason a select's must: the keyset comparison that continues a page matches nothing against a
-        // null, so the paging would end early and quietly.
-        if (isNullableColumn(table, column as string)) {
+        // null, so the paging would end early and quietly. A nullable column is a grouping column where
+        // the query's own `where` leaves its nulls out: then there is no null group to page past.
+        if (isNullableColumn(table, column as string) && !excludesNullOf(raw.where, column as string)) {
           issues.push(
             `${field}.groupBy[${index}] names nullable column "${column}". The grouping columns are ` +
-            "what this query is paged by, and a paging column must be NOT NULL.",
+            "what this query is paged by, and a paging column must be NOT NULL -- or the where must leave " +
+            `its nulls out ({ kind: "isNull", column: "${column}", negated: true }).`,
           );
         }
       });
@@ -900,4 +945,27 @@ export function phisAddonUnindexedSearches(
     }
   }
   return found;
+}
+
+export type PhisAddonAuthorityBypass = {
+  query: string;
+  kind: PhisAddonQueryDescriptor["kind"];
+  table: string;
+};
+
+/**
+ * The queries that run with the Add-on's own authority, whoever calls the route behind them.
+ *
+ * Not an error either: a capacity a guest takes from is what `authority: "addon"` is for. But it is a
+ * bypass of everything Core would otherwise ask of the caller -- the ladder, the group, the role -- and
+ * the operator installing the Add-on is the one who has to agree to it, so it is named where they are
+ * already looking, at install, at upgrade and at `phis addon check`. In declaration order, because that
+ * is the order the manifest reads in.
+ */
+export function phisAddonAuthorityBypasses(
+  catalog: PhisAddonQueryCatalog,
+): PhisAddonAuthorityBypass[] {
+  return catalog.queries
+    .filter((query) => query.authority === "addon")
+    .map((query) => ({ query: query.name, kind: query.kind, table: query.table }));
 }

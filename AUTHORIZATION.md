@@ -301,6 +301,10 @@ or implied through `includes`, and held by every Site Admin:
 - a browser or server access policy `{ access: "addon-roles", providerId, allowedRoles }`, evaluated
   against the viewer's `addonRoleClaims`.
 
+A declared query stating `authority: "addon"` asks no role and no row authority of the caller at all: it
+runs with the Add-on's own system authority, as a job does, and `phis addon install` and `check` list it
+as the bypass it is (SERVER_ADDONS.md, section 15, *Declared queries*).
+
 The full declaration, granting, and data-path rules are in [SERVER_ADDONS.md](./SERVER_ADDONS.md),
 section 13, *Add-on roles*.
 

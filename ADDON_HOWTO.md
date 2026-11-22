@@ -816,6 +816,13 @@ The job inserts through `notes_insert` without anybody holding `editor`: a job r
 own system authority, so role guards and the row ladder pass. A person reaching `create-note` needs the
 Site Admin claim for the route *and* the `editor` role for the query.
 
+A guest who takes a seat, redeems a code or counts a download holds no role and owns no row, and is still
+the one the write is for. Such a query declares `authority: "addon"` and runs as the job does, whoever
+calls the route; it cannot also state a role. It is a bypass, and the operator is shown it at install
+and at `phis addon check`, a delete twice. Keep it to the one statement that needs it -- for a capacity
+an update with `add` and a `where` that says there is enough -- and leave every other query on the
+caller's authority ([SERVER_ADDONS.md](./SERVER_ADDONS.md#declared-queries)).
+
 ### The runtime
 
 `src/addon/runtime.ts`, the bundle's entry point:

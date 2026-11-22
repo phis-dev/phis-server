@@ -23,12 +23,18 @@ import {
   type PhisAddonReconcileEntry,
 } from "../db/server-addon-reconcile.mts";
 
-import { type PhisAddonDesiredState } from "../lib/addons/contract.ts";
+import {
+  type PhisAddonDesiredState,
+  type PhisAddonManifestV1,
+} from "../lib/addons/contract.ts";
 import {
   findPhisAddonCapabilityClashes,
   PHIS_CORE_CAPABILITIES,
 } from "../lib/addons/core-capabilities.ts";
-import { phisAddonUnindexedSearches } from "../lib/addons/query-descriptor.ts";
+import {
+  phisAddonAuthorityBypasses,
+  phisAddonUnindexedSearches,
+} from "../lib/addons/query-descriptor.ts";
 import { ensurePhisAddonSiteGroups } from "../db/server-addon-groups.mts";
 import { reconcileProductSupplyAfterChange, syncAddonProductsAtSite } from "./product-sync.mts";
 import {
@@ -351,13 +357,37 @@ function loadDesiredAddons(root: string) {
   return loaded;
 }
 
+/**
+ * The queries an Add-on runs with its own authority, said to the operator who is agreeing to them.
+ *
+ * Every query declaring `authority: "addon"` is listed: whoever reaches a route that calls it runs it,
+ * and Core asks nothing of them. A delete among them is named a second time as a warning, because there
+ * the Add-on alone decides which row of the Site a caller's request removes, and that is the one outcome
+ * a later request cannot take back.
+ */
+function describeAddonAuthority(addonId: string, manifest: Pick<PhisAddonManifestV1, "queries">) {
+  const queries = manifest.queries ? phisAddonAuthorityBypasses(manifest.queries) : [];
+  return {
+    addonAuthorityQueries: queries.map((entry) => ({ addonId, ...entry })),
+    warnings: queries
+      .filter((entry) => entry.kind === "delete")
+      .map((entry) => ({
+        addonId,
+        ...entry,
+        message:
+          `query "${entry.query}" deletes from ${entry.table} with the Add-on's own authority: which ` +
+          "row of the Site a caller's request removes is decided by the Add-on, not by Core's row authority.",
+      })),
+  };
+}
+
 export async function checkAddons(root: string) {
   // Diagnose before loading. An entry a Core release invalidated cannot be loaded at all, and saying so
   // by name -- with the way out -- beats failing on the first artifact import with a wall of issues.
   const { invalid } = readAddonDesiredStateForChange(root);
   if (invalid.length > 0) {
     return {
-      ok: false,
+      ok: false as const,
       action: "addon.check",
       addons: [],
       invalid,
@@ -371,10 +401,15 @@ export async function checkAddons(root: string) {
         .map((search) => ({ addonId: desired.addonId, ...search }))
       : []
   );
+  const authority = loaded.map(({ desired, manifest }) =>
+    describeAddonAuthority(desired.addonId, manifest)
+  );
   return {
-    ok: true,
+    ok: true as const,
     action: "addon.check",
     unindexedSearches,
+    addonAuthorityQueries: authority.flatMap((entry) => entry.addonAuthorityQueries),
+    warnings: authority.flatMap((entry) => entry.warnings),
     addons: loaded.map(({ desired, manifest }) => ({
       ...desired,
       serverAbi: manifest.serverAbi,
@@ -491,6 +526,7 @@ export async function installAddon(root: string, flags: FlagMap) {
       enabled: false,
     },
     artifact: target,
+    ...describeAddonAuthority(manifest.addonId, manifest),
   };
 }
 
@@ -595,6 +631,8 @@ export async function upgradeAddon(root: string, flags: FlagMap) {
     schemaChanged: manifest.migrationVersion > existing.manifest.migrationVersion,
     enabled: existing.enabled,
     pendingRegistryReconciliation: true,
+    // The whole list for the new build rather than what changed: the operator agrees to what will run.
+    ...describeAddonAuthority(addonId, manifest),
   };
 }
 

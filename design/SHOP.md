@@ -220,9 +220,10 @@ browser cart -> address -> destination -> priced order -> payment created -> hos
 
 | Payment status | Order status | Also |
 | --- | --- | --- |
-| `captured` | `paid` | copies `totals` verbatim, sets `seller_of_record` from the tax addition's `collectedBy`, decrements tracked stock, counts the promotion use, sets `paid_at`; a shortfall in stock or a `totals.customer.country` that is not the order's country sets `attention` instead of undoing anything, because the money is already taken |
+| `captured` | `paid` | in one transaction and once (only an order still `awaiting_payment` is marked): copies `totals` verbatim, sets `seller_of_record` from the tax addition's `collectedBy`, takes the quantity from tracked stock, counts the promotion use (once per order, bit `PromotionsCounted` of `orders.flags`), sets `paid_at`; a shortfall in stock or a `totals.customer.country` that is not the order's country sets `attention` instead of undoing anything, because the money is already taken |
 | `authorized` | `paid` with `attention` | manual capture is not a Shop flow; a person captures or cancels |
-| `failed`, `expired`, `canceled` | stays `awaiting_payment` | the customer may try again from the order page, which creates a new attempt; a Site job (`orders.expire`) moves orders nobody paid after a configured number of days to `abandoned` |
+| `failed`, `expired`, `canceled` | stays `awaiting_payment` | the customer may try again from the order page, which creates a new attempt; a Site job (`orders.expire`) moves orders nobody paid after a configured number of days to `abandoned`, all of them page by page along the cursor up to 5,000 a run, each only while it is still `awaiting_payment` so an order paid meanwhile is not overwritten |
+| `captured` or `authorized` on an order already `canceled` or `abandoned` (never paid) | stays | `attention` says the payment came in after the order was closed and to refund it or fulfil the order; once, by bit `PaidAfterClosingNoted` of `orders.flags`, also where the order was closed between reading it and marking it paid |
 | refund observed | `refunded` or `partially_refunded` | from `refundedMinor` against the total |
 
 `fulfilment` is a second axis (`pending`, `shipped`, `delivered`, `granted`, `not_required`) and a
@@ -241,6 +242,18 @@ captured money, which includes tax, as PAYMENTS.md section 12 says; the Shop sho
 **Stock** is advisory: checked when the order is placed, decremented when it is paid, with no
 reservation in between. Two customers can pay for the last unit, and the second order wears `attention`.
 A small shop that cannot live with that is a shop with a warehouse, which is Medusa.
+
+Stock is never written as a number read earlier, only added to by the database on the row it changes
+(`add` beside a `where`, SERVER_ADDONS.md): the paid transition takes the quantity only while there is
+enough and otherwise takes what is there, so it never goes below nothing; a clerk adds or takes a delta
+(`POST manage/listings/stock`); editing a listing does not touch it. Every write of the paid transition
+-- the order marked, the stock taken, the code counted -- is one unit of work, so an event delivered
+again after a failure part way does none of it twice.
+
+A reservation at placing -- the stock taken when the order is placed, given back when its payment fails
+or its checkout ends (`payments.create` with `expiresAt`), and a job releasing what was left over -- is
+decided (2026-11-22) and waits for Core: placing is a guest's or a customer's request, and Core lets
+neither run an update on a table nobody owns (`listings`), which only a declared role can (section 3).
 
 ## 7. The order page is the receipt
 
@@ -370,7 +383,12 @@ sales and a Merchant of Record for the rest has two profiles and two destination
 `stripe-ch` with `net`/`provider`, and `*` on `paddle-intl` with `net`/`merchant-of-record`. A Site that
 sells only in Switzerland has one destination and never sees the second profile.
 
-The job `orders.expire` is run by the operator's scheduler, as every Add-on job is.
+A destination whose profile the operator switched off or retired (`profileReach` refuses it as
+`profile_unavailable`) sells nowhere: the public `destinations` hook leaves it out, named countries and `*`
+alike, and the quote, the order and a subscription pass over it to the next destination covering the
+country (phis-shop design/MARKETS.md section 5).
+
+The job `orders.expire` is run by Core's scheduler, daily, as every scheduled Add-on job is.
 
 ## 10. What needs Core, or someone else, first
 

@@ -35,6 +35,10 @@ import { getPool, withTransaction } from "@/lib/db";
  * remembered is one that eventually is not. An insert that names a group is refused the same way when
  * the actor does not stand in it.
  *
+ * The one exception is declared in the descriptor rather than decided here: a query stating
+ * `authority: "addon"` runs as the Add-on does in a job, whoever calls it, and the operator is shown it
+ * as the bypass it is.
+ *
  * `mayActOnRow` on the authorization capability answers the same question. It is for deciding what to
  * offer a user; this is what actually holds.
  */
@@ -177,6 +181,7 @@ function descriptorParametersFor(manifest: PhisAddonManifestV1, name: string) {
     group: descriptor.kind === "insert" ? descriptor.groupParameter : undefined,
     requiresRole: descriptor.requiresRole,
     alsoAllowedByRole: descriptor.alsoAllowedByRole,
+    addonAuthority: descriptor.authority === "addon",
     lists: (manifest.queries?.parameters[name] ?? [])
       .filter((parameter) => parameter.list === true)
       .map((parameter) => parameter.name),
@@ -266,6 +271,10 @@ async function run(
      * Narrower than "no user": an operator and an internal caller both have a null user id, and a job
      * has none either, while none of the three is anonymous. Only a caller who never identified
      * themselves lands here -- today that is a hook, and nothing else.
+     *
+     * A query declaring the Add-on's own authority lands here too. That authority is what a verified
+     * hook is given and an unverified one is not, and a declaration in the descriptor is no reason to
+     * believe a caller nothing else vouched for.
      */
     throw new PhisAddonQueryError(
       `Query "${name}" changes rows, and this request has no actor behind it.`,
@@ -288,15 +297,24 @@ async function run(
     }
   }
 
-  if ((kind === "update" || kind === "delete") && query.scoped) {
+  /*
+   * The Add-on's own authority, for this query and nothing else: the ladder and the group check below are
+   * passed over exactly as they are for a job, and a role guard was never declared beside it. Read from
+   * the descriptor on every call rather than from the capability, so the query before and the query
+   * after it in the same request -- in the same transaction -- keep the caller's authority.
+   *
+   * What it does not pass over is in the statement rather than here: the Site filter, the one row the key
+   * addresses, and the scope columns Core writes on insert.
+   */
+  if ((kind === "update" || kind === "delete") && query.scoped && !parameters.addonAuthority) {
     /*
      * Before the statement, never after: a refused write must not have happened.
      *
      * Only asked where there is something to ask about. A table with no owner and no group carries no
      * row authority, so the ladder answers no to every row in it -- and putting that question to it
      * anyway would make the role guard above decorative, allowing the attempt and then refusing it with
-     * a silent zero. Such a table's writes must state a role, which validation enforces, and that role
-     * is then the whole of the authority rather than half of it.
+     * a silent zero. Such a table's writes must state a role or the Add-on's own authority, which
+     * validation enforces, and that is then the whole of the authority rather than half of it.
      */
     const id = readArgument(args, parameters.id!, name);
     if (!await bound.mayActOnRow({ table: query.table, id, intent: kind, db })) {
@@ -315,7 +333,7 @@ async function run(
     }
   }
 
-  if (kind === "insert" && parameters.group) {
+  if (kind === "insert" && parameters.group && !parameters.addonAuthority) {
     /*
      * The group is the only scope column an insert names, because a row may belong to any group the
      * actor is in. That makes it the only way an insert could reach outside the actor's standing, so it

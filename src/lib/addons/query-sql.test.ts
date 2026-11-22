@@ -4,6 +4,7 @@ import { compilePhisAddonQueries } from "./query-sql.ts";
 import { buildPhisAddonSchemaStatements } from "./schema-ddl.ts";
 import { validatePhisAddonSchemaDescriptor } from "./schema-descriptor.ts";
 import {
+  phisAddonAuthorityBypasses,
   phisAddonUnindexedSearches,
   validatePhisAddonQueryCatalog,
 } from "./query-descriptor.ts";
@@ -535,6 +536,20 @@ describe("what paging refuses at validation", () => {
         groupBy: [column],
       }, [], scoped)).toMatch(/names nullable column/);
     }
+    // Where the query's own where leaves the nulls out there is no null group, and the paging holds.
+    const notNull = { kind: "isNull", column: "cover_path", negated: true };
+    expect(issuesFor({
+      kind: "aggregate", aggregates: [{ function: "count", as: "n" }], groupBy: ["cover_path"], limit: 50,
+      where: notNull,
+    }, [], scoped)).toBe("");
+    expect(issuesFor({
+      kind: "aggregate", aggregates: [{ function: "count", as: "n" }], groupBy: ["cover_path"], limit: 50,
+      where: { kind: "all", conditions: [{ kind: "isNull", column: "owner_user_id", negated: true }, notNull] },
+    }, [], scoped)).toBe("");
+    expect(issuesFor({
+      kind: "aggregate", aggregates: [{ function: "count", as: "n" }], groupBy: ["cover_path"], limit: 50,
+      where: { kind: "any", conditions: [notNull, { kind: "isNull", column: "cover_path" }] },
+    }, [], scoped)).toMatch(/names nullable column/);
   });
 
   it("accepts an ordering column that may not", () => {
@@ -1006,5 +1021,164 @@ describe("an update that adds, and one that is guarded", () => {
         },
       },
     ))).toMatch(/"expected" must be nullable/);
+  });
+});
+
+/**
+ * A query running with the Add-on's own authority rather than the caller's.
+ *
+ * What validation owes it is narrow: the value is one of two, no role stands beside it -- a role guards
+ * the caller's authority, which this query does not run on -- and the requirement to name a role on a
+ * table nobody owns is met by the declaration itself. What it must not loosen is everything the
+ * statement carries: Core's scope columns stay Core's in an insert, and the key still addresses one row.
+ */
+describe("a query running with the Add-on's own authority", () => {
+  const authoritySchema: PhisAddonSchemaDescriptor = {
+    descriptorVersion: 1,
+    version: 1,
+    tables: [
+      {
+        // Nobody owns a seat count: it is the Add-on's.
+        name: "offer",
+        siteScoped: true,
+        columns: [
+          { name: "id", type: "identity" },
+          { name: "capacity", type: "integer" },
+          { name: "label", type: "string", maxLength: 64 },
+        ],
+        primaryKey: ["id"],
+      },
+      {
+        name: "booking",
+        siteScoped: true,
+        groupScoped: true,
+        ownerScoped: true,
+        columns: [
+          { name: "id", type: "identity" },
+          { name: "seats", type: "integer" },
+        ],
+        primaryKey: ["id"],
+      },
+    ],
+  };
+
+  const parameters = {
+    q: [
+      { name: "id", type: "bigInteger" as const },
+      { name: "quantity", type: "integer" as const },
+      { name: "taken", type: "integer" as const },
+      { name: "group_id", type: "integer" as const },
+      { name: "owner", type: "integer" as const },
+    ],
+  };
+
+  function issuesFor(query: Record<string, unknown>, roles: string[] = ["clerk"]) {
+    const issues: string[] = [];
+    validatePhisAddonQueryCatalog(
+      { parameters, queries: [{ name: "q", ...query }] },
+      authoritySchema,
+      "queries",
+      issues,
+      new Set(roles),
+    );
+    return issues.join("\n");
+  }
+
+  const claim = {
+    kind: "update",
+    table: "offer",
+    set: [{ column: "capacity", add: { kind: "parameter", name: "taken" } }],
+    idParameter: "id",
+    where: {
+      kind: "compare", column: "capacity", operator: ">=", value: { kind: "parameter", name: "quantity" },
+    },
+  };
+
+  it("lets a guarded update change a table nobody owns without naming a role", () => {
+    expect(issuesFor({ ...claim, authority: "addon" })).toBe("");
+  });
+
+  it("still asks for a role where the caller's authority is the one stated, or none is", () => {
+    expect(issuesFor({ ...claim, authority: "caller" })).toMatch(/must state requiresRole/);
+    expect(issuesFor(claim)).toMatch(/must state requiresRole/);
+    expect(issuesFor({ ...claim, authority: "caller", requiresRole: "clerk" })).toBe("");
+  });
+
+  it("requires neither a guard nor an add: a counter has nothing to guard", () => {
+    expect(issuesFor({
+      kind: "update", table: "offer", idParameter: "id", authority: "addon",
+      set: [{ column: "label", value: { kind: "literal", value: "full" } }],
+    })).toBe("");
+    expect(issuesFor({ kind: "delete", table: "offer", idParameter: "id", authority: "addon" })).toBe("");
+  });
+
+  it("is offered on every kind of query", () => {
+    expect(issuesFor({ kind: "select", table: "offer", limit: 10, authority: "addon" })).toBe("");
+    expect(issuesFor({
+      kind: "aggregate", table: "offer", authority: "addon",
+      aggregates: [{ function: "sum", column: "capacity", as: "left" }],
+    })).toBe("");
+    expect(issuesFor({
+      kind: "insert", table: "booking", authority: "addon", groupParameter: "group_id",
+      values: [{ column: "seats", value: { kind: "parameter", name: "quantity" } }],
+    })).toBe("");
+  });
+
+  it("refuses a role beside it, in either direction", () => {
+    expect(issuesFor({ ...claim, authority: "addon", requiresRole: "clerk" }))
+      .toMatch(/states both authority "addon" and requiresRole/);
+    expect(issuesFor({
+      kind: "delete", table: "booking", idParameter: "id", authority: "addon", alsoAllowedByRole: "clerk",
+    })).toMatch(/states both authority "addon" and alsoAllowedByRole/);
+  });
+
+  it("refuses an authority it does not know", () => {
+    expect(issuesFor({ ...claim, authority: "system" })).toMatch(/authority must be "caller" or "addon"/);
+    expect(issuesFor({ ...claim, authority: true })).toMatch(/authority must be "caller" or "addon"/);
+  });
+
+  it("leaves the scope columns Core's: an insert under it may not name the owner or the group", () => {
+    const insert = (column: string) => issuesFor({
+      kind: "insert", table: "booking", authority: "addon", groupParameter: "group_id",
+      values: [
+        { column: "seats", value: { kind: "parameter", name: "quantity" } },
+        { column, value: { kind: "parameter", name: "owner" } },
+      ],
+    });
+    expect(insert("owner_user_id")).toMatch(/is "owner_user_id", which Core writes itself/);
+    expect(insert("group_id")).toMatch(/is "group_id", which Core writes itself/);
+    expect(insert("site_id")).toMatch(/is "site_id", which Core writes itself/);
+    // And a group-scoped insert still names the group through its parameter, where Core writes it.
+    expect(issuesFor({
+      kind: "insert", table: "booking", authority: "addon",
+      values: [{ column: "seats", value: { kind: "parameter", name: "quantity" } }],
+    })).toMatch(/groupParameter must name a declared parameter/);
+  });
+
+  it("compiles to the statement a caller's query would have been, Site filter and key included", () => {
+    const catalog = (authority?: "addon") => ({
+      parameters,
+      queries: [{ name: "q", ...claim, ...(authority ? { authority } : { requiresRole: "clerk" }) }],
+    }) as unknown as PhisAddonQueryCatalog;
+    const asAddon = compilePhisAddonQueries(SCHEMA, authoritySchema, catalog("addon")).get("q")!;
+    const asCaller = compilePhisAddonQueries(SCHEMA, authoritySchema, catalog()).get("q")!;
+    expect(asAddon.sql).toBe(asCaller.sql);
+    expect(asAddon.sql).toContain('WHERE "id" = $2 AND "site_id" = $3 AND ("capacity" >= $4)');
+  });
+
+  it("names every such query for the operator, with its kind and its table", () => {
+    const catalog = {
+      parameters,
+      queries: [
+        { name: "claim", ...claim, authority: "addon" },
+        { name: "rename", ...claim, requiresRole: "clerk" },
+        { name: "explicit", ...claim, authority: "caller", requiresRole: "clerk" },
+        { name: "retire", kind: "delete", table: "offer", idParameter: "id", authority: "addon" },
+      ],
+    } as unknown as PhisAddonQueryCatalog;
+    expect(phisAddonAuthorityBypasses(catalog)).toEqual([
+      { query: "claim", kind: "update", table: "offer" },
+      { query: "retire", kind: "delete", table: "offer" },
+    ]);
   });
 });

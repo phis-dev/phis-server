@@ -1205,6 +1205,25 @@ function reportPaymentReprobe(reprobe: PhisPaymentReprobe) {
   }
 }
 
+/**
+ * The queries an Add-on runs with its own authority, as install, upgrade and check say them: each one as
+ * the bypass it is, and a delete among them once more as a warning.
+ */
+function reportAddonAuthority(result: {
+  addonAuthorityQueries: readonly { addonId: string; query: string; kind: string; table: string }[];
+  warnings: readonly { message: string; addonId: string }[];
+}) {
+  for (const entry of result.addonAuthorityQueries) {
+    console.log(
+      `  ${entry.addonId}: query "${entry.query}" (${entry.kind} on ${entry.table}) bypasses the ` +
+      "caller's authority and runs with the Add-on's own, whoever calls it.",
+    );
+  }
+  for (const warning of result.warnings) {
+    console.warn(`  Warning: ${warning.addonId}: ${warning.message}`);
+  }
+}
+
 function requireSecretEncryptionKey(): PhiSecretEncryptionKey {
   const runtime = readPhiRuntimeConfigSync(configRoot);
   const keyHex = runtime.secrets?.encryptionKey?.trim() ?? "";
@@ -4002,6 +4021,7 @@ async function main() {
           "with no text index on it, and will read the whole table.",
         );
       }
+      reportAddonAuthority(result);
     } else {
       console.log(`${result.invalid?.length ?? 0} Add-on(s) no longer validate against this release:`);
       for (const entry of result.invalid ?? []) {
@@ -4028,6 +4048,7 @@ async function main() {
       console.log(
         `Installed ${result.addon.addonId} disabled; reconcile and enable it after migrations.`,
       );
+      reportAddonAuthority(result);
     }
     return;
   }
@@ -4046,6 +4067,7 @@ async function main() {
       if (result.previousArtifactKept) {
         console.log(`Kept ${result.previousArtifactKept} for a rollback.`);
       }
+      reportAddonAuthority(result);
     }
     return;
   }

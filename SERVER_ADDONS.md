@@ -1214,6 +1214,13 @@ Three things Core does here that an Add-on cannot influence:
 what to offer a user -- whether to render the delete control; the write path is what actually holds. A
 check an Add-on has to remember to call is one that eventually is not called.
 
+One query at a time may be taken out of the caller's hands. A query declaring `authority: "addon"` runs
+with the Add-on's own system authority, the one a job writes under, whoever called the route: the
+ladder, the group an insert names and a role are not asked for it. It lifts the row-level check and the
+group check above and nothing else -- the Site filter is still in the statement, and the scope columns
+are still Core's. `authorization:v1` keeps answering for the caller, so a surface deciding what to
+offer still asks about the person in front of it. See *Declared queries* in section 15.
+
 The transaction handle offers the same five operations and nothing else: no commit, no rollback, no
 savepoint. Returning ends the unit of work, throwing undoes it, and an Add-on cannot leave one open
 because it never holds the thing that would stay open.
@@ -2078,6 +2085,10 @@ a role, and validation refuses it otherwise. On an owned or grouped table the ro
 replaces: both have to be satisfied. `alsoAllowedByRole` widens instead, for moderation (section 15,
 *Declared queries*).
 
+Where no role can fit -- a guest has none, and a customer's roles have no reason to name a stock count --
+a query may declare `authority: "addon"` instead and run with the Add-on's own authority. It is the
+bypass of both, declared on the one query, and the operator is shown it at install.
+
 #### Gating a surface on a role
 
 A role reaches the browser too, so a Module can leave out a link somebody would be refused anyway.
@@ -2491,6 +2502,32 @@ The declaration form carries what a real query needs and refuses what does not s
   the ladder's silent zero, so a moderation query does not become a way of asking whether a row exists.
   Only on an update or a delete, only on a table that has authority to stand in for, and never together
   with `requiresRole` -- a query wanting both is two queries under one name.
+- `authority: "addon"` is the case between the caller's authority and a job's. A guest, or a customer
+  holding no role, sets off a write only the Add-on may make in their name: a seat taken from a
+  capacity, a code redeemed up to its limit, a download counted, a one-time code spent. Nobody owns the
+  count and no role names it, so on the caller's authority the write is refused to exactly the people it
+  is for. With the declaration the query runs with the Add-on's own system authority, as in a job,
+  whoever calls the route. It is a bypass and is written down as one: the Add-on vouches for this query,
+  and neither the ladder, nor the caller's standing in the group an insert names, nor a role is asked.
+  It never stands beside `requiresRole` or `alsoAllowedByRole`, since a role narrows or widens the
+  caller's authority and this query does not run on it. On a table nobody owns it meets the requirement
+  to name a role. On an owned or grouped table it reaches any row of the Site, as a job does.
+
+  What it does not lift is in the statement. The Site filter stays, so the Add-on's authority ends where
+  the Site does. An update or a delete still changes one row, addressed by its key. An insert still has
+  Core write the scope columns: the Site, the caller as owner -- null for a guest -- and the group from
+  `groupParameter`, which the foreign key keeps on this Site but which the caller no longer has to stand
+  in. `actor` still names the caller; the authority changes, the person acting does not. A request
+  nobody authenticated, an unverified hook, still writes nothing. Everything else the request runs keeps
+  the caller's authority, inside a `transaction` too, because the authority belongs to the query and not
+  to the call. The route's rate limit and body limit apply as declared.
+
+  A capacity wants a guarded update, `add: -quantity` beside `compare capacity >= quantity`: test and
+  write are one statement, and two guests cannot both get the last seat. Nothing requires the guard, but
+  an unguarded write under this authority is one any caller can repeat as often as the route allows.
+  `phis addon install`, `phis addon upgrade` and `phis addon check` list every such query by name, kind
+  and table (`addonAuthorityQueries` in `--json`), and a `delete` among them a second time under
+  `warnings`.
 - `in` comes in two forms. One takes values fixed in the descriptor -- a state, a kind, a handful of
   names the Add-on knows. The other names a `list` parameter and takes what the caller brings, which is
   what makes a second question about a page possible: read a listing, then ask something about exactly
@@ -2507,7 +2544,10 @@ The declaration form carries what a real query needs and refuses what does not s
   says so rather than letting the first call raise it. Without `groupBy` the answer is one row and there
   is no cursor. With it there is one row per group, paged like a select -- and the grouping columns *are*
   the ordering, total by construction because `GROUP BY` yields each combination once, which is also why
-  they must be `NOT NULL`. There is no ordering by an aggregated value: ranking by an average would page
+  they must be `NOT NULL`. A nullable column groups where the aggregate's own `where` leaves its nulls
+  out -- `{ kind: "isNull", column, negated: true }`, alone or in an `all` -- since there is then no null
+  group to page past: sales per listing, say, where a line keeps no listing once the listing is deleted.
+  There is no ordering by an aggregated value: ranking by an average would page
   on a key that is neither unique nor known before the group is computed.
 - an `update` or `delete` addresses exactly one row by its primary key, through `idParameter`; there is
   no bulk form. Every mutation answers with the row it wrote.
@@ -2575,6 +2615,15 @@ once per query:
 | add | `{ column, add }` | `column = column + add` | Only in an `update`. The column must be `smallInteger`, `integer` or `bigInteger`; `add` an integer literal or a non-nullable, non-list `integer` or `bigInteger` parameter. A null column stays null; a `range` constraint still refuses a sum outside it. |
 
 Core's scope columns and a slot's mirror column are never assigned.
+
+Whose authority a query runs under is said on the query itself, by at most one of three fields
+(`PhisAddonQueryDescriptor`):
+
+| Field | On | Authority | Rules |
+| --- | --- | --- | --- |
+| `requiresRole` | every kind | the caller's, narrowed: the role on top of the ladder | Names a role the manifest declares. Required on an update or delete of a table with neither owner nor group, unless `authority` is `"addon"`. Refused loudly when the caller does not hold it. |
+| `alsoAllowedByRole` | `update`, `delete` | the caller's, widened: the role where the ladder said no | Only on an owned or grouped table. Never with `requiresRole`. The refusal stays the ladder's `null`. |
+| `authority` | every kind | `"caller"`, the default, or `"addon"`: the Add-on's own system authority, as in a job | `"addon"` never stands beside `requiresRole` or `alsoAllowedByRole`, and asks neither the ladder nor the caller's group. Site filter, one row per key and Core's scope columns hold as for any query. Listed by `phis addon install`, `upgrade` and `check`; a `delete` also as a warning. |
 
 A parameter is declared per query with a `name`, a `type` (`integer`, `bigInteger`, `text`, `boolean`,
 `instant`, `uuid` or `json`), and optionally `nullable` and `list`. A `json` parameter cannot be a list.
