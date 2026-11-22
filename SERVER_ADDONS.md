@@ -2188,8 +2188,10 @@ Add-on to exactly `roles`: the same checks as `POST`/`DELETE` for each role to g
 back, written all together or not at all.
 
 `GET /api/site/addon-roles` answers `{ addons }`, every declared role of every Add-on enabled on the Site,
-each marked `grantable` or not for the caller, and with `?userId=` also what that person holds
-(`userId`, `held` stored, `holdsAll` true for a Site Admin) -- the latter only for a caller who may grant at least one role. One screen therefore
+each marked `grantable` or not for the caller and carrying its `impliedBy` as declared, and with `?userId=`
+also what that person holds (`userId`, `held` stored, `implied` the roles a Site access hands them with the
+access named, `holdsAll` true for a Site Admin) -- the latter only for a caller who may grant at least one
+role. A role in `implied` is not stored and is not taken back by any of these calls. One screen therefore
 serves an operator and a `market-admin` alike. `AUTHORIZATION.md` section 5 has the exact shapes.
 
 An Add-on's own surface renders the screen and calls these routes; it never decides the answer, so

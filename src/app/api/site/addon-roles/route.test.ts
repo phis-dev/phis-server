@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 
 const mocks = vi.hoisted(() => ({
@@ -12,6 +12,8 @@ const mocks = vi.hoisted(() => ({
   replace: vi.fn(),
   actorRoles: vi.fn(),
   actorClaims: vi.fn(),
+  // Every claim admits every access unless a case asks for the real Core role masks.
+  realAccess: { value: false },
 }));
 
 vi.mock("server-only", () => ({}));
@@ -38,8 +40,14 @@ vi.mock("@/lib/db", () => ({ getPool: () => ({}) }));
 vi.mock("@/lib/log", () => ({ logRuntimeEvent: vi.fn() }));
 vi.mock("@/lib/authorization", async () => {
   const actual = await vi.importActual<typeof import("@/lib/authorization")>("@/lib/authorization");
-  return { ...actual, canPhiViewerAccess: (viewer: { roleClaims: unknown[] }) => viewer.roleClaims.length > 0 };
+  return {
+    ...actual,
+    canPhiViewerAccess: (viewer: Parameters<typeof actual.canPhiViewerAccess>[0], policy: Parameters<typeof actual.canPhiViewerAccess>[1]) =>
+      mocks.realAccess.value ? actual.canPhiViewerAccess(viewer, policy) : (viewer.roleClaims ?? []).length > 0,
+  };
 });
+
+import { PhiBaseRole } from "@/lib/constants/phi-base-roles";
 
 import { GET, POST, PUT } from "./route";
 
@@ -167,8 +175,10 @@ describe("the Add-on role catalog", () => {
     const body = await (await get("?userId=42")).json();
     expect(body.userId).toBe(42);
     expect(body.held).toEqual([vendor]);
-    // The target (42) is the same stand-in claim set as the caller here: a Site Admin.
+    // The target (42) is the same stand-in claim set as the caller here: a Site Admin, who holds every role
+    // and has none of them through a Site access.
     expect(body.holdsAll).toBe(true);
+    expect(body.implied).toEqual([]);
 
     mocks.actorClaims.mockReturnValue([]);
     mocks.actorRoles.mockResolvedValue([]);
@@ -206,7 +216,7 @@ describe("setting the roles one person holds in an Add-on", () => {
       addonId: ADDON, siteId: 7, userId: 42, grant: ["auditor"], revoke: ["vendor"], grantedByUserId: 1,
     });
     const body = await response.json();
-    expect(Object.keys(body).sort()).toEqual(["addons", "held", "holdsAll", "userId"]);
+    expect(Object.keys(body).sort()).toEqual(["addons", "held", "holdsAll", "implied", "userId"]);
   });
 
   it("says whether the person holds every role, and keeps the stored list as it is", async () => {
@@ -267,5 +277,62 @@ describe("setting the roles one person holds in an Add-on", () => {
     expect((await put({ userId: 42, addonId: ADDON, roles: "vendor" })).status).toBe(400);
     expect((await put({ userId: 0, addonId: ADDON, roles: [] })).status).toBe(400);
     expect(mocks.replace).not.toHaveBeenCalled();
+  });
+});
+
+describe("the roles a Site access implies", () => {
+  const BOOKS = [
+    { name: "licence-manager", grantableBy: { siteAccess: "site-admin" }, impliedBy: { siteAccess: "accounting" }, includes: ["clerk"] },
+    { name: "clerk", grantableBy: { siteAccess: "site-admin" } },
+    { name: "auditor", grantableBy: { siteAccess: "site-admin" } },
+  ];
+  // The real Core role masks apply here: Admin and Accountant as their flags.
+  const SITE_ADMIN_CLAIMS = [{ providerId: "@phis/server/core", flags: PhiBaseRole.Admin }];
+  const ACCOUNTANT_CLAIMS = [{ providerId: "@phis/server/core", flags: PhiBaseRole.Accountant }];
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.realAccess.value = true;
+    mocks.context.mockResolvedValue({ context: { site: { id: 7, key: "site" }, session: { userId: 1 } }, error: null });
+    mocks.installed.mockReturnValue({ [ADDON]: { enabled: true, manifest: { addonId: ADDON, roles: BOOKS } } });
+    mocks.available.mockResolvedValue(new Set([ADDON]));
+    mocks.membership.mockResolvedValue({ userId: 42, siteId: 7 });
+    // Caller 1 is a Site Admin; person 42 an Accountant with `auditor` and `clerk` stored.
+    mocks.actorClaims.mockImplementation((userId: number) => (userId === 1 ? SITE_ADMIN_CLAIMS : ACCOUNTANT_CLAIMS));
+    mocks.actorRoles.mockResolvedValue([]);
+    mocks.held.mockResolvedValue([
+      { addonId: ADDON, role: "auditor", grantedAt: "x", grantedByUserId: 1 },
+      { addonId: ADDON, role: "clerk", grantedAt: "x", grantedByUserId: 1 },
+    ]);
+    mocks.replace.mockResolvedValue({ granted: [], revoked: ["clerk"] });
+  });
+  afterEach(() => {
+    mocks.realAccess.value = false;
+  });
+
+  it("are declared in the catalog, and a role without one carries none", async () => {
+    const body = await (await get()).json();
+
+    expect(body.addons[0].roles.map((role: { name: string; impliedBy?: unknown }) => [role.name, role.impliedBy]))
+      .toEqual([["licence-manager", { siteAccess: "accounting" }], ["clerk", undefined], ["auditor", undefined]]);
+  });
+
+  it("are answered beside the stored grants, with the access, whether or not stored as well", async () => {
+    const body = await (await get("?userId=42")).json();
+
+    expect(body.held.map((grant: { role: string }) => grant.role)).toEqual(["auditor", "clerk"]);
+    expect(body.holdsAll).toBe(false);
+    expect(body.implied).toEqual([
+      { addonId: ADDON, role: "licence-manager", through: { siteAccess: "accounting" } },
+      { addonId: ADDON, role: "clerk", through: { siteAccess: "accounting" } },
+    ]);
+  });
+
+  it("are not written: taking back the stored grant revokes the row and the role stays implied", async () => {
+    const response = await put({ userId: 42, addonId: ADDON, roles: ["auditor"] });
+
+    expect(response.status).toBe(200);
+    expect(mocks.replace.mock.calls[0]![1]).toMatchObject({ grant: [], revoke: ["clerk"] });
+    expect((await response.json()).implied.map((entry: { role: string }) => entry.role)).toEqual(["licence-manager", "clerk"]);
   });
 });

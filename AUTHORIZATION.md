@@ -170,7 +170,9 @@ Who drafts, submits and publishes content -- Widget content apart from structure
 -- is set out in [CONTENT.md](./CONTENT.md#rights). Writing a Site translation is Publishing, because it
 is live the moment it is written. Reading a Page list of an Area (`GET /api/site/cms/pages`) is open to
 everybody who writes for the Site -- `Maintainer | Builder | Author | Publisher` -- because a link is picked
-from it; changing a Page's path stays Structure authoring.
+from it; changing a Page's path stays Structure authoring. The Site's product directory -- listing it,
+releasing a publisher's terms, locking and unlocking (`/api/site/products`) -- is Accounting: the
+operator's books, which no shop owns.
 These are also the Site accesses an Add-on names in `grantableBy`, `impliedBy` or `hasSiteAccess`:
 `site-admin`, `site-maintenance`, `structure-authoring`, `content-editing`, `publishing`, `site-media`,
 `support`, `accounting` (`site-admin` not in `impliedBy`, section 5).
@@ -261,17 +263,24 @@ the Add-on is back, so a call naming one is refused with 404 `addon_unknown` (th
 taken back:
 
 - `GET /api/site/addon-roles` answers `{ addons: [{ addonId, title, roles: [{ name, description?,
-  grantableBy, includes?, grantable }] }] }`: every declared role of every Add-on that counts on the Site, and
-  per role whether the caller may grant it (the evaluation that decides the write). `title` is the Add-on id
+  grantableBy, includes?, impliedBy?, grantable }] }] }`: every declared role of every Add-on that counts on
+  the Site, its `impliedBy` as declared (`{ siteAccess }`, absent where the role declares none), and per role
+  whether the caller may grant it (the evaluation that decides the write). `title` is the Add-on id
   until the manifest carries a display name. With `?userId=N` it adds `userId`, `held` (the stored
   assignments of that user across the Add-ons that count, with roles the manifest still declares -- the
-  ones `GET /api/site/admin/users` lists, not implied and not widened for a Site Admin) and `holdsAll` (true when that user is Site Admin and so holds every
-  role whatever is stored); that needs at least one grantable role, else 403.
+  ones `GET /api/site/admin/users` lists, not implied and not widened for a Site Admin), `implied`
+  (`[{ addonId, role, through: { siteAccess } }]`: every role a Site access of that user hands them without a
+  grant -- a role's `impliedBy` and what it `includes` -- naming the access, whether or not the role is stored
+  as well; empty for a Site Admin and for a disabled membership; shown, never written) and `holdsAll` (true
+  when that user is Site Admin and so holds every role whatever is stored). `implied` and `holdsAll` come
+  from one read of that user's authorization snapshot. That needs at least one grantable role, else 403.
 - `PUT /api/site/addon-roles` with `{ userId, addonId, roles }` sets the stored roles of that user for that
   Add-on to exactly `roles`. Core takes the difference to what is held, checks the caller's standing for each
   role to give and each role to take back, and writes all of it or nothing; one refusal answers 403
   `{ error: "not_permitted", role }`. The authorization revision of the membership moves once. A stored role the
-  manifest no longer declares is left untouched. The answer has the shape of `GET ?userId=`. Nothing is refused or altered because the person is Site
+  manifest no longer declares is left untouched. A role held through `impliedBy` is not a stored role: naming it
+  stores a grant beside the access, leaving it out takes back only a stored grant, and `implied` still lists it
+  afterwards. The answer has the shape of `GET ?userId=`. Nothing is refused or altered because the person is Site
   Admin: the stored roles are written as asked, `held` shows them and `holdsAll` stays true.
 - `GET /api/site/admin/users` (Site Admin) lists per user `addonRoles: [{ addonId, role }]`, the stored
   assignments, not those implied through `includes`, for Add-ons that are installed, enabled and available
@@ -280,11 +289,16 @@ taken back:
   every enabled Site Admin; `?addonId=&addonRole=` keeps users who hold the role stored or through `includes`
   of a stored role, and every enabled Site Admin (when the Add-on declares the role). Both also keep every
   enabled member holding a Site access that one of those roles is `impliedBy` (by the access's Core role
-  mask, `phisSiteAccessCoreRoleFlags`); their `addonRoles` stay the stored ones too. A row shows a Site
-  Admin as `roleTags` containing `"admin"` (with `enabled`); its `addonRoles` stay the stored ones. An
-  unknown or unavailable Add-on or an undeclared role gives an empty list; a malformed value 400.
-  `?userId=N` (the one-user read a dialog pre-fills from) carries `addonRoles` in its `user` as a flat list of
-  `"<addonId>:<role>"` strings, one per role.
+  mask, `phisSiteAccessCoreRoleFlags`); their `addonRoles` stay the stored ones too. Every row carries
+  beside them `impliedAddonRoles: [{ addonId, role, through: { siteAccess } }]`, what `implied` above answers
+  for that person, taken from the row's `enabled` and Core role flags (`phisSiteAccessHolderOfCoreRoles`; every
+  Site access is a Core role mask), so a page costs no statement per row; the capability snapshot is read
+  only when a row has a grant or holds an access an enabled Add-on hangs a role on. A row shows a Site
+  Admin as `roleTags` containing `"admin"` (with `enabled`); its `addonRoles` stay the stored ones and its
+  `impliedAddonRoles` is empty. An unknown or unavailable Add-on or an undeclared role gives an empty list; a
+  malformed value 400. `?userId=N` (the one-user read a dialog pre-fills from) carries `addonRoles` in its
+  `user` as a flat list of `"<addonId>:<role>"` strings, one per role, and `impliedAddonRoles` as in a row,
+  from the membership it reads.
 - `PUT /api/site/admin/users` (Site Admin) takes an optional `addonRoles`: the stored Add-on roles the person
   is to hold afterwards, over the Add-ons whose roles count on the Site -- installed, enabled and available,
   the same set `GET` reads `addonRoles` from (`listPhiCountingAddonDeclaredRoles`) -- as one flat list of
@@ -299,7 +313,8 @@ taken back:
   `user_not_member`, 403 `not_permitted`; a malformed list is 400. Stored roles of an Add-on outside that set,
   or that the manifest no longer declares, are neither shown nor granted nor taken back: they are left as
   they are, so a save that sends back the list `GET` answered changes nothing. The authorization revision
-  moves once for the Add-on roles of one save. The answer carries `addonRoles` in the same string form.
+  moves once for the Add-on roles of one save. The answer carries `addonRoles` in the same string form and
+  `impliedAddonRoles` for the saved Core roles and enabled state; a role there is never stored by the save.
 
 Core does not forbid giving or taking an Add-on role from oneself (the caller's standing is the only
 check, and a Site Admin may set their own Add-on roles through either call); only the Core roles of one's

@@ -1,6 +1,6 @@
 import "server-only";
 
-import type { PhisAddonRoleDescriptor, PhisAddonRoleGrantPolicy } from "./contract.ts";
+import type { PhisAddonRoleDescriptor, PhisAddonRoleGrantPolicy, PhisSiteAccess } from "./contract.ts";
 import { PHIS_SITE_ACCESS } from "./contract.ts";
 import { listPhiCountingAddonDeclaredRoles } from "./viewer-roles.ts";
 import { readPhisAddonHeldRoles } from "./held-roles.ts";
@@ -107,6 +107,8 @@ export type PhisAddonRoleCatalogEntry = {
     description?: string;
     grantableBy: PhisAddonRoleGrantPolicy;
     includes?: string[];
+    /** The Site access whose holders hold this role without a grant, as declared; absent where none is. */
+    impliedBy?: { siteAccess: PhisSiteAccess };
     /** Whether the acting person may hand this role out -- the decision `mayGrantPhisAddonRole` makes. */
     grantable: boolean;
   }[];
@@ -152,6 +154,7 @@ export async function readPhisAddonRoleCatalog(input: {
         ...(role.description === undefined ? {} : { description: role.description }),
         grantableBy: policy,
         ...(role.includes === undefined ? {} : { includes: [...role.includes] }),
+        ...(role.impliedBy === undefined ? {} : { impliedBy: { siteAccess: role.impliedBy.siteAccess } }),
         grantable,
       });
     }

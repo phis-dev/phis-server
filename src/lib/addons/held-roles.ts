@@ -3,17 +3,9 @@ import "server-only";
 import type { PhisAddonRoleDescriptor } from "./contract.ts";
 import { PHIS_SITE_ACCESS } from "./contract.ts";
 import { resolvePhisAddonHeldRoles, type PhisSiteAccessHolder } from "./role-inclusion.ts";
-import { holdsPhisSiteAccess, readPhisSiteAccessHolder } from "./site-access.ts";
+import { readPhisSiteAccessHolder } from "./site-access.ts";
 import { readPhisAddonUserRoles } from "@/db/server-addon-roles.mts";
 import { getPool } from "@/lib/db";
-
-/**
- * Whether a person is Site Admin on a Site, and so holds every role of every Add-on enabled there.
- * The same check that is the floor of role granting (`satisfiesPhisAddonGrantPolicy`).
- */
-export function holdsEveryPhisAddonRole(siteId: number, userId: number) {
-  return holdsPhisSiteAccess(siteId, userId, PHIS_SITE_ACCESS.siteAdmin);
-}
 
 /**
  * The roles one person holds in one Add-on on one Site, by `resolvePhisAddonHeldRoles`: all declared

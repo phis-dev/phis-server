@@ -394,7 +394,25 @@ describe("PUT /api/site/admin/users with Add-on roles", () => {
 
     const response = await put([`${SHOP_ADDON}:manager`]);
 
-    expect(await response.json()).toMatchObject({ userId: 41, addonRoles: [`${SHOP_ADDON}:manager`] });
+    expect(await response.json()).toMatchObject({ userId: 41, addonRoles: [`${SHOP_ADDON}:manager`], impliedAddonRoles: [] });
+  });
+
+  it("answers what the saved Core roles imply beside the stored roles, and stores none of it", async () => {
+    mocks.installed.mockReturnValue({
+      [SHOP_ADDON]: {
+        enabled: true,
+        manifest: { addonId: SHOP_ADDON, roles: [{ name: "clerk" }, { name: "books", impliedBy: { siteAccess: "accounting" } }] },
+      },
+    });
+    mocks.held.mockResolvedValue([]);
+
+    const response = await PUT(request("PUT", { ...RECORD, roles: ["accountant"], addonRoles: [] }));
+
+    expect(mocks.save).toHaveBeenCalledWith(expect.objectContaining({ addonRoles: { grant: [], revoke: [] } }));
+    expect(await response.json()).toMatchObject({
+      addonRoles: [],
+      impliedAddonRoles: [{ addonId: SHOP_ADDON, role: "books", through: { siteAccess: "accounting" } }],
+    });
   });
 
   it("answers 409 when the address was taken between the check and the write", async () => {
@@ -454,8 +472,35 @@ describe("GET /api/site/admin/users?userId with Add-on roles", () => {
 
     const response = await GET(request("GET", undefined, "?userId=41"));
 
-    expect((await response.json()).user.addonRoles).toEqual(["@acme/shop:clerk"]);
+    const { user } = await response.json();
+    expect(user.addonRoles).toEqual(["@acme/shop:clerk"]);
+    expect(user.impliedAddonRoles).toEqual([]);
     expect(mocks.grants.mock.calls[0]![1]).toEqual({ siteId: 7, userIds: [41] });
+  });
+
+  it("lists beside them what the person's Core roles imply, from the membership it read", async () => {
+    mocks.getById.mockResolvedValue(account([7]));
+    mocks.getMembership.mockResolvedValue({ coreRoleFlags: PhiBaseRole.Accountant, enabled: true });
+    mocks.available.mockResolvedValue(new Set(["@acme/shop"]));
+    mocks.installed.mockReturnValue({
+      "@acme/shop": {
+        enabled: true,
+        manifest: {
+          addonId: "@acme/shop",
+          roles: [{ name: "books", impliedBy: { siteAccess: "accounting" }, includes: ["clerk"] }, { name: "clerk" }],
+        },
+      },
+    });
+    mocks.grants.mockResolvedValue(new Map([[41, [{ addonId: "@acme/shop", role: "clerk" }]]]));
+
+    const { user } = await (await GET(request("GET", undefined, "?userId=41"))).json();
+
+    // `clerk` is stored and implied through `books`: listed in both, the stored one the save sends back.
+    expect(user.addonRoles).toEqual(["@acme/shop:clerk"]);
+    expect(user.impliedAddonRoles).toEqual([
+      { addonId: "@acme/shop", role: "books", through: { siteAccess: "accounting" } },
+      { addonId: "@acme/shop", role: "clerk", through: { siteAccess: "accounting" } },
+    ]);
   });
 });
 
@@ -493,6 +538,50 @@ describe("GET /api/site/admin/users with Add-on roles", () => {
     ]);
     expect(mocks.grants).toHaveBeenCalledOnce();
     expect(mocks.grants.mock.calls[0]![1]).toEqual({ siteId: 7, userIds: [10, 11, 12] });
+  });
+
+  it("shows beside them what a Site access implies, from the rows' Core roles, never for a Site Admin or a disabled member", async () => {
+    mocks.installed.mockReturnValue({
+      [SHOP]: { enabled: true, manifest: { addonId: SHOP, roles: [{ ...SHOP_ROLES[0], impliedBy: { siteAccess: "accounting" } }, SHOP_ROLES[1]] } },
+    });
+    mocks.grants.mockResolvedValue(new Map());
+    vi.mocked(listAdminUsersForSite).mockResolvedValue({
+      rows: [
+        { ...listRow(10), coreRoleFlags: PhiBaseRole.Accountant },
+        { ...listRow(11), coreRoleFlags: PhiBaseRole.Maintainer },
+        { ...listRow(12), coreRoleFlags: PhiBaseRole.Admin | PhiBaseRole.Accountant },
+        { ...listRow(13), coreRoleFlags: PhiBaseRole.Accountant, enabled: false },
+        { ...listRow(14), coreRoleFlags: PhiBaseRole.Supporter },
+      ],
+      total: 5, siteTotal: 5, page: 1, pageSize: 20,
+    } as never);
+
+    const { body } = await list();
+
+    const implied = [
+      { addonId: SHOP, role: "manager", through: { siteAccess: "accounting" } },
+      { addonId: SHOP, role: "clerk", through: { siteAccess: "accounting" } },
+    ];
+    expect(body.rows.map((row: { impliedAddonRoles: unknown }) => row.impliedAddonRoles))
+      .toEqual([implied, implied, [], [], []]);
+    expect(body.rows.map((row: { addonRoles: unknown[] }) => row.addonRoles.length)).toEqual([0, 0, 0, 0, 0]);
+    expect(mocks.available).toHaveBeenCalledOnce();
+  });
+
+  it("reads no capability snapshot for a page nobody on which has a grant or an implying access", async () => {
+    mocks.installed.mockReturnValue({
+      [SHOP]: { enabled: true, manifest: { addonId: SHOP, roles: [{ ...SHOP_ROLES[0], impliedBy: { siteAccess: "accounting" } }, SHOP_ROLES[1]] } },
+    });
+    mocks.grants.mockResolvedValue(new Map());
+    vi.mocked(listAdminUsersForSite).mockResolvedValue({
+      rows: [{ ...listRow(10), coreRoleFlags: PhiBaseRole.Supporter }, listRow(11)],
+      total: 2, siteTotal: 2, page: 1, pageSize: 20,
+    } as never);
+
+    const { body } = await list();
+
+    expect(body.rows.map((row: { impliedAddonRoles: unknown[] }) => row.impliedAddonRoles)).toEqual([[], []]);
+    expect(mocks.available).not.toHaveBeenCalled();
   });
 
   it("shows no roles of an Add-on that is not available on the Site", async () => {

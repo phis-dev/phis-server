@@ -53,6 +53,42 @@ export function listPhisAddonRolesImpliedBySiteAccess(
     .map((role) => role.name);
 }
 
+/** One role somebody holds through a Site access alone, and the access (`impliedBy.siteAccess`) it hangs on. */
+export type PhisAddonRoleHeldThroughSiteAccess = { role: string; through: { siteAccess: PhisSiteAccess } };
+
+/**
+ * What a person holds of an Add-on's roles through a Site access, and through which: every role whose
+ * `impliedBy.siteAccess` they hold, and what it includes. A role reached several ways names the access of
+ * its own `impliedBy` when that is held, else that of the first declaring role (in declaration order) that
+ * includes it. Whether the role is also stored does not enter: a grant beside it is still the person's to
+ * lose, and the access still holds the role once the grant is taken back.
+ *
+ * What user administration shows beside the stored grants, so that "holds licence-manager through
+ * accounting" can be read off the person rather than inferred. Empty for a Site Admin, who holds every
+ * role (`resolvePhisAddonHeldRoles`) and is shown as that. Answered in declaration order.
+ */
+export function listPhisAddonRolesHeldThroughSiteAccess(
+  declared: readonly PhisAddonRoleDescriptor[],
+  holdsSiteAccess: PhisSiteAccessHolder,
+): PhisAddonRoleHeldThroughSiteAccess[] {
+  if (holdsSiteAccess(PHIS_SITE_ACCESS.siteAdmin)) {
+    return [];
+  }
+  const implying = declared.filter((role) => role.impliedBy !== undefined && holdsSiteAccess(role.impliedBy.siteAccess));
+  const through = new Map<string, PhisSiteAccess>(implying.map((role) => [role.name, role.impliedBy!.siteAccess]));
+  for (const role of implying) {
+    for (const name of expandPhisAddonHeldRoles(declared, [role.name])) {
+      if (!through.has(name)) {
+        through.set(name, role.impliedBy!.siteAccess);
+      }
+    }
+  }
+  return declared.flatMap((role) => {
+    const siteAccess = through.get(role.name);
+    return siteAccess === undefined ? [] : [{ role: role.name, through: { siteAccess } }];
+  });
+}
+
 /**
  * The one rule for what somebody holds of an Add-on's roles: a Site Admin holds every declared role,
  * whether or not an assignment is stored; anybody else holds what was granted, every role whose

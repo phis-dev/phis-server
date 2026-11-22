@@ -17,9 +17,16 @@ import { getUserProfileByUserId, upsertUserProfile } from "@/db/user-profiles";
 import { getUserSiteMembership, upsertUserSiteMembership } from "@/db/user-site-memberships";
 import { readAvailablePhisProviderIds } from "@/lib/addons/capability-snapshot";
 import { listPhisAddonRolesImplying } from "@/lib/addons/role-inclusion";
-import { phisSiteAccessCoreRoleFlags } from "@/lib/addons/site-access";
+import { PHIS_SITE_ACCESS } from "@/lib/addons/contract";
+import { phisSiteAccessCoreRoleFlags, phisSiteAccessHolderOfCoreRoles } from "@/lib/addons/site-access";
 import { mayGrantPhisAddonRole } from "@/lib/addons/role-granting";
-import { listPhiCountingAddonDeclaredRoles, selectPhiCountingAddonRoles } from "@/lib/addons/viewer-roles";
+import {
+  listPhiCountingAddonDeclaredRoles,
+  listPhiCountingAddonRolesHeldThroughSiteAccess,
+  listPhiInstalledAddonImpliedSiteAccesses,
+  selectPhiCountingAddonRoles,
+  type PhiCountingAddonRoleHeldThroughSiteAccess,
+} from "@/lib/addons/viewer-roles";
 import { getPool } from "@/lib/db";
 import { requireSiteAdminOnlyApiContext } from "@/lib/guards/site-admin-api";
 import { PHI_BASE_ROLE_OPTIONS } from "@/lib/constants/phi-base-role-metadata";
@@ -171,21 +178,40 @@ function parseAddonRolesSelection(value: unknown): AddonRoleAssignment[] | null 
 }
 
 /**
- * The stored Add-on roles that count on this Site for each of the given users, as the list shows them: one read
- * of the grants for all of them. Narrowed to the ones that count -- the rule the viewer's `addonRoleClaims`
- * apply -- but not expanded through `includes` and not widened for a Site Admin: what was granted is shown. The
- * UI recognises a Site Admin by `roleTags` containing "admin".
+ * The Add-on roles that count on this Site for each of the given members, as the list shows them, from one read
+ * of the grants for all of them:
+ *
+ * - `stored`, the stored grants, narrowed to the ones that count -- the rule the viewer's `addonRoleClaims`
+ *   apply -- but not expanded through `includes` and not widened for a Site Admin: what was granted is shown.
+ *   The UI recognises a Site Admin by `roleTags` containing "admin".
+ * - `implied`, what a Site access hands the member without a grant (`impliedBy`, with what it includes), each
+ *   naming the access (`listPhiCountingAddonRolesHeldThroughSiteAccess`), whether or not it is stored as well;
+ *   none for a Site Admin or a disabled membership. Answered from the `enabled` and Core role flags the caller
+ *   read with the members (`phisSiteAccessHolderOfCoreRoles`), never per role or per member.
+ *
+ * The capability snapshot is read only when there is something to narrow: a grant on the page, or a member
+ * holding a Site access an enabled Add-on hangs a role on.
  */
 async function readCountingAddonRoles(
   siteId: number,
-  userIds: readonly number[],
+  members: readonly { id: number; enabled: boolean; coreRoleFlags: number }[],
   known: ReadonlySet<string> | null = null,
 ) {
-  const grants = await readPhiSiteUsersAddonRoles(getPool(), { siteId, userIds });
-  const availableProviderIds = grants.size > 0 ? (known ?? await readAvailablePhisProviderIds(siteId)) : new Set<string>();
-  return (userId: number): AddonRoleAssignment[] => {
+  const grants = await readPhiSiteUsersAddonRoles(getPool(), { siteId, userIds: members.map((member) => member.id) });
+  const holders = new Map(members.map((member) => [member.id, phisSiteAccessHolderOfCoreRoles(member)] as const));
+  const impliedAccesses = listPhiInstalledAddonImpliedSiteAccesses();
+  const mayImply = [...holders.values()].some((holds) =>
+    !holds(PHIS_SITE_ACCESS.siteAdmin) && impliedAccesses.some((access) => holds(access)));
+  const availableProviderIds = grants.size > 0 || mayImply
+    ? (known ?? await readAvailablePhisProviderIds(siteId))
+    : new Set<string>();
+  return (userId: number): { stored: AddonRoleAssignment[]; implied: PhiCountingAddonRoleHeldThroughSiteAccess[] } => {
     const counting = selectPhiCountingAddonRoles(grants.get(userId) ?? [], availableProviderIds);
-    return [...counting].flatMap(([addonId, roles]) => roles.map((role) => ({ addonId, role })));
+    const holds = holders.get(userId);
+    return {
+      stored: [...counting].flatMap(([addonId, roles]) => roles.map((role) => ({ addonId, role }))),
+      implied: holds ? listPhiCountingAddonRolesHeldThroughSiteAccess(availableProviderIds, holds) : [],
+    };
   };
 }
 
@@ -216,7 +242,7 @@ async function sendPasswordResetMail(input: {
 }
 
 /**
- * The Site's users, one page, each with the Core roles and the stored Add-on roles they were given (a Site Admin holds every role besides); filterable by account type, enabled state, `addonId` and `addonRole`. `?userId=` answers the one user, with `addonRoles` as a list of `"<addonId>:<role>"` strings, one per role.
+ * The Site's users, one page, each with the Core roles, the stored Add-on roles they were given and, as `impliedAddonRoles`, the ones a Site access hands them without a grant (a Site Admin holds every role besides); filterable by account type, enabled state, `addonId` and `addonRole`. `?userId=` answers the one user, with `addonRoles` as a list of `"<addonId>:<role>"` strings, one per role.
  */
 export async function GET(request: NextRequest) {
   const { context, error } = await requireSiteAdminOnlyApiContext(request);
@@ -262,7 +288,7 @@ export async function GET(request: NextRequest) {
     if (!target || !target.siteIds.includes(site.id) || !membership) {
       return NextResponse.json({ error: "User not found." }, { status: 404 });
     }
-    const addonRolesOf = await readCountingAddonRoles(site.id, [target.id]);
+    const addonRoles = (await readCountingAddonRoles(site.id, [{ ...membership, id: target.id }]))(target.id);
     return NextResponse.json({
       user: {
         id: target.id,
@@ -274,7 +300,8 @@ export async function GET(request: NextRequest) {
         enabled: membership.enabled,
         coreRoleFlags: membership.coreRoleFlags,
         roleTags: buildRoleTags(membership.coreRoleFlags),
-        addonRoles: addonRolesOf(target.id).map(({ addonId, role }) => `${addonId}:${role}`),
+        addonRoles: addonRoles.stored.map(({ addonId, role }) => `${addonId}:${role}`),
+        impliedAddonRoles: addonRoles.implied,
         medusaCustomerId: target.medusaCustomerId,
         self: target.id === session.userId,
       },
@@ -327,29 +354,33 @@ export async function GET(request: NextRequest) {
     ...parsePhiPagination(searchParams, 20),
   });
 
-  // The page's stored grants in one read.
-  const addonRolesOf = await readCountingAddonRoles(site.id, result.rows.map((row) => row.id), availableProviderIds);
+  // The page's stored grants in one read; what a Site access implies from the rows' own Core roles.
+  const addonRolesOf = await readCountingAddonRoles(site.id, result.rows, availableProviderIds);
 
-  const rows = result.rows.map((row) => ({
-    id: row.id,
-    name: row.displayName,
-    email: row.emailNormalized,
-    accountType: row.accountType,
-    enabled: row.enabled,
-    userFlagTags: resolveUserAccountFlagTags(row.flags),
-    siteFlagTags: buildUserSiteFlagTags(row.siteFlags),
-    roleTags: buildRoleTags(row.coreRoleFlags),
-    addonRoles: addonRolesOf(row.id),
-    coreRoleFlags: row.coreRoleFlags,
-    lastLoginAt: row.lastLoginAt,
-    createdAt: row.createdAt,
-    companyName: row.companyName,
-    customerNumber: row.customerNumber,
-    medusaCustomerId: row.medusaCustomerId,
-    firstName: row.firstName,
-    lastName: row.lastName,
-    self: row.id === session.userId,
-  }));
+  const rows = result.rows.map((row) => {
+    const addonRoles = addonRolesOf(row.id);
+    return {
+      id: row.id,
+      name: row.displayName,
+      email: row.emailNormalized,
+      accountType: row.accountType,
+      enabled: row.enabled,
+      userFlagTags: resolveUserAccountFlagTags(row.flags),
+      siteFlagTags: buildUserSiteFlagTags(row.siteFlags),
+      roleTags: buildRoleTags(row.coreRoleFlags),
+      addonRoles: addonRoles.stored,
+      impliedAddonRoles: addonRoles.implied,
+      coreRoleFlags: row.coreRoleFlags,
+      lastLoginAt: row.lastLoginAt,
+      createdAt: row.createdAt,
+      companyName: row.companyName,
+      customerNumber: row.customerNumber,
+      medusaCustomerId: row.medusaCustomerId,
+      firstName: row.firstName,
+      lastName: row.lastName,
+      self: row.id === session.userId,
+    };
+  });
 
   return NextResponse.json({
     rows,
@@ -719,6 +750,12 @@ export async function PUT(request: NextRequest) {
     }
   }
 
+  const savedEnabled = requestedEnabled ?? currentMembership?.enabled ?? true;
+  const savedRoles = (await readCountingAddonRoles(
+    site.id,
+    [{ id: target.id, enabled: savedEnabled, coreRoleFlags: effectiveRoleFlags }],
+    availableProviderIds,
+  ))(target.id);
   return NextResponse.json({
     userId: target.id,
     email: requestedEmail,
@@ -728,9 +765,10 @@ export async function PUT(request: NextRequest) {
     firstName: requestedFirstName,
     lastName: requestedLastName,
     companyName: requestedCompanyName,
-    enabled: requestedEnabled ?? currentMembership?.enabled ?? true,
-    // As `GET ?userId=` answers them (`"<addonId>:<role>"` strings), read after the commit.
-    addonRoles: (await readCountingAddonRoles(site.id, [target.id], availableProviderIds))(target.id).map(({ addonId, role }) => `${addonId}:${role}`),
+    enabled: savedEnabled,
+    // As `GET ?userId=` answers them (`"<addonId>:<role>"` strings, `impliedAddonRoles` beside), read after the commit.
+    addonRoles: savedRoles.stored.map(({ addonId, role }) => `${addonId}:${role}`),
+    impliedAddonRoles: savedRoles.implied,
   });
 }
 

@@ -78,6 +78,23 @@ export function phisSiteAccessHolderOf(role: Parameters<typeof phisSiteAccessHel
 }
 
 /**
+ * The Site accesses a membership's Core roles admit, for a caller that read the membership rather than the
+ * whole snapshot -- user administration, which has every listed person's `enabled` and Core role flags from
+ * its own query. Every policy in the table is a Core role mask (`phisSiteAccessCoreRoleFlags`), so the
+ * person's groups do not enter and the answer is the one the snapshot gives; Core Admin is admitted to every
+ * access by the evaluator, as there.
+ */
+export function phisSiteAccessHolderOfCoreRoles(membership: { enabled: boolean; coreRoleFlags: number }): PhisSiteAccessHolder {
+  return phisSiteAccessHolderOf({
+    enabled: membership.enabled,
+    roleClaims: membership.coreRoleFlags > 0
+      ? [{ providerId: PHI_CORE_ROLE_PROVIDER_ID, flags: membership.coreRoleFlags }]
+      : [],
+    groupClaims: [],
+  });
+}
+
+/**
  * Every Site access of one person on one Site, from one read of their authorization snapshot.
  *
  * What a caller asks that has several access questions to put -- whether somebody is Site Admin, whether

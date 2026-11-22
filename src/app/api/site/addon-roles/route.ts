@@ -2,9 +2,14 @@ import { NextResponse, type NextRequest } from "next/server";
 
 import { requireSiteAuthenticatedApiContext } from "@/lib/guards/site-admin-api";
 import { readAvailablePhisProviderIds } from "@/lib/addons/capability-snapshot";
-import { holdsEveryPhisAddonRole } from "@/lib/addons/held-roles";
+import { PHIS_SITE_ACCESS } from "@/lib/addons/contract";
 import { mayGrantPhisAddonRole, readPhisAddonRoleCatalog } from "@/lib/addons/role-granting";
-import { filterPhiCountingAddonGrants, listPhiCountingAddonDeclaredRoles } from "@/lib/addons/viewer-roles";
+import { readPhisSiteAccessHolder } from "@/lib/addons/site-access";
+import {
+  filterPhiCountingAddonGrants,
+  listPhiCountingAddonDeclaredRoles,
+  listPhiCountingAddonRolesHeldThroughSiteAccess,
+} from "@/lib/addons/viewer-roles";
 import {
   grantPhisAddonUserRole,
   readPhiSiteUserAddonRoles,
@@ -41,6 +46,24 @@ function readCountingDeclaredRoles(addonId: string, availableProviderIds: Readon
   return listPhiCountingAddonDeclaredRoles(availableProviderIds).get(addonId) ?? null;
 }
 
+/**
+ * What one person holds of the roles that count here, as the answers with `userId` carry it: `held`, the
+ * stored grants; `implied`, what a Site access of theirs hands them without one (`impliedBy`, with what it
+ * includes); `holdsAll`, whether they are Site Admin. The two last from one read of their authorization
+ * snapshot, beside the one read of their grants.
+ */
+async function readPersonAddonRoles(siteId: number, userId: number, availableProviderIds: ReadonlySet<string>) {
+  const [grants, holdsSiteAccess] = await Promise.all([
+    readPhiSiteUserAddonRoles(getPool(), { siteId, userId }),
+    readPhisSiteAccessHolder(siteId, userId),
+  ]);
+  return {
+    held: filterPhiCountingAddonGrants(grants, availableProviderIds),
+    implied: listPhiCountingAddonRolesHeldThroughSiteAccess(availableProviderIds, holdsSiteAccess),
+    holdsAll: holdsSiteAccess(PHIS_SITE_ACCESS.siteAdmin),
+  };
+}
+
 function readBody(body: Body | null) {
   if (
     typeof body?.addonId !== "string" ||
@@ -57,8 +80,11 @@ function readBody(body: Body | null) {
  * Every role of every Add-on that counts here, each marked with whether the caller may grant it, and
  * optionally what one person already holds, and whether that is every role.
  *
- * `held` is the stored assignments that count, as `GET /api/site/admin/users` lists them; `holdsAll` is true
- * when the person is Site Admin, who holds every declared role whatever is stored.
+ * `held` is the stored assignments that count, as `GET /api/site/admin/users` lists them; `implied` is
+ * `[{ addonId, role, through: { siteAccess } }]`, every role a Site access of theirs hands them without a grant
+ * (a role's `impliedBy`, and what it includes), whether or not it is stored as well -- shown, never written;
+ * `holdsAll` is true when the person is Site Admin, who holds every declared role whatever is stored (and
+ * whose `implied` is empty). Each catalog role carries its `impliedBy` as declared.
  *
  * Reading somebody else's grants needs the standing to change at least one of them -- otherwise this
  * would be a way for any signed-in user to enumerate who staffs the Site.
@@ -91,11 +117,7 @@ export async function GET(request: NextRequest) {
   if (!addons.some((addon) => addon.roles.some((role) => role.grantable))) {
     return NextResponse.json({ error: "Not permitted." }, { status: 403 });
   }
-  const held = filterPhiCountingAddonGrants(
-    await readPhiSiteUserAddonRoles(getPool(), { siteId: context.site.id, userId }),
-    availableProviderIds,
-  );
-  return NextResponse.json({ addons, userId, held, holdsAll: await holdsEveryPhisAddonRole(context.site.id, userId) });
+  return NextResponse.json({ addons, userId, ...await readPersonAddonRoles(context.site.id, userId, availableProviderIds) });
 }
 
 /**
@@ -188,15 +210,7 @@ export async function PUT(request: NextRequest) {
     actorUserId: context.session.userId,
     availableProviderIds,
   });
-  return NextResponse.json({
-    addons,
-    userId,
-    held: filterPhiCountingAddonGrants(
-      await readPhiSiteUserAddonRoles(getPool(), { siteId: context.site.id, userId }),
-      availableProviderIds,
-    ),
-    holdsAll: await holdsEveryPhisAddonRole(context.site.id, userId),
-  });
+  return NextResponse.json({ addons, userId, ...await readPersonAddonRoles(context.site.id, userId, availableProviderIds) });
 }
 
 export async function POST(request: NextRequest) {

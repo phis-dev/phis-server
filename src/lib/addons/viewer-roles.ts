@@ -1,9 +1,14 @@
 import "server-only";
 
 import type { PhiViewerAddonRoleClaim } from "@/lib/authorization";
-import { PHIS_SITE_ACCESS, type PhisAddonRoleDescriptor } from "./contract.ts";
+import { PHIS_SITE_ACCESS, type PhisAddonRoleDescriptor, type PhisSiteAccess } from "./contract.ts";
 import { getPhisAddonInstalledManifest } from "./installed.ts";
-import { resolvePhisAddonHeldRoles, type PhisSiteAccessHolder } from "./role-inclusion.ts";
+import {
+  listPhisAddonRolesHeldThroughSiteAccess,
+  resolvePhisAddonHeldRoles,
+  type PhisAddonRoleHeldThroughSiteAccess,
+  type PhisSiteAccessHolder,
+} from "./role-inclusion.ts";
 import { readPhiSiteUserAddonRoles } from "@/db/server-addon-roles.mts";
 import { getPool } from "@/lib/db";
 
@@ -40,6 +45,40 @@ export function filterPhiCountingAddonGrants<G extends { addonId: string; role: 
   const counting = listPhiCountingAddonDeclaredRoles(availableProviderIds);
   return grants.filter((grant) =>
     (counting.get(grant.addonId) ?? []).some((declared) => declared.name === grant.role));
+}
+
+/**
+ * The Site accesses an enabled Add-on hangs one of its roles on (`impliedBy`), from the installed manifest
+ * alone. Whether anybody on a page of users can hold a role that way is answered from this before the
+ * capability snapshot is read for it: a Site whose Add-ons declare no `impliedBy`, or a page nobody on which
+ * holds such an access, costs no statement.
+ */
+export function listPhiInstalledAddonImpliedSiteAccesses(): PhisSiteAccess[] {
+  const accesses = new Set<PhisSiteAccess>();
+  for (const entry of Object.values(getPhisAddonInstalledManifest())) {
+    if (!entry.enabled) continue;
+    for (const role of entry.manifest.roles ?? []) {
+      if (role.impliedBy !== undefined) accesses.add(role.impliedBy.siteAccess);
+    }
+  }
+  return [...accesses];
+}
+
+/** A role one person holds through a Site access, in an Add-on that counts here. */
+export type PhiCountingAddonRoleHeldThroughSiteAccess = { addonId: string } & PhisAddonRoleHeldThroughSiteAccess;
+
+/**
+ * What one person holds through a Site access across the Add-ons that count here
+ * (`listPhisAddonRolesHeldThroughSiteAccess` per Add-on), in the order the Add-ons count, roles in declaration
+ * order. What user administration lists beside the stored grants; nothing for a Site Admin, who holds every
+ * role. `holdsSiteAccess` comes from the snapshot or membership the caller read already.
+ */
+export function listPhiCountingAddonRolesHeldThroughSiteAccess(
+  availableProviderIds: ReadonlySet<string>,
+  holdsSiteAccess: PhisSiteAccessHolder,
+): PhiCountingAddonRoleHeldThroughSiteAccess[] {
+  return [...listPhiCountingAddonDeclaredRoles(availableProviderIds)].flatMap(([addonId, declared]) =>
+    listPhisAddonRolesHeldThroughSiteAccess(declared, holdsSiteAccess).map((held) => ({ addonId, ...held })));
 }
 
 /** `filterPhiCountingAddonGrants`, by Add-on. */

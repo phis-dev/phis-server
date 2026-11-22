@@ -4,6 +4,7 @@ import { validatePhisAddonManifest } from "./manifest.ts";
 import {
   expandPhisAddonHeldRoles,
   findPhisAddonRoleInclusionCycle,
+  listPhisAddonRolesHeldThroughSiteAccess,
   listPhisAddonRolesImpliedBySiteAccess,
   listPhisAddonRolesImplying,
   resolvePhisAddonHeldRoles,
@@ -149,5 +150,25 @@ describe("a role implied by a Site access", () => {
 
   it("is the roles the user list counts among the holders of the included one", () => {
     expect(listPhisAddonRolesImplying(withImplied, "clerk")).toEqual(["books", "manager", "clerk"]);
+  });
+  it("is shown beside the grants with the access it hangs on, followed through what it includes", () => {
+    expect(listPhisAddonRolesHeldThroughSiteAccess(withImplied, holding("accounting"))).toEqual([
+      { role: "books", through: { siteAccess: "accounting" } },
+      { role: "clerk", through: { siteAccess: "accounting" } },
+    ]);
+    expect(listPhisAddonRolesHeldThroughSiteAccess(withImplied, holding("publishing"))).toEqual([]);
+  });
+
+  it("names a role's own access before one that reaches it through an inclusion", () => {
+    const support = { name: "support-desk", grantableBy: { siteAccess: "site-admin" as const }, impliedBy: { siteAccess: "support" as const }, includes: ["books"] };
+    expect(listPhisAddonRolesHeldThroughSiteAccess([support, books, clerk], holding("support", "accounting"))).toEqual([
+      { role: "support-desk", through: { siteAccess: "support" } },
+      { role: "books", through: { siteAccess: "accounting" } },
+      { role: "clerk", through: { siteAccess: "support" } },
+    ]);
+  });
+
+  it("is empty for a Site Admin, who is shown as holding every role", () => {
+    expect(listPhisAddonRolesHeldThroughSiteAccess(withImplied, holding("site-admin", "accounting"))).toEqual([]);
   });
 });
