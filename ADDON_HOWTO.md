@@ -293,6 +293,13 @@ module scope empty.
   ([SERVER_ADDONS.md](./SERVER_ADDONS.md#jobs)). Likewise no polling: a job that would have to run more
   often than every five minutes is waiting for an event, and `emits` with the `events:v1` capability is
   how one Add-on tells another that something happened.
+- **No day in the host's zone, and none in UTC by accident.** A day or a month you count by -- sold per
+  day, revenue per month -- is the Site's, and the Site's zone arrives on every context as
+  `context.site.timeZone` (an IANA name, `UTC` where the operator named none). A declared query has no
+  date functions, so work the day out when you write the row, e.g. with
+  `new Intl.DateTimeFormat("en-CA", { timeZone: context.site.timeZone }).format(instant)` for
+  `YYYY-MM-DD`, and store it beside the instant. `Date#toISOString().slice(0, 10)` is UTC's day, and
+  `Intl` without `timeZone` is the host's ([SERVER_ADDONS.md](./SERVER_ADDONS.md#10-handler-context)).
 - **No PII beyond what your actor could already see.** The request context carries a user *id*. A
   display name comes from `@phis/server/groups:v1`, and only for someone the acting user shares a
   group with; an email address is not on offer at all. If you need a person to receive a message, that

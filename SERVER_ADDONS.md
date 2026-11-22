@@ -599,11 +599,21 @@ An Add-on handler receives one argument, `PhisAddonRequestContext` from `@phis/c
 
 - `addonId` and `requestId`
 - `method`, `url`, `headers`, the raw `body` bytes, the matched `path`, and its `pathParams`
-- `site`: `{ id, key, publicBaseUrl }` for a Site-scoped route, otherwise `null`
+- `site`: `{ id, key, publicBaseUrl, timeZone }` for a Site-scoped route, otherwise `null`
 - `actor`: a Site user, an operator, an internal caller, or `null` on a hook
 - `capabilities`: the Core capabilities the manifest declared, bound to this Site and actor (section 13)
 - `signal`: an `AbortSignal` that fires when the caller aborts or the declared `timeoutMs` elapses; a
   timed-out request answers 504, and the handler is not cancelled
+
+`site.timeZone` is the Site's IANA zone as Core stores it (`phis site set --time-zone`): in its canonical
+spelling, never empty, and `UTC` where the operator named none. It is the zone an Add-on counts days and
+periods in -- sold per day, revenue per month -- because a day is the Site's day, not the host's and not
+UTC's. Core offers no date functions in a declared query (`now` is an instant, and nothing turns one into
+a day), so an Add-on that groups by day works the day out itself, in this zone, and stores it beside the
+instant, e.g. `paid_on` (`YYYY-MM-DD`) next to `paid_at`. The job, event and command contexts carry the
+same `timeZone` on their `site`. It is read with the Site's row Core resolves anyway, so it costs no
+query of its own. A serving process holds that row, zone included, until it restarts: a zone changed
+with `phis site set` reaches requests, hooks, events and jobs after the restart, and commands at once.
 
 There is no database handle, no general secret accessor, no logger, and no outbound HTTP client on the
 context. Mediated Module Storage is planned in [ADDONS_PLANNED.md](./design/ADDONS_PLANNED.md),
@@ -720,7 +730,8 @@ a retry the operator wants now.
 
 **A job has no actor.** It is the Add-on acting on its own data, not a person acting through it, so the
 row-level ladder has nobody to apply and `data:v1` writes with system authority. A job context carries
-`addonId`, `jobId`, `runId`, `site`, `capabilities`, and `signal`; the signal fires when the run loses
+`addonId`, `jobId`, `runId`, `site` (`{ id, key, timeZone }`, the zone as on a request, section 10),
+`capabilities`, and `signal`; the signal fires when the run loses
 its lease to another instance. That is exactly why a job is started only by the scheduler or through the
 internal-token route and never from a request: an Add-on able to start its own job from a handler would
 have built itself a way around the ladder.
@@ -776,7 +787,9 @@ own vocabulary (`product.add`), the `handler` its runtime exports under `command
 `phis addon command --addon <id> --command <command id> --site <site key> --as <email|user id>
 [--input <json|@file|->] --api-base-url <url>` posts to the serving instance's internal
 `/api/v1/addons/commands` route, for the reason a job is started there. The input is one JSON value and
-the answer is one JSON value, which the CLI prints.
+the answer is one JSON value, which the CLI prints. A command context carries `addonId`, `commandId`,
+`runId`, `site` (`{ id, key, publicBaseUrl, timeZone }`, as on a request, section 10), `actor`, `input`,
+`capabilities`, and `signal`.
 
 A command has an actor, and that is the line between it and a job. `--as` names a member of the Site
 who is not disabled, and the command's capabilities are bound to that person as a `site-user` route's
@@ -852,7 +865,8 @@ holds it. Without that, the after-commit attempt on one instance and the `addon-
 another read the same owed rows and handed the handler each of them twice.
 
 An event context carries `addonId`, `event`, `deliveryId` (the outbox key, stable across retries),
-`site`, a discriminated `subject`, `capabilities`, and `signal`. Current thread events use
+`site` (`{ id, key, timeZone }`, the zone as on a request, section 10), a discriminated `subject`,
+`capabilities`, and `signal`. Current thread events use
 `subject: { kind: "thread", threadId, messageId }`. Like a job, it runs with no
 actor and system authority: Core is telling the Add-on about a thread it is already allowed to reach.
 

@@ -10,7 +10,7 @@ const state = vi.hoisted(() => ({
 vi.mock("./installed.ts", () => ({ getPhisAddonInstalledManifest: () => ({ "@test/consumer": state.entry }), readPhisAddonServability: () => "ok" }));
 vi.mock("./registry-state.ts", () => ({ verifyPhisAddonRegistryState: async () => state.active ? "ready" : "hidden" }));
 vi.mock("./capabilities.ts", () => ({ buildPhisAddonCapabilities: (...args: unknown[]) => state.build(...args as []) }));
-vi.mock("@/db/sites", () => ({ getSiteIdentityById: async () => ({ id: 1, key: "demo" }) }));
+vi.mock("@/db/sites", () => ({ getSiteIdentityById: async () => ({ id: 1, key: "demo", timeZone: "Europe/Zurich" }) }));
 vi.mock("@/db/addon-events", () => ({ listPendingPhisAddonEvents: async () => state.pending, markPhisAddonEventDelivered: (...args: unknown[]) => state.delivered(...args),
   markPhisAddonEventFailed: (...args: unknown[]) => state.failed(...args), listPhisAddonEventAddonIds: async () => [],
   withPhisAddonEventDeliveryLock: async (_addonId: string, _siteId: number, body: () => Promise<unknown>) => state.lockHeld ? null : body() }));
@@ -35,6 +35,8 @@ describe("owner Payment outbox delivery", () => {
     expect(await deliverPhisAddonEvents({ addonId: "@test/consumer", siteId: 1 })).toEqual({ delivered: 1, failed: 0 });
     const context = state.handler.mock.calls[0]![0] as PhisAddonEventContext;
     expect(context.event).toBe("payment.changed");
+    // The Site's zone travels with it, so the handler can say which of the Site's days the payment fell on.
+    expect(context.site).toEqual({ id: 1, key: "demo", timeZone: "Europe/Zurich" });
     expect(context.subject).toEqual({ kind: "payment", paymentId: "payment-1", reference: "order-1", version: 3, operationId: "operation-1", refundId: null });
     expect(state.build).toHaveBeenCalledWith(expect.objectContaining({ paymentAuthority: { kind: "event", id: "payment.changed" }, signal: context.signal }));
     expect(state.delivered).toHaveBeenCalledWith("receipt-1");

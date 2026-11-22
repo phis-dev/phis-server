@@ -44,7 +44,7 @@ async function invokeEventHandler(input: {
   addonId: string;
   event: PhisAddonEventId;
   row: PhisAddonEventRow;
-  site: { id: number; key: string };
+  site: PhisAddonEventContext["site"];
   handler: (context: PhisAddonEventContext) => Promise<void> | void;
   manifest: PhisAddonManifestV1;
   manifestDigest: string;

@@ -70,7 +70,7 @@ export function requirePhisAddonServableEntry(addonId: string, refuse: (message:
 export async function runPhisAddonJob(input: {
   addonId: string;
   jobId: string;
-  site: { id: number; key: string };
+  site: PhisAddonJobContext["site"];
   signal?: AbortSignal;
 }): Promise<PhisAddonJobOutcome> {
   const { addonId, jobId, site } = input;

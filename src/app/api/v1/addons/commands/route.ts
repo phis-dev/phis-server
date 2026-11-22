@@ -68,7 +68,7 @@ export async function POST(request: NextRequest) {
     const outcome = await runPhisAddonCommand({
       addonId: body.addonId,
       commandId: body.commandId,
-      site: { id: site.id, key: site.key, publicBaseUrl: site.publicBaseUrl },
+      site: { id: site.id, key: site.key, publicBaseUrl: site.publicBaseUrl, timeZone: site.timeZone },
       actorUserId: account.id,
       input: body.input ?? null,
       signal: request.signal,

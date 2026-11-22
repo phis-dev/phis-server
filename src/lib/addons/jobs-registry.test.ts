@@ -2,10 +2,11 @@ import { describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
 
-const mocks = vi.hoisted(() => ({ state: vi.fn(), deliver: vi.fn(), build: vi.fn() }));
+const mocks = vi.hoisted(() => ({ state: vi.fn(), deliver: vi.fn(), build: vi.fn(), sync: vi.fn() }));
 const entry = {
   enabled: true,
   manifestDigest: "digest",
+  load: async () => ({ phisAddon: { jobHandlers: { sync: mocks.sync } } }),
   manifest: {
     addonId: "acme.shop",
     requiredCoreCapabilities: [],
@@ -33,7 +34,7 @@ describe("a job whose build the registry does not describe", () => {
   it("is refused before anything of the Add-on's runs", async () => {
     mocks.state.mockResolvedValue("unavailable");
 
-    await expect(runPhisAddonJob({ addonId: "acme.shop", jobId: "sync", site: { id: 7, key: "site" } }))
+    await expect(runPhisAddonJob({ addonId: "acme.shop", jobId: "sync", site: { id: 7, key: "site", timeZone: "UTC" } }))
       .rejects.toThrow(PhisAddonJobError);
     expect(mocks.deliver).not.toHaveBeenCalled();
     expect(mocks.build).not.toHaveBeenCalled();
@@ -41,7 +42,18 @@ describe("a job whose build the registry does not describe", () => {
 
   it("is refused as switched off where the Site does not have it", async () => {
     mocks.state.mockResolvedValue("hidden");
-    await expect(runPhisAddonJob({ addonId: "acme.shop", jobId: "sync", site: { id: 7, key: "site" } }))
+    await expect(runPhisAddonJob({ addonId: "acme.shop", jobId: "sync", site: { id: 7, key: "site", timeZone: "UTC" } }))
       .rejects.toThrow(/not enabled for site/);
+  });
+});
+
+describe("a job that runs", () => {
+  it.each(["Europe/Zurich", "UTC"])("is handed its Site with the Site's zone (%s)", async (timeZone) => {
+    mocks.state.mockResolvedValue("ready");
+    mocks.sync.mockClear();
+    const outcome = await runPhisAddonJob({ addonId: "acme.shop", jobId: "sync", site: { id: 7, key: "site", timeZone } });
+    expect(outcome.ok).toBe(true);
+    expect(mocks.sync).toHaveBeenCalledOnce();
+    expect(mocks.sync.mock.calls[0]![0].site).toEqual({ id: 7, key: "site", timeZone });
   });
 });

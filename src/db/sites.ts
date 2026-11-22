@@ -27,6 +27,13 @@ export type SiteRecord = {
    * mail, a picture in a feed -- would otherwise ask for the Site again to learn its name.
    */
   publicBaseUrl: string;
+  /**
+   * The IANA zone the Site keeps its calendar in, as `phis site set --time-zone` stored it: canonical
+   * spelling, `UTC` by the column's default. Read with the row for the reason `publicBaseUrl` is: an
+   * Add-on's request context hands it on (`site.timeZone`), and asking for it there would be a second
+   * query on every Add-on request.
+   */
+  timeZone: string;
 };
 
 export type SiteLocaleOption = {
@@ -69,10 +76,12 @@ export type SiteRuntimeConfig = {
 
 const siteByKeyCache = new Map<string, SiteRecord | null>();
 /**
- * Which key a Site id names. The notification drain and the event drain ask this for every row they
- * work through, and a drain of five hundred rows asked the same question five hundred times.
+ * Which key a Site id names, and the zone it keeps its calendar in. The notification drain and the
+ * event drain ask this for every row they work through, and a drain of five hundred rows asked the same
+ * question five hundred times; the event drain and the scheduler hand the zone on to an Add-on's event
+ * and job context.
  */
-const siteIdentityCache = new Map<number, { id: number; key: string }>();
+const siteIdentityCache = new Map<number, { id: number; key: string; timeZone: string }>();
 
 function normalizeHostname(input: string) {
   return input.trim().toLowerCase();
@@ -81,7 +90,7 @@ function normalizeHostname(input: string) {
 function mapSiteRow(
   row: {
     id: number; key: string; name: string; default_locale: string; flags: number;
-    public_base_url: string;
+    public_base_url: string; time_zone: string;
   },
 ): SiteRecord {
   return {
@@ -92,6 +101,7 @@ function mapSiteRow(
     defaultLocale: row.default_locale,
     flags: row.flags,
     publicBaseUrl: row.public_base_url,
+    timeZone: row.time_zone,
   };
 }
 
@@ -213,10 +223,10 @@ export async function getSiteByKey(input: string) {
   const { rows } = await pool.query<
     {
       id: number; key: string; name: string; default_locale: string; flags: number;
-      public_base_url: string;
+      public_base_url: string; time_zone: string;
     }
   >(
-    `SELECT id, key, name, default_locale, flags, public_base_url
+    `SELECT id, key, name, default_locale, flags, public_base_url, time_zone
      FROM phis.sites
      WHERE key = $1
        AND (flags & $2) <> 0
@@ -236,7 +246,7 @@ export async function getSiteByKey(input: string) {
 }
 
 /**
- * A Site's id and key, with no judgement attached.
+ * A Site's id, key and time zone, with no judgement attached.
  *
  * Deliberately without the active filter `getSiteByKey` applies: the caller is Add-on event delivery,
  * which is working through rows that were written when the Site was whatever it was, and dropping the
@@ -248,12 +258,17 @@ export async function getSiteIdentityById(siteId: number) {
   if (held) {
     return held;
   }
-  const { rows } = await getPool().query<{ id: number; key: string }>(
-    `SELECT id, key FROM phis.sites WHERE id = $1 LIMIT 1`,
+  const { rows } = await getPool().query<{ id: number; key: string; time_zone: string }>(
+    `SELECT id, key, time_zone FROM phis.sites WHERE id = $1 LIMIT 1`,
     [siteId],
   );
-  const identity = rows[0] ?? null;
-  // A key is never renamed, so the pair holds for the life of the process; a deleted Site is dropped below.
+  const row = rows[0];
+  const identity = row ? { id: row.id, key: row.key, timeZone: row.time_zone } : null;
+  /*
+   * A key is never renamed, so the pair holds for the life of the process; a deleted Site is dropped
+   * below. The zone is held as long, as `getSiteByKey` holds it with the rest of the row: it is changed
+   * by `phis site set`, in another process, and this one sees the change when it starts again.
+   */
   if (identity) {
     siteIdentityCache.set(siteId, identity);
   }

@@ -31,7 +31,7 @@ const PHIS_ADDON_COMMAND_TIMEOUT_MS = 120_000;
 export async function runPhisAddonCommand(input: {
   addonId: string;
   commandId: string;
-  site: { id: number; key: string; publicBaseUrl: string };
+  site: PhisAddonCommandContext["site"];
   actorUserId: number;
   input: unknown;
   signal?: AbortSignal;

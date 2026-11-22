@@ -626,6 +626,7 @@ export async function dispatchPhisAddonRequest(
             id: identity.site.id,
             key: identity.site.key,
             publicBaseUrl: identity.site.publicBaseUrl,
+            timeZone: identity.site.timeZone,
           }
           : null,
         actor: identity.actor,
