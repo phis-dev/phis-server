@@ -1,3 +1,19 @@
+phis (0.5.4-1) unstable; urgency=medium
+
+  * Every Add-on context names the Site's time zone: site.timeZone on a
+    request, a hook, an event, a job and a command.
+  * Entitlements resolve bundles: whoever holds a bundle holds each of its
+    parts (nested too; a locked part or bundle passes nothing on).
+    entitlements:v1 check answers via, list takes resolveBundles, and
+    entitlement.changed reaches the suppliers of a bundle's parts.
+  * An Add-on role can hang on a Site access: impliedBy { siteAccess } in
+    the manifest makes every holder of that access (accounting: Accountant
+    or Developer; support: Supporter or Developer) hold the role without a
+    grant, wherever Core asks a role. phis addon role shows it.
+  * No schema change. Needs @phis/contracts 0.8.5.
+
+ -- Marius Schumacher <marius.schumacher@phisys.com>  Sun, 22 Nov 2026 12:34:39 +0000
+
 phis (0.5.3-1) unstable; urgency=medium
 
   * A product carries an icon beside its picture: products:v1 iconAssetId
