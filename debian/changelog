@@ -1,3 +1,20 @@
+phis (0.5.6-1) unstable; urgency=medium
+
+  * The Site's product directory has session routes for the Accounting
+    Area: GET /api/site/products (filters, search, paging, list pictures),
+    POST /api/site/products/:id/release (optional expectedVersion, 409 when
+    the product moved), /lock and /unlock, guarded by the accounting access.
+  * products:v1 answers imageListPath and iconListPath (the icon variant);
+    entitlements:v1 offers checkMany and subjectForUser (staff holding the
+    accounting or support access only).
+  * An Add-on's manifest may state media limits (maxFileBytes, kinds,
+    maxPerField); they travel in the capability snapshot to the Site UI.
+  * GET /api/site/members: a Site member picker for staff holding the
+    accounting or support access, names only.
+  * No schema change. Needs @phis/contracts 0.8.9.
+
+ -- Marius Schumacher <marius.schumacher@phisys.com>  Sun, 22 Nov 2026 19:07:57 +0000
+
 phis (0.5.5-1) unstable; urgency=medium
 
   * The Core Site role Developer is Maintainer: PhiBaseRole.Maintainer (the
