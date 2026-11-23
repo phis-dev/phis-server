@@ -328,6 +328,15 @@ front of is infrastructure work, and belongs with
 
 ## Server Add-ons
 
+- **A person's file without an actor (`threads:v1` `fileOf`, @phis/contracts 0.8.10).** The contract
+  answers `fileOf` without an actor for an Add-on to which the Site's admin granted background access to
+  `users:v1` (manifest `users.background`). Core has neither `users:v1` nor that per-Site grant yet, so
+  `fileOf` throws without an actor and `readerPredicate` in `src/db/threads.ts` keeps every file out of an
+  actorless Add-on's reach. With the grant: `fileOf` checks it, the predicate opens files to the same
+  Add-on for `get` and `reply`, and an event handler can then write what happened (an order paid) with
+  `externalRef` -- which `reply` only records for an actorless writer today, so with an actor a reference
+  is not kept and a redelivered event would write twice.
+
 - **An Add-on's schema cannot be compared with its descriptor, or brought to it, without a version step
   (found 2026-11-17, rolling out @phis/shop 0.7.0).** Before v1 a schema is changed in place and its
   version stays, so `phis addon migrate` answers "already at schema version" and changes nothing -- and,

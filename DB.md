@@ -1768,7 +1768,9 @@ Contract:
   - `1 = group`, inside one group
   - `2 = cross-group`, between groups, each participating as a whole
   - `3 = support`, a requester and a queue's group
-- The kind is fixed when the thread is opened. A Site offers a kind only while one of its active Modules declares it in `site_thread_config`.
+  - `4 = file`, a person's file: Staff's record of one member, see `phis.thread_files`
+- The kind is fixed when the thread is opened. A Site offers the first four only while one of its active Modules declares them in `site_thread_config`; a file is Core's own and always offered.
+- There is no CHECK on `kind`; a new kind is a change to the code that reads it, not to the table.
 - `status` is `0 = open`, `1 = archived`. One row carries it, so archiving closes the thread for everyone in it rather than hiding it from one reader.
 - `flags` are `PhisThreadFlag`. `Locked` (`1 << 0`) refuses every new message, from people, Staff and integrations alike, while the thread stays open, listed and readable; whoever may change the status sets and clears it (`PATCH /api/site/threads/{id}` with `locked`), and the requester of a Support thread may not.
 - `owner_provider_id` is the Add-on that opened the thread with no actor behind it, and is what lets it reach the thread again without one. `NULL` is Core's own, which is every thread a person opened.
@@ -1776,6 +1778,23 @@ Contract:
 - `last_message_id` is denormalized so an inbox orders and previews without a lateral join per row. The two tables reference each other, so the constraint is added after `thread_messages` exists.
 - `last_public_message_id` is the same for messages without `Internal`. A reader who is not Staff is shown, previewed and counted unread against it, so a note written past a customer does not surface as a change they cannot open.
 - `(id, site_id)` is unique so a ticket and its thread cannot end up on different Sites.
+
+### `phis.thread_files`
+
+- `site_id SMALLINT NOT NULL REFERENCES phis.sites(id) ON DELETE CASCADE`
+- `user_id INT NOT NULL REFERENCES phis.user_accounts(id) ON DELETE CASCADE`
+- `thread_id INT NOT NULL`
+- `created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
+- `PRIMARY KEY (site_id, user_id)`
+- `UNIQUE (thread_id)` (`thread_files_thread_unique`)
+- `FOREIGN KEY (thread_id, site_id) REFERENCES phis.threads (id, site_id) ON DELETE CASCADE` (`thread_files_thread_site_fk`)
+
+Contract:
+- Whose file a thread of kind `4 = file` is: one per person and Site, opened on first asking (`threads:v1` `fileOf`, `ensureThreadFile`), only for a member of the Site. The primary key keeps it one when two requests ask at once; they take turns under an advisory lock and the second reads what the first wrote.
+- The thread is opened empty and as Core's own: no opening message, no `owner_provider_id`, no `created_by_user_id`, no `subject`, no participants. The person is never a participant.
+- The reader predicate reads this row: a file is reachable by id for whoever holds the Site access `support` or `accounting` and is not `user_id`, so nobody reads their own file. It is listed in no inbox and is out of an actorless Add-on's reach.
+- Every message in it carries `Internal`. It takes no participants and is neither archived nor locked.
+- Deleting the user deletes the row and leaves the thread, which is Staff's record and not the person's; deleting the thread deletes the row.
 
 ### `phis.thread_participants`
 
@@ -2527,7 +2546,7 @@ COMMIT;
   no emitter and is none of `payment.changed`, `entitlement.changed`, `product.changed` and `asset.changed`; a payment subject has exactly `payment_id`, `payment.changed` and no emitter; an emitted
   subject has an `emitter`, an event of the shape `@scope/name:event`, and neither thread nor payment;
   an entitlement subject has no thread, payment, subscription or emitter, the event `entitlement.changed`, and
-  `payload = { subject, product }`; a product subject has the same absences, the event `product.changed`, and
+  `payload = { subject, product }` (a redelivery adds `redelivery`, below); a product subject has the same absences, the event `product.changed`, and
   `payload = { productId }`; an asset subject has the same absences, the event `asset.changed`, and
   `payload = { table, ownerId, slot }`.
 
@@ -2536,7 +2555,12 @@ requested-enabled, `ready` and declares an `entitlement.changed` handler, with `
 and `payload = { subject, product }`, in the transaction of the change or of the `entitlements.expire`
 job -- for the product whose entry changed and, in the same statement, for every part it reaches through
 `products.parts` (a recursive CTE, nested bundles included, whatever their state), each product once per
-subject and Add-on, the changed product first. The same ordered drain delivers it.
+subject and Add-on, the changed product first. The same ordered drain delivers it. A redelivery
+(`entitlements:v1` `redeliver`) writes the same rows for one Add-on only, one per subject holding the product
+now (the walk of `readEntitlementStates`, valid entries only), with `payload = { subject, product,
+redelivery }` where `redelivery` is the id of the call that wrote it; a call that finds an undelivered row
+with `redelivery` for the same Add-on, Site and product writes nothing, under an advisory lock per Add-on,
+Site and product. The handler is handed `{ subject, product }` as for any other row.
 
 Asset events (SERVER_ADDONS.md, `assets:v1`): one row for the Add-on that owns the slot -- and for nobody else --
 when it is requested-enabled, `ready` and declares an `asset.changed` handler, with `subject_kind = 'asset'` and

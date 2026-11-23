@@ -16,6 +16,7 @@ const state = vi.hoisted(() => ({
   readStates: vi.fn(async (input: { subjectId: number | null; products: string[] }) =>
     input.products.map((product) => ({ product, entitled: input.subjectId !== null, quantity: null, until: null, via: [] }))),
   memberSubject: vi.fn(async (): Promise<string | null> => "sub_member"),
+  redeliver: vi.fn(async (_input: Record<string, unknown>) => 3),
   siteAccess: vi.fn((_access: string) => false),
   allowed: vi.fn(async () => false),
   ownSubscription: vi.fn(async () => true),
@@ -32,6 +33,7 @@ vi.mock("@/db/entitlements.mts", () => ({
   listEntitlements: (_pool: unknown, input: Record<string, unknown>) => state.list(input),
   readEntitlementState: (_pool: unknown, input: Record<string, unknown>) => state.readState(input),
   readEntitlementStates: (_pool: unknown, input: { subjectId: number | null; products: string[] }) => state.readStates(input),
+  redeliverEntitlementChanged: (_pool: unknown, input: Record<string, unknown>) => state.redeliver(input),
   ensureMemberEntitlementSubject: (_pool: unknown, ...args: unknown[]) => (state.memberSubject as (...a: unknown[]) => Promise<string | null>)(...args),
   isSubscriptionOfAddon: (_pool: unknown, ...args: unknown[]) => (state.ownSubscription as (...a: unknown[]) => Promise<boolean>)(...args),
   isEntitlementSourceAllowed: (_pool: unknown, ...args: unknown[]) => (state.allowed as (...a: unknown[]) => Promise<boolean>)(...args),
@@ -138,6 +140,35 @@ describe("entitlements capability", () => {
         await expect(capability().subjectForUser({ userId })).rejects.toThrow(/positive whole number/);
       }
       expect(state.memberSubject).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("redeliver", () => {
+    const LISTENING = "@acme/licenses";
+
+    it("queues the calling Add-on's own redelivery for staff holding accounting, and schedules the delivery", async () => {
+      state.siteAccess.mockImplementation((access) => access === "accounting");
+      expect(await capability({ addonId: LISTENING }).redeliver({ product: LICENSE })).toEqual({ queued: 3 });
+      expect(state.redeliver).toHaveBeenLastCalledWith({ siteId: 7, addonId: LISTENING, product: LICENSE });
+      expect(state.deliver).toHaveBeenLastCalledWith(7);
+      // Nothing queued, nothing to deliver.
+      state.deliver.mockClear();
+      state.redeliver.mockResolvedValueOnce(0);
+      expect(await capability({ addonId: LISTENING }).redeliver({ product: LICENSE })).toEqual({ queued: 0 });
+      expect(state.deliver).not.toHaveBeenCalled();
+    });
+
+    it("is refused without accounting (support is not enough), with nobody acting, from an unverified hook, without a handler, and for no product id", async () => {
+      state.siteAccess.mockImplementation((access) => access === "support");
+      await expect(capability({ addonId: LISTENING }).redeliver({ product: LICENSE })).rejects.toThrow(/Site access accounting/);
+      state.siteAccess.mockReturnValue(true);
+      await expect(capability({ addonId: LISTENING, actorUserId: null }).redeliver({ product: LICENSE })).rejects.toThrow(/Site access accounting/);
+      await expect(capability({ addonId: LISTENING, unauthenticated: true }).redeliver({ product: LICENSE })).rejects.toThrow(/unverified hook/);
+      // The shop declares no handler, and a switched-off Add-on is no listener.
+      await expect(capability().redeliver({ product: LICENSE })).rejects.toThrow(/handler for entitlement.changed/);
+      await expect(capability({ addonId: "@acme/off" }).redeliver({ product: LICENSE })).rejects.toThrow(/handler for entitlement.changed/);
+      await expect(capability({ addonId: LISTENING }).redeliver({ product: "licenses" as never })).rejects.toThrow(/not a product id/);
+      expect(state.redeliver).not.toHaveBeenCalled();
     });
   });
 

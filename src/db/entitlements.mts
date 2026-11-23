@@ -1,4 +1,4 @@
-import { randomBytes } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 
 import type { Pool, PoolClient } from "pg";
 
@@ -320,6 +320,60 @@ async function enqueueEntitlementChanged(
      ORDER BY reach.product = ANY($4::text[]) DESC, reach.product COLLATE "C", installed.addon_id`,
     [input.siteId, input.recipients, input.subject, input.products],
   );
+}
+
+/**
+ * Owes `entitlement.changed` once more to one Add-on, for every subject that holds `product` on the Site now
+ * (`entitlements:v1` `redeliver`): an Add-on that starts acting on a product only later catches up through
+ * its own handler.
+ *
+ * The holders are the walk `readEntitlementStates` answers with -- the product itself, unlocked, and every
+ * unlocked bundle that contains it -- and the valid entries on any of them, one row per subject. The event
+ * names `product` and not the bundle an entry is on, because what the handler asks next is whether the
+ * subject holds `product`. One `INSERT ... SELECT`: the subjects never pass through this process, however
+ * many there are, and the dispatcher hands them on in its own batches. The rows are addressed to
+ * `addonId` alone, as every outbox row is to one Add-on, so no other listener hears of it.
+ *
+ * A call while an earlier one for the same Add-on, product and Site is still owed queues nothing: those
+ * rows carry `redelivery` (the id of the call that wrote them) in their payload, and one pending row of them
+ * is enough to answer 0. The advisory lock makes two calls at once take turns at that question. Answers how
+ * many subjects were queued; the caller checks who may ask.
+ */
+export async function redeliverEntitlementChanged(pool: Pool, input: {
+  siteId: number;
+  addonId: string;
+  product: PhisProductId;
+}): Promise<number> {
+  return withPoolTransaction(pool, async (client) => {
+    await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
+      [JSON.stringify(["entitlement-redelivery", input.siteId, input.addonId, input.product])]);
+    const { rowCount } = await client.query(
+      `WITH RECURSIVE ${holdersSql("$1::smallint", "ARRAY[$3::text]", true)}
+       INSERT INTO phis.addon_event_outbox (site_id, addon_id, event, subject_kind, payload)
+       SELECT $1::smallint, installed.addon_id, 'entitlement.changed', 'entitlement',
+              jsonb_build_object('subject', s.reference, 'product', $3::text, 'redelivery', $4::text)
+       FROM phis.entitlement_subjects s
+       JOIN phis.site_server_addons installed
+         ON installed.site_id = $1 AND installed.addon_id = $2
+        AND (installed.flags & ${PHI_SITE_SERVER_ADDON_FLAG_REQUESTED_ENABLED}) <> 0
+        AND installed.configuration_status = 'ready'
+       WHERE s.site_id = $1
+         AND EXISTS (
+           SELECT 1 FROM holders h
+           JOIN phis.entitlements e ON e.site_id = $1 AND e.subject_id = s.id AND e.product = h.product
+           WHERE ${VALID_SQL}
+         )
+         AND NOT EXISTS (
+           SELECT 1 FROM phis.addon_event_outbox pending
+           WHERE pending.addon_id = $2 AND pending.site_id = $1 AND pending.delivered_at IS NULL
+             AND pending.event = 'entitlement.changed' AND pending.payload ? 'redelivery'
+             AND pending.payload->>'product' = $3::text
+         )
+       ORDER BY s.id`,
+      [input.siteId, input.addonId, input.product, randomUUID()],
+    );
+    return rowCount ?? 0;
+  });
 }
 
 async function readEntry(db: DbQueryable, id: number) {

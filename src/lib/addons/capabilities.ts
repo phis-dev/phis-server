@@ -277,7 +277,8 @@ export function buildPhisAddonCapabilities(input: {
   /*
    * The actor's authorization snapshot, read at most once for everything built here that asks a Site
    * access: `authorization:v1`'s `hasSiteAccess`, `roles:v1`, which needs it for the Site Admin floor
-   * and for the roles a Site access implies (`impliedBy`), and `entitlements:v1`'s `subjectForUser`. Read on the first question, not before: most
+   * and for the roles a Site access implies (`impliedBy`), `entitlements:v1`'s `subjectForUser` and `redeliver`,
+   * and `threads:v1`'s `fileOf`. Read on the first question, not before: most
    * requests ask none.
    */
   const actorUserId = input.actorUserId;
@@ -444,6 +445,8 @@ export function buildPhisAddonCapabilities(input: {
       addonId: input.manifest.addonId,
       siteId,
       actorUserId: input.actorUserId,
+      // For `fileOf`, which hands out a person's file by the actor's Site access.
+      readSiteAccess,
       // A verified hook carries `systemAuthority`, which is what tells it apart from the unsigned
       // request that reached the same address.
       unauthenticated: input.unauthenticated === true && input.systemAuthority !== true,

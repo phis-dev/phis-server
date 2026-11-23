@@ -24,6 +24,7 @@ import {
   listEntitlements,
   readEntitlementState,
   readEntitlementStates,
+  redeliverEntitlementChanged,
   updateEntitlement,
 } from "@/db/entitlements.mts";
 import { readProduct } from "@/db/products.mts";
@@ -40,7 +41,8 @@ import { readProduct } from "@/db/products.mts";
  *
  * `subjectForUser` hands out another person's subject, which is staff acting on their behalf: it asks the
  * acting user's Site access, `accounting` or `support`, from the request's one read of their authorization
- * snapshot, shared with `authorization:v1` and `roles:v1`.
+ * snapshot, shared with `authorization:v1` and `roles:v1`. `redeliver` asks the same snapshot for
+ * `accounting` alone: queuing an event for every holder of a product is a commercial act, not a person's.
  */
 
 export class PhisAddonEntitlementsError extends Error {}
@@ -173,6 +175,26 @@ export function buildPhisAddonEntitlementsCapability(input: {
         );
       }
       return ensureMemberEntitlementSubject(getPool(), siteId, userId);
+    },
+
+    async redeliver({ product }) {
+      requireBelievableCaller("redeliver");
+      const id = readProductId("redeliver", product);
+      const holds = actorUserId == null ? null : await input.readSiteAccess();
+      if (!holds || !holds(PHIS_SITE_ACCESS.accounting)) {
+        throw new PhisAddonEntitlementsError(
+          `${addonId} called entitlements.redeliver for a person acting without the Site access accounting; delivering a product's holders again is accounting's to ask.`,
+        );
+      }
+      // The listener rule every other entitlement.changed row is written by: enabled and declaring the handler.
+      if (!listPhisEntitlementListeners().includes(addonId)) {
+        throw new PhisAddonEntitlementsError(
+          `${addonId} called entitlements.redeliver without a handler for entitlement.changed in its manifest; there is nothing to deliver to.`,
+        );
+      }
+      // A product this Site lacks, or one that is locked, is held by nobody: nothing is queued.
+      const queued = await redeliverEntitlementChanged(getPool(), { siteId, addonId, product: id });
+      return { queued: queued > 0 ? written(queued) : queued };
     },
 
     async list({ subject, product, resolveBundles }) {

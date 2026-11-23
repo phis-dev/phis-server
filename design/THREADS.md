@@ -115,6 +115,12 @@ where *you share no group with anyone yet* is the one sentence that leads somebo
 | `Group` | `Author` of the group | the group | Site kind `Group` and group flag `Threads` |
 | `CrossGroup` | `Author` of one group | two or more groups | Site kind `CrossGroup` and group flag `CrossGroupThreads` on every group involved |
 | `Support` | any authenticated Site member | the requester and a queue's group | Site kind `Support` |
+| `File` | nobody: opened on first asking (`threads:v1` `fileOf`) | none; read by Staff holding `support` or `accounting`, never by the person it is about | always |
+
+A `File` is a person's file: Staff's record of one member of the Site, one per person and Site
+(`phis.thread_files`), whose messages are all `Internal` and only ever added to. It is listed in no inbox
+and reached by its id; it takes no participants and is neither archived nor locked. See SERVER_ADDONS.md,
+`threads:v1`.
 
 Settled: opening a `Group` or `CrossGroup` thread needs `Author`; reading and replying need `Member`.
 Admin and Maintainer are covered below.
@@ -410,13 +416,16 @@ Leaving:
 
 ## 7. One visibility predicate
 
-A thread is visible to a user when all of these hold:
+A thread is visible to a user when all of these hold (a `File` has its own rule, below):
 
 1. its kind is in `site_thread_config.flags`;
 2. the user is a participant, or an effective member of a participating group that is not retired and
    whose provider is available;
 3. for `Group` and `CrossGroup`, the participating group still carries its flag;
 4. for a `Requester` participant, the thread is `Support`.
+
+A `File` is reachable by its id for a user who holds the Site access `support` or `accounting` and is not
+the person it is about (`thread_files.user_id`), and for no Add-on without an actor.
 
 A message is visible when its thread is, and additionally not `Internal` unless the viewer is Staff.
 

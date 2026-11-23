@@ -1,11 +1,15 @@
 import "server-only";
 
-import type { PhisThreadsCapabilityV1 } from "./contract.ts";
+import { PHIS_SITE_ACCESS, type PhisThreadsCapabilityV1 } from "./contract.ts";
+import type { PhisSiteAccessHolder } from "./role-inclusion.ts";
+import { getPool } from "@/lib/db";
+import { findEntitlementSubject } from "@/db/entitlements.mts";
 import {
   addThreadMessage,
   addThreadParticipants,
   amendImportedThreadMessage,
   createThread,
+  ensureThreadFile,
   findThreadByExternalRef,
   findThreadMessageExport,
   getThreadDetail,
@@ -35,11 +39,17 @@ export class PhisAddonThreadsError extends Error {}
  *
  * What is withheld either way: `Internal` messages never reach an Add-on, and a `Confidential` one
  * arrives with its text removed and its flag set, so an interface can say why there is nothing to show.
+ *
+ * **A person's file** (`fileOf`) is Staff's record of them, so it is handed out by the actor's Site access
+ * (`support` or `accounting`, from the request's one read of their authorization snapshot) and reached
+ * afterwards through the same predicate as any thread, which admits the same Staff and never the person.
  */
 export function buildPhisAddonThreadsCapability(input: {
   addonId: string;
   siteId: number;
   actorUserId: number | null;
+  /** The actor's Site accesses, read once for the request (`buildPhisAddonCapabilities`). */
+  readSiteAccess: () => Promise<PhisSiteAccessHolder>;
   /** True when nobody authenticated and no signature stood in for them -- an unverified hook. */
   unauthenticated?: boolean;
 }): PhisThreadsCapabilityV1 {
@@ -172,6 +182,38 @@ export function buildPhisAddonThreadsCapability(input: {
     async markRead(readInput) {
       const userId = requireActor("markRead");
       return markThreadRead(siteId, userId, readInput.threadId, readInput.messageId ?? null);
+    },
+
+    async fileOf({ subject }) {
+      requireBelievableCaller("fileOf");
+      if (actorUserId == null) {
+        /*
+         * TODO(users:v1 background grant): without an actor the contract answers an Add-on to which the
+         * Site's admin granted background access to `users:v1` (manifest `users.background`). Core has no
+         * such grant yet, so nobody is answered without an actor; with the grant this checks it, and
+         * `readerPredicate` in src/db/threads.ts opens files to the same Add-on for `reply`.
+         */
+        throw new PhisAddonThreadsError(
+          `${addonId} called threads.fileOf with no acting user; without one a person's file is for an Add-on with background access to users:v1 on this Site, which this Site has not granted.`,
+        );
+      }
+      const holds = await input.readSiteAccess();
+      if (!(holds(PHIS_SITE_ACCESS.support) || holds(PHIS_SITE_ACCESS.accounting))) {
+        throw new PhisAddonThreadsError(
+          `${addonId} called threads.fileOf for a person acting without the Site access support or accounting; a person's file is Staff's record of them.`,
+        );
+      }
+      if (typeof subject !== "string" || !subject) {
+        throw new PhisAddonThreadsError(`${addonId} called threads.fileOf with a subject that is not an entitlement subject.`);
+      }
+      // A subject of another Site is nobody here, as everywhere a subject is read.
+      const person = await findEntitlementSubject(getPool(), siteId, subject);
+      if (!person) return null;
+      if (person.userId === actorUserId) {
+        throw new PhisAddonThreadsError(`${addonId} called threads.fileOf for the acting person's own file, which they never read.`);
+      }
+      const threadId = await ensureThreadFile(siteId, person.userId);
+      return threadId == null ? null : { threadId };
     },
 
     async findByExternalRef(externalRef) {

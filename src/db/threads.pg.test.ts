@@ -33,6 +33,8 @@ import {
   setThreadStatus,
 } from "./threads";
 import { buildPhisAddonThreadsCapability } from "@/lib/addons/threads-capability";
+import { readPhisSiteAccessHolder } from "@/lib/addons/site-access";
+import { ensureEntitlementSubject } from "./entitlements.mts";
 import { PhiSiteGroupFlags } from "@/lib/constants/site-groups";
 
 /**
@@ -43,6 +45,9 @@ import { PhiSiteGroupFlags } from "@/lib/constants/site-groups";
  */
 
 const ADDON_ID = "@probe/threads";
+
+/** The Site accesses of an actor these tests give none; the file's tests hand their own. */
+const holdsNothing = async () => () => false;
 
 async function offerAllThreadKinds(site: PhiTestSite) {
   const pool = await requirePhiTestDatabase();
@@ -617,7 +622,7 @@ describe("threads", () => {
     const { users: [actor, recipient] } = await createStaffWhoShareAGroup(site, "pgtest-capability", 2);
     const outsider = await createPhiTestUser(site);
 
-    const asActor = buildPhisAddonThreadsCapability({ addonId: ADDON_ID, siteId: site.id, actorUserId: actor });
+    const asActor = buildPhisAddonThreadsCapability({ addonId: ADDON_ID, siteId: site.id, actorUserId: actor, readSiteAccess: holdsNothing });
     const opened = await asActor.create({
       kind: PhisThreadKind.Direct,
       subject: "From an Add-on",
@@ -631,6 +636,7 @@ describe("threads", () => {
       addonId: ADDON_ID,
       siteId: site.id,
       actorUserId: outsider,
+      readSiteAccess: holdsNothing,
     });
     expect(await asOutsider.get(opened.thread.id)).toBeNull();
     expect(await asOutsider.setStatus({
@@ -645,7 +651,7 @@ describe("threads", () => {
     await offerAllThreadKinds(site);
     const { users: [person, recipient] } = await createStaffWhoShareAGroup(site, "pgtest-actorless", 2);
 
-    const asJob = buildPhisAddonThreadsCapability({ addonId: ADDON_ID, siteId: site.id, actorUserId: null });
+    const asJob = buildPhisAddonThreadsCapability({ addonId: ADDON_ID, siteId: site.id, actorUserId: null, readSiteAccess: holdsNothing });
 
     const owned = await asJob.create({
       kind: PhisThreadKind.Group,
@@ -700,7 +706,7 @@ describe("threads", () => {
     });
 
     await linkAddonToThread(site, opened.thread.id, person);
-    const asJob = buildPhisAddonThreadsCapability({ addonId: ADDON_ID, siteId: site.id, actorUserId: null });
+    const asJob = buildPhisAddonThreadsCapability({ addonId: ADDON_ID, siteId: site.id, actorUserId: null, readSiteAccess: holdsNothing });
     const seen = await asJob.get(opened.thread.id);
 
     expect(seen?.messages[0]?.bodyText).toBeNull();
@@ -719,7 +725,7 @@ describe("threads", () => {
     await grantCoreRole(site, supporter, PhiBaseRole.Supporter);
     const threadId = await openSupportThread(site, { requester: customer, supporter });
     await linkAddonToThread(site, threadId, supporter);
-    const asJob = buildPhisAddonThreadsCapability({ addonId: ADDON_ID, siteId: site.id, actorUserId: null });
+    const asJob = buildPhisAddonThreadsCapability({ addonId: ADDON_ID, siteId: site.id, actorUserId: null, readSiteAccess: holdsNothing });
 
     // What it brings in from outside may be an internal note: Staff read it, the requester does not.
     await asJob.reply({
@@ -738,5 +744,155 @@ describe("threads", () => {
     await asJob.reply({ threadId, message: "Status update.", messageFlags: PhisThreadMessageFlag.Internal });
     const afterOwn = await getThreadDetail(site.id, { kind: "user", userId: customer }, threadId);
     expect(afterOwn?.messages).toHaveLength(2);
+  });
+
+  describe("a person's file", () => {
+    /** The capability as an Add-on acting for this person, with their real Site accesses. */
+    const actingAs = (site: PhiTestSite, actorUserId: number | null) => buildPhisAddonThreadsCapability({
+      addonId: ADDON_ID,
+      siteId: site.id,
+      actorUserId,
+      readSiteAccess: () => (actorUserId == null ? holdsNothing() : readPhisSiteAccessHolder(site.id, actorUserId)),
+    });
+
+    async function staffOf(site: PhiTestSite, roleFlags: number) {
+      const userId = await createPhiTestUser(site);
+      await grantCoreRole(site, userId, roleFlags);
+      return userId;
+    }
+
+    async function fileRows(site: PhiTestSite, userId: number) {
+      const pool = await requirePhiTestDatabase();
+      const { rows } = await pool.query<{ thread_id: number; kind: number; owner_provider_id: string | null; participants: number }>(
+        `SELECT f.thread_id, t.kind, t.owner_provider_id,
+                (SELECT COUNT(*)::int FROM phis.thread_participants p WHERE p.thread_id = t.id) AS participants
+         FROM phis.thread_files f JOIN phis.threads t ON t.id = f.thread_id
+         WHERE f.site_id = $1 AND f.user_id = $2`,
+        [site.id, userId],
+      );
+      return rows;
+    }
+
+    it("opens one file per person on first asking, also when asked twice at once, with nobody in it", async () => {
+      // No Module declares anything here: a file is always offered.
+      const site = await createPhiTestSite("threads-file-open");
+      const accountant = await staffOf(site, PhiBaseRole.Accountant);
+      const customer = await createPhiTestUser(site);
+      const pool = await requirePhiTestDatabase();
+      const subject = await ensureEntitlementSubject(pool, site.id, customer);
+
+      const [first, second] = await Promise.all([
+        actingAs(site, accountant).fileOf({ subject }),
+        actingAs(site, accountant).fileOf({ subject }),
+      ]);
+      expect(first).not.toBeNull();
+      expect(second).toEqual(first);
+      expect(await actingAs(site, accountant).fileOf({ subject })).toEqual(first);
+      expect(await fileRows(site, customer)).toEqual([
+        { thread_id: first!.threadId, kind: PhisThreadKind.File, owner_provider_id: null, participants: 0 },
+      ]);
+    });
+
+    it("is read by Staff holding support or accounting and never by the person, whatever they hold", async () => {
+      const site = await createPhiTestSite("threads-file-read");
+      const accountant = await staffOf(site, PhiBaseRole.Accountant);
+      const supporter = await staffOf(site, PhiBaseRole.Supporter);
+      const admin = await staffOf(site, PhiBaseRole.Admin);
+      const author = await staffOf(site, PhiBaseRole.Author);
+      const member = await createPhiTestUser(site);
+      const customer = await createPhiTestUser(site);
+      const pool = await requirePhiTestDatabase();
+      const file = (await actingAs(site, supporter).fileOf({ subject: await ensureEntitlementSubject(pool, site.id, customer) }))!;
+
+      // What an Add-on reports goes in as Internal, whatever it asked for.
+      const written = await actingAs(site, accountant).reply({ threadId: file.threadId, message: "Order 1 paid.", messageFlags: 0 });
+      expect(written?.messages.map((message) => message.flags & PhisThreadMessageFlag.Internal)).toEqual([PhisThreadMessageFlag.Internal]);
+      await addThreadMessage({
+        siteId: site.id, threadId: file.threadId, reader: { kind: "user", userId: supporter }, message: "Called them.",
+      });
+
+      for (const keeper of [accountant, supporter, admin]) {
+        const detail = await getThreadDetail(site.id, { kind: "user", userId: keeper }, file.threadId);
+        expect(detail?.messages.map((message) => message.bodyText)).toEqual(["Order 1 paid.", "Called them."]);
+        expect(detail?.participants).toEqual([]);
+        // Reached by its id, listed in nobody's inbox.
+        expect((await listThreadsForUser(site.id, keeper)).rows.map((row) => row.id)).not.toContain(file.threadId);
+        expect((await listThreadsForUser(site.id, keeper, { kind: PhisThreadKind.File })).rows).toEqual([]);
+      }
+      for (const outsider of [author, member, customer]) {
+        expect(await getThreadDetail(site.id, { kind: "user", userId: outsider }, file.threadId)).toBeNull();
+        expect(await markThreadRead(site.id, outsider, file.threadId)).toBe(false);
+      }
+      // The person is never shown their own file, even once they keep everybody else's.
+      await grantCoreRole(site, customer, PhiBaseRole.Accountant | PhiBaseRole.Supporter);
+      expect(await getThreadDetail(site.id, { kind: "user", userId: customer }, file.threadId)).toBeNull();
+      expect(await addThreadMessage({
+        siteId: site.id, threadId: file.threadId, reader: { kind: "user", userId: customer }, message: "Let me see.",
+      })).toBeNull();
+    });
+
+    it("takes no participants, stays open and unlocked, and is never opened as a new thread", async () => {
+      const site = await createPhiTestSite("threads-file-rules");
+      await offerAllThreadKinds(site);
+      const accountant = await staffOf(site, PhiBaseRole.Accountant);
+      const supporter = await staffOf(site, PhiBaseRole.Supporter);
+      const customer = await createPhiTestUser(site);
+      const pool = await requirePhiTestDatabase();
+      const { threadId } = (await actingAs(site, accountant).fileOf({ subject: await ensureEntitlementSubject(pool, site.id, customer) }))!;
+      const reader = { kind: "user" as const, userId: accountant };
+
+      await expect(addThreadParticipants({ siteId: site.id, threadId, reader, participantUserIds: [customer] }))
+        .rejects.toThrow(/has no participants/u);
+      await expect(addThreadParticipants({ siteId: site.id, threadId, reader, participantUserIds: [supporter] }))
+        .rejects.toThrow(/has no participants/u);
+      await expect(setThreadStatus({ siteId: site.id, threadId, reader, status: PhisThreadStatus.Archived }))
+        .rejects.toThrow(/stays open/u);
+      await expect(setThreadLocked({ siteId: site.id, threadId, reader, locked: true }))
+        .rejects.toThrow(/stays open/u);
+      await expect(createThread({
+        siteId: site.id, kind: PhisThreadKind.File, message: "A second file.", participantUserIds: [supporter], createdByUserId: accountant,
+      })).rejects.toThrow(/opens on first asking/u);
+      await expect(actingAs(site, accountant).create({ kind: PhisThreadKind.File, message: "Another.", participantUserIds: [supporter] }))
+        .rejects.toThrow(/opens on first asking/u);
+      expect(await fileRows(site, customer)).toHaveLength(1);
+    });
+
+    it("answers only staff holding support or accounting, nobody without an actor, null for whoever is no member here", async () => {
+      const site = await createPhiTestSite("threads-file-refuse");
+      const elsewhere = await createPhiTestSite("threads-file-elsewhere");
+      const accountant = await staffOf(site, PhiBaseRole.Accountant);
+      const author = await staffOf(site, PhiBaseRole.Author);
+      const customer = await createPhiTestUser(site);
+      const leaver = await createPhiTestUser(site);
+      const pool = await requirePhiTestDatabase();
+      const subject = await ensureEntitlementSubject(pool, site.id, customer);
+
+      await expect(actingAs(site, author).fileOf({ subject })).rejects.toThrow(/support or accounting/u);
+      await expect(actingAs(site, null).fileOf({ subject })).rejects.toThrow(/no acting user/u);
+      await expect(actingAs(site, accountant).fileOf({ subject: await ensureEntitlementSubject(pool, site.id, accountant) }))
+        .rejects.toThrow(/own file/u);
+      expect(await actingAs(site, accountant).fileOf({ subject: "sub_000000000000000000000000" })).toBeNull();
+      // A subject of another Site is nobody here.
+      const foreign = await ensureEntitlementSubject(pool, elsewhere.id, await createPhiTestUser(elsewhere));
+      expect(await actingAs(site, accountant).fileOf({ subject: foreign })).toBeNull();
+      // Nor is somebody who left the Site, and nothing is opened for them.
+      const left = await ensureEntitlementSubject(pool, site.id, leaver);
+      await pool.query(`DELETE FROM phis.user_site_memberships WHERE site_id = $1 AND user_id = $2`, [site.id, leaver]);
+      expect(await actingAs(site, accountant).fileOf({ subject: left })).toBeNull();
+      expect(await fileRows(site, leaver)).toEqual([]);
+      expect(await fileRows(site, customer)).toEqual([]);
+    });
+
+    it("stays out of an actorless Add-on's reach, linked or not", async () => {
+      const site = await createPhiTestSite("threads-file-actorless");
+      const accountant = await staffOf(site, PhiBaseRole.Accountant);
+      const customer = await createPhiTestUser(site);
+      const pool = await requirePhiTestDatabase();
+      const { threadId } = (await actingAs(site, accountant).fileOf({ subject: await ensureEntitlementSubject(pool, site.id, customer) }))!;
+      await linkAddonToThread(site, threadId, accountant);
+      const asJob = actingAs(site, null);
+      expect(await asJob.get(threadId)).toBeNull();
+      expect(await asJob.reply({ threadId, message: "From nowhere.", externalRef: "evt-1" })).toBeNull();
+    });
   });
 });

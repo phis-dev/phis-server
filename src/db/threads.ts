@@ -33,6 +33,8 @@ import { enqueuePhisAddonThreadEventWithDb } from "@/db/addon-events";
 import { schedulePhisAddonEventDelivery } from "@/lib/addons/event-trigger";
 
 import { PHI_CORE_ROLE_PROVIDER_ID } from "@/lib/authorization";
+import { PHIS_SITE_ACCESS } from "@/lib/addons/contract";
+import { readPhisSiteAccessHolder } from "@/lib/addons/site-access";
 import { resolvePhiLocaleCapability } from "@/lib/locale";
 import { PhiGroupMembershipFlags, PhiSiteGroupFlags } from "@/lib/constants/site-groups";
 import { readEffectiveGroupFlagsWithDb } from "@/db/site-groups";
@@ -185,9 +187,12 @@ type ThreadParticipantRow = {
  * `site_thread_config` the way declared Media Space kinds are. A Site that declares nothing offers
  * nothing: the absent row answers `0`, which hides threads rather than deleting them, and they return
  * with the Module that declared their kind.
+ *
+ * A person's file (`PhisThreadKind.File`) is no Module's to declare and has no Site flag: it is Core's
+ * record of the person, there on every Site, so it is always offered.
  */
 const SITE_KIND_AVAILABLE_SQL = `
-  (COALESCE((
+  (t.kind = ${PhisThreadKind.File} OR (COALESCE((
     SELECT config.flags
     FROM phis.site_thread_config config
     WHERE config.site_id = t.site_id
@@ -197,7 +202,7 @@ const SITE_KIND_AVAILABLE_SQL = `
     WHEN ${PhisThreadKind.CrossGroup} THEN 4
     WHEN ${PhisThreadKind.Support} THEN 8
     ELSE 0
-  END) <> 0`;
+  END) <> 0)`;
 
 /**
  * Whether one person may see one thread.
@@ -258,11 +263,44 @@ const PROVIDER_MAY_SEE_SQL = (providerParam: string) => `
     )
   )`;
 
+/**
+ * Whether one person may reach one thread by its id: participation as above, and for a person's file
+ * (`PhisThreadKind.File`), which has no participants, anybody but the person it is about.
+ *
+ * That is only half of the file's rule. Who reads a file is Staff holding the Site access `support` or
+ * `accounting`, which the authorization evaluator decides and SQL cannot ask; `readThreadRow` asks it for
+ * the one row that is a file, so no other thread costs the read. The other half is here because it is a
+ * fact of the row: the person is never shown their own file, whatever role they hold.
+ */
+const USER_MAY_REACH_SQL = (viewerParam: string) => `
+  (CASE WHEN t.kind = ${PhisThreadKind.File}
+    THEN NOT EXISTS (
+      SELECT 1 FROM phis.thread_files own WHERE own.thread_id = t.id AND own.user_id = ${viewerParam}
+    )
+    ELSE ${USER_MAY_SEE_SQL(viewerParam)}
+  END)`;
+
 function readerPredicate(reader: ThreadReader, param: string) {
   if (reader.kind === "system") {
     return "TRUE";
   }
-  return reader.kind === "user" ? USER_MAY_SEE_SQL(param) : PROVIDER_MAY_SEE_SQL(param);
+  /*
+   * A file is out of an actorless Add-on's reach, owned or linked alike. Without an actor `threads:v1`
+   * hands a file only to an Add-on the Site granted background access to `users:v1`, and Core has no
+   * such grant yet (`fileOf`); until it does, no link a person writes opens a file to one.
+   */
+  return reader.kind === "user"
+    ? USER_MAY_REACH_SQL(param)
+    : `(t.kind <> ${PhisThreadKind.File} AND ${PROVIDER_MAY_SEE_SQL(param)})`;
+}
+
+/**
+ * Whether this person keeps the Site's files: Staff holding the Site access `support` or `accounting`
+ * (an Admin, a Maintainer, a Supporter or an Accountant), asked of the evaluator every Site access is.
+ */
+async function readerKeepsFiles(siteId: number, userId: number) {
+  const holds = await readPhisSiteAccessHolder(siteId, userId);
+  return holds(PHIS_SITE_ACCESS.support) || holds(PHIS_SITE_ACCESS.accounting);
 }
 
 function readerParamValue(reader: ThreadReader) {
@@ -676,6 +714,8 @@ export async function listThreadsForUser(
     "t.site_id = $1",
     SITE_KIND_AVAILABLE_SQL,
     USER_MAY_SEE_SQL("$2"),
+    // A file has no participants and is listed in nobody's inbox; Staff reach it by its id.
+    `t.kind <> ${PhisThreadKind.File}`,
   ];
 
   if (options.kind != null) {
@@ -764,7 +804,11 @@ async function readThreadRow(
     params,
   );
 
-  return rows[0] ?? null;
+  const row = rows[0] ?? null;
+  if (row && row.kind === PhisThreadKind.File && reader.kind === "user" && !await readerKeepsFiles(siteId, reader.userId)) {
+    return null;
+  }
+  return row;
 }
 
 async function readParticipants(db: DbQueryable, threadId: number) {
@@ -1176,6 +1220,10 @@ async function insertMessage(
  * and then be invisible to everybody, including whoever wrote it.
  */
 async function assertKindAvailable(db: DbQueryable, siteId: number, kind: PhisThreadKindValue) {
+  if (kind === PhisThreadKind.File) {
+    // One per person and Site, so it is never opened as a new thread with a first message and participants.
+    throw new PhisThreadError("A person's file opens on first asking for it (threads:v1 fileOf), not as a new thread.");
+  }
   const { rows } = await db.query<{ flags: number }>(
     `SELECT flags FROM phis.site_thread_config WHERE site_id = $1`,
     [siteId],
@@ -1354,11 +1402,13 @@ export async function addThreadMessage(input: AddThreadMessageInput): Promise<Ph
 
     const authorUserId = input.reader.kind === "user" ? input.reader.userId : null;
 
-    const flags = normalizeMessageFlags(input.messageFlags, {
+    const asked = normalizeMessageFlags(input.messageFlags, {
       isStaff,
       imported: Boolean(input.externalRef),
       reader: input.reader,
     });
+    // Everything in a file is Staff's, whoever writes it and whatever they asked for: narrowing only.
+    const flags = thread.kind === PhisThreadKind.File ? asked | PhisThreadMessageFlag.Internal : asked;
     const messageId = await insertMessage(client, {
       siteId: input.siteId,
       threadId: input.threadId,
@@ -1412,6 +1462,10 @@ export async function addThreadParticipants(
     if (userIds.length === 0 && groupIds.length === 0) {
       return true;
     }
+    // A file is read by who keeps the Site's files, never by participants -- the person least of all.
+    if (thread.kind === PhisThreadKind.File) {
+      throw new PhisThreadError("A person's file has no participants.");
+    }
 
     await assertParticipantsExist(client, input.siteId, userIds, groupIds);
     if (input.reader.kind === "user") {
@@ -1430,6 +1484,12 @@ export async function addThreadParticipants(
 
   return getThreadDetail(input.siteId, input.reader, input.threadId);
 }
+
+/**
+ * A file is only ever added to, by people and by the Add-ons that write what happened into it (`fileOf`):
+ * archived or locked it would take nothing more, and there is no second file to write into instead.
+ */
+const FILE_STAYS_OPEN = "A person's file stays open; it is neither archived nor locked.";
 
 /**
  * Moves a thread between open and archived.
@@ -1459,6 +1519,9 @@ export async function setThreadLocked(input: {
     const thread = await readThreadRow(client, input.siteId, input.reader, input.threadId);
     if (!thread) return;
     seen = true;
+    if (thread.kind === PhisThreadKind.File) {
+      throw new PhisThreadError(FILE_STAYS_OPEN);
+    }
     if (thread.kind === PhisThreadKind.Support && input.reader.kind === "user") {
       const { rowCount: requester } = await client.query(
         `SELECT 1 FROM phis.thread_participants
@@ -1528,6 +1591,9 @@ export async function setThreadStatus(input: {
     const thread = await readThreadRow(client, input.siteId, input.reader, input.threadId);
     if (thread) {
       seen = true;
+      if (thread.kind === PhisThreadKind.File) {
+        throw new PhisThreadError(FILE_STAYS_OPEN);
+      }
       if (thread.kind === PhisThreadKind.Support && input.reader.kind === "user") {
         // An archived thread takes no more messages, so the requester closing it would leave the queue
         // unable to answer the ticket it is still working. Its status follows the ticket's workflow.
@@ -1642,6 +1708,56 @@ export async function findThreadByExternalRef(input: {
     { kind: "provider", providerId: input.providerId },
     threadId,
   );
+}
+
+/**
+ * The file of one member of the Site, opened on first asking (`threads:v1` `fileOf`); null for a user who
+ * is not a member, for whom nothing is opened.
+ *
+ * Opened empty and as Core's own: no opening message, no participants -- the person is never one -- no
+ * owner, no opener, no subject. Whoever keeps the Site's files reads it and writes into it, and the
+ * Add-on that asked first is not its owner, because every Add-on that reports about the person writes
+ * into the same one. Two requests asking at once take turns under an advisory lock and the second reads
+ * what the first wrote; the primary key of `thread_files` would refuse a second file regardless. Whether
+ * the caller may ask is the caller's question.
+ */
+export async function ensureThreadFile(siteId: number, userId: number): Promise<number | null> {
+  const read = async (db: DbQueryable) => {
+    const { rows } = await db.query<{ thread_id: number }>(
+      `SELECT thread_id FROM phis.thread_files WHERE site_id = $1 AND user_id = $2`,
+      [siteId, userId],
+    );
+    return rows[0]?.thread_id ?? null;
+  };
+  const member = async (db: DbQueryable) => ((await db.query(
+    `SELECT 1 FROM phis.user_site_memberships WHERE site_id = $1 AND user_id = $2`,
+    [siteId, userId],
+  )).rowCount ?? 0) > 0;
+
+  const pool = getPool();
+  // Somebody who is no member (any more) is handed no file, also where one of theirs is still kept.
+  if (!await member(pool)) return null;
+  const known = await read(pool);
+  if (known != null) return known;
+
+  return withTransaction(async (client) => {
+    await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [JSON.stringify(["thread-file", siteId, userId])]);
+    const opened = await read(client);
+    if (opened != null) return opened;
+    if (!await member(client)) return null;
+    const { rows } = await client.query<{ id: number }>(
+      `INSERT INTO phis.threads (site_id, kind, status, subject, flags)
+       VALUES ($1, $2, $3, NULL, 0)
+       RETURNING id`,
+      [siteId, PhisThreadKind.File, PhisThreadStatus.Open],
+    );
+    const threadId = rows[0]!.id;
+    await client.query(
+      `INSERT INTO phis.thread_files (site_id, user_id, thread_id) VALUES ($1, $2, $3)`,
+      [siteId, userId, threadId],
+    );
+    return threadId;
+  });
 }
 
 /** Which kinds of thread this Site offers, as the materialized flags say. */

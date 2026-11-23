@@ -1238,8 +1238,9 @@ CREATE INDEX IF NOT EXISTS support_allowance_grants_user_type_idx
 CREATE TABLE IF NOT EXISTS phis.threads (
   id SERIAL PRIMARY KEY,
   site_id SMALLINT NOT NULL REFERENCES phis.sites(id) ON DELETE CASCADE,
-  -- 0 = direct, 1 = group, 2 = cross-group, 3 = support. Fixed when the thread is opened: it says which
-  -- conversation this is, and a Site offers each one only while a Module declares it.
+  -- 0 = direct, 1 = group, 2 = cross-group, 3 = support, 4 = file. Fixed when the thread is opened: it
+  -- says which conversation this is, and a Site offers each of the first four only while a Module
+  -- declares it. A file is Core's own record of one person (`thread_files`) and always offered.
   kind SMALLINT NOT NULL,
   -- 0 = open, 1 = archived. One row carries it, so archiving closes the thread for everyone in it
   -- rather than hiding it from one reader.
@@ -1279,6 +1280,24 @@ CREATE INDEX IF NOT EXISTS threads_site_kind_updated_idx
 CREATE INDEX IF NOT EXISTS threads_owner_provider_idx
   ON phis.threads (owner_provider_id, site_id)
   WHERE owner_provider_id IS NOT NULL;
+
+-- A person's file on a Site: the one thread of kind 4 (file) that is Staff's record of them, opened on
+-- first asking (`threads:v1` `fileOf`). The primary key is what makes it one per person and Site when
+-- two requests ask at once. The person is no participant of it and never reads it; the row is also what
+-- tells the reader predicate whose file it is. Deleting the user takes the row and leaves the thread,
+-- which is Staff's and not theirs.
+CREATE TABLE IF NOT EXISTS phis.thread_files (
+  site_id SMALLINT NOT NULL REFERENCES phis.sites(id) ON DELETE CASCADE,
+  user_id INT NOT NULL REFERENCES phis.user_accounts(id) ON DELETE CASCADE,
+  thread_id INT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (site_id, user_id),
+  CONSTRAINT thread_files_thread_unique UNIQUE (thread_id),
+  CONSTRAINT thread_files_thread_site_fk
+    FOREIGN KEY (thread_id, site_id)
+    REFERENCES phis.threads (id, site_id)
+    ON DELETE CASCADE
+);
 
 -- Who is in a thread. A group participates as a group: its members are resolved when the thread is
 -- read, so somebody who joins afterwards is in the conversation and somebody who leaves is not.

@@ -22,6 +22,7 @@ import {
   listEntitlements,
   readEntitlementState,
   readEntitlementStates,
+  redeliverEntitlementChanged,
   updateEntitlement,
 } from "./entitlements.mts";
 import { moveProductsAsOperator, registerProduct, setProductState } from "./products.mts";
@@ -34,6 +35,8 @@ const PARTS = "@pgtest/bundle-parts";
 const BUNDLES = "@pgtest/bundle-sets";
 const SHOP = "@pgtest/bundle-shop";
 const LISTENER = "@pgtest/bundle-listener";
+/** A second Add-on that listens too, and must hear nothing of another's redelivery. */
+const BYSTANDER = "@pgtest/bundle-bystander";
 
 const hours = (offset: number) => new Date(Date.now() + offset * 3_600_000).toISOString();
 
@@ -91,6 +94,7 @@ describe.skipIf(!configured)("entitlements through bundles", () => {
     pool = await requirePhiTestDatabase();
     site = await createPhiTestSite("entitlement-bundles");
     await enablePhiTestAddonForSite(site, LISTENER);
+    await enablePhiTestAddonForSite(site, BYSTANDER);
   });
 
   afterAll(async () => {
@@ -302,5 +306,82 @@ describe.skipIf(!configured)("entitlements through bundles", () => {
     await clearOutbox();
     await announceEndedEntitlements(pool, [LISTENER]);
     expect(await outboxOf(someone.subject)).toHaveLength(0);
+  });
+
+  describe("redelivery", () => {
+    const redeliver = (id: PhisProductId, addonId = LISTENER) =>
+      redeliverEntitlementChanged(pool, { siteId: site.id, addonId, product: id });
+
+    async function redelivered(id: PhisProductId) {
+      const { rows } = await pool.query<{ addon_id: string; subject: string; product: string; redelivery: string | null }>(
+        `SELECT addon_id, payload->>'subject' AS subject, payload->>'product' AS product, payload->>'redelivery' AS redelivery
+         FROM phis.addon_event_outbox
+         WHERE site_id = $1 AND event = 'entitlement.changed' AND payload->>'product' = $2 ORDER BY id`,
+        [site.id, id],
+      );
+      return rows;
+    }
+
+    it("owes the calling Add-on alone one event per current holder, directly or through nested bundles, naming the product", async () => {
+      const part = await product(PARTS);
+      const inner = await product(BUNDLES, { parts: [part] });
+      const outer = await product(BUNDLES, { parts: [inner] });
+      const direct = await person();
+      const throughBundle = await person();
+      const both = await person();
+      const revoked = await person();
+      const ended = await person();
+      const nobody = await person();
+      await direct.grant(part);
+      await throughBundle.grant(outer);
+      await both.grant(part);
+      await both.grant(inner);
+      const taken = await revoked.grant(part);
+      await updateEntitlement(pool, { siteId: site.id, source: SHOP, product: part, reference: taken.reference, revoke: true, listeners: [] });
+      await ended.grant(part, { startsAt: hours(-2), endsAt: hours(-1) });
+      await clearOutbox();
+
+      expect(await redeliver(part)).toBe(3);
+      const rows = await redelivered(part);
+      expect(rows.map((row) => row.subject).sort()).toEqual([direct.subject, throughBundle.subject, both.subject].sort());
+      expect(new Set(rows.map((row) => row.addon_id))).toEqual(new Set([LISTENER]));
+      expect(rows.every((row) => row.product === part && typeof row.redelivery === "string")).toBe(true);
+      expect(rows.map((row) => row.subject)).not.toContain(nobody.subject);
+    });
+
+    it("queues nothing new while the first call is still owed, and again once it was delivered", async () => {
+      const part = await product(PARTS);
+      const someone = await person();
+      await someone.grant(part);
+      await clearOutbox();
+      // An ordinary change that is still owed does not stand in for a redelivery.
+      await someone.grant(part, { listeners: [LISTENER] });
+
+      expect(await redeliver(part)).toBe(1);
+      expect(await redeliver(part)).toBe(0);
+      expect(await Promise.all([redeliver(part), redeliver(part)])).toEqual([0, 0]);
+      // Another Add-on's own redelivery is its own question.
+      expect(await redeliver(part, BYSTANDER)).toBe(1);
+
+      await pool.query(
+        `UPDATE phis.addon_event_outbox SET delivered_at = NOW() WHERE site_id = $1 AND addon_id = $2 AND payload ? 'redelivery'`,
+        [site.id, LISTENER],
+      );
+      // Two calls at once take turns: one queues, the other finds it owed.
+      expect((await Promise.all([redeliver(part), redeliver(part)])).sort()).toEqual([0, 1]);
+      expect((await redelivered(part)).filter((row) => row.addon_id === LISTENER && row.redelivery)).toHaveLength(2);
+    });
+
+    it("answers 0 for a locked product, one the Site lacks, and an Add-on not configured on the Site", async () => {
+      const part = await product(PARTS);
+      const someone = await person();
+      await someone.grant(part);
+      await clearOutbox();
+      expect(await redeliver(part, "@pgtest/bundle-absent")).toBe(0);
+      await moveProductsAsOperator(pool, { siteId: site.id, to: "locked", productId: part, listeners: [] });
+      expect(await redeliver(part)).toBe(0);
+      expect(await redeliver(`${PARTS}:missing` as PhisProductId)).toBe(0);
+      expect(await redelivered(part)).toHaveLength(0);
+    });
   });
 });

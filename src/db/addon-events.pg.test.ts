@@ -26,6 +26,9 @@ import { PhisThreadMessageFlag } from "@phis/contracts/threads";
  */
 
 const ADDON_ID = "@probe/events";
+
+/** The Site accesses of an actor these tests give none; the file's tests hand their own. */
+const holdsNothing = async () => () => false;
 const OTHER_ADDON_ID = "@probe/bystander";
 const LINK_TYPE = 20;
 const SYNCED = 1;
@@ -292,7 +295,7 @@ describe("the Add-on event outbox", () => {
         createdByUserId: author,
       });
     }
-    const threads = buildPhisAddonThreadsCapability({ addonId: ADDON_ID, siteId: site.id, actorUserId: null });
+    const threads = buildPhisAddonThreadsCapability({ addonId: ADDON_ID, siteId: site.id, actorUserId: null, readSiteAccess: holdsNothing });
 
     const written = await addThreadMessage({
       siteId: site.id, threadId, reader: { kind: "user", userId: author }, message: "Written here.",

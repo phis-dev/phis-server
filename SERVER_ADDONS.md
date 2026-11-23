@@ -1598,7 +1598,7 @@ gone -- and comes back with it, members included.
 ### `threads:v1`
 
 Core's threads, bounded by whoever is behind the call: `list`, `get`, `create`, `reply`,
-`addParticipants`, `setStatus`, `markRead`, `findByExternalRef`.
+`addParticipants`, `setStatus`, `markRead`, `findByExternalRef`, `fileOf`.
 
 **With an actor** the rule is the one `groups:v1` states, for the same reason -- an Add-on sees what its
 actor sees. A thread is visible to its participants, and a group participates as a group, so its members
@@ -1627,6 +1627,27 @@ Custody follows whoever the write is attributed to: acting for a person an Add-o
 files, acting as itself its own, and neither reaches into the other's Space. Who may read one is the
 message's answer and never the Space's, so a file an Add-on attaches is read by everyone in the
 conversation, and one it is shown does not thereby become its own.
+
+**A person's file.** `fileOf({ subject })` answers `{ threadId }` of the person's file
+(`PhisThreadKind.File`): Staff's record of one member of the Site, one per person and Site, opened on first
+asking (empty, as Core's own, without owner, opener, subject or participants; `phis.thread_files` holds
+whose it is and its key keeps it one when two requests ask at once). The subject is the person's
+entitlement subject; one of another Site, an unknown one and one of somebody who is no member of the Site
+answer `null`, and nothing is opened. With an actor, `fileOf` is allowed while the actor holds the Site
+access `support` or `accounting` (asked from the request's one read of their authorization snapshot) and
+refused otherwise, and refused for the actor's own file. Without an actor the contract answers an Add-on
+to which the Site granted background access to `users:v1`; Core has no such grant yet, so `fileOf` throws
+without an actor, and a file is out of an actorless Add-on's reach altogether -- owned or linked, `get` and
+`reply` answer `null`.
+
+The file is reached through the same predicate as any thread, with one rule of its own: it has no
+participants, and a person may reach it by its id while they hold the Site access `support` or
+`accounting` (an Admin, a Maintainer, a Supporter or an Accountant) and are not the person it is about --
+whatever they hold, nobody reads their own file. It is listed in nobody's inbox (`list`, `GET
+/api/site/threads`) and in no Support queue, since no ticket carries it; Staff open it by its id. Every
+message written into it is `Internal`, whatever the writer asked for. It takes no participants, is
+neither archived nor locked, and is never opened through `create` or `POST /api/site/threads`. An Add-on
+writes what happened with the person through `reply` (with `externalRef`), and only ever adds.
 
 Attaching does not change how a slot's file is delivered. A person's own upload is narrowed to
 `internal` when it is attached, because attaching it said "reached through this message"; an Add-on's file
@@ -1834,7 +1855,7 @@ supplier.
   --entitlement-grace-days`; 0 ends the entitlement with the period. A seller that runs its own
   subscriptions writes `endsAt` instead, and its grace is its own.
 
-The capability: `subject`, `subjectForUser`, `check`, `checkMany`, `list`, `grant`, `update`, `revoke`.
+The capability: `subject`, `subjectForUser`, `check`, `checkMany`, `redeliver`, `list`, `grant`, `update`, `revoke`.
 
 **Reads are open** to every Add-on that requires the capability, and cover the entries of every source.
 `subject()` and a call without a subject act for the acting user; with nobody acting there is no subject,
@@ -1895,6 +1916,18 @@ changes: when a paid period is booked and when the subscription ends. Those two 
 payments writes a subscription (`writePhisPaymentSubscription`) and change nothing of what payments does. A product that is locked or
 unlocked changes the answer without an entry changing; that is announced as `product.changed`, for that
 product only -- also when it is a bundle whose parts it changes, and when a bundle's `parts` are released.
+
+**Catching up.** `redeliver({ product })` owes `entitlement.changed` again to the calling Add-on alone, for
+every subject that holds `product` on the Site now -- a valid entry on the product or on a bundle that
+contains it, directly or through nested bundles, by the walk `check` answers with (a locked or unknown
+product is held by nobody) -- one event per subject, with `product` as the event's product. It is for an
+Add-on that starts acting on a product only later, such as a licence rule added after purchases were made.
+It needs an acting user holding the Site access `accounting` (`support` is not enough) and a handler for
+`entitlement.changed` in the caller's manifest, as an enabled listener; it throws otherwise, from an
+unverified hook and for an entry that is no product id. The rows are written by one `INSERT ... SELECT` into
+the outbox, addressed to the caller only, and the dispatcher delivers them in its batches. It answers `{
+queued }`; while rows of an earlier call for the same Add-on, product and Site are still owed, a call queues
+nothing and answers `0`, also when two arrive at once.
 
 **Not in it.** Signing a desktop app in, licence keys, devices and seats, reconciling store purchases,
 using a quantity up, an access policy in `@phis/ui` and delivery
