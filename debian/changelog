@@ -1,3 +1,32 @@
+phis (0.6.0-1) unstable; urgency=medium
+
+  * users:v1: Add-ons read a person of the Site field by field (name,
+    e-mail, phone, address) as the acting person may (Supporter without
+    address; accounting and Site Admin all; the person their own), or in the
+    background on a per-Site grant (phis addon users, Site Admin routes
+    /api/site/admin/users-access). Every answer is written to the Site's
+    access log, kept users_access_log_days (default 90, phis site set),
+    pruned by the Core job users-access-log.prune.
+  * The Site's address book phis.site_addresses: immutable versions, flags
+    for billing, shipping, defaults, superseded and removed, guest entries;
+    account routes /api/site/account/addresses.
+  * Business phone and mobile in the profile (PATCH
+    /api/v1/auth/profile/phone, /api/v1/auth/me); the member picker also
+    finds people by phone digits.
+  * Events user.registered and user.changed (field groups only).
+  * threads:v1 fileOf and the thread kind File: one staff-only file per
+    person and Site (phis.thread_files), also reachable in the background
+    on a grant of name; GET /api/site/members/{userId}/file for staff.
+    Add-on writes with an acting person keep their externalRef.
+  * entitlements:v1 redeliver re-sends entitlement.changed for the current
+    holders of a product to the asking Add-on.
+  * Schema: new tables thread_files, site_addresses, addon_users_grants,
+    users_access_log; new columns on sites and user_profiles and a changed
+    check on addon_event_outbox need the hand SQL in DB.md on an existing
+    database. Needs @phis/contracts 0.8.10.
+
+ -- Marius Schumacher <marius.schumacher@phisys.com>  Tue, 24 Nov 2026 13:02:50 +0000
+
 phis (0.5.6-1) unstable; urgency=medium
 
   * The Site's product directory has session routes for the Accounting
