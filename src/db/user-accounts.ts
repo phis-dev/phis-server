@@ -18,7 +18,6 @@ export type EnsureUserAccountInput = {
    * afterwards, and every caller knows it at the moment it writes.
    */
   emailSource: PhiUserEmailSourceValue;
-  medusaCustomerId?: string | null;
   passwordHash?: string | null;
   preferredLocale?: string | null;
   flags?: number;
@@ -28,47 +27,39 @@ export type EnsureUserAccountInput = {
 export type UserAccountRecord = {
   id: number;
   emailNormalized: string;
-  medusaCustomerId: string | null;
   passwordHash: string | null;
   preferredLocale: string | null;
   siteIds: number[];
   flags: number;
-  customerNumber: string | null;
 };
 
 export type UserAccountRow = {
   id: number;
   email_normalized: string;
-  medusa_customer_id: string | null;
   password_hash: string | null;
   preferred_locale: string | null;
   site_ids: number[] | null;
   flags: number;
-  customer_number: string | null;
 };
 
 export function mapUserAccountRow(row: UserAccountRow): UserAccountRecord {
   return {
     id: row.id,
     emailNormalized: row.email_normalized,
-    medusaCustomerId: row.medusa_customer_id,
     passwordHash: row.password_hash,
     preferredLocale: row.preferred_locale,
     siteIds: row.site_ids ?? [],
     flags: row.flags,
-    customerNumber: row.customer_number,
   };
 }
 
-export function userAccountProjection(siteParam: number) {
+export function userAccountProjection() {
   return `SELECT account.id,
                  email.email_normalized,
-                 external.external_account_id AS medusa_customer_id,
                  password.password_hash,
                  account.preferred_locale,
                  COALESCE(memberships.site_ids, ARRAY[]::smallint[]) AS site_ids,
-                 account.flags,
-                 external.customer_number
+                 account.flags
           FROM phis.user_accounts AS account
           JOIN LATERAL (
             SELECT value.email_normalized
@@ -82,16 +73,7 @@ export function userAccountProjection(siteParam: number) {
             SELECT ARRAY_AGG(membership.site_id ORDER BY membership.site_id)::smallint[] AS site_ids
             FROM phis.user_site_memberships AS membership
             WHERE membership.user_id = account.id
-          ) AS memberships ON TRUE
-          LEFT JOIN LATERAL (
-            SELECT mapping.external_account_id, mapping.customer_number
-            FROM phis.user_site_external_accounts AS mapping
-            WHERE mapping.user_id = account.id
-              AND mapping.provider_key = 'medusa'
-              AND $${siteParam}::smallint > 0
-              AND mapping.site_id = $${siteParam}::smallint
-            LIMIT 1
-          ) AS external ON TRUE`;
+          ) AS memberships ON TRUE`;
 }
 
 async function upsertPasswordCredential(
@@ -110,27 +92,6 @@ async function upsertPasswordCredential(
          changed_at = NOW(),
          updated_at = NOW()`,
     [userId, passwordHash],
-  );
-}
-
-async function upsertMedusaAccount(
-  client: PoolClient,
-  userId: number,
-  siteId: number,
-  medusaCustomerId: string | null | undefined,
-) {
-  if (!medusaCustomerId) {
-    return;
-  }
-  await client.query(
-    `INSERT INTO phis.user_site_external_accounts (
-       user_id, site_id, provider_key, external_account_id
-     )
-     VALUES ($1, $2, 'medusa', $3)
-     ON CONFLICT (user_id, site_id, provider_key) DO UPDATE
-     SET external_account_id = EXCLUDED.external_account_id,
-         updated_at = NOW()`,
-    [userId, siteId, medusaCustomerId],
   );
 }
 
@@ -194,7 +155,6 @@ export async function ensureUserAccount(input: EnsureUserAccountInput) {
       ? await announcePhisUserEvent(client, { userId, siteIds: [input.siteId], event: "user.registered" })
       : [];
     await upsertPasswordCredential(client, userId, input.passwordHash);
-    await upsertMedusaAccount(client, userId, input.siteId, input.medusaCustomerId);
     return { id: userId, emailNormalized: normalizedEmail, registered };
   }).then(({ registered, ...account }) => {
     schedulePhisUserEventDelivery(registered);
@@ -202,13 +162,13 @@ export async function ensureUserAccount(input: EnsureUserAccountInput) {
   });
 }
 
-export async function getUserAccountById(userId: number, siteId = 0) {
+export async function getUserAccountById(userId: number) {
   const pool = getPool();
   const { rows } = await pool.query<UserAccountRow>(phiPrepared(
-    `${userAccountProjection(2)}
+    `${userAccountProjection()}
      WHERE account.id = $1
      LIMIT 1`,
-    [userId, siteId],
+    [userId],
   ));
   return rows[0] ? mapUserAccountRow(rows[0]) : null;
 }
@@ -221,19 +181,19 @@ export async function getUserAccountById(userId: number, siteId = 0) {
  * it ended in the unique index as a 500, and its owner could not sign in with it. The account comes
  * back with its primary address, which is where mail goes.
  */
-export async function getUserAccountByEmail(email: string, siteId = 0) {
+export async function getUserAccountByEmail(email: string) {
   const normalizedEmail = normalizePhiEmail(email);
   if (!normalizedEmail) {
     return null;
   }
   const pool = getPool();
   const { rows } = await pool.query<UserAccountRow>(
-    `${userAccountProjection(2)}
+    `${userAccountProjection()}
      WHERE account.id = (
        SELECT owner.user_id FROM phis.user_emails AS owner WHERE owner.email_normalized = $1
      )
      LIMIT 1`,
-    [normalizedEmail, siteId],
+    [normalizedEmail],
   );
   return rows[0] ? mapUserAccountRow(rows[0]) : null;
 }

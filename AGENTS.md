@@ -77,8 +77,7 @@
   not be collapsed back into the global user row.
 - `registration_intents` is workflow history only; after `consumed`, personal snapshot fields may be minimized to `NULL` while `user_id` remains as the durable link.
 - Default customer numbers are derived per Site from `sites.customer_number_prefix` and
-  `user_accounts.id`; any explicit override is Site-scoped in `user_site_external_accounts`, never stored on the
-  global user row.
+  `user_accounts.id`; any explicit override is Site-scoped, never stored on the global user row.
 - CMS instance identities follow the `PhiCmsInstanceId` contract in `DB.md`.
 
 ## Maintenance contract

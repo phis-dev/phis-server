@@ -100,7 +100,7 @@ function parseEnabledFilter(value: QueryValue) {
 
 function parseAccountType(value: QueryValue) {
   const normalized = normalize(value).toLowerCase();
-  if (normalized === "customer" || normalized === "roles" || normalized === "auth") {
+  if (normalized === "roles" || normalized === "auth") {
     return normalized;
   }
 
@@ -262,7 +262,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "Invalid historyUserId." }, { status: 400 });
   }
   if (historyUserId) {
-    const target = await getUserAccountById(historyUserId, site.id);
+    const target = await getUserAccountById(historyUserId);
     if (!target || !target.siteIds.includes(site.id)) {
       return NextResponse.json({ error: "User not found." }, { status: 404 });
     }
@@ -281,7 +281,7 @@ export async function GET(request: NextRequest) {
   }
   if (userId) {
     const [target, profile, membership] = await Promise.all([
-      getUserAccountById(userId, site.id),
+      getUserAccountById(userId),
       getUserProfileByUserId(userId),
       getUserSiteMembership(userId, site.id),
     ]);
@@ -302,7 +302,6 @@ export async function GET(request: NextRequest) {
         roleTags: buildRoleTags(membership.coreRoleFlags),
         addonRoles: addonRoles.stored.map(({ addonId, role }) => `${addonId}:${role}`),
         impliedAddonRoles: addonRoles.implied,
-        medusaCustomerId: target.medusaCustomerId,
         self: target.id === session.userId,
       },
     });
@@ -374,8 +373,6 @@ export async function GET(request: NextRequest) {
       lastLoginAt: row.lastLoginAt,
       createdAt: row.createdAt,
       companyName: row.companyName,
-      customerNumber: row.customerNumber,
-      medusaCustomerId: row.medusaCustomerId,
       firstName: row.firstName,
       lastName: row.lastName,
       self: row.id === session.userId,
@@ -449,7 +446,6 @@ export async function POST(request: NextRequest) {
       email,
       siteId: site.id,
       emailSource: PhiUserEmailSource.Admin,
-      medusaCustomerId: null,
       passwordHash,
       // Nobody has asked this person which language they want, so the column stays empty and their
       // browser answers for them. Writing the Site default here said they had chosen it.
@@ -544,12 +540,9 @@ export async function PUT(request: NextRequest) {
     return NextResponse.json({ error: "Missing userId." }, { status: 400 });
   }
 
-  const target = await getUserAccountById(userId, site.id);
+  const target = await getUserAccountById(userId);
   if (!target || !target.siteIds.includes(site.id)) {
     return NextResponse.json({ error: "User not found." }, { status: 404 });
-  }
-  if (target.medusaCustomerId) {
-    return NextResponse.json({ error: "Medusa-managed accounts cannot be edited here." }, { status: 409 });
   }
 
   const currentMembership = await getUserSiteMembership(target.id, site.id);
@@ -843,12 +836,9 @@ export async function DELETE(request: NextRequest) {
     return NextResponse.json({ error: "You cannot delete your own account here." }, { status: 403 });
   }
 
-  const target = await getUserAccountById(userId, site.id);
+  const target = await getUserAccountById(userId);
   if (!target || !target.siteIds.includes(site.id)) {
     return NextResponse.json({ error: "User not found." }, { status: 404 });
-  }
-  if (target.medusaCustomerId) {
-    return NextResponse.json({ error: "Medusa-managed accounts cannot be deleted here." }, { status: 409 });
   }
 
   const hardDelete = isAccountOwnedBySite(target, site.id);

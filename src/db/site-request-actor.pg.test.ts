@@ -67,14 +67,14 @@ describe("getSiteRequestActorFromRequest against PostgreSQL", () => {
   const request = () => new NextRequest("https://server.test/api/site/x", { headers: { cookie } });
 
   it("answers what the session, authorization and account readers answer", async () => {
-    const actor = await getSiteRequestActorFromRequest(request(), site.id, { account: { externalSiteId: site.id } });
+    const actor = await getSiteRequestActorFromRequest(request(), site.id, { account: true });
     const session = await getSessionFromRequest(request(), site.id);
     const authorization = await getEffectiveUserSiteAuthorization(userId, site.id);
 
     expect(actor).not.toBeNull();
     expect(actor!.session).toEqual(session);
     expect(actor!.siteRole).toEqual(authorization);
-    expect(actor!.user).toEqual(await getUserAccountById(userId, site.id));
+    expect(actor!.user).toEqual(await getUserAccountById(userId));
     // What the rows above are for: the core role counts, the uninstalled provider does not, and of the
     // three groups only the live one grants.
     expect(actor!.siteRole.coreRoleFlags).toBe(5);

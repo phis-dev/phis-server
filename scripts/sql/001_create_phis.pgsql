@@ -30,8 +30,6 @@ CREATE TABLE IF NOT EXISTS phis.sites (
   mail_from_name VARCHAR(160) NOT NULL,
   support_email VARCHAR(320) NOT NULL,
   contact_recipient VARCHAR(320) NOT NULL,
-  medusa_base_url VARCHAR(512) NULL,
-  medusa_publishable_key VARCHAR(320) NULL,
   customer_number_prefix VARCHAR(32) NULL,
   form_guard_secret CHAR(64) NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),

@@ -14,7 +14,6 @@ vi.mock("@/lib/api-v1-guard", () => ({ guardApiV1: () => null }));
 vi.mock("@/lib/site-context", () => ({
   requireSiteFromRequest: async () => ({ id: 7, key: "site", defaultLocale: "en" }),
 }));
-vi.mock("@/db/site-config", () => ({ getSiteConfigBySiteId: async () => null }));
 vi.mock("@/lib/form-config", () => ({
   getFormGuardSecret: async () => "secret",
   getFormTimingWindow: () => ({}),
@@ -64,7 +63,7 @@ const ACCEPTED = { ok: true, status: "pending_verification" };
 function account(overrides: Record<string, unknown> = {}) {
   return {
     id: 41, emailNormalized: "paula@example.test", passwordHash: "hash", siteIds: [2],
-    flags: 0, medusaCustomerId: null, ...overrides,
+    flags: 0, ...overrides,
   };
 }
 

@@ -49,7 +49,7 @@ describe("finding an account by any of its addresses against PostgreSQL", () => 
     const userId = await createPhiTestUser(site);
     const { former, primary } = await withFormerAddress(userId);
 
-    const account = await getUserAccountByEmail(former, site.id);
+    const account = await getUserAccountByEmail(former);
 
     expect(account?.id).toBe(userId);
     expect(account?.emailNormalized).toBe(primary);

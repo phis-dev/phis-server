@@ -45,7 +45,7 @@ export async function requireAuthenticatedSiteUser(
   // Session, account and authorization from one statement (`getSiteRequestActorFromRequest`).
   const actor = await getSiteRequestActorFromRequest(request, site.id, {
     allowPasswordChangeRequired: options.allowPasswordChangeRequired,
-    account: { externalSiteId: 0 },
+    account: true,
   });
   if (!actor) {
     return refuse(unauthorized());

@@ -142,6 +142,9 @@ not a second writable copy of those business records.
 The associated Site Modules can provide product, variant, category, cart and checkout widgets,
 customer and order views, and access to administration. Phis identities and Medusa customers need an
 explicit account-binding design; a Phis session does not automatically establish a Medusa session.
+Core carries no Medusa code (its built-in registration hook was removed on 2026-11-24): the Add-on learns
+of a new account from `user.registered`, reads the person through `users:v1`, never receives a password,
+and creates the Medusa customer and its binding together or fails both.
 Medusa Admin can initially remain the administration surface rather than rebuilding its features in
 Phis. Deeper administration integration can follow as needed.
 

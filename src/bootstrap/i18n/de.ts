@@ -227,9 +227,6 @@ export const bootstrapDe = {
         "Verbindungstest über die Bootstrap-Verbindung.",
         "Klare Validierung vor dem nächsten Schritt.",
       ],
-      goodToKnowTitle: "Integrierte Medusa-Unterstützung",
-      goodToKnowBodyBeforeLink:
-        "phis bringt bereits integrierte Unterstützung für Medusa-Stores mit und kann sie später im Setup als verwaltete Commerce-Backends anbinden.",
     },
     schema: {
       title: "Schema-Erstellung",
@@ -255,7 +252,6 @@ export const bootstrapDe = {
       actions: [
         "Ja/Nein anbieten statt die Site-Erstellung zu erzwingen.",
         "Bei Ja: Key, Hostname, Lokalen, Mail-Identität und Public-Base-URL erfassen.",
-        "Eine initiale Medusa-Anbindung kann später optional ergänzt werden.",
       ],
       goodToKnowTitle: "Multi-Site-ready",
       goodToKnowBodyBeforeLink:

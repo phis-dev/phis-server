@@ -94,12 +94,10 @@ function account(siteIds: number[]) {
   return {
     id: 41,
     emailNormalized: "person@example.test",
-    medusaCustomerId: null,
     passwordHash: "their-hash",
     preferredLocale: null,
     siteIds,
     flags: 0,
-    customerNumber: null,
   };
 }
 
@@ -457,7 +455,7 @@ function listRow(id: number) {
   return {
     id, displayName: `User ${id}`, emailNormalized: `u${id}@example.test`, accountType: "roles", enabled: true,
     flags: 0, siteFlags: 0, coreRoleFlags: 0, lastLoginAt: null, createdAt: "x", companyName: null,
-    customerNumber: null, medusaCustomerId: null, firstName: null, lastName: null,
+    firstName: null, lastName: null,
   };
 }
 

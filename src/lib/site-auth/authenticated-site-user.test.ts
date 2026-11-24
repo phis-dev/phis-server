@@ -56,12 +56,12 @@ describe("the signed-in chain of the auth handlers", () => {
     await requireAuthenticatedSiteUser(request());
     expect(mocks.session).toHaveBeenLastCalledWith(expect.anything(), 7, {
       allowPasswordChangeRequired: undefined,
-      account: { externalSiteId: 0 },
+      account: true,
     });
     await requireAuthenticatedSiteUser(request(), { allowPasswordChangeRequired: true });
     expect(mocks.session).toHaveBeenLastCalledWith(expect.anything(), 7, {
       allowPasswordChangeRequired: true,
-      account: { externalSiteId: 0 },
+      account: true,
     });
   });
 });

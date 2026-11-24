@@ -16,8 +16,8 @@ export async function resolvePhisCommandActor(
 ): Promise<{ ok: true; id: number; email: string } | { ok: false; status: 404 | 409; error: string }> {
   const named = who.trim();
   const account = /^\d+$/.test(named)
-    ? await getUserAccountById(Number(named), site.id)
-    : await getUserAccountByEmail(named, site.id);
+    ? await getUserAccountById(Number(named))
+    : await getUserAccountByEmail(named);
   if (!account || !account.siteIds.includes(site.id)) {
     return { ok: false, status: 404, error: `${named} is not a member of ${site.key}.` };
   }

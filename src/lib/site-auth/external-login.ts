@@ -49,12 +49,12 @@ export async function resolveExternalLogin(input: {
     input.identity.subject,
   );
   const emailUser = input.identity.email && input.identity.emailVerified
-    ? await getUserAccountByEmail(input.identity.email, input.siteId)
+    ? await getUserAccountByEmail(input.identity.email)
     : null;
   const candidateUserId = identityUserId ?? emailUser?.id ?? null;
   const [candidateUser, membership] = candidateUserId
     ? await Promise.all([
-        getUserAccountById(candidateUserId, input.siteId),
+        getUserAccountById(candidateUserId),
         getUserSiteMembership(candidateUserId, input.siteId),
       ])
     : [null, null];

@@ -227,9 +227,6 @@ export const bootstrapEn = {
         "Connection test against the server-level bootstrap connection.",
         "Show clear validation before continuing.",
       ],
-      goodToKnowTitle: "Built-in Medusa support",
-      goodToKnowBodyBeforeLink:
-        "phis has built-in support for Medusa stores and can connect them as managed commerce backends later in the setup flow.",
     },
     schema: {
       title: "Schema creation",
@@ -255,7 +252,6 @@ export const bootstrapEn = {
       actions: [
         "Offer yes/no instead of forcing site creation.",
         "If enabled: collect key, hostname, locales, mail identity, and public base URL.",
-        "Optionally connect an initial Medusa backend later in the flow.",
       ],
       goodToKnowTitle: "Multi-site ready",
       goodToKnowBodyBeforeLink:

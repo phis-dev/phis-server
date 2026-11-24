@@ -209,15 +209,19 @@ The target PostgreSQL schema for `phis` is:
 - `mail_from_name VARCHAR(160) NOT NULL`
 - `support_email VARCHAR(320) NOT NULL`
 - `contact_recipient VARCHAR(320) NOT NULL`
-- `medusa_base_url VARCHAR(512) NULL`
-- `medusa_publishable_key VARCHAR(320) NULL`
 - `customer_number_prefix VARCHAR(32) NULL`
 - `form_guard_secret CHAR(64) NOT NULL`
 - `created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
 - `updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
 
 Contract:
-- `sites` stores the Site-wide runtime and business configuration: canonical hostname, locales, public URL, mail identity, commerce handoff values, and the form guard secret.
+- `sites` stores the Site-wide runtime and business configuration: canonical hostname, locales, public URL, mail identity, the customer number prefix, and the form guard secret.
+- Core carries no Medusa connection: `medusa_base_url` and `medusa_publishable_key` went with the built-in Medusa integration (owner, 2026-11-24; a Medusa Add-on is to bind its customers through `user.registered` and `users:v1`). An existing database drops them by hand, as the serving role (the development database `phi_server_dev` received it so):
+
+  ```sql
+  ALTER TABLE phis.sites DROP COLUMN IF EXISTS medusa_base_url, DROP COLUMN IF EXISTS medusa_publishable_key;
+  DELETE FROM phis.user_site_external_accounts WHERE provider_key = 'medusa';
+  ```
 - The immutable Site source locale is not a column. It is `sites.overrides.<siteKey>.sourceLocale` in the runtime configuration, with `translation.sourceLocale` as the installation fallback; see [TRANSLATIONS.md](./TRANSLATIONS.md).
 - `theme` stores public-facing presentation configuration only. Its shape is the `theme` member of `PhiBlockRuntimeSite` in `phis-ui/types/widget-runtime.ts`: `mode`, `blocks`, `derivedFrom`, `preset`, `presetVersion`, `shape`, `fonts`, `rem`, `brand`, `contact`, `shell`, `root`, `palette`, `style.token`, `buttons`, `typography`, and `components`.
 - `theme` must not become a raw dump of arbitrary `ConfigProvider` state; it is a Site-owned theme contract that the frontends map into Ant Design.
@@ -844,10 +848,12 @@ Contract:
 - `UNIQUE (user_id, site_id, provider_key)`
 
 Contract:
-- Medusa customer ids and equivalent domain-system ids are Site-scoped mappings, never global user
-  identity fields.
-- An explicit customer number is Site-scoped here. Otherwise it is derived from the Site prefix and
-  global user id.
+- No code reads or writes this table since the built-in Medusa integration, its only user, was removed
+  (2026-11-24); it stays in the schema until the owner decides whether it goes. Sign-in identities are
+  `phis.user_auth_identities`, not this table.
+- Domain-system ids are Site-scoped mappings, never global user identity fields.
+- `customer_number` was read only beside the Medusa row and is read by nothing now; a customer number is
+  derived from the Site prefix and the global user id.
 - An external domain account is not an authentication identity unless a separate validated Auth adapter
   resolves it through `user_auth_identities`.
 
@@ -992,8 +998,8 @@ Contract:
 - `phone` (business telephone) and `mobile` are the person's numbers as they typed them, valid on every Site as the names are; `users:v1` answers them as `phone` (`setUserProfilePhones` writes them for `PATCH /api/v1/auth/profile/phone`, and `/api/v1/auth/me` reads them back). `phone_digits` and `mobile_digits` are derived by the table, never written: the member picker (`GET /api/site/members`, `searchSiteMembers`) matches a query that is a telephone number against them, as a substring of the digits with the query's leading zeros dropped. Added 2026-11-24; existing databases receive both by hand (`ALTER TABLE phis.user_profiles ADD COLUMN IF NOT EXISTS phone_digits ...` and `mobile_digits`, as above), which computes them for the rows already there.
 - A change of the names (`upsertUserProfile`, which writes nothing when nothing changed), of the numbers, or of the primary e-mail address (`updateUserAccountProfileFields`) owes `user.changed` with `name`, `phone` or `email` on every Site the person is a member of (see `phis.addon_event_outbox`).
 - The single address of the profile (`address_1` .. `country_code`) is left as it is and read by nothing in `users:v1`; a Site's addresses are `phis.site_addresses`.
-- A Site-specific commerce profile may remain Medusa-owned and is reached through the matching
-  `user_site_external_accounts` relation; it does not change global identity ownership.
+- A Site-specific commerce profile kept by another system (a Medusa customer, through a future Add-on) is
+  that system's record; it does not change global identity ownership.
 
 ### `phis.registration_intents`
 

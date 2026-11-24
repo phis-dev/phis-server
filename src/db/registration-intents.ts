@@ -307,8 +307,8 @@ export async function markRegistrationIntentExpired(id: number) {
 /**
  * Takes a pending intent for the one confirmation that may act on it.
  *
- * Two clicks on the same link ran side by side: both created a Medusa customer, and the second account
- * insert failed on the address and answered 500. The first to move the intent to `verified` goes on; the
+ * Two clicks on the same link ran side by side: both went on to create the account, and the second
+ * account insert failed on the address and answered 500. The first to move the intent to `verified` goes on; the
  * other is answered as already confirmed. `releaseRegistrationIntentClaim` puts it back when that
  * confirmation stopped before consuming it.
  */

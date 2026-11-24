@@ -6,8 +6,8 @@ only after this contract has established a Site session and follows [AUTHORIZATI
 The presentation side -- the `@phis/ui/auth` Module, its Areas, the Auth UI provider, and the Account
 Widget -- is specified in [phis-ui AUTHENTICATION.md](https://github.com/phis-dev/phis-ui/blob/main/AUTHENTICATION.md).
 
-Email-address upserts, a Medusa-owned browser session, and UI-owned authentication decisions are not
-identity or session paths. The schema is defined by `scripts/sql/001_create_phis.pgsql`; table columns are
+Email-address upserts, a browser session owned by an external commerce system, and UI-owned
+authentication decisions are not identity or session paths. The schema is defined by `scripts/sql/001_create_phis.pgsql`; table columns are
 described in [DB.md](./DB.md).
 
 Platform-operator authentication under `/api/operator/*` is a separate infrastructure boundary and is
@@ -65,8 +65,11 @@ The target model therefore has these hard rules:
 - Site role claims remain separate from identity and follow `AUTHORIZATION.md`.
 
 Commerce and other external customer records are Site-scoped relations. A value such as a Medusa
-customer id belongs in a `(user_id, site_id, provider)` external-account relation, not on the global
-`user_accounts` row.
+customer id belongs in a `(user_id, site_id, provider)` relation, not on the global `user_accounts` row.
+Core keeps no such relation itself since the built-in Medusa integration was removed (2026-11-24): an Add-on
+that binds external customers keeps the binding in its own tables, learns of a new account from
+`user.registered` and reads the person through `users:v1`. Registration never hands a password to anything
+but Core.
 
 ## 3. Durable identifiers and email addresses
 
@@ -102,8 +105,8 @@ Authentication uses these relations:
 - `site_auth_config`: one versioned Site JSON document containing policy, enabled method/stage
   combinations, order, presentation, and non-secret provider installation configuration;
 - `user_auth_factors`: Site-scoped TOTP and recovery-code enrollments with a compact numeric factor type;
-- `user_site_external_accounts`: Site-scoped Medusa or other domain-system account mappings outside the
-  Auth identity model;
+- `user_site_external_accounts`: Site-scoped domain-system account mappings outside the Auth identity
+  model; no code reads or writes it since the built-in Medusa integration was removed (2026-11-24);
 - `user_sessions`: Site membership, hashed session secret, authentication time, assurance level,
   workflow state (`auth_state`), the accepted Site policy revision, method keys, preserved `next` path,
   expiry, revocation, and request metadata;

@@ -16,7 +16,6 @@ import { getUserProfileByUserId, upsertUserProfile } from "@/db/user-profiles";
 import { guardApiV1 } from "@/lib/api-v1-guard";
 import { notifyPhiPerson } from "@/lib/notifications/enqueue";
 import { getSiteMailConfig } from "@/lib/form-config";
-import { createMedusaCustomer } from "@/lib/medusa";
 import { logRuntimeEvent } from "@/lib/log";
 import { hashPassword } from "@/lib/password";
 import { decryptRegistrationPassword } from "@/lib/registration-secret";
@@ -134,7 +133,6 @@ export async function POST(request: Request) {
 
   try {
     const siteConfig = await getSiteMailConfig(site.id);
-    const usesMedusaCustomer = Boolean(siteConfig.medusaBaseUrl && siteConfig.medusaPublishableKey);
     const customerNumberPrefix = siteConfig.customerNumberPrefix?.trim().toUpperCase() ?? "";
     const normalizedEmail = intent.email?.trim() ?? "";
     if (!normalizedEmail) {
@@ -199,58 +197,12 @@ export async function POST(request: Request) {
     });
     const passwordHash = await hashPassword(password);
 
-    let medusaCustomerId: string | null = null;
-    let medusaCustomerEmail: string | null = null;
-    let medusaCustomerFirstName: string | null = null;
-    let medusaCustomerLastName: string | null = null;
-    const shouldCreateMedusaCustomer =
-      Boolean(siteConfig.medusaBaseUrl && siteConfig.medusaPublishableKey);
-    if (shouldCreateMedusaCustomer) {
-      try {
-        const customer = await createMedusaCustomer(siteConfig, {
-          email: normalizedEmail,
-          password,
-          firstName: intent.firstName ?? "",
-          lastName: intent.lastName ?? "",
-          companyName: intent.companyName ?? "",
-        });
-
-        medusaCustomerId = customer.id;
-        medusaCustomerEmail = customer.email;
-        medusaCustomerFirstName = customer.firstName;
-        medusaCustomerLastName = customer.lastName;
-        logRuntimeEvent("info", "registration.profile_source", {
-          message: "Registration profile resolved from Medusa.",
-          siteKey: site.key,
-          meta: {
-            intentId: intent.id,
-            email: normalizedEmail,
-            userId: null,
-            persistSource: "medusa",
-            medusaCustomerId: customer.id,
-          },
-        });
-      } catch (error) {
-        logRuntimeEvent("error", "registration.medusa_create_failed", {
-          message: "Registration Medusa customer creation failed.",
-          siteKey: site.key,
-          meta: {
-            intentId: intent.id,
-            email: intent.email,
-            reason: "medusa_create_customer_failed",
-          },
-          error,
-        });
-      }
-    }
-
     let user: Awaited<ReturnType<typeof ensureUserAccount>>;
     try {
       user = await ensureUserAccount({
         email: normalizedEmail,
         siteId: site.id,
         emailSource: PhiUserEmailSource.Registration,
-        medusaCustomerId,
         passwordHash,
         /*
          * Not `intent.locale`, although that is the language this person registered in.
@@ -280,36 +232,22 @@ export async function POST(request: Request) {
       siteId: site.id,
       userSiteFlags: intent.newsletterOptIn ? USER_SITE_FLAG_NEWSLETTER_OPT_IN : 0,
     });
-    if (!usesMedusaCustomer) {
-      await upsertUserProfile({
-        userId: user.id,
-        firstName: intent.firstName ?? "",
-        lastName: intent.lastName ?? "",
-        companyName: intent.companyName ?? null,
-      });
-      logRuntimeEvent("info", "registration.profile_upserted", {
-        message: "Registration profile persisted locally.",
-        siteKey: site.key,
-        userId: user.id,
-        meta: {
-          intentId: intent.id,
-          email: normalizedEmail,
-          persistSource: "user_profiles",
-        },
-      });
-    } else {
-      logRuntimeEvent("info", "registration.profile_source", {
-        message: "Registration profile resolved from Medusa.",
-        siteKey: site.key,
-        userId: user.id,
-        meta: {
-          intentId: intent.id,
-          email: normalizedEmail,
-          persistSource: "medusa",
-          medusaCustomerId,
-        },
-      });
-    }
+    await upsertUserProfile({
+      userId: user.id,
+      firstName: intent.firstName ?? "",
+      lastName: intent.lastName ?? "",
+      companyName: intent.companyName ?? null,
+    });
+    logRuntimeEvent("info", "registration.profile_upserted", {
+      message: "Registration profile persisted locally.",
+      siteKey: site.key,
+      userId: user.id,
+      meta: {
+        intentId: intent.id,
+        email: normalizedEmail,
+        persistSource: "user_profiles",
+      },
+    });
     const customerNumber = customerNumberPrefix
       ? formatCustomerNumber(customerNumberPrefix, user.id)
       : null;
@@ -317,13 +255,7 @@ export async function POST(request: Request) {
     const profileRecipientName = profile
       ? buildRecipientName(profile.firstName, profile.lastName)
       : "";
-    const medusaRecipientName = buildRecipientName(
-      medusaCustomerFirstName ?? "",
-      medusaCustomerLastName ?? "",
-    );
-    const recipientName = usesMedusaCustomer
-      ? medusaRecipientName || intent.fullName || normalizedEmail
-      : profileRecipientName || intent.fullName || normalizedEmail;
+    const recipientName = profileRecipientName || intent.fullName || normalizedEmail;
 
     await consumeRegistrationIntent(intent.id, user.id);
     logRuntimeEvent("info", "registration.confirmed", {
@@ -333,7 +265,6 @@ export async function POST(request: Request) {
       meta: {
         intentId: intent.id,
         email: intent.email,
-        customerId: medusaCustomerId,
         customerNumber,
         status: "confirmed",
       },
@@ -341,8 +272,7 @@ export async function POST(request: Request) {
 
     try {
       // The account exists by now, so the row names it and the address is resolved when it is sent. The
-      // name travels anyway: this request has just read one out of a customer record, which the profile
-      // does not necessarily carry.
+      // name travels anyway, read from the profile just written.
       const notificationId = await notifyPhiPerson({
         siteId: site.id,
         occasion: "registration_welcome",
@@ -369,8 +299,7 @@ export async function POST(request: Request) {
     return NextResponse.json({
       ok: true,
       status: "confirmed",
-      customerId: medusaCustomerId,
-      email: medusaCustomerEmail ?? normalizedEmail,
+      email: normalizedEmail,
       customerNumber,
     });
   } finally {

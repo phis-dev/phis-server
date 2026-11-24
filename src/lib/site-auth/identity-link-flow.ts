@@ -145,8 +145,8 @@ export async function confirmExternalIdentityLink(input: {
   }
 
   const [user, emailUser, linkedUserId] = await Promise.all([
-    getUserAccountById(transaction.userId, input.siteId),
-    getUserAccountByEmail(identity.email, input.siteId),
+    getUserAccountById(transaction.userId),
+    getUserAccountByEmail(identity.email),
     getUserIdByExternalIdentity(identity.issuer, identity.subject),
   ]);
   if (

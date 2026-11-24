@@ -186,7 +186,7 @@ export async function GET(request: NextRequest, context: Context) {
     // Redeemed: the flow this browser started is over, whichever way it ended.
     clearAuthFlowCookie(response);
     const csrfToken = createCsrfToken();
-    const user = await getUserAccountById(resolution.userId, siteContext.site.id);
+    const user = await getUserAccountById(resolution.userId);
     const locale = resolveSignedInLocale(request, {
       user,
       defaultLocale: runtime.defaultLocale,

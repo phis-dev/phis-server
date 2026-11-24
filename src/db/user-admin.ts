@@ -9,7 +9,7 @@ import { USER_SITE_FLAG_DISABLED, isUserSiteEnabled } from "@/lib/user-site-flag
 import { PHI_CORE_ROLE_PROVIDER_ID } from "@/lib/authorization";
 import { PhiBaseRole } from "@/lib/constants/phi-base-roles";
 
-export type AdminUserAccountType = "customer" | "roles" | "auth";
+export type AdminUserAccountType = "roles" | "auth";
 export type AdminUserSortKey = "name" | "email" | "accountType" | "enabled" | "createdAt" | "lastLoginAt";
 export type AdminUserSortOrder = "ascend" | "descend";
 
@@ -99,20 +99,15 @@ export async function listAdminUsersForSite(siteId: number, options: ListAdminUs
         OR lower(COALESCE(up.company_name, '')) LIKE $${index} ESCAPE '\\'
         OR lower(COALESCE(CONCAT_WS(' ', up.first_name, up.last_name), '')) LIKE $${index} ESCAPE '\\'
         OR lower(COALESCE(up.display_name, '')) LIKE $${index} ESCAPE '\\'
-        OR lower(COALESCE(external.customer_number, '')) LIKE $${index} ESCAPE '\\'
       )`,
     );
   }
 
   const accountType = options.accountType?.trim().toLowerCase();
-  if (accountType === "customer") {
-    conditions.push(`external.external_account_id IS NOT NULL`);
-  } else if (accountType === "roles") {
-    conditions.push(`external.external_account_id IS NULL AND (
-      COALESCE(core_claim.role_flags, 0) <> 0
-    )`);
+  if (accountType === "roles") {
+    conditions.push(`COALESCE(core_claim.role_flags, 0) <> 0`);
   } else if (accountType === "auth") {
-    conditions.push(`external.external_account_id IS NULL AND COALESCE(core_claim.role_flags, 0) = 0`);
+    conditions.push(`COALESCE(core_claim.role_flags, 0) = 0`);
   }
 
   const enabled = options.enabled?.trim().toLowerCase();
@@ -157,12 +152,10 @@ export async function listAdminUsersForSite(siteId: number, options: ListAdminUs
       SELECT
         ua.id,
         email.email_normalized,
-        external.external_account_id AS medusa_customer_id,
         credential.password_hash,
         ua.preferred_locale,
         membership_sites.site_ids,
         ua.flags,
-        external.customer_number,
         ua.created_at,
         ua.updated_at,
         up.first_name,
@@ -173,7 +166,6 @@ export async function listAdminUsersForSite(siteId: number, options: ListAdminUs
         usr.last_login_at,
         COALESCE(${userDisplayNameSql("up")}, email.email_normalized) AS display_name,
         CASE
-          WHEN external.external_account_id IS NOT NULL THEN 'customer'
           WHEN COALESCE(core_claim.role_flags, 0) <> 0 THEN 'roles'
           ELSE 'auth'
         END AS account_type,
@@ -190,10 +182,6 @@ export async function listAdminUsersForSite(siteId: number, options: ListAdminUs
       ) email ON TRUE
       LEFT JOIN phis.user_password_credentials credential
         ON credential.user_id = ua.id
-      LEFT JOIN phis.user_site_external_accounts external
-        ON external.user_id = ua.id
-       AND external.site_id = usr.site_id
-       AND external.provider_key = 'medusa'
       JOIN LATERAL (
         SELECT ARRAY_AGG(membership.site_id ORDER BY membership.site_id)::int[] AS site_ids
         FROM phis.user_site_memberships membership

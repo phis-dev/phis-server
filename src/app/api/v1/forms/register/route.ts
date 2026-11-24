@@ -8,7 +8,6 @@ import { upsertUserSiteMembership } from "@/db/user-site-memberships";
 import { guardApiV1 } from "@/lib/api-v1-guard";
 import { buildVerificationUrlForLocale } from "@/lib/email";
 import { notifyPhiPerson } from "@/lib/notifications/enqueue";
-import { getSiteConfigBySiteId } from "@/db/site-config";
 import { normalizeLocale } from "@/lib/locale";
 import { logRuntimeEvent } from "@/lib/log";
 import { requireSiteFromRequest } from "@/lib/site-context";
@@ -109,10 +108,6 @@ export async function POST(request: Request) {
   const formToken = normalizeString(payload.formToken);
   const termsAccepted = payload.termsAccepted === true;
   const newsletter = payload.newsletter === true;
-  const registrationSiteConfig = await getSiteConfigBySiteId(site.id);
-  const usesMedusaCustomer = Boolean(
-    registrationSiteConfig?.medusaBaseUrl && registrationSiteConfig.medusaPublishableKey,
-  );
 
   const guardResult = verifyFormGuard({
     form: "@phis/ui/modules/auth/forms/registration",
@@ -212,7 +207,6 @@ export async function POST(request: Request) {
       email: existingUser.emailNormalized,
       siteId: site.id,
       emailSource: PhiUserEmailSource.Registration,
-      medusaCustomerId: existingUser.medusaCustomerId,
       passwordHash: null,
       // Left unanswered here too, for the reason the confirm route states: `locale` is the language this
       // form was read in, and that reaches this person through the cookie without being stored as a
@@ -223,7 +217,7 @@ export async function POST(request: Request) {
     });
 
     const existingProfile = await getUserProfileByUserId(user.id);
-    if (!usesMedusaCustomer && !existingProfile) {
+    if (!existingProfile) {
       await upsertUserProfile({
         userId: user.id,
         firstName,

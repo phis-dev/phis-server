@@ -64,11 +64,8 @@ export async function getSiteRequestActorFromRequest(
   request: NextRequest,
   siteId: number,
   options: SessionAcceptOptions & {
-    /**
-     * Also read the account. `externalSiteId` is the Site whose external mapping it carries, as
-     * `getUserAccountById(userId, siteId)` takes it; 0 for none.
-     */
-    account?: { externalSiteId: number };
+    /** Also read the account, as `getUserAccountById` reads it. */
+    account?: boolean;
   } = {},
 ) {
   const parsed = readSessionCookie(request);
@@ -80,7 +77,7 @@ export async function getSiteRequestActorFromRequest(
   const addonIds = listPhisSnapshotAddonIds(manifest);
   const accountSql = options.account
     ? `(SELECT row_to_json(account_row) FROM (
-         ${userAccountProjection(3)}
+         ${userAccountProjection()}
          WHERE account.id = session.user_id
          LIMIT 1
        ) AS account_row)`
@@ -107,9 +104,7 @@ export async function getSiteRequestActorFromRequest(
      FROM ${PHI_SESSION_ROW_FROM}
      WHERE session.id = $1
      LIMIT 1`,
-    options.account
-      ? [parsed.sessionId, addonIds, options.account.externalSiteId]
-      : [parsed.sessionId, addonIds],
+    [parsed.sessionId, addonIds],
   ));
   const row = rows[0];
   if (!row) {

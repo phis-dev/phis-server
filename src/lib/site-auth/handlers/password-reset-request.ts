@@ -84,7 +84,7 @@ async function issuePasswordReset({
   email: string;
   locale: string;
 }) {
-  const user = await getUserAccountByEmail(email, site.id);
+  const user = await getUserAccountByEmail(email);
   if (!user || !user.siteIds.includes(site.id) || !user.passwordHash) {
     return;
   }

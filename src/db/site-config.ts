@@ -10,8 +10,6 @@ export type SiteConfigRecord = {
   mailFromName: string;
   supportEmail: string;
   contactRecipient: string;
-  medusaBaseUrl: string | null;
-  medusaPublishableKey: string | null;
   customerNumberPrefix: string | null;
   formGuardSecret: string;
 };
@@ -36,8 +34,6 @@ function mapSiteConfigRow(
     mail_from_name: string;
     support_email: string;
     contact_recipient: string;
-    medusa_base_url: string | null;
-    medusa_publishable_key: string | null;
     customer_number_prefix: string | null;
     form_guard_secret: string;
   },
@@ -50,8 +46,6 @@ function mapSiteConfigRow(
     mailFromName: row.mail_from_name,
     supportEmail: row.support_email,
     contactRecipient: row.contact_recipient,
-    medusaBaseUrl: row.medusa_base_url,
-    medusaPublishableKey: row.medusa_publishable_key,
     customerNumberPrefix: row.customer_number_prefix,
     formGuardSecret: row.form_guard_secret,
   };
@@ -71,8 +65,6 @@ export async function getSiteConfigBySiteId(siteId: number) {
     mail_from_name: string;
     support_email: string;
     contact_recipient: string;
-    medusa_base_url: string | null;
-    medusa_publishable_key: string | null;
     customer_number_prefix: string | null;
     form_guard_secret: string;
   }>(
@@ -83,8 +75,6 @@ export async function getSiteConfigBySiteId(siteId: number) {
             mail_from_name,
             support_email,
             contact_recipient,
-            medusa_base_url,
-            medusa_publishable_key,
             customer_number_prefix,
             form_guard_secret
      FROM phis.sites

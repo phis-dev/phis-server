@@ -107,7 +107,7 @@ async function resolveRecipient(
   }
 
   const [account, membership] = await Promise.all([
-    getUserAccountById(row.recipientUserId, row.siteId),
+    getUserAccountById(row.recipientUserId),
     getUserSiteMembership(row.recipientUserId, row.siteId),
   ]);
 

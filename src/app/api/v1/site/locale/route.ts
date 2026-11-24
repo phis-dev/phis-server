@@ -28,7 +28,7 @@ export async function GET(request: NextRequest) {
     readSiteLocaleCodes(site.id),
     getSiteRequestActorFromRequest(request, site.id, {
       allowPasswordChangeRequired: true,
-      account: { externalSiteId: 0 },
+      account: true,
     }),
   ]);
   if (!availableLocales) {

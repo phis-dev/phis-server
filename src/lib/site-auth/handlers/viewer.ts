@@ -33,7 +33,7 @@ export async function GET(request: NextRequest) {
   // Session, account and authorization from one statement (`getSiteRequestActorFromRequest`).
   const actor = await getSiteRequestActorFromRequest(request, site.id, {
     allowPasswordChangeRequired: true,
-    account: { externalSiteId: site.id },
+    account: true,
   });
   if (!actor) {
     return NextResponse.json({ authenticated: false }, { status: 401 });

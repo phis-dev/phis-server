@@ -107,7 +107,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Missing email or password." }, { status: 400 });
   }
 
-  const user = await getUserAccountByEmail(email, site.id);
+  const user = await getUserAccountByEmail(email);
 
   if (!user || !user.siteIds.includes(site.id) || !user.passwordHash) {
     logRuntimeEvent("warn", "auth.login.failed", {

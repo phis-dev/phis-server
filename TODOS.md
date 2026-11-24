@@ -202,6 +202,14 @@ processed.
 
 ## Authentication
 
+- **Medusa as an Add-on, not in Core (owner, 2026-11-24).** Core's built-in Medusa integration is removed:
+  no Site connection columns, no customer created on the registration confirm, no `medusa` mapping rows,
+  which also closes audit finding S23 (the confirm sent the plaintext password to Medusa and swallowed its
+  errors). A future Medusa Add-on binds its customers itself: it learns of a new account from
+  `user.registered` and reads the person through `users:v1`, never receives a password, and creates the
+  Medusa customer and its own binding together or fails both, so no account is left half bound and no
+  Medusa customer orphaned. The Site's shop then signs in through Core, not with a Medusa password. Design
+  context: [design/COMMERCE_AND_PAYMENTS.md](./design/COMMERCE_AND_PAYMENTS.md) section 6.
 - **Auth Module replacement.** One atomic operation for a Site that deactivates conflicting Auth UI
   provider Modules in the affected Areas, activates the replacement's Area projections, verifies that
   exactly one active Public provider owns `/login`, and reports every activation and preset change. Do not
