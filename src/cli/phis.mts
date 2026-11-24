@@ -176,6 +176,16 @@ import {
   listModuleMedia,
   syncModuleMedia,
 } from "./module-media.mts";
+import {
+  describeModuleProductOutcome,
+  describeModuleProductStates,
+  listModuleProducts,
+  readModuleProductPackages,
+  syncModuleProducts,
+  type ModuleProductListRow,
+} from "./module-products.mts";
+import { listSiteModuleProducts } from "../db/site-module-products.mts";
+import { PHIS_SITE_PACKAGE_PRODUCT_SUPPLIER } from "@phis/contracts/products";
 import { checkPhiDependencyLicenses } from "./licenses.mts";
 import { checkPhiMediaOwnership, findPhiMediaOrphanedLocalStaging } from "./media-check.mts";
 import { listPhiStoredPages, resetPhiPageToPreset } from "./page.mts";
@@ -433,7 +443,9 @@ Usage:
 
   phis init <site key> --api-base-url <url> [--path <site source path>] [--package-manager pnpm|npm|yarn|bun] [--install]
   phis reconcile <site key> [--path <site source path>] [--package-manager pnpm|npm|yarn|bun] [--install]
-  phis update <site key> [--path <site source path>] [--package-manager pnpm|npm|yarn|bun]
+  phis update <site key> [--path <site source path>] [--package-manager pnpm|npm|yarn|bun] [--as <email|user id>]
+                         --as takes the products the Site's packages propose (phis module products sync) as
+                         that member; without it the update only says which proposals wait.
                          --path defaults to <sites.sourcePathRoot>/<site key>. Without --package-manager the
                          Site's own is used (packageManager field, else its lockfile; npm for a new Site).
 
@@ -445,6 +457,8 @@ Usage:
   phis module media sync --site <site key> [--path <site source path>]
   phis module media list --site <site key> [--path <site source path>]
   phis module media bind --site <site key> --package <name> --key <key> (--asset <id> | --folder <id> | --reset)
+  phis module products sync --site <site key> --as <email|user id> [--path <site source path>]
+  phis module products list --site <site key> [--path <site source path>]
 
   phis addon list
   phis addon check
@@ -1603,9 +1617,80 @@ async function runSiteModuleMediaCommand(subcommand: string | undefined, flags: 
   }
 }
 
+/**
+ * `phis module products sync|list`: the products the Site's packages propose, taken once per Site by
+ * `@phis/products` as the member `--as` names. HTTP to the running Core and files of the Site, as
+ * `phis module media`; the database is read only to find the Site's directory without `--path`.
+ */
+async function runSiteModuleProductsCommand(subcommand: string | undefined, flags: FlagMap, json: boolean) {
+  if (subcommand !== "sync" && subcommand !== "list") {
+    throw new Error("Use phis module products sync or list.");
+  }
+  const siteKey = getRequiredFlag(flags, "site").toLowerCase();
+  const explicitPath = getOptionalFlag(flags, "path");
+  const siteRoot = explicitPath
+    ?? resolveSiteSource(await getSiteByKey(siteKey), readCliMergedConfig().sites).path;
+  if (!existsSync(path.join(siteRoot, "package.json"))) {
+    throw new Error(`No Site at ${siteRoot} (no package.json). Pass --path if the Site lives elsewhere.`);
+  }
+  const packageNames = (readSiteModuleDesiredState(configRoot).sites[siteKey]?.modules ?? []).map((entry) => entry.packageName);
+
+  if (subcommand === "list") {
+    const { rows, issues } = await listModuleProducts({ siteKey, siteRoot, packageNames });
+    if (json) {
+      printJson({ ok: issues.length === 0, action: "module.products.list", site: siteKey, rows, issues });
+    } else {
+      if (rows.length === 0) console.log(`No product proposed or taken for ${siteKey}.`);
+      for (const row of rows) console.log(`  ${describeModuleProductListRow(row)}`);
+      for (const issue of issues) console.error(`  invalid: ${issue}`);
+    }
+    if (issues.length > 0) process.exitCode = 1;
+    return;
+  }
+
+  const report = await syncModuleProducts({ siteKey, siteRoot, packageNames, as: getRequiredFlag(flags, "as") });
+  if (json) {
+    printJson({ ok: report.refused.length === 0, action: "module.products.sync", ...report });
+  } else if (report.proposed === 0) {
+    console.log(`No installed package of ${siteKey} proposes products.`);
+  } else {
+    for (const item of report.items) console.log(`  ${describeModuleProductOutcome(item)}`);
+  }
+  if (report.refused.length > 0) {
+    throw new Error(`${PHIS_SITE_PACKAGE_PRODUCT_SUPPLIER.addonId} refused ${report.refused.length} proposed product(s).`);
+  }
+}
+
+function describeModuleProductListRow(row: ModuleProductListRow) {
+  return `${row.state.padEnd(18)} ${row.packageName} ${row.key}  ${PHIS_SITE_PACKAGE_PRODUCT_SUPPLIER.addonId}:${row.productKey}`;
+}
+
+/**
+ * What `phis module check` says of the proposals: each one taken (and as what) or waiting, and why it
+ * waits. Waiting fails nothing -- a Site without `@phis/products`, or one nobody synced yet, is a state.
+ */
+async function readSiteModuleProductCheck(siteId: number, siteKey: string, siteRoot: string, packageNames: readonly string[]) {
+  const packages = readModuleProductPackages(siteRoot, packageNames).filter((entry) => entry.proposals.length > 0);
+  if (packages.length === 0) return { rows: [] as ModuleProductListRow[], waitingReason: null as string | null };
+  const pool = getPool();
+  const supplier = PHIS_SITE_PACKAGE_PRODUCT_SUPPLIER.addonId;
+  const enabled = (await readPhisAddonSiteStates(pool, supplier)).some((state) => state.siteId === siteId && state.requestedEnabled);
+  const rows = describeModuleProductStates(packages, await listSiteModuleProducts(pool, siteId));
+  return {
+    rows,
+    waitingReason: enabled
+      ? `run phis module products sync --site ${siteKey} --as <member who keeps products>`
+      : `${supplier} is not enabled for ${siteKey} (phis addon site --addon ${supplier} --site ${siteKey} --enable), then sync`,
+  };
+}
+
 async function runSiteModuleCommand(command: string, remaining: readonly string[], flags: FlagMap, json: boolean) {
   if (command === "media") {
     await runSiteModuleMediaCommand(remaining[0], flags, json);
+    return;
+  }
+  if (command === "products") {
+    await runSiteModuleProductsCommand(remaining[0], flags, json);
     return;
   }
   const requireFlag = (key: string) => {
@@ -1661,10 +1746,16 @@ async function runSiteModuleCommand(command: string, remaining: readonly string[
       throw new Error(`${only} is not installed for site ${site.key}.`);
     }
     const reports = targets.map((entry) => inspectSiteModulePackage(siteRoot, entry.packageName));
+    const products = await readSiteModuleProductCheck(site.id, site.key, siteRoot, targets.map((entry) => entry.packageName));
     if (json) {
-      printJson({ site: site.key, root: siteRoot, reports });
+      printJson({ site: site.key, root: siteRoot, reports, products });
     } else {
       reportSiteModulePackages(site.key, reports);
+      if (products.rows.length > 0) {
+        console.log("  proposed products:");
+        for (const row of products.rows) console.log(`    ${describeModuleProductListRow(row)}`);
+        if (products.rows.some((row) => row.state === "waiting")) console.log(`    waiting: ${products.waitingReason}`);
+      }
     }
     if (reports.some((report) => report.issues.length > 0)) {
       process.exitCode = 1;
@@ -2391,6 +2482,28 @@ async function runSiteScaffoldCommand(
       );
     }
   }
+  /*
+   * After the pictures, which a proposed product may name. Taking a proposal makes a product as somebody,
+   * so only with `--as`; without it the update says what waits and goes on -- a proposal not taken yet is
+   * a state, not a fault.
+   */
+  let moduleProducts: Awaited<ReturnType<typeof syncModuleProducts>> | null = null;
+  if (mode === "update") {
+    const packageNames = (readSiteModuleDesiredState(configRoot).sites[site.key]?.modules ?? []).map((entry) => entry.packageName);
+    const as = getOptionalFlag(flags, "as");
+    if (as) {
+      moduleProducts = await syncModuleProducts({ siteKey: site.key, siteRoot: result.root, packageNames, as });
+      if (!json) {
+        for (const item of moduleProducts.items.filter((entry) => entry.status !== "taken")) {
+          console.log(`  module products: ${describeModuleProductOutcome(item)}`);
+        }
+      }
+    } else if (!json) {
+      const check = await readSiteModuleProductCheck(site.id, site.key, result.root, packageNames);
+      const waiting = check.rows.filter((row) => row.state === "waiting");
+      if (waiting.length > 0) console.log(`  module products: ${waiting.length} proposed product(s) wait; ${check.waitingReason}.`);
+    }
+  }
   if (mode === "update") {
     await runPhiSitePackageCommand(result.root, manager, ["run", "typecheck"]);
     await runPhiSitePackageCommand(result.root, manager, ["run", "build"]);
@@ -2399,7 +2512,7 @@ async function runSiteScaffoldCommand(
   // The release links to this file rather than carrying it, so a release built without it starts and fails.
   const runtimeConfigMissing = mode === "update" && !existsSync(path.join(result.root, "config", "site-runtime.json"));
   if (json) {
-    printJson({ ok: true, action: `site.${mode}`, installed: shouldInstall, built: mode === "update", moduleMedia, release, runtimeConfigMissing, directoryProblems, ...result });
+    printJson({ ok: true, action: `site.${mode}`, installed: shouldInstall, built: mode === "update", moduleMedia, moduleProducts, release, runtimeConfigMissing, directoryProblems, ...result });
     return;
   }
   const changed = result.changes.filter((entry) => entry.action !== "unchanged");

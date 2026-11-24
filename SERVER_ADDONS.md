@@ -1806,6 +1806,31 @@ came from a manifest and is no longer declared is withdrawn, never removed. A de
 breaks a rule (a part that does not exist) is reported and does not stop the others. What an Add-on makes
 at runtime it registers through `register`.
 
+**Products a Site package proposes.** A Site package (Module) may propose products the Site keeps as its own,
+under `phis.products` in its `package.json`: `[{ key, title, summary?, kind?, state?: draft|active, flags?,
+picture?, icon? }]` (`PhisSitePackageProductProposal`, read by `readPhisSitePackageProductProposals` in
+`@phis/contracts/products`), which is what `@phis/products`' command `product.add` takes, the two yes-or-no
+answers as `PhisSitePackageProductFlag` bits (`Counted` 1, `AccountRequired` 2), and `picture`/`icon` as the key
+of one of the package's own `phis.media.files`. They are not a supplier's manifest products: Core does not
+register them itself but has `@phis/products` -- the supplier of the products made by hand
+(`PHIS_SITE_PACKAGE_PRODUCT_SUPPLIER`) -- make each one through `product.add`, so it is a product of the Site's
+like any it made on the Products page, edited, withdrawn or removed there. The key is the package name's parts
+and the proposal's key joined by dots (`@phis/phisys` and `phivoice-ai` are `phis.phisys.phivoice-ai`, the
+product `@phis/products:phis.phisys.phivoice-ai`; `phisSitePackageProductKey`), which no two packages can share,
+since neither part may hold a dot. `phis module products sync --site … --as <member>` (and `phis update … --as
+<member>`, after the media import) posts each proposal the Site has not taken to `POST /api/v1/module-products`
+(internal token, one proposal per request), and Core, under a lock per Site: answers a recorded one `taken`
+and asks nothing; records one whose product the Site has already (`found`, `site_module_products` flag
+`Found`) and leaves the product as it is; lets one whose picture or icon is not in the Site's library yet wait;
+and otherwise runs `product.add` for `@phis/products` as that member (`runPhisAddonCommand`, exactly as `phis
+addon command` would, so the member needs its `editor` role) with the Asset ids the media names stand for, and
+records it `created`. A proposal is taken once and never again: a product the Site changed, withdrew or removed
+is not made or changed by a later sync, and a proposal the package drops changes nothing. Where `@phis/products`
+is not on for the Site the proposal waits, and a refusal of `product.add` is reported; neither is recorded, so
+the next sync asks again. `phis module check` validates the field and lists each proposal as `created`,
+`found` or `waiting`, with why it waits; waiting fails nothing. Taking a proposal is a person's act and not a
+job's, because a command has an actor (Commands, above): without `--as`, `phis update` only says what waits.
+
 **A supplier that is switched off or removed.** Its `active` products go to `withdrawn` and are marked as
 withdrawn for that reason; when the Add-on is switched on again, exactly those return to `active`. Products
 and entries stay. A product the supplier left in `draft`, or the operator moved, is not touched. This runs

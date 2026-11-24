@@ -50,6 +50,8 @@ The target PostgreSQL schema for `phis` is:
 
 - `phis.site_module_media.flags INT`, `phis.site_module_media_folders.flags INT`
   - `1 << 0 = bound` (`PhisSiteModuleMediaFlag.Bound`)
+- `phis.site_module_products.flags INT`
+  - `1 << 0 = found` (`PhisSiteModuleProductFlag.Found`)
 - `phis.entitlements.flags INT`
   - `1 << 0 = revoked`
   - `1 << 1 = suspended`
@@ -482,6 +484,23 @@ Contract (design/MODULE_MEDIA.md):
 - `flags` are `PhisSiteModuleMediaFlag`: `1 = Bound`. A bound row is one an operator pointed at an Asset or Folder by hand (`phis module media bind`); the import leaves it alone, even when its target is gone. There is no "bound by" column: the CLI binds without an acting user. `--reset` deletes the row of a bound name.
 - Written only by Core's Module media routes (`/api/v1/module-media`), under a per-Site advisory lock (`pg_advisory_xact_lock` on `phis.site_module_media:<site id>`), in the transaction that also writes the Asset and books its bytes against the Site Space. Read by the Site's runtime through `GET /api/v1/site/module-media` (ids only).
 - Added before v1 in place, like the entitlement tables: no schema version is raised. An existing database receives the two tables by hand, the `CREATE TABLE IF NOT EXISTS phis.site_module_media (...)` and `CREATE TABLE IF NOT EXISTS phis.site_module_media_folders (...)` statements of `scripts/sql/001_create_phis.pgsql` and nothing else (added 2026-11-16; the development database `phi_server_dev` received them so).
+
+### `phis.site_module_products`
+
+- `site_id SMALLINT NOT NULL REFERENCES phis.sites(id) ON DELETE CASCADE`
+- `package_name VARCHAR(255) NOT NULL`
+- `key VARCHAR(48) NOT NULL`
+- `product_key VARCHAR(96) NOT NULL`
+- `flags INT NOT NULL DEFAULT 0`
+- `created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
+- `PRIMARY KEY (site_id, package_name, key)`
+- `CHECK (package_name <> '')`, `CHECK (key ~ '^[a-z][a-z0-9-]*$')`, `CHECK (product_key ~ '^[a-z][a-z0-9.-]*$')`
+
+Contract (SERVER_ADDONS.md, `products:v1`, "Products a Site package proposes"):
+- Which product a Site package proposed (`phis.products` in its `package.json`) the Site took, and as which product: `product_key` is the key under `@phis/products` (`phisSitePackageProductKey`: the package name's parts and `key` joined by dots), the product `@phis/products:<product_key>`. A row is the record that the proposal was taken, and nothing undoes it: it is what keeps a product the Site changed, withdrew or removed from being made again. No foreign key reaches `products` for that reason, and none reaches the package, whose installed copy is the catalogue; a row whose proposal the package dropped is kept and listed as `no longer proposed`.
+- `flags` are `PhisSiteModuleProductFlag`: `1 = Found`, the Site had a product of `@phis/products` under `product_key` when the proposal was first taken, so Core made nothing and left that product as it was. Without it, `@phis/products` made the product through `product.add`.
+- Written only by `POST /api/v1/module-products` (`applyModuleProductProposal`), under a per-Site advisory lock (`pg_advisory_xact_lock` on `phis.site_module_products:<site id>`) held across the command that makes the product, never updated or deleted by Core. A proposal that waits (the supplier off, a picture not imported) or is refused writes no row. Read by `GET /api/v1/module-products` and by `phis module check`.
+- Added before v1 in place: no schema version is raised. An existing database receives the table by hand, the `CREATE TABLE IF NOT EXISTS phis.site_module_products (...)` statement of `scripts/sql/001_create_phis.pgsql` and nothing else, as the serving role (added 2026-11-24; the development database `phi_server_dev` received it so).
 
 ### `phis.media_upload_sessions`
 

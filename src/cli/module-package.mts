@@ -7,6 +7,7 @@ import {
   type PhisModulePackageDeclaration,
   type PhisModulePackageEntry,
 } from "@phis/contracts/catalog";
+import { readPhisSitePackageProductProposals } from "@phis/contracts/products";
 
 /**
  * What a Module package has to look like once it is built, checked where it arrives.
@@ -30,6 +31,7 @@ export type PhiSiteModulePackageIssueCode =
   | "declaration_invalid"
   | "declaration_foreign_module"
   | "declaration_unknown_category"
+  | "products_invalid"
   | "server_only_in_client_graph"
   | "client_in_server_graph";
 
@@ -517,6 +519,15 @@ export function inspectSiteModulePackage(
           "verdict.",
       });
     }
+  }
+
+  /*
+   * The products the package proposes (`phis.products`), read as `phis module products sync` reads them,
+   * so a proposal the sync would refuse is reported here first. Whether they were taken is the Site's,
+   * and `phis module check` says it beside this report.
+   */
+  for (const message of readPhisSitePackageProductProposals(packageName, manifest.phis).issues) {
+    issues.push({ code: "products_invalid", message });
   }
 
   for (const runtime of SHARED_RUNTIMES) {

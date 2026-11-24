@@ -122,9 +122,10 @@ export function readSiteRuntimeCore(siteRoot: string) {
   return { apiBaseUrl, internalToken };
 }
 
-type Core = ReturnType<typeof readSiteRuntimeCore> & { siteKey: string };
+export type Core = ReturnType<typeof readSiteRuntimeCore> & { siteKey: string };
 
-async function callCore(core: Core, route: string, init: { method: "GET" | "POST"; json?: unknown; form?: FormData }) {
+/** One call to an internal route of the Site's Core; the Module products step talks to Core the same way. */
+export async function callCore(core: Core, route: string, init: { method: "GET" | "POST"; json?: unknown; form?: FormData }) {
   const headers: Record<string, string> = {
     [PHIS_TOKEN_HEADER]: core.internalToken,
     [PHIS_SITE_KEY_HEADER]: core.siteKey,

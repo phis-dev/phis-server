@@ -2,10 +2,9 @@ import { NextResponse, type NextRequest } from "next/server";
 
 import { guardApiV1 } from "@/lib/api-v1-guard";
 import { getPhiCliSiteByKey } from "@/db/cli-sites.mts";
-import { getUserAccountByEmail, getUserAccountById } from "@/db/user-accounts";
 import { getPool } from "@/lib/db";
+import { resolvePhisCommandActor } from "@/lib/addons/command-actor";
 import { PhisAddonCommandError, runPhisAddonCommand } from "@/lib/addons/commands";
-import { PhiUserAccountFlag } from "@/lib/constants/user-account-flags";
 import { logRuntimeEvent } from "@/lib/log";
 
 export const dynamic = "force-dynamic";
@@ -53,15 +52,9 @@ export async function POST(request: NextRequest) {
   if (!site) {
     return NextResponse.json({ error: "site_not_found" }, { status: 404 });
   }
-  const who = body.as.trim();
-  const account = /^\d+$/.test(who)
-    ? await getUserAccountById(Number(who), site.id)
-    : await getUserAccountByEmail(who, site.id);
-  if (!account || !account.siteIds.includes(site.id)) {
-    return NextResponse.json({ error: `${who} is not a member of ${site.key}.` }, { status: 404 });
-  }
-  if ((account.flags & PhiUserAccountFlag.Disabled) !== 0) {
-    return NextResponse.json({ error: `${who} is disabled.` }, { status: 409 });
+  const account = await resolvePhisCommandActor(site, body.as);
+  if (!account.ok) {
+    return NextResponse.json({ error: account.error }, { status: account.status });
   }
 
   try {
@@ -77,7 +70,7 @@ export async function POST(request: NextRequest) {
       addonId: body.addonId,
       commandId: body.commandId,
       siteKey: site.key,
-      actor: { id: account.id, email: account.emailNormalized },
+      actor: { id: account.id, email: account.email },
       ...outcome,
     };
     logRuntimeEvent(outcome.ok ? "info" : "warn", outcome.ok ? "addon.command.ran" : "addon.command.failed", {

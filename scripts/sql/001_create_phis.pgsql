@@ -620,6 +620,21 @@ CREATE TABLE IF NOT EXISTS phis.site_module_media_folders (
   CONSTRAINT site_module_media_folders_key_check CHECK (key ~ '^[a-z0-9][a-z0-9-]*$')
 );
 
+CREATE TABLE IF NOT EXISTS phis.site_module_products (
+  site_id SMALLINT NOT NULL REFERENCES phis.sites(id) ON DELETE CASCADE,
+  package_name VARCHAR(255) NOT NULL,
+  key VARCHAR(48) NOT NULL,
+  -- The product the proposal became, under `@phis/products`; no foreign key, because the row outlives a
+  -- product the Site removed, and that is exactly what keeps it from being made again.
+  product_key VARCHAR(96) NOT NULL,
+  flags INT NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (site_id, package_name, key),
+  CONSTRAINT site_module_products_package_check CHECK (package_name <> ''),
+  CONSTRAINT site_module_products_key_check CHECK (key ~ '^[a-z][a-z0-9-]*$'),
+  CONSTRAINT site_module_products_product_key_check CHECK (product_key ~ '^[a-z][a-z0-9.-]*$')
+);
+
 CREATE TABLE IF NOT EXISTS phis.media_upload_sessions (
   token VARCHAR(128) PRIMARY KEY,
   site_id SMALLINT NOT NULL REFERENCES phis.sites(id) ON DELETE CASCADE,

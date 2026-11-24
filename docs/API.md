@@ -8,7 +8,7 @@ public or internal token, and `session` is the visitor's Site session with the a
 passes (see [AUTHORIZATION.md](../AUTHORIZATION.md)). A route with no access entry performs its own checks
 or none; read its source. Request and response shapes are not listed; the source is linked per route.
 
-189 routes.
+190 routes.
 
 ## Contents
 
@@ -26,6 +26,7 @@ or none; read its source. Request and response shapes are not listed; the source
 - [`/api/v1/locales`](#apiv1locales) (1)
 - [`/api/v1/media`](#apiv1media) (2)
 - [`/api/v1/module-media`](#apiv1modulemedia) (4)
+- [`/api/v1/module-products`](#apiv1moduleproducts) (1)
 - [`/api/v1/notifications`](#apiv1notifications) (2)
 - [`/api/v1/site`](#apiv1site) (20)
 - [`/api/v1/tr`](#apiv1tr) (1)
@@ -365,6 +366,15 @@ Versioned API a Site calls server-to-server with its token (`x-phis-token`), and
 | POST | [`/api/v1/module-media/bind`](../src/app/api/v1/module-media/bind/route.ts) | internal token | Pointing a declared name at an Asset or Folder of the Site by hand, or taking that back. |
 | POST | [`/api/v1/module-media/file`](../src/app/api/v1/module-media/file/route.ts) | internal token | Importing one declared file of a Module package into the Site Space, as an ordinary Asset. |
 | POST | [`/api/v1/module-media/folder`](../src/app/api/v1/module-media/folder/route.ts) | internal token | Importing one declared Media Folder of a Module package into the Site Space. |
+
+## `/api/v1/module-products`
+
+Versioned API a Site calls server-to-server with its token (`x-phis-token`), and the public endpoints under it.
+
+| Method | Address | Access | Description |
+|---|---|---|---|
+| GET | [`/api/v1/module-products`](../src/app/api/v1/module-products/route.ts) | internal token | The proposals of the Site's packages that the Site took, with the product each became. |
+| POST | [`/api/v1/module-products`](../src/app/api/v1/module-products/route.ts) | internal token | Taking one proposal of one package: `{ package, proposal, as }`. |
 
 ## `/api/v1/notifications`
 

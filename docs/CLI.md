@@ -141,12 +141,12 @@ server keeps the old values for up to four hours.
 | Needs | Commands |
 | --- | --- |
 | An administrative database connection, passed in | `db bootstrap` — it creates what every row below already expects to exist |
-| Configuration files only | `config`, `operator`, `secret init-key`, `module list`, `module media sync|list|bind` with `--path` (the Site's files and a running Core, no database), `addon list|check|install|upgrade|enable|disable|remove|forget`, `site config set|add|del` (also read the Site row, so a database), `licenses check` |
-| `database.uri` (serving role) | `schema check|apply`, all `site` commands except `config set|add|del`, `init|reconcile|update`, `module add|del|sync|check`, `module media sync|list|bind` without `--path` (only to find the Site's directory), `addon reconcile|site|config|role|owner|storage|job`, `storage`, `secret set|check|list|del`, `auth`, `media check`, `page list|reset`, `translations usage|status|export|import`, `maintain`, `payment profile`, `instance` |
+| Configuration files only | `config`, `operator`, `secret init-key`, `module list`, `module media sync|list|bind` and `module products sync|list` with `--path` (the Site's files and a running Core, no database), `addon list|check|install|upgrade|enable|disable|remove|forget`, `site config set|add|del` (also read the Site row, so a database), `licenses check` |
+| `database.uri` (serving role) | `schema check|apply`, all `site` commands except `config set|add|del`, `init|reconcile|update`, `module add|del|sync|check` (`check` reads the taken product proposals), `module media sync|list|bind` and `module products sync|list` without `--path` (only to find the Site's directory), `addon reconcile|site|config|role|owner|storage|job`, `storage`, `secret set|check|list|del`, `auth`, `media check`, `page list|reset`, `translations usage|status|export|import`, `maintain`, `payment profile`, `instance` |
 | `database.migrationUri` (migration role) | `schema drop --force`, `addon migrate`, `addon purge` |
 | `secrets.encryptionKey` | `secret set|check`, `auth import-secrets`, `storage` commands that reach a Provider credential, `addon purge` and `addon storage --sweep|--recount` on a Site with an external store, `payment profile probe|enable` and `maintain --task payments` (they reach the Provider's credential) |
 | `api.internalToken` | `init` (copied into the Site), `site check` (running Site), `addon job`, `addon command` and `mail drain` (running server) |
-| The Site's `config/site-runtime.json` (`phis.apiBaseUrl`, `phis.internalToken`) and a running Core | `module media sync|list|bind`, and `update` when an installed package declares media |
+| The Site's `config/site-runtime.json` (`phis.apiBaseUrl`, `phis.internalToken`) and a running Core | `module media sync|list|bind`, `module products sync|list`, and `update` when an installed package declares media (or proposes products and `--as` is given) |
 
 There is no fallback from `database.migrationUri` to `database.uri`.
 
@@ -642,7 +642,9 @@ install (`pnpm install --no-frozen-lockfile`, `npm install`, `yarn install`, `bu
 the Module media import (`phis module media sync`, below; skipped when no installed package declares
 media), `run typecheck`, `run build`, and then packages a release into `.phis/releases/<release id>/`.
 A refused media item, an invalid declaration or a Core that cannot be reached stops `update` before the
-build.
+build. With `--as <email|user id>` it then takes the products the installed packages propose, as that member
+(`phis module products sync`, below); a proposal that waits or is refused is printed and does not stop it.
+Without `--as` it only says how many proposals wait.
 `update` does not raise dependency versions; change them in the Site first (e.g. `npm install @phis/ui@<version>`),
 then run `update`.
 
@@ -723,8 +725,12 @@ arrived with the install reaches `site-modules-fonts.ts` here. Rebuild afterward
 
 ### `phis module check --site <site key> [--package <@scope/name>] [--path <dir>]`
 
-Inspects the installed Module packages in the Site's `node_modules` against the Module contract.
-Fails when the path has no `package.json`; exits `1` when a package has issues.
+Inspects the installed Module packages in the Site's `node_modules` against the Module contract, the
+products a package proposes (`phis.products`, issue `products_invalid`) among it. Fails when the path has no
+`package.json`; exits `1` when a package has issues. It then lists each proposed product with what it came to
+on the Site -- `created`, `found`, `waiting` or `no longer proposed` (see `phis module products list`) -- and
+why the waiting ones wait: `@phis/products` is not enabled for the Site, or nobody synced yet. A waiting
+proposal fails nothing.
 
 ### `phis module media sync|list|bind`
 
@@ -782,6 +788,58 @@ example the pictures that already lie in the library as uploads. Core validates 
 one the package declares. It sets `Bound`, so `sync` leaves the name alone and the Site follows the binding.
 `--reset` ends a binding by removing its row, so the next `sync` writes the package's file again; it refuses a
 name that is not bound.
+
+### `phis module products sync|list`
+
+A Site package (Module) may propose products for the Site to keep as its own. It declares them under
+`phis.products` in its `package.json`, with what `@phis/products`' command `product.add` takes; Core makes
+each one once per Site through that command and records that it did (SERVER_ADDONS.md, `products:v1`,
+"Products a Site package proposes"; DB.md `site_module_products`). As with media, the CLI reads the packages
+and posts one proposal per request to Core's internal route (`/api/v1/module-products`, the Site's own
+`config/site-runtime.json`, the Site named by `x-phis-site-key`); no package code runs.
+
+```json
+"phis": {
+  "media": { "files": [{ "key": "acme-icon", "file": "dist/media/icon.png", "alt": "Acme app icon" }] },
+  "products": [{ "key": "acme-pro", "title": "Acme Pro", "summary": "Everything Acme does.",
+                 "kind": "app", "state": "active", "flags": 2, "picture": "acme-icon", "icon": "acme-icon" }]
+}
+```
+
+- `key`: lowercase letters, digits and hyphens, starting with a letter, at most 48; unique in the package.
+  The product's key at the Site is the package name's parts and this key joined by dots
+  (`@acme/site` and `acme-pro` are `acme.site.acme-pro`, the product `@phis/products:acme.site.acme-pro`), so
+  two packages cannot collide. A package name with a dot, an underscore or a leading digit cannot propose.
+- `title` (required, at most 200) and `summary` (at most 1000), in the package's `sourceLocale`; `kind` (a
+  lower-case word or words joined by dashes, `product` where none is said); `state` `draft` (the default) or
+  `active`; `flags` the bits of `PhisSitePackageProductFlag` (`Counted` 1, `AccountRequired` 2).
+- `picture` and `icon` name one of the package's own `phis.media.files` by its key. Core hands
+  `product.add` the Asset that name stands for on the Site, so the media are imported first
+  (`phis module media sync`, which `update` runs before).
+
+Every violation is reported with the package and the key, and stops the command before any request.
+
+#### `phis module products sync --site <site key> --as <email|user id> [--path <dir>]`
+
+Reads the taken proposals from Core and posts every other one. `--as` names the member the product is made
+as, as for `phis addon command`: a member of the Site, not disabled, who may keep the Site's products
+(`@phis/products`' `editor` role, which whoever edits the Site's content and a Site Admin hold). Core answers
+per proposal:
+
+- `created`: `@phis/products` made it now;
+- `found`: the Site had a product under the key already; it is recorded as taken and left as it is;
+- `taken`: recorded before, so nothing is asked -- a product the Site changed, withdrew or removed since is
+  never made or changed again;
+- `waiting`: `@phis/products` is not on for the Site, or a picture is not in the library yet; nothing is
+  recorded and the next sync asks again;
+- `refused`: `@phis/products` said no (the member may not keep products, Core's refusal); nothing is
+  recorded. Exits `1`.
+
+#### `phis module products list --site <site key> [--path <dir>]`
+
+Every proposal and every recorded row: state (`created`, `found`, `waiting`, or `no longer proposed` for a
+row whose proposal the package dropped, which changes nothing), package, key and the product's id. Exits `1`
+when a declaration is invalid.
 
 ## addon (server Add-ons)
 
