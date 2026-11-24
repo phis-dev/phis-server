@@ -1,3 +1,31 @@
+phis (0.8.0-1) unstable; urgency=medium
+
+  * Versions follow one line with @phis/contracts and @phis/ui from here:
+    0.7 is skipped. Needs @phis/contracts 0.8.11.
+  * Site packages propose products (phis.products in package.json), kept
+    in Core and made through @phis/products when a Site Admin publishes the
+    Area's Module selection, acting as that admin (phis module products).
+  * Products carry a Markdown description, an ordered gallery of public
+    Media assets and a source language of their own; product texts and an
+    Add-on's own words (translations:v1) are source texts of the Site's
+    translation store and are answered in the reader's language, through
+    the TR route's Site or external path (one switch for all callers).
+  * The Share image variant (1200x630 JPEG) for link previews.
+  * The built-in Medusa integration is removed: no customer is created in
+    Medusa at registration and no password leaves Core; the Site columns
+    medusa_base_url, medusa_publishable_key and the table
+    user_site_external_accounts go. Admin users list: account types staff
+    and customer.
+  * Schema on an existing database, by hand before the new Core starts (all
+    statements in DB.md): from 0.6.0 thread_files, site_addresses,
+    addon_users_grants, users_access_log, the sites and user_profiles
+    columns and the outbox check; from 0.8.0 site_module_products,
+    site_module_product_proposals, product_gallery, product_texts,
+    products.description and products.source_locale with their checks, and
+    the Medusa drops; then the product texts sweep.
+
+ -- Marius Schumacher <marius.schumacher@phisys.com>  Tue, 24 Nov 2026 19:54:18 +0000
+
 phis (0.6.0-1) unstable; urgency=medium
 
   * users:v1: Add-ons read a person of the Site field by field (name,
