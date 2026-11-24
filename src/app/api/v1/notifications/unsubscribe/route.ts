@@ -1,10 +1,11 @@
 import { NextResponse, type NextRequest } from "next/server";
 
 import {
+  hasPhiNotificationOptOut,
   readPhiNotificationLinkSalt,
+  recordPhiNotificationOptOut,
   touchPhiNotificationLinkSalt,
 } from "@/db/notifications";
-import { changeUserSiteFlags, getUserSiteMembership } from "@/db/user-site-memberships";
 import { guardApiV1 } from "@/lib/api-v1-guard";
 import { logRuntimeEvent } from "@/lib/log";
 import {
@@ -12,7 +13,6 @@ import {
   verifyPhiUnsubscribeToken,
 } from "@/lib/notifications/links";
 import { requireSiteFromRequest } from "@/lib/site-context";
-import { hasUserSiteFlag, USER_SITE_FLAG_NEWSLETTER_OPT_IN } from "@/lib/user-site-flags";
 
 export const dynamic = "force-dynamic";
 
@@ -24,7 +24,10 @@ export const dynamic = "force-dynamic";
  * `GET` therefore only reports what the link is and what pressing would do; `POST` does it.
  *
  * No session and no CSRF: whoever holds the link is who it was issued to, and the signature is what says
- * so. Nothing else is on offer here -- it clears one flag on one membership of one Site.
+ * so. Nothing else is on offer here -- it records that one membership of one Site left one occasion
+ * (`phis.notification_opt_outs`). Core holds no consent to clear: the Add-on that sends the occasion
+ * does, and learns of the opt-out from Core (design/NOTIFICATIONS.md section 9). The drain skips the
+ * occasion for this person from then on.
  */
 
 type Outcome = "unsubscribed" | "already" | "invalid";
@@ -58,6 +61,7 @@ async function resolveOutcome(request: NextRequest, token: string, act: boolean)
       siteId: site.id,
       userId: subject.userId,
       salt,
+      occasion: subject.occasion,
       signature: subject.signature,
     })
   ) {
@@ -66,33 +70,27 @@ async function resolveOutcome(request: NextRequest, token: string, act: boolean)
     return { status: 422 as const, body: INVALID };
   }
 
-  const membership = await getUserSiteMembership(subject.userId, site.id);
-  if (!membership) {
-    return { status: 422 as const, body: INVALID };
+  const optOut = { userId: subject.userId, siteId: site.id, ...subject.occasion };
+
+  if (!act) {
+    // Already out is friendlier to say than a success that would change nothing, and it is what a second
+    // visit to the same link should say.
+    return await hasPhiNotificationOptOut(optOut)
+      ? { status: 200 as const, body: { outcome: "already" satisfies Outcome } }
+      : { status: 200 as const, body: { outcome: "unsubscribed" satisfies Outcome, pending: true } };
   }
 
-  if (!hasUserSiteFlag(membership.siteFlags, USER_SITE_FLAG_NEWSLETTER_OPT_IN)) {
-    // Already out. Saying so is friendlier than reporting a success that changed nothing, and it is what a
-    // second press of the same button should say.
+  const recorded = await recordPhiNotificationOptOut(optOut);
+  await touchPhiNotificationLinkSalt(subject.userId, site.id);
+  if (!recorded) {
     return { status: 200 as const, body: { outcome: "already" satisfies Outcome } };
   }
 
-  if (!act) {
-    return { status: 200 as const, body: { outcome: "unsubscribed" satisfies Outcome, pending: true } };
-  }
-
-  const updated = await changeUserSiteFlags(subject.userId, site.id, {
-    clear: USER_SITE_FLAG_NEWSLETTER_OPT_IN,
-  });
-  if (!updated) {
-    return { status: 500 as const, body: { error: "The preference could not be changed." } };
-  }
-
-  await touchPhiNotificationLinkSalt(subject.userId, site.id);
   logRuntimeEvent("info", "mail.unsubscribed", {
     message: "A circular's recipient unsubscribed.",
     siteKey: site.key,
     userId: subject.userId,
+    meta: { providerId: subject.occasion.providerId, occasion: subject.occasion.occasion },
   });
 
   return { status: 200 as const, body: { outcome: "unsubscribed" satisfies Outcome } };

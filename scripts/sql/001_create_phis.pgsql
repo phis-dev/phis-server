@@ -3212,9 +3212,10 @@ CREATE TABLE IF NOT EXISTS phis.notification_outbox (
   -- the convention `server_capabilities.provider_id` already uses.
   provider_id VARCHAR(255) NOT NULL DEFAULT '@phis/server/core',
   occasion VARCHAR(120) NOT NULL,
-  -- Bit 0: sent rather than asked for, so consent decided it and the footer owes an unsubscribe link.
-  -- Bit 1: settled without being sent, because by the time it was due nobody wanted it -- the consent it
-  -- needed was withdrawn between the enqueue and the drain. Not a failure, so it must not be counted as
+  -- Bit 0: sent rather than asked for, so the sender's consent decided it and the footer owes an
+  -- unsubscribe link.
+  -- Bit 1: settled without being sent, because by the time it was due nobody wanted it -- the recipient
+  -- left its occasion between the enqueue and the drain. Not a failure, so it must not be counted as
   -- one, and not a send either. A flag rather than a boolean column, per the house rule.
   flags SMALLINT NOT NULL DEFAULT 0,
   recipient_user_id INT NULL,
@@ -3280,8 +3281,9 @@ CREATE UNIQUE INDEX IF NOT EXISTS notification_outbox_dedupe_idx
  * every send. Rotating one person's links replaces their salt; rotating everybody's rotates the key, and
  * invalidates every link still sitting in a mailbox.
  *
- * Acting on such a link clears the newsletter flag and does nothing else -- no session, no other Site, no
- * profile -- which is what makes a link that never expires the safe answer rather than the lazy one.
+ * Acting on such a link records an opt-out of the one occasion it names (`notification_opt_outs`) and does
+ * nothing else -- no session, no other Site, no profile -- which is what makes a link that never expires
+ * the safe answer rather than the lazy one.
  */
 CREATE TABLE IF NOT EXISTS phis.notification_link_salts (
   user_id INT NOT NULL,
@@ -3293,6 +3295,30 @@ CREATE TABLE IF NOT EXISTS phis.notification_link_salts (
   -- Sixteen random bytes; the link signs their 32-character lowercase hex form.
   CONSTRAINT notification_link_salts_link_salt_check CHECK (octet_length(link_salt) = 16),
   CONSTRAINT notification_link_salts_membership_fk
+    FOREIGN KEY (user_id, site_id)
+    REFERENCES phis.user_site_memberships (user_id, site_id)
+    ON DELETE CASCADE
+);
+
+/*
+ * Who left which circulars, from the unsubscribe link in one of them: one row per membership and occasion.
+ *
+ * Core holds no consent for a circular (owner, 2026-11-24): the Add-on that sends one holds it and names
+ * the recipients it holds it for. What Core holds is the way out, because the link is Core's, and this is
+ * its record -- a fact the drain reads before it sends an occasion to somebody, and the sender learns of.
+ * The occasion is `provider_id` and `occasion` as `notification_outbox` carries them, so leaving one
+ * Add-on's newsletter is not leaving every other circular on the Site. A row is never updated: leaving
+ * twice is the same fact, and coming back is the sender's consent to take again, not a row to clear here.
+ */
+CREATE TABLE IF NOT EXISTS phis.notification_opt_outs (
+  user_id INT NOT NULL,
+  site_id SMALLINT NOT NULL,
+  provider_id VARCHAR(255) NOT NULL,
+  occasion VARCHAR(120) NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT notification_opt_outs_pkey PRIMARY KEY (user_id, site_id, provider_id, occasion),
+  CONSTRAINT notification_opt_outs_occasion_check CHECK (provider_id <> '' AND occasion <> ''),
+  CONSTRAINT notification_opt_outs_membership_fk
     FOREIGN KEY (user_id, site_id)
     REFERENCES phis.user_site_memberships (user_id, site_id)
     ON DELETE CASCADE

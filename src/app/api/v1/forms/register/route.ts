@@ -4,7 +4,6 @@ import { createRegistrationIntent } from "@/db/registration-intents";
 import { ensureUserAccount, getUserAccountByEmail } from "@/db/user-accounts";
 import { getSiteAuthPolicy } from "@/db/site-auth";
 import { getUserProfileByUserId, upsertUserProfile } from "@/db/user-profiles";
-import { upsertUserSiteMembership } from "@/db/user-site-memberships";
 import { guardApiV1 } from "@/lib/api-v1-guard";
 import { buildVerificationUrlForLocale } from "@/lib/email";
 import { notifyPhiPerson } from "@/lib/notifications/enqueue";
@@ -18,7 +17,6 @@ import { verifyPasswordHash } from "@/lib/password";
 import { checkAuthAttemptLimit } from "@/lib/site-auth/attempt-limit";
 import { isSitePasswordMethodEnabled } from "@/lib/site-auth/password-method";
 import { isUserAccountEnabled } from "@/lib/user-flags";
-import { USER_SITE_FLAG_NEWSLETTER_OPT_IN } from "@/lib/user-site-flags";
 
 import { PhiUserEmailSource } from "@phis/contracts/access";
 import { normalizeString } from "@/lib/helpers/request";
@@ -32,7 +30,6 @@ type RegistrationPayload = {
   password?: unknown;
   confirmPassword?: unknown;
   termsAccepted?: unknown;
-  newsletter?: unknown;
   locale?: unknown;
   website?: unknown;
   issuedAt?: unknown;
@@ -107,7 +104,6 @@ export async function POST(request: Request) {
   const issuedAt = normalizeString(payload.issuedAt);
   const formToken = normalizeString(payload.formToken);
   const termsAccepted = payload.termsAccepted === true;
-  const newsletter = payload.newsletter === true;
 
   const guardResult = verifyFormGuard({
     form: "@phis/ui/modules/auth/forms/registration",
@@ -235,14 +231,6 @@ export async function POST(request: Request) {
       });
     }
 
-    if (newsletter) {
-      await upsertUserSiteMembership({
-        userId: user.id,
-        siteId: site.id,
-        userSiteFlags: USER_SITE_FLAG_NEWSLETTER_OPT_IN,
-      });
-    }
-
     return NextResponse.json({
       ok: true,
       status: "confirmed",
@@ -261,7 +249,6 @@ export async function POST(request: Request) {
     companyName: company || null,
     password,
     locale,
-      newsletterOptIn: newsletter,
     });
   } catch (error) {
     // Registered between the lookup above and this write: the same answer as everywhere else.
@@ -282,7 +269,6 @@ export async function POST(request: Request) {
       lastName: intent.lastName,
       locale: intent.locale,
       company: company || null,
-      newsletter,
     },
   });
 

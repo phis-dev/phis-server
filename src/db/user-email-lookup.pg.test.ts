@@ -60,7 +60,7 @@ describe("finding an account by any of its addresses against PostgreSQL", () => 
     const { former } = await withFormerAddress(userId);
 
     await expect(createRegistrationIntent({
-      siteId: site.id, userId, email: former, locale: "en", newsletterOptIn: false,
+      siteId: site.id, userId, email: former, locale: "en",
     })).resolves.toMatchObject({ email: former });
   });
 
@@ -70,7 +70,7 @@ describe("finding an account by any of its addresses against PostgreSQL", () => 
     const { former } = await withFormerAddress(owner);
 
     await expect(createRegistrationIntent({
-      siteId: site.id, userId: other, email: former, locale: "en", newsletterOptIn: false,
+      siteId: site.id, userId: other, email: former, locale: "en",
     })).rejects.toThrow("ACCOUNT_EXISTS");
     await expect(ensureUserAccount({
       email: former, siteId: site.id, emailSource: 1, reuseExisting: false,

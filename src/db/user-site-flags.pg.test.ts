@@ -9,7 +9,7 @@ import {
   type PhiTestSite,
 } from "../../test/pg/harness";
 import { changeUserSiteFlags } from "./user-site-memberships";
-import { USER_SITE_FLAG_DISABLED, USER_SITE_FLAG_NEWSLETTER_OPT_IN } from "@/lib/user-site-flags";
+import { USER_SITE_FLAG_DISABLED } from "@/lib/user-site-flags";
 
 /**
  * A flag change touches its own bit and nothing else, whatever another request wrote in between. The
@@ -29,23 +29,22 @@ describe("membership flags against PostgreSQL", () => {
     await closePhiTestPool();
   });
 
-  it("leaves a Disabled another request set standing when the newsletter bit moves", async () => {
+  it("leaves a bit another request set standing when Disabled moves", async () => {
     const userId = await createPhiTestUser(site);
     const pool = await requirePhiTestDatabase();
-    // What an administrator did a moment after the visitor's page read the flags.
+    // What another request wrote a moment after this one read the flags. No bit beside Disabled is
+    // assigned, so an unassigned one stands in for it: the statement must not care which bit it is.
+    const other = 1 << 30;
     await pool.query(
       `UPDATE phis.user_site_memberships SET user_site_flags = user_site_flags | $3
        WHERE user_id = $1 AND site_id = $2`,
-      [userId, site.id, USER_SITE_FLAG_DISABLED],
+      [userId, site.id, other],
     );
 
-    const opted = await changeUserSiteFlags(userId, site.id, { set: USER_SITE_FLAG_NEWSLETTER_OPT_IN });
-    expect(opted!.siteFlags & USER_SITE_FLAG_DISABLED).toBe(USER_SITE_FLAG_DISABLED);
-    expect(opted!.siteFlags & USER_SITE_FLAG_NEWSLETTER_OPT_IN).toBe(USER_SITE_FLAG_NEWSLETTER_OPT_IN);
+    const disabled = await changeUserSiteFlags(userId, site.id, { set: USER_SITE_FLAG_DISABLED });
+    expect(disabled!.siteFlags).toBe(other | USER_SITE_FLAG_DISABLED);
 
-    const cleared = await changeUserSiteFlags(userId, site.id, {
-      clear: USER_SITE_FLAG_NEWSLETTER_OPT_IN,
-    });
-    expect(cleared!.siteFlags).toBe(USER_SITE_FLAG_DISABLED);
+    const enabled = await changeUserSiteFlags(userId, site.id, { clear: USER_SITE_FLAG_DISABLED });
+    expect(enabled!.siteFlags).toBe(other);
   });
 });

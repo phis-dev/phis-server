@@ -43,7 +43,6 @@ describe("claiming a registration intent against PostgreSQL", () => {
       companyName: null,
       password: "long-enough-1",
       locale: "en",
-      newsletterOptIn: false,
     });
   }
 

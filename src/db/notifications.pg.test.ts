@@ -15,11 +15,13 @@ import {
   readPhiNotificationLinkSalt,
   ensurePhiNotificationLinkSalt,
   enqueuePhiNotification,
+  hasPhiNotificationOptOut,
   markPhiNotificationDropped,
   markPhiNotificationFailed,
   markPhiNotificationSent,
   PHI_NOTIFICATION_FLAG_DROPPED,
   PHI_NOTIFICATION_FLAG_SENT,
+  recordPhiNotificationOptOut,
 } from "./notifications";
 
 /**
@@ -152,7 +154,7 @@ describe("the notification outbox against PostgreSQL", () => {
       params: { anything: "goes" },
     });
 
-    await markPhiNotificationDropped(id!, "consent was withdrawn");
+    await markPhiNotificationDropped(id!, "the recipient left the occasion");
     const row = await readRow(id!);
     expect(row.flags & PHI_NOTIFICATION_FLAG_DROPPED).toBe(PHI_NOTIFICATION_FLAG_DROPPED);
     expect(row.sent_at).toBeNull();
@@ -160,6 +162,24 @@ describe("the notification outbox against PostgreSQL", () => {
 
     expect(await claimPhiNotificationById(id!)).toBeNull();
     expect((await claimDuePhiNotifications(50)).map((entry) => entry.id)).not.toContain(id);
+  });
+
+  it("records an opt-out per occasion once, and lets it go with the membership", async () => {
+    const userId = await createPhiTestUser(site);
+    const news = { userId, siteId: site.id, providerId: "@acme/newsletter", occasion: "news" };
+
+    expect(await hasPhiNotificationOptOut(news)).toBe(false);
+    expect(await recordPhiNotificationOptOut(news)).toBe(true);
+    // A second press is the same fact, and says it was not news.
+    expect(await recordPhiNotificationOptOut(news)).toBe(false);
+    expect(await hasPhiNotificationOptOut(news)).toBe(true);
+
+    // Leaving one occasion is not leaving another, nor another sender's of the same name.
+    expect(await hasPhiNotificationOptOut({ ...news, occasion: "offers" })).toBe(false);
+    expect(await hasPhiNotificationOptOut({ ...news, providerId: "@other/newsletter" })).toBe(false);
+
+    await pool.query(`DELETE FROM phis.user_site_memberships WHERE user_id = $1 AND site_id = $2`, [userId, site.id]);
+    expect(await hasPhiNotificationOptOut(news)).toBe(false);
   });
 
   it("mints one link salt per membership and hands the same one back", async () => {

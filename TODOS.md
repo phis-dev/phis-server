@@ -210,6 +210,21 @@ processed.
   Medusa customer and its own binding together or fails both, so no account is left half bound and no
   Medusa customer orphaned. The Site's shop then signs in through Core, not with a Medusa password. Design
   context: [design/COMMERCE_AND_PAYMENTS.md](./design/COMMERCE_AND_PAYMENTS.md) section 6.
+- **Registration consents from Add-ons (design, owner, 2026-11-24).** Core no longer asks for newsletter
+  consent; a newsletter Add-on is to offer it. An Add-on's manifest declares `registration.consents`
+  (`key`, `label`, a required/optional flag, an optional page reference). The Site Admin chooses at most
+  one or two offers, including Core's own Terms consent, for the registration Form, and every other
+  offer is made in account settings or at a checkout. The Auth Module draws the chosen offers from the
+  capability snapshot as unticked checkboxes. Core records the Terms consent itself and hands each ticked
+  optional key with `user.registered` only to the Add-on that offered it. Design:
+  [design/ADDONS_PLANNED.md](./design/ADDONS_PLANNED.md) section 6.
+- **Circulars from Add-ons (design, owner, 2026-11-24).** Core keeps the circular machinery (the
+  occasion-bound unsubscribe link, the page, `List-Unsubscribe`, `phis.notification_opt_outs`) and refuses
+  the sent class until this exists. An Add-on declares a circular occasion and names the members it holds
+  consent for. Core sends, adds the link and the header, and skips whoever left the occasion. The Add-on
+  learns of an opt-out from an event such as `notification.unsubscribed` (preferred, facts only, like
+  `user.changed`) or by asking Core. It never builds its own unsubscribe link. Design:
+  [design/NOTIFICATIONS.md](./design/NOTIFICATIONS.md) section 9.
 - **Auth Module replacement.** One atomic operation for a Site that deactivates conflicting Auth UI
   provider Modules in the affected Areas, activates the replacement's Area projections, verifies that
   exactly one active Public provider owns `/login`, and reports every activation and preset change. Do not

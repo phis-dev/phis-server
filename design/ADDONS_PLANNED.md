@@ -277,3 +277,71 @@ Modules stay out of hot-plugging by decision. Loading a Module into a running Si
 React, antd, and the `@phis/ui` runtime as shared singletons behind a runtime ABI, whose breaks surface in
 a visitor's browser rather than in a build. A Site rebuild affects one tenant, so building and restarting
 that Site is the mechanism.
+
+## 6. Add-ons contribute registration consents
+
+**Status: design, owner, 2026-11-24.** Nothing here is built. Core used to ask for newsletter consent
+itself: a checkbox on the registration Form, a bit `1 << 1` in `user_site_memberships.user_site_flags`,
+a switch on the App profile page. That consent was removed, and newsletters are to come back as an
+Add-on. This section is how an Add-on asks for a consent without Core knowing what the consent is about.
+
+### Two kinds of consent
+
+- **Required.** It must be ticked before anyone can register, such as the Site's Terms. The Form refuses
+  to submit without it.
+- **Optional.** It is given freely and never pre-ticked, such as a newsletter. Registering without it is
+  the same registration.
+
+Every offer states its kind as a flag, so the kind is never inferred from the wording.
+
+### The offer
+
+An Add-on's manifest declares `registration.consents: [{ key, label, flags, page? }]`:
+
+- `key` is the Add-on's own name for the consent.
+- `label` is the sentence beside the checkbox, translated like the other words an Add-on ships.
+- `flags` carries the kind. Required is a bit, and optional is its absence.
+- `page` is an optional link to the page that explains what is agreed to, such as the Terms or the
+  newsletter's description. It is stored as a page reference, never a path, and resolved to the Site's
+  address for that language on every render, like every other page link.
+
+### At most one or two at registration
+
+Not every offer belongs on the registration page. Asking for consent to something nobody has bought yet
+(product-specific offers) is the wrong place and the wrong moment. Those offers are made later, in the
+account's settings or at a checkout.
+
+- The registration Form shows a small, fixed number of consents: one or two.
+- The Site Admin chooses which, within that limit. The candidates are the offers of the Site's active
+  Add-ons and Core's own Terms consent.
+- Every offer not chosen for registration is still made: in the account's settings, or where the Add-on
+  sells, at a checkout.
+
+### The Terms consent is the Site's
+
+The Terms consent is Core's, not an Add-on's. It is required, and it links the Site's Terms page and its
+Privacy page, both as page references. Core's registration records it: what was agreed to, when, and,
+ideally, the version of the text agreed to. Today Core only checks `termsAccepted` on the request and
+keeps nothing, and phis-ui's registration descriptor names the Terms page by a configured path
+(`termsHref`). Both change when this is built.
+
+### How an offer travels
+
+1. Core collects the offers of the Site's active Add-ons, together with the Site Admin's choice of what
+   appears at registration, and passes them to the Site UI through the capability snapshot.
+2. The Auth Module draws them itself, as checkboxes in its own registration Form, never pre-ticked.
+   Required ones are validated as required. The Module draws data. It never places another Module's
+   Widget in its Form.
+3. Core keeps the ticked keys with the registration intent, next to the person's other answers, until
+   the address is confirmed.
+4. On the confirm, Core records the required Terms consent itself. It hands each optional ticked key with
+   `user.registered`, and only to the Add-on that offered it. No Add-on learns of another Add-on's
+   consents, and none learns of a consent that was not given.
+
+The Add-on then owns the consent from there on: it stores it, offers its withdrawal, and answers for it.
+Core keeps no bit for it. How the Add-on sends to the people who consented, through Core's outbox and
+under Core's unsubscribe link, is [NOTIFICATIONS.md](./NOTIFICATIONS.md) section 9.
+
+### First user
+
+A newsletter Add-on: one optional consent with a link to the page that describes the newsletter.

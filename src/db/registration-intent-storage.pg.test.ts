@@ -39,7 +39,6 @@ describe("registration intent storage against PostgreSQL", () => {
       lastName: "Person",
       password: "long-enough-ü-1",
       locale: "en",
-      newsletterOptIn: false,
     });
 
     const found = await getRegistrationIntentByVerificationToken(site.id, created.verificationToken);

@@ -88,7 +88,6 @@ export async function POST(request: NextRequest) {
         availableLocales: runtimeConfig?.availableLocales.map((option) => option.code)
           ?? [site.defaultLocale],
       }),
-      newsletterOptIn: false,
     });
   } catch (error) {
     // Taken between the check above and this write, by an account that is not this one.

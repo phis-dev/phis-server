@@ -20,7 +20,6 @@ import { logRuntimeEvent } from "@/lib/log";
 import { hashPassword } from "@/lib/password";
 import { decryptRegistrationPassword } from "@/lib/registration-secret";
 import { requireSiteFromRequest } from "@/lib/site-context";
-import { USER_SITE_FLAG_NEWSLETTER_OPT_IN } from "@/lib/user-site-flags";
 
 import { PhiUserEmailSource } from "@phis/contracts/access";
 import { hasExpiryPassed } from "@/lib/helpers/expiry";
@@ -230,7 +229,6 @@ export async function POST(request: Request) {
     await upsertUserSiteMembership({
       userId: user.id,
       siteId: site.id,
-      userSiteFlags: intent.newsletterOptIn ? USER_SITE_FLAG_NEWSLETTER_OPT_IN : 0,
     });
     await upsertUserProfile({
       userId: user.id,

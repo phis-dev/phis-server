@@ -39,7 +39,7 @@ import { hashPassword } from "@/lib/password";
 import { hasPhiFlag } from "@/lib/helpers/flags";
 import { listUserSessionsForSite, revokeUserSessionsForSite } from "@/db/user-sessions";
 import { resolveUserAccountFlagTags } from "@/lib/user-flags";
-import { USER_SITE_FLAG_DISABLED, USER_SITE_FLAG_NEWSLETTER_OPT_IN } from "@/lib/user-site-flags";
+import { USER_SITE_FLAG_DISABLED } from "@/lib/user-site-flags";
 import {
   normalizeNullableString,
   normalizeString,
@@ -118,10 +118,6 @@ function buildUserSiteFlagTags(siteFlags: number) {
 
   if ((siteFlags & USER_SITE_FLAG_DISABLED) === USER_SITE_FLAG_DISABLED) {
     tags.push("disabled");
-  }
-
-  if ((siteFlags & USER_SITE_FLAG_NEWSLETTER_OPT_IN) === USER_SITE_FLAG_NEWSLETTER_OPT_IN) {
-    tags.push("newsletter");
   }
 
   return tags;

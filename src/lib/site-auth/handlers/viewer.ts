@@ -9,7 +9,6 @@ import { touchSession } from "@/db/user-sessions";
 import { resolveSignedInLocale } from "@/lib/auth";
 import { requireSiteFromRequest } from "@/lib/site-context";
 import { resolvePhiUserArea } from "@/lib/user-area";
-import { USER_SITE_FLAG_NEWSLETTER_OPT_IN } from "@/lib/user-site-flags";
 import { resolveUserThemeModeName, USER_ACCOUNT_FLAG_MUST_CHANGE_PASSWORD } from "@/lib/user-flags";
 
 function buildDisplayName(input: {
@@ -80,7 +79,6 @@ export async function GET(request: NextRequest) {
       groupClaims: siteRole.groupClaims,
       addonRoleClaims,
       authorizationRevision: siteRole.authorizationRevision,
-      newsletterOptIn: (siteRole.siteFlags & USER_SITE_FLAG_NEWSLETTER_OPT_IN) === USER_SITE_FLAG_NEWSLETTER_OPT_IN,
       /*
        * The language this person is being served, which is their saved choice where they made one and
        * otherwise what this request resolves to. Not the raw column: that also holds the seed

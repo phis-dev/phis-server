@@ -249,7 +249,7 @@ export async function recordUserSiteLogin(userId: number, siteId: number) {
 /**
  * Sets and clears named flags in one statement, leaving every other bit as the row holds it.
  *
- * It used to take the whole number, computed from a read a moment earlier: a newsletter toggle landing
+ * It used to take the whole number, computed from a read a moment earlier: a toggle of one bit landing
  * after an administrator disabled the membership wrote the old number back and enabled it again.
  */
 export async function changeUserSiteFlags(

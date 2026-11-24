@@ -4,6 +4,7 @@ import {
   claimDuePhiNotifications,
   claimPhiNotificationById,
   ensurePhiNotificationLinkSalt,
+  hasPhiNotificationOptOut,
   markPhiNotificationDropped,
   markPhiNotificationFailed,
   markPhiNotificationSent,
@@ -21,7 +22,6 @@ import { sendEmail } from "@/lib/email";
 import { sendTemplatedEmail, type SupportedEmailTemplate } from "@/lib/email-templates";
 import { logRuntimeEvent } from "@/lib/log";
 import { isUserAccountEnabled } from "@/lib/user-flags";
-import { hasUserSiteFlag, USER_SITE_FLAG_NEWSLETTER_OPT_IN } from "@/lib/user-site-flags";
 import {
   buildPhiUnsubscribeToken,
   buildPhiUnsubscribeUrl,
@@ -80,9 +80,9 @@ function readStringParam(params: Record<string, unknown>, key: string) {
  * Who this row goes to, in the language they read, under the name they are greeted by.
  *
  * The address is resolved here rather than carried on the row, which is the point of storing an id: a
- * corrected address is used, and a membership that has gone takes the message with it. A withdrawal of
- * consent between the enqueue and the drain lands here too, and it is a drop rather than a failure --
- * nobody wanted this message by the time it was due.
+ * corrected address is used, and a membership that has gone takes the message with it. A circular whose
+ * recipient left its occasion between the enqueue and the drain lands here too, and it is a drop rather
+ * than a failure -- nobody wanted this message by the time it was due.
  */
 async function resolveRecipient(
   row: PhiNotificationRow,
@@ -93,7 +93,7 @@ async function resolveRecipient(
       throw new DropError("The row carries neither an account nor an address.");
     }
     if ((row.flags & PHI_NOTIFICATION_FLAG_SENT) !== 0) {
-      // A circular owes a way out, and a way out needs a membership whose flag it can clear.
+      // A circular owes a way out, and a way out is signed for a membership.
       throw new DropError("A sent message cannot go to an address without an account.");
     }
     return {
@@ -119,9 +119,14 @@ async function resolveRecipient(
   }
   if (
     (row.flags & PHI_NOTIFICATION_FLAG_SENT) !== 0 &&
-    !hasUserSiteFlag(membership.siteFlags, USER_SITE_FLAG_NEWSLETTER_OPT_IN)
+    await hasPhiNotificationOptOut({
+      userId: row.recipientUserId,
+      siteId: row.siteId,
+      providerId: row.providerId,
+      occasion: row.occasion,
+    })
   ) {
-    throw new DropError("Consent for sent messages was withdrawn before this one was due.");
+    throw new DropError("The recipient left this occasion's circulars before this one was due.");
   }
 
   const profile = await getUserProfileByUserId(account.id);
@@ -260,7 +265,12 @@ export async function deliverPhiNotification(row: PhiNotificationRow): Promise<D
       unsubscribeUrl = buildPhiUnsubscribeUrl({
         publicBaseUrl: siteConfig.publicBaseUrl,
         locale: recipient.locale,
-        token: buildPhiUnsubscribeToken({ siteId: row.siteId, userId: recipient.userId, salt }),
+        token: buildPhiUnsubscribeToken({
+          siteId: row.siteId,
+          userId: recipient.userId,
+          salt,
+          occasion: { providerId: row.providerId, occasion: row.occasion },
+        }),
       });
     }
 

@@ -10,8 +10,8 @@ import { getPhisConfigSync } from "@/lib/config";
  * An unsubscribe link cannot be a stored one-time token: a stored hash cannot be read back, so the link
  * could never be rendered a second time, and it has to keep working for as long as the mail carrying it
  * exists. It cannot be a bare id either, because then anybody could unsubscribe anybody. So it is the
- * recipient plus a signature over the recipient and a salt kept beside the membership -- the salt is
- * public and proves nothing, and this key is what makes the pair unforgeable.
+ * recipient and the occasion plus a signature over both and a salt kept beside the membership -- the
+ * salt is public and proves nothing, and this key is what makes the link unforgeable.
  *
  * Installation-wide, out of the database, and rotating it invalidates every link still in a mailbox --
  * which is why it is configuration a backup has to carry rather than something generated on demand.
@@ -31,30 +31,64 @@ export function createPhiNotificationLinkSalt() {
   return randomBytes(16).toString("hex");
 }
 
-function signUnsubscribe(siteId: number, userId: number, salt: string) {
+/**
+ * Which circulars a link leaves: one occasion of one declarer, `providerId` as the outbox row carries it
+ * (`@phis/server/core` or an Add-on id) and the occasion's name. Somebody who leaves a newsletter has not
+ * left every other circular the Site may send, so the occasion is part of what the link is bound to.
+ */
+export type PhiUnsubscribeOccasion = { providerId: string; occasion: string };
+
+const OCCASION_SEPARATOR = "|";
+
+function encodeOccasion(occasion: PhiUnsubscribeOccasion) {
+  return `${occasion.providerId}${OCCASION_SEPARATOR}${occasion.occasion}`;
+}
+
+function signUnsubscribe(siteId: number, userId: number, salt: string, occasion: PhiUnsubscribeOccasion) {
   return createHmac("sha256", getNotificationLinkSecret())
-    .update(`unsubscribe:${siteId}:${userId}:${salt}`)
+    .update(`unsubscribe:${siteId}:${userId}:${salt}:${encodeOccasion(occasion)}`)
     .digest("base64url");
 }
 
 /**
- * The value a link carries: who it is for, and the proof that it was issued.
+ * The value a link carries: who it is for, which occasion it leaves, and the proof that it was issued.
  *
- * The id is in the clear because the verifier needs it to find the salt, and hiding it would buy nothing
- * -- the signature is what authorises, and an id alone opens nothing.
+ * The id and the occasion are in the clear because the verifier needs the id to find the salt and the
+ * occasion to know what to record, and hiding them would buy nothing -- the signature is what authorises,
+ * and an id alone opens nothing.
  */
-export function buildPhiUnsubscribeToken(input: { siteId: number; userId: number; salt: string }) {
-  return `${input.userId}.${signUnsubscribe(input.siteId, input.userId, input.salt)}`;
+export function buildPhiUnsubscribeToken(input: {
+  siteId: number;
+  userId: number;
+  salt: string;
+  occasion: PhiUnsubscribeOccasion;
+}) {
+  const occasion = Buffer.from(encodeOccasion(input.occasion)).toString("base64url");
+  return `${input.userId}.${occasion}.${signUnsubscribe(input.siteId, input.userId, input.salt, input.occasion)}`;
 }
 
-/** Which account a link claims to be for, before anything is verified. `null` when it is not a link. */
+/**
+ * Which account and which occasion a link claims, before anything is verified. `null` when it is not a
+ * link.
+ */
 export function readPhiUnsubscribeTokenSubject(rawToken: string) {
-  const [idPart, signature] = rawToken.split(".");
-  const userId = Number(idPart);
-  if (!signature || !Number.isInteger(userId) || userId <= 0) {
+  const parts = rawToken.split(".");
+  if (parts.length !== 3) {
     return null;
   }
-  return { userId, signature };
+  const [idPart, occasionPart, signature] = parts as [string, string, string];
+  const userId = Number(idPart);
+  if (!signature || !occasionPart || !/^\d+$/u.test(idPart) || !Number.isInteger(userId) || userId <= 0) {
+    return null;
+  }
+  const decoded = Buffer.from(occasionPart, "base64url").toString("utf8");
+  const separator = decoded.indexOf(OCCASION_SEPARATOR);
+  const providerId = separator > 0 ? decoded.slice(0, separator) : "";
+  const occasion = separator > 0 ? decoded.slice(separator + 1) : "";
+  if (!providerId || !occasion || occasion.includes(OCCASION_SEPARATOR)) {
+    return null;
+  }
+  return { userId, occasion: { providerId, occasion } satisfies PhiUnsubscribeOccasion, signature };
 }
 
 /**
@@ -67,9 +101,10 @@ export function verifyPhiUnsubscribeToken(input: {
   siteId: number;
   userId: number;
   salt: string;
+  occasion: PhiUnsubscribeOccasion;
   signature: string;
 }) {
-  const expected = Buffer.from(signUnsubscribe(input.siteId, input.userId, input.salt));
+  const expected = Buffer.from(signUnsubscribe(input.siteId, input.userId, input.salt, input.occasion));
   const received = Buffer.from(input.signature);
   return expected.length === received.length && timingSafeEqual(expected, received);
 }

@@ -8,7 +8,7 @@ public or internal token, and `session` is the visitor's Site session with the a
 passes (see [AUTHORIZATION.md](../AUTHORIZATION.md)). A route with no access entry performs its own checks
 or none; read its source. Request and response shapes are not listed; the source is linked per route.
 
-190 routes.
+189 routes.
 
 ## Contents
 
@@ -17,7 +17,7 @@ or none; read its source. Request and response shapes are not listed; the source
 - [`/api/site`](#apisite) (103)
 - [`/api/v1/addons`](#apiv1addons) (3)
 - [`/api/v1/admin`](#apiv1admin) (1)
-- [`/api/v1/auth`](#apiv1auth) (30)
+- [`/api/v1/auth`](#apiv1auth) (29)
 - [`/api/v1/email`](#apiv1email) (1)
 - [`/api/v1/entries`](#apiv1entries) (2)
 - [`/api/v1/forms`](#apiv1forms) (8)
@@ -270,7 +270,6 @@ Versioned API a Site calls server-to-server with its token (`x-phis-token`), and
 | POST | [`/api/v1/auth/profile/email/request`](../src/app/api/v1/auth/profile/email/request/route.ts) | internal token |  |
 | PATCH | [`/api/v1/auth/profile/locale`](../src/app/api/v1/auth/profile/locale/route.ts) | internal token |  |
 | PATCH | [`/api/v1/auth/profile/name`](../src/app/api/v1/auth/profile/name/route.ts) | internal token |  |
-| PATCH | [`/api/v1/auth/profile/newsletter`](../src/app/api/v1/auth/profile/newsletter/route.ts) | internal token |  |
 | PATCH | [`/api/v1/auth/profile/password`](../src/app/api/v1/auth/profile/password/route.ts) | internal token |  |
 | PATCH | [`/api/v1/auth/profile/phone`](../src/app/api/v1/auth/profile/phone/route.ts) | internal token | The signed-in person's business telephone and mobile number: `{ phone: string \| null, mobile: string \| null }`, both stated, each at most 64 characters; answers the two as kept. `/api/v1/auth/me` reads them back in `user.profile`. `409` while the person has no profile (no name yet). A change owes `user.changed` with `phone` on every Site the person is a member of (users:v1). |
 | PATCH | [`/api/v1/auth/profile/theme`](../src/app/api/v1/auth/profile/theme/route.ts) | internal token |  |

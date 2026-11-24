@@ -5,8 +5,8 @@ const mocks = vi.hoisted(() => ({
   site: vi.fn(),
   readSalt: vi.fn(),
   touchSalt: vi.fn(),
-  membership: vi.fn(),
-  changeFlags: vi.fn(),
+  hasOptOut: vi.fn(),
+  recordOptOut: vi.fn(),
   verify: vi.fn(),
 }));
 
@@ -15,15 +15,15 @@ vi.mock("@/lib/site-context", () => ({ requireSiteFromRequest: mocks.site }));
 vi.mock("@/db/notifications", () => ({
   readPhiNotificationLinkSalt: mocks.readSalt,
   touchPhiNotificationLinkSalt: mocks.touchSalt,
-}));
-vi.mock("@/db/user-site-memberships", () => ({
-  getUserSiteMembership: mocks.membership,
-  changeUserSiteFlags: mocks.changeFlags,
+  hasPhiNotificationOptOut: mocks.hasOptOut,
+  recordPhiNotificationOptOut: mocks.recordOptOut,
 }));
 vi.mock("@/lib/notifications/links", () => ({
   readPhiUnsubscribeTokenSubject: (raw: string) => {
-    const [id, signature] = raw.split(".");
-    return signature && Number(id) > 0 ? { userId: Number(id), signature } : null;
+    const [id, occasion, signature] = raw.split(".");
+    return signature && occasion && Number(id) > 0
+      ? { userId: Number(id), occasion: { providerId: "@acme/newsletter", occasion }, signature }
+      : null;
   },
   verifyPhiUnsubscribeToken: mocks.verify,
 }));
@@ -31,7 +31,8 @@ vi.mock("@/lib/log", () => ({ logRuntimeEvent: vi.fn() }));
 
 import { GET, POST } from "./route";
 
-const TOKEN = "42.signature";
+const TOKEN = "42.news.signature";
+const OPT_OUT = { userId: 42, siteId: 3, providerId: "@acme/newsletter", occasion: "news" };
 
 function url(token = TOKEN) {
   return `https://server.test/api/v1/notifications/unsubscribe?token=${encodeURIComponent(token)}`;
@@ -49,35 +50,44 @@ describe("the unsubscribe route", () => {
     mocks.site.mockResolvedValue({ id: 3, key: "site" });
     mocks.readSalt.mockResolvedValue("a".repeat(32));
     mocks.verify.mockReturnValue(true);
-    mocks.membership.mockResolvedValue({ siteFlags: 2, enabled: true });
-    mocks.changeFlags.mockResolvedValue({ siteFlags: 0 });
+    mocks.hasOptOut.mockResolvedValue(false);
+    mocks.recordOptOut.mockResolvedValue(true);
   });
 
   it("reports what a press would do on GET, and changes nothing", async () => {
     const response = await GET(new Request(url()) as never);
 
     expect(await response.json()).toEqual({ outcome: "unsubscribed", pending: true });
-    expect(mocks.changeFlags).not.toHaveBeenCalled();
+    expect(mocks.hasOptOut).toHaveBeenCalledWith(OPT_OUT);
+    expect(mocks.recordOptOut).not.toHaveBeenCalled();
     expect(mocks.touchSalt).not.toHaveBeenCalled();
   });
 
-  it("clears the flag on POST and notes the use", async () => {
+  it("says on GET that somebody already left the occasion", async () => {
+    mocks.hasOptOut.mockResolvedValue(true);
+    const response = await GET(new Request(url()) as never);
+
+    expect(await response.json()).toEqual({ outcome: "already" });
+    expect(mocks.recordOptOut).not.toHaveBeenCalled();
+  });
+
+  it("records the opt-out of the link's occasion on POST and notes the use", async () => {
     const response = await POST(new Request(url(), { method: "POST" }) as never);
 
     expect(await response.json()).toEqual({ outcome: "unsubscribed" });
-    expect(mocks.changeFlags).toHaveBeenCalledWith(42, 3, { clear: 2 });
+    expect(mocks.recordOptOut).toHaveBeenCalledWith(OPT_OUT);
     expect(mocks.touchSalt).toHaveBeenCalledWith(42, 3);
   });
 
   it("says so rather than reporting a change when somebody is already out", async () => {
-    mocks.membership.mockResolvedValue({ siteFlags: 0, enabled: true });
+    mocks.recordOptOut.mockResolvedValue(false);
     const response = await POST(new Request(url(), { method: "POST" }) as never);
 
     expect(await response.json()).toEqual({ outcome: "already" });
-    expect(mocks.changeFlags).not.toHaveBeenCalled();
+    expect(mocks.touchSalt).toHaveBeenCalledWith(42, 3);
   });
 
-  it("does not look up a membership, or touch anything, when the link does not hold", async () => {
+  it("records nothing, and touches nothing, when the link does not hold", async () => {
     mocks.verify.mockReturnValue(false);
     const response = await POST(new Request(url(), { method: "POST" }) as never);
 
@@ -85,8 +95,8 @@ describe("the unsubscribe route", () => {
     // success and tell somebody they were unsubscribed when nothing happened.
     expect(response.status).toBe(422);
     expect(await response.json()).toMatchObject({ outcome: "invalid" });
-    expect(mocks.membership).not.toHaveBeenCalled();
-    expect(mocks.changeFlags).not.toHaveBeenCalled();
+    expect(mocks.hasOptOut).not.toHaveBeenCalled();
+    expect(mocks.recordOptOut).not.toHaveBeenCalled();
     expect(mocks.touchSalt).not.toHaveBeenCalled();
   });
 
@@ -106,11 +116,11 @@ describe("the unsubscribe route", () => {
     ) as never);
 
     expect(await response.json()).toEqual({ outcome: "unsubscribed" });
-    expect(mocks.changeFlags).toHaveBeenCalledWith(42, 3, { clear: 2 });
+    expect(mocks.recordOptOut).toHaveBeenCalledWith(OPT_OUT);
   });
 
   it("refuses a token that is not one at all", async () => {
-    for (const bad of ["", "42", "nonsense"]) {
+    for (const bad of ["", "42", "42.signature", "nonsense"]) {
       const response = await POST(new Request(url(bad), { method: "POST" }) as never);
       expect(response.status, bad).toBe(422);
       expect(await response.json(), bad).toMatchObject({ outcome: "invalid" });

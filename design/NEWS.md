@@ -149,10 +149,11 @@ A circular about new entries is a notification, and everything that makes it pos
 [NOTIFICATIONS.md](./NOTIFICATIONS.md): the outbox, the unsubscribe link, the `List-Unsubscribe` headers.
 Four things are this document's, though:
 
-- It is a **sent** message, not an asked-for one. It requires `USER_SITE_FLAG_NEWSLETTER_OPT_IN` and its
-  footer carries the unsubscribe link.
-- Recipients are the memberships carrying that bit. Addresses are resolved when the outbox row is drained,
-  never enumerated into it.
+- It is a **sent** message, not an asked-for one, and its footer carries the unsubscribe link. Core holds
+  no consent for it (owner, 2026-11-24): a digest is sent by an Add-on that holds its readers' consent,
+  such as a newsletter Add-on, through the protocol of [NOTIFICATIONS.md](./NOTIFICATIONS.md) section 9.
+- Recipients are the members the sending Add-on names, less whoever left its occasion. Addresses are
+  resolved when the outbox row is drained, never enumerated into it.
 - **Never twice** is the outbox row, not a mark in `site_content.meta`. A mark on the content row would
   make the entry's data remember a sending run, and two runs against one entry would race over it.
 - Who may send is `PHI_ACCESS_PUBLISHING`, the same policy as publishing. Sending to an audience is

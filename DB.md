@@ -71,7 +71,7 @@ The target PostgreSQL schema for `phis` is:
   - `3 = expired`
   - `4 = consumed`
 - `phis.registration_intents.flags INT`
-  - `1 << 0 = newsletter opt-in`
+  - no bit is assigned; `1 << 0` was the newsletter opt-in until 2026-11-24 and is free
 - `phis.site_content.type SMALLINT`
   - `0 = news`
   - `1 = page`
@@ -171,7 +171,7 @@ The target PostgreSQL schema for `phis` is:
   - Core role matrix (`PhiBaseRole`) governed by `AUTHORIZATION.md`
 - `phis.user_site_memberships.user_site_flags INT`
   - `1 << 0 = disabled`
-  - `1 << 1 = newsletter opt-in`
+  - `1 << 1 = free`: the newsletter opt-in until 2026-11-24, cleared on every row (see `user_site_memberships`)
 - `phis.user_sessions.auth_state SMALLINT` (`PHI_AUTH_SESSION_STATES`)
   - `1 = factor enrollment required`
   - `2 = factor challenge required`
@@ -768,7 +768,16 @@ Contract:
 - `UNIQUE (user_id, site_id)`
 
 Contract:
-- `user_site_flags` stores site-local state such as enabled/disabled access and newsletter consent.
+- `user_site_flags` stores site-local state; today that is enabled/disabled access alone. Core keeps no
+  newsletter consent (owner, 2026-11-24: newsletters become an Add-on, which keeps the consents it
+  offers; see [design/ADDONS_PLANNED.md](./design/ADDONS_PLANNED.md) section 6). Bit `1 << 1` held it and
+  is free. An existing database clears it by hand, as the serving role (the development database
+  `phi_server_dev` received it so):
+
+  ```sql
+  UPDATE phis.user_site_memberships SET user_site_flags = user_site_flags & ~2 WHERE user_site_flags & 2 <> 0;
+  UPDATE phis.registration_intents SET flags = flags & ~1 WHERE flags & 1 <> 0;
+  ```
 - `last_login_at` stores the last successful login for this user on this site.
 - `authorization_revision` increments whenever the user's Core role claim or effective group membership
   on the Site changes, and participates in authorization-sensitive cache identity.
@@ -1001,8 +1010,7 @@ Contract:
 - `updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
 
 Contract:
-- Temporary registration consent flags should be stored in `registration_intents.flags` instead of standalone boolean columns.
-- On successful confirmation, relevant site-scoped consent bits should be copied into `phis.user_site_memberships.user_site_flags`.
+- `registration_intents.flags` holds the intent's yes/no answers as bits rather than standalone boolean columns. No bit is assigned: the newsletter opt-in it carried into the membership is gone (owner, 2026-11-24).
 - On successful confirmation, `registration_intents.user_id` should be linked to the final `user_accounts` row.
 - `registration_intents.user_id = NULL` means a new account registration intent.
 - `registration_intents.user_id IS NOT NULL` means a confirmed account update intent, such as an email change.
@@ -2931,13 +2939,15 @@ Contract:
   precedes one, or an Add-on's contact recipient -- a guest who gave the Add-on their address for this
   very message (`notifications:v1`, SERVER_ADDONS.md section 13). Carrying both recipient forms at once
   is refused by CHECK, and the address is cleared with `params` once the row is settled.
-- `flags & 1` means the message was **sent** rather than asked for: consent decided whether the row was
-  written at all, and the rendered mail owes an unsubscribe footer. A message the person's own action
+- `flags & 1` means the message was **sent** rather than asked for: the sender had to hold consent for the
+  row to be written at all, and the rendered mail owes an unsubscribe footer. No row carries it today:
+  Core keeps no consent for circulars (owner, 2026-11-24), so `notifyPhiPerson` refuses the class until a
+  sending Add-on can name the recipients it holds consent for ([design/NOTIFICATIONS.md](./design/NOTIFICATIONS.md) section 9). A message the person's own action
   asked for carries no such footer, because offering to withdraw what cannot be withdrawn is the
   misrepresentation `design/CONSENT.md` documents for banners.
-- `flags & 2` means the row was **settled without being sent**: by the time it was due, the consent it
-  needed had been withdrawn. That is the expected outcome of somebody unsubscribing between the enqueue and
-  the drain, not a delivery failure, and conflating the two would make an operator chase a broken address
+- `flags & 2` means the row was **settled without being sent**: by the time it was due, its recipient had
+  left its occasion (`phis.notification_opt_outs`). That is the expected outcome of somebody unsubscribing
+  between the enqueue and the drain, not a delivery failure, and conflating the two would make an operator chase a broken address
   that never existed. A dropped row is never claimed again, which is why the flag is in the index
   predicate as well as in the claim.
 - `locale` is the language the message is written in, and it outranks the profile. An address has no
@@ -2972,8 +2982,9 @@ Contract:
   `ON DELETE CASCADE`
 
 Contract:
-- The public half of the unsubscribe link carried in every circular. The link is a signature over the
-  recipient and this salt; the key that signs it is `notifications.linkSecret` in the runtime config and
+- The public half of the unsubscribe link carried in every circular. The link names the recipient and the
+  occasion it leaves (`provider_id` and `occasion` of the outbox row) and is a signature over both and
+  this salt; the key that signs it is `notifications.linkSecret` in the runtime config and
   stays out of the database. **Nothing here is secret** -- the salt alone proves nothing.
 - **The link does not expire and is not consumed**, unlike `user_password_reset_tokens`. It sits in an
   archived mail, where a dead link is a dead link against an obligation (Art. 21 GDPR, § 7 UWG), and the
@@ -2981,13 +2992,54 @@ Contract:
   cannot be read back, so a durable link could never be rendered a second time.
 - One row per membership rather than one per message -- the difference between growing with the audience
   and growing with every send. `last_used_at` moves on every use, because a second click is not an error.
-- Acting on a link clears `USER_SITE_FLAG_NEWSLETTER_OPT_IN` for that membership and does nothing else: no
-  session, no other Site, no profile. `GET` must not act -- mail clients and scanners fetch links before a
+- Acting on a link records an opt-out of its occasion in `phis.notification_opt_outs` and does nothing
+  else: no session, no other Site, no profile. Core holds no consent for a circular to clear (owner,
+  2026-11-24); the sending Add-on holds it. `GET` must not act -- mail clients and scanners fetch links before a
   person sees them -- so `GET` offers the button and `POST` performs it, which is what RFC 8058 one-click
   requires as well.
 - Rotation for one person replaces the salt; rotation for everybody rotates the key and invalidates every
   link still in a mailbox. A link whose membership is gone finds no row and says so rather than reporting
   success.
+
+### `phis.notification_opt_outs`
+
+- `user_id INT NOT NULL`
+- `site_id SMALLINT NOT NULL`
+- `provider_id VARCHAR(255) NOT NULL` -- who declared the occasion, as `notification_outbox.provider_id`
+- `occasion VARCHAR(120) NOT NULL` -- the occasion's name, as `notification_outbox.occasion`
+- `created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
+- PRIMARY KEY `(user_id, site_id, provider_id, occasion)`
+- CHECK `provider_id <> '' AND occasion <> ''`
+- composite foreign key `(user_id, site_id)` to `user_site_memberships (user_id, site_id)`
+  `ON DELETE CASCADE`
+
+Contract:
+- Who left which circulars, from the unsubscribe link in one of them. Core keeps no consent for a circular
+  (owner, 2026-11-24): the Add-on that sends one holds it and names the recipients it holds it for. Core
+  holds the way out, because the link is Core's, and this table is its record.
+- Written only by the `POST` of `/api/v1/notifications/unsubscribe`, one row per membership and occasion.
+  A second press writes nothing and answers `already`. A row is never updated or cleared here; coming
+  back is a consent the sender takes again.
+- The drain drops a sent-class row whose recipient has a row for that occasion. The sender is to learn of
+  an opt-out from Core ([design/NOTIFICATIONS.md](./design/NOTIFICATIONS.md) section 9).
+- Added 2026-11-24 in `001_create_phis.pgsql` with no schema version raised. An existing database
+  creates it by hand, as the serving role (the development database `phi_server_dev` received it so):
+
+  ```sql
+  CREATE TABLE IF NOT EXISTS phis.notification_opt_outs (
+    user_id INT NOT NULL,
+    site_id SMALLINT NOT NULL,
+    provider_id VARCHAR(255) NOT NULL,
+    occasion VARCHAR(120) NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT notification_opt_outs_pkey PRIMARY KEY (user_id, site_id, provider_id, occasion),
+    CONSTRAINT notification_opt_outs_occasion_check CHECK (provider_id <> '' AND occasion <> ''),
+    CONSTRAINT notification_opt_outs_membership_fk
+      FOREIGN KEY (user_id, site_id)
+      REFERENCES phis.user_site_memberships (user_id, site_id)
+      ON DELETE CASCADE
+  );
+  ```
 
 ## Content and Translation Model
 

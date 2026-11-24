@@ -3,11 +3,9 @@ import "server-only";
 import { createHash, randomBytes } from "node:crypto";
 
 import { getPool, withTransaction } from "@/lib/db";
-import { hasPhiFlag } from "@/lib/helpers/flags";
 import { encryptRegistrationPassword } from "@/lib/registration-secret";
 import { normalizePhiEmail } from "@/lib/helpers/normalize";
 
-const REGISTRATION_INTENT_FLAG_NEWSLETTER_OPT_IN = 1 << 0;
 export const REGISTRATION_INTENT_STATUS_PENDING = 0;
 export const REGISTRATION_INTENT_STATUS_VERIFIED = 1;
 export const REGISTRATION_INTENT_STATUS_SUPERSEDED = 2;
@@ -30,7 +28,6 @@ export type CreateRegistrationIntentInput = {
   companyName?: string | null;
   password?: string | null;
   locale: string;
-  newsletterOptIn: boolean;
 };
 
 export type RegistrationIntentRecord = {
@@ -55,7 +52,6 @@ export type RegistrationIntentVerificationRecord = {
   fullName: string;
   companyName: string | null;
   locale: string;
-  newsletterOptIn: boolean;
   status: RegistrationIntentStatus;
   verificationTokenExpiresAt: string;
   verifiedAt: string | null;
@@ -73,7 +69,6 @@ export type RegistrationIntentProfileRecord = {
   fullName: string;
   companyName: string | null;
   locale: string;
-  newsletterOptIn: boolean;
   status: RegistrationIntentStatus;
   createdAt: string;
   verifiedAt: string | null;
@@ -90,10 +85,6 @@ function buildFullName(firstName: string | null, lastName: string | null) {
   return [firstName?.trim() ?? "", lastName?.trim() ?? ""].filter(Boolean).join(" ").trim();
 }
 
-function buildIntentFlags(newsletterOptIn: boolean) {
-  return newsletterOptIn ? REGISTRATION_INTENT_FLAG_NEWSLETTER_OPT_IN : 0;
-}
-
 function mapVerificationRow(
   row: {
     id: number;
@@ -104,7 +95,6 @@ function mapVerificationRow(
     last_name: string | null;
     company_name: string | null;
     locale: string;
-    flags: number;
     status: RegistrationIntentStatus;
     verification_token_expires_at: string;
     verified_at: string | null;
@@ -124,7 +114,6 @@ function mapVerificationRow(
     fullName: buildFullName(row.first_name, row.last_name),
     companyName: row.company_name,
     locale: row.locale,
-    newsletterOptIn: hasPhiFlag(row.flags, REGISTRATION_INTENT_FLAG_NEWSLETTER_OPT_IN),
     status: row.status,
     verificationTokenExpiresAt: row.verification_token_expires_at,
     verifiedAt: row.verified_at,
@@ -144,7 +133,6 @@ export async function createRegistrationIntent(
     ? encryptRegistrationPassword(input.password)
     : null;
   const normalizedEmail = normalizePhiEmail(input.email);
-  const flags = buildIntentFlags(input.newsletterOptIn);
 
   const rows = await withTransaction(async (client) => {
     // Somebody else's address, not the asking account's own: returning to an address this account held
@@ -206,7 +194,6 @@ export async function createRegistrationIntent(
          password_iv,
          password_auth_tag,
          locale,
-         flags,
          verification_token_hash,
          verification_token_expires_at
        )
@@ -222,7 +209,6 @@ export async function createRegistrationIntent(
          $9,
          $10,
          $11,
-         $12,
          NOW() + INTERVAL '24 hours'
        )
        RETURNING id, site_id, email, first_name, last_name, locale, verification_token_expires_at`,
@@ -237,7 +223,6 @@ export async function createRegistrationIntent(
         encryptedPassword?.iv ?? null,
         encryptedPassword?.authTag ?? null,
         input.locale,
-        flags,
         verificationTokenHash,
       ],
     );
@@ -270,7 +255,6 @@ export async function getRegistrationIntentByVerificationToken(siteId: number, t
     last_name: string | null;
     company_name: string | null;
     locale: string;
-    flags: number;
     status: RegistrationIntentStatus;
     verification_token_expires_at: string;
     verified_at: string | null;
@@ -279,7 +263,7 @@ export async function getRegistrationIntentByVerificationToken(siteId: number, t
     password_iv: Buffer | null;
     password_auth_tag: Buffer | null;
   }>(
-    `SELECT id, site_id, user_id, email, first_name, last_name, company_name, locale, flags, status,
+    `SELECT id, site_id, user_id, email, first_name, last_name, company_name, locale, status,
             verification_token_expires_at, verified_at, consumed_at,
             password_ciphertext, password_iv, password_auth_tag
      FROM phis.registration_intents
@@ -359,13 +343,12 @@ export async function getLatestRegistrationIntentProfileByEmail(siteId: number, 
     last_name: string | null;
     company_name: string | null;
     locale: string;
-    flags: number;
     status: RegistrationIntentStatus;
     created_at: string;
     verified_at: string | null;
     consumed_at: string | null;
   }>(
-    `SELECT site_id, email, first_name, last_name, company_name, locale, flags, status,
+    `SELECT site_id, email, first_name, last_name, company_name, locale, status,
             created_at, verified_at, consumed_at
      FROM phis.registration_intents
      WHERE site_id = $1
@@ -388,7 +371,6 @@ export async function getLatestRegistrationIntentProfileByEmail(siteId: number, 
     fullName: buildFullName(row.first_name, row.last_name),
     companyName: row.company_name,
     locale: row.locale,
-    newsletterOptIn: hasPhiFlag(row.flags, REGISTRATION_INTENT_FLAG_NEWSLETTER_OPT_IN),
     status: row.status,
     createdAt: row.created_at,
     verifiedAt: row.verified_at,
@@ -411,14 +393,13 @@ export async function searchLatestRegistrationIntentProfiles(siteId: number, que
     last_name: string | null;
     company_name: string | null;
     locale: string;
-    flags: number;
     status: RegistrationIntentStatus;
     created_at: string;
     verified_at: string | null;
     consumed_at: string | null;
   }>(
     `SELECT DISTINCT ON (COALESCE(email, CONCAT('__consumed__', id::text)))
-        site_id, email, first_name, last_name, company_name, locale, flags, status,
+        site_id, email, first_name, last_name, company_name, locale, status,
         created_at, verified_at, consumed_at, id
      FROM phis.registration_intents
      WHERE site_id = $1
@@ -442,7 +423,6 @@ export async function searchLatestRegistrationIntentProfiles(siteId: number, que
         fullName: buildFullName(row.first_name, row.last_name),
         companyName: row.company_name,
         locale: row.locale,
-        newsletterOptIn: hasPhiFlag(row.flags, REGISTRATION_INTENT_FLAG_NEWSLETTER_OPT_IN),
         status: row.status,
         createdAt: row.created_at,
         verifiedAt: row.verified_at,

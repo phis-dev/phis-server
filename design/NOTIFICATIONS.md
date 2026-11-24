@@ -10,6 +10,15 @@ form go through the outbox. What does not exist: a bulk run that enumerates reci
 a rate limit, bounce handling, and the sent class for an Add-on's occasion -- every declared occasion is
 asked-for.
 
+A second amendment came with the owner's decision of 2026-11-24 that newsletters become an Add-on: **Core
+holds no consent for a circular any more.** The newsletter opt-in bit on the membership is gone, and with
+it every place below that says Core answers whether a person wants a circular. The sending Add-on holds
+that consent and names the recipients it holds it for. Core keeps what makes a circular lawful to send: the
+signed unsubscribe link, now bound to one occasion, the `GET` page and `POST` action, the
+`List-Unsubscribe` header, and a record of who left which occasion (`phis.notification_opt_outs`). Until
+the protocol of §9 exists, `notifyPhiPerson` refuses the sent class outright, and nothing in Core asks for
+it.
+
 One amendment to §1 was made when the first consumer arrived. The small Shop
 ([SHOP.md](./SHOP.md)) writes to guests, who have an address on an order and no user id, so `notify` takes
 a second recipient beside the user id: a **contact**, an address a person gave the Add-on for exactly
@@ -37,7 +46,8 @@ notify({ userId, occasion, params })
 
 The caller names **who** and **what happened**. Core resolves the address from the id, picks the language
 from the profile, renders the words, decides the route, and decides whether the person wants it at all --
-the last of which only Core can answer, because only Core holds the consent bit.
+the last of which only Core can answer, because only Core holds the consent bit. (Superseded for circulars
+on 2026-11-24: the sending Add-on holds their consent, and Core holds the opt-outs; see §9.)
 
 So the capability is `@phis/server/notifications:v1`, not `email:v1`. Two reasons, and the second is the
 one that cannot be repaired later. The caller does not know the transport and has no business knowing it:
@@ -59,7 +69,8 @@ and a Site speaks with one voice whether the occasion came from Core or from an 
 
 It is not a broadcast either. `notify` names one person. An occasion that concerns many people is many
 calls, or -- for Core's own bulk case, §6 -- a run that enumerates recipients inside Core, where the
-consent bit and the address already are.
+consent bit and the address already are. (Superseded on 2026-11-24: the sending Add-on names the
+recipients, §9.)
 
 ## 2. The occasion, and who owns its words
 
@@ -112,7 +123,8 @@ the same move:
   the same lie [design/CONSENT.md](https://github.com/phis-dev/phis-ui/blob/main/design/CONSENT.md) documents for a consent banner over
   strictly necessary cookies, which "suggeriert, dass die Verarbeitung freiwillig ist".
 - **Sent.** Somebody decided to write to people who did not ask today: a news digest. It requires the
-  opt-in bit and must carry the unsubscribe link.
+  opt-in bit and must carry the unsubscribe link. (Since 2026-11-24 the opt-in is the sending Add-on's,
+  and Core skips whoever left the occasion; see §9.)
 
 The class belongs on the declaration, not on the call, so that it is read from the manifest and not
 argued at every call site. An occasion declared as the second class is refused by Core unless the
@@ -198,8 +210,10 @@ Three places where an unsubscribe token is not a reset token:
   `POST`. That is a door in `@phis/ui`, decided against the Skeleton contract rather than around it, and it
   is not this design's to open.
 
-The bit lives on `user_site_memberships`, so a token that outlives the membership finds nothing to clear
-and should say so plainly rather than reporting success. None of this is a consent question:
+Since 2026-11-24 a link records an opt-out of the one occasion it names, in `phis.notification_opt_outs`,
+instead of clearing a bit; the occasion is signed into the link with the recipient. The salt lives beside
+the membership, so a token that outlives the membership finds nothing to verify against and should say so
+plainly rather than reporting success. None of this is a consent question:
 [design/CONSENT.md](https://github.com/phis-dev/phis-ui/blob/main/design/CONSENT.md) governs access to a device, and an unsubscribe link
 is Art. 21 GDPR and § 7 UWG -- an obligation, not a choice to be offered.
 
@@ -221,7 +235,7 @@ is Art. 21 GDPR and § 7 UWG -- an obligation, not a choice to be offered.
 1. The send path: `headers` on `EmailMessage`, the outbox, a `phis maintain` drain, `replyTo`
    generalised.
 2. The unsubscribe link: the token table, the `GET` page and the `POST` action, both list headers. The
-   consent bit already exists.
+   consent bit already exists. (It no longer does, since 2026-11-24; see §9.)
 3. `notifications:v1`: a new id in `PHIS_CORE_CAPABILITIES`, an entry in
    `DELIVERABLE_CAPABILITY_ID_SET`, a field on `PhisAddonCapabilities`, and a
    `buildPhisAddonNotificationsCapability` beside `storage-capability.ts` and `secrets-capability.ts`.
@@ -239,3 +253,39 @@ operation is a category [AGENTS.md](../AGENTS.md) keeps open. What moves a contr
 the token table of step 2 -- both documented in [DB.md](../DB.md) under the migration contract -- and the
 capability of step 3, which is a typed surface in `@phis/contracts`. Of all of it, the capability name is
 the only part that cannot be corrected afterwards.
+
+## 9. Circulars sent by an Add-on
+
+**Status: design, owner, 2026-11-24.** Nothing in this section is built except Core's half of the way out:
+the occasion-bound unsubscribe link and `phis.notification_opt_outs`. It extends the registration
+consents of [ADDONS_PLANNED.md](./ADDONS_PLANNED.md) section 6, which is how an Add-on collects a consent
+in the first place.
+
+Core keeps the machinery of a circular as a tool for every Add-on that sends mail, and the consent goes to
+whoever sends. The protocol:
+
+- **The Add-on declares a circular occasion** in its manifest, beside its asked-for ones, as the second
+  class of §3: for example `newsletter` with the subject "Neuigkeiten". The class is read from the
+  declaration, never argued at the call, as today.
+- **When sending, the Add-on names the recipients it holds consent for.** It names members by id, never by
+  address, as `notify` does. Core writes one outbox row per recipient, resolves the address at the drain,
+  adds the unsubscribe link and the `List-Unsubscribe` header, and skips anyone who left that occasion.
+  The skip is the record in `phis.notification_opt_outs`, keyed by the Add-on's id and the occasion, so
+  leaving one Add-on's newsletter is not leaving another's.
+- **On unsubscribe, Core records the opt-out and the Add-on learns of it.** There are two ways, and the
+  first is preferred:
+  - an event, such as `notification.unsubscribed`, delivered only to the Add-on that declared the
+    occasion, with the subject, the Site and the occasion, facts only, like `user.changed`: the Add-on
+    reads nothing it was not already told, and sets its own consent to withdrawn;
+  - a question the Add-on asks Core, such as whether a member left an occasion, for an Add-on that checks
+    before it sends rather than keeping its own state in step.
+  With the event, the Add-on's consent and Core's record agree without either reading the other's tables.
+  The question stays available for a check at send time, and the drain's skip applies either way.
+- **The Add-on never builds its own unsubscribe links.** The link is Core's: signed with Core's key, bound
+  to the membership and the occasion, and answered by Core's page. An Add-on that put its own link into a
+  circular would have to hold an address or a secret it must not have, and the footer would stop being
+  the one obligation every Site meets the same way.
+
+Coming back is a consent the Add-on takes again, with its own offer (registration, account settings or a
+checkout). Core does not clear an opt-out on the Add-on's word. An opt-out that should be lifted is the
+Add-on's question for the person, not a row it may delete.

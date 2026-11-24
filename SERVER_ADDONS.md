@@ -2277,8 +2277,10 @@ names, is refused at install, which is the only moment the author is there. `rec
 **Every declared occasion is asked-for.** `class` admits `asked-for` and nothing else this release: the
 person's own action is the reason for the message -- an order they placed, a request they made -- so no
 consent bit is consulted and no unsubscribe footer is offered. The sent class, a message somebody decided
-to send to people who did not ask today, is Core's own bulk case with the footer and the headers it owes,
-and is not declarable by an Add-on until the day it is.
+to send to people who did not ask today, is not declarable by an Add-on until the day it is. Core keeps no
+consent for it (owner, 2026-11-24): the Add-on that sends a circular will hold its readers' consent and
+name them, and Core will add the footer and the headers it owes and skip whoever left the occasion
+([design/NOTIFICATIONS.md](./design/NOTIFICATIONS.md) section 9).
 
 **Two recipients.** `{ kind: "user", userId, locale? }` is a member of this Site, named by id: the
 address is resolved when the row is drained, so a corrected address is used and a membership that is gone

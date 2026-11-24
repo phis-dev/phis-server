@@ -9,8 +9,10 @@ type DbQueryable = Pick<PoolClient, "query">;
 /**
  * Bit 0 of `notification_outbox.flags`: the message was sent rather than asked for.
  *
- * It decides two things and they belong together -- whether consent had to be there for the row to be
- * written at all, and whether the rendered mail owes an unsubscribe footer. A message somebody's own
+ * It decides two things and they belong together -- whether the sender had to hold consent for the row
+ * to be written at all, and whether the rendered mail owes an unsubscribe footer. No row carries it
+ * today: Core keeps no consent for circulars (owner, 2026-11-24), and `notifyPhiPerson` refuses the class
+ * until the sending Add-on can name the recipients it holds consent for. A message somebody's own
  * action asked for carries no footer, because offering to withdraw what cannot be withdrawn is the
  * misrepresentation a consent banner over a session cookie makes.
  */
@@ -315,8 +317,8 @@ export async function readPhiNotificationLinkSalt(userId: number, siteId: number
 /**
  * Notes that a verified link was acted on.
  *
- * `last_used_at` moves on every use rather than on the first, because clearing a flag twice is not an error
- * and a second click deserves the same answer as the first.
+ * `last_used_at` moves on every use rather than on the first, because leaving twice is not an error and a
+ * second click deserves the same answer as the first.
  */
 export async function touchPhiNotificationLinkSalt(userId: number, siteId: number) {
   await getPool().query(
@@ -325,6 +327,45 @@ export async function touchPhiNotificationLinkSalt(userId: number, siteId: numbe
      WHERE user_id = $1 AND site_id = $2`,
     [userId, siteId],
   );
+}
+
+/**
+ * Records that this person left one occasion's circulars on this Site, from a link in one of them.
+ *
+ * Answers whether this was news: `false` means the opt-out stood already, which a second press of the
+ * same button is. The row is the fact and nothing more -- Core holds no consent to clear, and whoever
+ * sends that occasion learns of it from here.
+ */
+export async function recordPhiNotificationOptOut(input: {
+  userId: number;
+  siteId: number;
+  providerId: string;
+  occasion: string;
+}) {
+  const { rowCount } = await getPool().query(
+    `INSERT INTO phis.notification_opt_outs (user_id, site_id, provider_id, occasion)
+     VALUES ($1, $2, $3, $4)
+     ON CONFLICT (user_id, site_id, provider_id, occasion) DO NOTHING`,
+    [input.userId, input.siteId, input.providerId, input.occasion],
+  );
+  return (rowCount ?? 0) > 0;
+}
+
+/** Whether this person left this occasion's circulars on this Site. */
+export async function hasPhiNotificationOptOut(input: {
+  userId: number;
+  siteId: number;
+  providerId: string;
+  occasion: string;
+}) {
+  const { rows } = await getPool().query(
+    `SELECT 1
+     FROM phis.notification_opt_outs
+     WHERE user_id = $1 AND site_id = $2 AND provider_id = $3 AND occasion = $4
+     LIMIT 1`,
+    [input.userId, input.siteId, input.providerId, input.occasion],
+  );
+  return rows.length > 0;
 }
 
 /**

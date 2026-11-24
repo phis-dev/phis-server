@@ -6,7 +6,8 @@ against them as if they were normative; the contracts are the documents in the r
 design is built, its settled parts move into the owning contract and leave this directory.
 
 - [ADDONS_PLANNED.md](./ADDONS_PLANNED.md) -- capabilities supplied by Add-ons, mediated Module Storage,
-  sidecar Add-ons, Add-on desired state in the database, and delegated installation.
+  sidecar Add-ons, Add-on desired state in the database, delegated installation, and registration
+  consents an Add-on offers.
 - [AUTHENTICATION_PLANNED.md](./AUTHENTICATION_PLANNED.md) -- passkeys, email and SMS one-time codes, the
   first-Admin setup token, and CLI emergency recovery.
 - [COMMERCE_AND_PAYMENTS.md](./COMMERCE_AND_PAYMENTS.md) -- a small optional Shop, Payment Provider
