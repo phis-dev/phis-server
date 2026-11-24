@@ -36,6 +36,53 @@ const PHI_MAINTENANCE_BATCH_ROWS = 1000;
 const PHI_MAINTENANCE_MAX_BATCHES = 50;
 
 /**
+ * The users:v1 access log past each Site's retention (`sites.users_access_log_days`, 90 days unless the
+ * operator set another with `phis site set --users-access-log-days`), oldest first and in batches.
+ */
+export async function forgetExpiredPhisUsersAccessLog(
+  pool: Pool,
+  { dryRun = false, signal }: PhiMaintenanceStepOptions = {},
+): Promise<PhiMaintenanceOutcome> {
+  const expired = `l.created_at < NOW() - make_interval(days => s.users_access_log_days)`;
+  if (dryRun) {
+    const { rows } = await pool.query<{ count: string }>(
+      `SELECT COUNT(*)::text AS count
+         FROM phis.users_access_log l
+         JOIN phis.sites s ON s.id = l.site_id
+        WHERE ${expired}`,
+    );
+    const count = Number(rows[0]?.count ?? "0");
+    return { cleared: 0, detail: `Would forget ${count} access log entr${count === 1 ? "y" : "ies"} past their Site's retention.` };
+  }
+  let cleared = 0;
+  let more = false;
+  for (let batch = 0; batch < PHI_MAINTENANCE_MAX_BATCHES; batch += 1) {
+    if (signal?.aborted) break;
+    const { rowCount } = await pool.query(
+      `DELETE FROM phis.users_access_log
+        WHERE id IN (
+          SELECT l.id FROM phis.users_access_log l
+            JOIN phis.sites s ON s.id = l.site_id
+           WHERE ${expired}
+           ORDER BY l.id
+           LIMIT $1::int
+             FOR UPDATE OF l SKIP LOCKED)`,
+      [PHI_MAINTENANCE_BATCH_ROWS],
+    );
+    const removed = rowCount ?? 0;
+    cleared += removed;
+    if (removed < PHI_MAINTENANCE_BATCH_ROWS) break;
+    if (batch === PHI_MAINTENANCE_MAX_BATCHES - 1) more = true;
+  }
+  return {
+    cleared,
+    detail: cleared === 0
+      ? "Nothing past its Site's retention."
+      : `${cleared} access log entr${cleared === 1 ? "y" : "ies"}${more ? "; more may be due, run again" : ""}.`,
+  };
+}
+
+/**
  * Reservations of uploads that were never completed, across every Space.
  *
  * The request path already releases these for the Space it is reserving against, and the reader already

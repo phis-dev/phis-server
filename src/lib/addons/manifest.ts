@@ -8,6 +8,7 @@ import { PHIS_ADDON_ID_PATTERN } from "./schema-name.ts";
 import {
   PHIS_ADDON_ABI_VERSION,
   PHIS_ADDON_EVENTS,
+  PHIS_CORE_CAPABILITIES,
   PHIS_ADDON_JOB_INTERVALS,
   PHIS_ADDON_MANIFEST_VERSION,
   PHIS_SITE_ACCESS,
@@ -20,6 +21,7 @@ import {
 } from "./contract.ts";
 import { isPhiRecord } from "../helpers/record.ts";
 import { PhiMediaKind } from "@phis/contracts/media";
+import { PHIS_USER_FIELDS } from "@phis/contracts/users";
 import { normalizePhisProductDraft } from "./product-draft.ts";
 
 /**
@@ -995,6 +997,46 @@ export function validatePhisAddonManifest(
           }
           assertUnique(kinds.filter((kind): kind is string => typeof kind === "string"), "media.kinds", issues);
         }
+      }
+    }
+  }
+
+  /*
+   * What the Add-on reads of a person through `users:v1`, which Core holds every road to: stated with the
+   * capability and only with it, every field one of the contract's, and the background fields -- those it
+   * reads with nobody acting, once the Site's admin granted them -- a part of the fields.
+   */
+  const requiresUsers = requiredIds.includes(PHIS_CORE_CAPABILITIES.users);
+  if (value.users === undefined) {
+    if (requiresUsers) {
+      issues.push(`users must be stated with ${PHIS_CORE_CAPABILITIES.users}: the fields this Add-on reads of a person.`);
+    }
+  } else if (!requiresUsers) {
+    issues.push(`users is stated without requiring ${PHIS_CORE_CAPABILITIES.users}.`);
+  } else if (!isPhiRecord(value.users)) {
+    issues.push("users must be an object when it is stated at all.");
+  } else {
+    for (const key of Object.keys(value.users)) {
+      if (key !== "fields" && key !== "background") issues.push(`users.${key} is not part of users; users states fields and background.`);
+    }
+    const readFields = (list: unknown, field: string, nonEmpty: boolean) => {
+      if (!Array.isArray(list) || (nonEmpty && list.length === 0)) {
+        issues.push(`${field} must be ${nonEmpty ? "a non-empty" : "an"} array of ${PHIS_USER_FIELDS.join(", ")}.`);
+        return [];
+      }
+      for (const [index, entry] of list.entries()) {
+        if (typeof entry !== "string" || !(PHIS_USER_FIELDS as readonly string[]).includes(entry)) {
+          issues.push(`${field}[${index}] must be one of ${PHIS_USER_FIELDS.join(", ")}.`);
+        }
+      }
+      const named = list.filter((entry): entry is string => typeof entry === "string");
+      assertUnique(named, field, issues);
+      return named;
+    };
+    const fields = readFields(value.users.fields, "users.fields", true);
+    if (value.users.background !== undefined) {
+      for (const field of readFields(value.users.background, "users.background", false)) {
+        if (!fields.includes(field)) issues.push(`users.background names ${field}, which users.fields does not list.`);
       }
     }
   }

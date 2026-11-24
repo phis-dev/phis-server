@@ -20,6 +20,9 @@ CREATE TABLE IF NOT EXISTS phis.sites (
   -- How many whole days an entitlement bound to a subscription goes on counting after its paid period, as
   -- long as the subscription has not ended (entitlements:v1). 0 ends it with the period.
   entitlement_grace_days SMALLINT NOT NULL DEFAULT 14 CHECK (entitlement_grace_days BETWEEN 0 AND 14),
+  -- How many whole days the Site keeps its users:v1 access log (`users_access_log`): every answer that
+  -- carried a person's data to an Add-on. The Core job `users-access-log.prune` drops older rows.
+  users_access_log_days SMALLINT NOT NULL DEFAULT 90 CHECK (users_access_log_days BETWEEN 1 AND 3650),
   flags INT NOT NULL DEFAULT 0,
   theme JSONB NOT NULL DEFAULT '{}'::jsonb,
   public_base_url VARCHAR(512) NOT NULL,
@@ -107,8 +110,12 @@ CREATE TABLE IF NOT EXISTS phis.user_profiles (
   -- first and last name stand in for it, and an e-mail address never does.
   display_name VARCHAR(128) NULL,
   company_name VARCHAR(256) NULL,
+  -- Business telephone and mobile number as the person typed them, valid on every Site as the names are
+  -- (users:v1 `phone`). The digits-only forms are derived, never written, and are what a search matches.
   phone VARCHAR(64) NULL,
   mobile VARCHAR(64) NULL,
+  phone_digits VARCHAR(64) GENERATED ALWAYS AS (NULLIF(regexp_replace(phone, '[^0-9]', '', 'g'), '')) STORED,
+  mobile_digits VARCHAR(64) GENERATED ALWAYS AS (NULLIF(regexp_replace(mobile, '[^0-9]', '', 'g'), '')) STORED,
   fax VARCHAR(64) NULL,
   address_1 VARCHAR(255) NULL,
   address_2 VARCHAR(255) NULL,
@@ -2720,7 +2727,8 @@ CREATE TABLE IF NOT EXISTS phis.addon_event_outbox (
   CONSTRAINT addon_event_outbox_event_check CHECK (event <> ''),
   CONSTRAINT addon_event_outbox_hop_check CHECK (hop >= 0),
   CONSTRAINT addon_event_outbox_subject_check CHECK (
-    (subject_kind = 'thread' AND thread_id IS NOT NULL AND payment_id IS NULL AND subscription_id IS NULL AND emitter IS NULL AND event NOT IN ('payment.changed', 'entitlement.changed', 'product.changed', 'asset.changed') AND event NOT LIKE '@%') OR
+    (subject_kind = 'thread' AND thread_id IS NOT NULL AND payment_id IS NULL AND subscription_id IS NULL AND emitter IS NULL AND event NOT IN ('payment.changed', 'entitlement.changed', 'product.changed', 'asset.changed', 'user.registered', 'user.changed') AND event NOT LIKE '@%') OR
+    (subject_kind = 'user' AND thread_id IS NULL AND payment_id IS NULL AND subscription_id IS NULL AND emitter IS NULL AND event IN ('user.registered', 'user.changed')) OR
     (subject_kind = 'entitlement' AND thread_id IS NULL AND payment_id IS NULL AND subscription_id IS NULL AND emitter IS NULL AND event = 'entitlement.changed') OR
     (subject_kind = 'asset' AND thread_id IS NULL AND payment_id IS NULL AND subscription_id IS NULL AND emitter IS NULL AND event = 'asset.changed') OR
     (subject_kind = 'product' AND thread_id IS NULL AND payment_id IS NULL AND subscription_id IS NULL AND emitter IS NULL AND event = 'product.changed') OR
@@ -2893,6 +2901,90 @@ CREATE TABLE IF NOT EXISTS phis.entitlement_sources (
     ((flags & 1) <> 0 AND cardinality(suppliers) = 0) OR ((flags & 1) = 0 AND cardinality(suppliers) > 0)
   )
 );
+
+-- A Site's address book (users:v1, SERVER_ADDONS.md). An entry never changes its text: a change is a new
+-- row naming the one it follows (`replaces_id`), and the old one is marked Superseded, so an order or an
+-- invoice keeps the address it was made out to. A guest's address (a checkout without an account) is a
+-- row without a person. Deleting the account keeps the rows, as a guest's, for the records that point
+-- at them.
+-- flags, the contract's `PhisSiteAddressFlags` in the low bits: 1 = billing, 2 = shipping, 4 = default
+-- billing, 8 = default shipping, 16 = superseded, 32 = removed. Core's own above them, never answered:
+-- 65536 = handed out, set once the address was answered to an Add-on (createAddress, addresses,
+-- describe). Core cannot see an Add-on's records, so a handed-out address is what may be pointed at:
+-- removing it keeps it as Removed, removing one never handed out deletes it.
+CREATE TABLE IF NOT EXISTS phis.site_addresses (
+  id SERIAL PRIMARY KEY,
+  site_id SMALLINT NOT NULL REFERENCES phis.sites(id) ON DELETE CASCADE,
+  user_id INT NULL REFERENCES phis.user_accounts(id) ON DELETE SET NULL,
+  flags INT NOT NULL DEFAULT 0,
+  company_name VARCHAR(256) NULL,
+  name VARCHAR(256) NOT NULL,
+  line1 VARCHAR(256) NOT NULL,
+  line2 VARCHAR(256) NULL,
+  postal_code VARCHAR(32) NULL,
+  city VARCHAR(128) NOT NULL,
+  region VARCHAR(128) NULL,
+  country CHAR(2) NOT NULL,
+  replaces_id INT NULL REFERENCES phis.site_addresses(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT site_addresses_country_check CHECK (country ~ '^[A-Z]{2}$'),
+  CONSTRAINT site_addresses_purpose_check CHECK ((flags & 3) <> 0)
+);
+
+-- A person's addresses on a Site, which every proposal and every change reads.
+CREATE INDEX IF NOT EXISTS site_addresses_person_idx
+  ON phis.site_addresses (site_id, user_id)
+  WHERE user_id IS NOT NULL;
+
+-- At most one default billing and one default shipping address per person and Site; a default moves.
+CREATE UNIQUE INDEX IF NOT EXISTS site_addresses_default_billing_unique
+  ON phis.site_addresses (site_id, user_id)
+  WHERE user_id IS NOT NULL AND (flags & 4) <> 0;
+CREATE UNIQUE INDEX IF NOT EXISTS site_addresses_default_shipping_unique
+  ON phis.site_addresses (site_id, user_id)
+  WHERE user_id IS NOT NULL AND (flags & 8) <> 0;
+
+-- The Site's admin letting an Add-on read people without an acting person (users:v1 background access),
+-- per Site and until withdrawn: the row is the grant, deleting it withdraws it. `fields` are the fields
+-- granted as bits in the order of `PHIS_USER_FIELDS` (1 = name, 2 = email, 4 = phone, 8 = address); what
+-- counts is their intersection with the manifest's `users.background`, so a manifest that asks for more
+-- keeps the old grant until the admin grants again. `granted_by_user_id` is NULL where the operator
+-- granted it from the command line.
+CREATE TABLE IF NOT EXISTS phis.addon_users_grants (
+  site_id SMALLINT NOT NULL REFERENCES phis.sites(id) ON DELETE CASCADE,
+  addon_id VARCHAR(255) NOT NULL REFERENCES phis.server_addons(addon_id) ON DELETE CASCADE,
+  fields SMALLINT NOT NULL,
+  granted_by_user_id INT NULL REFERENCES phis.user_accounts(id) ON DELETE SET NULL,
+  granted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (site_id, addon_id),
+  CONSTRAINT addon_users_grants_fields_check CHECK (fields BETWEEN 1 AND 15)
+);
+
+-- Every users:v1 answer that carried a person's data, kept for the Site's `users_access_log_days`: who
+-- asked (`actor_user_id`, NULL without an acting person), through which Add-on, by which road
+-- (1 = staff, 2 = self, 3 = background, 4 = checkout: a guest's address written without either), with
+-- which call (`operation`: 1 = describe, 2 = addresses, 3 = createAddress), about which subjects and
+-- addresses, and which fields (bits as in `addon_users_grants`). No foreign keys besides the Site: the
+-- log outlives the Add-on, the account and the address it names.
+CREATE TABLE IF NOT EXISTS phis.users_access_log (
+  id BIGSERIAL PRIMARY KEY,
+  site_id SMALLINT NOT NULL REFERENCES phis.sites(id) ON DELETE CASCADE,
+  addon_id VARCHAR(255) NOT NULL,
+  actor_user_id INT NULL,
+  road SMALLINT NOT NULL,
+  operation SMALLINT NOT NULL,
+  subjects VARCHAR(40)[] NOT NULL DEFAULT '{}',
+  address_ids INT[] NOT NULL DEFAULT '{}',
+  fields SMALLINT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT users_access_log_road_check CHECK (road BETWEEN 1 AND 4),
+  CONSTRAINT users_access_log_operation_check CHECK (operation BETWEEN 1 AND 3),
+  CONSTRAINT users_access_log_fields_check CHECK (fields BETWEEN 1 AND 15)
+);
+
+-- The Site's log in order, and the retention job's walk.
+CREATE INDEX IF NOT EXISTS users_access_log_site_idx
+  ON phis.users_access_log (site_id, created_at);
 
 -- Every secret the server holds, encrypted, so more than one instance can read them.
 --

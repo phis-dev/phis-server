@@ -165,6 +165,9 @@ import {
   type PhisPaymentReprobe,
 } from "./payments.mts";
 import { runPhisEntitlementCommand } from "./entitlements.mts";
+import { runPhisAddonUsersCommand } from "./users.mts";
+import { listUserListenersOf } from "../lib/addons/commerce-listeners.ts";
+import { PHIS_USERS_ACCESS_LOG_MAX_DAYS } from "../lib/constants/users.ts";
 import { runPhisProductCommand } from "./products.mts";
 import { reconcileProductSupplyAfterChange, syncAddonProductsAtSite } from "./product-sync.mts";
 import {
@@ -409,7 +412,7 @@ Usage:
                 --source-locale <locale> --default-locale <locale> [--available-locales <csv>]
                 --support-email|-e <email> [--time-zone <iana zone>]
   phis site set --key|-k <site key> [--name|-n <site name>] [--hostname|-h <hostname>] [--public-base-url|-u <url>] [--support-email|-e <email>] [--time-zone <iana zone>]
-                 [--entitlement-grace-days <0-14>]
+                 [--entitlement-grace-days <0-14>] [--users-access-log-days <1-3650>]
   phis site enable --key|-k <site key>
   phis site disable --key|-k <site key>
   phis site del --key|-k <site key>
@@ -469,6 +472,8 @@ Usage:
   phis addon commands [--addon <@scope/name>]
   phis addon command --addon <@scope/name> --command <command id> --site <site key> --as <email|user id>
                      [--input <json|@file|->] --api-base-url <url>
+  phis addon users   --site <site key> [--addon <@scope/name>]
+  phis addon users   --site <site key> --addon <@scope/name> --grant [--fields <name,email,phone,address>] | --revoke
 
   phis storage list  --site <site key>
   phis storage add   --site <site key> --key <profile key> --provider <provider id>
@@ -2429,7 +2434,7 @@ async function printSites(flags: FlagMap, json: boolean) {
 
   for (const site of sites) {
     console.log(
-      `${site.key}  enabled=${site.enabled ? "true" : "false"}  hostname=${site.hostname}  entitlement-grace-days=${site.entitlementGraceDays}  name=${site.name}`,
+      `${site.key}  enabled=${site.enabled ? "true" : "false"}  hostname=${site.hostname}  entitlement-grace-days=${site.entitlementGraceDays}  users-access-log-days=${site.usersAccessLogDays}  name=${site.name}`,
     );
   }
 }
@@ -2538,9 +2543,15 @@ async function updateSiteFields(flags: FlagMap, json: boolean) {
   }
   const entitlementGraceDays = graceFlag === undefined ? undefined : Number(graceFlag);
 
-  if (!name && !supportEmail && !hostname && !publicBaseUrl && !timeZone && entitlementGraceDays === undefined) {
+  const accessLogFlag = getOptionalFlag(flags, "users-access-log-days");
+  if (accessLogFlag !== undefined && (!/^\d{1,4}$/.test(accessLogFlag) || Number(accessLogFlag) < 1 || Number(accessLogFlag) > PHIS_USERS_ACCESS_LOG_MAX_DAYS)) {
+    throw new Error(`--users-access-log-days is a whole number of days from 1 to ${PHIS_USERS_ACCESS_LOG_MAX_DAYS}.`);
+  }
+  const usersAccessLogDays = accessLogFlag === undefined ? undefined : Number(accessLogFlag);
+
+  if (!name && !supportEmail && !hostname && !publicBaseUrl && !timeZone && entitlementGraceDays === undefined && usersAccessLogDays === undefined) {
     throw new Error(
-      "Nothing to set. Provide at least --name, --hostname, --public-base-url, --support-email, --time-zone, or --entitlement-grace-days.",
+      "Nothing to set. Provide at least --name, --hostname, --public-base-url, --support-email, --time-zone, --entitlement-grace-days, or --users-access-log-days.",
     );
   }
 
@@ -2561,6 +2572,7 @@ async function updateSiteFields(flags: FlagMap, json: boolean) {
     supportEmail,
     timeZone,
     entitlementGraceDays,
+    usersAccessLogDays,
     mailFrom: `no-reply@${mailHost}`,
     mailFromName: name ?? current.name,
     contactRecipient: nextSupportEmail,
@@ -2580,6 +2592,7 @@ async function updateSiteFields(flags: FlagMap, json: boolean) {
       supportEmail: updated.supportEmail,
       timeZone: updated.timeZone,
       entitlementGraceDays: updated.entitlementGraceDays,
+      usersAccessLogDays: updated.usersAccessLogDays,
     });
     return;
   }
@@ -2756,6 +2769,10 @@ async function grantSiteAdmin(flags: FlagMap, json: boolean) {
     preferredLocale: site.defaultLocale,
     firstName: typeof firstName === "string" ? firstName : null,
     lastName: typeof lastName === "string" ? lastName : null,
+    userListeners: listUserListenersOf(
+      Object.fromEntries(readAddonDesiredState(configRoot).addons.map((entry) => [entry.addonId, { enabled: entry.enabled, manifest: entry.manifest }])),
+      "user.registered",
+    ),
   });
 
   if (json) {
@@ -4107,6 +4124,21 @@ async function main() {
 
   if (group === "addon" && command === "role") {
     await runAddonRoleCommand(flags, json);
+    return;
+  }
+
+  if (group === "addon" && command === "users") {
+    const site = await getSiteByKey(getRequiredFlag(flags, "site"));
+    const result = await runPhisAddonUsersCommand(getPool(), {
+      site,
+      addons: readAddonDesiredState(configRoot).addons,
+      flags,
+    });
+    if (json) {
+      printJson(result.data);
+    } else {
+      for (const line of result.lines) console.log(line);
+    }
     return;
   }
 

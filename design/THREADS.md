@@ -502,6 +502,11 @@ idempotent on `externalRef`, `setStatus`, `findByExternalRef`. A reply is writte
 `author_kind = Integration`. `Internal` messages are never handed to an actorless Add-on;
 `Confidential` ones arrive with their bodies withheld.
 
+With an actor, `create` and `reply` keep `externalRef` under the calling Add-on too, while the message
+is the person's (`thread_message_refs` flag `0`): `reply` is idempotent on it either way, so a
+redelivered event writes once, `findByExternalRef` finds the thread, and `amendImported` cannot reach a
+person's message.
+
 ## 10. Verified hooks
 
 A hook descriptor gains:

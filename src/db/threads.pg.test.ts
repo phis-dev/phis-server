@@ -857,6 +857,29 @@ describe("threads", () => {
       expect(await fileRows(site, customer)).toHaveLength(1);
     });
 
+    it("writes a message an Add-on sends for a person once per reference, however often the event is delivered", async () => {
+      const site = await createPhiTestSite("threads-file-reference");
+      const accountant = await staffOf(site, PhiBaseRole.Accountant);
+      const customer = await createPhiTestUser(site);
+      const pool = await requirePhiTestDatabase();
+      const asAccountant = actingAs(site, accountant);
+      const { threadId } = (await asAccountant.fileOf({ subject: await ensureEntitlementSubject(pool, site.id, customer) }))!;
+
+      const reply = { threadId, message: "Order 1001 refunded.", externalRef: "order-1001-refunded" };
+      await asAccountant.reply(reply);
+      const again = await asAccountant.reply(reply);
+      expect(again?.messages.map((message) => message.bodyText)).toEqual(["Order 1001 refunded."]);
+      // The message is the person's, the reference the Add-on's: no import, nothing for the Add-on to amend.
+      const { rows } = await pool.query<{ flags: number; author_user_id: number | null; author_provider_id: string | null }>(
+        `SELECT ref.flags, message.author_user_id, message.author_provider_id
+         FROM phis.thread_message_refs ref JOIN phis.thread_messages message ON message.id = ref.message_id
+         WHERE ref.site_id = $1 AND ref.provider_id = $2 AND ref.external_id = $3`,
+        [site.id, ADDON_ID, reply.externalRef],
+      );
+      expect(rows).toEqual([{ flags: 0, author_user_id: accountant, author_provider_id: null }]);
+      expect(await actingAs(site, null).amendImported({ externalRef: reply.externalRef, message: "Changed." })).toBe(false);
+    });
+
     it("answers only staff holding support or accounting, nobody without an actor, null for whoever is no member here", async () => {
       const site = await createPhiTestSite("threads-file-refuse");
       const elsewhere = await createPhiTestSite("threads-file-elsewhere");

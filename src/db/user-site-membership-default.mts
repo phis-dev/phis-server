@@ -5,17 +5,19 @@ import type { PoolClient } from "pg";
  *
  * What registering an account and `phis site admin` both do before anything else about the Site, and
  * the one place a new membership's starting flags are stated. Free of `server-only`, because the CLI
- * writes it too; the caller owns the transaction.
+ * writes it too; the caller owns the transaction. True when the person became a member now, which owes
+ * `user.registered` (`enqueuePhisUserEvent`).
  */
 export async function ensurePhiDefaultSiteMembership(
   db: Pick<PoolClient, "query">,
   userId: number,
   siteId: number,
-) {
-  await db.query(
+): Promise<boolean> {
+  const { rowCount } = await db.query(
     `INSERT INTO phis.user_site_memberships (user_id, site_id, user_site_flags)
      VALUES ($1, $2, 0)
      ON CONFLICT (user_id, site_id) DO NOTHING`,
     [userId, siteId],
   );
+  return (rowCount ?? 0) > 0;
 }

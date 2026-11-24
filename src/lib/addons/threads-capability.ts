@@ -134,6 +134,8 @@ export function buildPhisAddonThreadsCapability(input: {
         // conversation open at all.
         ownerProviderId: actorUserId == null ? addonId : null,
         externalRef: createInput.externalRef ?? null,
+        // Acting for a person, the reference is still this Add-on's, so it finds the thread again.
+        referenceProviderId: addonId,
         externalAuthor: createInput.externalAuthor ?? null,
       });
       if (!detail) {
@@ -154,6 +156,8 @@ export function buildPhisAddonThreadsCapability(input: {
         messageFlags: replyInput.messageFlags,
         assetIds: replyInput.assetIds,
         externalRef: replyInput.externalRef ?? null,
+        // Acting for a person too: a redelivered event finds the message it wrote and writes nothing.
+        referenceProviderId: addonId,
         externalAuthor: replyInput.externalAuthor ?? null,
       });
     },
@@ -188,13 +192,14 @@ export function buildPhisAddonThreadsCapability(input: {
       requireBelievableCaller("fileOf");
       if (actorUserId == null) {
         /*
-         * TODO(users:v1 background grant): without an actor the contract answers an Add-on to which the
-         * Site's admin granted background access to `users:v1` (manifest `users.background`). Core has no
-         * such grant yet, so nobody is answered without an actor; with the grant this checks it, and
-         * `readerPredicate` in src/db/threads.ts opens files to the same Add-on for `reply`.
+         * TODO(owner decision): without an actor the contract answers an Add-on to which the Site's admin
+         * granted background access to `users:v1` (manifest `users.background`, `phis.addon_users_grants`).
+         * The grant exists now; whether it opens a person's file -- which fields of it would, and whether
+         * `readerPredicate` in src/db/threads.ts then reaches files for `reply` -- is not decided, so
+         * nobody is answered without an actor (TODOS.md).
          */
         throw new PhisAddonThreadsError(
-          `${addonId} called threads.fileOf with no acting user; without one a person's file is for an Add-on with background access to users:v1 on this Site, which this Site has not granted.`,
+          `${addonId} called threads.fileOf with no acting user; a person's file is not handed out without one.`,
         );
       }
       const holds = await input.readSiteAccess();

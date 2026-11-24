@@ -1,4 +1,4 @@
-import { randomBytes, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 
 import type { Pool, PoolClient } from "pg";
 
@@ -15,6 +15,7 @@ import { PHIS_ENTITLEMENT_SOURCE_FLAG_ALL_PRODUCTS, PHIS_PRODUCT_FLAG } from "..
 import { PHI_SITE_SERVER_ADDON_FLAG_REQUESTED_ENABLED } from "../lib/constants/server-addons.ts";
 import { splitPhisProductId } from "../lib/addons/product-draft.ts";
 import { ENTRY_PRODUCT_JOIN_SQL } from "./products.mts";
+import { newEntitlementSubjectReference } from "./entitlement-subject-reference.mts";
 
 /** Pool or client alike: every read here is equally correct inside a caller's transaction and outside. */
 type DbQueryable = Pick<PoolClient, "query">;
@@ -122,22 +123,13 @@ function mapEntry(row: EntryRow): PhisEntitlement {
   };
 }
 
-/** `sub_` and 24 characters of base 36: about 124 bits, which nobody guesses and nobody needs to read. */
-function newSubjectReference(): PhisEntitlementSubject {
-  let text = "";
-  for (const byte of randomBytes(24)) {
-    text += (byte % 36).toString(36);
-  }
-  return `sub_${text}`;
-}
-
 /** The subject of one person on one Site, issued on first asking and the same ever after. */
 export async function ensureEntitlementSubject(db: Pool, siteId: number, userId: number): Promise<PhisEntitlementSubject> {
   await db.query(
     `INSERT INTO phis.entitlement_subjects (site_id, user_id, reference)
      VALUES ($1::smallint, $2::int, $3)
      ON CONFLICT (site_id, user_id) DO NOTHING`,
-    [siteId, userId, newSubjectReference()],
+    [siteId, userId, newEntitlementSubjectReference()],
   );
   const { rows } = await db.query<{ reference: string }>(
     `SELECT reference FROM phis.entitlement_subjects WHERE site_id = $1 AND user_id = $2`,
@@ -157,7 +149,7 @@ export async function ensureMemberEntitlementSubject(db: Pool, siteId: number, u
     `INSERT INTO phis.entitlement_subjects (site_id, user_id, reference)
      SELECT $1::smallint, $2::int, $3 WHERE ${member}
      ON CONFLICT (site_id, user_id) DO NOTHING`,
-    [siteId, userId, newSubjectReference()],
+    [siteId, userId, newEntitlementSubjectReference()],
   );
   const { rows } = await db.query<{ reference: string }>(
     `SELECT s.reference FROM phis.entitlement_subjects s WHERE s.site_id = $1 AND s.user_id = $2 AND ${member}`,

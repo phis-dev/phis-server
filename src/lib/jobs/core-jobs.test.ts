@@ -14,6 +14,7 @@ const MAINTENANCE_JOBS: Record<string, { jobId: string; every: string; at?: stri
   "addon-assets": { jobId: "addon-assets.collect", every: "daily", at: "02:40" },
   "support-requester-window": { jobId: "support-tickets.close", every: "daily", at: "02:55" },
   payments: { jobId: "payments.recover", every: "hourly" },
+  "users-access-log": { jobId: "users-access-log.prune", every: "daily", at: "03:10" },
 };
 
 describe("Core's own jobs", () => {

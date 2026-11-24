@@ -83,7 +83,7 @@ export const PHIS_COMMAND_FLAGS: Record<string, FlagSpec> = {
     key: S, name: S, hostname: S, "public-base-url": S, "source-locale": S, "default-locale": S,
     "available-locales": S, "support-email": S, email: S, "time-zone": S,
   },
-  "site set": { key: S, name: S, hostname: S, "public-base-url": S, "support-email": S, email: S, "time-zone": S, "entitlement-grace-days": S },
+  "site set": { key: S, name: S, hostname: S, "public-base-url": S, "support-email": S, email: S, "time-zone": S, "entitlement-grace-days": S, "users-access-log-days": S },
   "site enable": { key: S },
   "site disable": { key: S },
   "site del": { key: S },
@@ -137,6 +137,9 @@ export const PHIS_COMMAND_FLAGS: Record<string, FlagSpec> = {
   "addon jobs": { addon: S, site: S, limit: S },
   "addon commands": { addon: S },
   "addon command": { addon: S, command: S, site: S, as: S, input: S, "api-base-url": S },
+  // Background access to users:v1 per Site: list without a switch, `--grant` the fields the manifest asks
+  // for (or those named in `--fields`), `--revoke` withdraws.
+  "addon users": { site: S, addon: S, grant: B, revoke: B, fields: S },
 
   "mail drain": { limit: S, "api-base-url": S },
   "email test": { to: S, site: S },

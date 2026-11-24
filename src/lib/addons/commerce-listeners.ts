@@ -1,14 +1,14 @@
-import { PHIS_ADDON_EVENTS, type PhisAddonManifestV1 } from "@phis/contracts/addon";
+import { PHIS_ADDON_EVENTS, PHIS_CORE_CAPABILITIES, type PhisAddonManifestV1 } from "@phis/contracts/addon";
 
 /**
- * The listeners of Core's two commerce events, and what an installed-manifest reading yields.
+ * The listeners of Core's commerce and user events, and what an installed-manifest reading yields.
  *
  * Pure, and not `server-only`: the server reads the entries from `getPhisAddonInstalledManifest()`, the
  * CLI from the desired state on disk, and both get the same answer from the same shape.
  */
 export type PhisInstalledManifestEntries = Record<
   string,
-  { enabled: boolean; manifest: Pick<PhisAddonManifestV1, "eventHandlers"> }
+  { enabled: boolean; manifest: Pick<PhisAddonManifestV1, "eventHandlers" | "requiredCoreCapabilities"> }
 >;
 
 function listenersOf(entries: PhisInstalledManifestEntries, event: string): string[] {
@@ -24,3 +24,11 @@ export const listEntitlementListenersOf = (entries: PhisInstalledManifestEntries
 /** The enabled Add-ons that declare a handler for `product.changed`. */
 export const listProductListenersOf = (entries: PhisInstalledManifestEntries) =>
   listenersOf(entries, PHIS_ADDON_EVENTS.productChanged);
+
+/**
+ * The enabled Add-ons that require `users:v1` and declare a handler for a user event: a person's events
+ * reach only an Add-on that may read people at all, never one that merely listens.
+ */
+export const listUserListenersOf = (entries: PhisInstalledManifestEntries, event: "user.registered" | "user.changed") =>
+  listenersOf(entries, event).filter((addonId) =>
+    entries[addonId]!.manifest.requiredCoreCapabilities.includes(PHIS_CORE_CAPABILITIES.users));

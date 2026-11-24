@@ -2,7 +2,8 @@ import "server-only";
 
 import type { PoolClient } from "pg";
 
-import { getPool, withTransactionOn } from "@/lib/db";
+import { getPool, withTransaction, withTransactionOn } from "@/lib/db";
+import { announcePhisUserEvent, schedulePhisUserEventDelivery } from "@/lib/addons/user-events";
 import {
   PHI_CORE_ROLE_PROVIDER_ID,
   type PhiRoleProviderId,
@@ -170,8 +171,9 @@ export async function upsertUserSiteMembership(input: {
   coreRoleFlags?: number;
   userSiteFlags?: number;
 }, db?: PoolClient) {
-  return withTransactionOn(db, async (client) => {
-    const { rows } = await client.query<UserSiteMembershipRecord>(
+  let registered: number[] = [];
+  const membership = await withTransactionOn(db, async (client) => {
+    const { rows } = await client.query<UserSiteMembershipRecord & { inserted?: boolean }>(
       `INSERT INTO phis.user_site_memberships (
          user_id, site_id, user_site_flags
        )
@@ -180,9 +182,13 @@ export async function upsertUserSiteMembership(input: {
        SET user_site_flags = COALESCE($3::integer, phis.user_site_memberships.user_site_flags),
            updated_at = NOW()
        RETURNING id, user_id, site_id, user_site_flags, authorization_revision,
-                 last_login_at, created_at, updated_at`,
+                 last_login_at, created_at, updated_at, (xmax = 0) AS inserted`,
       [input.userId, input.siteId, input.userSiteFlags ?? null],
     );
+    // Becoming a member owes `user.registered` on this Site (users:v1).
+    if (rows[0]?.inserted) {
+      registered = await announcePhisUserEvent(client, { userId: input.userId, siteIds: [input.siteId], event: "user.registered" });
+    }
     if (input.coreRoleFlags !== undefined) {
       const before = await readRoleClaims(client, input.userId, input.siteId);
       const previous =
@@ -216,19 +222,28 @@ export async function upsertUserSiteMembership(input: {
     const roleClaims = await readRoleClaims(client, input.userId, input.siteId);
     return mapMembership(rows[0], roleClaims);
   });
+  schedulePhisUserEventDelivery(registered);
+  return membership;
 }
 
+/** Records a sign-in; one that makes the person a member of the Site owes `user.registered` there. */
 export async function recordUserSiteLogin(userId: number, siteId: number) {
-  const pool = getPool();
-  await pool.query(
-    `INSERT INTO phis.user_site_memberships (
-       user_id, site_id, user_site_flags, last_login_at
-     )
-     VALUES ($1, $2, 0, NOW())
-     ON CONFLICT (user_id, site_id) DO UPDATE
-     SET last_login_at = NOW(), updated_at = NOW()`,
-    [userId, siteId],
-  );
+  const registered = await withTransaction(async (client) => {
+    const { rows } = await client.query<{ inserted: boolean }>(
+      `INSERT INTO phis.user_site_memberships (
+         user_id, site_id, user_site_flags, last_login_at
+       )
+       VALUES ($1, $2, 0, NOW())
+       ON CONFLICT (user_id, site_id) DO UPDATE
+       SET last_login_at = NOW(), updated_at = NOW()
+       RETURNING (xmax = 0) AS inserted`,
+      [userId, siteId],
+    );
+    return rows[0]?.inserted
+      ? announcePhisUserEvent(client, { userId, siteIds: [siteId], event: "user.registered" })
+      : [];
+  });
+  schedulePhisUserEventDelivery(registered);
 }
 
 /**

@@ -9,6 +9,7 @@ import {
 
 import { withPoolTransaction } from "../lib/db-transaction.ts";
 import { ensurePhiDefaultSiteMembership } from "./user-site-membership-default.mts";
+import { enqueuePhisUserEvent } from "./user-events.mts";
 
 /**
  * Site administrators, from the operator's side.
@@ -65,6 +66,8 @@ export async function grantPhiCliSiteAdmin(
     preferredLocale?: string | null;
     firstName?: string | null;
     lastName?: string | null;
+    /** The Add-ons owed `user.registered` (`listUserListenersOf`), read by the CLI from the desired state. */
+    userListeners?: readonly string[];
   },
 ): Promise<PhiCliSiteAdminGrant> {
   return withPoolTransaction(pool, async (client) => {
@@ -104,7 +107,12 @@ export async function grantPhiCliSiteAdmin(
       }
     }
 
-    await ensurePhiDefaultSiteMembership(client, userId, input.siteId);
+    // Becoming a member owes `user.registered`; the server's next drain delivers it.
+    if (await ensurePhiDefaultSiteMembership(client, userId, input.siteId)) {
+      await enqueuePhisUserEvent(client, {
+        userId, siteIds: [input.siteId], event: "user.registered", recipients: input.userListeners ?? [],
+      });
+    }
 
     const before = await client.query<{ role_flags: number }>(
       `SELECT role_flags

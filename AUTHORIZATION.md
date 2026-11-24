@@ -174,10 +174,18 @@ everybody who writes for the Site -- `Maintainer | Builder | Author | Publisher`
 from it; changing a Page's path stays Structure authoring. The Site's product directory -- listing it,
 releasing a publisher's terms, locking and unlocking (`/api/site/products`) -- is Accounting: the
 operator's books, which no shop owns. Finding a member to act for -- the Site member picker,
-`GET /api/site/members`, which answers a member's user id and name and never an address -- is Accounting
+`GET /api/site/members`, which answers a member's user id and name and never an address or a number,
+however they were found -- is Accounting
 or support (`PHI_ACCESS_ACCOUNTING_OR_SUPPORT`): the staff `entitlements:v1` `subjectForUser` names a
 member to, so whoever may grant on a member's behalf can find them, without the Site's user list, which
 stays the Site Admin's. It is not a Site access an Add-on names.
+What an Add-on reads of a person through `users:v1` follows the same two accesses, field by field
+(SERVER_ADDONS.md, `users:v1`): `support` reads name, e-mail and telephone, `accounting` (and a Site
+Admin, through `site-admin` and the evaluator) those and the Site's addresses, the person reads all of their
+own, and anybody else nothing. Without an acting person only a job, an event handler or a verified hook
+reads, and only what the Site granted that Add-on (`phis.addon_users_grants`); a request nobody signed in
+to reads nothing and may only write a guest's address. Writing a member's address is the person's own or
+`accounting`'s. Every answer that carried personal data is in the Site's access log.
 These are also the Site accesses an Add-on names in `grantableBy`, `impliedBy` or `hasSiteAccess`:
 `site-admin`, `site-maintenance`, `structure-authoring`, `content-editing`, `publishing`, `site-media`,
 `support`, `accounting` (`site-admin` not in `impliedBy`, section 5).

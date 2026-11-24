@@ -110,6 +110,10 @@ export type CreateThreadInput = {
   /** The Add-on opening this thread as its own, where no person is behind it. */
   ownerProviderId?: string | null;
   externalRef?: string | null;
+  /**
+   * The Add-on writing for a person, under whose name `externalRef` is kept (see `AddThreadMessageInput`).
+   */
+  referenceProviderId?: string | null;
   externalAuthor?: { name: string; url?: string } | null;
 };
 
@@ -124,6 +128,13 @@ export type AddThreadMessageInput = {
   messageFlags?: number;
   messageMeta?: Record<string, unknown>;
   externalRef?: string | null;
+  /**
+   * The Add-on writing for a person (`threads:v1` with an actor), under whose name `externalRef` is kept:
+   * the message is the person's, the reference the Add-on's, so an event delivered twice finds the
+   * first message and writes nothing (`thread_message_refs` flag 0, neither imported nor exported -- the
+   * Add-on cannot amend a person's message). An integration writing as itself is its own reference holder.
+   */
+  referenceProviderId?: string | null;
   externalAuthor?: { name: string; url?: string } | null;
   /** Files to hang on this reply; the writer's own, as on `CreateThreadInput`. */
   assetIds?: readonly number[];
@@ -1121,6 +1132,7 @@ async function insertMessage(
     flags: number;
     meta: Record<string, unknown>;
     externalRef?: string | null;
+    referenceProviderId?: string | null;
   },
 ) {
   const authorKind = input.authorProviderId
@@ -1161,16 +1173,18 @@ async function insertMessage(
     throw new PhisThreadError("Failed to write the thread message.");
   }
 
-  if (input.externalRef && input.authorProviderId) {
+  // The integration's own message is an import; one it wrote for a person keeps only its reference.
+  const referenceHolder = input.authorProviderId ?? input.referenceProviderId ?? null;
+  if (input.externalRef && referenceHolder) {
     await db.query(
       `INSERT INTO phis.thread_message_refs (site_id, provider_id, external_id, message_id, flags)
        VALUES ($1, $2, $3, $4, $5)`,
       [
         input.siteId,
-        input.authorProviderId,
+        referenceHolder,
         input.externalRef,
         messageId,
-        PHIS_THREAD_MESSAGE_REF_IMPORTED,
+        input.authorProviderId ? PHIS_THREAD_MESSAGE_REF_IMPORTED : 0,
       ],
     );
   }
@@ -1316,6 +1330,7 @@ export async function createThreadWithDb(
       }),
       meta: authorMeta(input.messageMeta, input.externalAuthor),
       externalRef: input.externalRef ?? null,
+      referenceProviderId: input.referenceProviderId ?? null,
     });
 
     await attachAssetsWithDb(client, {
@@ -1373,13 +1388,14 @@ export async function createThread(input: CreateThreadInput): Promise<PhisThread
 export async function addThreadMessage(input: AddThreadMessageInput): Promise<PhisThreadDetail | null> {
   const pool = getPool();
   const providerId = input.reader.kind === "provider" ? input.reader.providerId : null;
+  const referenceHolder = providerId ?? input.referenceProviderId ?? null;
 
-  if (input.externalRef && providerId) {
+  if (input.externalRef && referenceHolder) {
     const { rows } = await pool.query<{ message_id: number }>(
       `SELECT message_id
        FROM phis.thread_message_refs
        WHERE site_id = $1 AND provider_id = $2 AND external_id = $3`,
-      [input.siteId, providerId, input.externalRef],
+      [input.siteId, referenceHolder, input.externalRef],
     );
     if (rows[0]) {
       return getThreadDetail(input.siteId, input.reader, input.threadId);
@@ -1420,6 +1436,7 @@ export async function addThreadMessage(input: AddThreadMessageInput): Promise<Ph
       flags,
       meta: authorMeta(input.messageMeta, input.externalAuthor),
       externalRef: input.externalRef ?? null,
+      referenceProviderId: input.referenceProviderId ?? null,
     });
     // A person answering in a ticket's conversation moves the ticket; an integration's message does not.
     if (thread.kind === PhisThreadKind.Support && authorUserId != null && providerId == null) {

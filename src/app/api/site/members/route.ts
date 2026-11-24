@@ -12,9 +12,10 @@ const SITE_MEMBERS_DEFAULT_PER_PAGE = 20;
 
 /**
  * The Site's members, for a picker that names a person by user id (a licence granted on somebody's
- * behalf): `q` matched on the name and the e-mail addresses, `page` and `pageSize` (at most 50). Answers
+ * behalf): `q` matched on the name and the e-mail addresses, and a `q` that is a telephone number on the
+ * digits of the business telephone and the mobile number, `page` and `pageSize` (at most 50). Answers
  * `{ items }`, each `{ userId, displayName }`, ordered by name -- the name the person is shown under, or
- * `#<id>` without one, never the address that may have been searched by. For the staff who act on a
+ * `#<id>` without one, never the address or number that may have been searched by. For the staff who act on a
  * member's behalf, the holders of the Site access `accounting` or `support`, which Core asks before it
  * names a member to an Add-on (`subjectForUser`); the Site's user list is the Site Admin's and the group
  * candidates are a group Manager's.

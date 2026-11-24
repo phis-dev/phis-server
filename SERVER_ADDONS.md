@@ -285,7 +285,8 @@ Every Add-on exports a server-only manifest, `PhisAddonManifestV1` from `@phis/c
 - `jobs`
 - `schema`: the schema descriptor, or `null` when the Add-on owns no tables, and `migrationVersion`
 - `queries`: the declared query catalog
-- optional `settings`, `roles`, `groups`, `groupWriter`, `occasions`, `products`, `modules`, and `media`
+- optional `settings`, `roles`, `groups`, `groupWriter`, `occasions`, `products`, `modules`, `media`, and
+  `users` (required with `users:v1`, see [`users:v1`](#usersv1))
 
 The manifest digest is the SHA-256 of the manifest's canonical JSON and therefore covers every field. The
 manifest never contains runtime secrets.
@@ -830,7 +831,8 @@ telling.
 
 An Add-on declares `eventHandlers: [{ id, event, handler }]`, where `event` is one of Core's own,
 `thread.message.created`, `thread.message.updated`, `thread.status.changed`, `thread.link.removed`,
-`payment.changed`, `entitlement.changed`, `product.changed`, `asset.changed`, or an event an Add-on emits, named `@scope/name:what.happened`, and `handler` names
+`payment.changed`, `entitlement.changed`, `product.changed`, `asset.changed`, `user.registered`,
+`user.changed`, or an event an Add-on emits, named `@scope/name:what.happened`, and `handler` names
 an entry in `eventHandlers` on the runtime. One handler per event: two would need an order Core does not
 define, and an Add-on wanting two things to happen can do both in one function where the order is
 visible.
@@ -904,6 +906,12 @@ may use `assets:v1` (reads) and `products:v1` (register its own products) like a
 
 **Product events:** `product.changed` carries a `kind: "product"` subject with the product id, and no
 state. It is routed like the entitlement event; see [`products:v1`](#productsv1).
+
+**User events:** `user.registered` carries `{ kind: "user", subject }`, `user.changed` `{ kind: "user",
+subject, fields }` with the groups of fields that changed and never a value. They reach every enabled Add-on
+of the Site that requires `users:v1` and declares a handler for them -- an Add-on that may not read people
+hears nothing of them -- and the handler reads what it may through [`users:v1`](#usersv1), which for a
+handler is the background road.
 
 **Payment events:** `PhisAddonEventContext` also describes
 `payment.changed` with a `kind: "payment"` subject containing payment/reference/version and nullable
@@ -1136,6 +1144,7 @@ dispatch, by the job runner, and when its service factory is resolved.
 | `@phis/server/cdn:v1` | yes -- [`cdn:v1`](#cdnv1) | the Site's CDN catalogue, read-only |
 | `@phis/server/media:v1` | yes -- [`media:v1`](#mediav1) | Media library Assets by id: `servable`, `path` and what a media tile draws |
 | `@phis/server/media-release:v1` | yes -- [`media-release:v1`](#media-releasev1) | giving up Media library Assets; Core deletes one nothing references |
+| `@phis/server/users:v1` | yes -- [`users:v1`](#usersv1) | a person of the Site, field by field by the acting person; the Site's address book |
 
 Core descriptors are generated from the running release and reconciled into the registry. They are not
 editable Site settings and cannot be disabled per Site.
@@ -1636,9 +1645,10 @@ entitlement subject; one of another Site, an unknown one and one of somebody who
 answer `null`, and nothing is opened. With an actor, `fileOf` is allowed while the actor holds the Site
 access `support` or `accounting` (asked from the request's one read of their authorization snapshot) and
 refused otherwise, and refused for the actor's own file. Without an actor the contract answers an Add-on
-to which the Site granted background access to `users:v1`; Core has no such grant yet, so `fileOf` throws
-without an actor, and a file is out of an actorless Add-on's reach altogether -- owned or linked, `get` and
-`reply` answer `null`.
+to which the Site granted background access to `users:v1`. That grant exists now
+(`phis.addon_users_grants`, [`users:v1`](#usersv1)), but whether it opens a person's file -- and with which
+of its fields -- is not decided, so `fileOf` still throws without an actor, and a file is out of an actorless
+Add-on's reach altogether -- owned or linked, `get` and `reply` answer `null` (TODOS.md).
 
 The file is reached through the same predicate as any thread, with one rule of its own: it has no
 participants, and a person may reach it by its id while they hold the Site access `support` or
@@ -1648,6 +1658,13 @@ whatever they hold, nobody reads their own file. It is listed in nobody's inbox 
 message written into it is `Internal`, whatever the writer asked for. It takes no participants, is
 neither archived nor locked, and is never opened through `create` or `POST /api/site/threads`. An Add-on
 writes what happened with the person through `reply` (with `externalRef`), and only ever adds.
+
+**`externalRef` with an actor.** `create` and `reply` keep the reference under the calling Add-on whoever
+the message is attributed to: acting for a person, the message is theirs and the reference the Add-on's
+(`thread_message_refs` with flag `0`, neither imported nor exported). So `reply` with a reference it already
+wrote answers the thread as it stands and writes nothing -- an event delivered twice writes once with an
+actor as without -- `findByExternalRef` finds the thread again, and `amendImported`, which asks for an
+import, cannot change a person's message.
 
 Attaching does not change how a slot's file is delivered. A person's own upload is narrowed to
 `internal` when it is attached, because attaching it said "reached through this message"; an Add-on's file
@@ -1875,7 +1892,7 @@ else, with nobody acting, and for a `userId` that is not a positive whole number
 of the Site answers `null` and is issued nothing. The Add-on keeps the subject and never the user id, which
 it holds only for the call; writing for the subject is `grant`'s question, as for any subject. The user id
 comes from the Site member picker, `GET /api/site/members` (`{ items: [{ userId, displayName }] }`, searched
-by name or address, a page at a time), which is open to the same staff, so whoever may name a member here
+by name, address or telephone number, a page at a time), which is open to the same staff, so whoever may name a member here
 can find them there; the Site UI offers it to any Form's select as Core's options Provider
 `PHI_CORE_RUNTIME_DATA_PROVIDER_KEYS.siteMembers`. `list({ product, resolveBundles: true })` also lists the subject's entries on
 every bundle that contains the product, directly or through nested bundles and whatever the bundle's
@@ -1934,6 +1951,77 @@ using a quantity up, an access policy in `@phis/ui` and delivery
 state are not part of this service; see
 [design/ENTITLEMENTS.md](./design/ENTITLEMENTS.md) sections 7 and 9 and
 [design/COMMERCE_COORDINATION.md](./design/COMMERCE_COORDINATION.md) section 5.
+
+### `users:v1`
+
+A person of the Site, as far as whoever is behind the call may read them (`@phis/contracts/users`, whose
+header is the specification): `describe({ subjects, fields })`, `addresses({ ids })`, `createAddress({
+subject, address, flags, replaces? })`. Built by `src/lib/addons/users-capability.ts`; the reads, the address
+book and the log are `src/db/site-users.ts`.
+
+**The manifest.** `users: { fields, background? }` is required with the capability and refused without it:
+`fields` a non-empty list of `PHIS_USER_FIELDS` (`name`, `email`, `phone`, `address`) without duplicates,
+`background` a part of them. A field `fields` does not list is refused on every road: `describe` naming one
+throws, and so do `addresses` and `createAddress` without `address`.
+
+**The roads**, decided per person asked about, never by the Add-on:
+
+| Road | Who | What |
+| ---- | --- | ---- |
+| staff | an actor holding the Site access `support` | name, e-mail, telephone |
+| staff | an actor holding `accounting` (an Admin, a Maintainer, an Accountant) or `site-admin` | and the addresses |
+| self | the actor, about themself | all of their own |
+| background | nobody acting, under system authority: a job, an event handler, a verified hook | the fields the Site granted and the manifest still asks in `users.background` |
+
+Anybody else is answered nothing: an actor without either access about somebody else, a request nobody
+signed in to (an `internal` route reached through the Site), an operator's request. Those have no actor and
+no system authority and so stand on no road, whatever the Site granted. An unverified hook is refused every
+call. The accesses are asked from the request's one read of the actor's authorization snapshot, shared with
+`authorization:v1`.
+
+Fields that may not be read are absent from the answer, not an error. `describe` takes at most
+`PHIS_USERS_DESCRIBE_MAX` (100) subjects, answers in the order asked with duplicates where they stand, and
+answers a subject that is unknown, of another Site or of somebody who is no member here as `{ subject }`.
+`name` is the profile's names and company (absent where the person has no profile yet), `email` the
+primary address, `phone` `{ phone, mobile }` from the profile, `addresses` the person's current addresses
+on this Site. Nothing is read that nobody on the call may be told.
+
+`addresses({ ids })` answers the Site's addresses by id whatever their flags, in the order asked without
+duplicates, at most 1000 ids: anybody's for staff with `address`, the actor's own on the self road, anybody's
+in the background with `address` granted; an id of another Site, or one the road does not reach, is absent.
+
+**The address book** (`phis.site_addresses`, DB.md) is per Site and never changes an entry's text.
+`createAddress` writes for the person themself, for a member by an actor holding `accounting`, or for a guest
+(`subject: null`) by anybody but an unverified hook -- a checkout without an account is a request nobody
+signed in to, and what it is answered is only what it just gave, so a guest's address replaces nothing and
+holds no default, and every one is a new row. A subject that is no member of the Site is refused; so is a
+subject from the background road, which reads and never writes a person's address. The flags are the
+caller's `Billing`, `Shipping`, `DefaultBilling` and `DefaultShipping` (at least one purpose, a default only
+with its purpose); `Superseded` and `Removed` are Core's. An address equal in every part to one of the
+person's current ones is that one, given the purposes and defaults asked besides, rather than a second; a
+default moves from the address that held it; `replaces`, one of the person's current addresses, becomes
+`Superseded`. Every address answered to an Add-on is marked handed out: that is what keeps it as `Removed`
+when the person removes it, since Core cannot see the Add-on's records; one never handed out is deleted.
+Removing is a database function for the account route that is still to come (`removePhisSiteAddress`).
+
+**The access log.** Every answer that carries personal data is written to `phis.users_access_log` before it
+is handed over: who, which Add-on, which road (`checkout` for a guest's address written with neither an
+actor nor system authority), which call, which subjects and addresses, which fields. It is kept for the
+Site's `users_access_log_days` (90 unless `phis site set --users-access-log-days` says otherwise); the Core
+job `users-access-log.prune` and `phis maintain` (`users-access-log`) forget older rows.
+
+**The background grant** (`phis.addon_users_grants`) is the Site's, per Add-on, and withdrawn by deleting
+it. Until the Site Admin has a page for it the operator stands in: `phis addon users --site <key>` lists per
+Add-on requiring `users:v1` what it reads, what it asks in the background, what is granted, what of that
+counts and what awaits a grant; `--addon <id> --grant [--fields name,email]` grants what the manifest asks
+(or that part of it), `--revoke` withdraws. A manifest that asks for more keeps the old grant until it is
+granted again.
+
+**The user events** are written with the change into the outbox (DB.md, `phis.addon_event_outbox`):
+`user.registered` when a person becomes a member of the Site, `user.changed` with `name`, `email` or
+`phone` on every Site the person is a member of when their names, primary e-mail address or numbers
+change, and with `address` on the Site when their current address there is replaced or removed. See
+[Events](#events).
 
 ### `cdn:v1`
 

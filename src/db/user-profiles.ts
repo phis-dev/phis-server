@@ -4,6 +4,7 @@ import type { PoolClient } from "pg";
 
 import { getPool } from "@/lib/db";
 import { phiPrepared } from "@/lib/db-prepared";
+import { announcePhisUserEvent, schedulePhisUserEventDelivery } from "@/lib/addons/user-events";
 
 export type UserProfileRecord = {
   userId: number;
@@ -70,7 +71,11 @@ export async function upsertUserProfile(input: {
   companyName?: string | null;
 }, db?: Pick<PoolClient, "query">) {
   const pool = db ?? getPool();
-  await pool.query(
+  /*
+   * A write that changes nothing is not written, so `rowCount` says whether the names changed -- which is
+   * what owes `user.changed` with `name` on every Site the person is a member of (users:v1).
+   */
+  const { rowCount } = await pool.query(
     `INSERT INTO phis.user_profiles (
        user_id,
        first_name,
@@ -84,7 +89,10 @@ export async function upsertUserProfile(input: {
          last_name = EXCLUDED.last_name,
          display_name = CASE WHEN $6::boolean THEN EXCLUDED.display_name ELSE phis.user_profiles.display_name END,
          company_name = EXCLUDED.company_name,
-         updated_at = NOW()`,
+         updated_at = NOW()
+     WHERE (phis.user_profiles.first_name, phis.user_profiles.last_name, phis.user_profiles.company_name)
+             IS DISTINCT FROM (EXCLUDED.first_name, EXCLUDED.last_name, EXCLUDED.company_name)
+        OR ($6::boolean AND phis.user_profiles.display_name IS DISTINCT FROM EXCLUDED.display_name)`,
     [
       input.userId,
       input.firstName,
@@ -94,4 +102,42 @@ export async function upsertUserProfile(input: {
       input.displayName !== undefined,
     ],
   );
+  if ((rowCount ?? 0) > 0) {
+    schedulePhisUserEventDelivery(
+      await announcePhisUserEvent(pool, { userId: input.userId, siteIds: null, event: "user.changed", fields: ["name"] }),
+    );
+  }
+}
+
+/**
+ * Writes a profile's business telephone and mobile number, as the person typed them; the digits-only
+ * forms a search matches are derived by the table. For the account route (not yet offered). A person
+ * without a profile has no names yet and is written nothing: false. A change owes `user.changed` with
+ * `phone` on every Site the person is a member of.
+ */
+export async function setUserProfilePhones(input: {
+  userId: number;
+  phone: string | null;
+  mobile: string | null;
+}): Promise<boolean> {
+  const pool = getPool();
+  const { rows } = await pool.query<{ changed: boolean }>(
+    `WITH written AS (
+       UPDATE phis.user_profiles
+       SET phone = $2, mobile = $3, updated_at = NOW()
+       WHERE user_id = $1 AND (phone, mobile) IS DISTINCT FROM ($2::varchar, $3::varchar)
+       RETURNING user_id
+     )
+     SELECT EXISTS (SELECT 1 FROM written) AS changed FROM phis.user_profiles WHERE user_id = $1`,
+    [input.userId, input.phone, input.mobile],
+  );
+  if (!rows[0]) {
+    return false;
+  }
+  if (rows[0].changed) {
+    schedulePhisUserEventDelivery(
+      await announcePhisUserEvent(pool, { userId: input.userId, siteIds: null, event: "user.changed", fields: ["phone"] }),
+    );
+  }
+  return true;
 }

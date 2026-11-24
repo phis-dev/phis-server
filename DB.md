@@ -198,6 +198,7 @@ The target PostgreSQL schema for `phis` is:
 - `default_locale VARCHAR(8) NOT NULL DEFAULT 'en'`
 - `available_locales VARCHAR(8)[] NOT NULL DEFAULT ARRAY['en']::VARCHAR(8)[]`
 - `entitlement_grace_days SMALLINT NOT NULL DEFAULT 14` (`CHECK BETWEEN 0 AND 14`) -- whole days an entitlement entry bound to a subscription goes on counting after its paid period while the subscription has not ended (`phis site set --entitlement-grace-days`; existing databases received `ALTER TABLE phis.sites ADD COLUMN IF NOT EXISTS entitlement_grace_days SMALLINT NOT NULL DEFAULT 14 CHECK (entitlement_grace_days BETWEEN 0 AND 14)` by hand).
+- `users_access_log_days SMALLINT NOT NULL DEFAULT 90` (`CHECK BETWEEN 1 AND 3650`) -- whole days the Site keeps its `users:v1` access log (`phis.users_access_log`); the Core job `users-access-log.prune` drops older rows. A per-Site setting like the grace days, so a column of the row, set with `phis site set --users-access-log-days` and shown by `phis site list`. Added 2026-11-24; existing databases receive `ALTER TABLE phis.sites ADD COLUMN IF NOT EXISTS users_access_log_days SMALLINT NOT NULL DEFAULT 90 CHECK (users_access_log_days BETWEEN 1 AND 3650)` by hand.
 - `time_zone VARCHAR(64) NOT NULL DEFAULT 'UTC'` -- the IANA zone the Site's dates and times are shown in, server render and browser alike (`phis site set --time-zone`). Added 2026-11-09; existing databases received `ALTER TABLE phis.sites ADD COLUMN IF NOT EXISTS time_zone VARCHAR(64) NOT NULL DEFAULT 'UTC'` by hand.
 - `flags INT NOT NULL DEFAULT 0`
 - `theme JSONB NOT NULL DEFAULT '{}'::jsonb`
@@ -928,6 +929,8 @@ Contract:
 - `company_name VARCHAR(256) NULL`
 - `phone VARCHAR(64) NULL`
 - `mobile VARCHAR(64) NULL`
+- `phone_digits VARCHAR(64) GENERATED ALWAYS AS (NULLIF(regexp_replace(phone, '[^0-9]', '', 'g'), '')) STORED`
+- `mobile_digits VARCHAR(64) GENERATED ALWAYS AS (NULLIF(regexp_replace(mobile, '[^0-9]', '', 'g'), '')) STORED`
 - `fax VARCHAR(64) NULL`
 - `address_1 VARCHAR(255) NULL`
 - `address_2 VARCHAR(255) NULL`
@@ -940,6 +943,9 @@ Contract:
 
 Contract:
 - `user_profiles` stores Phi-owned global profile data.
+- `phone` (business telephone) and `mobile` are the person's numbers as they typed them, valid on every Site as the names are; `users:v1` answers them as `phone` (`setUserProfilePhones` writes them, for the account route still to come). `phone_digits` and `mobile_digits` are derived by the table, never written: the member picker (`GET /api/site/members`, `searchSiteMembers`) matches a query that is a telephone number against them, as a substring of the digits with the query's leading zeros dropped. Added 2026-11-24; existing databases receive both by hand (`ALTER TABLE phis.user_profiles ADD COLUMN IF NOT EXISTS phone_digits ...` and `mobile_digits`, as above), which computes them for the rows already there.
+- A change of the names (`upsertUserProfile`, which writes nothing when nothing changed), of the numbers, or of the primary e-mail address (`updateUserAccountProfileFields`) owes `user.changed` with `name`, `phone` or `email` on every Site the person is a member of (see `phis.addon_event_outbox`).
+- The single address of the profile (`address_1` .. `country_code`) is left as it is and read by nothing in `users:v1`; a Site's addresses are `phis.site_addresses`.
 - A Site-specific commerce profile may remain Medusa-owned and is reached through the matching
   `user_site_external_accounts` relation; it does not change global identity ownership.
 
@@ -1744,6 +1750,81 @@ Contract:
 - `granted_by_user_id` is NULL where the operator allowed it from the CLI or the granting user is gone.
 - Removing a row does not remove the entries the source wrote: they are statements about the past.
 
+### `phis.site_addresses`
+
+- `id SERIAL PRIMARY KEY`
+- `site_id SMALLINT NOT NULL REFERENCES phis.sites(id) ON DELETE CASCADE`
+- `user_id INT NULL REFERENCES phis.user_accounts(id) ON DELETE SET NULL`
+- `flags INT NOT NULL DEFAULT 0`
+- `company_name VARCHAR(256) NULL`, `name VARCHAR(256) NOT NULL`, `line1 VARCHAR(256) NOT NULL`, `line2 VARCHAR(256) NULL`
+- `postal_code VARCHAR(32) NULL`, `city VARCHAR(128) NOT NULL`, `region VARCHAR(128) NULL`, `country CHAR(2) NOT NULL` (`CHECK (country ~ '^[A-Z]{2}$')`)
+- `replaces_id INT NULL REFERENCES phis.site_addresses(id) ON DELETE SET NULL`
+- `created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
+- `CHECK ((flags & 3) <> 0)` (`site_addresses_purpose_check`): every address is for billing, shipping or both
+- index `site_addresses_person_idx` on `(site_id, user_id) WHERE user_id IS NOT NULL`
+- unique indexes `site_addresses_default_billing_unique` and `site_addresses_default_shipping_unique` on `(site_id, user_id)` where `user_id IS NOT NULL` and the flag `4` resp. `8` is set
+
+Contract:
+- The Site's address book of `users:v1` (SERVER_ADDONS.md): per Site, so a person who gives two Sites two addresses has each Site see its own. A guest's address (a checkout without an account) is a row with `user_id IS NULL`; deleting an account keeps its rows as a guest's would be, for the records pointing at them.
+- `flags`: the low bits are the contract's `PhisSiteAddressFlags` -- `1 = Billing`, `2 = Shipping`, `4 = DefaultBilling`, `8 = DefaultShipping`, `16 = Superseded`, `32 = Removed` -- and the only ones ever answered. `65536 = handed out` is Core's own (`PHIS_SITE_ADDRESS_FLAG_HANDED_OUT`): set, in the statement that reads it, on every address answered to an Add-on (`createAddress`, `addresses`, `describe`).
+- An entry's text never changes. A change is a new row with `replaces_id` naming the version it follows, which gets `Superseded` and gives up its defaults; a person's current addresses are those with neither `Superseded` nor `Removed`. The partial unique indexes make one default of each kind per person and Site; a default asked for moves from the row that held it.
+- `createPhisSiteAddress` takes an advisory lock per person and Site: an address equal in every part (trimmed text, empty optional parts as `NULL`) to one of the person's current ones is that one, given the purposes and defaults asked for besides, rather than a second row. A guest's address is always a new row and replaces nothing.
+- Removing (`removePhisSiteAddress`, for the account route still to come) takes the address and the versions it followed: a row never handed out is deleted, a handed-out one is kept with `Removed` and without its defaults, because Core cannot see whether an Add-on's record points at it and the handed-out bit is the rule that stands in for that. Purging `Removed` rows once their records' retention ended is open (TODOS.md).
+- A replace or a removal of a person's current address owes their `user.changed` with `address` on the Site.
+
+### `phis.addon_users_grants`
+
+- `site_id SMALLINT NOT NULL REFERENCES phis.sites(id) ON DELETE CASCADE`
+- `addon_id VARCHAR(255) NOT NULL REFERENCES phis.server_addons(addon_id) ON DELETE CASCADE`
+- `fields SMALLINT NOT NULL` (`CHECK BETWEEN 1 AND 15`)
+- `granted_by_user_id INT NULL REFERENCES phis.user_accounts(id) ON DELETE SET NULL`
+- `granted_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
+- `PRIMARY KEY (site_id, addon_id)`
+
+Contract:
+- The Site's admin letting an Add-on read people with nobody acting (`users:v1` background access): the row is the grant, deleting it withdraws it. `fields` are bits in the order of `PHIS_USER_FIELDS`: `1 = name`, `2 = email`, `4 = phone`, `8 = address` (`PHIS_USER_FIELD_BITS`).
+- What a job or an event handler reads is `fields` intersected with the manifest's `users.background`: a manifest that asks for more keeps the old grant until the admin grants again, one that asks for less reads less.
+- Granted, withdrawn and listed with `phis addon users`; `granted_by_user_id` is NULL where the operator granted it from the command line. Purging the Add-on deletes its grants.
+
+### `phis.users_access_log`
+
+- `id BIGSERIAL PRIMARY KEY`
+- `site_id SMALLINT NOT NULL REFERENCES phis.sites(id) ON DELETE CASCADE`
+- `addon_id VARCHAR(255) NOT NULL`
+- `actor_user_id INT NULL`
+- `road SMALLINT NOT NULL` (`CHECK BETWEEN 1 AND 4`)
+- `operation SMALLINT NOT NULL` (`CHECK BETWEEN 1 AND 3`)
+- `subjects VARCHAR(40)[] NOT NULL DEFAULT '{}'`, `address_ids INT[] NOT NULL DEFAULT '{}'`
+- `fields SMALLINT NOT NULL` (`CHECK BETWEEN 1 AND 15`)
+- `created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
+- index `users_access_log_site_idx` on `(site_id, created_at)`
+
+Contract:
+- One row per `users:v1` answer that carried personal data, written before it is handed over: who asked (`actor_user_id`, NULL with nobody acting), which Add-on, by which road (`PhisUsersAccessRoad`: `1 = staff`, `2 = self`, `3 = background`, `4 = checkout`, a guest's address written by a request with neither), which call (`operation`: `1 = describe`, `2 = addresses`, `3 = createAddress`), about which subjects and addresses, and which fields (bits as in `addon_users_grants`). A `describe` that answered on two roads writes one row per road; an answer that carried nothing writes none.
+- No foreign keys besides the Site: the log outlives the Add-on, the account and the address it names.
+- Retention: the Core job `users-access-log.prune` (daily 03:10; by hand `phis maintain`, `users-access-log`) deletes rows older than the Site's `sites.users_access_log_days`, in batches of 1000 (at most 50 per run).
+
+Existing databases receive the three tables above as the creation script declares them (`phis schema apply` creates them), the two columns of `phis.sites` and `phis.user_profiles` named there, and the widened `addon_event_outbox_subject_check` by hand:
+
+```sql
+BEGIN;
+ALTER TABLE phis.sites ADD COLUMN IF NOT EXISTS users_access_log_days SMALLINT NOT NULL DEFAULT 90 CHECK (users_access_log_days BETWEEN 1 AND 3650);
+ALTER TABLE phis.user_profiles ADD COLUMN IF NOT EXISTS phone_digits VARCHAR(64) GENERATED ALWAYS AS (NULLIF(regexp_replace(phone, '[^0-9]', '', 'g'), '')) STORED;
+ALTER TABLE phis.user_profiles ADD COLUMN IF NOT EXISTS mobile_digits VARCHAR(64) GENERATED ALWAYS AS (NULLIF(regexp_replace(mobile, '[^0-9]', '', 'g'), '')) STORED;
+ALTER TABLE phis.addon_event_outbox DROP CONSTRAINT IF EXISTS addon_event_outbox_subject_check;
+ALTER TABLE phis.addon_event_outbox ADD CONSTRAINT addon_event_outbox_subject_check CHECK (
+    (subject_kind = 'thread' AND thread_id IS NOT NULL AND payment_id IS NULL AND subscription_id IS NULL AND emitter IS NULL AND event NOT IN ('payment.changed', 'entitlement.changed', 'product.changed', 'asset.changed', 'user.registered', 'user.changed') AND event NOT LIKE '@%') OR
+    (subject_kind = 'user' AND thread_id IS NULL AND payment_id IS NULL AND subscription_id IS NULL AND emitter IS NULL AND event IN ('user.registered', 'user.changed')) OR
+    (subject_kind = 'entitlement' AND thread_id IS NULL AND payment_id IS NULL AND subscription_id IS NULL AND emitter IS NULL AND event = 'entitlement.changed') OR
+    (subject_kind = 'asset' AND thread_id IS NULL AND payment_id IS NULL AND subscription_id IS NULL AND emitter IS NULL AND event = 'asset.changed') OR
+    (subject_kind = 'product' AND thread_id IS NULL AND payment_id IS NULL AND subscription_id IS NULL AND emitter IS NULL AND event = 'product.changed') OR
+    (subject_kind = 'payment' AND thread_id IS NULL AND payment_id IS NOT NULL AND subscription_id IS NULL AND emitter IS NULL AND event = 'payment.changed') OR
+    (subject_kind = 'subscription' AND thread_id IS NULL AND payment_id IS NULL AND subscription_id IS NOT NULL AND emitter IS NULL AND event = 'payment.changed') OR
+    (subject_kind = 'emitted' AND thread_id IS NULL AND payment_id IS NULL AND subscription_id IS NULL AND emitter IS NOT NULL AND event LIKE '@%/%:%')
+  );
+COMMIT;
+```
+
 ### `phis.threads`
 
 - `id SERIAL PRIMARY KEY`
@@ -1866,6 +1947,7 @@ Contract:
 - What an integration calls a message, so a delivery arriving twice writes one message and an outbound comment can be recognized when it comes back.
 - The Site is part of the key: one repository may be linked from two Sites, and the external id would otherwise collide between them.
 - `flags` are `1 = Imported`, `2 = Exported`. What came from outside is never sent back out, which is what stops a mirror from echoing.
+- `0` is a reference an Add-on gave a message it wrote for a person (`threads:v1` `create` or `reply` with an actor, `referenceProviderId`): the message is the person's and the reference the Add-on's, so a delivery arriving twice finds the first message and writes nothing, and `amendImported` (which asks `Imported`) cannot change a person's message.
 - It replaces `support_ticket_messages.external_message_ref`, which could hold one reference and could not be looked up by it.
 
 ### `phis.thread_message_assets`
@@ -2527,7 +2609,7 @@ COMMIT;
 - `addon_id VARCHAR(255) NOT NULL REFERENCES phis.server_addons(addon_id) ON DELETE CASCADE`
 - `event VARCHAR(120) NOT NULL` (CHECK `<> ''`)
 - `thread_id INT NULL REFERENCES phis.threads(id) ON DELETE CASCADE`
-- `subject_kind VARCHAR(16) NOT NULL DEFAULT 'thread'` (`thread`, `payment`, `subscription`, `emitted`, `entitlement`, `product` or `asset`)
+- `subject_kind VARCHAR(16) NOT NULL DEFAULT 'thread'` (`thread`, `payment`, `subscription`, `emitted`, `entitlement`, `product`, `asset` or `user`)
 - `payment_id UUID NULL REFERENCES phis.payments(id) ON DELETE RESTRICT`
 - `payload JSONB NOT NULL DEFAULT '{}'::jsonb`
 - `emitter VARCHAR(255) NULL REFERENCES phis.server_addons(addon_id) ON DELETE CASCADE`
@@ -2543,12 +2625,22 @@ COMMIT;
 - partial unique index `addon_event_outbox_dedupe_unique` on `(site_id, addon_id, event, dedupe_key)
   WHERE dedupe_key IS NOT NULL`
 - `addon_event_outbox_subject_check`: a thread subject has exactly `thread_id`, a bare thread event and
-  no emitter and is none of `payment.changed`, `entitlement.changed`, `product.changed` and `asset.changed`; a payment subject has exactly `payment_id`, `payment.changed` and no emitter; an emitted
+  no emitter and is none of `payment.changed`, `entitlement.changed`, `product.changed`, `asset.changed`, `user.registered` and `user.changed`; a payment subject has exactly `payment_id`, `payment.changed` and no emitter; an emitted
   subject has an `emitter`, an event of the shape `@scope/name:event`, and neither thread nor payment;
   an entitlement subject has no thread, payment, subscription or emitter, the event `entitlement.changed`, and
   `payload = { subject, product }` (a redelivery adds `redelivery`, below); a product subject has the same absences, the event `product.changed`, and
   `payload = { productId }`; an asset subject has the same absences, the event `asset.changed`, and
-  `payload = { table, ownerId, slot }`.
+  `payload = { table, ownerId, slot }`; a user subject has the same absences, the event `user.registered`
+  with `payload = { subject }` or `user.changed` with `payload = { subject, fields }`.
+
+User events (SERVER_ADDONS.md, `users:v1`; `enqueuePhisUserEvent`, `src/db/user-events.mts`): one row per Add-on of
+the Site that is requested-enabled, `ready`, requires `users:v1` and declares a handler for the event, with
+`subject_kind = 'user'`, in the transaction of the change. `user.registered` is written when a membership row is
+inserted (registration, a sign-in on a new Site, an admin adding the person, `phis site admin`) for that Site;
+`user.changed` for a change of the names, the telephone numbers or the primary e-mail address on every Site the
+person is a member of, and for a replaced or removed current address on its Site, with `fields` the groups that
+changed and never a value. The person is named by their subject on that Site, issued in the same transaction
+where they had none (`entitlement_subjects`).
 
 Entitlement events (SERVER_ADDONS.md, `entitlements:v1`): Core writes one row per Add-on of the Site that is
 requested-enabled, `ready` and declares an `entitlement.changed` handler, with `subject_kind = 'entitlement'`

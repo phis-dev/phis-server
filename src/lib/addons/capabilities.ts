@@ -30,6 +30,7 @@ import { buildPhisAddonGroupsCapability } from "./groups-capability.ts";
 import { buildPhisAddonResourceLinksCapability } from "./resource-links-capability.ts";
 import { buildPhisAddonSupportCapability } from "./support-capability.ts";
 import { buildPhisAddonThreadsCapability } from "./threads-capability.ts";
+import { buildPhisAddonUsersCapability } from "./users-capability.ts";
 import { buildPhisAddonSecretsCapability } from "./secrets-capability.ts";
 import { buildPhisAddonSettingsCapability } from "./settings-capability.ts";
 import { buildPhisAddonCdnCapability } from "./cdn-capability.ts";
@@ -278,8 +279,8 @@ export function buildPhisAddonCapabilities(input: {
    * The actor's authorization snapshot, read at most once for everything built here that asks a Site
    * access: `authorization:v1`'s `hasSiteAccess`, `roles:v1`, which needs it for the Site Admin floor
    * and for the roles a Site access implies (`impliedBy`), `entitlements:v1`'s `subjectForUser` and `redeliver`,
-   * and `threads:v1`'s `fileOf`. Read on the first question, not before: most
-   * requests ask none.
+   * `threads:v1`'s `fileOf`, and `users:v1`, whose staff road it decides. Read on the first question, not
+   * before: most requests ask none.
    */
   const actorUserId = input.actorUserId;
   let siteAccess: Promise<PhisSiteAccessHolder> | undefined;
@@ -449,6 +450,23 @@ export function buildPhisAddonCapabilities(input: {
       readSiteAccess,
       // A verified hook carries `systemAuthority`, which is what tells it apart from the unsigned
       // request that reached the same address.
+      unauthenticated: input.unauthenticated === true && input.systemAuthority !== true,
+    });
+  }
+  if (required.includes(PHIS_CORE_CAPABILITIES.users)) {
+    /*
+     * Bound to the acting person, whose Site access decides the staff road, and to the manifest's `users`,
+     * which bounds every road. The background road is for nobody acting under system authority -- a job,
+     * an event handler, a verified hook -- and never for a request nobody signed in to, which reaches the
+     * same "no actor" by another way and may only write a guest's address.
+     */
+    capabilities.users = buildPhisAddonUsersCapability({
+      addonId: input.manifest.addonId,
+      siteId,
+      actorUserId: input.actorUserId,
+      access: input.manifest.users,
+      readSiteAccess,
+      background: input.systemAuthority === true && input.actorUserId == null,
       unauthenticated: input.unauthenticated === true && input.systemAuthority !== true,
     });
   }

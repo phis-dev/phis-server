@@ -8,6 +8,7 @@ import { getPool, withTransaction, withTransactionOn } from "@/lib/db";
 import { normalizePhiEmail } from "@/lib/helpers/normalize";
 import { ensurePhiDefaultSiteMembership } from "@/db/user-site-membership-default.mts";
 import { phiPrepared } from "@/lib/db-prepared";
+import { announcePhisUserEvent, schedulePhisUserEventDelivery } from "@/lib/addons/user-events";
 
 export type EnsureUserAccountInput = {
   email: string;
@@ -188,10 +189,16 @@ export async function ensureUserAccount(input: EnsureUserAccountInput) {
       );
     }
 
-    await ensurePhiDefaultSiteMembership(client, userId, input.siteId);
+    // Becoming a member owes `user.registered` on this Site.
+    const registered = await ensurePhiDefaultSiteMembership(client, userId, input.siteId)
+      ? await announcePhisUserEvent(client, { userId, siteIds: [input.siteId], event: "user.registered" })
+      : [];
     await upsertPasswordCredential(client, userId, input.passwordHash);
     await upsertMedusaAccount(client, userId, input.siteId, input.medusaCustomerId);
-    return { id: userId, emailNormalized: normalizedEmail };
+    return { id: userId, emailNormalized: normalizedEmail, registered };
+  }).then(({ registered, ...account }) => {
+    schedulePhisUserEventDelivery(registered);
+    return account;
   });
 }
 
@@ -303,7 +310,17 @@ export async function updateUserAccountProfileFields(
   } = {},
   db?: PoolClient,
 ) {
-  return withTransactionOn(db, async (client) => {
+  let announced: number[] = [];
+  const result = await withTransactionOn(db, async (client) => {
+    const primaryEmail = async () => (await client.query<{ email_normalized: string }>(
+      `SELECT email_normalized
+       FROM phis.user_emails
+       WHERE user_id = $1
+       ORDER BY (flags & 1) DESC, verified_at ASC, id ASC
+       LIMIT 1`,
+      [userId],
+    )).rows[0]?.email_normalized ?? null;
+    const before = input.email ? await primaryEmail() : null;
     if (input.email) {
       if (!input.emailSource) {
         throw new Error("EMAIL_SOURCE_REQUIRED");
@@ -343,23 +360,22 @@ export async function updateUserAccountProfileFields(
       }
     }
     const updated = await applyUserAccountFlagDelta(client, userId, input);
-    const email = await client.query<{ email_normalized: string }>(
-      `SELECT email_normalized
-       FROM phis.user_emails
-       WHERE user_id = $1
-       ORDER BY (flags & 1) DESC, verified_at ASC, id ASC
-       LIMIT 1`,
-      [userId],
-    );
-    return updated && email.rows[0]
+    const email = await primaryEmail();
+    // A new primary address owes `user.changed` with `email` on every Site the person is a member of.
+    if (input.email && email !== before) {
+      announced = await announcePhisUserEvent(client, { userId, siteIds: null, event: "user.changed", fields: ["email"] });
+    }
+    return updated && email
       ? {
           id: updated.id,
-          emailNormalized: email.rows[0].email_normalized,
+          emailNormalized: email,
           preferredLocale: updated.preferred_locale,
           flags: updated.flags,
         }
       : null;
   });
+  schedulePhisUserEventDelivery(announced);
+  return result;
 }
 
 export async function removeUserAccountSiteMembership(userId: number, siteId: number) {

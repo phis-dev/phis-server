@@ -12,6 +12,7 @@ import {
   closePhisSupportTicketsPastRequesterWindow,
   collectOrphanedPhisAddonAssets,
   forgetSettledPhisHookDeliveries,
+  forgetExpiredPhisUsersAccessLog,
   forgetSettledPhisQueueRows,
   releaseExpiredPhisUploadSessions,
 } from "@/db/maintenance.mts";
@@ -38,7 +39,7 @@ import { isPhiJobStepSubHourly } from "./slots";
  *
  * The housekeeping steps (`queues.prune`, `hook-deliveries.prune`, `upload-sessions.prune`,
  * `addon-assets.collect`, `support-tickets.close`, `payments.recover`) were `phis maintain` tasks that an
- * operator's timer had to call. They run here now, and `phis maintain` stays as the same steps started by
+ * operator's timer had to call; `users-access-log.prune` came later and was born both. They run here now, and `phis maintain` stays as the same steps started by
  * hand: job and task call one function (`src/db/maintenance.mts`, `reconcilePhisPayments`), so neither
  * has a window or a bound of its own. Each is bounded per run and looks at the signal where it loops.
  * `addon-storage` is not among them: it lists every store in full and stays in `phis maintain`.
@@ -168,6 +169,14 @@ export const PHI_CORE_JOBS: readonly PhiCoreJob[] = Object.freeze([
     async run() {
       // At most 500 tickets a run, oldest resolution first.
       await closePhisSupportTicketsPastRequesterWindow(getPool());
+    },
+  },
+  {
+    id: "users-access-log.prune",
+    schedule: { every: "daily", at: "03:10" },
+    summary: "Forgets the users:v1 access log entries past each Site's retention.",
+    async run(signal: AbortSignal) {
+      await forgetExpiredPhisUsersAccessLog(getPool(), { signal });
     },
   },
   {

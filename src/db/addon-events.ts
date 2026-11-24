@@ -28,7 +28,7 @@ export type PhisAddonEventRow = {
   siteId: number;
   addonId: string;
   event: PhisAddonEventId;
-  subjectKind: "thread" | "payment" | "subscription" | "emitted" | "entitlement" | "product" | "asset";
+  subjectKind: "thread" | "payment" | "subscription" | "emitted" | "entitlement" | "product" | "asset" | "user";
   threadId: number | null;
   paymentId: string | null;
   subscriptionId: string | null;
@@ -48,7 +48,7 @@ type OutboxRow = {
   addon_id: string;
   event: string;
   thread_id: number | null;
-  subject_kind: "thread" | "payment" | "subscription" | "emitted" | "entitlement" | "product" | "asset";
+  subject_kind: "thread" | "payment" | "subscription" | "emitted" | "entitlement" | "product" | "asset" | "user";
   payment_id: string | null;
   subscription_id: string | null;
   payload: Record<string, unknown> | null;

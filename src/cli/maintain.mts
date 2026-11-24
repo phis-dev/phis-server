@@ -9,6 +9,7 @@ import { readPhisAddonStorageUsage } from "../db/server-addon-storage-usage.mts"
 import {
   closePhisSupportTicketsPastRequesterWindow,
   collectOrphanedPhisAddonAssets,
+  forgetExpiredPhisUsersAccessLog,
   forgetSettledPhisHookDeliveries,
   forgetSettledPhisQueueRows,
   releaseExpiredPhisUploadSessions,
@@ -165,6 +166,11 @@ export const PHI_MAINTENANCE_TASKS: readonly PhiMaintenanceTask[] = Object.freez
     id: "support-requester-window",
     summary: "Close resolved tickets whose requester did not answer within the window.",
     run: (pool, { dryRun }) => closePhisSupportTicketsPastRequesterWindow(pool, { dryRun }),
+  },
+  {
+    id: "users-access-log",
+    summary: "Forget the users:v1 access log entries past each Site's retention.",
+    run: (pool, { dryRun }) => forgetExpiredPhisUsersAccessLog(pool, { dryRun }),
   },
 ]);
 

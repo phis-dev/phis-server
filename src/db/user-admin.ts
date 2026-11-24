@@ -293,12 +293,28 @@ export async function setAdminUserEnabled(userId: number, siteId: number, enable
  * Membership is read the same way the effective claims are, so an expired row does not count.
  */
 /**
+ * The digits a member search matches telephone numbers with, or null where the query is no telephone
+ * number: only digits and what is written between them (spaces, `+`, `-`, `.`, `/`, parentheses), at
+ * least three digits once the leading zeros are dropped. The zeros go because a number is written with a
+ * trunk prefix (`079`) or an international one (`0041`, `+41`), and what is left is part of every
+ * spelling of it; a query mixing letters and digits is a name.
+ */
+export function phisPhoneQueryDigits(query: string): string | null {
+  if (!/^[0-9+\-./()\s]+$/u.test(query)) {
+    return null;
+  }
+  const digits = query.replace(/\D/gu, "").replace(/^0+/u, "");
+  return digits.length >= 3 ? digits : null;
+}
+
+/**
  * One page of the Site's members, for a picker that names a person by user id (`GET /api/site/members`):
- * matched on the name or any of the person's e-mail addresses, ordered by name and id, and answered with
- * the id and the name only. The name is the one a person is shown under (`userDisplayNameSql`) and, where
- * they have none, `#<id>` -- never an address, which the staff this answers do not see in user
- * administration either. Every membership counts, a disabled one too: it is the membership a grant on the
- * person's behalf asks for (`ensureMemberEntitlementSubject`).
+ * matched on the name, any of the person's e-mail addresses or -- for a query that is a telephone number
+ * (`phisPhoneQueryDigits`) -- the digits of their business telephone or mobile number, ordered by name and
+ * id, and answered with the id and the name only. The name is the one a person is shown under
+ * (`userDisplayNameSql`) and, where they have none, `#<id>` -- never an address or a number, which the
+ * staff this answers do not see in user administration either. Every membership counts, a disabled one
+ * too: it is the membership a grant on the person's behalf asks for (`ensureMemberEntitlementSubject`).
  */
 export async function searchSiteMembers(input: {
   siteId: number;
@@ -308,6 +324,7 @@ export async function searchSiteMembers(input: {
 }) {
   const query = input.query.trim();
   const pattern = `%${query.replace(/[%_\\]/gu, (match) => `\\${match}`)}%`;
+  const digits = phisPhoneQueryDigits(query);
   const { rows } = await getPool().query<{ id: number; display_name: string | null }>(
     `SELECT ua.id, ${userDisplayNameSql("up")} AS display_name
      FROM phis.user_site_memberships usm
@@ -319,10 +336,11 @@ export async function searchSiteMembers(input: {
          OR EXISTS (
            SELECT 1 FROM phis.user_emails email
            WHERE email.user_id = ua.id AND email.email_normalized ILIKE $3 ESCAPE '\\'
-         ))
+         )
+         OR ($6::text IS NOT NULL AND (up.phone_digits LIKE '%' || $6 || '%' OR up.mobile_digits LIKE '%' || $6 || '%')))
      ORDER BY LOWER(COALESCE(${userDisplayNameSql("up")}, '')), ua.id
      LIMIT $4 OFFSET $5`,
-    [input.siteId, query, pattern, input.pageSize, (input.page - 1) * input.pageSize],
+    [input.siteId, query, pattern, input.pageSize, (input.page - 1) * input.pageSize, digits],
   );
   return rows.map((row) => ({ userId: row.id, displayName: row.display_name ?? `#${row.id}` }));
 }

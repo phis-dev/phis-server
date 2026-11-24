@@ -18,6 +18,7 @@ import {
   type PhisAddonEventRow } from "@/db/addon-events";
 import { getSiteIdentityById } from "@/db/sites";
 import { logRuntimeEvent } from "@/lib/log";
+import { isPhisUserField } from "@/lib/constants/users";
 
 /**
  * Handing an Add-on what Core owes it.
@@ -101,6 +102,16 @@ async function invokeEventHandler(input: {
       const { productId } = input.row.payload;
       if (input.row.subjectKind !== "product" || typeof productId !== "string" || !productId.startsWith("@")) throw new Error("Invalid product outbox subject.");
       await timed(input.handler({ ...common, event: input.event, subject: { kind: "product", productId: productId as `@${string}/${string}:${string}` } }));
+    } else if (input.event === "user.registered" || input.event === "user.changed") {
+      // Facts only, never a value: the handler reads what it may through `users:v1`.
+      const { subject, fields } = input.row.payload;
+      if (input.row.subjectKind !== "user" || typeof subject !== "string") throw new Error("Invalid user outbox subject.");
+      if (input.event === "user.registered") {
+        await timed(input.handler({ ...common, event: input.event, subject: { kind: "user", subject } }));
+      } else {
+        if (!Array.isArray(fields) || !fields.every(isPhisUserField)) throw new Error("Invalid user outbox subject.");
+        await timed(input.handler({ ...common, event: input.event, subject: { kind: "user", subject, fields } }));
+      }
     } else if (input.row.subjectKind === "emitted") {
       /*
        * What another Add-on said (SERVER_ADDONS.md, Events). The envelope is the row: who emitted it,
