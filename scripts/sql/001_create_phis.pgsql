@@ -2780,10 +2780,10 @@ CREATE INDEX IF NOT EXISTS addon_event_outbox_delivered_idx
 -- 16 = declared by the supplier's manifest, 32 = account required. `sale`, `referral_url`, `free`,
 -- `account required` and `parts` are the terms in force; what a publisher asked to change of them on a
 -- released product waits in `pending_terms` ({ sale, referralUrl, free, accountRequired, parts }) until the operator releases it. `image_asset_id` (the picture)
--- `source_locale` is the language the three are written in, a locale key in the catalogue's spelling, NULL
--- for the Site's source language (never the Site's own spelled out: Core writes NULL for it).
 -- and `icon_asset_id` (the small picture beside the title) each go to NULL when their Asset is deleted.
 -- `description` is the long text, Markdown, in the source language like `title` and `summary`; '' for none.
+-- `source_locale` is the language the three are written in, a locale key in the catalogue's spelling, NULL
+-- for the Site's source language (never the Site's own spelled out: Core writes NULL for it).
 -- The gallery is `phis.product_gallery`.
 CREATE TABLE IF NOT EXISTS phis.products (
   id SERIAL PRIMARY KEY,
@@ -2793,9 +2793,9 @@ CREATE TABLE IF NOT EXISTS phis.products (
   publisher VARCHAR(255) NULL,
   type VARCHAR(64) NOT NULL,
   title VARCHAR(200) NOT NULL,
-  source_locale VARCHAR(16) NULL,
   summary VARCHAR(1000) NOT NULL,
   description TEXT NOT NULL DEFAULT '',
+  source_locale VARCHAR(16) NULL,
   image_asset_id INT NULL,
   icon_asset_id INT NULL,
   sale VARCHAR(8) NOT NULL DEFAULT 'own',
@@ -2815,9 +2815,9 @@ CREATE TABLE IF NOT EXISTS phis.products (
   CONSTRAINT products_sale_check CHECK (sale IN ('own', 'referral', 'payout')),
   CONSTRAINT products_referral_check CHECK ((sale = 'referral') = (referral_url IS NOT NULL)),
   CONSTRAINT products_state_check CHECK (state IN ('draft', 'active', 'withdrawn', 'locked')),
-  CONSTRAINT products_source_locale_check CHECK (source_locale IS NULL OR source_locale ~ '^[a-z]{2,3}(-[A-Za-z0-9]{2,8})*$'),
   CONSTRAINT products_pending_check CHECK (pending_terms IS NULL OR jsonb_typeof(pending_terms) = 'object'),
   CONSTRAINT products_description_check CHECK (char_length(description) <= 20000),
+  CONSTRAINT products_source_locale_check CHECK (source_locale IS NULL OR source_locale ~ '^[a-z]{2,3}(-[A-Za-z0-9]{2,8})*$'),
   CONSTRAINT products_image_asset_site_fk
     FOREIGN KEY (image_asset_id, site_id)
     REFERENCES phis.media_assets (id, site_id)

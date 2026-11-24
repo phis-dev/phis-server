@@ -1679,13 +1679,13 @@ Contract:
 - `title VARCHAR(200) NOT NULL`
 - `summary VARCHAR(1000) NOT NULL`
 - `description TEXT NOT NULL DEFAULT ''`
+- `source_locale VARCHAR(16) NULL`
 - `image_asset_id INT NULL`
 - `icon_asset_id INT NULL`
 - `sale VARCHAR(8) NOT NULL DEFAULT 'own'`
 - `referral_url VARCHAR(2000) NULL`
 - `state VARCHAR(10) NOT NULL DEFAULT 'draft'`
 - `flags INT NOT NULL DEFAULT 0`
-- `source_locale VARCHAR(16) NULL`
 - `parts TEXT[] NOT NULL DEFAULT '{}'`
 - `pending_terms JSONB NULL`
 - `version INT NOT NULL DEFAULT 1`
@@ -1699,13 +1699,13 @@ Contract:
 - `CHECK (state IN ('draft', 'active', 'withdrawn', 'locked'))`, `CHECK (publisher IS NULL OR publisher <> '')`
 - `CHECK (pending_terms IS NULL OR jsonb_typeof(pending_terms) = 'object')`
 - `CHECK (char_length(description) <= 20000)` (`products_description_check`)
+- `CHECK (source_locale IS NULL OR source_locale ~ '^[a-z]{2,3}(-[A-Za-z0-9]{2,8})*$')` (`products_source_locale_check`)
 - partial index `products_publisher_idx` on `(site_id, publisher) WHERE publisher IS NOT NULL`
 
 Contract:
 - What a Site has that somebody can hold (`products:v1`, SERVER_ADDONS.md; `design/COMMERCE_COORDINATION.md` section 4). An identity and nothing about how it is sold or delivered. The id an Add-on sees is `supplier_addon_id || ':' || key`; the supplier is the Add-on that registered it and delivers it, and no foreign key points at `server_addons`, because a product stays when its supplier is removed.
 - `publisher` is the supplier's own reference for whose product it is, NULL for the Site's own, and does not change after the row was written. A product with a publisher is released by the operator (flag `released`); the Site's own is derived as released whatever the bit says (it is set at creation).
 - `sale`, `referral_url`, the `free` and `account required` flags and `parts` are the terms in force. What a publisher asked to change of them on a released product waits in `pending_terms` (`{ sale, referralUrl, free, accountRequired, parts }`) until the operator releases it, which moves them into the columns and clears it. `parts` are product ids of the same Site; no cycle, counting `pending_terms.parts`; a bundle is not `counted`.
-- `CHECK (source_locale IS NULL OR source_locale ~ '^[a-z]{2,3}(-[A-Za-z0-9]{2,8})*$')` (`products_source_locale_check`)
 - `flags` are `PHIS_PRODUCT_FLAG`: `1 = counted` (fixed once an entitlement names the product), `2 = free`, `4 = released`, `8 = withdrawn because the supplier was switched off` (cleared by any explicit move; Core restores exactly the products that carry it when the supplier is on again), `16 = declared by the supplier's manifest` (what lets Core withdraw it when a later manifest stops declaring it), `32 = account required` (Core does not enforce it: an entitlement entry always has a subject with an account).
 - `state`: `draft`, `active`, `withdrawn`, `locked`. `locked` is the operator's; `phis product unlock` (or `POST /api/site/products/{id}/unlock`) takes the product to `withdrawn`, because the state before the lock is not kept.
 - `version` rises with every change, attribute changes included, and not with a write that changes nothing.
@@ -1714,12 +1714,6 @@ Contract:
 - `icon_asset_id` is the product's icon -- a small picture (a logo, an app icon) shown beside its title on its page -- under exactly the rules of `image_asset_id`: the same `register` check, the same delete guard (a product wearing the Asset as either is named), the same `SET NULL` when the Asset goes, and a manifest sync never writes it either.
 - Every read of a product -- `products:v1`, the operator's directory (`listProductDirectory`, `GET /api/site/products`) and the answers of the writes -- joins both Assets in the statement that reads the product (`PRODUCT_COLUMNS`, `PRODUCT_FROM`), so `imagePath`, `iconPath` and the list paths `imageListPath` and `iconListPath` (the `icon` variant of the picture and of the icon) are built without a read per row; the galleries of every product read come in one further statement for all of them (`loadGalleries`).
 - `description` is the long text, Markdown, in the Site's source language like `title` and `summary`; `''` for none. `register` states it whole (absent is `''`), a manifest-declared product's included, and a change of it raises the version and owes `product.changed`.
-- The gallery is `phis.product_gallery`, below; the words' messages are `phis.product_texts`.
-- The operator's release may name the `version` it read (`releaseProduct`'s `expectedVersion`); a row that has moved on is refused under the row lock the release takes anyway.
-
-### `phis.product_gallery`
-
-- `product_id INT NOT NULL`
 - `source_locale` is the language `title`, `summary` and `description` are written in, a locale key in the catalogue's spelling (`fr`, `pt-BR`), NULL for the Site's source language: Core writes NULL also where a supplier names the Site's own language (`phisProductSourceLocaleAtSite`), so a product read back -- `PhisProduct.sourceLocale` always states a language -- and written again stays the Site's. Which language a hand-over is in is the rule of `@phis/contracts/products` (SERVER_ADDONS.md, `products:v1`, **Language**). A change of it is a change of every text: the fields' messages are recorded anew and the old ones go with their translations, as do the external renderings (`[extern]product <id> <field>`) of the old reading.
   - Added before v1 in place: no schema version is raised. An existing database receives it by hand, as the serving role (added 2026-11-24; the development database `phi_server_dev` received it so); every existing product is then the Site's language, which is what NULL says:
 
@@ -1728,6 +1722,12 @@ Contract:
     ALTER TABLE phis.products ADD CONSTRAINT products_source_locale_check
       CHECK (source_locale IS NULL OR source_locale ~ '^[a-z]{2,3}(-[A-Za-z0-9]{2,8})*$');
     ```
+- The gallery is `phis.product_gallery`, below; the words' messages are `phis.product_texts`.
+- The operator's release may name the `version` it read (`releaseProduct`'s `expectedVersion`); a row that has moved on is refused under the row lock the release takes anyway.
+
+### `phis.product_gallery`
+
+- `product_id INT NOT NULL`
 - `site_id SMALLINT NOT NULL`
 - `position SMALLINT NOT NULL`
 - `asset_id INT NOT NULL`
