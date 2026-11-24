@@ -56,12 +56,12 @@ describe("the Module products routes", () => {
   it("answer 404 for a Site they do not know", async () => {
     mocks.site.mockResolvedValue(null);
     expect((await GET(new Request("https://core.test/api/v1/module-products", { headers: INTERNAL }))).status).toBe(404);
-    expect((await post({ package: "@acme/site", proposal: { key: "pro", title: "Pro" }, as: "9" })).status).toBe(404);
+    expect((await post({ package: "@acme/site", proposal: { key: "pro", sourceLocale: "en", title: "Pro" }, as: "9" })).status).toBe(404);
   });
 
   it("list the Site's taken proposals, and the ones Core keeps with why they wait", async () => {
     mocks.rows.mockResolvedValue([{ packageName: "@acme/site", key: "pro", productKey: "acme.site.pro", flags: 0, createdAt: "x" }]);
-    mocks.proposals.mockResolvedValue([{ packageName: "@acme/site", key: "basic", proposal: { key: "basic", title: "Basic" }, waitingReason: "supplier_refused", waitingDetail: "No." }]);
+    mocks.proposals.mockResolvedValue([{ packageName: "@acme/site", key: "basic", proposal: { key: "basic", sourceLocale: "en", title: "Basic" }, waitingReason: "supplier_refused", waitingDetail: "No." }]);
     const response = await GET(new Request("https://core.test/api/v1/module-products", { headers: INTERNAL }));
     expect(await response.json()).toEqual({
       rows: [{ packageName: "@acme/site", key: "pro", productKey: "acme.site.pro", flags: 0, createdAt: "x" }],
@@ -72,40 +72,43 @@ describe("the Module products routes", () => {
 
   it("refuse a proposal that is not one, and a body without the member", async () => {
     expect((await post({ package: "@acme/site", proposal: { key: "pro" }, as: "9" })).status).toBe(400);
-    expect((await post({ package: "not a name", proposal: { key: "pro", title: "Pro" }, as: "9" })).status).toBe(400);
-    expect((await post({ package: "@acme/site", proposal: { key: "pro", title: "Pro" } })).status).toBe(400);
+    expect((await post({ package: "not a name", proposal: { key: "pro", sourceLocale: "en", title: "Pro" }, as: "9" })).status).toBe(400);
+    expect((await post({ package: "@acme/site", proposal: { key: "pro", sourceLocale: "en", title: "Pro" } })).status).toBe(400);
     expect(mocks.apply).not.toHaveBeenCalled();
   });
 
   it("keep a package's whole list of proposals when it is handed over without a member, and refuse it whole on one that is not valid", async () => {
-    const response = await post({ package: "@acme/site", proposals: [{ key: "pro", title: "Pro", gallery: ["shot"] }] });
+    const response = await post({ package: "@acme/site", proposals: [{ key: "pro", sourceLocale: "en", title: "Pro", gallery: ["shot"] }] });
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ results: [{ packageName: "@acme/site", key: "pro", productKey: "acme.site.pro", status: "waiting", reason: "activation" }] });
-    expect(mocks.record).toHaveBeenCalledWith(SITE, { packageName: "@acme/site", proposals: [{ key: "pro", title: "Pro", gallery: ["shot"] }] });
+    expect(mocks.record).toHaveBeenCalledWith(SITE, { packageName: "@acme/site", proposals: [{ key: "pro", sourceLocale: "en", title: "Pro", gallery: ["shot"] }] });
     expect((await post({ package: "@acme/site", proposals: [] })).status).toBe(200);
     expect(mocks.record).toHaveBeenLastCalledWith(SITE, { packageName: "@acme/site", proposals: [] });
     mocks.record.mockClear();
-    expect((await post({ package: "@acme/site", proposals: [{ key: "pro", title: "Pro" }, { key: "bad" }] })).status).toBe(400);
-    expect((await post({ package: "@acme/site", proposals: [{ key: "pro", title: "Pro" }, { key: "pro", title: "Again" }] })).status).toBe(400);
+    expect((await post({ package: "@acme/site", proposals: [{ key: "pro", sourceLocale: "en", title: "Pro" }, { key: "bad" }] })).status).toBe(400);
+    expect((await post({ package: "@acme/site", proposals: [{ key: "pro", sourceLocale: "en", title: "Pro" }, { key: "pro", sourceLocale: "en", title: "Again" }] })).status).toBe(400);
+    // A language Core does not know, or none at all, refuses the hand-over too.
+    expect((await post({ package: "@acme/site", proposals: [{ key: "pro", sourceLocale: "xx-nowhere", title: "Pro" }] })).status).toBe(400);
+    expect((await post({ package: "@acme/site", proposals: [{ key: "pro", title: "Pro" }] })).status).toBe(400);
     expect(mocks.record).not.toHaveBeenCalled();
     expect(mocks.actor).not.toHaveBeenCalled();
   });
 
   it("answer the actor's refusal as it is, and take nothing", async () => {
     mocks.actor.mockResolvedValue({ ok: false, status: 404, error: "nobody is not a member of acme." });
-    const response = await post({ package: "@acme/site", proposal: { key: "pro", title: "Pro" }, as: "nobody" });
+    const response = await post({ package: "@acme/site", proposal: { key: "pro", sourceLocale: "en", title: "Pro" }, as: "nobody" });
     expect(response.status).toBe(404);
     expect(mocks.apply).not.toHaveBeenCalled();
   });
 
   it("take the proposal as the member named, and answer what it came to", async () => {
-    const response = await post({ package: "@acme/site", proposal: { key: "pro", title: "Pro", flags: 1 }, as: "ops@acme.test" });
+    const response = await post({ package: "@acme/site", proposal: { key: "pro", sourceLocale: "en", title: "Pro", flags: 1 }, as: "ops@acme.test" });
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ result: { packageName: "@acme/site", key: "pro", productKey: "acme.site.pro", status: "created" } });
     expect(mocks.actor).toHaveBeenCalledWith(SITE, "ops@acme.test");
     expect(mocks.apply).toHaveBeenCalledWith(SITE, {
       packageName: "@acme/site",
-      proposal: { key: "pro", title: "Pro", flags: 1 },
+      proposal: { key: "pro", sourceLocale: "en", title: "Pro", flags: 1 },
       actorUserId: 9,
     });
   });

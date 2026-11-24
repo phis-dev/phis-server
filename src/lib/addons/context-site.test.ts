@@ -77,8 +77,8 @@ describe("the Site's zone on a request, a hook and a command", () => {
       { scope: "acme", name: "days", path: ["day"] },
     );
     expect(request.status).toBe(200);
-    // Exactly these four: the rest of the Site's record is Core's, not the handler's.
-    expect(lastSeen("request")).toEqual({ id: 3, key: "days", publicBaseUrl: "https://days.example", timeZone });
+    // Exactly these five: the rest of the Site's record is Core's, not the handler's.
+    expect(lastSeen("request")).toEqual({ id: 3, key: "days", publicBaseUrl: "https://days.example", timeZone, sourceLocale: "en" });
 
     const hook = await dispatchPhisAddonRequest(
       new NextRequest("http://localhost/api/hooks/acme/days/ping", { method: "POST", headers, body: "{}" }),
@@ -86,13 +86,14 @@ describe("the Site's zone on a request, a hook and a command", () => {
       { scope: "acme", name: "days", path: ["ping"] },
     );
     expect(hook.status).toBe(200);
-    expect(lastSeen("hook")).toEqual({ id: 3, key: "days", publicBaseUrl: "https://days.example", timeZone });
+    expect(lastSeen("hook")).toEqual({ id: 3, key: "days", publicBaseUrl: "https://days.example", timeZone, sourceLocale: "en" });
   });
 
   it.each(cases)("reaches a command handler ($label)", async ({ timeZone }) => {
     const site = { id: 3, key: "days", publicBaseUrl: "https://days.example", timeZone };
     const outcome = await runPhisAddonCommand({ addonId: "@acme/days", commandId: "day.show", site, actorUserId: 9, input: null });
     expect(outcome.ok).toBe(true);
-    expect(lastSeen("command")).toEqual(site);
+    // The Site's source language is Core's configuration's, read by the runner.
+    expect(lastSeen("command")).toEqual({ ...site, sourceLocale: "en" });
   });
 });

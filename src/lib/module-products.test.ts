@@ -51,11 +51,18 @@ describe("reading phis.products", () => {
     expect(issues).toEqual([]);
     expect(proposals).toEqual([
       {
-        key: "pro", title: "Pro", summary: "All of it", description: "## Features\n\n- Fast", kind: "app", state: "active", flags: 3,
+        key: "pro", sourceLocale: "en", title: "Pro", summary: "All of it", description: "## Features\n\n- Fast", kind: "app", state: "active", flags: 3,
         picture: "app-icon", icon: "app-icon", gallery: ["shot-2", "shot-1"],
       },
-      { key: "basic", title: "Basic" },
+      { key: "basic", sourceLocale: "en", title: "Basic" },
     ]);
+  });
+
+  it("states the package's language on every proposal, and takes none from a proposal itself", () => {
+    expect(readPhisSitePackageProductProposals(PKG, { sourceLocale: "fr", products: [{ key: "pro", title: "Pro" }] }).proposals)
+      .toEqual([{ key: "pro", sourceLocale: "fr", title: "Pro" }]);
+    expect(readPhisSitePackageProductProposals(PKG, { products: [{ key: "pro", title: "Pro", sourceLocale: "de" }] }).issues)
+      .toEqual([expect.stringContaining("a proposal names no language of its own")]);
   });
 
   it("is nothing for a package that proposes nothing", () => {
@@ -104,12 +111,15 @@ describe("reading phis.products", () => {
   });
 
   it("reads one proposal for Core, where a picture need only be a Media key", () => {
-    expect(readPhisSitePackageProductProposal(PKG, { key: "pro", title: "Pro", picture: "app-icon" }).proposal)
-      .toEqual({ key: "pro", title: "Pro", picture: "app-icon" });
-    expect(readPhisSitePackageProductProposal(PKG, { key: "pro", title: "Pro", picture: "Not A Key" }).proposal).toBeNull();
-    expect(readPhisSitePackageProductProposal(PKG, { key: "pro", title: "Pro", gallery: ["shot-9", "shot-1"] }).proposal)
-      .toEqual({ key: "pro", title: "Pro", gallery: ["shot-9", "shot-1"] });
-    expect(readPhisSitePackageProductProposal(PKG, { key: "pro", title: "Pro", gallery: ["Not A Key"] }).proposal).toBeNull();
+    expect(readPhisSitePackageProductProposal(PKG, { key: "pro", sourceLocale: "en", title: "Pro", picture: "app-icon" }).proposal)
+      .toEqual({ key: "pro", sourceLocale: "en", title: "Pro", picture: "app-icon" });
+    expect(readPhisSitePackageProductProposal(PKG, { key: "pro", sourceLocale: "en", title: "Pro", picture: "Not A Key" }).proposal).toBeNull();
+    expect(readPhisSitePackageProductProposal(PKG, { key: "pro", sourceLocale: "en", title: "Pro", gallery: ["shot-9", "shot-1"] }).proposal)
+      .toEqual({ key: "pro", sourceLocale: "en", title: "Pro", gallery: ["shot-9", "shot-1"] });
+    expect(readPhisSitePackageProductProposal(PKG, { key: "pro", sourceLocale: "en", title: "Pro", gallery: ["Not A Key"] }).proposal).toBeNull();
+    // Handed one, Core needs the language the package's reader stated.
+    expect(readPhisSitePackageProductProposal(PKG, { key: "pro", title: "Pro" }).issues).toEqual([expect.stringContaining("`sourceLocale`")]);
+    expect(readPhisSitePackageProductProposal(PKG, { key: "pro", sourceLocale: "Français", title: "Pro" }).proposal).toBeNull();
     expect(readPhisSitePackageProductProposal(PKG, "pro").issues).toEqual([`${PKG}: proposal: must be an object`]);
   });
 });
@@ -117,13 +127,13 @@ describe("reading phis.products", () => {
 describe("what product.add is handed", () => {
   it("is the proposal under the derived key, its flags as product.add's two answers, its pictures as Asset ids", () => {
     expect(buildModuleProductCommandInput("acme.site.pro", {
-      key: "pro", title: "Pro", summary: "All", description: "Long", kind: "app", state: "active",
+      key: "pro", sourceLocale: "fr", title: "Pro", summary: "All", description: "Long", kind: "app", state: "active",
       flags: PhisSitePackageProductFlag.AccountRequired, picture: "app-icon", gallery: ["shot-2", "shot-1"],
     }, { picture: 41, icon: null, gallery: [43, 42] })).toEqual({
-      key: "acme.site.pro", title: "Pro", summary: "All", description: "Long", kind: "app", state: "active",
+      key: "acme.site.pro", sourceLocale: "fr", title: "Pro", summary: "All", description: "Long", kind: "app", state: "active",
       counted: false, accountRequired: true, picture: 41, gallery: [43, 42],
     });
-    expect(buildModuleProductCommandInput("acme.site.basic", { key: "basic", title: "Basic", flags: PhisSitePackageProductFlag.Counted }, { picture: null, icon: 7, gallery: [] }))
-      .toEqual({ key: "acme.site.basic", title: "Basic", counted: true, accountRequired: false, icon: 7 });
+    expect(buildModuleProductCommandInput("acme.site.basic", { key: "basic", sourceLocale: "en", title: "Basic", flags: PhisSitePackageProductFlag.Counted }, { picture: null, icon: 7, gallery: [] }))
+      .toEqual({ key: "acme.site.basic", sourceLocale: "en", title: "Basic", counted: true, accountRequired: false, icon: 7 });
   });
 });

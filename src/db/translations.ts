@@ -136,13 +136,42 @@ export function findGlobalExternalTranslationUnits(input: {
   return findExternalTranslationUnits(input);
 }
 
-export function findSiteExternalTranslationUnits(input: {
+/**
+ * The Site's external units for sources that each have a context of their own -- a product's title under
+ * `[extern]product <n> title` -- in one statement, the TR route's batch included (all under one context):
+ * per entry, in order, the unit, null where there is none, or an Error where the hash names another source.
+ */
+export async function findSiteExternalTranslationUnitsByContext(input: {
   siteId: number;
   locale: string;
-  ctx: string;
-  entries: ReadonlyArray<{ source: string; sourceHash: string }>;
-}) {
-  return findExternalTranslationUnits(input);
+  entries: ReadonlyArray<{ source: string; sourceHash: string; ctx: string }>;
+}): Promise<Array<ExternalTranslationUnit | null | Error>> {
+  if (input.entries.length === 0) {
+    return [];
+  }
+  const { rows } = await getPool().query<{ msg_id: number; canonical_msg: string; source: string; source_hash: string; ctx: string }>(
+    `SELECT lang.msg_id, msg.msg AS canonical_msg, lang.translation AS source,
+            encode(lang.source_hash, 'hex') AS source_hash, msg.ctx
+     FROM phis.tr_site_lang lang
+     JOIN phis.tr_site_msg msg ON msg.id = lang.msg_id
+     WHERE msg.site_id = $1
+       AND lang.locale = $2
+       AND (lang.source_hash, msg.ctx) IN (
+         SELECT decode(hash, 'hex'), ctx FROM unnest($3::text[], $4::text[]) AS wanted(hash, ctx)
+       )`,
+    [input.siteId, input.locale, input.entries.map((entry) => normalizePhiMessageHash(entry.sourceHash)), input.entries.map((entry) => entry.ctx)],
+  );
+  notePhiTranslationUse("site", rows.map((row) => row.msg_id));
+  return input.entries.map((entry) => {
+    const hash = normalizePhiMessageHash(entry.sourceHash);
+    const candidates = rows.filter((row) => row.source_hash === hash && row.ctx === entry.ctx);
+    const exact = candidates.find((row) => row.source === entry.source);
+    return exact
+      ? { msgId: exact.msg_id, canonicalMsg: exact.canonical_msg }
+      : candidates.length > 0
+        ? new Error("Hash collision detected for an external translation source.")
+        : null;
+  });
 }
 
 /**
@@ -363,81 +392,61 @@ export async function ensureSiteMessageIds(
   ctx: string,
   database: TranslationQueryClient = getPool(),
 ): Promise<Map<string, number | Error>> {
-  const entries = Array.from(new Set(msgs)).map((msg) => ({ msg, hash: computePhiMessageHash(msg) }));
-  const result = new Map<string, number | Error>();
-  if (entries.length === 0) {
-    return result;
-  }
-
-  const read = async (hashes: string[]) => {
-    const { rows } = await database.query<{ id: number; msg: string; msg_hash: string }>(
-      `SELECT id, msg, encode(msg_hash, 'hex') AS msg_hash
-       FROM phis.tr_site_msg
-       WHERE site_id = $1
-         AND ctx = $2
-         AND msg_hash = ANY(ARRAY(SELECT decode(hash, 'hex') FROM unnest($3::text[]) AS hash))`,
-      [siteId, ctx, hashes],
-    );
-    return new Map(rows.map((row) => [row.msg_hash, row]));
-  };
-
-  const stored = await read(entries.map((entry) => entry.hash));
-  const missing = entries.filter((entry) => !stored.has(entry.hash));
-  if (missing.length > 0) {
-    await database.query(
-      `INSERT INTO phis.tr_site_msg (site_id, msg, msg_hash, ctx)
-       SELECT $1, input.msg, decode(input.hash, 'hex'), $2
-       FROM unnest($3::text[], $4::text[]) AS input(msg, hash)
-       ON CONFLICT (site_id, msg_hash, ctx) DO NOTHING`,
-      [siteId, ctx, missing.map((entry) => entry.msg), missing.map((entry) => entry.hash)],
-    );
-    for (const [hash, row] of await read(missing.map((entry) => entry.hash))) {
-      stored.set(hash, row);
-    }
-  }
-
-  for (const entry of entries) {
-    const row = stored.get(entry.hash);
-    result.set(
-      entry.msg,
-      row && row.msg === entry.msg
-        ? row.id
-        : createPhiSiteCollisionError(siteId, entry.msg, ctx, entry.hash, row?.msg ?? ""),
-    );
-  }
-  return result;
+  const unique = Array.from(new Set(msgs));
+  const ids = await resolveSiteMessageIds(siteId, unique.map((msg) => ({ msg, ctx })), { database });
+  return new Map(unique.map((msg, index) => [msg, ids[index] as number | Error]));
 }
 
 /**
- * The ids of Site messages the store already holds under `ctx`, by message; one statement, and nothing
- * created. A message the store does not hold, or holds a different text under the same hash, is absent.
- *
- * For a caller that may answer recorded texts and must not record new ones (`translations:v1`'s
- * `translate`): what the request path would create, it leaves to the write that records them.
+ * `ensureSiteMessageIds` for messages that each have a context of their own -- a product's title under
+ * `product <n> title` -- in the same statements for all of them, answered in order. With `create: false`
+ * nothing is written and a message the store does not hold is null: for a caller that may answer recorded
+ * texts and must not record new ones (`translations:v1`'s `translate`).
  */
-export async function findSiteMessageIds(
+export async function resolveSiteMessageIds(
   siteId: number,
-  msgs: readonly string[],
-  ctx: string,
-): Promise<Map<string, number>> {
-  const entries = Array.from(new Set(msgs)).map((msg) => ({ msg, hash: computePhiMessageHash(msg) }));
-  const result = new Map<string, number>();
+  entries: ReadonlyArray<{ msg: string; ctx: string }>,
+  options: { create?: boolean; database?: TranslationQueryClient } = {},
+): Promise<Array<number | Error | null>> {
   if (entries.length === 0) {
-    return result;
+    return [];
   }
-  const { rows } = await getPool().query<{ id: number; msg: string }>(
-    `SELECT id, msg
-     FROM phis.tr_site_msg
-     WHERE site_id = $1
-       AND ctx = $2
-       AND msg_hash = ANY(ARRAY(SELECT decode(hash, 'hex') FROM unnest($3::text[]) AS hash))`,
-    [siteId, ctx, entries.map((entry) => entry.hash)],
-  );
-  const wanted = new Set(entries.map((entry) => entry.msg));
-  for (const row of rows) {
-    if (wanted.has(row.msg)) result.set(row.msg, row.id);
+  const database = options.database ?? getPool();
+  const hashed = entries.map((entry) => ({ ...entry, hash: computePhiMessageHash(entry.msg) }));
+  const keyOf = (hash: string, ctx: string) => `${ctx}\u0000${hash}`;
+
+  const read = async (wanted: typeof hashed) => {
+    const { rows } = await database.query<{ id: number; msg: string; msg_hash: string; ctx: string }>(
+      `SELECT id, msg, encode(msg_hash, 'hex') AS msg_hash, ctx
+       FROM phis.tr_site_msg
+       WHERE site_id = $1
+         AND (msg_hash, ctx) IN (SELECT decode(hash, 'hex'), ctx FROM unnest($2::text[], $3::text[]) AS wanted(hash, ctx))`,
+      [siteId, wanted.map((entry) => entry.hash), wanted.map((entry) => entry.ctx)],
+    );
+    return new Map(rows.map((row) => [keyOf(row.msg_hash, row.ctx), row]));
+  };
+
+  const stored = await read(hashed);
+  // Every one not stored, in order: where two share a hash, the first one written is the message.
+  const missing = hashed.filter((entry) => !stored.has(keyOf(entry.hash, entry.ctx)));
+  if (missing.length > 0 && options.create !== false) {
+    await database.query(
+      `INSERT INTO phis.tr_site_msg (site_id, msg, msg_hash, ctx)
+       SELECT $1, input.msg, decode(input.hash, 'hex'), input.ctx
+       FROM unnest($2::text[], $3::text[], $4::text[]) AS input(msg, hash, ctx)
+       ON CONFLICT (site_id, msg_hash, ctx) DO NOTHING`,
+      [siteId, missing.map((entry) => entry.msg), missing.map((entry) => entry.hash), missing.map((entry) => entry.ctx)],
+    );
+    for (const [key, row] of await read(missing)) {
+      stored.set(key, row);
+    }
   }
-  return result;
+
+  return hashed.map((entry) => {
+    const row = stored.get(keyOf(entry.hash, entry.ctx));
+    if (!row) return options.create === false ? null : createPhiSiteCollisionError(siteId, entry.msg, entry.ctx, entry.hash, "");
+    return row.msg === entry.msg ? row.id : options.create === false ? null : createPhiSiteCollisionError(siteId, entry.msg, entry.ctx, entry.hash, row.msg);
+  });
 }
 
 export async function ensureSiteExternalTranslationUnit(input: {

@@ -1,6 +1,8 @@
 import type { PhisProductDraft, PhisProductId, PhisProductSale } from "@phis/contracts/addon";
 import { PHIS_PRODUCT_DESCRIPTION_MAX, PHIS_PRODUCT_GALLERY_MAX } from "@phis/contracts/products";
 
+import { resolvePhiLocaleBase, resolvePhiLocaleCapability } from "../locale.ts";
+
 /**
  * What a product's draft has to be, judged without the database.
  *
@@ -47,6 +49,11 @@ export type PhisNormalizedProductDraft = {
   title: string;
   summary: string;
   description: string;
+  /**
+   * The language the texts are written in, in the catalogue's spelling; null for the Site's. As the draft
+   * states it -- `phisProductSourceLocaleAtSite` turns the Site's own language into null before a register.
+   */
+  sourceLocale: string | null;
   imageAssetId: number | null;
   iconAssetId: number | null;
   /** First to last, none twice. */
@@ -64,6 +71,23 @@ function text(value: unknown, name: string, max: number, allowEmpty = false) {
     throw new PhisProductDraftError(`${name} must be ${allowEmpty ? "at most" : "1 to"} ${max} characters without control characters.`);
   }
   return value;
+}
+
+/**
+ * A product's language as Core keeps it: null where it is the Site's source language -- also where a
+ * supplier names it, which is how a product read back (`sourceLocale` always stated) and written again
+ * stays the Site's -- else the language in the catalogue's spelling.
+ */
+export function phisProductSourceLocaleAtSite(sourceLocale: string | null, siteSourceLocale: string): string | null {
+  return sourceLocale === null || resolvePhiLocaleBase(sourceLocale) === resolvePhiLocaleBase(siteSourceLocale) ? null : sourceLocale;
+}
+
+/** A stated language, in the catalogue's spelling, or the rule it breaks; absent and null are the Site's. */
+function readSourceLocale(value: unknown): string | null {
+  if (value === undefined || value === null) return null;
+  const capability = typeof value === "string" ? resolvePhiLocaleCapability(value) : null;
+  if (!capability) throw new PhisProductDraftError("sourceLocale is a locale key Core knows, such as fr or pt-BR, or null for the Site's language.");
+  return capability.locale;
 }
 
 /**
@@ -131,6 +155,7 @@ export function normalizePhisProductDraft(draft: PhisProductDraft, ownId?: PhisP
     title: text(draft.title, "title", PHIS_PRODUCT_TITLE_MAX_LENGTH),
     summary: text(draft.summary, "summary", PHIS_PRODUCT_SUMMARY_MAX_LENGTH, true),
     description,
+    sourceLocale: readSourceLocale(draft.sourceLocale),
     imageAssetId,
     iconAssetId,
     gallery: [...gallery],

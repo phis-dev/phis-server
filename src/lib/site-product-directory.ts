@@ -15,6 +15,8 @@ import {
 import { schedulePhisAddonEventDelivery } from "@/lib/addons/event-trigger";
 import { isPhisProductId } from "@/lib/addons/product-draft";
 import { listPhisProductListeners, presentPhisProduct } from "@/lib/addons/products-capability";
+import { getPhisConfigSync } from "@/lib/config";
+import { resolvePhiSiteSourceLocale } from "@/lib/config-core";
 import { PHIS_ADDON_ID_PATTERN } from "@/lib/addons/schema-name";
 import { getPool } from "@/lib/db";
 import type { SiteAdminApiGuardedContext } from "@/lib/guards/site-admin-api";
@@ -49,8 +51,9 @@ export type SiteProductDirectoryRow = Pick<
   | "imageListPath" | "iconListPath" | "version"
 >;
 
-function toRow(stored: PhisStoredProduct): SiteProductDirectoryRow {
-  const product = presentPhisProduct(stored);
+/** The operator's row; the language is the Site's where a product names none, though the row does not show it. */
+function toRow(stored: PhisStoredProduct, siteKey: string): SiteProductDirectoryRow {
+  const product = presentPhisProduct(stored, resolvePhiSiteSourceLocale(getPhisConfigSync(), siteKey));
   return {
     id: product.id,
     supplier: product.supplier,
@@ -111,7 +114,7 @@ export async function answerSiteProductDirectory(request: NextRequest, context: 
     pageSize,
   });
   return NextResponse.json({
-    rows: result.products.map(toRow),
+    rows: result.products.map((stored) => toRow(stored, context.site.key)),
     total: result.total,
     page,
     pageSize,
@@ -206,5 +209,5 @@ export async function answerSiteProductCommand(
   }
   const product = await readProduct(pool, siteId, id);
   if (!product) return refuse(404, "product_not_found");
-  return NextResponse.json({ outcome, product: toRow(product) });
+  return NextResponse.json({ outcome, product: toRow(product, context.site.key) });
 }

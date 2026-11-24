@@ -6,6 +6,7 @@ import { listSiteModuleProductProposals, listSiteModuleProducts } from "@/db/sit
 import { resolvePhisCommandActor } from "@/lib/addons/command-actor";
 import { guardApiV1 } from "@/lib/api-v1-guard";
 import { getPool } from "@/lib/db";
+import { resolvePhiLocaleCapability } from "@/lib/locale";
 import { logRuntimeEvent } from "@/lib/log";
 import { isPhisModuleMediaPackageName } from "@/lib/module-media";
 import { applyModuleProductProposal, recordModuleProductProposals } from "@/lib/module-products-apply";
@@ -13,6 +14,18 @@ import type { PhisModuleProductMapping } from "@/lib/module-products";
 import { requireSiteFromRequest } from "@/lib/site-context";
 
 export const dynamic = "force-dynamic";
+
+/** One proposal as the contract reads it, and in a language Core translates from. */
+function readKnownProposal(packageName: string, value: unknown) {
+  const read = readPhisSitePackageProductProposal(packageName, value);
+  if (read.proposal && !resolvePhiLocaleCapability(read.proposal.sourceLocale)) {
+    return {
+      proposal: null,
+      issues: [`${packageName}: proposal (key "${read.proposal.key}"): sourceLocale "${read.proposal.sourceLocale}" is no language Core knows`],
+    };
+  }
+  return read;
+}
 
 /**
  * The proposals of the Site's packages that the Site took, with the product each became (`rows`), and the
@@ -58,7 +71,7 @@ export async function POST(request: Request) {
   const body = await request.json().catch(() => null) as Record<string, unknown> | null;
   if (isPhisModuleMediaPackageName(body?.package) && body.as === undefined && body.proposal === undefined && Array.isArray(body.proposals)) {
     const handedOver = body.package;
-    const read = body.proposals.map((entry) => readPhisSitePackageProductProposal(handedOver, entry));
+    const read = body.proposals.map((entry) => readKnownProposal(handedOver, entry));
     const issues = read.flatMap((entry) => entry.issues);
     const keys = read.flatMap((entry) => (entry.proposal ? [entry.proposal.key] : []));
     if (issues.length > 0 || new Set(keys).size !== keys.length) {
@@ -74,7 +87,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "package with proposals, or package, proposal and as, are required." }, { status: 400 });
   }
   const packageName = body.package;
-  const { proposal, issues } = readPhisSitePackageProductProposal(packageName, body.proposal);
+  const { proposal, issues } = readKnownProposal(packageName, body.proposal);
   if (!proposal) {
     return NextResponse.json({ error: issues.join("; ") || "The proposal is not valid." }, { status: 400 });
   }

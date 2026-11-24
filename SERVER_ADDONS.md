@@ -621,7 +621,10 @@ An Add-on handler receives one argument, `PhisAddonRequestContext` from `@phis/c
 
 - `addonId` and `requestId`
 - `method`, `url`, `headers`, the raw `body` bytes, the matched `path`, and its `pathParams`
-- `site`: `{ id, key, publicBaseUrl, timeZone }` for a Site-scoped route, otherwise `null`
+- `site`: `{ id, key, publicBaseUrl, timeZone, sourceLocale }` for a Site-scoped route, otherwise `null`;
+  `sourceLocale` is the language the Site's own texts are written in (immutable, TRANSLATIONS.md), what a
+  person on the Site types unless they say otherwise -- a Form's default, the language of a text an Add-on
+  records for staff. A command's `site` carries it too.
 - `actor`: a Site user, an operator, an internal caller, or `null` on a hook
 - `locale`: the language the request is read in, as Core resolves it for its own reads -- the `x-locale` a
   Site sends for the page it draws, else `Accept-Language`, else `en` -- a locale key; `null` where no reader
@@ -1742,8 +1745,10 @@ The design is [design/COMMERCE_COORDINATION.md](./design/COMMERCE_COORDINATION.m
   fitted whole on a transparent ground, Site-relative with the delivery revision and the variant version so
   the address changes when the picture does; null without one or for an Asset that is no image; built at read
   time and never stored, as `imagePath`), `description` (the long text, Markdown, at most
-  `PHIS_PRODUCT_DESCRIPTION_MAX` characters, in the Site's source language like `title` and `summary`; `""` for
-  none), `gallery` (further pictures, first to last, at most `PHIS_PRODUCT_GALLERY_MAX`, none twice: written to
+  `PHIS_PRODUCT_DESCRIPTION_MAX` characters, in the product's `sourceLocale` like `title` and `summary`; `""` for
+  none), `sourceLocale` (the language the three are written in, always stated: the product's own, else the
+  Site's; **Language**, below), `translated` (`PhisProductText` bits: which text a read with `locale` answers
+  as a translation), `gallery` (further pictures, first to last, at most `PHIS_PRODUCT_GALLERY_MAX`, none twice: written to
   `register` as Asset ids and read as `{ assetId, path, listPath }`, each accepted, refused and addressed exactly
   as `imageAssetId` -- so every `path` is one a visitor is served and a seller may hand on, to a storefront
   elsewhere or a feed -- and held by the Media library as the picture is: its delete guard names a product
@@ -1751,8 +1756,28 @@ The design is [design/COMMERCE_COORDINATION.md](./design/COMMERCE_COORDINATION.m
   `counted`, `sale` (`own`,
   `referral` or `payout`), `referralUrl` (required, https, exactly for `referral`), `free`, `accountRequired` (can only be acquired with an account; Core does not enforce it, an entitlement entry always has a subject with an account), `parts` (the
   ids of a bundle's parts), `state`, `released`, `pendingTerms`, `attributes`, `version`, the two
-  timestamps. Title, summary and description are written in the Site's source language and read in it,
+  timestamps. Title, summary and description are written in the product's `sourceLocale` and read in it,
   or in a reader's language with `locale` (**Words**, below). Core reads neither `type` nor `attributes`.
+- **Language.** Several suppliers or publishers may sell through one Site, each writing in their own
+  language, so the language belongs to the product (`phis.products.source_locale`, null for the Site's).
+  One rule decides it for every way a product reaches Core (`@phis/contracts/products`, at the top):
+  1. The language a hand-over states always wins: `PhisProductDraft.sourceLocale` of a `register`,
+     `sourceLocale` of `@phis/products`' `product.add` and commands and of its Forms ("Language of the
+     texts", first on the Form, the Site's language by default), and a Site package proposal's
+     (`PhisSitePackageProductProposal.sourceLocale`: the package's `phis.sourceLocale`, `en` where it states
+     none, which the CLI's hand-over to `POST /api/v1/module-products` carries and Core hands to `product.add`).
+  2. Otherwise, for a text the Add-on ships itself -- the products of its manifest, its own
+     `translations:v1` texts recorded without a language -- the manifest's `sourceLocale`. A manifest that
+     declares products or requires `translations:v1` must state it, a locale key Core knows in its spelling;
+     the manifest is refused otherwise (`validatePhisAddonManifest`). A manifest product names no language
+     of its own.
+  3. Otherwise the text was typed by a person on the Site -- a staff Form, the Shop's listing hint -- and is
+     in the Site's source language. `@phis/products`' manifest language never stands in for what staff type
+     into its Form: that is rule 3, unless the Form states another language, which is rule 1.
+  `register` refuses a language Core does not know and keeps the Site's own as null; `register` is the whole
+  statement, so a supplier writing a product back states it again (the product's `sourceLocale` is what it
+  read). A change of the language is a change of every text: their messages and translations go. A command
+  (`phis addon command`) takes the language in its input, as `product.add` does; there is no flag of its own.
 - **Words.** Title, summary and description are source texts of the Site's translation store
   (TRANSLATIONS.md, "Words Core records"): `register` records each in its transaction, under the product's
   own context `product <n> title`, `product <n> summary`, `product <n> description` (`<n>` Core's number for
@@ -1760,12 +1785,18 @@ The design is [design/COMMERCE_COORDINATION.md](./design/COMMERCE_COORDINATION.m
   through the capability, a manifest sync, `@phis/products`' Forms and commands, or a Site package's
   proposal, which all end in `register`. A changed text is a new message and the old one goes with its
   translations; a removed product takes its messages along. `list({ locale })` and `get({ id, locale })`
-  answer the three in that language: a translation held (a person's, an import's) wins; a title or a summary
-  nobody translated is asked of the configured provider once for the whole read -- told `product title` or
-  `product summary`, never the product -- and kept; a description nobody translated stays the source,
-  because a Markdown document is never handed to a provider whole. Without `locale`, or with the Site's
-  source language, they are the words as written: what a supplier reads to write its product back and a
-  seller copies into an order. The operator's directory reads them as written.
+  answer the three in that language, each product from its own: a translation held on the field's message
+  (a person's, an import's) wins; a title or a summary nobody translated is had as the TR route has it --
+  for a product in the Site's language the Site path, asked of the configured provider and kept on the
+  field's message; for one in another language the external path (TRANSLATIONS.md, "External and
+  non-canonical sources") under `[extern]product <n> title`, rendered into the Site's language once and every
+  other language from that rendering -- one call per field (and per language) for the whole read, the
+  provider told `product title` or `product summary`, never the product; a description nobody translated
+  stays the source, because a Markdown document is never handed to a provider whole: `translated` says so
+  (its `Description` bit unset), and a renderer translates it paragraph by paragraph from `sourceLocale`
+  (phis-ui's Markdown record field). Without `locale`, or in the product's own language, they are the words
+  as written: what a supplier reads to write its product back and a seller copies into an order. The
+  operator's directory reads them as written.
 - **States.** `draft` and `active` and `withdrawn` are the supplier's to set; `locked` is the operator's
   alone (`phis product lock|unlock`, or `POST /api/site/products/{id}/lock|unlock`). Only `active` can be
   acquired. A withdrawn product is held as it was; a locked one is held by nobody -- no entry for it counts
@@ -2102,9 +2133,16 @@ change, and with `address` on the Site when their current address there is repla
 An Add-on's own words as source texts of the Site's translation store: what an administrator writes into an
 Add-on's tables and a visitor reads -- a listing's hint ("20 % off"), a category's name -- translated where a
 Page's words are, by the same people, the same files and the same provider. `record({ context, texts })` and
-`translate({ context, locale, texts })` (`PhisTranslationsCapabilityV1`).
+`translate({ context, locale, texts })` (`PhisTranslationsCapabilityV1`), both with an optional `sourceLocale`.
 
-- **Whose words.** The Site's, in the Site's source language, so the Site store (`tr_site_msg`). Core keeps
+- **Which language.** `sourceLocale` is the texts' language, refused where Core knows none such. Absent, it is
+  the manifest's `sourceLocale` -- right for what the Add-on ships itself (rule 2 of `products:v1`'s
+  **Language**) and required in a manifest that requires the capability -- and what a person typed on the
+  Site is in the Site's language, which the Add-on states (`context.site.sourceLocale`, rule 3): the Shop's
+  listing hint does. A text in the Site's language is filled on its own message; one in another takes the
+  external path under `[extern]<addonId>: <context>`. A translation held on the recorded message wins either
+  way. Give `record` and `translate` the same language.
+- **Whose words.** The Site's, so the Site store (`tr_site_msg`). Core keeps
   them under `<addonId>: <context>`: `context` is the Add-on's own natural-language word for what the texts
   are (`listing hint`, at most `PHIS_ADDON_TRANSLATION_CONTEXT_MAX` characters, no leading `[`, never an id or
   an address), and Core puts the Add-on's id in front -- the rule the global store applies to another
@@ -2121,7 +2159,7 @@ Page's words are, by the same people, the same files and the same provider. `rec
   an unverified hook.
 - **Read in the reader's language.** `translate` answers each text at its position: the translation held, else
   the configured provider's -- one request for the missing ones, told the stored context, the answers kept as a
-  Widget's are -- and the text as written where `locale` is null, the Site's source language or no language a
+  Widget's are -- and the text as written where `locale` is null, the texts' language or no language a
   translation is kept in, and for a text never recorded, which `translate` never records: what a public hook
   reads, an administrator wrote. `provisional` says an answer is the text standing in for a provider that
   failed. A public hook may translate; the hook hands `context.locale`.

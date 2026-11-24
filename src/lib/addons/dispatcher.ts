@@ -24,6 +24,8 @@ import {
 import { guardApiV1 } from "@/lib/api-v1-guard";
 import { requireSiteAdminOnlyApiContext } from "@/lib/guards/site-admin-api";
 import { createLogger } from "@/lib/log";
+import { getPhisConfigSync } from "@/lib/config";
+import { resolvePhiSiteSourceLocale } from "@/lib/config-core";
 import { resolveRequestLocale } from "@/lib/locale";
 import { getOperatorSessionFromRequest } from "@/lib/operator-auth";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
@@ -628,6 +630,7 @@ export async function dispatchPhisAddonRequest(
             key: identity.site.key,
             publicBaseUrl: identity.site.publicBaseUrl,
             timeZone: identity.site.timeZone,
+            sourceLocale: resolvePhiSiteSourceLocale(getPhisConfigSync(), identity.site.key),
           }
           : null,
         actor: identity.actor,

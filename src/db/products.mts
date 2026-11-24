@@ -17,6 +17,7 @@ import { PhisMediaSpaceKind } from "../lib/constants/media-space-kinds.ts";
 import { withPoolTransaction } from "../lib/db-transaction.ts";
 import { splitPhisProductId, type PhisNormalizedProductDraft } from "../lib/addons/product-draft.ts";
 import { computePhiMessageHash, ensurePhiSiteMessageId } from "./translation-message.mts";
+import { buildTranslationContext } from "../lib/translation-context.ts";
 
 /** Pool or client alike: every read here is equally correct inside a caller's transaction and outside. */
 type DbQueryable = Pick<PoolClient, "query">;
@@ -37,7 +38,11 @@ type DbQueryable = Pick<PoolClient, "query">;
  * address of a Media Asset is built where the Media delivery lives (`resolvePhiMediaDeliveryUrl`,
  * `resolvePhiMediaVariantUrl`), from the Asset's parts joined into every read, and never stored.
  */
-export type PhisStoredProduct = Omit<PhisProduct, "imagePath" | "iconPath" | "imageListPath" | "iconListPath" | "gallery"> & {
+export type PhisStoredProduct = Omit<PhisProduct, "imagePath" | "iconPath" | "imageListPath" | "iconListPath" | "gallery" | "sourceLocale" | "translated"> & {
+  /** Core's number for the product (`phis.products.id`), which its texts' contexts name; never handed to an Add-on. */
+  readonly rowId: number;
+  /** The language the texts are written in, as kept: null for the Site's, which only the capability knows. */
+  readonly sourceLocale: string | null;
   readonly imageMedia: PhisProductMedia | null;
   readonly iconMedia: PhisProductMedia | null;
   /** The gallery, first to last: each picture's parts, as `imageMedia` for the picture (`phis.product_gallery`). */
@@ -71,6 +76,19 @@ export function phisProductTextContext(productId: number, field: PhisProductText
 }
 
 /**
+ * Where the TR route's external path keeps a product's field written in another language than the Site's
+ * (TRANSLATIONS.md, "External and non-canonical sources"): the field's own context with the `[extern]` flag.
+ * The unit's message is the Site-language rendering, its original the protected variant. Per product, as
+ * the field's message is, so a changed text or language takes the old unit along and nothing else meets it.
+ */
+export function phisProductExternalTextContext(productId: number, field: PhisProductTextField) {
+  return buildTranslationContext({ context: phisProductTextContext(productId, field), flags: ["extern"] });
+}
+
+const externalTextContexts = (productId: number, fields: readonly PhisProductTextField[]) =>
+  fields.map((field) => phisProductExternalTextContext(productId, field));
+
+/**
  * The parts of a product's picture or icon its addresses are built from -- the delivery's
  * (`resolvePhiMediaDeliveryUrl`) and one of its image variants' (`resolvePhiMediaVariantUrl`) -- `null` where
  * the product names none or the Asset is gone.
@@ -91,7 +109,7 @@ const FLAG = PHIS_PRODUCT_FLAG;
  * The picture and the icon are joined into every read, not read per row: a list shows them on every line,
  * and an address of a variant needs the Asset's content type and variant version beside the revision.
  */
-const PRODUCT_COLUMNS = `p.id, p.supplier_addon_id, p.key, p.publisher, p.type, p.title, p.summary, p.description, p.image_asset_id,
+const PRODUCT_COLUMNS = `p.id, p.supplier_addon_id, p.key, p.publisher, p.type, p.title, p.summary, p.description, p.source_locale, p.image_asset_id,
   p.icon_asset_id, p.sale, p.referral_url, p.state, p.flags, p.parts, p.pending_terms, p.version, p.created_at, p.updated_at,
   ${suppliedSql("p")} AS supplied,
   image.delivery_revision AS image_media_revision, image.variant_version AS image_media_variant_version,
@@ -130,6 +148,7 @@ type ProductRow = {
   title: string;
   summary: string;
   description: string;
+  source_locale: string | null;
   image_asset_id: number | null;
   icon_asset_id: number | null;
   sale: PhisProductSale;
@@ -165,6 +184,7 @@ function mapProduct(
 ): PhisStoredProduct {
   return {
     id: `${row.supplier_addon_id}:${row.key}` as PhisProductId,
+    rowId: row.id,
     supplier: row.supplier_addon_id,
     supplied: row.supplied,
     publisher: row.publisher,
@@ -172,6 +192,7 @@ function mapProduct(
     title: row.title,
     summary: row.summary,
     description: row.description,
+    sourceLocale: row.source_locale,
     imageAssetId: row.image_asset_id,
     imageMedia: productMedia(row, "image"),
     iconAssetId: row.icon_asset_id,
@@ -278,6 +299,8 @@ async function recordProductTexts(db: DbQueryable, input: {
   siteId: number;
   productId: number;
   texts: Readonly<Record<PhisProductTextField, string>>;
+  /** The texts' language changed: every field is a new text, and what was translated from the old reading goes. */
+  languageChanged?: boolean;
 }) {
   const { rows } = await db.query<{ field: PhisProductTextField; msg_id: number; msg: string }>(
     `SELECT t.field, t.msg_id, m.msg
@@ -286,9 +309,11 @@ async function recordProductTexts(db: DbQueryable, input: {
     [input.productId],
   );
   const recorded = new Map(rows.map((row) => [row.field, row]));
-  const changed = PHIS_PRODUCT_TEXT_FIELDS.filter((field) => recorded.get(field)?.msg !== input.texts[field]
+  const changed = PHIS_PRODUCT_TEXT_FIELDS.filter((field) => (input.languageChanged || recorded.get(field)?.msg !== input.texts[field])
     && (recorded.has(field) || input.texts[field] !== ""));
   if (changed.length === 0) return;
+  // A changed field's rendering through the external path, if it was written in another language, goes too.
+  await db.query(`DELETE FROM phis.tr_site_msg WHERE site_id = $1 AND ctx = ANY($2::text[])`, [input.siteId, externalTextContexts(input.productId, changed)]);
   const gone = changed.flatMap((field) => {
     const row = recorded.get(field);
     return row ? [row.msg_id] : [];
@@ -312,7 +337,8 @@ async function recordProductTexts(db: DbQueryable, input: {
   }
 }
 
-const draftTexts = (draft: PhisNormalizedProductDraft) => ({ title: draft.title, summary: draft.summary, description: draft.description });
+/** The texts as the store keeps them: trimmed, as the TR route reads a message (`translateSiteBatchWithCache`). */
+const draftTexts = (draft: PhisNormalizedProductDraft) => ({ title: draft.title.trim(), summary: draft.summary.trim(), description: draft.description.trim() });
 
 /** The gallery's Asset ids as stored, first to last, under the caller's lock on the product's row. */
 async function readGalleryIds(db: DbQueryable, productId: number) {
@@ -601,13 +627,13 @@ export async function registerProduct(pool: Pool, input: {
       const flags = (draft.counted ? FLAG.Counted : 0) | (draft.free ? FLAG.Free : 0) | (draft.accountRequired ? FLAG.AccountRequired : 0)
         | (draft.publisher === null ? FLAG.Released : 0) | (input.declared ? FLAG.Declared : 0);
       const inserted = await client.query(
-        `INSERT INTO phis.products (site_id, supplier_addon_id, key, publisher, type, title, summary, description, image_asset_id,
-           icon_asset_id, sale, referral_url, state, flags, parts)
-         VALUES ($1::smallint, $2, $3, $4, $5, $6, $7, $15, $8::int, $9::int, $10, $11, $12, $13::int, $14::text[])
+        `INSERT INTO phis.products (site_id, supplier_addon_id, key, publisher, type, title, summary, description, source_locale,
+           image_asset_id, icon_asset_id, sale, referral_url, state, flags, parts)
+         VALUES ($1::smallint, $2, $3, $4, $5, $6, $7, $15, $16, $8::int, $9::int, $10, $11, $12, $13::int, $14::text[])
          ON CONFLICT (site_id, supplier_addon_id, key) DO NOTHING
          RETURNING id`,
         [siteId, supplier, draft.key, draft.publisher, draft.type, draft.title, draft.summary, pickImage(null), pickIcon(null),
-          draft.sale, draft.referralUrl, input.declared ? "active" : "draft", flags, draft.parts, draft.description],
+          draft.sale, draft.referralUrl, input.declared ? "active" : "draft", flags, draft.parts, draft.description, draft.sourceLocale],
       );
       if ((inserted.rowCount ?? 0) > 0) {
         const productId = (inserted.rows[0] as { id: number }).id;
@@ -641,23 +667,24 @@ export async function registerProduct(pool: Pool, input: {
       | ((row.flags & FLAG.Declared) !== 0 || input.declared ? FLAG.Declared : 0);
     const storedGallery = await readGalleryIds(client, row.id);
     const gallery = pickGallery(storedGallery);
+    const languageChanged = row.source_locale !== draft.sourceLocale;
     const unchanged = row.type === draft.type && row.title === draft.title && row.summary === draft.summary
-      && row.description === draft.description && sameIds(storedGallery, gallery)
+      && row.description === draft.description && !languageChanged && sameIds(storedGallery, gallery)
       && row.image_asset_id === pickImage(row.image_asset_id) && row.icon_asset_id === pickIcon(row.icon_asset_id)
       && flags === row.flags && sameTerms(terms, current)
       && (pending === null ? row.pending_terms === null : row.pending_terms !== null && sameTerms(pending, row.pending_terms));
     // Unchanged still records: a product registered before its words were source texts has none yet.
-    await recordProductTexts(client, { siteId, productId: row.id, texts: draftTexts(draft) });
+    await recordProductTexts(client, { siteId, productId: row.id, texts: draftTexts(draft), languageChanged });
     if (unchanged) return { product: (await readProduct(client, siteId, id))!, outcome: "unchanged" as const };
 
     await client.query(
       `UPDATE phis.products
        SET type = $2, title = $3, summary = $4, image_asset_id = $5::int, icon_asset_id = $6::int, sale = $7,
            referral_url = $8, flags = $9::int, parts = $10::text[], pending_terms = $11::jsonb, description = $12,
-           version = version + 1, updated_at = NOW()
+           source_locale = $13, version = version + 1, updated_at = NOW()
        WHERE id = $1`,
       [row.id, draft.type, draft.title, draft.summary, pickImage(row.image_asset_id), pickIcon(row.icon_asset_id), terms.sale,
-        terms.referralUrl, flags, terms.parts, pending ? JSON.stringify(pending) : null, draft.description],
+        terms.referralUrl, flags, terms.parts, pending ? JSON.stringify(pending) : null, draft.description, draft.sourceLocale],
     );
     if (!sameIds(storedGallery, gallery)) await writeGallery(client, { productId: row.id, siteId, gallery });
     await enqueueProductChanged(client, { siteId, recipients: input.listeners, productId: id });
@@ -723,6 +750,9 @@ export async function removeProduct(pool: Pool, input: { siteId: number; supplie
     if ((partOf ?? 0) > 0) return false;
     // Its words go with it: their context is this product's, so nothing else names those messages.
     await client.query(`DELETE FROM phis.tr_site_msg WHERE id IN (SELECT msg_id FROM phis.product_texts WHERE product_id = $1)`, [row.id]);
+    // And their renderings through the external path, for a product written in another language than the Site's.
+    await client.query(`DELETE FROM phis.tr_site_msg WHERE site_id = $1 AND ctx = ANY($2::text[])`,
+      [input.siteId, externalTextContexts(row.id, PHIS_PRODUCT_TEXT_FIELDS)]);
     await client.query(`DELETE FROM phis.products WHERE id = $1`, [row.id]);
     return true;
   });

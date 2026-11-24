@@ -25,7 +25,7 @@ describe("a product's id and key", () => {
 describe("a product draft", () => {
   it("fills the defaults in", () => {
     expect(normalizePhisProductDraft(base)).toEqual({
-      ...base, publisher: null, description: "", imageAssetId: null, iconAssetId: null, gallery: [], counted: false, sale: "own", referralUrl: null, free: false, accountRequired: false, parts: [],
+      ...base, publisher: null, description: "", sourceLocale: null, imageAssetId: null, iconAssetId: null, gallery: [], counted: false, sale: "own", referralUrl: null, free: false, accountRequired: false, parts: [],
     });
   });
 

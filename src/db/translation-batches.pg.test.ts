@@ -12,7 +12,8 @@ import {
   ensureSiteExternalTranslationUnit,
   ensureSiteMessageId,
   ensureSiteMessageIds,
-  findSiteExternalTranslationUnits,
+  findSiteExternalTranslationUnitsByContext,
+  resolveSiteMessageIds,
 } from "./translations";
 
 afterAll(async () => {
@@ -70,14 +71,36 @@ describe("translation batches against PostgreSQL", () => {
       ctx,
     });
 
-    const units = await findSiteExternalTranslationUnits({
+    const units = await findSiteExternalTranslationUnitsByContext({
       siteId: site.id,
       locale: "de",
-      ctx,
-      entries: [source, "Unbekannt"].map((text) => ({ source: text, sourceHash: computeExternalSourceHash(text) })),
+      entries: [source, "Unbekannt"].map((text) => ({ source: text, sourceHash: computeExternalSourceHash(text), ctx })),
     });
 
-    expect(units.get(source)).toEqual({ msgId, canonicalMsg: "A source text" });
-    expect(units.get("Unbekannt")).toBeNull();
+    expect(units).toEqual([{ msgId, canonicalMsg: "A source text" }, null]);
+  });
+
+  it("resolves messages under contexts of their own in one go, and only reads them where it may not create", async () => {
+    const entries = [{ msg: "Pro", ctx: `${ctx} one` }, { msg: "Pro", ctx: `${ctx} two` }];
+    expect(await resolveSiteMessageIds(site.id, entries, { create: false })).toEqual([null, null]);
+    const created = await resolveSiteMessageIds(site.id, entries);
+    expect(created.every((id) => typeof id === "number")).toBe(true);
+    expect(created[0]).not.toBe(created[1]);
+    expect(await resolveSiteMessageIds(site.id, [...entries, { msg: "Never", ctx: `${ctx} one` }], { create: false }))
+      .toEqual([created[0], created[1], null]);
+  });
+
+  it("finds the external units of sources under contexts of their own in one go, each only under its own", async () => {
+    const source = "Édition Pro";
+    const [first, second] = [`[extern]${ctx} one`, `[extern]${ctx} two`];
+    const msgId = await ensureSiteExternalTranslationUnit({
+      siteId: site.id, sourceLocale: "fr", source, sourceHash: computeExternalSourceHash(source), canonicalMsg: "Pro edition", ctx: first,
+    });
+    const lookup = (entries: Array<[string, string]>) => findSiteExternalTranslationUnitsByContext({
+      siteId: site.id, locale: "fr", entries: entries.map(([text, at]) => ({ source: text, sourceHash: computeExternalSourceHash(text), ctx: at })),
+    });
+    // In order: the unit under its context, none under another context, none for a text never rendered.
+    expect(await lookup([[source, first], [source, second], ["Inconnu", first]])).toEqual([{ msgId, canonicalMsg: "Pro edition" }, null, null]);
+    expect(await lookup([])).toEqual([]);
   });
 });

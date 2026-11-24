@@ -7,6 +7,8 @@ import { buildPhisAddonCapabilities } from "./capabilities.ts";
 import { isPhisAddonRuntimeManifestCurrent } from "./installed.ts";
 import { requirePhisAddonServableEntry } from "./jobs.ts";
 import { verifyPhisAddonRegistryState } from "./registry-state.ts";
+import { getPhisConfigSync } from "@/lib/config";
+import { resolvePhiSiteSourceLocale } from "@/lib/config-core";
 
 /**
  * Running one of an Add-on's declared commands, for one Site, as one of its members.
@@ -31,7 +33,8 @@ const PHIS_ADDON_COMMAND_TIMEOUT_MS = 120_000;
 export async function runPhisAddonCommand(input: {
   addonId: string;
   commandId: string;
-  site: PhisAddonCommandContext["site"];
+  /** The Site as the caller read it; its source language is Core's configuration's, read here. */
+  site: Omit<PhisAddonCommandContext["site"], "sourceLocale">;
   actorUserId: number;
   input: unknown;
   signal?: AbortSignal;
@@ -75,7 +78,7 @@ export async function runPhisAddonCommand(input: {
     addonId,
     commandId,
     runId,
-    site,
+    site: { ...site, sourceLocale: resolvePhiSiteSourceLocale(getPhisConfigSync(), site.key) },
     actor: { kind: "user", id: input.actorUserId },
     input: input.input,
     capabilities: buildPhisAddonCapabilities({

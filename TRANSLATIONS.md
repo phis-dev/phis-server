@@ -604,12 +604,42 @@ Translations before anybody reads them, and with no provider at all. Three kinds
   told `product title` or `product summary`, one request per field for every product of a read, and the
   answer is kept on the product's message. A description is Markdown and never handed to a provider whole;
   it reads translated where a person translated it under Editor > Translations (or imported it), and as its
-  source otherwise.
+  source otherwise -- `PhisProduct.translated` says which, so the Markdown Widget translates only a source
+  description, paragraph by paragraph from the product's language.
+  A product has a language of its own (`PhisProduct.sourceLocale`, `phis.products.source_locale`; the rule is
+  SERVER_ADDONS.md, `products:v1`, **Language**): several suppliers may sell through one Site, each writing
+  in theirs. A product in the Site's language is read as above. One in another language is an external
+  source, read as the TR route reads one: its title and summary go the external path below under
+  `[extern]product <n> title` (and `summary`), rendered into the Site's language once, the original kept as
+  the protected variant, every other language translated from that rendering; its description is rendered by
+  the Markdown Widget, unit by unit, through `/api/v1/tr` with the product's `sourceLocale`.
 - **An Add-on's words** (`translations:v1`, SERVER_ADDONS.md): what an Add-on keeps in its tables and a visitor
   reads, recorded by the Add-on on save under `<addonId>: <context>` (`@phis/shop: listing hint`), the
   context built by Core as for another application's strings in the global store. One message per text, so a
   hint twenty listings carry is translated once. Read with the Add-on's `translate`, which fills what is
   missing as a Widget's words are filled and never records a text itself.
+
+**What a translator sees of a text in another language.** Two entries under Editor > Translations, as for a
+content entry written in another language:
+
+- The text as recorded, under its own context (`product <n> title`, `@phis/shop: listing hint`): the foreign
+  original shown as the source text, because Core records what was written and the Site store has no
+  language column. A translation a person enters there for a language is the answer for that language and
+  wins over everything else -- it is the place to correct a title, and the only place a description is
+  translated whole.
+- Once somebody read it in another language, the external unit (`[extern]product <n> title`): its message is
+  the Site-language rendering, the foreign original is its protected variant in the source language
+  (`source_hash` set, never overwritten), and its translations into further languages derive from the
+  rendering. A translator who corrects the rendering's translation there corrects what readers get where the
+  recorded text holds none. The rendering itself is the provider's and the editor offers no translation
+  into the Site's own language; a bad one is deleted as an external unit (Editor > Translations, `DELETE
+  /api/site/editor/translations?scope=external-unit`) and rendered again on the next read, or replaced by a
+  translation on the recorded text for each language that matters.
+
+A changed text or language takes both along: the recorded message goes with its translations, and the
+product's external units with theirs. `translations:v1` follows the same two-entry shape under
+`[extern]<addonId>: <context>`, except that nothing is deleted when a text changes (its message may be
+another row's).
 
 A reader's language reaches them as Core's own reads take it: the request's `x-locale`, which a Site sends
 for the page it draws, else `Accept-Language` (`PhisAddonRequestContext.locale` for an Add-on's handler).

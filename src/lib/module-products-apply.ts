@@ -52,7 +52,8 @@ type Site = { id: number; key: string; publicBaseUrl: string; timeZone: string }
 
 /**
  * The body `product.add` is handed for a proposal:
- * `{ key, title, summary?, description?, kind?, state?, counted?, accountRequired?, picture?, icon?, gallery? }`.
+ * `{ key, sourceLocale, title, summary?, description?, kind?, state?, counted?, accountRequired?, picture?, icon?, gallery? }`,
+ * `sourceLocale` the package's language, which always wins over the Site's (`@phis/contracts/products`).
  */
 export function buildModuleProductCommandInput(
   productKey: string,
@@ -62,6 +63,7 @@ export function buildModuleProductCommandInput(
   const flags = proposal.flags ?? 0;
   return {
     key: productKey,
+    sourceLocale: proposal.sourceLocale,
     title: proposal.title,
     ...(proposal.summary !== undefined ? { summary: proposal.summary } : {}),
     ...(proposal.description !== undefined ? { description: proposal.description } : {}),

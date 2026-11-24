@@ -23,7 +23,26 @@ function manifest(extra: Record<string, unknown> = {}) {
   };
 }
 
-const issuesOf = (products: unknown) => validatePhisAddonManifest(manifest({ products })).issues;
+const issuesOf = (products: unknown) => validatePhisAddonManifest(manifest({ products, sourceLocale: "en" })).issues;
+
+describe("the language of what a manifest ships", () => {
+  const entry = { key: "pro", type: "a", title: "Pro", summary: "" };
+  const issues = (extra: Record<string, unknown>) => validatePhisAddonManifest(manifest(extra)).issues.join("\n");
+
+  it("is required with products and with translations:v1, and nowhere else", () => {
+    expect(issues({ products: [entry] })).toMatch(/sourceLocale is required/);
+    expect(issues({ requiredCoreCapabilities: ["@phis/server/translations:v1"] })).toMatch(/sourceLocale is required/);
+    expect(issues({ products: [] })).toBe("");
+    expect(issues({ products: [entry], sourceLocale: "fr" })).toBe("");
+    expect(issues({ sourceLocale: "pt-BR" })).toBe("");
+  });
+
+  it("is a language Core knows, spelled as Core spells it", () => {
+    expect(issues({ products: [entry], sourceLocale: "xx-nowhere" })).toMatch(/sourceLocale must be a locale key/);
+    expect(issues({ products: [entry], sourceLocale: "FR" })).toMatch(/spelled as Core spells it.*: fr/);
+    expect(issues({ products: [entry], sourceLocale: 7 })).toMatch(/sourceLocale must be/);
+  });
+});
 
 describe("products in a manifest", () => {
   it("admits well-formed products, and a manifest that states none", () => {
@@ -52,6 +71,8 @@ describe("products in a manifest", () => {
     expect(issuesOf([{ ...entry, imageAssetId: 3 }])).toContain("products[0].imageAssetId is not declared in a manifest.");
     expect(issuesOf([{ ...entry, iconAssetId: 3 }])).toContain("products[0].iconAssetId is not declared in a manifest.");
     expect(issuesOf([{ ...entry, gallery: [3] }])).toContain("products[0].gallery is not declared in a manifest.");
+    // The language is the manifest's, never a product's own.
+    expect(issuesOf([{ ...entry, sourceLocale: "fr" }])).toContain("products[0].sourceLocale is not declared in a manifest.");
     // A manifest may state a description, as every other text of the product.
     expect(issuesOf([{ ...entry, description: "## Long" }])).toEqual([]);
     expect(issuesOf([{ ...entry, accountRequired: "yes" }]).join("\n")).toMatch(/accountRequired is a boolean/);

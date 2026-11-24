@@ -239,7 +239,7 @@ describe.skipIf(!configured)("phis product and phis entitlement", () => {
 
     await pool.query(`DELETE FROM phis.addon_event_outbox WHERE site_id = $1`, [site.id]);
     const first = await syncAddonProductsAtSite(pool, {
-      addonId: supplier, siteId: site.id, entries,
+      addonId: supplier, siteId: site.id, entries, sourceLocale: "en", configRoot: process.cwd(),
       declared: [{ key: "pass", type: "addon", title: "Pass", summary: "S" }, { key: "plan", type: "plan", title: "Plan", summary: "S", free: true }],
     });
     expect(first.map((a) => a.action)).toEqual(["created", "created"]);
@@ -254,7 +254,7 @@ describe.skipIf(!configured)("phis product and phis entitlement", () => {
     expect(lost.filter((change) => change.id.startsWith(`${supplier}:`)).map((change) => change.to)).toEqual(["withdrawn", "withdrawn"]);
     expect((await product(["list"], { supplier, state: "withdrawn" })).lines.every((line) => line.includes("supplier off"))).toBe(true);
     await pool.query(`UPDATE phis.site_server_addons SET flags = 1 WHERE site_id = $1 AND addon_id = $2`, [site.id, supplier]);
-    const again = await syncAddonProductsAtSite(pool, { addonId: supplier, siteId: site.id, entries, declared: [{ key: "pass", type: "addon", title: "Pass", summary: "S" }] });
+    const again = await syncAddonProductsAtSite(pool, { addonId: supplier, siteId: site.id, entries, sourceLocale: "en", configRoot: process.cwd(), declared: [{ key: "pass", type: "addon", title: "Pass", summary: "S" }] });
     expect(Object.fromEntries(again.map((a) => [a.key, a.action]))).toEqual({ pass: "unchanged", plan: "withdrawn" });
     const back = await reconcileProductSupplyAfterChange(pool, entries, site.id);
     expect(back.filter((change) => change.id.startsWith(`${supplier}:`))).toEqual([{ siteId: site.id, id: `${supplier}:pass`, to: "active" }]);

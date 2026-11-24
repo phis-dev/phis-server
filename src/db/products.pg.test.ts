@@ -18,9 +18,11 @@ import {
   type PhiTestSite,
 } from "../../test/pg/harness";
 import { normalizePhisProductDraft } from "../lib/addons/product-draft.ts";
+import { computeExternalSourceHash, ensureSiteExternalTranslationUnit } from "./translations.ts";
 import { ensureEntitlementSubject, findEntitlementSubject, grantEntitlement } from "./entitlements.mts";
 import {
   annotateProduct,
+  phisProductExternalTextContext,
   listProductDirectory,
   listProductIdsWithImage,
   listProducts,
@@ -475,6 +477,51 @@ describe.skipIf(!configured)("products", () => {
     expect(await removeProduct(pool, { siteId: site.id, supplier: SUPPLIER, key: "worded" })).toBe(true);
     const { rows: left } = await pool.query(`SELECT id FROM phis.tr_site_msg WHERE site_id = $1 AND ctx LIKE $2`, [site.id, `product ${rowId} %`]);
     expect(left).toEqual([]);
+  });
+
+  it("keeps a product's language, and drops its texts' translations and external renderings when the language or a text changes", async () => {
+    const productId = id(SUPPLIER, "francais");
+    const created = await register("francais", { title: "Édition Pro", summary: "Rapide", sourceLocale: "fr" });
+    expect(created.outcome).toBe("created");
+    expect(created.product.sourceLocale).toBe("fr");
+    const { rows: [{ id: rowId }] } = await pool.query<{ id: number }>(
+      `SELECT id FROM phis.products WHERE site_id = $1 AND supplier_addon_id = $2 AND key = 'francais'`, [site.id, SUPPLIER],
+    );
+    expect(phisProductExternalTextContext(rowId, "title")).toBe(`[extern]product ${rowId} title`);
+    const msgIds = async () => (await pool.query<{ msg_id: number }>(`SELECT msg_id FROM phis.product_texts WHERE product_id = $1 ORDER BY field`, [rowId])).rows.map((row) => row.msg_id);
+    const externalUnits = async () => (await pool.query<{ ctx: string }>(
+      `SELECT ctx FROM phis.tr_site_msg WHERE site_id = $1 AND ctx LIKE $2 ORDER BY ctx`, [site.id, `[extern]product ${rowId} %`],
+    )).rows.map((row) => row.ctx);
+    const external = async (field: "title" | "summary", source: string, canonical: string) => ensureSiteExternalTranslationUnit({
+      siteId: site.id, sourceLocale: "fr", source, sourceHash: computeExternalSourceHash(source), canonicalMsg: canonical,
+      ctx: phisProductExternalTextContext(rowId, field),
+    });
+    await external("title", "Édition Pro", "Pro edition");
+    await external("summary", "Rapide", "Fast");
+
+    // The same draft changes nothing; a text changed takes its own rendering along and leaves the other's.
+    const before = await msgIds();
+    expect((await register("francais", { title: "Édition Pro", summary: "Rapide", sourceLocale: "fr" })).outcome).toBe("unchanged");
+    expect(await msgIds()).toEqual(before);
+    await register("francais", { title: "Édition Pro", summary: "Très rapide", sourceLocale: "fr" });
+    expect(await externalUnits()).toEqual([`[extern]product ${rowId} title`]);
+
+    // Another language is a change of every text: new messages, and nothing rendered from the old reading stays.
+    const relanguaged = await register("francais", { title: "Édition Pro", summary: "Très rapide", sourceLocale: "es" });
+    expect(relanguaged.outcome).toBe("updated");
+    expect(relanguaged.product.sourceLocale).toBe("es");
+    const after = await msgIds();
+    expect(after.some((msgId) => before.includes(msgId))).toBe(false);
+    expect(await externalUnits()).toEqual([]);
+    // Null is the Site's language.
+    expect((await register("francais", { title: "Édition Pro", summary: "Très rapide" })).product.sourceLocale).toBeNull();
+    expect((await get(productId))!.sourceLocale).toBeNull();
+
+    // Removed, it takes its renderings along with its words.
+    await register("francais", { title: "Édition Pro", summary: "Très rapide", sourceLocale: "fr" });
+    await external("title", "Édition Pro", "Pro edition");
+    expect(await removeProduct(pool, { siteId: site.id, supplier: SUPPLIER, key: "francais" })).toBe(true);
+    expect(await externalUnits()).toEqual([]);
   });
 
   it("keeps a gallery in its order under the picture's rules, owes product.changed for each change of it, and lets an Asset deleted leave it", async () => {

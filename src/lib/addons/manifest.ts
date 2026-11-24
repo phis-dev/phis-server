@@ -23,6 +23,7 @@ import { isPhiRecord } from "../helpers/record.ts";
 import { PhiMediaKind } from "@phis/contracts/media";
 import { PHIS_USER_FIELDS } from "@phis/contracts/users";
 import { normalizePhisProductDraft } from "./product-draft.ts";
+import { resolvePhiLocaleCapability } from "../locale.ts";
 
 /**
  * An Add-on id is an npm package name in which neither `_` nor `.` occurs. Both would have to map to `_` in the derived schema name, and three characters collapsing
@@ -714,7 +715,7 @@ export function validatePhisAddonManifest(
       issues.push(`products[${index}] must be an object.`);
       continue;
     }
-    for (const field of ["publisher", "imageAssetId", "iconAssetId", "gallery"]) {
+    for (const field of ["publisher", "imageAssetId", "iconAssetId", "gallery", "sourceLocale"]) {
       if (product[field] !== undefined) issues.push(`products[${index}].${field} is not declared in a manifest.`);
     }
     if (typeof product.key === "string") productKeys.push(product.key);
@@ -726,6 +727,23 @@ export function validatePhisAddonManifest(
     }
   }
   assertUnique(productKeys, "products", issues);
+
+  /*
+   * The language the texts this Add-on ships are written in: its products' and what it records through
+   * translations:v1 without naming one. Required where it ships such texts, so a Site never reads an
+   * Add-on's French as its own English; a language Core does not know is refused rather than kept under a
+   * spelling nothing reads.
+   */
+  const shipsTexts = products.length > 0
+    || (Array.isArray(value.requiredCoreCapabilities) && value.requiredCoreCapabilities.includes(PHIS_CORE_CAPABILITIES.translations));
+  if (value.sourceLocale !== undefined) {
+    const capability = typeof value.sourceLocale === "string" ? resolvePhiLocaleCapability(value.sourceLocale) : null;
+    if (!capability || capability.locale !== value.sourceLocale) {
+      issues.push(`sourceLocale must be a locale key Core knows, spelled as Core spells it (en, fr, pt-BR)${capability ? `: ${capability.locale}` : ""}.`);
+    }
+  } else if (shipsTexts) {
+    issues.push("sourceLocale is required where the manifest declares products or requires translations:v1: the language the Add-on's own texts are written in (its package's phis.sourceLocale).");
+  }
 
   const roles = Array.isArray(value.roles) ? value.roles : [];
   if (value.roles !== undefined && !Array.isArray(value.roles)) {

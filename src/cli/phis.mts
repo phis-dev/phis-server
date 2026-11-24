@@ -4838,7 +4838,8 @@ async function main() {
     );
     const products = wantsEnable
       ? await syncAddonProductsAtSite(getPool(), {
-        addonId, siteId: site.id, declared: productEntries[addonId]?.manifest.products ?? [], entries: productEntries,
+        addonId, siteId: site.id, declared: productEntries[addonId]?.manifest.products ?? [],
+        sourceLocale: productEntries[addonId]?.manifest.sourceLocale, entries: productEntries, configRoot,
       })
       : [];
     const productSupply = await reconcileProductSupplyAfterChange(getPool(), productEntries, site.id);

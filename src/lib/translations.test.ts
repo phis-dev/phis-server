@@ -13,15 +13,15 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@/db/translations", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/db/translations")>()),
   // The batch answers per message what the single form would: the id, or the Error it would throw.
-  ensureSiteMessageIds: async (siteId: number, msgs: readonly string[]) => new Map(await Promise.all(
-    msgs.map(async (msg) => {
+  resolveSiteMessageIds: async (siteId: number, entries: ReadonlyArray<{ msg: string }>) => Promise.all(
+    entries.map(async ({ msg }) => {
       try {
-        return [msg, await mocks.ensureSiteMessageId(siteId, msg)] as const;
+        return await mocks.ensureSiteMessageId(siteId, msg) as number;
       } catch (error) {
-        return [msg, error as Error] as const;
+        return error as Error;
       }
     }),
-  )),
+  ),
   getSiteTranslations: mocks.getSiteTranslations,
   getTranslations: mocks.getTranslations,
   upsertSiteTranslations: mocks.upsertSiteTranslations,

@@ -119,7 +119,7 @@ describe("the Site's zone in every Add-on context", () => {
       { scope: "pgtest", name: "time-zone", path: ["day"] },
     );
     expect(request.status).toBe(200);
-    expect(lastSeen("request")).toEqual({ id: site().id, key: site().key, publicBaseUrl: `https://${site().key}.invalid`, timeZone });
+    expect(lastSeen("request")).toEqual({ id: site().id, key: site().key, publicBaseUrl: `https://${site().key}.invalid`, timeZone, sourceLocale: "en" });
 
     const hook = await dispatchPhisAddonRequest(
       new NextRequest("http://localhost/api/hooks/pgtest/time-zone/ping", { method: "POST", headers, body: "{}" }),
@@ -127,7 +127,7 @@ describe("the Site's zone in every Add-on context", () => {
       { scope: "pgtest", name: "time-zone", path: ["ping"] },
     );
     expect(hook.status).toBe(200);
-    expect(lastSeen("hook")).toEqual({ id: site().id, key: site().key, publicBaseUrl: `https://${site().key}.invalid`, timeZone });
+    expect(lastSeen("hook")).toEqual({ id: site().id, key: site().key, publicBaseUrl: `https://${site().key}.invalid`, timeZone, sourceLocale: "en" });
   });
 
   it.each(cases)("reaches an event handler on $label", async ({ site, timeZone }) => {
@@ -155,6 +155,6 @@ describe("the Site's zone in every Add-on context", () => {
       body: JSON.stringify({ addonId: ADDON_ID, commandId: "day.show", siteKey: site().key, as: String(userId) }),
     }));
     expect(response.status).toBe(200);
-    expect(lastSeen("command")).toEqual({ id: site().id, key: site().key, publicBaseUrl: `https://${site().key}.invalid`, timeZone });
+    expect(lastSeen("command")).toEqual({ id: site().id, key: site().key, publicBaseUrl: `https://${site().key}.invalid`, timeZone, sourceLocale: "en" });
   });
 });

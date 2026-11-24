@@ -32,9 +32,12 @@ describe("reading what a Site's packages propose", () => {
   it("reads phis.products, and a package that is not installed is no fault", () => {
     writePackage({ products: [{ key: "pro", title: "Pro" }] });
     expect(readModuleProductPackages(root, [PKG, "@acme/missing"])).toEqual([
-      { packageName: PKG, installed: true, proposals: [{ key: "pro", title: "Pro" }], issues: [] },
+      // A package that names no language is in en (PhisModulePackageDeclaration).
+      { packageName: PKG, installed: true, proposals: [{ key: "pro", sourceLocale: "en", title: "Pro" }], issues: [] },
       { packageName: "@acme/missing", installed: false, proposals: [], issues: [] },
     ]);
+    writePackage({ sourceLocale: "fr", modules: [], products: [{ key: "pro", title: "Édition Pro" }] });
+    expect(readModuleProductPackages(root, [PKG])[0]!.proposals).toEqual([{ key: "pro", sourceLocale: "fr", title: "Édition Pro" }]);
   });
 
   it("says what each proposal came to from the recorded rows", () => {
@@ -94,8 +97,11 @@ describe("sync talks to Core over HTTP only", () => {
     const report = await syncModuleProducts({ siteKey: "acme", siteRoot: root, packageNames: [PKG], as: "ops@acme.test" });
     expect(report.items.map((item) => `${item.key}:${item.status}`)).toEqual(["pro:created", "basic:taken"]);
     expect(seen.map((entry) => `${entry.method} ${entry.url}`)).toEqual(["GET /api/v1/module-products", "POST /api/v1/module-products", "POST /api/v1/module-products"]);
-    expect(JSON.parse(seen[1]!.body)).toEqual({ package: PKG, proposals: [{ key: "pro", title: "Pro" }, { key: "basic", title: "Basic" }] });
-    expect(JSON.parse(seen[2]!.body)).toEqual({ package: PKG, proposal: { key: "pro", title: "Pro" }, as: "ops@acme.test" });
+    // The hand-over carries the package's language on every proposal.
+    expect(JSON.parse(seen[1]!.body)).toEqual({
+      package: PKG, proposals: [{ key: "pro", sourceLocale: "en", title: "Pro" }, { key: "basic", sourceLocale: "en", title: "Basic" }],
+    });
+    expect(JSON.parse(seen[2]!.body)).toEqual({ package: PKG, proposal: { key: "pro", sourceLocale: "en", title: "Pro" }, as: "ops@acme.test" });
     for (const entry of seen) {
       expect(entry.token).toBe("tok-test");
       expect(entry.site).toBe("acme");

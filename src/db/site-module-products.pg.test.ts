@@ -69,7 +69,7 @@ describe("taking proposed products against PostgreSQL", () => {
   });
 
   it("makes the product through product.add once, as the member named, and never asks again", async () => {
-    const proposal = { key: "pro", title: "Pro", kind: "app", state: "active" as const, flags: 2 };
+    const proposal = { key: "pro", sourceLocale: "en", title: "Pro", kind: "app", state: "active" as const, flags: 2 };
     const first = await applyModuleProductProposal(ref(site), { packageName: PKG, proposal, actorUserId: actor });
     expect(first).toEqual({ packageName: PKG, key: "pro", productKey: "pgtest.site.pro", status: "created" });
     expect(commands.run).toHaveBeenCalledTimes(1);
@@ -78,7 +78,7 @@ describe("taking proposed products against PostgreSQL", () => {
       commandId: "product.add",
       site: ref(site),
       actorUserId: actor,
-      input: { key: "pgtest.site.pro", title: "Pro", kind: "app", state: "active", counted: false, accountRequired: true },
+      input: { key: "pgtest.site.pro", sourceLocale: "en", title: "Pro", kind: "app", state: "active", counted: false, accountRequired: true },
     });
     expect(await rows()).toEqual([expect.objectContaining({ packageName: PKG, key: "pro", productKey: "pgtest.site.pro", flags: 0 })]);
 
@@ -96,7 +96,7 @@ describe("taking proposed products against PostgreSQL", () => {
        VALUES ($1, '@phis/products', 'pgtest.site.basic', 'product', 'Made by hand', '')`,
       [site.id],
     );
-    const result = await applyModuleProductProposal(ref(site), { packageName: PKG, proposal: { key: "basic", title: "Basic" }, actorUserId: actor });
+    const result = await applyModuleProductProposal(ref(site), { packageName: PKG, proposal: { key: "basic", sourceLocale: "en", title: "Basic" }, actorUserId: actor });
     expect(result.status).toBe("found");
     expect(commands.run).not.toHaveBeenCalled();
     expect((await rows()).find((row) => row.key === "basic")?.flags).toBe(PhisSiteModuleProductFlag.Found);
@@ -105,7 +105,7 @@ describe("taking proposed products against PostgreSQL", () => {
   });
 
   it("waits for a picture the Site's library does not hold yet, then hands its Asset id over", async () => {
-    const proposal = { key: "pictured", title: "Pictured", picture: "app-icon" };
+    const proposal = { key: "pictured", sourceLocale: "en", title: "Pictured", picture: "app-icon" };
     const waiting = await applyModuleProductProposal(ref(site), { packageName: PKG, proposal, actorUserId: actor });
     expect(waiting).toMatchObject({ status: "waiting", reason: "media_missing" });
     expect(commands.run).not.toHaveBeenCalled();
@@ -117,11 +117,11 @@ describe("taking proposed products against PostgreSQL", () => {
     );
     const created = await applyModuleProductProposal(ref(site), { packageName: PKG, proposal, actorUserId: actor });
     expect(created.status).toBe("created");
-    expect(commands.run.mock.calls[0]?.[0].input).toEqual({ key: "pgtest.site.pictured", title: "Pictured", counted: false, accountRequired: false, picture: assetId });
+    expect(commands.run.mock.calls[0]?.[0].input).toEqual({ key: "pgtest.site.pictured", sourceLocale: "en", title: "Pictured", counted: false, accountRequired: false, picture: assetId });
   });
 
   it("waits until every picture of the gallery is in the library, then hands their Asset ids over in order", async () => {
-    const proposal = { key: "galleried", title: "Galleried", description: "## Long", gallery: ["shot-b", "shot-a"] };
+    const proposal = { key: "galleried", sourceLocale: "en", title: "Galleried", description: "## Long", gallery: ["shot-b", "shot-a"] };
     const asset = async (key: string) => {
       const assetId = await createPhiTestAsset(site, `pgtest/modproducts/${key}/${Date.now()}`);
       await sql(
@@ -137,7 +137,7 @@ describe("taking proposed products against PostgreSQL", () => {
     const b = await asset("shot-b");
     expect((await applyModuleProductProposal(ref(site), { packageName: PKG, proposal, actorUserId: actor })).status).toBe("created");
     expect(commands.run.mock.calls[0]?.[0].input).toEqual({
-      key: "pgtest.site.galleried", title: "Galleried", description: "## Long", counted: false, accountRequired: false, gallery: [b, a],
+      key: "pgtest.site.galleried", sourceLocale: "en", title: "Galleried", description: "## Long", counted: false, accountRequired: false, gallery: [b, a],
     });
   });
 
@@ -149,9 +149,9 @@ describe("taking proposed products against PostgreSQL", () => {
     const stored = async () => (await listSiteModuleProductProposals(pool, site2.id)).map((row) => `${row.key}:${row.waitingReason ?? "-"}`);
 
     // Handed over: kept, waiting for the activation; a later hand-over is the whole list and drops what it no longer names.
-    const handed = await recordModuleProductProposals(ref(site2), { packageName: pkg, proposals: [{ key: "one", title: "One" }, { key: "two", title: "Two" }] });
+    const handed = await recordModuleProductProposals(ref(site2), { packageName: pkg, proposals: [{ key: "one", sourceLocale: "en", title: "One" }, { key: "two", sourceLocale: "en", title: "Two" }] });
     expect(handed.map((item) => `${item.key}:${item.status}:${item.reason}`)).toEqual(["one:waiting:activation", "two:waiting:activation"]);
-    await recordModuleProductProposals(ref(site2), { packageName: pkg, proposals: [{ key: "one", title: "One" }, { key: "three", title: "Three" }] });
+    await recordModuleProductProposals(ref(site2), { packageName: pkg, proposals: [{ key: "one", sourceLocale: "en", title: "One" }, { key: "three", sourceLocale: "en", title: "Three" }] });
     expect(await stored()).toEqual(["one:-", "three:-"]);
 
     // Nothing is taken while none of the package's Modules runs.
@@ -175,28 +175,28 @@ describe("taking proposed products against PostgreSQL", () => {
     expect(again.map((item) => `${item.key}:${item.status}`)).toEqual(["three:created"]);
     expect(commands.run).toHaveBeenCalledTimes(1);
     expect(await stored()).toEqual(["one:-", "three:-"]);
-    expect((await recordModuleProductProposals(ref(site2), { packageName: pkg, proposals: [{ key: "one", title: "One" }] }))[0]!.status).toBe("taken");
+    expect((await recordModuleProductProposals(ref(site2), { packageName: pkg, proposals: [{ key: "one", sourceLocale: "en", title: "One" }] }))[0]!.status).toBe("taken");
     active.moduleIds = [];
   });
 
   it("records nothing while the supplier is off or refuses, so the next sync asks again", async () => {
     commands.run.mockRejectedValueOnce(new commands.PhisAddonCommandError("@phis/products is not enabled for x."));
-    const off = await applyModuleProductProposal(ref(site), { packageName: PKG, proposal: { key: "later", title: "Later" }, actorUserId: actor });
+    const off = await applyModuleProductProposal(ref(site), { packageName: PKG, proposal: { key: "later", sourceLocale: "en", title: "Later" }, actorUserId: actor });
     expect(off).toMatchObject({ status: "waiting", reason: "supplier_unavailable", detail: "@phis/products is not enabled for x." });
 
     commands.run.mockResolvedValueOnce({ ok: false, runId: "r", error: "This needs the editor role." });
-    const refused = await applyModuleProductProposal(ref(site), { packageName: PKG, proposal: { key: "later", title: "Later" }, actorUserId: actor });
+    const refused = await applyModuleProductProposal(ref(site), { packageName: PKG, proposal: { key: "later", sourceLocale: "en", title: "Later" }, actorUserId: actor });
     expect(refused).toMatchObject({ status: "refused", reason: "supplier_refused", detail: "This needs the editor role." });
     expect((await rows()).some((row) => row.key === "later")).toBe(false);
 
-    const taken = await applyModuleProductProposal(ref(site), { packageName: PKG, proposal: { key: "later", title: "Later" }, actorUserId: actor });
+    const taken = await applyModuleProductProposal(ref(site), { packageName: PKG, proposal: { key: "later", sourceLocale: "en", title: "Later" }, actorUserId: actor });
     expect(taken.status).toBe("created");
   });
 
   it("takes a proposal once when two syncs ask at the same moment", async () => {
     let release!: () => void;
     commands.run.mockImplementationOnce(() => new Promise((resolve) => { release = () => resolve({ ok: true, runId: "r", result: {} }); }));
-    const proposal = { key: "raced", title: "Raced" };
+    const proposal = { key: "raced", sourceLocale: "en", title: "Raced" };
     const first = applyModuleProductProposal(ref(site), { packageName: PKG, proposal, actorUserId: actor });
     await vi.waitFor(() => expect(commands.run).toHaveBeenCalledTimes(1));
     const second = applyModuleProductProposal(ref(site), { packageName: PKG, proposal, actorUserId: actor });

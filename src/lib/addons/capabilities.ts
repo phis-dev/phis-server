@@ -23,6 +23,8 @@ import { readEffectiveGroupMembershipFlags } from "@/db/site-groups";
 import { PhiGroupMembershipFlags, phiGroupLevelOf } from "@/lib/constants/site-groups";
 import { readPhisSiteAccessHolder } from "./site-access.ts";
 import type { PhisSiteAccessHolder } from "./role-inclusion.ts";
+import { getPhisConfigSync } from "@/lib/config";
+import { resolvePhiSiteSourceLocale } from "@/lib/config-core";
 import { getPool } from "@/lib/db";
 import { buildPhisAddonDataCapability } from "./data-capability.ts";
 import { buildPhisAddonRolesCapability } from "./roles-capability.ts";
@@ -402,21 +404,26 @@ export function buildPhisAddonCapabilities(input: {
       unauthenticated: input.unauthenticated === true && input.systemAuthority !== true,
     });
   }
-  if (required.includes(PHIS_CORE_CAPABILITIES.products)) {
+  // The Site's source language, which a product's and an Add-on's texts are read against; Core's configuration's.
+  const readsTexts = required.includes(PHIS_CORE_CAPABILITIES.products) || required.includes(PHIS_CORE_CAPABILITIES.translations);
+  const siteSourceLocale = readsTexts && input.siteKey ? resolvePhiSiteSourceLocale(getPhisConfigSync(), input.siteKey) : null;
+  if (required.includes(PHIS_CORE_CAPABILITIES.products) && siteSourceLocale) {
     // Bound to the Site and to the Add-on, which is the supplier of what it registers and the author of what it annotates.
     capabilities.products = buildPhisAddonProductsCapability({
       addonId: input.manifest.addonId,
       siteId,
-      siteKey: input.siteKey ?? null,
+      siteSourceLocale,
       unauthenticated: input.unauthenticated === true && input.systemAuthority !== true,
     });
   }
-  if (required.includes(PHIS_CORE_CAPABILITIES.translations) && input.siteKey) {
+  if (required.includes(PHIS_CORE_CAPABILITIES.translations) && siteSourceLocale) {
     // Bound to the Site, whose store it writes, and to the Add-on, whose name every context it builds begins with.
     capabilities.translations = buildPhisAddonTranslationsCapability({
       addonId: input.manifest.addonId,
       siteId,
-      siteKey: input.siteKey,
+      siteSourceLocale,
+      // What it records without naming a language is its own, shipped text (validated at manifest read).
+      addonSourceLocale: input.manifest.sourceLocale ?? null,
       unauthenticated: input.unauthenticated === true && input.systemAuthority !== true,
     });
   }

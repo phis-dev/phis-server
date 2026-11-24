@@ -6,11 +6,11 @@ import { createHash } from "crypto";
 import {
   computeExternalSourceHash,
   ensureGlobalExternalTranslationUnit,
-  ensureSiteMessageIds,
   ensureSiteExternalTranslationUnit,
   findGlobalExternalTranslationUnits,
   findGlobalMessageHashes,
-  findSiteExternalTranslationUnits,
+  findSiteExternalTranslationUnitsByContext,
+  resolveSiteMessageIds,
   getSiteTranslations,
   getTranslations,
   readTranslationChangeMarkers,
@@ -603,32 +603,43 @@ export async function translateSiteWithCache(input: SiteTranslationInput) {
   return translation;
 }
 
-async function translateCanonicalSiteBatch(input: Required<Pick<SiteBatchTranslationInput, "siteId" | "locale" | "sourceLocale" | "msgs">> & {
-  ctx: string;
+/**
+ * The Site path for a batch of messages, each kept under its stored context (`ctx`, its flags included): the
+ * message ids in one go, what `locale` holds, one provider request for the rest -- told `providerCtx` -- and
+ * the answers kept. With `create: false` a message the store does not hold is answered as written and nothing
+ * is recorded. The answer is per entry, in order.
+ */
+async function translateCanonicalSiteBatch(input: {
+  siteId: number;
+  locale: string;
+  sourceLocale: string;
+  entries: ReadonlyArray<{ msg: string; ctx: string }>;
+  providerCtx: string;
   format: TranslationFormat;
-}) {
-  const cacheContext = buildTranslationCacheContext({ ctx: input.ctx, format: input.format });
-  const uniqueMsgs = Array.from(new Set(input.msgs));
-  const isolation = { stage: "ensureSiteMessageIds", locale: input.locale, ctx: cacheContext, siteId: input.siteId };
+  create: boolean;
+}): Promise<string[]> {
+  const keyOf = (entry: { msg: string; ctx: string }) => `${entry.ctx}\u0000${entry.msg}`;
+  const unique = Array.from(new Map(input.entries.map((entry) => [keyOf(entry), entry])).values());
+  const isolation = { stage: "ensureSiteMessageIds", locale: input.locale, ctx: unique[0]?.ctx ?? "", siteId: input.siteId };
   // One batch for every message; a message the batch could not place falls back on its own, as before.
   const msgIds = await withMessageIsolation(
-    () => ensureSiteMessageIds(input.siteId, uniqueMsgs, cacheContext),
-    { ...isolation, msg: uniqueMsgs[0] ?? "" },
+    () => resolveSiteMessageIds(input.siteId, unique, { create: input.create }),
+    { ...isolation, msg: unique[0]?.msg ?? "" },
   );
-  const entries = uniqueMsgs.flatMap((msg) => {
-    const msgId = msgIds?.get(msg);
+  const entries = unique.flatMap((entry, index) => {
+    const msgId = msgIds?.[index];
     if (msgId instanceof Error) {
-      recordSkippedMessage(msgId, { ...isolation, msg });
+      recordSkippedMessage(msgId, { ...isolation, ctx: entry.ctx, msg: entry.msg });
       return [];
     }
-    return msgId == null ? [] : [{ msg, msgId }];
+    return msgId == null ? [] : [{ ...entry, msgId }];
   });
   const cached = await getSiteTranslations(entries.map((entry) => entry.msgId), input.locale);
   const result = new Map<string, string>();
   const pending = entries.filter((entry) => {
     const value = cached.get(entry.msgId);
     if (value != null) {
-      result.set(entry.msg, value);
+      result.set(keyOf(entry), value);
       return false;
     }
     return true;
@@ -637,7 +648,7 @@ async function translateCanonicalSiteBatch(input: Required<Pick<SiteBatchTransla
     const fresh = await requestConfiguredTranslationsOrFallback({
       locale: input.locale,
       msgs: pending.map((entry) => entry.msg),
-      ctx: input.ctx,
+      ctx: input.providerCtx,
       sourceLocale: input.sourceLocale,
       format: input.format,
     });
@@ -649,60 +660,69 @@ async function translateCanonicalSiteBatch(input: Required<Pick<SiteBatchTransla
       // not a reason to hand back source text instead.
       await withMessageIsolation(
         () => upsertSiteTranslations(kept),
-        { stage: "upsertSiteTranslations", locale: input.locale, ctx: cacheContext, siteId: input.siteId, msg: pending[0]?.msg ?? "" },
+        { stage: "upsertSiteTranslations", locale: input.locale, ctx: pending[0]?.ctx ?? "", siteId: input.siteId, msg: pending[0]?.msg ?? "" },
       );
     }
     pending.forEach((entry, index) => {
-      result.set(entry.msg, fresh.translations[index] ?? entry.msg);
+      result.set(keyOf(entry), fresh.translations[index] ?? entry.msg);
     });
   }
-  return input.msgs.map((msg) => result.get(msg) ?? msg);
+  return input.entries.map((entry) => result.get(keyOf(entry)) ?? entry.msg);
 }
 
-async function translateExternalSiteBatch(input: Required<Pick<SiteBatchTranslationInput, "siteId" | "locale" | "sourceLocale" | "msgs">> & {
+/**
+ * The external path (TRANSLATIONS.md, "External and non-canonical sources") for texts that each keep their
+ * own stored context, in the fewest statements and provider requests: one lookup for every unit, one request
+ * for the canonical renderings missing, one read of what `locale` holds, one request for what it lacks. What
+ * the TR route does for a batch under one context (`translateExternalSiteBatchWithCache`), and what a product read does
+ * for every product's title under `[extern]product <n> title` at once. `providerCtx` is what the provider is
+ * told; each entry's `ctx` is the stored context, its `[extern]` flag included. The answer is per entry, in
+ * order: the text in `locale`, or the text as written where it could not be had.
+ */
+async function translateExternalSiteEntries(input: {
+  siteId: number;
+  locale: string;
+  sourceLocale: string;
   canonicalLocale: string;
-  ctx: string;
+  providerCtx: string;
   format: TranslationFormat;
-}) {
+  entries: ReadonlyArray<{ msg: string; ctx: string }>;
+}): Promise<string[]> {
   if (
+    input.entries.length === 0 ||
     sameLocale(input.locale, input.sourceLocale) ||
     !isConfiguredSourceLocaleSupported(input.sourceLocale)
   ) {
-    return input.msgs;
+    return input.entries.map((entry) => entry.msg);
   }
-  const cacheContext = buildTranslationCacheContext({
-    ctx: input.ctx,
-    format: input.format,
-    external: true,
-  });
-  const uniqueSources = Array.from(new Set(input.msgs));
+  const keyOf = (entry: { msg: string; ctx: string }) => `${entry.ctx}\u0000${entry.msg}`;
+  const lookups = Array.from(new Map(input.entries.map((entry) => [keyOf(entry), entry])).values())
+    .map((entry) => ({ source: entry.msg, ctx: entry.ctx, sourceHash: computeExternalSourceHash(entry.msg) }));
   const units = new Map<string, { msgId: number; canonicalMsg: string }>();
-  const pending: Array<{ source: string; sourceHash: string }> = [];
-  const lookups = uniqueSources.map((source) => ({ source, sourceHash: computeExternalSourceHash(source) }));
-  const existing = await findSiteExternalTranslationUnits({
+  const pending: typeof lookups = [];
+  const existing = await findSiteExternalTranslationUnitsByContext({
     siteId: input.siteId,
     locale: input.sourceLocale,
-    ctx: cacheContext,
     entries: lookups,
   });
-  for (const lookup of lookups) {
-    const unit = existing.get(lookup.source);
+  lookups.forEach((lookup, index) => {
+    const unit = existing[index];
     if (unit instanceof Error) {
       // A hash that names another source: this one falls back, the rest of the batch does not.
       recordSkippedMessage(unit, {
-        stage: "findSiteExternalTranslationUnits", locale: input.locale, ctx: cacheContext, siteId: input.siteId, msg: lookup.source,
+        stage: "findSiteExternalTranslationUnits", locale: input.locale, ctx: lookup.ctx, siteId: input.siteId, msg: lookup.source,
       });
     } else if (unit) {
-      units.set(lookup.source, unit);
+      units.set(keyOf({ msg: lookup.source, ctx: lookup.ctx }), unit);
     } else {
       pending.push(lookup);
     }
-  }
+  });
   if (pending.length > 0) {
     const canonical = await requestConfiguredTranslationsOrFallback({
       locale: input.canonicalLocale,
       msgs: pending.map((entry) => entry.source),
-      ctx: input.ctx,
+      ctx: input.providerCtx,
       sourceLocale: input.sourceLocale,
       format: input.format,
     });
@@ -717,24 +737,24 @@ async function translateExternalSiteBatch(input: Required<Pick<SiteBatchTranslat
             source: entry.source,
             sourceHash: entry.sourceHash,
             canonicalMsg,
-            ctx: cacheContext,
+            ctx: entry.ctx,
           }),
-          { stage: "ensureSiteExternalTranslationUnit", locale: input.locale, ctx: cacheContext, siteId: input.siteId, msg: entry.source },
+          { stage: "ensureSiteExternalTranslationUnit", locale: input.locale, ctx: entry.ctx, siteId: input.siteId, msg: entry.source },
         );
-        if (msgId != null) units.set(entry.source, { msgId, canonicalMsg });
+        if (msgId != null) units.set(keyOf({ msg: entry.source, ctx: entry.ctx }), { msgId, canonicalMsg });
       }));
     }
   }
   if (sameLocale(input.locale, input.canonicalLocale)) {
-    return input.msgs.map((source) => units.get(source)?.canonicalMsg ?? source);
+    return input.entries.map((entry) => units.get(keyOf(entry))?.canonicalMsg ?? entry.msg);
   }
   const resolved = new Map<string, string>();
-  const unitEntries = Array.from(units.entries()).map(([source, unit]) => ({ source, ...unit }));
+  const unitEntries = Array.from(units.entries()).map(([key, unit]) => ({ key, ...unit }));
   const cached = await getSiteTranslations(unitEntries.map((entry) => entry.msgId), input.locale);
   const targetPending = unitEntries.filter((entry) => {
     const value = cached.get(entry.msgId);
     if (value != null) {
-      resolved.set(entry.source, value);
+      resolved.set(entry.key, value);
       return false;
     }
     return true;
@@ -743,7 +763,7 @@ async function translateExternalSiteBatch(input: Required<Pick<SiteBatchTranslat
     const fresh = await requestConfiguredTranslationsOrFallback({
       locale: input.locale,
       msgs: targetPending.map((entry) => entry.canonicalMsg),
-      ctx: input.ctx,
+      ctx: input.providerCtx,
       sourceLocale: input.canonicalLocale,
       format: input.format,
     });
@@ -754,62 +774,55 @@ async function translateExternalSiteBatch(input: Required<Pick<SiteBatchTranslat
       await upsertSiteTranslations(kept);
     }
     targetPending.forEach((entry, index) => {
-      resolved.set(entry.source, fresh.accepted[index]
-        ? fresh.translations[index] ?? entry.canonicalMsg
-        : entry.source);
+      if (fresh.accepted[index]) resolved.set(entry.key, fresh.translations[index] ?? entry.canonicalMsg);
     });
   }
-  return input.msgs.map((source) => resolved.get(source) ?? source);
+  return input.entries.map((entry) => resolved.get(keyOf(entry)) ?? entry.msg);
 }
 
 /**
- * Site messages whose ids the caller holds and for which `locale` has no translation yet, filled the way
- * the request path fills a Widget's words: one provider request for all of them, the answers kept
- * (`upsertSiteTranslations`, a fill that moves no change marker), and the source text standing in where the
- * provider failed, recorded as a stand-in (`trackTranslationStandIns`).
- *
- * For words Core records itself and reads beside their rows -- a product's title and summary
- * (`products:v1`), an Add-on's texts (`translations:v1`) -- whose message ids are at hand, so neither the
- * message nor the held translation is looked up again. `providerContext` is what the provider is told,
- * natural language, which may differ from the stored context: a product's context names the product, and
- * a provider is told the field.
- *
- * The answer maps each id to its text in `locale`.
+ * A batch's messages with the context each is kept under: `ctx` for all of them, or, where `storedContexts`
+ * is given, each its own (`product 12 title`) while the provider is still told `ctx` (`product title`). With
+ * `storedContexts` the answer stays aligned with `msgs` -- an empty message is answered empty -- and without
+ * it the batch is normalized as it always was (trimmed, empty ones dropped).
  */
-export async function fillSiteMessageTranslations(input: {
-  siteId: number;
-  locale: string;
-  sourceLocale: string;
-  providerContext: string;
-  messages: ReadonlyArray<{ msgId: number; msg: string }>;
-}): Promise<Map<number, string>> {
-  const result = new Map<number, string>();
-  const messages = input.messages.filter((message) => message.msg.trim());
-  if (messages.length === 0) {
-    return result;
+function readSiteBatchEntries(input: { msgs: string[]; ctx?: string | null; storedContexts?: readonly string[] }) {
+  const providerCtx = input.ctx?.trim() ?? "";
+  if (input.storedContexts === undefined) {
+    return { providerCtx, entries: normalizeBatchMessages(input.msgs).map((msg) => ({ msg, ctx: providerCtx })) };
   }
-  const fresh = await requestConfiguredTranslationsOrFallback({
-    locale: input.locale,
-    msgs: messages.map((message) => message.msg),
-    ctx: input.providerContext,
-    sourceLocale: input.sourceLocale,
-    format: "text",
-  });
-  const kept = messages.flatMap((message, index) => fresh.accepted[index]
-    ? [{ msgId: message.msgId, locale: input.locale, translation: fresh.translations[index] ?? message.msg }]
-    : []);
-  if (kept.length > 0) {
-    await withMessageIsolation(
-      () => upsertSiteTranslations(kept),
-      { stage: "upsertSiteTranslations", locale: input.locale, ctx: input.providerContext, siteId: input.siteId, msg: messages[0]!.msg },
-    );
+  if (input.storedContexts.length !== input.msgs.length) {
+    throw new Error("storedContexts names one context per message.");
   }
-  messages.forEach((message, index) => {
-    result.set(message.msgId, fresh.translations[index] ?? message.msg);
+  return {
+    providerCtx,
+    entries: input.msgs.map((msg, index) => ({ msg: msg.trim(), ctx: input.storedContexts![index]!.trim() })),
+  };
+}
+
+/** Each entry's answer where `translate` gave one, the empty ones answered as they are. */
+async function translateNonEmptyEntries(
+  entries: ReadonlyArray<{ msg: string; ctx: string }>,
+  translate: (entries: Array<{ msg: string; ctx: string }>) => Promise<string[]>,
+) {
+  const asked = entries.flatMap((entry, index) => (entry.msg ? [{ ...entry, index }] : []));
+  const answers = asked.length > 0 ? await translate(asked) : [];
+  const result = entries.map((entry) => entry.msg);
+  asked.forEach((entry, position) => {
+    result[entry.index] = answers[position] ?? entry.msg;
   });
   return result;
 }
 
+/**
+ * The Site path of `/api/v1/tr`: messages of the Site's store in its canonical `sourceLocale`, answered in
+ * `locale` -- what is held, else the provider's, kept.
+ *
+ * `storedContexts` keeps each message under a context of its own while the provider is told `ctx` -- the
+ * words Core records itself under one context per row (a product's `product <n> title`, told `product
+ * title`) -- in the same statements for all of them. `create: false` answers a message the store does not
+ * hold as written and records nothing (`translations:v1`'s `translate`, which reads what `record` wrote).
+ */
 export async function translateSiteBatchWithCache({
   siteId,
   locale,
@@ -817,42 +830,55 @@ export async function translateSiteBatchWithCache({
   msgs,
   ctx,
   format,
-}: SiteBatchTranslationInput) {
+  storedContexts,
+  create = true,
+}: SiteBatchTranslationInput & { storedContexts?: readonly string[]; create?: boolean }) {
   if (!siteId || !locale.trim() || !sourceLocale.trim()) {
     throw new Error("siteId, locale, and sourceLocale are required.");
   }
   const normalizedLocale = requirePhiTranslationLocale(locale);
   const canonicalLocale = requirePhiTranslationLocale(sourceLocale);
-  const normalizedMsgs = normalizeBatchMessages(msgs);
-  const rawCtx = ctx?.trim() ?? "";
   const translationFormat = normalizeTranslationFormat(format);
-  if (normalizedMsgs.length === 0 || sameLocale(normalizedLocale, canonicalLocale)) {
-    return normalizedMsgs;
+  const { providerCtx, entries } = readSiteBatchEntries({ msgs, ctx, storedContexts });
+  if (entries.length === 0 || sameLocale(normalizedLocale, canonicalLocale)) {
+    return entries.map((entry) => entry.msg);
   }
-  return translateCanonicalSiteBatch({
+  return translateNonEmptyEntries(entries, (asked) => translateCanonicalSiteBatch({
     siteId,
     locale: normalizedLocale,
     sourceLocale: canonicalLocale,
-    msgs: normalizedMsgs,
-    ctx: rawCtx,
+    entries: asked.map((entry) => ({ msg: entry.msg, ctx: buildTranslationCacheContext({ ctx: entry.ctx, format: translationFormat }) })),
+    providerCtx,
     format: translationFormat,
-  });
+    create,
+  }));
 }
 
+/**
+ * The external path of `/api/v1/tr` (TRANSLATIONS.md, "External and non-canonical sources"): texts written in
+ * `sourceLocale`, another language than the Site's `canonicalLocale`, answered in `locale`. `storedContexts`
+ * as for `translateSiteBatchWithCache`: each text's unit is kept under `[extern]` and its own context, the
+ * provider told `ctx`.
+ */
 export async function translateExternalSiteBatchWithCache(input: SiteBatchTranslationInput & {
   canonicalLocale: string;
+  storedContexts?: readonly string[];
 }) {
-  const normalizedMsgs = normalizeBatchMessages(input.msgs);
-  if (normalizedMsgs.length === 0) {
-    return [];
+  const locale = requirePhiTranslationLocale(input.locale);
+  const sourceLocale = requirePhiTranslationLocale(input.sourceLocale);
+  const canonicalLocale = requirePhiTranslationLocale(input.canonicalLocale);
+  const format = normalizeTranslationFormat(input.format);
+  const { providerCtx, entries } = readSiteBatchEntries(input);
+  if (entries.length === 0 || sameLocale(locale, sourceLocale) || !isConfiguredSourceLocaleSupported(sourceLocale)) {
+    return entries.map((entry) => entry.msg);
   }
-  return translateExternalSiteBatch({
+  return translateNonEmptyEntries(entries, (asked) => translateExternalSiteEntries({
     siteId: input.siteId,
-    locale: requirePhiTranslationLocale(input.locale),
-    sourceLocale: requirePhiTranslationLocale(input.sourceLocale),
-    canonicalLocale: requirePhiTranslationLocale(input.canonicalLocale),
-    msgs: normalizedMsgs,
-    ctx: input.ctx?.trim() ?? "",
-    format: normalizeTranslationFormat(input.format),
-  });
+    locale,
+    sourceLocale,
+    canonicalLocale,
+    providerCtx,
+    format,
+    entries: asked.map((entry) => ({ msg: entry.msg, ctx: buildTranslationCacheContext({ ctx: entry.ctx, format, external: true }) })),
+  }));
 }

@@ -821,7 +821,9 @@ export async function reconcileAddons(
         addonId: desired.addonId,
         siteId,
         declared: manifest.products ?? [],
+        sourceLocale: manifest.sourceLocale,
         entries: productEntries,
+        configRoot: root,
       });
       products.push(...applied.map((entry) => ({ addonId: desired.addonId, siteId, ...entry })));
     }

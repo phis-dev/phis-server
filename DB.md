@@ -516,7 +516,13 @@ Contract (SERVER_ADDONS.md, `products:v1`, "Products a Site package proposes"):
 
 Contract (SERVER_ADDONS.md, `products:v1`, "Products a Site package proposes"):
 - What the Site's packages propose, as the CLI last handed it to Core (`phis update`, `phis module products sync`; `POST /api/v1/module-products` with `{ package, proposals }`): one package's whole list per hand-over, which replaces what was kept of that package -- a key it no longer names is deleted, a changed proposal rewritten. Core cannot read a Site's packages itself (the Site's files may be on another host), so this is the copy the Builder's activation works from.
-- `proposal` is the proposal as `readPhisSitePackageProductProposal` read it; it is read again under today's rules before it is taken.
+- `proposal` is the proposal as `readPhisSitePackageProductProposal` read it; it is read again under today's rules before it is taken. It carries `sourceLocale`, the package's `phis.sourceLocale` (`en` where the package states none), which `product.add` is handed. A row kept before that field existed is refused as `invalid_proposal` until the package is handed over again (`phis module products sync`), or swept by hand where the package's language is `en`, as every workspace package's is (2026-11-24; `phi_server_dev` received it so):
+
+  ```sql
+  UPDATE phis.site_module_product_proposals
+  SET proposal = proposal || '{"sourceLocale":"en"}'::jsonb
+  WHERE NOT proposal ? 'sourceLocale';
+  ```
 - `waiting_reason` and `waiting_detail` are what the last attempt on the Builder's activation answered for a proposal it could not take: `supplier_unavailable` (`@phis/products` not on for the Site), `media_missing` (a picture not in the library yet), `supplier_refused` (the admin who activated it may not keep the Site's products). NULL before any attempt, after one that took it, and after a hand-over that changed the proposal. `phis module check` and `phis module products list` say them.
 - A row stays after its proposal was taken; `site_module_products` is what says it was. Written under the same per-Site advisory lock.
 - Added before v1 in place: no schema version is raised. An existing database receives the table by hand, the `CREATE TABLE IF NOT EXISTS phis.site_module_product_proposals (...)` statement of `scripts/sql/001_create_phis.pgsql`, as the serving role (added 2026-11-24; the development database `phi_server_dev` received it so).
@@ -1697,6 +1703,7 @@ Contract:
 - `referral_url VARCHAR(2000) NULL`
 - `state VARCHAR(10) NOT NULL DEFAULT 'draft'`
 - `flags INT NOT NULL DEFAULT 0`
+- `source_locale VARCHAR(16) NULL`
 - `parts TEXT[] NOT NULL DEFAULT '{}'`
 - `pending_terms JSONB NULL`
 - `version INT NOT NULL DEFAULT 1`
@@ -1716,6 +1723,7 @@ Contract:
 - What a Site has that somebody can hold (`products:v1`, SERVER_ADDONS.md; `design/COMMERCE_COORDINATION.md` section 4). An identity and nothing about how it is sold or delivered. The id an Add-on sees is `supplier_addon_id || ':' || key`; the supplier is the Add-on that registered it and delivers it, and no foreign key points at `server_addons`, because a product stays when its supplier is removed.
 - `publisher` is the supplier's own reference for whose product it is, NULL for the Site's own, and does not change after the row was written. A product with a publisher is released by the operator (flag `released`); the Site's own is derived as released whatever the bit says (it is set at creation).
 - `sale`, `referral_url`, the `free` and `account required` flags and `parts` are the terms in force. What a publisher asked to change of them on a released product waits in `pending_terms` (`{ sale, referralUrl, free, accountRequired, parts }`) until the operator releases it, which moves them into the columns and clears it. `parts` are product ids of the same Site; no cycle, counting `pending_terms.parts`; a bundle is not `counted`.
+- `CHECK (source_locale IS NULL OR source_locale ~ '^[a-z]{2,3}(-[A-Za-z0-9]{2,8})*$')` (`products_source_locale_check`)
 - `flags` are `PHIS_PRODUCT_FLAG`: `1 = counted` (fixed once an entitlement names the product), `2 = free`, `4 = released`, `8 = withdrawn because the supplier was switched off` (cleared by any explicit move; Core restores exactly the products that carry it when the supplier is on again), `16 = declared by the supplier's manifest` (what lets Core withdraw it when a later manifest stops declaring it), `32 = account required` (Core does not enforce it: an entitlement entry always has a subject with an account).
 - `state`: `draft`, `active`, `withdrawn`, `locked`. `locked` is the operator's; `phis product unlock` (or `POST /api/site/products/{id}/unlock`) takes the product to `withdrawn`, because the state before the lock is not kept.
 - `version` rises with every change, attribute changes included, and not with a write that changes nothing.
@@ -1730,6 +1738,14 @@ Contract:
 ### `phis.product_gallery`
 
 - `product_id INT NOT NULL`
+- `source_locale` is the language `title`, `summary` and `description` are written in, a locale key in the catalogue's spelling (`fr`, `pt-BR`), NULL for the Site's source language: Core writes NULL also where a supplier names the Site's own language (`phisProductSourceLocaleAtSite`), so a product read back -- `PhisProduct.sourceLocale` always states a language -- and written again stays the Site's. Which language a hand-over is in is the rule of `@phis/contracts/products` (SERVER_ADDONS.md, `products:v1`, **Language**). A change of it is a change of every text: the fields' messages are recorded anew and the old ones go with their translations, as do the external renderings (`[extern]product <id> <field>`) of the old reading.
+  - Added before v1 in place: no schema version is raised. An existing database receives it by hand, as the serving role (added 2026-11-24; the development database `phi_server_dev` received it so); every existing product is then the Site's language, which is what NULL says:
+
+    ```sql
+    ALTER TABLE phis.products ADD COLUMN IF NOT EXISTS source_locale VARCHAR(16) NULL;
+    ALTER TABLE phis.products ADD CONSTRAINT products_source_locale_check
+      CHECK (source_locale IS NULL OR source_locale ~ '^[a-z]{2,3}(-[A-Za-z0-9]{2,8})*$');
+    ```
 - `site_id SMALLINT NOT NULL`
 - `position SMALLINT NOT NULL`
 - `asset_id INT NOT NULL`

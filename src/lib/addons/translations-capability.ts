@@ -7,11 +7,9 @@ import {
   type PhisTranslationsCapabilityV1,
 } from "@phis/contracts/addon";
 
-import { getPhisConfigSync } from "@/lib/config";
-import { resolvePhiSiteSourceLocale } from "@/lib/config-core";
 import { resolvePhiLocaleBase, resolvePhiLocaleCapability } from "@/lib/locale";
-import { fillSiteMessageTranslations, trackTranslationStandIns } from "@/lib/translations";
-import { ensureSiteMessageIds, findSiteMessageIds, getSiteTranslations } from "@/db/translations";
+import { trackTranslationStandIns, translateExternalSiteBatchWithCache, translateSiteBatchWithCache } from "@/lib/translations";
+import { ensureSiteMessageIds, getSiteTranslations, resolveSiteMessageIds } from "@/db/translations";
 
 /**
  * `translations:v1` for one request (SERVER_ADDONS.md, translations:v1): an Add-on's own words as source
@@ -23,6 +21,12 @@ import { ensureSiteMessageIds, findSiteMessageIds, getSiteTranslations } from "@
  * texts begin with its own name and cannot land in a register of the platform's or of another Add-on.
  * Beyond that a message is an ordinary Site message, so Editor > Translations, `phis translations
  * export|import --site` and the change markers treat it as they treat a Page's words.
+ *
+ * The texts' language is the caller's `sourceLocale`, else the manifest's -- the Add-on's own, shipped texts
+ * -- else the Site's (`@phis/contracts/products`, the source-language rule). Texts in the Site's language are
+ * filled on their own message; texts in another take the TR route's external path under `[extern]<addonId>:
+ * <context>`, rendered into the Site's language once and every other language from that rendering. A
+ * translation a person keeps on the recorded message wins either way.
  */
 
 export class PhisAddonTranslationsError extends Error {}
@@ -30,7 +34,10 @@ export class PhisAddonTranslationsError extends Error {}
 export function buildPhisAddonTranslationsCapability(input: {
   addonId: string;
   siteId: number;
-  siteKey: string;
+  /** The Site's source language. */
+  siteSourceLocale: string;
+  /** The manifest's `sourceLocale`: the language of what the Add-on records without naming one. */
+  addonSourceLocale: string | null;
   /** True when nobody authenticated and no signature stood in for them -- an unverified hook. */
   unauthenticated?: boolean;
 }): PhisTranslationsCapabilityV1 {
@@ -65,25 +72,35 @@ export function buildPhisAddonTranslationsCapability(input: {
     return texts as string[];
   };
 
-  /** The reader's language and the Site's, or null where the texts as written are the answer. */
-  const readLocale = (locale: unknown) => {
+  /** The texts' language: the caller's, else the Add-on's own, else the Site's; refused where Core knows none such. */
+  const readSourceLocale = (sourceLocale: unknown) => {
+    if (sourceLocale === undefined) return input.addonSourceLocale ?? input.siteSourceLocale;
+    const capability = typeof sourceLocale === "string" ? resolvePhiLocaleCapability(sourceLocale) : null;
+    if (!capability) throw new PhisAddonTranslationsError("sourceLocale is a locale key Core knows, such as en or fr: the language the texts are written in.");
+    return capability.locale;
+  };
+
+  /** The reader's language, or null where the texts as written are the answer: null, unknown, or theirs. */
+  const readLocale = (locale: unknown, sourceLocale: string) => {
     if (locale === null) return null;
     if (typeof locale !== "string") throw new PhisAddonTranslationsError("locale is a locale key such as de, or null for the texts as written.");
     const capability = resolvePhiLocaleCapability(locale);
     if (!capability) return null;
-    const sourceLocale = resolvePhiSiteSourceLocale(getPhisConfigSync(), input.siteKey);
-    return resolvePhiLocaleBase(capability.locale) === resolvePhiLocaleBase(sourceLocale) ? null : { locale: capability.locale, sourceLocale };
+    return resolvePhiLocaleBase(capability.locale) === resolvePhiLocaleBase(sourceLocale) ? null : capability.locale;
   };
 
   return {
-    async record({ context, texts }) {
+    async record({ context, texts, sourceLocale }) {
       if (input.unauthenticated) {
         throw new PhisAddonTranslationsError(
           `${addonId} called translations.record from an unverified hook; a visitor writes nothing into the Site's translation store.`,
         );
       }
       const ctx = readContext(context);
-      const recorded = readTexts(texts).filter((text) => text.trim() !== "");
+      // Checked though not stored: the text is kept as written in whatever language, as a product's are.
+      readSourceLocale(sourceLocale);
+      // Trimmed, as the TR route reads a message back (`translateSiteBatchWithCache`).
+      const recorded = readTexts(texts).map((text) => text.trim()).filter((text) => text !== "");
       if (recorded.length === 0) return;
       // A text that collides with a stored one under the same opening is refused; the others are kept.
       const ids = await ensureSiteMessageIds(siteId, recorded, ctx);
@@ -95,24 +112,36 @@ export function buildPhisAddonTranslationsCapability(input: {
       }
     },
 
-    async translate({ context, locale, texts }) {
+    async translate({ context, locale, texts, sourceLocale }) {
       const ctx = readContext(context);
       const asWritten = readTexts(texts);
-      const read = readLocale(locale);
-      if (!read) return { texts: [...asWritten], provisional: false };
+      const language = readSourceLocale(sourceLocale);
+      const target = readLocale(locale, language);
+      if (!target) return { texts: [...asWritten], provisional: false };
       const { value, standIn } = await trackTranslationStandIns(async () => {
-        const ids = await findSiteMessageIds(siteId, asWritten.filter((text) => text.trim() !== ""), ctx);
-        const held = await getSiteTranslations([...ids.values()], read.locale);
-        const missing = [...ids].flatMap(([msg, msgId]) => (held.get(msgId)?.trim() ? [] : [{ msgId, msg }]));
-        const filled = await fillSiteMessageTranslations({
-          siteId, locale: read.locale, sourceLocale: read.sourceLocale, providerContext: ctx, messages: missing,
+        // In the Site's language: the TR route's Site path, reading only what `record` wrote.
+        if (resolvePhiLocaleBase(language) === resolvePhiLocaleBase(input.siteSourceLocale)) {
+          return translateSiteBatchWithCache({
+            siteId, locale: target, sourceLocale: language, msgs: asWritten, ctx,
+            storedContexts: asWritten.map(() => ctx), create: false, format: "text",
+          });
+        }
+        // In another: a translation held on the recorded message wins, the rest takes the TR route's external path.
+        const ids = await resolveSiteMessageIds(siteId, asWritten.map((msg) => ({ msg: msg.trim(), ctx })), { create: false });
+        const recorded = asWritten.flatMap((msg, index) => {
+          const msgId = ids[index];
+          return typeof msgId === "number" && msg.trim() !== "" ? [{ msg, msgId, index }] : [];
         });
-        return asWritten.map((text) => {
-          const msgId = ids.get(text);
-          if (msgId === undefined) return text;
-          const translation = held.get(msgId);
-          return translation?.trim() ? translation : filled.get(msgId) ?? text;
+        const held = await getSiteTranslations(recorded.map((entry) => entry.msgId), target);
+        const missing = recorded.filter((entry) => !held.get(entry.msgId)?.trim());
+        const rendered = await translateExternalSiteBatchWithCache({
+          siteId, locale: target, sourceLocale: language, canonicalLocale: input.siteSourceLocale,
+          msgs: missing.map((entry) => entry.msg), ctx, storedContexts: missing.map(() => ctx), format: "text",
         });
+        const result = [...asWritten];
+        for (const entry of recorded) result[entry.index] = held.get(entry.msgId)?.trim() ? held.get(entry.msgId)! : entry.msg;
+        missing.forEach((entry, position) => { result[entry.index] = rendered[position] ?? entry.msg; });
+        return result;
       });
       return { texts: value, provisional: standIn };
     },
