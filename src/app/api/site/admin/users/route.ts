@@ -100,7 +100,7 @@ function parseEnabledFilter(value: QueryValue) {
 
 function parseAccountType(value: QueryValue) {
   const normalized = normalize(value).toLowerCase();
-  if (normalized === "roles" || normalized === "auth") {
+  if (normalized === "staff" || normalized === "customer") {
     return normalized;
   }
 

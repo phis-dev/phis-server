@@ -9,7 +9,8 @@ import { USER_SITE_FLAG_DISABLED, isUserSiteEnabled } from "@/lib/user-site-flag
 import { PHI_CORE_ROLE_PROVIDER_ID } from "@/lib/authorization";
 import { PhiBaseRole } from "@/lib/constants/phi-base-roles";
 
-export type AdminUserAccountType = "roles" | "auth";
+/** `staff`: holds at least one Core staff role (role flags not 0); `customer`: holds none (role flags 0). */
+export type AdminUserAccountType = "staff" | "customer";
 export type AdminUserSortKey = "name" | "email" | "accountType" | "enabled" | "createdAt" | "lastLoginAt";
 export type AdminUserSortOrder = "ascend" | "descend";
 
@@ -104,9 +105,9 @@ export async function listAdminUsersForSite(siteId: number, options: ListAdminUs
   }
 
   const accountType = options.accountType?.trim().toLowerCase();
-  if (accountType === "roles") {
+  if (accountType === "staff") {
     conditions.push(`COALESCE(core_claim.role_flags, 0) <> 0`);
-  } else if (accountType === "auth") {
+  } else if (accountType === "customer") {
     conditions.push(`COALESCE(core_claim.role_flags, 0) = 0`);
   }
 
@@ -166,8 +167,8 @@ export async function listAdminUsersForSite(siteId: number, options: ListAdminUs
         usr.last_login_at,
         COALESCE(${userDisplayNameSql("up")}, email.email_normalized) AS display_name,
         CASE
-          WHEN COALESCE(core_claim.role_flags, 0) <> 0 THEN 'roles'
-          ELSE 'auth'
+          WHEN COALESCE(core_claim.role_flags, 0) <> 0 THEN 'staff'
+          ELSE 'customer'
         END AS account_type,
         usr.user_site_flags & ${USER_SITE_FLAG_DISABLED} = 0 AS enabled
       FROM phis.user_site_memberships usr

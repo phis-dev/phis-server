@@ -453,7 +453,7 @@ const SHOP_ROLES = [
 
 function listRow(id: number) {
   return {
-    id, displayName: `User ${id}`, emailNormalized: `u${id}@example.test`, accountType: "roles", enabled: true,
+    id, displayName: `User ${id}`, emailNormalized: `u${id}@example.test`, accountType: "staff", enabled: true,
     flags: 0, siteFlags: 0, coreRoleFlags: 0, lastLoginAt: null, createdAt: "x", companyName: null,
     firstName: null, lastName: null,
   };
@@ -588,6 +588,16 @@ describe("GET /api/site/admin/users with Add-on roles", () => {
     const { body } = await list();
 
     expect(body.rows.map((row: { addonRoles: unknown[] }) => row.addonRoles.length)).toEqual([0, 0, 0]);
+  });
+
+  it("filters by account type staff or customer and reads any other value as all", async () => {
+    await list("?accountType=staff");
+    await list("?accountType=Customer");
+    await list("?accountType=roles");
+    await list("?accountType=auth");
+
+    expect(vi.mocked(listAdminUsersForSite).mock.calls.map(call => call[1]?.accountType))
+      .toEqual(["staff", "customer", "all", "all"]);
   });
 
   it("filters by Add-on to every declared role, stored", async () => {
