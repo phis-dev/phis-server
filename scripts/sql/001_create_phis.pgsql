@@ -876,25 +876,6 @@ CREATE TABLE IF NOT EXISTS phis.site_auth_config (
   CONSTRAINT site_auth_config_json_check CHECK (jsonb_typeof(config) = 'object')
 );
 
-CREATE TABLE IF NOT EXISTS phis.user_site_external_accounts (
-  id SERIAL PRIMARY KEY,
-  user_id INT NOT NULL,
-  site_id SMALLINT NOT NULL,
-  provider_key VARCHAR(64) NOT NULL,
-  external_account_id VARCHAR(512) NOT NULL,
-  customer_number VARCHAR(64) NULL,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  CONSTRAINT user_site_external_accounts_membership_fk
-    FOREIGN KEY (user_id, site_id)
-    REFERENCES phis.user_site_memberships (user_id, site_id)
-    ON DELETE CASCADE,
-  CONSTRAINT user_site_external_accounts_external_unique
-    UNIQUE (site_id, provider_key, external_account_id),
-  CONSTRAINT user_site_external_accounts_user_provider_unique
-    UNIQUE (user_id, site_id, provider_key)
-);
-
 CREATE TABLE IF NOT EXISTS phis.user_auth_factors (
   id UUID PRIMARY KEY,
   user_id INT NOT NULL,

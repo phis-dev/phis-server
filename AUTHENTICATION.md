@@ -105,8 +105,6 @@ Authentication uses these relations:
 - `site_auth_config`: one versioned Site JSON document containing policy, enabled method/stage
   combinations, order, presentation, and non-secret provider installation configuration;
 - `user_auth_factors`: Site-scoped TOTP and recovery-code enrollments with a compact numeric factor type;
-- `user_site_external_accounts`: Site-scoped domain-system account mappings outside the Auth identity
-  model; no code reads or writes it since the built-in Medusa integration was removed (2026-11-24);
 - `user_sessions`: Site membership, hashed session secret, authentication time, assurance level,
   workflow state (`auth_state`), the accepted Site policy revision, method keys, preserved `next` path,
   expiry, revocation, and request metadata;

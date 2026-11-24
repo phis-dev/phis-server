@@ -216,11 +216,11 @@ The target PostgreSQL schema for `phis` is:
 
 Contract:
 - `sites` stores the Site-wide runtime and business configuration: canonical hostname, locales, public URL, mail identity, the customer number prefix, and the form guard secret.
-- Core carries no Medusa connection: `medusa_base_url` and `medusa_publishable_key` went with the built-in Medusa integration (owner, 2026-11-24; a Medusa Add-on is to bind its customers through `user.registered` and `users:v1`). An existing database drops them by hand, as the serving role (the development database `phi_server_dev` received it so):
+- Core carries no Medusa connection: `medusa_base_url` and `medusa_publishable_key` went with the built-in Medusa integration (owner, 2026-11-24; a Medusa Add-on is to bind its customers through `user.registered` and `users:v1`), and so did `phis.user_site_external_accounts`, whose Medusa customer mappings were its only rows (sign-in identities are `phis.user_auth_identities`). An existing database drops them by hand, as the serving role (the development database `phi_server_dev` received it so):
 
   ```sql
   ALTER TABLE phis.sites DROP COLUMN IF EXISTS medusa_base_url, DROP COLUMN IF EXISTS medusa_publishable_key;
-  DELETE FROM phis.user_site_external_accounts WHERE provider_key = 'medusa';
+  DROP TABLE IF EXISTS phis.user_site_external_accounts;
   ```
 - The immutable Site source locale is not a column. It is `sites.overrides.<siteKey>.sourceLocale` in the runtime configuration, with `translation.sourceLocale` as the installation fallback; see [TRANSLATIONS.md](./TRANSLATIONS.md).
 - `theme` stores public-facing presentation configuration only. Its shape is the `theme` member of `PhiBlockRuntimeSite` in `phis-ui/types/widget-runtime.ts`: `mode`, `blocks`, `derivedFrom`, `preset`, `presetVersion`, `shape`, `fonts`, `rem`, `brand`, `contact`, `shell`, `root`, `palette`, `style.token`, `buttons`, `typography`, and `components`.
@@ -832,30 +832,6 @@ Contract:
 - Provider secret values never enter the JSON. The deployment secret store is authoritative.
 - Core parses and validates the complete document on every read and writes it atomically under a row lock.
 - Site Auth settings may mutate only the current Site row through authorized Core operations.
-
-### `phis.user_site_external_accounts`
-
-- `id SERIAL PRIMARY KEY`
-- `user_id INT NOT NULL`
-- `site_id SMALLINT NOT NULL`
-- `provider_key VARCHAR(64) NOT NULL`
-- `external_account_id VARCHAR(512) NOT NULL`
-- `customer_number VARCHAR(64) NULL`
-- `created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
-- `updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
-- `FOREIGN KEY (user_id, site_id) REFERENCES phis.user_site_memberships(user_id, site_id) ON DELETE CASCADE`
-- `UNIQUE (site_id, provider_key, external_account_id)`
-- `UNIQUE (user_id, site_id, provider_key)`
-
-Contract:
-- No code reads or writes this table since the built-in Medusa integration, its only user, was removed
-  (2026-11-24); it stays in the schema until the owner decides whether it goes. Sign-in identities are
-  `phis.user_auth_identities`, not this table.
-- Domain-system ids are Site-scoped mappings, never global user identity fields.
-- `customer_number` was read only beside the Medusa row and is read by nothing now; a customer number is
-  derived from the Site prefix and the global user id.
-- An external domain account is not an authentication identity unless a separate validated Auth adapter
-  resolves it through `user_auth_identities`.
 
 ### `phis.user_auth_factors`
 
