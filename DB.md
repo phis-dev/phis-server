@@ -605,6 +605,8 @@ Contract:
   - `8 = landscape` (640 x 396, cover)
   - `9 = portrait` (396 x 640, cover)
   - `10 = icon` (64 x 64, contain on a transparent ground: icons, logos and pictures in lists and tables, never cropped)
+  - `11 = share` (1200 x 630, cover, a JPEG: the picture of a link preview, `og:image`)
+- A variant is a WebP unless its spec says `jpeg`, and is never larger than its original unless its spec carries `PhiImageAssetVariantSpecFlags.ExactSize`: then it is exactly its box, a smaller original enlarged, because the document head states the size of a link preview's picture before anybody has fetched it. A JPEG has no transparency, so a transparent original is laid on white. The object key ends in the format's extension (`.webp`, `.jpg`).
 - Shared helper code resolves these numeric keys to readable names (`resolvePhiImageAssetVariantKeyName`). An address of a variant is built in one place, `resolvePhiMediaVariantUrl` (`/api/site/media/<id>/variants/<key>?r=<delivery revision>&v=<variant version>`), and only for an image Asset.
 - Next.js `Image` does not define or require specific variant keys; these keys are our own CMS/rendering contract.
 - `width` and `height` on `media_assets` describe the original image dimensions.

@@ -4,10 +4,12 @@ import sharp, { type Sharp } from "sharp";
 
 import { getImageAssetVariantByAssetIdAndKey, upsertImageAssetVariant, type MediaAssetRecord } from "@/db/media";
 import {
+  PhiImageAssetVariantSpecFlags,
   PhiMediaKind,
   resolvePhiImageAssetVariantKeyName,
   resolvePhiImageAssetVariantSpec,
   resolvePhiMediaKindFromContentType,
+  type PhiImageAssetVariantSpec,
 } from "@/lib/constants/media";
 import { normalizeMediaFocalRect } from "@/db/media";
 import type { PhisMediaObjectHead } from "@phis/contracts/addon";
@@ -31,9 +33,10 @@ export type EnsureImageAssetVariantResult = {
   storage: Awaited<ReturnType<typeof createPhisMediaStorageServiceForProfile>>;
 };
 
-function buildVariantStorageKey(assetStorageKey: string, variantKey: number) {
+/** The object key of one rendition, ending in its format's extension. */
+function buildVariantStorageKey(assetStorageKey: string, variantKey: number, format: PhiImageAssetVariantSpec["format"]) {
   const normalizedAssetKey = assetStorageKey.trim().replace(/\/+$/g, "");
-  return `${normalizedAssetKey}.__variants/${variantKey}.webp`;
+  return `${normalizedAssetKey}.__variants/${variantKey}.${format === "jpeg" ? "jpg" : "webp"}`;
 }
 
 function clamp(value: number, min: number, max: number) {
@@ -105,8 +108,18 @@ function sanitizeExtractArea(
   return { left, top, width, height };
 }
 
-function resolveVariantContentType() {
-  return "image/webp";
+function resolveVariantContentType(format: PhiImageAssetVariantSpec["format"]) {
+  return format === "jpeg" ? "image/jpeg" : "image/webp";
+}
+
+/**
+ * The encoder of a format. A JPEG has no transparency, so a transparent original is laid on white first:
+ * left to the encoder it would come out on black, which is no preview anybody chose.
+ */
+function encodeVariant(pipeline: Sharp, spec: PhiImageAssetVariantSpec) {
+  return spec.format === "jpeg"
+    ? pipeline.flatten({ background: "#ffffff" }).jpeg({ quality: spec.quality, mozjpeg: true })
+    : pipeline.webp({ quality: spec.quality });
 }
 
 function isImageAsset(asset: MediaAssetRecord) {
@@ -162,7 +175,13 @@ export async function ensureImageAssetVariant(
   }
 
   const normalizedVariantKey = variantKey;
-  const variantStorageKey = buildVariantStorageKey(asset.storageKey, normalizedVariantKey);
+  const variantStorageKey = buildVariantStorageKey(asset.storageKey, normalizedVariantKey, spec.format);
+  /*
+   * A variant is never larger than its original, unless it promises its exact box: a link preview's
+   * picture is stated in the head as 1200 x 630 before anybody fetches it, so a smaller original is
+   * enlarged to that rather than delivered at its own size.
+   */
+  const withoutEnlargement = (spec.flags & PhiImageAssetVariantSpecFlags.ExactSize) === 0;
   const orientedSourceBody = await sharp(sourceBody, { failOn: "none" }).rotate().toBuffer();
   const sourceMetadata = await sharp(orientedSourceBody, { failOn: "none" }).metadata();
   const focalRect = normalizeMediaFocalRect(asset.meta && typeof asset.meta === "object" ? asset.meta.focalRect : null);
@@ -185,22 +204,22 @@ export async function ensureImageAssetVariant(
     const extractArea = sanitizeExtractArea(cropBox, sourceMetadata.width, sourceMetadata.height);
     fallbackPipeline = sharp(orientedSourceBody, { failOn: "none" }).resize(spec.width, spec.height, {
       fit: spec.fit,
-      withoutEnlargement: true,
+      withoutEnlargement,
     });
     pipeline = pipeline.extract(extractArea).resize(spec.width, spec.height, {
       fit: "fill",
-      withoutEnlargement: true,
+      withoutEnlargement,
     });
   } else {
     pipeline = pipeline.resize(spec.width, spec.height, {
       fit: spec.fit,
-      withoutEnlargement: true,
+      withoutEnlargement,
       background: spec.fit === "contain" ? { r: 0, g: 0, b: 0, alpha: 0 } : undefined,
     });
   }
 
-  pipeline = pipeline.webp({ quality: spec.quality });
-  fallbackPipeline = fallbackPipeline?.webp({ quality: spec.quality }) ?? null;
+  pipeline = encodeVariant(pipeline, spec);
+  fallbackPipeline = fallbackPipeline ? encodeVariant(fallbackPipeline, spec) : null;
 
   let rendered: Awaited<ReturnType<typeof pipeline.toBuffer>>;
   try {
@@ -214,7 +233,7 @@ export async function ensureImageAssetVariant(
   const storedObject = await storageService.putObject({
     storageKey: variantStorageKey,
     body: rendered.data,
-    contentType: resolveVariantContentType(),
+    contentType: resolveVariantContentType(spec.format),
     metadata: {
       assetId: String(asset.id),
       siteId: String(asset.siteId),

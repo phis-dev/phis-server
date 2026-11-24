@@ -45,6 +45,7 @@ export const PhiMediaStorageProfileFlags = {
 export {
   PhiImageAssetVariantKey,
   PhiImageAssetVariantKeyName,
+  PhiImageAssetVariantSpecFlags,
   PhiMediaFolderFlags,
   PhiMediaKind,
   normalizePhiImageAssetVariantKey,
