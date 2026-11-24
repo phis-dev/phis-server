@@ -36,9 +36,11 @@ type DbQueryable = Pick<PoolClient, "query">;
  * address of a Media Asset is built where the Media delivery lives (`resolvePhiMediaDeliveryUrl`,
  * `resolvePhiMediaVariantUrl`), from the Asset's parts joined into every read, and never stored.
  */
-export type PhisStoredProduct = Omit<PhisProduct, "imagePath" | "iconPath" | "imageListPath" | "iconListPath"> & {
+export type PhisStoredProduct = Omit<PhisProduct, "imagePath" | "iconPath" | "imageListPath" | "iconListPath" | "gallery"> & {
   readonly imageMedia: PhisProductMedia | null;
   readonly iconMedia: PhisProductMedia | null;
+  /** The gallery, first to last: each picture's parts, as `imageMedia` for the picture (`phis.product_gallery`). */
+  readonly galleryMedia: readonly PhisProductMedia[];
 };
 
 /**
@@ -62,7 +64,7 @@ const FLAG = PHIS_PRODUCT_FLAG;
  * The picture and the icon are joined into every read, not read per row: a list shows them on every line,
  * and an address of a variant needs the Asset's content type and variant version beside the revision.
  */
-const PRODUCT_COLUMNS = `p.id, p.supplier_addon_id, p.key, p.publisher, p.type, p.title, p.summary, p.image_asset_id,
+const PRODUCT_COLUMNS = `p.id, p.supplier_addon_id, p.key, p.publisher, p.type, p.title, p.summary, p.description, p.image_asset_id,
   p.icon_asset_id, p.sale, p.referral_url, p.state, p.flags, p.parts, p.pending_terms, p.version, p.created_at, p.updated_at,
   ${suppliedSql("p")} AS supplied,
   image.delivery_revision AS image_media_revision, image.variant_version AS image_media_variant_version,
@@ -100,6 +102,7 @@ type ProductRow = {
   type: string;
   title: string;
   summary: string;
+  description: string;
   image_asset_id: number | null;
   icon_asset_id: number | null;
   sale: PhisProductSale;
@@ -127,7 +130,11 @@ function productMedia(row: ProductRow, which: "image" | "icon"): PhisProductMedi
   return { id, deliveryRevision: revision, variantVersion: row[`${which}_media_variant_version`], contentType };
 }
 
-function mapProduct(row: ProductRow, attributes: Record<string, Record<string, unknown>>): PhisStoredProduct {
+function mapProduct(
+  row: ProductRow,
+  attributes: Record<string, Record<string, unknown>>,
+  galleryMedia: readonly PhisProductMedia[],
+): PhisStoredProduct {
   return {
     id: `${row.supplier_addon_id}:${row.key}` as PhisProductId,
     supplier: row.supplier_addon_id,
@@ -136,10 +143,12 @@ function mapProduct(row: ProductRow, attributes: Record<string, Record<string, u
     type: row.type,
     title: row.title,
     summary: row.summary,
+    description: row.description,
     imageAssetId: row.image_asset_id,
     imageMedia: productMedia(row, "image"),
     iconAssetId: row.icon_asset_id,
     iconMedia: productMedia(row, "icon"),
+    galleryMedia,
     counted: (row.flags & FLAG.Counted) !== 0,
     sale: row.sale,
     referralUrl: row.referral_url,
@@ -171,10 +180,56 @@ async function loadAttributes(db: DbQueryable, ids: readonly number[]) {
   return byProduct;
 }
 
-async function mapProducts(db: DbQueryable, rows: readonly ProductRow[]) {
-  const attributes = await loadAttributes(db, rows.map((row) => row.id));
-  return rows.map((row) => mapProduct(row, attributes.get(row.id) ?? {}));
+/** The galleries of the products named, one query for all of them, each first to last. */
+async function loadGalleries(db: DbQueryable, ids: readonly number[]) {
+  const byProduct = new Map<number, PhisProductMedia[]>();
+  if (ids.length === 0) return byProduct;
+  const { rows } = await db.query<{
+    product_id: number; asset_id: number; delivery_revision: number; variant_version: number | null; content_type: string;
+  }>(
+    `SELECT g.product_id, g.asset_id, a.delivery_revision, a.variant_version, a.content_type
+     FROM phis.product_gallery g
+     JOIN phis.media_assets a ON a.id = g.asset_id AND a.site_id = g.site_id
+     WHERE g.product_id = ANY($1::int[])
+     ORDER BY g.product_id, g.position`,
+    [ids],
+  );
+  for (const row of rows) {
+    const entry = byProduct.get(row.product_id) ?? [];
+    entry.push({ id: row.asset_id, deliveryRevision: row.delivery_revision, variantVersion: row.variant_version, contentType: row.content_type });
+    byProduct.set(row.product_id, entry);
+  }
+  return byProduct;
 }
+
+async function mapProducts(db: DbQueryable, rows: readonly ProductRow[]) {
+  const ids = rows.map((row) => row.id);
+  const [attributes, galleries] = await Promise.all([loadAttributes(db, ids), loadGalleries(db, ids)]);
+  return rows.map((row) => mapProduct(row, attributes.get(row.id) ?? {}, galleries.get(row.id) ?? []));
+}
+
+/** The gallery's Asset ids as stored, first to last, under the caller's lock on the product's row. */
+async function readGalleryIds(db: DbQueryable, productId: number) {
+  const { rows } = await db.query<{ asset_id: number }>(
+    `SELECT asset_id FROM phis.product_gallery WHERE product_id = $1 ORDER BY position`,
+    [productId],
+  );
+  return rows.map((row) => row.asset_id);
+}
+
+/** Writes the gallery whole, first to last; positions start at 0 again. */
+async function writeGallery(db: DbQueryable, input: { productId: number; siteId: number; gallery: readonly number[] }) {
+  await db.query(`DELETE FROM phis.product_gallery WHERE product_id = $1`, [input.productId]);
+  if (input.gallery.length === 0) return;
+  await db.query(
+    `INSERT INTO phis.product_gallery (product_id, site_id, position, asset_id)
+     SELECT $1::int, $2::smallint, (entry.ordinality - 1)::smallint, entry.asset_id
+     FROM unnest($3::int[]) WITH ORDINALITY AS entry(asset_id, ordinality)`,
+    [input.productId, input.siteId, input.gallery],
+  );
+}
+
+const sameIds = (a: readonly number[], b: readonly number[]) => a.length === b.length && a.every((id, index) => id === b[index]);
 
 async function selectRow(db: DbQueryable, siteId: number, id: PhisProductId, lock = false) {
   const { supplier, key } = splitPhisProductId(id);
@@ -353,13 +408,16 @@ const sameTerms = (a: PhisProductReleasedTerms, b: PhisProductReleasedTerms) =>
   && a.parts.length === b.parts.length && a.parts.every((part, index) => part === b.parts[index]);
 
 /**
- * The ids of the Site's products that wear the Asset as their picture or their icon; the Media delete
- * guard names them.
+ * The ids of the Site's products that wear the Asset as their picture, their icon or a picture of their
+ * gallery; the Media delete guard names them, and `media-release:v1` keeps an Asset they name.
  */
 export async function listProductIdsWithImage(db: DbQueryable, siteId: number, assetId: number): Promise<PhisProductId[]> {
   const { rows } = await db.query<{ supplier_addon_id: string; key: string }>(
-    `SELECT supplier_addon_id, key FROM phis.products
-     WHERE site_id = $1 AND (image_asset_id = $2 OR icon_asset_id = $2) ORDER BY supplier_addon_id, key`,
+    `SELECT p.supplier_addon_id, p.key FROM phis.products p
+     WHERE p.site_id = $1
+       AND (p.image_asset_id = $2 OR p.icon_asset_id = $2
+         OR EXISTS (SELECT 1 FROM phis.product_gallery g WHERE g.product_id = p.id AND g.site_id = $1 AND g.asset_id = $2))
+     ORDER BY p.supplier_addon_id, p.key`,
     [siteId, assetId],
   );
   return rows.map((row) => `${row.supplier_addon_id}:${row.key}` as PhisProductId);
@@ -372,7 +430,7 @@ export async function listProductIdsWithImage(db: DbQueryable, siteId: number, a
  * refused. An Asset of another Site, or none, gets the same answer as before, so the message tells
  * nothing about what exists elsewhere.
  */
-async function assertProductImage(db: DbQueryable, siteId: number, supplier: string, assetId: number, use: "picture" | "icon") {
+async function assertProductImage(db: DbQueryable, siteId: number, supplier: string, assetId: number, use: "picture" | "icon" | "gallery picture") {
   const { rows } = await db.query<{ lifecycle_status: number; delivery_policy: number; kind: number; addon_id: string | null }>(
     `SELECT a.lifecycle_status, a.delivery_policy, s.kind, s.addon_id
      FROM phis.media_assets a JOIN phis.media_spaces s ON s.id = a.space_id AND s.site_id = a.site_id
@@ -395,6 +453,9 @@ export type RegisterOutcome = "created" | "updated" | "unchanged";
  * Registers a supplier's product, or changes it. Idempotent on the key: the same draft twice changes
  * nothing, raises no version and owes no event.
  *
+ * The gallery is checked as the picture is, each Asset of it, and compared in its order: another picture or
+ * another order is a change, which raises the version and owes `product.changed` like any other.
+ *
  * A new product is `draft`, or `active` where its manifest declared it (`declared`): the operator who
  * switched the Add-on on chose it, and it belongs to the Site. On a publisher's product that is already
  * released, changed `sale`, `referralUrl`, `free`, `accountRequired` or `parts` wait in `pending_terms`; before the first
@@ -411,25 +472,31 @@ export async function registerProduct(pool: Pool, input: {
   const { siteId, supplier, draft } = input;
   const id = `${supplier}:${draft.key}` as PhisProductId;
   return withPoolTransaction(pool, async (client) => {
-    // A manifest does not speak of the picture or the icon, so a manifest sync neither sets nor clears them.
+    // A manifest does not speak of the picture, the icon or the gallery, so a manifest sync neither sets nor clears them.
     if (!input.declared && draft.imageAssetId !== null) await assertProductImage(client, siteId, supplier, draft.imageAssetId, "picture");
     if (!input.declared && draft.iconAssetId !== null) await assertProductImage(client, siteId, supplier, draft.iconAssetId, "icon");
+    if (!input.declared) {
+      for (const assetId of draft.gallery) await assertProductImage(client, siteId, supplier, assetId, "gallery picture");
+    }
     let row = await selectRow(client, siteId, id, true);
     const pickImage = (current: number | null) => (input.declared ? current : draft.imageAssetId);
     const pickIcon = (current: number | null) => (input.declared ? current : draft.iconAssetId);
+    const pickGallery = (current: readonly number[]) => (input.declared ? current : draft.gallery);
     if (!row) {
       await assertParts(client, siteId, id, draft.parts);
       const flags = (draft.counted ? FLAG.Counted : 0) | (draft.free ? FLAG.Free : 0) | (draft.accountRequired ? FLAG.AccountRequired : 0)
         | (draft.publisher === null ? FLAG.Released : 0) | (input.declared ? FLAG.Declared : 0);
       const inserted = await client.query(
-        `INSERT INTO phis.products (site_id, supplier_addon_id, key, publisher, type, title, summary, image_asset_id,
+        `INSERT INTO phis.products (site_id, supplier_addon_id, key, publisher, type, title, summary, description, image_asset_id,
            icon_asset_id, sale, referral_url, state, flags, parts)
-         VALUES ($1::smallint, $2, $3, $4, $5, $6, $7, $8::int, $9::int, $10, $11, $12, $13::int, $14::text[])
-         ON CONFLICT (site_id, supplier_addon_id, key) DO NOTHING`,
+         VALUES ($1::smallint, $2, $3, $4, $5, $6, $7, $15, $8::int, $9::int, $10, $11, $12, $13::int, $14::text[])
+         ON CONFLICT (site_id, supplier_addon_id, key) DO NOTHING
+         RETURNING id`,
         [siteId, supplier, draft.key, draft.publisher, draft.type, draft.title, draft.summary, pickImage(null), pickIcon(null),
-          draft.sale, draft.referralUrl, input.declared ? "active" : "draft", flags, draft.parts],
+          draft.sale, draft.referralUrl, input.declared ? "active" : "draft", flags, draft.parts, draft.description],
       );
       if ((inserted.rowCount ?? 0) > 0) {
+        await writeGallery(client, { productId: (inserted.rows[0] as { id: number }).id, siteId, gallery: pickGallery([]) });
         await enqueueProductChanged(client, { siteId, recipients: input.listeners, productId: id });
         return { product: (await readProduct(client, siteId, id))!, outcome: "created" as const };
       }
@@ -456,7 +523,10 @@ export async function registerProduct(pool: Pool, input: {
     const flags = (row.flags & ~(FLAG.Counted | FLAG.Free | FLAG.AccountRequired | FLAG.Declared))
       | (draft.counted ? FLAG.Counted : 0) | (terms.free ? FLAG.Free : 0) | (terms.accountRequired ? FLAG.AccountRequired : 0)
       | ((row.flags & FLAG.Declared) !== 0 || input.declared ? FLAG.Declared : 0);
+    const storedGallery = await readGalleryIds(client, row.id);
+    const gallery = pickGallery(storedGallery);
     const unchanged = row.type === draft.type && row.title === draft.title && row.summary === draft.summary
+      && row.description === draft.description && sameIds(storedGallery, gallery)
       && row.image_asset_id === pickImage(row.image_asset_id) && row.icon_asset_id === pickIcon(row.icon_asset_id)
       && flags === row.flags && sameTerms(terms, current)
       && (pending === null ? row.pending_terms === null : row.pending_terms !== null && sameTerms(pending, row.pending_terms));
@@ -465,12 +535,13 @@ export async function registerProduct(pool: Pool, input: {
     await client.query(
       `UPDATE phis.products
        SET type = $2, title = $3, summary = $4, image_asset_id = $5::int, icon_asset_id = $6::int, sale = $7,
-           referral_url = $8, flags = $9::int, parts = $10::text[], pending_terms = $11::jsonb, version = version + 1,
-           updated_at = NOW()
+           referral_url = $8, flags = $9::int, parts = $10::text[], pending_terms = $11::jsonb, description = $12,
+           version = version + 1, updated_at = NOW()
        WHERE id = $1`,
       [row.id, draft.type, draft.title, draft.summary, pickImage(row.image_asset_id), pickIcon(row.icon_asset_id), terms.sale,
-        terms.referralUrl, flags, terms.parts, pending ? JSON.stringify(pending) : null],
+        terms.referralUrl, flags, terms.parts, pending ? JSON.stringify(pending) : null, draft.description],
     );
+    if (!sameIds(storedGallery, gallery)) await writeGallery(client, { productId: row.id, siteId, gallery });
     await enqueueProductChanged(client, { siteId, recipients: input.listeners, productId: id });
     return { product: (await readProduct(client, siteId, id))!, outcome: "updated" as const };
   });

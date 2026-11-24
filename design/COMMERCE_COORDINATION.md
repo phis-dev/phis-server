@@ -117,8 +117,13 @@ export type PhisProduct = {
 };
 ```
 
-Deliberately absent: price, currency, tax, stock, category, long description, gallery, files, versions,
-keys. The first group is the seller's, the second the supplier's.
+Deliberately absent: price, currency, tax, stock, category, files, versions, keys. The first group is the
+seller's, the second the supplier's.
+
+A long description (Markdown) and a gallery (further pictures in order, under the picture's rules) are in
+Core since the owner's decision of 2026-11-24: Add-ons work independently of each other, so a seller (the
+Shop, a Medusa seller later) reads them through `products:v1` rather than from the supplier or a listing of
+its own, and the supplier writes them through `register`. The Shop's own listing gallery went with it.
 
 Also absent: whether it is paid once or as a subscription, and for how long it is held. A product is
 *what somebody holds*; how it is sold is a **listing**, and a seller may keep several for one product --
@@ -134,8 +139,8 @@ attribute is written by one Add-on under its own id and read by all; it is displ
 never authority -- whether a package is signed is decided where the signature is checked, not by what
 the directory says.
 
-Title and summary are in the Site's source language and translated through the Site's store like any
-Module text.
+Title, summary and description are in the Site's source language and translated through the Site's store
+like any Module text.
 
 ### Who writes
 
@@ -279,8 +284,9 @@ recorded unless the publisher reports it.
 
 **The small Shop is one package with two halves** (operator, 2026-11-17):
 
-- a **seller half**: listings (per product: price per currency, tax category, category, stock, long
-  description, gallery, published), promotions, carts, orders;
+- a **seller half**: listings (per product: price per currency, tax category, category, stock, a card
+  text of its own, published), promotions, carts, orders -- the product page's gallery and long
+  description are the product's in Core since 2026-11-24 (section 4);
 - a **supplier half** for what nobody else delivers: products made by hand in the Accounting Area, and
   the clerk's "provide" button as their delivery.
 
@@ -461,8 +467,9 @@ does is the contract:
   the shop's cover). An Asset of a User's or a Group's Space, or of another Add-on's, is refused with the
   reason and without saying whether one exists elsewhere.
 
-The gallery stays where section 8 put it, on the seller's listing. Several pictures on a product would be a
-change to `products:v1`, to be decided when a marketplace needs a supplier to bring them.
+The gallery moved from the seller's listing to the product (owner, 2026-11-24): `products:v1` `gallery`, its
+pictures under exactly these rules -- checked by `register`, held by the delete guard, released by
+`media-release:v1` -- so that every seller reads the same pictures without depending on another Add-on.
 
 ## 15. Sequence
 

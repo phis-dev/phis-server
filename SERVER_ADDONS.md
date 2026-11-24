@@ -1736,7 +1736,14 @@ The design is [design/COMMERCE_COORDINATION.md](./design/COMMERCE_COORDINATION.m
   picture and the icon as a list or a table shows them: the Media library's `icon` image variant, 64 x 64
   fitted whole on a transparent ground, Site-relative with the delivery revision and the variant version so
   the address changes when the picture does; null without one or for an Asset that is no image; built at read
-  time and never stored, as `imagePath`), `counted`, `sale` (`own`,
+  time and never stored, as `imagePath`), `description` (the long text, Markdown, at most
+  `PHIS_PRODUCT_DESCRIPTION_MAX` characters, in the Site's source language like `title` and `summary`; `""` for
+  none), `gallery` (further pictures, first to last, at most `PHIS_PRODUCT_GALLERY_MAX`, none twice: written to
+  `register` as Asset ids and read as `{ assetId, path, listPath }`, each accepted, refused and addressed exactly
+  as `imageAssetId` -- so every `path` is one a visitor is served and a seller may hand on, to a storefront
+  elsewhere or a feed -- and held by the Media library as the picture is: its delete guard names a product
+  showing the Asset in its gallery, `media-release:v1` keeps it, and an Asset deleted anyway leaves the gallery),
+  `counted`, `sale` (`own`,
   `referral` or `payout`), `referralUrl` (required, https, exactly for `referral`), `free`, `accountRequired` (can only be acquired with an account; Core does not enforce it, an entitlement entry always has a subject with an account), `parts` (the
   ids of a bundle's parts), `state`, `released`, `pendingTerms`, `attributes`, `version`, the two
   timestamps. Title and summary are in the Site's source language. Core reads neither `type` nor
@@ -1799,7 +1806,7 @@ them at the Site: a new one as `active`, because the operator switched the Add-o
 the Site's own; an existing one has its details compared and its state left alone. **What the manifest does
 not speak of, the sync does not touch:** it names no picture and no icon, so neither `imageAssetId` nor
 `iconAssetId` is set or cleared by it -- a cover or an icon a handler put on a declared product stays
-through every enable and reconcile. Title, summary
+through every enable and reconcile, and the same holds for the `gallery`. Title, summary, a `description`
 and the other declared fields are the manifest's statement and are reconciled to it. A sync that changes
 nothing raises no `version` and owes no `product.changed`. A product that
 came from a manifest and is no longer declared is withdrawn, never removed. A declared product that
@@ -1807,36 +1814,51 @@ breaks a rule (a part that does not exist) is reported and does not stop the oth
 at runtime it registers through `register`.
 
 **Products a Site package proposes.** A Site package (Module) may propose products the Site keeps as its own,
-under `phis.products` in its `package.json`: `[{ key, title, summary?, kind?, state?: draft|active, flags?,
-picture?, icon? }]` (`PhisSitePackageProductProposal`, read by `readPhisSitePackageProductProposals` in
+under `phis.products` in its `package.json`: `[{ key, title, summary?, description?, kind?, state?: draft|active,
+flags?, picture?, icon?, gallery? }]` (`PhisSitePackageProductProposal`, read by `readPhisSitePackageProductProposals` in
 `@phis/contracts/products`), which is what `@phis/products`' command `product.add` takes, the two yes-or-no
-answers as `PhisSitePackageProductFlag` bits (`Counted` 1, `AccountRequired` 2), and `picture`/`icon` as the key
-of one of the package's own `phis.media.files`. They are not a supplier's manifest products: Core does not
+answers as `PhisSitePackageProductFlag` bits (`Counted` 1, `AccountRequired` 2), `picture`/`icon` as the key
+of one of the package's own `phis.media.files`, and `gallery` as a list of such keys in order. They are not a supplier's manifest products: Core does not
 register them itself but has `@phis/products` -- the supplier of the products made by hand
 (`PHIS_SITE_PACKAGE_PRODUCT_SUPPLIER`) -- make each one through `product.add`, so it is a product of the Site's
 like any it made on the Products page, edited, withdrawn or removed there. The key is the package name's parts
 and the proposal's key joined by dots (`@phis/phisys` and `phivoice-ai` are `phis.phisys.phivoice-ai`, the
 product `@phis/products:phis.phisys.phivoice-ai`; `phisSitePackageProductKey`), which no two packages can share,
-since neither part may hold a dot. `phis module products sync --site … --as <member>` (and `phis update … --as
-<member>`, after the media import) posts each proposal the Site has not taken to `POST /api/v1/module-products`
-(internal token, one proposal per request), and Core, under a lock per Site: answers a recorded one `taken`
-and asks nothing; records one whose product the Site has already (`found`, `site_module_products` flag
-`Found`) and leaves the product as it is; lets one whose picture or icon is not in the Site's library yet wait;
-and otherwise runs `product.add` for `@phis/products` as that member (`runPhisAddonCommand`, exactly as `phis
-addon command` would, so the member needs its `editor` role) with the Asset ids the media names stand for, and
-records it `created`. A proposal is taken once and never again: a product the Site changed, withdrew or removed
+since neither part may hold a dot.
+
+Core cannot read a Site's packages (its files may be elsewhere), so the CLI hands them over: `phis update`
+(after the media import) and `phis module products sync` post each installed package's whole list to `POST
+/api/v1/module-products` as `{ package, proposals }` (internal token), and Core keeps it
+(`site_module_product_proposals`), replacing what it kept of that package. **They are taken when a Site Admin
+activates the package in the Builder**: publishing an Area's Module selection (`POST
+/api/site/cms/area/modules/publish`) that holds one of the package's Modules (`<package>/…`) takes every kept
+proposal of it not taken yet, as the person who published (`takeModuleProductProposalsOnActivation`). The
+publish is answered as before whatever comes of them: one that cannot be taken keeps waiting, with why noted on
+its kept row for `phis module check` -- `@phis/products` not on for the Site, a picture not imported, or the
+admin lacking `@phis/products`' `editor` role (`supplier_refused`) -- and an error is logged, never answered. A
+package already active when a proposal is handed over takes it at its next activation, or with `--as`.
+`phis module products sync --site … --as <member>` (and `phis update … --as <member>`) also posts each proposal
+the Site has not taken, one per request as `{ package, proposal, as }`, to take it now as that member. Either
+way Core, under a lock per Site: answers a recorded one `taken` and asks nothing; records one whose product the
+Site has already (`found`, `site_module_products` flag `Found`) and leaves the product as it is; lets one whose
+picture, icon or any gallery picture is not in the Site's library yet wait (`media_missing`); and otherwise runs
+`product.add` for `@phis/products` as that person (`runPhisAddonCommand`, exactly as `phis addon command` would,
+so the person needs its `editor` role) with the description and the Asset ids the media names stand for, the
+gallery in its order, and records it `created`. A proposal is taken once and never again: a product the Site changed, withdrew or removed
 is not made or changed by a later sync, and a proposal the package drops changes nothing. Where `@phis/products`
 is not on for the Site the proposal waits, and a refusal of `product.add` is reported; neither is recorded, so
 the next sync asks again. `phis module check` validates the field and lists each proposal as `created`,
 `found` or `waiting`, with why it waits; waiting fails nothing. Taking a proposal is a person's act and not a
-job's, because a command has an actor (Commands, above): without `--as`, `phis update` only says what waits.
+job's, because a command has an actor (Commands, above): without `--as`, `phis update` only hands the
+proposals over, and the Builder's activation is the person.
 
 **A supplier that is switched off or removed.** Its `active` products go to `withdrawn` and are marked as
 withdrawn for that reason; when the Add-on is switched on again, exactly those return to `active`. Products
 and entries stay. A product the supplier left in `draft`, or the operator moved, is not touched. This runs
 in `phis addon site` and `phis addon reconcile`, the commands that switch an Add-on on and off.
 
-**The event.** Core emits `product.changed` when a product is registered, changed, released, moved to
+**The event.** Core emits `product.changed` when a product is registered, changed (its description and its
+gallery -- another picture or another order -- included), released, moved to
 another state, loses or regains its supplier, or has its attributes changed (not when a call changes
 nothing, and not when a product is removed). The subject is typed, `{ kind: "product", productId }`, and
 carries no state; the handler reads the product through the capability. It goes to every enabled,
@@ -2705,9 +2727,10 @@ The link is bound to the Site and cascades **both ways**, which is worth reading
   to deliver for that slot.** That is deliberate: it makes deleting a file a usable answer to somebody
   uploading rubbish, without destroying the record it was attached to. These link rows are not counted.
   What the delete guard does count, beside the CMS references, are two kinds of row outside the CMS. A
-  **product's picture or icon**: an Asset that a product of the Site wears as `imageAssetId` or `iconAssetId` is refused
-  with `media_asset_in_use` and a reference of scope `product` (the product's id in `fieldPath`), like a
-  Page's. The foreign key's `SET NULL` stays as the last safeguard. And an Asset that a row of an installed
+  **product's picture, icon or gallery picture**: an Asset that a product of the Site wears as `imageAssetId` or
+  `iconAssetId` or shows in its `gallery` is refused with `media_asset_in_use` and a reference of scope `product`
+  (the product's id in `fieldPath`), like a Page's. The foreign keys stay as the last safeguard (`SET NULL` for
+  the picture and the icon, the gallery's row deleted). And an Asset that a row of an installed
   Add-on -- enabled or not -- names in a column of its own declared with `references: "core.mediaAsset"` is
   refused the same way, with a reference of scope `addon`, with `addon: { addonId, packageName, table, column, rowId }` (`rowId` the
   row's primary key as text, a composite key's values joined by `,`) and `<table>.<column>` in `fieldPath`.

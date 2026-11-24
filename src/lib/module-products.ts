@@ -24,8 +24,9 @@ export const PhisSiteModuleProductFlag = {
  * - `created`: `@phis/products` made the product now.
  * - `found`: the Site had a product under the key already; it is recorded as taken and left alone.
  * - `taken`: recorded before; nothing is asked or changed, whatever became of the product since.
- * - `waiting`: not taken yet, and nothing is wrong with it -- `@phis/products` is not on for the Site, or
- *   a picture the proposal names has not been imported (`phis module media sync`). The next sync asks again.
+ * - `waiting`: not taken yet, and nothing is wrong with it -- it waits for a Site Admin to activate the
+ *   package in the Builder (`activation`), `@phis/products` is not on for the Site, or a picture the
+ *   proposal names has not been imported (`phis module media sync`). The next attempt asks again.
  * - `refused`: `@phis/products` said no (a person without its `editor` role, Core's refusal); not recorded,
  *   so the next sync asks again.
  */
@@ -53,6 +54,17 @@ export type PhisModuleProductRow = {
   createdAt: string;
 };
 
+/** One proposal Core keeps as the CLI last handed it over, and why the last attempt left it waiting. */
+export type PhisModuleProductProposalRow = {
+  packageName: string;
+  key: string;
+  /** Null before any attempt in the Builder, and once a changed proposal was handed over. */
+  waitingReason: string | null;
+  waitingDetail: string | null;
+};
+
 export type PhisModuleProductMapping = {
   rows: PhisModuleProductRow[];
+  /** What Core keeps of the packages' proposals (DB.md `site_module_product_proposals`). */
+  proposals: PhisModuleProductProposalRow[];
 };

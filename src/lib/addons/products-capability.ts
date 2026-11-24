@@ -51,7 +51,7 @@ function present(product: PhisStoredProduct, publicView?: false): PhisProduct;
 function present(product: PhisStoredProduct | null, publicView?: boolean): PhisProduct | null;
 function present(product: PhisStoredProduct | null, publicView = false): PhisProduct | null {
   if (!product) return null;
-  const { imageMedia, iconMedia, ...rest } = product;
+  const { imageMedia, iconMedia, galleryMedia, ...rest } = product;
   // What is not in the catalogue yet is not public: a product shown to everybody has no pending terms.
   if (publicView && product.state !== "active") return null;
   return {
@@ -61,6 +61,8 @@ function present(product: PhisStoredProduct | null, publicView = false): PhisPro
     iconPath: deliveryPath(iconMedia),
     imageListPath: listPath(imageMedia),
     iconListPath: listPath(iconMedia),
+    // The gallery's pictures were each accepted as the picture is -- ready, public, in reach -- so every path is a public one.
+    gallery: galleryMedia.map((media) => ({ assetId: media.id, path: deliveryPath(media)!, listPath: listPath(media) })),
   };
 }
 

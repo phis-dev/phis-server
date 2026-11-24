@@ -642,9 +642,9 @@ install (`pnpm install --no-frozen-lockfile`, `npm install`, `yarn install`, `bu
 the Module media import (`phis module media sync`, below; skipped when no installed package declares
 media), `run typecheck`, `run build`, and then packages a release into `.phis/releases/<release id>/`.
 A refused media item, an invalid declaration or a Core that cannot be reached stops `update` before the
-build. With `--as <email|user id>` it then takes the products the installed packages propose, as that member
-(`phis module products sync`, below); a proposal that waits or is refused is printed and does not stop it.
-Without `--as` it only says how many proposals wait.
+build. It then hands the products the installed packages propose to Core, which takes them when a Site Admin
+activates the package in the Builder (`phis module products sync`, below); with `--as <email|user id>` it takes
+them now, as that member. A proposal that waits or is refused is printed and does not stop it.
 `update` does not raise dependency versions; change them in the Site first (e.g. `npm install @phis/ui@<version>`),
 then run `update`.
 
@@ -794,15 +794,18 @@ name that is not bound.
 A Site package (Module) may propose products for the Site to keep as its own. It declares them under
 `phis.products` in its `package.json`, with what `@phis/products`' command `product.add` takes; Core makes
 each one once per Site through that command and records that it did (SERVER_ADDONS.md, `products:v1`,
-"Products a Site package proposes"; DB.md `site_module_products`). As with media, the CLI reads the packages
-and posts one proposal per request to Core's internal route (`/api/v1/module-products`, the Site's own
-`config/site-runtime.json`, the Site named by `x-phis-site-key`); no package code runs.
+"Products a Site package proposes"; DB.md `site_module_products`, `site_module_product_proposals`). As with
+media, the CLI reads the packages and posts them to Core's internal route (`/api/v1/module-products`, the
+Site's own `config/site-runtime.json`, the Site named by `x-phis-site-key`); no package code runs. Core keeps
+each package's list and takes it when a Site Admin activates the package in the Builder -- publishes an Area's
+Module selection holding one of its Modules -- as that admin.
 
 ```json
 "phis": {
   "media": { "files": [{ "key": "acme-icon", "file": "dist/media/icon.png", "alt": "Acme app icon" }] },
   "products": [{ "key": "acme-pro", "title": "Acme Pro", "summary": "Everything Acme does.",
-                 "kind": "app", "state": "active", "flags": 2, "picture": "acme-icon", "icon": "acme-icon" }]
+                 "description": "## Features\n\n- Fast\n- Small", "kind": "app", "state": "active", "flags": 2,
+                 "picture": "acme-icon", "icon": "acme-icon", "gallery": ["acme-shot-1", "acme-shot-2"] }]
 }
 ```
 
@@ -810,19 +813,24 @@ and posts one proposal per request to Core's internal route (`/api/v1/module-pro
   The product's key at the Site is the package name's parts and this key joined by dots
   (`@acme/site` and `acme-pro` are `acme.site.acme-pro`, the product `@phis/products:acme.site.acme-pro`), so
   two packages cannot collide. A package name with a dot, an underscore or a leading digit cannot propose.
-- `title` (required, at most 200) and `summary` (at most 1000), in the package's `sourceLocale`; `kind` (a
+- `title` (required, at most 200), `summary` (at most 1000) and `description` (Markdown, at most 20000), in the
+  package's `sourceLocale`; `kind` (a
   lower-case word or words joined by dashes, `product` where none is said); `state` `draft` (the default) or
   `active`; `flags` the bits of `PhisSitePackageProductFlag` (`Counted` 1, `AccountRequired` 2).
-- `picture` and `icon` name one of the package's own `phis.media.files` by its key. Core hands
-  `product.add` the Asset that name stands for on the Site, so the media are imported first
-  (`phis module media sync`, which `update` runs before).
+- `picture` and `icon` name one of the package's own `phis.media.files` by its key, `gallery` a list of such
+  keys in order (at most 20, none twice). Core hands `product.add` the Asset each name stands for on the Site,
+  so the media are imported first (`phis module media sync`, which `update` runs before); a proposal waits
+  until every one of them is there.
 
 Every violation is reported with the package and the key, and stops the command before any request.
 
-#### `phis module products sync --site <site key> --as <email|user id> [--path <dir>]`
+#### `phis module products sync --site <site key> [--as <email|user id>] [--path <dir>]`
 
-Reads the taken proposals from Core and posts every other one. `--as` names the member the product is made
-as, as for `phis addon command`: a member of the Site, not disabled, who may keep the Site's products
+Hands every installed package's proposals to Core (`{ package, proposals }`, the package's whole list, so a
+proposal the package dropped is no longer kept; a package that proposes none any more but had proposals kept
+is handed over empty). Without `--as` that is all: each proposal not taken answers `waiting` for the Builder's
+activation. With `--as` it also reads the taken proposals and posts every other one, to be taken now. `--as`
+names the member the product is made as, as for `phis addon command`: a member of the Site, not disabled, who may keep the Site's products
 (`@phis/products`' `editor` role, which whoever edits the Site's content and a Site Admin hold). Core answers
 per proposal:
 
@@ -830,16 +838,19 @@ per proposal:
 - `found`: the Site had a product under the key already; it is recorded as taken and left as it is;
 - `taken`: recorded before, so nothing is asked -- a product the Site changed, withdrew or removed since is
   never made or changed again;
-- `waiting`: `@phis/products` is not on for the Site, or a picture is not in the library yet; nothing is
-  recorded and the next sync asks again;
+- `waiting`: not taken yet -- waiting for the Builder's activation (without `--as`), `@phis/products` is not on
+  for the Site, or a picture is not in the library yet; nothing is recorded and the next sync asks again;
 - `refused`: `@phis/products` said no (the member may not keep products, Core's refusal); nothing is
   recorded. Exits `1`.
 
 #### `phis module products list --site <site key> [--path <dir>]`
 
 Every proposal and every recorded row: state (`created`, `found`, `waiting`, or `no longer proposed` for a
-row whose proposal the package dropped, which changes nothing), package, key and the product's id. Exits `1`
-when a declaration is invalid.
+row whose proposal the package dropped, which changes nothing), package, key and the product's id, and for a
+waiting one why: not handed to Core yet, waiting for a Site Admin to activate the package in the Builder, or
+what the last activation answered (`supplier_unavailable`, `media_missing`, `supplier_refused` -- the admin
+lacks `@phis/products`' `editor` role). `phis module check` lists the same. Exits `1` when a declaration is
+invalid.
 
 ## addon (server Add-ons)
 

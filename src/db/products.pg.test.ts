@@ -429,6 +429,62 @@ describe.skipIf(!configured)("products", () => {
     expect((await get(id(SUPPLIER, "ico")))).toMatchObject({ imageAssetId: picture, iconAssetId: null, iconMedia: null });
   });
 
+  it("keeps a gallery in its order under the picture's rules, owes product.changed for each change of it, and lets an Asset deleted leave it", async () => {
+    const supplier = "@pgtest/prod-gallery";
+    await activatePhiTestAddonForSite(site, supplier);
+    await switchSupplier(supplier, true);
+    const ready = { lifecycleStatus: 2 } as const;
+    const [one, two, three] = [
+      await createPhiTestAsset(site, "gallery-one", ready),
+      await createPhiTestAsset(site, "gallery-two", ready),
+      await createPhiTestAsset(site, "gallery-three", ready),
+    ];
+    const productId = id(supplier, "gal");
+    const write = (rest: Partial<PhisProductDraft>) => registerProduct(pool, { siteId: site.id, supplier, draft: draft("gal", rest), listeners });
+    const events = async () => (await outbox()).filter((row) => row.payload.productId === productId).length;
+    const ids = async () => (await get(productId))!.galleryMedia.map((media) => media.id);
+    await clearOutbox();
+
+    const created = await write({ gallery: [two, one], description: "## Features\n\n- Fast" });
+    expect(created.outcome).toBe("created");
+    expect(created.product).toMatchObject({ description: "## Features\n\n- Fast", galleryMedia: [{ id: two, deliveryRevision: 1 }, { id: one }] });
+    expect(await events()).toBe(1);
+    // The same gallery and description again is no change; another order, another picture or another text is.
+    expect((await write({ gallery: [two, one], description: "## Features\n\n- Fast" })).outcome).toBe("unchanged");
+    expect(await events()).toBe(1);
+    const reordered = await write({ gallery: [one, two], description: "## Features\n\n- Fast" });
+    expect(reordered).toMatchObject({ outcome: "updated", product: { version: created.product.version + 1 } });
+    expect(await ids()).toEqual([one, two]);
+    expect((await write({ gallery: [one, two, three], description: "## Features\n\n- Fast" })).outcome).toBe("updated");
+    expect((await write({ gallery: [one, two, three], description: "Other" })).product.description).toBe("Other");
+    expect(await events()).toBe(4);
+    // A gallery picture's address follows its revision, read at the moment it is used.
+    await pool.query(`UPDATE phis.media_assets SET delivery_revision = 3 WHERE id = $1`, [two]);
+    expect((await get(productId))!.galleryMedia[1]).toMatchObject({ id: two, deliveryRevision: 3 });
+
+    // Each picture under the picture's rules: one a visitor is not served refuses the whole write.
+    const pending = await createPhiTestAsset(site, "gallery-pending");
+    const authenticated = await createPhiTestAsset(site, "gallery-authenticated", { ...ready, deliveryPolicy: 2 });
+    for (const refused of [pending, authenticated]) {
+      await expect(write({ gallery: [one, refused], description: "Other" })).rejects.toThrow(/cannot be a product's gallery picture/);
+    }
+    const elsewhere = await createPhiTestSite("products-gallery-elsewhere");
+    await expect(write({ gallery: [await createPhiTestAsset(elsewhere, "gallery-foreign", ready)] })).rejects.toThrow(/not an Asset of this Site/);
+    expect(await ids()).toEqual([one, two, three]);
+
+    // The Media delete guard and media-release see a gallery picture; deleted anyway, it leaves the gallery.
+    expect(await listProductIdsWithImage(pool, site.id, two)).toEqual([productId]);
+    await pool.query(`DELETE FROM phis.media_assets WHERE id = $1`, [two]);
+    expect(await listProductIdsWithImage(pool, site.id, two)).toEqual([]);
+    expect(await ids()).toEqual([one, three]);
+    // Emptied, the gallery is a change as well; a product removed takes its gallery rows along.
+    expect((await write({ gallery: [], description: "Other" })).outcome).toBe("updated");
+    expect(await ids()).toEqual([]);
+    await write({ gallery: [one], description: "Other" });
+    expect(await removeProduct(pool, { siteId: site.id, supplier, key: "gal" })).toBe(true);
+    expect((await pool.query(`SELECT 1 FROM phis.product_gallery WHERE asset_id = $1`, [one])).rowCount).toBe(0);
+  });
+
   it("lists active products unless states are asked for, by supplier, publisher and release, in pages", async () => {
     const lister = await createPhiTestSite("products-list");
     await activatePhiTestAddonForSite(lister, SUPPLIER);
@@ -631,7 +687,7 @@ describe.skipIf(!configured)("products", () => {
     expect(Object.fromEntries(mixed.map((a) => [a.key, a.action]))).toMatchObject({ "m-ok": "created", "m-bad": "refused" });
   });
 
-  it("leaves a picture and an icon set on a declared product alone: the manifest never names one", async () => {
+  it("leaves a picture, an icon and a gallery set on a declared product alone: the manifest never names one", async () => {
     const supplier = "@pgtest/prod-manifest-image";
     await activatePhiTestAddonForSite(site, supplier);
     await switchSupplier(supplier, true);
@@ -659,6 +715,13 @@ describe.skipIf(!configured)("products", () => {
     expect((await sync("Renamed", listeners))[0]!.action).toBe("updated");
     expect((await get(id(supplier, "shop")))).toMatchObject({ title: "Renamed", imageAssetId: cover, iconAssetId: logo, version: before.version + 1 });
     expect(await outbox()).toHaveLength(1);
+    // Nor does it name a gallery: one set at runtime stays through a sync.
+    await registerProduct(pool, {
+      siteId: site.id, supplier, listeners: [],
+      draft: draft("shop", { type: "addon", title: "Renamed", summary: "S", imageAssetId: cover, iconAssetId: logo, gallery: [logo, cover] }),
+    });
+    expect((await sync("Renamed"))[0]!.action).toBe("unchanged");
+    expect((await get(id(supplier, "shop")))!.galleryMedia.map((media) => media.id)).toEqual([logo, cover]);
   });
 
   it("owes product.changed to the ready listeners for each kind of change, and for nothing that changed nothing", async () => {

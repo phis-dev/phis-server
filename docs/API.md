@@ -373,8 +373,8 @@ Versioned API a Site calls server-to-server with its token (`x-phis-token`), and
 
 | Method | Address | Access | Description |
 |---|---|---|---|
-| GET | [`/api/v1/module-products`](../src/app/api/v1/module-products/route.ts) | internal token | The proposals of the Site's packages that the Site took, with the product each became. |
-| POST | [`/api/v1/module-products`](../src/app/api/v1/module-products/route.ts) | internal token | Taking one proposal of one package: `{ package, proposal, as }`. |
+| GET | [`/api/v1/module-products`](../src/app/api/v1/module-products/route.ts) | internal token | The proposals of the Site's packages that the Site took, with the product each became (`rows`), and the proposals Core keeps for the Builder's activation with why each still waits (`proposals`). |
+| POST | [`/api/v1/module-products`](../src/app/api/v1/module-products/route.ts) | internal token | Handing over what one package proposes, `{ package, proposals }`, or taking one proposal of it now, `{ package, proposal, as }`. |
 
 ## `/api/v1/notifications`
 

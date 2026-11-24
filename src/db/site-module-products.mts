@@ -74,3 +74,79 @@ export async function siteHasSupplierProduct(db: Queryable, siteId: number, supp
   );
   return rows.length > 0;
 }
+
+/** One proposal as the CLI last handed it over (DB.md `site_module_product_proposals`). */
+export type PhisStoredModuleProductProposal = {
+  packageName: string;
+  key: string;
+  /** The proposal as read by `readPhisSitePackageProductProposal` when it was handed over. */
+  proposal: Record<string, unknown>;
+  /** What the last attempt in the Builder answered for it, while it waits; null before any. */
+  waitingReason: string | null;
+  waitingDetail: string | null;
+};
+
+type ProposalRow = {
+  package_name: string;
+  key: string;
+  proposal: Record<string, unknown>;
+  waiting_reason: string | null;
+  waiting_detail: string | null;
+};
+
+function mapProposal(row: ProposalRow): PhisStoredModuleProductProposal {
+  return {
+    packageName: row.package_name,
+    key: row.key,
+    proposal: row.proposal,
+    waitingReason: row.waiting_reason,
+    waitingDetail: row.waiting_detail,
+  };
+}
+
+export async function listSiteModuleProductProposals(db: Queryable, siteId: number) {
+  const { rows } = await db.query<ProposalRow>(
+    `SELECT package_name, key, proposal, waiting_reason, waiting_detail FROM phis.site_module_product_proposals
+      WHERE site_id = $1 ORDER BY package_name, key`,
+    [siteId],
+  );
+  return rows.map(mapProposal);
+}
+
+/**
+ * Replaces what one package proposes on the Site with `proposals`, whole: a key it no longer names goes, a
+ * changed proposal is written and forgets why it waited, an unchanged one keeps it. Under the Site's lock.
+ */
+export async function replaceSiteModuleProductProposals(client: PoolClient, input: {
+  siteId: number;
+  packageName: string;
+  proposals: readonly { key: string }[];
+}) {
+  await client.query(
+    `DELETE FROM phis.site_module_product_proposals
+      WHERE site_id = $1 AND package_name = $2 AND NOT (key = ANY($3::text[]))`,
+    [input.siteId, input.packageName, input.proposals.map((proposal) => proposal.key)],
+  );
+  for (const proposal of input.proposals) {
+    await client.query(
+      `INSERT INTO phis.site_module_product_proposals (site_id, package_name, key, proposal)
+       VALUES ($1, $2, $3, $4::jsonb)
+       ON CONFLICT (site_id, package_name, key) DO UPDATE
+         SET proposal = EXCLUDED.proposal, waiting_reason = NULL, waiting_detail = NULL, updated_at = NOW()
+         WHERE phis.site_module_product_proposals.proposal IS DISTINCT FROM EXCLUDED.proposal`,
+      [input.siteId, input.packageName, proposal.key, JSON.stringify(proposal)],
+    );
+  }
+}
+
+/** Notes why a stored proposal still waits after an attempt, or clears it (null) once it was taken. */
+export async function noteSiteModuleProductProposalWaiting(db: Queryable, input: {
+  siteId: number; packageName: string; key: string; reason: string | null; detail: string | null;
+}) {
+  await db.query(
+    `UPDATE phis.site_module_product_proposals
+        SET waiting_reason = $4, waiting_detail = $5, updated_at = NOW()
+      WHERE site_id = $1 AND package_name = $2 AND key = $3`,
+    [input.siteId, input.packageName, input.key, input.reason, input.detail?.slice(0, 1000) ?? null],
+  );
+}

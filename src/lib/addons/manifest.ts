@@ -702,7 +702,7 @@ export function validatePhisAddonManifest(
   assertUnique(settingNames, "settings", issues);
 
   // The products this package carries: the draft a supplier would register, less what only a runtime
-  // knows (a publisher, a picture). The rules that need other rows -- a part exists -- are checked
+  // knows (a publisher, a picture, a gallery). The rules that need other rows -- a part exists -- are checked
   // where the product is registered at a Site.
   const products = Array.isArray(value.products) ? value.products : [];
   if (value.products !== undefined && !Array.isArray(value.products)) {
@@ -714,7 +714,7 @@ export function validatePhisAddonManifest(
       issues.push(`products[${index}] must be an object.`);
       continue;
     }
-    for (const field of ["publisher", "imageAssetId", "iconAssetId"]) {
+    for (const field of ["publisher", "imageAssetId", "iconAssetId", "gallery"]) {
       if (product[field] !== undefined) issues.push(`products[${index}].${field} is not declared in a manifest.`);
     }
     if (typeof product.key === "string") productKeys.push(product.key);

@@ -184,7 +184,7 @@ import {
   syncModuleProducts,
   type ModuleProductListRow,
 } from "./module-products.mts";
-import { listSiteModuleProducts } from "../db/site-module-products.mts";
+import { listSiteModuleProductProposals, listSiteModuleProducts } from "../db/site-module-products.mts";
 import { PHIS_SITE_PACKAGE_PRODUCT_SUPPLIER } from "@phis/contracts/products";
 import { checkPhiDependencyLicenses } from "./licenses.mts";
 import { checkPhiMediaOwnership, findPhiMediaOrphanedLocalStaging } from "./media-check.mts";
@@ -444,8 +444,9 @@ Usage:
   phis init <site key> --api-base-url <url> [--path <site source path>] [--package-manager pnpm|npm|yarn|bun] [--install]
   phis reconcile <site key> [--path <site source path>] [--package-manager pnpm|npm|yarn|bun] [--install]
   phis update <site key> [--path <site source path>] [--package-manager pnpm|npm|yarn|bun] [--as <email|user id>]
-                         --as takes the products the Site's packages propose (phis module products sync) as
-                         that member; without it the update only says which proposals wait.
+                         Hands the products the Site's packages propose to Core, which takes them when a
+                         Site Admin activates the package in the Builder; --as takes them now as that member
+                         (phis module products sync).
                          --path defaults to <sites.sourcePathRoot>/<site key>. Without --package-manager the
                          Site's own is used (packageManager field, else its lockfile; npm for a new Site).
 
@@ -457,7 +458,7 @@ Usage:
   phis module media sync --site <site key> [--path <site source path>]
   phis module media list --site <site key> [--path <site source path>]
   phis module media bind --site <site key> --package <name> --key <key> (--asset <id> | --folder <id> | --reset)
-  phis module products sync --site <site key> --as <email|user id> [--path <site source path>]
+  phis module products sync --site <site key> [--as <email|user id>] [--path <site source path>]
   phis module products list --site <site key> [--path <site source path>]
 
   phis addon list
@@ -1618,9 +1619,10 @@ async function runSiteModuleMediaCommand(subcommand: string | undefined, flags: 
 }
 
 /**
- * `phis module products sync|list`: the products the Site's packages propose, taken once per Site by
- * `@phis/products` as the member `--as` names. HTTP to the running Core and files of the Site, as
- * `phis module media`; the database is read only to find the Site's directory without `--path`.
+ * `phis module products sync|list`: the products the Site's packages propose, handed to Core -- which has
+ * `@phis/products` take them once per Site when a Site Admin activates the package in the Builder -- and
+ * taken now as the member `--as` names. HTTP to the running Core and files of the Site, as `phis module
+ * media`; the database is read only to find the Site's directory without `--path`.
  */
 async function runSiteModuleProductsCommand(subcommand: string | undefined, flags: FlagMap, json: boolean) {
   if (subcommand !== "sync" && subcommand !== "list") {
@@ -1648,7 +1650,7 @@ async function runSiteModuleProductsCommand(subcommand: string | undefined, flag
     return;
   }
 
-  const report = await syncModuleProducts({ siteKey, siteRoot, packageNames, as: getRequiredFlag(flags, "as") });
+  const report = await syncModuleProducts({ siteKey, siteRoot, packageNames, as: getOptionalFlag(flags, "as") });
   if (json) {
     printJson({ ok: report.refused.length === 0, action: "module.products.sync", ...report });
   } else if (report.proposed === 0) {
@@ -1662,12 +1664,14 @@ async function runSiteModuleProductsCommand(subcommand: string | undefined, flag
 }
 
 function describeModuleProductListRow(row: ModuleProductListRow) {
-  return `${row.state.padEnd(18)} ${row.packageName} ${row.key}  ${PHIS_SITE_PACKAGE_PRODUCT_SUPPLIER.addonId}:${row.productKey}`;
+  return `${row.state.padEnd(18)} ${row.packageName} ${row.key}  ${PHIS_SITE_PACKAGE_PRODUCT_SUPPLIER.addonId}:${row.productKey}${row.why ? ` -- ${row.why}` : ""}`;
 }
 
 /**
  * What `phis module check` says of the proposals: each one taken (and as what) or waiting, and why it
- * waits. Waiting fails nothing -- a Site without `@phis/products`, or one nobody synced yet, is a state.
+ * waits -- not handed to Core, waiting for the Builder's activation, or what the last attempt there
+ * answered (the admin who activated it may not keep products, say). Waiting fails nothing -- a Site
+ * without `@phis/products`, or one nobody activated yet, is a state.
  */
 async function readSiteModuleProductCheck(siteId: number, siteKey: string, siteRoot: string, packageNames: readonly string[]) {
   const packages = readModuleProductPackages(siteRoot, packageNames).filter((entry) => entry.proposals.length > 0);
@@ -1675,12 +1679,14 @@ async function readSiteModuleProductCheck(siteId: number, siteKey: string, siteR
   const pool = getPool();
   const supplier = PHIS_SITE_PACKAGE_PRODUCT_SUPPLIER.addonId;
   const enabled = (await readPhisAddonSiteStates(pool, supplier)).some((state) => state.siteId === siteId && state.requestedEnabled);
-  const rows = describeModuleProductStates(packages, await listSiteModuleProducts(pool, siteId));
+  const stored = (await listSiteModuleProductProposals(pool, siteId))
+    .map(({ packageName, key, waitingReason, waitingDetail }) => ({ packageName, key, waitingReason, waitingDetail }));
+  const rows = describeModuleProductStates(packages, await listSiteModuleProducts(pool, siteId), stored);
   return {
     rows,
     waitingReason: enabled
-      ? `run phis module products sync --site ${siteKey} --as <member who keeps products>`
-      : `${supplier} is not enabled for ${siteKey} (phis addon site --addon ${supplier} --site ${siteKey} --enable), then sync`,
+      ? `activate the package in the Builder as a Site Admin who keeps products, or run phis module products sync --site ${siteKey} --as <member who keeps products>`
+      : `${supplier} is not enabled for ${siteKey} (phis addon site --addon ${supplier} --site ${siteKey} --enable), then activate or sync`,
   };
 }
 
@@ -2483,25 +2489,18 @@ async function runSiteScaffoldCommand(
     }
   }
   /*
-   * After the pictures, which a proposed product may name. Taking a proposal makes a product as somebody,
-   * so only with `--as`; without it the update says what waits and goes on -- a proposal not taken yet is
-   * a state, not a fault.
+   * After the pictures, which a proposed product may name. The proposals are handed to Core, which takes
+   * them when a Site Admin activates the package in the Builder; taking one makes a product as somebody,
+   * so the update takes them itself only with `--as`. A proposal not taken yet is a state, not a fault.
    */
   let moduleProducts: Awaited<ReturnType<typeof syncModuleProducts>> | null = null;
   if (mode === "update") {
     const packageNames = (readSiteModuleDesiredState(configRoot).sites[site.key]?.modules ?? []).map((entry) => entry.packageName);
-    const as = getOptionalFlag(flags, "as");
-    if (as) {
-      moduleProducts = await syncModuleProducts({ siteKey: site.key, siteRoot: result.root, packageNames, as });
-      if (!json) {
-        for (const item of moduleProducts.items.filter((entry) => entry.status !== "taken")) {
-          console.log(`  module products: ${describeModuleProductOutcome(item)}`);
-        }
+    moduleProducts = await syncModuleProducts({ siteKey: site.key, siteRoot: result.root, packageNames, as: getOptionalFlag(flags, "as") });
+    if (!json) {
+      for (const item of moduleProducts.items.filter((entry) => entry.status !== "taken")) {
+        console.log(`  module products: ${describeModuleProductOutcome(item)}`);
       }
-    } else if (!json) {
-      const check = await readSiteModuleProductCheck(site.id, site.key, result.root, packageNames);
-      const waiting = check.rows.filter((row) => row.state === "waiting");
-      if (waiting.length > 0) console.log(`  module products: ${waiting.length} proposed product(s) wait; ${check.waitingReason}.`);
     }
   }
   if (mode === "update") {

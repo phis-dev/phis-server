@@ -53,6 +53,8 @@ const stored = (rest: Record<string, unknown> = {}) => ({
   imageMedia: { id: 12, deliveryRevision: 3, variantVersion: 2, contentType: "image/png" },
   iconAssetId: null,
   iconMedia: null,
+  description: "",
+  galleryMedia: [],
   counted: false,
   sale: "payout",
   referralUrl: null,

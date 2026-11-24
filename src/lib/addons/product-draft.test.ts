@@ -25,8 +25,25 @@ describe("a product's id and key", () => {
 describe("a product draft", () => {
   it("fills the defaults in", () => {
     expect(normalizePhisProductDraft(base)).toEqual({
-      ...base, publisher: null, imageAssetId: null, iconAssetId: null, counted: false, sale: "own", referralUrl: null, free: false, accountRequired: false, parts: [],
+      ...base, publisher: null, description: "", imageAssetId: null, iconAssetId: null, gallery: [], counted: false, sale: "own", referralUrl: null, free: false, accountRequired: false, parts: [],
     });
+  });
+
+  it("takes a Markdown description with its line breaks and tabs, and refuses one too long or with control characters", () => {
+    const description = "## Features\n\n- Fast\r\n\t- Small";
+    expect(normalizePhisProductDraft({ ...base, description }).description).toBe(description);
+    expect(normalizePhisProductDraft({ ...base, description: "x".repeat(20000) }).description).toHaveLength(20000);
+    expect(() => normalizePhisProductDraft({ ...base, description: "x".repeat(20001) })).toThrow(/description/);
+    expect(() => normalizePhisProductDraft({ ...base, description: "bell\u0007" })).toThrow(/description/);
+    expect(() => normalizePhisProductDraft({ ...base, description: 3 as never })).toThrow(/description/);
+  });
+
+  it("takes a gallery of Asset ids in its order, and refuses one named twice, a bad id or more than 20", () => {
+    expect(normalizePhisProductDraft({ ...base, gallery: [9, 3, 5] }).gallery).toEqual([9, 3, 5]);
+    expect(() => normalizePhisProductDraft({ ...base, gallery: [3, 3] })).toThrow(/twice/);
+    expect(() => normalizePhisProductDraft({ ...base, gallery: [0] })).toThrow(/gallery/);
+    expect(() => normalizePhisProductDraft({ ...base, gallery: ["3"] as never })).toThrow(/gallery/);
+    expect(() => normalizePhisProductDraft({ ...base, gallery: Array.from({ length: 21 }, (_, index) => index + 1) })).toThrow(/at most 20/);
   });
 
   it("asks a referral for an https address, and keeps no address otherwise", () => {

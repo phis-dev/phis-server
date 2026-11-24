@@ -499,8 +499,27 @@ Contract (design/MODULE_MEDIA.md):
 Contract (SERVER_ADDONS.md, `products:v1`, "Products a Site package proposes"):
 - Which product a Site package proposed (`phis.products` in its `package.json`) the Site took, and as which product: `product_key` is the key under `@phis/products` (`phisSitePackageProductKey`: the package name's parts and `key` joined by dots), the product `@phis/products:<product_key>`. A row is the record that the proposal was taken, and nothing undoes it: it is what keeps a product the Site changed, withdrew or removed from being made again. No foreign key reaches `products` for that reason, and none reaches the package, whose installed copy is the catalogue; a row whose proposal the package dropped is kept and listed as `no longer proposed`.
 - `flags` are `PhisSiteModuleProductFlag`: `1 = Found`, the Site had a product of `@phis/products` under `product_key` when the proposal was first taken, so Core made nothing and left that product as it was. Without it, `@phis/products` made the product through `product.add`.
-- Written only by `POST /api/v1/module-products` (`applyModuleProductProposal`), under a per-Site advisory lock (`pg_advisory_xact_lock` on `phis.site_module_products:<site id>`) held across the command that makes the product, never updated or deleted by Core. A proposal that waits (the supplier off, a picture not imported) or is refused writes no row. Read by `GET /api/v1/module-products` and by `phis module check`.
+- Written only by `applyModuleProductProposal` -- from `POST /api/v1/module-products` with a member, and from the Builder's activation (`POST /api/site/cms/area/modules/publish`, `takeModuleProductProposalsOnActivation`) -- under a per-Site advisory lock (`pg_advisory_xact_lock` on `phis.site_module_products:<site id>`) held across the command that makes the product, never updated or deleted by Core. A proposal that waits (the supplier off, a picture of it not imported) or is refused writes no row. Read by `GET /api/v1/module-products` and by `phis module check`.
 - Added before v1 in place: no schema version is raised. An existing database receives the table by hand, the `CREATE TABLE IF NOT EXISTS phis.site_module_products (...)` statement of `scripts/sql/001_create_phis.pgsql` and nothing else, as the serving role (added 2026-11-24; the development database `phi_server_dev` received it so).
+
+### `phis.site_module_product_proposals`
+
+- `site_id SMALLINT NOT NULL REFERENCES phis.sites(id) ON DELETE CASCADE`
+- `package_name VARCHAR(255) NOT NULL`
+- `key VARCHAR(48) NOT NULL`
+- `proposal JSONB NOT NULL`
+- `waiting_reason VARCHAR(32) NULL`
+- `waiting_detail VARCHAR(1000) NULL`
+- `updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
+- `PRIMARY KEY (site_id, package_name, key)`
+- `CHECK (package_name <> '')`, `CHECK (key ~ '^[a-z][a-z0-9-]*$')`, `CHECK (jsonb_typeof(proposal) = 'object')`
+
+Contract (SERVER_ADDONS.md, `products:v1`, "Products a Site package proposes"):
+- What the Site's packages propose, as the CLI last handed it to Core (`phis update`, `phis module products sync`; `POST /api/v1/module-products` with `{ package, proposals }`): one package's whole list per hand-over, which replaces what was kept of that package -- a key it no longer names is deleted, a changed proposal rewritten. Core cannot read a Site's packages itself (the Site's files may be on another host), so this is the copy the Builder's activation works from.
+- `proposal` is the proposal as `readPhisSitePackageProductProposal` read it; it is read again under today's rules before it is taken.
+- `waiting_reason` and `waiting_detail` are what the last attempt on the Builder's activation answered for a proposal it could not take: `supplier_unavailable` (`@phis/products` not on for the Site), `media_missing` (a picture not in the library yet), `supplier_refused` (the admin who activated it may not keep the Site's products). NULL before any attempt, after one that took it, and after a hand-over that changed the proposal. `phis module check` and `phis module products list` say them.
+- A row stays after its proposal was taken; `site_module_products` is what says it was. Written under the same per-Site advisory lock.
+- Added before v1 in place: no schema version is raised. An existing database receives the table by hand, the `CREATE TABLE IF NOT EXISTS phis.site_module_product_proposals (...)` statement of `scripts/sql/001_create_phis.pgsql`, as the serving role (added 2026-11-24; the development database `phi_server_dev` received it so).
 
 ### `phis.media_upload_sessions`
 
@@ -1669,6 +1688,7 @@ Contract:
 - `type VARCHAR(64) NOT NULL`
 - `title VARCHAR(200) NOT NULL`
 - `summary VARCHAR(1000) NOT NULL`
+- `description TEXT NOT NULL DEFAULT ''`
 - `image_asset_id INT NULL`
 - `icon_asset_id INT NULL`
 - `sale VARCHAR(8) NOT NULL DEFAULT 'own'`
@@ -1687,6 +1707,7 @@ Contract:
 - `CHECK (sale IN ('own', 'referral', 'payout'))`, `CHECK ((sale = 'referral') = (referral_url IS NOT NULL))`
 - `CHECK (state IN ('draft', 'active', 'withdrawn', 'locked'))`, `CHECK (publisher IS NULL OR publisher <> '')`
 - `CHECK (pending_terms IS NULL OR jsonb_typeof(pending_terms) = 'object')`
+- `CHECK (char_length(description) <= 20000)` (`products_description_check`)
 - partial index `products_publisher_idx` on `(site_id, publisher) WHERE publisher IS NOT NULL`
 
 Contract:
@@ -1699,8 +1720,27 @@ Contract:
 - A product that was ever named by an `entitlements` row is never deleted; `entitlements.product` is no foreign key, so removal is decided by looking.
 - `image_asset_id` is a picture of the Site's Media library; deleting the Asset sets it to NULL. `register` accepts only an Asset that is ready, delivered publicly, and in the Site's Space or the supplier's own Add-on Space; the Media delete route refuses an Asset a product wears (`media_asset_in_use`, scope `product`) before the foreign key would null it, and a manifest sync of the declared products never writes the column.
 - `icon_asset_id` is the product's icon -- a small picture (a logo, an app icon) shown beside its title on its page -- under exactly the rules of `image_asset_id`: the same `register` check, the same delete guard (a product wearing the Asset as either is named), the same `SET NULL` when the Asset goes, and a manifest sync never writes it either.
-- Every read of a product -- `products:v1`, the operator's directory (`listProductDirectory`, `GET /api/site/products`) and the answers of the writes -- joins both Assets in the statement that reads the product (`PRODUCT_COLUMNS`, `PRODUCT_FROM`), so `imagePath`, `iconPath` and the list paths `imageListPath` and `iconListPath` (the `icon` variant of the picture and of the icon) are built without a read per row.
+- Every read of a product -- `products:v1`, the operator's directory (`listProductDirectory`, `GET /api/site/products`) and the answers of the writes -- joins both Assets in the statement that reads the product (`PRODUCT_COLUMNS`, `PRODUCT_FROM`), so `imagePath`, `iconPath` and the list paths `imageListPath` and `iconListPath` (the `icon` variant of the picture and of the icon) are built without a read per row; the galleries of every product read come in one further statement for all of them (`loadGalleries`).
+- `description` is the long text, Markdown, in the Site's source language like `title` and `summary`; `''` for none. `register` states it whole (absent is `''`), a manifest-declared product's included, and a change of it raises the version and owes `product.changed`.
+- The gallery is `phis.product_gallery`, below.
 - The operator's release may name the `version` it read (`releaseProduct`'s `expectedVersion`); a row that has moved on is refused under the row lock the release takes anyway.
+
+### `phis.product_gallery`
+
+- `product_id INT NOT NULL`
+- `site_id SMALLINT NOT NULL`
+- `position SMALLINT NOT NULL`
+- `asset_id INT NOT NULL`
+- `PRIMARY KEY (product_id, position)`, `UNIQUE (product_id, asset_id)` (`product_gallery_asset_unique`)
+- `CHECK (position >= 0 AND position < 20)` (`product_gallery_position_check`)
+- `FOREIGN KEY (product_id, site_id) REFERENCES phis.products (id, site_id) ON DELETE CASCADE` (`product_gallery_product_fk`)
+- `FOREIGN KEY (asset_id, site_id) REFERENCES phis.media_assets (id, site_id) ON DELETE CASCADE` (`product_gallery_asset_site_fk`)
+- index `product_gallery_asset_idx` on `(site_id, asset_id)`
+
+Contract (`products:v1` `gallery`, SERVER_ADDONS.md):
+- A product's further pictures, first to last by `position`. One row per picture rather than an `INT[]` on `products`, so that each Asset is held by a foreign key exactly as `image_asset_id` and `icon_asset_id` are: the Media delete guard names a product that shows the Asset in its gallery (`listProductIdsWithImage`, scope `product`), `media-release:v1` keeps such an Asset, and an Asset deleted anyway takes its row along -- the gallery closes up around it, as the picture's column goes to NULL.
+- Written only by `registerProduct`, whole, in the product's transaction under its row lock: compared with the draft in its order, and on any difference deleted and inserted again from position 0. Each Asset is checked as the picture is (ready, delivered publicly, in the Site's Space or the supplier's own Add-on Space), none twice, at most 20. A manifest sync never writes it. A change raises the product's version and owes `product.changed`, so a seller that copied the pictures' addresses elsewhere hears of it.
+- Added before v1 in place, with `products.description`: no schema version is raised. An existing database receives them by hand, as the serving role: `ALTER TABLE phis.products ADD COLUMN IF NOT EXISTS description TEXT NOT NULL DEFAULT '';`, `ALTER TABLE phis.products ADD CONSTRAINT products_description_check CHECK (char_length(description) <= 20000);`, and the `CREATE TABLE IF NOT EXISTS phis.product_gallery (...)` and `CREATE INDEX IF NOT EXISTS product_gallery_asset_idx ...` statements of `scripts/sql/001_create_phis.pgsql` (added 2026-11-24; the development database `phi_server_dev` received them so).
 
 ### `phis.product_attributes`
 

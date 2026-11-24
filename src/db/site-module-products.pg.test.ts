@@ -16,6 +16,11 @@ vi.mock("@/lib/addons/commands", () => ({
   runPhisAddonCommand: commands.run,
   PhisAddonCommandError: commands.PhisAddonCommandError,
 }));
+// Which Modules the Site runs is the published Area selections' answer; stood in for, as the command is.
+const active = vi.hoisted(() => ({ moduleIds: [] as string[] }));
+vi.mock("@/db/site-active-modules", () => ({
+  listPhiSiteActiveModuleIdsWithDb: async () => active.moduleIds,
+}));
 
 import {
   closePhiTestPool,
@@ -26,9 +31,13 @@ import {
   requirePhiTestDatabase,
   type PhiTestSite,
 } from "../../test/pg/harness";
-import { applyModuleProductProposal } from "@/lib/module-products-apply";
+import {
+  applyModuleProductProposal,
+  recordModuleProductProposals,
+  takeModuleProductProposalsOnActivation,
+} from "@/lib/module-products-apply";
 import { PhisSiteModuleProductFlag } from "@/lib/module-products";
-import { listSiteModuleProducts } from "./site-module-products.mts";
+import { listSiteModuleProductProposals, listSiteModuleProducts } from "./site-module-products.mts";
 
 const PKG = "@pgtest/site";
 
@@ -109,6 +118,65 @@ describe("taking proposed products against PostgreSQL", () => {
     const created = await applyModuleProductProposal(ref(site), { packageName: PKG, proposal, actorUserId: actor });
     expect(created.status).toBe("created");
     expect(commands.run.mock.calls[0]?.[0].input).toEqual({ key: "pgtest.site.pictured", title: "Pictured", counted: false, accountRequired: false, picture: assetId });
+  });
+
+  it("waits until every picture of the gallery is in the library, then hands their Asset ids over in order", async () => {
+    const proposal = { key: "galleried", title: "Galleried", description: "## Long", gallery: ["shot-b", "shot-a"] };
+    const asset = async (key: string) => {
+      const assetId = await createPhiTestAsset(site, `pgtest/modproducts/${key}/${Date.now()}`);
+      await sql(
+        `INSERT INTO phis.site_module_media (site_id, package_name, key, asset_id, source_checksum, flags) VALUES ($1, $2, $3, $4, NULL, 0)`,
+        [site.id, PKG, key, assetId],
+      );
+      return assetId;
+    };
+    const a = await asset("shot-a");
+    const waiting = await applyModuleProductProposal(ref(site), { packageName: PKG, proposal, actorUserId: actor });
+    expect(waiting).toMatchObject({ status: "waiting", reason: "media_missing", detail: expect.stringContaining('gallery picture "shot-b"') });
+    expect(commands.run).not.toHaveBeenCalled();
+    const b = await asset("shot-b");
+    expect((await applyModuleProductProposal(ref(site), { packageName: PKG, proposal, actorUserId: actor })).status).toBe("created");
+    expect(commands.run.mock.calls[0]?.[0].input).toEqual({
+      key: "pgtest.site.galleried", title: "Galleried", description: "## Long", counted: false, accountRequired: false, gallery: [b, a],
+    });
+  });
+
+  it("keeps what a package proposes as handed over, and takes it on the Builder's activation as the person who activated it", async () => {
+    const pool = await requirePhiTestDatabase();
+    const site2 = await createPhiTestSite("modproducts-activation");
+    const admin = await createPhiTestUser(site2);
+    const pkg = "@pgtest/shell";
+    const stored = async () => (await listSiteModuleProductProposals(pool, site2.id)).map((row) => `${row.key}:${row.waitingReason ?? "-"}`);
+
+    // Handed over: kept, waiting for the activation; a later hand-over is the whole list and drops what it no longer names.
+    const handed = await recordModuleProductProposals(ref(site2), { packageName: pkg, proposals: [{ key: "one", title: "One" }, { key: "two", title: "Two" }] });
+    expect(handed.map((item) => `${item.key}:${item.status}:${item.reason}`)).toEqual(["one:waiting:activation", "two:waiting:activation"]);
+    await recordModuleProductProposals(ref(site2), { packageName: pkg, proposals: [{ key: "one", title: "One" }, { key: "three", title: "Three" }] });
+    expect(await stored()).toEqual(["one:-", "three:-"]);
+
+    // Nothing is taken while none of the package's Modules runs.
+    active.moduleIds = ["@pgtest/other/modules/site"];
+    expect(await takeModuleProductProposalsOnActivation(ref(site2), { actorUserId: admin })).toEqual([]);
+    expect(commands.run).not.toHaveBeenCalled();
+
+    // Activated: taken as that person; one the person may not take keeps waiting and says why, and fails nothing.
+    active.moduleIds = [`${pkg}/modules/site`];
+    commands.run.mockResolvedValueOnce({ ok: true, runId: "r", result: {} });
+    commands.run.mockResolvedValueOnce({ ok: false, runId: "r", error: "This needs the editor role." });
+    const taken = await takeModuleProductProposalsOnActivation(ref(site2), { actorUserId: admin });
+    expect(taken.map((item) => `${item.key}:${item.status}`)).toEqual(["one:created", "three:refused"]);
+    expect(commands.run.mock.calls.every((call) => call[0].actorUserId === admin)).toBe(true);
+    expect(await stored()).toEqual(["one:-", "three:supplier_refused"]);
+    expect((await listSiteModuleProductProposals(pool, site2.id))[1]!.waitingDetail).toBe("This needs the editor role.");
+
+    // The next activation asks only for what is not taken; once taken, the reason goes.
+    commands.run.mockClear();
+    const again = await takeModuleProductProposalsOnActivation(ref(site2), { actorUserId: admin });
+    expect(again.map((item) => `${item.key}:${item.status}`)).toEqual(["three:created"]);
+    expect(commands.run).toHaveBeenCalledTimes(1);
+    expect(await stored()).toEqual(["one:-", "three:-"]);
+    expect((await recordModuleProductProposals(ref(site2), { packageName: pkg, proposals: [{ key: "one", title: "One" }] }))[0]!.status).toBe("taken");
+    active.moduleIds = [];
   });
 
   it("records nothing while the supplier is off or refuses, so the next sync asks again", async () => {

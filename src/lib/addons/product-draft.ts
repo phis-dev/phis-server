@@ -1,4 +1,5 @@
 import type { PhisProductDraft, PhisProductId, PhisProductSale } from "@phis/contracts/addon";
+import { PHIS_PRODUCT_DESCRIPTION_MAX, PHIS_PRODUCT_GALLERY_MAX } from "@phis/contracts/products";
 
 /**
  * What a product's draft has to be, judged without the database.
@@ -13,6 +14,9 @@ export const PHIS_PRODUCT_KEY_MAX_LENGTH = 96;
 export const PHIS_PRODUCT_TYPE_MAX_LENGTH = 64;
 export const PHIS_PRODUCT_TITLE_MAX_LENGTH = 200;
 export const PHIS_PRODUCT_SUMMARY_MAX_LENGTH = 1000;
+/** Markdown, so line breaks and tabs are its own; `phis.products.description` checks the same length. */
+export const PHIS_PRODUCT_DESCRIPTION_MAX_LENGTH = PHIS_PRODUCT_DESCRIPTION_MAX;
+export const PHIS_PRODUCT_GALLERY_MAX_PICTURES = PHIS_PRODUCT_GALLERY_MAX;
 export const PHIS_PRODUCT_PUBLISHER_MAX_LENGTH = 255;
 export const PHIS_PRODUCT_REFERRAL_URL_MAX_LENGTH = 2000;
 export const PHIS_PRODUCT_PARTS_MAX = 100;
@@ -42,8 +46,11 @@ export type PhisNormalizedProductDraft = {
   type: string;
   title: string;
   summary: string;
+  description: string;
   imageAssetId: number | null;
   iconAssetId: number | null;
+  /** First to last, none twice. */
+  gallery: number[];
   counted: boolean;
   sale: PhisProductSale;
   referralUrl: string | null;
@@ -104,14 +111,29 @@ export function normalizePhisProductDraft(draft: PhisProductDraft, ownId?: PhisP
   if (iconAssetId !== null && (!Number.isInteger(iconAssetId) || iconAssetId <= 0)) {
     throw new PhisProductDraftError("iconAssetId is the id of an Asset of the Site, or null.");
   }
+  const description = draft.description === undefined ? "" : draft.description;
+  if (typeof description !== "string" || description.length > PHIS_PRODUCT_DESCRIPTION_MAX_LENGTH
+    || /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/u.test(description)) {
+    throw new PhisProductDraftError(
+      `description must be Markdown of at most ${PHIS_PRODUCT_DESCRIPTION_MAX_LENGTH} characters without control characters other than tabs and line breaks.`,
+    );
+  }
+  const gallery = draft.gallery === undefined ? [] : draft.gallery;
+  if (!Array.isArray(gallery) || gallery.length > PHIS_PRODUCT_GALLERY_MAX_PICTURES
+    || !gallery.every((id) => Number.isInteger(id) && id > 0 && id <= 2_147_483_647)) {
+    throw new PhisProductDraftError(`gallery is a list of at most ${PHIS_PRODUCT_GALLERY_MAX_PICTURES} ids of Assets of the Site.`);
+  }
+  if (new Set(gallery).size !== gallery.length) throw new PhisProductDraftError("gallery names an Asset twice.");
   return {
     key: draft.key,
     publisher,
     type: text(draft.type, "type", PHIS_PRODUCT_TYPE_MAX_LENGTH),
     title: text(draft.title, "title", PHIS_PRODUCT_TITLE_MAX_LENGTH),
     summary: text(draft.summary, "summary", PHIS_PRODUCT_SUMMARY_MAX_LENGTH, true),
+    description,
     imageAssetId,
     iconAssetId,
+    gallery: [...gallery],
     counted,
     sale,
     referralUrl,

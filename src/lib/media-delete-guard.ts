@@ -16,7 +16,7 @@ import { derivePhisAddonSchemaName } from "@/lib/addons/schema-name";
 
 export type MediaDeleteGuardReference = {
   /**
-   * `product`: a product of the Site wears the Asset as its picture; `fieldPath` carries the product's id.
+   * `product`: a product of the Site wears the Asset as its picture, its icon or a gallery picture; `fieldPath` carries the product's id.
    * `addon`: a row of an installed Add-on's table names it in a `core.mediaAsset` column; `addon` says
    * which, and `fieldPath` is `<table>.<column>`.
    */
@@ -116,8 +116,8 @@ export async function collectMediaAssetDeleteReferences(
     addon: null,
   }));
   // A product's picture and its icon are each held by an ON DELETE SET NULL foreign key as the last
-  // safeguard; the refusal is the same one a CMS reference earns, so neither is taken from a product by
-  // accident.
+  // safeguard, a picture of its gallery by one that deletes the gallery's row; the refusal is the same one
+  // a CMS reference earns, so none is taken from a product by accident.
   for (const productId of await listProductIdsWithImage(db, siteId, asset.id)) {
     references.push({
       scope: "product",

@@ -44,8 +44,9 @@ Media Assets. Some that are easy to miss:
 - An Asset of the Media library by id, with whether a visitor is served it, its address and what a media
   tile draws (name, title, thumbnail, preview): `media:v1`.
 - Deleting a Media library Asset the Add-on no longer uses: `media-release:v1`.
-- A picture the package carries in its own bytes: `assets:v1` `put`. A product's picture and its icon:
-  `products:v1` `imageAssetId` and `iconAssetId`, not columns of yours.
+- A picture the package carries in its own bytes: `assets:v1` `put`. A product's picture, its icon, its
+  gallery and its long description: `products:v1` `imageAssetId`, `iconAssetId`, `gallery` and
+  `description`, not columns of yours -- a seller shows the product's and keeps none of its own.
 - A `core.group` or `core.mediaAsset` column that is cleared rather than cascaded: `onDelete: "setNull"`.
 - A Widget shown only when the record a Page is about has a field: the `record` condition source
   (`@phis/contracts/conditions`), not a component of your own.
@@ -138,8 +139,8 @@ Two ways, and they answer different questions: whose file it is, and who chooses
 
 A slot is for a file that exists for this row alone: a vendor's logo uploaded through the Add-on's own
 form, a release artifact, a picture the package ships. A reference is for what a person picks from the
-Site's library, or one picture that serves several rows. A product's picture and its icon are neither --
-they are `products:v1`'s `imageAssetId` and `iconAssetId`.
+Site's library, or one picture that serves several rows. A product's picture, its icon and its gallery are
+neither -- they are `products:v1`'s `imageAssetId`, `iconAssetId` and `gallery`.
 
 **A reference is a column of its own**, `{ name: "cover_asset_id", references: "core.mediaAsset",
 nullable: true, onDelete: "setNull" }`, on a `siteScoped` table. Where a visitor will see it, check on save

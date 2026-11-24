@@ -55,6 +55,7 @@ import { createPhiPageReference } from "@/lib/internal-references";
 import { normalizeLocale } from "@/lib/locale";
 import { logRuntimeEvent, normalizeLogThrowable } from "@/lib/log";
 import { logSiteCmsAuditEvent } from "@/lib/site-cms-audit";
+import { takeModuleProductProposalsOnActivation } from "@/lib/module-products-apply";
 
 function resolveRequestLocale(request: Request) {
   const url = new URL(request.url);
@@ -819,6 +820,26 @@ export async function handleSiteCmsAreaModulesPublish(request: NextRequest) {
         revisionId: result.revisionId,
       },
     });
+
+    /*
+     * Activating a package's Module is when the Site takes the products the package proposes, as the
+     * person who activated it (SERVER_ADDONS.md, "Products a Site package proposes"). The selection is
+     * published whatever comes of them: a proposal that cannot be taken keeps waiting and says why to
+     * `phis module check`, and an error here is logged, never answered.
+     */
+    const actorUserId = context!.session?.userId ?? null;
+    if (actorUserId !== null) {
+      try {
+        await takeModuleProductProposalsOnActivation(context!.site!, { actorUserId });
+      } catch (proposalError) {
+        logRuntimeEvent("error", "cms.area_modules_publish.products_failed", {
+          message: "Taking the proposed products after an Area Module publish failed.",
+          siteKey: context!.site!.key,
+          userId: actorUserId,
+          error: normalizeLogThrowable(proposalError),
+        });
+      }
+    }
 
     return NextResponse.json({
       areaMask,

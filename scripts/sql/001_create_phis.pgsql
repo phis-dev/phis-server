@@ -635,6 +635,27 @@ CREATE TABLE IF NOT EXISTS phis.site_module_products (
   CONSTRAINT site_module_products_product_key_check CHECK (product_key ~ '^[a-z][a-z0-9.-]*$')
 );
 
+-- What the Site's packages propose, as the CLI last handed it to Core (`phis update`, `phis module products
+-- sync`): the package's whole list, replaced on every hand-over, so a proposal the package dropped goes.
+-- Core takes these when a Site Admin activates one of the package's Modules in the Builder (publishes an
+-- Area's Module selection holding it), as that admin; a row stays after its proposal was taken, which
+-- `site_module_products` records. `waiting_reason` and `waiting_detail` are what the last attempt there
+-- answered for a proposal it could not take (`supplier_unavailable`, `media_missing`, `supplier_refused`),
+-- NULL before any attempt and after a hand-over that changed the proposal; `phis module check` says them.
+CREATE TABLE IF NOT EXISTS phis.site_module_product_proposals (
+  site_id SMALLINT NOT NULL REFERENCES phis.sites(id) ON DELETE CASCADE,
+  package_name VARCHAR(255) NOT NULL,
+  key VARCHAR(48) NOT NULL,
+  proposal JSONB NOT NULL,
+  waiting_reason VARCHAR(32) NULL,
+  waiting_detail VARCHAR(1000) NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (site_id, package_name, key),
+  CONSTRAINT site_module_product_proposals_package_check CHECK (package_name <> ''),
+  CONSTRAINT site_module_product_proposals_key_check CHECK (key ~ '^[a-z][a-z0-9-]*$'),
+  CONSTRAINT site_module_product_proposals_proposal_check CHECK (jsonb_typeof(proposal) = 'object')
+);
+
 CREATE TABLE IF NOT EXISTS phis.media_upload_sessions (
   token VARCHAR(128) PRIMARY KEY,
   site_id SMALLINT NOT NULL REFERENCES phis.sites(id) ON DELETE CASCADE,
@@ -2781,6 +2802,8 @@ CREATE INDEX IF NOT EXISTS addon_event_outbox_delivered_idx
 -- `account required` and `parts` are the terms in force; what a publisher asked to change of them on a
 -- released product waits in `pending_terms` ({ sale, referralUrl, free, accountRequired, parts }) until the operator releases it. `image_asset_id` (the picture)
 -- and `icon_asset_id` (the small picture beside the title) each go to NULL when their Asset is deleted.
+-- `description` is the long text, Markdown, in the source language like `title` and `summary`; '' for none.
+-- The gallery is `phis.product_gallery`.
 CREATE TABLE IF NOT EXISTS phis.products (
   id SERIAL PRIMARY KEY,
   site_id SMALLINT NOT NULL REFERENCES phis.sites(id) ON DELETE CASCADE,
@@ -2790,6 +2813,7 @@ CREATE TABLE IF NOT EXISTS phis.products (
   type VARCHAR(64) NOT NULL,
   title VARCHAR(200) NOT NULL,
   summary VARCHAR(1000) NOT NULL,
+  description TEXT NOT NULL DEFAULT '',
   image_asset_id INT NULL,
   icon_asset_id INT NULL,
   sale VARCHAR(8) NOT NULL DEFAULT 'own',
@@ -2810,6 +2834,7 @@ CREATE TABLE IF NOT EXISTS phis.products (
   CONSTRAINT products_referral_check CHECK ((sale = 'referral') = (referral_url IS NOT NULL)),
   CONSTRAINT products_state_check CHECK (state IN ('draft', 'active', 'withdrawn', 'locked')),
   CONSTRAINT products_pending_check CHECK (pending_terms IS NULL OR jsonb_typeof(pending_terms) = 'object'),
+  CONSTRAINT products_description_check CHECK (char_length(description) <= 20000),
   CONSTRAINT products_image_asset_site_fk
     FOREIGN KEY (image_asset_id, site_id)
     REFERENCES phis.media_assets (id, site_id)
@@ -2824,6 +2849,33 @@ CREATE TABLE IF NOT EXISTS phis.products (
 CREATE INDEX IF NOT EXISTS products_publisher_idx
   ON phis.products (site_id, publisher)
   WHERE publisher IS NOT NULL;
+
+-- A product's gallery: further pictures beside `image_asset_id`, first to last by `position` (0 up, written
+-- whole by `register`, so without gaps until an Asset goes). One row per picture rather than an array, so
+-- that each Asset is held by a foreign key as the picture and the icon are: the Media library's delete guard
+-- and `media-release:v1` see it (`listProductIdsWithImage`), and an Asset deleted anyway takes its row along,
+-- the gallery closing up around it. At most 20 per product (`products:v1`), none twice.
+CREATE TABLE IF NOT EXISTS phis.product_gallery (
+  product_id INT NOT NULL,
+  site_id SMALLINT NOT NULL,
+  position SMALLINT NOT NULL,
+  asset_id INT NOT NULL,
+  PRIMARY KEY (product_id, position),
+  CONSTRAINT product_gallery_asset_unique UNIQUE (product_id, asset_id),
+  CONSTRAINT product_gallery_position_check CHECK (position >= 0 AND position < 20),
+  CONSTRAINT product_gallery_product_fk
+    FOREIGN KEY (product_id, site_id)
+    REFERENCES phis.products (id, site_id)
+    ON DELETE CASCADE,
+  CONSTRAINT product_gallery_asset_site_fk
+    FOREIGN KEY (asset_id, site_id)
+    REFERENCES phis.media_assets (id, site_id)
+    ON DELETE CASCADE
+);
+
+-- The Media delete guard asks which products show an Asset.
+CREATE INDEX IF NOT EXISTS product_gallery_asset_idx
+  ON phis.product_gallery (site_id, asset_id);
 
 -- What other Add-ons attached to a product: one JSON object per product and Add-on, written whole by
 -- that Add-on and nobody else. Display and filtering data, never authority.

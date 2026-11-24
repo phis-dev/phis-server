@@ -57,11 +57,13 @@ describe("sync talks to Core over HTTP only", () => {
   let server: Server;
   let seen: { method: string; url: string; token: unknown; site: unknown; body: string }[];
   let rows: unknown[];
+  let kept: unknown[];
   let base: string;
 
   beforeEach(async () => {
     seen = [];
     rows = [];
+    kept = [];
     server = createServer((request, response) => {
       const chunks: Buffer[] = [];
       request.on("data", (chunk) => chunks.push(chunk));
@@ -69,9 +71,14 @@ describe("sync talks to Core over HTTP only", () => {
         const body = Buffer.concat(chunks).toString("utf8");
         seen.push({ method: request.method!, url: request.url!, token: request.headers["x-phis-token"], site: request.headers["x-phis-site-key"], body });
         response.setHeader("content-type", "application/json");
-        if (request.method === "GET") return response.end(JSON.stringify({ rows }));
-        const posted = JSON.parse(body) as { package: string; proposal: { key: string } };
-        response.end(JSON.stringify({ result: { packageName: posted.package, key: posted.proposal.key, productKey: `acme.site.${posted.proposal.key}`, status: "created" } }));
+        if (request.method === "GET") return response.end(JSON.stringify({ rows, proposals: kept }));
+        const posted = JSON.parse(body) as { package: string; proposal?: { key: string }; proposals?: { key: string }[] };
+        if (posted.proposals) {
+          return response.end(JSON.stringify({ results: posted.proposals.map((proposal) => ({
+            packageName: posted.package, key: proposal.key, productKey: `acme.site.${proposal.key}`, status: "waiting", reason: "activation",
+          })) }));
+        }
+        response.end(JSON.stringify({ result: { packageName: posted.package, key: posted.proposal!.key, productKey: `acme.site.${posted.proposal!.key}`, status: "created" } }));
       });
     });
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -81,24 +88,51 @@ describe("sync talks to Core over HTTP only", () => {
   });
   afterEach(() => new Promise<void>((resolve) => server.close(() => resolve())));
 
-  it("posts each proposal not taken yet, with the member it is taken as, and nothing for one that is", async () => {
+  it("hands the package's proposals over, then posts each one not taken yet with the member it is taken as, and nothing for one that is", async () => {
     writePackage({ products: [{ key: "pro", title: "Pro" }, { key: "basic", title: "Basic" }] });
     rows = [{ packageName: PKG, key: "basic", productKey: "acme.site.basic", flags: 0, createdAt: "x" }];
     const report = await syncModuleProducts({ siteKey: "acme", siteRoot: root, packageNames: [PKG], as: "ops@acme.test" });
     expect(report.items.map((item) => `${item.key}:${item.status}`)).toEqual(["pro:created", "basic:taken"]);
-    expect(seen.map((entry) => `${entry.method} ${entry.url}`)).toEqual(["GET /api/v1/module-products", "POST /api/v1/module-products"]);
-    expect(JSON.parse(seen[1]!.body)).toEqual({ package: PKG, proposal: { key: "pro", title: "Pro" }, as: "ops@acme.test" });
+    expect(seen.map((entry) => `${entry.method} ${entry.url}`)).toEqual(["GET /api/v1/module-products", "POST /api/v1/module-products", "POST /api/v1/module-products"]);
+    expect(JSON.parse(seen[1]!.body)).toEqual({ package: PKG, proposals: [{ key: "pro", title: "Pro" }, { key: "basic", title: "Basic" }] });
+    expect(JSON.parse(seen[2]!.body)).toEqual({ package: PKG, proposal: { key: "pro", title: "Pro" }, as: "ops@acme.test" });
     for (const entry of seen) {
       expect(entry.token).toBe("tok-test");
       expect(entry.site).toBe("acme");
     }
   });
 
-  it("asks Core nothing where no package proposes, and stops before any request on an invalid proposal", async () => {
+  it("without a member only hands the proposals over, each waiting for the Builder's activation", async () => {
+    writePackage({ products: [{ key: "pro", title: "Pro" }] });
+    const report = await syncModuleProducts({ siteKey: "acme", siteRoot: root, packageNames: [PKG] });
+    expect(report.items).toEqual([{ packageName: PKG, key: "pro", productKey: "acme.site.pro", status: "waiting", reason: "activation" }]);
+    expect(seen.map((entry) => `${entry.method} ${entry.url}`)).toEqual(["GET /api/v1/module-products", "POST /api/v1/module-products"]);
+  });
+
+  it("hands over nothing where no package proposes, clears what Core kept of a package that proposes none any more, and stops before any request on an invalid proposal", async () => {
     writePackage({ modules: [] });
     expect((await syncModuleProducts({ siteKey: "acme", siteRoot: root, packageNames: [PKG], as: "1" })).proposed).toBe(0);
+    expect(seen.map((entry) => entry.method)).toEqual(["GET"]);
+    kept = [{ packageName: PKG, key: "gone", waitingReason: null, waitingDetail: null }];
+    await syncModuleProducts({ siteKey: "acme", siteRoot: root, packageNames: [PKG] });
+    expect(seen.map((entry) => entry.method)).toEqual(["GET", "GET", "POST"]);
+    expect(JSON.parse(seen[2]!.body)).toEqual({ package: PKG, proposals: [] });
+    seen = [];
     writePackage({ products: [{ key: "pro" }] });
     await expect(syncModuleProducts({ siteKey: "acme", siteRoot: root, packageNames: [PKG], as: "1" })).rejects.toThrow(/proposals are invalid/);
     expect(seen).toEqual([]);
+  });
+
+  it("says why a proposal waits from what Core keeps of it", () => {
+    writePackage({ products: [{ key: "a", title: "A" }, { key: "b", title: "B" }, { key: "c", title: "C" }] });
+    const states = describeModuleProductStates(readModuleProductPackages(root, [PKG]), [], [
+      { packageName: PKG, key: "b", waitingReason: null, waitingDetail: null },
+      { packageName: PKG, key: "c", waitingReason: "supplier_refused", waitingDetail: "This needs the editor role." },
+    ]);
+    expect(states.map((row) => row.why)).toEqual([
+      expect.stringContaining("not handed to Core yet"),
+      expect.stringContaining(`activates ${PKG} in the Builder`),
+      "supplier_refused: This needs the editor role.",
+    ]);
   });
 });

@@ -60,6 +60,8 @@ function showProduct(product: PhisProduct) {
     `  publisher  ${product.publisher ?? "- (the Site's own)"}  ${product.released ? "released" : "not released"}`,
     `  image      ${product.imageAssetId === null ? "-" : `Asset ${product.imageAssetId}`}`,
     `  icon       ${product.iconAssetId === null ? "-" : `Asset ${product.iconAssetId}`}`,
+    `  gallery    ${product.galleryMedia.length === 0 ? "-" : product.galleryMedia.map((media) => `Asset ${media.id}`).join(", ")}`,
+    `  description ${product.description === "" ? "-" : `${product.description.length} characters`}`,
     `  terms      ${describeTerms(product)}`,
     ...(product.pendingTerms ? [`  pending    ${describeTerms(product.pendingTerms)}`] : []),
     `  attributes ${attributes.length === 0 ? "-" : attributes.join(", ")}`,

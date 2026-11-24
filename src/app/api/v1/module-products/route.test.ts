@@ -7,7 +7,9 @@ const mocks = vi.hoisted(() => ({
   site: vi.fn(),
   actor: vi.fn(),
   apply: vi.fn(),
+  record: vi.fn(),
   rows: vi.fn(),
+  proposals: vi.fn(),
 }));
 
 vi.mock("@/lib/config", async (importOriginal) => ({
@@ -16,9 +18,9 @@ vi.mock("@/lib/config", async (importOriginal) => ({
 }));
 vi.mock("@/lib/site-context", () => ({ requireSiteFromRequest: mocks.site }));
 vi.mock("@/lib/db", () => ({ getPool: () => ({}) }));
-vi.mock("@/db/site-module-products.mts", () => ({ listSiteModuleProducts: mocks.rows }));
+vi.mock("@/db/site-module-products.mts", () => ({ listSiteModuleProducts: mocks.rows, listSiteModuleProductProposals: mocks.proposals }));
 vi.mock("@/lib/addons/command-actor", () => ({ resolvePhisCommandActor: mocks.actor }));
-vi.mock("@/lib/module-products-apply", () => ({ applyModuleProductProposal: mocks.apply }));
+vi.mock("@/lib/module-products-apply", () => ({ applyModuleProductProposal: mocks.apply, recordModuleProductProposals: mocks.record }));
 
 import { GET, POST } from "./route";
 
@@ -35,6 +37,8 @@ describe("the Module products routes", () => {
     mocks.getPhisConfigSync.mockReturnValue({ api: { internalToken: "internal-token", publicToken: "public-token", disableRateLimit: true } } as PhisConfig);
     mocks.site.mockResolvedValue(SITE);
     mocks.rows.mockResolvedValue([]);
+    mocks.proposals.mockResolvedValue([]);
+    mocks.record.mockResolvedValue([{ packageName: "@acme/site", key: "pro", productKey: "acme.site.pro", status: "waiting", reason: "activation" }]);
     mocks.actor.mockResolvedValue({ ok: true, id: 9, email: "ops@acme.test" });
     mocks.apply.mockResolvedValue({ packageName: "@acme/site", key: "pro", productKey: "acme.site.pro", status: "created" });
   });
@@ -55,10 +59,14 @@ describe("the Module products routes", () => {
     expect((await post({ package: "@acme/site", proposal: { key: "pro", title: "Pro" }, as: "9" })).status).toBe(404);
   });
 
-  it("list the Site's taken proposals", async () => {
+  it("list the Site's taken proposals, and the ones Core keeps with why they wait", async () => {
     mocks.rows.mockResolvedValue([{ packageName: "@acme/site", key: "pro", productKey: "acme.site.pro", flags: 0, createdAt: "x" }]);
+    mocks.proposals.mockResolvedValue([{ packageName: "@acme/site", key: "basic", proposal: { key: "basic", title: "Basic" }, waitingReason: "supplier_refused", waitingDetail: "No." }]);
     const response = await GET(new Request("https://core.test/api/v1/module-products", { headers: INTERNAL }));
-    expect(await response.json()).toEqual({ rows: [{ packageName: "@acme/site", key: "pro", productKey: "acme.site.pro", flags: 0, createdAt: "x" }] });
+    expect(await response.json()).toEqual({
+      rows: [{ packageName: "@acme/site", key: "pro", productKey: "acme.site.pro", flags: 0, createdAt: "x" }],
+      proposals: [{ packageName: "@acme/site", key: "basic", waitingReason: "supplier_refused", waitingDetail: "No." }],
+    });
     expect(mocks.rows).toHaveBeenCalledWith({}, 1);
   });
 
@@ -67,6 +75,20 @@ describe("the Module products routes", () => {
     expect((await post({ package: "not a name", proposal: { key: "pro", title: "Pro" }, as: "9" })).status).toBe(400);
     expect((await post({ package: "@acme/site", proposal: { key: "pro", title: "Pro" } })).status).toBe(400);
     expect(mocks.apply).not.toHaveBeenCalled();
+  });
+
+  it("keep a package's whole list of proposals when it is handed over without a member, and refuse it whole on one that is not valid", async () => {
+    const response = await post({ package: "@acme/site", proposals: [{ key: "pro", title: "Pro", gallery: ["shot"] }] });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ results: [{ packageName: "@acme/site", key: "pro", productKey: "acme.site.pro", status: "waiting", reason: "activation" }] });
+    expect(mocks.record).toHaveBeenCalledWith(SITE, { packageName: "@acme/site", proposals: [{ key: "pro", title: "Pro", gallery: ["shot"] }] });
+    expect((await post({ package: "@acme/site", proposals: [] })).status).toBe(200);
+    expect(mocks.record).toHaveBeenLastCalledWith(SITE, { packageName: "@acme/site", proposals: [] });
+    mocks.record.mockClear();
+    expect((await post({ package: "@acme/site", proposals: [{ key: "pro", title: "Pro" }, { key: "bad" }] })).status).toBe(400);
+    expect((await post({ package: "@acme/site", proposals: [{ key: "pro", title: "Pro" }, { key: "pro", title: "Again" }] })).status).toBe(400);
+    expect(mocks.record).not.toHaveBeenCalled();
+    expect(mocks.actor).not.toHaveBeenCalled();
   });
 
   it("answer the actor's refusal as it is, and take nothing", async () => {

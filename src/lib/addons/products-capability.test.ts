@@ -7,10 +7,10 @@ const state = vi.hoisted(() => ({
   installed: {} as Record<string, { enabled: boolean; manifest: { eventHandlers?: { event: string }[] } }>,
   list: vi.fn(async (input: Record<string, unknown>): Promise<unknown> => ({ products: [], nextCursor: null, input })),
   read: vi.fn(async (...args: unknown[]): Promise<unknown> => ({ args })),
-  register: vi.fn(async (input: Record<string, unknown>): Promise<unknown> => ({ product: { id: "p" }, outcome: "created", input })),
-  setState: vi.fn(async (input: Record<string, unknown>): Promise<unknown> => ({ id: "p", input })),
+  register: vi.fn(async (input: Record<string, unknown>): Promise<unknown> => ({ product: { id: "p", galleryMedia: [] }, outcome: "created", input })),
+  setState: vi.fn(async (input: Record<string, unknown>): Promise<unknown> => ({ id: "p", galleryMedia: [], input })),
   remove: vi.fn(async (input: Record<string, unknown>): Promise<boolean> => Boolean(input)),
-  annotate: vi.fn(async (input: Record<string, unknown>): Promise<unknown> => ({ id: "p", input })),
+  annotate: vi.fn(async (input: Record<string, unknown>): Promise<unknown> => ({ id: "p", galleryMedia: [], input })),
 }));
 vi.mock("./installed.ts", () => ({ getPhisAddonInstalledManifest: () => state.installed }));
 vi.mock("./event-trigger.ts", () => ({ schedulePhisAddonEventDelivery: (...args: unknown[]) => state.deliver(...args) }));
@@ -61,7 +61,7 @@ describe("products capability", () => {
 
   describe("an unverified hook reading the catalogue", () => {
     const hook = () => capability({ unauthenticated: true });
-    const stored = (stateName: string) => ({ id: "p", state: stateName, imageAssetId: null, imageMedia: null, iconAssetId: null, iconMedia: null, pendingTerms: { sale: "own" }, attributes: { "@a/b": { mark: 1 } } });
+    const stored = (stateName: string) => ({ id: "p", state: stateName, imageAssetId: null, imageMedia: null, iconAssetId: null, iconMedia: null, galleryMedia: [], pendingTerms: { sale: "own" }, attributes: { "@a/b": { mark: 1 } } });
 
     it("gets an active product without its pending terms, with its attributes, and nothing else", async () => {
       state.read.mockResolvedValueOnce(stored("active"));
@@ -134,6 +134,10 @@ describe("products capability", () => {
         imageMedia: { id: 12, deliveryRevision: 3, variantVersion: 2, contentType: "image/png" },
         iconAssetId: 14,
         iconMedia: { id: 14, deliveryRevision: 1, variantVersion: null, contentType: "image/svg+xml" },
+        galleryMedia: [
+          { id: 21, deliveryRevision: 2, variantVersion: 1, contentType: "image/webp" },
+          { id: 20, deliveryRevision: 1, variantVersion: null, contentType: "application/pdf" },
+        ],
       });
       expect(await capability().get({ id: "@acme/licenses:pro" })).toEqual({
         id: "p",
@@ -143,16 +147,21 @@ describe("products capability", () => {
         iconAssetId: 14,
         iconPath: "/api/site/media/14/content?r=1",
         iconListPath: "/api/site/media/14/variants/10?r=1&v=0",
+        // The gallery in its order, each picture's public address and its list variant, built as the picture's.
+        gallery: [
+          { assetId: 21, path: "/api/site/media/21/content?r=2", listPath: "/api/site/media/21/variants/10?r=2&v=1" },
+          { assetId: 20, path: "/api/site/media/20/content?r=1", listPath: null },
+        ],
       });
       // A picture that is no image is delivered, and has no variant for a list.
       state.read.mockResolvedValueOnce({
-        id: "p", imageAssetId: 12, imageMedia: { id: 12, deliveryRevision: 1, variantVersion: null, contentType: "application/pdf" }, iconAssetId: null, iconMedia: null,
+        id: "p", imageAssetId: 12, imageMedia: { id: 12, deliveryRevision: 1, variantVersion: null, contentType: "application/pdf" }, iconAssetId: null, iconMedia: null, galleryMedia: [],
       });
       expect(await capability().get({ id: "@acme/licenses:pro" })).toMatchObject({
         imagePath: "/api/site/media/12/content?r=1", imageListPath: null, iconPath: null, iconListPath: null,
       });
-      state.read.mockResolvedValueOnce({ id: "p", imageAssetId: null, imageMedia: null, iconAssetId: null, iconMedia: null });
-      expect(await capability().get({ id: "@acme/licenses:pro" })).toMatchObject({ imagePath: null, iconPath: null, imageListPath: null, iconListPath: null });
+      state.read.mockResolvedValueOnce({ id: "p", imageAssetId: null, imageMedia: null, iconAssetId: null, iconMedia: null, galleryMedia: [] });
+      expect(await capability().get({ id: "@acme/licenses:pro" })).toMatchObject({ imagePath: null, iconPath: null, imageListPath: null, iconListPath: null, gallery: [] });
       state.read.mockResolvedValueOnce(null);
       expect(await capability().get({ id: "@acme/licenses:pro" })).toBeNull();
     });

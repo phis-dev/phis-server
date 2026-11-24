@@ -12,6 +12,7 @@ import {
   PhisSiteModuleProductFlag,
   type PhisModuleProductMapping,
   type PhisModuleProductOutcome,
+  type PhisModuleProductProposalRow,
   type PhisModuleProductRow,
 } from "../lib/module-products.ts";
 import { callCore, readSiteRuntimeCore, type Core } from "./module-media.mts";
@@ -63,15 +64,19 @@ export type ModuleProductSyncReport = {
 };
 
 /**
- * Posts every proposal Core has not recorded as taken. A manifest violation stops the run before any
- * request, naming every one. A waiting or refused proposal does not: the rest is taken, and the report
+ * Hands every package's proposals to Core, which keeps them for the Builder's activation (a Site Admin
+ * switching the package's Module on takes them, as that admin), and -- with `as` -- posts every proposal
+ * Core has not recorded as taken, to be taken now as that member. A package Core keeps proposals of and
+ * that proposes none any more is handed over empty, so they go. A manifest violation stops the run before
+ * any request, naming every one. A waiting or refused proposal does not: the rest is taken, and the report
  * carries them for the caller to say so.
  */
 export async function syncModuleProducts(input: {
   siteKey: string;
   siteRoot: string;
   packageNames: readonly string[];
-  as: string;
+  /** The member to take them as now; absent, they are only handed over. */
+  as?: string;
 }): Promise<ModuleProductSyncReport> {
   const packages = readModuleProductPackages(input.siteRoot, input.packageNames);
   const issues = packages.flatMap((entry) => entry.issues);
@@ -80,14 +85,36 @@ export async function syncModuleProducts(input: {
   }
   const proposing = packages.filter((entry) => entry.proposals.length > 0);
   const proposed = proposing.reduce((sum, entry) => sum + entry.proposals.length, 0);
-  if (proposed === 0) return { site: input.siteKey, proposed: 0, items: [], refused: [] };
+  // Without a proposal and without a Core to clear, there is nothing to say; a Site without `site-runtime.json` is not asked.
+  if (proposed === 0 && !existsSync(path.join(input.siteRoot, "config", "site-runtime.json"))) {
+    return { site: input.siteKey, proposed: 0, items: [], refused: [] };
+  }
 
   const core: Core = { ...readSiteRuntimeCore(input.siteRoot), siteKey: input.siteKey };
   const mapping = await callCore(core, "/api/v1/module-products", { method: "GET" }) as unknown as PhisModuleProductMapping;
+  const kept = new Set(mapping.proposals.map((row) => row.packageName));
+  const handOver = packages.filter((entry) => entry.installed && (entry.proposals.length > 0 || kept.has(entry.packageName)));
+  const handedOver = new Map<string, PhisModuleProductOutcome>();
+  for (const entry of handOver) {
+    const answer = await callCore(core, "/api/v1/module-products", {
+      method: "POST",
+      json: { package: entry.packageName, proposals: entry.proposals },
+    });
+    for (const result of ((answer as { results?: PhisModuleProductOutcome[] } | null)?.results ?? [])) {
+      handedOver.set(rowKey(result.packageName, result.key), result);
+    }
+  }
+  if (proposed === 0) return { site: input.siteKey, proposed: 0, items: [], refused: [] };
+
   const taken = new Map(mapping.rows.map((row) => [rowKey(row.packageName, row.key), row]));
   const items: PhisModuleProductOutcome[] = [];
   for (const entry of proposing) {
     for (const proposal of entry.proposals) {
+      if (input.as === undefined) {
+        const result = handedOver.get(rowKey(entry.packageName, proposal.key));
+        if (result) items.push(result);
+        continue;
+      }
       const row = taken.get(rowKey(entry.packageName, proposal.key));
       if (row) {
         items.push({ packageName: entry.packageName, key: proposal.key, productKey: row.productKey, status: "taken" });
@@ -117,7 +144,19 @@ export type ModuleProductListRow = {
    * taken yet; `no longer proposed` is a row whose proposal the package dropped, which changes nothing.
    */
   state: "created" | "found" | "waiting" | "no longer proposed";
+  /**
+   * Why a `waiting` one waits, where what Core keeps was asked: not handed to Core yet, waiting for a Site
+   * Admin to activate the package in the Builder, or what the last attempt there answered.
+   */
+  why?: string;
 };
+
+/** Why a proposal not taken waits, from what Core keeps of it. */
+function waitingWhy(packageName: string, stored: PhisModuleProductProposalRow | undefined) {
+  if (!stored) return "not handed to Core yet: run phis update or phis module products sync";
+  if (stored.waitingReason === null) return `taken when a Site Admin activates ${packageName} in the Builder, or with phis module products sync --as`;
+  return `${stored.waitingReason}${stored.waitingDetail ? `: ${stored.waitingDetail}` : ""}`;
+}
 
 /**
  * Every proposal and every recorded row, with what each came to. Read from the rows alone, so it is the
@@ -126,8 +165,11 @@ export type ModuleProductListRow = {
 export function describeModuleProductStates(
   packages: readonly ModuleProductPackage[],
   rows: readonly PhisModuleProductRow[],
+  /** What Core keeps of the proposals; given, a waiting row says why it waits. */
+  stored?: readonly PhisModuleProductProposalRow[],
 ): ModuleProductListRow[] {
   const byKey = new Map(rows.map((row) => [rowKey(row.packageName, row.key), row]));
+  const storedByKey = new Map((stored ?? []).map((row) => [rowKey(row.packageName, row.key), row]));
   const proposed = new Set<string>();
   const list: ModuleProductListRow[] = [];
   for (const entry of packages) {
@@ -139,6 +181,7 @@ export function describeModuleProductStates(
         key: proposal.key,
         productKey: row?.productKey ?? phisSitePackageProductKey(entry.packageName, proposal.key) ?? "",
         state: !row ? "waiting" : (row.flags & PhisSiteModuleProductFlag.Found) !== 0 ? "found" : "created",
+        ...(!row && stored ? { why: waitingWhy(entry.packageName, storedByKey.get(rowKey(entry.packageName, proposal.key))) } : {}),
       });
     }
   }
@@ -158,5 +201,5 @@ export async function listModuleProducts(input: {
   const packages = readModuleProductPackages(input.siteRoot, input.packageNames);
   const core: Core = { ...readSiteRuntimeCore(input.siteRoot), siteKey: input.siteKey };
   const mapping = await callCore(core, "/api/v1/module-products", { method: "GET" }) as unknown as PhisModuleProductMapping;
-  return { rows: describeModuleProductStates(packages, mapping.rows), issues: packages.flatMap((entry) => entry.issues) };
+  return { rows: describeModuleProductStates(packages, mapping.rows, mapping.proposals), issues: packages.flatMap((entry) => entry.issues) };
 }
