@@ -623,6 +623,10 @@ An Add-on handler receives one argument, `PhisAddonRequestContext` from `@phis/c
 - `method`, `url`, `headers`, the raw `body` bytes, the matched `path`, and its `pathParams`
 - `site`: `{ id, key, publicBaseUrl, timeZone }` for a Site-scoped route, otherwise `null`
 - `actor`: a Site user, an operator, an internal caller, or `null` on a hook
+- `locale`: the language the request is read in, as Core resolves it for its own reads -- the `x-locale` a
+  Site sends for the page it draws, else `Accept-Language`, else `en` -- a locale key; `null` where no reader
+  stands behind the request (an Add-on that runs a route for a command, which writes and reads the texts as
+  written). What a handler hands `products:v1` and `translations:v1` to answer a reader in their language
 - `capabilities`: the Core capabilities the manifest declared, bound to this Site and actor (section 13)
 - `signal`: an `AbortSignal` that fires when the caller aborts or the declared `timeoutMs` elapses; a
   timed-out request answers 504, and the handler is not cancelled
@@ -1145,6 +1149,7 @@ dispatch, by the job runner, and when its service factory is resolved.
 | `@phis/server/media:v1` | yes -- [`media:v1`](#mediav1) | Media library Assets by id: `servable`, `path` and what a media tile draws |
 | `@phis/server/media-release:v1` | yes -- [`media-release:v1`](#media-releasev1) | giving up Media library Assets; Core deletes one nothing references |
 | `@phis/server/users:v1` | yes -- [`users:v1`](#usersv1) | a person of the Site, field by field by the acting person; the Site's address book |
+| `@phis/server/translations:v1` | yes -- [`translations:v1`](#translationsv1) | the Add-on's own words as source texts of the Site's translation store, read in a reader's language |
 
 Core descriptors are generated from the running release and reconciled into the registry. They are not
 editable Site settings and cannot be disabled per Site.
@@ -1746,8 +1751,21 @@ The design is [design/COMMERCE_COORDINATION.md](./design/COMMERCE_COORDINATION.m
   `counted`, `sale` (`own`,
   `referral` or `payout`), `referralUrl` (required, https, exactly for `referral`), `free`, `accountRequired` (can only be acquired with an account; Core does not enforce it, an entitlement entry always has a subject with an account), `parts` (the
   ids of a bundle's parts), `state`, `released`, `pendingTerms`, `attributes`, `version`, the two
-  timestamps. Title and summary are in the Site's source language. Core reads neither `type` nor
-  `attributes`.
+  timestamps. Title, summary and description are written in the Site's source language and read in it,
+  or in a reader's language with `locale` (**Words**, below). Core reads neither `type` nor `attributes`.
+- **Words.** Title, summary and description are source texts of the Site's translation store
+  (TRANSLATIONS.md, "Words Core records"): `register` records each in its transaction, under the product's
+  own context `product <n> title`, `product <n> summary`, `product <n> description` (`<n>` Core's number for
+  the product, `phis.product_texts`), so Editor > Translations lists them as soon as a supplier wrote them --
+  through the capability, a manifest sync, `@phis/products`' Forms and commands, or a Site package's
+  proposal, which all end in `register`. A changed text is a new message and the old one goes with its
+  translations; a removed product takes its messages along. `list({ locale })` and `get({ id, locale })`
+  answer the three in that language: a translation held (a person's, an import's) wins; a title or a summary
+  nobody translated is asked of the configured provider once for the whole read -- told `product title` or
+  `product summary`, never the product -- and kept; a description nobody translated stays the source,
+  because a Markdown document is never handed to a provider whole. Without `locale`, or with the Site's
+  source language, they are the words as written: what a supplier reads to write its product back and a
+  seller copies into an order. The operator's directory reads them as written.
 - **States.** `draft` and `active` and `withdrawn` are the supplier's to set; `locked` is the operator's
   alone (`phis product lock|unlock`, or `POST /api/site/products/{id}/lock|unlock`). Only `active` can be
   acquired. A withdrawn product is held as it was; a locked one is held by nobody -- no entry for it counts
@@ -1770,7 +1788,7 @@ The design is [design/COMMERCE_COORDINATION.md](./design/COMMERCE_COORDINATION.m
 The capability: `list`, `get`, `register`, `setState`, `remove`, `annotate`.
 
 **Reads are open** to every Add-on that requires the capability. `list({ ids?, supplier?, publisher?, type?,
-states?, released?, cursor?, limit? })` answers `active` products only unless `states` is given; `ids` asks for
+states?, released?, cursor?, limit?, locale? })` answers `active` products only unless `states` is given; `ids` asks for
 exactly those products (at most 200, more is refused; unknown ids are missing from the answer) in every state
 unless `states` says otherwise; `limit` is
 at most 200 and 50 by default; the `cursor` is opaque and is passed back. `released: false` is the
@@ -2078,6 +2096,39 @@ granted again.
 `phone` on every Site the person is a member of when their names, primary e-mail address or numbers
 change, and with `address` on the Site when their current address there is replaced or removed. See
 [Events](#events).
+
+### `translations:v1`
+
+An Add-on's own words as source texts of the Site's translation store: what an administrator writes into an
+Add-on's tables and a visitor reads -- a listing's hint ("20 % off"), a category's name -- translated where a
+Page's words are, by the same people, the same files and the same provider. `record({ context, texts })` and
+`translate({ context, locale, texts })` (`PhisTranslationsCapabilityV1`).
+
+- **Whose words.** The Site's, in the Site's source language, so the Site store (`tr_site_msg`). Core keeps
+  them under `<addonId>: <context>`: `context` is the Add-on's own natural-language word for what the texts
+  are (`listing hint`, at most `PHIS_ADDON_TRANSLATION_CONTEXT_MAX` characters, no leading `[`, never an id or
+  an address), and Core puts the Add-on's id in front -- the rule the global store applies to another
+  application's strings (TRANSLATIONS.md, "Somebody else's strings in the global store"): the stored context
+  is Core's construction, so an Add-on's texts cannot land in a register of the platform's or of another
+  Add-on, and the translator reads whose they are. The same text under the same context is one message
+  however many rows carry it.
+- **Recorded on save.** The Add-on calls `record` where it writes the texts, before the write, with what it is
+  about to save; a text recorded twice changes nothing, an empty one is skipped, and one that opens with the
+  same 50 characters as another of its context is refused (the hash covers the opening; "word it
+  differently"), so the save can say so before anything is written. Editor > Translations then lists it, and
+  `phis translations export --site` exports it. Nothing is deleted when a text changes or its row goes: the
+  message may be another row's, and `phis translations usage` finds what nobody reads. `record` is refused to
+  an unverified hook.
+- **Read in the reader's language.** `translate` answers each text at its position: the translation held, else
+  the configured provider's -- one request for the missing ones, told the stored context, the answers kept as a
+  Widget's are -- and the text as written where `locale` is null, the Site's source language or no language a
+  translation is kept in, and for a text never recorded, which `translate` never records: what a public hook
+  reads, an administrator wrote. `provisional` says an answer is the text standing in for a provider that
+  failed. A public hook may translate; the hook hands `context.locale`.
+- **The order a seller follows.** Record on save, translate where a visitor reads, never translate into the
+  stored row. The Shop's listing hint is the first user (phis-shop README, "A listing's hint").
+- **At most** `PHIS_ADDON_TRANSLATION_TEXTS_MAX` texts per call, each at most `PHIS_ADDON_TRANSLATION_TEXT_MAX`
+  characters.
 
 ### `cdn:v1`
 

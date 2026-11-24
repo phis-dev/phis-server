@@ -762,6 +762,54 @@ async function translateExternalSiteBatch(input: Required<Pick<SiteBatchTranslat
   return input.msgs.map((source) => resolved.get(source) ?? source);
 }
 
+/**
+ * Site messages whose ids the caller holds and for which `locale` has no translation yet, filled the way
+ * the request path fills a Widget's words: one provider request for all of them, the answers kept
+ * (`upsertSiteTranslations`, a fill that moves no change marker), and the source text standing in where the
+ * provider failed, recorded as a stand-in (`trackTranslationStandIns`).
+ *
+ * For words Core records itself and reads beside their rows -- a product's title and summary
+ * (`products:v1`), an Add-on's texts (`translations:v1`) -- whose message ids are at hand, so neither the
+ * message nor the held translation is looked up again. `providerContext` is what the provider is told,
+ * natural language, which may differ from the stored context: a product's context names the product, and
+ * a provider is told the field.
+ *
+ * The answer maps each id to its text in `locale`.
+ */
+export async function fillSiteMessageTranslations(input: {
+  siteId: number;
+  locale: string;
+  sourceLocale: string;
+  providerContext: string;
+  messages: ReadonlyArray<{ msgId: number; msg: string }>;
+}): Promise<Map<number, string>> {
+  const result = new Map<number, string>();
+  const messages = input.messages.filter((message) => message.msg.trim());
+  if (messages.length === 0) {
+    return result;
+  }
+  const fresh = await requestConfiguredTranslationsOrFallback({
+    locale: input.locale,
+    msgs: messages.map((message) => message.msg),
+    ctx: input.providerContext,
+    sourceLocale: input.sourceLocale,
+    format: "text",
+  });
+  const kept = messages.flatMap((message, index) => fresh.accepted[index]
+    ? [{ msgId: message.msgId, locale: input.locale, translation: fresh.translations[index] ?? message.msg }]
+    : []);
+  if (kept.length > 0) {
+    await withMessageIsolation(
+      () => upsertSiteTranslations(kept),
+      { stage: "upsertSiteTranslations", locale: input.locale, ctx: input.providerContext, siteId: input.siteId, msg: messages[0]!.msg },
+    );
+  }
+  messages.forEach((message, index) => {
+    result.set(message.msgId, fresh.translations[index] ?? message.msg);
+  });
+  return result;
+}
+
 export async function translateSiteBatchWithCache({
   siteId,
   locale,

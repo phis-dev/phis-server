@@ -11,15 +11,22 @@ const state = vi.hoisted(() => ({
   setState: vi.fn(async (input: Record<string, unknown>): Promise<unknown> => ({ id: "p", galleryMedia: [], input })),
   remove: vi.fn(async (input: Record<string, unknown>): Promise<boolean> => Boolean(input)),
   annotate: vi.fn(async (input: Record<string, unknown>): Promise<unknown> => ({ id: "p", galleryMedia: [], input })),
+  fill: vi.fn(async (input: { messages: { msgId: number; msg: string }[] }) =>
+    new Map(input.messages.map((message) => [message.msgId, `DE ${message.msg}`]))),
+  used: vi.fn(),
 }));
 vi.mock("./installed.ts", () => ({ getPhisAddonInstalledManifest: () => state.installed }));
 vi.mock("./event-trigger.ts", () => ({ schedulePhisAddonEventDelivery: (...args: unknown[]) => state.deliver(...args) }));
 vi.mock("@/lib/db", () => ({ getPool: () => ({}) }));
+vi.mock("@/lib/config", () => ({ getPhisConfigSync: () => ({ sites: { overrides: { acme: { sourceLocale: "en" } } } }) }));
+vi.mock("@/lib/translations", () => ({ fillSiteMessageTranslations: (input: never) => state.fill(input) }));
+vi.mock("@/db/translation-usage", () => ({ notePhiTranslationUse: (...args: unknown[]) => state.used(...args) }));
 vi.mock("@/lib/media-response", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/media-response")>()),
   resolvePhiMediaDeliveryUrl: (asset: { id: number; deliveryRevision: number }) => `/api/site/media/${asset.id}/content?r=${asset.deliveryRevision}`,
 }));
 vi.mock("@/db/products.mts", () => ({
+  PHIS_PRODUCT_TEXT_FIELDS: ["title", "summary", "description"],
   listProducts: (_pool: unknown, input: Record<string, unknown>) => state.list(input),
   readProduct: (_pool: unknown, ...args: unknown[]) => state.read(...args),
   registerProduct: (_pool: unknown, input: Record<string, unknown>) => state.register(input),
@@ -33,7 +40,7 @@ import { buildPhisAddonProductsCapability, listPhisProductListeners } from "./pr
 const SUPPLIER = "@acme/licenses";
 
 function capability(overrides: Partial<Parameters<typeof buildPhisAddonProductsCapability>[0]> = {}) {
-  return buildPhisAddonProductsCapability({ addonId: SUPPLIER, siteId: 7, unauthenticated: false, ...overrides });
+  return buildPhisAddonProductsCapability({ addonId: SUPPLIER, siteId: 7, siteKey: "acme", unauthenticated: false, ...overrides });
 }
 
 describe("products capability", () => {
@@ -164,6 +171,59 @@ describe("products capability", () => {
       expect(await capability().get({ id: "@acme/licenses:pro" })).toMatchObject({ imagePath: null, iconPath: null, imageListPath: null, iconListPath: null, gallery: [] });
       state.read.mockResolvedValueOnce(null);
       expect(await capability().get({ id: "@acme/licenses:pro" })).toBeNull();
+    });
+  });
+
+  describe("a read in a language", () => {
+    const translatable = (texts: Record<string, { msgId: number; translation: string | null }>) => ({
+      id: "p", state: "active", title: "Pro", summary: "Fast", description: "## Features", imageMedia: null, iconMedia: null, galleryMedia: [],
+      textMessages: texts,
+    });
+
+    it("answers what is held, asks the provider for a title or a summary that has none, and leaves the description to a person", async () => {
+      state.list.mockResolvedValueOnce({
+        products: [translatable({
+          title: { msgId: 1, translation: "Profi" },
+          summary: { msgId: 2, translation: null },
+          description: { msgId: 3, translation: null },
+        })],
+        nextCursor: null,
+      });
+      const page = await capability({ unauthenticated: true }).list({ locale: "de" });
+      expect(state.list).toHaveBeenLastCalledWith(expect.objectContaining({ locale: "de" }));
+      expect(page.products[0]).toMatchObject({ title: "Profi", summary: "DE Fast", description: "## Features" });
+      // The provider is told the field, never the product; the title was held and is not asked for again.
+      expect(state.fill).toHaveBeenCalledWith(expect.objectContaining({ providerContext: "product summary", locale: "de", sourceLocale: "en", messages: [{ msgId: 2, msg: "Fast" }] }));
+      expect(state.fill).toHaveBeenCalledWith(expect.objectContaining({ providerContext: "product title", messages: [] }));
+      expect(state.fill).not.toHaveBeenCalledWith(expect.objectContaining({ messages: [expect.objectContaining({ msgId: 3 })] }));
+      expect(state.used).toHaveBeenCalledWith("site", [1, 2, 3]);
+      // The messages are Core's own bookkeeping and never reach an Add-on.
+      expect(page.products[0]).not.toHaveProperty("textMessages");
+    });
+
+    it("answers a person's translation of the description", async () => {
+      state.read.mockResolvedValueOnce(translatable({ description: { msgId: 3, translation: "## Funktionen" } }));
+      expect(await capability().get({ id: "@acme/licenses:pro", locale: "de" })).toMatchObject({ title: "Pro", description: "## Funktionen" });
+      expect(state.read).toHaveBeenLastCalledWith(7, "@acme/licenses:pro", "de");
+    });
+
+    it("reads the words as written without a locale, in the Site's source language, and in a language none is kept in", async () => {
+      for (const locale of [undefined, null, "en", "en-US", "xx-nowhere"]) {
+        state.list.mockResolvedValueOnce({ products: [], nextCursor: null });
+        await capability().list({ locale });
+        expect(state.list, String(locale)).toHaveBeenLastCalledWith(expect.objectContaining({ locale: null }));
+      }
+      expect(state.fill).not.toHaveBeenCalled();
+      await expect(capability().list({ locale: 7 as never })).rejects.toThrow(/locale/);
+    });
+
+    it("translates nothing a public read is not answered", async () => {
+      state.read.mockResolvedValueOnce(translatable({ summary: { msgId: 2, translation: null } }));
+      state.read.mockResolvedValueOnce({ ...translatable({ summary: { msgId: 2, translation: null } }), state: "draft" });
+      expect(await capability({ unauthenticated: true }).get({ id: "@acme/licenses:pro", locale: "de" })).toMatchObject({ summary: "DE Fast" });
+      state.fill.mockClear();
+      expect(await capability({ unauthenticated: true }).get({ id: "@acme/licenses:pro", locale: "de" })).toBeNull();
+      expect(state.fill).not.toHaveBeenCalled();
     });
   });
 

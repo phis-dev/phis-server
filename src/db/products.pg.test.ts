@@ -429,6 +429,54 @@ describe.skipIf(!configured)("products", () => {
     expect((await get(id(SUPPLIER, "ico")))).toMatchObject({ imageAssetId: picture, iconAssetId: null, iconMedia: null });
   });
 
+  it("records a product's words as source texts under its own context, and answers what is held for a language", async () => {
+    const productId = id(SUPPLIER, "worded");
+    const opening = "A description that opens with the same fifty characters";
+    await register("worded", { title: "Worded", summary: "Short", description: `${opening}, first.` });
+    const { rows: [{ id: rowId }] } = await pool.query<{ id: number }>(
+      `SELECT id FROM phis.products WHERE site_id = $1 AND supplier_addon_id = $2 AND key = 'worded'`, [site.id, SUPPLIER],
+    );
+    const texts = async () => (await pool.query<{ field: string; msg_id: number; msg: string; ctx: string }>(
+      `SELECT t.field, t.msg_id, m.msg, m.ctx FROM phis.product_texts t JOIN phis.tr_site_msg m ON m.id = t.msg_id
+       WHERE t.product_id = $1 AND m.site_id = $2 ORDER BY t.field`,
+      [rowId, site.id],
+    )).rows;
+    const first = await texts();
+    expect(first.map(({ field, msg, ctx }) => ({ field, msg, ctx }))).toEqual([
+      { field: "description", msg: `${opening}, first.`, ctx: `product ${rowId} description` },
+      { field: "summary", msg: "Short", ctx: `product ${rowId} summary` },
+      { field: "title", msg: "Worded", ctx: `product ${rowId} title` },
+    ]);
+    const msgOf = (rows: typeof first, field: string) => rows.find((row) => row.field === field)!.msg_id;
+
+    // A read with a locale carries each field's message and what is held for it; one without carries none.
+    await pool.query(`INSERT INTO phis.tr_site_lang (msg_id, locale, translation) VALUES ($1, 'de', 'Bewortet')`, [msgOf(first, "title")]);
+    expect((await readProduct(pool, site.id, productId, "de"))!.textMessages).toEqual({
+      title: { msgId: msgOf(first, "title"), translation: "Bewortet" },
+      summary: { msgId: msgOf(first, "summary"), translation: null },
+      description: { msgId: msgOf(first, "description"), translation: null },
+    });
+    expect((await get(productId))!.textMessages).toEqual({});
+    expect((await listProducts(pool, { siteId: site.id, states: ["draft"], cursor: null, limit: 50, ids: [productId], locale: "de" }))
+      .products[0]!.textMessages.title).toEqual({ msgId: msgOf(first, "title"), translation: "Bewortet" });
+
+    // The same words again keep their messages; a changed text is a new message and its old one goes with its
+    // translation; an emptied one loses its message; a text changed after its fiftieth character does not meet its old wording.
+    await register("worded", { title: "Worded", summary: "Short", description: `${opening}, first.` });
+    expect(await texts()).toEqual(first);
+    await register("worded", { title: "Reworded", summary: "", description: `${opening}, second.` });
+    const second = await texts();
+    expect(second.map(({ field, msg }) => [field, msg])).toEqual([["description", `${opening}, second.`], ["title", "Reworded"]]);
+    const { rows: gone } = await pool.query(`SELECT id FROM phis.tr_site_msg WHERE id = ANY($1::int[])`, [first.map((row) => row.msg_id)]);
+    expect(gone).toEqual([]);
+    expect((await readProduct(pool, site.id, productId, "de"))!.textMessages.title).toEqual({ msgId: msgOf(second, "title"), translation: null });
+
+    // A product removed takes its words along.
+    expect(await removeProduct(pool, { siteId: site.id, supplier: SUPPLIER, key: "worded" })).toBe(true);
+    const { rows: left } = await pool.query(`SELECT id FROM phis.tr_site_msg WHERE site_id = $1 AND ctx LIKE $2`, [site.id, `product ${rowId} %`]);
+    expect(left).toEqual([]);
+  });
+
   it("keeps a gallery in its order under the picture's rules, owes product.changed for each change of it, and lets an Asset deleted leave it", async () => {
     const supplier = "@pgtest/prod-gallery";
     await activatePhiTestAddonForSite(site, supplier);

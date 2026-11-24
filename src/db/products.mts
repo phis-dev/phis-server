@@ -16,6 +16,7 @@ import { PHI_SITE_SERVER_ADDON_FLAG_REQUESTED_ENABLED, PHIS_ADDON_FLAG_GLOBALLY_
 import { PhisMediaSpaceKind } from "../lib/constants/media-space-kinds.ts";
 import { withPoolTransaction } from "../lib/db-transaction.ts";
 import { splitPhisProductId, type PhisNormalizedProductDraft } from "../lib/addons/product-draft.ts";
+import { computePhiMessageHash, ensurePhiSiteMessageId } from "./translation-message.mts";
 
 /** Pool or client alike: every read here is equally correct inside a caller's transaction and outside. */
 type DbQueryable = Pick<PoolClient, "query">;
@@ -41,7 +42,33 @@ export type PhisStoredProduct = Omit<PhisProduct, "imagePath" | "iconPath" | "im
   readonly iconMedia: PhisProductMedia | null;
   /** The gallery, first to last: each picture's parts, as `imageMedia` for the picture (`phis.product_gallery`). */
   readonly galleryMedia: readonly PhisProductMedia[];
+  /**
+   * The words' messages in the Site's translation store with what is held for the locale read, per field that
+   * has a text (`phis.product_texts`); only on a read that named a locale, empty otherwise.
+   */
+  readonly textMessages: Readonly<Partial<Record<PhisProductTextField, PhisProductTextMessage>>>;
 };
+
+/** The fields of a product that are words, each a source text of the Site's translation store. */
+export const PHIS_PRODUCT_TEXT_FIELDS = ["title", "summary", "description"] as const;
+export type PhisProductTextField = (typeof PHIS_PRODUCT_TEXT_FIELDS)[number];
+
+/** A field's message, and its translation into the locale read; null where none is held. */
+export type PhisProductTextMessage = { readonly msgId: number; readonly translation: string | null };
+
+/**
+ * The context a product's field is kept under in its Site's translation store: `product <id> <field>`.
+ *
+ * Per product rather than one phrase for every product's title, because the context is half of a message's
+ * identity and the hash covers a message's first 50 characters: two products whose summaries open alike --
+ * a Free and a Pro edition -- would be one key, and the second could not be recorded at all. Per product
+ * they never meet, and a product's old text can go when it changes without asking who else uses it. What
+ * a provider is told is the field alone (`PHIS_PRODUCT_TEXT_PROVIDER_CONTEXTS`); the number stays in the
+ * store, where Editor > Translations shows it and a translator can search for it.
+ */
+export function phisProductTextContext(productId: number, field: PhisProductTextField) {
+  return `product ${productId} ${field}`;
+}
 
 /**
  * The parts of a product's picture or icon its addresses are built from -- the delivery's
@@ -134,6 +161,7 @@ function mapProduct(
   row: ProductRow,
   attributes: Record<string, Record<string, unknown>>,
   galleryMedia: readonly PhisProductMedia[],
+  textMessages: Partial<Record<PhisProductTextField, PhisProductTextMessage>>,
 ): PhisStoredProduct {
   return {
     id: `${row.supplier_addon_id}:${row.key}` as PhisProductId,
@@ -149,6 +177,7 @@ function mapProduct(
     iconAssetId: row.icon_asset_id,
     iconMedia: productMedia(row, "icon"),
     galleryMedia,
+    textMessages,
     counted: (row.flags & FLAG.Counted) !== 0,
     sale: row.sale,
     referralUrl: row.referral_url,
@@ -202,11 +231,88 @@ async function loadGalleries(db: DbQueryable, ids: readonly number[]) {
   return byProduct;
 }
 
-async function mapProducts(db: DbQueryable, rows: readonly ProductRow[]) {
-  const ids = rows.map((row) => row.id);
-  const [attributes, galleries] = await Promise.all([loadAttributes(db, ids), loadGalleries(db, ids)]);
-  return rows.map((row) => mapProduct(row, attributes.get(row.id) ?? {}, galleries.get(row.id) ?? []));
+/**
+ * The words' messages of the products named and what is held for `locale`, one query for all of them; a
+ * field without a text has no message and is not here.
+ */
+async function loadTextMessages(db: DbQueryable, ids: readonly number[], locale: string) {
+  const byProduct = new Map<number, Partial<Record<PhisProductTextField, PhisProductTextMessage>>>();
+  if (ids.length === 0) return byProduct;
+  const { rows } = await db.query<{ product_id: number; field: PhisProductTextField; msg_id: number; translation: string | null }>(
+    `SELECT t.product_id, t.field, t.msg_id, l.translation
+     FROM phis.product_texts t
+     LEFT JOIN phis.tr_site_lang l ON l.msg_id = t.msg_id AND l.locale = $2
+     WHERE t.product_id = ANY($1::int[])`,
+    [ids, locale],
+  );
+  for (const row of rows) {
+    const entry = byProduct.get(row.product_id) ?? {};
+    entry[row.field] = { msgId: row.msg_id, translation: row.translation?.trim() ? row.translation : null };
+    byProduct.set(row.product_id, entry);
+  }
+  return byProduct;
 }
+
+/** `locale`: also the words' messages and what is held for that language (`textMessages`); null: neither. */
+async function mapProducts(db: DbQueryable, rows: readonly ProductRow[], locale: string | null = null) {
+  const ids = rows.map((row) => row.id);
+  const [attributes, galleries, texts] = await Promise.all([
+    loadAttributes(db, ids),
+    loadGalleries(db, ids),
+    locale === null ? new Map<number, Partial<Record<PhisProductTextField, PhisProductTextMessage>>>() : loadTextMessages(db, ids, locale),
+  ]);
+  return rows.map((row) => mapProduct(row, attributes.get(row.id) ?? {}, galleries.get(row.id) ?? [], texts.get(row.id) ?? {}));
+}
+
+/**
+ * Records a product's words as source texts of its Site's translation store (`phis.product_texts`), in the
+ * caller's transaction: a field whose text is unchanged keeps its message, a changed one gets a new message
+ * and its old one is deleted -- its translations with it, which were of the old words -- and a field emptied
+ * loses its message. Safe to run again; what is recorded already costs one read.
+ *
+ * Before a new message is made, one of the same context and opening that no field names any more is
+ * deleted: the hash covers the first 50 characters, so a description changed further on would otherwise meet
+ * the message of its old wording (`phis translations import --add` can leave one) and be refused.
+ */
+async function recordProductTexts(db: DbQueryable, input: {
+  siteId: number;
+  productId: number;
+  texts: Readonly<Record<PhisProductTextField, string>>;
+}) {
+  const { rows } = await db.query<{ field: PhisProductTextField; msg_id: number; msg: string }>(
+    `SELECT t.field, t.msg_id, m.msg
+     FROM phis.product_texts t JOIN phis.tr_site_msg m ON m.id = t.msg_id
+     WHERE t.product_id = $1`,
+    [input.productId],
+  );
+  const recorded = new Map(rows.map((row) => [row.field, row]));
+  const changed = PHIS_PRODUCT_TEXT_FIELDS.filter((field) => recorded.get(field)?.msg !== input.texts[field]
+    && (recorded.has(field) || input.texts[field] !== ""));
+  if (changed.length === 0) return;
+  const gone = changed.flatMap((field) => {
+    const row = recorded.get(field);
+    return row ? [row.msg_id] : [];
+  });
+  // The link rows go with their messages (ON DELETE CASCADE).
+  if (gone.length > 0) await db.query(`DELETE FROM phis.tr_site_msg WHERE id = ANY($1::int[])`, [gone]);
+  for (const field of changed) {
+    const text = input.texts[field];
+    if (text === "") continue;
+    const ctx = phisProductTextContext(input.productId, field);
+    await db.query(
+      `DELETE FROM phis.tr_site_msg WHERE site_id = $1 AND msg_hash = decode($2, 'hex') AND ctx = $3 AND msg <> $4`,
+      [input.siteId, computePhiMessageHash(text), ctx, text],
+    );
+    const msgId = await ensurePhiSiteMessageId(db, input.siteId, text, ctx);
+    await db.query(
+      `INSERT INTO phis.product_texts (product_id, field, msg_id) VALUES ($1, $2, $3)
+       ON CONFLICT (product_id, field) DO UPDATE SET msg_id = EXCLUDED.msg_id`,
+      [input.productId, field, msgId],
+    );
+  }
+}
+
+const draftTexts = (draft: PhisNormalizedProductDraft) => ({ title: draft.title, summary: draft.summary, description: draft.description });
 
 /** The gallery's Asset ids as stored, first to last, under the caller's lock on the product's row. */
 async function readGalleryIds(db: DbQueryable, productId: number) {
@@ -241,9 +347,15 @@ async function selectRow(db: DbQueryable, siteId: number, id: PhisProductId, loc
   return rows[0] ?? null;
 }
 
-export async function readProduct(db: DbQueryable, siteId: number, id: PhisProductId): Promise<PhisStoredProduct | null> {
+/** `locale`: with the words' messages and what is held for that language (`textMessages`). */
+export async function readProduct(
+  db: DbQueryable,
+  siteId: number,
+  id: PhisProductId,
+  locale: string | null = null,
+): Promise<PhisStoredProduct | null> {
   const row = await selectRow(db, siteId, id);
-  return row ? (await mapProducts(db, [row]))[0]! : null;
+  return row ? (await mapProducts(db, [row], locale))[0]! : null;
 }
 
 /**
@@ -265,6 +377,8 @@ export async function listProducts(db: DbQueryable, input: ProductListFilter & {
   states: readonly PhisProductState[];
   cursor: string | null;
   limit: number;
+  /** As `readProduct`'s. */
+  locale?: string | null;
 }): Promise<{ products: PhisStoredProduct[]; nextCursor: string | null }> {
   const afterId = decodeCursor(input.cursor);
   const { rows } = await db.query<ProductRow>(
@@ -285,7 +399,7 @@ export async function listProducts(db: DbQueryable, input: ProductListFilter & {
       input.released ?? null, afterId, input.limit + 1, input.ids ?? null],
   );
   const page = rows.slice(0, input.limit);
-  const products = await mapProducts(db, page);
+  const products = await mapProducts(db, page, input.locale ?? null);
   return { products, nextCursor: rows.length > input.limit ? encodeCursor(page[page.length - 1]!.id) : null };
 }
 
@@ -496,7 +610,9 @@ export async function registerProduct(pool: Pool, input: {
           draft.sale, draft.referralUrl, input.declared ? "active" : "draft", flags, draft.parts, draft.description],
       );
       if ((inserted.rowCount ?? 0) > 0) {
-        await writeGallery(client, { productId: (inserted.rows[0] as { id: number }).id, siteId, gallery: pickGallery([]) });
+        const productId = (inserted.rows[0] as { id: number }).id;
+        await writeGallery(client, { productId, siteId, gallery: pickGallery([]) });
+        await recordProductTexts(client, { siteId, productId, texts: draftTexts(draft) });
         await enqueueProductChanged(client, { siteId, recipients: input.listeners, productId: id });
         return { product: (await readProduct(client, siteId, id))!, outcome: "created" as const };
       }
@@ -530,6 +646,8 @@ export async function registerProduct(pool: Pool, input: {
       && row.image_asset_id === pickImage(row.image_asset_id) && row.icon_asset_id === pickIcon(row.icon_asset_id)
       && flags === row.flags && sameTerms(terms, current)
       && (pending === null ? row.pending_terms === null : row.pending_terms !== null && sameTerms(pending, row.pending_terms));
+    // Unchanged still records: a product registered before its words were source texts has none yet.
+    await recordProductTexts(client, { siteId, productId: row.id, texts: draftTexts(draft) });
     if (unchanged) return { product: (await readProduct(client, siteId, id))!, outcome: "unchanged" as const };
 
     await client.query(
@@ -603,6 +721,8 @@ export async function removeProduct(pool: Pool, input: { siteId: number; supplie
       [input.siteId, id],
     );
     if ((partOf ?? 0) > 0) return false;
+    // Its words go with it: their context is this product's, so nothing else names those messages.
+    await client.query(`DELETE FROM phis.tr_site_msg WHERE id IN (SELECT msg_id FROM phis.product_texts WHERE product_id = $1)`, [row.id]);
     await client.query(`DELETE FROM phis.products WHERE id = $1`, [row.id]);
     return true;
   });

@@ -2877,6 +2877,22 @@ CREATE TABLE IF NOT EXISTS phis.product_gallery (
 CREATE INDEX IF NOT EXISTS product_gallery_asset_idx
   ON phis.product_gallery (site_id, asset_id);
 
+-- A product's words as source texts of its Site's translation store: one row per field that has a text,
+-- naming the message (`tr_site_msg`) Core keeps it under, in the context `product <id> <field>`. Written by
+-- `register` in the product's transaction, so Editor > Translations lists a product's texts as soon as its
+-- supplier wrote them, and read beside the product to answer them in a reader's language. A changed text is a
+-- new message, and the old one goes (its translations with it): the context is this product's alone, so no
+-- other row names it. Deleting the message takes the row along; deleting the product leaves its messages to
+-- `removeProduct`, which deletes them first.
+CREATE TABLE IF NOT EXISTS phis.product_texts (
+  product_id INT NOT NULL REFERENCES phis.products(id) ON DELETE CASCADE,
+  field VARCHAR(16) NOT NULL,
+  msg_id INT NOT NULL REFERENCES phis.tr_site_msg(id) ON DELETE CASCADE,
+  PRIMARY KEY (product_id, field),
+  CONSTRAINT product_texts_field_check CHECK (field IN ('title', 'summary', 'description')),
+  CONSTRAINT product_texts_msg_unique UNIQUE (msg_id)
+);
+
 -- What other Add-ons attached to a product: one JSON object per product and Add-on, written whole by
 -- that Add-on and nobody else. Display and filtering data, never authority.
 CREATE TABLE IF NOT EXISTS phis.product_attributes (

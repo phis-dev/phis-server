@@ -24,6 +24,7 @@ import {
 import { guardApiV1 } from "@/lib/api-v1-guard";
 import { requireSiteAdminOnlyApiContext } from "@/lib/guards/site-admin-api";
 import { createLogger } from "@/lib/log";
+import { resolveRequestLocale } from "@/lib/locale";
 import { getOperatorSessionFromRequest } from "@/lib/operator-auth";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 import { requireSiteFromRequest } from "@/lib/site-context";
@@ -630,6 +631,8 @@ export async function dispatchPhisAddonRequest(
           }
           : null,
         actor: identity.actor,
+        // The reader's language, as Core's own reads resolve it, for what the handler answers in it.
+        locale: resolveRequestLocale(request.headers),
         // Built here, per request, so the Site and actor above are the ones closed over. A capability
         // hoisted out of the request would be a capability someone could reach with another's identity.
         capabilities: buildPhisAddonCapabilities({

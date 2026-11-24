@@ -61,6 +61,7 @@ const DELIVERABLE_CAPABILITY_ID_SET = new Set<string>([
   CORE_CAPABILITY_IDS.media,
   CORE_CAPABILITY_IDS.mediaRelease,
   CORE_CAPABILITY_IDS.users,
+  CORE_CAPABILITY_IDS.translations,
 ]);
 
 /**

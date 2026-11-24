@@ -585,6 +585,35 @@ global store without `--site`, a Site's with it; `phis translations status` says
 French and Spanish of the global store were filled this way on 14.11.2026, while the DeepL quota was
 spent.
 
+## Words Core records
+
+Most Site messages enter the store on their first read in another language: a Widget's words are sent by
+the renderer, and the request path keeps a message once a provider answered for it. Words that live in a row
+rather than in a Page are recorded where they are written instead, so a translator finds them under Editor >
+Translations before anybody reads them, and with no provider at all. Three kinds today:
+
+- **Content entries** (`site_content`): a version's title, subtitle and body, under one phrase per field
+  (`news entry title`) shared by every entry, through `site_content_version_text`.
+- **A product's words** (`products:v1`): title, summary and description, recorded by `register` in the
+  product's transaction under the product's own context -- `product <n> title`, `product <n> summary`,
+  `product <n> description`, `<n>` Core's number for the product -- through `phis.product_texts` (DB.md).
+  Per product and not one phrase, because the context is half of the identity and the hash covers the first
+  50 characters: a Free and a Pro edition whose summaries open alike would be one key, and the second could
+  not be recorded. Per product they never meet, and a changed text can take its old message along -- no other
+  row names it. The number is identity and no hint, so a provider asked for a missing title or summary is
+  told `product title` or `product summary`, one request per field for every product of a read, and the
+  answer is kept on the product's message. A description is Markdown and never handed to a provider whole;
+  it reads translated where a person translated it under Editor > Translations (or imported it), and as its
+  source otherwise.
+- **An Add-on's words** (`translations:v1`, SERVER_ADDONS.md): what an Add-on keeps in its tables and a visitor
+  reads, recorded by the Add-on on save under `<addonId>: <context>` (`@phis/shop: listing hint`), the
+  context built by Core as for another application's strings in the global store. One message per text, so a
+  hint twenty listings carry is translated once. Read with the Add-on's `translate`, which fills what is
+  missing as a Widget's words are filled and never records a text itself.
+
+A reader's language reaches them as Core's own reads take it: the request's `x-locale`, which a Site sends
+for the page it draws, else `Accept-Language` (`PhisAddonRequestContext.locale` for an Add-on's handler).
+
 ## Content revisions and deletion
 
 Site content keeps stable content identity but immutable version text links:

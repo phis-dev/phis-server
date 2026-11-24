@@ -408,6 +408,38 @@ export async function ensureSiteMessageIds(
   return result;
 }
 
+/**
+ * The ids of Site messages the store already holds under `ctx`, by message; one statement, and nothing
+ * created. A message the store does not hold, or holds a different text under the same hash, is absent.
+ *
+ * For a caller that may answer recorded texts and must not record new ones (`translations:v1`'s
+ * `translate`): what the request path would create, it leaves to the write that records them.
+ */
+export async function findSiteMessageIds(
+  siteId: number,
+  msgs: readonly string[],
+  ctx: string,
+): Promise<Map<string, number>> {
+  const entries = Array.from(new Set(msgs)).map((msg) => ({ msg, hash: computePhiMessageHash(msg) }));
+  const result = new Map<string, number>();
+  if (entries.length === 0) {
+    return result;
+  }
+  const { rows } = await getPool().query<{ id: number; msg: string }>(
+    `SELECT id, msg
+     FROM phis.tr_site_msg
+     WHERE site_id = $1
+       AND ctx = $2
+       AND msg_hash = ANY(ARRAY(SELECT decode(hash, 'hex') FROM unnest($3::text[]) AS hash))`,
+    [siteId, ctx, entries.map((entry) => entry.hash)],
+  );
+  const wanted = new Set(entries.map((entry) => entry.msg));
+  for (const row of rows) {
+    if (wanted.has(row.msg)) result.set(row.msg, row.id);
+  }
+  return result;
+}
+
 export async function ensureSiteExternalTranslationUnit(input: {
   siteId: number;
   sourceLocale: string;

@@ -1724,7 +1724,7 @@ Contract:
 - `icon_asset_id` is the product's icon -- a small picture (a logo, an app icon) shown beside its title on its page -- under exactly the rules of `image_asset_id`: the same `register` check, the same delete guard (a product wearing the Asset as either is named), the same `SET NULL` when the Asset goes, and a manifest sync never writes it either.
 - Every read of a product -- `products:v1`, the operator's directory (`listProductDirectory`, `GET /api/site/products`) and the answers of the writes -- joins both Assets in the statement that reads the product (`PRODUCT_COLUMNS`, `PRODUCT_FROM`), so `imagePath`, `iconPath` and the list paths `imageListPath` and `iconListPath` (the `icon` variant of the picture and of the icon) are built without a read per row; the galleries of every product read come in one further statement for all of them (`loadGalleries`).
 - `description` is the long text, Markdown, in the Site's source language like `title` and `summary`; `''` for none. `register` states it whole (absent is `''`), a manifest-declared product's included, and a change of it raises the version and owes `product.changed`.
-- The gallery is `phis.product_gallery`, below.
+- The gallery is `phis.product_gallery`, below; the words' messages are `phis.product_texts`.
 - The operator's release may name the `version` it read (`releaseProduct`'s `expectedVersion`); a row that has moved on is refused under the row lock the release takes anyway.
 
 ### `phis.product_gallery`
@@ -1743,6 +1743,43 @@ Contract (`products:v1` `gallery`, SERVER_ADDONS.md):
 - A product's further pictures, first to last by `position`. One row per picture rather than an `INT[]` on `products`, so that each Asset is held by a foreign key exactly as `image_asset_id` and `icon_asset_id` are: the Media delete guard names a product that shows the Asset in its gallery (`listProductIdsWithImage`, scope `product`), `media-release:v1` keeps such an Asset, and an Asset deleted anyway takes its row along -- the gallery closes up around it, as the picture's column goes to NULL.
 - Written only by `registerProduct`, whole, in the product's transaction under its row lock: compared with the draft in its order, and on any difference deleted and inserted again from position 0. Each Asset is checked as the picture is (ready, delivered publicly, in the Site's Space or the supplier's own Add-on Space), none twice, at most 20. A manifest sync never writes it. A change raises the product's version and owes `product.changed`, so a seller that copied the pictures' addresses elsewhere hears of it.
 - Added before v1 in place, with `products.description`: no schema version is raised. An existing database receives them by hand, as the serving role: `ALTER TABLE phis.products ADD COLUMN IF NOT EXISTS description TEXT NOT NULL DEFAULT '';`, `ALTER TABLE phis.products ADD CONSTRAINT products_description_check CHECK (char_length(description) <= 20000);`, and the `CREATE TABLE IF NOT EXISTS phis.product_gallery (...)` and `CREATE INDEX IF NOT EXISTS product_gallery_asset_idx ...` statements of `scripts/sql/001_create_phis.pgsql` (added 2026-11-24; the development database `phi_server_dev` received them so).
+
+### `phis.product_texts`
+
+- `product_id INT NOT NULL REFERENCES phis.products(id) ON DELETE CASCADE`
+- `field VARCHAR(16) NOT NULL`
+- `msg_id INT NOT NULL REFERENCES phis.tr_site_msg(id) ON DELETE CASCADE`
+- `PRIMARY KEY (product_id, field)`, `UNIQUE (msg_id)` (`product_texts_msg_unique`)
+- `CHECK (field IN ('title', 'summary', 'description'))` (`product_texts_field_check`)
+
+Contract (`products:v1` "Words", SERVER_ADDONS.md; TRANSLATIONS.md, "Words Core records"):
+- A product's title, summary and description as source texts of its Site's translation store: one row per field that has a text, naming the `tr_site_msg` row it is kept under, in the context `product <products.id> <field>` (`phisProductTextContext`).
+- Written only by `registerProduct`, in the product's transaction, on every register -- an unchanged one included, so a product registered before this table records its words the next time its supplier writes it. A field whose text is unchanged keeps its message; a changed one gets a new message and the old message is deleted, its translations with it (they were of the old words), which takes this row along by the cascade; an emptied field loses its row and message. Before a new message is made, one of the same context and opening (hash) that no row names is deleted, so a description changed after its fiftieth character cannot meet its old wording.
+- `removeProduct` deletes the product's messages before the product: the context is the product's alone, so no other row names them. A deleted message takes its row along.
+- Read beside the product with a locale (`loadTextMessages`, one statement for every product read): the message id and what `tr_site_lang` holds for that locale, which `products:v1` answers, and the provider fills for title and summary.
+- Added before v1 in place: no schema version is raised. An existing database receives it by hand, as the serving role: the `CREATE TABLE IF NOT EXISTS phis.product_texts (...)` statement of `scripts/sql/001_create_phis.pgsql`, then the words of every existing product are recorded by its supplier's next `register`, or at once by the hand sweep below (added 2026-11-24; the development database `phi_server_dev` received both so):
+
+```sql
+BEGIN;
+WITH words AS (
+  SELECT p.id AS product_id, p.site_id, w.field, w.text, 'product ' || p.id || ' ' || w.field AS ctx
+  FROM phis.products p
+  CROSS JOIN LATERAL (VALUES ('title', p.title), ('summary', p.summary), ('description', p.description)) AS w(field, text)
+  WHERE w.text <> '' AND NOT EXISTS (SELECT 1 FROM phis.product_texts t WHERE t.product_id = p.id AND t.field = w.field)
+), messages AS (
+  -- left(.., 50) counts characters where the Server counts UTF-16 units; the two differ only for a text
+  -- whose first 50 characters hold one outside the Basic Multilingual Plane (an emoji), which its next
+  -- register records again correctly.
+  INSERT INTO phis.tr_site_msg (site_id, msg, msg_hash, ctx)
+  SELECT site_id, text, sha256(convert_to(left(text, 50), 'UTF8')), ctx FROM words
+  ON CONFLICT (site_id, msg_hash, ctx) DO NOTHING
+  RETURNING id, site_id, ctx
+)
+INSERT INTO phis.product_texts (product_id, field, msg_id)
+SELECT w.product_id, w.field, m.id FROM words w JOIN messages m ON m.site_id = w.site_id AND m.ctx = w.ctx;
+SELECT count(*) AS recorded FROM phis.product_texts;
+COMMIT;
+```
 
 ### `phis.product_attributes`
 

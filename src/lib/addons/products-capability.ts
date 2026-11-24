@@ -15,9 +15,25 @@ import { getPhisAddonInstalledManifest } from "./installed.ts";
 import { isPhisProductId, isPhisProductKey, normalizePhisProductDraft } from "./product-draft.ts";
 import { PHIS_PRODUCT_ATTRIBUTES_MAX_BYTES } from "@/lib/constants/products";
 import { getPool } from "@/lib/db";
+import { getPhisConfigSync } from "@/lib/config";
+import { resolvePhiSiteSourceLocale } from "@/lib/config-core";
 import { PhiImageAssetVariantKey } from "@/lib/constants/media";
+import { resolvePhiLocaleBase, resolvePhiLocaleCapability } from "@/lib/locale";
 import { resolvePhiMediaDeliveryUrl, resolvePhiMediaVariantUrl } from "@/lib/media-response";
-import { annotateProduct, type PhisProductMedia, type PhisStoredProduct, listProducts, readProduct, registerProduct, removeProduct, setProductState } from "@/db/products.mts";
+import { fillSiteMessageTranslations } from "@/lib/translations";
+import { notePhiTranslationUse } from "@/db/translation-usage";
+import {
+  annotateProduct,
+  type PhisProductMedia,
+  PHIS_PRODUCT_TEXT_FIELDS,
+  type PhisProductTextField,
+  type PhisStoredProduct,
+  listProducts,
+  readProduct,
+  registerProduct,
+  removeProduct,
+  setProductState,
+} from "@/db/products.mts";
 
 /**
  * `products:v1` for one request (SERVER_ADDONS.md, products:v1).
@@ -51,7 +67,7 @@ function present(product: PhisStoredProduct, publicView?: false): PhisProduct;
 function present(product: PhisStoredProduct | null, publicView?: boolean): PhisProduct | null;
 function present(product: PhisStoredProduct | null, publicView = false): PhisProduct | null {
   if (!product) return null;
-  const { imageMedia, iconMedia, galleryMedia, ...rest } = product;
+  const { imageMedia, iconMedia, galleryMedia, textMessages: _textMessages, ...rest } = product;
   // What is not in the catalogue yet is not public: a product shown to everybody has no pending terms.
   if (publicView && product.state !== "active") return null;
   return {
@@ -77,6 +93,50 @@ export function presentPhisProduct(product: PhisStoredProduct): PhisProduct {
 
 const MOVABLE_STATES = new Set<string>(["draft", "active", "withdrawn"]);
 
+/**
+ * What a provider is told of a product's word it is asked to translate: the field, in natural language.
+ * The stored context names the product as well (`phisProductTextContext`), which is identity and no hint.
+ */
+const PROVIDER_CONTEXTS: Readonly<Record<"title" | "summary", string>> = { title: "product title", summary: "product summary" };
+
+/** The fields a provider is asked for where nobody translated them: not the description, a Markdown document. */
+const FILLED_FIELDS = ["title", "summary"] as const;
+
+/**
+ * Products as read in `locale`: each field that has a translation held answers it, a title or a summary
+ * that has none is asked of the Site's provider -- one request per field for every product of the read --
+ * and kept, and the description stays the source where nobody translated it. In place, on the products
+ * handed in; the messages read are noted as used.
+ */
+async function translateProducts(products: PhisStoredProduct[], input: { siteId: number; locale: string; sourceLocale: string }) {
+  const used: number[] = [];
+  const answers = new Map<number, string>();
+  for (const field of FILLED_FIELDS) {
+    const missing = products.flatMap((product) => {
+      const message = product.textMessages[field];
+      return message && message.translation === null ? [{ msgId: message.msgId, msg: product[field] }] : [];
+    });
+    const filled = await fillSiteMessageTranslations({
+      siteId: input.siteId, locale: input.locale, sourceLocale: input.sourceLocale,
+      providerContext: PROVIDER_CONTEXTS[field], messages: missing,
+    });
+    for (const [msgId, text] of filled) answers.set(msgId, text);
+  }
+  const translated = products.map((product) => {
+    const texts: Partial<Record<PhisProductTextField, string>> = {};
+    for (const field of PHIS_PRODUCT_TEXT_FIELDS) {
+      const message = product.textMessages[field];
+      if (!message) continue;
+      used.push(message.msgId);
+      const text = message.translation ?? answers.get(message.msgId);
+      if (text !== undefined) texts[field] = text;
+    }
+    return { ...product, ...texts };
+  });
+  notePhiTranslationUse("site", used);
+  return translated;
+}
+
 /** The enabled Add-ons that declare a handler for `product.changed`. */
 export const listPhisProductListeners = (): string[] => listProductListenersOf(getPhisAddonInstalledManifest());
 
@@ -84,6 +144,8 @@ export function buildPhisAddonProductsCapability(input: {
   /** The calling Add-on: the supplier of what it registers and the author of what it annotates. */
   addonId: string;
   siteId: number;
+  /** The Site's key, which names its source language; a read with a `locale` needs it. */
+  siteKey: string | null;
   /** True when nobody authenticated and no signature stood in for them -- an unverified hook. */
   unauthenticated?: boolean;
 }): PhisProductsCapabilityV1 {
@@ -107,6 +169,23 @@ export function buildPhisAddonProductsCapability(input: {
     if (!isPhisProductId(id)) throw new PhisAddonProductsError("A product id looks like @scope/name:key.");
     return id;
   };
+
+  /**
+   * The language a read answers its words in, or null for the words as written: absent, null, the Site's
+   * source language, or a language no translation is kept in. Anything but a string or null is refused.
+   */
+  const readLocale = (locale: unknown) => {
+    if (locale === undefined || locale === null) return null;
+    if (typeof locale !== "string") throw new PhisAddonProductsError("locale is a locale key such as de, or null for the texts as written.");
+    const capability = resolvePhiLocaleCapability(locale);
+    if (!capability) return null;
+    if (!input.siteKey) throw new Error("products:v1 was built without the Site's key; a read in a language needs its source language.");
+    const sourceLocale = resolvePhiSiteSourceLocale(getPhisConfigSync(), input.siteKey);
+    return resolvePhiLocaleBase(capability.locale) === resolvePhiLocaleBase(sourceLocale) ? null : { locale: capability.locale, sourceLocale };
+  };
+
+  const inLocale = async (products: PhisStoredProduct[], read: { locale: string; sourceLocale: string } | null) =>
+    read ? translateProducts(products, { siteId, ...read }) : products;
 
   const readKey = (key: string) => {
     if (!isPhisProductKey(key)) throw new PhisAddonProductsError("A product key matches ^[a-z][a-z0-9.-]*$ and has at most 96 characters.");
@@ -134,15 +213,22 @@ export function buildPhisAddonProductsCapability(input: {
         if (request[name] !== undefined && typeof request[name] !== "string") throw new PhisAddonProductsError(`${name} is a string.`);
       }
       if (request.released !== undefined && typeof request.released !== "boolean") throw new PhisAddonProductsError("released is a boolean.");
+      const read = readLocale(request.locale);
       const page = await listProducts(getPool(), {
-        siteId, states, limit, cursor: request.cursor ?? null, ids,
+        siteId, states, limit, cursor: request.cursor ?? null, ids, locale: read?.locale ?? null,
         supplier: request.supplier, publisher: request.publisher, type: request.type, released: publicView ? undefined : request.released,
       });
-      return { products: page.products.map((product) => present(product, publicView)!), nextCursor: page.nextCursor };
+      const products = await inLocale(page.products, read);
+      return { products: products.map((product) => present(product, publicView)!), nextCursor: page.nextCursor };
     },
 
-    async get({ id }) {
-      return present(await readProduct(getPool(), siteId, readId(id)), input.unauthenticated === true);
+    async get({ id, locale }) {
+      const publicView = input.unauthenticated === true;
+      const read = readLocale(locale);
+      const product = await readProduct(getPool(), siteId, readId(id), read?.locale ?? null);
+      // What a public read would not be answered is not translated for it either.
+      if (!product || (publicView && product.state !== "active")) return null;
+      return present((await inLocale([product], read))[0]!, publicView);
     },
 
     async register(draft: PhisProductDraft) {

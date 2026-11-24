@@ -38,6 +38,7 @@ import { buildPhisAddonMediaCapability } from "./media-capability.ts";
 import { buildPhisAddonMediaReleaseCapability } from "./media-release-capability.ts";
 import { buildPhisAddonEntitlementsCapability } from "./entitlements-capability.ts";
 import { buildPhisAddonProductsCapability } from "./products-capability.ts";
+import { buildPhisAddonTranslationsCapability } from "./translations-capability.ts";
 import { buildPhisAddonEventsCapability } from "./events-capability.ts";
 import { buildPhisAddonNotificationsCapability } from "./notifications-capability.ts";
 import { buildPhisAddonStorageCapability } from "./storage-capability.ts";
@@ -406,6 +407,16 @@ export function buildPhisAddonCapabilities(input: {
     capabilities.products = buildPhisAddonProductsCapability({
       addonId: input.manifest.addonId,
       siteId,
+      siteKey: input.siteKey ?? null,
+      unauthenticated: input.unauthenticated === true && input.systemAuthority !== true,
+    });
+  }
+  if (required.includes(PHIS_CORE_CAPABILITIES.translations) && input.siteKey) {
+    // Bound to the Site, whose store it writes, and to the Add-on, whose name every context it builds begins with.
+    capabilities.translations = buildPhisAddonTranslationsCapability({
+      addonId: input.manifest.addonId,
+      siteId,
+      siteKey: input.siteKey,
       unauthenticated: input.unauthenticated === true && input.systemAuthority !== true,
     });
   }
