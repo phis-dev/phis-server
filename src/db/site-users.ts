@@ -6,6 +6,8 @@ import type { PhisEntitlementSubject } from "@phis/contracts/entitlements";
 import { PhisSiteAddressFlags, type PhisSiteAddress, type PhisSiteAddressInput } from "@phis/contracts/users";
 
 import { getPool, withTransaction } from "@/lib/db";
+import { newEntitlementSubjectReference } from "@/db/entitlement-subject-reference.mts";
+import { userDisplayNameSql } from "@/db/user-profiles";
 import { announcePhisUserEvent, schedulePhisUserEventDelivery } from "@/lib/addons/user-events";
 import {
   PHIS_SITE_ADDRESS_CONTRACT_FLAGS,
@@ -160,9 +162,10 @@ const MARK_HANDED_OUT = `marked AS (
 
 /**
  * The current addresses of these members on the Site (neither `Superseded` nor `Removed`), by person, oldest
- * first; every one answered is marked handed out.
+ * first. Every one answered is marked handed out, unless the caller is Core showing them to a person
+ * (`handedOut: false`: the account, the customer file), where no Add-on record can come to point at them.
  */
-export async function readPhisCurrentSiteAddresses(siteId: number, userIds: readonly number[]) {
+export async function readPhisCurrentSiteAddresses(siteId: number, userIds: readonly number[], options: { handedOut?: boolean } = {}) {
   const byUser = new Map<number, PhisSiteAddress[]>();
   if (userIds.length === 0) {
     return byUser;
@@ -173,7 +176,7 @@ export async function readPhisCurrentSiteAddresses(siteId: number, userIds: read
        FROM phis.site_addresses a
        ${ADDRESS_SUBJECT_JOIN}
        WHERE a.site_id = $1 AND a.user_id = ANY($2::int[]) AND (a.flags & ${PHIS_SITE_ADDRESS_RETIRED_FLAGS}) = 0
-     ), ${MARK_HANDED_OUT}
+     )${options.handedOut === false ? "" : `, ${MARK_HANDED_OUT}`}
      SELECT * FROM picked ORDER BY user_id, id`,
     [siteId, [...new Set(userIds)]],
   );
@@ -239,8 +242,11 @@ export async function createPhisSiteAddress(input: {
   address: PhisSiteAddressInput;
   flags: number;
   replaces: number | null;
+  /** True where the answer goes to an Add-on (`createAddress`); false for the person's own account route. */
+  handedOut: boolean;
 }): Promise<PhisSiteAddress> {
   const { siteId, userId, address } = input;
+  const answeredFlags = input.flags | (input.handedOut ? PHIS_SITE_ADDRESS_FLAG_HANDED_OUT : 0);
   const params = [
     siteId,
     userId,
@@ -264,13 +270,20 @@ export async function createPhisSiteAddress(input: {
          SELECT a.id, a.user_id, NULL::text AS subject, a.flags, a.company_name, a.name, a.line1, a.line2,
                 a.postal_code, a.city, a.region, a.country, a.replaces_id, a.created_at
          FROM written a`,
-        [...params, input.flags | PHIS_SITE_ADDRESS_FLAG_HANDED_OUT],
+        [...params, answeredFlags],
       );
       return { row: rows[0]!, moved: false };
     }
 
     await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
       [JSON.stringify(["site-address", siteId, userId])]);
+    // The person's subject on the Site, which every answer about the address names.
+    await client.query(
+      `INSERT INTO phis.entitlement_subjects (site_id, user_id, reference)
+       VALUES ($1, $2, $3)
+       ON CONFLICT (site_id, user_id) DO NOTHING`,
+      [siteId, userId, newEntitlementSubjectReference()],
+    );
     if (input.replaces != null) {
       const { rows } = await client.query(
         `SELECT 1 FROM phis.site_addresses
@@ -314,7 +327,7 @@ export async function createPhisSiteAddress(input: {
            UPDATE phis.site_addresses SET flags = flags | $2::int WHERE id = $1 RETURNING *
          )
          SELECT ${ADDRESS_COLUMNS} FROM written a ${ADDRESS_SUBJECT_JOIN}`,
-        [keep, input.flags | PHIS_SITE_ADDRESS_FLAG_HANDED_OUT],
+        [keep, answeredFlags],
       )
       : await client.query<AddressRow>(
         `WITH written AS (
@@ -323,7 +336,7 @@ export async function createPhisSiteAddress(input: {
            RETURNING *
          )
          SELECT ${ADDRESS_COLUMNS} FROM written a ${ADDRESS_SUBJECT_JOIN}`,
-        [...params, input.flags | PHIS_SITE_ADDRESS_FLAG_HANDED_OUT, replaced],
+        [...params, answeredFlags, replaced],
       );
     const sites = replaced != null
       ? await announcePhisUserEvent(client, { userId, siteIds: [siteId], event: "user.changed", fields: ["address"] })
@@ -338,18 +351,19 @@ export async function createPhisSiteAddress(input: {
 }
 
 /**
- * A person removes one of their current addresses on the Site, for the account route (not yet offered).
+ * A person removes one of their current addresses on the Site (`DELETE /api/site/account/addresses/{id}`).
  *
  * The address and the versions it followed go: every one never handed to an Add-on is deleted, and every
  * one that was is kept as `Removed` without its defaults, for the records that may point at it (a newer
  * version's `replaces_id` to a deleted one is cleared by its foreign key). Owes the person's
- * `user.changed` with `address` on this Site. Answers false for an id that is no current address of theirs.
+ * `user.changed` with `address` on this Site. Answers what became of the address named -- `deleted`, or
+ * `removed` where it was handed out -- and null for an id that is no current address of theirs.
  */
-export async function removePhisSiteAddress(input: { siteId: number; userId: number; addressId: number }): Promise<boolean> {
-  const sites = await withTransaction(async (client) => {
+export async function removePhisSiteAddress(input: { siteId: number; userId: number; addressId: number }): Promise<"deleted" | "removed" | null> {
+  const result = await withTransaction(async (client) => {
     await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
       [JSON.stringify(["site-address", input.siteId, input.userId])]);
-    const { rows } = await client.query<{ id: number }>(
+    const { rows } = await client.query<{ id: number; flags: number }>(
       `WITH RECURSIVE chain(id) AS (
          SELECT a.id FROM phis.site_addresses a
          WHERE a.id = $3 AND a.site_id = $1 AND a.user_id = $2 AND (a.flags & ${PHIS_SITE_ADDRESS_RETIRED_FLAGS}) = 0
@@ -359,13 +373,15 @@ export async function removePhisSiteAddress(input: { siteId: number; userId: num
          JOIN phis.site_addresses newer ON newer.id = chain.id
          JOIN phis.site_addresses older ON older.id = newer.replaces_id AND older.site_id = $1 AND older.user_id = $2
        )
-       SELECT id FROM chain`,
+       SELECT chain.id, a.flags FROM chain JOIN phis.site_addresses a ON a.id = chain.id`,
       [input.siteId, input.userId, input.addressId],
     );
     if (rows.length === 0) {
       return null;
     }
     const ids = rows.map((row) => row.id);
+    const named = rows.find((row) => row.id === input.addressId)!;
+    const outcome = (named.flags & PHIS_SITE_ADDRESS_FLAG_HANDED_OUT) !== 0 ? "removed" as const : "deleted" as const;
     await client.query(
       `UPDATE phis.site_addresses
        SET flags = (flags | ${PhisSiteAddressFlags.Removed}) & ~${PHIS_SITE_ADDRESS_DEFAULT_FLAGS}
@@ -377,13 +393,14 @@ export async function removePhisSiteAddress(input: { siteId: number; userId: num
        WHERE id = ANY($1::int[]) AND (flags & ${PHIS_SITE_ADDRESS_FLAG_HANDED_OUT}) = 0`,
       [ids],
     );
-    return announcePhisUserEvent(client, { userId: input.userId, siteIds: [input.siteId], event: "user.changed", fields: ["address"] });
+    const sites = await announcePhisUserEvent(client, { userId: input.userId, siteIds: [input.siteId], event: "user.changed", fields: ["address"] });
+    return { outcome, sites };
   });
-  if (sites == null) {
-    return false;
+  if (result == null) {
+    return null;
   }
-  schedulePhisUserEventDelivery(sites);
-  return true;
+  schedulePhisUserEventDelivery(result.sites);
+  return result.outcome;
 }
 
 /**
@@ -426,4 +443,90 @@ export async function recordPhisUsersAccess(db: DbQueryable | null, entry: {
       entry.fields,
     ],
   );
+}
+
+/** The Site's retention of the access log, in days (`sites.users_access_log_days`); null for no such Site. */
+export async function readPhisUsersAccessLogDays(siteId: number): Promise<number | null> {
+  const { rows } = await getPool().query<{ days: number }>(
+    `SELECT users_access_log_days AS days FROM phis.sites WHERE id = $1`,
+    [siteId],
+  );
+  return rows[0]?.days ?? null;
+}
+
+/** Sets the Site's retention of the access log; the caller holds it to 1..3650 days. */
+export async function setPhisUsersAccessLogDays(siteId: number, days: number): Promise<void> {
+  await getPool().query(
+    `UPDATE phis.sites SET users_access_log_days = $2, updated_at = NOW() WHERE id = $1`,
+    [siteId, days],
+  );
+}
+
+export type PhisUsersAccessLogEntry = {
+  at: string;
+  addonId: string;
+  actor: { userId: number; displayName: string } | null;
+  road: number;
+  operation: number;
+  subjects: string[];
+  addressIds: number[];
+  fields: number;
+};
+
+/**
+ * A page of the Site's access log, newest first, narrowed to one subject, one Add-on, or both. The actor
+ * is named as the person is shown (`userDisplayNameSql`, `#<id>` without a name); an account that is gone
+ * since is still named by its id.
+ */
+export async function listPhisUsersAccessLog(input: {
+  siteId: number;
+  subject: string | null;
+  addonId: string | null;
+  page: number;
+  pageSize: number;
+}): Promise<PhisUsersAccessLogEntry[]> {
+  const { rows } = await getPool().query<{
+    created_at: Date;
+    addon_id: string;
+    actor_user_id: number | null;
+    actor_name: string | null;
+    road: number;
+    operation: number;
+    subjects: string[];
+    address_ids: number[];
+    fields: number;
+  }>(
+    `SELECT l.created_at, l.addon_id, l.actor_user_id, ${userDisplayNameSql("p")} AS actor_name,
+            l.road, l.operation, l.subjects, l.address_ids, l.fields
+     FROM phis.users_access_log l
+     LEFT JOIN phis.user_profiles p ON p.user_id = l.actor_user_id
+     WHERE l.site_id = $1
+       AND ($2::text IS NULL OR $2::text = ANY(l.subjects))
+       AND ($3::text IS NULL OR l.addon_id = $3::text)
+     ORDER BY l.id DESC
+     LIMIT $4 OFFSET $5`,
+    [input.siteId, input.subject, input.addonId, input.pageSize, (input.page - 1) * input.pageSize],
+  );
+  return rows.map((row) => ({
+    at: row.created_at.toISOString(),
+    addonId: row.addon_id,
+    actor: row.actor_user_id == null ? null : { userId: row.actor_user_id, displayName: row.actor_name ?? `#${row.actor_user_id}` },
+    road: row.road,
+    operation: row.operation,
+    subjects: row.subjects,
+    addressIds: row.address_ids,
+    fields: row.fields,
+  }));
+}
+
+/** A member of the Site by user id, with the name they are shown under; null for anybody who is no member. */
+export async function readPhisSiteMember(siteId: number, userId: number): Promise<{ userId: number; displayName: string } | null> {
+  const { rows } = await getPool().query<{ display_name: string | null }>(
+    `SELECT ${userDisplayNameSql("p")} AS display_name
+     FROM phis.user_site_memberships m
+     LEFT JOIN phis.user_profiles p ON p.user_id = m.user_id
+     WHERE m.site_id = $1 AND m.user_id = $2`,
+    [siteId, userId],
+  );
+  return rows[0] ? { userId, displayName: rows[0].display_name ?? `#${userId}` } : null;
 }

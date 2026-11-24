@@ -2963,8 +2963,9 @@ CREATE TABLE IF NOT EXISTS phis.addon_users_grants (
 -- Every users:v1 answer that carried a person's data, kept for the Site's `users_access_log_days`: who
 -- asked (`actor_user_id`, NULL without an acting person), through which Add-on, by which road
 -- (1 = staff, 2 = self, 3 = background, 4 = checkout: a guest's address written without either), with
--- which call (`operation`: 1 = describe, 2 = addresses, 3 = createAddress), about which subjects and
--- addresses, and which fields (bits as in `addon_users_grants`). No foreign keys besides the Site: the
+-- which call (`operation`: 1 = describe, 2 = addresses, 3 = createAddress, 4 = threads:v1 fileOf in the
+-- background, 5 = Core's customer file, GET /api/site/members/{userId}/file, whose `addon_id` is
+-- '@phis/server'), about which subjects and addresses, and which fields (bits as in `addon_users_grants`). No foreign keys besides the Site: the
 -- log outlives the Add-on, the account and the address it names.
 CREATE TABLE IF NOT EXISTS phis.users_access_log (
   id BIGSERIAL PRIMARY KEY,
@@ -2978,7 +2979,7 @@ CREATE TABLE IF NOT EXISTS phis.users_access_log (
   fields SMALLINT NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   CONSTRAINT users_access_log_road_check CHECK (road BETWEEN 1 AND 4),
-  CONSTRAINT users_access_log_operation_check CHECK (operation BETWEEN 1 AND 3),
+  CONSTRAINT users_access_log_operation_check CHECK (operation BETWEEN 1 AND 5),
   CONSTRAINT users_access_log_fields_check CHECK (fields BETWEEN 1 AND 15)
 );
 

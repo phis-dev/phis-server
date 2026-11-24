@@ -24,7 +24,17 @@ import {
   type PhiTestSite,
 } from "../../test/pg/harness";
 import { ensureEntitlementSubject } from "./entitlements.mts";
-import { removePhisSiteAddress } from "./site-users";
+import {
+  createPhisSiteAddress,
+  listPhisUsersAccessLog,
+  readPhisCurrentSiteAddresses,
+  readPhisUsersAccessLogDays,
+  removePhisSiteAddress,
+  setPhisUsersAccessLogDays,
+} from "./site-users";
+import { addThreadMessage, getThreadDetail } from "./threads";
+import { buildPhisAddonThreadsCapability } from "@/lib/addons/threads-capability";
+import { readPhisCustomerFile } from "@/lib/site-customer-file";
 import { grantPhisAddonUsersBackground, revokePhisAddonUsersBackground } from "./users-grants.mts";
 import { setUserProfilePhones, upsertUserProfile } from "./user-profiles";
 import { updateUserAccountProfileFields } from "./user-accounts";
@@ -277,17 +287,121 @@ describe.skipIf(process.env.PHIS_PG_TEST !== "1")("users:v1", () => {
       const newer = await capability(person).createAddress({ subject: own, address: { ...HOME, city: "Bath" }, flags: 1 | 4, replaces: handed.id });
       await clear();
 
-      expect(await removePhisSiteAddress({ siteId: site.id, userId: person, addressId: unshown })).toBe(true);
+      expect(await removePhisSiteAddress({ siteId: site.id, userId: person, addressId: unshown })).toBe("deleted");
       expect(await rowOf(unshown)).toBeNull();
-      expect(await removePhisSiteAddress({ siteId: site.id, userId: person, addressId: handed.id })).toBe(false);
-      expect(await removePhisSiteAddress({ siteId: site.id, userId: ada, addressId: newer.id })).toBe(false);
-      expect(await removePhisSiteAddress({ siteId: site.id, userId: person, addressId: newer.id })).toBe(true);
+      expect(await removePhisSiteAddress({ siteId: site.id, userId: person, addressId: handed.id })).toBeNull();
+      expect(await removePhisSiteAddress({ siteId: site.id, userId: ada, addressId: newer.id })).toBeNull();
+      expect(await removePhisSiteAddress({ siteId: site.id, userId: person, addressId: newer.id })).toBe("removed");
       expect((await rowOf(newer.id))!.flags & 0xffff).toBe(PhisSiteAddressFlags.Billing | PhisSiteAddressFlags.Removed);
       expect((await rowOf(handed.id))!.flags & 0xffff).toBe(PhisSiteAddressFlags.Billing | PhisSiteAddressFlags.Superseded | PhisSiteAddressFlags.Removed);
       expect(await outbox(site)).toHaveLength(2);
       const [described] = await capability(person).describe({ subjects: [own], fields: ["address"] });
       expect(described!.addresses).toEqual([]);
     });
+  });
+
+  it("keeps what a person writes in their account off the handed-out mark, so removing it deletes it", async () => {
+    const person = await createPhiTestUser(site);
+    const written = await createPhisSiteAddress({ siteId: site.id, userId: person, address: HOME, flags: 1, replaces: null, handedOut: false });
+    const pool = await requirePhiTestDatabase();
+    // The subject is issued with the first address, so an Add-on reading it later sees whose it is.
+    expect(written.subject).toBe(await ensureEntitlementSubject(pool, site.id, person));
+    expect((await readPhisCurrentSiteAddresses(site.id, [person], { handedOut: false })).get(person)!.map((row) => row.id)).toEqual([written.id]);
+    const { rows } = await pool.query<{ flags: number }>(`SELECT flags FROM phis.site_addresses WHERE id = $1`, [written.id]);
+    expect(rows[0]!.flags & PHIS_SITE_ADDRESS_FLAG_HANDED_OUT).toBe(0);
+    expect(await removePhisSiteAddress({ siteId: site.id, userId: person, addressId: written.id })).toBe("deleted");
+  });
+
+  describe("a person's file in the background", () => {
+    const job = (backgroundFields: PhisUserField[]) => buildPhisAddonThreadsCapability({
+      addonId: READER,
+      siteId: site.id,
+      actorUserId: null,
+      readSiteAccess: async () => () => false,
+      background: true,
+      usersBackground: backgroundFields,
+    });
+
+    it("is handed out and reached for get and reply while the Site grants name, and logged on the background road", async () => {
+      const pool = await requirePhiTestDatabase();
+      const person = await createPhiTestUser(site);
+      const own = await ensureEntitlementSubject(pool, site.id, person);
+      await expect(job(["name"]).fileOf({ subject: own })).rejects.toThrow(/background grant/u);
+
+      await grantPhisAddonUsersBackground(pool, { siteId: site.id, addonId: READER, fields: 2, grantedByUserId: null });
+      await expect(job(["name", "email"]).fileOf({ subject: own })).rejects.toThrow(/background grant/u);
+      await grantPhisAddonUsersBackground(pool, { siteId: site.id, addonId: READER, fields: 1, grantedByUserId: null });
+      // Granted, and no longer asked in the manifest: nothing.
+      await expect(job(["address"]).fileOf({ subject: own })).rejects.toThrow(/background grant/u);
+      // A request nobody signed in to never stands on the background road.
+      await expect(buildPhisAddonThreadsCapability({
+        addonId: READER, siteId: site.id, actorUserId: null, readSiteAccess: async () => () => false, usersBackground: ["name"],
+      }).fileOf({ subject: own })).rejects.toThrow(/background grant/u);
+
+      const file = (await job(["name"]).fileOf({ subject: own }))!;
+      expect(file.threadId).toBeGreaterThan(0);
+      expect(await job(["name"]).fileOf({ subject: "sub_000000000000000000000000" })).toBeNull();
+      expect((await logOf(site)).map((row) => [row.actor_user_id, row.road, row.operation, row.subjects, row.fields]))
+        .toEqual([[null, PhisUsersAccessRoad.Background, 4, [own], 1]]);
+
+      const reply = { threadId: file.threadId, message: "Order 7 paid.", externalRef: "order-7-paid" };
+      expect(await job(["name"]).reply(reply)).not.toBeNull();
+      await job(["name"]).reply(reply);
+      expect((await job(["name"]).get(file.threadId))?.thread.id).toBe(file.threadId);
+      // The message is Internal, so the Add-on is never handed it back; Staff read it once.
+      const asStaff = await getThreadDetail(site.id, { kind: "user", userId: accountant }, file.threadId);
+      expect(asStaff?.messages.map((message) => message.bodyText)).toEqual(["Order 7 paid."]);
+      // Nothing but get and reply reaches it: no reader without the grant's reach, and none once it is withdrawn.
+      expect(await addThreadMessage({ siteId: site.id, threadId: file.threadId, reader: { kind: "provider", providerId: READER }, message: "x" })).toBeNull();
+      await revokePhisAddonUsersBackground(pool, { siteId: site.id, addonId: READER });
+      expect(await job(["name"]).get(file.threadId)).toBeNull();
+      expect(await job(["name"]).reply({ ...reply, externalRef: "order-8" })).toBeNull();
+    });
+  });
+
+  it("reads the access log a page at a time, newest first, by subject and Add-on, and keeps the retention per Site", async () => {
+    await capability(supporter).describe({ subjects: [subject], fields: ["name"] });
+    await capability(accountant).describe({ subjects: [subject], fields: ["address"] });
+    const all = await listPhisUsersAccessLog({ siteId: site.id, subject: null, addonId: null, page: 1, pageSize: 10 });
+    expect(all.map((entry) => [entry.actor?.userId, entry.fields])).toEqual([[accountant, 8], [supporter, 1]]);
+    expect(all[0]!.actor!.displayName).toBe(`#${accountant}`);
+    expect(await listPhisUsersAccessLog({ siteId: site.id, subject: "sub_none", addonId: null, page: 1, pageSize: 10 })).toEqual([]);
+    expect(await listPhisUsersAccessLog({ siteId: site.id, subject, addonId: DEAF, page: 1, pageSize: 10 })).toEqual([]);
+    expect(await listPhisUsersAccessLog({ siteId: site.id, subject, addonId: READER, page: 2, pageSize: 1 })).toHaveLength(1);
+    expect(await listPhisUsersAccessLog({ siteId: other.id, subject: null, addonId: null, page: 1, pageSize: 10 })).toEqual([]);
+
+    await setPhisUsersAccessLogDays(other.id, 400);
+    expect(await readPhisUsersAccessLogDays(other.id)).toBe(400);
+    expect(await readPhisUsersAccessLogDays(site.id)).not.toBe(400);
+    await setPhisUsersAccessLogDays(other.id, 90);
+  });
+
+  it("answers Staff's customer file by the staff road, opens the file, lists the shared threads and logs the read", async () => {
+    const pool = await requirePhiTestDatabase();
+    const person = await createPhiTestUser(site);
+    await upsertUserProfile({ userId: person, firstName: "Mary", lastName: "Somerville" });
+    await createPhisSiteAddress({ siteId: site.id, userId: person, address: HOME, flags: 1, replaces: null, handedOut: false });
+    const own = await ensureEntitlementSubject(pool, site.id, person);
+    const read = async (actor: number) => readPhisCustomerFile({
+      siteId: site.id, actorUserId: actor, holds: await readPhisSiteAccessHolder(site.id, actor), userId: person, page: 1, pageSize: 25,
+    });
+
+    const bySupport = (await read(supporter))!;
+    expect(bySupport.person).toEqual({
+      userId: person, displayName: "Mary Somerville",
+      name: { firstName: "Mary", lastName: "Somerville", displayName: null, companyName: null },
+      email: expect.stringContaining("@example.invalid"), phone: { phone: null, mobile: null },
+    });
+    const byAccounting = (await read(accountant))!;
+    expect(byAccounting.person.addresses).toHaveLength(1);
+    expect(byAccounting.fileThreadId).toBe(bySupport.fileThreadId);
+    expect(byAccounting.threads).toEqual([]);
+    expect(await read(author)).toBeNull();
+    expect(await readPhisCustomerFile({
+      siteId: site.id, actorUserId: accountant, holds: await readPhisSiteAccessHolder(site.id, accountant), userId: 2_000_000_000, page: 1, pageSize: 25,
+    })).toBeNull();
+    expect((await logOf(site)).map((row) => [row.actor_user_id, row.road, row.operation, row.subjects, row.fields]))
+      .toEqual([[supporter, PhisUsersAccessRoad.Staff, 5, [own], 7], [accountant, PhisUsersAccessRoad.Staff, 5, [own], 15]]);
   });
 
   describe("the user events", () => {

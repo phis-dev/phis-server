@@ -34,6 +34,7 @@ import { schedulePhisAddonEventDelivery } from "@/lib/addons/event-trigger";
 
 import { PHI_CORE_ROLE_PROVIDER_ID } from "@/lib/authorization";
 import { PHIS_SITE_ACCESS } from "@/lib/addons/contract";
+import { PHIS_USER_FIELD_BITS } from "@/lib/constants/users";
 import { readPhisSiteAccessHolder } from "@/lib/addons/site-access";
 import { resolvePhiLocaleCapability } from "@/lib/locale";
 import { PhiGroupMembershipFlags, PhiSiteGroupFlags } from "@/lib/constants/site-groups";
@@ -67,7 +68,12 @@ export class PhisThreadError extends Error {}
  */
 export type ThreadReader =
   | { kind: "user"; userId: number }
-  | { kind: "provider"; providerId: string }
+  /**
+   * `filesGranted`: the Add-on, with nobody acting, asks `name` in its manifest's `users.background`, so a
+   * person's file is in its reach while the Site's grant (`addon_users_grants`) includes `name`. Set by
+   * `threads:v1` for `get` and `reply` alone.
+   */
+  | { kind: "provider"; providerId: string; filesGranted?: boolean }
   | { kind: "system" };
 
 export type ThreadListOptions = {
@@ -76,6 +82,11 @@ export type ThreadListOptions = {
   unreadOnly?: boolean;
   kind?: PhisThreadKindValue | null;
   status?: PhisThreadStatusValue | null;
+  /**
+   * Only the threads this other person takes part in too, directly or through a group, by the same rule the
+   * reader is held to (Staff's customer file, `GET /api/site/members/{userId}/file`).
+   */
+  participantUserId?: number | null;
 };
 
 export type CreateThreadInput = {
@@ -295,14 +306,27 @@ function readerPredicate(reader: ThreadReader, param: string) {
   if (reader.kind === "system") {
     return "TRUE";
   }
+  if (reader.kind === "user") {
+    return USER_MAY_REACH_SQL(param);
+  }
   /*
-   * A file is out of an actorless Add-on's reach, owned or linked alike. Without an actor `threads:v1`
-   * hands a file only to an Add-on the Site granted background access to `users:v1`, and Core has no
-   * such grant yet (`fileOf`); until it does, no link a person writes opens a file to one.
+   * A file is out of an actorless Add-on's reach, owned or linked alike: no link a person writes opens one.
+   * It is reached only by an Add-on to which the Site granted `name` in the background (`users:v1`,
+   * `threads:v1` `fileOf`), for `get` and `reply`, and only while the grant stands.
    */
-  return reader.kind === "user"
-    ? USER_MAY_REACH_SQL(param)
-    : `(t.kind <> ${PhisThreadKind.File} AND ${PROVIDER_MAY_SEE_SQL(param)})`;
+  if (reader.filesGranted) {
+    return `(CASE WHEN t.kind = ${PhisThreadKind.File}
+      THEN EXISTS (
+        SELECT 1 FROM phis.thread_files granted_file
+        JOIN phis.addon_users_grants grant_row
+          ON grant_row.site_id = granted_file.site_id AND grant_row.addon_id = ${param}
+         AND (grant_row.fields & ${PHIS_USER_FIELD_BITS.name}) <> 0
+        WHERE granted_file.thread_id = t.id
+      )
+      ELSE ${PROVIDER_MAY_SEE_SQL(param)}
+    END)`;
+  }
+  return `(t.kind <> ${PhisThreadKind.File} AND ${PROVIDER_MAY_SEE_SQL(param)})`;
 }
 
 /**
@@ -736,6 +760,10 @@ export async function listThreadsForUser(
   if (options.status != null) {
     params.push(options.status);
     conditions.push(`t.status = $${params.length}`);
+  }
+  if (options.participantUserId != null) {
+    params.push(options.participantUserId);
+    conditions.push(USER_MAY_SEE_SQL(`$${params.length}`));
   }
 
   const pageSize = Math.max(1, Math.min(200, Math.trunc(options.pageSize ?? 25) || 25));

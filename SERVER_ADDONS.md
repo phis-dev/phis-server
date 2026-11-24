@@ -1645,10 +1645,14 @@ entitlement subject; one of another Site, an unknown one and one of somebody who
 answer `null`, and nothing is opened. With an actor, `fileOf` is allowed while the actor holds the Site
 access `support` or `accounting` (asked from the request's one read of their authorization snapshot) and
 refused otherwise, and refused for the actor's own file. Without an actor the contract answers an Add-on
-to which the Site granted background access to `users:v1`. That grant exists now
-(`phis.addon_users_grants`, [`users:v1`](#usersv1)), but whether it opens a person's file -- and with which
-of its fields -- is not decided, so `fileOf` still throws without an actor, and a file is out of an actorless
-Add-on's reach altogether -- owned or linked, `get` and `reply` answer `null` (TODOS.md).
+to which the Site granted background access to `users:v1`: with nobody acting under system
+authority (a job, an event handler, a verified hook), `fileOf` answers an Add-on whose manifest asks `name`
+in `users.background` and to which the Site granted `name` (`phis.addon_users_grants`), writes the handout
+to the access log on the background road (operation `fileOf`), and throws otherwise -- a request nobody
+signed in to never stands on that road. Such an Add-on then reaches the file through `get` and `reply`
+alone, while the grant stands; every other call, `findByExternalRef` included, and every other actorless
+Add-on, owned or linked, find no file (`null`). Withdrawing the grant ends the reach at once, since the
+reader predicate asks the grant row.
 
 The file is reached through the same predicate as any thread, with one rule of its own: it has no
 participants, and a person may reach it by its id while they hold the Site access `support` or
@@ -2002,7 +2006,10 @@ person's current ones is that one, given the purposes and defaults asked besides
 default moves from the address that held it; `replaces`, one of the person's current addresses, becomes
 `Superseded`. Every address answered to an Add-on is marked handed out: that is what keeps it as `Removed`
 when the person removes it, since Core cannot see the Add-on's records; one never handed out is deleted.
-Removing is a database function for the account route that is still to come (`removePhisSiteAddress`).
+The person keeps their own through the account routes: `GET` and `POST /api/site/account/addresses`, `PUT`
+(a new version) and `DELETE` (`{ outcome: "deleted" | "removed" }`) `/api/site/account/addresses/{id}`,
+under the same rules, never marking an address handed out. Their numbers are `PATCH
+/api/v1/auth/profile/phone`, read back from `/api/v1/auth/me` (`user.profile.phone`, `.mobile`).
 
 **The access log.** Every answer that carries personal data is written to `phis.users_access_log` before it
 is handed over: who, which Add-on, which road (`checkout` for a guest's address written with neither an
@@ -2011,7 +2018,9 @@ Site's `users_access_log_days` (90 unless `phis site set --users-access-log-days
 job `users-access-log.prune` and `phis maintain` (`users-access-log`) forget older rows.
 
 **The background grant** (`phis.addon_users_grants`) is the Site's, per Add-on, and withdrawn by deleting
-it. Until the Site Admin has a page for it the operator stands in: `phis addon users --site <key>` lists per
+it. The Site Admin lists, grants and withdraws it through `/api/site/admin/users-access` (`GET`, `PUT` and
+`DELETE /{addonId}` with `{ fields }`), sets the log's retention (`PUT .../retention`, `{ days }`) and reads
+the log (`GET .../log`). The operator does the same from the shell: `phis addon users --site <key>` lists per
 Add-on requiring `users:v1` what it reads, what it asks in the background, what is granted, what of that
 counts and what awaits a grant; `--addon <id> --grant [--fields name,email]` grants what the manifest asks
 (or that part of it), `--revoke` withdraws. A manifest that asks for more keeps the old grant until it is

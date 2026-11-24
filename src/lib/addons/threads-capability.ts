@@ -4,6 +4,9 @@ import { PHIS_SITE_ACCESS, type PhisThreadsCapabilityV1 } from "./contract.ts";
 import type { PhisSiteAccessHolder } from "./role-inclusion.ts";
 import { getPool } from "@/lib/db";
 import { findEntitlementSubject } from "@/db/entitlements.mts";
+import { recordPhisUsersAccess } from "@/db/site-users";
+import { readPhisAddonUsersGrant } from "@/db/users-grants.mts";
+import { PHIS_USER_FIELD_BITS, PhisUsersAccessOperation, PhisUsersAccessRoad } from "@/lib/constants/users";
 import {
   addThreadMessage,
   addThreadParticipants,
@@ -43,6 +46,9 @@ export class PhisAddonThreadsError extends Error {}
  * **A person's file** (`fileOf`) is Staff's record of them, so it is handed out by the actor's Site access
  * (`support` or `accounting`, from the request's one read of their authorization snapshot) and reached
  * afterwards through the same predicate as any thread, which admits the same Staff and never the person.
+ * With nobody acting it is handed to an Add-on whose manifest asks `name` in `users.background` and to which
+ * the Site granted `name` (`users:v1`, `phis.addon_users_grants`), written to the access log on the
+ * background road, and reached by that Add-on through `get` and `reply` alone while the grant stands.
  */
 export function buildPhisAddonThreadsCapability(input: {
   addonId: string;
@@ -52,8 +58,14 @@ export function buildPhisAddonThreadsCapability(input: {
   readSiteAccess: () => Promise<PhisSiteAccessHolder>;
   /** True when nobody authenticated and no signature stood in for them -- an unverified hook. */
   unauthenticated?: boolean;
+  /** Nobody acting and system authority: a job, an event handler, a verified hook (`users:v1`'s background road). */
+  background?: boolean;
+  /** The manifest's `users.background`, of which `name` is what opens a person's file in the background. */
+  usersBackground?: readonly string[];
 }): PhisThreadsCapabilityV1 {
   const { addonId, siteId, actorUserId } = input;
+  const backgroundAsksName = input.background === true && actorUserId == null
+    && (input.usersBackground ?? []).includes("name");
 
   /*
    * Reads are refused here too, which `data:v1` does not do.
@@ -73,6 +85,8 @@ export function buildPhisAddonThreadsCapability(input: {
   const reader: ThreadReader = actorUserId != null
     ? { kind: "user", userId: actorUserId }
     : { kind: "provider", providerId: addonId };
+  // `get` and `reply` reach a person's file too, where the Site granted `name`; nothing else does.
+  const fileReader: ThreadReader = backgroundAsksName ? { kind: "provider", providerId: addonId, filesGranted: true } : reader;
 
   /*
    * An inbox needs somebody to be an inbox for.
@@ -103,7 +117,7 @@ export function buildPhisAddonThreadsCapability(input: {
 
     async get(threadId, options = {}) {
       requireBelievableCaller("get");
-      return getThreadDetail(siteId, reader, threadId, {
+      return getThreadDetail(siteId, fileReader, threadId, {
         messageLimit: options.messageLimit,
         beforeMessageId: options.beforeMessageId,
       });
@@ -149,7 +163,7 @@ export function buildPhisAddonThreadsCapability(input: {
       return addThreadMessage({
         siteId,
         threadId: replyInput.threadId,
-        reader,
+        reader: fileReader,
         message: replyInput.message,
         messageMarkdown: replyInput.messageMarkdown ?? null,
         messageSourceLang: replyInput.messageSourceLang ?? null,
@@ -191,16 +205,33 @@ export function buildPhisAddonThreadsCapability(input: {
     async fileOf({ subject }) {
       requireBelievableCaller("fileOf");
       if (actorUserId == null) {
-        /*
-         * TODO(owner decision): without an actor the contract answers an Add-on to which the Site's admin
-         * granted background access to `users:v1` (manifest `users.background`, `phis.addon_users_grants`).
-         * The grant exists now; whether it opens a person's file -- which fields of it would, and whether
-         * `readerPredicate` in src/db/threads.ts then reaches files for `reply` -- is not decided, so
-         * nobody is answered without an actor (TODOS.md).
-         */
-        throw new PhisAddonThreadsError(
-          `${addonId} called threads.fileOf with no acting user; a person's file is not handed out without one.`,
-        );
+        // With nobody acting: the Site's grant of `name` to this Add-on, as far as its manifest asks it.
+        const granted = backgroundAsksName
+          ? (await readPhisAddonUsersGrant(getPool(), { siteId, addonId }) & PHIS_USER_FIELD_BITS.name) !== 0
+          : false;
+        if (!granted) {
+          throw new PhisAddonThreadsError(
+            `${addonId} called threads.fileOf with no acting user and without the Site's background grant of users:v1 name; a person's file is not handed out without one.`,
+          );
+        }
+        if (typeof subject !== "string" || !subject) {
+          throw new PhisAddonThreadsError(`${addonId} called threads.fileOf with a subject that is not an entitlement subject.`);
+        }
+        const person = await findEntitlementSubject(getPool(), siteId, subject);
+        if (!person) return null;
+        const threadId = await ensureThreadFile(siteId, person.userId);
+        if (threadId == null) return null;
+        await recordPhisUsersAccess(null, {
+          siteId,
+          addonId,
+          actorUserId: null,
+          road: PhisUsersAccessRoad.Background,
+          operation: PhisUsersAccessOperation.FileOf,
+          subjects: [subject],
+          addressIds: [],
+          fields: PHIS_USER_FIELD_BITS.name,
+        });
+        return { threadId };
       }
       const holds = await input.readSiteAccess();
       if (!(holds(PHIS_SITE_ACCESS.support) || holds(PHIS_SITE_ACCESS.accounting))) {

@@ -185,7 +185,22 @@ Admin, through `site-admin` and the evaluator) those and the Site's addresses, t
 own, and anybody else nothing. Without an acting person only a job, an event handler or a verified hook
 reads, and only what the Site granted that Add-on (`phis.addon_users_grants`); a request nobody signed in
 to reads nothing and may only write a guest's address. Writing a member's address is the person's own or
-`accounting`'s. Every answer that carried personal data is in the Site's access log.
+`accounting`'s. Every answer that carried personal data is in the Site's access log. A grant that includes
+`name` also opens a person's file (`threads:v1` `fileOf`, then `get` and `reply` on it) to that Add-on with
+nobody acting.
+The routes over the same data:
+- Staff's customer file, `GET /api/site/members/{userId}/file`, is Accounting or support
+  (`PHI_ACCESS_ACCOUNTING_OR_SUPPORT`, the Site Admin through the evaluator). The person's fields follow the
+  staff road above -- support without addresses -- and the read is written to the access log. Nobody reaches
+  their own file this way (403), whatever they hold.
+- The background grants and the access log, `/api/site/admin/users-access` (`GET`; `PUT` and `DELETE
+  /{addonId}`; `PUT /retention`; `GET /log`), are Site Admin only (`requireSiteAdminOnlyApiContext`): granting
+  an Add-on to read the Site's people with nobody acting is the Site's own decision, and a Maintainer or an
+  Accountant takes no part in it.
+- One's own addresses on the Site, `/api/site/account/addresses` (`GET`, `POST`) and `/{id}` (`PUT`,
+  `DELETE`), need a signed-in, enabled membership and no role (`requireSiteAuthenticatedApiContext`); each
+  reaches only the actor's own current addresses. One's own telephone numbers are `PATCH
+  /api/v1/auth/profile/phone`, guarded like the other profile writes under `/api/v1/auth/profile`.
 These are also the Site accesses an Add-on names in `grantableBy`, `impliedBy` or `hasSiteAccess`:
 `site-admin`, `site-maintenance`, `structure-authoring`, `content-editing`, `publishing`, `site-media`,
 `support`, `accounting` (`site-admin` not in `impliedBy`, section 5).

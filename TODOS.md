@@ -328,22 +328,6 @@ front of is infrastructure work, and belongs with
 
 ## Server Add-ons
 
-- **A person's file without an actor (`threads:v1` `fileOf`, @phis/contracts 0.8.10): owner decision.**
-  The contract answers `fileOf` without an actor for an Add-on to which the Site's admin granted background
-  access to `users:v1`. The grant exists now (`phis.addon_users_grants`, `phis addon users`), but whether it
-  opens a person's file -- any granted field, or a field of its own such as `name` -- is not decided, so
-  `fileOf` still throws without an actor and `readerPredicate` in `src/db/threads.ts` keeps every file out
-  of an actorless Add-on's reach. Once decided: `fileOf` checks the grant, and the predicate opens files to
-  the same Add-on for `get` and `reply`. `reply` keeps the Add-on's `externalRef` with an actor too since
-  2026-11-24, so a redelivered event writes once either way.
-
-- **`users:v1` routes for the Site UI (2026-11-24), awaiting the owner's approval of their shapes.** Core
-  has the database half and no route: the account (read and edit one's own telephone numbers,
-  `setUserProfilePhones`; list, create, change and remove one's own addresses on the Site,
-  `removePhisSiteAddress`), the Site Admin (background grants, today `phis addon users`; the access log's
-  retention, today `phis site set --users-access-log-days`; reading the access log) and Staff's customer
-  file (a person's threads beside their file). Proposed shapes are in the report of the users:v1 commit.
-
 - **Purging removed and orphaned addresses (`phis.site_addresses`).** An address the person removed after it
   was handed to an Add-on stays as `Removed` for the records that may point at it, and the addresses of a
   deleted account stay without a person. Neither is purged yet: it needs the records' retention (an

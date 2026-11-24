@@ -439,8 +439,8 @@ export function buildPhisAddonCapabilities(input: {
     /*
      * Bound to the acting user, and to nobody where there is none: a job holds no membership, so it
      * gets a capability that can open a thread and refuses the calls that would have to answer "which
-     * threads are yours". `systemAuthority` is deliberately not read here -- it lifts row authority for
-     * an Add-on's own tables, and these are not its rows.
+     * threads are yours". `systemAuthority` lifts no row authority here -- these are not its rows -- and
+     * is read only for what users:v1 grants without an actor: a person's file, on the Site's grant of `name`.
      */
     capabilities.threads = buildPhisAddonThreadsCapability({
       addonId: input.manifest.addonId,
@@ -448,6 +448,9 @@ export function buildPhisAddonCapabilities(input: {
       actorUserId: input.actorUserId,
       // For `fileOf`, which hands out a person's file by the actor's Site access.
       readSiteAccess,
+      // Or, with nobody acting under system authority, by the Site's users:v1 grant of `name`.
+      background: input.systemAuthority === true && input.actorUserId == null,
+      usersBackground: input.manifest.users?.background ?? [],
       // A verified hook carries `systemAuthority`, which is what tells it apart from the unsigned
       // request that reached the same address.
       unauthenticated: input.unauthenticated === true && input.systemAuthority !== true,

@@ -65,9 +65,31 @@ export const PhisUsersAccessOperation = {
   Describe: 1,
   Addresses: 2,
   CreateAddress: 3,
+  /** `threads:v1` `fileOf` with nobody acting, on the Site's grant of `name`. */
+  FileOf: 4,
+  /** Core's own customer file for Staff (`GET /api/site/members/{userId}/file`). */
+  CustomerFile: 5,
 } as const;
 export type PhisUsersAccessOperationValue = (typeof PhisUsersAccessOperation)[keyof typeof PhisUsersAccessOperation];
 
 /** The access log's retention when the Site names none, and the bounds `phis site set` takes. */
 export const PHIS_USERS_ACCESS_LOG_DEFAULT_DAYS = 90;
 export const PHIS_USERS_ACCESS_LOG_MAX_DAYS = 3650;
+
+/** The names the access log's road and operation are answered under (`GET /api/site/admin/users-access/log`). */
+export const PHIS_USERS_ACCESS_ROAD_NAMES: Readonly<Record<number, string>> = Object.freeze({
+  [PhisUsersAccessRoad.Staff]: "staff",
+  [PhisUsersAccessRoad.Self]: "self",
+  [PhisUsersAccessRoad.Background]: "background",
+  [PhisUsersAccessRoad.Checkout]: "checkout",
+});
+export const PHIS_USERS_ACCESS_OPERATION_NAMES: Readonly<Record<number, string>> = Object.freeze({
+  [PhisUsersAccessOperation.Describe]: "describe",
+  [PhisUsersAccessOperation.Addresses]: "addresses",
+  [PhisUsersAccessOperation.CreateAddress]: "createAddress",
+  [PhisUsersAccessOperation.FileOf]: "fileOf",
+  [PhisUsersAccessOperation.CustomerFile]: "customerFile",
+});
+
+/** The Add-on id the access log names where Core itself handed the data out. */
+export const PHIS_USERS_ACCESS_CORE_ADDON_ID = "@phis/server";

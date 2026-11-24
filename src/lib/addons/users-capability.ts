@@ -2,7 +2,6 @@ import "server-only";
 
 import {
   PHIS_USERS_DESCRIBE_MAX,
-  PhisSiteAddressFlags,
   type PhisAddonUsersAccess,
   type PhisSiteAddressInput,
   type PhisUserDescription,
@@ -22,10 +21,10 @@ import {
   readPhisUserDescriptions,
   recordPhisUsersAccess,
 } from "@/db/site-users";
+import { PhisSiteAddressInputError, readPhisSiteAddressFlags, readPhisSiteAddressInput } from "@/lib/site-address-input";
 import {
   isPhisUserField,
   PHIS_SITE_ADDRESS_DEFAULT_FLAGS,
-  PHIS_SITE_ADDRESS_WRITABLE_FLAGS,
   PHIS_USER_FIELD_ALL_BITS,
   PHIS_USER_FIELD_BITS,
   phisUserFieldBitsOf,
@@ -43,18 +42,6 @@ const NAME = PHIS_USER_FIELD_BITS.name;
 const EMAIL = PHIS_USER_FIELD_BITS.email;
 const PHONE = PHIS_USER_FIELD_BITS.phone;
 const ADDRESS = PHIS_USER_FIELD_BITS.address;
-
-/** The widths of `phis.site_addresses`, which an input is held to before it reaches a statement. */
-const ADDRESS_TEXT_LIMITS = {
-  companyName: 256,
-  name: 256,
-  line1: 256,
-  line2: 256,
-  postalCode: 32,
-  city: 128,
-  region: 128,
-} as const;
-const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f]/u;
 
 /**
  * `@phis/server/users:v1`: a person of the Site, field by field by the acting person (SERVER_ADDONS.md,
@@ -253,8 +240,17 @@ export function buildPhisAddonUsersCapability(input: {
     async createAddress(createInput) {
       requireBelievableCaller("createAddress");
       requireListed("createAddress", ADDRESS);
-      const address = readAddressInput(addonId, createInput?.address);
-      const flags = readAddressFlags(addonId, createInput?.flags);
+      let address: PhisSiteAddressInput;
+      let flags: number;
+      try {
+        address = readPhisSiteAddressInput(createInput?.address);
+        flags = readPhisSiteAddressFlags(createInput?.flags);
+      } catch (error) {
+        if (error instanceof PhisSiteAddressInputError) {
+          throw new PhisAddonUsersError(`${addonId} called users.createAddress, but ${error.message}`);
+        }
+        throw error;
+      }
       const replaces = createInput?.replaces ?? null;
       if (replaces !== null && (!Number.isSafeInteger(replaces) || replaces <= 0)) {
         throw new PhisAddonUsersError(`${addonId} called users.createAddress with replaces that is no address id.`);
@@ -291,7 +287,7 @@ export function buildPhisAddonUsersCapability(input: {
         userId = person.userId;
       }
 
-      const written = await createPhisSiteAddress({ siteId, userId, address, flags, replaces });
+      const written = await createPhisSiteAddress({ siteId, userId, address, flags, replaces, handedOut: true });
       await recordPhisUsersAccess(null, {
         siteId,
         addonId,
@@ -305,63 +301,4 @@ export function buildPhisAddonUsersCapability(input: {
       return written;
     },
   } satisfies PhisUsersCapabilityV1);
-}
-
-/** The text of an address as Core stores it: trimmed, empty optional parts as null, held to the columns. */
-function readAddressInput(addonId: string, value: unknown): PhisSiteAddressInput {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    throw new PhisAddonUsersError(`${addonId} called users.createAddress without an address.`);
-  }
-  const record = value as Record<string, unknown>;
-  const text = (key: keyof typeof ADDRESS_TEXT_LIMITS, required: boolean): string | null => {
-    const raw = record[key];
-    if (raw === undefined || raw === null) {
-      if (required) throw new PhisAddonUsersError(`${addonId} called users.createAddress without address.${key}.`);
-      return null;
-    }
-    if (typeof raw !== "string" || CONTROL_CHARACTERS.test(raw)) {
-      throw new PhisAddonUsersError(`${addonId} called users.createAddress with address.${key} that is no line of text.`);
-    }
-    const trimmed = raw.trim();
-    if (!trimmed) {
-      if (required) throw new PhisAddonUsersError(`${addonId} called users.createAddress with an empty address.${key}.`);
-      return null;
-    }
-    if (trimmed.length > ADDRESS_TEXT_LIMITS[key]) {
-      throw new PhisAddonUsersError(`${addonId} called users.createAddress with address.${key} longer than ${ADDRESS_TEXT_LIMITS[key]} characters.`);
-    }
-    return trimmed;
-  };
-  const country = typeof record.country === "string" ? record.country.trim().toUpperCase() : "";
-  if (!/^[A-Z]{2}$/u.test(country)) {
-    throw new PhisAddonUsersError(`${addonId} called users.createAddress with address.country that is no ISO 3166-1 alpha-2 code.`);
-  }
-  return {
-    companyName: text("companyName", false),
-    name: text("name", true)!,
-    line1: text("line1", true)!,
-    line2: text("line2", false),
-    postalCode: text("postalCode", false),
-    city: text("city", true)!,
-    region: text("region", false),
-    country,
-  };
-}
-
-/** The purposes and defaults a caller states: at least one purpose, a default only with its purpose. */
-function readAddressFlags(addonId: string, value: unknown): number {
-  if (!Number.isSafeInteger(value) || (value as number) < 0 || ((value as number) & ~PHIS_SITE_ADDRESS_WRITABLE_FLAGS) !== 0) {
-    throw new PhisAddonUsersError(`${addonId} called users.createAddress with flags other than Billing, Shipping, DefaultBilling and DefaultShipping; Core keeps the rest.`);
-  }
-  const flags = value as number;
-  if ((flags & (PhisSiteAddressFlags.Billing | PhisSiteAddressFlags.Shipping)) === 0) {
-    throw new PhisAddonUsersError(`${addonId} called users.createAddress for an address that is neither a billing nor a shipping address.`);
-  }
-  if (
-    ((flags & PhisSiteAddressFlags.DefaultBilling) !== 0 && (flags & PhisSiteAddressFlags.Billing) === 0)
-    || ((flags & PhisSiteAddressFlags.DefaultShipping) !== 0 && (flags & PhisSiteAddressFlags.Shipping) === 0)
-  ) {
-    throw new PhisAddonUsersError(`${addonId} called users.createAddress with a default for a purpose the address does not have.`);
-  }
-  return flags;
 }

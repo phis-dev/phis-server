@@ -425,7 +425,8 @@ A thread is visible to a user when all of these hold (a `File` has its own rule,
 4. for a `Requester` participant, the thread is `Support`.
 
 A `File` is reachable by its id for a user who holds the Site access `support` or `accounting` and is not
-the person it is about (`thread_files.user_id`), and for no Add-on without an actor.
+the person it is about (`thread_files.user_id`), and, with nobody acting, for `get` and `reply` of an Add-on
+to which the Site granted `users:v1` `name` in the background (section 9); for no other Add-on.
 
 A message is visible when its thread is, and additionally not `Internal` unless the viewer is Staff.
 
@@ -501,6 +502,13 @@ Actorless calls: `create` (owned), `get`, `reply({ threadId, message, externalRe
 idempotent on `externalRef`, `setStatus`, `findByExternalRef`. A reply is written with
 `author_kind = Integration`. `Internal` messages are never handed to an actorless Add-on;
 `Confidential` ones arrive with their bodies withheld.
+
+A person's file is the one exception to the two ways in: with nobody acting, an Add-on reaches it for
+`get` and `reply` -- and is handed it by `fileOf` -- while the Site's `users:v1` background grant to it
+includes `name` and its manifest still asks for `name` in the background. The grant is the Site admin's
+consent for the Add-on and every person's file on the Site, as a link is a person's for one thread, and
+withdrawing it ends the reach. The handout is written to the `users:v1` access log on the background road.
+A file whose person was deleted is kept: it is Staff's record, not the person's (decided 2026-11-24).
 
 With an actor, `create` and `reply` keep `externalRef` under the calling Add-on too, while the message
 is the person's (`thread_message_refs` flag `0`): `reply` is idempotent on it either way, so a

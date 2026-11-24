@@ -1,6 +1,6 @@
 import type { Pool } from "pg";
 
-import { PHIS_CORE_CAPABILITIES, type PhisAddonManifestV1 } from "@phis/contracts/addon";
+import type { PhisAddonManifestV1 } from "@phis/contracts/addon";
 import type { PhisUserField } from "@phis/contracts/users";
 
 import {
@@ -9,6 +9,7 @@ import {
   revokePhisAddonUsersBackground,
 } from "../db/users-grants.mts";
 import { isPhisUserField, phisUserFieldBitsOf, phisUserFieldsOf } from "../lib/constants/users.ts";
+import { describePhisAddonUsersAccess, isPhisUsersReader, readPhisUsersGrantFields } from "../lib/addons/users-access.ts";
 
 type Flags = Map<string, string | boolean>;
 
@@ -34,7 +35,7 @@ export async function runPhisAddonUsersCommand(pool: Pool, input: {
   if (grant && revoke) {
     throw new Error("Use either --grant or --revoke.");
   }
-  const readers = input.addons.filter((entry) => entry.manifest.requiredCoreCapabilities.includes(PHIS_CORE_CAPABILITIES.users));
+  const readers = input.addons.filter((entry) => isPhisUsersReader(entry.manifest));
 
   if (grant || revoke) {
     if (!addonFlag) throw new Error("Missing --addon.");
@@ -52,19 +53,15 @@ export async function runPhisAddonUsersCommand(pool: Pool, input: {
       throw new Error(`${addonFlag} is not installed on this server or does not require users:v1.`);
     }
     const asked: PhisUserField[] = (entry.manifest.users?.background ?? []).filter(isPhisUserField);
-    if (asked.length === 0) {
-      throw new Error(`${addonFlag} asks for no background access (manifest users.background); there is nothing to grant.`);
-    }
     const fieldsFlag = flags.get("fields");
-    let fields = asked;
-    if (typeof fieldsFlag === "string") {
-      const named = fieldsFlag.split(",").map((field) => field.trim()).filter(Boolean);
-      const unasked = named.filter((field) => !isPhisUserField(field) || !asked.includes(field));
-      if (named.length === 0 || unasked.length > 0) {
-        throw new Error(`--fields names what ${addonFlag} asks for in the background: ${asked.join(", ")}.`);
-      }
-      fields = named as PhisUserField[];
+    const chosen = readPhisUsersGrantFields(
+      asked,
+      typeof fieldsFlag === "string" ? fieldsFlag.split(",").map((field) => field.trim()).filter(Boolean) : asked,
+    );
+    if ("error" in chosen) {
+      throw new Error(`${addonFlag}: ${chosen.error}`);
     }
+    const fields = chosen.fields;
     const { rows } = await pool.query(`SELECT 1 FROM phis.server_addons WHERE addon_id = $1`, [addonFlag]);
     if (rows.length === 0) {
       throw new Error(`${addonFlag} is not in the Add-on registry yet; run phis addon reconcile first.`);
@@ -84,26 +81,11 @@ export async function runPhisAddonUsersCommand(pool: Pool, input: {
     };
   }
 
-  const grants = new Map((await listPhisAddonUsersGrants(pool, site.id)).map((row) => [row.addonId, row]));
   const listed = addonFlag ? readers.filter((entry) => entry.addonId === addonFlag) : readers;
   if (addonFlag && listed.length === 0) {
     throw new Error(`${addonFlag} is not installed on this server or does not require users:v1.`);
   }
-  const rows = listed.map((entry) => {
-    const asked = (entry.manifest.users?.background ?? []).filter(isPhisUserField);
-    const held = grants.get(entry.addonId);
-    const grantedBits = held?.fields ?? 0;
-    return {
-      addonId: entry.addonId,
-      fields: (entry.manifest.users?.fields ?? []).filter(isPhisUserField),
-      background: asked,
-      granted: phisUserFieldsOf(grantedBits),
-      effective: phisUserFieldsOf(grantedBits & phisUserFieldBitsOf(asked)),
-      awaiting: asked.filter((field) => (grantedBits & phisUserFieldBitsOf([field])) === 0),
-      grantedAt: held?.grantedAt ?? null,
-      grantedByUserId: held?.grantedByUserId ?? null,
-    };
-  });
+  const rows = describePhisAddonUsersAccess(listed, await listPhisAddonUsersGrants(pool, site.id));
   const lines = rows.length === 0
     ? [`No installed Add-on requires users:v1.`]
     : rows.map((row) => `${row.addonId}  fields=${row.fields.join(",") || "-"}  background=${row.background.join(",") || "-"}`

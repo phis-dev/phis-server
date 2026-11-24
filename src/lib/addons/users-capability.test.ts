@@ -132,7 +132,7 @@ describe("users capability", () => {
   it("writes an address for the person, for accounting on a member's behalf and for a guest, and refuses the rest", async () => {
     state.member.mockResolvedValueOnce({ userId: 9, member: true });
     await capability().createAddress({ subject: "sub_me", address: ADDRESS as never, flags: PhisSiteAddressFlags.Billing | PhisSiteAddressFlags.DefaultBilling });
-    expect(state.create).toHaveBeenLastCalledWith(expect.objectContaining({ userId: 9, flags: 5, replaces: null, address: expect.objectContaining({ country: "GB", line2: null }) }));
+    expect(state.create).toHaveBeenLastCalledWith(expect.objectContaining({ userId: 9, flags: 5, replaces: null, handedOut: true, address: expect.objectContaining({ country: "GB", line2: null }) }));
     expect(state.log).toHaveBeenLastCalledWith(null, expect.objectContaining({ road: PhisUsersAccessRoad.Self, operation: 3, addressIds: [41] }));
 
     await expect(capability().createAddress({ subject: "sub_other", address: ADDRESS as never, flags: 1 })).rejects.toThrow(/accounting/u);
@@ -156,12 +156,12 @@ describe("users capability", () => {
   it("holds an address to its parts and its flags to what a caller states", async () => {
     const write = (address: unknown, flags = 1) => capability({ actorUserId: null }).createAddress({ subject: null, address: address as never, flags });
     await expect(write({ ...ADDRESS, country: "GBR" })).rejects.toThrow(/ISO 3166-1/u);
-    await expect(write({ ...ADDRESS, name: " " })).rejects.toThrow(/empty address\.name/u);
-    await expect(write({ ...ADDRESS, city: undefined })).rejects.toThrow(/without address\.city/u);
+    await expect(write({ ...ADDRESS, name: " " })).rejects.toThrow(/address\.name is empty/u);
+    await expect(write({ ...ADDRESS, city: undefined })).rejects.toThrow(/address\.city is missing/u);
     await expect(write({ ...ADDRESS, line1: "a\nb" })).rejects.toThrow(/no line of text/u);
     await expect(write({ ...ADDRESS, postalCode: "1".repeat(33) })).rejects.toThrow(/longer than 32/u);
     await expect(write(ADDRESS, 0)).rejects.toThrow(/neither a billing nor a shipping/u);
     await expect(write(ADDRESS, PhisSiteAddressFlags.Superseded | 1)).rejects.toThrow(/Core keeps the rest/u);
-    await expect(write(ADDRESS, PhisSiteAddressFlags.DefaultShipping | PhisSiteAddressFlags.Billing)).rejects.toThrow(/default for a purpose/u);
+    await expect(write(ADDRESS, PhisSiteAddressFlags.DefaultShipping | PhisSiteAddressFlags.Billing)).rejects.toThrow(/default was given for a purpose/u);
   });
 });

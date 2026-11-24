@@ -13,6 +13,9 @@ export type UserProfileRecord = {
   /** The name the person chose to be shown under, or `null` for their first and last name. */
   displayName: string | null;
   companyName: string | null;
+  /** Business telephone and mobile number as the person typed them (users:v1 `phone`). */
+  phone: string | null;
+  mobile: string | null;
 };
 
 /**
@@ -34,8 +37,10 @@ export async function getUserProfileByUserId(userId: number) {
     last_name: string;
     display_name: string | null;
     company_name: string | null;
+    phone: string | null;
+    mobile: string | null;
   }>(phiPrepared(
-    `SELECT user_id, first_name, last_name, display_name, company_name
+    `SELECT user_id, first_name, last_name, display_name, company_name, phone, mobile
      FROM phis.user_profiles
      WHERE user_id = $1
      LIMIT 1`,
@@ -53,6 +58,8 @@ export async function getUserProfileByUserId(userId: number) {
     lastName: row.last_name,
     displayName: row.display_name,
     companyName: row.company_name,
+    phone: row.phone,
+    mobile: row.mobile,
   } satisfies UserProfileRecord;
 }
 
@@ -111,7 +118,7 @@ export async function upsertUserProfile(input: {
 
 /**
  * Writes a profile's business telephone and mobile number, as the person typed them; the digits-only
- * forms a search matches are derived by the table. For the account route (not yet offered). A person
+ * forms a search matches are derived by the table (`PATCH /api/v1/auth/profile/phone`). A person
  * without a profile has no names yet and is written nothing: false. A change owes `user.changed` with
  * `phone` on every Site the person is a member of.
  */

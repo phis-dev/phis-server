@@ -943,7 +943,7 @@ Contract:
 
 Contract:
 - `user_profiles` stores Phi-owned global profile data.
-- `phone` (business telephone) and `mobile` are the person's numbers as they typed them, valid on every Site as the names are; `users:v1` answers them as `phone` (`setUserProfilePhones` writes them, for the account route still to come). `phone_digits` and `mobile_digits` are derived by the table, never written: the member picker (`GET /api/site/members`, `searchSiteMembers`) matches a query that is a telephone number against them, as a substring of the digits with the query's leading zeros dropped. Added 2026-11-24; existing databases receive both by hand (`ALTER TABLE phis.user_profiles ADD COLUMN IF NOT EXISTS phone_digits ...` and `mobile_digits`, as above), which computes them for the rows already there.
+- `phone` (business telephone) and `mobile` are the person's numbers as they typed them, valid on every Site as the names are; `users:v1` answers them as `phone` (`setUserProfilePhones` writes them for `PATCH /api/v1/auth/profile/phone`, and `/api/v1/auth/me` reads them back). `phone_digits` and `mobile_digits` are derived by the table, never written: the member picker (`GET /api/site/members`, `searchSiteMembers`) matches a query that is a telephone number against them, as a substring of the digits with the query's leading zeros dropped. Added 2026-11-24; existing databases receive both by hand (`ALTER TABLE phis.user_profiles ADD COLUMN IF NOT EXISTS phone_digits ...` and `mobile_digits`, as above), which computes them for the rows already there.
 - A change of the names (`upsertUserProfile`, which writes nothing when nothing changed), of the numbers, or of the primary e-mail address (`updateUserAccountProfileFields`) owes `user.changed` with `name`, `phone` or `email` on every Site the person is a member of (see `phis.addon_event_outbox`).
 - The single address of the profile (`address_1` .. `country_code`) is left as it is and read by nothing in `users:v1`; a Site's addresses are `phis.site_addresses`.
 - A Site-specific commerce profile may remain Medusa-owned and is reached through the matching
@@ -1769,7 +1769,7 @@ Contract:
 - `flags`: the low bits are the contract's `PhisSiteAddressFlags` -- `1 = Billing`, `2 = Shipping`, `4 = DefaultBilling`, `8 = DefaultShipping`, `16 = Superseded`, `32 = Removed` -- and the only ones ever answered. `65536 = handed out` is Core's own (`PHIS_SITE_ADDRESS_FLAG_HANDED_OUT`): set, in the statement that reads it, on every address answered to an Add-on (`createAddress`, `addresses`, `describe`).
 - An entry's text never changes. A change is a new row with `replaces_id` naming the version it follows, which gets `Superseded` and gives up its defaults; a person's current addresses are those with neither `Superseded` nor `Removed`. The partial unique indexes make one default of each kind per person and Site; a default asked for moves from the row that held it.
 - `createPhisSiteAddress` takes an advisory lock per person and Site: an address equal in every part (trimmed text, empty optional parts as `NULL`) to one of the person's current ones is that one, given the purposes and defaults asked for besides, rather than a second row. A guest's address is always a new row and replaces nothing.
-- Removing (`removePhisSiteAddress`, for the account route still to come) takes the address and the versions it followed: a row never handed out is deleted, a handed-out one is kept with `Removed` and without its defaults, because Core cannot see whether an Add-on's record points at it and the handed-out bit is the rule that stands in for that. Purging `Removed` rows once their records' retention ended is open (TODOS.md).
+- The person reads and writes their own through `/api/site/account/addresses`, which marks nothing handed out. Removing (`removePhisSiteAddress`, `DELETE /api/site/account/addresses/{id}`, answering `deleted` or `removed` for the address named) takes the address and the versions it followed: a row never handed out is deleted, a handed-out one is kept with `Removed` and without its defaults, because Core cannot see whether an Add-on's record points at it and the handed-out bit is the rule that stands in for that. Purging `Removed` rows once their records' retention ended is open (TODOS.md).
 - A replace or a removal of a person's current address owes their `user.changed` with `address` on the Site.
 
 ### `phis.addon_users_grants`
@@ -1784,7 +1784,8 @@ Contract:
 Contract:
 - The Site's admin letting an Add-on read people with nobody acting (`users:v1` background access): the row is the grant, deleting it withdraws it. `fields` are bits in the order of `PHIS_USER_FIELDS`: `1 = name`, `2 = email`, `4 = phone`, `8 = address` (`PHIS_USER_FIELD_BITS`).
 - What a job or an event handler reads is `fields` intersected with the manifest's `users.background`: a manifest that asks for more keeps the old grant until the admin grants again, one that asks for less reads less.
-- Granted, withdrawn and listed with `phis addon users`; `granted_by_user_id` is NULL where the operator granted it from the command line. Purging the Add-on deletes its grants.
+- Granted, withdrawn and listed by the Site Admin (`/api/site/admin/users-access`, `granted_by_user_id` the Admin) and by the operator with `phis addon users` (`granted_by_user_id` NULL). Purging the Add-on deletes its grants.
+- A grant that includes `name`, while the manifest asks `name` in the background, also opens the person's file to the Add-on with nobody acting: `threads:v1` `fileOf`, and `get` and `reply` on that file (the reader predicate joins this table, so withdrawing the grant ends the reach at once).
 
 ### `phis.users_access_log`
 
@@ -1793,16 +1794,18 @@ Contract:
 - `addon_id VARCHAR(255) NOT NULL`
 - `actor_user_id INT NULL`
 - `road SMALLINT NOT NULL` (`CHECK BETWEEN 1 AND 4`)
-- `operation SMALLINT NOT NULL` (`CHECK BETWEEN 1 AND 3`)
+- `operation SMALLINT NOT NULL` (`CHECK BETWEEN 1 AND 5`)
 - `subjects VARCHAR(40)[] NOT NULL DEFAULT '{}'`, `address_ids INT[] NOT NULL DEFAULT '{}'`
 - `fields SMALLINT NOT NULL` (`CHECK BETWEEN 1 AND 15`)
 - `created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
 - index `users_access_log_site_idx` on `(site_id, created_at)`
 
 Contract:
-- One row per `users:v1` answer that carried personal data, written before it is handed over: who asked (`actor_user_id`, NULL with nobody acting), which Add-on, by which road (`PhisUsersAccessRoad`: `1 = staff`, `2 = self`, `3 = background`, `4 = checkout`, a guest's address written by a request with neither), which call (`operation`: `1 = describe`, `2 = addresses`, `3 = createAddress`), about which subjects and addresses, and which fields (bits as in `addon_users_grants`). A `describe` that answered on two roads writes one row per road; an answer that carried nothing writes none.
+- One row per `users:v1` answer that carried personal data, written before it is handed over: who asked (`actor_user_id`, NULL with nobody acting), which Add-on, by which road (`PhisUsersAccessRoad`: `1 = staff`, `2 = self`, `3 = background`, `4 = checkout`, a guest's address written by a request with neither), which call (`operation`: `1 = describe`, `2 = addresses`, `3 = createAddress`, `4 = fileOf` in the background, `5 = customerFile`, Core's own `GET /api/site/members/{userId}/file` with `addon_id = '@phis/server'`), about which subjects and addresses, and which fields (bits as in `addon_users_grants`). A `describe` that answered on two roads writes one row per road; an answer that carried nothing writes none.
 - No foreign keys besides the Site: the log outlives the Add-on, the account and the address it names.
+- Read by the Site Admin, newest first, through `GET /api/site/admin/users-access/log`; the retention is set with `PUT /api/site/admin/users-access/retention` or `phis site set --users-access-log-days`.
 - Retention: the Core job `users-access-log.prune` (daily 03:10; by hand `phis maintain`, `users-access-log`) deletes rows older than the Site's `sites.users_access_log_days`, in batches of 1000 (at most 50 per run).
+- A database that took the hand SQL below before `fileOf` and the customer file were logged widens the operation check by hand: `ALTER TABLE phis.users_access_log DROP CONSTRAINT IF EXISTS users_access_log_operation_check; ALTER TABLE phis.users_access_log ADD CONSTRAINT users_access_log_operation_check CHECK (operation BETWEEN 1 AND 5);`
 
 Existing databases receive the three tables above as the creation script declares them (`phis schema apply` creates them), the two columns of `phis.sites` and `phis.user_profiles` named there, and the widened `addon_event_outbox_subject_check` by hand:
 
@@ -1873,9 +1876,11 @@ Contract:
 Contract:
 - Whose file a thread of kind `4 = file` is: one per person and Site, opened on first asking (`threads:v1` `fileOf`, `ensureThreadFile`), only for a member of the Site. The primary key keeps it one when two requests ask at once; they take turns under an advisory lock and the second reads what the first wrote.
 - The thread is opened empty and as Core's own: no opening message, no `owner_provider_id`, no `created_by_user_id`, no `subject`, no participants. The person is never a participant.
-- The reader predicate reads this row: a file is reachable by id for whoever holds the Site access `support` or `accounting` and is not `user_id`, so nobody reads their own file. It is listed in no inbox and is out of an actorless Add-on's reach.
+- The reader predicate reads this row: a file is reachable by id for whoever holds the Site access `support` or `accounting` and is not `user_id`, so nobody reads their own file. It is listed in no inbox and is out of an actorless Add-on's reach, but for the `name` grant below.
 - Every message in it carries `Internal`. It takes no participants and is neither archived nor locked.
-- Deleting the user deletes the row and leaves the thread, which is Staff's record and not the person's; deleting the thread deletes the row.
+- Deleting the user deletes the row and keeps the thread, which is Staff's record and not the person's (decided 2026-11-24); deleting the thread deletes the row.
+- With nobody acting, an Add-on reaches a file for `get` and `reply` while the Site's `users:v1` grant to it includes `name` (`addon_users_grants`), and is handed it by `fileOf`; no link opens one.
+- Staff's customer file (`GET /api/site/members/{userId}/file`) opens it on first asking, as `fileOf` does.
 
 ### `phis.thread_participants`
 

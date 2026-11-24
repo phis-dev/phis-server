@@ -115,6 +115,9 @@ export async function GET(request: NextRequest) {
             lastName: profile.lastName,
             displayName: profile.displayName,
             companyName: profile.companyName,
+            // The person's own numbers (`PATCH /api/v1/auth/profile/phone`), never anybody else's.
+            phone: profile.phone,
+            mobile: profile.mobile,
           }
         : null,
       site: {
