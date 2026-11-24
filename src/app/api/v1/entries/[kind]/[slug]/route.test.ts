@@ -24,8 +24,8 @@ vi.mock("@/db/site-content-entries", () => ({
   } } },
 }));
 vi.mock("@/lib/translations", () => ({
-  translateSiteBatchWithCache: mocks.translateSite,
-  translateExternalSiteBatchWithCache: vi.fn(),
+  // Every entry here is written in the Site's language, so this is the Site path.
+  translateSiteTextsWithCache: mocks.translateSite,
   trackTranslationStandIns: async (work: () => Promise<unknown>) => ({ value: await work(), standIn: false }),
 }));
 vi.mock("@/lib/media-response", () => ({ resolvePhiMediaThumbnailUrl: () => null }));

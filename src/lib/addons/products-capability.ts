@@ -19,7 +19,7 @@ import { getPool } from "@/lib/db";
 import { PhiImageAssetVariantKey } from "@/lib/constants/media";
 import { resolvePhiLocaleBase, resolvePhiLocaleCapability } from "@/lib/locale";
 import { resolvePhiMediaDeliveryUrl, resolvePhiMediaVariantUrl } from "@/lib/media-response";
-import { translateExternalSiteBatchWithCache, translateSiteBatchWithCache } from "@/lib/translations";
+import { translateSiteTextsWithCache } from "@/lib/translations";
 import { notePhiTranslationUse } from "@/db/translation-usage";
 import {
   annotateProduct,
@@ -122,8 +122,8 @@ const FIELD_BITS: Readonly<Record<PhisProductTextField, number>> = {
  * - a translation a person (or an earlier fill) keeps on the field's message for `locale` wins -- read with
  *   the product (`textMessages`), as a content entry's are;
  * - a title or a summary nobody translated goes the TR route's own way (`/api/v1/tr`): written in the Site's
- *   language, `translateSiteBatchWithCache` on the field's message; written in another,
- *   `translateExternalSiteBatchWithCache`, under `[extern]product <n> <field>`, rendered into the Site's
+ *   language, `translateSiteTextsWithCache` takes the Site path on the field's message; written in another,
+ *   the external path, under `[extern]product <n> <field>`, rendered into the Site's
  *   language once and every other language from that rendering. Each message keeps its product's context
  *   (`storedContexts`) and the provider is told the field; one call per field and language for every product
  *   of the read;
@@ -165,14 +165,12 @@ async function translateProducts(
       byLanguage.set(languageOf(product), [...(byLanguage.get(languageOf(product)) ?? []), product]);
     }
     for (const [sourceLocale, group] of byLanguage) {
-      const batch = {
-        siteId: input.siteId, locale: input.locale, msgs: group.map((product) => product[field]),
-        ctx: PROVIDER_CONTEXTS[field], storedContexts: group.map((product) => phisProductTextContext(product.rowId, field)), format: "text" as const,
-      };
-      const texts = same(sourceLocale, input.siteSourceLocale)
-        // The field's own message, recorded by register; one that is not there yet is read as written.
-        ? await translateSiteBatchWithCache({ ...batch, sourceLocale: input.siteSourceLocale, create: false })
-        : await translateExternalSiteBatchWithCache({ ...batch, sourceLocale, canonicalLocale: input.siteSourceLocale });
+      // In the Site's language the field's own message, recorded by register; one that is not there yet is read as written.
+      const texts = await translateSiteTextsWithCache({
+        siteId: input.siteId, locale: input.locale, sourceLocale, canonicalLocale: input.siteSourceLocale,
+        msgs: group.map((product) => product[field]), ctx: PROVIDER_CONTEXTS[field],
+        storedContexts: group.map((product) => phisProductTextContext(product.rowId, field)), format: "text", create: false,
+      });
       group.forEach((product, index) => answer(product, field, texts[index]!));
     }
   }

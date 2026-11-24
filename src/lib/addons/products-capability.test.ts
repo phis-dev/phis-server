@@ -20,8 +20,9 @@ vi.mock("./event-trigger.ts", () => ({ schedulePhisAddonEventDelivery: (...args:
 vi.mock("@/lib/db", () => ({ getPool: () => ({}) }));
 vi.mock("@/lib/config", () => ({ getPhisConfigSync: () => ({ sites: { overrides: { acme: { sourceLocale: "en" } } } }) }));
 vi.mock("@/lib/translations", () => ({
-  translateSiteBatchWithCache: (input: never) => state.fill(input),
-  translateExternalSiteBatchWithCache: (input: never) => state.external(input),
+  // The TR route's choice by the texts' language: fill is the Site path, external the external path.
+  translateSiteTextsWithCache: (input: { sourceLocale: string; canonicalLocale: string }) =>
+    (input.sourceLocale.split("-")[0] === input.canonicalLocale.split("-")[0] ? state.fill(input as never) : state.external(input as never)),
 }));
 vi.mock("@/db/translation-usage", () => ({ notePhiTranslationUse: (...args: unknown[]) => state.used(...args) }));
 vi.mock("@/lib/media-response", async (importOriginal) => ({
@@ -209,7 +210,7 @@ describe("products capability", () => {
       // Through the TR route's Site path, the message kept under the product's context, nothing recorded anew.
       expect(state.fill).toHaveBeenCalledTimes(1);
       expect(state.fill).toHaveBeenCalledWith({
-        siteId: 7, locale: "de", sourceLocale: "en", msgs: ["Fast"], ctx: "product summary",
+        siteId: 7, locale: "de", sourceLocale: "en", canonicalLocale: "en", msgs: ["Fast"], ctx: "product summary",
         storedContexts: ["product 12 summary"], format: "text", create: false,
       });
       expect(state.used).toHaveBeenCalledWith("site", [1, 2, 3]);

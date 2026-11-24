@@ -2,6 +2,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   ensureSiteMessageId: vi.fn(),
+  resolveSiteMessageIds: vi.fn(),
+  findSiteExternalTranslationUnitsByContext: vi.fn(),
+  translationMode: vi.fn(),
   getSiteTranslations: vi.fn(),
   getTranslations: vi.fn(),
   upsertSiteTranslations: vi.fn(),
@@ -13,15 +16,17 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@/db/translations", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/db/translations")>()),
   // The batch answers per message what the single form would: the id, or the Error it would throw.
-  resolveSiteMessageIds: async (siteId: number, entries: ReadonlyArray<{ msg: string }>) => Promise.all(
-    entries.map(async ({ msg }) => {
+  resolveSiteMessageIds: async (siteId: number, entries: ReadonlyArray<{ msg: string }>, options?: { create?: boolean }) => {
+    mocks.resolveSiteMessageIds(siteId, entries, options);
+    return Promise.all(entries.map(async ({ msg }) => {
       try {
         return await mocks.ensureSiteMessageId(siteId, msg) as number;
       } catch (error) {
         return error as Error;
       }
-    }),
-  ),
+    }));
+  },
+  findSiteExternalTranslationUnitsByContext: mocks.findSiteExternalTranslationUnitsByContext,
   getSiteTranslations: mocks.getSiteTranslations,
   getTranslations: mocks.getTranslations,
   upsertSiteTranslations: mocks.upsertSiteTranslations,
@@ -31,6 +36,10 @@ vi.mock("@/lib/translation-unit", async (importOriginal) => {
   const original = await importOriginal<typeof import("@/lib/translation-unit")>();
   return {
     ...original,
+    // The configured mode unless a test named one.
+    getConfiguredTranslationMode: () => (mocks.translationMode.getMockImplementation()
+      ? mocks.translationMode()
+      : original.getConfiguredTranslationMode()),
     // The real unit unless a test gave the provider an answer.
     requestPhisTranslationUnit: (...args: Parameters<typeof original.requestPhisTranslationUnit>) =>
       (mocks.requestPhisTranslationUnit.getMockImplementation()
@@ -43,7 +52,7 @@ vi.mock("@/lib/log", async (importOriginal) => ({
   logRuntimeEvent: mocks.logRuntimeEvent,
 }));
 
-const { trackTranslationStandIns, translateBatchWithCache, translateSiteBatchWithCache } =
+const { trackTranslationStandIns, translateBatchWithCache, translateSiteBatchWithCache, translateSiteTextsWithCache } =
   await import("@/lib/translations");
 
 /*
@@ -374,5 +383,68 @@ describe("a collision on reading the global store", () => {
 
     expect(mocks.requestPhisTranslationUnit).not.toHaveBeenCalled();
     expect(mocks.logRuntimeEvent).toHaveBeenCalledWith("warn", "translation.message_skipped", expect.anything());
+  });
+});
+
+/*
+ * The one choice every reader of a Site's texts makes as the TR route does: the Site path for texts in the
+ * Site's language, the external path for texts in another.
+ */
+describe("translateSiteTextsWithCache", () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    mocks.upsertSiteTranslations.mockResolvedValue(undefined);
+  });
+
+  it("takes the Site path for texts in the Site's language, however the region is written", async () => {
+    mocks.ensureSiteMessageId.mockResolvedValue(2);
+    mocks.getSiteTranslations.mockResolvedValue(new Map([[2, "zwei"]]));
+
+    await expect(translateSiteTextsWithCache({
+      siteId: 1, locale: "de", sourceLocale: "en-US", canonicalLocale: "en", msgs: ["two"], ctx: "hint", format: "text", create: false,
+    })).resolves.toEqual(["zwei"]);
+    // The message itself under its context, never an [extern] unit; create goes to the Site path.
+    expect(mocks.resolveSiteMessageIds).toHaveBeenCalledWith(1, [{ msg: "two", ctx: "hint" }], { create: false });
+    expect(mocks.findSiteExternalTranslationUnitsByContext).not.toHaveBeenCalled();
+  });
+
+  it("with recordedMessages, in another language: a held translation wins, a never recorded text stays, the rest goes external", async () => {
+    mocks.translationMode.mockReturnValue("deepl");
+    const ids: Record<string, number | null> = { Bonjour: 2, Merci: 5, jamais: null };
+    mocks.ensureSiteMessageId.mockImplementation(async (_siteId: number, msg: string) => ids[msg] ?? null);
+    const held: Record<number, string> = { 2: "Hallo", 9: "Danke" };
+    mocks.getSiteTranslations.mockImplementation(async (msgIds: number[]) =>
+      new Map(msgIds.flatMap((msgId) => (held[msgId] ? [[msgId, held[msgId]!] as const] : []))));
+    mocks.findSiteExternalTranslationUnitsByContext.mockImplementation(async (input: { entries: unknown[] }) =>
+      input.entries.map(() => ({ msgId: 9, canonicalMsg: "Thanks" })));
+
+    await expect(translateSiteTextsWithCache({
+      siteId: 1, locale: "de", sourceLocale: "fr", canonicalLocale: "en", msgs: ["Bonjour", "Merci", "jamais", ""],
+      ctx: "@acme/shop: hint", storedContexts: Array(4).fill("@acme/shop: hint"), format: "text",
+      create: false, recordedMessages: true,
+    })).resolves.toEqual(["Hallo", "Danke", "jamais", ""]);
+    // The recorded messages are read, nothing recorded; only the one without a held translation goes external.
+    expect(mocks.resolveSiteMessageIds).toHaveBeenCalledWith(1, [
+      { msg: "Bonjour", ctx: "@acme/shop: hint" },
+      { msg: "Merci", ctx: "@acme/shop: hint" },
+      { msg: "jamais", ctx: "@acme/shop: hint" },
+    ], { create: false });
+    expect(mocks.findSiteExternalTranslationUnitsByContext).toHaveBeenCalledTimes(1);
+    expect(mocks.findSiteExternalTranslationUnitsByContext).toHaveBeenCalledWith(expect.objectContaining({
+      locale: "fr", entries: [expect.objectContaining({ source: "Merci", ctx: "[extern]@acme/shop: hint" })],
+    }));
+    expect(mocks.requestPhisTranslationUnit).not.toHaveBeenCalled();
+  });
+
+  it("without recordedMessages, in another language, sends every text the external way and reads no message", async () => {
+    mocks.translationMode.mockReturnValue("deepl");
+    mocks.getSiteTranslations.mockResolvedValue(new Map([[9, "Danke"]]));
+    mocks.findSiteExternalTranslationUnitsByContext.mockImplementation(async (input: { entries: unknown[] }) =>
+      input.entries.map(() => ({ msgId: 9, canonicalMsg: "Thanks" })));
+
+    await expect(translateSiteTextsWithCache({
+      siteId: 1, locale: "de", sourceLocale: "fr", canonicalLocale: "en", msgs: ["Merci"], ctx: "hint", format: "text", create: false,
+    })).resolves.toEqual(["Danke"]);
+    expect(mocks.resolveSiteMessageIds).not.toHaveBeenCalled();
   });
 });

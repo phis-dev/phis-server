@@ -8,8 +8,8 @@ import {
 } from "@phis/contracts/addon";
 
 import { resolvePhiLocaleBase, resolvePhiLocaleCapability } from "@/lib/locale";
-import { trackTranslationStandIns, translateExternalSiteBatchWithCache, translateSiteBatchWithCache } from "@/lib/translations";
-import { ensureSiteMessageIds, getSiteTranslations, resolveSiteMessageIds } from "@/db/translations";
+import { trackTranslationStandIns, translateSiteTextsWithCache } from "@/lib/translations";
+import { ensureSiteMessageIds } from "@/db/translations";
 
 /**
  * `translations:v1` for one request (SERVER_ADDONS.md, translations:v1): an Add-on's own words as source
@@ -99,7 +99,7 @@ export function buildPhisAddonTranslationsCapability(input: {
       const ctx = readContext(context);
       // Checked though not stored: the text is kept as written in whatever language, as a product's are.
       readSourceLocale(sourceLocale);
-      // Trimmed, as the TR route reads a message back (`translateSiteBatchWithCache`).
+      // Trimmed, as the TR route reads a message back (`translateSiteTextsWithCache`).
       const recorded = readTexts(texts).map((text) => text.trim()).filter((text) => text !== "");
       if (recorded.length === 0) return;
       // A text that collides with a stored one under the same opening is refused; the others are kept.
@@ -118,31 +118,12 @@ export function buildPhisAddonTranslationsCapability(input: {
       const language = readSourceLocale(sourceLocale);
       const target = readLocale(locale, language);
       if (!target) return { texts: [...asWritten], provisional: false };
-      const { value, standIn } = await trackTranslationStandIns(async () => {
-        // In the Site's language: the TR route's Site path, reading only what `record` wrote.
-        if (resolvePhiLocaleBase(language) === resolvePhiLocaleBase(input.siteSourceLocale)) {
-          return translateSiteBatchWithCache({
-            siteId, locale: target, sourceLocale: language, msgs: asWritten, ctx,
-            storedContexts: asWritten.map(() => ctx), create: false, format: "text",
-          });
-        }
-        // In another: a translation held on the recorded message wins, the rest takes the TR route's external path.
-        const ids = await resolveSiteMessageIds(siteId, asWritten.map((msg) => ({ msg: msg.trim(), ctx })), { create: false });
-        const recorded = asWritten.flatMap((msg, index) => {
-          const msgId = ids[index];
-          return typeof msgId === "number" && msg.trim() !== "" ? [{ msg, msgId, index }] : [];
-        });
-        const held = await getSiteTranslations(recorded.map((entry) => entry.msgId), target);
-        const missing = recorded.filter((entry) => !held.get(entry.msgId)?.trim());
-        const rendered = await translateExternalSiteBatchWithCache({
-          siteId, locale: target, sourceLocale: language, canonicalLocale: input.siteSourceLocale,
-          msgs: missing.map((entry) => entry.msg), ctx, storedContexts: missing.map(() => ctx), format: "text",
-        });
-        const result = [...asWritten];
-        for (const entry of recorded) result[entry.index] = held.get(entry.msgId)?.trim() ? held.get(entry.msgId)! : entry.msg;
-        missing.forEach((entry, position) => { result[entry.index] = rendered[position] ?? entry.msg; });
-        return result;
-      });
+      // The TR route's own choice, reading only what `record` wrote: in the Site's language the Site path on the
+      // recorded message; in another a translation held on it wins and the rest takes the external path.
+      const { value, standIn } = await trackTranslationStandIns(() => translateSiteTextsWithCache({
+        siteId, locale: target, sourceLocale: language, canonicalLocale: input.siteSourceLocale, msgs: asWritten, ctx,
+        storedContexts: asWritten.map(() => ctx), format: "text", create: false, recordedMessages: true,
+      }));
       return { texts: value, provisional: standIn };
     },
   } satisfies PhisTranslationsCapabilityV1;

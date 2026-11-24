@@ -15,9 +15,7 @@ import { PHIS_APP_HEADER, PHIS_SITE_KEY_HEADER } from "@/lib/constants/http-head
 import {
   trackTranslationStandIns,
   translateBatchWithCache,
-  translateExternalSiteBatchWithCache,
-  translateSiteBatchWithCache,
-  translateSiteWithCache,
+  translateSiteTextsWithCache,
   translateWithCache,
 } from "@/lib/translations";
 
@@ -233,24 +231,15 @@ async function handleTranslation(request: Request, payload: TranslationPayload) 
         : null;
     const effectiveSourceLocale = sourceLocale?.trim() || site?.sourceLocale || PHI_CANONICAL_SOURCE_LOCALE;
     const { value: translation, standIn } = await trackTranslationStandIns(async () => site
-      ? resolvePhiLocaleBase(effectiveSourceLocale) === resolvePhiLocaleBase(site.sourceLocale)
-        ? await translateSiteWithCache({
+      ? (await translateSiteTextsWithCache({
           siteId: site.id,
           locale,
-          sourceLocale: site.sourceLocale,
-          msg,
+          sourceLocale: effectiveSourceLocale,
+          canonicalLocale: site.sourceLocale,
+          msgs: [msg],
           ctx,
           format,
-        })
-        : (await translateExternalSiteBatchWithCache({
-            siteId: site.id,
-            locale,
-            sourceLocale: effectiveSourceLocale,
-            canonicalLocale: site.sourceLocale,
-            msgs: [msg],
-            ctx,
-            format,
-          }))[0] ?? msg
+        }))[0] ?? msg.trim()
       : await translateWithCache({
           locale,
           sourceLocale: effectiveSourceLocale,
@@ -311,24 +300,15 @@ async function handleBatchTranslation(request: Request, payload: TranslationPayl
         : null;
     const effectiveSourceLocale = sourceLocale?.trim() || site?.sourceLocale || PHI_CANONICAL_SOURCE_LOCALE;
     const { value: translations, standIn } = await trackTranslationStandIns(async () => site
-      ? resolvePhiLocaleBase(effectiveSourceLocale) === resolvePhiLocaleBase(site.sourceLocale)
-        ? await translateSiteBatchWithCache({
+      ? await translateSiteTextsWithCache({
           siteId: site.id,
           locale,
-          sourceLocale: site.sourceLocale,
+          sourceLocale: effectiveSourceLocale,
+          canonicalLocale: site.sourceLocale,
           msgs,
           ctx,
           format,
         })
-        : await translateExternalSiteBatchWithCache({
-            siteId: site.id,
-            locale,
-            sourceLocale: effectiveSourceLocale,
-            canonicalLocale: site.sourceLocale,
-            msgs,
-            ctx,
-            format,
-          })
       : await translateBatchWithCache({
           locale,
           sourceLocale: effectiveSourceLocale,

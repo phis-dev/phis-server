@@ -52,24 +52,10 @@ import {
 import { normalizeSiteCmsPath } from "@/lib/helpers/cms-path";
 import { normalizeString } from "@/lib/helpers/request";
 import { createPhiPageReference } from "@/lib/internal-references";
-import { normalizeLocale } from "@/lib/locale";
+import { resolveSiteReadLocale } from "@/lib/locale";
 import { logRuntimeEvent, normalizeLogThrowable } from "@/lib/log";
 import { logSiteCmsAuditEvent } from "@/lib/site-cms-audit";
 import { takeModuleProductProposalsOnActivation } from "@/lib/module-products-apply";
-
-function resolveRequestLocale(request: Request) {
-  const url = new URL(request.url);
-  const rawLocale =
-    url.searchParams.get("locale") ??
-    request.headers.get("x-locale") ??
-    request.headers.get("accept-language");
-
-  if (!rawLocale?.trim()) {
-    return null;
-  }
-
-  return normalizeLocale(rawLocale);
-}
 
 function resolveAreaMask(area: unknown) {
   return resolvePhisCmsAreaMask(typeof area === "string" ? area.trim().toLowerCase() : "");
@@ -1333,7 +1319,7 @@ export async function handleSiteCmsAreaStructuresRead(request: NextRequest) {
   }
 
   const siteId = context!.site!.id;
-  const locale = resolveRequestLocale(request);
+  const locale = resolveSiteReadLocale(request);
   try {
     const readModules = async (areaMask: number) => {
       const draft = await getSiteCurrentAreaModulesDraft(siteId, { areaMask });
@@ -1437,7 +1423,7 @@ export async function handleSiteCmsPagePublish(request: NextRequest) {
   const revisionId =
     revisionIdValue && Number.isInteger(Number(revisionIdValue)) ? Number(revisionIdValue) : null;
   const areaMask = resolveAreaMask(area);
-  const locale = resolveRequestLocale(request);
+  const locale = resolveSiteReadLocale(request);
 
   try {
     const result = await publishSitePageRevision(
@@ -1545,7 +1531,7 @@ export async function handleSiteCmsAreaPublish(request: NextRequest) {
   const revisionId =
     revisionIdValue && Number.isInteger(Number(revisionIdValue)) ? Number(revisionIdValue) : null;
   const areaMask = resolveAreaMask(area);
-  const locale = resolveRequestLocale(request);
+  const locale = resolveSiteReadLocale(request);
 
   try {
     const result = await publishSiteAreaRevision(

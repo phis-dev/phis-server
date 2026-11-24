@@ -9,11 +9,7 @@ import {
 import { resolvePhiLocaleBase } from "@/lib/locale";
 import { logRuntimeEvent, normalizeLogThrowable } from "@/lib/log";
 import { resolvePhiMediaThumbnailUrl } from "@/lib/media-response";
-import {
-  trackTranslationStandIns,
-  translateExternalSiteBatchWithCache,
-  translateSiteBatchWithCache,
-} from "@/lib/translations";
+import { trackTranslationStandIns, translateSiteTextsWithCache } from "@/lib/translations";
 
 /*
  * What every public read of a content type's entries does after the store has answered (CONTENT.md):
@@ -131,32 +127,21 @@ async function translatePendingFields(input: {
   const groups = collectPendingFields(input.kind, input.entries, input.locale, input.canonicalLocale);
   for (const group of groups) {
     const texts = group.fields.map((entry) => entry.text);
-    const sameAsCanonical =
-      resolvePhiLocaleBase(group.sourceLocale) === resolvePhiLocaleBase(input.canonicalLocale);
-    const translations = sameAsCanonical
-      ? await translateSiteBatchWithCache({
-        siteId: input.siteId,
-        locale: input.locale,
-        sourceLocale: input.canonicalLocale,
-        msgs: texts,
-        ctx: group.ctx,
-        format: "text",
-      })
-      /*
-       * Written in another language than the Site's canonical one: the same route external Markdown
-       * takes. The text is translated into the canonical language once and kept as its own message, the
-       * original stays the answer for its own language, and every further language derives from the
-       * canonical one.
-       */
-      : await translateExternalSiteBatchWithCache({
-        siteId: input.siteId,
-        locale: input.locale,
-        sourceLocale: group.sourceLocale,
-        canonicalLocale: input.canonicalLocale,
-        msgs: texts,
-        ctx: group.ctx,
-        format: "text",
-      });
+    /*
+     * Written in another language than the Site's canonical one, a field takes the same route external
+     * Markdown takes: the text is translated into the canonical language once and kept as its own message,
+     * the original stays the answer for its own language, and every further language derives from the
+     * canonical one.
+     */
+    const translations = await translateSiteTextsWithCache({
+      siteId: input.siteId,
+      locale: input.locale,
+      sourceLocale: group.sourceLocale,
+      canonicalLocale: input.canonicalLocale,
+      msgs: texts,
+      ctx: group.ctx,
+      format: "text",
+    });
 
     group.fields.forEach((field, index) => {
       const translation = translations[index]?.trim();

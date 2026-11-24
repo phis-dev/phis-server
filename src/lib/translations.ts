@@ -64,15 +64,6 @@ type TranslationInput = {
   format?: TranslationFormat | null;
 };
 
-type SiteTranslationInput = {
-  siteId: number;
-  locale: string;
-  sourceLocale: string;
-  msg: string;
-  ctx?: string | null;
-  format?: TranslationFormat | null;
-};
-
 type SiteBatchTranslationInput = {
   siteId: number;
   locale: string;
@@ -591,18 +582,6 @@ export async function translateBatchWithCache({
   });
 }
 
-export async function translateSiteWithCache(input: SiteTranslationInput) {
-  const [translation = input.msg.trim()] = await translateSiteBatchWithCache({
-    siteId: input.siteId,
-    locale: input.locale,
-    sourceLocale: input.sourceLocale,
-    msgs: [input.msg],
-    ctx: input.ctx,
-    format: input.format,
-  });
-  return translation;
-}
-
 /**
  * The Site path for a batch of messages, each kept under its stored context (`ctx`, its flags included): the
  * message ids in one go, what `locale` holds, one provider request for the rest -- told `providerCtx` -- and
@@ -859,20 +838,27 @@ export async function translateSiteBatchWithCache({
  * `sourceLocale`, another language than the Site's `canonicalLocale`, answered in `locale`. `storedContexts`
  * as for `translateSiteBatchWithCache`: each text's unit is kept under `[extern]` and its own context, the
  * provider told `ctx`.
+ *
+ * `recordedMessages`: the texts are also messages of the Site's store under their stored contexts, as
+ * `translations:v1`'s `record` keeps an Add-on's words. A translation held on a text's message for `locale`
+ * wins, a text the store holds no message for is answered as written, and only the rest takes the external
+ * path. A reader that has the held translations already (a product's `textMessages`, a content entry's
+ * joins) leaves it off rather than read them twice.
  */
-export async function translateExternalSiteBatchWithCache(input: SiteBatchTranslationInput & {
+async function translateExternalSiteBatchWithCache(input: SiteBatchTranslationInput & {
   canonicalLocale: string;
   storedContexts?: readonly string[];
+  recordedMessages?: boolean;
 }) {
   const locale = requirePhiTranslationLocale(input.locale);
   const sourceLocale = requirePhiTranslationLocale(input.sourceLocale);
   const canonicalLocale = requirePhiTranslationLocale(input.canonicalLocale);
   const format = normalizeTranslationFormat(input.format);
   const { providerCtx, entries } = readSiteBatchEntries(input);
-  if (entries.length === 0 || sameLocale(locale, sourceLocale) || !isConfiguredSourceLocaleSupported(sourceLocale)) {
+  if (entries.length === 0 || sameLocale(locale, sourceLocale)) {
     return entries.map((entry) => entry.msg);
   }
-  return translateNonEmptyEntries(entries, (asked) => translateExternalSiteEntries({
+  const external = (asked: ReadonlyArray<{ msg: string; ctx: string }>) => translateExternalSiteEntries({
     siteId: input.siteId,
     locale,
     sourceLocale,
@@ -880,5 +866,48 @@ export async function translateExternalSiteBatchWithCache(input: SiteBatchTransl
     providerCtx,
     format,
     entries: asked.map((entry) => ({ msg: entry.msg, ctx: buildTranslationCacheContext({ ctx: entry.ctx, format, external: true }) })),
-  }));
+  });
+  if (!input.recordedMessages) {
+    return translateNonEmptyEntries(entries, external);
+  }
+  return translateNonEmptyEntries(entries, async (asked) => {
+    const msgIds = await resolveSiteMessageIds(
+      input.siteId,
+      asked.map((entry) => ({ msg: entry.msg, ctx: buildTranslationCacheContext({ ctx: entry.ctx, format }) })),
+      { create: false },
+    );
+    const held = await getSiteTranslations(msgIds.filter((msgId): msgId is number => typeof msgId === "number"), locale);
+    const answers = asked.map((entry) => entry.msg);
+    const missing: number[] = [];
+    msgIds.forEach((msgId, index) => {
+      if (typeof msgId !== "number") return;
+      const translation = held.get(msgId);
+      if (translation?.trim()) answers[index] = translation;
+      else missing.push(index);
+    });
+    const rendered = await external(missing.map((index) => asked[index]!));
+    missing.forEach((index, position) => {
+      answers[index] = rendered[position] ?? asked[index]!.msg;
+    });
+    return answers;
+  });
+}
+
+/**
+ * The TR route's choice for a Site's texts, and every reader's that answers them as the route would: texts
+ * written in the Site's language (`canonicalLocale`, by base language) take the Site path
+ * (`translateSiteBatchWithCache`), texts written in another take the external path
+ * (`translateExternalSiteBatchWithCache`). `storedContexts`, `ctx` and `format` go to either; `create` is the
+ * Site path's and `recordedMessages` the external path's.
+ */
+export async function translateSiteTextsWithCache(input: SiteBatchTranslationInput & {
+  canonicalLocale: string;
+  storedContexts?: readonly string[];
+  create?: boolean;
+  recordedMessages?: boolean;
+}) {
+  const { canonicalLocale, create, recordedMessages, ...batch } = input;
+  return sameLocale(input.sourceLocale, canonicalLocale)
+    ? translateSiteBatchWithCache({ ...batch, sourceLocale: canonicalLocale, create })
+    : translateExternalSiteBatchWithCache({ ...batch, canonicalLocale, recordedMessages });
 }

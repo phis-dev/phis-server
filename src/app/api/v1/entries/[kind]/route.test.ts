@@ -27,8 +27,9 @@ vi.mock("@/lib/media-response", () => ({
   resolvePhiMediaThumbnailUrl: ({ id }: { id: number }) => `/api/site/media/${id}/variants/1`,
 }));
 vi.mock("@/lib/translations", () => ({
-  translateSiteBatchWithCache: mocks.translateSite,
-  translateExternalSiteBatchWithCache: mocks.translateExternal,
+  // The TR route's choice by the texts' language: translateSite is the Site path, translateExternal the external path.
+  translateSiteTextsWithCache: (input: { sourceLocale: string; canonicalLocale: string }) =>
+    (input.sourceLocale.split("-")[0] === input.canonicalLocale.split("-")[0] ? mocks.translateSite(input) : mocks.translateExternal(input)),
   trackTranslationStandIns: async (work: () => Promise<unknown>) => ({
     value: await work(),
     standIn: mocks.standIn.value,
