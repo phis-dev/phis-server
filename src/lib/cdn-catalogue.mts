@@ -133,7 +133,8 @@ export async function checkPhisCdnBucket(pool: Pool, target: PhisCdnTarget): Pro
   return {
     flags: consistent ? PhisCdnCheckReportFlags.Consistent : 0,
     objects: objects.length,
-    recorded: rows.length,
+    // A deleted file stays in the catalogue for its key, but its bytes are meant to be gone.
+    recorded: rows.filter((row) => (row.flags & PhisCdnFileFlags.Deleted) === 0).length,
     unrecorded,
     missing,
     sizeMismatch,

@@ -290,7 +290,7 @@ describe.skipIf(!configured)("the CDN page's routes", () => {
     storage.objects.set("c/2/c.tar", { body: Buffer.from("cc"), contentType: "application/x-tar" });
     const report = await (await CHECK(new NextRequest(`${BASE}/check`, { method: "POST" }))).json();
     expect(report).toEqual({
-      flags: 0, objects: 1, recorded: 1, missing: [], sizeMismatch: [],
+      flags: 0, objects: 1, recorded: 0, missing: [], sizeMismatch: [],
       unrecorded: [{ key: "c/2/c.tar", sizeBytes: 2, flags: PhisCdnCheckObjectFlags.Adoptable, reason: null }],
     });
     const adopted = await (await ADOPT(new NextRequest(`${BASE}/check/adopt`, json({ keys: ["c/2/c.tar", "a/1/a.zip", "n/1/none"] })))).json();
