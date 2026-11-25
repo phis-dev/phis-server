@@ -10,7 +10,6 @@ import {
   PHIS_CORE_CAPABILITIES,
   type PhisAddonCapabilities,
   type PhisAuthorizationCapabilityV1,
-  type PhisCdnPublishCapabilityV1,
   type PhisRowIntent,
 } from "./contract.ts";
 import {
@@ -273,11 +272,7 @@ export function buildPhisAddonCapabilities(input: {
    */
   unauthenticated?: boolean;
 }): PhisAddonCapabilities {
-  /*
-   * `cdnPublish` is delivered under the key `PHIS_CORE_CAPABILITIES` names it by, as every capability is;
-   * `PhisAddonCapabilities` of the contracts does not state the field yet, so it is stated here.
-   */
-  const capabilities: PhisAddonCapabilities & { cdnPublish?: PhisCdnPublishCapabilityV1 } = {};
+  const capabilities: PhisAddonCapabilities = {};
   if (input.siteId == null) {
     // Every capability here is Site-scoped. Without a Site there is nothing to bind them to.
     return Object.freeze(capabilities);
