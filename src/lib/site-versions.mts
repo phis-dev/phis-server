@@ -17,7 +17,8 @@
  */
 
 import { spawn } from "node:child_process";
-import { readFile, stat } from "node:fs/promises";
+import { constants as fsConstants } from "node:fs";
+import { access, readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -176,13 +177,52 @@ export function flattenPhiSiteVersions(set: PhiSiteVersionSet): Record<string, s
 
 const NPM_VIEW_TIMEOUT_MS = 30_000;
 
-function runNpmView(args: readonly string[], cwd: string, timeoutMs: number) {
+/**
+ * The npm cache `npm view` uses when the environment names none.
+ *
+ * npm caches under `~/.npm`, and the `phis` service account has no home (`/nonexistent`): every `npm view`
+ * it ran failed with EACCES, and `init` fell back to the recorded set without ever asking the registry.
+ * An operator who creates this directory for the account (`install -d -o phis -g phis /var/cache/phis-npm`)
+ * gives those calls a cache; without it npm keeps its default, which serves every account with a home.
+ */
+export const PHI_NPM_VIEW_CACHE_DIRECTORY = "/var/cache/phis-npm";
+
+/** An environment as `spawn` takes it. */
+type PhiProcessEnvironment = Record<string, string | undefined>;
+
+/** True when the environment sets npm's `cache`; npm reads `npm_config_*` without regard to case. */
+function namesNpmCache(env: PhiProcessEnvironment) {
+  return Object.entries(env).some(([key, value]) => key.toLowerCase() === "npm_config_cache" && value !== undefined && value !== "");
+}
+
+/**
+ * The environment `npm view` runs with: the caller's, without npm's update check, and with `npm_config_cache`
+ * set to `cacheDirectory` when the caller sets no cache and that directory exists and this process may
+ * write to it. Anything else leaves npm its own default.
+ */
+export async function resolvePhiNpmViewEnvironment(
+  env: PhiProcessEnvironment = process.env,
+  cacheDirectory: string = PHI_NPM_VIEW_CACHE_DIRECTORY,
+): Promise<PhiProcessEnvironment> {
+  const resolved: PhiProcessEnvironment = { ...env, NO_UPDATE_NOTIFIER: "1", npm_config_update_notifier: "false" };
+  if (namesNpmCache(env)) return resolved;
+  try {
+    if (!(await stat(cacheDirectory)).isDirectory()) return resolved;
+    await access(cacheDirectory, fsConstants.W_OK | fsConstants.X_OK);
+  } catch {
+    return resolved;
+  }
+  return { ...resolved, npm_config_cache: cacheDirectory };
+}
+
+function runNpmView(args: readonly string[], cwd: string, timeoutMs: number, env: PhiProcessEnvironment) {
   return new Promise<string>((resolve, reject) => {
     // One try, a bounded wait: an unreachable registry falls back instead of holding `phis init` for the
     // minutes npm's own retries take.
     const child = spawn("npm", ["view", ...args, "--json", "--fetch-retries=0", `--fetch-timeout=${Math.min(timeoutMs, 15_000)}`], {
       cwd,
-      env: { ...process.env, NO_UPDATE_NOTIFIER: "1", npm_config_update_notifier: "false" },
+      // Next's types demand NODE_ENV of every ProcessEnv; npm needs none of it.
+      env: env as NodeJS.ProcessEnv,
       stdio: ["ignore", "pipe", "pipe"],
     });
     let stdout = "";
@@ -216,16 +256,21 @@ function runNpmView(args: readonly string[], cwd: string, timeoutMs: number) {
  */
 export function createPhiNpmViewRegistry(options: { cwd: string; timeoutMs?: number }): PhiPackageRegistry {
   const timeoutMs = options.timeoutMs ?? NPM_VIEW_TIMEOUT_MS;
+  let environment: Promise<PhiProcessEnvironment> | null = null;
+  const view = async (args: readonly string[]) => {
+    environment ??= resolvePhiNpmViewEnvironment();
+    return runNpmView(args, options.cwd, timeoutMs, await environment);
+  };
   return {
     async listVersions(name) {
-      const output = await runNpmView([name, "versions"], options.cwd, timeoutMs);
+      const output = await view([name, "versions"]);
       const value = output ? JSON.parse(output) as unknown : [];
       if (typeof value === "string") return [value];
       if (!Array.isArray(value)) throw new Error(`npm view ${name} versions answered no list`);
       return value.filter((entry): entry is string => typeof entry === "string");
     },
     async readField(name, version, field) {
-      const output = await runNpmView([`${name}@${version}`, field], options.cwd, timeoutMs);
+      const output = await view([`${name}@${version}`, field]);
       return output ? JSON.parse(output) as unknown : undefined;
     },
   };

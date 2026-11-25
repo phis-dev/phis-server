@@ -617,7 +617,9 @@ published in the Server's Major.Minor line; beside it stand the versions that `@
 `package.json#phis.testedWith`, the ones it is built and tested with (`next`, `react`, `react-dom`,
 `antd`, `@ant-design/icons`, `typescript`, `@types/node`, `@types/react`, `@types/react-dom`). Both come
 from `npm view` run in the Site's directory, so the npm configuration (registry, auth, proxy) applies;
-one try with a bounded wait. When the registry cannot be asked or the chosen `@phis/ui` states no
+one try with a bounded wait. Without `npm_config_cache` in the environment, `npm view` caches in
+`/var/cache/phis-npm` when that directory exists and is writable -- the `phis` account has no home for
+npm's default `~/.npm` -- and in npm's default otherwise. When the registry cannot be asked or the chosen `@phis/ui` states no
 `phis.testedWith`, the set recorded when this CLI was built answers: `pnpm build:cli` takes it from the
 registry's newest `@phis/ui` of the line that states one, else from a phis-ui checkout beside phis-server
 (or `PHIS_UI_ROOT`), and refuses to build with neither. `init` prints which applied and why (JSON

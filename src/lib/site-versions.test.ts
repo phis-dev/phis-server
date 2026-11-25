@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -8,6 +8,7 @@ import {
   readPhiSiteVersionsAtBuild,
   readPhiTestedWith,
   resolvePhiSiteScaffoldVersions,
+  resolvePhiNpmViewEnvironment,
   resolvePhiSiteVersions,
   selectPhiUiVersionInLine,
   type PhiPackageRegistry,
@@ -145,5 +146,41 @@ describe("Site versions", () => {
     await manifest("7.8.4");
     await expect(readPhiSiteVersionsAtBuild({ serverVersion: "7.8.0", registry: down, uiRoot }))
       .rejects.toThrow(/states no phis\.testedWith/);
+  });
+
+  it("gives npm view the phis cache when no cache is set and the directory is writable, else npm's default", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "phis-npm-cache-"));
+    roots.push(root);
+    const cache = path.join(root, "phis-npm");
+    const quiet = { NO_UPDATE_NOTIFIER: "1", npm_config_update_notifier: "false" };
+
+    // Not there: npm keeps its default.
+    expect(await resolvePhiNpmViewEnvironment({ PATH: "/usr/bin" }, cache)).toEqual({ PATH: "/usr/bin", ...quiet });
+
+    await mkdir(cache);
+    expect(await resolvePhiNpmViewEnvironment({ PATH: "/usr/bin" }, cache))
+      .toEqual({ PATH: "/usr/bin", ...quiet, npm_config_cache: cache });
+
+    // A cache the caller set wins, however it is spelled; an empty one counts as unset, as npm reads it.
+    expect(await resolvePhiNpmViewEnvironment({ npm_config_cache: "/elsewhere" }, cache))
+      .toEqual({ npm_config_cache: "/elsewhere", ...quiet });
+    expect(await resolvePhiNpmViewEnvironment({ NPM_CONFIG_CACHE: "/elsewhere" }, cache))
+      .toEqual({ NPM_CONFIG_CACHE: "/elsewhere", ...quiet });
+    expect((await resolvePhiNpmViewEnvironment({ npm_config_cache: "" }, cache)).npm_config_cache).toBe(cache);
+
+    // A file of that name is no cache.
+    const file = path.join(root, "file");
+    await writeFile(file, "");
+    expect((await resolvePhiNpmViewEnvironment({}, file)).npm_config_cache).toBeUndefined();
+
+    // Nor is a directory this process cannot write to (root writes anywhere, so it cannot show this).
+    if (process.getuid?.() !== 0) {
+      await chmod(cache, 0o555);
+      try {
+        expect((await resolvePhiNpmViewEnvironment({}, cache)).npm_config_cache).toBeUndefined();
+      } finally {
+        await chmod(cache, 0o755);
+      }
+    }
   });
 });

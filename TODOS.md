@@ -274,10 +274,12 @@ processed.
   `phis init`, and nothing is rolled back on failure. Provide one transactional flow that registers and
   validates the Site and then materializes its scaffold, leaving neither a partially registered Site nor a
   partial source tree on failure.
-- **Release-resolved scaffold dependencies.** `src/lib/site-scaffold.mts` hard-codes dependency and
-  package-manager versions. Resolve the exact compatible set from the installed `phis` release and the
-  selected package manager, verify availability, and record it in the scaffold manifest and the sole
-  lockfile, including the Site's installed Modules.
+- **Release-resolved scaffold dependencies.** The framework and toolchain versions come from `@phis/ui`'s
+  `phis.testedWith` since 2026-11-25 (`src/lib/site-versions.mts`); the package-manager versions
+  (`PACKAGE_MANAGER_VERSIONS` in `src/lib/site-scaffold.mts`, written into the Site's `packageManager`)
+  stay hand-kept for now (owner, 2026-11-25). Open: resolve the selected package manager's version too,
+  verify availability, and record the set in the scaffold manifest and the sole lockfile, including the
+  Site's installed Modules.
 - **Consistent lifecycle.** `init` installs only with `--install` and never builds; `update` installs,
   checks, builds, and writes a release artifact. The first-install path must produce a verified runnable
   Site in one operation with consistent install, typecheck, build, artifact, and cleanup behaviour.
