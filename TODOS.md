@@ -55,9 +55,10 @@ login work; the documented path to a served Site does not.
   Release `@phis/ui` with the field before the Server -- the Server's release build records its fallback
   from the registry and stops without it -- then repeat the phisys path through `phis update` to a release
   and a running Site.
-- **`sanitize-html` is pinned to 2.17.7.** The fresh Site's `npm audit` lists moderate advisories fixed in
-  2.18.0 (GHSA-x3q4-9hxx-gx8m, GHSA-374f-7chj-9948, GHSA-cv27-6wvh-8x7j); the Server's `package.json` pins
-  2.17.7 like `@phis/ui`. Raise both together (package update round 1) and release; no exploit test was made.
+- **`sanitize-html` 2.18.2 is not released yet.** The fresh Site's `npm audit` listed moderate advisories
+  fixed in 2.18.0 (GHSA-x3q4-9hxx-gx8m, GHSA-374f-7chj-9948, GHSA-cv27-6wvh-8x7j) against the 2.17.7 pin;
+  the Server and `@phis/ui` pin 2.18.2 since package update round 1 (2026-11-25). The re-run above checks
+  that the audit is clean; no exploit test was made.
 
 ## Payments
 
