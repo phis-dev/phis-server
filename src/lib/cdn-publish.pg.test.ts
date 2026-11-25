@@ -25,7 +25,7 @@ import {
   setPhiTestMediaConfig,
   type PhiTestSite,
 } from "../../test/pg/harness";
-import { readSiteCdn, readSiteCdnProfile } from "@/db/site-cdn.mts";
+import { readSiteCdn, readSiteCdnProfile, withdrawSiteCdnFile } from "@/db/site-cdn.mts";
 import { buildPhisAddonCdnCapability } from "@/lib/addons/cdn-capability";
 import { buildPhisAddonCdnPublishCapability } from "@/lib/addons/cdn-publish-capability";
 import { PhisCdnUploadStatusCode } from "@/lib/cdn-core";
@@ -306,6 +306,44 @@ describe.skipIf(!configured)("cdn-publish:v1 and the CDN pipeline", () => {
     await importPhisCdnFile(pool, target, request("/copy.zip", body), caller());
     expect(await linkPhisCdnFile(pool, target, { ...link, version: "0.8.1-1", fileName: "copy.zip", sha256: sha(body), sizeBytes: 4 }, caller()))
       .toMatchObject({ refusal: "key-taken" });
+  });
+
+  it("moves a link to the address its source names now, for the same bytes only", async () => {
+    const link = {
+      name: "phis", version: "0.8.2", fileName: "phis_0.8.2_amd64.deb",
+      url: "https://files.example.com/old/phis_0.8.2_amd64.deb", sizeBytes: 1234, sha256: "e".repeat(64),
+    };
+    const moves: { key: string; from: string | null; to: string }[] = [];
+    const moving = caller({ onLinkMoved: (move) => moves.push(move) });
+    expect(await linkPhisCdnFile(pool, target, link, moving)).toMatchObject({ ok: true, flags: 0, file: { url: link.url } });
+
+    const moved = { ...link, url: "https://objects.example.com/new/phis_0.8.2_amd64.deb" };
+    expect(await linkPhisCdnFile(pool, target, moved, moving))
+      .toMatchObject({ ok: true, flags: PhisCdnPublishResultFlags.Already, file: { url: moved.url, sha256: link.sha256, sizeBytes: 1234 } });
+    expect(moves).toEqual([{ key: "phis/0.8.2/phis_0.8.2_amd64.deb", from: link.url, to: moved.url }]);
+    // What cdn:v1 answers -- and the counting route redirects to -- is the new address.
+    expect(await buildPhisAddonCdnCapability({ siteId: site.id }).file("phis/0.8.2/phis_0.8.2_amd64.deb"))
+      .toMatchObject({ storage: "link", url: moved.url });
+    // Asking again with the address it has now changes nothing.
+    expect(await linkPhisCdnFile(pool, target, moved, moving)).toMatchObject({ ok: true, flags: PhisCdnPublishResultFlags.Already });
+    expect(moves).toHaveLength(1);
+
+    // Other bytes -- another SHA-256 or another size -- never move the link: the key stays as it was.
+    const elsewhere = "https://files.example.com/other/phis_0.8.2_amd64.deb";
+    expect(await linkPhisCdnFile(pool, target, { ...link, url: elsewhere, sha256: "f".repeat(64) }, moving)).toMatchObject({ refusal: "key-taken" });
+    expect(await linkPhisCdnFile(pool, target, { ...link, url: elsewhere, sizeBytes: 1235 }, moving)).toMatchObject({ refusal: "key-taken" });
+    expect(moves).toHaveLength(1);
+    const { rows } = await pool.query<{ source_url: string }>(
+      `SELECT o.source_url FROM phis.site_cdn_file_origins o JOIN phis.site_cdn_files f ON f.id = o.file_id
+        WHERE f.site_id = $1 AND f.object_key = $2`,
+      [site.id, "phis/0.8.2/phis_0.8.2_amd64.deb"],
+    );
+    expect(rows).toEqual([{ source_url: moved.url }]);
+
+    // A withdrawn link stays where it was withdrawn.
+    expect(await withdrawSiteCdnFile(pool, site.id, "phis/0.8.2/phis_0.8.2_amd64.deb")).toBe(true);
+    expect(await linkPhisCdnFile(pool, target, { ...link, url: elsewhere }, moving)).toMatchObject({ refusal: "key-taken" });
+    expect(moves).toHaveLength(1);
   });
 
   it("is not handed to an unverified hook", async () => {

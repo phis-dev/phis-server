@@ -61,6 +61,14 @@ export function buildPhisAddonCdnPublishCapability(input: {
           meta: { addonId, refusal: code, key },
         });
       },
+      onLinkMoved: ({ key, from, to }) => {
+        logRuntimeEvent("info", "cdn.link.moved", {
+          message: `${addonId} linked ${key} again from another address of the same bytes.`,
+          siteKey,
+          pluginKey: addonId,
+          meta: { addonId, key, storage: "link", previousSourceUrl: from, sourceUrl: to },
+        });
+      },
     };
   }
 

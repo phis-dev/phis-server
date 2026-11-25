@@ -224,6 +224,35 @@ export async function withdrawSiteCdnFile(db: Queryable, siteId: number, key: st
 }
 
 /**
+ * Points an Add-on's link at the address its source names now. Only an offered link of that Add-on whose
+ * bytes (SHA-256 and size) are the ones recorded moves: the file stays the same, only where it lies does
+ * not. False where nothing matched -- another file, a copy, a withdrawn link, or the address already.
+ */
+export async function moveSiteCdnLinkSource(db: Queryable, input: {
+  siteId: number;
+  key: string;
+  addonId: string;
+  sha256: string;
+  sizeBytes: number;
+  sourceUrl: string;
+}): Promise<boolean> {
+  const { rowCount } = await db.query(
+    `UPDATE phis.site_cdn_file_origins o SET source_url = $6
+       FROM phis.site_cdn_files f
+      WHERE o.file_id = f.id AND f.site_id = $1 AND f.object_key = $2
+        AND o.origin = $7::smallint AND o.addon_id = $3
+        AND f.sha256 = $4 AND f.size_bytes = $5::bigint
+        AND (f.flags & $8::int) = $9::int
+        AND o.source_url IS DISTINCT FROM $6`,
+    [
+      input.siteId, input.key, input.addonId, input.sha256, input.sizeBytes, input.sourceUrl, PhisCdnFileOrigin.Addon,
+      PhisCdnFileFlags.Linked | PhisCdnFileFlags.Withdrawn, PhisCdnFileFlags.Linked,
+    ],
+  );
+  return rowCount === 1;
+}
+
+/**
  * Marks a file withdrawn and deleted. Null where it already was deleted (or does not exist), else what a
  * caller needs to give the Space its bytes back: a copy's size, and none for a link.
  */

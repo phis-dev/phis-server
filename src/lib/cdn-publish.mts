@@ -46,6 +46,7 @@ import {
   insertSiteCdnUpload,
   isSiteCdnNameHeldByOthers,
   listExpiredSiteCdnUploads,
+  moveSiteCdnLinkSource,
   readOpenSiteCdnUpload,
   readSiteCdnFile,
   renewSiteCdnUpload,
@@ -981,6 +982,8 @@ export type PhisCdnAddonCaller = {
   maxObjectBytes: number;
   /** Told of every refusal, for the Server's log. */
   onRefusal?: (refusal: { code: string; message: string; key: string | null }) => void;
+  /** Told where a link now sends a visitor: the same bytes, linked again from another address. */
+  onLinkMoved?: (move: { key: string; from: string | null; to: string }) => void;
   /** For tests: the resolver and the transport `fetchPhisOutbound` uses. */
   outbound?: Pick<PhisOutboundOptions, "resolve" | "transport">;
 };
@@ -1338,7 +1341,9 @@ export async function importPhisCdnFile(
 
 /**
  * `cdn-publish:v1.link`: records `url` under the key as a link, nothing fetched and nothing stored.
- * Idempotent: the key linked with the same SHA-256 answers `Already`.
+ * Idempotent: the key linked with the same SHA-256 and size answers `Already`. Where the source names
+ * another address for those bytes (a GitHub asset that moved), the link takes it: what a visitor gets is
+ * the same file, and the old address may be gone.
  */
 export async function linkPhisCdnFile(
   pool: Pool,
@@ -1365,11 +1370,25 @@ export async function linkPhisCdnFile(
     ({ ok: true, file: presentPhisCdnFile(row, cdn.cdn.publicBaseUrl), flags });
 
   const sameLink = (row: PhisCdnFileRow) => isPhisCdnFileLinked(row) && (row.flags & PhisCdnFileFlags.Withdrawn) === 0
-    && row.sha256 === request.sha256;
+    && row.sha256 === request.sha256 && Number(row.size_bytes) === request.sizeBytes;
+  const takenMessage = `${parts.key} is recorded with other bytes or as a copy, or was and has been withdrawn.`;
+  /** The link that is there already, at the address the source names now. */
+  const already = async (row: PhisCdnFileRow): Promise<PhisCdnLinkResultV1> => {
+    if (row.source_url === request.url) return await present(row, PhisCdnPublishResultFlags.Already);
+    const moved = await moveSiteCdnLinkSource(pool, {
+      siteId: cdn.siteId, key: parts.key, addonId: caller.addonId,
+      sha256: request.sha256, sizeBytes: request.sizeBytes, sourceUrl: request.url,
+    });
+    const after = await readSiteCdnFile(pool, cdn.siteId, parts.key, { includeWithdrawn: true });
+    // Withdrawn between the read and the move: the key is taken, as it would have been a moment later.
+    if (!after || !sameLink(after)) return refuse("key-taken", takenMessage, parts.key);
+    if (moved) caller.onLinkMoved?.({ key: parts.key, from: row.source_url, to: request.url });
+    return await present(after, PhisCdnPublishResultFlags.Already);
+  };
   const existing = await readSiteCdnFile(pool, cdn.siteId, parts.key, { includeWithdrawn: true });
   if (existing) {
-    if (sameLink(existing)) return await present(existing, PhisCdnPublishResultFlags.Already);
-    return refuse("key-taken", `${parts.key} is recorded with other bytes or as a copy, or was and has been withdrawn.`, parts.key);
+    if (sameLink(existing)) return await already(existing);
+    return refuse("key-taken", takenMessage, parts.key);
   }
   if (await readOpenSiteCdnUpload(pool, cdn.siteId, parts.key)) {
     return refuse("busy", `An upload of ${parts.key} is open elsewhere.`, parts.key);
@@ -1388,7 +1407,7 @@ export async function linkPhisCdnFile(
   } catch (error) {
     if (error instanceof PhisCdnPublishRefusal && error.code === "key-taken") {
       const raced = await readSiteCdnFile(pool, cdn.siteId, parts.key, { includeWithdrawn: true });
-      if (raced && sameLink(raced)) return await present(raced, PhisCdnPublishResultFlags.Already);
+      if (raced && sameLink(raced)) return await already(raced);
       return refuse("key-taken", error.message, parts.key);
     }
     throw error;
