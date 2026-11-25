@@ -1,4 +1,4 @@
-import { access, lstat, mkdir, mkdtemp, readFile, readdir, readlink, rm, writeFile } from "node:fs/promises";
+import { access, lstat, mkdir, mkdtemp, readFile, readdir, readlink, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -10,9 +10,20 @@ import {
 } from "./site-scaffold.mts";
 
 const roots: string[] = [];
+/** What `resolvePhiSiteVersions` would hand over; made-up versions, so no test reads like a pin. */
+const packageVersions = {
+  "@phis/ui": "9.1.2",
+  "@types/node": "9.2.0",
+  antd: "9.3.0",
+  next: "9.4.1",
+  react: "9.5.0",
+  "react-dom": "9.5.0",
+  typescript: "9.6.0",
+};
 const context = {
   siteKey: "example-site",
   packageManager: "pnpm" as const,
+  packageVersions,
   runtime: {
     publicBaseUrl: "https://example.test",
     apiBaseUrl: "https://api.example.test",
@@ -20,7 +31,7 @@ const context = {
   },
 };
 /** What `reconcile` and `update` pass: no manager named, no runtime values. */
-const reconcileContext = { siteKey: "example-site" };
+const reconcileContext = { siteKey: "example-site", packageVersions };
 
 async function scaffoldRoot() {
   const root = await mkdtemp(path.join(tmpdir(), "phis-scaffold-"));
@@ -62,7 +73,33 @@ describe("site scaffold", () => {
     expect(hooks).toContain("buildPhiHookProxyHandlers");
     // What arrives from the open internet must not pick up a claim to have come from inside.
     expect(hooks).toContain("{ internalToken: false }");
-    expect(JSON.parse(files["package.json"]!).dependencies["@phis/ui"]).toBe("0.4.0");
+    const manifest = JSON.parse(files["package.json"]!);
+    expect(manifest.dependencies).toEqual({
+      "@phis/ui": "9.1.2",
+      antd: "9.3.0",
+      next: "9.4.1",
+      react: "9.5.0",
+      "react-dom": "9.5.0",
+    });
+    expect(manifest.devDependencies).toEqual({ "@types/node": "9.2.0", typescript: "9.6.0" });
+  });
+
+  /*
+   * The scaffold used to keep its own list, and on 2026-11-25 a clean install pinned a `next` that Next
+   * refuses to build and an `@phis/ui` months old. Every version now comes from `@phis/ui` through
+   * site-versions.mts; this keeps a list from creeping back into either file.
+   */
+  it("holds no hand-pinned framework versions", async () => {
+    for (const file of ["site-scaffold.mts", "site-versions.mts"]) {
+      const source = await readFile(path.join(import.meta.dirname, file), "utf8");
+      const pins = [...source.matchAll(/["']?(@?[a-z0-9][\w./-]*)["']?\s*:\s*["'][\^~]?\d+\.\d+\.\d+/gu)]
+        .map((match) => match[1])
+        // The Site's own version, and the package managers it declares in `packageManager`, are no
+        // framework of `@phis/ui`'s.
+        .filter((name) => !["version", "pnpm", "npm", "yarn", "bun"].includes(name));
+      expect(pins, file).toEqual([]);
+    }
+    expect(() => buildPhiSiteScaffoldFiles({ siteKey: "example-site", packageVersions: {} })).toThrow(/@phis\/ui/);
   });
 
   it("compiles the installed Module packages the projection lists", () => {
@@ -351,7 +388,7 @@ describe("site scaffold", () => {
 
   it("refuses init without Core's address and the internal token", async () => {
     const root = await scaffoldRoot();
-    await expect(reconcilePhiSiteScaffold(root, { siteKey: "example-site" }, "init")).rejects.toThrow(/internal token/);
+    await expect(reconcilePhiSiteScaffold(root, { siteKey: "example-site", packageVersions }, "init")).rejects.toThrow(/internal token/);
     await expect(reconcilePhiSiteScaffold(root, {
       ...context,
       runtime: { ...context.runtime, internalToken: " " },
@@ -371,6 +408,23 @@ describe("site scaffold", () => {
     const result = await reconcilePhiSiteScaffold(root, reconcileContext, "reconcile");
     await expect(access(path.join(root, "config/site-runtime.json"))).rejects.toThrow();
     expect(result.changes.some((entry) => entry.path === "config/site-runtime.json")).toBe(false);
+  });
+
+  /*
+   * The file holds `phis.internalToken`. Written with the umask's mode it was 0644 on a clean install, and
+   * any account on the host could read the token (phisys test, 2026-11-25).
+   */
+  it("writes the runtime config readable by its owner alone, and keeps it so", async () => {
+    const root = await scaffoldRoot();
+    await reconcilePhiSiteScaffold(root, context, "init");
+    const runtimeFile = path.join(root, "config/site-runtime.json");
+    expect((await stat(runtimeFile)).mode & 0o777).toBe(0o600);
+    // Everything else stays readable for the build and the operator's login.
+    expect((await stat(path.join(root, "config/site-runtime.example.json"))).mode & 0o044).toBe(0o044);
+    expect((await stat(path.join(root, "package.json"))).mode & 0o044).toBe(0o044);
+
+    await reconcilePhiSiteScaffold(root, reconcileContext, "reconcile");
+    expect((await stat(runtimeFile)).mode & 0o777).toBe(0o600);
   });
 
   it("never retires the runtime config an earlier manifest listed", async () => {
@@ -450,7 +504,7 @@ describe("site scaffold", () => {
 
     expect(merged.dependencies["@phis/ui"]).toBe("^0.4.2");
     expect(merged.dependencies["@acme/extra"]).toBe("1.0.0");
-    expect(merged.dependencies.antd).toBe("6.7.0");
+    expect(merged.dependencies.antd).toBe("9.3.0");
     expect(merged.devDependencies.typescript).toBeUndefined();
     expect(merged.scripts.build).toBe("next build --debug");
     expect(merged.scripts.typecheck).toBe("tsc --noEmit");

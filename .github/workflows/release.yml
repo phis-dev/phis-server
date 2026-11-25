@@ -117,7 +117,10 @@ jobs:
           printf 'allowBuilds:\n  argon2: true\n  esbuild: true\n  sharp: true\n  unrs-resolver: true\nminimumReleaseAgeExclude:\n  - "@phis/*"\n' > pnpm-workspace.yaml
           pnpm install --no-frozen-lockfile
 
-      # The inputs the Debian packages are assembled from.
+      # The inputs the Debian packages are assembled from. `build:cli` records the Site versions an offline
+      # `phis init` falls back to, from the registry's newest @phis/ui of this release's Major.Minor line,
+      # and stops when that one states no `phis.testedWith` (no phis-ui checkout is here): release
+      # @phis/ui before the Server.
       - run: pnpm build
       - run: pnpm build:cli
 

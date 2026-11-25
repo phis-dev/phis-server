@@ -19,12 +19,14 @@ import {
   commandExists,
   detectPhiProxyKind,
   isPhiProxyInstalled,
+  readPhiServerProxyRecord,
   readPhiStagePorts,
   renderPhiServerProxyConfig,
   requiredApacheModules,
   resolvePhiStageUnit,
   runPhiSystemCommand,
   type PhiProxyKind,
+  type PhiServerProxyRecord,
 } from "./proxy.mts";
 import { printPhiEmailTestResult, runPhiEmailTest } from "./email-test.mts";
 import type { FlagMap } from "./argv.mts";
@@ -42,7 +44,7 @@ import type { FlagMap } from "./argv.mts";
  *
  * Every step looks first and skips what is there, so the command can be run again on an installation that
  * exists -- it then only fills gaps. Certificates are not a step: `phis proxy tls` is run by the operator,
- * on purpose, once DNS points here.
+ * on purpose, once DNS points here, and a proxy it put on HTTPS stays on HTTPS when install runs again.
  *
  * The steps that need the rest of the CLI (schema, operators, Sites) come in as `operations`, so this file
  * holds the order and the questions, not a second copy of those commands.
@@ -249,6 +251,11 @@ function serviceStep(configRoot: string) {
   return unit;
 }
 
+/** The port a URL is asked on: its own, else its scheme's. */
+export function resolvePhiUrlPort(target: URL) {
+  return target.port || (target.protocol === "https:" ? "443" : "80");
+}
+
 /**
  * Until the address answers with anything below 500. A domain is asked for through this host's own web
  * server (`curl --resolve`), so the check proves the proxy file and does not wait for DNS.
@@ -263,7 +270,7 @@ async function waitForOk(url: string, timeoutMs = 60_000) {
       if (throughProxy) {
         const result = spawnSync("curl", [
           "-s", "-o", "/dev/null", "-w", "%{http_code}", "--max-time", "5",
-          "--resolve", `${target.hostname}:${target.port || 80}:127.0.0.1`, url,
+          "--resolve", `${target.hostname}:${resolvePhiUrlPort(target)}:127.0.0.1`, url,
         ], { encoding: "utf8" });
         const status = Number(result.stdout.trim());
         if (status > 0 && status < 500) return status;
@@ -281,6 +288,23 @@ async function waitForOk(url: string, timeoutMs = 60_000) {
   throw new Error(`${url} did not answer within ${timeoutMs / 1000} s (${last}).`);
 }
 
+/**
+ * Whether the install writes the proxy with TLS: only when `phis proxy tls` already put this domain on
+ * HTTPS behind this web server, as the stage's proxy record says.
+ *
+ * Install itself never obtains a certificate, so on a first run this is false. On a repeated run it keeps
+ * what is there: the proxy is one of the gaps install fills, and a working HTTPS proxy is none -- writing
+ * it as plain HTTP again (as 0.8.0 did) took the site off HTTPS with exit code 0. A record for another
+ * domain or the other web server is a different proxy, and its certificate does not cover this one.
+ * There is no flag to step down: an operator who wants plain HTTP back writes it with `phis proxy config`.
+ */
+export function shouldPhiInstallKeepTls(
+  record: Pick<PhiServerProxyRecord, "kind" | "domain" | "tls"> | null,
+  input: { kind: PhiProxyKind; domain: string },
+) {
+  return record?.tls === true && record.kind === input.kind && record.domain === input.domain;
+}
+
 async function proxyStep(configRoot: string, flags: FlagMap, prompter: Prompter): Promise<string | null> {
   step("Web server");
   let domain = flag(flags, "domain");
@@ -293,17 +317,18 @@ async function proxyStep(configRoot: string, flags: FlagMap, prompter: Prompter)
   }
   domain = assertPhiProxyDomain(domain);
   const kind: PhiProxyKind | null = detectPhiProxyKind(flag(flags, "proxy"));
-  const input = { domain, tls: false, ports: readPhiStagePorts(configRoot) };
+  const ports = readPhiStagePorts(configRoot);
   if (!kind || !isPhiProxyInstalled(kind)) {
     skip("neither Apache nor nginx is installed; the file it would need:");
-    console.log(renderPhiServerProxyConfig({ ...input, kind: kind ?? "nginx" }));
+    console.log(renderPhiServerProxyConfig({ domain, tls: false, ports, kind: kind ?? "nginx" }));
     return null;
   }
-  const result = applyAndRecordPhiServerProxyConfig(configRoot, { ...input, kind });
+  const tls = shouldPhiInstallKeepTls(readPhiServerProxyRecord(configRoot), { kind, domain });
+  const result = applyAndRecordPhiServerProxyConfig(configRoot, { kind, domain, tls, ports });
   for (const done of result.steps) console.log(`   ${done.command}`);
-  console.log(`   wrote ${result.path}${kind === "apache" ? ` (modules: ${requiredApacheModules(false).join(" ")})` : ""}`);
-  console.log(`   HTTPS: once DNS points here, run  phis proxy tls --domain ${domain} --email <you>`);
-  return `http://${domain}`;
+  console.log(`   wrote ${result.path}${tls ? " over HTTPS, as phis proxy tls left it" : ""}${kind === "apache" ? ` (modules: ${requiredApacheModules(tls).join(" ")})` : ""}`);
+  if (!tls) console.log(`   HTTPS: once DNS points here, run  phis proxy tls --domain ${domain} --email <you>`);
+  return `${tls ? "https" : "http"}://${domain}`;
 }
 
 async function operatorStep(configRoot: string, flags: FlagMap, prompter: Prompter, operations: PhiInstallOperations) {

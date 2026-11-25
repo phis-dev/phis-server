@@ -241,6 +241,7 @@ import {
   type PhiSiteScaffoldPackageManager,
   type PhiSiteScaffoldRuntime,
 } from "../lib/site-scaffold.mts";
+import { flattenPhiSiteVersions, resolvePhiSiteScaffoldVersions } from "../lib/site-versions.mts";
 import { parsePhisArgv, type FlagMap } from "./argv.mts";
 import { normalizePhiEmail, normalizePhiSiteKey } from "../lib/helpers/normalize.ts";
 import { normalizePhiTimeZone } from "../lib/helpers/time-zone.ts";
@@ -2454,9 +2455,23 @@ async function runSiteScaffoldCommand(
     }
     runtime = { publicBaseUrl: site.publicBaseUrl ?? `https://${site.hostname}`, apiBaseUrl, internalToken };
   }
+  // The pins come from `@phis/ui`, never from this CLI: the newest of the Server's line and the versions it
+  // states it was tested with, or the set recorded when this CLI was built (src/lib/site-versions.mts).
+  const siteVersions = await resolvePhiSiteScaffoldVersions({
+    serverVersion: packageJson.version,
+    siteRoot: path.resolve(root),
+    mode: mode === "init" ? "init" : "reconcile",
+  });
+  // Only `init` pins everything; a reconcile's versions reach a dependency the Site lacks, and none is usual.
+  if (!json && mode === "init") {
+    console.log(siteVersions.source === "registry"
+      ? `Site versions: @phis/ui ${siteVersions.uiVersion} and the versions it was tested with, from the npm registry.`
+      : `Site versions: @phis/ui ${siteVersions.uiVersion}, the rest as recorded when this phis was built (${siteVersions.reason}).`);
+  }
   const result = await reconcilePhiSiteScaffold(root, {
     siteKey: site.key,
     packageManager: readSiteScaffoldPackageManager(flags),
+    packageVersions: flattenPhiSiteVersions(siteVersions),
     runtime,
   }, mode === "init" ? "init" : "reconcile");
   const manager = result.packageManager;
@@ -2511,7 +2526,7 @@ async function runSiteScaffoldCommand(
   // The release links to this file rather than carrying it, so a release built without it starts and fails.
   const runtimeConfigMissing = mode === "update" && !existsSync(path.join(result.root, "config", "site-runtime.json"));
   if (json) {
-    printJson({ ok: true, action: `site.${mode}`, installed: shouldInstall, built: mode === "update", moduleMedia, moduleProducts, release, runtimeConfigMissing, directoryProblems, ...result });
+    printJson({ ok: true, action: `site.${mode}`, installed: shouldInstall, built: mode === "update", siteVersions, moduleMedia, moduleProducts, release, runtimeConfigMissing, directoryProblems, ...result });
     return;
   }
   const changed = result.changes.filter((entry) => entry.action !== "unchanged");

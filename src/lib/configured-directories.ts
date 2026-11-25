@@ -18,8 +18,9 @@ import type { PhisConfig } from "./config-core.ts";
  *   and the server is the only thing that reads them -- media is delivered through phis, never straight
  *   from disk by the web server, so nobody outside the service account and its group needs to look in;
  * - the two Site roots are 0755: they hold Site checkouts and the links to their releases, which carry no
- *   secret of the installation's (a Site's `config/site-runtime.json` sets its own mode), and the operator's
- *   own login, the build and the Sites' processes all read them.
+ *   secret of the installation's (a Site's `config/site-runtime.json`, which carries the internal token, is
+ *   written 0600 for the Site's account by the scaffold: `writeAtomic` in site-scaffold.mts), and the
+ *   operator's own login, the build and the Sites' processes all read them.
  *
  * A directory that exists is left as it is, mode and owner both: it may be shared with something this
  * cannot know about. The check then says what is wrong with it, and the operator decides.

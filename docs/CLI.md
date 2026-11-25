@@ -181,6 +181,9 @@ question has a flag; without a terminal, a missing required answer stops the com
      configuration for hours). Only for a stage under `/srv/phis/stages/`.
   10. Web server, with `--domain`: when Apache or nginx is installed (`--proxy` picks one where both are),
      as `phis proxy config --write`; otherwise the file is printed. HTTPS is not a step: `phis proxy tls`.
+     A proxy that `phis proxy tls` put on HTTPS for this domain and web server (the stage's
+     `config/phis-proxy.json` says `tls: true`) is written as HTTPS again, and the check below asks it on
+     443; there is no flag to step down -- `phis proxy config <kind> --domain <host> --write` does that.
   11. Checks that `/operator/login` answers below 500 -- through the web server for the domain (`curl
      --resolve`, so DNS need not point here yet), else on the loopback port.
   12. Test email, once `email.from` is set: in a terminal it asks whether to send one now and to which
@@ -605,7 +608,20 @@ wrong (JSON `directoryProblems`). See
 
 `config/site-runtime.json` gets `site.key`, `site.publicUrl` (the Site's public base URL, else
 `https://<hostname>`), `phis.apiBaseUrl`, `phis.internalToken` (`api.internalToken`) and
-`network.internalApiTimeoutMs` (`8000`). Only `init` writes this file.
+`network.internalApiTimeoutMs` (`8000`). Only `init` writes this file, with mode `0600`; run as root, it
+gives the file the owner of the nearest directory that existed before `init` (the Sites root `phis install`
+made for the service account), so the Site can read it and nobody else can.
+
+`package.json` pins exact versions, none of them kept by the CLI. `@phis/ui` is the newest release
+published in the Server's Major.Minor line; beside it stand the versions that `@phis/ui` states in
+`package.json#phis.testedWith`, the ones it is built and tested with (`next`, `react`, `react-dom`,
+`antd`, `@ant-design/icons`, `typescript`, `@types/node`, `@types/react`, `@types/react-dom`). Both come
+from `npm view` run in the Site's directory, so the npm configuration (registry, auth, proxy) applies;
+one try with a bounded wait. When the registry cannot be asked or the chosen `@phis/ui` states no
+`phis.testedWith`, the set recorded when this CLI was built answers: `pnpm build:cli` takes it from the
+registry's newest `@phis/ui` of the line that states one, else from a phis-ui checkout beside phis-server
+(or `PHIS_UI_ROOT`), and refuses to build with neither. `init` prints which applied and why (JSON
+`siteVersions`: `uiVersion`, `packages`, `source` `registry` or `fallback`, `reason`).
 
 ### `phis reconcile <site key>`
 
@@ -617,7 +633,8 @@ Brings an existing Site repository to the current scaffold:
 - `package.json` is merged by adding, not resetting: a dependency (in `dependencies` or
   `devDependencies`), script or top-level field the scaffold needs and the Site lacks is added with
   the scaffold's value; everything the Site already has keeps the Site's value, including version
-  ranges such as `@phis/ui`. Two exceptions: `engines.node` is set to the scaffold's `>=24.21.0`
+  ranges such as `@phis/ui`. An added dependency takes the version the Site's own `@phis/ui` states in
+  `phis.testedWith` when the Site pins `@phis/ui` exactly, else the version `init` would choose. Two exceptions: `engines.node` is set to the scaffold's `>=24.21.0`
   (other `engines` keys stay), and `packageManager` changes only with an explicit
   `--package-manager` (see above).
 - Site-owned files (`PHI_SITE_OWNED_AFTER_INIT`) are left alone when they exist: `.gitignore`, the

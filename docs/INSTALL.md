@@ -36,7 +36,8 @@ proxy file when Apache or nginx is installed. It leaves the setup closed, starts
 checks `/operator/login` through the proxy. Once a sender is set it offers a test email (`phis email test`). Every step looks first and skips what exists, so running it
 again only fills gaps; every question has a flag ([CLI.md](./CLI.md#phis-install)), so it also runs
 unattended. HTTPS is a separate, deliberate step once DNS points at the host:
-`phis proxy tls --domain <host> --email <you>` ([section 8](#the-servers-own-web-server)).
+`phis proxy tls --domain <host> --email <you>` ([section 8](#the-servers-own-web-server)). A proxy that
+step put on HTTPS stays on HTTPS when `phis install` runs again for the same domain and web server.
 
 `phis install --mode browser` does only what the browser cannot -- the keys, the same three directories,
 the database with `--local-db` or `--admin-uri` and the sender with `--email-from` -- opens the setup window, starts the service and prints the SSH tunnel to
@@ -379,15 +380,17 @@ phis init acme --path /srv/phis/sites/acme --api-base-url http://127.0.0.1:5301
   `@phis/server`, as seen from the host the Site runs on. The Debian package serves on
   `http://127.0.0.1:5301`. Only `init` writes it into `config/site-runtime.json`.
 - `--package-manager` defaults to `npm` for a new Site.
+- `init` prints which `@phis/ui` it pinned, and whether the rest came from the registry or from the set
+  recorded at build time (JSON `siteVersions`).
 
 What `init` writes (scaffold version 3):
 
 | Path | Content |
 | --- | --- |
-| `package.json` | Scripts `dev`, `build`, `start`, `typecheck`; `next`, `react`, `antd`, `@phis/ui` and types; `engines.node >=24.21.0`; `packageManager`. |
+| `package.json` | Scripts `dev`, `build`, `start`, `typecheck`; exact pins of `@phis/ui` and of the versions it was tested with (`next`, `react`, `react-dom`, `antd`, `@ant-design/icons`, `typescript`, `@types/*`), see below; `engines.node >=24.21.0`; `packageManager`. |
 | `tsconfig.json`, `next.config.ts` | `output: "standalone"`, the in-memory render cache handler from `@phis/ui/next/cache-handler`, `transpilePackages` with `@phis/ui` and the installed Module packages from `src/generated/site-module-packages.json`. The configuration is wrapped in `withPhiNextConfig` from `@phis/ui/next/config`, which generates Ant Design's structure from the Ant Design installed in the Site. |
 | `.gitignore` | Ignores `node_modules/`, `.next/`, build output, `.phis/releases/` and `config/site-runtime.json`. |
-| `config/site-runtime.json` | `site.key`, `site.publicUrl`, `phis.apiBaseUrl`, `phis.internalToken` (from `api.internalToken`), `network.internalApiTimeoutMs` (`8000`). |
+| `config/site-runtime.json` | `site.key`, `site.publicUrl`, `phis.apiBaseUrl`, `phis.internalToken` (from `api.internalToken`), `network.internalApiTimeoutMs` (`8000`). Mode `0600`; run as root, `init` gives it the owner of the nearest directory that existed before (the Sites root `phis install` made for `phis`). |
 | `config/site-runtime.example.json` | The same keys with `site.publicUrl`, `phis.apiBaseUrl` and `phis.internalToken` empty. |
 | `src/proxy.ts` | Request routing (`@phis/ui/next/site-proxy`). |
 | `src/app/(site)/` | Route group for everything that reads the request: root layout, index page, `not-found`, `forbidden`, `unauthorized`; the Public Area under `[root]/` and the Areas `accounting`, `admin`, `app`, `builder`, `editor`, each with a `(root)` and a `(pages)` branch and their region slots; `builder/api/[[...path]]`. |
@@ -402,6 +405,15 @@ What `init` writes (scaffold version 3):
 
 `config/site-runtime.json`, `.gitignore` and the `src/generated/` files belong to the Site after
 `init`: `reconcile` leaves them as they are.
+
+The versions in `package.json` are none of the scaffold's own. `@phis/ui` is the newest one published in
+the Server's Major.Minor line (phis 0.8.x takes the newest `@phis/ui` 0.8.x; contracts, Server and
+`@phis/ui` share Major.Minor). Everything beside it is what that `@phis/ui` states in
+`package.json#phis.testedWith`, the exact versions it is built and tested with. Both are asked of the npm
+registry with `npm view`, in the Site's directory, so the npm configuration applies (`registry`, scope
+registries, auth, proxy). When the registry cannot be asked, or the chosen `@phis/ui` states no
+`phis.testedWith` (0.8.1 and earlier), `init` takes the set recorded when this `phis` was built and says
+so. A Site created by hand from a clone takes its versions from its own `package.json`.
 
 `src/generated/` is ignored by git as well. The projection is what the operator installed, and its
 source is the desired state in the phis root (`config/phis-modules.json`), not the Site's history: a
@@ -525,7 +537,10 @@ phis proxy tls --domain api.example.com --email ops@example.com
 `/.well-known/acme-challenge/` from `/var/www/phis-acme` on port 80, so no certbot plugin is needed -- and
 then writes the HTTPS file: port 80 redirects, port 443 proxies with `X-Forwarded-Proto "https"`. certbot
 renews on its own timer and reloads the web server. It runs only when called; `phis install` never does.
-Both commands write the whole file again: change their flags rather than the file.
+Both commands write the whole file again: change their flags rather than the file. `phis install` with
+`--domain` writes the file too: as HTTPS when the stage's record (`config/phis-proxy.json`) says
+`proxy tls` put that domain on HTTPS behind that web server, else as plain HTTP. Plain HTTP over a TLS proxy
+takes `phis proxy config <apache|nginx> --domain <host> --write` without `--tls`.
 
 ### A translation mirror
 
@@ -656,8 +671,11 @@ phis update acme --path /srv/phis/sites/acme
 
 - rewrites the canonical scaffold files to the current scaffold (Site edits to them are lost);
 - adds to `package.json` what the scaffold needs and the Site lacks, keeping every version, script
-  and field the Site already has; only `engines.node` is set to `>=24.21.0`. To move to a newer
-  `@phis/ui` or Next, raise the version in the Site (`npm install @phis/ui@<version>`) and then run `update`;
+  and field the Site already has; only `engines.node` is set to `>=24.21.0`. A dependency it adds is
+  pinned to the version the Site's own `@phis/ui` states in `phis.testedWith` (if the Site pins one exactly;
+  otherwise as `init` chooses). To move to a newer `@phis/ui` or Next, raise the versions in the Site
+  (`npm install @phis/ui@<version>`, and the `next`, `antd` and `react` that release states in
+  `npm view @phis/ui@<version> phis.testedWith`) and then run `update`;
 - keeps the Site-owned files (`PHI_SITE_OWNED_AFTER_INIT`: `config/site-runtime.json`, `.gitignore`,
   `src/generated/site-modules*.ts`) as they are;
 - removes files an earlier scaffold wrote and the current one no longer does, if their content is
@@ -671,4 +689,5 @@ added by hand; `reconcile` does not rewrite `.gitignore`.
 Review the changes (`phis reconcile acme --json` lists every file with its action, and `git diff`
 shows them), then deploy the new release (step 7) and restart the Site service. To change the
 server address or token of an existing Site, edit `config/site-runtime.json` yourself; `reconcile`
-does not rewrite it.
+does not rewrite it. Keep it at mode `0600`, owned by the account the Site runs as: it holds the internal
+token. A Site created by `phis init` 0.8.0 or earlier has it at `0644`; `chmod 0600` it by hand.

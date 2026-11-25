@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
-import { access, cp, mkdir, readFile, readdir, rename, rmdir, stat, symlink, unlink, writeFile } from "node:fs/promises";
+import { access, chmod, chown, cp, mkdir, readFile, readdir, rename, rm, rmdir, stat, symlink, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import { PHI_CMS_AREA_KEYS } from "@phis/contracts/cms";
@@ -96,7 +96,12 @@ export type PhiSiteScaffoldContext = {
    * `resolvePhiSitePackageManager` -- and no lockfile is touched.
    */
   packageManager?: PhiSiteScaffoldPackageManager;
-  packageVersions?: Partial<Record<string, string>>;
+  /**
+   * The exact versions `package.json` pins: `@phis/ui` and what it was tested with, as
+   * `resolvePhiSiteVersions` (site-versions.mts) chose them. The scaffold holds no versions of its own.
+   * On `reconcile` they reach only a dependency the Site does not have: one it has keeps its own.
+   */
+  packageVersions: Readonly<Record<string, string>>;
   runtime?: PhiSiteScaffoldRuntime;
 };
 /**
@@ -122,18 +127,6 @@ export type PhiSiteReleaseArtifact = {
   appDirectory: string;
 };
 
-const DEFAULT_VERSIONS: Record<string, string> = {
-  "@ant-design/icons": "6.3.4",
-  "@phis/ui": "0.4.0",
-  antd: "6.7.0",
-  next: "16.4.2",
-  react: "19.3.1",
-  "react-dom": "19.3.1",
-  "@types/node": "26.6.1",
-  "@types/react": "19.3.0",
-  "@types/react-dom": "19.3.0",
-  typescript: "6.0.3",
-};
 const PACKAGE_MANAGER_VERSIONS: Record<PhiSiteScaffoldPackageManager, string> = {
   pnpm: "11.9.0",
   npm: "11.10.1",
@@ -513,7 +506,8 @@ function proxyRoute(kind: "auth" | "site" | "addons" | "hooks") {
 }
 
 function packageJson(context: PhiSiteScaffoldContext, manager: PhiSiteScaffoldPackageManager) {
-  const versions = { ...DEFAULT_VERSIONS, ...(context.packageVersions ?? {}) };
+  const versions = context.packageVersions;
+  if (!versions["@phis/ui"]) throw new Error("The Site scaffold needs the @phis/ui version to pin.");
   return `${JSON.stringify({
     name: context.siteKey,
     version: "0.1.0",
@@ -590,11 +584,54 @@ async function exists(target: string) {
   try { await access(target); return true; } catch { return false; }
 }
 
-async function writeAtomic(target: string, content: string) {
+/**
+ * The files the scaffold writes that carry a secret: `config/site-runtime.json` holds `phis.internalToken`.
+ * Readable by their owner alone, the account the Site runs as.
+ */
+const PHI_SITE_SECRET_FILES: readonly string[] = ["config/site-runtime.json"];
+
+type PhiFileOwner = { uid: number; gid: number };
+
+/**
+ * Writes by renaming a fresh file over the old one, so the old one's mode would be lost: a secret file
+ * is created 0600 here rather than corrected afterwards, and a temp file an interrupted write left
+ * behind is removed first, because `mode` applies only to a file the write creates. The rename hands the
+ * file to whoever wrote it; a write as root gives it `owner` instead, so a Site running as its own account
+ * can still read a file only its owner may.
+ */
+async function writeAtomic(target: string, content: string, options: { mode?: number; owner?: PhiFileOwner | null } = {}) {
   await mkdir(path.dirname(target), { recursive: true });
   const temporary = `${target}.phis-tmp-${process.pid}`;
-  await writeFile(temporary, content, "utf8");
+  await rm(temporary, { force: true });
+  await writeFile(temporary, content, { encoding: "utf8", ...(options.mode === undefined ? {} : { mode: options.mode }) });
+  if (options.mode !== undefined) await chmod(temporary, options.mode);
+  if (options.owner && process.getuid?.() === 0) await chown(temporary, options.owner.uid, options.owner.gid);
   await rename(temporary, target);
+}
+
+/**
+ * Who a secret file belongs to: the owner of the file it replaces, else of the nearest directory that
+ * existed before this run -- the Site root, or the configured Sites root `init` creates it in, which
+ * `phis install` made for the account the Sites run as.
+ */
+async function readFileOwner(target: string): Promise<PhiFileOwner | null> {
+  try {
+    const info = await stat(target);
+    return { uid: info.uid, gid: info.gid };
+  } catch {
+    return null;
+  }
+}
+
+async function nearestExistingOwner(directory: string): Promise<PhiFileOwner | null> {
+  let current = directory;
+  while (true) {
+    const owner = await readFileOwner(current);
+    if (owner) return owner;
+    const parent = path.dirname(current);
+    if (parent === current) return null;
+    current = parent;
+  }
 }
 
 async function readJsonRecord(target: string) {
@@ -753,6 +790,8 @@ export async function reconcilePhiSiteScaffold(root: string, context: PhiSiteSca
   } else if (!await exists(path.join(resolvedRoot, "package.json"))) {
     throw new Error(`No Site at ${resolvedRoot} (no package.json); phis init creates one.`);
   }
+  // Before the root is made: a root `init` creates as root says nothing about whom the Site runs as.
+  const siteOwner = await nearestExistingOwner(resolvedRoot);
   await mkdir(resolvedRoot, { recursive: true });
   const manager = await resolvePhiSitePackageManager(resolvedRoot, context.packageManager, mode);
   // Only a manager the operator named replaces another one's lockfile; a Site's own choice is never undone.
@@ -783,7 +822,11 @@ export async function reconcilePhiSiteScaffold(root: string, context: PhiSiteSca
       changes.push({ path: relativePath, action: "unchanged" });
       continue;
     }
-    await writeAtomic(target, desired);
+    if (PHI_SITE_SECRET_FILES.includes(relativePath)) {
+      await writeAtomic(target, desired, { mode: 0o600, owner: await readFileOwner(target) ?? siteOwner });
+    } else {
+      await writeAtomic(target, desired);
+    }
     changes.push({ path: relativePath, action: alreadyExists ? "repaired" : "created" });
   }
   await removeRetiredScaffoldFiles(resolvedRoot, previousFiles, files, changes);
