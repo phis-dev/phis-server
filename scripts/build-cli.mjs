@@ -1,5 +1,6 @@
 import { chmodSync, readFileSync } from "node:fs";
 import path from "node:path";
+import { tmpdir } from "node:os";
 import { build } from "esbuild";
 
 import {
@@ -35,7 +36,9 @@ const external = Object.entries(packageJson.dependencies ?? {})
 // checkout beside this one. A build with neither stops, since its first offline `phis init` would.
 const siteVersions = await readPhiSiteVersionsAtBuild({
   serverVersion: packageJson.version,
-  registry: createPhiNpmViewRegistry({ cwd: root }),
+  // Asked outside this checkout: npm refuses every command in a project whose devEngines name pnpm
+  // (EBADDEVENGINES), and the build needs no project .npmrc to read the public registry.
+  registry: createPhiNpmViewRegistry({ cwd: tmpdir() }),
   uiRoot: resolvePhiUiCheckoutRoot(root),
 });
 console.log(`Site versions recorded from ${siteVersions.source}: @phis/ui ${siteVersions.uiVersion}, ${
