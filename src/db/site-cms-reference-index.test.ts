@@ -214,15 +214,16 @@ describe("The reference index keeps sources apart", () => {
     expect(index.of(PhiCmsReferenceSourceKind.Content, 18)).toEqual(["/content"]);
   });
 
-  it("counts only this Site's references to a Page, across all four sources", async () => {
+  it("counts only this Site's references to a Page, across every source, a product's button among them", async () => {
     const index = referenceIndex();
     await write(index, [pageRef("/a", 42), pageRef("/b", 42)], { sourceKind: PhiCmsReferenceSourceKind.Page });
     await write(index, [pageRef("/c", 42)], { sourceKind: PhiCmsReferenceSourceKind.Navigation });
     await write(index, [pageRef("/d", 42)], { sourceKind: PhiCmsReferenceSourceKind.Area });
+    await write(index, [pageRef("/link/target", 42)], { sourceKind: PhiCmsReferenceSourceKind.Product });
     await write(index, [pageRef("/e", 42)], { siteId: 32, sourceKind: PhiCmsReferenceSourceKind.Content });
     await expect(countSiteCmsReferencesToPageWithDb(index.db, 31, 42)).resolves.toEqual({
-      total: 4,
-      bySource: { page: 2, navigation: 1, content: 0, area: 1 },
+      total: 5,
+      bySource: { page: 2, navigation: 1, content: 0, area: 1, product: 1 },
     });
     // The other Site's reference is counted for that Site alone.
     await expect(countSiteCmsReferencesToPageWithDb(index.db, 32, 42)).resolves.toMatchObject({
@@ -254,7 +255,7 @@ describe("The reference index keeps sources apart", () => {
     await write(index, [pageRef("/a", 42)]);
     await expect(countSiteCmsReferencesToPageWithDb(index.db, 31, 43)).resolves.toEqual({
       total: 0,
-      bySource: { page: 0, navigation: 0, content: 0, area: 0 },
+      bySource: { page: 0, navigation: 0, content: 0, area: 0, product: 0 },
     });
   });
 });

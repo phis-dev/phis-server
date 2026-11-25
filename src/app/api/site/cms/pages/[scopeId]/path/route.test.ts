@@ -45,7 +45,7 @@ const result = {
   pendingPath: "/kontakt-neu",
   publishedRevisionId: 184,
   workingDraftRevisionId: 190,
-  references: { total: 3, bySource: { page: 2, navigation: 0, content: 0, area: 1 } },
+  references: { total: 3, bySource: { page: 2, navigation: 0, content: 0, area: 1, product: 0 } },
 };
 
 /*

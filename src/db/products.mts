@@ -11,7 +11,7 @@ import type {
 
 import { PhiMediaDeliveryPolicy, PhiMediaLifecycleStatus } from "@phis/contracts/media";
 import type { PhisProductLink } from "@phis/contracts/products";
-import type { PhiLinkTarget } from "@phis/contracts/references";
+import { readPhiPageReference, type PhiLinkTarget } from "@phis/contracts/references";
 
 import { PHIS_PRODUCT_FLAG } from "../lib/constants/products.ts";
 import { PHI_SITE_SERVER_ADDON_FLAG_REQUESTED_ENABLED, PHIS_ADDON_FLAG_GLOBALLY_ENABLED } from "../lib/constants/server-addons.ts";
@@ -19,6 +19,7 @@ import { PhisMediaSpaceKind } from "../lib/constants/media-space-kinds.ts";
 import { withPoolTransaction } from "../lib/db-transaction.ts";
 import { splitPhisProductId, type PhisNormalizedProductDraft } from "../lib/addons/product-draft.ts";
 import { computePhiMessageHash, ensurePhiSiteMessageId } from "./translation-message.mts";
+import { PhiCmsReferenceSourceKind } from "./site-revision-pointers.mts";
 import { buildTranslationContext } from "../lib/translation-context.ts";
 
 /** Pool or client alike: every read here is equally correct inside a caller's transaction and outside. */
@@ -369,8 +370,46 @@ const sameLink = (row: ProductRow, link: PhisProductLink | null) => link === nul
   ? row.link_target === null
   : row.link_target !== null && (row.link_label ?? "") === link.label && canonicalJson(row.link_target) === canonicalJson(link.target);
 
-/** Writes the product's button whole, or removes it (`phis.product_links`). */
-async function writeLink(db: DbQueryable, productId: number, link: PhisProductLink | null) {
+/** The Site Page Scope a link leads to, where it leads to one; a Module Page or an https address names none. */
+function linkedSitePage(link: PhisProductLink | null) {
+  if (link?.target.kind !== "page") return null;
+  const parsed = readPhiPageReference(link.target.reference);
+  if (parsed?.target.kind !== "site") return null;
+  // The fragment is the index's note of where on the Page, not identity; one longer than its column is left out.
+  const fragment = link.target.fragment?.trim() || null;
+  return { pageScopeId: parsed.target.pageScopeId, fragment: fragment && fragment.length <= 512 ? fragment : null };
+}
+
+/**
+ * Refuses a link to a Site Page this Site does not have. The button's Page is held by the CMS reference
+ * index (`writeLink`), whose foreign key would refuse an id of nothing, and a Page of another Site is not
+ * one this product can lead to. A Module Page and an https address are not checked here: the Site owns
+ * neither, as for every other source of the index (REFERENCES.md). A tombstoned Page still exists -- its
+ * deletion is undone by publishing it again -- and is accepted; the button draws nothing while it is gone.
+ */
+async function assertProductLinkPage(db: DbQueryable, siteId: number, link: PhisProductLink | null) {
+  const page = linkedSitePage(link);
+  if (!page) return;
+  const { rowCount } = await db.query(
+    `SELECT 1 FROM phis.site_page_scopes WHERE id = $1 AND site_id = $2 FOR KEY SHARE`,
+    [page.pageScopeId, siteId],
+  );
+  if ((rowCount ?? 0) === 0) throw new PhisProductRuleError("`link.target` names no Page of this Site.");
+}
+
+/** Where a product's button sits in its index row, as the other sources name a location (REFERENCES.md). */
+const PRODUCT_LINK_REFERENCE_LOCATION = "/link/target";
+
+/**
+ * Writes the product's button whole, or removes it (`phis.product_links`), and with it the product's set
+ * in the CMS reference index (`phis.site_cms_references`, source kind `Product`): one row where the
+ * button leads to a Site Page, none otherwise. That row is what a Page move counts and what keeps the
+ * Page Scope from being deleted under it, as a link in a Page, an Area, a Navigation or a Content body is.
+ * The row is filed under the Area the Page lies in: a product belongs to no Area, so there is no asking
+ * Area to fall back to, and the Page's own is where a move or a deletion of it happens.
+ */
+async function writeLink(db: DbQueryable, siteId: number, productId: number, link: PhisProductLink | null) {
+  await deleteProductLinkReferences(db, siteId, productId);
   if (link === null) {
     await db.query(`DELETE FROM phis.product_links WHERE product_id = $1`, [productId]);
     return;
@@ -379,6 +418,26 @@ async function writeLink(db: DbQueryable, productId: number, link: PhisProductLi
     `INSERT INTO phis.product_links (product_id, target, label) VALUES ($1, $2::jsonb, $3)
      ON CONFLICT (product_id) DO UPDATE SET target = EXCLUDED.target, label = EXCLUDED.label`,
     [productId, JSON.stringify(link.target), link.label],
+  );
+  const page = linkedSitePage(link);
+  if (!page) return;
+  await db.query(
+    `INSERT INTO phis.site_cms_references (
+       site_id, source_kind, source_scope_id, source_revision_id, source_location,
+       target_kind, target_area_id, target_page_scope_id, fragment
+     )
+     SELECT $1, $2, $3, NULL, $4, 1, s.area_id, s.id, $6
+     FROM phis.site_page_scopes s
+     WHERE s.id = $5 AND s.site_id = $1`,
+    [siteId, PhiCmsReferenceSourceKind.Product, productId, PRODUCT_LINK_REFERENCE_LOCATION, page.pageScopeId, page.fragment],
+  );
+}
+
+/** The product's rows in the CMS reference index; nothing else removes them, since the index names no product. */
+async function deleteProductLinkReferences(db: DbQueryable, siteId: number, productId: number) {
+  await db.query(
+    `DELETE FROM phis.site_cms_references WHERE site_id = $1 AND source_kind = $2 AND source_scope_id = $3`,
+    [siteId, PhiCmsReferenceSourceKind.Product, productId],
   );
 }
 
@@ -660,6 +719,8 @@ export async function registerProduct(pool: Pool, input: {
     if (!input.declared) {
       for (const assetId of draft.gallery) await assertProductImage(client, siteId, supplier, assetId, "gallery picture");
     }
+    // A manifest may name a button, so its sync is checked as a supplier's register is.
+    await assertProductLinkPage(client, siteId, draft.link);
     let row = await selectRow(client, siteId, id, true);
     const pickImage = (current: number | null) => (input.declared ? current : draft.imageAssetId);
     const pickIcon = (current: number | null) => (input.declared ? current : draft.iconAssetId);
@@ -680,7 +741,7 @@ export async function registerProduct(pool: Pool, input: {
       if ((inserted.rowCount ?? 0) > 0) {
         const productId = (inserted.rows[0] as { id: number }).id;
         await writeGallery(client, { productId, siteId, gallery: pickGallery([]) });
-        if (draft.link) await writeLink(client, productId, draft.link);
+        if (draft.link) await writeLink(client, siteId, productId, draft.link);
         await recordProductTexts(client, { siteId, productId, texts: draftTexts(draft) });
         await enqueueProductChanged(client, { siteId, recipients: input.listeners, productId: id });
         return { product: (await readProduct(client, siteId, id))!, outcome: "created" as const };
@@ -730,7 +791,7 @@ export async function registerProduct(pool: Pool, input: {
         terms.referralUrl, flags, terms.parts, pending ? JSON.stringify(pending) : null, draft.description, draft.sourceLocale],
     );
     if (!sameIds(storedGallery, gallery)) await writeGallery(client, { productId: row.id, siteId, gallery });
-    if (!sameLink(row, draft.link)) await writeLink(client, row.id, draft.link);
+    if (!sameLink(row, draft.link)) await writeLink(client, siteId, row.id, draft.link);
     await enqueueProductChanged(client, { siteId, recipients: input.listeners, productId: id });
     return { product: (await readProduct(client, siteId, id))!, outcome: "updated" as const };
   });
@@ -797,6 +858,8 @@ export async function removeProduct(pool: Pool, input: { siteId: number; supplie
     // And their renderings through the external path, for a product written in another language than the Site's.
     await client.query(`DELETE FROM phis.tr_site_msg WHERE site_id = $1 AND ctx = ANY($2::text[])`,
       [input.siteId, externalTextContexts(row.id, PHIS_PRODUCT_TEXT_FIELDS)]);
+    // Its button's row in the CMS reference index, which would otherwise go on holding the Page it led to.
+    await deleteProductLinkReferences(client, input.siteId, row.id);
     await client.query(`DELETE FROM phis.products WHERE id = $1`, [row.id]);
     return true;
   });

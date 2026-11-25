@@ -1760,7 +1760,11 @@ The design is [design/COMMERCE_COORDINATION.md](./design/COMMERCE_COORDINATION.m
   Site-relative path -- and `label`, at most `PHIS_PRODUCT_LINK_LABEL_MAX` characters in the product's
   `sourceLocale` like the title, `""` for the Widget's own wording; `register` reads it with the contracts'
   `readPhisProductLink`, so a label without a target, an unknown property or another kind of target is
-  refused, and it is kept in `phis.product_links`), `counted`, `sale` (`own`,
+  refused, and it is kept in `phis.product_links`; a target that is a Site Page must be a Page of this Site --
+  live or deleted, not one of another Site or none -- and is a row of the CMS reference index like a link in
+  a Page, so moving the Page counts it and the Page's Scope cannot be removed while the button leads there;
+  `remove` and a `register` without the link take the row along. A Module Page or an https address is kept
+  as given and indexes nothing, REFERENCES.md), `counted`, `sale` (`own`,
   `referral` or `payout`), `referralUrl` (required, https, exactly for `referral`), `free`, `accountRequired` (can only be acquired with an account; Core does not enforce it, an entitlement entry always has a subject with an account), `parts` (the
   ids of a bundle's parts), `state`, `released`, `pendingTerms`, `attributes`, `version`, the two
   timestamps. Title, summary and description are written in the product's `sourceLocale` and read in it,

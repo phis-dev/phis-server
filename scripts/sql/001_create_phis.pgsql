@@ -2164,7 +2164,9 @@ CREATE TABLE IF NOT EXISTS phis.site_cms_references (
   target_asset_id INT NULL REFERENCES phis.media_assets(id) ON DELETE RESTRICT,
   fragment VARCHAR(512) NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  CONSTRAINT site_cms_references_source_kind_check CHECK (source_kind IN (1, 2, 3, 4, 5)),
+  -- 1 Page, 2 Navigation, 3 Content, 4 Area, 5 Theme revision or body; 6 a product's button
+  -- (`phis.product_links`, source_scope_id the product's id, no revision).
+  CONSTRAINT site_cms_references_source_kind_check CHECK (source_kind IN (1, 2, 3, 4, 5, 6)),
   -- Two kinds and a gap where a third was. A Module Page target is not indexed: the Site owns neither
   -- the Page nor its path, switching the Module off is reversible and gives the routes back, and there
   -- is no row for a foreign key to point at. The kinds keep their numbers so the two that remain mean
@@ -2949,7 +2951,9 @@ CREATE TABLE IF NOT EXISTS phis.product_texts (
 -- `PhiLinkTarget` as `readPhisProductLink` read it, never a resolved path -- and what it says, in the
 -- product's source language like its title ('' for the Widget's default). No row, no button. Written whole by
 -- `register`; the label is also a source text of the Site's translation store (`product_texts`, field
--- `link_label`, context `product <id> link label`).
+-- `link_label`, context `product <id> link label`). A target that is a Site Page is also a row of
+-- `site_cms_references` (source kind 6, the product's id), written and removed with this one, so moving or
+-- deleting the Page sees it as it sees a link in a Page.
 CREATE TABLE IF NOT EXISTS phis.product_links (
   product_id INT PRIMARY KEY REFERENCES phis.products(id) ON DELETE CASCADE,
   target JSONB NOT NULL,

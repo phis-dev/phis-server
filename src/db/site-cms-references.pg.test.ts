@@ -83,7 +83,7 @@ describe("site_cms_references referential actions", () => {
       pool.query(
         `INSERT INTO phis.site_cms_references (
            site_id, source_kind, source_scope_id, source_location, target_kind, target_asset_id
-         ) VALUES ($1, 6, 1, 'pgtest', 3, $2)`,
+         ) VALUES ($1, 7, 1, 'pgtest', 3, $2)`,
         [site.id, asset],
       ),
     ).rejects.toMatchObject({ code: "23514" });

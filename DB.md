@@ -1334,14 +1334,15 @@ persist the referencing data. Revision JSON is never scanned to answer a referen
 - `UNIQUE (site_id, source_kind, source_scope_id, source_revision_id, source_location)`
 
 Contract:
-- `source_kind` is closed: `1 = page` (revision `tree_json`), `2 = navigation` (revision `tree_json`), `3 = content` (a trusted `site_content` HTML or Markdown body), `4 = area` (revision `tree_json`), `5 = theme` (revision `tree_json`).
-- `source_scope_id` is the owning Page Scope, Navigation Scope, Area Scope, Theme Scope, or `site_content.id` for the matching source kind. Writers replace the reference set of the revision they persist -- one `(site_id, source_kind, source_scope_id, source_revision_id)` -- in the same transaction; a Content source, which has versions rather than revisions, replaces its whole set.
+- `source_kind` is closed: `1 = page` (revision `tree_json`), `2 = navigation` (revision `tree_json`), `3 = content` (a trusted `site_content` HTML or Markdown body), `4 = area` (revision `tree_json`), `5 = theme` (revision `tree_json`), `6 = product` (a product's button, `phis.product_links`; added 2026-11-25, by hand as noted there).
+- `source_scope_id` is the owning Page Scope, Navigation Scope, Area Scope, Theme Scope, `site_content.id`, or `products.id` for the matching source kind. Writers replace the reference set of the revision they persist -- one `(site_id, source_kind, source_scope_id, source_revision_id)` -- in the same transaction; a Content source, which has versions rather than revisions, replaces its whole set.
 - An Asset reference in persisted config is a positive id in a field named `assetId` or in one whose name ends in `AssetId`; `phis:asset/<id>` is the form for trusted Markdown and HTML bodies. The collector reads exactly these two, so an Asset stored under any other shape has no index row and is deletable while the Site renders it. Normative in [REFERENCES.md](./REFERENCES.md).
 - `source_location` is a JSON-Pointer-style path into the source value, with `~0`/`~1` escaping and an appended `@<offset>` when several references are embedded in one string. Content sources use the persisted field name as the root, for example `/html@42`.
 - `target_kind` is closed: `1 = Site Page Scope`, `3 = Asset`. A CHECK constraint enforces that exactly the matching target columns are set. `2` was the Module preset Page and is retired: a Module Page target is not indexed at all, because the Site owns neither the Page nor its path, switching the Module off is reversible and gives its routes back, and there is no row a foreign key could point at. The absence of a row therefore does not mean nothing points at a Module Page. The numbers of the two remaining kinds are unchanged, so a stored value keeps its meaning.
 - Asset targets are validated against the Site Media Space on write; a reference to an Asset outside it aborts the transaction.
 - `ON DELETE RESTRICT` on both target columns makes the index the enforcement point for Page and Asset deletion, not just a reporting aid.
 - The projection is read for path-change affected-reference counts, Page and Asset deletion diagnostics, and delete guards. It never rewrites reference owners: a stable identity already resolves to the new path.
+- The Product source is a product's button: one row at `source_location` `/link/target` where its target is a Site Page, none for a Module Page or an https address, `source_revision_id` null because the product directory writes a link whole. `registerProduct` replaces the product's set whenever the link changes and `removeProduct` deletes it, both in the product's transaction; nothing else names a product here, so no cascade would. The row is filed under the Area the Page lies in (`site_page_scopes.area_id`): a product belongs to no Area. It is counted in a path change's affected references as `bySource.product` and holds the Page Scope under `ON DELETE RESTRICT` like every other source.
 - Because a Widget body is persisted both in the revision `tree_json` and in its `site_content` row, one authored reference legitimately produces one Page-source row and one Content-source row. The per-source breakdown keeps that visible; the sum is a location count, not a distinct-authored-reference count.
 - The Area source is the `tree_json` counterpart to the Page source, written by the Area draft save inside the same transaction. Area-owned trusted bodies reach the index through the Content source; the Area source covers references in Area widget or Region config, which carry no content binding.
 - The Theme source is the Site-wide carrier no CMS tree reaches. One Scope per Site, a key without an Area prefix, and it holds the Root background a Module's ground was taken over into plus the brand logo. A Theme row names no Area, and a Page reference in a Theme is invalid because a Site-wide Scope has no Area to resolve one in. Written by the Theme draft save and rewritten by the Theme publish, which may promote a revision other than the current draft.
@@ -1803,6 +1804,32 @@ Contract:
 - A product's button (`PhisProduct.link`): `target` is the `PhiLinkTarget` `readPhisProductLink` took -- a Page by its reference (`PhiPageReference`, resolved to an address wherever the button is drawn) or an `https` address -- never a resolved path; `label` is in the product's `source_locale` like `title`, `''` for the Widget's own wording. No row, no button.
 - Written whole by `register`: a link the draft states replaces the row, none removes it. A change of target or label raises the product's `version` and owes `product.changed`; the same link again changes nothing.
 - The label is also a source text of the Site's translation store, `phis.product_texts` field `link_label` under the context `product <id> link label`, translated like the title (`PhisProductText.LinkLabel`).
+- A target that is a Site Page is also a row of `phis.site_cms_references` (source kind `6`, `source_scope_id` the product's id), written with this row and removed with it or with the product. `register` refuses a Site Page this Site does not have; a tombstoned one is accepted. Moving the Page counts the button among the affected references, and the Page's Scope is not deleted while the button leads there -- the same guard a link in a Page or a Navigation has. Deleting the Page (a tombstone) keeps the link, which then draws no button until the Page is published again. An existing database receives the wider `site_cms_references_source_kind_check` and the rows of the links it already holds by hand, as the serving role (the development database `phi_server_dev` received it so, with no links to index yet):
+
+  ```sql
+  BEGIN;
+  ALTER TABLE phis.site_cms_references DROP CONSTRAINT IF EXISTS site_cms_references_source_kind_check;
+  ALTER TABLE phis.site_cms_references ADD CONSTRAINT site_cms_references_source_kind_check
+    CHECK (source_kind IN (1, 2, 3, 4, 5, 6));
+  -- Every product button that leads to a Site Page of its own Site, into the index as register writes it.
+  INSERT INTO phis.site_cms_references (
+    site_id, source_kind, source_scope_id, source_revision_id, source_location,
+    target_kind, target_area_id, target_page_scope_id, fragment
+  )
+  SELECT p.site_id, 6, p.id, NULL, '/link/target', 1, s.area_id, s.id,
+         CASE WHEN char_length(btrim(l.target->>'fragment')) BETWEEN 1 AND 512 THEN btrim(l.target->>'fragment') END
+  FROM phis.product_links l
+  JOIN phis.products p ON p.id = l.product_id
+  JOIN phis.site_page_scopes s
+    ON s.site_id = p.site_id
+   AND s.id::text = substring(l.target->>'reference' FROM '^v1s([1-9][0-9]{0,9})$')
+  WHERE l.target->>'kind' = 'page'
+    AND NOT EXISTS (
+      SELECT 1 FROM phis.site_cms_references r
+      WHERE r.site_id = p.site_id AND r.source_kind = 6 AND r.source_scope_id = p.id
+    );
+  COMMIT;
+  ```
 - A table of its own rather than columns of `phis.products`, so an existing database gains it without an ALTER of the product row. Added before v1 in place, without a schema version raised (2026-11-25). An existing database receives it by hand, as the serving role, together with the wider field check of `phis.product_texts` (the development database `phi_server_dev` received both so):
 
   ```sql

@@ -370,7 +370,8 @@ export async function countSiteCmsReferencesToPageWithDb(
   //
   // An Area Scope's Module pointers are not among them: a Modules revision holds no reference. The
   // Theme source is absent here because it cannot name a Page -- it is Site wide, so it has no Area to
-  // resolve one in, and the writer rejects a Page reference that names none.
+  // resolve one in, and the writer rejects a Page reference that names none. A product's button has no
+  // revisions either: its row is the product's one link, `source_revision_id` null, and counts as it is.
   const { rows } = await db.query<{ source_kind: number; count: string }>(
     `SELECT ref.source_kind, COUNT(*)::text AS count
      FROM phis.site_cms_references ref
@@ -394,16 +395,17 @@ export async function countSiteCmsReferencesToPageWithDb(
      GROUP BY ref.source_kind`,
     [siteId, pageScopeId],
   );
-  const bySource = { page: 0, navigation: 0, content: 0, area: 0 };
+  const bySource = { page: 0, navigation: 0, content: 0, area: 0, product: 0 };
   for (const row of rows) {
     const count = Number.parseInt(row.count, 10) || 0;
     if (row.source_kind === PhiCmsReferenceSourceKind.Page) bySource.page = count;
     if (row.source_kind === PhiCmsReferenceSourceKind.Navigation) bySource.navigation = count;
     if (row.source_kind === PhiCmsReferenceSourceKind.Content) bySource.content = count;
     if (row.source_kind === PhiCmsReferenceSourceKind.Area) bySource.area = count;
+    if (row.source_kind === PhiCmsReferenceSourceKind.Product) bySource.product = count;
   }
   return {
-    total: bySource.page + bySource.navigation + bySource.content + bySource.area,
+    total: bySource.page + bySource.navigation + bySource.content + bySource.area + bySource.product,
     bySource,
   };
 }

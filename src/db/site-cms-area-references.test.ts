@@ -109,7 +109,7 @@ describe("An Area's own tree is a reference source", () => {
   it("persists under the fourth source kind the schema allows", async () => {
     expect(PhiCmsReferenceSourceKind.Area).toBe(4);
     const ddl = await read("scripts/sql/001_create_phis.pgsql");
-    expect(ddl).toMatch(/source_kind_check CHECK \(source_kind IN \(1, 2, 3, 4, 5\)\)/u);
+    expect(ddl).toMatch(/source_kind_check CHECK \(source_kind IN \(1, 2, 3, 4, 5, 6\)\)/u);
   });
 
   it("replaces its own revision's set rather than appending to it", async () => {

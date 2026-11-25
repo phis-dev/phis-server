@@ -10,6 +10,7 @@ import {
   closePhiTestPool,
   createPhiTestAddonSpace,
   createPhiTestAsset,
+  createPhiTestPageScope,
   createPhiTestSite,
   createPhiTestUser,
   createPhiTestUserSpace,
@@ -21,6 +22,7 @@ import {
 import { normalizePhisProductDraft } from "../lib/addons/product-draft.ts";
 import { computeExternalSourceHash, ensureSiteExternalTranslationUnit } from "./translations.ts";
 import { ensureEntitlementSubject, findEntitlementSubject, grantEntitlement } from "./entitlements.mts";
+import { countSiteCmsReferencesToPageWithDb } from "./site-cms-references.ts";
 import {
   annotateProduct,
   phisProductExternalTextContext,
@@ -529,6 +531,83 @@ describe.skipIf(!configured)("products", () => {
     expect(() => draft("x", { link: { label: "Alone" } as never })).toThrow(/target/u);
     expect(() => draft("x", { link: { target: { kind: "external", href: "http://example.com" } } })).toThrow(/https/u);
     expect(() => draft("x", { link: { target: external, label: "x".repeat(81) } })).toThrow(/80/u);
+  });
+
+  it("puts a button that leads to a Site Page into the CMS reference index, so moving or deleting the Page sees it", async () => {
+    const supplier = "@pgtest/prod-paged";
+    await activatePhiTestAddonForSite(site, supplier);
+    await switchSupplier(supplier, true);
+    const first = await createPhiTestPageScope(site, "/pgtest-product-first");
+    const second = await createPhiTestPageScope(site, "/pgtest-product-second", 2);
+    const sitePage = (pageScopeId: number, fragment?: string) => ({
+      kind: "page" as const,
+      reference: createPhiPageReference({ kind: "site", pageScopeId }),
+      ...(fragment ? { fragment } : {}),
+    });
+    const write = (link: PhisProductDraft["link"], key = "paged") =>
+      registerProduct(pool, { siteId: site.id, supplier, draft: draft(key, { link }), listeners });
+    const created = await write({ target: sitePage(first, "buy"), label: "Buy" });
+    const rowId = created.product.rowId;
+    const indexed = async () => (await pool.query(
+      `SELECT source_revision_id, source_location, target_kind, target_area_id, target_page_scope_id, fragment
+       FROM phis.site_cms_references WHERE site_id = $1 AND source_kind = 6 AND source_scope_id = $2`,
+      [site.id, rowId],
+    )).rows;
+    const deletePage = (pageScopeId: number) => pool.query(`DELETE FROM phis.site_page_scopes WHERE id = $1`, [pageScopeId]);
+
+    // One row, filed under the Area the Page lies in, with no revision: a product's link is written whole.
+    expect(await indexed()).toEqual([{
+      source_revision_id: null, source_location: "/link/target", target_kind: 1, target_area_id: 1,
+      target_page_scope_id: first, fragment: "buy",
+    }]);
+    // A move counts it with the other sources; a deletion of the Scope is refused by the index's foreign key.
+    await expect(countSiteCmsReferencesToPageWithDb(pool, site.id, first)).resolves.toEqual({
+      total: 1, bySource: { page: 0, navigation: 0, content: 0, area: 0, product: 1 },
+    });
+    await expect(deletePage(first)).rejects.toMatchObject({ code: "23503" });
+
+    // The same link again writes nothing twice; a label alone changing keeps the one row.
+    expect((await write({ target: sitePage(first, "buy"), label: "Buy" })).outcome).toBe("unchanged");
+    expect((await write({ target: sitePage(first, "buy"), label: "Get" })).outcome).toBe("updated");
+    expect(await indexed()).toHaveLength(1);
+
+    // Another Page moves the row, and the Page it left is free again.
+    await write({ target: sitePage(second) });
+    expect(await indexed()).toEqual([{
+      source_revision_id: null, source_location: "/link/target", target_kind: 1, target_area_id: 2,
+      target_page_scope_id: second, fragment: null,
+    }]);
+    await expect(countSiteCmsReferencesToPageWithDb(pool, site.id, first)).resolves.toMatchObject({ total: 0 });
+    await deletePage(first);
+
+    // A Module Page and an https address are not the Site's to delete: no row, as for every other source.
+    const modulePage = { kind: "page" as const, reference: createPhiPageReference({ kind: "module", ownerModuleId: "@phis/dev/modules/dev", presetKey: "download" }) };
+    await write({ target: modulePage });
+    expect(await indexed()).toEqual([]);
+    await write({ target: { kind: "external", href: "https://example.com/buy" } });
+    expect(await indexed()).toEqual([]);
+
+    // A Page this Site does not have is refused, the removed one and another Site's alike, and nothing is written.
+    const elsewhere = await createPhiTestSite("products-elsewhere");
+    const foreign = await createPhiTestPageScope(elsewhere, "/pgtest-product-foreign");
+    await expect(write({ target: sitePage(first) })).rejects.toThrow(/no Page of this Site/u);
+    await expect(write({ target: sitePage(foreign) })).rejects.toThrow(/no Page of this Site/u);
+    await expect(write({ target: sitePage(foreign) }, "paged-new")).rejects.toThrow(/no Page of this Site/u);
+    expect((await readProduct(pool, site.id, id(supplier, "paged")))!.link!.target).toEqual({ kind: "external", href: "https://example.com/buy" });
+    expect(await readProduct(pool, site.id, id(supplier, "paged-new"))).toBeNull();
+
+    // A tombstoned Page still exists -- publishing it again brings it back -- and is held like a live one.
+    await pool.query(`UPDATE phis.site_page_scopes SET tombstoned_at = NOW() WHERE id = $1`, [second]);
+    await write({ target: sitePage(second) });
+    expect(await indexed()).toHaveLength(1);
+
+    // No button, no row; and a product removed takes its row along, so the Page can go.
+    await write(null);
+    expect(await indexed()).toEqual([]);
+    await write({ target: sitePage(second) });
+    expect(await removeProduct(pool, { siteId: site.id, supplier, key: "paged" })).toBe(true);
+    expect(await indexed()).toEqual([]);
+    await deletePage(second);
   });
 
   it("keeps a product's language, and drops its texts' translations and external renderings when the language or a text changes", async () => {

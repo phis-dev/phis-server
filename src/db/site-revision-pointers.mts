@@ -23,6 +23,12 @@ export const PhiCmsReferenceSourceKind = {
   Content: 3,
   Area: 4,
   Theme: 5,
+  /**
+   * A product's button (`phis.product_links`), its Scope the product's row (`phis.products.id`). No
+   * revisions: the directory writes a product's link whole, so its set is replaced whole, as Content's is,
+   * with `source_revision_id` null.
+   */
+  Product: 6,
 } as const;
 
 export type PhiCmsReferenceSourceKind = typeof PhiCmsReferenceSourceKind[keyof typeof PhiCmsReferenceSourceKind];

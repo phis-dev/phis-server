@@ -122,7 +122,7 @@ beforeEach(() => {
  */
 describe("A Page path change", () => {
   it("proposes the move and reports what pointed at it", async () => {
-    const db = pathChangeDb({ references: [{ source_kind: 1, count: "2" }, { source_kind: 4, count: "1" }] });
+    const db = pathChangeDb({ references: [{ source_kind: 1, count: "2" }, { source_kind: 4, count: "1" }, { source_kind: 6, count: "1" }] });
     const result = await change();
     expect(result).toMatchObject({
       pageScopeId: 18,
@@ -130,7 +130,8 @@ describe("A Page path change", () => {
       // The live address is unchanged: the Page answers on it until somebody publishes.
       path: "/kontakt",
       pendingPath: "/kontakt-neu",
-      references: { total: 3, bySource: { page: 2, navigation: 0, content: 0, area: 1 } },
+      // A product's button that leads to the Page is counted with the rest (source kind 6).
+      references: { total: 4, bySource: { page: 2, navigation: 0, content: 0, area: 1, product: 1 } },
     });
     expect(db.texts()).toContain("COMMIT");
     expect(db.find("ROLLBACK")).toBeUndefined();

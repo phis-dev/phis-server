@@ -228,8 +228,12 @@ content binding reaches: a reference sitting in Region or widget config. The The
 no CMS tree reaches at all: it is Site wide, one Scope per Site with a key that has no Area prefix, and
 it holds the Root background a Module's ground was taken over into and the brand logo. A Theme
 reference therefore names no Area, and a Page reference in a Theme is invalid because a Site-wide Scope
-has no Area to resolve one in. Path change uses the index for audit/feedback but does not rewrite
-reference owners because their stable identity already resolves to the new path.
+has no Area to resolve one in. A product's button (`products:v1` `link`, `phis.product_links`) is a
+source as well (owner, 2026-11-25): a product directory write replaces the product's one row with the
+link, a Site Page target alone producing one, and removing the product or its link removes it. A product
+belongs to no Area, so its row is filed under the Area the Page lies in. Path change uses the index for
+audit/feedback but does not rewrite reference owners because their stable identity already resolves to
+the new path.
 
 A Scope's set is replaced per Scope, and its rows stay readable across every revision that Scope points
 at: published and Working Draft. An Area's Module selection lives in Modules revisions of its own, which

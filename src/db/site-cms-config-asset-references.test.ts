@@ -172,7 +172,7 @@ describe("The Theme is a reference source of its own", () => {
 
   it("persists under the fifth source kind the schema allows", async () => {
     const schema = await read("scripts/sql/001_create_phis.pgsql");
-    expect(schema).toMatch(/site_cms_references_source_kind_check CHECK \(source_kind IN \(1, 2, 3, 4, 5\)\)/u);
+    expect(schema).toMatch(/site_cms_references_source_kind_check CHECK \(source_kind IN \(1, 2, 3, 4, 5, 6\)\)/u);
   });
 
   it("is reconciled against the Theme Scope's own pointers where the guard reads", async () => {
