@@ -43,6 +43,33 @@ tracked here because the server contract depends on them.
   `/var/www/phis/sites`) sets them in `config/phis-runtime.json` before upgrading; prod and dev on
   phi-systems.ch name all three already. No schema change since 0.3.0.
 
+## Clean-install findings (phisys test, 2026-11-25)
+
+Reported by the phisys session after a clean install of `phis` 0.8.0-1+noble on Ubuntu 24.04 from the packaged
+INSTALL.md/CLI.md (report with logs on that host under `/root/phis-reinstall-20261125/`). Core and the operator
+login work; the documented path to a served Site does not.
+
+- **Blocker: the Site scaffold pins stale versions, and the Site build fails.** `DEFAULT_VERSIONS` in
+  `src/lib/site-scaffold.mts` still says `next` 16.4.2, `@phis/ui` 0.4.0 and `antd` 6.7.0. Next 16.4.2 stops
+  `npm run build` after a successful compile with `SecurityFatalError` (advisories up to 16.4.4, e.g.
+  GHSA-mfr8-8qww-v76h; the Server itself ships 16.4.6), so `phis update <site>` exits 1 and writes no
+  release or instance link, on the first and on a repeated run. Fix: keep the scaffold's pins in step
+  with the Server's own `package.json` and the current `@phis/ui` (ideally derived at build time rather
+  than hand-kept constants, with a test that they match), then re-run the whole fresh path through to a
+  release and a running Site.
+- **Repeating `phis install` turns HTTPS off.** After `phis proxy tls --domain …`, re-running
+  `phis install --mode full --local-db --db-name prod --domain … --proxy apache` exits 0 but sets
+  `phis-proxy.json` from `tls: true` to `tls: false` and rewrites the Apache site as plain HTTP, although a
+  repeated install should only fill gaps (it correctly skips database, keys, operator and Site). Expected:
+  keep the existing TLS proxy, or downgrade only on an explicit request.
+- **`config/site-runtime.json` is world-readable.** `phis init` (and `update`) leave it at mode 0644 though it
+  holds `phis.internalToken`; `runuser -u nobody -- test -r` succeeds. Write it 0600 (owner `phis`) when it is
+  created and keep the mode when it is rewritten. `src/lib/configured-directories.ts` says the file "sets its
+  own mode"; check that claim against the writer.
+- **`sanitize-html` is pinned to 2.17.7.** The fresh Site's `npm audit` lists moderate advisories fixed in
+  2.18.0 (GHSA-x3q4-9hxx-gx8m, GHSA-374f-7chj-9948, GHSA-cv27-6wvh-8x7j); the Server's `package.json` pins
+  2.17.7 like `@phis/ui`. Raise both together (package update round 1) and release; no exploit test was made.
+
 ## Payments
 
 - **Pricing policies in the sandbox.** PAYMENTS.md section 12 and the Stripe mapping of PAYMENTS_STRIPE.md
