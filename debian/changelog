@@ -1,3 +1,33 @@
+phis (0.8.1-1) unstable; urgency=medium
+
+  * Needs @phis/contracts 0.8.12 and builds against @phis/ui 0.8.2.
+  * A Site's CDN takes files from three roads through one pipeline: the
+    operator's phis cdn publish (outside the size limit and the quota, but
+    counted), a Maintainer's upload in parts on the Admin page CDN
+    (/api/site/admin/cdn, with withdraw, delete, check and adopt), and an
+    Add-on's import or link through @phis/server/cdn-publish:v1. Imports
+    fetch https only from cdn.importHosts. Copies count in the Site Space
+    quota and are bounded by max_object_bytes; links count nothing. The
+    catalogue's flags carry the state, the operating system and the
+    processor of a file.
+  * A product has an optional button (products:v1 PhisProduct.link): a Site
+    Page reference or an https address, with a label of its own; a Page
+    target is a source of the CMS reference index.
+  * phis init takes the newest @phis/ui of the server's line and the exact
+    framework versions it states (phis.testedWith); a repeated phis install
+    keeps TLS; config/site-runtime.json is written 0600; the package
+    creates /var/cache/phis-npm for the phis account.
+  * A Site's src/proxy.ts leaves the CDN upload part and the Media body
+    path out of the Next middleware, which cut every body at 10 MiB.
+  * sanitize-html 2.18.2; next ^16.4.6.
+  * Schema on an existing database, by hand before the new Core starts (all
+    statements in DB.md): site_cdn_file_origins and site_cdn_uploads with
+    the origins backfill and the used_bytes count of existing copies,
+    product_links with the wider product_texts field check, the wider
+    site_cms_references source kind check with its backfill.
+
+ -- Marius Schumacher <marius.schumacher@phisys.com>  Wed, 25 Nov 2026 14:19:51 +0000
+
 phis (0.8.0-1) unstable; urgency=medium
 
   * Versions follow one line with @phis/contracts and @phis/ui from here:
