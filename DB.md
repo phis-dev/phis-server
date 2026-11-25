@@ -1793,6 +1793,27 @@ Contract:
 - The gallery is `phis.product_gallery`, below; the words' messages are `phis.product_texts`.
 - The operator's release may name the `version` it read (`releaseProduct`'s `expectedVersion`); a row that has moved on is refused under the row lock the release takes anyway.
 
+### `phis.product_links`
+
+- `product_id INT PRIMARY KEY REFERENCES phis.products(id) ON DELETE CASCADE`
+- `target JSONB NOT NULL`, CHECK an object whose `kind` is `page` or `external` (`product_links_target_check`)
+- `label VARCHAR(80) NOT NULL DEFAULT ''`, CHECK trimmed (`product_links_label_check`)
+
+Contract:
+- A product's button (`PhisProduct.link`): `target` is the `PhiLinkTarget` `readPhisProductLink` took -- a Page by its reference (`PhiPageReference`, resolved to an address wherever the button is drawn) or an `https` address -- never a resolved path; `label` is in the product's `source_locale` like `title`, `''` for the Widget's own wording. No row, no button.
+- Written whole by `register`: a link the draft states replaces the row, none removes it. A change of target or label raises the product's `version` and owes `product.changed`; the same link again changes nothing.
+- The label is also a source text of the Site's translation store, `phis.product_texts` field `link_label` under the context `product <id> link label`, translated like the title (`PhisProductText.LinkLabel`).
+- A table of its own rather than columns of `phis.products`, so an existing database gains it without an ALTER of the product row. Added before v1 in place, without a schema version raised (2026-11-25). An existing database receives it by hand, as the serving role, together with the wider field check of `phis.product_texts` (the development database `phi_server_dev` received both so):
+
+  ```sql
+  BEGIN;
+  -- The CREATE TABLE IF NOT EXISTS phis.product_links (...) statement of scripts/sql/001_create_phis.pgsql, then:
+  ALTER TABLE phis.product_texts DROP CONSTRAINT IF EXISTS product_texts_field_check;
+  ALTER TABLE phis.product_texts ADD CONSTRAINT product_texts_field_check
+    CHECK (field IN ('title', 'summary', 'description', 'link_label'));
+  COMMIT;
+  ```
+
 ### `phis.product_gallery`
 
 - `product_id INT NOT NULL`
@@ -1816,7 +1837,7 @@ Contract (`products:v1` `gallery`, SERVER_ADDONS.md):
 - `field VARCHAR(16) NOT NULL`
 - `msg_id INT NOT NULL REFERENCES phis.tr_site_msg(id) ON DELETE CASCADE`
 - `PRIMARY KEY (product_id, field)`, `UNIQUE (msg_id)` (`product_texts_msg_unique`)
-- `CHECK (field IN ('title', 'summary', 'description'))` (`product_texts_field_check`)
+- `CHECK (field IN ('title', 'summary', 'description', 'link_label'))` (`product_texts_field_check`; `link_label` is the label of `phis.product_links`, added 2026-11-25 by hand as noted there)
 
 Contract (`products:v1` "Words", SERVER_ADDONS.md; TRANSLATIONS.md, "Words Core records"):
 - A product's title, summary and description as source texts of its Site's translation store: one row per field that has a text, naming the `tr_site_msg` row it is kept under, in the context `product <products.id> <field>` (`phisProductTextContext`).

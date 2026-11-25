@@ -52,7 +52,7 @@ type Site = { id: number; key: string; publicBaseUrl: string; timeZone: string }
 
 /**
  * The body `product.add` is handed for a proposal:
- * `{ key, sourceLocale, title, summary?, description?, kind?, state?, counted?, accountRequired?, picture?, icon?, gallery? }`,
+ * `{ key, sourceLocale, title, summary?, description?, link?, kind?, state?, counted?, accountRequired?, picture?, icon?, gallery? }`,
  * `sourceLocale` the package's language, which always wins over the Site's (`@phis/contracts/products`).
  */
 export function buildModuleProductCommandInput(
@@ -67,6 +67,8 @@ export function buildModuleProductCommandInput(
     title: proposal.title,
     ...(proposal.summary !== undefined ? { summary: proposal.summary } : {}),
     ...(proposal.description !== undefined ? { description: proposal.description } : {}),
+    // The button as the proposal reader took it: a Module Page of the package or an https address, its label in sourceLocale.
+    ...(proposal.link !== undefined ? { link: proposal.link } : {}),
     ...(proposal.kind !== undefined ? { kind: proposal.kind } : {}),
     ...(proposal.state !== undefined ? { state: proposal.state } : {}),
     counted: (flags & PhisSitePackageProductFlag.Counted) !== 0,

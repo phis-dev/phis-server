@@ -2941,8 +2941,21 @@ CREATE TABLE IF NOT EXISTS phis.product_texts (
   field VARCHAR(16) NOT NULL,
   msg_id INT NOT NULL REFERENCES phis.tr_site_msg(id) ON DELETE CASCADE,
   PRIMARY KEY (product_id, field),
-  CONSTRAINT product_texts_field_check CHECK (field IN ('title', 'summary', 'description')),
+  CONSTRAINT product_texts_field_check CHECK (field IN ('title', 'summary', 'description', 'link_label')),
   CONSTRAINT product_texts_msg_unique UNIQUE (msg_id)
+);
+
+-- A product's button (`PhisProduct.link`): where it leads -- a Page by its reference or an https address,
+-- `PhiLinkTarget` as `readPhisProductLink` read it, never a resolved path -- and what it says, in the
+-- product's source language like its title ('' for the Widget's default). No row, no button. Written whole by
+-- `register`; the label is also a source text of the Site's translation store (`product_texts`, field
+-- `link_label`, context `product <id> link label`).
+CREATE TABLE IF NOT EXISTS phis.product_links (
+  product_id INT PRIMARY KEY REFERENCES phis.products(id) ON DELETE CASCADE,
+  target JSONB NOT NULL,
+  label VARCHAR(80) NOT NULL DEFAULT '',
+  CONSTRAINT product_links_target_check CHECK (jsonb_typeof(target) = 'object' AND target->>'kind' IN ('page', 'external')),
+  CONSTRAINT product_links_label_check CHECK (label = btrim(label))
 );
 
 -- What other Add-ons attached to a product: one JSON object per product and Add-on, written whole by

@@ -10,6 +10,8 @@ import type {
 } from "@phis/contracts/products";
 
 import { PhiMediaDeliveryPolicy, PhiMediaLifecycleStatus } from "@phis/contracts/media";
+import type { PhisProductLink } from "@phis/contracts/products";
+import type { PhiLinkTarget } from "@phis/contracts/references";
 
 import { PHIS_PRODUCT_FLAG } from "../lib/constants/products.ts";
 import { PHI_SITE_SERVER_ADDON_FLAG_REQUESTED_ENABLED, PHIS_ADDON_FLAG_GLOBALLY_ENABLED } from "../lib/constants/server-addons.ts";
@@ -54,8 +56,11 @@ export type PhisStoredProduct = Omit<PhisProduct, "imagePath" | "iconPath" | "im
   readonly textMessages: Readonly<Partial<Record<PhisProductTextField, PhisProductTextMessage>>>;
 };
 
-/** The fields of a product that are words, each a source text of the Site's translation store. */
-export const PHIS_PRODUCT_TEXT_FIELDS = ["title", "summary", "description"] as const;
+/**
+ * The fields of a product that are words, each a source text of the Site's translation store. `link_label`
+ * is the label of the product's button (`phis.product_links`).
+ */
+export const PHIS_PRODUCT_TEXT_FIELDS = ["title", "summary", "description", "link_label"] as const;
 export type PhisProductTextField = (typeof PHIS_PRODUCT_TEXT_FIELDS)[number];
 
 /** A field's message, and its translation into the locale read; null where none is held. */
@@ -72,7 +77,8 @@ export type PhisProductTextMessage = { readonly msgId: number; readonly translat
  * store, where Editor > Translations shows it and a translator can search for it.
  */
 export function phisProductTextContext(productId: number, field: PhisProductTextField) {
-  return `product ${productId} ${field}`;
+  // The link's label is `product <n> link label`, as `@phis/contracts/products` names it.
+  return `product ${productId} ${field === "link_label" ? "link label" : field}`;
 }
 
 /**
@@ -115,8 +121,10 @@ const PRODUCT_COLUMNS = `p.id, p.supplier_addon_id, p.key, p.publisher, p.type, 
   image.delivery_revision AS image_media_revision, image.variant_version AS image_media_variant_version,
   image.content_type AS image_media_content_type,
   icon.delivery_revision AS icon_media_revision, icon.variant_version AS icon_media_variant_version,
-  icon.content_type AS icon_media_content_type`;
+  icon.content_type AS icon_media_content_type,
+  pl.target AS link_target, pl.label AS link_label`;
 const PRODUCT_FROM = `FROM phis.products p
+  LEFT JOIN phis.product_links pl ON pl.product_id = p.id
   LEFT JOIN phis.media_assets image ON image.id = p.image_asset_id AND image.site_id = p.site_id
   LEFT JOIN phis.media_assets icon ON icon.id = p.icon_asset_id AND icon.site_id = p.site_id`;
 
@@ -161,6 +169,8 @@ type ProductRow = {
   created_at: Date;
   updated_at: Date;
   supplied: boolean;
+  link_target: PhiLinkTarget | null;
+  link_label: string | null;
 } & {
   [Column in `${"image" | "icon"}_media_${"revision" | "variant_version"}`]: number | null;
 } & {
@@ -192,6 +202,7 @@ function mapProduct(
     title: row.title,
     summary: row.summary,
     description: row.description,
+    link: row.link_target ? { target: row.link_target, label: row.link_label ?? "" } : null,
     sourceLocale: row.source_locale,
     imageAssetId: row.image_asset_id,
     imageMedia: productMedia(row, "image"),
@@ -338,7 +349,38 @@ async function recordProductTexts(db: DbQueryable, input: {
 }
 
 /** The texts as the store keeps them: trimmed, as the TR route reads a message (`translateSiteBatchWithCache`). */
-const draftTexts = (draft: PhisNormalizedProductDraft) => ({ title: draft.title.trim(), summary: draft.summary.trim(), description: draft.description.trim() });
+const draftTexts = (draft: PhisNormalizedProductDraft) => ({
+  title: draft.title.trim(),
+  summary: draft.summary.trim(),
+  description: draft.description.trim(),
+  link_label: draft.link?.label ?? "",
+});
+
+/** A value with its keys sorted, so two link targets compare by content and not by the order jsonb keeps. */
+function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  if (value && typeof value === "object") {
+    return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonicalJson((value as Record<string, unknown>)[key])}`).join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
+const sameLink = (row: ProductRow, link: PhisProductLink | null) => link === null
+  ? row.link_target === null
+  : row.link_target !== null && (row.link_label ?? "") === link.label && canonicalJson(row.link_target) === canonicalJson(link.target);
+
+/** Writes the product's button whole, or removes it (`phis.product_links`). */
+async function writeLink(db: DbQueryable, productId: number, link: PhisProductLink | null) {
+  if (link === null) {
+    await db.query(`DELETE FROM phis.product_links WHERE product_id = $1`, [productId]);
+    return;
+  }
+  await db.query(
+    `INSERT INTO phis.product_links (product_id, target, label) VALUES ($1, $2::jsonb, $3)
+     ON CONFLICT (product_id) DO UPDATE SET target = EXCLUDED.target, label = EXCLUDED.label`,
+    [productId, JSON.stringify(link.target), link.label],
+  );
+}
 
 /** The gallery's Asset ids as stored, first to last, under the caller's lock on the product's row. */
 async function readGalleryIds(db: DbQueryable, productId: number) {
@@ -638,6 +680,7 @@ export async function registerProduct(pool: Pool, input: {
       if ((inserted.rowCount ?? 0) > 0) {
         const productId = (inserted.rows[0] as { id: number }).id;
         await writeGallery(client, { productId, siteId, gallery: pickGallery([]) });
+        if (draft.link) await writeLink(client, productId, draft.link);
         await recordProductTexts(client, { siteId, productId, texts: draftTexts(draft) });
         await enqueueProductChanged(client, { siteId, recipients: input.listeners, productId: id });
         return { product: (await readProduct(client, siteId, id))!, outcome: "created" as const };
@@ -669,7 +712,7 @@ export async function registerProduct(pool: Pool, input: {
     const gallery = pickGallery(storedGallery);
     const languageChanged = row.source_locale !== draft.sourceLocale;
     const unchanged = row.type === draft.type && row.title === draft.title && row.summary === draft.summary
-      && row.description === draft.description && !languageChanged && sameIds(storedGallery, gallery)
+      && row.description === draft.description && sameLink(row, draft.link) && !languageChanged && sameIds(storedGallery, gallery)
       && row.image_asset_id === pickImage(row.image_asset_id) && row.icon_asset_id === pickIcon(row.icon_asset_id)
       && flags === row.flags && sameTerms(terms, current)
       && (pending === null ? row.pending_terms === null : row.pending_terms !== null && sameTerms(pending, row.pending_terms));
@@ -687,6 +730,7 @@ export async function registerProduct(pool: Pool, input: {
         terms.referralUrl, flags, terms.parts, pending ? JSON.stringify(pending) : null, draft.description, draft.sourceLocale],
     );
     if (!sameIds(storedGallery, gallery)) await writeGallery(client, { productId: row.id, siteId, gallery });
+    if (!sameLink(row, draft.link)) await writeLink(client, row.id, draft.link);
     await enqueueProductChanged(client, { siteId, recipients: input.listeners, productId: id });
     return { product: (await readProduct(client, siteId, id))!, outcome: "updated" as const };
   });

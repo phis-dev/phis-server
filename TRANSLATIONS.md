@@ -594,9 +594,11 @@ Translations before anybody reads them, and with no provider at all. Three kinds
 
 - **Content entries** (`site_content`): a version's title, subtitle and body, under one phrase per field
   (`news entry title`) shared by every entry, through `site_content_version_text`.
-- **A product's words** (`products:v1`): title, summary and description, recorded by `register` in the
-  product's transaction under the product's own context -- `product <n> title`, `product <n> summary`,
-  `product <n> description`, `<n>` Core's number for the product -- through `phis.product_texts` (DB.md).
+- **A product's words** (`products:v1`): title, summary, description and its link's label, recorded by
+  `register` in the product's transaction under the product's own context -- `product <n> title`,
+  `product <n> summary`, `product <n> description`, `product <n> link label`, `<n>` Core's number for the
+  product -- through `phis.product_texts` (DB.md). The label is read as the title is (`product link label`
+  to a provider, `PhisProductText.LinkLabel` in `translated`).
   Per product and not one phrase, because the context is half of the identity and the hash covers the first
   50 characters: a Free and a Pro edition whose summaries open alike would be one key, and the second could
   not be recorded. Per product they never meet, and a changed text can take its old message along -- no other
@@ -610,7 +612,7 @@ Translations before anybody reads them, and with no provider at all. Three kinds
   SERVER_ADDONS.md, `products:v1`, **Language**): several suppliers may sell through one Site, each writing
   in theirs. A product in the Site's language is read as above. One in another language is an external
   source, read as the TR route reads one: its title and summary go the external path below under
-  `[extern]product <n> title` (and `summary`), rendered into the Site's language once, the original kept as
+  `[extern]product <n> title` (and `summary`, and `link label`), rendered into the Site's language once, the original kept as
   the protected variant, every other language translated from that rendering; its description is rendered by
   the Markdown Widget, unit by unit, through `/api/v1/tr` with the product's `sourceLocale`.
 - **An Add-on's words** (`translations:v1`, SERVER_ADDONS.md): what an Add-on keeps in its tables and a visitor

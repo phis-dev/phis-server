@@ -3,6 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { Pool } from "pg";
 
 import type { PhisProductDraft, PhisProductId } from "@phis/contracts/products";
+import { createPhiPageReference } from "@phis/contracts/references";
 
 import {
   activatePhiTestAddonForSite,
@@ -477,6 +478,57 @@ describe.skipIf(!configured)("products", () => {
     expect(await removeProduct(pool, { siteId: site.id, supplier: SUPPLIER, key: "worded" })).toBe(true);
     const { rows: left } = await pool.query(`SELECT id FROM phis.tr_site_msg WHERE site_id = $1 AND ctx LIKE $2`, [site.id, `product ${rowId} %`]);
     expect(left).toEqual([]);
+  });
+
+  it("keeps a product's button: its target as given, its label as a source text, a change owing product.changed", async () => {
+    const supplier = "@pgtest/prod-linked";
+    await activatePhiTestAddonForSite(site, supplier);
+    await switchSupplier(supplier, true);
+    const productId = id(supplier, "linked");
+    const page = { kind: "page" as const, reference: createPhiPageReference({ kind: "module", ownerModuleId: "@phis/dev/modules/dev", presetKey: "download" }) };
+    const external = { kind: "external" as const, href: "https://apps.apple.com/app/id1" };
+    const write = (link: PhisProductDraft["link"]) =>
+      registerProduct(pool, { siteId: site.id, supplier, draft: draft("linked", { link }), listeners });
+    const count = async () => (await outbox()).filter((row) => row.payload.productId === productId).length;
+    await clearOutbox();
+
+    const created = await write({ target: external, label: "  On the App Store " });
+    expect(created.product.link).toEqual({ target: external, label: "On the App Store" });
+    const { rows: [{ id: rowId }] } = await pool.query<{ id: number }>(
+      `SELECT id FROM phis.products WHERE site_id = $1 AND supplier_addon_id = $2 AND key = 'linked'`, [site.id, supplier],
+    );
+    const label = async () => (await pool.query<{ msg: string; ctx: string; msg_id: number }>(
+      `SELECT m.msg, m.ctx, m.id AS msg_id FROM phis.product_texts t JOIN phis.tr_site_msg m ON m.id = t.msg_id
+        WHERE t.product_id = $1 AND t.field = 'link_label'`, [rowId],
+    )).rows;
+    expect((await label()).map(({ msg, ctx }) => ({ msg, ctx }))).toEqual([{ msg: "On the App Store", ctx: `product ${rowId} link label` }]);
+    expect(await count()).toBe(1);
+
+    // The same link again is no change; another label, another target or none is one, each owing product.changed.
+    expect((await write({ target: external, label: "On the App Store" })).outcome).toBe("unchanged");
+    expect(await count()).toBe(1);
+    const relabelled = await write({ target: external, label: "Download" });
+    expect([relabelled.outcome, relabelled.product.version]).toEqual(["updated", 2]);
+    expect((await label()).map(({ msg }) => msg)).toEqual(["Download"]);
+    const paged = await write({ target: page });
+    expect(paged.product.link).toEqual({ target: page, label: "" });
+    expect(await label()).toEqual([]);
+    expect((await write({ target: page })).outcome).toBe("unchanged");
+    expect((await write(null)).product.link).toBeNull();
+    expect(await count()).toBe(4);
+    const { rows: links } = await pool.query(`SELECT 1 FROM phis.product_links WHERE product_id = $1`, [rowId]);
+    expect(links).toEqual([]);
+
+    // A label is read in a language with what is held for it.
+    await write({ target: external, label: "Get it" });
+    const [{ msg_id: msgId }] = await label();
+    await pool.query(`INSERT INTO phis.tr_site_lang (msg_id, locale, translation) VALUES ($1, 'de', 'Holen')`, [msgId]);
+    expect((await readProduct(pool, site.id, productId, "de"))!.textMessages.link_label).toEqual({ msgId, translation: "Holen" });
+
+    // No target, no button: a label alone is refused, and so is a target that is neither a Page nor https.
+    expect(() => draft("x", { link: { label: "Alone" } as never })).toThrow(/target/u);
+    expect(() => draft("x", { link: { target: { kind: "external", href: "http://example.com" } } })).toThrow(/https/u);
+    expect(() => draft("x", { link: { target: external, label: "x".repeat(81) } })).toThrow(/80/u);
   });
 
   it("keeps a product's language, and drops its texts' translations and external renderings when the language or a text changes", async () => {

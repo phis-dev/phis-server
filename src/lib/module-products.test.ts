@@ -135,5 +135,11 @@ describe("what product.add is handed", () => {
     });
     expect(buildModuleProductCommandInput("acme.site.basic", { key: "basic", sourceLocale: "en", title: "Basic", flags: PhisSitePackageProductFlag.Counted }, { picture: null, icon: 7, gallery: [] }))
       .toEqual({ key: "acme.site.basic", sourceLocale: "en", title: "Basic", counted: true, accountRequired: false, icon: 7 });
+    // The button goes along as the proposal reader took it.
+    const link = { target: { kind: "external" as const, href: "https://apps.apple.com/app/id1" }, label: "Get it" };
+    expect(buildModuleProductCommandInput("acme.site.app", { key: "app", sourceLocale: "en", title: "App", link }, { picture: null, icon: null, gallery: [] }))
+      .toMatchObject({ key: "acme.site.app", link });
+    expect(readPhisSitePackageProductProposal(PKG, { key: "app", sourceLocale: "en", title: "App", link: { label: "Alone" } }).issues)
+      .toEqual([expect.stringContaining("without a target")]);
   });
 });

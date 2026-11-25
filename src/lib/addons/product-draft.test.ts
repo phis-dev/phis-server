@@ -25,8 +25,20 @@ describe("a product's id and key", () => {
 describe("a product draft", () => {
   it("fills the defaults in", () => {
     expect(normalizePhisProductDraft(base)).toEqual({
-      ...base, publisher: null, description: "", sourceLocale: null, imageAssetId: null, iconAssetId: null, gallery: [], counted: false, sale: "own", referralUrl: null, free: false, accountRequired: false, parts: [],
+      ...base, publisher: null, description: "", link: null, sourceLocale: null, imageAssetId: null, iconAssetId: null, gallery: [], counted: false, sale: "own", referralUrl: null, free: false, accountRequired: false, parts: [],
     });
+  });
+
+  it("takes a link to a Page or an https address with a trimmed label, and refuses a label without a target", () => {
+    const external = { kind: "external" as const, href: "https://example.com/app" };
+    expect(normalizePhisProductDraft({ ...base, link: { target: external, label: "  Get it " } }).link).toEqual({ target: external, label: "Get it" });
+    expect(normalizePhisProductDraft({ ...base, link: { target: external } }).link).toEqual({ target: external, label: "" });
+    expect(normalizePhisProductDraft({ ...base, link: null }).link).toBeNull();
+    expect(() => normalizePhisProductDraft({ ...base, link: { label: "Alone" } as never })).toThrow(/without a target/u);
+    expect(() => normalizePhisProductDraft({ ...base, link: { target: { kind: "external", href: "http://example.com" } } })).toThrow(/https/u);
+    expect(() => normalizePhisProductDraft({ ...base, link: { target: external, label: "x".repeat(81) } })).toThrow(/80/u);
+    expect(() => normalizePhisProductDraft({ ...base, link: { target: external, label: "a\u0007b" } })).toThrow(/control/u);
+    expect(() => normalizePhisProductDraft({ ...base, link: { target: external, extra: 1 } as never })).toThrow(/unknown property/u);
   });
 
   it("takes a Markdown description with its line breaks and tabs, and refuses one too long or with control characters", () => {

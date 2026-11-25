@@ -1755,7 +1755,12 @@ The design is [design/COMMERCE_COORDINATION.md](./design/COMMERCE_COORDINATION.m
   as `imageAssetId` -- so every `path` is one a visitor is served and a seller may hand on, to a storefront
   elsewhere or a feed -- and held by the Media library as the picture is: its delete guard names a product
   showing the Asset in its gallery, `media-release:v1` keeps it, and an Asset deleted anyway leaves the gallery),
-  `counted`, `sale` (`own`,
+  `link` (the product's button, `PhisProductLink`, null for none: `target` a `PhiLinkTarget` -- a Page by its
+  reference, which whoever draws the button resolves to an address, or an `https` address; never a
+  Site-relative path -- and `label`, at most `PHIS_PRODUCT_LINK_LABEL_MAX` characters in the product's
+  `sourceLocale` like the title, `""` for the Widget's own wording; `register` reads it with the contracts'
+  `readPhisProductLink`, so a label without a target, an unknown property or another kind of target is
+  refused, and it is kept in `phis.product_links`), `counted`, `sale` (`own`,
   `referral` or `payout`), `referralUrl` (required, https, exactly for `referral`), `free`, `accountRequired` (can only be acquired with an account; Core does not enforce it, an entitlement entry always has a subject with an account), `parts` (the
   ids of a bundle's parts), `state`, `released`, `pendingTerms`, `attributes`, `version`, the two
   timestamps. Title, summary and description are written in the product's `sourceLocale` and read in it,
@@ -1780,10 +1785,10 @@ The design is [design/COMMERCE_COORDINATION.md](./design/COMMERCE_COORDINATION.m
   statement, so a supplier writing a product back states it again (the product's `sourceLocale` is what it
   read). A change of the language is a change of every text: their messages and translations go. A command
   (`phis addon command`) takes the language in its input, as `product.add` does; there is no flag of its own.
-- **Words.** Title, summary and description are source texts of the Site's translation store
+- **Words.** Title, summary, description and the link's label are source texts of the Site's translation store
   (TRANSLATIONS.md, "Words Core records"): `register` records each in its transaction, under the product's
-  own context `product <n> title`, `product <n> summary`, `product <n> description` (`<n>` Core's number for
-  the product, `phis.product_texts`), so Editor > Translations lists them as soon as a supplier wrote them --
+  own context `product <n> title`, `product <n> summary`, `product <n> description`, `product <n> link label`
+  (`<n>` Core's number for the product, `phis.product_texts`), so Editor > Translations lists them as soon as a supplier wrote them --
   through the capability, a manifest sync, `@phis/products`' Forms and commands, or a Site package's
   proposal, which all end in `register`. A changed text is a new message and the old one goes with its
   translations; a removed product takes its messages along. `list({ locale })` and `get({ id, locale })`
@@ -1793,7 +1798,8 @@ The design is [design/COMMERCE_COORDINATION.md](./design/COMMERCE_COORDINATION.m
   field's message; for one in another language the external path (TRANSLATIONS.md, "External and
   non-canonical sources") under `[extern]product <n> title`, rendered into the Site's language once and every
   other language from that rendering -- one call per field (and per language) for the whole read, the
-  provider told `product title` or `product summary`, never the product; a description nobody translated
+  provider told `product title` or `product summary`, never the product; the link's label is read as the
+  title is (`product link label`, the `LinkLabel` bit in `translated`); a description nobody translated
   stays the source, because a Markdown document is never handed to a provider whole: `translated` says so
   (its `Description` bit unset), and a renderer translates it paragraph by paragraph from `sourceLocale`
   (phis-ui's Markdown record field). Without `locale`, or in the product's own language, they are the words
@@ -1865,11 +1871,13 @@ breaks a rule (a part that does not exist) is reported and does not stop the oth
 at runtime it registers through `register`.
 
 **Products a Site package proposes.** A Site package (Module) may propose products the Site keeps as its own,
-under `phis.products` in its `package.json`: `[{ key, title, summary?, description?, kind?, state?: draft|active,
+under `phis.products` in its `package.json`: `[{ key, title, summary?, description?, link?, kind?, state?: draft|active,
 flags?, picture?, icon?, gallery? }]` (`PhisSitePackageProductProposal`, read by `readPhisSitePackageProductProposals` in
 `@phis/contracts/products`), which is what `@phis/products`' command `product.add` takes, the two yes-or-no
 answers as `PhisSitePackageProductFlag` bits (`Counted` 1, `AccountRequired` 2), `picture`/`icon` as the key
-of one of the package's own `phis.media.files`, and `gallery` as a list of such keys in order. They are not a supplier's manifest products: Core does not
+of one of the package's own `phis.media.files`, `gallery` as a list of such keys in order, and `link` as
+`PhisProductLinkDraft` -- a Module Page of the package or an https address, since a package knows no Page of
+the Site; the proposal reader refuses a label without a target -- which Core hands to `product.add` as it is. They are not a supplier's manifest products: Core does not
 register them itself but has `@phis/products` -- the supplier of the products made by hand
 (`PHIS_SITE_PACKAGE_PRODUCT_SUPPLIER`) -- make each one through `product.add`, so it is a product of the Site's
 like any it made on the Products page, edited, withdrawn or removed there. The key is the package name's parts
@@ -1908,8 +1916,8 @@ withdrawn for that reason; when the Add-on is switched on again, exactly those r
 and entries stay. A product the supplier left in `draft`, or the operator moved, is not touched. This runs
 in `phis addon site` and `phis addon reconcile`, the commands that switch an Add-on on and off.
 
-**The event.** Core emits `product.changed` when a product is registered, changed (its description and its
-gallery -- another picture or another order -- included), released, moved to
+**The event.** Core emits `product.changed` when a product is registered, changed (its description, its
+link -- another target, another label, or none -- and its gallery -- another picture or another order -- included), released, moved to
 another state, loses or regains its supplier, or has its attributes changed (not when a call changes
 nothing, and not when a product is removed). The subject is typed, `{ kind: "product", productId }`, and
 carries no state; the handler reads the product through the capability. It goes to every enabled,

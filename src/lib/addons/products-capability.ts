@@ -104,16 +104,35 @@ const MOVABLE_STATES = new Set<string>(["draft", "active", "withdrawn"]);
  * What a provider is told of a product's word it is asked to translate: the field, in natural language.
  * The stored context names the product as well (`phisProductTextContext`), which is identity and no hint.
  */
-const PROVIDER_CONTEXTS: Readonly<Record<"title" | "summary", string>> = { title: "product title", summary: "product summary" };
+const PROVIDER_CONTEXTS: Readonly<Record<"title" | "summary" | "link_label", string>> = {
+  title: "product title",
+  summary: "product summary",
+  link_label: "product link label",
+};
 
 /** The fields a provider is asked for where nobody translated them: not the description, a Markdown document. */
-const FILLED_FIELDS = ["title", "summary"] as const;
+const FILLED_FIELDS = ["title", "summary", "link_label"] as const;
 
 const FIELD_BITS: Readonly<Record<PhisProductTextField, number>> = {
   title: PhisProductText.Title,
   summary: PhisProductText.Summary,
   description: PhisProductText.Description,
+  link_label: PhisProductText.LinkLabel,
 };
+
+/** A field's words as the product holds them; the link's label is the button's, '' without one. */
+const textOf = (product: PhisStoredProduct, field: PhisProductTextField) =>
+  field === "link_label" ? product.link?.label ?? "" : product[field];
+
+/** The product with the words of a read in place, the link's label inside its link. */
+function withTexts(product: PhisStoredProduct, texts: Partial<Record<PhisProductTextField, string>>) {
+  const { link_label: linkLabel, ...words } = texts;
+  return {
+    ...product,
+    ...words,
+    ...(linkLabel !== undefined && product.link ? { link: { ...product.link, label: linkLabel } } : {}),
+  };
+}
 
 /**
  * Products as read in `locale`, each from its own language (`sourceLocale`, null for the Site's):
@@ -161,14 +180,14 @@ async function translateProducts(
   for (const field of FILLED_FIELDS) {
     const byLanguage = new Map<string, PhisStoredProduct[]>();
     for (const product of asked) {
-      if (product[field].trim() === "" || answers.get(product)?.[field] !== undefined) continue;
+      if (textOf(product, field).trim() === "" || answers.get(product)?.[field] !== undefined) continue;
       byLanguage.set(languageOf(product), [...(byLanguage.get(languageOf(product)) ?? []), product]);
     }
     for (const [sourceLocale, group] of byLanguage) {
       // In the Site's language the field's own message, recorded by register; one that is not there yet is read as written.
       const texts = await translateSiteTextsWithCache({
         siteId: input.siteId, locale: input.locale, sourceLocale, canonicalLocale: input.siteSourceLocale,
-        msgs: group.map((product) => product[field]), ctx: PROVIDER_CONTEXTS[field],
+        msgs: group.map((product) => textOf(product, field)), ctx: PROVIDER_CONTEXTS[field],
         storedContexts: group.map((product) => phisProductTextContext(product.rowId, field)), format: "text", create: false,
       });
       group.forEach((product, index) => answer(product, field, texts[index]!));
@@ -180,9 +199,9 @@ async function translateProducts(
     let translated = held.get(product) ?? 0;
     for (const field of FILLED_FIELDS) {
       // A filled text that came back as written is no translation: a provider failed, or the language had none.
-      if (texts[field] !== undefined && texts[field] !== product[field]) translated |= FIELD_BITS[field];
+      if (texts[field] !== undefined && texts[field] !== textOf(product, field)) translated |= FIELD_BITS[field];
     }
-    return { ...product, ...texts, translated };
+    return { ...withTexts(product, texts), translated };
   });
 }
 

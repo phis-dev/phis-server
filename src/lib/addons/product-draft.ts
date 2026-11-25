@@ -1,5 +1,5 @@
 import type { PhisProductDraft, PhisProductId, PhisProductSale } from "@phis/contracts/addon";
-import { PHIS_PRODUCT_DESCRIPTION_MAX, PHIS_PRODUCT_GALLERY_MAX } from "@phis/contracts/products";
+import { PHIS_PRODUCT_DESCRIPTION_MAX, PHIS_PRODUCT_GALLERY_MAX, readPhisProductLink, type PhisProductLink } from "@phis/contracts/products";
 
 import { resolvePhiLocaleBase, resolvePhiLocaleCapability } from "../locale.ts";
 
@@ -49,6 +49,8 @@ export type PhisNormalizedProductDraft = {
   title: string;
   summary: string;
   description: string;
+  /** The button: a target `readPhisProductLink` took and the label trimmed, '' for none; null for no button. */
+  link: PhisProductLink | null;
   /**
    * The language the texts are written in, in the catalogue's spelling; null for the Site's. As the draft
    * states it -- `phisProductSourceLocaleAtSite` turns the Site's own language into null before a register.
@@ -142,6 +144,11 @@ export function normalizePhisProductDraft(draft: PhisProductDraft, ownId?: PhisP
       `description must be Markdown of at most ${PHIS_PRODUCT_DESCRIPTION_MAX_LENGTH} characters without control characters other than tabs and line breaks.`,
     );
   }
+  const { link, issue: linkIssue } = readPhisProductLink(draft.link);
+  if (linkIssue !== null) throw new PhisProductDraftError(linkIssue);
+  if (link?.label && /[\u0000-\u001f\u007f]/u.test(link.label)) {
+    throw new PhisProductDraftError("`link.label` must be without control characters.");
+  }
   const gallery = draft.gallery === undefined ? [] : draft.gallery;
   if (!Array.isArray(gallery) || gallery.length > PHIS_PRODUCT_GALLERY_MAX_PICTURES
     || !gallery.every((id) => Number.isInteger(id) && id > 0 && id <= 2_147_483_647)) {
@@ -155,6 +162,7 @@ export function normalizePhisProductDraft(draft: PhisProductDraft, ownId?: PhisP
     title: text(draft.title, "title", PHIS_PRODUCT_TITLE_MAX_LENGTH),
     summary: text(draft.summary, "summary", PHIS_PRODUCT_SUMMARY_MAX_LENGTH, true),
     description,
+    link: link ? { target: link.target, label: link.label ?? "" } : null,
     sourceLocale: readSourceLocale(draft.sourceLocale),
     imageAssetId,
     iconAssetId,

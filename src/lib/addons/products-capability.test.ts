@@ -30,8 +30,8 @@ vi.mock("@/lib/media-response", async (importOriginal) => ({
   resolvePhiMediaDeliveryUrl: (asset: { id: number; deliveryRevision: number }) => `/api/site/media/${asset.id}/content?r=${asset.deliveryRevision}`,
 }));
 vi.mock("@/db/products.mts", () => ({
-  PHIS_PRODUCT_TEXT_FIELDS: ["title", "summary", "description"],
-  phisProductTextContext: (id: number, field: string) => `product ${id} ${field}`,
+  PHIS_PRODUCT_TEXT_FIELDS: ["title", "summary", "description", "link_label"],
+  phisProductTextContext: (id: number, field: string) => `product ${id} ${field === "link_label" ? "link label" : field}`,
   listProducts: (_pool: unknown, input: Record<string, unknown>) => state.list(input),
   readProduct: (_pool: unknown, ...args: unknown[]) => state.read(...args),
   registerProduct: (_pool: unknown, input: Record<string, unknown>) => state.register(input),
@@ -218,6 +218,27 @@ describe("products capability", () => {
       expect(page.products[0]).not.toHaveProperty("textMessages");
       expect(page.products[0]).not.toHaveProperty("rowId");
       expect(state.external).not.toHaveBeenCalled();
+    });
+
+    it("reads the link's label like a title: a person's translation, else the provider's, with LinkLabel in translated", async () => {
+      const link = { target: { kind: "external", href: "https://apps.apple.com/app/id1" }, label: "Get it" };
+      const asWritten = async (input: { msgs: string[] }) => [...input.msgs];
+      state.read.mockResolvedValueOnce({ ...translatable({ link_label: { msgId: 4, translation: "Holen" } }), link });
+      state.fill.mockImplementationOnce(asWritten).mockImplementationOnce(asWritten);
+      expect(await capability().get({ id: "@acme/licenses:pro", locale: "de" })).toMatchObject({
+        title: "Pro", link: { target: link.target, label: "Holen" }, translated: PhisProductText.LinkLabel,
+      });
+      state.read.mockResolvedValueOnce({ ...translatable({}), link });
+      state.fill.mockImplementationOnce(asWritten).mockImplementationOnce(asWritten);
+      expect(await capability().get({ id: "@acme/licenses:pro", locale: "de" })).toMatchObject({
+        link: { label: "DE Get it" }, translated: PhisProductText.LinkLabel,
+      });
+      expect(state.fill).toHaveBeenLastCalledWith(expect.objectContaining({
+        msgs: ["Get it"], ctx: "product link label", storedContexts: ["product 12 link label"],
+      }));
+      // Without a locale the link is as written, and null where there is none.
+      state.read.mockResolvedValueOnce({ ...translatable({}), link: null });
+      expect(await capability().get({ id: "@acme/licenses:pro" })).toMatchObject({ link: null });
     });
 
     it("answers a person's translation of the description", async () => {
