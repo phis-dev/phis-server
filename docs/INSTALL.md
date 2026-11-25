@@ -413,7 +413,7 @@ the Server's Major.Minor line (phis 0.8.x takes the newest `@phis/ui` 0.8.x; con
 registry with `npm view`, in the Site's directory, so the npm configuration applies (`registry`, scope
 registries, auth, proxy). npm caches under the home directory, and the `phis` service account has none;
 when the environment sets no `npm_config_cache`, those calls use `/var/cache/phis-npm` if it exists and
-is writable (`install -d -o phis -g phis /var/cache/phis-npm`), else npm's default. When the registry cannot be asked, or the chosen `@phis/ui` states no
+is writable (the Debian package creates it, owned by `phis`; elsewhere `install -d -o phis -g phis /var/cache/phis-npm`), else npm's default. When the registry cannot be asked, or the chosen `@phis/ui` states no
 `phis.testedWith` (0.8.1 and earlier), `init` takes the set recorded when this `phis` was built and says
 so. A Site created by hand from a clone takes its versions from its own `package.json`.
 

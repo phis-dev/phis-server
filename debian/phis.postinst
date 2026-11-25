@@ -66,6 +66,10 @@ case "$1" in
     ensure_stage_dir "${STAGE_ROOT}"
     ensure_stage_dir "${CONFIG_DIR}"
 
+    # npm's cache for the phis account, which has no home: `phis init` and `phis update` ask the
+    # registry through it (site-versions.mts picks it when npm_config_cache is unset). Kept on purge.
+    install -d -o phis -g phis -m 0755 /var/cache/phis-npm
+
     # A link left dangling by an earlier version is replaced; a stage's own file or link stays.
     if [ -L "${STATIC_CONFIG_LINK}" ] && [ ! -e "${STATIC_CONFIG_LINK}" ]; then
       rm -f "${STATIC_CONFIG_LINK}"

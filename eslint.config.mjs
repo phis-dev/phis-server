@@ -31,6 +31,8 @@ const eslintConfig = defineConfig([
     "next-env.d.ts",
     // Installed Add-ons: bundles put there at run time, not source of this checkout.
     "addons/**",
+    // The output of `pnpm package:pack`: a built copy of this checkout, not its source.
+    "package/**",
   ]),
 ]);
 
