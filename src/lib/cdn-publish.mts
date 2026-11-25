@@ -415,10 +415,10 @@ async function abandonAssembly(storage: PhisCdnStorage, key: string, uploadId: s
 /**
  * The whole object's SHA-256 from the bucket, and each part's where it was sent in parts.
  *
- * Read range by range, one part (or 16 MiB) at a time, rather than as one GET: a GET of a whole object
- * that was assembled from parts answers the storage's composite checksum, which an S3 client that
- * validates response checksums compares with the body's plain SHA-256 and refuses (measured against
- * Garage 2.3.0 through @phis/storage-s3). A range answers no whole-object checksum.
+ * Read range by range, one part (or 16 MiB) at a time, so each request stays bounded and every part's
+ * digest falls out of the same pass. A whole GET would work too since @phis/storage-s3 validates
+ * response checksums only when asked (6d7dd15; before it, an assembled object's composite checksum was
+ * compared with the body's plain SHA-256 and refused, measured against Garage 2.3.0).
  */
 export async function hashPhisCdnObject(
   storage: Pick<PhisCdnStorage, "getObjectRangeStream" | "headObject">,
