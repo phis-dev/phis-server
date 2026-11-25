@@ -463,7 +463,23 @@ async function invokeHandler(
   }
 }
 
+/**
+ * An Add-on's route or hook, for every method Core takes. `HEAD` is answered by the `GET` descriptor of
+ * the same path -- the handler sees `method: "HEAD"` and answers as for `GET`, without its side effects --
+ * and whatever body the answer has is dropped here.
+ */
 export async function dispatchPhisAddonRequest(
+  request: NextRequest,
+  kind: AddonRouteKind,
+  params: AddonRouteParams,
+) {
+  const response = await dispatchAddonRequest(request, kind, params);
+  if (request.method !== "HEAD") return response;
+  await response.body?.cancel().catch(() => {});
+  return new NextResponse(null, { status: response.status, statusText: response.statusText, headers: response.headers });
+}
+
+async function dispatchAddonRequest(
   request: NextRequest,
   kind: AddonRouteKind,
   params: AddonRouteParams,
@@ -500,10 +516,12 @@ export async function dispatchPhisAddonRequest(
     });
   }
 
+  // No descriptor declares HEAD: it is the GET of the same path, answered without a body.
+  const descriptorMethod = request.method === "HEAD" ? "GET" : request.method;
   const match =
     kind === "api"
-      ? findDescriptor(entry.manifest.apiRoutes, request.method, path)
-      : findDescriptor(entry.manifest.hooks, request.method, path);
+      ? findDescriptor(entry.manifest.apiRoutes, descriptorMethod, path)
+      : findDescriptor(entry.manifest.hooks, descriptorMethod, path);
   if (!match) {
     return notFound();
   }
@@ -618,7 +636,7 @@ export async function dispatchPhisAddonRequest(
       {
         addonId,
         requestId,
-        method: request.method as PhisAddonHttpMethod,
+        method: request.method as PhisAddonRequestContext["method"],
         url: request.url,
         headers: new Headers(request.headers),
         body: bodyResult.body,

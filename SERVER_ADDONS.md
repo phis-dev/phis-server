@@ -302,7 +302,7 @@ because a hook has no authentication policy to fall back on and Core will not gu
 | Field | API route | Hook | Meaning |
 | --- | --- | --- | --- |
 | `id` | required | required | Lower-case descriptor id, unique across the Add-on's routes and hooks together. |
-| `method` | required | required | `GET`, `POST`, `PUT`, `PATCH` or `DELETE`. |
+| `method` | required | required | `GET`, `POST`, `PUT`, `PATCH` or `DELETE`. `HEAD` is not declared: it reaches the `GET` of the same path. |
 | `path` | required | required | The path below the Add-on's root, without leading or trailing slash; a segment may be a `:name` parameter. |
 | `handler` | required | required | The key in `apiHandlers` or `hookHandlers` that serves it. |
 | `auth` | required | -- | The minimum authentication policy; see below. A hook is unauthenticated by construction. |
@@ -608,7 +608,7 @@ Before an Add-on handler receives a request, Core verifies:
 6. package, Add-on ABI, and capability compatibility
 7. applied migration version
 8. required configuration and secret availability
-9. an exact declared method and subpath match
+9. an exact declared method and subpath match (`HEAD` matches the `GET`; Core drops the answer's body)
 10. authentication and authorization policy
 11. request size, rate limit, timeout, and audit requirements
 
@@ -620,7 +620,9 @@ namespace or register outside its own route namespace.
 An Add-on handler receives one argument, `PhisAddonRequestContext` from `@phis/contracts/addon`:
 
 - `addonId` and `requestId`
-- `method`, `url`, `headers`, the raw `body` bytes, the matched `path`, and its `pathParams`
+- `method`, `url`, `headers`, the raw `body` bytes, the matched `path`, and its `pathParams`; `method` is
+  `HEAD` where a `HEAD` reached a `GET` route or hook, answered as for `GET` without its side effects (a
+  count, a write)
 - `site`: `{ id, key, publicBaseUrl, timeZone, sourceLocale }` for a Site-scoped route, otherwise `null`;
   `sourceLocale` is the language the Site's own texts are written in (immutable, TRANSLATIONS.md), what a
   person on the Site types unless they say otherwise -- a Form's default, the language of a text an Add-on
