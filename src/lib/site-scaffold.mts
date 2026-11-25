@@ -559,7 +559,7 @@ export function buildPhiSiteScaffoldFiles(
      * nothing, and there is no `/error/500` preset for a Site to edit in its stead.
      */
     "src/app/global-error.tsx": `"use client";\n\nexport { PhiNextGlobalErrorPage as default } from "@phis/ui/next/global-error";\n`,
-    "src/proxy.ts": `import type { NextRequest } from "next/server";\nimport { proxyPhiNextSiteRequest } from "@phis/ui/next/site-proxy";\n\nexport function proxy(request: NextRequest) {\n  return proxyPhiNextSiteRequest(request);\n}\n\nexport const config = { matcher: "/:path*" };\n`,
+    "src/proxy.ts": `import type { NextRequest } from "next/server";\nimport { proxyPhiNextSiteRequest } from "@phis/ui/next/site-proxy";\n\nexport function proxy(request: NextRequest) {\n  return proxyPhiNextSiteRequest(request);\n}\n\n/*\n * Every path but the two that carry a file's bytes: a CDN upload part and a Media upload streamed\n * through Core (a Local Storage Profile). Next copies a body the proxy sees and cuts it at\n * proxyClientMaxBodySize (10 MiB); the proxy only strips x-locale on backend paths, so leaving these\n * out costs nothing.\n */\nexport const config = {\n  matcher: "/((?!api/site/admin/cdn/uploads/[^/]+/parts/|api/site/media/uploads/[^/]+$).*)",\n};\n`,
     "src/app/api/auth/[[...path]]/route.ts": proxyRoute("auth"),
     "src/app/api/site/[[...path]]/route.ts": proxyRoute("site"),
     "src/app/api/addons/[[...path]]/route.ts": proxyRoute("addons"),
