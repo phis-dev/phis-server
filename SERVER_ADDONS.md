@@ -789,6 +789,7 @@ Site, bounded per run, and recorded in the ledger like any other job:
 | --- | --- | --- |
 | `payments.recover` | asks the Provider for the state of the payments with an unresolved operation, at most 100 a run; it replays no command and skips a payment another reconciliation holds | hourly |
 | `upload-sessions.prune` | releases the reservations of upload sessions that ran out | hourly |
+| `cdn-uploads.prune` | aborts CDN uploads and imports that ran out, finishes the ones whose hashing stalled, forgets ended ones after 30 days | hourly |
 | `queues.prune` | forgets sent mails, processed payment receipts and delivered Add-on events past their window | daily 02:10 |
 | `hook-deliveries.prune` | forgets webhook deliveries older than 30 days | daily 02:25 |
 | `addon-assets.collect` | collects the files of an Add-on that nothing links to any more | daily 02:40 |
@@ -798,7 +799,7 @@ A step that has more to do than one run allows is finished by the next one. The 
 and stay clear of `job-runs.prune` at 03:30.
 
 `phis maintain` is the same steps started by hand: `phis maintain [--task <id>] [--dry-run]` runs the
-tasks `queue-retention`, `hook-deliveries`, `upload-sessions`, `addon-assets`,
+tasks `queue-retention`, `hook-deliveries`, `upload-sessions`, `cdn-uploads`, `addon-assets`,
 `support-requester-window` and `payments`, each of which calls the very function its job calls, and
 `--dry-run` reports what a run would do without changing anything. One task is not a job:
 `addon-storage` lists every Add-on store in full and costs what the stores hold, which is too heavy for
@@ -1148,7 +1149,8 @@ dispatch, by the job runner, and when its service factory is resolved.
 | `@phis/server/events:v1` | yes -- [Events an Add-on emits](#events-an-add-on-emits) | announcing the Add-on's own events to the Site's Add-ons |
 | `@phis/server/entitlements:v1` | yes -- [`entitlements:v1`](#entitlementsv1) | who holds which product, from when until when |
 | `@phis/server/products:v1` | yes -- [`products:v1`](#productsv1) | the Site's product directory |
-| `@phis/server/cdn:v1` | yes -- [`cdn:v1`](#cdnv1) | the Site's CDN catalogue, read-only |
+| `@phis/server/cdn:v1` | yes -- [`cdn:v1`](#cdnv1) | the Site's CDN catalogue, read-only: copies and links |
+| `@phis/server/cdn-publish:v1` | yes -- [`cdn-publish:v1`](#cdn-publishv1) | importing a file into the Site's CDN from an address Core fetches, or recording it as a link |
 | `@phis/server/media:v1` | yes -- [`media:v1`](#mediav1) | Media library Assets by id: `servable`, `path` and what a media tile draws |
 | `@phis/server/media-release:v1` | yes -- [`media-release:v1`](#media-releasev1) | giving up Media library Assets; Core deletes one nothing references |
 | `@phis/server/users:v1` | yes -- [`users:v1`](#usersv1) | a person of the Site, field by field by the acting person; the Site's address book |
@@ -2171,16 +2173,59 @@ Page's words are, by the same people, the same files and the same provider. `rec
 ### `cdn:v1`
 
 The Site's CDN catalogue, read-only: `configured()`, `file(key)` and `files({ name?, limit? })`, each file as
-`PhisCdnFileV1` with its key, name, version, file name, size, SHA-256, content type, publication time and
-public `url`. Bound to the Site of the call; nothing in it depends on who asks, so a public hook may read it.
+`PhisCdnFileV1` with its key, name, version, file name, size, SHA-256, content type, publication time,
+`url`, `storage`, `os` and `arch`. Bound to the Site of the call; nothing in it depends on who asks, so a
+public hook may read it.
+
+Copies and links are read alike. `storage: "cdn"` is a file Core holds in the bucket, its `url` the CDN's
+base and the encoded key; `storage: "link"` is a file whose bytes stay at its source, its `url` the address
+Core recorded when it was linked. `os` and `arch` are `PhisCdnFileOs` and `PhisCdnFileArch` bits, 0 where
+nobody stated them.
 
 A Site without a CDN is not an error: `configured()` is false and the reads answer empty, so an Add-on can
 offer CDN files wherever the operator set one up. A withdrawn file is not listed and reads as null. `files`
-is ordered by name, newest first within a name, and capped at 500.
+is ordered by name, newest first within a name, and capped at 500. Writing is not `cdn:v1`'s: it is
+[`cdn-publish:v1`](#cdn-publishv1), so being able to read the catalogue is not being able to publish under
+the Site's name. What a CDN is and how it is run is [GROUPS_AND_STORAGE.md](./GROUPS_AND_STORAGE.md#a-sites-cdn).
 
-There is no writer. Files are published with `phis cdn publish`, and an Add-on that could publish could put
-bytes on a public host under the Site's name. What a CDN is and how it is run is
-[GROUPS_AND_STORAGE.md](./GROUPS_AND_STORAGE.md#a-sites-cdn).
+### `cdn-publish:v1`
+
+Putting a file into the Site's CDN catalogue (`PhisCdnPublishCapabilityV1`), as `context.capabilities.cdnPublish`:
+
+- `import(request, { signal? })` hands Core an `https` address, the size and the SHA-256 the source states
+  (null where it states none), and optionally a content type and the `os`/`arch` bits. Core fetches the
+  file itself, uploads it to `<name>/<version>/<fileName>` and records it, before it resolves.
+- `link(request)` takes the same fields with a SHA-256 required, and records the address as a link
+  (`storage: "link"`): nothing is fetched and nothing stored.
+
+Both answer `{ ok: true, file, flags }` -- `PhisCdnPublishResultFlags.Already` where the key was there with
+the same SHA-256 (for an import without one: the same size and address, by this Add-on), so a job that lost
+its lease can ask again -- or `{ ok: false, refusal, message }`. A request that is not of the contract's
+shape throws.
+
+Bound to the Site and to the calling Add-on, which becomes the file's origin (`site_cdn_file_origins`,
+origin `addon`, with the address). What bounds it is Core's, not the Add-on's:
+
+- **The operator's host list.** Every hop of an import -- and a link's address -- must be `https` on 443,
+  without credentials, its host on the stage's `cdn.importHosts` in `phis-runtime.json`
+  ([docs/INSTALL.md](./docs/INSTALL.md)); empty, the default, imports and links nothing (`host-not-allowed`).
+  Core resolves each host once, refuses it where any address is private, loopback, link-local, ULA or
+  multicast, and connects to the address it checked. At most five redirects.
+- **The name.** An Add-on imports and links only under a name that is new or holds nothing but its own
+  files (`name-not-yours`): not under the operator's, a Maintainer's or another Add-on's.
+- **The type.** HTML, SVG, XML and JavaScript are refused as `phis cdn publish` refuses them, and so is a
+  source that answers `text/html` (`content-type-refused`).
+- **The size.** At most the Site's `max_object_bytes` (`too-large`), for a link too. A copy counts in the
+  Site Space and is refused past its quota (`quota-exceeded`); a link counts nothing.
+- **The bytes.** Read once in 16 MiB parts, two in flight, hashed as they are read and compared before the
+  upload is completed: another length is `size-mismatch`, another hash `checksum-mismatch`, and nothing is
+  left behind. The signal -- a job's lease -- aborts the import the same way.
+- **One upload per key.** An upload of the key open elsewhere, an import or a Maintainer's, is `busy`.
+
+A job, a route and a command get it; an unverified hook gets a capability whose every call throws, because
+nobody stands behind such a request. There is no withdraw and no delete: a file an Add-on published is
+withdrawn on the Site's CDN page or with `phis cdn withdraw`. A private source is not supported: a later
+optional `credential` field naming one of the Add-on's own secrets is meant for it.
 
 ### `media:v1`
 

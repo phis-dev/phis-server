@@ -321,7 +321,8 @@ CREATE TABLE IF NOT EXISTS phis.media_storage_profiles (
 );
 
 -- A Site's CDN: one bucket (a Storage Profile flagged Cdn) whose files are served from a host of their
--- own. Files are published with `phis cdn publish`, which writes the catalogue below; a key is
+-- own. Files reach the catalogue below by `phis cdn publish`, a Maintainer's upload on the CDN page or an
+-- Add-on's `cdn-publish:v1`, all through one pipeline (src/lib/cdn-publish.mts); a key is
 -- <name>/<version>/<file> and is never written twice. See GROUPS_AND_STORAGE.md, "A Site's CDN".
 CREATE TABLE IF NOT EXISTS phis.site_cdns (
   site_id SMALLINT PRIMARY KEY REFERENCES phis.sites(id) ON DELETE CASCADE,
@@ -356,6 +357,74 @@ CREATE TABLE IF NOT EXISTS phis.site_cdn_files (
 );
 
 CREATE INDEX IF NOT EXISTS site_cdn_files_name_idx ON phis.site_cdn_files (site_id, name, published_at DESC);
+
+-- `flags`: the state in bits 0-7 (Withdrawn 1, Deleted 2, Linked 4), the operating systems in bits 8-15
+-- and the architectures in bits 16-23 (`PhisCdnFileOs`/`PhisCdnFileArch` shifted, src/lib/cdn-core.ts).
+-- A Linked row's bytes are not in the bucket: Core records the entry, its source keeps the file.
+
+-- Where a catalogued file came from. One row per file, written in the statement that writes the file.
+-- origin: 1 the operator's CLI (publish, check --adopt), 2 a Maintainer's upload, 3 an Add-on.
+CREATE TABLE IF NOT EXISTS phis.site_cdn_file_origins (
+  file_id BIGINT PRIMARY KEY REFERENCES phis.site_cdn_files(id) ON DELETE CASCADE,
+  origin SMALLINT NOT NULL,
+  addon_id VARCHAR(255) NULL,
+  actor_user_id INT NULL REFERENCES phis.user_accounts(id) ON DELETE SET NULL,
+  -- What an Add-on's file was fetched from, or links to.
+  source_url TEXT NULL,
+  CONSTRAINT site_cdn_file_origins_origin_check CHECK (
+    (origin = 1 AND addon_id IS NULL AND source_url IS NULL) OR
+    (origin = 2 AND addon_id IS NULL AND source_url IS NULL) OR
+    (origin = 3 AND addon_id IS NOT NULL AND actor_user_id IS NULL AND source_url IS NOT NULL)
+  )
+);
+
+-- An upload into the CDN that is not finished: a Maintainer's from the CDN page (origin 2) and an
+-- Add-on's import (origin 3) alike. The CLI keeps its own resume state beside the stage.
+-- status: 1 pending, 2 uploading, 3 hashing, 4 published, 5 failed, 6 aborted; below 4 is open and holds
+-- a reservation of size_bytes in the Site Space.
+CREATE TABLE IF NOT EXISTS phis.site_cdn_uploads (
+  token VARCHAR(128) PRIMARY KEY,
+  site_id SMALLINT NOT NULL REFERENCES phis.site_cdns(site_id) ON DELETE CASCADE,
+  object_key VARCHAR(620) NOT NULL,
+  name VARCHAR(200) NOT NULL,
+  version VARCHAR(200) NOT NULL,
+  file_name VARCHAR(200) NOT NULL,
+  size_bytes BIGINT NOT NULL,
+  content_type VARCHAR(255) NOT NULL,
+  part_size_bytes BIGINT NOT NULL,
+  -- A browser upload's SHA-256 per part, as lowercase hex in part order.
+  part_sha256 JSONB NULL,
+  -- An import's SHA-256 as its source stated it; null where the source states none.
+  expected_sha256 CHAR(64) NULL,
+  -- The platform bits the file is recorded with, laid out as in site_cdn_files.flags.
+  file_flags INT NOT NULL DEFAULT 0,
+  origin SMALLINT NOT NULL,
+  actor_user_id INT NULL REFERENCES phis.user_accounts(id) ON DELETE SET NULL,
+  addon_id VARCHAR(255) NULL,
+  source_url TEXT NULL,
+  status SMALLINT NOT NULL,
+  -- The Provider's name for a multipart assembly; null for a body of one part.
+  provider_upload_id VARCHAR(512) NULL,
+  error_code VARCHAR(48) NULL,
+  error_message VARCHAR(1000) NULL,
+  heartbeat_at TIMESTAMPTZ NULL,
+  expires_at TIMESTAMPTZ NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT site_cdn_uploads_key_check CHECK (object_key = name || '/' || version || '/' || file_name),
+  CONSTRAINT site_cdn_uploads_size_check CHECK (size_bytes > 0 AND part_size_bytes > 0),
+  CONSTRAINT site_cdn_uploads_status_check CHECK (status BETWEEN 1 AND 6),
+  CONSTRAINT site_cdn_uploads_sha256_check CHECK (expected_sha256 IS NULL OR expected_sha256 ~ '^[0-9a-f]{64}$'),
+  CONSTRAINT site_cdn_uploads_origin_check CHECK (
+    (origin = 2 AND addon_id IS NULL AND source_url IS NULL AND part_sha256 IS NOT NULL) OR
+    (origin = 3 AND addon_id IS NOT NULL AND actor_user_id IS NULL AND source_url IS NOT NULL AND part_sha256 IS NULL)
+  )
+);
+
+-- At most one open upload per key, which is the lock: a second answers busy.
+CREATE UNIQUE INDEX IF NOT EXISTS site_cdn_uploads_open_key_idx
+  ON phis.site_cdn_uploads (site_id, object_key) WHERE status < 4;
+CREATE INDEX IF NOT EXISTS site_cdn_uploads_status_idx ON phis.site_cdn_uploads (status, expires_at);
 
 -- What this endpoint turned out to be able to do, established by `phis storage probe` rather than
 -- declared by an operator. One adapter serves AWS, MinIO and Garage alike, and they do not agree on

@@ -9,8 +9,9 @@ import { PHIS_CDN_LIST_LIMIT, presentPhisCdnFile } from "@/lib/cdn-core";
  * `cdn:v1`: the Site's CDN catalogue, read-only.
  *
  * Bound to the Site of the call. A Site without a CDN answers empty rather than failing, so an Add-on
- * can offer CDN files wherever the operator set one up. There is no writer: publishing is
- * `phis cdn publish`, the operator's, for the reason `secrets:v1` has none.
+ * can offer CDN files wherever the operator set one up. Copies and links are read alike, `storage` tells
+ * them apart, and a link's `url` is its source's address. Writing is `cdn-publish:v1`, a capability of its
+ * own (`cdn-publish-capability.ts`), so reading the catalogue is not publishing under the Site's name.
  */
 export function buildPhisAddonCdnCapability(input: { siteId: number }): PhisCdnCapabilityV1 {
   const { siteId } = input;

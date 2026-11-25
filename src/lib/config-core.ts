@@ -176,6 +176,18 @@ export type PhisConfig = {
       groupQuotaBytes?: number | null;
     };
   };
+  /**
+   * A Site's CDN, as far as the stage decides it. Operator-owned and read from `phis-runtime.json`; no
+   * Site administration writes it.
+   */
+  cdn?: {
+    /**
+     * The hosts an Add-on's `cdn-publish:v1` may import from or link to, lowercase and exact
+     * (`github.com`, `release-assets.githubusercontent.com`). Every hop of an import is checked against it.
+     * Absent or empty: no Add-on imports or links anything.
+     */
+    importHosts?: string[];
+  };
   translation?: {
     sourceLocale?: string;
     /**
@@ -401,6 +413,11 @@ export function mergeConfig(base: PhisConfig, override: PhisConfig): PhisConfig 
         ...override.media?.defaults,
       },
     },
+    cdn: {
+      ...base.cdn,
+      ...override.cdn,
+      importHosts: override.cdn?.importHosts ?? base.cdn?.importHosts,
+    },
     translation: {
       ...base.translation,
       ...override.translation,
@@ -487,6 +504,15 @@ function validateSiteLocationConfig(
   if (value.path !== undefined && typeof value.path !== "string") {
     issues.push(`${keyPrefix}.path must be a string.`);
   }
+}
+
+/** A host name as `cdn.importHosts` takes it: lowercase labels, no scheme, port, path or wildcard. */
+const PHIS_IMPORT_HOST_PATTERN = /^(?=.{1,253}$)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/u;
+
+/** The stage's import hosts (`cdn.importHosts`), lowercase; empty where none are set. */
+export function readPhiCdnImportHosts(config: PhisConfig): string[] {
+  // `validatePhiConfig` reports an entry of another shape; one that is no host name matches no address.
+  return Array.isArray(config.cdn?.importHosts) ? config.cdn.importHosts.map((host) => String(host)) : [];
 }
 
 export function validatePhiConfig(config: PhisConfig) {
@@ -583,6 +609,13 @@ export function validatePhiConfig(config: PhisConfig) {
     && (typeof bootstrap.enabledUntil !== "string" || Number.isNaN(new Date(bootstrap.enabledUntil).getTime()))
   ) {
     issues.push("bootstrap.enabledUntil must be an ISO 8601 moment.");
+  }
+
+  if (config.cdn?.importHosts !== undefined) {
+    const hosts = config.cdn.importHosts as unknown;
+    if (!Array.isArray(hosts) || hosts.some((host) => typeof host !== "string" || !PHIS_IMPORT_HOST_PATTERN.test(host))) {
+      issues.push("cdn.importHosts must be a list of lowercase host names (github.com), without scheme, port or path.");
+    }
   }
 
   if (

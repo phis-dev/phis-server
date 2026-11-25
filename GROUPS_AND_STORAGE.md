@@ -898,64 +898,116 @@ binding. A profile change does not reinterpret existing Assets.
 
 A CDN here is one bucket of files that are published once and never change, served from a host of their own
 (`cdn.phis.dev`) and never through a serving process: model weights, installers, archives. It is not media.
-There is no Space, no Asset and no audience; nobody uploads to it from a browser, and every file is public
-from the moment it is published. A Site has at most one CDN, and two Sites never share a bucket.
+There is no Asset and no audience, and every file is public from the moment it is published. A Site has at
+most one CDN, and two Sites never share a bucket.
 
 **The bucket is a Storage Profile** flagged `PhiMediaStorageProfileFlags.Cdn`, set once by
 `phis storage add --cdn`. No Space may write to such a Profile (`storage use` refuses it), Site
-administration neither lists nor offers it, and Core writes no CORS or lifecycle rule into it. Its
-`publicEndpoint` is the address the CLI reaches the storage at, which on one host may equal `endpoint`:
-with it set the Provider issues presigned and multipart plans, and those are how `phis cdn publish` uploads.
-Its secret is the one key for the bucket, and only Core holds it. No Add-on reads the bucket.
+administration neither lists nor offers it as a Media storage, and Core writes no CORS or lifecycle rule into
+it. Its `publicEndpoint` is the address this host reaches the storage at, which on one host may equal
+`endpoint`: with it set the Provider issues presigned and multipart plans, and those are how every file is
+uploaded -- by the CLI, and by the Server for the CDN page and for an import. A browser never sends bytes to
+the bucket itself. Its secret is the one key for the bucket, and only Core holds it.
 
 ```text
-site_cdns                      site_cdn_files
-├── site_id  (PK)              ├── id
-├── storage_profile_id         ├── site_id → site_cdns
-├── public_base_url            ├── object_key   unique per Site, <name>/<version>/<file>
-├── flags                      ├── name, version, file_name
-├── created_at                 ├── size_bytes, sha256 (the whole file), content_type
-└── updated_at                 ├── flags        PhisCdnFileFlags.Withdrawn
-                               └── published_at
+site_cdns                      site_cdn_files                              site_cdn_file_origins
+├── site_id  (PK)              ├── id                                      ├── file_id (PK) → site_cdn_files
+├── storage_profile_id         ├── site_id → site_cdns                     ├── origin    1 cli, 2 upload, 3 addon
+├── public_base_url            ├── object_key   unique per Site            ├── addon_id
+├── flags                      ├── name, version, file_name                ├── actor_user_id
+├── created_at                 ├── size_bytes, sha256, content_type        └── source_url
+└── updated_at                 ├── flags        state, os, arch (below)
+                               └── published_at                            site_cdn_uploads (open uploads)
 ```
 
-**A key is written once.** It is `<name>/<version>/<file>`, each segment matching
-`PHIS_CDN_KEY_SEGMENT_PATTERN` from `@phis/contracts`, and the first segment `api` is reserved, because
-the host may share its name with a translation mirror whose doors are under `/api/v1/`. A key that has been
-used stays taken, withdrawn or not, so a URL that delivered a file once never delivers other bytes and the
-host may cache every file it delivers as `immutable`. What it does not deliver -- a 404, an error -- is
-`no-store`, because the key may be published after it was asked for.
+**The catalogue holds every file offered under the Site's name**, so Core knows all of them and can
+withdraw any of them. A file is a copy (`storage: "cdn"`), whose bytes Core put into the bucket, or a link
+(`storage: "link"`, `PhisCdnFileFlags.Linked`), whose bytes stay where an Add-on's source keeps them: Core
+records the entry with the size and SHA-256 the source states and the address in `source_url`, and whoever
+offers the file sends a visitor there. A link is never recorded without a SHA-256.
 
-**The catalogue is written by the command that uploads.** `phis cdn publish` reads the file once to get its
-size, its SHA-256 and, above one part (16 MiB), each part's SHA-256. It refuses a key that is taken in the
-catalogue or occupied in the bucket, asks the Provider for an upload plan, and sends the body or its parts
-to the presigned addresses itself, with each digest signed into its request where the Profile's probe found
-the storage verifies SHA-256. It then completes the upload, compares the size the storage reports, and only
-then writes the row. An interrupted multipart upload is carried on by the next run through
-`resumeUploadPlan`. The storage's name for the assembly is kept in `<phis root>/cdn-uploads/` because
-nothing else outlives the command, and the parts are the storage's to report. No serving process sees a
-byte, and nothing polls the bucket to learn what it holds.
+**`flags` is one word in three parts**, so nothing about a file needs a column of its own: bits 0-7 the state
+(`Withdrawn` 1, `Deleted` 2, `Linked` 4), bits 8-15 the operating systems and bits 16-23 the architectures
+the file is for -- the contracts' `PhisCdnFileOs` and `PhisCdnFileArch`, shifted by 8 and 16
+(`src/lib/cdn-core.ts`). Zero in a part is "not stated". Bits 24-30 are reserved and bit 31 stays free. On
+the wire the three are separate fields, `flags`, `os` and `arch`, each from bit 0; the shift is Core's.
+
+**A key is written once.** It is `<name>/<version>/<file>`: name and file name match
+`PHIS_CDN_KEY_SEGMENT_PATTERN`, the version `PHIS_CDN_KEY_VERSION_PATTERN`, both from `@phis/contracts`.
+A tilde is taken anywhere after the first character (`1.0.0~beta.1-1`), a colon only in the version, for a
+Debian epoch (`1:2.0-1`), and a slash nowhere. The first segment `api` is reserved, because the host may
+share its name with a translation mirror whose doors are under `/api/v1/`. A key that has been used stays
+taken -- withdrawn, deleted, copy or link -- so a URL that delivered a file once never delivers other bytes
+and the host may cache every file it delivers as `immutable`. What it does not deliver -- a 404, an error
+-- is `no-store`, because the key may be published after it was asked for.
+
+**One pipeline, three roads** (`src/lib/cdn-publish.mts`). Each moves the bytes its own way, and all of them
+share the checks -- key, content type, the Site's limits, the catalogue, an object already in the bucket,
+an upload of the key open elsewhere -- the Provider's upload plans, and the write of the catalogue row, its
+origin row and the Site Space's bytes in one transaction:
+
+- `phis cdn publish` (origin `cli`) reads the file once for its size, its SHA-256 and, above one part
+  (16 MiB, `resolvePhiMediaUploadPartSizeBytes`), each part's SHA-256, and sends the body or its parts to the
+  presigned addresses itself, each digest signed into its request where the Profile's probe found the
+  storage verifies SHA-256. An interrupted multipart upload is carried on by the next run through
+  `resumeUploadPlan`; the storage's name for the assembly is kept in `<phis root>/cdn-uploads/`.
+- **The CDN page** (origin `upload`, `/api/site/admin/cdn/uploads`, for the Site's Maintainers and Admins).
+  The page hashes each part as the Media upload divides a file and opens an upload with the digests. The
+  Server relays each part from the request to the presigned part address, streamed and never buffered,
+  with its digest signed in where the storage verifies one. The same key, size and digests by the same
+  person carry the open upload on, so a reload sends only what is missing. Once every part is in, the
+  Server completes the assembly, compares the size, and computes the whole file's SHA-256 from the bucket
+  -- each part against the digest the page sent, which catches bytes a storage that verifies nothing took
+  -- and only then records it. Web Crypto cannot hash incrementally, so the whole digest is the Server's.
+  The page beats every 20 s; each beat or part pushes the upload's expiry a day ahead.
+- **An Add-on's import** (origin `addon`, `cdn-publish:v1.import`, [SERVER_ADDONS.md](./SERVER_ADDONS.md#cdn-publishv1)).
+  The Add-on hands Core an address, a size and a SHA-256, and Core fetches the bytes itself through
+  `src/lib/outbound-fetch.ts`: https on port 443 only, no credentials in the address, at most five
+  redirects followed by hand, every hop's host on the stage's `cdn.importHosts`, every address the host
+  resolves to public (no private, loopback, link-local, ULA, multicast or reserved network), and the
+  connection pinned to the address that was checked, so a second DNS answer -- rebinding -- never decides
+  where the bytes come from. An HTML answer is refused. The body is read once in 16 MiB parts, two in
+  flight, hashed as it is read and compared before the upload is completed; a different length or hash, or
+  the caller's signal, aborts the assembly and leaves nothing behind. A link (`cdn-publish:v1.link`) takes
+  the same checks without fetching anything.
+
+An Add-on publishes only under a name that is new or holds nothing but its own files, so what the operator
+or a Maintainer publishes under a name is never mixed with an Add-on's versions.
+
+**Limits come from the Site's Media settings**, not from a CDN setting of their own. One file of an upload,
+an import or a link may be at most `site_media_config.max_object_bytes` (`too-large`). Copies count in the
+Site Space's `used_bytes`: an upload and an import reserve their size against the Space's quota when they
+start (`quota-exceeded` where it does not fit, no refusal without a quota), the reservation moves to used
+when the file is recorded and is given back when it is not. Links count nothing. The operator's
+`phis cdn publish` and an adopted object are counted without a quota check -- the bytes are stored either
+way -- and are not bound by `max_object_bytes`. A delete gives a copy's bytes back; a detach gives back
+what the catalogue's copies still hold.
+
+**Open uploads** live in `site_cdn_uploads`, one open row per key (`status < 4` is the lock), for the CDN
+page and for imports alike. The Core job `cdn-uploads.prune` (hourly, and `phis maintain --task cdn-uploads`)
+aborts the open ones whose expiry passed, giving the reservation back and the assembly up, takes over a
+`hashing` one whose instance died and finishes it, and forgets ended rows after 30 days.
 
 **Content types.** The type is the one stated, else the extension's, else `application/octet-stream`.
-Nothing looks at the bytes: the publisher is the operator, and the formats a CDN carries are ones a sniffer
-does not recognise anyway. What sniffing guards against in media, a file that turns out to be a page, is
-refused outright: HTML, SVG, XML and JavaScript are not published under any extension or stated type. The
-host is usually a subdomain of the Site's own, close enough to set cookies the Site reads. For the same
-reason `phis cdn nginx` serves every file with `Content-Disposition: attachment` and
-`X-Content-Type-Options: nosniff`; an embedded `<video>` or `<img>` still plays.
+Nothing looks at the bytes. What sniffing guards against in media, a file that turns out to be a page, is
+refused outright: HTML, SVG, XML and JavaScript are not published under any extension or stated type, and an
+import whose source answers `text/html` is refused too. The host is usually a subdomain of the Site's own,
+close enough to set cookies the Site reads. For the same reason `phis cdn nginx` serves every file with
+`Content-Disposition: attachment` and `X-Content-Type-Options: nosniff`; an embedded `<video>` or `<img>`
+still plays.
 
-**Withdrawing** marks a file `Withdrawn`. It is no longer listed and reads as null through `cdn:v1`, and
-its key stays taken. A link already handed out keeps working until `--delete` removes the bytes too. A
-cache in front of the host may serve them until it expires.
+**Withdrawing** marks a file `Withdrawn`. It is no longer listed and reads as null through `cdn:v1`, and its
+key stays taken. A link already handed out keeps working until the file is deleted: for a copy that removes
+the bytes and sets `Deleted`, for a link it sets `Deleted` and moves no bytes. A cache in front of the host
+may serve a copy until it expires.
 
 **Bucket and catalogue can drift** only by hand: an object written with another tool, bytes deleted in the
-storage. `phis cdn check` lists the bucket and names both, and `--adopt` catalogues the objects that are
-valid CDN keys, hashing each once. It is a command and not a job, for the reason
-`phis addon storage --recount` is one.
+storage. `phis cdn check` (and the CDN page's check) lists the bucket and names both; links are not checked.
+`--adopt` (and `check/adopt`) catalogues objects that are valid CDN keys with origin `cli`, hashing each once.
 
-**What reaches an Add-on** is `@phis/server/cdn:v1` ([SERVER_ADDONS.md](./SERVER_ADDONS.md#cdnv1)):
-the catalogue, read-only and bound to the Site, with each file's public address. Publishing is the
-operator's alone, for the reason there is no secret writer.
+**What reaches an Add-on** is `@phis/server/cdn:v1` ([SERVER_ADDONS.md](./SERVER_ADDONS.md#cdnv1)), the
+catalogue read-only with copies and links alike (`storage`, `os`, `arch`), and, separately,
+`@phis/server/cdn-publish:v1` for an Add-on that imports or links.
 
 Creating the keys is outside phis. No common storage API makes one, and Garage, MinIO and AWS each have
 their own admin interface for it. The operator creates one key per CDN bucket with read and write rights on

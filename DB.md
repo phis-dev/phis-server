@@ -277,7 +277,7 @@ Contract:
 - CHECK: `public_base_url` is `https://host[/path]` without a trailing slash, query or fragment
 
 Contract:
-- A Site's CDN (GROUPS_AND_STORAGE.md, "A Site's CDN"): at most one per Site, written by `phis cdn attach`, removed by `phis cdn detach`. The Profile carries the Cdn flag.
+- A Site's CDN (GROUPS_AND_STORAGE.md, "A Site's CDN"): at most one per Site, written by `phis cdn attach`, removed by `phis cdn detach` (refused while a file is offered or an upload is open; the bytes its copies still hold leave the Site Space's `used_bytes` with it). The Profile carries the Cdn flag.
 - `flags` has no assigned bit.
 
 ### `phis.site_cdn_files`
@@ -293,10 +293,70 @@ Contract:
 - Index `(site_id, name, published_at DESC)`
 
 Contract:
-- The catalogue of the Site's CDN, written only by `phis cdn publish` and `phis cdn check --adopt` after the object is in the bucket, read by `@phis/server/cdn:v1`.
-- A key is written once: a row is never deleted while the CDN stays attached, so a withdrawn key stays taken.
-- `flags`: `1` Withdrawn (not offered, read as null by `cdn:v1`; the bytes may or may not still be in the bucket).
-- `sha256` is the whole file's, computed by the publisher; the storage verified it where the Profile records SHA-256.
+- The catalogue of the Site's CDN: every file offered under the Site's name, copied into the bucket or linked to its source. Written only by the pipeline (`src/lib/cdn-publish.mts`) -- `phis cdn publish`, `phis cdn check --adopt` and the CDN page's adopt after the object is in the bucket, a Maintainer's upload after it is hashed from the bucket, an Add-on's import (`cdn-publish:v1.import`) after its bytes matched and its link (`cdn-publish:v1.link`) -- always together with its `site_cdn_file_origins` row. Read by `@phis/server/cdn:v1` and the CDN page.
+- A key is written once: a row is never deleted while the CDN stays attached, so a withdrawn or deleted key stays taken.
+- `flags`, three parts in one word (`src/lib/cdn-core.ts`):
+  - bits 0-7, the state: `1` Withdrawn (not offered, read as null by `cdn:v1`), `2` Deleted (withdrawn and the bytes removed from the bucket; for a link, withdrawn and the entry kept; always with Withdrawn), `4` Linked (the bytes are not in the bucket and never were: `site_cdn_file_origins.source_url` is where they are);
+  - bits 8-15, the operating systems: `PhisCdnFileOs` of `@phis/contracts` shifted by 8 (Linux `1<<8`, Windows `1<<9`, macOS `1<<10`, Android `1<<11`, iOS `1<<12`, ChromeOS `1<<13`, Other `1<<15`);
+  - bits 16-23, the architectures: `PhisCdnFileArch` shifted by 16 (x64 `1<<16`, arm64 `1<<17`, x86 `1<<18`, arm32 `1<<19`, riscv64 `1<<20`);
+  - bits 24-30 reserved, bit 31 free. Zero in a part is "not stated". The wire carries `flags`, `os` and `arch` apart, each from bit 0.
+- `sha256` is the whole file's: computed by Core for a copy (by the CLI from the file, by the Server from the bucket or from the import's stream), stated by the source for a link -- never empty.
+- `size_bytes` of a copy that is not Deleted counts in the Site Space's `media_spaces.used_bytes`; a link's never does.
+
+### `phis.site_cdn_file_origins`
+
+- `file_id BIGINT PRIMARY KEY REFERENCES phis.site_cdn_files(id) ON DELETE CASCADE`
+- `origin SMALLINT NOT NULL` -- `PhisCdnFileOrigin`: `1` cli (`phis cdn publish`, an adopt), `2` upload (a Maintainer on the CDN page), `3` addon (`cdn-publish:v1`)
+- `addon_id VARCHAR(255) NULL`, `actor_user_id INT NULL REFERENCES phis.user_accounts(id) ON DELETE SET NULL`, `source_url TEXT NULL`
+- CHECK: origin 1 and 2 have neither `addon_id` nor `source_url`; origin 3 has both and no `actor_user_id`
+
+Contract:
+- Where a catalogued file came from, one row per file, written in the statement that writes the file. The name binding of `cdn-publish:v1` reads it: an Add-on publishes only under a name whose every file is `origin = 3` with its own `addon_id`.
+- A file without a row is never read as the CLI's: the CDN page refuses to present it, which is what the sweep below prevents.
+
+### `phis.site_cdn_uploads`
+
+- `token VARCHAR(128) PRIMARY KEY`, `site_id SMALLINT NOT NULL REFERENCES phis.site_cdns(site_id) ON DELETE CASCADE`
+- `object_key VARCHAR(620)`, `name`, `version`, `file_name VARCHAR(200)`, all `NOT NULL`; CHECK `object_key = name || '/' || version || '/' || file_name`
+- `size_bytes BIGINT NOT NULL`, `content_type VARCHAR(255) NOT NULL`, `part_size_bytes BIGINT NOT NULL` (CHECK both positive)
+- `part_sha256 JSONB NULL` (a browser upload's digest per part), `expected_sha256 CHAR(64) NULL` (an import's, as its source stated it)
+- `file_flags INT NOT NULL DEFAULT 0` -- the platform bits the file is recorded with, laid out as in `site_cdn_files.flags`
+- `origin SMALLINT NOT NULL`, `actor_user_id INT NULL REFERENCES phis.user_accounts(id) ON DELETE SET NULL`, `addon_id VARCHAR(255) NULL`, `source_url TEXT NULL`; CHECK origin 2 with `part_sha256` and without `addon_id`/`source_url`, origin 3 with `addon_id` and `source_url`, without `actor_user_id` and `part_sha256`
+- `status SMALLINT NOT NULL` (CHECK 1-6): `1` pending, `2` uploading, `3` hashing, `4` published, `5` failed, `6` aborted
+- `provider_upload_id VARCHAR(512) NULL` (the Provider's name for a multipart assembly), `error_code VARCHAR(48) NULL`, `error_message VARCHAR(1000) NULL`
+- `heartbeat_at TIMESTAMPTZ NULL`, `expires_at TIMESTAMPTZ NOT NULL`, `created_at`, `updated_at`
+- Unique index `site_cdn_uploads_open_key_idx (site_id, object_key) WHERE status < 4`; index `(status, expires_at)`
+
+Contract:
+- An upload into the CDN that is not finished: a Maintainer's from the CDN page and an Add-on's import alike. The CLI keeps its own resume state beside the stage and never writes here.
+- The partial unique index is the lock: one open upload per key, a second is `busy`.
+- An open row (`status < 4`) holds a reservation of `size_bytes` in the Site Space's `reserved_bytes`. Whoever ends the row (`UPDATE ... WHERE status IN (open)`) gives it back, or -- for `published` -- moves it to `used_bytes` in the transaction that writes the catalogue row.
+- `expires_at` slides: a page's heartbeat or part pushes it a day ahead, an import's part 15 minutes. The Core job `cdn-uploads.prune` (hourly; by hand `phis maintain --task cdn-uploads`) aborts open rows past it, takes over `hashing` rows whose `heartbeat_at` is older than 10 minutes and finishes them, and deletes ended rows (`status >= 4`) 30 days after `updated_at`.
+
+Added before v1 in place, without a schema version raised (2026-11-25). An existing database receives the two
+tables by hand, as the serving role (`database.uri`), in one transaction -- the `CREATE TABLE IF NOT EXISTS
+phis.site_cdn_file_origins (...)`, `CREATE TABLE IF NOT EXISTS phis.site_cdn_uploads (...)` and the two
+`CREATE ... INDEX IF NOT EXISTS site_cdn_uploads_...` statements of `scripts/sql/001_create_phis.pgsql`, then
+the sweeps below (the development database `phi_server_dev` received them so):
+
+```sql
+-- Every file catalogued before origins were recorded came from the CLI: publish or check --adopt.
+INSERT INTO phis.site_cdn_file_origins (file_id, origin)
+SELECT id, 1 FROM phis.site_cdn_files ON CONFLICT (file_id) DO NOTHING;
+
+-- A file withdrawn with --delete before the Deleted bit existed: withdrawn, and its object gone from the
+-- bucket. Take the keys from `phis cdn check` (none of them is listed as missing, since only an offered file
+-- is) by listing the withdrawn ones with `phis cdn list --withdrawn` and the bucket's objects.
+UPDATE phis.site_cdn_files SET flags = flags | 2
+ WHERE site_id = (SELECT id FROM phis.sites WHERE key = '<site key>')
+   AND (flags & 1) <> 0 AND object_key IN ('<name/version/file>', ...);
+
+-- What the copies that still have their bytes hold now counts in the Site Space (after the step above).
+UPDATE phis.media_spaces s SET used_bytes = s.used_bytes + c.bytes, updated_at = NOW()
+  FROM (SELECT site_id, SUM(size_bytes) AS bytes FROM phis.site_cdn_files
+         WHERE (flags & 6) = 0 GROUP BY site_id) c
+ WHERE s.site_id = c.site_id AND s.kind = 1;
+```
 
 ### `phis.media_spaces`
 

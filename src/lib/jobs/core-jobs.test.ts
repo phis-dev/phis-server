@@ -11,6 +11,7 @@ const MAINTENANCE_JOBS: Record<string, { jobId: string; every: string; at?: stri
   "queue-retention": { jobId: "queues.prune", every: "daily", at: "02:10" },
   "hook-deliveries": { jobId: "hook-deliveries.prune", every: "daily", at: "02:25" },
   "upload-sessions": { jobId: "upload-sessions.prune", every: "hourly" },
+  "cdn-uploads": { jobId: "cdn-uploads.prune", every: "hourly" },
   "addon-assets": { jobId: "addon-assets.collect", every: "daily", at: "02:40" },
   "support-requester-window": { jobId: "support-tickets.close", every: "daily", at: "02:55" },
   payments: { jobId: "payments.recover", every: "hourly" },

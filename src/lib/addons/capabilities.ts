@@ -10,6 +10,7 @@ import {
   PHIS_CORE_CAPABILITIES,
   type PhisAddonCapabilities,
   type PhisAuthorizationCapabilityV1,
+  type PhisCdnPublishCapabilityV1,
   type PhisRowIntent,
 } from "./contract.ts";
 import {
@@ -36,6 +37,7 @@ import { buildPhisAddonUsersCapability } from "./users-capability.ts";
 import { buildPhisAddonSecretsCapability } from "./secrets-capability.ts";
 import { buildPhisAddonSettingsCapability } from "./settings-capability.ts";
 import { buildPhisAddonCdnCapability } from "./cdn-capability.ts";
+import { buildPhisAddonCdnPublishCapability } from "./cdn-publish-capability.ts";
 import { buildPhisAddonMediaCapability } from "./media-capability.ts";
 import { buildPhisAddonMediaReleaseCapability } from "./media-release-capability.ts";
 import { buildPhisAddonEntitlementsCapability } from "./entitlements-capability.ts";
@@ -271,7 +273,11 @@ export function buildPhisAddonCapabilities(input: {
    */
   unauthenticated?: boolean;
 }): PhisAddonCapabilities {
-  const capabilities: PhisAddonCapabilities = {};
+  /*
+   * `cdnPublish` is delivered under the key `PHIS_CORE_CAPABILITIES` names it by, as every capability is;
+   * `PhisAddonCapabilities` of the contracts does not state the field yet, so it is stated here.
+   */
+  const capabilities: PhisAddonCapabilities & { cdnPublish?: PhisCdnPublishCapabilityV1 } = {};
   if (input.siteId == null) {
     // Every capability here is Site-scoped. Without a Site there is nothing to bind them to.
     return Object.freeze(capabilities);
@@ -539,6 +545,18 @@ export function buildPhisAddonCapabilities(input: {
     }
     if (required.includes(PHIS_CORE_CAPABILITIES.paymentNotifications) && input.paymentHook) {
       capabilities.paymentNotifications = buildPhisPaymentNotificationsCapability({ scope, ...input.paymentHook, signal });
+    }
+    if (required.includes(PHIS_CORE_CAPABILITIES.cdnPublish)) {
+      /*
+       * Bound to the Site and to the Add-on, which becomes the origin of what it publishes and may publish
+       * only under names that are new or wholly its own. An unverified hook gets calls that throw.
+       */
+      capabilities.cdnPublish = buildPhisAddonCdnPublishCapability({
+        addonId: input.manifest.addonId,
+        siteId,
+        siteKey,
+        unauthenticated: input.unauthenticated === true && input.systemAuthority !== true,
+      });
     }
     if (required.includes(PHIS_CORE_CAPABILITIES.storage)) {
       capabilities.storage = buildPhisAddonStorageCapability({

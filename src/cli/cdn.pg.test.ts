@@ -1,7 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import http from "node:http";
-import type { AddressInfo } from "node:net";
 import os from "node:os";
 import path from "node:path";
 
@@ -11,13 +9,20 @@ import type { Pool } from "pg";
 
 import {
   PHIS_MEDIA_UPLOAD_PART_SIZE_BYTES,
-  resolvePhiMediaUploadPartCount,
-  type PhiMediaUploadPlan,
-  type PhisMediaObjectHead,
-  type PhisMediaStorageAdapter,
+  PhisCdnCheckObjectFlags,
+  PhisCdnFileArch,
+  PhisCdnFileOs,
 } from "@phis/contracts/addon";
 
-import { closePhiTestPool, createPhiTestSite, dropPhiTestSites, requirePhiTestDatabase, type PhiTestSite } from "../../test/pg/harness";
+import { PhiTestCdnStorage } from "../../test/pg/cdn-fake-storage";
+import {
+  closePhiTestPool,
+  createPhiTestSite,
+  dropPhiTestSites,
+  readPhiTestSpaceBytes,
+  requirePhiTestDatabase,
+  type PhiTestSite,
+} from "../../test/pg/harness";
 import { buildPhisAddonCdnCapability } from "../lib/addons/cdn-capability";
 import { PhiMediaStorageProfileFlags } from "../lib/constants/media";
 import { runPhisCdnCommand, type PhisCdnCommandDeps } from "./cdn.mts";
@@ -26,118 +31,13 @@ import { useStorageProfile } from "./storage.mts";
 const configured = process.env.PHIS_PG_TEST === "1";
 const flags = (entries: Record<string, string | true>) => new Map<string, string | boolean>(Object.entries(entries));
 
-/*
- * A storage that takes presigned PUTs over a local HTTP server, the way an S3 endpoint does: a single
- * body to `/single/<key>`, a part to `/part/<upload>/<n>`. Enough of the Provider contract for what
- * `phis cdn` calls, and it can be told to refuse a part, so an interrupted upload can be carried on.
- */
-class FakeStorage {
-  objects = new Map<string, { body: Buffer; contentType: string }>();
-  uploads = new Map<string, { key: string; contentType: string; parts: Map<number, Buffer> }>();
-  refuseParts = new Set<number>();
-  server = http.createServer((request, response) => {
-    const chunks: Buffer[] = [];
-    request.on("data", (chunk: Buffer) => chunks.push(chunk));
-    request.on("end", () => {
-      const body = Buffer.concat(chunks);
-      const [, kind, first, second] = (request.url ?? "").split("/");
-      if (kind === "single") {
-        this.objects.set(decodeURIComponent(first!), { body, contentType: String(request.headers["content-type"] ?? "") });
-        response.writeHead(200, { etag: `"${createHash("md5").update(body).digest("hex")}"` }).end();
-        return;
-      }
-      const partNumber = Number(second);
-      if (this.refuseParts.has(partNumber)) {
-        response.writeHead(500).end("<Error><Code>InternalError</Code></Error>");
-        return;
-      }
-      this.uploads.get(first!)!.parts.set(partNumber, body);
-      response.writeHead(200, { etag: `"part-${partNumber}"` }).end();
-    });
-  });
-
-  base = "";
-
-  async start() {
-    await new Promise<void>((resolve) => this.server.listen(0, "127.0.0.1", resolve));
-    this.base = `http://127.0.0.1:${(this.server.address() as AddressInfo).port}`;
-  }
-
-  head(key: string): PhisMediaObjectHead | null {
-    const object = this.objects.get(key);
-    return object
-      ? { storageKey: key, byteSize: object.body.length, contentType: object.contentType, etag: "x", metadata: {}, lastModifiedAt: new Date().toISOString() }
-      : null;
-  }
-
-  adapter(): PhisMediaStorageAdapter {
-    const partsPlan = (uploadId: string, numbers: number[]): Extract<PhiMediaUploadPlan, { kind: "multipart-put" }> => ({
-      kind: "multipart-put",
-      method: "PUT",
-      uploadId,
-      partSizeBytes: PHIS_MEDIA_UPLOAD_PART_SIZE_BYTES,
-      parts: numbers.map((partNumber) => ({ partNumber, url: `${this.base}/part/${uploadId}/${partNumber}` })),
-      expiresAt: new Date(Date.now() + 60_000).toISOString(),
-    });
-    const adapter: Partial<PhisMediaStorageAdapter> = {
-      putObject: async (input) => {
-        this.objects.set(input.storageKey, { body: Buffer.from(input.body), contentType: input.contentType });
-        return this.head(input.storageKey)!;
-      },
-      headObject: async (key) => this.head(key),
-      deleteObject: async (key) => this.objects.delete(key),
-      listPrefix: async (prefix) => [...this.objects.keys()].filter((key) => key.startsWith(prefix)).map((key) => this.head(key)!),
-      getObjectStream: async (key) => {
-        const object = this.objects.get(key);
-        return object ? new Blob([new Uint8Array(object.body)]).stream() : null;
-      },
-      createUploadPlan: async (input) => {
-        if (input.mayAssembleFromParts && input.sizeBytes > PHIS_MEDIA_UPLOAD_PART_SIZE_BYTES) {
-          const uploadId = randomUUID();
-          this.uploads.set(uploadId, { key: input.storageKey, contentType: input.contentType, parts: new Map() });
-          const count = resolvePhiMediaUploadPartCount(input.sizeBytes);
-          return partsPlan(uploadId, Array.from({ length: count }, (_unused, index) => index + 1));
-        }
-        return {
-          kind: "presigned-put",
-          url: `${this.base}/single/${encodeURIComponent(input.storageKey)}`,
-          method: "PUT",
-          headers: { "content-type": input.contentType },
-          expiresAt: input.expiresAt,
-        };
-      },
-      resumeUploadPlan: async (input) => {
-        const upload = this.uploads.get(input.uploadId);
-        if (!upload) return null;
-        const count = resolvePhiMediaUploadPartCount(input.sizeBytes);
-        const missing = Array.from({ length: count }, (_unused, index) => index + 1).filter((n) => !upload.parts.has(n));
-        return {
-          plan: partsPlan(input.uploadId, missing),
-          uploaded: [...upload.parts].map(([partNumber, body]) => ({ partNumber, eTag: `"part-${partNumber}"`, sizeBytes: body.length })),
-        };
-      },
-      completeUpload: async (input) => {
-        const completion = input.completion as { uploadId: string; parts: { partNumber: number; eTag: string }[] } | undefined;
-        if (completion) {
-          const upload = this.uploads.get(completion.uploadId)!;
-          const body = Buffer.concat(completion.parts.map((part) => upload.parts.get(part.partNumber)!));
-          this.objects.set(input.storageKey, { body, contentType: upload.contentType });
-          this.uploads.delete(completion.uploadId);
-        }
-        return this.head(input.storageKey);
-      },
-    };
-    return adapter as PhisMediaStorageAdapter;
-  }
-}
-
 describe.skipIf(!configured)("phis cdn", () => {
   let pool: Pool;
   let site: PhiTestSite;
   let profileId: number;
   let root: string;
   let files: string;
-  const storage = new FakeStorage();
+  const storage = new PhiTestCdnStorage();
   let deps: PhisCdnCommandDeps;
   const cdn = (command: string, entries: Record<string, string | true> = {}) =>
     runPhisCdnCommand(deps, command, flags({ site: site.key, ...entries }));
@@ -158,14 +58,12 @@ describe.skipIf(!configured)("phis cdn", () => {
       [site.id, PhiMediaStorageProfileFlags.Cdn],
     );
     profileId = rows[0]!.id;
-    storage.objects.clear();
-    storage.uploads.clear();
-    storage.refuseParts.clear();
+    storage.reset();
   });
 
   afterAll(async () => {
     await dropPhiTestSites();
-    storage.server.close();
+    await storage.stop();
     rmSync(root, { recursive: true, force: true });
     rmSync(files, { recursive: true, force: true });
     await closePhiTestPool();
@@ -257,9 +155,9 @@ describe.skipIf(!configured)("phis cdn", () => {
     storage.objects.set("loose.txt", { body: Buffer.from("x"), contentType: "text/plain" });
     const checked = await cdn("check");
     expect(checked).toMatchObject({ action: "cdn.check", missing: [], adopted: [] });
-    expect(checked.action === "cdn.check" && checked.unrecorded.map((entry) => [entry.key, entry.adoptable])).toEqual([
-      ["c/2/c.tar", true],
-      ["loose.txt", false],
+    expect(checked.action === "cdn.check" && checked.unrecorded.map((entry) => [entry.key, entry.flags])).toEqual([
+      ["c/2/c.tar", PhisCdnCheckObjectFlags.Adoptable],
+      ["loose.txt", 0],
     ]);
     const adopted = await cdn("check", { adopt: true });
     expect(adopted.action === "cdn.check" && adopted.adopted).toEqual(["c/2/c.tar"]);
@@ -270,9 +168,30 @@ describe.skipIf(!configured)("phis cdn", () => {
     expect(missing).toMatchObject({ ok: false, missing: ["c/2/c.tar"] });
 
     const listed = await cdn("list", { withdrawn: true });
-    expect(listed.action === "cdn.list" && listed.files.map((entry) => [entry.key, entry.withdrawn])).toEqual([
-      ["a/1/a.zip", true], ["b/1/b.zip", true], ["c/2/c.tar", false],
+    expect(listed.action === "cdn.list" && listed.files.map((entry) => [entry.key, entry.state, entry.origin.kind])).toEqual([
+      ["a/1/a.zip", "withdrawn", "cli"], ["b/1/b.zip", "deleted", "cli"], ["c/2/c.tar", "offered", "cli"],
     ]);
+    // a (1 byte) and the adopted c (2 bytes) are stored; b's byte left with its delete.
+    expect(await readPhiTestSpaceBytes(site.siteSpaceId)).toEqual({ used: 3, reserved: 0 });
+  });
+
+  it("states the platform from --os/--arch or the file name, and takes a tilde and an epoch", async () => {
+    await cdn("attach", { profile: "cdn", "public-base-url": "https://cdn.example.invalid" });
+    const deb = await cdn("publish", { name: "phis", version: "1:0.8.1~beta.1-1", file: file("phis_0.8.1~beta.1-1+trixie_amd64.deb", Buffer.from("deb")) });
+    expect(deb.action === "cdn.publish" && deb.file).toMatchObject({
+      key: "phis/1:0.8.1~beta.1-1/phis_0.8.1~beta.1-1+trixie_amd64.deb",
+      storage: "cdn", os: PhisCdnFileOs.Linux, arch: PhisCdnFileArch.X64,
+      url: "https://cdn.example.invalid/phis/1%3A0.8.1~beta.1-1/phis_0.8.1~beta.1-1%2Btrixie_amd64.deb",
+    });
+    const stated = await cdn("publish", { name: "tool", version: "2", file: file("tool.zip", Buffer.from("zip")), os: "macos,windows", arch: "arm64" });
+    expect(stated.action === "cdn.publish" && [stated.file.os, stated.file.arch, stated.platform]).toEqual([
+      PhisCdnFileOs.Windows | PhisCdnFileOs.MacOS, PhisCdnFileArch.Arm64, { os: ["windows", "macos"], arch: ["arm64"] },
+    ]);
+    await expect(cdn("publish", { name: "tool", version: "3", file: file("tool.zip", Buffer.from("zip")), os: "beos" })).rejects.toThrow(/--os "beos"/u);
+    await expect(cdn("publish", { name: "a:b", version: "1", file: file("x.zip", Buffer.from("x")) })).rejects.toThrow(/--name/u);
+    const { rows } = await pool.query<{ flags: number }>(`SELECT flags FROM phis.site_cdn_files WHERE site_id = $1 AND name = 'tool'`, [site.id]);
+    expect(rows[0]!.flags).toBe(((PhisCdnFileOs.Windows | PhisCdnFileOs.MacOS) << 8) | (PhisCdnFileArch.Arm64 << 16));
+    expect(await readPhiTestSpaceBytes(site.siteSpaceId)).toEqual({ used: 6, reserved: 0 });
   });
 
   it("answers empty on a Site without a CDN", async () => {

@@ -1169,37 +1169,54 @@ record, no certificate) is a warning, so the CDN can be attached before its host
 
 ### `phis cdn detach --site <site key>`
 
-Removes the binding, with the rows of withdrawn files. Refused while a file is offered.
+Removes the binding, with the rows of withdrawn files. Refused while a file is offered or an upload is
+open. What the catalogue's copies still hold leaves the Site Space's `used_bytes` with it.
 
-### `phis cdn publish --site <site key> --name <name> --version <version> --file <path> [--as <file name>] [--content-type <type>]`
+### `phis cdn publish --site <site key> --name <name> --version <version> --file <path> [--as <file name>] [--content-type <type>] [--os <names>] [--arch <names>]`
 
-Uploads one file to `<name>/<version>/<file>` (the file name is `--as`, else the file's own) and records it.
-The bytes go from the file straight to the storage over the Provider's presigned plan, in 16 MiB parts above
-one part, with each part's SHA-256 signed in where the Profile verifies SHA-256. A key that is taken, in the
-catalogue or in the bucket, is refused: publish a new version instead. A failed run of a multipart upload is
-carried on by running the same command again, which sends only the missing parts.
+Uploads one file to `<name>/<version>/<file>` (the file name is `--as`, else the file's own) and records it
+with origin `cli`. It is the operator's road into the CDN pipeline the CDN page and `cdn-publish:v1` share
+(`src/lib/cdn-publish.mts`). The bytes go from the file straight to the storage over the Provider's presigned
+plan, in 16 MiB parts above one part, with each part's SHA-256 signed in where the Profile verifies SHA-256.
+A key that is taken, in the catalogue or in the bucket, or with an upload open on the CDN page, is refused:
+publish a new version instead. A failed run of a multipart upload is carried on by running the same command
+again, which sends only the missing parts.
+
+Name and file name take letters, digits and `. _ + ~ -`; the version takes a colon as well, for an epoch
+(`1:2.0-1`). None starts with a dot, a tilde or a colon.
+
+`--os` and `--arch` are comma lists of the platform names (`linux`, `windows`, `macos`, `android`, `ios`,
+`chromeos`, `other`; `x64`, `arm64`, `x86`, `arm32`, `riscv64`), stored as `PhisCdnFileOs`/`PhisCdnFileArch`
+bits. Without them the file name decides where it is obvious: `.dmg`/`.pkg` macOS, `.exe`/`.msi` Windows,
+`.deb`/`.rpm` Linux, `.apk` Android, and one architecture name among its parts (`amd64`, `x86_64`, `arm64`,
+`aarch64`, `i386`, `armhf`, `riscv64`, ...). Otherwise nothing is stated.
 
 The content type is `--content-type`, else the extension's, else `application/octet-stream`. HTML, SVG, XML
 and JavaScript are refused under any extension or type. The Profile needs a `publicEndpoint` (it may equal
-`endpoint`), or its Provider offers no direct upload.
+`endpoint`), or its Provider offers no direct upload. The operator's publish is not bound by the Site's
+`max_object_bytes`, and its bytes count in the Site Space whether or not they fit the quota.
 
-Progress goes to stderr; the result prints the key, size, SHA-256 and public URL.
+Progress goes to stderr; the result prints the key, size, SHA-256, platform and public URL.
 
 ### `phis cdn list --site <site key> [--name <name>] [--withdrawn]`
 
-The catalogue, by name and newest first. `--withdrawn` includes withdrawn files, marked.
+The catalogue, by name and newest first: copies and links, each with its storage (`cdn` or `link`, a link's
+source address below it), origin (`cli`, `upload`, `addon <id>`) and platform. `--withdrawn` includes
+withdrawn and deleted files, marked `WITHDRAWN` or `DELETED`.
 
 ### `phis cdn withdraw --site <site key> --key <name/version/file> [--delete]`
 
-Takes a file out of the offer. Its key stays taken and a link already handed out keeps working; `--delete`
-removes the bytes from the bucket as well. A cache in front of the host may serve them until it expires.
+Takes a file -- a copy or a link -- out of the offer. Its key stays taken and a link already handed out keeps
+working; `--delete` removes a copy's bytes from the bucket as well, gives them back to the Site Space and sets
+`Deleted`. Deleting a link sets `Deleted` and moves no bytes. A cache in front of the host may serve a copy
+until it expires.
 
 ### `phis cdn check --site <site key> [--adopt]`
 
-Lists the bucket and compares it with the catalogue: objects nobody recorded (written with another tool),
-offered files whose bytes are gone, and sizes that disagree. `--adopt` records the unrecorded objects whose
-keys and types are publishable, hashing each once. The result says `ok: false` when something is missing
-or disagrees.
+Lists the bucket and compares it with the catalogue's copies (links are not checked): objects nobody recorded
+(written with another tool), offered files whose bytes are gone, and sizes that disagree. `--adopt` records the
+unrecorded objects whose keys and types are publishable with origin `cli`, hashing each once, and checks again.
+The result says `ok: false` unless bucket and catalogue agree (`PhisCdnCheckReportFlags.Consistent`).
 
 ### `phis cdn nginx --site <site key> --upstream <origin> [--tls] [--write]`
 
@@ -1406,7 +1423,7 @@ session may be being written. `--prune-staging` removes the reported files; with
 Runs the cleanup tasks by hand, now, in the order below. `--list` prints them.
 
 The server does this on its own: every task except `addon-storage` is also a Core job that the server's
-clock runs (`payments.recover` and `upload-sessions.prune` hourly; `queues.prune`, `hook-deliveries.prune`,
+clock runs (`payments.recover`, `upload-sessions.prune` and `cdn-uploads.prune` hourly; `queues.prune`, `hook-deliveries.prune`,
 `addon-assets.collect` and `support-tickets.close` nightly, see
 [SERVER_ADDONS.md](../SERVER_ADDONS.md#maintenance-without-a-timer)). **You need no timer for it.** The
 job and the task call one function, so this command does what the job does -- it is for running a step
@@ -1416,6 +1433,7 @@ step left out of the clock. Tasks are bounded and idempotent:
 | Id | Effect |
 | --- | --- |
 | `payments` | Reconciles up to 100 Payments that are marked as needing reconciliation or have an operation still `reserved`, `pending` or `indeterminate`: it asks the Payment Provider for the current state and records it, and never replays a financial command. Needs `secrets.encryptionKey` to reach the Provider's credential. With `--dry-run` it only counts the candidates and makes no Provider call. |
+| `cdn-uploads` | Aborts the CDN uploads (CDN page and Add-on imports) whose expiry passed -- the reservation back to the Site Space, the multipart assembly given up -- takes over the ones whose hashing stalled for 10 minutes (their instance died) and finishes them, and forgets ended uploads after 30 days. Opens each Site's CDN storage through the installed Provider, so it needs `secrets.encryptionKey`. With `--dry-run` it only counts. |
 | `upload-sessions` | Deletes expired upload sessions and gives their reserved bytes back to their Media Spaces. Up to 1000 sessions per statement and 50 statements per run (the next run continues). |
 | `addon-assets` | Deletes the rows of Media Assets in Add-on Spaces that nothing links to any more. The stored objects are not removed; `phis addon storage --sweep` removes them per Add-on and Site. With `--dry-run` it only reports how many Spaces it would examine. |
 | `hook-deliveries` | Deletes the records of verified hook deliveries (`phis.addon_hook_deliveries`, used to recognise a retried webhook) older than 30 days, far past any sender's retry window. Up to 1000 rows per statement and 50 statements per run. |

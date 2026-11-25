@@ -9,6 +9,11 @@ import { PhiGroupMembershipFlags } from "@/lib/constants/site-groups";
 import { getSiteGroupById, readEffectiveGroupMembershipFlags } from "@/db/site-groups";
 import type { RequestedMediaSpace } from "@/lib/guards/site-media-api";
 import { getPool, withTransaction } from "@/lib/db";
+import {
+  liveMediaSpaceReservedBytesSql,
+  releaseMediaSpaceReservationWithDb,
+  reserveMediaSpaceQuotaWithDb,
+} from "@/db/media-space-quota.mts";
 import { hasPhiFlag } from "@/lib/helpers/flags";
 import type { PhisMediaStorageProbe } from "@phis/contracts/addon";
 import {
@@ -168,21 +173,11 @@ async function ensureLocalStorageProfileWithDb(db: MediaSpaceDbQueryable, siteId
 }
 
 /**
- * Reserved bytes as a reader must understand them.
- *
- * `media_spaces.reserved_bytes` is a counter, and an upload session that expired without anyone
- * touching it again leaves its share standing in that counter until the next reservation against the
- * same Space releases it. A read therefore discounts what is already dead instead of repairing it --
- * the maintenance contract in `AGENTS.md` gives the repair to the writer and the truth to the reader,
- * over the same predicate, so what is reported free is what the next request will actually grant.
+ * Reserved bytes as a reader must understand them (`liveMediaSpaceReservedBytesSql`, shared with the
+ * CLI so the CDN pipeline measures a reservation as Media does).
  */
 function liveReservedBytes(alias: string) {
-  const space = alias ? `${alias}.` : "";
-  return `GREATEST(0, ${space}reserved_bytes - COALESCE((
-              SELECT SUM(u.size_bytes)
-              FROM phis.media_upload_sessions u
-              WHERE u.space_id = ${space}id AND u.expires_at < NOW()
-            ), 0))`;
+  return liveMediaSpaceReservedBytesSql(alias);
 }
 
 export async function ensureSiteMediaSpace(siteId: number) {
@@ -427,38 +422,11 @@ export async function reserveMediaSpaceQuota(
   /** A caller's open transaction, for a write that books the bytes in the same one (Module media import). */
   db?: Pick<PoolClient, "query">,
 ) {
-  const { rows } = await (db ?? getPool()).query<{ id: number }>(
-    `WITH effective AS (
-       SELECT s.id,
-              COALESCE(
-                s.quota_bytes,
-                CASE s.kind
-                  WHEN ${PhisMediaSpaceKind.User} THEN c.default_user_quota_bytes
-                  WHEN ${PhisMediaSpaceKind.Group} THEN c.default_group_quota_bytes
-                  WHEN ${PhisMediaSpaceKind.Addon} THEN c.default_addon_quota_bytes
-                END
-              ) AS quota
-       FROM phis.media_spaces s
-       LEFT JOIN phis.site_media_config c ON c.site_id = s.site_id
-       WHERE s.id = $1
-     )
-     UPDATE phis.media_spaces s
-     SET reserved_bytes = s.reserved_bytes + $2, updated_at = NOW()
-     FROM effective e
-     WHERE s.id = e.id AND $2 > 0
-       AND (e.quota IS NULL OR s.used_bytes + ${liveReservedBytes("s")} + $2 <= e.quota)
-     RETURNING s.id`,
-    [input.spaceId, input.bytes],
-  );
-  return Boolean(rows[0]);
+  return reserveMediaSpaceQuotaWithDb(db ?? getPool(), input);
 }
 
 export async function releaseMediaSpaceReservation(input: { spaceId: number; bytes: number }) {
-  await getPool().query(
-    `UPDATE phis.media_spaces SET reserved_bytes = GREATEST(0, reserved_bytes - $2), updated_at = NOW()
-     WHERE id = $1`,
-    [input.spaceId, input.bytes],
-  );
+  await releaseMediaSpaceReservationWithDb(getPool(), input);
 }
 
 export type SiteMediaConfigRecord = {

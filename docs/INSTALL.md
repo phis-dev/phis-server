@@ -270,6 +270,24 @@ refuses to run while it is unset. `operator.sessionSecret` signs the operator se
 deliberately not the internal token, which every Site holds. The `/setup` finish step makes every key that is
 still missing, too.
 
+An Add-on that imports files into a Site's CDN, or links to them (`cdn-publish:v1`, for example
+`@phis/releases` copying release assets), may only reach the hosts the operator names for the stage. The
+list is empty by default, which imports and links nothing; nobody but the operator writes it:
+
+```json
+{
+  "cdn": {
+    "importHosts": ["github.com", "release-assets.githubusercontent.com", "objects.githubusercontent.com", "apt.phisys.com"]
+  }
+}
+```
+
+Each entry is a lowercase host name without scheme, port or path, matched exactly; every redirect of an
+import is checked against it again. Only `https` on port 443 is fetched, and a host that resolves to a
+private, loopback or link-local address is refused whatever the list says
+([GROUPS_AND_STORAGE.md](../GROUPS_AND_STORAGE.md#a-sites-cdn)). The server reads the list at each import,
+so a change applies without a restart.
+
 In production the server also needs the environment variable `NEXT_SERVER_ACTIONS_ENCRYPTION_KEY`
 (base64 of 32 bytes: `head -c 32 /dev/urandom | base64`) and refuses to start without it. Instances
 of one installation share the value. Other server environment variables (`PORT`, `HOSTNAME`,

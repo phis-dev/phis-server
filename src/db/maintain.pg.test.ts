@@ -291,8 +291,11 @@ describe("maintenance", () => {
     const payments = reports.find((report) => report.id === "payments");
     expect(payments?.error).toBeNull();
     expect(payments?.detail).toMatch(/no Payment Provider resolver/);
+    // So does the CDN task without the stores it would open.
+    expect(reports.find((report) => report.id === "cdn-uploads")?.detail).toMatch(/no access to the CDN storages/);
     expect(
-      reports.filter((report) => report.id !== "payments").every((report) => report.error === "the database went away"),
+      reports.filter((report) => report.id !== "payments" && report.id !== "cdn-uploads")
+        .every((report) => report.error === "the database went away"),
     ).toBe(true);
   });
 });

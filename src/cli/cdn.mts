@@ -1,24 +1,33 @@
-import { createHash, randomUUID } from "node:crypto";
-import { createReadStream, existsSync, mkdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
-import http from "node:http";
-import https from "node:https";
+import { randomUUID } from "node:crypto";
+import { existsSync, mkdirSync, symlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
 import type { Pool } from "pg";
 
-import { resolvePhiMediaUploadPartCount, resolvePhiMediaUploadPartSizeBytes } from "@phis/contracts/addon";
-import type { PhiMediaUploadPlan, PhisMediaObjectHead, PhisMediaStorageAdapter } from "@phis/contracts/addon";
+import type { PhisMediaStorageAdapter } from "@phis/contracts/addon";
+import { PhisCdnCheckObjectFlags, PhisCdnCheckReportFlags } from "@phis/contracts/addon";
 
-import { insertSiteCdnFile, listSiteCdnFiles, readSiteCdn, readSiteCdnFile, withdrawSiteCdnFile } from "../db/site-cdn.mts";
+import { changeMediaSpaceUsedBytesWithDb, readSiteMediaSpaceIdWithDb } from "../db/media-space-quota.mts";
 import {
-  buildPhisCdnKey,
-  PhisCdnFileFlags,
+  hasOpenSiteCdnUploads,
+  listSiteCdnFiles,
+  readSiteCdn,
+  readSiteCdnProfile,
+  sumSiteCdnStoredBytes,
+  type SiteCdnProfileRecord,
+} from "../db/site-cdn.mts";
+import { adoptPhisCdnObjects, checkPhisCdnBucket, withdrawPhisCdnFile } from "../lib/cdn-catalogue.mts";
+import {
+  guessPhisCdnPlatform,
+  isPhisCdnFileLinked,
+  namePhisCdnPlatform,
   phisCdnPublicUrl,
-  presentPhisCdnFile,
-  readPhisCdnKey,
+  presentPhisCdnAdminFile,
+  readPhisCdnArchNames,
+  readPhisCdnOsNames,
   readPhisCdnPublicBaseUrl,
-  resolvePhisCdnContentType,
 } from "../lib/cdn-core.ts";
+import { prunePhisCdnUploads, publishPhisCdnFileFromDisk, type PhisCdnTarget } from "../lib/cdn-publish.mts";
 import { PhiMediaStorageProfileFlags } from "../lib/constants/media.ts";
 import { commandExists, obtainPhiCertificate, runPhiSystemCommand, type PhiCommandStep } from "./proxy.mts";
 import { resolvePhiStorageAdapter, type StorageSecretReader } from "./storage.mts";
@@ -30,7 +39,8 @@ import { resolvePhiStorageAdapter, type StorageSecretReader } from "./storage.mt
  * Site with the address it is served from. `publish` puts one file there and records it, straight from
  * the file to the storage over the Provider's own upload plan -- no serving process sees the bytes, and
  * the catalogue is written by the same command that uploaded, so nothing has to poll the bucket to learn
- * what it holds. What an Add-on sees of it is `cdn:v1`, read-only.
+ * what it holds. The pipeline is the one the CDN page and `cdn-publish:v1` take (`src/lib/cdn-publish.mts`);
+ * this file is its operator's caller.
  *
  * A key is `<name>/<version>/<file>` and is written once. `withdraw` takes a file out of the offer and
  * keeps its key taken; `--delete` removes the bytes as well.
@@ -45,24 +55,11 @@ export type PhisCdnCommandDeps = {
   pool: Pool;
   readSecret: StorageSecretReader;
   /** The Provider for a Profile; the installed artifact's by default, a fake in tests. */
-  adapterFor?: (profile: CdnProfileRecord) => Promise<PhisMediaStorageAdapter | null>;
+  adapterFor?: (profile: SiteCdnProfileRecord) => Promise<PhisMediaStorageAdapter | null>;
   /** Progress lines while a file uploads; stderr by default. */
   progress?: (line: string) => void;
 };
 
-type CdnProfileRecord = {
-  id: number;
-  key: string;
-  providerId: string;
-  config: Record<string, unknown>;
-  secretReference: string | null;
-  flags: number;
-  checksumAlgorithm: string | null;
-};
-
-const PART_ATTEMPTS = 3;
-const PART_CONCURRENCY = 4;
-const UPLOAD_PLAN_TTL_MS = 15 * 60 * 1000;
 const NGINX_ACME_WEBROOT = "/var/www/phis-acme";
 
 function optional(flags: FlagMap, key: string) {
@@ -83,35 +80,26 @@ async function requireSite(pool: Pool, flags: FlagMap) {
   return rows[0];
 }
 
-async function readProfile(pool: Pool, siteId: number, where: { id: number } | { key: string }) {
-  const byId = "id" in where;
-  const { rows } = await pool.query<{
-    id: number; key: string; provider_id: string; config: Record<string, unknown>;
-    secret_reference: string | null; flags: number; checksum_algorithm: string | null;
-  }>(
-    `SELECT id, key, provider_id, config, secret_reference, flags, checksum_algorithm
-       FROM phis.media_storage_profiles WHERE site_id = $1 AND ${byId ? "id = $2" : "key = $2"}`,
-    [siteId, byId ? where.id : where.key],
-  );
-  const row = rows[0];
-  if (!row) return null;
-  return {
-    id: row.id,
-    key: row.key,
-    providerId: row.provider_id,
-    config: row.config ?? {},
-    secretReference: row.secret_reference,
-    flags: row.flags,
-    checksumAlgorithm: row.checksum_algorithm,
-  } satisfies CdnProfileRecord;
+function readProfile(pool: Pool, siteId: number, where: { id: number } | { key: string }) {
+  return readSiteCdnProfile(pool, siteId, where);
 }
 
-async function adapterOf(deps: PhisCdnCommandDeps, profile: CdnProfileRecord) {
+async function adapterOf(deps: PhisCdnCommandDeps, profile: SiteCdnProfileRecord) {
   const adapter = deps.adapterFor
     ? await deps.adapterFor(profile)
     : await resolvePhiStorageAdapter(deps.root, profile.providerId, profile.config, profile.secretReference, deps.readSecret);
   if (!adapter) throw new Error(`Storage Profile "${profile.key}" is Core's Local storage, which cannot hold a CDN.`);
   return adapter;
+}
+
+/** A Site's CDN opened for the pipeline, by id; null where it has none. What `phis maintain` opens. */
+export async function openPhisCdnTargetForCli(deps: PhisCdnCommandDeps, siteId: number): Promise<PhisCdnTarget | null> {
+  const { rows } = await deps.pool.query<{ key: string }>(`SELECT key FROM phis.sites WHERE id = $1`, [siteId]);
+  const cdn = await readSiteCdn(deps.pool, siteId);
+  if (!rows[0] || !cdn) return null;
+  const profile = await readProfile(deps.pool, siteId, { id: cdn.storageProfileId });
+  if (!profile) return null;
+  return { siteId, siteKey: rows[0].key, cdn, profile, storage: await adapterOf(deps, profile) };
 }
 
 /** The Site, its CDN, the Profile behind it and the Provider for that Profile. */
@@ -121,7 +109,9 @@ async function openCdn(deps: PhisCdnCommandDeps, flags: FlagMap) {
   if (!cdn) throw new Error(`Site ${site.key} has no CDN. Attach one first: phis cdn attach --site ${site.key} --profile <key> --public-base-url <url>.`);
   const profile = await readProfile(deps.pool, site.id, { id: cdn.storageProfileId });
   if (!profile) throw new Error(`The CDN of ${site.key} names Storage Profile #${cdn.storageProfileId}, which is gone.`);
-  return { site, cdn, profile, adapter: await adapterOf(deps, profile) };
+  const adapter = await adapterOf(deps, profile);
+  const target: PhisCdnTarget = { siteId: site.id, siteKey: site.key, cdn, profile, storage: adapter };
+  return { site, cdn, profile, adapter, target };
 }
 
 /*
@@ -188,232 +178,63 @@ export async function detachCdn(deps: PhisCdnCommandDeps, flags: FlagMap) {
   if (!cdn) throw new Error(`Site ${site.key} has no CDN.`);
   const offered = await listSiteCdnFiles(deps.pool, site.id, { limit: 1 });
   if (offered.length > 0) throw new Error(`The CDN of ${site.key} still offers files. Withdraw them first.`);
-  // The rows of withdrawn files go with it, and with them the record of which keys were taken.
-  await deps.pool.query(`DELETE FROM phis.site_cdns WHERE site_id = $1`, [site.id]);
+  if (await hasOpenSiteCdnUploads(deps.pool, site.id)) {
+    throw new Error(`The CDN of ${site.key} has uploads open. Abort them on the CDN page, or wait for cdn-uploads.prune.`);
+  }
+  // The rows of withdrawn files go with it, and with them the record of which keys were taken. The bytes
+  // their copies still hold leave the Site Space's count with them: the bucket is no longer the Site's.
+  const client = await deps.pool.connect();
+  try {
+    await client.query("BEGIN");
+    const stored = await sumSiteCdnStoredBytes(client, site.id);
+    const spaceId = await readSiteMediaSpaceIdWithDb(client, site.id);
+    if (spaceId !== null && stored > 0) await changeMediaSpaceUsedBytesWithDb(client, { spaceId, delta: -stored });
+    await client.query(`DELETE FROM phis.site_cdns WHERE site_id = $1`, [site.id]);
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw error;
+  } finally {
+    client.release();
+  }
   return { ok: true, action: "cdn.detach" as const, site: site.key };
 }
 
-/** The whole file's SHA-256 and, where it goes in parts, each part's, in one read. */
-async function hashFile(file: string, partSizeBytes: number | null) {
-  const whole = createHash("sha256");
-  const parts: string[] = [];
-  let part = partSizeBytes ? createHash("sha256") : null;
-  let inPart = 0;
-  for await (const chunk of createReadStream(file, { highWaterMark: 4 * 1024 * 1024 }) as AsyncIterable<Buffer>) {
-    whole.update(chunk);
-    if (!part || !partSizeBytes) continue;
-    let offset = 0;
-    while (offset < chunk.length) {
-      const take = Math.min(partSizeBytes - inPart, chunk.length - offset);
-      part.update(chunk.subarray(offset, offset + take));
-      inPart += take;
-      offset += take;
-      if (inPart === partSizeBytes) {
-        parts.push(part.digest("hex"));
-        part = createHash("sha256");
-        inPart = 0;
-      }
-    }
-  }
-  if (part && inPart > 0) parts.push(part.digest("hex"));
-  return { sha256: whole.digest("hex"), parts };
-}
-
-/** One range of the file to one presigned address, with its length stated; answers the entity tag. */
-function putRange(url: string, headers: Record<string, string> | undefined, file: string, start: number, length: number) {
-  const target = new URL(url);
-  const client = target.protocol === "https:" ? https : http;
-  return new Promise<string>((resolve, reject) => {
-    const request = client.request(target, {
-      method: "PUT",
-      headers: { ...(headers ?? {}), "content-length": String(length) },
-    }, (response) => {
-      const chunks: Buffer[] = [];
-      response.on("data", (chunk: Buffer) => chunks.push(chunk));
-      response.on("end", () => {
-        const status = response.statusCode ?? 0;
-        if (status >= 200 && status < 300) {
-          resolve(String(response.headers.etag ?? ""));
-          return;
-        }
-        const body = Buffer.concat(chunks).toString("utf8");
-        const code = /<Code>([^<]+)<\/Code>/u.exec(body)?.[1];
-        reject(new Error(`The storage refused the upload (${status}${code ? ` ${code}` : ""}).`));
-      });
-      response.on("error", reject);
-    });
-    request.on("error", reject);
-    if (length === 0) {
-      request.end();
-      return;
-    }
-    const stream = createReadStream(file, { start, end: start + length - 1 });
-    stream.on("error", (error) => request.destroy(error));
-    stream.pipe(request);
-  });
-}
-
-async function putRangeWithRetry(...args: Parameters<typeof putRange>) {
-  let lastError: unknown;
-  for (let attempt = 1; attempt <= PART_ATTEMPTS; attempt++) {
-    try {
-      return await putRange(...args);
-    } catch (error) {
-      lastError = error;
-    }
-  }
-  throw lastError;
-}
-
-/*
- * What lets an interrupted multipart upload carry on: the storage's name for the assembly, kept beside
- * the stage because nothing else outlives the command. The parts themselves are the storage's to report
- * (`resumeUploadPlan`), so this holds no tally that could disagree with it.
- */
-type ResumeState = { key: string; sizeBytes: number; sha256: string; contentType: string; uploadId: string };
-
-function resumeStatePath(root: string, siteKey: string, key: string) {
-  return path.join(root, "cdn-uploads", `${siteKey}-${createHash("sha256").update(key).digest("hex").slice(0, 24)}.json`);
-}
-
-function readResumeState(file: string): ResumeState | null {
-  if (!existsSync(file)) return null;
-  try {
-    return JSON.parse(readFileSync(file, "utf8")) as ResumeState;
-  } catch {
-    return null;
-  }
-}
-
-function writeResumeState(file: string, state: ResumeState) {
-  mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
-  writeFileSync(file, `${JSON.stringify(state)}\n`, { mode: 0o600 });
+/** `--os`/`--arch` as stated, else what the file name makes obvious (`guessPhisCdnPlatform`). */
+function readPlatform(flags: FlagMap, fileName: string) {
+  const guessed = guessPhisCdnPlatform(fileName);
+  const os = optional(flags, "os");
+  const arch = optional(flags, "arch");
+  return {
+    os: os === undefined ? guessed.os : readPhisCdnOsNames(os),
+    arch: arch === undefined ? guessed.arch : readPhisCdnArchNames(arch),
+  };
 }
 
 export async function publishCdnFile(deps: PhisCdnCommandDeps, flags: FlagMap) {
   const progress = deps.progress ?? ((line: string) => process.stderr.write(`${line}\n`));
-  const { site, cdn, profile, adapter } = await openCdn(deps, flags);
-  if ((profile.flags & PhiMediaStorageProfileFlags.Disabled) !== 0) {
-    throw new Error(`Storage Profile "${profile.key}" is disabled and takes no new files.`);
-  }
+  const { site, target } = await openCdn(deps, flags);
   const file = path.resolve(required(flags, "file"));
-  const stat = statSync(file, { throwIfNoEntry: false });
-  if (!stat?.isFile()) throw new Error(`${file} is not a file.`);
-  const parts = buildPhisCdnKey(required(flags, "name"), required(flags, "version"), optional(flags, "as") ?? path.basename(file));
-  const contentType = resolvePhisCdnContentType(parts.fileName, optional(flags, "content-type"));
-
-  if (await readSiteCdnFile(deps.pool, site.id, parts.key, { includeWithdrawn: true })) {
-    throw new Error(`${parts.key} is already published on ${site.key}. A key is written once: publish a new version.`);
-  }
-  if (await adapter.headObject(parts.key)) {
-    throw new Error(`An object already lies at ${parts.key} in the bucket. Catalogue it with phis cdn check --adopt, or choose another version.`);
-  }
-
-  const sizeBytes = stat.size;
-  const partSizeBytes = resolvePhiMediaUploadPartSizeBytes(sizeBytes);
-  const multipart = sizeBytes > partSizeBytes;
-  progress(`Reading ${path.basename(file)} (${sizeBytes} bytes)...`);
-  const digest = await hashFile(file, multipart ? partSizeBytes : null);
-  if (multipart && digest.parts.length !== resolvePhiMediaUploadPartCount(sizeBytes)) {
-    throw new Error("The file changed while it was read.");
-  }
-  // Digests go into the signature only where the probe found the storage verifies SHA-256.
-  const verifies = profile.checksumAlgorithm === "sha256";
-  const expiresAt = new Date(Date.now() + UPLOAD_PLAN_TTL_MS).toISOString();
-  const stateFile = resumeStatePath(deps.root, site.key, parts.key);
-
-  let plan: PhiMediaUploadPlan | null = null;
-  let uploaded: { partNumber: number; eTag: string }[] = [];
-  const previous = readResumeState(stateFile);
-  if (multipart && previous && previous.key === parts.key && previous.sizeBytes === sizeBytes && previous.sha256 === digest.sha256) {
-    const resumption = await adapter.resumeUploadPlan({
-      storageKey: parts.key,
-      uploadId: previous.uploadId,
-      contentType: previous.contentType,
-      sizeBytes,
-      expiresAt,
-      ...(verifies ? { partChecksums: digest.parts } : {}),
-    });
-    if (resumption) {
-      plan = resumption.plan;
-      uploaded = resumption.uploaded.map((part) => ({ partNumber: part.partNumber, eTag: part.eTag }));
-      progress(`Carrying on an earlier upload: ${uploaded.length} of ${digest.parts.length} parts are there.`);
-    }
-  }
-  if (!plan) {
-    plan = await adapter.createUploadPlan({
-      token: randomUUID(),
-      storageKey: parts.key,
-      contentType,
-      sizeBytes,
-      expiresAt,
-      proxyUploadUrl: "",
-      mayAssembleFromParts: multipart,
-      ...(verifies && !multipart ? { checksum: { algorithm: "sha256" as const, value: digest.sha256 } } : {}),
-      ...(verifies && multipart ? { partChecksums: digest.parts } : {}),
-    });
-  }
-
-  let completion: unknown;
-  if (plan.kind === "proxy-stream") {
-    throw new Error(
-      `Storage Profile "${profile.key}" has no public endpoint, so its Provider offers no direct upload. ` +
-      "Set publicEndpoint to the address this host reaches the storage at (it may equal endpoint).",
-    );
-  } else if (plan.kind === "presigned-put") {
-    progress("Uploading...");
-    await putRangeWithRetry(plan.url, plan.headers, file, 0, sizeBytes);
-  } else {
-    writeResumeState(stateFile, { key: parts.key, sizeBytes, sha256: digest.sha256, contentType, uploadId: plan.uploadId });
-    const queue = [...plan.parts];
-    const total = digest.parts.length;
-    const sent: { partNumber: number; eTag: string }[] = [];
-    const partSize = plan.partSizeBytes;
-    const worker = async () => {
-      for (let next = queue.shift(); next; next = queue.shift()) {
-        const start = (next.partNumber - 1) * partSize;
-        const length = Math.min(partSize, sizeBytes - start);
-        const eTag = await putRangeWithRetry(next.url, next.headers, file, start, length);
-        if (!eTag) throw new Error(`The storage answered part ${next.partNumber} without an entity tag.`);
-        sent.push({ partNumber: next.partNumber, eTag });
-        progress(`part ${uploaded.length + sent.length}/${total}`);
-      }
-    };
-    await Promise.all(Array.from({ length: Math.min(PART_CONCURRENCY, queue.length) }, worker));
-    completion = {
-      uploadId: plan.uploadId,
-      parts: [...uploaded, ...sent].sort((left, right) => left.partNumber - right.partNumber),
-    };
-  }
-
-  const head: PhisMediaObjectHead | null = await adapter.completeUpload({ storageKey: parts.key, completion });
-  if (!head) throw new Error(`The storage holds nothing at ${parts.key} after the upload.`);
-  if (head.byteSize !== sizeBytes) {
-    throw new Error(`The storage holds ${head.byteSize} bytes at ${parts.key}, not ${sizeBytes}. Nothing was recorded.`);
-  }
-  if (head.checksum?.algorithm === "sha256" && head.checksum.value.toLowerCase() !== digest.sha256) {
-    throw new Error(`The storage reports another SHA-256 for ${parts.key} than the file has. Nothing was recorded.`);
-  }
-  rmSync(stateFile, { force: true });
-
-  const recorded = await insertSiteCdnFile(deps.pool, {
-    siteId: site.id,
-    key: parts.key,
-    name: parts.name,
-    version: parts.version,
-    fileName: parts.fileName,
-    sizeBytes,
-    sha256: digest.sha256,
-    contentType,
+  const fileName = optional(flags, "as") ?? path.basename(file);
+  const platform = readPlatform(flags, fileName);
+  const published = await publishPhisCdnFileFromDisk(deps.pool, target, {
+    root: deps.root,
+    file,
+    name: required(flags, "name"),
+    version: required(flags, "version"),
+    fileName,
+    ...(optional(flags, "content-type") ? { contentType: optional(flags, "content-type") } : {}),
+    os: platform.os,
+    arch: platform.arch,
+    progress,
   });
-  if (!recorded) throw new Error(`${parts.key} was published by somebody else at the same time.`);
-  const row = await readSiteCdnFile(deps.pool, site.id, parts.key);
   return {
     ok: true,
     action: "cdn.publish" as const,
     site: site.key,
-    file: presentPhisCdnFile(row!, cdn.publicBaseUrl),
-    verified: verifies,
+    file: published.file,
+    platform: namePhisCdnPlatform(published.file.os, published.file.arch),
+    verified: published.verified,
   };
 }
 
@@ -433,100 +254,66 @@ export async function listCdnFiles(deps: PhisCdnCommandDeps, flags: FlagMap) {
     site: site.key,
     profile: profile?.key ?? null,
     publicBaseUrl: cdn.publicBaseUrl,
-    files: rows.map((row) => ({
-      ...presentPhisCdnFile(row, cdn.publicBaseUrl),
-      withdrawn: (row.flags & PhisCdnFileFlags.Withdrawn) !== 0,
-    })),
+    files: rows.map((row) => {
+      const file = presentPhisCdnAdminFile(row, cdn.publicBaseUrl);
+      return {
+        ...file,
+        withdrawn: file.state !== "offered",
+        deleted: file.state === "deleted",
+        platform: namePhisCdnPlatform(file.os, file.arch),
+      };
+    }),
   };
 }
 
 export async function withdrawCdnFile(deps: PhisCdnCommandDeps, flags: FlagMap) {
-  const { site, adapter } = await openCdn(deps, flags);
+  const { site, target } = await openCdn(deps, flags);
   const key = required(flags, "key");
-  const row = await readSiteCdnFile(deps.pool, site.id, key, { includeWithdrawn: true });
-  if (!row) throw new Error(`${key} is not published on ${site.key}.`);
-  const withdrawn = await withdrawSiteCdnFile(deps.pool, site.id, key);
   const remove = flags.get("delete") === true;
-  const deleted = remove ? await adapter.deleteObject(key) : false;
+  const outcome = await withdrawPhisCdnFile(deps.pool, target, key, { remove });
+  const linked = isPhisCdnFileLinked(outcome.row);
   return {
     ok: true,
     action: "cdn.withdraw" as const,
     site: site.key,
     key,
-    alreadyWithdrawn: !withdrawn,
-    deleted,
+    alreadyWithdrawn: outcome.flags !== 0,
+    deleted: outcome.deleted,
     note: remove
-      ? "The bytes are gone from the bucket. A cache in front of the CDN may serve them until it expires."
+      ? linked
+        ? "The link is deleted; its source keeps the file, which was never in the bucket."
+        : "The bytes are gone from the bucket. A cache in front of the CDN may serve them until it expires."
       : "The file is no longer offered; a link already handed out keeps working. --delete removes the bytes.",
   };
 }
 
 /** Bucket against catalogue: what lies there unrecorded, what is recorded and gone, and sizes that disagree. */
 export async function checkCdn(deps: PhisCdnCommandDeps, flags: FlagMap) {
-  const { site, adapter } = await openCdn(deps, flags);
-  const adopt = flags.get("adopt") === true;
-  const objects = await adapter.listPrefix("");
-  const rows = await listSiteCdnFiles(deps.pool, site.id, { includeWithdrawn: true, all: true });
-  const byKey = new Map(rows.map((row) => [row.object_key, row]));
-  const inBucket = new Set(objects.map((object) => object.storageKey));
-
-  const unrecorded: { key: string; sizeBytes: number; adoptable: boolean; reason: string | null }[] = [];
-  const adopted: string[] = [];
-  const sizeMismatch: { key: string; recorded: number; stored: number }[] = [];
-  for (const object of objects) {
-    const row = byKey.get(object.storageKey);
-    if (row) {
-      if (Number(row.size_bytes) !== object.byteSize) {
-        sizeMismatch.push({ key: object.storageKey, recorded: Number(row.size_bytes), stored: object.byteSize });
-      }
-      continue;
+  const { site, target } = await openCdn(deps, flags);
+  let report = await checkPhisCdnBucket(deps.pool, target);
+  let adopted: string[] = [];
+  if (flags.get("adopt") === true) {
+    const adoptable = report.unrecorded.filter((entry) => (entry.flags & PhisCdnCheckObjectFlags.Adoptable) !== 0).map((entry) => entry.key);
+    if (adoptable.length > 0) {
+      adopted = (await adoptPhisCdnObjects(deps.pool, target, adoptable)).adopted;
+      report = await checkPhisCdnBucket(deps.pool, target);
     }
-    const parts = readPhisCdnKey(object.storageKey);
-    let reason: string | null = parts ? null : "not <name>/<version>/<file>";
-    let contentType: string | null = null;
-    if (parts) {
-      try {
-        buildPhisCdnKey(parts.name, parts.version, parts.fileName);
-        contentType = resolvePhisCdnContentType(parts.fileName, object.contentType);
-      } catch (error) {
-        reason = error instanceof Error ? error.message : String(error);
-      }
-    }
-    if (adopt && parts && contentType && !reason) {
-      const stream = await adapter.getObjectStream(object.storageKey);
-      if (!stream) continue;
-      const hash = createHash("sha256");
-      for await (const chunk of stream as unknown as AsyncIterable<Uint8Array>) hash.update(chunk);
-      await insertSiteCdnFile(deps.pool, {
-        siteId: site.id,
-        key: parts.key,
-        name: parts.name,
-        version: parts.version,
-        fileName: parts.fileName,
-        sizeBytes: object.byteSize,
-        sha256: hash.digest("hex"),
-        contentType,
-      });
-      adopted.push(parts.key);
-      continue;
-    }
-    unrecorded.push({ key: object.storageKey, sizeBytes: object.byteSize, adoptable: Boolean(parts && contentType && !reason), reason });
   }
-  // A withdrawn file whose bytes are gone is what `withdraw --delete` leaves; only an offered one is missing.
-  const missing = rows
-    .filter((row) => (row.flags & PhisCdnFileFlags.Withdrawn) === 0 && !inBucket.has(row.object_key))
-    .map((row) => row.object_key);
   return {
-    ok: missing.length === 0 && sizeMismatch.length === 0,
+    ok: (report.flags & PhisCdnCheckReportFlags.Consistent) !== 0,
     action: "cdn.check" as const,
     site: site.key,
-    objects: objects.length,
-    recorded: rows.length,
-    unrecorded,
+    ...report,
     adopted,
-    missing,
-    sizeMismatch,
   };
+}
+
+/** `phis maintain --task cdn-uploads`: the Core job's run, with the stores reached the CLI's way. */
+export function prunePhisCdnUploadsForCli(deps: PhisCdnCommandDeps, options: { dryRun: boolean }) {
+  return prunePhisCdnUploads(deps.pool, {
+    dryRun: options.dryRun,
+    openTarget: (siteId) => openPhisCdnTargetForCli(deps, siteId),
+  });
 }
 
 /** The server block of the CDN's host: GET only, cached for good, never rendered, a proxy to the bucket. */

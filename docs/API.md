@@ -8,13 +8,13 @@ public or internal token, and `session` is the visitor's Site session with the a
 passes (see [AUTHORIZATION.md](../AUTHORIZATION.md)). A route with no access entry performs its own checks
 or none; read its source. Request and response shapes are not listed; the source is linked per route.
 
-189 routes.
+199 routes.
 
 ## Contents
 
 - [`/api/operator`](#apioperator) (5)
 - [`/api/setup`](#apisetup) (2)
-- [`/api/site`](#apisite) (103)
+- [`/api/site`](#apisite) (113)
 - [`/api/v1/addons`](#apiv1addons) (3)
 - [`/api/v1/admin`](#apiv1admin) (1)
 - [`/api/v1/auth`](#apiv1auth) (29)
@@ -67,6 +67,17 @@ Site administration, CMS, media and support API. A Site's `/api/site` proxy forw
 | PUT | [`/api/site/addon-roles`](../src/app/api/site/addon-roles/route.ts) | session, `authenticated` (requireSiteAuthenticatedApiContext) | Sets the roles one person holds in one Add-on to exactly the ones named, in one call. |
 | POST | [`/api/site/addon-roles`](../src/app/api/site/addon-roles/route.ts) | session, `authenticated` (requireSiteAuthenticatedApiContext) |  |
 | DELETE | [`/api/site/addon-roles`](../src/app/api/site/addon-roles/route.ts) | session, `authenticated` (requireSiteAuthenticatedApiContext) |  |
+| GET | [`/api/site/admin/cdn`](../src/app/api/site/admin/cdn/route.ts) | session, `site-maintenance` (requireSiteMaintainerApiContext) | The Site's CDN catalogue, a page at a time (`PhisCdnAdminListV1`): copies and links, with state and origin. A Site without a CDN answers `cdn: null` and no files, so the page can say how one is attached. |
+| POST | [`/api/site/admin/cdn/check`](../src/app/api/site/admin/cdn/check/route.ts) | session, `site-maintenance` (requireSiteMaintainerApiContext) | The bucket against the catalogue's copies (`PhisCdnCheckReportV1`): what lies there unrecorded and whether it can be adopted, what is offered and gone, and sizes that disagree. Links are not checked. |
+| POST | [`/api/site/admin/cdn/check/adopt`](../src/app/api/site/admin/cdn/check/adopt/route.ts) | session, `site-maintenance` (requireSiteMaintainerApiContext) | Takes objects of the bucket the catalogue does not hold into it (`PhisCdnAdoptRequestV1`, at most `PHIS_CDN_ADOPT_KEYS_MAX` keys): each hashed once from the bucket and recorded with origin `cli`, as `phis cdn check --adopt` records it, and counted in the Site Space. `PhisCdnAdoptResultV1`. |
+| DELETE | [`/api/site/admin/cdn/files/{name}/{version}/{file}`](../src/app/api/site/admin/cdn/files/[name]/[version]/[file]/route.ts) | session, `site-maintenance` (requireSiteMaintainerApiContext) | Withdraws the file and deletes it: a copy's bytes leave the bucket and the Site Space, a link keeps its entry and moves no bytes. The key stays taken, and a cache in front of the CDN may serve a copy until it expires. `{ file }`. |
+| POST | [`/api/site/admin/cdn/files/{name}/{version}/{file}/withdraw`](../src/app/api/site/admin/cdn/files/[name]/[version]/[file]/withdraw/route.ts) | session, `site-maintenance` (requireSiteMaintainerApiContext) | Takes the file -- a copy or a link -- out of the offer; its key stays taken and a copy's bytes stay in the bucket. `PhisCdnAdminWithdrawResultV1`, with `AlreadyWithdrawn` where nothing changed. |
+| POST | [`/api/site/admin/cdn/uploads`](../src/app/api/site/admin/cdn/uploads/route.ts) | session, `site-maintenance` (requireSiteMaintainerApiContext) | Starts a Maintainer's upload into the Site's CDN (`PhisCdnUploadInitV1`), answered `201` with its state. The same key, size and part digests by the same person carry the open upload on: `200` with the parts the storage holds already. The bytes follow part by part through `uploads/{token}/parts/{n}`. |
+| GET | [`/api/site/admin/cdn/uploads/{token}`](../src/app/api/site/admin/cdn/uploads/[token]/route.ts) | session, `site-maintenance` (requireSiteMaintainerApiContext) | Where an upload stands (`PhisCdnUploadStateV1`); the page asks until `published` or `failed`. |
+| DELETE | [`/api/site/admin/cdn/uploads/{token}`](../src/app/api/site/admin/cdn/uploads/[token]/route.ts) | session, `site-maintenance` (requireSiteMaintainerApiContext) | Aborts an upload that is not hashing or published yet: its parts are given up, its reservation back. |
+| POST | [`/api/site/admin/cdn/uploads/{token}/complete`](../src/app/api/site/admin/cdn/uploads/[token]/complete/route.ts) | session, `site-maintenance` (requireSiteMaintainerApiContext) | Ends the sending: answered `202` with `state: "hashing"` once every part is in. After the response the assembly is completed, its size compared, its SHA-256 computed from the bucket -- each part against the digest the page sent -- and the file recorded with origin `upload`; the page asks `GET uploads/{token}` until it reads `published` or `failed`. `409 parts_missing` with `uploaded` where parts are missing. |
+| POST | [`/api/site/admin/cdn/uploads/{token}/heartbeat`](../src/app/api/site/admin/cdn/uploads/[token]/heartbeat/route.ts) | session, `site-maintenance` (requireSiteMaintainerApiContext) | Says the page is still sending: the upload's expiry moves a day ahead. `409` once it is no longer open. |
+| PUT | [`/api/site/admin/cdn/uploads/{token}/parts/{partNumber}`](../src/app/api/site/admin/cdn/uploads/[token]/parts/[partNumber]/route.ts) | session, `site-maintenance` (requireSiteMaintainerApiContext) | One part of an upload, as raw bytes: streamed from this request to the storage's presigned part address and never buffered here, its SHA-256 signed into that request where the storage verifies one. The length is the Media upload's division of the size; `content-length`, where the request states one, must be it, and a body of another length fails as it streams. |
 | GET | [`/api/site/admin/locales`](../src/app/api/site/admin/locales/route.ts) | session, `site-admin` (requireSiteAdminOnlyApiContext) |  |
 | PATCH | [`/api/site/admin/locales`](../src/app/api/site/admin/locales/route.ts) | session, `site-admin` (requireSiteAdminOnlyApiContext) |  |
 | DELETE | [`/api/site/admin/locales`](../src/app/api/site/admin/locales/route.ts) | session, `site-admin` (requireSiteAdminOnlyApiContext) |  |

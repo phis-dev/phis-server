@@ -25,6 +25,8 @@ import {
   PHI_JOB_RUN_RETENTION_SUB_HOURLY_MS,
 } from "@/lib/constants/jobs";
 import { getPool } from "@/lib/db";
+import { prunePhisCdnUploads } from "@/lib/cdn-publish.mts";
+import { openPhisCdnTarget } from "@/lib/cdn-server";
 import { drainPhiNotifications } from "@/lib/notifications/deliver";
 import { reconcileUnresolvedPhisPayments, runDuePhisPaymentSubscriptions } from "@/lib/payments/runtime";
 import { isPhiJobStepSubHourly } from "./slots";
@@ -37,7 +39,7 @@ import { isPhiJobStepSubHourly } from "./slots";
  * Site, because each walks every Site that owes something. The two drains are the retry: the request
  * that wrote a row already tried once, so five minutes is how late a retry is at most.
  *
- * The housekeeping steps (`queues.prune`, `hook-deliveries.prune`, `upload-sessions.prune`,
+ * The housekeeping steps (`queues.prune`, `hook-deliveries.prune`, `upload-sessions.prune`, `cdn-uploads.prune`,
  * `addon-assets.collect`, `support-tickets.close`, `payments.recover`) were `phis maintain` tasks that an
  * operator's timer had to call; `users-access-log.prune` came later and was born both. They run here now, and `phis maintain` stays as the same steps started by
  * hand: job and task call one function (`src/db/maintenance.mts`, `reconcilePhisPayments`), so neither
@@ -136,6 +138,15 @@ export const PHI_CORE_JOBS: readonly PhiCoreJob[] = Object.freeze([
     summary: "Releases the reservations of upload sessions that ran out.",
     async run(signal: AbortSignal) {
       await releaseExpiredPhisUploadSessions(getPool(), { signal });
+    },
+  },
+  {
+    id: "cdn-uploads.prune",
+    schedule: { every: "hourly" },
+    summary: "Aborts CDN uploads that ran out, finishes the ones whose hashing stalled, and forgets ended ones after 30 days.",
+    async run(signal: AbortSignal) {
+      // The same run as `phis maintain --task cdn-uploads`; each Site's storage opened through the registry.
+      await prunePhisCdnUploads(getPool(), { signal, openTarget: (siteId) => openPhisCdnTarget(siteId) });
     },
   },
   {

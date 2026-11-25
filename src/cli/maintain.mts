@@ -64,6 +64,8 @@ export type PhiMaintenanceContext = {
   dryRun: boolean;
   openStore?: PhiMaintenanceStoreOpener;
   recoverPayments?: (dryRun: boolean) => Promise<{ cleared: number; detail: string }>;
+  /** `cdn-uploads.prune`, with each Site's CDN storage opened the CLI's way (`prunePhisCdnUploadsForCli`). */
+  pruneCdnUploads?: (dryRun: boolean) => Promise<{ cleared: number; detail: string }>;
 };
 
 export type PhiMaintenanceTask = {
@@ -142,6 +144,14 @@ export const PHI_MAINTENANCE_TASKS: readonly PhiMaintenanceTask[] = Object.freez
     },
   },
   {
+    id: "cdn-uploads",
+    summary: "Abort CDN uploads that ran out, finish the ones whose hashing stalled, forget ended ones after 30 days.",
+    async run(_pool, { dryRun, pruneCdnUploads }) {
+      if (!pruneCdnUploads) return { cleared: 0, detail: "This invocation has no access to the CDN storages." };
+      return pruneCdnUploads(dryRun);
+    },
+  },
+  {
     id: "upload-sessions",
     summary: "Release the reservations of upload sessions that ran out.",
     run: (pool, { dryRun }) => releaseExpiredPhisUploadSessions(pool, { dryRun }),
@@ -182,7 +192,13 @@ export const PHI_MAINTENANCE_TASKS: readonly PhiMaintenanceTask[] = Object.freez
  */
 export async function runPhiMaintenance(
   pool: Pool,
-  options: { only?: string | null; dryRun?: boolean; openStore?: PhiMaintenanceStoreOpener; recoverPayments?: PhiMaintenanceContext["recoverPayments"] } = {},
+  options: {
+    only?: string | null;
+    dryRun?: boolean;
+    openStore?: PhiMaintenanceStoreOpener;
+    recoverPayments?: PhiMaintenanceContext["recoverPayments"];
+    pruneCdnUploads?: PhiMaintenanceContext["pruneCdnUploads"];
+  } = {},
 ): Promise<PhiMaintenanceReport[]> {
   const dryRun = options.dryRun === true;
   const only = options.only?.trim() || null;
@@ -199,7 +215,9 @@ export async function runPhiMaintenance(
       continue;
     }
     try {
-      const result = await task.run(pool, { dryRun, openStore: options.openStore, recoverPayments: options.recoverPayments });
+      const result = await task.run(pool, {
+        dryRun, openStore: options.openStore, recoverPayments: options.recoverPayments, pruneCdnUploads: options.pruneCdnUploads,
+      });
       reports.push({ id: task.id, cleared: result.cleared, detail: result.detail, error: null });
     } catch (error) {
       reports.push({

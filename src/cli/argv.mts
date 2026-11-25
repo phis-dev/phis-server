@@ -159,7 +159,7 @@ export const PHIS_COMMAND_FLAGS: Record<string, FlagSpec> = {
 
   "cdn attach": { site: S, profile: S, "public-base-url": S },
   "cdn detach": { site: S },
-  "cdn publish": { site: S, name: S, version: S, file: S, as: S, "content-type": S },
+  "cdn publish": { site: S, name: S, version: S, file: S, as: S, "content-type": S, os: S, arch: S },
   "cdn list": { site: S, name: S, withdrawn: B },
   "cdn withdraw": { site: S, key: S, delete: B },
   "cdn check": { site: S, adopt: B },

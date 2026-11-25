@@ -186,6 +186,7 @@ import {
 } from "./module-products.mts";
 import { listSiteModuleProductProposals, listSiteModuleProducts } from "../db/site-module-products.mts";
 import { PHIS_SITE_PACKAGE_PRODUCT_SUPPLIER } from "@phis/contracts/products";
+import { PhisCdnCheckObjectFlags } from "@phis/contracts/addon";
 import { checkPhiDependencyLicenses } from "./licenses.mts";
 import { checkPhiMediaOwnership, findPhiMediaOrphanedLocalStaging } from "./media-check.mts";
 import { listPhiStoredPages, resetPhiPageToPreset } from "./page.mts";
@@ -207,7 +208,7 @@ import {
   useStorageProfile,
   setStorageProfileEnabled,
 } from "./storage.mts";
-import { runPhisCdnCommand } from "./cdn.mts";
+import { prunePhisCdnUploadsForCli, runPhisCdnCommand } from "./cdn.mts";
 import { PHI_MEDIA_STORAGE_LIFECYCLE_DAYS } from "../lib/media-storage-policies-core.ts";
 import { restoreFirstPartyAuthPreset } from "../db/auth-preset.mts";
 import { importPhiAuthSecrets } from "../db/auth-secret-import.mts";
@@ -304,6 +305,12 @@ function formatBytes(bytes: number) {
   return `${unit === 0 ? value : value.toFixed(1)} ${units[unit]}`;
 }
 
+/** `linux, macos / x64` -- or "any platform" where nobody stated one. */
+function formatCdnPlatform(platform: { os: string[]; arch: string[] }) {
+  if (platform.os.length === 0 && platform.arch.length === 0) return "any platform";
+  return `${platform.os.join(",") || "any os"} / ${platform.arch.join(",") || "any arch"}`;
+}
+
 function printCdnResult(result: Awaited<ReturnType<typeof runPhisCdnCommand>>) {
   switch (result.action) {
     case "cdn.attach":
@@ -318,12 +325,16 @@ function printCdnResult(result: Awaited<ReturnType<typeof runPhisCdnCommand>>) {
     case "cdn.publish":
       console.log(`Published ${result.file.key} on ${result.site} (${formatBytes(result.file.sizeBytes)}, ${result.file.contentType}).`);
       console.log(`  sha256 ${result.file.sha256}${result.verified ? " (verified by the storage)" : ""}`);
+      console.log(`  for ${formatCdnPlatform(result.platform)}`);
       console.log(`  ${result.file.url}`);
       return;
     case "cdn.list":
       console.log(`CDN of ${result.site}: ${result.publicBaseUrl} (Profile "${result.profile ?? "?"}")`);
       for (const file of result.files) {
-        console.log(`${file.key}  ${formatBytes(file.sizeBytes)}  ${file.publishedAt}${file.withdrawn ? "  WITHDRAWN" : ""}`);
+        const origin = file.origin.kind === "addon" ? `addon ${file.origin.addonId}` : file.origin.kind;
+        console.log(`${file.key}  ${formatBytes(file.sizeBytes)}  ${file.publishedAt}  ${file.storage}  ${origin}  ` +
+          `${formatCdnPlatform(file.platform)}${file.state === "offered" ? "" : `  ${file.state.toUpperCase()}`}`);
+        if (file.storage === "link") console.log(`    -> ${file.url}`);
       }
       if (result.files.length === 0) console.log("(no files)");
       return;
@@ -336,11 +347,12 @@ function printCdnResult(result: Awaited<ReturnType<typeof runPhisCdnCommand>>) {
       console.log(`${result.site}: ${result.objects} object(s) in the bucket, ${result.recorded} recorded.`);
       for (const key of result.adopted) console.log(`  adopted ${key}`);
       for (const entry of result.unrecorded) {
-        console.log(`  unrecorded ${entry.key} (${formatBytes(entry.sizeBytes)})${entry.adoptable ? " -- adopt with --adopt" : `: ${entry.reason}`}`);
+        const adoptable = (entry.flags & PhisCdnCheckObjectFlags.Adoptable) !== 0;
+        console.log(`  unrecorded ${entry.key} (${formatBytes(entry.sizeBytes)})${adoptable ? " -- adopt with --adopt" : `: ${entry.reason}`}`);
       }
       for (const key of result.missing) console.log(`  MISSING ${key}: recorded and offered, but not in the bucket`);
       for (const entry of result.sizeMismatch) console.log(`  SIZE ${entry.key}: recorded ${entry.recorded}, stored ${entry.stored}`);
-      if (result.ok && result.unrecorded.length === 0) console.log("  Bucket and catalogue agree.");
+      if (result.ok) console.log("  Bucket and catalogue agree.");
       return;
     case "cdn.nginx":
       if (!result.written) {
@@ -508,6 +520,8 @@ Usage:
   phis cdn detach   --site <site key>
   phis cdn publish  --site <site key> --name <name> --version <version> --file <path>
                     [--as <file name>] [--content-type <type>]
+                    [--os linux,windows,macos,android,ios,chromeos,other]
+                    [--arch x64,arm64,x86,arm32,riscv64]
   phis cdn list     --site <site key> [--name <name>] [--withdrawn]
   phis cdn withdraw --site <site key> --key <name/version/file> [--delete]
   phis cdn check    --site <site key> [--adopt]
@@ -3691,6 +3705,9 @@ async function main() {
       only,
       dryRun,
       recoverPayments: (dryRun) => recoverPhisPayments(configRoot, getPool(), readMaintenanceSecret, dryRun),
+      pruneCdnUploads: (dryRun) => prunePhisCdnUploadsForCli(
+        { root: configRoot, pool: getPool(), readSecret: readMaintenanceSecret }, { dryRun },
+      ),
       // The same way `addon storage --recount` reaches a store; a Provider this process cannot list is
       // reported by the task rather than failing the run.
       openStore: (site) => resolvePhiStorageObjectAdapter(
