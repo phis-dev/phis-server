@@ -14,6 +14,7 @@ import { isPhisProductId, splitPhisProductId } from "./product-draft.ts";
 import { PHIS_SITE_ACCESS } from "./contract.ts";
 import type { PhisSiteAccessHolder } from "./role-inclusion.ts";
 import { getPool } from "@/lib/db";
+import { PHIS_ENTITLEMENT_LIST_MAX } from "@/lib/constants/products";
 import {
   ensureEntitlementSubject,
   ensureMemberEntitlementSubject,
@@ -135,6 +136,16 @@ export function buildPhisAddonEntitlementsCapability(input: {
     return reference;
   };
 
+  /** A listing longer than the bound is refused, never cut: a part of it would read as all of it. */
+  const whole = (entries: Awaited<ReturnType<typeof listEntitlements>>) => {
+    if (entries.length > PHIS_ENTITLEMENT_LIST_MAX) {
+      throw new PhisAddonEntitlementsError(
+        `${addonId} called entitlements.list for more than ${PHIS_ENTITLEMENT_LIST_MAX} entries; ask for fewer subjects or one product.`,
+      );
+    }
+    return entries;
+  };
+
   const written = <T>(entry: T): T => {
     // After the commit; the outbox rows are already written, this only spares them the next tick.
     schedulePhisAddonEventDelivery(siteId);
@@ -213,11 +224,11 @@ export function buildPhisAddonEntitlementsCapability(input: {
         }
         if (subjects.length === 0) return [];
         // One statement for all of them; a reference that is nobody here simply has no entries.
-        return listEntitlements(getPool(), { siteId, subjectReferences: [...new Set(subjects)], product: product ?? null, resolveBundles: resolveBundles === true });
+        return whole(await listEntitlements(getPool(), { siteId, subjectReferences: [...new Set(subjects)], product: product ?? null, resolveBundles: resolveBundles === true }));
       }
       // Without a subject and without anybody acting there is nobody to list for; a Site-wide read is not offered.
       const row = await resolveSubject(subject);
-      return row ? listEntitlements(getPool(), { siteId, subjectId: row.id, product: product ?? null, resolveBundles: resolveBundles === true }) : [];
+      return row ? whole(await listEntitlements(getPool(), { siteId, subjectId: row.id, product: product ?? null, resolveBundles: resolveBundles === true })) : [];
     },
 
     async grant({ subject, product, reference, startsAt, endsAt, subscriptionId, quantity }) {

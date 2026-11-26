@@ -286,6 +286,19 @@ describe.skipIf(!configured)("entitlements through bundles", () => {
       .toEqual([a.id, b.id]);
   });
 
+  it("reads one entry past the bound, so a longer listing can be refused and not cut", async () => {
+    const part = await product(PARTS);
+    const someone = await person();
+    // Written in one statement: 501 entries of one source and product, references apart.
+    await pool.query(
+      `INSERT INTO phis.entitlements (site_id, subject_id, product, source, reference, starts_at, flags)
+       SELECT $1, $2, $3, $4, 'bulk-' || n, NOW(), 0 FROM generate_series(1, 501) n`,
+      [site.id, someone.subjectId, part, SHOP],
+    );
+    expect(await listEntitlements(pool, { siteId: site.id, subjectId: someone.subjectId })).toHaveLength(501);
+    expect(await listEntitlements(pool, { siteId: site.id, subjectReferences: [someone.subject] })).toHaveLength(501);
+  });
+
   it("owes each part, through nested bundles, its event when an entry on the bundle is written or taken back", async () => {
     const part = await product(PARTS);
     const inner = await product(BUNDLES, { parts: [part] });

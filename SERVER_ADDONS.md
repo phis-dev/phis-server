@@ -2010,6 +2010,8 @@ subjects in one statement -- an Admin table of keys asks for its page at once ra
 narrowed by `product` and `resolveBundles` as for one subject, in id order, each entry naming its subject.
 It takes at most 100 subjects and throws beyond, for an entry that is not a string, and beside `subject`;
 an empty list answers nothing without a read, and a reference that is nobody on the Site has no entries.
+A listing answers at most 500 entries, for one subject as for several: one that would hold more throws
+(`ask for fewer subjects or one product`) rather than answering a part that would read as the whole.
 
 **Another person's subject.** `subjectForUser({ userId })` answers the subject of a member of the Site,
 issued on first asking as `subject()` issues it, for staff acting on a person's behalf -- a licence granted

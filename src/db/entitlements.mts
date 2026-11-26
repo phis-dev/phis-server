@@ -11,7 +11,7 @@ import {
 import type { PhisProductId } from "@phis/contracts/products";
 
 import { withPoolTransaction } from "../lib/db-transaction.ts";
-import { PHIS_ENTITLEMENT_SOURCE_FLAG_ALL_PRODUCTS, PHIS_PRODUCT_FLAG } from "../lib/constants/products.ts";
+import { PHIS_ENTITLEMENT_LIST_MAX, PHIS_ENTITLEMENT_SOURCE_FLAG_ALL_PRODUCTS, PHIS_PRODUCT_FLAG } from "../lib/constants/products.ts";
 import { PHI_SITE_SERVER_ADDON_FLAG_REQUESTED_ENABLED } from "../lib/constants/server-addons.ts";
 import { splitPhisProductId } from "../lib/addons/product-draft.ts";
 import { ENTRY_PRODUCT_JOIN_SQL } from "./products.mts";
@@ -178,6 +178,9 @@ export async function findEntitlementSubject(
  *
  * `resolveBundles` with a product also lists the entries on every bundle that contains it, directly or
  * through nested bundles and whatever their state, each as it is. Without a product it changes nothing.
+ *
+ * Reads one entry past `PHIS_ENTITLEMENT_LIST_MAX`, so the caller can tell a listing that is whole from
+ * one that would be longer, and refuse the second instead of answering a part of it.
  */
 export async function listEntitlements(pool: Pool, input: {
   siteId: number;
@@ -198,7 +201,7 @@ export async function listEntitlements(pool: Pool, input: {
        AND ($4::text[] IS NULL OR s.reference = ANY($4::text[]))
        AND ${bundles ? "e.product IN (SELECT product FROM holders)" : "($3::text IS NULL OR e.product = $3)"}
      ORDER BY e.id ASC
-     LIMIT 500`,
+     LIMIT ${PHIS_ENTITLEMENT_LIST_MAX + 1}`,
     [input.siteId, input.subjectId ?? null, product, input.subjectReferences ?? null],
   );
   return rows.map(mapEntry);

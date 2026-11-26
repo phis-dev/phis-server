@@ -5,6 +5,7 @@ import {
   listEntitlements, updateEntitlement,
 } from "../db/entitlements.mts";
 import { readProduct } from "../db/products.mts";
+import { PHIS_ENTITLEMENT_LIST_MAX } from "../lib/constants/products.ts";
 import { isPhiSiteMember } from "../db/server-addon-owner.mts";
 import { listEntitlementListenersOf, type PhisInstalledManifestEntries } from "../lib/addons/commerce-listeners.ts";
 import { isPhisProductId } from "../lib/addons/product-draft.ts";
@@ -117,6 +118,9 @@ export async function runPhisEntitlementCommand(root: string, pool: Pool, words:
     const subject = await ensureEntitlementSubject(pool, selectedSite.id, id);
     const subjectId = (await findEntitlementSubject(pool, selectedSite.id, subject))!.id;
     const found = await listEntitlements(pool, { siteId: selectedSite.id, subjectId, product: productFlag ?? null });
+    if (found.length > PHIS_ENTITLEMENT_LIST_MAX) {
+      throw new Error(`User ${id} has more than ${PHIS_ENTITLEMENT_LIST_MAX} entitlements at ${selectedSite.key}; name one --product.`);
+    }
     return {
       data: { site: selectedSite.key, userId: id, subject, entitlements: found },
       lines: found.length === 0 ? [`User ${id} has no entitlements at ${selectedSite.key}.`] : found.map(describeEntry),

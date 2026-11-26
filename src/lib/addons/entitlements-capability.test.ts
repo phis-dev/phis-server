@@ -355,6 +355,16 @@ describe("entitlements capability", () => {
       expect(state.list).toHaveBeenCalledOnce();
     });
 
+    it("refuses a listing longer than 500 entries rather than answering part of it", async () => {
+      const entries = (count: number) => Array.from({ length: count }, (_, id) => ({ id }));
+      state.list.mockResolvedValueOnce(entries(500));
+      expect(await capability().list({ subjects: ["sub_a"] })).toHaveLength(500);
+      state.list.mockResolvedValueOnce(entries(501));
+      await expect(capability().list({ subjects: ["sub_a", "sub_b"] })).rejects.toThrow(/more than 500 entries; ask for fewer subjects or one product/);
+      state.list.mockResolvedValueOnce(entries(501));
+      await expect(capability().list({})).rejects.toThrow(/more than 500 entries/);
+    });
+
     it("keeps subjects from an unverified hook", async () => {
       await expect(capability({ unauthenticated: true }).list({ subjects: ["sub_a"] })).rejects.toThrow(/unverified hook/);
     });

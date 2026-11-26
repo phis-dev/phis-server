@@ -21,3 +21,9 @@ export const PHIS_PRODUCT_ATTRIBUTES_MAX_BYTES = 8 * 1024;
 
 /** `phis.entitlement_sources.flags`: the source may write for every product, not only for named suppliers. */
 export const PHIS_ENTITLEMENT_SOURCE_FLAG_ALL_PRODUCTS = 1 << 0;
+
+/**
+ * The most entries one listing answers (`entitlements:v1` `list`, `phis entitlement list`). A listing that
+ * would hold more is refused rather than cut, so nobody reads a partial list as the whole one.
+ */
+export const PHIS_ENTITLEMENT_LIST_MAX = 500;
