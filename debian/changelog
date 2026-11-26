@@ -1,3 +1,15 @@
+phis (0.8.2-1) unstable; urgency=medium
+
+  * Needs @phis/contracts 0.8.13.
+  * Add-on routes and hooks answer HEAD through their GET descriptor,
+    preserving status and headers while omitting the response body.
+  * CDN links can move to a new source URL for the same SHA-256 and size.
+    Other bytes, copies and withdrawn links remain immutable conflicts.
+  * The CLI build reads registry Site versions outside the checkout, so
+    the package's pnpm devEngines do not block the registry lookup.
+
+ -- Marius Schumacher <marius.schumacher@phisys.com>  Thu, 26 Nov 2026 09:07:49 +0000
+
 phis (0.8.1-1) unstable; urgency=medium
 
   * Needs @phis/contracts 0.8.12 and builds against @phis/ui 0.8.2.
