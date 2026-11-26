@@ -2400,6 +2400,9 @@ Contract:
 - `site_id SMALLINT NOT NULL REFERENCES phis.sites(id) ON DELETE CASCADE`
 - `msg TEXT NOT NULL`
 - `msg_hash BYTEA NOT NULL` -- SHA-256 over the first 50 characters of `msg`, as in `tr_msg` (above)
+- `msg` of a message in this table or in `tr_msg` changes in one place only: `phis translations import
+  --replace-source`, for a text rewritten after its first 50 characters. The row keeps its id and key and
+  loses its answers in the other locales (TRANSLATIONS.md, "A source that changed past its key").
 - `ctx VARCHAR(128) NOT NULL DEFAULT ''`
 - `created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
 - `UNIQUE (site_id, msg_hash, ctx)`

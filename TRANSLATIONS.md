@@ -468,7 +468,8 @@ batch isolation such an error left the whole request: a page lost every translat
 paragraph began like another.
 
 A skipped message is logged as `translation.message_skipped` with its stage, locale, context and the
-opening of the text. Failures that are not about one message -- a database that is unreachable, a
+opening of the text. Where the cause is a text rewritten after its first 50 characters, its message is
+replaced through the CLI ("A source that changed past its key"). Failures that are not about one message -- a database that is unreachable, a
 provider that refuses the whole batch -- are not caught here and still surface.
 
 A request in which any answer is such a stand-in -- a skipped message, a provider that failed and left
@@ -585,6 +586,37 @@ global store without `--site`, a Site's with it; `phis translations status` says
 
 French and Spanish of the global store were filled this way on 14.11.2026, while the DeepL quota was
 spent.
+
+### A source that changed past its key
+
+The key covers the first 50 characters of a message and its context, not the whole text. An author who
+rewrites a paragraph after its opening produces a text with the key of the old one: the runtime meets the
+stored message, cannot store the new one (a collision, logged as `translation.message_skipped`), answers
+the source as a provisional stand-in, and the paragraph stays untranslated for good. An import of the new
+text is refused too, as "its source text changed since the export". The key is decided and stays (the
+50-character hash is not up for change); what changes is the message under it.
+
+The rule (owner, 2026-11-26): **same key, text changed -> replace the source, drop the other answers.**
+The message keeps its id and key, takes the new text, takes the new translation for the locale at hand,
+and loses its answers in every other locale, because they translate the old words; those locales are
+translated again from the new text on their next read, as any missing answer is. The way to do it is
+`phis translations import --file <file.json> [--site <key>] --replace-source [--dry-run]` (CLI.md,
+`translations`), never hand SQL:
+
+- The entry names the new text (`msg`), its `ctx` and the translation for the file's locale; `hash` may
+  be left out and is computed. It must be the new text's hash, and the stored message is found by it and
+  `ctx`, so only a message whose key the new text really has is ever replaced.
+- Without `--replace-source` such an entry is still refused: an import never replaces a source by
+  accident. With it, the entry's translation is checked against the new text (placeholders, tags) and
+  written whatever the locale held, `--overwrite` or not.
+- `--dry-run` lists every message it would replace -- the opening, the old and the new text from the
+  character where they part, and each answer of another locale it would drop -- and writes nothing. One
+  transaction per run; the change markers move, so every Site reads the new text at once.
+- Refused: a translation into the canonical source language (there is none to give), a message that
+  holds a protected external variant, a product's text (its supplier's `register` replaces it, as
+  "Words Core records" says), a message content versions read as their own text (replacing it would
+  rewrite those versions; the content is changed by saving it), and a second, different source for a key
+  the same file already replaced.
 
 ## Words Core records
 

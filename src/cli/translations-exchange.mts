@@ -24,6 +24,12 @@ import {
  * path creates them with (`translation-message.mts`), so the key is the runtime's own. A message is
  * always in the canonical source language here; the file carries no source language of its own.
  *
+ * `import --replace-source` takes an entry's source text over the stored one where the two share the key but
+ * not the words -- an author rewrote a paragraph after its first 50 characters, which the key does not cover,
+ * so the runtime meets its old message, cannot store the new one and answers the source forever. The message
+ * keeps its id and key; its text becomes the file's, the file's answer becomes its translation for the
+ * file's locale, and its answers in every other locale go, because they translate the old words.
+ *
  * An import is an editor's write, not a provider fill, so it moves the change markers like any edit and
  * every Site answering from the store reads the new text. Messages a source language other than the
  * canonical one reached (`extern` context) are not exchanged here: their key is the source in that
@@ -168,7 +174,29 @@ export function readPhiTranslationDefect(msg: string, ctx: string, translation: 
   return null;
 }
 
-export type PhiTranslationImportOutcome = "created" | "written" | "replaced" | "unchanged" | "kept" | "refused";
+export type PhiTranslationImportOutcome =
+  | "created"
+  | "written"
+  | "replaced"
+  | "sourceReplaced"
+  | "unchanged"
+  | "kept"
+  | "refused";
+
+/** With `replaceSource`: a message whose stored text the file's took over, and the answers that went with the old. */
+export type PhiTranslationSourceReplacement = {
+  hash: string;
+  ctx: string;
+  /** The new source text's opening. */
+  msg: string;
+  /** Where the old and the new text first differ (UTF-16 units, as the key counts them). */
+  differsAt: number;
+  /** The old and the new text from a little before that point, so the change shows past the shared opening. */
+  oldExcerpt: string;
+  newExcerpt: string;
+  /** The answers of other locales that translated the old text and were deleted (the opening of each). */
+  dropped: Array<{ locale: string; translation: string }>;
+};
 
 export type PhiTranslationImportResult = {
   store: string;
@@ -180,16 +208,33 @@ export type PhiTranslationImportResult = {
   /** One line per entry not written, and why. */
   refused: Array<{ hash: string; ctx: string; msg: string; reason: string }>;
   kept: Array<{ hash: string; ctx: string; msg: string }>;
+  /** With `replaceSource`: the messages whose source text was (or, in a dry run, would be) replaced. */
+  sourceReplaced: PhiTranslationSourceReplacement[];
 };
+
+/** Index of the first UTF-16 unit in which two texts differ; the shorter one's length where one opens the other. */
+function firstDifference(left: string, right: string) {
+  const length = Math.min(left.length, right.length);
+  for (let index = 0; index < length; index += 1) if (left[index] !== right[index]) return index;
+  return length;
+}
+
+function excerptFrom(text: string, start: number) {
+  const body = text.slice(start, start + 80);
+  return `${start > 0 ? "..." : ""}${body}${start + 80 < text.length ? "..." : ""}`;
+}
 
 /**
  * Reads and checks an exchange file; throws on a file that is not one.
  *
- * For `add`, an entry may leave `hash` out -- a file written by hand has none to copy -- and it is computed
- * from `msg`. A `hash` that is given must still be that message's. `ctx` is never defaulted (`""` is a context): it is
+ * For `add` and `replaceSource`, an entry may leave `hash` out -- a file written by hand has none to copy -- and it
+ * is computed from `msg`. A `hash` that is given must still be that message's. `ctx` is never defaulted (`""` is a context): it is
  * part of the key, and a message created under another context than the one the runtime asks with is never read.
  */
-export function readPhiTranslationExchangeFile(raw: string, options: { add?: boolean } = {}): PhiTranslationExchangeFile {
+export function readPhiTranslationExchangeFile(
+  raw: string,
+  options: { add?: boolean; replaceSource?: boolean } = {},
+): PhiTranslationExchangeFile {
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
@@ -202,7 +247,7 @@ export function readPhiTranslationExchangeFile(raw: string, options: { add?: boo
     throw new Error(`The file is not a translations export of version ${PHI_TRANSLATION_EXCHANGE_VERSION}.`);
   }
   file.entries.forEach((entry, index) => {
-    if (options.add && entry && typeof entry === "object" && entry.hash === undefined && typeof entry.msg === "string") {
+    if ((options.add || options.replaceSource) && entry && typeof entry === "object" && entry.hash === undefined && typeof entry.msg === "string") {
       entry.hash = computePhiMessageHash(entry.msg);
     }
     if (!entry || typeof entry.hash !== "string" || typeof entry.ctx !== "string" || typeof entry.msg !== "string"
@@ -255,12 +300,20 @@ function readPhiTranslationCreationProblems(file: PhiTranslationExchangeFile) {
  * needs aborts the import before anything is written. A message in the canonical source language is not
  * given a translation into it. A translation the store already holds is kept
  * unless `overwrite`. Everything is one transaction, and a dry run rolls it back.
+ *
+ * With `replaceSource`, a message found by the key whose text is not the entry's takes the entry's text (same
+ * id, same key: the hash was checked against the new text above and the context is the lookup's), gets the
+ * entry's translation for the file's locale whatever it held, and loses its answers in every other locale.
+ * Refused instead: a translation into the canonical source language, a message holding a protected external
+ * variant, a product's text (its supplier's `register` replaces it), one that content versions read as their
+ * own text (replacing it would rewrite them), and a second, different source for a key the run replaced.
  */
 export async function importPhiTranslations(pool: Pool, file: PhiTranslationExchangeFile, options: {
   siteKey?: string | null;
   overwrite?: boolean;
   dryRun?: boolean;
   add?: boolean;
+  replaceSource?: boolean;
 }): Promise<PhiTranslationImportResult> {
   const locale = requirePhiTranslationLocale(file.locale);
   if (options.add) {
@@ -279,11 +332,14 @@ export async function importPhiTranslations(pool: Pool, file: PhiTranslationExch
       store: store.name,
       locale,
       dryRun: options.dryRun === true,
-      counts: { created: 0, written: 0, replaced: 0, unchanged: 0, kept: 0, refused: 0 },
+      counts: { created: 0, written: 0, replaced: 0, sourceReplaced: 0, unchanged: 0, kept: 0, refused: 0 },
       created: [],
       refused: [],
       kept: [],
+      sourceReplaced: [],
     };
+    /** The source each message replaced in this run was given: a later entry naming another one is refused. */
+    const replacedInRun = new Map<number, string>();
     const refuse = (entry: PhiTranslationExchangeEntry, reason: string) => {
       result.counts.refused += 1;
       result.refused.push({ hash: entry.hash, ctx: entry.ctx, msg: entry.msg.slice(0, 80), reason });
@@ -328,7 +384,17 @@ export async function importPhiTranslations(pool: Pool, file: PhiTranslationExch
         created = true;
       }
       if (message.msg !== entry.msg) {
-        refuse(entry, "its source text changed since the export");
+        if (!options.replaceSource) {
+          refuse(entry, "its source text changed since the export (same key; --replace-source takes the file's text)");
+          continue;
+        }
+        const replaced = await replaceSource(client, store, message, entry, locale, replacedInRun);
+        if (typeof replaced === "string") {
+          refuse(entry, replaced);
+          continue;
+        }
+        result.counts.sourceReplaced += 1;
+        result.sourceReplaced.push(replaced);
         continue;
       }
       const { rows: [held] } = await client.query<{ translation: string; external: boolean }>(
@@ -369,4 +435,71 @@ export async function importPhiTranslations(pool: Pool, file: PhiTranslationExch
   } finally {
     client.release();
   }
+}
+
+/**
+ * Replaces a message's source text under its unchanged key, on the import's transaction: the reason it cannot
+ * as text, or what it did. The caller has checked that the entry's hash is its text's and its translation's
+ * placeholders and tags against the new text.
+ *
+ * The Site store's change marker moves through the trigger on `tr_site_msg`; the global store has none on
+ * `tr_msg`, and its marker moves with the write of the answer into `tr_lang`, which this always makes.
+ */
+async function replaceSource(
+  client: PoolClient,
+  store: Store,
+  message: { id: number; msg: string },
+  entry: PhiTranslationExchangeEntry,
+  locale: string,
+  replacedInRun: Map<number, string>,
+): Promise<PhiTranslationSourceReplacement | string> {
+  const t = tables(store);
+  const earlier = replacedInRun.get(message.id);
+  if (earlier !== undefined) {
+    return `an earlier entry of this file gave this key another source ("${earlier.slice(0, 40)}")`;
+  }
+  if (locale === PHI_CANONICAL_SOURCE_LOCALE) {
+    return `its source language is ${locale}, the language it would be translated into`;
+  }
+  const { rows: answers } = await client.query<{ locale: string; translation: string; external: boolean }>(
+    `SELECT locale, translation, source_hash IS NOT NULL AS external FROM ${t.lang} WHERE msg_id = $1 ORDER BY locale`,
+    [message.id],
+  );
+  const external = answers.find((answer) => answer.external);
+  if (external) return `it holds a protected external source variant (${external.locale}), which a replaced source would orphan`;
+  if (store.siteId != null) {
+    const { rows: [use] } = await client.query<{ product: boolean; content: string }>(
+      `SELECT EXISTS (SELECT 1 FROM phis.product_texts WHERE msg_id = $1) AS product,
+              (SELECT count(*) FROM phis.site_content_version_text WHERE msg_id = $1) AS content`,
+      [message.id],
+    );
+    if (use?.product) return "it is a product's text; its supplier's register replaces it";
+    const versions = Number(use?.content ?? 0);
+    if (versions > 0) {
+      return `${versions} content version${versions === 1 ? "" : "s"} read it as their own text; replacing it would rewrite them`;
+    }
+  }
+  const dropped = answers.filter((answer) => answer.locale !== locale);
+  if (dropped.length > 0) {
+    await client.query(`DELETE FROM ${t.lang} WHERE msg_id = $1 AND locale <> $2`, [message.id, locale]);
+  }
+  await client.query(`UPDATE ${t.msg} SET msg = $2 WHERE id = $1`, [message.id, entry.msg]);
+  await client.query(
+    `INSERT INTO ${t.lang} (msg_id, locale, translation)
+       VALUES ($1, $2, $3)
+     ON CONFLICT (msg_id, locale) DO UPDATE SET translation = EXCLUDED.translation, updated_at = now()`,
+    [message.id, locale, entry.translation],
+  );
+  replacedInRun.set(message.id, entry.msg);
+  const differsAt = firstDifference(message.msg, entry.msg);
+  const start = Math.max(0, differsAt - 20);
+  return {
+    hash: entry.hash,
+    ctx: entry.ctx,
+    msg: entry.msg.slice(0, 80),
+    differsAt,
+    oldExcerpt: excerptFrom(message.msg, start),
+    newExcerpt: excerptFrom(entry.msg, start),
+    dropped: dropped.map((answer) => ({ locale: answer.locale, translation: answer.translation.slice(0, 80) })),
+  };
 }

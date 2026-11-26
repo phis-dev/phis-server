@@ -574,7 +574,10 @@ Usage:
   phis translations usage [--unused-for <days, e.g. 90d>] [--site <site key>] [--examples <n>]
   phis translations status [--site <site key>] [--locale <code>[,<code>...]]
   phis translations export --locale <code> [--site <site key>] [--missing] [--out <file.json>]
-  phis translations import --file <file.json> [--site <site key>] [--add] [--overwrite] [--dry-run]
+  phis translations import --file <file.json> [--site <site key>] [--add] [--overwrite] [--replace-source] [--dry-run]
+                         --replace-source: an entry whose key the store holds with other words (changed
+                         after the first 50 characters) replaces that message's text, takes the file's
+                         answer and drops the message's answers in every other locale.
   phis maintain [--list] [--task <id>] [--dry-run]
   phis mail drain [--limit <rows>] --api-base-url <url>
   phis email test --to <address> [--site <site key>]
@@ -3822,10 +3825,12 @@ async function main() {
   if (group === "translations" && command === "import") {
     const filePath = getRequiredFlag(flags, "file");
     const add = flags.has("add");
-    const file = readPhiTranslationExchangeFile(readFileSync(filePath, "utf8"), { add });
+    const replaceSource = flags.has("replace-source");
+    const file = readPhiTranslationExchangeFile(readFileSync(filePath, "utf8"), { add, replaceSource });
     const result = await importPhiTranslations(getPool(), file, {
       siteKey: getOptionalFlag(flags, "site") ?? null,
       add,
+      replaceSource,
       overwrite: flags.has("overwrite"),
       dryRun: flags.has("dry-run"),
     });
@@ -3836,9 +3841,19 @@ async function main() {
       console.log(
         `${result.dryRun ? "Would write" : "Wrote"} ${result.store} ${result.locale}: `
           + `${add ? `${c.created} created (new messages), ` : ""}${c.written} ${add ? "filled" : "new"}, ${c.replaced} replaced, `
+          + `${replaceSource ? `${c.sourceReplaced} source replaced, ` : ""}`
           + `${c.unchanged} unchanged, ${c.kept} kept (already translated; --overwrite replaces them), ${c.refused} refused.`,
       );
       if (result.dryRun) for (const entry of result.created) console.log(`  would create [${entry.ctx}] ${entry.msg}`);
+      for (const entry of result.sourceReplaced) {
+        console.log(`  ${result.dryRun ? "would replace" : "replaced"} source [${entry.ctx}] ${entry.msg}`);
+        console.log(`    from character ${entry.differsAt}, was: ${entry.oldExcerpt}`);
+        console.log(`    from character ${entry.differsAt}, now: ${entry.newExcerpt}`);
+        if (entry.dropped.length === 0) console.log(`    no answer in another locale to drop`);
+        for (const answer of entry.dropped) {
+          console.log(`    ${result.dryRun ? "would drop" : "dropped"} ${answer.locale}: ${answer.translation}`);
+        }
+      }
       for (const entry of result.refused) console.log(`  refused [${entry.ctx}] ${entry.msg}: ${entry.reason}`);
     }
     if (result.counts.refused > 0) process.exitCode = 1;

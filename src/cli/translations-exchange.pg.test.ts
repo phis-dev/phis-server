@@ -224,3 +224,149 @@ describe("translations import --add, against PostgreSQL", () => {
       .find((entry) => entry.msg === "Add to cart")?.translation).toBe("Ajouter au panier");
   });
 });
+
+/** `--replace-source`: same key, other words -- the message takes the file's text, other locales lose their answers. */
+describe("translations import --replace-source, against PostgreSQL", () => {
+  const globalCtx = "pgtest exchange replace";
+  const opening = "This paragraph opens the same way in both versions ";
+  const oldText = `${opening}and then says the old thing.`;
+  const newText = `${opening}and then says something new, rewritten.`;
+  let site: PhiTestSite;
+
+  const fileFor = (store: string, locale: string, entries: Array<Record<string, unknown>>) =>
+    ({ version: 1, store, locale, exportedAt: "x", entries }) as unknown as PhiTranslationExchangeFile;
+
+  const siteMessage = async (ctx: string) => (await getPool().query<{ id: number; msg: string }>(
+    "SELECT id, msg FROM phis.tr_site_msg WHERE site_id = $1 AND ctx = $2", [site.id, ctx],
+  )).rows;
+  const siteAnswers = async (id: number) => (await getPool().query<{ locale: string; translation: string }>(
+    "SELECT locale, translation FROM phis.tr_site_lang WHERE msg_id = $1 ORDER BY locale", [id],
+  )).rows;
+
+  const cleanGlobal = () => getPool().query("DELETE FROM phis.tr_msg WHERE ctx LIKE 'pgtest exchange replace%'");
+
+  beforeAll(async () => {
+    expect(hashOf(oldText)).toBe(hashOf(newText));
+    await requirePhiTestDatabase();
+    await dropPhiTestSites();
+    await cleanGlobal();
+    site = await createPhiTestSite("tr-exchange-replace");
+  });
+
+  afterAll(async () => {
+    await cleanGlobal();
+    await dropPhiTestSites();
+  });
+
+  it("refuses without the flag, replaces with it under the same id, and drops the other locales' answers", async () => {
+    const pool = getPool();
+    const ctx = "[html]pgtest replace";
+    const id = await ensureSiteMessageId(site.id, oldText, ctx);
+    await pool.query(
+      "INSERT INTO phis.tr_site_lang (msg_id, locale, translation) VALUES ($1, 'de', 'Alter Text'), ($1, 'fr', 'Ancien texte'), ($1, 'es', 'Texto viejo')",
+      [id],
+    );
+    const { rows: [before] } = await pool.query<{ marker: string }>("SELECT marker::text FROM phis.tr_site_marker WHERE site_id = $1", [site.id]);
+    const file = fileFor(site.key, "de", [{ hash: hashOf(newText), ctx, msg: newText, translation: "Neuer Text" }]);
+
+    const strict = await importPhiTranslations(pool, file, { siteKey: site.key, overwrite: true });
+    expect(strict.counts).toMatchObject({ sourceReplaced: 0, refused: 1 });
+    expect(strict.refused[0]?.reason).toMatch(/source text changed since the export/);
+    expect((await siteMessage(ctx))[0]?.msg).toBe(oldText);
+
+    const dry = await importPhiTranslations(pool, file, { siteKey: site.key, replaceSource: true, dryRun: true });
+    expect(dry.counts).toMatchObject({ sourceReplaced: 1, refused: 0 });
+    expect(dry.sourceReplaced[0]).toMatchObject({
+      ctx,
+      differsAt: opening.length + "and then says ".length,
+      dropped: [{ locale: "es", translation: "Texto viejo" }, { locale: "fr", translation: "Ancien texte" }],
+    });
+    expect(dry.sourceReplaced[0]?.oldExcerpt).toMatch(/the old thing/);
+    expect(dry.sourceReplaced[0]?.newExcerpt).toMatch(/something new/);
+    expect((await siteMessage(ctx))[0]?.msg).toBe(oldText);
+    expect(await siteAnswers(id)).toHaveLength(3);
+
+    const result = await importPhiTranslations(pool, file, { siteKey: site.key, replaceSource: true });
+    expect(result.counts).toMatchObject({ sourceReplaced: 1, written: 0, replaced: 0, refused: 0 });
+    expect(await siteMessage(ctx)).toEqual([{ id, msg: newText }]);
+    expect(await siteAnswers(id)).toEqual([{ locale: "de", translation: "Neuer Text" }]);
+    const { rows: [after] } = await pool.query<{ marker: string }>("SELECT marker::text FROM phis.tr_site_marker WHERE site_id = $1", [site.id]);
+    expect(after?.marker).not.toBe(before?.marker);
+
+    // The runtime now finds the new text under its key instead of a collision.
+    expect(await ensureSiteMessageId(site.id, newText, ctx)).toBe(id);
+    // The same file again is an ordinary import.
+    expect((await importPhiTranslations(pool, file, { siteKey: site.key, replaceSource: true })).counts)
+      .toMatchObject({ sourceReplaced: 0, unchanged: 1 });
+  });
+
+  it("refuses a translation that breaks the new text's tags, a second source for one key, and the source locale", async () => {
+    const pool = getPool();
+    const ctx = "[html]pgtest replace checks";
+    await ensureSiteMessageId(site.id, `${opening}<b>old</b>`, ctx);
+    const tagged = `${opening}<b>new</b> words`;
+    const broken = await importPhiTranslations(pool, fileFor(site.key, "de", [
+      { hash: hashOf(tagged), ctx, msg: tagged, translation: "Neue Worte" },
+    ]), { siteKey: site.key, replaceSource: true });
+    expect(broken.refused[0]?.reason).toBe("its tags are not the source's");
+
+    const other = `${opening}<b>other</b> words`;
+    const twice = await importPhiTranslations(pool, fileFor(site.key, "de", [
+      { hash: hashOf(tagged), ctx, msg: tagged, translation: "<b>Neue</b> Worte" },
+      { hash: hashOf(other), ctx, msg: other, translation: "<b>Andere</b> Worte" },
+    ]), { siteKey: site.key, replaceSource: true });
+    expect(twice.counts).toMatchObject({ sourceReplaced: 1, refused: 1 });
+    expect(twice.refused[0]?.reason).toMatch(/earlier entry/);
+    expect((await siteMessage(ctx))[0]?.msg).toBe(tagged);
+
+    const source = await importPhiTranslations(pool, fileFor(site.key, "en", [
+      { hash: hashOf(other), ctx, msg: other, translation: other },
+    ]), { siteKey: site.key, replaceSource: true });
+    expect(source.refused[0]?.reason).toMatch(/source language is en/);
+  });
+
+  it("refuses a message content versions read as their own text", async () => {
+    const pool = getPool();
+    const ctx = "pgtest replace content";
+    const id = await ensureSiteMessageId(site.id, oldText, ctx);
+    const { rows: [content] } = await pool.query<{ id: number }>(
+      "INSERT INTO phis.site_content (site_id, type, slug) VALUES ($1, 1, 'pgtest-replace') RETURNING id",
+      [site.id],
+    );
+    const { rows: [version] } = await pool.query<{ id: number }>(
+      "INSERT INTO phis.site_content_versions (content_id, version_no) VALUES ($1, 1) RETURNING id",
+      [content!.id],
+    );
+    await pool.query(
+      "INSERT INTO phis.site_content_version_text (version_id, field_name, msg_id) VALUES ($1, 'content', $2)",
+      [version!.id, id],
+    );
+    const result = await importPhiTranslations(pool, fileFor(site.key, "de", [
+      { hash: hashOf(newText), ctx, msg: newText, translation: "Neuer Text" },
+    ]), { siteKey: site.key, replaceSource: true });
+    expect(result.refused[0]?.reason).toMatch(/1 content version read it/);
+    expect((await siteMessage(ctx))[0]?.msg).toBe(oldText);
+  });
+
+  it("replaces in the global store too, with a hand-written file without hash", async () => {
+    const pool = getPool();
+    await upsertTranslation("fr", oldText, globalCtx, "Ancien texte", hashOf(oldText));
+    await upsertTranslation("es", oldText, globalCtx, "Texto viejo", hashOf(oldText));
+    const raw = JSON.stringify({ version: 1, store: "global", locale: "fr", exportedAt: "x", entries: [
+      { ctx: globalCtx, msg: newText, translation: "Nouveau texte" },
+    ] });
+    const file = readPhiTranslationExchangeFile(raw, { replaceSource: true });
+    const { rows: [before] } = await pool.query<{ marker: string }>("SELECT marker::text FROM phis.tr_marker WHERE scope = 'global'");
+    const result = await importPhiTranslations(pool, file, { replaceSource: true });
+    expect(result.counts).toMatchObject({ sourceReplaced: 1, refused: 0 });
+    expect(result.sourceReplaced[0]?.dropped).toEqual([{ locale: "es", translation: "Texto viejo" }]);
+    const { rows } = await pool.query<{ msg: string }>("SELECT msg FROM phis.tr_msg WHERE ctx = $1", [globalCtx]);
+    expect(rows).toEqual([{ msg: newText }]);
+    expect((await getTranslations("fr", [{ msg: newText, hash: hashOf(newText) }], globalCtx)).get(hashOf(newText)))
+      .toBe("Nouveau texte");
+    expect((await getTranslations("es", [{ msg: newText, hash: hashOf(newText) }], globalCtx)).get(hashOf(newText)))
+      .toBeUndefined();
+    const { rows: [after] } = await pool.query<{ marker: string }>("SELECT marker::text FROM phis.tr_marker WHERE scope = 'global'");
+    expect(after?.marker).not.toBe(before?.marker);
+  });
+});

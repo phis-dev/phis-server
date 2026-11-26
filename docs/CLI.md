@@ -1374,7 +1374,7 @@ Writes the store's messages with what each holds for `--locale` as a JSON file (
 those without a translation. To stdout, or to `--out`, which must be a new file. `extern` units (a source
 in a language other than the canonical one) are left out. Reads only. Needs `database.uri`.
 
-### `phis translations import --file <file.json> [--site <site key>] [--add] [--overwrite] [--dry-run]`
+### `phis translations import --file <file.json> [--site <site key>] [--add] [--overwrite] [--replace-source] [--dry-run]`
 
 Writes a file's translations into the store it was exported from (the file names it; `--site` must say
 the same). An entry with `translation: null` is skipped. Refused, each with its reason, and exit `1`: a
@@ -1401,6 +1401,24 @@ held), `replaced` and `kept`; with `--dry-run` it lists the messages it would cr
 by then is filled as without `--add`. With `--json`, `counts.created` and `created` are added.
 Example (`fr.json`): `{"version": 1, "store": "global", "locale": "fr", "exportedAt": "-", "entries":
 [{"ctx": "Navigation", "msg": "Add to cart", "translation": "Ajouter au panier"}]}`.
+
+`--replace-source` takes an entry whose key (hash and context) the store holds with other words -- a text
+rewritten after its first 50 characters, which the key does not cover -- as the message's new source:
+the message keeps its id and key, its text becomes the entry's `msg`, the entry's translation is written
+for the file's locale whatever it held (with or without `--overwrite`), and its answers in every other
+locale are deleted, since they translate the old text. The `hash` must be the new text's (it may be left
+out and is computed). Without the flag such an entry stays refused (`its source text changed since the
+export`). Refused with it, exit `1`: a translation into the canonical source language, a message holding a
+protected external variant, a product's text, a message content versions read as their own text, and a
+second, different source for a key the same file already replaced. The summary adds `source replaced`,
+and each replaced message is listed with its opening, the old and the new text from the character where
+they part, and the answers dropped per locale; with `--dry-run` as `would replace` and `would drop`. With
+`--json`, `counts.sourceReplaced` and `sourceReplaced` (`hash`, `ctx`, `msg`, `differsAt`, `oldExcerpt`,
+`newExcerpt`, `dropped` of `locale` and `translation`) are added. Works for the global store and, with
+`--site`, a Site's. TRANSLATIONS.md, "A source that changed past its key".
+Example (`de.json`, Site `phisys`): `{"version": 1, "store": "phisys", "locale": "de", "exportedAt": "-",
+"entries": [{"ctx": "[html]", "msg": "<the whole new paragraph>", "translation": "<its German>"}]}`, then
+`phis translations import --file de.json --site phisys --replace-source --dry-run`.
 
 ## media
 
