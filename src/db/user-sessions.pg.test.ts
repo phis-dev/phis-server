@@ -14,6 +14,8 @@ import {
   acceptSession,
   createUserSession,
   getSessionById,
+  listLiveUserSessionsForSite,
+  listUserSessionsForSite,
   revokeUserSessions,
   updateUserSessionAuthState,
 } from "./user-sessions";
@@ -276,5 +278,51 @@ describe("the session secret hash against PostgreSQL", () => {
        VALUES ($1, $2, $3, $4, NOW() + INTERVAL '1 day')`,
       ["00000000-0000-4000-8000-0000000000a2", userId, site.id, Buffer.alloc(31)],
     )).rejects.toMatchObject({ code: "23514" });
+  });
+});
+
+/**
+ * The account sees its live sessions and nothing of its history (owner, 2026-11-26); the Site Admin's
+ * history read keeps every row. Which rows count as live is the statement's answer, so it runs for real.
+ */
+describe("the live sessions against the login history", () => {
+  let pool: Pool;
+  let site: PhiTestSite;
+  let userId: number;
+
+  beforeAll(async () => {
+    pool = await requirePhiTestDatabase();
+    await dropPhiTestSites();
+    site = await createPhiTestSite("live-sessions");
+    userId = await createPhiTestUser(site);
+  });
+
+  afterAll(async () => {
+    await dropPhiTestSites();
+  });
+
+  it("leaves revoked, expired and lapsed-challenge sessions out of the live list only", async () => {
+    const open = async () => (await createUserSession({ userId, siteId: site.id, authMethodKeys: ["password"] })).id;
+    const live = await open();
+    const revoked = await open();
+    const expired = await open();
+    const lapsed = await open();
+    const waiting = await open();
+    await pool.query(`UPDATE phis.user_sessions SET revoked_at = NOW() WHERE id = $1`, [revoked]);
+    await pool.query(`UPDATE phis.user_sessions SET expires_at = NOW() - INTERVAL '1 minute' WHERE id = $1`, [expired]);
+    await pool.query(
+      `UPDATE phis.user_sessions SET auth_state = $2, authenticated_at = NOW() - INTERVAL '1 day' WHERE id = $1`,
+      [lapsed, PHI_AUTH_SESSION_STATES.factorChallengeRequired],
+    );
+    await pool.query(
+      `UPDATE phis.user_sessions SET auth_state = $2, authenticated_at = NOW() WHERE id = $1`,
+      [waiting, PHI_AUTH_SESSION_STATES.factorChallengeRequired],
+    );
+
+    const liveIds = (await listLiveUserSessionsForSite(userId, site.id)).map((session) => session.id);
+    expect(liveIds.sort()).toEqual([live, waiting].sort());
+
+    const historyIds = (await listUserSessionsForSite(userId, site.id)).map((session) => session.id);
+    expect(historyIds.sort()).toEqual([live, revoked, expired, lapsed, waiting].sort());
   });
 });

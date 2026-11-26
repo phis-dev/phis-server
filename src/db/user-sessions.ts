@@ -201,9 +201,37 @@ export async function getSessionById(sessionId: string) {
   return row ? mapSessionRow(row) : null;
 }
 
+/**
+ * The sessions of one account on one Site, newest first, revoked and expired ones included: the login
+ * history, which is the Site Admin's to read (`GET /api/site/admin/users?historyUserId=`). The account
+ * itself is shown only its live ones (`listLiveUserSessionsForSite`).
+ */
 export async function listUserSessionsForSite(userId: number, siteId: number, limit = 25) {
+  return selectUserSessionsForSite(userId, siteId, limit, false);
+}
+
+/**
+ * The sessions of one account on one Site that still count, newest first: neither revoked nor expired,
+ * nor a second-factor challenge that lapsed (`hasFactorChallengeLapsed`). This is what the account itself
+ * is shown (`GET /api/v1/auth/account/security`), each one something it can still sign out; the history
+ * of past logins is not the account's to read (owner, 2026-11-26).
+ */
+export async function listLiveUserSessionsForSite(userId: number, siteId: number, limit = 25) {
+  return selectUserSessionsForSite(userId, siteId, limit, true);
+}
+
+async function selectUserSessionsForSite(userId: number, siteId: number, limit: number, liveOnly: boolean) {
   const normalizedLimit = Math.max(1, Math.min(100, Math.trunc(limit) || 25));
   const pool = getPool();
+  const liveCondition = liveOnly
+    ? `
+       AND revoked_at IS NULL
+       AND expires_at > NOW()
+       AND NOT (
+         auth_state = $4
+         AND (authenticated_at IS NULL OR authenticated_at <= NOW() - ($5::int * INTERVAL '1 second'))
+       )`
+    : "";
   const { rows } = await pool.query<UserSessionRecord>(
     `SELECT id,
             user_id,
@@ -223,10 +251,12 @@ export async function listUserSessionsForSite(userId: number, siteId: number, li
             user_agent
      FROM phis.user_sessions
      WHERE user_id = $1
-       AND site_id = $2
+       AND site_id = $2${liveCondition}
      ORDER BY created_at DESC, id DESC
      LIMIT $3`,
-    [userId, siteId, normalizedLimit],
+    liveOnly
+      ? [userId, siteId, normalizedLimit, PHI_AUTH_SESSION_STATES.factorChallengeRequired, FACTOR_CHALLENGE_TTL_SECONDS]
+      : [userId, siteId, normalizedLimit],
   );
 
   return rows.map((row) => ({

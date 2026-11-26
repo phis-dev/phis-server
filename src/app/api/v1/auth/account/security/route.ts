@@ -2,12 +2,15 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { getSiteAuthPolicy, listUserAuthIdentities } from "@/db/site-auth";
 import { listUserAuthFactors } from "@/db/user-auth-factors";
-import { getSessionFromRequest, listUserSessionsForSite } from "@/db/user-sessions";
+import { getSessionFromRequest, listLiveUserSessionsForSite } from "@/db/user-sessions";
 import { guardApiV1 } from "@/lib/api-v1-guard";
 import { requireSiteFromExplicitKeyRequest } from "@/lib/site-context";
 
 export const dynamic = "force-dynamic";
 
+/**
+ * The signed-in account's own security: the Site's factor policy, its factors, linked identities and live sessions (neither revoked nor expired) -- the login history is the Site Admin's, not the account's.
+ */
 export async function GET(request: NextRequest) {
   const guardError = await guardApiV1(request, { requireInternalToken: true });
   if (guardError) return guardError;
@@ -21,7 +24,7 @@ export async function GET(request: NextRequest) {
     getSiteAuthPolicy(siteContext.site.id),
     listUserAuthFactors(session.userId, session.siteId),
     listUserAuthIdentities(session.userId),
-    listUserSessionsForSite(session.userId, session.siteId),
+    listLiveUserSessionsForSite(session.userId, session.siteId),
   ]);
   return NextResponse.json({
     policy: { factor: policy?.factorPolicy ?? null },

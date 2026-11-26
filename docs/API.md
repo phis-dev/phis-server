@@ -261,7 +261,7 @@ Versioned API a Site calls server-to-server with its token (`x-phis-token`), and
 | Method | Address | Access | Description |
 |---|---|---|---|
 | DELETE | [`/api/v1/auth/account/factors/{factorId}`](../src/app/api/v1/auth/account/factors/[factorId]/route.ts) | CSRF token; Site session, checked in the handler; internal token |  |
-| GET | [`/api/v1/auth/account/security`](../src/app/api/v1/auth/account/security/route.ts) | Site session, checked in the handler; internal token |  |
+| GET | [`/api/v1/auth/account/security`](../src/app/api/v1/auth/account/security/route.ts) | Site session, checked in the handler; internal token | The signed-in account's own security: the Site's factor policy, its factors, linked identities and live sessions (neither revoked nor expired) -- the login history is the Site Admin's, not the account's. |
 | DELETE | [`/api/v1/auth/account/sessions/{sessionId}`](../src/app/api/v1/auth/account/sessions/[sessionId]/route.ts) | CSRF token; Site session, checked in the handler; internal token |  |
 | GET | [`/api/v1/auth/admin/installations`](../src/app/api/v1/auth/admin/installations/route.ts) | session (requireAuthAdminSectionReadContext) |  |
 | POST | [`/api/v1/auth/admin/installations`](../src/app/api/v1/auth/admin/installations/route.ts) | session (requireAuthAdminSectionContext) |  |
