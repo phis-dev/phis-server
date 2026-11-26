@@ -239,6 +239,7 @@ Versioned API a Site calls server-to-server with its token (`x-phis-token`), and
 |---|---|---|---|
 | DELETE | [`/api/v1/addons/{scope}/{name}/{...path?}`](../src/app/api/v1/addons/[scope]/[name]/[[...path]]/route.ts) | decided per route by the Add-on dispatcher (SERVER_ADDONS.md) |  |
 | GET | [`/api/v1/addons/{scope}/{name}/{...path?}`](../src/app/api/v1/addons/[scope]/[name]/[[...path]]/route.ts) | decided per route by the Add-on dispatcher (SERVER_ADDONS.md) |  |
+| HEAD | [`/api/v1/addons/{scope}/{name}/{...path?}`](../src/app/api/v1/addons/[scope]/[name]/[[...path]]/route.ts) | decided per route by the Add-on dispatcher (SERVER_ADDONS.md) |  |
 | PATCH | [`/api/v1/addons/{scope}/{name}/{...path?}`](../src/app/api/v1/addons/[scope]/[name]/[[...path]]/route.ts) | decided per route by the Add-on dispatcher (SERVER_ADDONS.md) |  |
 | POST | [`/api/v1/addons/{scope}/{name}/{...path?}`](../src/app/api/v1/addons/[scope]/[name]/[[...path]]/route.ts) | decided per route by the Add-on dispatcher (SERVER_ADDONS.md) |  |
 | PUT | [`/api/v1/addons/{scope}/{name}/{...path?}`](../src/app/api/v1/addons/[scope]/[name]/[[...path]]/route.ts) | decided per route by the Add-on dispatcher (SERVER_ADDONS.md) |  |
@@ -345,6 +346,7 @@ Versioned API a Site calls server-to-server with its token (`x-phis-token`), and
 |---|---|---|---|
 | DELETE | [`/api/v1/hooks/{scope}/{name}/{...path?}`](../src/app/api/v1/hooks/[scope]/[name]/[[...path]]/route.ts) | decided per route by the Add-on dispatcher (SERVER_ADDONS.md) |  |
 | GET | [`/api/v1/hooks/{scope}/{name}/{...path?}`](../src/app/api/v1/hooks/[scope]/[name]/[[...path]]/route.ts) | decided per route by the Add-on dispatcher (SERVER_ADDONS.md) |  |
+| HEAD | [`/api/v1/hooks/{scope}/{name}/{...path?}`](../src/app/api/v1/hooks/[scope]/[name]/[[...path]]/route.ts) | decided per route by the Add-on dispatcher (SERVER_ADDONS.md) |  |
 | PATCH | [`/api/v1/hooks/{scope}/{name}/{...path?}`](../src/app/api/v1/hooks/[scope]/[name]/[[...path]]/route.ts) | decided per route by the Add-on dispatcher (SERVER_ADDONS.md) |  |
 | POST | [`/api/v1/hooks/{scope}/{name}/{...path?}`](../src/app/api/v1/hooks/[scope]/[name]/[[...path]]/route.ts) | decided per route by the Add-on dispatcher (SERVER_ADDONS.md) |  |
 | PUT | [`/api/v1/hooks/{scope}/{name}/{...path?}`](../src/app/api/v1/hooks/[scope]/[name]/[[...path]]/route.ts) | decided per route by the Add-on dispatcher (SERVER_ADDONS.md) |  |
