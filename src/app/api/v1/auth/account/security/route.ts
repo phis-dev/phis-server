@@ -9,7 +9,7 @@ import { requireSiteFromExplicitKeyRequest } from "@/lib/site-context";
 export const dynamic = "force-dynamic";
 
 /**
- * The signed-in account's own security: the Site's factor policy, its factors, linked identities and live sessions (neither revoked nor expired) -- the login history is the Site Admin's, not the account's.
+ * The signed-in account's own security: the Site's factor policy, its factors, linked identities and live sessions (neither revoked nor expired) -- the login history is for the Site Admin and the Site Maintainer, not the account.
  */
 export async function GET(request: NextRequest) {
   const guardError = await guardApiV1(request, { requireInternalToken: true });

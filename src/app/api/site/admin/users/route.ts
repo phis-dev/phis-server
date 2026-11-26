@@ -28,7 +28,7 @@ import {
   type PhiCountingAddonRoleHeldThroughSiteAccess,
 } from "@/lib/addons/viewer-roles";
 import { getPool } from "@/lib/db";
-import { requireSiteAdminOnlyApiContext } from "@/lib/guards/site-admin-api";
+import { requireSiteAdminOnlyApiContext, requireSiteMaintainerApiContext } from "@/lib/guards/site-admin-api";
 import { PHI_BASE_ROLE_OPTIONS } from "@/lib/constants/phi-base-role-metadata";
 import { PhiUserAccountFlag } from "@/lib/constants/user-account-flags";
 import { buildPasswordResetUrlForLocale } from "@/lib/email";
@@ -238,10 +238,19 @@ async function sendPasswordResetMail(input: {
 }
 
 /**
- * The Site's users, one page, each with the Core roles, the stored Add-on roles they were given and, as `impliedAddonRoles`, the ones a Site access hands them without a grant (a Site Admin holds every role besides); filterable by account type, enabled state, `addonId` and `addonRole`. `?userId=` answers the one user, with `addonRoles` as a list of `"<addonId>:<role>"` strings, one per role.
+ * The Site's users, one page, each with the Core roles, the stored Add-on roles they were given and, as `impliedAddonRoles`, the ones a Site access hands them without a grant (a Site Admin holds every role besides); filterable by account type, enabled state, `addonId` and `addonRole`. `?userId=` answers the one user, with `addonRoles` as a list of `"<addonId>:<role>"` strings, one per role. `?historyUserId=` answers that user's login history on the Site (every session, revoked and expired ones too), which a Site Maintainer may read as well; everything else here is the Site Admin's.
  */
 export async function GET(request: NextRequest) {
-  const { context, error } = await requireSiteAdminOnlyApiContext(request);
+  const { searchParams } = new URL(request.url);
+  /*
+   * The login history is a read the Site Maintainer is given too (owner, 2026-11-26): they look after the
+   * Site and its people without changing who they are. Only this branch: the user list and a user's
+   * record carry what the Users page edits, and that stays the Site Admin's. Supporters are not given it.
+   */
+  const historyUserParam = searchParams.get("historyUserId");
+  const { context, error } = historyUserParam === null
+    ? await requireSiteAdminOnlyApiContext(request)
+    : await requireSiteMaintainerApiContext(request);
   if (error) {
     return error;
   }
@@ -250,9 +259,7 @@ export async function GET(request: NextRequest) {
 
   const site = context.site;
 
-  const { searchParams } = new URL(request.url);
   // Ids are read strictly: "12abc" names nobody, and must not become user 12.
-  const historyUserParam = searchParams.get("historyUserId");
   const historyUserId = historyUserParam === null ? null : parseStrictPositiveInt(historyUserParam);
   if (historyUserParam !== null && !historyUserId) {
     return NextResponse.json({ error: "Invalid historyUserId." }, { status: 400 });

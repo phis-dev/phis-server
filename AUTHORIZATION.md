@@ -197,6 +197,11 @@ The routes over the same data:
   /{addonId}`; `PUT /retention`; `GET /log`), are Site Admin only (`requireSiteAdminOnlyApiContext`): granting
   an Add-on to read the Site's people with nobody acting is the Site's own decision, and a Maintainer or an
   Accountant takes no part in it.
+- A user's login history on the Site, `GET /api/site/admin/users?historyUserId=` (every session, revoked
+  and expired ones too), is Site maintenance (`requireSiteMaintainerApiContext`, the Site Admin through the
+  evaluator): a Maintainer reads it and changes nothing. The rest of `/api/site/admin/users`, the list and a
+  user's record included, stays Site Admin only, and a Supporter reads no history. The account itself sees
+  only its live sessions (`GET /api/v1/auth/account/security`).
 - One's own addresses on the Site, `/api/site/account/addresses` (`GET`, `POST`) and `/{id}` (`PUT`,
   `DELETE`), need a signed-in, enabled membership and no role (`requireSiteAuthenticatedApiContext`); each
   reaches only the actor's own current addresses. One's own telephone numbers are `PATCH

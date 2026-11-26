@@ -5,6 +5,8 @@ vi.mock("server-only", () => ({}));
 
 const mocks = vi.hoisted(() => ({
   guard: vi.fn(),
+  maintainerGuard: vi.fn(),
+  history: vi.fn(),
   getByEmail: vi.fn(),
   getById: vi.fn(),
   ensureAccount: vi.fn(),
@@ -30,6 +32,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("@/lib/guards/site-admin-api", () => ({
   requireSiteAdminOnlyApiContext: mocks.guard,
+  requireSiteMaintainerApiContext: mocks.maintainerGuard,
 }));
 vi.mock("@/db/user-accounts", () => ({
   deleteUserAccount: mocks.deleteAccount,
@@ -63,7 +66,7 @@ vi.mock("@/db/user-site-memberships", () => ({
   upsertUserSiteMembership: mocks.upsertMembership,
 }));
 vi.mock("@/db/user-sessions", () => ({
-  listUserSessionsForSite: vi.fn(),
+  listUserSessionsForSite: mocks.history,
   revokeUserSessionsForSite: mocks.revokeSessions,
 }));
 vi.mock("@/lib/email", () => ({ buildPasswordResetUrlForLocale: () => "https://site.test/reset" }));
@@ -77,6 +80,7 @@ vi.mock("@/lib/password", () => ({ hashPassword: async () => "hash" }));
 
 import { listAdminUsersForSite } from "@/db/user-admin";
 import { PhiBaseRole } from "@/lib/constants/phi-base-roles";
+import { canPhiViewerAccess, PHI_ACCESS_SITE_MAINTENANCE, PHI_CORE_ROLE_PROVIDER_ID } from "@/lib/authorization";
 
 import { DELETE, GET, POST, PUT } from "./route";
 
@@ -113,6 +117,7 @@ const RECORD = {
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.guard.mockResolvedValue({ context: { site: SITE, session: { userId: 3 } }, error: null });
+  mocks.maintainerGuard.mockResolvedValue({ context: { site: SITE, session: { userId: 3 } }, error: null });
   mocks.getProfile.mockResolvedValue({
     userId: 41, firstName: "Paula", lastName: "Person", companyName: null,
   });
@@ -432,7 +437,7 @@ describe("DELETE /api/site/admin/users", () => {
 });
 
 describe("GET /api/site/admin/users", () => {
-  // Addresses, sign-in history and IPs are user administration, which AUTHORIZATION.md keeps to the Core
+  // Addresses and the user records are user administration, which AUTHORIZATION.md keeps to the Core
   // Admin; a Maintainer resolves to the admin Area but is not one.
   it("answers with the Admin-only guard's refusal", async () => {
     mocks.guard.mockResolvedValue({
@@ -442,6 +447,56 @@ describe("GET /api/site/admin/users", () => {
     const response = await GET(request("GET"));
 
     expect(response.status).toBe(403);
+    expect(mocks.maintainerGuard).not.toHaveBeenCalled();
+  });
+});
+
+/*
+ * The login history is the one read a Site Maintainer is given (owner, 2026-11-26). The policy is
+ * checked for real below; here, that the history asks the Maintainer guard and nothing else does.
+ */
+describe("GET /api/site/admin/users?historyUserId", () => {
+  it("asks the Maintainer guard and answers the history", async () => {
+    mocks.getById.mockResolvedValue(account([7]));
+    mocks.history.mockResolvedValue([{ id: "s1" }]);
+    const response = await GET(request("GET", undefined, "?historyUserId=41"));
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ userId: 41, sessions: [{ id: "s1" }] });
+    expect(mocks.maintainerGuard).toHaveBeenCalledTimes(1);
+    expect(mocks.guard).not.toHaveBeenCalled();
+  });
+
+  it("answers with the Maintainer guard's refusal", async () => {
+    mocks.maintainerGuard.mockResolvedValue({
+      context: null,
+      error: NextResponse.json({ error: "Forbidden." }, { status: 403 }),
+    });
+    const response = await GET(request("GET", undefined, "?historyUserId=41"));
+
+    expect(response.status).toBe(403);
+    expect(mocks.history).not.toHaveBeenCalled();
+  });
+
+  // An unreadable id never falls through to the list, which is the Admin's.
+  it("refuses an unreadable id instead of answering the list", async () => {
+    const response = await GET(request("GET", undefined, "?historyUserId=12abc"));
+
+    expect(response.status).toBe(400);
+    expect(listAdminUsersForSite).not.toHaveBeenCalled();
+  });
+
+  it("is open to the Site Admin and the Maintainer, not to a Supporter or a member", () => {
+    const reach = (flags: number) => canPhiViewerAccess({
+      authenticated: true,
+      roleClaims: flags === 0 ? [] : [{ providerId: PHI_CORE_ROLE_PROVIDER_ID, flags }],
+      groupClaims: [],
+    }, PHI_ACCESS_SITE_MAINTENANCE);
+
+    expect(reach(PhiBaseRole.Admin)).toBe(true);
+    expect(reach(PhiBaseRole.Maintainer)).toBe(true);
+    expect(reach(PhiBaseRole.Supporter)).toBe(false);
+    expect(reach(0)).toBe(false);
   });
 });
 

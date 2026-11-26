@@ -203,8 +203,8 @@ export async function getSessionById(sessionId: string) {
 
 /**
  * The sessions of one account on one Site, newest first, revoked and expired ones included: the login
- * history, which is the Site Admin's to read (`GET /api/site/admin/users?historyUserId=`). The account
- * itself is shown only its live ones (`listLiveUserSessionsForSite`).
+ * history, which the Site Admin and the Site Maintainer read (`GET /api/site/admin/users?historyUserId=`).
+ * The account itself is shown only its live ones (`listLiveUserSessionsForSite`).
  */
 export async function listUserSessionsForSite(userId: number, siteId: number, limit = 25) {
   return selectUserSessionsForSite(userId, siteId, limit, false);
