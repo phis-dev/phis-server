@@ -96,7 +96,8 @@ contribution.
 The Areas are `public`, `app`, `admin`, `builder`, `editor`, and `accounting`
 (`src/lib/constants/cms-areas.ts`). The `admin` Area is the shared Site control-plane host for Core Admin
 and Maintainer viewers: Core Maintainer resolves to `admin`, while user, role and Site administration remain
-protected by Core-Admin-only policies. Observability and Site maintenance use the Core Maintainer policy
+protected by Core-Admin-only policies (a Maintainer reads the user list and login history, section 4, and
+changes nothing). Observability and Site maintenance use the Core Maintainer policy
 and are also reachable by Core Admin through the Site-superuser override.
 
 ## 3. Shared access policy
@@ -197,11 +198,13 @@ The routes over the same data:
   /{addonId}`; `PUT /retention`; `GET /log`), are Site Admin only (`requireSiteAdminOnlyApiContext`): granting
   an Add-on to read the Site's people with nobody acting is the Site's own decision, and a Maintainer or an
   Accountant takes no part in it.
-- A user's login history on the Site, `GET /api/site/admin/users?historyUserId=` (every session, revoked
-  and expired ones too), is Site maintenance (`requireSiteMaintainerApiContext`, the Site Admin through the
-  evaluator): a Maintainer reads it and changes nothing. The rest of `/api/site/admin/users`, the list and a
-  user's record included, stays Site Admin only, and a Supporter reads no history. The account itself sees
-  only its live sessions (`GET /api/v1/auth/account/security`).
+- The user list, `GET /api/site/admin/users` (no addresses in it), and a user's login history on the Site,
+  `GET /api/site/admin/users?historyUserId=` (every session, revoked and expired ones too), are Site
+  maintenance (`requireSiteMaintainerApiContext`, the Site Admin through the evaluator): a Maintainer reads
+  them and changes nothing. This takes back part of the 2026-09-29 decision that kept the list to the Core
+  Admin (owner, 2026-11-26). A user's record, `GET ?userId=`, which the edit Form loads, and every writing
+  method of `/api/site/admin/users` stay Site Admin only; a Supporter reads neither list nor history. The
+  account itself sees only its live sessions (`GET /api/v1/auth/account/security`).
 - One's own addresses on the Site, `/api/site/account/addresses` (`GET`, `POST`) and `/{id}` (`PUT`,
   `DELETE`), need a signed-in, enabled membership and no role (`requireSiteAuthenticatedApiContext`); each
   reaches only the actor's own current addresses. One's own telephone numbers are `PATCH

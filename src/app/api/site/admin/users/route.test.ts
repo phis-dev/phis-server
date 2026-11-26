@@ -436,25 +436,44 @@ describe("DELETE /api/site/admin/users", () => {
   });
 });
 
+/*
+ * The Site Maintainer reads the user list and a user's login history (owner, 2026-11-26); a user's record,
+ * which the edit Form loads, stays the Site Admin's. The policy is checked for real at the end; here, which
+ * read asks which guard.
+ */
+const forbidden = () => ({ context: null, error: NextResponse.json({ error: "Forbidden." }, { status: 403 }) });
+
 describe("GET /api/site/admin/users", () => {
-  // Addresses and the user records are user administration, which AUTHORIZATION.md keeps to the Core
-  // Admin; a Maintainer resolves to the admin Area but is not one.
-  it("answers with the Admin-only guard's refusal", async () => {
-    mocks.guard.mockResolvedValue({
-      context: null,
-      error: NextResponse.json({ error: "Forbidden." }, { status: 403 }),
-    });
+
+  it("answers the list through the Maintainer guard", async () => {
+    vi.mocked(listAdminUsersForSite).mockResolvedValue(
+      { rows: [], total: 0, siteTotal: 0, page: 1, pageSize: 20 } as never,
+    );
+    const response = await GET(request("GET"));
+
+    expect(response.status).toBe(200);
+    expect(mocks.maintainerGuard).toHaveBeenCalledTimes(1);
+    expect(mocks.guard).not.toHaveBeenCalled();
+  });
+
+  it("answers the list with the Maintainer guard's refusal", async () => {
+    mocks.maintainerGuard.mockResolvedValue(forbidden());
     const response = await GET(request("GET"));
 
     expect(response.status).toBe(403);
+    expect(listAdminUsersForSite).not.toHaveBeenCalled();
+  });
+
+  it("keeps a user's record to the Admin-only guard", async () => {
+    mocks.guard.mockResolvedValue(forbidden());
+    const response = await GET(request("GET", undefined, "?userId=41"));
+
+    expect(response.status).toBe(403);
     expect(mocks.maintainerGuard).not.toHaveBeenCalled();
+    expect(mocks.getById).not.toHaveBeenCalled();
   });
 });
 
-/*
- * The login history is the one read a Site Maintainer is given (owner, 2026-11-26). The policy is
- * checked for real below; here, that the history asks the Maintainer guard and nothing else does.
- */
 describe("GET /api/site/admin/users?historyUserId", () => {
   it("asks the Maintainer guard and answers the history", async () => {
     mocks.getById.mockResolvedValue(account([7]));
@@ -468,17 +487,14 @@ describe("GET /api/site/admin/users?historyUserId", () => {
   });
 
   it("answers with the Maintainer guard's refusal", async () => {
-    mocks.maintainerGuard.mockResolvedValue({
-      context: null,
-      error: NextResponse.json({ error: "Forbidden." }, { status: 403 }),
-    });
+    mocks.maintainerGuard.mockResolvedValue(forbidden());
     const response = await GET(request("GET", undefined, "?historyUserId=41"));
 
     expect(response.status).toBe(403);
     expect(mocks.history).not.toHaveBeenCalled();
   });
 
-  // An unreadable id never falls through to the list, which is the Admin's.
+  // An unreadable id is the caller's mistake, not a request for the list.
   it("refuses an unreadable id instead of answering the list", async () => {
     const response = await GET(request("GET", undefined, "?historyUserId=12abc"));
 
@@ -561,6 +577,7 @@ describe("GET /api/site/admin/users with Add-on roles", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.guard.mockResolvedValue({ context: { site: SITE, session: { userId: 1 } }, error: null });
+    mocks.maintainerGuard.mockResolvedValue({ context: { site: SITE, session: { userId: 1 } }, error: null });
     vi.mocked(listAdminUsersForSite).mockResolvedValue(
       { rows: [listRow(10), listRow(11), listRow(12)], total: 3, siteTotal: 3, page: 1, pageSize: 20 } as never,
     );

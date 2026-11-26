@@ -238,17 +238,19 @@ async function sendPasswordResetMail(input: {
 }
 
 /**
- * The Site's users, one page, each with the Core roles, the stored Add-on roles they were given and, as `impliedAddonRoles`, the ones a Site access hands them without a grant (a Site Admin holds every role besides); filterable by account type, enabled state, `addonId` and `addonRole`. `?userId=` answers the one user, with `addonRoles` as a list of `"<addonId>:<role>"` strings, one per role. `?historyUserId=` answers that user's login history on the Site (every session, revoked and expired ones too), which a Site Maintainer may read as well; everything else here is the Site Admin's.
+ * The Site's users, one page, each with the Core roles, the stored Add-on roles they were given and, as `impliedAddonRoles`, the ones a Site access hands them without a grant (a Site Admin holds every role besides); filterable by account type, enabled state, `addonId` and `addonRole`. `?userId=` answers the one user, with `addonRoles` as a list of `"<addonId>:<role>"` strings, one per role. `?historyUserId=` answers that user's login history on the Site (every session, revoked and expired ones too). The list and the history are open to a Site Maintainer as well, to read; `?userId=` is the Site Admin's.
  */
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
   /*
-   * The login history is a read the Site Maintainer is given too (owner, 2026-11-26): they look after the
-   * Site and its people without changing who they are. Only this branch: the user list and a user's
-   * record carry what the Users page edits, and that stays the Site Admin's. Supporters are not given it.
+   * The Site Maintainer reads the user list and a user's login history (owner, 2026-11-26): they look after
+   * the Site and its people without changing who they are, and the list -- which carries no addresses -- is
+   * how they reach the history. A user's record (`?userId=`) is what the edit Form loads, and it stays the
+   * Site Admin's with every writing method of this route. Supporters are given neither.
    */
   const historyUserParam = searchParams.get("historyUserId");
-  const { context, error } = historyUserParam === null
+  const userParam = searchParams.get("userId");
+  const { context, error } = userParam !== null && historyUserParam === null
     ? await requireSiteAdminOnlyApiContext(request)
     : await requireSiteMaintainerApiContext(request);
   if (error) {
@@ -277,7 +279,6 @@ export async function GET(request: NextRequest) {
     });
   }
 
-  const userParam = searchParams.get("userId");
   const userId = userParam === null ? null : parseStrictPositiveInt(userParam);
   if (userParam !== null && !userId) {
     return NextResponse.json({ error: "Invalid userId." }, { status: 400 });
