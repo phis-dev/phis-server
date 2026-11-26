@@ -825,6 +825,13 @@ who does not understand a message is the filter -- was built that way on 2026-09
 and is replaced by this one: the filter it relied on is a control that is drawn on every row whether
 anybody needs it or not.
 
+**"Other language"** (owner decision, 2026-11-26). The picker also offers one option beyond the Site's
+languages, last and after a separator. It declares nothing: the form's relay leaves `sourceLang` out of the request
+(the routes already read absent as not declared, so nothing changes here), the message is stored with
+`source_lang` NULL, *Translate* shows for every reader, and the detection on the first translation fills
+the language in with `LangDetected`. The picker opens on it where the writer's and the page's language are
+both not the Site's. An unknown code is still a 400.
+
 A declaration is a declaration whoever makes it: stored as it resolves and **without** `LangDetected`.
 `Confidential` messages store it too; the language never leaves Core with the body, because the body
 does not leave.
