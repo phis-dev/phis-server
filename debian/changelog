@@ -1,3 +1,19 @@
+phis (0.8.4-1) unstable; urgency=medium
+
+  * Needs @phis/contracts 0.8.14.
+  * Messages can carry their writer's declared language. Site thread and
+    support routes validate sourceLang, and support:v1 accepts
+    messageSourceLang for the opening message. A translation into the
+    message's own written language returns the original without a provider
+    call; "Other language" leaves detection to the first translation.
+  * The translation exchange CLI can replace source text that changed
+    beyond its existing key, with the documented collision checks.
+  * phis media import puts local files into a Site's Media library and
+    returns their Asset ids. Its file and folder routes require the
+    internal token and are included in the generated API reference.
+
+ -- Marius Schumacher <marius.schumacher@phisys.com>  Thu, 26 Nov 2026 15:08:55 +0000
+
 phis (0.8.3-1) unstable; urgency=medium
 
   * Include HEAD dispatch in the generated API reference.
