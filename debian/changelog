@@ -1,3 +1,14 @@
+phis (0.8.5-1) unstable; urgency=medium
+
+  * Needs @phis/contracts 0.8.15.
+  * payments:v1 listProfiles names the payment profiles whose grant for the
+    consuming Add-on holds read, with their state, in one statement.
+  * entitlements:v1 list takes subjects (at most 100) and reads them in one
+    statement. It and phis entitlement list refuse a listing of more than
+    500 entries instead of cutting it.
+
+ -- Marius Schumacher <marius.schumacher@phisys.com>  Thu, 26 Nov 2026 19:20:00 +0000
+
 phis (0.8.4-1) unstable; urgency=medium
 
   * Needs @phis/contracts 0.8.14.
