@@ -105,7 +105,7 @@ Provider. No API key, webhook secret or payment token is a CLI argument or profi
 values enter through the existing protected secret-write mechanism. The adapter's bound
 `readCredentials()` resolves only that profile's validated references.
 
-`read` covers `listMethods`, `profileReach`, `refreshProfileReach`, `get`, `getOperation` and `getRefund`. Each remaining grant names its
+`read` covers `listProfiles`, `listMethods`, `profileReach`, `refreshProfileReach`, `get`, `getOperation` and `getRefund`. Each remaining grant names its
 capability operation. Grants are checked on stored payments as well as new ones. Removing a grant
 stops the consumer's access; operator reconciliation remains possible without transferring ownership.
 There is no implicit default merchant profile and no automatic grant to an installed consumer.

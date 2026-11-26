@@ -71,7 +71,7 @@ describe("core capability deliverability", () => {
     const capabilities = buildPhisAddonCapabilities({ manifest: manifestRequiring([PHIS_CORE_CAPABILITIES.payments, PHIS_CORE_CAPABILITIES.paymentNotifications]),
       manifestDigest: "probe", siteId: 1, siteKey: "probe-site", actorUserId: null });
     expect(capabilities.paymentNotifications).toBeUndefined();
-    expect(Object.keys(capabilities.payments!).sort()).toEqual(["listMethods", "profileReach", "refreshProfileReach", "create", "get", "getOperation", "getRefund", "complete", "refresh", "capture", "cancel", "refund",
+    expect(Object.keys(capabilities.payments!).sort()).toEqual(["listProfiles", "listMethods", "profileReach", "refreshProfileReach", "create", "get", "getOperation", "getRefund", "complete", "refresh", "capture", "cancel", "refund",
       "getStoredMethod", "listStoredMethods", "removeStoredMethod", "createSubscription", "getSubscription", "listSubscriptionPeriods",
       "cancelSubscription", "resumeSubscription", "settleSubscription", "replaceSubscriptionMethod",
       "setupMethod", "refreshStoredMethod", "changeSubscriptionPrice"].sort());

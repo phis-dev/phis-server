@@ -173,6 +173,8 @@ export async function findEntitlementSubject(
 
 /**
  * The entries of a Site, narrowed to a subject, a product, or both; every source's, valid or not.
+ * `subjectReferences` narrows to several subjects at once by their references, in the same one
+ * statement -- a reference that is nobody on this Site matches no entry of it.
  *
  * `resolveBundles` with a product also lists the entries on every bundle that contains it, directly or
  * through nested bundles and whatever their state, each as it is. Without a product it changes nothing.
@@ -180,6 +182,7 @@ export async function findEntitlementSubject(
 export async function listEntitlements(pool: Pool, input: {
   siteId: number;
   subjectId?: number | null;
+  subjectReferences?: readonly PhisEntitlementSubject[] | null;
   product?: string | null;
   resolveBundles?: boolean;
 }): Promise<PhisEntitlement[]> {
@@ -192,10 +195,11 @@ export async function listEntitlements(pool: Pool, input: {
      JOIN phis.entitlement_subjects s ON s.id = e.subject_id
      WHERE e.site_id = $1
        AND ($2::int IS NULL OR e.subject_id = $2)
+       AND ($4::text[] IS NULL OR s.reference = ANY($4::text[]))
        AND ${bundles ? "e.product IN (SELECT product FROM holders)" : "($3::text IS NULL OR e.product = $3)"}
      ORDER BY e.id ASC
      LIMIT 500`,
-    [input.siteId, input.subjectId ?? null, product],
+    [input.siteId, input.subjectId ?? null, product, input.subjectReferences ?? null],
   );
   return rows.map(mapEntry);
 }

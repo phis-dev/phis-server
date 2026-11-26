@@ -50,6 +50,8 @@ export class PhisAddonEntitlementsError extends Error {}
 const REFERENCE_MAX_LENGTH = 190;
 /** The most products one `checkMany` answers for (the contract's bound). */
 const CHECK_MANY_MAX = 100;
+/** The most subjects one `list` answers for (the contract's bound). */
+const LIST_SUBJECTS_MAX = 100;
 const QUANTITY_MAX = 2_000_000_000;
 
 /** The enabled Add-ons that declare a handler for `entitlement.changed`. */
@@ -197,10 +199,21 @@ export function buildPhisAddonEntitlementsCapability(input: {
       return { queued: queued > 0 ? written(queued) : queued };
     },
 
-    async list({ subject, product, resolveBundles }) {
+    async list({ subject, subjects, product, resolveBundles }) {
       requireBelievableCaller("list");
       if (resolveBundles !== undefined && typeof resolveBundles !== "boolean") {
         throw new PhisAddonEntitlementsError(`${addonId} called entitlements.list with resolveBundles that is not a boolean.`);
+      }
+      if (subjects !== undefined) {
+        if (subject !== undefined) {
+          throw new PhisAddonEntitlementsError(`${addonId} called entitlements.list with both subject and subjects; one names whom it lists.`);
+        }
+        if (!Array.isArray(subjects) || subjects.length > LIST_SUBJECTS_MAX || subjects.some((entry) => typeof entry !== "string")) {
+          throw new PhisAddonEntitlementsError(`${addonId} called entitlements.list with subjects that is not a list of at most ${LIST_SUBJECTS_MAX} subjects.`);
+        }
+        if (subjects.length === 0) return [];
+        // One statement for all of them; a reference that is nobody here simply has no entries.
+        return listEntitlements(getPool(), { siteId, subjectReferences: [...new Set(subjects)], product: product ?? null, resolveBundles: resolveBundles === true });
       }
       // Without a subject and without anybody acting there is nobody to list for; a Site-wide read is not offered.
       const row = await resolveSubject(subject);

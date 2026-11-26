@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
-import type { PhisPaymentProfileDraft, PhisPaymentProviderProbe } from "@phis/contracts/payments";
+import type { PhisPaymentProfileDraft, PhisPaymentProfileSummary, PhisPaymentProviderProbe } from "@phis/contracts/payments";
 import { withPoolTransaction } from "../lib/db-transaction.ts";
 import { PHIS_PAYMENT_LEASE_SECONDS } from "../lib/constants/payments.ts";
 import { PhisPaymentError, requirePhisPaymentReference } from "../lib/payments/validation.ts";
@@ -40,6 +40,22 @@ export async function listPhisPaymentProfiles(db: Db, siteId: number): Promise<P
   const result: PhisPaymentProfile[] = [];
   for (const row of rows) { const profile = await readPhisPaymentProfile(db, siteId, row.key); if (profile) result.push(profile); }
   return result;
+}
+
+/**
+ * The Site's profiles whose grant for the consumer holds `read`, retired ones too, by key: what
+ * `listProfiles` answers. One statement, reading the grant from the draft as the engine's `granted`
+ * reads it -- a draft holds at most one grant per consumer.
+ */
+export async function listPhisPaymentProfilesGrantedTo(db: Db, siteId: number, consumerAddonId: string): Promise<PhisPaymentProfileSummary[]> {
+  const { rows } = await db.query<{ key: string; provider_key: string; provider_addon_id: string; mode: "test" | "live"; enabled: boolean; retired: boolean }>(
+    `SELECT p.key, p.draft->>'providerKey' AS provider_key, p.provider_addon_id, p.draft->>'mode' AS mode, p.enabled, p.retired
+     FROM phis.payment_profiles p
+     WHERE p.site_id = $1 AND EXISTS (SELECT 1 FROM jsonb_array_elements(p.draft->'grants') g
+       WHERE g->>'consumerAddonId' = $2 AND g->'operations' ? 'read')
+     ORDER BY p.key`, [siteId, consumerAddonId]);
+  return rows.map(row => ({ profileKey: row.key, providerKey: row.provider_key, providerAddonId: row.provider_addon_id, mode: row.mode,
+    state: row.retired ? "retired" : row.enabled ? "enabled" : "disabled" }));
 }
 
 export async function writePhisPaymentProfile(pool: Pool, siteId: number, providerAddonId: string, draft: PhisPaymentProfileDraft, replace: boolean) {

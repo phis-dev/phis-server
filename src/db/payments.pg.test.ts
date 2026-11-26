@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import type { PhisPaymentPricing, PhisPaymentProviderCommand, PhisPaymentProviderExecution, PhisPaymentProviderObservation, PhisPaymentProviderV1 } from "@phis/contracts/payments";
+import type { PhisPaymentPricing, PhisPaymentProfileDraft, PhisPaymentProviderCommand, PhisPaymentProviderExecution, PhisPaymentProviderObservation, PhisPaymentProviderV1 } from "@phis/contracts/payments";
 import { PhisPaymentEngine } from "@/lib/payments/engine";
 import { PHIS_PAYMENT_KNOCK_REPEATS } from "@/lib/constants/payments";
 import { logRuntimeEvent } from "@/lib/log";
@@ -564,6 +564,32 @@ describe("durable Payment execution", () => {
     await expect(engine().refreshProfileReach({ profileKey: "reach", currencies: ["CHF"] })).rejects.toMatchObject({ code: "provider_unavailable" });
     expect((await readPhisPaymentProfile(pool, site.id, "reach"))!.methods).toEqual(before);
     await expect(engine().refreshProfileReach({ profileKey: "reach", currencies: ["CHF"] })).rejects.toMatchObject({ code: "rate_limited" });
+  });
+  it("lists the profiles whose grant for the consumer holds read, with their state, by key", async () => {
+    const pool = await requirePhiTestDatabase();
+    const policy = { roles: [], jobs: [], events: [] };
+    const merchantActions = { capture: policy, cancel: policy, refund: policy };
+    const draft = (key: string, grants: unknown[]) => ({ key, providerKey: "@pgtest/payment-provider/test", mode: "test" as const, credentialReferences: {}, grants } as PhisPaymentProfileDraft);
+    await writePhisPaymentProfile(pool, site.id, providerBinding.addonId, draft("list-b", [{ consumerAddonId: CONSUMER, operations: ["read", "create"], merchantActions }]), false);
+    await writePhisPaymentProfile(pool, site.id, providerBinding.addonId, draft("list-a", [{ consumerAddonId: "@pgtest/other-consumer", operations: ["read"], merchantActions },
+      { consumerAddonId: CONSUMER, operations: ["read"], merchantActions }]), false);
+    await writePhisPaymentProfile(pool, site.id, providerBinding.addonId, draft("list-c", [{ consumerAddonId: CONSUMER, operations: ["create"], merchantActions }]), false);
+    await writePhisPaymentProfile(pool, site.id, providerBinding.addonId, draft("list-d", [{ consumerAddonId: "@pgtest/other-consumer", operations: ["read"], merchantActions }]), false);
+    const b = (await readPhisPaymentProfile(pool, site.id, "list-b"))!;
+    await recordPhisPaymentProfileProbe(pool, b, "acct_test", "test", "CHF", []);
+    await setPhisPaymentProfileEnabled(pool, (await readPhisPaymentProfile(pool, site.id, "list-b"))!, true);
+    await setPhisPaymentProfileEnabled(pool, (await readPhisPaymentProfile(pool, site.id, "list-a"))!, false, true);
+    const engine = (unauthenticated: boolean) => new PhisPaymentEngine({ pool, scope: { siteId: site.id, siteKey: site.key, consumerAddonId: CONSUMER },
+      signal: new AbortController().signal, publicBaseUrl: async () => `https://${site.key}.invalid`, resolveProvider: async () => { throw new Error("not asked"); },
+      merchantAuthorized: async () => false, unauthenticated });
+    const listed = (await engine(false).listProfiles()).filter(entry => entry.profileKey.startsWith("list-"));
+    expect(listed).toEqual([
+      { profileKey: "list-a", providerKey: "@pgtest/payment-provider/test", providerAddonId: providerBinding.addonId, mode: "test", state: "retired" },
+      { profileKey: "list-b", providerKey: "@pgtest/payment-provider/test", providerAddonId: providerBinding.addonId, mode: "test", state: "enabled" },
+    ]);
+    await expect(engine(true).listProfiles()).rejects.toMatchObject({ code: "forbidden" });
+    await writePhisPaymentProfile(pool, site.id, providerBinding.addonId, draft("list-b", [{ consumerAddonId: CONSUMER, operations: ["read", "create"], merchantActions }]), true);
+    expect((await engine(false).listProfiles()).find(entry => entry.profileKey === "list-b")?.state).toBe("disabled");
   });
   it("retired profiles reject new payments and preserve access to existing evidence", async () => {
     const api = await service(); const args = input(); const result = await api.create(args); const pool = await requirePhiTestDatabase();

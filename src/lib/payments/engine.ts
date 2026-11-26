@@ -3,7 +3,7 @@ import { isDeepStrictEqual } from "node:util";
 import type { Pool, PoolClient } from "pg";
 import type {
   PhisPaymentCheckoutPlan, PhisPaymentCommandResult, PhisPaymentCreateInput, PhisPaymentErrorCode, PhisPaymentGrantedOperation, PhisPaymentMerchantActionPolicy, PhisPaymentMoney,
-  PhisPaymentPricing, PhisPaymentProfileReach, PhisPaymentProviderExecution, PhisPaymentProviderObservation, PhisPaymentProviderStoredMethod, PhisPaymentProviderV1,
+  PhisPaymentPricing, PhisPaymentProfileReach, PhisPaymentProfileSummary, PhisPaymentProviderExecution, PhisPaymentProviderObservation, PhisPaymentProviderStoredMethod, PhisPaymentProviderV1,
   PhisPaymentStoredMethod, PhisPaymentSubscription, PhisPaymentSubscriptionCreateInput, PhisPaymentSubscriptionPeriod, PhisPaymentSubscriptionResult,
   PhisPaymentSubscriptionTerms, PhisPaymentsCapabilityV1,
 } from "@phis/contracts/payments";
@@ -17,7 +17,7 @@ import {
 } from "./schedule.ts";
 import {
   claimPhisPayment, claimPhisPaymentProfileRefresh, recordPhisPaymentProfileProbe, rememberPhisPaymentNotification, settlePhisPaymentNotification, findPhisPaymentIdempotency, insertPhisPayment, insertPhisPaymentOperation,
-  listPhisPaymentOperations, listPhisPaymentRefunds, readPhisPayment, readPhisPaymentOperation, readPhisPaymentProfile,
+  listPhisPaymentOperations, listPhisPaymentProfilesGrantedTo, listPhisPaymentRefunds, readPhisPayment, readPhisPaymentOperation, readPhisPaymentProfile,
   readPhisPaymentRefund, writePhisPayment, writePhisPaymentOperation, writePhisPaymentRefund, finishPhisPaymentReceipt,
   findPhisPaymentStoredMethodSetup, insertPhisPaymentStoredMethod, listPhisPaymentStoredMethods, readPhisPaymentStoredMethod,
   revokeSupersededPhisPaymentStoredMethods, writePhisPaymentStoredMethod, writePhisPaymentStoredMethodSetupCheckout,
@@ -395,6 +395,15 @@ export class PhisPaymentEngine implements PhisPaymentsCapabilityV1 {
     return this.methods(profile, { amount: { currency: input.amount.currency, minor: input.amount.minor }, captureMode: input.captureMode, checkoutKind: input.checkoutKind, pricing,
       ...(input.usage === "recurring" ? { usage: "recurring" as const } : {}) });
   }
+  /**
+   * The profiles this consumer may read, for a seller to choose one by: the grant rule of `granted`, in
+   * one read, and refused to a hook as every operation but `profileReach` is.
+   */
+  async listProfiles(): Promise<readonly PhisPaymentProfileSummary[]> {
+    if (this.options.unauthenticated) throw new PhisPaymentError("forbidden");
+    return listPhisPaymentProfilesGrantedTo(this.pool, this.scope.siteId, this.scope.consumerAddonId);
+  }
+
   /**
    * What the profile sells as Merchant of Record in one currency, read from what Core recorded; no
    * Provider is asked. The one operation a hook may call -- the ban `profile` applies to an

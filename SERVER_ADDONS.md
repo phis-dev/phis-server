@@ -2005,7 +2005,11 @@ read -- the same query, the walk to the bundles started from every product at on
 per product asked for, in the order asked, a product asked twice answered twice. It takes at most 100
 products and throws beyond, and throws for an entry that is not a product id (where `check` answers a
 non-id as held by nobody); an empty list answers an empty one without a read. A licence of a bundle of
-twenty parts refreshes with one call rather than twenty.
+twenty parts refreshes with one call rather than twenty. `list({ subjects })` lists the entries of several
+subjects in one statement -- an Admin table of keys asks for its page at once rather than per row --
+narrowed by `product` and `resolveBundles` as for one subject, in id order, each entry naming its subject.
+It takes at most 100 subjects and throws beyond, for an entry that is not a string, and beside `subject`;
+an empty list answers nothing without a read, and a reference that is nobody on the Site has no entries.
 
 **Another person's subject.** `subjectForUser({ userId })` answers the subject of a member of the Site,
 issued on first asking as `subject()` issues it, for staff acting on a person's behalf -- a licence granted

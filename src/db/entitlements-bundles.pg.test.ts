@@ -266,6 +266,26 @@ describe.skipIf(!configured)("entitlements through bundles", () => {
       .toEqual(await listEntitlements(pool, { siteId: site.id, subjectId: someone.subjectId }));
   });
 
+  it("lists the entries of several subjects in one statement, narrowed and resolved as for one", async () => {
+    const part = await product(PARTS);
+    const bundle = await product(BUNDLES, { parts: [part] });
+    const other = await product(PARTS);
+    const first = await person();
+    const second = await person();
+    const outsider = await person();
+    const a = await first.grant(part);
+    const b = await second.grant(bundle);
+    const c = await second.grant(other);
+    await outsider.grant(part);
+
+    const both = [first.subject, second.subject, "sub_nobody_here"];
+    const all = await listEntitlements(pool, { siteId: site.id, subjectReferences: both });
+    expect(all.map((entry) => [entry.id, entry.subject])).toEqual([[a.id, first.subject], [b.id, second.subject], [c.id, second.subject]]);
+    expect((await listEntitlements(pool, { siteId: site.id, subjectReferences: both, product: part })).map((entry) => entry.id)).toEqual([a.id]);
+    expect((await listEntitlements(pool, { siteId: site.id, subjectReferences: both, product: part, resolveBundles: true })).map((entry) => entry.id))
+      .toEqual([a.id, b.id]);
+  });
+
   it("owes each part, through nested bundles, its event when an entry on the bundle is written or taken back", async () => {
     const part = await product(PARTS);
     const inner = await product(BUNDLES, { parts: [part] });

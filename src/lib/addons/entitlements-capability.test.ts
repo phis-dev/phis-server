@@ -329,5 +329,34 @@ describe("entitlements capability", () => {
       expect(state.list).not.toHaveBeenCalled();
       expect(state.findSubject).not.toHaveBeenCalled();
     });
+
+    it("lists several subjects in one read, each once, without resolving them one by one", async () => {
+      state.list.mockClear();
+      state.findSubject.mockClear();
+      await capability().list({ subjects: ["sub_a", "sub_b", "sub_a"], product: LICENSE });
+      expect(state.list).toHaveBeenCalledOnce();
+      expect(state.list).toHaveBeenLastCalledWith({ siteId: 7, subjectReferences: ["sub_a", "sub_b"], product: LICENSE, resolveBundles: false });
+      expect(state.findSubject).not.toHaveBeenCalled();
+      // Nobody asked about: nothing read.
+      state.list.mockClear();
+      expect(await capability().list({ subjects: [] })).toEqual([]);
+      expect(state.list).not.toHaveBeenCalled();
+    });
+
+    it("refuses subjects beside subject, more than 100 of them, or one that is not a reference", async () => {
+      state.list.mockClear();
+      await expect(capability().list({ subject: "sub_a", subjects: ["sub_b"] })).rejects.toThrow(/both subject and subjects/);
+      const many = Array.from({ length: 101 }, (_, index) => `sub_${index}`);
+      await expect(capability().list({ subjects: many })).rejects.toThrow(/at most 100 subjects/);
+      await expect(capability().list({ subjects: ["sub_a", 5 as never] })).rejects.toThrow(/at most 100 subjects/);
+      await expect(capability().list({ subjects: "sub_a" as never })).rejects.toThrow(/at most 100 subjects/);
+      expect(state.list).not.toHaveBeenCalled();
+      await capability().list({ subjects: many.slice(0, 100) });
+      expect(state.list).toHaveBeenCalledOnce();
+    });
+
+    it("keeps subjects from an unverified hook", async () => {
+      await expect(capability({ unauthenticated: true }).list({ subjects: ["sub_a"] })).rejects.toThrow(/unverified hook/);
+    });
   });
 });

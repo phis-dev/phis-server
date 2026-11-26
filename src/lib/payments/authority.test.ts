@@ -4,10 +4,10 @@ import type { PhisPaymentAuthority, PhisPaymentProfile, PhisStoredPayment } from
 import { buildPhisPaymentsCapability } from "./runtime.ts";
 vi.mock("../addons/event-trigger.ts", () => ({ schedulePhisAddonEventDelivery: vi.fn() }));
 
-const dependencies = vi.hoisted(() => ({ profile: null as unknown, payment: null as unknown,
+const dependencies = vi.hoisted(() => ({ profile: null as unknown, payment: null as unknown, granted: vi.fn(async () => [] as unknown[]),
   role: false, admin: false, transaction: vi.fn(async () => { throw new Error("authorized-reservation-boundary"); }) }));
 vi.mock("../db", () => ({ getPool: () => ({}) }));
-vi.mock("../../db/payments.mts", () => ({ readPhisPayment: async () => dependencies.payment, readPhisPaymentProfile: async () => dependencies.profile,
+vi.mock("../../db/payments.mts", () => ({ listPhisPaymentProfilesGrantedTo: (...args: unknown[]) => dependencies.granted(...args as []), readPhisPayment: async () => dependencies.payment, readPhisPaymentProfile: async () => dependencies.profile,
   readPhisPaymentOperation: async () => ({ record: { id: "operation-1", paymentId: "payment-1" } }), readPhisPaymentRefund: async () => ({ record: { id: "refund-1", paymentId: "payment-1" } }),
   readPhisPaymentStoredMethod: async () => ({ record: { id: "method-1", profileKey: "sandbox" } }) }));
 vi.mock("../../db/payment-subscriptions.mts", () => ({ readPhisPaymentSubscription: async () => ({ record: { id: "subscription-1", profileKey: "sandbox" } }) }));
@@ -114,6 +114,7 @@ describe("a profile's reach, the one operation a hook may call", () => {
     ["getSubscription", (api: ReturnType<typeof hook>) => api.getSubscription("subscription-1")],
     ["listSubscriptionPeriods", (api: ReturnType<typeof hook>) => api.listSubscriptionPeriods("subscription-1")],
     ["refreshProfileReach", (api: ReturnType<typeof hook>) => api.refreshProfileReach({ profileKey: "sandbox", currencies: ["CHF"] })],
+    ["listProfiles", (api: ReturnType<typeof hook>) => api.listProfiles()],
   ] as const)("keeps %s refused to a hook, under a grant that holds it", async (_name, call) => {
     await expect(call(hook())).rejects.toMatchObject({ code: "forbidden" });
     expect(dependencies.transaction).not.toHaveBeenCalled();
@@ -130,5 +131,18 @@ describe("a profile's reach, the one operation a hook may call", () => {
     await expect(request(7).refreshProfileReach({ profileKey: "sandbox", currencies: ["CHF"] })).rejects.toMatchObject({ code: "forbidden" });
     await expect(request(7).refreshProfileReach({ profileKey: "sandbox", currencies: ["CHF", "CHF"] })).rejects.toMatchObject({ code: "invalid_input" });
     await expect(request(7).refreshProfileReach({ profileKey: "sandbox", currencies: [] })).rejects.toMatchObject({ code: "invalid_input" });
+  });
+});
+
+describe("the profiles a consumer may choose from", () => {
+  const manifest = { addonId: "@test/shop", roles: [], jobs: [], eventHandlers: [] } as unknown as PhisAddonManifestV1;
+  it("names the profiles granted to this consumer on this Site, in one read", async () => {
+    const summary = { profileKey: "stripe-ch", providerKey: "@test/provider/main", providerAddonId: "@test/provider", mode: "test", state: "enabled" };
+    dependencies.granted.mockReset(); dependencies.granted.mockResolvedValue([summary]);
+    const api = buildPhisPaymentsCapability({ scope: { siteId: 3, siteKey: "demo", consumerAddonId: manifest.addonId }, manifest,
+      authority: { kind: "request", operator: false, actorUserId: 7 }, signal: new AbortController().signal });
+    expect(await api.listProfiles()).toEqual([summary]);
+    expect(dependencies.granted).toHaveBeenCalledOnce();
+    expect(dependencies.granted).toHaveBeenCalledWith({}, 3, "@test/shop");
   });
 });

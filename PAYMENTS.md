@@ -236,6 +236,7 @@ export type PhisPaymentCommandInput = {
 };
 
 export interface PhisPaymentsCapabilityV1 {
+  listProfiles(): Promise<readonly PhisPaymentProfileSummary[]>;
   listMethods(input: {
     profileKey: string;
     amount: PhisPaymentMoney;
@@ -1206,6 +1207,26 @@ enabled, pinned profile. At most once a minute per profile, counted from `probed
 same statement that moves it, so of two refreshes at once one asks; the other, and any within the
 minute, answer `rate_limited`, which names nothing and changes nothing. A Provider that fails answers
 `provider_unavailable`; a currency recorded before it stays recorded.
+
+**The profiles a consumer may choose from.** Where a seller picks a profile -- a Shop's destination -- it
+is chosen from `listProfiles()`, not typed:
+
+```ts
+export type PhisPaymentProfileSummary = {
+  profileKey: string;
+  providerKey: string;
+  providerAddonId: string;
+  mode: "test" | "live";
+  state: "enabled" | "disabled" | "retired";
+};
+```
+
+It names the Site's profiles whose grant for the calling consumer holds `read`, retired ones too, by key,
+read in one statement; a profile without such a grant is not named, as it is `not_found` everywhere else.
+`state` is Core's two columns read as one: `retired`, else `enabled`, else `disabled` (added or changed and
+not enabled since). No credentials, grants or merchant identity are named. A hook is refused (`forbidden`).
+The countries a `merchant-of-record` destination may sell to are then `profileReach` of the chosen profile
+in the destination's currency; a currency never probed answers `null` until `refreshProfileReach`.
 
 **Before v1** the recording has no other shape. A profile probed before this section holds a list in
 `methods`; it is swept (`methods = NULL`) and probed again in its currencies, by hand.
